@@ -186,7 +186,7 @@ def test_401_maps_to_actionable_message():
         req.return_value = _resp(401)
         with pytest.raises(McpError) as exc:
             _call("cognism_entitlement", op="contact")
-    assert "401" in str(exc.value) or "invalide" in str(exc.value)
+    assert "401" in str(exc.value) or "invalid" in str(exc.value)
 
 
 def test_5xx_maps_to_retry_message():

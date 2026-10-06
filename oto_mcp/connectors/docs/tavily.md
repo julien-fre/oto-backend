@@ -1,24 +1,24 @@
-## prerequisite — clé api tavily
+## prerequisite — tavily api key
 
-crée une clé API dans [Tavily](https://app.tavily.com/home) (elle commence par `tvly-`), puis colle-la dans oto. le palier gratuit donne 1 000 crédits par mois.
-- une clé plateforme oto est aussi posable par le super-admin : elle sert de repli quand ni le compte ni l'org n'ont la leur
+create an API key in [Tavily](https://app.tavily.com/home) (it starts with `tvly-`), then paste it into oto. the free tier gives 1,000 credits per month.
+- an oto platform key can also be set by the super-admin: it serves as a fallback when neither the account nor the org has its own
 
-## usage — chercher sur le web et lire des pages, taillé pour un agent
+## usage — search the web and read pages, tailored for an agent
 
-une recherche rend des extraits cités ET une réponse synthétique ; une lecture rend le markdown propre de plusieurs URLs d'un coup.
-- « qu'est-ce que X ? » / « trouve-moi des infos récentes sur Y » → `tavily_search` (mettre `topic="news"` et `time_range` pour l'actualité)
-- « lis ces 5 pages et résume » → `tavily_extract` avec la liste d'URLs (les URLs en échec reviennent dans `failed_results`, le reste passe)
-- « quelles pages a ce site ? » → `tavily_map` (URLs seules, à faire AVANT un crawl)
-- « récupère la doc / les études de cas de ce site » → `tavily_crawl` avec `instructions` en langage naturel (synchrone, 100 pages max)
+a search returns cited excerpts AND a synthesized answer; a read returns the clean markdown of several URLs at once.
+- "what is X?" / "find me recent info on Y" → `tavily_search` (set `topic="news"` and `time_range` for current events)
+- "read these 5 pages and summarize" → `tavily_extract` with the list of URLs (failed URLs come back in `failed_results`, the rest goes through)
+- "what pages does this site have?" → `tavily_map` (URLs only, do it BEFORE a crawl)
+- "get the docs / case studies of this site" → `tavily_crawl` with `instructions` in natural language (synchronous, 100 pages max)
 
-## note — coût et choix de l'outil
+## note — cost and choice of tool
 
-chaque réponse porte `usage.credits` : search 1 crédit (`advanced` 2), extract 1 crédit par 5 URLs, crawl/map 1 crédit par 10 pages (×2 avec `instructions` ou `advanced`).
-- SERP Google brut (positions, People Also Ask) → `serper_search`, pas Tavily
-- UNE page avec JavaScript exécuté, ou une page qui bloque → `firecrawl_scrape`
-- crawl d'un domaine entier → `firecrawl_crawl` (asynchrone, sans plafond) ; `tavily_crawl` est borné à 100 pages / 40 s
-- `include_raw_content` sur une recherche alourdit beaucoup la réponse : préférer `tavily_extract` sur les URLs retenues
+each response carries `usage.credits`: search 1 credit (`advanced` 2), extract 1 credit per 5 URLs, crawl/map 1 credit per 10 pages (×2 with `instructions` or `advanced`).
+- raw Google SERP (rankings, People Also Ask) → `serper_search`, not Tavily
+- ONE page with JavaScript executed, or a page that blocks → `firecrawl_scrape`
+- crawl of a whole domain → `firecrawl_crawl` (asynchronous, uncapped); `tavily_crawl` is bounded to 100 pages / 40 s
+- `include_raw_content` on a search makes the response much heavier: prefer `tavily_extract` on the URLs you keep
 
-## note — périmètre de projet (#605, 2026-08-29)
+## note — project perimeter (#605, 2026-08-29)
 
-sous un projet à `excluded_url_prefixes`, `tavily_search`, `tavily_map` et `tavily_crawl` écartent les résultats/pages correspondants et le disent (`excluded_by_perimeter`) ; `tavily_extract`, `tavily_map` et `tavily_crawl` **refusent** une URL correspondante (pour `extract`, tout le lot est refusé en nommant les URLs). la réponse synthétique `answer` est de la prose : elle n'est pas filtrée. détail : `docs/projects.md`.
+under a project with `excluded_url_prefixes`, `tavily_search`, `tavily_map` and `tavily_crawl` drop the matching results/pages and say so (`excluded_by_perimeter`); `tavily_extract`, `tavily_map` and `tavily_crawl` **refuse** a matching URL (for `extract`, the whole batch is refused, naming the URLs). the synthesized `answer` is prose: it is not filtered. details: `docs/projects.md`.

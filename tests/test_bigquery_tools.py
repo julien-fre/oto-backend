@@ -88,9 +88,9 @@ def test_meme_en_dry_run_un_non_select_est_refuse(client):
 
 def test_au_dela_du_plafond_refus_avant_lancement_estimation_a_lappui(client):
     client.dry_run.return_value = {**client.dry_run.return_value, "bytes_processed": 42 * GB}
-    with pytest.raises(McpError, match="42 Go") as e:
+    with pytest.raises(McpError, match="42 GB") as e:
         _tool("bigquery_query")(sql="SELECT * FROM p.d.t", project="bill")
-    assert "10 Go" in str(e.value)
+    assert "10 GB" in str(e.value)
     client.query.assert_not_called()
 
 
@@ -208,7 +208,7 @@ def test_api_non_activee_dit_que_cest_le_client_oauth(client):
     client.list_projects.side_effect = _http_error(
         403, "accessNotConfigured",
         "BigQuery API has not been used in project 123 before or it is disabled.")
-    with pytest.raises(McpError, match="client OAuth"):
+    with pytest.raises(McpError, match="OAuth client"):
         _tool("bigquery_catalog")()
 
 
@@ -301,7 +301,7 @@ def test_chaque_tool_a_une_description():
     lambda: _tool("bigquery_results")(job_id="job_1", project="a?b"),
 ])
 def test_un_identifiant_hors_motif_est_refuse_avant_tout_appel(client, appel):
-    with pytest.raises(McpError, match="identifiant BigQuery invalide"):
+    with pytest.raises(McpError, match="invalid BigQuery identifier"):
         appel()
     assert not client.method_calls
 
@@ -313,7 +313,7 @@ def test_un_projet_a_domaine_est_accepte(client):
 
 def test_un_typeerror_de_googleapiclient_devient_un_refus_nomme(client):
     client.list_datasets.side_effect = TypeError("Parameter projectId does not match")
-    with pytest.raises(McpError, match="argument refusé"):
+    with pytest.raises(McpError, match="argument refused"):
         _tool("bigquery_catalog")(project="p")
 
 
@@ -330,4 +330,4 @@ def test_une_page_trop_lourde_est_tronquee_et_le_dit(client):
     assert out["truncated_bytes"] is True
     assert 0 < out["row_count"] < 1000
     assert len(json.dumps(out["rows"])) <= T._MAX_OUT_BYTES + 1000
-    assert "Ko" in out["hint"]
+    assert "KB" in out["hint"]

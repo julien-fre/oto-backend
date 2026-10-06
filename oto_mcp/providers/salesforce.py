@@ -1,45 +1,45 @@
-"""Déclaration de registre du connecteur `salesforce`.
+"""Registry declaration of the `salesforce` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it doesn't
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# salesforce : OAuth2 Connected App → credential multi-champs (ADR 0011, comme
-# zoho), résolu via resolve_credential_fields. byo_user OU byo_org (équipe sales
-# partage une Connected App). Pas de table de région fixe : le refresh Salesforce
-# renvoie l'`instance_url`, `login_url` ne fait que sélectionner prod vs sandbox
-# (ou un My Domain).
-# salesforce : plus de `refresh_token` posé à la main — le flow OAuth live
-# (salesforce_oauth.py) est désormais le SEUL chemin pour l'obtenir. Le
-# formulaire ne collecte que le triplet client_id/client_secret/login_url ;
-# « il reste le consentement » se dit par `status_hints` (register_state +
-# pending_action, déclarés dans tools/salesforce.py) — PAS par une méthode d'auth
-# à part : le jeu de `auth_method` est fermé et lu par un switch du dashboard. Le
-# `client_id`/`client_secret` restent PER-CUSTOMER (chaque org crée sa
-# propre Connected App) — pas de client Otomata partagé possible ici,
-# contrairement à google (cf. salesforce_oauth.py).
+# salesforce: OAuth2 Connected App → multi-field credential (ADR 0011, like
+# zoho), resolved via resolve_credential_fields. byo_user OR byo_org (sales
+# team shares a Connected App). No fixed region table: the Salesforce refresh
+# returns the `instance_url`, `login_url` only selects prod vs sandbox
+# (or a My Domain).
+# salesforce: no more hand-set `refresh_token` — the live OAuth flow
+# (salesforce_oauth.py) is now the ONLY way to obtain it. The
+# form only collects the client_id/client_secret/login_url triplet;
+# "the consent remains" is expressed via `status_hints` (register_state +
+# pending_action, declared in tools/salesforce.py) — NOT via a separate auth
+# method: the `auth_method` set is closed and read by a dashboard switch. The
+# `client_id`/`client_secret` remain PER-CUSTOMER (each org creates its
+# own Connected App) — no shared Otomata client possible here,
+# unlike google (see salesforce_oauth.py).
 CONNECTOR = _c(
     "salesforce", ["salesforce"], auth_modes={"byo_user", "byo_org"},
     secret_kind="fields", label="Salesforce",
-    help="CRM Salesforce (Contacts, Accounts/companies, Leads, Opportunities, notes)",
+    help="Salesforce CRM (Contacts, Accounts/companies, Leads, Opportunities, notes)",
     href="https://login.salesforce.com", credential_fields=(
-        CredentialField("client_id", "Clé du consommateur", secret=True,
-                        help="Consumer Key de la Connected App"),
-        CredentialField("client_secret", "Secret du consommateur", secret=True,
-                        help="révélé par « Détails du consommateur » sur ton "
-                             "application Salesforce, après vérification par email"),
-        # ⚠️ Le libellé disait « login.salesforce.com (prod) ou test.salesforce.com
-        # (sandbox) ». C'est daté : My Domain est obligatoire depuis, et une org qui
-        # bloque l'authentification via login.salesforce.com — de plus en plus le
-        # défaut — fait échouer le consentement. Vécu le 31/07.
-        CredentialField("login_url", "Login URL (ton My Domain)",
+        CredentialField("client_id", "Consumer Key", secret=True,
+                        help="Consumer Key of the Connected App"),
+        CredentialField("client_secret", "Consumer Secret", secret=True,
+                        help="revealed by \"Consumer Details\" on your "
+                             "Salesforce application, after email verification"),
+        # ⚠️ The label used to say "login.salesforce.com (prod) or test.salesforce.com
+        # (sandbox)". That is outdated: My Domain has since become mandatory, and an org that
+        # blocks authentication via login.salesforce.com — increasingly the
+        # default — makes the consent fail. Experienced on 31/07.
+        CredentialField("login_url", "Login URL (your My Domain)",
                         secret=False,
-                        help="https://<ton-domaine>.my.salesforce.com — SANS le "
-                             "« -setup » du domaine de la console. Sandbox : "
-                             "https://<domaine>.sandbox.my.salesforce.com"),
+                        help="https://<your-domain>.my.salesforce.com — WITHOUT the "
+                             "\"-setup\" of the console domain. Sandbox: "
+                             "https://<domain>.sandbox.my.salesforce.com"),
     ),
 )
 
@@ -48,7 +48,7 @@ PUBLISHER = "Salesforce"
 LOGO_DOMAIN = "salesforce.com"
 
 DESCRIPTION = (
-    "Le CRM Salesforce : contacts, comptes (entreprises), leads, opportunités "
-    "et notes. OAuth2 via une Connected App, en flow de consentement — plus de "
-    "refresh token à coller à la main."
+    "The Salesforce CRM: contacts, accounts (companies), leads, opportunities "
+    "and notes. OAuth2 via a Connected App, in a consent flow — no more "
+    "refresh token to paste by hand."
 )

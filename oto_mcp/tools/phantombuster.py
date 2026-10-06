@@ -1,10 +1,10 @@
 """Phantombuster — automation agents (launch + monitor + results).
 
-Wrappe `oto.tools.phantombuster.PhantombusterClient`. Clé résolue par appel via
+Wraps `oto.tools.phantombuster.PhantombusterClient`. Key resolved per call via
 `access.resolve_api_key("phantombuster")` — byo.
 
-Note : `phantombuster_launch_agent` déclenche un run (peut consommer des crédits
-Phantombuster et agir sur des comptes tiers). Les autres tools sont en lecture.
+Note: `phantombuster_launch_agent` triggers a run (may consume Phantombuster
+credits and act on third-party accounts). The other tools are read-only.
 """
 from __future__ import annotations
 
@@ -17,15 +17,15 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /containers` (déjà dans le client — `list_containers`), sans
-    `agent_id` : liste les exécutions récentes du COMPTE entier, `limit=1` —
-    le plus petit format disponible, Phantombuster n'exposant ni `/me` ni
-    solde à cet appel. Une liste VIDE (aucune exécution) est un état normal.
+    `GET /containers` (already in the client — `list_containers`), without
+    `agent_id`: lists the recent runs of the ENTIRE ACCOUNT, `limit=1` —
+    the smallest format available, Phantombuster exposing neither `/me` nor a
+    balance on this call. An EMPTY list (no runs) is a normal state.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    une clé Phantombuster porte le périmètre entier du compte.
+    **Authenticated ≠ usable** (class oto#69): does not distinguish scope —
+    a Phantombuster key carries the account's entire scope.
     """
     from oto.tools.phantombuster.client import PhantombusterClient
 

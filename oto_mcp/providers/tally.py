@@ -1,23 +1,23 @@
-"""Déclaration de registre du connecteur `tally`.
+"""Registry declaration of the `tally` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# tally : formulaires en ligne — formulaires, questions, blocs, réponses,
-# analytics, espaces de travail, dossiers, membres de l'organisation, webhooks
-# (38 opérations, couverture complète de l'API publique). keyed api_key
-# (Bearer `tly-…`), **byo-only et byo-only par nature** : une clé Tally est liée
-# à UN utilisateur, hérite de ses droits (aucun scope fin n'existe côté Tally)
-# et cesse de fonctionner s'il quitte l'organisation — une clé plateforme
-# partagée serait donc un compte nominatif déguisé, pas une clé de service.
+# tally: online forms — forms, questions, blocks, responses,
+# analytics, workspaces, folders, organization members, webhooks
+# (38 operations, full coverage of the public API). keyed api_key
+# (Bearer `tly-…`), **byo-only and byo-only by nature**: a Tally key is tied
+# to ONE user, inherits their rights (no fine-grained scope exists on Tally's side)
+# and stops working if they leave the organization — a shared platform
+# key would therefore be a named account in disguise, not a service key.
 CONNECTOR = _c(
     "tally", ["tally"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Tally",
-    help="formulaires : réponses, questions, blocs, analytics, espaces, webhooks",
+    help="forms: responses, questions, blocks, analytics, workspaces, webhooks",
     href="https://tally.so",
 )
 
@@ -26,9 +26,9 @@ PUBLISHER = "Tally"
 LOGO_DOMAIN = "tally.so"
 
 DESCRIPTION = (
-    "Les formulaires en ligne créés avec Tally : réponses, questions, blocs, "
-    "analytics, espaces de travail, dossiers, membres de l'organisation et "
-    "webhooks. Une clé Tally est nominative — elle hérite des droits de la "
-    "personne qui l'a créée, et cesse de fonctionner si elle quitte "
-    "l'organisation."
+    "The online forms created with Tally: responses, questions, blocks, "
+    "analytics, workspaces, folders, organization members and "
+    "webhooks. A Tally key is personal — it inherits the rights of the "
+    "person who created it, and stops working if they leave "
+    "the organization."
 )

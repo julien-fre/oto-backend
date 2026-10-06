@@ -1,23 +1,23 @@
-"""SearchApi — recherche multi-moteurs via SearchApi.io (scope complet de l'API).
+"""SearchApi — multi-engine search via SearchApi.io (full scope of the API).
 
-Wrappe l'API REST **SearchApi.io** (`GET https://www.searchapi.io/api/v1/search`,
-un seul endpoint paramétré par `engine`). **Surface consolidée (ADR 0047
-§Amendement appliqué à un connecteur)** : l'API n'ayant qu'UN endpoint, elle
-n'expose qu'UN tool — `searchapi_search`, la verticale choisie par `engine`.
-Les 6 tools typés d'avant (`searchapi_{web,news,jobs,scholar,maps,youtube}_search`)
-ne différaient du générique que par un `engine` codé en dur et par des champs
-nommés (`q`/`gl`/`hl`/`location`/`num`/`page`, communs à la plupart des moteurs) :
-ils sont devenus des valeurs d'`engine` + des paramètres typés du tool générique.
-`engine` reste **ouvert** (n'importe quel id SearchApi, y compris un moteur que ce
-module ne connaît pas) — c'est la capacité même du connecteur, on ne la ferme pas
-par une allowlist.
+Wraps the **SearchApi.io** REST API (`GET https://www.searchapi.io/api/v1/search`,
+a single endpoint parameterized by `engine`). **Consolidated surface (ADR 0047
+§Amendment applied to a connector)**: since the API has only ONE endpoint, it
+exposes only ONE tool — `searchapi_search`, the vertical chosen by `engine`.
+The 6 typed tools from before (`searchapi_{web,news,jobs,scholar,maps,youtube}_search`)
+differed from the generic one only by a hardcoded `engine` and by named
+fields (`q`/`gl`/`hl`/`location`/`num`/`page`, common to most engines):
+they have become `engine` values + typed parameters of the generic tool.
+`engine` stays **open** (any SearchApi id, including an engine this
+module does not know) — that is the connector's very capability, we do not close it
+with an allowlist.
 
-Pas de dépendance oto-core : le client HTTP est **auto-contenu** (httpx), comme
-`infosec`/`fr`. Clé résolue par appel via `access.resolve_api_key("searchapi")` :
-user key (`/account`) ou credential partagé de l'org si posé, sinon clé plateforme
-+ quota daily pour les members (même régime que serper/serpapi). Pourquoi en plus
-de serper/serpapi : SearchApi a sa propre couverture de moteurs + parsing, utile
-en fallback ou quand une clé SearchApi est déjà en place côté client.
+No oto-core dependency: the HTTP client is **self-contained** (httpx), like
+`infosec`/`fr`. Key resolved per call via `access.resolve_api_key("searchapi")`:
+user key (`/account`) or the org's shared credential if set, otherwise platform key
++ daily quota for members (same regime as serper/serpapi). Why in addition
+to serper/serpapi: SearchApi has its own engine coverage + parsing, useful
+as a fallback or when a SearchApi key is already in place on the customer side.
 """
 from __future__ import annotations
 
@@ -37,16 +37,16 @@ _TIMEOUT = 30.0
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /api/v1/me` — endpoint dédié « account usage » (crédits restants,
-    limite horaire), documenté « without requiring a specific plan level » :
-    gratuit, contrairement à `/api/v1/search` (facturé à la requête, ce que
-    ce module wrappe). Bearer header (jamais en query — `_run` de ce module
-    applique déjà cette règle sur `/search`, cf. #284).
+    `GET /api/v1/me` — dedicated "account usage" endpoint (remaining credits,
+    hourly limit), documented as "without requiring a specific plan level":
+    free, unlike `/api/v1/search` (billed per request, which is what
+    this module wraps). Bearer header (never in the query — this module's `_run`
+    already applies that rule on `/search`, see #284).
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne lit pas le solde (pas de
-    forme de champ confirmée dans le temps imparti) — `auth` seul.
+    **Authenticated ≠ usable** (class oto#69): does not read the balance (no
+    field shape confirmed in the time available) — `auth` only.
     """
     import requests
 
@@ -63,11 +63,11 @@ def register(mcp: FastMCP) -> None:
         return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
     def _run(engine: str, params: dict) -> dict:
-        """Résout la clé, appelle SearchApi, compte l'usage plateforme.
+        """Resolve the key, call SearchApi, count platform usage.
 
-        La clé passe en `Authorization: Bearer` (jamais en query — pas de fuite
-        dans les logs d'accès). Un 4xx amont (input rejeté) remonte tel quel via
-        `raise_for_status` ; Sentry droppe les 4xx tiers (cf. CLAUDE.md).
+        The key goes in `Authorization: Bearer` (never in the query — no leak
+        into access logs). An upstream 4xx (input rejected) surfaces as-is via
+        `raise_for_status`; Sentry drops third-party 4xx (see CLAUDE.md).
         """
         key, is_platform = access.resolve_api_key("searchapi")
         payload = {k: v for k, v in params.items() if v is not None}
@@ -155,16 +155,16 @@ def register(mcp: FastMCP) -> None:
         """
         if not engine or not engine.strip():
             raise _bad(
-                "searchapi_search requiert `engine` (la verticale SearchApi), "
-                "ex. 'google', 'google_news', 'google_jobs', 'google_scholar', "
-                "'google_maps', 'youtube' — voir la liste complète dans la "
-                "description du tool. Tout id de moteur SearchApi est accepté."
+                "searchapi_search requires `engine` (the SearchApi vertical), "
+                "e.g. 'google', 'google_news', 'google_jobs', 'google_scholar', "
+                "'google_maps', 'youtube' — see the full list in the tool "
+                "description. Any SearchApi engine id is accepted."
             )
         if query is None and not params:
             raise _bad(
-                f"searchapi_search(engine='{engine}') requiert `query` (le `q` du "
-                "moteur) — ou `params` pour un moteur dont l'entrée n'est pas `q` "
-                "(ex. engine='google_lens' avec params={'url': …})."
+                f"searchapi_search(engine='{engine}') requires `query` (the engine's "
+                "`q`) — or `params` for an engine whose input is not `q` "
+                "(e.g. engine='google_lens' with params={'url': …})."
             )
         payload: dict = {"q": query, "gl": country, "hl": language,
                          "location": location, "num": num, "page": page}

@@ -1,29 +1,29 @@
-## prerequisite — clé api origami
+## prerequisite — origami api key
 
-crée une clé API dans Origami (Settings → API keys ; elle commence par `og_live_` — voir la [doc d'authentification](https://docs.origami.chat/authentication)), puis colle-la dans oto.
-- byo-only : les crédits d'enrichissement et les envois sont ceux du compte Origami de l'org
-- pour envoyer, un compte email et/ou LinkedIn doit être connecté dans Origami — sinon le lancement répond `blocked.missingChannels` et rien ne part
+create an API key in Origami (Settings → API keys; it starts with `og_live_` — see the [authentication docs](https://docs.origami.chat/authentication)), then paste it into oto.
+- byo-only: enrichment credits and sends are those of the org's Origami account
+- to send, an email and/or LinkedIn account must be connected in Origami — otherwise the launch answers `blocked.missingChannels` and nothing goes out
 
-## usage — des leads au lancement d'une campagne email + LinkedIn
+## usage — from leads to launching an email + LinkedIn campaign
 
-origami tient des tables de leads et fait rédiger puis envoyer des campagnes multicanal par son agent.
-- « quels workspaces / quelles tables ? » → `origami_workspaces`, `origami_tables(op="list")`
-- « crée une table à partir de ce CSV » → `origami_upload_csv(workspace_id, "leads.csv", csv_text)` (`dry_run=True` montre les premières lignes)
-- « ajoute / mets à jour ces contacts dans la table » → `origami_tables(op="columns")` pour lire les SLUGS, puis `origami_rows(op="upsert", rows=[{slug: valeur}], match_columns=["email"])`
-- « lis les lignes » → `origami_rows(op="list", max_pages=…)` (suit `nextCursor` côté serveur)
-- « rédige une campagne sur cette table » → `origami_campaign_create(table_id, instructions)` puis `origami_run_get(agent_id, run_id)` jusqu'à `status != "running"`
-- « lance-la » → `origami_campaign_launch(campaign_id, dry_run=False)` — le défaut `dry_run=True` ne fait qu'un aperçu
-- « où en est-elle ? » → `origami_campaigns(op="stats" | "people")`, `origami_sequences(workspace_id=…)`
-- « pause / reprise / suppression » → `origami_campaign_pause`, `origami_campaign_resume`, `origami_campaign_delete(confirm=True)`
+origami keeps lead tables and has its agent draft then send multichannel campaigns.
+- "which workspaces / which tables?" → `origami_workspaces`, `origami_tables(op="list")`
+- "create a table from this CSV" → `origami_upload_csv(workspace_id, "leads.csv", csv_text)` (`dry_run=True` shows the first rows)
+- "add / update these contacts in the table" → `origami_tables(op="columns")` to read the SLUGS, then `origami_rows(op="upsert", rows=[{slug: value}], match_columns=["email"])`
+- "read the rows" → `origami_rows(op="list", max_pages=…)` (follows `nextCursor` server-side)
+- "draft a campaign on this table" → `origami_campaign_create(table_id, instructions)` then `origami_run_get(agent_id, run_id)` until `status != "running"`
+- "launch it" → `origami_campaign_launch(campaign_id, dry_run=False)` — the default `dry_run=True` only previews
+- "where does it stand?" → `origami_campaigns(op="stats" | "people")`, `origami_sequences(workspace_id=…)`
+- "pause / resume / delete" → `origami_campaign_pause`, `origami_campaign_resume`, `origami_campaign_delete(confirm=True)`
 
-## note — ce qui envoie, ce qui coûte, ce qui piège
+## note — what sends, what costs, what traps
 
-- **lancer envoie pour de vrai** (emails + messages LinkedIn à des personnes réelles) : relire les personnes enrôlées et le texte AVANT `dry_run=False` ; il n'y a pas de rappel
-- `origami_campaign_create` avec `block_prior_contacts=True` (défaut) écarte toute personne déjà enrôlée auparavant, MÊME dans un brouillon supprimé jamais envoyé — passer False seulement si ces enrôlements n'ont jamais envoyé à personne
-- les réglages `block_prior_contacts` / `block_active_duplicates` sont DEMANDÉS, pas garantis : Origami les a ignorés sur des campagnes créées par l'appel. Relire `origami_campaigns(op="get")` → `settings` après le déroulé ; les redire en toutes lettres dans `instructions` les a fait tenir en pratique ; sinon, bascule à la main dans Origami
-- un déroulé refusé `aucune_action` peut laisser dans l'interface Origami un brouillon « Ready to launch » invisible à l'API : relancer UNE fois, et faire vérifier la liste des campagnes par un humain avant de relancer encore
-- les clés de lignes sont les **slugs** des colonnes d'entrée (avec des tirets), pas les noms affichés — un slug inconnu est refusé (400 UNKNOWN_FIELDS)
-- `enrich=False` par défaut à l'upsert : l'enrichissement dépense des crédits, il se demande explicitement
-- la suppression est en deux temps ; le tool re-lit la campagne et ne dit « supprimée » que sur un 404
-- il n'y a pas de liste globale des campagnes : lister par table, ou `origami_sequences(workspace_id=…)` qui suit `nextCursor` (pages de 50, `max_pages=10` par défaut) et rend `campaign_ids`, les campagnes DISTINCTES vues — une seule page en fait croire une là où il y en a quatre ; `truncated: true` = il en reste, repasser `cursor`
-- `origami_upload_csv` rend `table_id` / `table_slug` au premier niveau (l'id de la table créée conditionne l'upsert et la campagne qui suivent) et `error` si Origami a refusé le fichier
+- **launching sends for real** (emails + LinkedIn messages to real people): review the enrolled people and the text BEFORE `dry_run=False`; there is no recall
+- `origami_campaign_create` with `block_prior_contacts=True` (default) excludes anyone previously enrolled, EVEN in a deleted draft that was never sent — pass False only if those enrollments never sent to anyone
+- the `block_prior_contacts` / `block_active_duplicates` settings are REQUESTED, not guaranteed: Origami ignored them on campaigns created by the call. Re-read `origami_campaigns(op="get")` → `settings` after the run; restating them in plain words in `instructions` made them stick in practice; otherwise, toggle by hand in Origami
+- a run refused with `aucune_action` can leave a "Ready to launch" draft in the Origami interface that is invisible to the API: retry ONCE, and have a human check the campaign list before retrying again
+- row keys are the **slugs** of the input columns (with dashes), not the displayed names — an unknown slug is rejected (400 UNKNOWN_FIELDS)
+- `enrich=False` by default on upsert: enrichment spends credits, it must be requested explicitly
+- deletion happens in two steps; the tool re-reads the campaign and only says "deleted" on a 404
+- there is no global campaign list: list by table, or use `origami_sequences(workspace_id=…)` which follows `nextCursor` (pages of 50, `max_pages=10` by default) and returns `campaign_ids`, the DISTINCT campaigns seen — a single page makes you think there is one where there are four; `truncated: true` = more remain, pass `cursor` again
+- `origami_upload_csv` returns `table_id` / `table_slug` at the top level (the id of the created table conditions the upsert and the campaign that follow) and `error` if Origami rejected the file

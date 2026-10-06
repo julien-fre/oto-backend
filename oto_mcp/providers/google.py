@@ -1,46 +1,46 @@
-"""Déclaration de registre du connecteur `google` — le COMPTE Google, porteur du
-credential des six connecteurs de service (split du 2026-09-26).
+"""Registry declaration of the `google` connector — the Google ACCOUNT, carrier of the
+credential for the six service connectors (split of 2026-09-26).
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 
-Jusqu'au split, `google` portait six namespaces (gmail, tasks, calendar, sheets,
-drive, chat) : UNE carte, UNE activation, UN consentement qui demandait les six
-scopes d'un coup — dont trois RESTRICTED chez Google (Gmail, Drive, Chat). Un tenant
-qui n'offre que Gmail et Drive devait pourtant faire vérifier Chat et Tasks, et un
-utilisateur qui ne voulait que son agenda livrait sa boîte mail. Même mouvement que
-le split unipile du 2026-08-28 : chaque service est désormais un connecteur à part
-entière — sa carte, son activation, sa sélection, sa visibilité, SON consentement
-(ses scopes seulement, en autorisation incrémentale sur le même compte) — et
-emprunte le compte d'ici (`credential_of="google"`, cf. `service` en bas).
+Until the split, `google` carried six namespaces (gmail, tasks, calendar, sheets,
+drive, chat): ONE card, ONE activation, ONE consent that requested all six
+scopes at once — three of them RESTRICTED at Google (Gmail, Drive, Chat). A tenant
+offering only Gmail and Drive still had to get Chat and Tasks verified, and a
+user who only wanted their calendar handed over their mailbox. Same move as
+the unipile split of 2026-08-28: each service is now a connector in its own
+right — its card, its activation, its selection, its visibility, ITS consent
+(its scopes only, as incremental authorisation on the same account) — and
+borrows the account from here (`credential_of="google"`, see `service` below).
 
-Ce que le compte garde en propre : le coffre (une ligne par adresse, le refresh
-token, le client OAuth qui l'a émis), le rappel `/api/google/oauth/callback`, la
-liste des comptes et le compte par défaut. Son propre consentement demande les six
-scopes sous NOTRE app (l'état d'avant, pour un tableau de bord à carte unique) et
-seulement l'identité sous l'app d'un tenant — un partenaire ne demande jamais un
-scope que son projet Google ne déclare pas ; ses services les ajoutent un à un
+What the account keeps for itself: the vault (one row per address, the refresh
+token, the OAuth client that issued it), the `/api/google/oauth/callback` callback, the
+list of accounts and the default account. Its own consent requests all six
+scopes under OUR app (the prior state, for a single-card dashboard) and
+only the identity under a tenant's app — a partner never requests a
+scope its Google project does not declare; its services add them one by one
 (`auth/google.scopes_for`).
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# Un seul namespace depuis le split : `google_*` (le compte). Les six autres sont
-# devenus des connecteurs — un namespace n'appartient qu'à UN connecteur.
+# A single namespace since the split: `google_*` (the account). The other six became
+# connectors — a namespace belongs to only ONE connector.
 CONNECTOR = _c(
     "google", ["google"],
-    # `byo_org` (2026-09-27) : un admin d'org ou un chef d'équipe peut confier UN compte
-    # à tous (boîte partagée, agenda d'équipe) — rangé sous l'org ou l'équipe, résolu
-    # après le compte du membre (`auth/google._resolve_row`).
+    # `byo_org` (2026-09-27): an org admin or team lead can entrust ONE account
+    # to everyone (shared mailbox, team calendar) — filed under the org or team, resolved
+    # after the member's own account (`auth/google._resolve_row`).
     auth_modes={"byo_user", "byo_org"},
     personal_session=True, secret_kind="oauth",
-    # OAuth ⟹ la dérivation dirait mono ; or N consentements = N comptes, et le
-    # coffre porte une ligne par adresse. Déclaré ici, pas dans une liste transverse.
+    # OAuth ⟹ the derivation would say mono; yet N consents = N accounts, and the
+    # vault holds one row per address. Declared here, not in a cross-cutting list.
     cardinality="multi", account_axis_static=True,
-    label="Compte Google",
-    help="le compte Google que Gmail, Drive, Sheets, Calendar, Tasks, Chat et BigQuery "
-         "empruntent — chaque service se connecte depuis sa propre carte",
+    label="Google account",
+    help="the Google account that Gmail, Drive, Sheets, Calendar, Tasks, Chat and BigQuery "
+         "borrow — each service connects from its own card",
     modules=("google",),
 )
 
@@ -49,30 +49,30 @@ PUBLISHER = "Google"
 LOGO_DOMAIN = "google.com"
 
 DESCRIPTION = (
-    "Ton compte Google, par OAuth : le porteur que les services Google empruntent. "
-    "Chaque adresse Google connectée devient un compte distinct dans le coffre — "
-    "plusieurs consentements, plusieurs comptes — et chaque service (Gmail, Drive, "
-    "Sheets, Calendar, Tasks, Chat, BigQuery) s'autorise depuis sa carte, avec ses seuls scopes."
+    "Your Google account, via OAuth: the carrier that the Google services borrow. "
+    "Each connected Google address becomes a distinct account in the vault — "
+    "several consents, several accounts — and each service (Gmail, Drive, "
+    "Sheets, Calendar, Tasks, Chat, BigQuery) is authorised from its own card, with only its scopes."
 )
 
 
 def service(name: str, *, label: str, help: str, href: str,
             modules: tuple[str, ...] | None = None):
-    """Un connecteur de SERVICE Google — une carte par service, sur le compte partagé.
+    """A Google SERVICE connector — one card per service, on the shared account.
 
-    Ce qu'il partage avec les cinq autres — le mode d'auth, la délégation de credential,
-    la cardinalité multi-compte, l'éditeur — est décrit ICI, chez le porteur du compte,
-    parce que c'est une propriété du COMPTE et pas du service. Le recopier six fois,
-    c'est se donner cinq occasions de le faire diverger (même raison que
+    What it shares with the other five — the auth mode, the credential delegation,
+    the multi-account cardinality, the publisher — is described HERE, at the account
+    carrier, because it is a property of the ACCOUNT and not of the service. Copying
+    it six times gives five chances for it to diverge (same reason as
     `unipile.channel`).
 
-    Le service ne DÉTIENT rien : `credential_of="google"` renvoie coffre et comptes sur
-    le porteur (`providers.credential_provider`). Ce qu'il possède en propre, c'est ce
-    qui se gouverne par service — activation, sélection, visibilité de ses tools — et
-    SON consentement : `auth/google.SERVICE_SCOPES[name]`, et rien d'autre.
+    The service OWNS nothing: `credential_of="google"` points vault and accounts at
+    the carrier (`providers.credential_provider`). What it owns for itself is
+    what is governed per service — activation, selection, visibility of its tools — and
+    ITS consent: `auth/google.SERVICE_SCOPES[name]`, and nothing else.
 
-    `href` est celui du SERVICE : ce que la personne autorise, c'est son Gmail ou son
-    Drive. `publisher` reste Google — l'éditeur nomme qui reçoit l'appel."""
+    `href` is the SERVICE's: what the person authorises is their Gmail or their
+    Drive. `publisher` stays Google — the publisher names who receives the call."""
     return _c(
         name, [name],
         auth_modes={"byo_user", "byo_org"},

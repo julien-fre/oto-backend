@@ -109,7 +109,7 @@ def test_genre(brut, attendu):
 
 
 def test_un_genre_inattendu_leve_au_lieu_d_etre_devine():
-    with pytest.raises(ValueError, match="genre"):
+    with pytest.raises(ValueError, match="gender"):
         analyse._genre({"gender": "F"})
 
 
@@ -122,7 +122,7 @@ def test_une_date_de_naissance_illisible_leve_sans_etre_citee():
 def test_le_plafond_de_pages_leve_au_lieu_de_rendre_un_partiel(monkeypatch):
     monkeypatch.setattr(analyse, "MAX_PAGES_PATIENTS", 2)
     lignes = [_patient(i, zip_code="75008") for i in range(5)]
-    with pytest.raises(ValueError, match="plafond"):
+    with pytest.raises(ValueError, match="cap"):
         analyse.patientele(_pages(lignes, taille=2), ["zip_code"], AUJOURD_HUI)
 
 
@@ -179,7 +179,7 @@ def test_duree_deduite_des_bornes_sinon_leve():
     rdv = _rdv(LASER, None, start_time="2026-10-01T10:00:00+02:00",
                end_time="2026-10-01T10:40:00+02:00")
     assert analyse._minutes(rdv) == 40
-    with pytest.raises(ValueError, match="durée"):
+    with pytest.raises(ValueError, match="duration"):
         analyse._minutes(_rdv(LASER, None))
 
 

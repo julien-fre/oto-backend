@@ -329,7 +329,7 @@ def test_step_delete_targets_the_step_route_only(fetch):
 def test_unknown_op_is_refused_with_the_allowed_list(fetch, tool, kwargs):
     """Une op inconnue doit lever en NOMMANT les ops valides — jamais retomber
     silencieusement sur un défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _call(tool, op="nope", **kwargs)
 
 
@@ -350,7 +350,7 @@ def test_refusal_message_lists_every_valid_op(fetch):
 def test_unknown_op_reaches_neither_brevo_nor_the_vault(fetch, tool, kwargs):
     """La garde est AVANT `_api` : une op inconnue ne résout même pas le credential
     (donc ne déchiffre pas la session de l'utilisateur), et rien ne part vers Brevo."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _call(tool, **kwargs)
     fetch.assert_not_called()
     fetch.credential.assert_not_called()

@@ -329,7 +329,7 @@ async def test_oto_call_reconnait_un_spine_sous_son_nom_de_produit(compte_acme):
     part se faire dispatcher."""
     with pytest.raises(McpError) as ei:
         await _appelle("oto_call", {"name": "acme_doc", "arguments": {}})
-    assert "méta/spine" in str(ei.value) and "acme_doc" in str(ei.value)
+    assert "meta/spine" in str(ei.value) and "acme_doc" in str(ei.value)
 
 
 @pytest.mark.asyncio

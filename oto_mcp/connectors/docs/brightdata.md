@@ -1,3 +1,3 @@
-## note — connecteur bientôt disponible
+## note — connector coming soon
 
-le connecteur **Bright Data** est en cours d'implémentation (coquille vide pour l'instant). reviens bientôt — voir [brightdata.com](https://brightdata.com).
+the **Bright Data** connector is being implemented (empty shell for now). check back soon — see [brightdata.com](https://brightdata.com).

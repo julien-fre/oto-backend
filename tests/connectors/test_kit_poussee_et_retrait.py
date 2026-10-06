@@ -172,7 +172,7 @@ def test_la_poussee_ne_defait_pas_un_retrait_et_dit_la_date(live, monkeypatch):
                          (m, org)).fetchone()["removed_at"]
     code, corps = _pousse(monkeypatch, admin, org, "folk", m)
     assert code == 409 and corps["error"] == "removed_by_member"
-    assert f"le {date} (UTC)" in corps["detail"] and "rien n'a été écrit" in corps["detail"]
+    assert f"on {date} (UTC)" in corps["detail"] and "nothing was written" in corps["detail"]
     assert corps["details"] == {"removed_at": date}
     assert _ligne(m, org, "folk") is None and _surcharges(m, org) == 0
 

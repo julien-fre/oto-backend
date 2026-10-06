@@ -91,7 +91,7 @@ def test_each_engine_routes_to_monitor_with_its_provider_slug(client, engine):
 def test_ask_refuses_an_unknown_engine_and_names_the_valid_ones(client):
     """Jamais de repli sur un moteur par défaut : une veille attribuée au mauvais
     moteur est un faux résultat, pas une erreur visible."""
-    with pytest.raises(McpError, match="engine doit être"):
+    with pytest.raises(McpError, match="engine must be one of"):
         _tool("cloro_ask").fn(engine="mistral", prompt="x")
     client.monitor.assert_not_called()
 
@@ -155,7 +155,7 @@ def test_google_news_routes_to_google_news_without_include(client):
 
 
 def test_google_refuses_an_unknown_op_and_names_the_valid_ones(client):
-    with pytest.raises(McpError, match="op doit être 'serp' ou 'news'"):
+    with pytest.raises(McpError, match="op must be 'serp' or 'news'"):
         _tool("cloro_google").fn(query="q", op="nope")
     client.google.assert_not_called()
     client.google_news.assert_not_called()

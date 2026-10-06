@@ -1,22 +1,22 @@
-"""Firecrawl — lire une page web comme un humain la voit (firecrawl.dev).
+"""Firecrawl — read a web page the way a human sees it (firecrawl.dev).
 
-Wrappe `oto.tools.firecrawl.client.FirecrawlClient` (API v2). keyed `api_key`
-(Bearer), byo-only (pas de clé plateforme) : chaque user/org connecte SON compte —
-Firecrawl se facture au crédit.
+Wraps `oto.tools.firecrawl.client.FirecrawlClient` (API v2). keyed `api_key`
+(Bearer), byo-only (no platform key): each user/org connects THEIR account —
+Firecrawl bills per credit.
 
-Cinq gestes, du moins cher au plus cher :
-- `firecrawl_map` : les URLs d'un site, sans le contenu (repérage).
-- `firecrawl_scrape` : UNE page en markdown propre (JS exécuté, nav retirée).
-- `firecrawl_search` : recherche web + contenu des résultats en un appel.
-- `firecrawl_crawl` : un domaine entier — **asynchrone** (`firecrawl_crawl_status`).
-- `firecrawl_extract` : données structurées sur N URLs — **asynchrone**.
+Five gestures, from cheapest to most expensive:
+- `firecrawl_map`: a site's URLs, without the content (scouting).
+- `firecrawl_scrape`: ONE page as clean markdown (JS executed, nav stripped).
+- `firecrawl_search`: web search + content of the results in one call.
+- `firecrawl_crawl`: a whole domain — **asynchronous** (`firecrawl_crawl_status`).
+- `firecrawl_extract`: structured data over N URLs — **asynchronous**.
 
-Face aux voisins : `serper_scrape` rend le HTML brut d'une URL (moins cher, pas de
-rendu JS), le connecteur `browser` lit des pages derrière un login. Firecrawl est
-le chemin quand il faut du markdown propre à l'échelle d'un site.
+Compared to its neighbors: `serper_scrape` returns a URL's raw HTML (cheaper, no
+JS rendering), the `browser` connector reads pages behind a login. Firecrawl is
+the path when you need clean markdown at the scale of a site.
 
-Les appels au client sont écrits en clair (`_client().scrape(…)`) et non dispatchés
-par nom : c'est ce qui les rend vérifiables par la sonde version-skew.
+Client calls are written out in plain form (`_client().scrape(…)`) and not dispatched
+by name: that is what makes them verifiable by the version-skew probe.
 """
 from __future__ import annotations
 
@@ -38,23 +38,23 @@ def _bad(msg: str) -> McpError:
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"Firecrawl a rejeté la clé API (HTTP {status}) — vérifie la clé "
-                "configurée sur ce connecteur (Firecrawl : Dashboard → API Keys).")
+        return (f"Firecrawl rejected the API key (HTTP {status}) — check the key "
+                "configured on this connector (Firecrawl: Dashboard → API Keys).")
     if status == 402:
-        return ("Firecrawl : crédits épuisés ou plan insuffisant (402) — recharge "
-                "le compte, ou réduis la portée (limit, formats).")
+        return ("Firecrawl: credits exhausted or plan insufficient (402) — top up "
+                "the account, or reduce the scope (limit, formats).")
     if status == 404:
-        return f"Firecrawl : ressource introuvable (404) — vérifie l'id du job. {e.body}"
+        return f"Firecrawl: resource not found (404) — check the job id. {e.body}"
     if status == 429:
-        return "Firecrawl : trop de requêtes (429) — réessaie dans un instant."
+        return "Firecrawl: too many requests (429) — retry in a moment."
     if status in (500, 502, 503, 504):
-        return f"Firecrawl est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Firecrawl a refusé la requête (HTTP {status}): {e.body}"
+        return f"Firecrawl is temporarily unavailable (HTTP {status}) — retry later."
+    return f"Firecrawl refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : un `map` d'example.com, l'appel authentifié
-    le moins coûteux (pas de rendu de page)."""
+    """"Test the connection" probe: a `map` of example.com, the cheapest
+    authenticated call (no page rendering)."""
     from oto.tools.firecrawl.client import FirecrawlClient
     FirecrawlClient(api_key=fields["key"]).map_site("https://example.com", limit=1)
 
@@ -71,7 +71,7 @@ def register(mcp: FastMCP) -> None:
 
     @contextmanager
     def _upstream():
-        """Traduit un refus de Firecrawl en erreur d'outil actionnable."""
+        """Translate a Firecrawl refusal into an actionable tool error."""
         try:
             yield
         except ValueError as e:
@@ -79,7 +79,7 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
 
-    # --- repérage -----------------------------------------------------------
+    # --- scouting -----------------------------------------------------------
 
     @mcp.tool()
     def firecrawl_map(
@@ -112,7 +112,7 @@ def register(mcp: FastMCP) -> None:
                                         sitemap=sitemap)
         return url_perimeter.filter_results(result, per)
 
-    # --- une page -----------------------------------------------------------
+    # --- one page -----------------------------------------------------------
 
     @mcp.tool()
     def firecrawl_scrape(
@@ -158,7 +158,7 @@ def register(mcp: FastMCP) -> None:
                 wait_for=wait_for, actions=actions, max_age=max_age,
                 mobile=mobile, proxy=proxy)
 
-    # --- recherche ----------------------------------------------------------
+    # --- search ----------------------------------------------------------
 
     @mcp.tool()
     def firecrawl_search(
@@ -199,7 +199,7 @@ def register(mcp: FastMCP) -> None:
                 scrape_options=scrape_options)
         return url_perimeter.filter_results(result, url_perimeter.perimeter_of_call())
 
-    # --- crawl (asynchrone) -------------------------------------------------
+    # --- crawl (asynchronous) -------------------------------------------------
 
     @mcp.tool()
     def firecrawl_crawl(
@@ -271,7 +271,7 @@ def register(mcp: FastMCP) -> None:
         with _upstream():
             return _client().cancel_crawl(job_id)
 
-    # --- extraction structurée (asynchrone) ---------------------------------
+    # --- structured extraction (asynchronous) ---------------------------------
 
     @mcp.tool()
     def firecrawl_extract(

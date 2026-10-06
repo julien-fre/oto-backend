@@ -40,8 +40,8 @@ def test_un_domaine_jamais_scrapable_rend_un_refus_ACTIONNABLE(monkeypatch):
     with pytest.raises(McpError) as exc:
         _scrape("https://www.facebook.com/exemple", monkeypatch)
     message = exc.value.error.message
-    assert "exige une session" in message, "la raison doit survivre jusqu'au modèle"
-    assert "autre source" in message, "et elle doit dire quoi FAIRE"
+    assert "requires a session" in message, "la raison doit survivre jusqu'au modèle"
+    assert "another source" in message, "et elle doit dire quoi FAIRE"
 
 
 def test_le_refus_dit_de_NE_PAS_reessayer(monkeypatch):
@@ -49,7 +49,7 @@ def test_le_refus_dit_de_NE_PAS_reessayer(monkeypatch):
     URL — c'est ce que faisaient les runs mesurés."""
     with pytest.raises(McpError) as exc:
         _scrape("https://twitter.com/quelquun", monkeypatch)
-    assert "ne réessaie pas" in exc.value.error.message.lower()
+    assert "do not retry" in exc.value.error.message.lower()
 
 
 def test_le_message_SURVIT_a_la_taxonomie(monkeypatch):
@@ -68,7 +68,7 @@ def test_le_defaut_d_origine_est_bien_celui_qu_on_croit():
     nu portant le même texte, est toujours classée « Erreur interne du serveur. ».
     Si ce banc devenait faux, le correctif serait ailleurs et celui-ci inutile."""
     nu = RuntimeError("Serper scrape refusé pour https://x : Facebook exige une session.")
-    assert error_taxonomy.classify(nu).message == "Erreur interne du serveur."
+    assert error_taxonomy.classify(nu).message == "Internal server error."
 
 
 def test_une_url_ordinaire_n_est_PAS_refusee(monkeypatch):
@@ -88,7 +88,7 @@ def test_une_url_ordinaire_n_est_PAS_refusee(monkeypatch):
     try:
         _scrape("https://exemple.invalid/page", monkeypatch)
     except McpError as e:
-        assert "exige une session" not in e.error.message
+        assert "requires a session" not in e.error.message
     except Exception:
         pass  # tout autre échec (réseau, client stubé) n'est pas le sujet de ce banc
 

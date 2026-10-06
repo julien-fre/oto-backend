@@ -1,13 +1,13 @@
-## prerequisite — ta clé api phantombuster
+## prerequisite — your phantombuster api key
 
-- depuis [phantombuster.com](https://phantombuster.com), ouvre les paramètres de ton organisation puis la section api key
-- copie ta clé api
-- colle-la dans tes clés de connecteur oto sous `phantombuster`
+- from [phantombuster.com](https://phantombuster.com), open your organization settings then the api key section
+- copy your api key
+- paste it into your oto connector keys under `phantombuster`
 
-## usage — lancer des agents et récupérer leurs résultats
+## usage — launch agents and fetch their results
 
-déclenche un agent (phantom) puis suis son run et récupère ses résultats.
-- `phantombuster_get_agent` la configuration et le statut d'un agent
-- `phantombuster_launch_agent` démarre un run (⚠️ consomme des crédits et agit sur des comptes tiers), renvoie le `containerId`
-- `phantombuster_list_containers` / `phantombuster_get_container` listent et suivent les runs
-- `phantombuster_container_results` récupère les résultats json d'un run terminé, `phantombuster_container_output` ses logs
+trigger an agent (phantom), then follow its run and fetch its results.
+- `phantombuster_get_agent` an agent's configuration and status
+- `phantombuster_launch_agent` starts a run (⚠️ consumes credits and acts on third-party accounts), returns the `containerId`
+- `phantombuster_list_containers` / `phantombuster_get_container` list and follow runs
+- `phantombuster_container_results` fetches the json results of a finished run, `phantombuster_container_output` its logs

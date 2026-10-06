@@ -72,5 +72,5 @@ def test_une_date_mal_formee_est_un_refus_d_entree(outil):
 def test_zero_sur_un_jour_dit_comment_trancher(outil):
     r, _ = outil([], query="", edited_on="2026-09-04")
     w = r.get("warning")
-    assert w and "2026-09-04" in w and "partag" in w and 'query=""' in w
+    assert w and "2026-09-04" in w and "shared" in w and 'query=""' in w
     assert "edited_on" in w, "le geste discriminant doit dire de retirer edited_on"

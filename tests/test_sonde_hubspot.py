@@ -55,7 +55,7 @@ def test_une_cle_refusee_leve(monkeypatch):
 
 def test_une_reponse_200_SANS_identite_est_un_echec(monkeypatch):
     _brancher(monkeypatch, _FauxClient({}))
-    with pytest.raises(RuntimeError, match="sans identifier"):
+    with pytest.raises(RuntimeError, match="without identifying"):
         H._verify(_fields("k"))
 
 

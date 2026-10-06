@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `hithorizons`.
+"""Registry declaration for the `hithorizons` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from ._model import _c
 
 CONNECTOR = _c(
     "hithorizons", ["hithorizons"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
-    default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
+    default_quota=0, platform_key_open=False,  # platform key on explicit grant (data bought per credit)
     secret_kind="api_key", label="HitHorizons",
-    help="données entreprise européennes (recherche + détails)",
+    help="European company data (search + details)",
     href="https://www.hithorizons.com",
 )
 
@@ -20,6 +20,6 @@ PUBLISHER = "HitHorizons"
 LOGO_DOMAIN = "hithorizons.com"
 
 DESCRIPTION = (
-    "Données d'entreprise européennes chez HitHorizons : recherche et fiche "
-    "détaillée."
+    "European company data from HitHorizons: search and detailed "
+    "profile."
 )

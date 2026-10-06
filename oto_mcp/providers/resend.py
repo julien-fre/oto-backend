@@ -1,33 +1,33 @@
-"""Déclaration de registre du connecteur `resend`.
+"""Registry declaration of the `resend` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# resend : credential-only (PAS de tools propres). La clé Resend de l'org est
-# consommée par `email_send` (transport=resend) via resolve_api_key, cascade
-# user > org. Domaine d'envoi vérifié côté Resend par l'org ; l'adresse `from`
-# vit dans orgs.email_settings, pas dans le credential. Hors socle (pas un
-# tool à exposer). tools/resend.py = register() no-op pour
-# satisfaire l'invariant « un fichier tools/ par provider kind=tools ».
-# resend : email transactionnel BYOK (clé Resend de l'ORG). byo_org uniquement
-# (l'email est org-level) ; self_serve = dispo à la demande pour toute org. La
-# propriété du domaine est garantie par Resend (la clé ne peut envoyer que depuis
-# les domaines vérifiés dans le compte Resend de l'org) → zéro logique domaine côté oto.
+# resend: credential-only (NO tools of its own). The org's Resend key is
+# consumed by `email_send` (transport=resend) via resolve_api_key, user >
+# org cascade. Sending domain verified on the Resend side by the org; the `from` address
+# lives in orgs.email_settings, not in the credential. Outside the base (not a
+# tool to expose). tools/resend.py = no-op register() to
+# satisfy the invariant "one tools/ file per provider kind=tools".
+# resend: BYOK transactional email (the ORG's Resend key). byo_org only
+# (email is org-level); self_serve = available on request to any org. Domain
+# ownership is guaranteed by Resend (the key can only send from the
+# domains verified in the org's Resend account) → zero domain logic on the oto side.
 CONNECTOR = _c(
     "resend", ["resend"], auth_modes={"byo_org"}, keyed=True,
     secret_kind="api_key",
-    label="Resend", help="envoi d'email transactionnel (clé de l'org)",
+    label="Resend", help="transactional email sending (the org's key)",
     publisher="Resend", href="https://resend.com",
 )
 
 LOGO_DOMAIN = "resend.com"
 
 DESCRIPTION = (
-    "L'envoi d'email transactionnel via la clé Resend de ton organisation — pas "
-    "de tools propres : la clé est consommée par l'envoi d'email de la "
-    "plateforme, depuis un domaine que tu as vérifié chez Resend."
+    "Transactional email sending through your organization's Resend key — no "
+    "tools of its own: the key is consumed by the platform's email "
+    "sending, from a domain you have verified at Resend."
 )

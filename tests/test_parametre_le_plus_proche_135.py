@@ -38,20 +38,20 @@ def _refus(**arguments) -> Exception:
 def test_le_parametre_le_plus_proche_est_rendu_avec_le_geste():
     msg = T._arg_error_message(_refus(datastore="v", rows_data=[{}]),
                                ["datastore", "row", "rows"])
-    assert "champ(s) non reconnu(s) : rows_data" in msg, msg
-    assert "Rejoue `data_write(…)` avec `rows=` à la place de `rows_data`" in msg, msg
+    assert "unrecognized field(s): rows_data" in msg, msg
+    assert "Replay `data_write(…)` with `rows=` instead of `rows_data`" in msg, msg
 
 
 def test_un_parametre_requis_MAL_ECRIT_n_est_plus_dit_absent():
     msg = T._arg_error_message(_refus(datastor="v"), ["datastore", "row", "rows"])
-    assert "`datastore=` à la place de `datastor`" in msg, msg
-    assert "requis absent" not in msg, msg
+    assert "`datastore=` instead of `datastor`" in msg, msg
+    assert "missing" not in msg, msg
 
 
 def test_sans_parent_plausible_rien_n_est_invente():
     msg = T._arg_error_message(_refus(datastore="v", op="list"),
                                ["datastore", "row", "rows"])
-    assert "Rejoue" not in msg and "non reconnu(s) : op" in msg, msg
+    assert "Replay" not in msg and "unrecognized field(s): op" in msg, msg
 
 
 def test_le_middleware_lit_les_parametres_de_l_outil():
@@ -66,4 +66,4 @@ def test_le_middleware_lit_les_parametres_de_l_outil():
 
     with pytest.raises(Exception) as e:
         asyncio.run(m.call_tool("data_write", {"datastore": "v", "rows_data": []}))
-    assert "Rejoue `data_write(…)` avec `rows=` à la place de `rows_data`" in str(e.value)
+    assert "Replay `data_write(…)` with `rows=` instead of `rows_data`" in str(e.value)

@@ -113,7 +113,7 @@ def _page_sans_contact(md: str = "# Association\n\nNous lisons pour les autres."
 # ── ① le décodage des trois motifs ───────────────────────────────────────────
 @pytest.mark.parametrize("html, attendue, motif", [
     (HTML_JOOMLA, "presidente@lavoixdeslivres.fr", "joomla-hidden-mail"),
-    (HTML_ENTITES, "stranumundueditions@gmail.com", "mailto en entités HTML"),
+    (HTML_ENTITES, "stranumundueditions@gmail.com", "mailto in HTML entities"),
     (HTML_CLOUDFLARE, "louloisirsrugby@gmail.com", "cloudflare-email-protection"),
 ])
 def test_adresse_invisible_au_rendu_est_rendue_et_collee_dans_la_page(
@@ -166,7 +166,7 @@ def test_motif_vu_mais_non_decodable_est_annonce(monte):
 
     assert "adresses_obfusquees" not in res
     assert res["motifs_obfuscation"] == ["joomla-hidden-mail"]
-    assert "obfuscation d'adresse détectée" in res["markdown"]
+    assert "address obfuscation detected" in res["markdown"]
     assert 'format="html"' in res["markdown"]
 
 
@@ -198,7 +198,7 @@ def test_sonde_qui_echoue_le_dit_au_lieu_de_se_taire(monte):
 
     res = fn("https://acme.test/contact")
 
-    assert "non concluante" in res["sonde_obfuscation"]
+    assert "inconclusive" in res["sonde_obfuscation"]
     assert "adresses_obfusquees" not in res
 
 
@@ -241,7 +241,7 @@ def test_une_sonde_refusee_ne_fait_pas_tomber_un_scrape_reussi(monte, monkeypatc
     res = fn("https://acme.test/contact")
 
     assert res["markdown"] == _page_sans_contact()["markdown"]
-    assert "écartée" in res["sonde_obfuscation"]
+    assert "discarded" in res["sonde_obfuscation"]
     assert "ne résout pas" in res["sonde_obfuscation"]
 
 
@@ -304,7 +304,7 @@ def test_html_brut_qui_echoue_leve_une_erreur_nommee(monte):
     with pytest.raises(McpError) as ei:
         fn("https://acme.test/contact", format="html")
 
-    assert "Lecture directe impossible" in ei.value.error.message
+    assert "Direct read impossible" in ei.value.error.message
     assert "timeout" in ei.value.error.message
 
 
@@ -324,7 +324,7 @@ def test_refus_du_fournisseur_declenche_une_lecture_directe(monte):
 
     res = fn("https://acme.test/wix")
 
-    assert "scraper hébergé a refusé" in res["source"]
+    assert "hosted scraper refused" in res["source"]
     assert res["format_servi"] == "text"
     assert "Gorge bleue" in res["text"]
     assert res["adresses_obfusquees"] == ["stranumundueditions@gmail.com"]
@@ -341,8 +341,8 @@ def test_repli_qui_echoue_aussi_nomme_les_deux_echecs(monte):
         fn("https://acme.test/morte")
 
     message = ei.value.error.message
-    assert "n'existe pas" in message
-    assert "lecture directe a échoué aussi" in message
+    assert "does not exist" in message
+    assert "direct read failed too" in message
     assert "timeout" in message
 
 
@@ -356,7 +356,7 @@ def test_repli_sur_une_coquille_vide_ne_se_fait_pas_passer_pour_une_lecture(mont
     with pytest.raises(McpError) as ei:
         fn("https://acme.test/js")
 
-    assert "lue en direct mais vide" in ei.value.error.message
+    assert "read directly but empty" in ei.value.error.message
 
 
 def test_expiration_ne_declenche_aucun_repli(monte):
@@ -376,7 +376,7 @@ def test_expiration_ne_declenche_aucun_repli(monte):
 
     with pytest.raises(McpError) as refus:
         fn("https://acme.test/lente")
-    assert "n'a pas répondu" in refus.value.error.message
+    assert "did not answer" in refus.value.error.message
     assert etat["fetchs"] == []
 
 

@@ -123,7 +123,7 @@ def test_content_list_notes_refuses_get_only_params():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("granola_content")).fn
-        with pytest.raises(McpError, match="op='list_notes' n'utilise pas"):
+        with pytest.raises(McpError, match="op='list_notes' does not use"):
             fn(op="list_notes", note_id="not_abc")
         cls.return_value.list_notes.assert_not_called()
     finally:
@@ -134,9 +134,9 @@ def test_content_get_note_requires_note_id_and_refuses_list_filters():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("granola_content")).fn
-        with pytest.raises(McpError, match="requiert .note_id."):
+        with pytest.raises(McpError, match="requires .note_id."):
             fn(op="get_note")
-        with pytest.raises(McpError, match="op='get_note' n'utilise pas"):
+        with pytest.raises(McpError, match="op='get_note' does not use"):
             fn(op="get_note", note_id="not_abc", folder_id="fol_x")
         cls.return_value.get_note.assert_not_called()
 
@@ -163,9 +163,9 @@ def test_content_get_transcript_requires_note_id_and_refuses_note_only_params():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("granola_content")).fn
-        with pytest.raises(McpError, match="requiert .note_id."):
+        with pytest.raises(McpError, match="requires .note_id."):
             fn(op="get_transcript")
-        with pytest.raises(McpError, match="op='get_transcript' n'utilise pas"):
+        with pytest.raises(McpError, match="op='get_transcript' does not use"):
             fn(op="get_transcript", note_id="not_abc", include="transcript")
 
         cls.return_value.get_transcript.return_value = {}
@@ -179,7 +179,7 @@ def test_content_list_folders_refuses_note_params():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("granola_content")).fn
-        with pytest.raises(McpError, match="op='list_folders' n'utilise pas"):
+        with pytest.raises(McpError, match="op='list_folders' does not use"):
             fn(op="list_folders", note_id="not_abc")
 
         cls.return_value.list_folders.return_value = {}
@@ -193,7 +193,7 @@ def test_webhook_endpoint_create_requires_url_and_scopes():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("granola_webhook_endpoint")).fn
-        with pytest.raises(McpError, match="requiert .url. et .scopes."):
+        with pytest.raises(McpError, match="requires .url. and .scopes."):
             fn(op="create")
 
         cls.return_value.create_webhook_endpoint.return_value = {"id": "whe_x"}
@@ -208,9 +208,9 @@ def test_webhook_endpoint_update_delete_require_id():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("granola_webhook_endpoint")).fn
-        with pytest.raises(McpError, match="requiert .webhook_endpoint_id."):
+        with pytest.raises(McpError, match="requires .webhook_endpoint_id."):
             fn(op="update", enabled=False)
-        with pytest.raises(McpError, match="requiert .webhook_endpoint_id."):
+        with pytest.raises(McpError, match="requires .webhook_endpoint_id."):
             fn(op="delete")
 
         cls.return_value.delete_webhook_endpoint.return_value = {"deleted": True}
@@ -228,7 +228,7 @@ def test_webhook_endpoint_update_requires_at_least_one_field():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("granola_webhook_endpoint")).fn
-        with pytest.raises(McpError, match="au moins un champ"):
+        with pytest.raises(McpError, match="at least one field"):
             fn(op="update", webhook_endpoint_id="whe_x")
     finally:
         patcher.stop()
@@ -238,7 +238,7 @@ def test_webhook_endpoint_delete_refuses_extra_fields():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("granola_webhook_endpoint")).fn
-        with pytest.raises(McpError, match="op='delete' n'utilise pas"):
+        with pytest.raises(McpError, match="op='delete' does not use"):
             fn(op="delete", webhook_endpoint_id="whe_x", enabled=True)
         cls.return_value.delete_webhook_endpoint.assert_not_called()
     finally:

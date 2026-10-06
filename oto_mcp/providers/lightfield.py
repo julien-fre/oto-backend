@@ -1,26 +1,26 @@
-"""Déclaration de registre du connecteur `lightfield`.
+"""Registry declaration of the `lightfield` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# lightfield : CRM dont le modèle de champs est PROPRE À CHAQUE WORKSPACE (les
-# clés sont définies par le client, pas par l'éditeur) — d'où un `op="definitions"`
-# sur chaque objet, et une validation des clés AVANT écriture. keyed api_key,
-# **BYOK** (byo user/org) : ce sont les données du client, il ne peut pas y avoir
-# de clé oto partagée. 29 scopes granulaires côté éditeur, choisis à la CRÉATION
-# de la clé — la sonde de connexion les lit et refuse une clé sans lecture CRM.
-# ⚠️ Écrit ET envoie : `lightfield_emails(op="send")` part d'une boîte que le
-# propriétaire de la clé a lui-même connectée, et est en dry-run PAR DÉFAUT.
+# lightfield: CRM whose field model is SPECIFIC TO EACH WORKSPACE (the
+# keys are defined by the customer, not by the vendor) — hence an `op="definitions"`
+# on each object, and key validation BEFORE writing. keyed api_key,
+# **BYOK** (byo user/org): it is the customer's data, there cannot be
+# a shared oto key. 29 granular scopes on the vendor side, chosen at key CREATION
+# — the connection probe reads them and refuses a key without CRM read.
+# ⚠️ Writes AND sends: `lightfield_emails(op="send")` goes out from a mailbox that the
+# key owner has connected themselves, and is dry-run BY DEFAULT.
 CONNECTOR = _c(
     "lightfield", ["lightfield"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key",
     label="Lightfield",
-    help="CRM dont les champs sont propres à chaque espace de travail — comptes, "
-         "contacts, opportunités, notes et envoi d'emails",
+    help="CRM whose fields are specific to each workspace — accounts, "
+         "contacts, opportunities, notes and email sending",
     href="https://lightfield.app",
 )
 
@@ -29,9 +29,9 @@ PUBLISHER = "Lightfield"
 LOGO_DOMAIN = "lightfield.app"
 
 DESCRIPTION = (
-    "Un CRM dont les champs sont propres à chaque espace de travail — le client "
-    "définit lui-même son modèle de données. Le connecteur lit d'abord la "
-    "définition des champs avant d'écrire, pour ne jamais deviner une clé qui "
-    "n'existe pas chez ce client. Peut aussi envoyer un email depuis une boîte "
-    "connectée, en dry-run par défaut."
+    "A CRM whose fields are specific to each workspace — the customer "
+    "defines their own data model. The connector first reads the "
+    "field definitions before writing, so it never guesses a key that "
+    "does not exist for this customer. Can also send an email from a connected "
+    "mailbox, dry-run by default."
 )

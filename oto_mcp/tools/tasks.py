@@ -1,23 +1,23 @@
-"""Google Tasks — surface oto-core (TasksClient) exposée par-utilisateur, multi-compte.
+"""Google Tasks — oto-core surface (TasksClient) exposed per user, multi-account.
 
-Même substrat que Gmail : chaque user connecte un ou plusieurs comptes Google
-sur `https://app.oto.ninja/` (flow OAuth unifié, scope `tasks` inclus). Les
-tools `tasks_*` agissent sur le compte par défaut, ou sur le compte ciblé par
-`account` (l'adresse email). Pas de clé plateforme : accès strictement per-user.
+Same substrate as Gmail: each user connects one or more Google accounts
+on `https://app.oto.ninja/` (unified OAuth flow, `tasks` scope included). The
+`tasks_*` tools act on the default account, or on the account targeted by
+`account` (the email address). No platform key: strictly per-user access.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au produit tasks)** : un tool
-par OBJET métier, le verbe en paramètre `op` — 6 tools → 2.
-- `tasks_task` = **la tâche** : `list` / `get` / `upsert` (créer ou modifier) /
-  `set_status` (fait / rouvert) / `rm` (supprimer). Tous ses ops partagent le même
-  couple `(task_id, tasklist)` + `account` : recouvrement de paramètres maximal,
-  c'est le critère de fusion.
-- `tasks_lists` = **la liste de tâches**, et il reste SEUL : autre objet, et aucun
-  paramètre commun avec la tâche (ni `task_id`, ni `tasklist` — c'est lui qui
-  PRODUIT les ids de `tasklist` que l'autre consomme). Même cas que `zoho_modules`.
+**Consolidated surface (ADR 0047 §Amendment, applied to the tasks product)**: one tool
+per business OBJECT, the verb as an `op` parameter — 6 tools → 2.
+- `tasks_task` = **the task**: `list` / `get` / `upsert` (create or update) /
+  `set_status` (done / reopened) / `rm` (delete). All its ops share the same
+  `(task_id, tasklist)` pair + `account`: maximal parameter overlap,
+  which is the merge criterion.
+- `tasks_lists` = **the task list**, and it stays ALONE: a different object, and no
+  parameter in common with the task (neither `task_id` nor `tasklist` — it is what
+  PRODUCES the `tasklist` ids the other consumes). Same case as `zoho_modules`.
 
-⚠️ Ce module ÉCRIT sur les données personnelles de l'utilisateur : `op="upsert"`
-crée/modifie, `op="set_status"` modifie, **`op="rm"` supprime** (irréversible). Le
-défaut `op="list"` est une LECTURE — un appel sans `op` n'écrit ni ne supprime jamais.
+⚠️ This module WRITES to the user's personal data: `op="upsert"`
+creates/updates, `op="set_status"` updates, **`op="rm"` deletes** (irreversible). The
+default `op="list"` is a READ — a call without `op` never writes or deletes.
 """
 from __future__ import annotations
 
@@ -31,13 +31,13 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..auth import google as google_oauth
 
-# Ops de `tasks_task`, et le libellé de refus qui les NOMME (source unique : un op
-# ajouté ici doit apparaître dans le message, sinon l'agent ne peut pas se corriger).
-# Le `Literal` est cette source : il sert à la fois d'annotation (⟹ `enum` au schéma
-# JSON servi au modèle, qui contraint la génération) et de garde runtime via `get_args`.
+# Ops of `tasks_task`, and the refusal message that NAMES them (single source: an op
+# added here must appear in the message, otherwise the agent cannot correct itself).
+# The `Literal` is that source: it serves both as annotation (⟹ `enum` in the JSON
+# schema served to the model, which constrains generation) and as runtime guard via `get_args`.
 _TaskOp = Literal["list", "get", "upsert", "set_status", "rm"]
 _TASK_OPS = get_args(_TaskOp)
-_UNKNOWN_OP = "op doit être 'list', 'get', 'upsert', 'set_status' ou 'rm'"
+_UNKNOWN_OP = "op must be 'list', 'get', 'upsert', 'set_status' or 'rm'"
 
 
 def _bad(msg: str) -> McpError:
@@ -45,13 +45,13 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
+    """Required argument for THIS op — actionable error, never a fallback.
 
-    La chaîne VIDE compte comme absente : `op='rm'` avec `task_id=""` partirait
-    sinon taper l'API avec un id vide, et le refus doit venir d'ici, pas d'un 404
-    amont opaque."""
+    The EMPTY string counts as absent: `op='rm'` with `task_id=""` would otherwise
+    hit the API with an empty id, and the refusal must come from here, not from an
+    opaque upstream 404."""
     if value is None or value == "":
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
@@ -66,15 +66,15 @@ def _client_for_user(account: Optional[str] = None):
 
 
 _GOOGLE_CLIENT_TIMEOUT_S = 20
-# oto-backend#867 lot 2 — voir gmail.py::_client_for_user_async pour la
-# justification (même mécanisme de rafraîchissement de jeton, même méthode).
+# oto-backend#867 batch 2 — see gmail.py::_client_for_user_async for the
+# rationale (same token-refresh mechanism, same method).
 async def _client_for_user_async(account: Optional[str] = None):
     try:
         return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
                                       timeout=_GOOGLE_CLIENT_TIMEOUT_S)
     except asyncio.TimeoutError:
-        raise _bad(f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
-                   "(rafraîchissement de jeton) — réessaie.")
+        raise _bad(f"Google did not respond within {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                   "(token refresh) — retry.")
 
 
 def _normalize_due(due: Optional[str]) -> Optional[str]:
@@ -147,8 +147,8 @@ def register(mcp: FastMCP) -> None:
             max_results: op="list" — max tasks to return (default 100).
             account: email of the Google account to use (default if omitted).
         """
-        # Refus AVANT toute résolution de credential : un op inconnu doit s'entendre
-        # dire lesquels sont valides, pas « aucun compte Google connecté ».
+        # Refuse BEFORE any credential resolution: an unknown op must be told
+        # which ones are valid, not "no Google account connected".
         if op not in _TASK_OPS:
             raise _bad(_UNKNOWN_OP)
 
@@ -164,12 +164,12 @@ def register(mcp: FastMCP) -> None:
         if op == "upsert":
             if task_id:
                 if title is None and notes is None and due is None:
-                    raise _bad("Pour une mise à jour, fournis title, notes ou due.")
+                    raise _bad("To update, provide title, notes or due.")
                 return await asyncio.to_thread(
                     client.update_task, task_id, tasklist, title, notes, _normalize_due(due)
                 )
             if not title:
-                raise _bad("`title` requis pour créer une tâche (ou fournis `task_id` pour modifier).")
+                raise _bad("`title` is required to create a task (or provide `task_id` to update).")
             return await asyncio.to_thread(
                 client.create_task, title, notes, _normalize_due(due), tasklist, parent
             )
@@ -181,4 +181,4 @@ def register(mcp: FastMCP) -> None:
             return await asyncio.to_thread(
                 client.delete_task, _need(task_id, "task_id", op), tasklist
             )
-        raise _bad(_UNKNOWN_OP)   # inatteignable (garde en tête) — filet si `_TASK_OPS` grandit
+        raise _bad(_UNKNOWN_OP)   # unreachable (guard at the top) — safety net if `_TASK_OPS` grows

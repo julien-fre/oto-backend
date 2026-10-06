@@ -1,21 +1,21 @@
-"""BLS — salaires et emploi par métier aux États-Unis (enquête OEWS, open data).
+"""BLS — wages and employment by occupation in the United States (OEWS survey, open data).
 
-Wrappe `oto.tools.bls.client.BLSClient` (API publique BLS v2). Connecteur open-data :
-pas de credential, pas de cascade. Exposé seulement si activé en DB (cran
-d'activation, ADR 0010).
+Wraps `oto.tools.bls.client.BLSClient` (BLS public API v2). Open-data connector:
+no credential, no cascade. Exposed only if activated in DB (activation
+notch, ADR 0010).
 
-Un seul outil, `bls_oews_wages` : la distribution annuelle des salaires d'un métier
-(SOC à 6 chiffres) pour une ou plusieurs zones, en une requête tant que possible.
+A single tool, `bls_oews_wages`: the annual wage distribution of an occupation
+(6-digit SOC) for one or more areas, in one request whenever possible.
 
-⚠️ **Le quota est celui de la PLATEFORME, pas de l'appelant** : sans clé
-d'enregistrement, l'API sert 25 requêtes par jour à l'adresse qui appelle — donc à
-toutes les orgs réunies. L'exploitant lève ce plafond (500/jour, 50 séries par
-requête) en posant `BLS_API_KEY` dans l'environnement du serveur : `_client()` la
-lit et la passe au client (la lib ne lit aucun secret). C'est aussi pourquoi `bls` n'est PAS dans
-`TESTABLE_NAMESPACES` : un bouton « tester » dépenserait le quota de tout le monde.
+⚠️ **The quota is the PLATFORM's, not the caller's**: without a registration
+key, the API serves 25 requests per day to the calling address — so to
+all orgs together. The operator lifts this cap (500/day, 50 series per
+request) by setting `BLS_API_KEY` in the server environment: `_client()` reads it
+and passes it to the client (the lib reads no secret). That is also why `bls` is NOT in
+`TESTABLE_NAMESPACES`: a « test » button would spend everyone's quota.
 
-L'appel au client est écrit en clair (`_client().oews_wages(…)`) : c'est ce qui le
-rend vérifiable par la sonde version-skew.
+The client call is written out in plain form (`_client().oews_wages(…)`): that is what makes it
+verifiable by the version-skew probe.
 """
 from __future__ import annotations
 
@@ -27,9 +27,9 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from ..mcp_errors import McpError
 
-# 7 séries par zone, 25 par requête sans clé : 3 zones par requête. 12 zones = 4
-# requêtes au pire, soit un sixième du quota journalier partagé — au-delà, l'appelant
-# découpe et le voit.
+# 7 series per area, 25 per request without a key: 3 areas per request. 12 areas = 4
+# requests at worst, i.e. a sixth of the shared daily quota — beyond that, the caller
+# splits and sees it.
 _MAX_AREAS = 12
 
 _SOURCE = "U.S. Bureau of Labor Statistics — Occupational Employment and Wage Statistics (OEWS)"
@@ -42,19 +42,19 @@ def _bad(msg: str) -> McpError:
 def _upstream_message(e) -> str:
     status = e.status_code
     if status == 429:
-        return "BLS : trop de requêtes (429) — réessaie dans un instant."
+        return "BLS: too many requests (429) — retry in a moment."
     if status in (500, 502, 503, 504):
-        return f"BLS est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"BLS a refusé la requête (HTTP {status}) : {e.body}"
+        return f"BLS is temporarily unavailable (HTTP {status}) — retry later."
+    return f"BLS refused the request (HTTP {status}): {e.body}"
 
 
 def _refusal_message(e) -> str:
     detail = " ; ".join(e.messages) or e.status
     if "threshold" in detail.lower():
-        return ("BLS : le quota journalier de l'API publique est épuisé (25 requêtes "
-                "par jour sans clé d'enregistrement, partagées par toute la plateforme) "
-                f"— réessaie demain. Détail : {detail}")
-    return f"BLS a refusé la requête ({e.status}) : {detail}"
+        return ("BLS: the public API's daily quota is exhausted (25 requests "
+                "per day without a registration key, shared by the whole platform) "
+                f"— retry tomorrow. Detail: {detail}")
+    return f"BLS refused the request ({e.status}): {detail}"
 
 
 def register(mcp: FastMCP) -> None:
@@ -62,10 +62,10 @@ def register(mcp: FastMCP) -> None:
     from oto.tools.common.errors import UpstreamHTTPError
 
     def _client() -> BLSClient:
-        # Clé d'enregistrement FACULTATIVE, posée par l'exploitant : elle lève le quota
-        # (500 requêtes/jour, 50 séries par requête). Absente, l'API sert le régime sans
-        # clé — le mode nominal d'un connecteur open data, pas un repli. C'est le
-        # serveur qui la lit : la lib ne lit plus aucun secret (oto-core v1.148.0).
+        # OPTIONAL registration key, set by the operator: it lifts the quota
+        # (500 requests/day, 50 series per request). Absent, the API serves the keyless
+        # regime — the nominal mode of an open data connector, not a fallback. The
+        # server is what reads it: the lib no longer reads any secret (oto-core v1.148.0).
         return BLSClient(registration_key=os.environ.get("BLS_API_KEY") or None)
 
     @mcp.tool()
@@ -98,11 +98,11 @@ def register(mcp: FastMCP) -> None:
         if areas is None:
             areas = ["US"]
         if not areas:
-            raise _bad("`areas` est vide — passe au moins une zone ('US', un État, "
-                       "un code CBSA à 5 chiffres).")
+            raise _bad("`areas` is empty — pass at least one area ('US', a State, "
+                       "a 5-digit CBSA code).")
         if len(areas) > _MAX_AREAS:
-            raise _bad(f"{len(areas)} zones demandées — {_MAX_AREAS} au plus par appel "
-                       "(quota journalier BLS partagé) : découpe la liste.")
+            raise _bad(f"{len(areas)} areas requested — at most {_MAX_AREAS} per call "
+                       "(shared BLS daily quota): split the list.")
         try:
             out = _client().oews_wages(soc, list(areas))
         except ValueError as e:

@@ -58,7 +58,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def culture_spectacle_get(siren: str) -> dict:
-        """Fetch all récépissés (L1/L2/L3 categories) for a given SIREN/SIRET.
+        """Fetch all receipts (récépissés, L1/L2/L3 categories) for a given SIREN/SIRET.
 
         A single structure often holds multiple licences across categories;
         use this to pivot from a SIREN to its full LES footprint.
@@ -80,8 +80,8 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Group-by aggregation on LES — fills the gap of the official datagouv MCP.
 
-        Use cases: distribution NAF among L2/L3 producers, top régions for
-        active spectacle entities, count per départment for territorial
+        Use cases: distribution NAF among L2/L3 producers, top regions for
+        active spectacle entities, count per department for territorial
         targeting.
 
         Args:

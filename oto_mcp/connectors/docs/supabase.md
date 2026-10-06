@@ -1,12 +1,12 @@
-## prerequisite — clé api supabase (pat)
+## prerequisite — supabase api key (pat)
 
-crée un personal access token (`sbp_…`) dans [Supabase](https://supabase.com) (Account → Access Tokens), puis colle-le dans oto.
-- c'est un token **Management API** (pas une clé de projet)
+create a personal access token (`sbp_…`) in [Supabase](https://supabase.com) (Account → Access Tokens), then paste it into oto.
+- it is a **Management API** token (not a project key)
 
-## usage — management api : projets, auth, logs
+## usage — management api: projects, auth, logs
 
-pilote tes projets Supabase via la Management API : liste, config d'auth, requêtes de logs.
-- « liste mes projets Supabase »
-- « montre la config auth du projet `doeb…` (site_url, redirect allow-list, providers) »
-- « sors les derniers `auth_logs` du projet »
-- « requête les `postgres_logs` sur les 2 dernières heures »
+drive your Supabase projects via the Management API: list, auth config, log queries.
+- "list my Supabase projects"
+- "show the auth config of project `doeb…` (site_url, redirect allow-list, providers)"
+- "pull the latest `auth_logs` of the project"
+- "query the `postgres_logs` over the last 2 hours"

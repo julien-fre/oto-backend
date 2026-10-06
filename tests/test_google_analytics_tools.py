@@ -188,11 +188,11 @@ def test_acces_manquant_refus_nomme_l_email_du_compte_de_service(transport):
     with pytest.raises(McpError) as ei:
         _tool("ga4_report")(property=PROP, metrics=["sessions"])
     msg = str(ei.value)
-    assert EMAIL in msg and "Lecteur" in msg and PROP in msg
+    assert EMAIL in msg and "Viewer" in msg and PROP in msg
 
 
 def test_identifiant_de_mesure_refuse_avant_tout_appel(transport):
-    with pytest.raises(McpError, match="Propriété GA4 invalide"):
+    with pytest.raises(McpError, match="Invalid GA4 property"):
         _tool("ga4_report")(property="G-FACTICE", metrics=["sessions"])
     assert not [r for r in transport.sent if "analyticsdata" in r.url]
 
@@ -260,7 +260,7 @@ def test_sonde_zero_propriete_est_un_refus_pas_un_vert(transport, key_json):
     from oto_mcp.connectors import verify as V
 
     transport.on("GET", "/v1beta/accountSummaries", 200, {})
-    with pytest.raises(V.NonAutorise, match="aucune propriété"):
+    with pytest.raises(V.NonAutorise, match="no GA4 property"):
         _verify()({"service_account_json": key_json}, {})
 
 
@@ -276,6 +276,6 @@ def test_sonde_cle_revoquee_est_non_autorisee(transport, key_json):
 def test_sonde_json_qui_n_est_pas_une_cle_est_non_autorise(transport):
     from oto_mcp.connectors import verify as V
 
-    with pytest.raises(V.NonAutorise, match="client OAuth"):
+    with pytest.raises(V.NonAutorise, match="OAuth client"):
         _verify()({"service_account_json": '{"installed": {}}'}, {})
     assert V.couverture("google_analytics") == V.AUTH

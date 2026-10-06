@@ -35,7 +35,7 @@ def test_revoked_hint_dit_quand_et_pourquoi(monkeypatch):
                             "revoked_at": "2026-08-20T10:00:00+00:00",
                             "revoked_reason": "credential_removed"})
     hint = indices._revoked_hint("u1", 35, "zoho")
-    assert "2026-08-20" in hint and "retiré" in hint and "clé retirée" in hint
+    assert "2026-08-20" in hint and "removed" in hint and "key removed" in hint
 
 
 def test_revoked_hint_interroge_le_bon_owner(monkeypatch):
@@ -78,7 +78,7 @@ def test_le_refus_reel_nomme_la_revocation(monkeypatch):
                             "revoked_reason": "credential_removed"})
     with pytest.raises(McpError) as e:
         access._resolve_credential_impl("zoho", "byo", "u1")
-    assert "2026-08-20" in str(e.value) and "retiré" in str(e.value)
+    assert "2026-08-20" in str(e.value) and "removed" in str(e.value)
 
 
 def test_le_refus_reel_reste_muet_si_jamais_rien_nexistait(monkeypatch):
@@ -86,4 +86,4 @@ def test_le_refus_reel_reste_muet_si_jamais_rien_nexistait(monkeypatch):
     monkeypatch.setattr(indices.db, "most_recent_revocation", lambda *a, **k: None)
     with pytest.raises(McpError) as e:
         access._resolve_credential_impl("zoho", "byo", "u1")
-    assert "retiré" not in str(e.value)
+    assert "removed" not in str(e.value)

@@ -198,7 +198,7 @@ def test_la_fiche_nomme_meta_comme_editeur():
     rejoue lui-même une session faute d'API publique."""
     c = providers.REGISTRY[CONNECTEUR]
     assert c.publisher_name == "Meta"
-    assert "Facebook" in c.help and "Lecture seule" in c.help
+    assert "Facebook" in c.help and "Read-only" in c.help
     assert c.doc_sections, "la fiche doit être servie depuis son markdown"
 
 
@@ -207,9 +207,9 @@ def test_la_fiche_annonce_la_limite_des_testeurs_avant_qu_on_bute_dessus():
     condition d'entrée du connecteur, et Meta la refuse avec le même message qu'un
     refus volontaire — donc si la fiche ne la dit pas, personne ne la déduira."""
     corps = " ".join(s.body_md for s in providers.REGISTRY[CONNECTEUR].doc_sections)
-    assert "testeur" in corps
-    assert "professionnel" in corps
-    assert "60 jours" in corps
+    assert "tester" in corps
+    assert "professional" in corps
+    assert "60 days" in corps
 
 
 # ── Le flux hébergé ─────────────────────────────────────────────────────────
@@ -285,8 +285,8 @@ def _session():
 def test_sans_compte_connecte_le_refus_dit_le_geste(env):
     with pytest.raises(RuntimeError) as e:
         _session().resolve_token(SUB)
-    assert "Aucun compte Instagram connecté" in str(e.value)
-    assert "connecteurs" in str(e.value)
+    assert "No Instagram account connected" in str(e.value)
+    assert "connectors" in str(e.value)
 
 
 def test_un_jeton_frais_est_servi_sans_toucher_a_meta(env):
@@ -333,7 +333,7 @@ def test_une_autorisation_expiree_refuse_avec_la_date_et_le_geste(env):
         _session().resolve_token(SUB)
     message = str(e.value)
     assert "8 juillet 2026" in message
-    assert "60 jours" in message and "Reconnecte" in message
+    assert "60 days" in message and "Reconnect" in message
     # et on n'appelle PAS Meta pour se l'entendre dire
     env.coeur.refresh_long_lived.assert_not_called()
     # la ligne est marquée : la fiche le dira sans attendre le prochain appel
@@ -360,7 +360,7 @@ def test_une_panne_de_renouvellement_ne_se_dit_pas_autorisation_morte(env):
     with pytest.raises(RuntimeError) as e:
         _session().resolve_token(SUB)
     assert not isinstance(e.value, _session().InstagramReauthRequired)
-    assert "réessaie" in str(e.value)
+    assert "retry" in str(e.value)
     assert env.coffre.rejets == []
     # et on ne sert pas non plus le vieux jeton : la panne se dirait un appel
     # plus loin, où plus rien ne l'expliquerait
@@ -369,7 +369,7 @@ def test_une_panne_de_renouvellement_ne_se_dit_pas_autorisation_morte(env):
 
 def test_un_coffre_sans_identifiant_de_compte_le_dit(env):
     env.coffre.poser("jeton", {"expires_at": _dans(59)})
-    with pytest.raises(RuntimeError, match="identifiant de compte"):
+    with pytest.raises(RuntimeError, match="account identifier"):
         _session().resolve_token(SUB)
 
 

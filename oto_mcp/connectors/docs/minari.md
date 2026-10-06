@@ -1,63 +1,63 @@
-## prerequisite — clé api minari
+## prerequisite — minari api key
 
-crée une clé API dans Minari (**Settings → API & webhook**), puis colle-la dans oto.
-- la clé porte les droits de **toute l'entreprise**, pas d'un utilisateur : elle voit les appels de tous les commerciaux de l'espace, et tout ce qu'elle écrit est écrit au nom de l'entreprise
-- byo-only : pas de clé oto partagée. c'est votre journal d'appels
-- **60 requêtes par minute, par entreprise** — pas par clé ni par personne : deux automatisations qui tournent sous la même clé se partagent ce budget. un `429` remonte avec le nombre de secondes avant réarmement
+create an API key in Minari (**Settings → API & webhook**), then paste it into oto.
+- the key carries the rights of the **whole company**, not of a single user: it sees the calls of all the reps in the workspace, and everything it writes is written on behalf of the company
+- byo-only: no shared oto key. it is your call log
+- **60 requests per minute, per company** — not per key or per person: two automations running under the same key share this budget. a `429` comes back with the number of seconds until reset
 
-## usage — appels transcrits, listes à composer, analytics d'équipe
+## usage — transcribed calls, call lists, team analytics
 
-minari est un composeur d'appels sortants : l'équipe compose, minari enregistre, transcrit, résume et détecte les objections. six tools :
+minari is an outbound call dialer: the team dials, minari records, transcribes, summarizes and detects objections. six tools:
 
-- « qu'est-ce qui s'est dit sur le prix cette semaine ? » → `minari_call(op="list", transcript_search="prix", start_date="…", end_date="…")`
-- « quels appels ont donné un rendez-vous ? » → `minari_call(op="list", status=["meeting-booked"])` — ⚠️ `meeting-booked` est une valeur de **filtre uniquement** : une ligne d'appel ne la porte jamais comme `status`, elle porte le booléen `meeting_booked`
-- « le résumé et les objections de cet appel » → `minari_call(op="get", call_id="…")` — rend la fiche **sans** le transcript (voir les bornes plus bas)
-- « le verbatim complet » → `minari_call(op="transcript", call_id="…")`
-- « y a-t-il un enregistrement ? » → `minari_call(op="recording", call_id="…")` — dit s'il existe et sa taille, **sans** rapatrier l'audio ; pour le faire écouter à quelqu'un, c'est `public_call_link` de la fiche d'appel, une page partageable sans clé — **null** si le partage externe est désactivé pour l'entreprise, donc à vérifier avant de promettre un lien
-- « quel est notre taux de décroché ce mois-ci ? » → `minari_analytics(op="overview", start_date="…", end_date="…")`
-- « qui décroche le plus dans l'équipe ? » → `minari_analytics(op="users", start_date="…", end_date="…")`
-- « sur quoi bute-t-on le plus, et est-ce qu'on s'en sort ? » → `minari_analytics(op="objections")`
-- « quelles listes sont à l'arrêt ou épuisées ? » → `minari_analytics(op="lists", period="week", call_limit=3)`
-- « pousse cette liste de prospects dans le composeur » → `minari_user()` pour l'id du commercial, puis `minari_list(op="create", name="…", assigned_to=…, contacts=[…])`
-- « ajoute ces 50 contacts à la liste en cours » → `minari_contact(op="add", list_id="…", contacts=[…])`
-- « déclare un champ `industry` avant l'import » → `minari_custom_field(op="create", field_id="industry", label="Industrie")`
+- "what was said about pricing this week?" → `minari_call(op="list", transcript_search="prix", start_date="…", end_date="…")`
+- "which calls led to a meeting?" → `minari_call(op="list", status=["meeting-booked"])` — ⚠️ `meeting-booked` is a **filter-only** value: a call row never carries it as its `status`, it carries the boolean `meeting_booked`
+- "the summary and objections of this call" → `minari_call(op="get", call_id="…")` — returns the record **without** the transcript (see the limits below)
+- "the full verbatim" → `minari_call(op="transcript", call_id="…")`
+- "is there a recording?" → `minari_call(op="recording", call_id="…")` — says whether it exists and its size, **without** pulling the audio; to let someone listen, use the call record's `public_call_link`, a page shareable without a key — **null** if external sharing is disabled for the company, so check before promising a link
+- "what is our pickup rate this month?" → `minari_analytics(op="overview", start_date="…", end_date="…")`
+- "who picks up the most on the team?" → `minari_analytics(op="users", start_date="…", end_date="…")`
+- "what do we get stuck on most, and do we handle it?" → `minari_analytics(op="objections")`
+- "which lists are stalled or exhausted?" → `minari_analytics(op="lists", period="week", call_limit=3)`
+- "push this prospect list into the dialer" → `minari_user()` for the rep's id, then `minari_list(op="create", name="…", assigned_to=…, contacts=[…])`
+- "add these 50 contacts to the list in progress" → `minari_contact(op="add", list_id="…", contacts=[…])`
+- "declare an `industry` field before the import" → `minari_custom_field(op="create", field_id="industry", label="Industry")`
 
-un contact d'import demande au moins un de `firstName`, `lastName`, `email` ; il accepte aussi `company`, `title`, `companyDomain`, `linkedinUrl`, `description`, `phoneNumber1`…`phoneNumber5`, une `note` (5000 caractères) et des `customFields` déclarés au préalable.
+an imported contact requires at least one of `firstName`, `lastName`, `email`; it also accepts `company`, `title`, `companyDomain`, `linkedinUrl`, `description`, `phoneNumber1`…`phoneNumber5`, a `note` (5000 characters) and `customFields` declared beforehand.
 
-## note — ⚠️ les listes ne montrent que les imports CSV
+## note — ⚠️ lists only show CSV imports
 
-c'est le piège n°1 de cette API, et il est silencieux : `minari_list` et `minari_contact` ne voient **que la source import CSV**. si vos contacts arrivent de HubSpot, Salesforce ou d'une autre synchro CRM, vos listes existent bel et bien dans Minari mais **n'apparaîtront jamais** par ces tools — un résultat vide veut dire « aucune liste CSV », pas « aucune liste ».
+this is the API's trap no. 1, and it is silent: `minari_list` and `minari_contact` see **only the CSV import source**. if your contacts come from HubSpot, Salesforce or another CRM sync, your lists do exist in Minari but will **never appear** through these tools — an empty result means "no CSV list", not "no list".
 
-la vue **toutes sources** est `minari_analytics(op="lists")` : c'est elle qui répond à « où en sont mes listes ». les appels et les analytics couvrent, eux, toutes les sources.
+the **all-sources** view is `minari_analytics(op="lists")`: it is the one that answers "where are my lists at". calls and analytics, for their part, cover all sources.
 
-## note — bornes de lecture
+## note — read limits
 
-trois réponses peuvent exploser, et le connecteur les borne **en le disant** plutôt qu'en tronquant en silence :
+three responses can blow up, and the connector bounds them **while saying so** rather than truncating silently:
 
-- **la fiche d'appel embarque tout le transcript.** `minari_call(op="get")` le retire donc et rend `transcript_utterances` (le nombre de répliques) ; le texte s'obtient par `op="transcript"`, l'endpoint que Minari a justement séparé pour ça
-- `op="transcript"` s'arrête à **200 répliques** par défaut (`max_utterances`) et rend le total réel plus un drapeau `truncated`
-- **une liste rend ses 1500 contacts d'un bloc**, sans pagination : `minari_list(op="get")` s'arrête à **100** contacts par défaut (`max_contacts`) et rend `total_contacts` plus `truncated`
+- **the call record embeds the whole transcript.** `minari_call(op="get")` therefore removes it and returns `transcript_utterances` (the number of utterances); the text is obtained via `op="transcript"`, the endpoint Minari split off precisely for this
+- `op="transcript"` stops at **200 utterances** by default (`max_utterances`) and returns the real total plus a `truncated` flag
+- **a list returns its 1500 contacts in one block**, with no pagination: `minari_list(op="get")` stops at **100** contacts by default (`max_contacts`) and returns `total_contacts` plus `truncated`
 
-pagination : `minari_call(op="list")` et `minari_list(op="list")` rendent 50 lignes par page, `minari_analytics(op="lists")` en rend 10 — tailles fixées par Minari, non négociables. chaque réponse porte un `next_cursor`.
+pagination: `minari_call(op="list")` and `minari_list(op="list")` return 50 rows per page, `minari_analytics(op="lists")` returns 10 — sizes fixed by Minari, not negotiable. every response carries a `next_cursor`.
 
-⚠️ **le curseur est une POSITION, pas une requête** — il se décode en `{"s": <date de début>, "c": <id d'appel>}` et ne porte aucun filtre. tourner la page en ne repassant QUE le curseur rend donc la suite du journal **entier**, non filtrée, sans la moindre erreur : il faut repasser les mêmes filtres à côté du curseur. la réponse le rappelle dans `note` à chaque fois qu'une page suivante existe.
+⚠️ **the cursor is a POSITION, not a query** — it decodes to `{"s": <start date>, "c": <call id>}` and carries no filter. turning the page while passing ONLY the cursor therefore returns the rest of the **entire** log, unfiltered, without any error: you must pass the same filters alongside the cursor. the response reminds you in `note` every time a next page exists.
 
-## note — les fenêtres par défaut des analytics ne sont pas les mêmes
+## note — analytics default windows are not the same
 
-`op="overview"` et `op="users"` portent sur **aujourd'hui** quand on ne donne pas de dates ; `op="objections"` porte sur les **7 derniers jours**. demander « nos chiffres » sans préciser de période ne rend donc pas « tout », mais la journée en cours — et la réponse dit toujours dans `period` la fenêtre réellement retenue, à lire avant de conclure.
+`op="overview"` and `op="users"` cover **today** when no dates are given; `op="objections"` covers the **last 7 days**. asking for "our numbers" without specifying a period therefore does not return "everything", but the current day — and the response always states in `period` the window actually used, to be read before concluding.
 
-les taux sont des pourcentages (0–100) et valent `null` quand leur dénominateur est nul. les analyses sont à la journée près.
+rates are percentages (0–100) and are `null` when their denominator is zero. analytics are day-granular.
 
-deux paramètres de `op="lists"` sont **obligatoires** parce qu'ils définissent le vocabulaire : `period` (la fenêtre de comptage des appels) et `call_limit` (le nombre de tentatives après lequel un contact jamais joint est considéré épuisé). deux valeurs différentes donnent deux réponses différentes — ce sont deux questions, pas une incohérence.
+two parameters of `op="lists"` are **required** because they define the vocabulary: `period` (the call counting window) and `call_limit` (the number of attempts after which a never-reached contact is considered exhausted). two different values give two different answers — they are two questions, not an inconsistency.
 
-## note — écrit sur contrat, pas encore vérifié en live
+## note — written from the contract, not yet verified live
 
-ce connecteur a été écrit à partir de l'OpenAPI 3.1 publié par Minari (`api.minari.ai/docs/openapi.json`) et de son guide d'usage pour agents, **sans sonde contre un vrai compte** (2026-08-31). tout ce qui précède est donc une lecture du contrat, pas une mesure.
+this connector was written from the OpenAPI 3.1 published by Minari (`api.minari.ai/docs/openapi.json`) and its usage guide for agents, **without a probe against a real account** (2026-08-31). everything above is therefore a reading of the contract, not a measurement.
 
-le premier vrai test est le bouton **« tester la connexion »** de cette fiche : il lit les membres de l'entreprise, ce qui prouve que la clé authentifie. il ne juge pas ce qu'elle rend — un annuaire vide n'est pas un motif de refus, et la sonde tourne avant l'enregistrement : ce qu'elle refuse ne serait jamais sauvegardé.
+the first real test is the **"test the connection"** button on this card: it reads the company's members, which proves the key authenticates. it does not judge what it returns — an empty directory is not grounds for refusal, and the probe runs before saving: what it refuses would never be saved.
 
-## note — ce que minari n'expose pas
+## note — what minari does not expose
 
-l'API publique ne permet **ni de déclencher un appel**, ni de modifier un contact existant, ni de gérer les utilisateurs. ces gestes se font dans Minari. les webhooks (`call.completed`, `call.meeting_booked`, `contact.updated`) se configurent aussi depuis **Settings → API & webhook** : il n'existe aucun endpoint pour les créer ou les lister, donc aucun tool ici.
+the public API allows **neither triggering a call**, nor editing an existing contact, nor managing users. these actions are done in Minari. webhooks (`call.completed`, `call.meeting_booked`, `contact.updated`) are also configured from **Settings → API & webhook**: there is no endpoint to create or list them, hence no tool here.
 
-supprimer une liste (`minari_list(op="delete")`) ou un champ personnalisé (`minari_custom_field(op="delete")`) est **définitif** et retire la liste de la file d'appel du commercial. retirer des contacts d'une liste sans la détruire, c'est `minari_contact(op="remove")`.
+deleting a list (`minari_list(op="delete")`) or a custom field (`minari_custom_field(op="delete")`) is **permanent** and removes the list from the rep's call queue. removing contacts from a list without destroying it is `minari_contact(op="remove")`.

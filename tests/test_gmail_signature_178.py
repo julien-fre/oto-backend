@@ -107,7 +107,7 @@ def test_une_signature_illisible_refuse_et_n_envoie_rien(monkeypatch):
     with pytest.raises(McpError) as e:
         _compose(monkeypatch, cli, body="x", mode="send", to="j@x.fr")
     assert "sign=False" in e.value.error.message
-    assert "rien n'a été envoyé" in e.value.error.message
+    assert "nothing was sent" in e.value.error.message
     assert cli.appels == []
 
 

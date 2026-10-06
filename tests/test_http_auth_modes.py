@@ -93,7 +93,7 @@ def test_header_sans_header_name_est_refuse_a_lecriture():
         credentials_store.validate_fields(
             "http", {**BASE, "auth_mode": "header", "token": "T"})
     assert e.value.code == "missing_credentials"
-    assert "Nom du header" in e.value.message
+    assert "Header name" in e.value.message
 
 
 def test_un_mode_mal_orthographie_est_refuse_avec_le_jeu_attendu():

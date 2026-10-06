@@ -101,7 +101,7 @@ def test_unipile_select_unknown_id_raises(monkeypatch):
     _wire_byo(monkeypatch)
     monkeypatch.setattr("oto_mcp.db.set_unipile_account",
                         lambda *a, **k: pytest.fail("ne doit pas écrire un id inconnu"))
-    with pytest.raises(ValueError, match="inconnu"):
+    with pytest.raises(ValueError, match="Unknown Unipile account"):
         asyncio.run(connector_identities.select_identity("u1", "unipile", "GHOST"))
 
 
@@ -112,7 +112,7 @@ def test_unipile_platform_no_selector(monkeypatch):
     monkeypatch.setattr("oto_mcp.db.list_account_grants_to", lambda sub: [])
     monkeypatch.setattr("oto_mcp.db.list_unipile_accounts", lambda sub: [])
     assert asyncio.run(connector_identities.list_identities("u1", "unipile")) == []
-    with pytest.raises(ValueError, match="plateforme"):
+    with pytest.raises(ValueError, match="platform key"):
         asyncio.run(connector_identities.select_identity("u1", "unipile", "A1"))
 
 

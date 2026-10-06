@@ -712,9 +712,9 @@ def test_site_publish_dry_run_makes_no_call(client):
 # --- traduction d'erreur HTTP ---------------------------------------------------
 
 @pytest.mark.parametrize("status,fragment", [
-    (401, "invalide"),
-    (404, "introuvable"),
-    (500, "indisponible"),
+    (401, "invalid"),
+    (404, "not found"),
+    (500, "unavailable"),
 ])
 def test_upstream_errors_translated_to_actionable_message(client, status, fragment):
     client.get_site.side_effect = UpstreamHTTPError(status, {"msg": "x"}, service="webflow")

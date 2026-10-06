@@ -127,7 +127,7 @@ def test_dispatch_passthrough_when_no_policy(oto_call_fn, monkeypatch):
 def test_dispatch_refuses_meta_spine(oto_call_fn, name):
     with pytest.raises(McpError) as ei:
         _call(oto_call_fn, [], name=name, arguments={})
-    assert "méta/spine" in str(ei.value)
+    assert "meta/spine" in str(ei.value)
 
 
 # --- 3. handoff de schéma sur argument invalide ---------------------------
@@ -161,7 +161,7 @@ def test_target_error_returned_as_data(oto_call_fn, monkeypatch):
 
     out = _call(oto_call_fn, [target], name="foncier_dpe", arguments={})
     assert out == {"tool": "foncier_dpe", "ok": False,
-                   "error": "Erreur interne du serveur."}
+                   "error": "Internal server error."}
     assert "upstream 500" not in out["error"]
 
 

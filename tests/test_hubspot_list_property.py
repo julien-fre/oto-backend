@@ -341,5 +341,5 @@ def test_archived_flag_reaches_the_client(client):
 
 
 def test_unknown_property_op_is_refused(client):
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool("hubspot_property")(op="schema", object_type="contacts")

@@ -26,16 +26,16 @@ REFUSES rather than dropping it (`_only`, allow-list per op — same contract
 as Fireflies' `_refuse_ignored`, expressed as an allow-list instead of a
 per-op deny-list since every op here has a small, disjoint param set).
 
-**Fenêtre de lecture sur `linear_issue op=list`** (signaux #561 et #568) :
-`updated_after`/`updated_before`/`created_after`/`created_before` bornent la
-lecture CÔTÉ SERVEUR (`IssueFilter.updatedAt`/`createdAt`, des `DateComparator`
-que le schéma portait déjà), et `order_by` choisit entre `createdAt` — le défaut
-de Linear — et `updatedAt`. L'ordre est **décroissant**, ce que rien n'annonçait :
-relevé le 24/08/2026 contre un workspace réel, une issue créée le 26 juillet mais
-modifiée le 21 août se trouvait loin dans la pagination, si bien qu'un run ne
-pouvait pas s'arrêter à la première page hors fenêtre. Contrairement à Attio,
-il n'y avait rien à refuser ici : GraphQL rejette DUREMENT un champ de filtre
-inconnu, donc aucun risque de filtre avalé en silence.
+**Read window on `linear_issue op=list`** (signals #561 and #568):
+`updated_after`/`updated_before`/`created_after`/`created_before` bound the
+read SERVER-SIDE (`IssueFilter.updatedAt`/`createdAt`, `DateComparator`s
+that the schema already carried), and `order_by` chooses between `createdAt` — Linear's
+default — and `updatedAt`. The order is **descending**, which nothing announced:
+observed on 24/08/2026 against a real workspace, an issue created on July 26 but
+modified on August 21 sat far down the pagination, so a run
+could not stop at the first page outside the window. Unlike Attio,
+there was nothing to refuse here: GraphQL HARD-rejects an unknown filter
+field, so there is no risk of a filter being silently swallowed.
 
 **Live-tested 2026-08-21** against a real workspace, through this tool layer
 (not just the raw client) — full create/get/update/delete lifecycle on
@@ -61,18 +61,18 @@ def _bad(msg: str) -> McpError:
 
 
 def _only(op: str, allowed: set, **provided: Any) -> None:
-    """Un argument fourni hors de l'allow-list de CET op est une erreur
-    d'intention, pas un détail — sinon un param mal placé serait
-    silencieusement ignoré."""
+    """An argument supplied outside THIS op's allow-list is an error of
+    intent, not a detail — otherwise a misplaced param would be
+    silently ignored."""
     extra = sorted(k for k, v in provided.items() if v is not None and k not in allowed)
     if extra:
-        raise _bad(f"op={op!r} n'utilise pas {', '.join(extra)}")
+        raise _bad(f"op={op!r} does not use {', '.join(extra)}")
 
 
 def _require(op: str, **required: Any) -> None:
     missing = sorted(k for k, v in required.items() if v is None)
     if missing:
-        raise _bad(f"op={op!r} requiert {', '.join(missing)}")
+        raise _bad(f"op={op!r} requires {', '.join(missing)}")
 
 
 def _page(first: Optional[int]) -> int:
@@ -86,43 +86,43 @@ def _upstream_message(e: Exception) -> str:
     if isinstance(e, UpstreamHTTPError):
         status = e.status_code
         if status in (401, 403):
-            return (f"Linear a rejeté la clé API (HTTP {status}) — vérifie la clé posée "
-                     "sur ce connecteur (linear.app/settings/api).")
+            return (f"Linear rejected the API key (HTTP {status}) — check the key set "
+                     "on this connector (linear.app/settings/api).")
         if status in (500, 502, 503, 504):
-            return f"Linear est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-        return f"Linear a refusé la requête (HTTP {status}) : {e.body}"
+            return f"Linear is temporarily unavailable (HTTP {status}) — try again later."
+        return f"Linear refused the request (HTTP {status}): {e.body}"
 
     if isinstance(e, LinearRateLimited):
-        reset = f" (réinitialisation à {e.reset_at} epoch ms UTC)" if e.reset_at else ""
-        return ("Linear : quota horaire atteint (5 000 requêtes/h ou 3 000 000 points de "
-                f"complexité/h){reset} — STOP, ne pas réessayer immédiatement.")
+        reset = f" (reset at {e.reset_at} epoch ms UTC)" if e.reset_at else ""
+        return ("Linear: hourly quota reached (5,000 requests/h or 3,000,000 complexity "
+                f"points/h){reset} — STOP, do not retry immediately.")
 
     if isinstance(e, LinearGraphQLError):
-        # Linear répond son refus d'authentification dans un `errors[]` GraphQL SOUS
-        # HTTP 200 — `_execute` lève donc avant tout `raise_for_upstream`, et la branche
-        # 401/403 ci-dessus, qui nomme pourtant exactement ce cas, n'a jamais rien vu.
-        # Résultat servi jusqu'au 2026-09-03 : la phrase du fournisseur, recopiée
-        # (« linear GraphQL error (AUTHENTICATION_ERROR): Authentication required, not
-        # authenticated »), qui ne dit ni ce qui est en cause ni où le réparer (#541).
-        # Seul ce code est traduit : les autres portent le VRAI diagnostic de Linear,
-        # que le reformuler perdrait.
+        # Linear returns its authentication refusal in a GraphQL `errors[]` UNDER
+        # HTTP 200 — `_execute` therefore raises before any `raise_for_upstream`, and the
+        # 401/403 branch above, which names exactly this case, never saw anything.
+        # Result served until 2026-09-03: the vendor's sentence, copied verbatim
+        # ("linear GraphQL error (AUTHENTICATION_ERROR): Authentication required, not
+        # authenticated"), which says neither what is wrong nor where to fix it (#541).
+        # Only this code is translated: the others carry Linear's REAL diagnosis,
+        # which rephrasing would lose.
         if getattr(e, "code", None) == "AUTHENTICATION_ERROR":
-            return ("Linear a rejeté la clé API — elle est invalide ou révoquée. Pose "
-                    "une clé valide (linear.app/settings/api) puis re-teste avec "
+            return ("Linear rejected the API key — it is invalid or revoked. Set "
+                    "a valid key (linear.app/settings/api) then re-test with "
                     "`oto_instance op=verify`.")
-        return f"Linear a refusé la requête : {e.message if hasattr(e, 'message') else str(e)}"
+        return f"Linear refused the request: {e.message if hasattr(e, 'message') else str(e)}"
 
     return str(e)
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : le profil du porteur de la clé, la
-    plus légère des lectures (aucun filtre, un seul objet).
+    """"Test the connection" probe: the profile of the key's holder, the
+    lightest of reads (no filter, a single object).
 
-    Son message d'échec n'est pas jeté : il est persisté en `meta.health_reason` et
-    relu par le verdict `ready` de la carte connecteur (#541). Il passe donc par
-    `_upstream_message`, comme un appel d'outil — sinon la carte afficherait la phrase
-    brute du fournisseur là où l'outil, lui, nomme le rejet de clé."""
+    Its failure message is not thrown away: it is persisted in `meta.health_reason` and
+    re-read by the connector card's `ready` verdict (#541). It therefore goes through
+    `_upstream_message`, like a tool call — otherwise the card would show the vendor's
+    raw sentence where the tool names the key rejection."""
     from oto.tools.linear import LinearError
     from oto.tools.linear.client import LinearClient
     from oto.tools.common.errors import UpstreamHTTPError

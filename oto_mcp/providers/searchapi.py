@@ -1,22 +1,22 @@
-"""Déclaration de registre du connecteur `searchapi`.
+"""Registry declaration of the `searchapi` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# searchapi : recherche multi-moteurs via SearchApi.io (verticaux Google +
+# searchapi: multi-engine search via SearchApi.io (Google verticals +
 # YouTube/Bing/Amazon/… + jobs/news/maps/scholar). keyed api_key, platform-
-# eligible (clé plateforme + quota daily, comme serper/serpapi). Client HTTP
-# auto-contenu (pas de dép oto-core).
+# eligible (platform key + daily quota, like serper/serpapi). Self-contained
+# HTTP client (no oto-core dep).
 CONNECTOR = _c(
     "searchapi", ["searchapi"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
     secret_kind="api_key", default_quota=200, platform_key_open=True,
     label="SearchApi",
-    help="même périmètre multi-moteurs que SerpApi (Google, YouTube, Bing, jobs, "
-         "news, maps, scholar) — à poser si ta clé est chez SearchApi",
+    help="same multi-engine scope as SerpApi (Google, YouTube, Bing, jobs, "
+         "news, maps, scholar) — set it up if your key is with SearchApi",
     href="https://www.searchapi.io",
 )
 
@@ -25,8 +25,8 @@ PUBLISHER = "SearchApi"
 LOGO_DOMAIN = "searchapi.io"
 
 DESCRIPTION = (
-    "Le même périmètre multi-moteurs que SerpApi — Google, YouTube, Bing, "
-    "offres d'emploi, actualités, cartes, Google Scholar — à poser si ta clé "
-    "est chez SearchApi.io plutôt que SerpApi. Clé plateforme partagée "
-    "disponible, avec un quota quotidien."
+    "The same multi-engine scope as SerpApi — Google, YouTube, Bing, "
+    "job postings, news, maps, Google Scholar — to set up if your key "
+    "is with SearchApi.io rather than SerpApi. Shared platform key "
+    "available, with a daily quota."
 )

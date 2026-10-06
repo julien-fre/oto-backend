@@ -1,7 +1,7 @@
-"""Les capacités de GOUVERNANCE d'un connecteur (ADR 0019/0024/0044) : l'activer,
-l'instancier, le partager, le sonder, en lister les identités.
+"""Governance capabilities of a connector (ADR 0019/0024/0044): enabling it,
+instantiating it, sharing it, probing it, listing its identities.
 
-Package sans surface propre — `capabilities/__init__.py` importe chaque module pour
-son effet de DÉCLARATION. ⚠️ À ne pas confondre avec `oto_mcp/connectors/`, qui porte
-la mécanique ; ici ce sont les VERBES exposés aux deux faces.
+A package with no surface of its own — `capabilities/__init__.py` imports each module for
+its DECLARATION side effect. ⚠️ Not to be confused with `oto_mcp/connectors/`, which holds
+the machinery; here these are the VERBS exposed to both faces.
 """

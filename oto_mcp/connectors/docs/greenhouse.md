@@ -1,16 +1,16 @@
-## prerequisite — ta clé api greenhouse (harvest)
+## prerequisite — your greenhouse (harvest) api key
 
-il te faut une clé **harvest api** greenhouse.
-- dans greenhouse, va dans **configure → dev center → api credentials** et crée une clé de type *harvest*
-- donne-lui les permissions candidats/jobs/applications/users
-- colle-la dans tes [clés de connecteurs](https://manage.oto.cx/) (ou laisse ton org partager la sienne)
-- doc éditeur : [greenhouse.io](https://www.greenhouse.io)
-- ⚠️ les écritures (créer un candidat, ajouter une note) exigent un `on_behalf_of` = l'id d'un utilisateur greenhouse, récupéré via `greenhouse_users`
+you need a greenhouse **harvest api** key.
+- in greenhouse, go to **configure → dev center → api credentials** and create a key of type *harvest*
+- give it the candidates/jobs/applications/users permissions
+- paste it into your [connector keys](https://manage.oto.cx/) (or let your org share its own)
+- vendor docs: [greenhouse.io](https://www.greenhouse.io)
+- ⚠️ writes (creating a candidate, adding a note) require an `on_behalf_of` = the id of a greenhouse user, retrieved via `greenhouse_users`
 
-## usage — ce que tu peux faire
+## usage — what you can do
 
-pilote ton ats greenhouse depuis la conversation : candidats, jobs, candidatures, notes.
-- « liste les candidats sur le job 123 » → `greenhouse_candidate(op="list")` (filtres `job_id`, `email`, `created_after`)
-- « montre-moi le candidat 456 et ses candidatures » → `greenhouse_candidate`
-- « ajoute une note sur le candidat 456 » → `greenhouse_candidate(op="add_note")` (il faut un `user_id` auteur, cf. `greenhouse_users`)
-- « quels jobs sont ouverts ? » → `greenhouse_job(op="list")` (`status` open/closed/draft)
+drive your greenhouse ats from the conversation: candidates, jobs, applications, notes.
+- "list the candidates on job 123" → `greenhouse_candidate(op="list")` (filters `job_id`, `email`, `created_after`)
+- "show me candidate 456 and their applications" → `greenhouse_candidate`
+- "add a note on candidate 456" → `greenhouse_candidate(op="add_note")` (needs an author `user_id`, see `greenhouse_users`)
+- "which jobs are open?" → `greenhouse_job(op="list")` (`status` open/closed/draft)

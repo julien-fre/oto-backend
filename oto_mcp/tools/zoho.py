@@ -1,17 +1,17 @@
 """Zoho CRM — generic CRUD over modules (Contacts, Leads, Deals, Accounts…).
 
-Credential = OAuth2 (self-client) à 3 secrets : client_id + client_secret +
-refresh_token → modèle générique multi-champs (ADR 0011), résolu par appel via
-`access.resolve_credential("zoho", want="byo")` (l'ENTITÉ gagnante, pas seulement
-les champs — oto#25 lot b2 : elle sert à marquer une ligne rejetée sur un grant mort,
-`ZohoAuthError` au refresh). byo_user (pas de quota plateforme : le credential EST
-le grant). Le token d'accès est dérivé/caché en mémoire côté client.
+Credential = OAuth2 (self-client) with 3 secrets: client_id + client_secret +
+refresh_token → generic multi-field model (ADR 0011), resolved per call via
+`access.resolve_credential("zoho", want="byo")` (the winning ENTITY, not just
+the fields — oto#25 lot b2: it is used to mark a row rejected on a dead grant,
+`ZohoAuthError` at refresh). byo_user (no platform quota: the credential IS
+the grant). The access token is derived/cached in memory on the client side.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur zoho)** : un tool
-par OBJET métier, le verbe en paramètre `op` — `zoho_record` (list/get/search/create/
-update/delete, tous scopés par `module`) et `zoho_note` (list/create sur un record).
-`zoho_modules` reste seul : il ne prend AUCUN paramètre (il énumère les `module` que
-les deux autres consomment) et dépend d'un scope OAuth distinct (settings vs data).
+**Consolidated surface (ADR 0047 §Amendment, applied to the zoho connector)**: one tool
+per business OBJECT, the verb as an `op` parameter — `zoho_record` (list/get/search/create/
+update/delete, all scoped by `module`) and `zoho_note` (list/create on a record).
+`zoho_modules` stays alone: it takes NO parameter (it enumerates the `module`s that
+the other two consume) and depends on a distinct OAuth scope (settings vs data).
 """
 from __future__ import annotations
 
@@ -29,17 +29,17 @@ from ..connectors import flow as connector_flow
 from ..connectors import health as connector_health
 from ..connectors import verify as connector_verify
 
-# Modules CRM standard sondés pour prouver un scope de LECTURE réel (au moins un
-# `ZohoCRM.modules.<m>.READ`). On passe au 1er lisible ; tous en scope-mismatch =
-# le token authentifie mais n'a aucun accès CRM (souvent une clé d'un AUTRE produit
-# Zoho — Analytics/Desk). Ordre = du plus universellement présent au moins.
+# Standard CRM modules probed to prove a real READ scope (at least one
+# `ZohoCRM.modules.<m>.READ`). We stop at the first readable one; all in scope-mismatch =
+# the token authenticates but has no CRM access (often a key from ANOTHER Zoho
+# product — Analytics/Desk). Order = from most to least universally present.
 _CRM_PROBE_MODULES = ("Contacts", "Deals", "Accounts", "Leads")
 
 
-# Zoho héberge par data center régional ; le self-client (client_id/secret) ET le
-# refresh token sont liés à leur région d'émission — un self-client `.eu` tapant
-# `accounts.zoho.com` est rejeté par Zoho avec un `invalid_client` opaque. Le champ
-# `data_center` du credential sélectionne les domaines API/OAuth. Régions reconnues :
+# Zoho hosts per regional data center; the self-client (client_id/secret) AND the
+# refresh token are bound to their issuing region — a `.eu` self-client hitting
+# `accounts.zoho.com` is rejected by Zoho with an opaque `invalid_client`. The
+# credential's `data_center` field selects the API/OAuth domains. Recognized regions:
 _DC_DOMAINS = {
     "com": ("https://www.zohoapis.com", "https://accounts.zoho.com"),
     "eu": ("https://www.zohoapis.eu", "https://accounts.zoho.eu"),
@@ -51,50 +51,50 @@ _DC_DOMAINS = {
 
 
 def _resolve_dc_domains(data_center: Optional[str]) -> tuple[str, str]:
-    """`(api_domain, accounts_url)` pour la région Zoho déclarée. Région manquante ou
-    non reconnue → `McpError` actionnable, **jamais** de repli silencieux sur `com` (ce
-    repli masquait la vraie cause d'un `invalid_client` : self-client posé sur une autre
-    région). `com` reste pleinement valide — on ne force aucune région, on exige juste un
-    choix reconnu."""
+    """`(api_domain, accounts_url)` for the declared Zoho region. Missing or
+    unrecognized region → actionable `McpError`, **never** a silent fallback to `com` (that
+    fallback masked the real cause of an `invalid_client`: self-client created on another
+    region). `com` remains fully valid — we force no region, we just require a
+    recognized choice."""
     dc = (data_center or "").strip().lower()
     if dc not in _DC_DOMAINS:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-            (f"Data center Zoho non reconnu : {data_center!r}." if dc
-             else "Data center Zoho manquant.")
-            + " Renseigne ta région dans le champ « Data center » du connecteur Zoho —"
-            " l'une de : com, eu, in, au, jp, ca. Elle est visible dans l'URL quand tu es"
-            " connecté·e à Zoho (ex. crm.zoho.eu → « eu », crm.zoho.com → « com »)."
+            (f"Unrecognized Zoho data center: {data_center!r}." if dc
+             else "Zoho data center missing.")
+            + " Set your region in the \"Data center\" field of the Zoho connector —"
+            " one of: com, eu, in, au, jp, ca. It is visible in the URL when you are"
+            " logged in to Zoho (e.g. crm.zoho.eu → \"eu\", crm.zoho.com → \"com\")."
         )))
     return _DC_DOMAINS[dc]
 
 
 def _credential_state_for(connector: str):
-    """SOURCE UNIQUE de « ce credential Zoho est-il utilisable ? », par connecteur.
+    """SINGLE SOURCE of "is this Zoho credential usable?", per connector.
 
-    Connexion en DEUX temps : on pose l'app (client_id + client_secret), puis on
-    consent — et c'est le consentement qui produit le refresh_token. L'état
-    intermédiaire est donc NORMAL, pas une panne. Un seul libellé, rendu tel quel
-    par toutes les surfaces (verdict de la fiche, sonde « tester la connexion »).
+    TWO-step connection: we set up the app (client_id + client_secret), then we
+    consent — and it is the consent that produces the refresh_token. The
+    intermediate state is therefore NORMAL, not a failure. One single label, rendered as-is
+    by all surfaces (card verdict, "test the connection" probe).
 
-    ⚠️ Le consentement ne remplit QUE ce qu'OAuth produit (`zoho_oauth.PERSISTED_FIELDS`) :
-    les AUTRES champs requis du connecteur restent à saisir. Analytics exige ainsi un
-    `org_id` qu'aucun flux ne peut deviner — c'est l'identifiant de l'org Analytics de
-    l'utilisateur. On dérive donc les manques du REGISTRE plutôt que de nommer un champ
-    en dur : coder `refresh_token` seul laissait passer pour « complet » un credential
-    Analytics inutilisable, et chaque nouveau champ requis rouvrirait le même trou.
+    ⚠️ Consent fills in ONLY what OAuth produces (`zoho_oauth.PERSISTED_FIELDS`):
+    the connector's OTHER required fields remain to be entered. Analytics thus requires an
+    `org_id` that no flow can guess — it is the identifier of the user's Analytics org.
+    We therefore derive what is missing from the REGISTRY rather than naming a field
+    in code: coding `refresh_token` alone let an unusable Analytics credential pass as
+    "complete", and every new required field would reopen the same hole.
 
-    Les champs produits par le flux sont EXCLUS de ce contrôle : ils ont déjà leur
-    diagnostic, plus précis (`_resolve_dc_domains` sur la région). Deux messages pour un
-    seul problème valent moins qu'un bon."""
+    The fields produced by the flow are EXCLUDED from this check: they already have their
+    own, more precise diagnostic (`_resolve_dc_domains` on the region). Two messages for a
+    single problem are worth less than one good one."""
     def _state(fields: dict) -> status_hints.CredentialState:
         if fields.get("client_id") and fields.get("client_secret") \
                 and not fields.get("refresh_token"):
             return status_hints.CredentialState(
                 complete=False, missing=("refresh_token",),
-                next_action=("app Zoho enregistrée, mais l'autorisation n'a pas encore "
-                             "été donnée — clique « Autoriser oto chez Zoho » sur la "
-                             "fiche du connecteur. (Ou colle un refresh token si tu "
-                             "utilises un self client.)"))
+                next_action=("Zoho app registered, but authorization has not been "
+                             "granted yet — click \"Authorize oto with Zoho\" on the "
+                             "connector card. (Or paste a refresh token if you "
+                             "use a self client.)"))
         con = providers.REGISTRY.get(connector)
         manquants = tuple(f for f in (con.secret_fields if con else ())
                           if f.required and not fields.get(f.name)
@@ -103,64 +103,64 @@ def _credential_state_for(connector: str):
             libelles = ", ".join(f"« {f.label} »" for f in manquants)
             return status_hints.CredentialState(
                 complete=False, missing=tuple(f.name for f in manquants),
-                next_action=(f"il manque {libelles} sur la fiche du connecteur — "
-                             "l'autorisation Zoho ne peut pas le deviner."))
+                next_action=(f"{libelles} missing on the connector card — "
+                             "the Zoho authorization cannot guess it."))
         return status_hints.CredentialState(complete=True)
     return _state
 
 
 def _zoho_error_hint(exc: Exception) -> str:
-    """Traduit l'erreur OAuth Zoho brute en message actionnable pour la sonde."""
+    """Turn the raw Zoho OAuth error into an actionable message for the probe."""
     low = str(exc).lower()
     if "invalid_client" in low or "invalid_client_secret" in low:
-        return ("client_id / client_secret ou data center incorrect — le self-client "
-                "Zoho est lié à sa région, vérifie le champ « data center ».")
+        return ("incorrect client_id / client_secret or data center — the Zoho "
+                "self-client is bound to its region, check the \"data center\" field.")
     if "invalid_code" in low or "invalid_grant" in low or "invalid_oauthtoken" in low:
-        return "refresh token périmé ou révoqué — régénère-le dans la console Zoho."
-    return f"échec de connexion Zoho : {exc}"
+        return "refresh token expired or revoked — regenerate it in the Zoho console."
+    return f"Zoho connection failed: {exc}"
 
 
 def _pending_action_for(connector: str):
-    """Fabrique le hook `status_hints` d'un connecteur Zoho — le seam passe
-    `(sub, org, group, entry)` sans le nom du connecteur, on le capture ici.
+    """Build the `status_hints` hook of a Zoho connector — the seam passes
+    `(sub, org, group, entry)` without the connector name, we capture it here.
 
-    Connexion en DEUX temps (mode server-based) : l'app est posée (client_id +
-    client_secret) mais le consentement n'a pas encore été donné → pas de
-    refresh_token. Sans ce hook la carte paraîtrait configurée et échouerait au
-    premier appel ; avec lui, le front affiche l'étape qui manque."""
+    TWO-step connection (server-based mode): the app is set up (client_id +
+    client_secret) but consent has not been given yet → no
+    refresh_token. Without this hook the card would look configured and fail on the
+    first call; with it, the front shows the missing step."""
     def _hook(sub: str, org, group, entry: dict):  # noqa: ARG001
         if entry.get("mode") == "forbidden":
-            return None   # rien de posé → le verdict « à connecter » suffit
+            return None   # nothing set up → the "to connect" verdict is enough
         try:
-            # `resolve_credential(sub=…)` : le hook tourne depuis /api/me (REST),
-            # hors contexte MCP → le sub doit être EXPLICITE. `emit_on_failure=False`
-            # (sonde d'affichage, ne fausse pas le signal d'usage).
+            # `resolve_credential(sub=…)`: the hook runs from /api/me (REST),
+            # outside the MCP context → the sub must be EXPLICIT. `emit_on_failure=False`
+            # (display probe, does not skew the usage signal).
             f = access.resolve_credential(
                 connector, want="byo", sub=sub, emit_on_failure=False).fields
-        # noqa: SILENT — sonde d'affichage : sans credential, pas d'action en attente à proposer
-        except Exception:  # noqa: BLE001 — fail-open, jamais /api/me en erreur
+        # noqa: SILENT — display probe: without a credential, no pending action to offer
+        except Exception:  # noqa: BLE001 — fail-open, never /api/me in error
             return None
         st = _credential_state_for(connector)(f)
-        # Le libellé du CTA suit l'étape qui manque : proposer « Autorise oto chez
-        # Zoho » à qui a déjà consenti mais à qui il manque un champ enverrait
-        # refaire le geste qui vient de réussir.
+        # The CTA label follows the missing step: offering "Authorize oto with
+        # Zoho" to someone who already consented but is missing a field would send
+        # them to redo the gesture that just succeeded.
         if st.complete:
             return None
-        return ("Autorise oto chez Zoho" if "refresh_token" in (st.missing or ())
+        return ("Authorize oto with Zoho" if "refresh_token" in (st.missing or ())
                 else st.next_action)
     return _hook
 
 
-# Les 3 connecteurs Zoho partagent ce mode de connexion — enregistrés ici, ce
-# module étant chargé inconditionnellement par `register_all`.
+# The 3 Zoho connectors share this connection mode — registered here, this
+# module being loaded unconditionally by `register_all`.
 def _start_flow(ctx, connector: str, values: dict) -> dict:
-    """Point d'entrée du flux générique — même corps que la capacité `me.zoho_connect`,
-    dont il partage le handler pour qu'il n'existe qu'UNE façon de démarrer."""
+    """Entry point of the generic flow — same body as the `me.zoho_connect` capability,
+    whose handler it shares so that there is only ONE way to start."""
     from ..auth import flow as oauth_flow
     from ..capabilities import zoho_connect
-    # `app` est une clé CACHÉE, pas un `FlowParam` déclaré : le front la passe hors
-    # formulaire (le client sait qui il est), elle ne doit jamais devenir un champ
-    # visible. Résolue ICI, une seule fois, contre la liste fermée — jamais signée brute.
+    # `app` is a HIDDEN key, not a declared `FlowParam`: the front passes it outside the
+    # form (the client knows who it is), it must never become a visible field.
+    # Resolved HERE, once, against the closed list — never signed raw.
     return zoho_connect.start_for(
         ctx, connector, (values.get("data_center") or "").lower(),
         oauth_flow.resolve_return_app(values.get("app")))
@@ -169,72 +169,72 @@ def _start_flow(ctx, connector: str, values: dict) -> dict:
 for _c in ("zoho", "zohodesk", "zohoanalytics"):
     status_hints.register(_c, _pending_action_for(_c))
     status_hints.register_state(_c, _credential_state_for(_c))
-    # Le flux de consentement, déclaré comme le reste : le front en dérive un select de
-    # région + un bouton, sans savoir que « zoho » existe. Les régions vivent ICI et
-    # nulle part ailleurs — elles étaient recopiées jusque dans un libellé de registre
-    # qui annonçait un data center que le code rejette.
+    # The consent flow, declared like the rest: the front derives a region select
+    # + a button from it, without knowing that "zoho" exists. The regions live HERE and
+    # nowhere else — they used to be copied even into a registry label
+    # that announced a data center the code rejects.
     connector_flow.declare(
         _c,
         start=lambda ctx, values, _c=_c: _start_flow(ctx, _c, values),
-        label="Autoriser oto chez Zoho",
+        label="Authorize oto with Zoho",
         callback_path="/api/zoho/oauth/callback",
-        # Sans région : « une app existe quelque part » (la sienne, celle de son org,
-        # ou celle d'oto pour au moins une région). La région n'est choisie qu'au clic,
-        # donc la promesse affichée avant le clic ne peut pas en dépendre.
+        # Without region: "an app exists somewhere" (their own, their org's,
+        # or oto's for at least one region). The region is only chosen at click time,
+        # so the promise displayed before the click cannot depend on it.
         app_ready=lambda sub, _c=_c: zoho_oauth.has_app(_c, sub),
         params=(connector_flow.FlowParam(
-            name="data_center", label="Région de ton compte Zoho", default="eu",
-            help="l'app OAuth et le jeton sont liés à leur data center",
+            name="data_center", label="Region of your Zoho account", default="eu",
+            help="the OAuth app and the token are bound to their data center",
             options=tuple((dc, lbl) for dc, lbl in (
                 ("eu", "Europe (zoho.eu)"), ("com", "International (zoho.com)"),
-                ("in", "Inde (zoho.in)"), ("au", "Australie (zoho.com.au)"),
-                ("jp", "Japon (zoho.jp)"), ("ca", "Canada (zohocloud.ca)"),
+                ("in", "India (zoho.in)"), ("au", "Australia (zoho.com.au)"),
+                ("jp", "Japan (zoho.jp)"), ("ca", "Canada (zohocloud.ca)"),
             ) if dc in _DC_DOMAINS)),
         ),
     )
 
 
-def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
-    """Sonde SANS effet de bord, en DEUX temps (auth PUIS scope) :
+def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: probe contract, unused here)
+    """Probe WITHOUT side effects, in TWO steps (auth THEN scope):
 
-    1. **refresh du token OAuth** : valide client_id + client_secret + refresh_token +
-       data_center d'un coup (échec → message actionnable via `_zoho_error_hint`) ;
-    2. **lecture réelle d'un module CRM** (`GET /crm/v7/<module>?per_page=1`) : un token
-       peut authentifier mais n'avoir AUCUN scope CRM (ex. une clé Zoho **Analytics** posée
-       par erreur sur le connecteur CRM — vécu 2026-07-04, la sonde auth-seule donnait un
-       faux « ok »). Si TOUS les modules renvoient `OAUTH_SCOPE_MISMATCH`, on lève en
-       incluant le **scope réellement accordé** (renvoyé par le refresh) → immédiatement
-       diagnostiquable. Aucun effet de bord (lectures `per_page=1`).
+    1. **OAuth token refresh**: validates client_id + client_secret + refresh_token +
+       data_center in one go (failure → actionable message via `_zoho_error_hint`);
+    2. **real read of a CRM module** (`GET /crm/v7/<module>?per_page=1`): a token
+       can authenticate yet have NO CRM scope (e.g. a Zoho **Analytics** key set
+       by mistake on the CRM connector — experienced 2026-07-04, the auth-only probe gave a
+       false "ok"). If ALL modules return `OAUTH_SCOPE_MISMATCH`, we raise
+       including the **scope actually granted** (returned by the refresh) → immediately
+       diagnosable. No side effects (`per_page=1` reads).
 
-    `_resolve_dc_domains` lève déjà une `McpError` claire si la région manque/est inconnue.
+    `_resolve_dc_domains` already raises a clear `McpError` if the region is missing/unknown.
     """
     from oto.tools.zoho.client import ZohoClient
 
     status_hints.require_complete("zoho", fields)
     api_domain, accounts_url = _resolve_dc_domains(fields.get("data_center"))
 
-    # 1) auth — refresh brut : valide les 4 champs ET capte le `scope` accordé (le
-    # refresh Zoho le renvoie), pour un message de scope actionnable si besoin.
+    # 1) auth — raw refresh: validates the 4 fields AND captures the granted `scope` (the
+    # Zoho refresh returns it), for an actionable scope message if needed.
     try:
-        # ⚠️ `data=` et JAMAIS `params=` : en query string, client_id/client_secret/
-        # refresh_token atterrissent dans l'URL — donc dans le message de toute
-        # exception requests (ConnectionError, HTTPError…), qui est ici renvoyé à
-        # l'agent et journalisé. Fuite vécue (#284) ; cf. `oto.tools.zoho.auth`.
+        # ⚠️ `data=` and NEVER `params=`: in a query string, client_id/client_secret/
+        # refresh_token end up in the URL — hence in the message of any
+        # requests exception (ConnectionError, HTTPError…), which is returned here to
+        # the agent and logged. Leak experienced (#284); see `oto.tools.zoho.auth`.
         tok = requests.post(f"{accounts_url}/oauth/v2/token", data={
             "grant_type": "refresh_token",
             "client_id": fields.get("client_id"),
             "client_secret": fields.get("client_secret"),
             "refresh_token": fields.get("refresh_token"),
         }, timeout=20).json()
-    except Exception as e:  # noqa: BLE001 — réseau / réponse illisible
-        raise ValueError(f"échec de connexion Zoho : {type(e).__name__}") from e
+    except Exception as e:  # noqa: BLE001 — network / unreadable response
+        raise ValueError(f"Zoho connection failed: {type(e).__name__}") from e
     if "access_token" not in tok:
         raise ValueError(_zoho_error_hint(tok.get("error") or tok))
     granted = tok.get("scope", "")
 
-    # 2) scope — LECTURE réelle par le MÊME chemin que le tool `zoho_record`
-    # (`list_records` ajoute les `fields` par défaut, requis en API v7) : au moins un
-    # module CRM lisible = credential utilisable. `per_page=1`, sans effet de bord.
+    # 2) scope — real READ through the SAME path as the `zoho_record` tool
+    # (`list_records` adds the default `fields`, required in API v7): at least one
+    # readable CRM module = usable credential. `per_page=1`, no side effects.
     client = ZohoClient(
         client_id=fields.get("client_id"), client_secret=fields.get("client_secret"),
         refresh_token=fields.get("refresh_token"),
@@ -244,44 +244,44 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
     for module in _CRM_PROBE_MODULES:
         try:
             client.list_records(module, page=1, per_page=1)
-            return  # lecture réelle OK → credential utilisable
+            return  # real read OK → usable credential
         except McpError:
             raise
-        # noqa: SILENT — scope absent pour CE module ⇒ essayer le suivant, verdict rendu à la fin
-        except Exception as e:  # noqa: BLE001 — l'erreur provider EST le retour de la sonde
+        # noqa: SILENT — scope missing for THIS module ⇒ try the next one, verdict given at the end
+        except Exception as e:  # noqa: BLE001 — the provider error IS the probe's return
             if "OAUTH_SCOPE_MISMATCH" in str(e):
-                scope_missing = True   # scope absent pour CE module — essayer le suivant
-            # autre erreur (module désactivé, INVALID_MODULE…) → tenter le suivant
+                scope_missing = True   # scope missing for THIS module — try the next one
+            # other error (module disabled, INVALID_MODULE…) → try the next one
     if scope_missing:
-        extra = f" (scope accordé : {granted})" if granted else ""
+        extra = f" (granted scope: {granted})" if granted else ""
         raise ValueError(
-            "le token authentifie mais n'a aucun scope de lecture CRM" + extra
-            + " — c'est peut-être une clé d'un autre produit Zoho (Analytics/Desk). "
-            "Régénère un self-client Zoho CRM avec ZohoCRM.modules.ALL "
-            "(ou leads/contacts/deals/accounts.READ).")
-    raise ValueError("connexion Zoho établie mais aucun module CRM lisible "
-                     "(modules désactivés ou inaccessibles).")
+            "the token authenticates but has no CRM read scope" + extra
+            + " — it may be a key from another Zoho product (Analytics/Desk). "
+            "Regenerate a Zoho CRM self-client with ZohoCRM.modules.ALL "
+            "(or leads/contacts/deals/accounts.READ).")
+    raise ValueError("Zoho connection established but no readable CRM module "
+                     "(modules disabled or inaccessible).")
 
 
 def _demarque_apres_refresh(rc):
-    """Démarque la ligne de coffre quand le refresh Zoho RÉUSSIT (oto#25 lot b3).
+    """Unmark the vault row when the Zoho refresh SUCCEEDS (oto#25 lot b3).
 
-    Symétrique du câblage Salesforce, qui n'existait pas ici : le démarquage
-    excluait Zoho, faute de savoir quand un credential recommence à marcher. Une
-    ligne marquée rejetée restait rouge jusqu'à une re-pose manuelle, même après
-    que son propriétaire ait réparé son application.
+    Symmetric to the Salesforce wiring, which did not exist here: unmarking
+    excluded Zoho, for lack of knowing when a credential starts working again. A
+    row marked rejected stayed red until a manual re-set, even after
+    its owner had repaired their application.
 
-    ⚠️ Le rappel n'est invoqué qu'après un refresh RÉUSSI, et jamais sur un succès
-    de cache (garanti côté oto-core) : c'est ce qui en fait une preuve de vie et
-    non une information périmée. Le cache Zoho dure une heure — un jeton valide
-    prouve un refresh d'il y a une heure, pas un credential sain maintenant.
+    ⚠️ The callback is only invoked after a SUCCESSFUL refresh, and never on a cache
+    hit (guaranteed on the oto-core side): that is what makes it proof of life and
+    not stale information. The Zoho cache lasts an hour — a valid token
+    proves a refresh from an hour ago, not a healthy credential right now.
 
-    Au niveau MODULE, hors de `register()` : une fabrique enfermée dans la closure
-    ne s'éprouve qu'en montant tout le connecteur, et c'est précisément le genre de
-    pièce qu'on veut pouvoir attaquer seule.
+    At MODULE level, outside `register()`: a factory locked inside the closure
+    can only be exercised by mounting the whole connector, and this is precisely the kind
+    of piece we want to be able to attack on its own.
     """
     if rc.entity_type is None:
-        return None              # grant plateforme : aucune ligne de coffre à marquer
+        return None              # platform grant: no vault row to mark
 
     def _demarque(_token_data: dict) -> None:
         connector_health.record_health(
@@ -296,16 +296,16 @@ def register(mcp: FastMCP) -> None:
     from oto.tools.zoho.client import ZohoClient
 
     def _client() -> tuple[ZohoClient, "access.ResolvedCredential"]:
-        # `resolve_credential(want="byo")` — pas `resolve_credential_fields`, qui n'en
-        # est qu'une vue mince (mêmes champs, cascade user > groupe > org identique,
-        # cf. `access/views.py`) — parce qu'on a besoin de l'ENTITÉ gagnante pour
-        # marquer une ligne rejetée (oto#25 lot b2, `rc` rendu à l'appelant).
+        # `resolve_credential(want="byo")` — not `resolve_credential_fields`, which is
+        # only a thin view of it (same fields, identical user > group > org cascade,
+        # see `access/views.py`) — because we need the winning ENTITY in order to
+        # mark a rejected row (oto#25 lot b2, `rc` returned to the caller).
         rc = access.resolve_credential("zoho", want="byo")
         creds = rc.fields
-        # Connexion en DEUX temps : l'app peut être posée sans que le consentement ait
-        # été donné (pas de refresh_token). Partir quand même produisait un échec OAuth
-        # opaque au premier appel ; on rend l'ÉTAPE MANQUANTE, avec le libellé unique de
-        # `_zoho_credential_state` — le même que celui de la fiche et de la sonde.
+        # TWO-step connection: the app can be set up without consent having been
+        # given (no refresh_token). Going ahead anyway produced an opaque OAuth failure
+        # on the first call; we return the MISSING STEP, with the single label of
+        # `_zoho_credential_state` — the same as the card's and the probe's.
         state = _credential_state_for("zoho")(creds)
         if not state.complete:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=state.next_action))
@@ -322,12 +322,12 @@ def register(mcp: FastMCP) -> None:
 
     @contextmanager
     def _marks_rejection(rc):
-        """Sur `ZohoAuthError` (refus du REFRESH — grant mort ; jamais un 401 nu d'un
-        geste applicatif ordinaire, avec une clé par ailleurs saine — cf.
-        `oto.tools.zoho.auth`, seul point qui la lève), marque la ligne DE COFFRE
-        réellement servie rejetée (`connectors.health.mark_rejected`, même garde de
-        portée que `verify`), PUIS RE-LÈVE — marquer n'est jamais un fallback qui
-        avale l'erreur réelle (oto#25 lot b2)."""
+        """On `ZohoAuthError` (REFRESH refusal — dead grant; never a bare 401 from an
+        ordinary application gesture, with an otherwise healthy key — see
+        `oto.tools.zoho.auth`, the only place that raises it), mark the VAULT row
+        actually served as rejected (`connectors.health.mark_rejected`, same scope
+        guard as `verify`), THEN RE-RAISE — marking is never a fallback that
+        swallows the real error (oto#25 lot b2)."""
         try:
             yield
         except ZohoAuthError as e:
@@ -339,9 +339,9 @@ def register(mcp: FastMCP) -> None:
         return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
     def _need(value, name: str, op: str):
-        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
+        """Required argument for THIS op — actionable error, never a fallback."""
         if value is None:
-            raise _bad(f"op='{op}' requiert {name}")
+            raise _bad(f"op='{op}' requires {name}")
         return value
 
     @mcp.tool()
@@ -362,10 +362,10 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             if "OAUTH_SCOPE_MISMATCH" in str(e.body):
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                    "le token Zoho n'a pas le scope métadonnées `ZohoCRM.settings.modules.READ` "
-                    "(ou `ZohoCRM.settings.ALL`) requis pour lister les modules — les données "
-                    "(`zoho_record`) restent lisibles. Régénère le self-client Zoho CRM en "
-                    "ajoutant ce scope settings à côté des scopes data.")))
+                    "the Zoho token lacks the metadata scope `ZohoCRM.settings.modules.READ` "
+                    "(or `ZohoCRM.settings.ALL`) required to list modules — the data "
+                    "(`zoho_record`) remains readable. Regenerate the Zoho CRM self-client "
+                    "adding this settings scope alongside the data scopes.")))
             raise
 
     @mcp.tool()
@@ -421,8 +421,8 @@ def register(mcp: FastMCP) -> None:
                                             _need(data, "data", op))
             if op == "delete":
                 return client.delete_record(module, _need(record_id, "record_id", op))
-            raise _bad("op doit être 'list', 'get', 'search', 'create', 'update' "
-                       "ou 'delete'")
+            raise _bad("op must be 'list', 'get', 'search', 'create', 'update' "
+                       "or 'delete'")
 
     @mcp.tool()
     def zoho_note(
@@ -454,4 +454,4 @@ def register(mcp: FastMCP) -> None:
                 return client.create_note(module, record_id,
                                           _need(title, "title", op),
                                           _need(content, "content", op))
-            raise _bad("op doit être 'list' ou 'create'")
+            raise _bad("op must be 'list' or 'create'")

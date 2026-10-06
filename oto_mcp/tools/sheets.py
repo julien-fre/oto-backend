@@ -1,26 +1,26 @@
-"""Google Sheets — surface oto-core (SheetsClient) exposée par-utilisateur, multi-compte.
+"""Google Sheets — oto-core surface (SheetsClient) exposed per-user, multi-account.
 
-Édition de feuilles de calcul appartenant au user (différent du datastore, qui est
-un spine PG natif — ADR 0016). Scope `spreadsheets`. Compte par défaut ou ciblé
-par `account` (email). Accès strictement per-user via OAuth.
+Editing of spreadsheets belonging to the user (different from the datastore, which is
+a native PG spine — ADR 0016). `spreadsheets` scope. Default account or targeted
+by `account` (email). Strictly per-user access via OAuth.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au produit `sheets` du connecteur
-`google`)** : un tool par OBJET métier, le verbe en paramètre `op` — `sheets_spreadsheet`
-(metadata/read/write/clear), tous scopés par le MÊME `spreadsheet_id`, et `range` sur
-trois d'entre eux. Le namespace ne change pas (`sheets_*`), le credential non plus (un
-seul OAuth Google pour tous ses produits).
+**Consolidated surface (ADR 0047 §Amendment, applied to the `sheets` product of the
+`google` connector)**: one tool per business OBJECT, the verb in the `op` parameter — `sheets_spreadsheet`
+(metadata/read/write/clear), all scoped by the SAME `spreadsheet_id`, and `range` on
+three of them. The namespace does not change (`sheets_*`), nor does the credential (a
+single Google OAuth for all its products).
 
-`sheets_create` reste SEUL : c'est la seule op qui ne prend pas de `spreadsheet_id`
-(elle en PRODUIT un) et la seule qui prend `title` — ses paramètres ne recouvrent aucun
-de ceux de ses voisines. Une variante disjointe pèse au schéma ce que pesait le tool
-séparé ; et la fusionner rendrait `spreadsheet_id` optionnel sur des ops qui l'exigent,
-c'est-à-dire déplacerait dans le corps une garde que la signature tient aujourd'hui.
+`sheets_create` stays ALONE: it is the only op that does not take a `spreadsheet_id`
+(it PRODUCES one) and the only one that takes `title` — its parameters overlap none
+of its neighbours'. A disjoint variant weighs on the schema what the separate tool
+used to; and merging it would make `spreadsheet_id` optional on ops that require it,
+that is, would move into the body a guard that the signature holds today.
 
-⚠️ **Ce module ÉCRIT sur les données de l'utilisateur** : `op="write"` écrase la plage
-visée et `op="clear"` en efface les valeurs. Deux conséquences câblées ici, pas seulement
-documentées : le défaut de `op` est une LECTURE (`metadata`), et `range` n'a de valeur par
-défaut QUE pour `op="read"` — une écriture ou un effacement sans plage explicite est
-refusé, jamais élargi au tableau entier.
+⚠️ **This module WRITES to the user's data**: `op="write"` overwrites the targeted
+range and `op="clear"` erases its values. Two consequences wired in here, not only
+documented: the default `op` is a READ (`metadata`), and `range` has a default value
+ONLY for `op="read"` — a write or a clear without an explicit range is
+refused, never widened to the whole sheet.
 """
 from __future__ import annotations
 
@@ -34,14 +34,14 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..auth import google as google_oauth
 
-# Ops de `sheets_spreadsheet`. Vérifiées AVANT toute construction de client : une op
-# inconnue ne doit atteindre aucune méthode du client, jamais retomber sur un défaut.
+# Ops of `sheets_spreadsheet`. Checked BEFORE any client is built: an unknown op
+# must reach no client method, never fall back on a default.
 _SPREADSHEET_OPS = ("metadata", "read", "write", "clear")
-_SPREADSHEET_OPS_HINT = "op doit être 'metadata', 'read', 'write' ou 'clear'"
+_SPREADSHEET_OPS_HINT = "op must be 'metadata', 'read', 'write' or 'clear'"
 
-# Plage par défaut de la LECTURE seule (contrat historique de `sheets_read`). Ni
-# l'écriture ni l'effacement n'en héritent : « toute la feuille » est un défaut
-# acceptable pour lire, jamais pour écraser ou vider.
+# Default range of the READ only (historical contract of `sheets_read`). Neither
+# write nor clear inherit it: "the whole sheet" is an acceptable default for
+# reading, never for overwriting or emptying.
 _READ_DEFAULT_RANGE = "A:ZZ"
 
 
@@ -60,25 +60,25 @@ def _bad(msg: str) -> McpError:
 
 
 _GOOGLE_CLIENT_TIMEOUT_S = 20
-# oto-backend#867 lot 2 — voir gmail.py::_client_for_user_async pour la
-# justification (même mécanisme de rafraîchissement de jeton, même méthode).
+# oto-backend#867 batch 2 — see gmail.py::_client_for_user_async for the
+# rationale (same token-refresh mechanism, same method).
 async def _client_for_user_async(account: Optional[str] = None):
     try:
         return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
                                       timeout=_GOOGLE_CLIENT_TIMEOUT_S)
     except asyncio.TimeoutError:
-        raise _bad(f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
-                   "(rafraîchissement de jeton) — réessaie.")
+        raise _bad(f"Google did not respond within {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                   "(token refresh) — retry.")
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
+    """Required argument for THIS op — actionable error, never a fallback.
 
-    Sur une op d'écriture, un fallback serait un dégât : `op="clear"` sans plage
-    tomberait sur la plage par défaut de la lecture, donc viderait la feuille entière.
+    On a write op, a fallback would be damage: `op="clear"` without a range
+    would fall back on the read's default range, and so empty the entire sheet.
     """
     if value is None:
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
@@ -152,7 +152,7 @@ def register(mcp: FastMCP) -> None:
         if op == "clear":
             return await asyncio.to_thread(
                 client.clear, spreadsheet_id, _need(range, "range", op))
-        # Inatteignable tant que `_SPREADSHEET_OPS` et les branches ci-dessus disent la
-        # même chose — et c'est bien pourquoi la garde reste : une op ajoutée au tuple
-        # sans sa branche tomberait sinon dans la DERNIÈRE, donc effacerait des cellules.
+        # Unreachable as long as `_SPREADSHEET_OPS` and the branches above say the
+        # same thing — and that is precisely why the guard stays: an op added to the tuple
+        # without its branch would otherwise fall into the LAST one, and so erase cells.
         raise _bad(_SPREADSHEET_OPS_HINT)

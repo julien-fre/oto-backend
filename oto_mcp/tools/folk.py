@@ -1,85 +1,85 @@
 """Folk CRM — groups, people, companies, deals, notes, interactions, tasks, webhooks.
 
-Wrappe `oto.tools.folk.FolkClient` (API publique https://developer.folk.app).
-Clé résolue par appel via `access.resolve_api_key("folk")` — provider byo-only
-(user key posée sur /account, ou credential partagé de l'org active). Pas de
-clé plateforme.
+Wraps `oto.tools.folk.FolkClient` (public API https://developer.folk.app).
+Key resolved per call via `access.resolve_api_key("folk")` — byo-only provider
+(user key set on /account, or shared credential of the active org). No
+platform key.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur folk)** : un
-tool par OBJET métier, le verbe en paramètre `op` — 17 tools → 4. Ce qui a été
-fusionné, et ce qui ne l'a PAS été (le critère est l'homogénéité des paramètres,
-pas le comptage) :
+**Consolidated surface (ADR 0047 §Amendment, applied to the folk connector)**: one
+tool per business OBJECT, the verb as an `op` parameter — 17 tools → 4. What was
+merged, and what was NOT (the criterion is parameter homogeneity,
+not the count):
 
-- **`folk_record`** (search/get/create/update/delete/add_to_group) — les six
-  verbes partagent le MÊME jeu de paramètres (`entity`, `group_id`,
-  `object_type`, `id`/`ids`, `dry_run`) ; seul change le porteur de données
-  (`filters` en lecture, `item`/`items` en création, `fields` en mise à jour).
-  `entity` y joue le rôle que `module` joue chez Zoho : person | company | deal |
-  note | interaction | task | reminder. Les ex-`folk_list_deals` /
-  `folk_list_notes` / `folk_list_reminders` / `folk_get_reminder` y entrent SANS
-  ajouter un paramètre : ce sont `op="search"` / `op="get"` sur une autre
-  `entity`. `mark_done`/`mark_todo` sont les deux seules ops à ne valoir que
-  pour UNE entité (la tâche) : chez Folk la complétion est un endpoint à part
-  (`POST /tasks/{id}/mark-as-done`), refusé dans un PATCH — la replier dans
-  `op="update"` aurait menti sur ce que fait l'appel.
+- **`folk_record`** (search/get/create/update/delete/add_to_group) — the six
+  verbs share the SAME set of parameters (`entity`, `group_id`,
+  `object_type`, `id`/`ids`, `dry_run`); only the data carrier changes
+  (`filters` for reads, `item`/`items` for creation, `fields` for updates).
+  `entity` plays the role that `module` plays at Zoho: person | company | deal |
+  note | interaction | task | reminder. The former `folk_list_deals` /
+  `folk_list_notes` / `folk_list_reminders` / `folk_get_reminder` fold in WITHOUT
+  adding a parameter: they are `op="search"` / `op="get"` on another
+  `entity`. `mark_done`/`mark_todo` are the only two ops that apply to
+  ONE entity (the task): at Folk, completion is a separate endpoint
+  (`POST /tasks/{id}/mark-as-done`), rejected in a PATCH — folding it into
+  `op="update"` would have misrepresented what the call does.
 - **`folk_group`** (list/create/update/custom_fields/get_custom_field/
   create_custom_field/update_custom_field/members/add_member/remove_member/
-  update_member) — reste à part : ni `id`/`ids` (jamais bulk — un workspace a
-  peu de groupes), ni `entity` (`entity_type` qualifie un schéma de champs
-  custom, il ne désigne pas un objet à écrire). Les ops `*_member` y sont
-  entrées par le même critère d'homogénéité (ancrées sur `group_id`, comme les
-  sept ops précédentes) plutôt qu'un tool `folk_group_member` séparé dont le
-  seul paramètre obligatoire aurait été... `group_id`. Folk n'a **pas
-  d'endpoint delete** pour un groupe ni pour un champ custom (vérifié contre la
-  doc — seuls list/create/update existent) : on ne peut retirer ni l'un ni
-  l'autre via l'API, seulement depuis l'app Folk — un **membre**, en revanche,
-  se retire bien via l'API (`op="remove_member"`).
-- **`folk_user`** (list/get) — reste à part : un membre du workspace n'est pas un
-  record CRM (pas d'`entity`, pas de `group_id`/`object_type`, pas d'écriture).
-  Son paramètre `user_id` réapparaît sur `folk_group` (ops `*_member`) — même
-  espace d'ids (un membre de groupe EST un user du workspace), pas une
-  coïncidence de nommage.
-- **`folk_webhook`** (list/create/update) — reste à part : ressource GLOBALE du
-  workspace (ni `entity`, ni `group_id`/`object_type`, ni mode bulk — un
-  workspace en a peu), avec son propre vocabulaire d'événements validé à
-  l'entrée.
+  update_member) — stays separate: neither `id`/`ids` (never bulk — a workspace has
+  few groups), nor `entity` (`entity_type` qualifies a custom field
+  schema, it does not designate an object to write). The `*_member` ops joined
+  it by the same homogeneity criterion (anchored on `group_id`, like the
+  seven previous ops) rather than a separate `folk_group_member` tool whose
+  only required parameter would have been... `group_id`. Folk has **no
+  delete endpoint** for a group or a custom field (checked against the
+  docs — only list/create/update exist): neither can be removed
+  via the API, only from the Folk app — a **member**, however,
+  can be removed via the API (`op="remove_member"`).
+- **`folk_user`** (list/get) — stays separate: a workspace member is not a CRM
+  record (no `entity`, no `group_id`/`object_type`, no writes).
+  Its `user_id` parameter reappears on `folk_group` (`*_member` ops) — same
+  id space (a group member IS a workspace user), not a naming
+  coincidence.
+- **`folk_webhook`** (list/create/update) — stays separate: GLOBAL workspace
+  resource (no `entity`, no `group_id`/`object_type`, no bulk mode — a
+  workspace has few), with its own event vocabulary validated on
+  input.
 
-Surface : lecture/écriture **par entité** (`op="search"`/`"get"` prennent
+Surface: read/write **per entity** (`op="search"`/`"get"` take
 `entity` = person|company|deal[|note|reminder]). `op="create"`/`"update"`/
-`"delete"`/`"add_to_group"` couvrent aussi note/reminder (et interaction pour
-create), et sont **solo OU bulk selon le param passé** : un singulier
-(`item`/`id`) pour UN record → résultat direct ; un pluriel (`items`/`ids`, ≤50)
-pour plusieurs → reçu allégé (compte + erreurs par item, jamais N corps de
-réponse complets). Folk n'a d'endpoint batch nulle part — le mode bulk boucle sur
-les méthodes single-record, en PARALLÈLE et à cadence plafonnée (`_bulk_run`),
-pas en séquence avec une pause fixe (la latence réseau par appel dominait le
-temps total, pas la cadence Folk).
+`"delete"`/`"add_to_group"` also cover note/reminder (and interaction for
+create), and are **solo OR bulk depending on the param passed**: a singular
+(`item`/`id`) for ONE record → direct result; a plural (`items`/`ids`, ≤50)
+for several → lightweight receipt (count + per-item errors, never N full
+response bodies). Folk has no batch endpoint anywhere — bulk mode loops over
+the single-record methods, in PARALLEL and at a capped rate (`_bulk_run`),
+not sequentially with a fixed pause (per-call network latency dominated total
+time, not Folk's rate limit).
 
-⚠️ **Deux vocabulaires de champs différents cohabitent** : `op="create"` prend
-des clés Python snake_case (`first_name`, `company_id`...) ; `op="update"` prend
-les noms de champs bruts de l'API Folk en camelCase (`jobTitle`,
-`customFieldValues`...). Ne pas transposer l'un vers l'autre — voir le docstring
-de `folk_record`. Deux mots changent AUSSI de sens entre create et update, et
-sont refusés explicitement plutôt que renvoyés en 422 opaque : `type` devient
-`activityType` au PATCH d'une interaction, et `completedAt` (écrivable à la
-création d'une tâche) n'est pas patchable — c'est `op="mark_done"`.
+⚠️ **Two different field vocabularies coexist**: `op="create"` takes
+Python snake_case keys (`first_name`, `company_id`...); `op="update"` takes
+the raw Folk API field names in camelCase (`jobTitle`,
+`customFieldValues`...). Do not transpose one into the other — see the docstring
+of `folk_record`. Two words ALSO change meaning between create and update, and
+are explicitly rejected rather than returned as an opaque 422: `type` becomes
+`activityType` in an interaction PATCH, and `completedAt` (writable at
+task creation) is not patchable — use `op="mark_done"`.
 
-**Interactions : lecture, pas seulement écriture.** Le connecteur n'a longtemps
-exposé que `create_interaction`, d'où la croyance — écrite noir sur blanc dans
-la doc de ce connecteur — qu'on ne pouvait pas RELIRE ce qui s'était dit avec
-un contact. C'était vrai du connecteur, pas de Folk : `GET /interactions/past`,
-`/upcoming`, `/{id}` (+ PATCH et DELETE) existent, en open beta. Ils sont
-maintenant branchés sur `op="search"/"get"/"update"/"delete"`. Une interaction
-n'est PAS adressable seule : `entity.id` (la personne/société porteuse) est
-obligatoire en query sur listing/get/delete — d'où le paramètre `entity_id`.
+**Interactions: reading, not only writing.** The connector long exposed
+only `create_interaction`, hence the belief — written in black and white in
+this connector's docs — that what had been said with a contact could not be
+READ back. That was true of the connector, not of Folk: `GET /interactions/past`,
+`/upcoming`, `/{id}` (+ PATCH and DELETE) exist, in open beta. They are
+now wired to `op="search"/"get"/"update"/"delete"`. An interaction
+is NOT addressable on its own: `entity.id` (the owning person/company) is
+required in the query on listing/get/delete — hence the `entity_id` parameter.
 
-**Rappels → tâches.** Folk a déprécié `/reminders` le 2026-08-13 (retrait
-annoncé pour février 2027) au profit de `/tasks`, qui fait strictement plus :
-`description` markdown, filtres réels (échéance, assigné, complété ou non), et
-un suivi de complétion que les rappels n'ont jamais eu. `entity="reminder"`
-continue de marcher — le déprécié n'est pas le cassé — mais rien de nouveau ne
-devrait s'y brancher. Ce qui N'EST PAS documenté par Folk et reste à vérifier :
-si les rappels déjà posés remontent ou non dans `list_tasks`.
+**Reminders → tasks.** Folk deprecated `/reminders` on 2026-08-13 (removal
+announced for February 2027) in favor of `/tasks`, which does strictly more:
+markdown `description`, real filters (due date, assignee, completed or not), and
+completion tracking that reminders never had. `entity="reminder"`
+keeps working — deprecated is not broken — but nothing new should be
+wired to it. What is NOT documented by Folk and remains to be verified:
+whether reminders already set show up in `list_tasks` or not.
 """
 from __future__ import annotations
 
@@ -105,12 +105,12 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable qui NOMME l'op et
-    l'argument manquant, jamais un fallback silencieux (les ops d'écriture de ce
-    module touchent des données réelles : deviner à la place de l'appelant y
-    coûte un record)."""
+    """Required argument for THIS op — actionable error that NAMES the op and
+    the missing argument, never a silent fallback (the write ops of this
+    module touch real data: guessing in the caller's place costs a
+    record)."""
     if value is None:
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
@@ -118,19 +118,19 @@ _CUSTOM_FIELD_RESERVED_KEYS = {"group_id", "entity_type", "custom_field_name"}
 
 
 def _reject_reserved_keys(d: dict, param_name: str, op: str) -> None:
-    """`create_group_custom_field`/`update_group_custom_field` splattent le dict
-    de l'appelant (**field / **fields) sur des paramètres NOMMÉS (group_id,
-    entity_type, custom_field_name) — si le dict porte l'une de ces clés,
-    `TypeError: got multiple values for keyword argument` remonte en erreur
-    opaque au lieu d'un refus actionnable. Même famille de collision que
-    `_create_one` (folk_record) : un champ métier mangé par un paramètre
-    homonyme."""
+    """`create_group_custom_field`/`update_group_custom_field` splat the caller's
+    dict (**field / **fields) onto NAMED parameters (group_id,
+    entity_type, custom_field_name) — if the dict carries one of these keys,
+    `TypeError: got multiple values for keyword argument` surfaces as an opaque
+    error instead of an actionable refusal. Same family of collision as
+    `_create_one` (folk_record): a business field eaten by a same-named
+    parameter."""
     collide = _CUSTOM_FIELD_RESERVED_KEYS & set(d or {})
     if collide:
         raise _bad(
-            f"op='{op}' : {param_name} ne doit pas porter {sorted(collide)} — "
-            "ce sont des paramètres du tool (group_id/entity_type/"
-            "custom_field_name), pas des champs de l'API custom field.")
+            f"op='{op}': {param_name} must not carry {sorted(collide)} — "
+            "these are tool parameters (group_id/entity_type/"
+            "custom_field_name), not fields of the custom field API.")
 
 
 _AVAILABLE_ENTITY_TYPES_RE = re.compile(r"Available entity types are:\s*(.+)")
@@ -138,16 +138,16 @@ _FIXED_ENTITY_TYPES = {"person", "company"}
 
 
 def _resolve_deal_object_type(c, group_id: str) -> str:
-    """`entity="deal"`'s `object_type` a longtemps défaulté à `"deals"` — mais
-    l'objet deal est un OBJET CUSTOM que chaque client Folk nomme lui-même
-    ("Deals" n'est que le nom choisi PAR CE workspace ; confirmé en live, un
-    autre workspace peut l'appeler autrement, ou décliner "deals" en
-    majuscule). Sonder plutôt que deviner : tenter "deals" (l'historique), et
-    si Folk 404, son propre message énumère les entity_type RÉELS du groupe
-    (`"Available entity types are: ..."`) — on y prend celui qui n'est ni
-    "person" ni "company". Ambigu (plusieurs objets custom, ex. Deals/Events/
-    Projects) ou aucun candidat : erreur actionnable plutôt qu'une supposition
-    qui écrirait au mauvais endroit.
+    """`entity="deal"`'s `object_type` long defaulted to `"deals"` — but
+    the deal object is a CUSTOM OBJECT that each Folk customer names themselves
+    ("Deals" is just the name chosen BY THIS workspace; confirmed live, another
+    workspace may call it something else, or capitalize "deals"). Probe rather than
+    guess: try "deals" (the historical value), and if Folk answers 404, its own message
+    lists the group's REAL entity_types
+    (`"Available entity types are: ..."`) — we take the one that is neither
+    "person" nor "company". Ambiguous (several custom objects, e.g. Deals/Events/
+    Projects) or no candidate: actionable error rather than a guess
+    that would write to the wrong place.
     """
     try:
         c.get_group_custom_fields(group_id, entity_type="deals")
@@ -159,30 +159,30 @@ def _resolve_deal_object_type(c, group_id: str) -> str:
             if isinstance(e.body, dict) else ""
         match = _AVAILABLE_ENTITY_TYPES_RE.search(message)
         if not match:
-            raise  # 404 d'une autre nature (ex. group_id introuvable) — ne pas deviner dessus
+            raise  # 404 of another nature (e.g. group_id not found) — don't guess on it
         available = re.findall(r'"([^"]+)"', match.group(1))
         candidates = [t for t in available if t not in _FIXED_ENTITY_TYPES]
         if len(candidates) == 1:
             return candidates[0]
         if not candidates:
             raise _bad(
-                f"group_id {group_id!r} n'a pas d'objet deal — objets disponibles : "
-                f"{sorted(available)}. Passer `object_type` explicitement si l'un "
-                "d'eux convient (voir folk_group(op='custom_fields') pour le détail).")
+                f"group_id {group_id!r} has no deal object — available objects: "
+                f"{sorted(available)}. Pass `object_type` explicitly if one "
+                "of them fits (see folk_group(op='custom_fields') for details).")
         raise _bad(
-            f"group_id {group_id!r} a plusieurs objets custom {sorted(candidates)} — "
-            "impossible de deviner lequel désigne les deals. Passer `object_type` "
-            "explicitement.")
+            f"group_id {group_id!r} has several custom objects {sorted(candidates)} — "
+            "cannot guess which one designates the deals. Pass `object_type` "
+            "explicitly.")
 
 
 def _merge_group_ids(current_groups, add, remove) -> list[dict]:
-    """Fusionne la liste de groupes d'un record Folk et renvoie la liste COMPLÈTE
-    au format API (`[{"id": ...}]`).
+    """Merges a Folk record's group list and returns the COMPLETE list
+    in API format (`[{"id": ...}]`).
 
-    L'API Folk est en *replace-all* sur les champs-listes (un PATCH `groups`
-    écrase la liste entière) : pour ajouter/retirer un groupe sans perdre les
-    autres, il faut relire les groupes actuels et renvoyer l'union résultante.
-    Préserve l'ordre et déduplique.
+    The Folk API is *replace-all* on list fields (a `groups` PATCH
+    overwrites the whole list): to add/remove a group without losing the
+    others, you must re-read the current groups and send back the resulting union.
+    Preserves order and deduplicates.
     """
     remove_set = set(remove or [])
     result: list[str] = []
@@ -197,14 +197,14 @@ def _merge_group_ids(current_groups, add, remove) -> list[dict]:
 
 
 def _forme_ecriture(valeur):
-    """Une valeur RELUE ramenée à la forme que Folk accepte en écriture (#866, #834).
+    """A value that was READ back, brought to the form Folk accepts on write (#866, #834).
 
-    Folk rend un champ utilisateur sous la forme `{id, fullName, email}`, un champ de
-    contact ou d'objet sous `{id, fullName, entityType}`, mais n'accepte en écriture
-    que `{id}` (ou `{email}` pour un utilisateur) : renvoyer la forme lue telle quelle
-    fait refuser TOUT l'appel en 422 (« either an id or an email, not both »), y
-    compris pour un champ d'un groupe que l'appel ne visait pas. Seules les listes de
-    dicts qui portent un `id` sont touchées ; tout le reste passe tel quel."""
+    Folk returns a user field as `{id, fullName, email}`, a contact or object field as
+    `{id, fullName, entityType}`, but only accepts `{id}` on write
+    (or `{email}` for a user): sending the read form back as is
+    makes the WHOLE call fail with a 422 ("either an id or an email, not both"), even
+    for a field of a group the call did not target. Only lists of
+    dicts that carry an `id` are touched; everything else passes through unchanged."""
     if isinstance(valeur, list) and valeur and all(
             isinstance(d, dict) and d.get("id") for d in valeur):
         return [{"id": d["id"]} for d in valeur]
@@ -212,28 +212,28 @@ def _forme_ecriture(valeur):
 
 
 def _merge_custom_fields(current_cfv, patch: dict) -> dict:
-    """Fusionne `customFieldValues` et renvoie l'objet COMPLET attendu par l'API.
+    """Merges `customFieldValues` and returns the COMPLETE object expected by the API.
 
-    Même faute que `groups` juste au-dessus, et bien plus coûteuse : l'API Folk est en
-    *replace-all* sur cet objet aussi. Passer un seul champ personnalisé effaçait tous
-    les autres de ce groupe sur la fiche — silencieusement, avec `succeeded: 1` en
-    retour. Mesuré le 04/09/2026 : **quatre champs perdus en un appel**, dont une
-    consigne opérationnelle (oto-backend, signal 714).
+    Same fault as `groups` just above, and far costlier: the Folk API is
+    *replace-all* on this object too. Passing a single custom field used to erase all
+    the others of that group on the record — silently, with `succeeded: 1` returned.
+    Measured on 2026-09-04: **four fields lost in one call**, including an
+    operational instruction (oto-backend, signal 714).
 
-    ⚠️ La documentation de l'outil DIT que `groups` est un remplacement et offre
-    `add_to_groups`/`remove_from_groups` pour l'éviter. C'est cette précaution visible
-    sur le champ voisin qui trompe : elle fait conclure que la fusion est le défaut
-    ailleurs. Un remède qui ne traiterait que `groups` laisserait donc intact le champ
-    où le même défaut coûte le plus.
+    ⚠️ The tool documentation SAYS that `groups` is a replacement and offers
+    `add_to_groups`/`remove_from_groups` to avoid it. It is that visible precaution
+    on the neighboring field that misleads: it makes people conclude that merging is the default
+    elsewhere. A remedy that only handled `groups` would thus leave intact the field
+    where the same flaw costs the most.
 
-    **Ce qui est fourni gagne, ce qui est absent survit.** La granularité est le CHAMP,
-    pas le groupe : les autres groupes de la fiche sont conservés tels quels, et dans le
-    groupe visé les clés non citées restent en place.
+    **What is provided wins, what is absent survives.** The granularity is the FIELD,
+    not the group: the record's other groups are kept as is, and in the
+    targeted group the keys not cited stay in place.
 
-    ⚠️ **Une valeur explicitement fournie est écrite telle quelle, `None` et `""`
-    compris** — c'est ainsi qu'on VIDE un champ, et il faut que ça reste possible :
-    l'incident fondateur s'est réparé par un second appel qui remettait à vide. Fusionner
-    « sauf les valeurs vides » enlèverait le seul geste d'effacement disponible.
+    ⚠️ **An explicitly provided value is written as is, `None` and `""`
+    included** — that is how a field is CLEARED, and it must remain possible:
+    the founding incident was repaired by a second call that reset it to empty. Merging
+    "except empty values" would remove the only erasing gesture available.
     """
     out: dict = {}
     for gid, champs in (current_cfv or {}).items():
@@ -245,26 +245,26 @@ def _merge_custom_fields(current_cfv, patch: dict) -> dict:
         if isinstance(ancien, dict) and isinstance(champs, dict):
             ancien.update(champs)
         else:
-            # Groupe absent de la fiche, ou forme inattendue d'un côté : on écrit ce
-            # que l'appelant a fourni. Rien n'est écrasé qu'on aurait pu préserver.
+            # Group absent from the record, or unexpected shape on one side: we write what
+            # the caller provided. Nothing is overwritten that we could have preserved.
             out[gid] = dict(champs) if isinstance(champs, dict) else champs
     return out
 
 
-# --- dispatch par entité, partagé entre modes singulier et bulk -------------
+# --- per-entity dispatch, shared between singular and bulk modes ------------
 #
-# `_create_one`/`_update_one`/`_delete_one` portent la logique de l'op sur UN
-# record : on l'extrait pour que le mode bulk l'appelle item-par-item sans
-# dupliquer/diverger de la validation. Tous les trois acceptent `dry_run`
-# (convention oto — cf. `email_send`, LinkedIn `send_message`/`connect`) : la
-# validation tourne normalement, seul l'appel mutant final est sauté, remplacé
-# par un aperçu.
+# `_create_one`/`_update_one`/`_delete_one` carry the op's logic on ONE
+# record: we extract it so that bulk mode calls it item by item without
+# duplicating/diverging from the validation. All three accept `dry_run`
+# (oto convention — cf. `email_send`, LinkedIn `send_message`/`connect`): the
+# validation runs normally, only the final mutating call is skipped, replaced
+# by a preview.
 
-# Axes de dispatch de `folk_record`, DÉCLARÉS au schéma (`Literal` → `enum` JSON).
-# Depuis la consolidation, le verbe n'est plus dans le NOM du tool : sans enum, les
-# valeurs admises n'existent que dans la prose de la docstring, et rien ne contraint
-# le client. `_Entity` borne l'UNION des entités (= tout ce qu'au moins une op
-# accepte) ; le sous-ensemble admis PAR op reste gardé par les tuples ci-dessous.
+# Dispatch axes of `folk_record`, DECLARED in the schema (`Literal` → JSON `enum`).
+# Since the consolidation, the verb is no longer in the tool NAME: without an enum, the
+# allowed values exist only in the docstring prose, and nothing constrains
+# the client. `_Entity` bounds the UNION of entities (= everything at least one op
+# accepts); the subset allowed PER op is still guarded by the tuples below.
 _Entity = Literal["person", "company", "deal", "note", "interaction", "task",
                   "reminder"]
 _RecordOp = Literal["search", "get", "create", "update", "delete",
@@ -280,30 +280,30 @@ _UPDATE_ENTITIES = ("person", "company", "deal", "note", "interaction", "task",
 _DELETE_ENTITIES = ("person", "company", "deal", "note", "interaction", "task",
                     "reminder")
 _GROUP_ENTITIES = ("person", "company")
-# `mark_done`/`mark_todo` n'existent que sur la tâche : chez Folk la complétion
-# est un appel À PART (`POST /tasks/{id}/mark-as-done`), jamais un PATCH — une
-# tâche ne se termine pas toute seule, contrairement à un rappel qui se marque
-# « déclenché » sur son propre calendrier.
+# `mark_done`/`mark_todo` only exist on the task: at Folk, completion
+# is a SEPARATE call (`POST /tasks/{id}/mark-as-done`), never a PATCH — a
+# task does not complete by itself, unlike a reminder which marks itself
+# "triggered" on its own schedule.
 _MARK_ENTITIES = ("task",)
 
-# Entités dont l'id n'est adressable QUE via l'entité parente : Folk exige
-# `entity.id` sur les DEUX endpoints de listing, sur le get et le delete (en
-# query), et sur le PATCH (dans le corps) — il n'existe pas de « lire
-# l'interaction lit_… » tout court. Le PATCH a été vérifié en live le
-# 2026-08-27 : la spec OpenAPI ne marque pas `entity` requis, Folk répond
-# pourtant 422 `path: ['entity'], Required` sans lui.
+# Entities whose id is addressable ONLY through the parent entity: Folk requires
+# `entity.id` on BOTH listing endpoints, on get and delete (in the
+# query), and on the PATCH (in the body) — there is no plain "read
+# interaction lit_…". The PATCH was verified live on
+# 2026-08-27: the OpenAPI spec does not mark `entity` as required, yet Folk answers
+# 422 `path: ['entity'], Required` without it.
 _ENTITY_ID_REQUIRED = ("interaction",)
 
-# Champs acceptés par `op="create"` par entité — miroir des paramètres nommés
-# des méthodes `FolkClient.create_*` (snake_case Python, PAS les noms de
-# champs API Folk en camelCase utilisés par `op="update"`/`fields`). Codé en
-# dur plutôt qu'introspecté via `inspect.signature` : `create_person`/
-# `create_company` acceptent `**kwargs` côté client, donc sans cette
-# allow-list explicite un champ mal orthographié/mal casé (ex. `firstName` au
-# lieu de `first_name`) serait avalé SILENCIEUSEMENT dans le payload envoyé à
-# Folk sous le mauvais nom, plutôt que de lever une erreur. Une liste codée en
-# dur reste aussi testable contre un `FolkClient` mocké (l'introspection de
-# signature ne fonctionne pas sur un Mock sans `autospec`).
+# Fields accepted by `op="create"` per entity — mirror of the named parameters
+# of the `FolkClient.create_*` methods (Python snake_case, NOT the camelCase Folk API
+# field names used by `op="update"`/`fields`). Hardcoded
+# rather than introspected via `inspect.signature`: `create_person`/
+# `create_company` accept `**kwargs` on the client side, so without this explicit
+# allow-list a misspelled/miscased field (e.g. `firstName` instead of
+# `first_name`) would be SILENTLY swallowed into the payload sent to
+# Folk under the wrong name, rather than raising an error. A hardcoded list
+# is also testable against a mocked `FolkClient` (signature introspection
+# does not work on a Mock without `autospec`).
 _CREATE_FIELDS = {
     "person": {"first_name", "last_name", "emails", "phones", "job_title",
                "company_name", "company_id", "group_ids", "urls", "description"},
@@ -316,63 +316,63 @@ _CREATE_FIELDS = {
     "reminder": {"entity_id", "name", "recurrence_rule", "visibility"},
 }
 
-# Champs qu'un `op="update"` doit REFUSER, avec le chemin à prendre à la place.
-# Deux pièges hérités d'asymétries de l'API Folk elle-même — sans ce garde,
-# chacun rend un 422 opaque là où l'appelant a juste pris le mauvais mot :
-#   - `type` est le nom du champ à la CRÉATION d'une interaction, mais le PATCH
-#     l'appelle `activityType` (même valeur, autre clé) ;
-#   - `completedAt` s'écrit à la création d'une tâche, mais le PATCH le refuse
-#     (`additionalProperties: false`) : compléter, c'est `op="mark_done"`.
+# Fields that an `op="update"` must REJECT, with the path to take instead.
+# Two traps inherited from asymmetries in the Folk API itself — without this guard,
+# each yields an opaque 422 where the caller merely used the wrong word:
+#   - `type` is the field name at interaction CREATION, but the PATCH
+#     calls it `activityType` (same value, different key);
+#   - `completedAt` is written at task creation, but the PATCH rejects it
+#     (`additionalProperties: false`): to complete, use `op="mark_done"`.
 _UPDATE_FORBIDDEN_FIELDS = {
     "interaction": {
-        "type": "le PATCH d'une interaction nomme ce champ `activityType` "
-                "(c'est `type` seulement à la création).",
+        "type": "an interaction PATCH names this field `activityType` "
+                "(it is `type` only at creation).",
     },
     "task": {
-        "completedAt": "la complétion d'une tâche n'est pas un PATCH — "
-                       "utiliser op='mark_done' (ou op='mark_todo' pour la "
-                       "rouvrir).",
+        "completedAt": "completing a task is not a PATCH — "
+                       "use op='mark_done' (or op='mark_todo' to "
+                       "reopen it).",
     },
 }
 
-# Filtres acceptés par `op="search"` sur note/reminder : Folk n'expose qu'un
-# filtre par entité parente (`list_notes(entity_id=…)`). Contrairement à
-# `list_people(**filters)`, ces méthodes ont une signature FERMÉE — un filtre
-# inconnu lèverait un `TypeError` rendu en « erreur interne », là où l'appelant
-# doit lire quel filtre existe.
+# Filters accepted by `op="search"` on note/reminder: Folk only exposes one
+# filter per parent entity (`list_notes(entity_id=…)`). Unlike
+# `list_people(**filters)`, these methods have a CLOSED signature — an unknown
+# filter would raise a `TypeError` rendered as an "internal error", where the caller
+# needs to read which filter exists.
 _SUBRECORD_FILTERS = {"entity_id"}
 
 
 def _reject_forbidden_update_fields(entity: str, fields: dict) -> None:
-    """Refuse, en le NOMMANT, un champ qui existe ailleurs sur la même entité
-    mais pas dans son PATCH. Sans ça l'appelant reçoit un 422 Folk opaque
-    (`unrecognized_keys`) sur un mot qu'il a lu dans ce même docstring — au
-    rayon création."""
+    """Rejects, NAMING it, a field that exists elsewhere on the same entity
+    but not in its PATCH. Without this the caller gets an opaque Folk 422
+    (`unrecognized_keys`) on a word they read in this very docstring — in the
+    creation aisle."""
     for name, why in _UPDATE_FORBIDDEN_FIELDS.get(entity, {}).items():
         if name in fields:
-            raise _bad(f"op='update' entity='{entity}' : champ `{name}` "
-                       f"refusé — {why}")
+            raise _bad(f"op='update' entity='{entity}': field `{name}` "
+                       f"rejected — {why}")
 
 
 def _get_one(c, entity: str, id: str, group_id: Optional[str] = None,
              object_type: str = "deals", entity_id: Optional[str] = None):
-    """Récupère l'état courant d'un record, pour diff/preview `dry_run`.
+    """Fetches a record's current state, for `dry_run` diff/preview.
 
-    Renvoie `None` pour `note` : Folk n'a PAS d'endpoint get-par-id pour les
-    notes (`client.py` n'expose que list/create/update/delete) — un gap
-    permanent de l'API, pas un raccourci d'implémentation. Les previews
-    update/delete d'une note dégradent en conséquence (pas de diff possible).
+    Returns `None` for `note`: Folk has NO get-by-id endpoint for
+    notes (`client.py` only exposes list/create/update/delete) — a permanent
+    API gap, not an implementation shortcut. Note update/delete previews
+    degrade accordingly (no diff possible).
 
-    Le cas « interaction sans `entity_id` » ne se produit plus : les trois ops
-    qui appellent `_get_one` sur une interaction (get, update, delete) l'exigent
-    toutes en amont. Le garde reste par sûreté."""
+    The "interaction without `entity_id`" case no longer occurs: the three ops
+    that call `_get_one` on an interaction (get, update, delete) all require it
+    upstream. The guard stays for safety."""
     if entity == "person":
         return c.get_person(id)
     if entity == "company":
         return c.get_company(id)
     if entity == "deal":
         if not group_id:
-            raise _bad("group_id requis pour entity='deal'.")
+            raise _bad("group_id required for entity='deal'.")
         return c.get_deal(group_id, id, object_type=object_type)
     if entity == "interaction":
         return c.get_interaction(id, entity_id) if entity_id else None
@@ -386,29 +386,29 @@ def _get_one(c, entity: str, id: str, group_id: Optional[str] = None,
 def _create_one(c, entity: str, fields: Optional[dict] = None,
                  group_id: Optional[str] = None,
                  object_type: str = "deals", dry_run: bool = False):
-    """Crée UN record. `fields` = l'item de l'appelant, passé comme DICT.
+    """Creates ONE record. `fields` = the caller's item, passed as a DICT.
 
-    Surtout pas `**fields` : les clés de l'item viennent de l'agent, et l'une
-    d'elles peut porter le nom d'un paramètre de cette fonction — `folk_record
-    (op='create', entity='person', item={... 'group_id': 'grp_…'})` levait alors
-    un `TypeError: got multiple values for keyword argument 'group_id'`, rendu à
-    l'appelant en « erreur interne du serveur » là où il attendait le refus
-    actionnable « champ inconnu pour entity='person' » que la validation juste
-    en dessous sait produire (signal #353). Même famille que la collision des
-    jetons de contexte : un argument métier mangé par un paramètre homonyme.
-    Passer le dict ferme la collision par construction, pour toute clé future.
+    Never `**fields`: the item's keys come from the agent, and one
+    of them may carry the name of a parameter of this function — `folk_record
+    (op='create', entity='person', item={... 'group_id': 'grp_…'})` then raised
+    a `TypeError: got multiple values for keyword argument 'group_id'`, rendered to
+    the caller as an "internal server error" where they expected the actionable
+    refusal "unknown field for entity='person'" that the validation just
+    below can produce (signal #353). Same family as the collision of
+    context tokens: a business argument eaten by a same-named parameter.
+    Passing the dict closes the collision by construction, for any future key.
     """
     fields = dict(fields or {})
     if entity == "deal" and not group_id:
-        raise _bad("group_id requis pour entity='deal'.")
+        raise _bad("group_id required for entity='deal'.")
     unknown = set(fields) - _CREATE_FIELDS.get(entity, set())
     if unknown:
         raise _bad(
-            f"champ(s) inconnu(s) pour entity='{entity}' : {sorted(unknown)}. "
-            f"Champs acceptés : {sorted(_CREATE_FIELDS.get(entity, set()))}. "
-            f"Rappel : op='create' utilise des clés snake_case Python "
-            f"(first_name, company_id...) — PAS les noms de champs API Folk "
-            f"en camelCase (jobTitle, customFieldValues...) utilisés par op='update'.")
+            f"unknown field(s) for entity='{entity}': {sorted(unknown)}. "
+            f"Accepted fields: {sorted(_CREATE_FIELDS.get(entity, set()))}. "
+            f"Reminder: op='create' uses Python snake_case keys "
+            f"(first_name, company_id...) — NOT the camelCase Folk API field "
+            f"names (jobTitle, customFieldValues...) used by op='update'.")
     if dry_run:
         preview = {"would_create": fields}
         if entity == "deal":
@@ -428,7 +428,7 @@ def _create_one(c, entity: str, fields: Optional[dict] = None,
         return c.create_task(**fields)
     if entity == "reminder":
         return c.create_reminder(**fields)
-    raise _bad(f"entity doit être l'un de {_CREATE_ENTITIES}.")
+    raise _bad(f"entity must be one of {_CREATE_ENTITIES}.")
 
 
 def _update_one(c, entity: str, id: str, fields: Optional[dict] = None,
@@ -439,37 +439,37 @@ def _update_one(c, entity: str, id: str, fields: Optional[dict] = None,
     fields = dict(fields or {})
     _reject_forbidden_update_fields(entity, fields)
     current = None
-    # `customFieldValues` rejoint la liste des champs qui EXIGENT l'état actuel : sans
-    # lui, un patch partiel est une destruction (cf. `_merge_custom_fields`).
+    # `customFieldValues` joins the list of fields that REQUIRE the current state: without
+    # it, a partial patch is destructive (cf. `_merge_custom_fields`).
     besoin_courant = bool(add_to_groups or remove_from_groups or dry_run
                           or isinstance(fields.get("customFieldValues"), dict))
     if besoin_courant:
         current = _get_one(c, entity, id, group_id=group_id,
                            object_type=object_type, entity_id=entity_id)
     if isinstance(fields.get("customFieldValues"), dict):
-        # ⚠️ REFUSER plutôt qu'écrire à l'aveugle. Sans l'état actuel on ne peut pas
-        # fusionner, et envoyer le patch tel quel écraserait les champs qu'on n'a pas
-        # pu lire — exactement le dégât que ce lot corrige. Un refus nommé laisse
-        # l'appelant choisir ; un succès muet ne laisse rien.
+        # ⚠️ REFUSE rather than write blindly. Without the current state we cannot
+        # merge, and sending the patch as is would overwrite the fields we could not
+        # read — exactly the damage this batch fixes. A named refusal lets
+        # the caller choose; a silent success leaves nothing.
         if current is None:
             raise _bad(
-                "Impossible de relire la fiche pour fusionner `customFieldValues` : "
-                "l'API Folk REMPLACE cet objet, donc écrire sans l'état actuel "
-                "effacerait les champs personnalisés non fournis. Réessaie, ou passe "
-                "l'objet complet après un op='get'.")
+                "Cannot re-read the record to merge `customFieldValues`: "
+                "the Folk API REPLACES this object, so writing without the current state "
+                "would erase the custom fields not provided. Retry, or pass "
+                "the complete object after an op='get'.")
         fields["customFieldValues"] = _merge_custom_fields(
             current.get("customFieldValues"), fields["customFieldValues"])
     if add_to_groups or remove_from_groups:
         if entity not in _GROUP_ENTITIES:
-            raise _bad("add_to_groups/remove_from_groups ne valent que pour "
-                       "entity='person' ou 'company'.")
+            raise _bad("add_to_groups/remove_from_groups only apply to "
+                       "entity='person' or 'company'.")
         if "groups" in fields:
-            raise _bad("Ne pas passer 'groups' dans fields en même temps que "
+            raise _bad("Do not pass 'groups' in fields at the same time as "
                        "add_to_groups/remove_from_groups.")
         fields["groups"] = _merge_group_ids(
             (current or {}).get("groups"), add_to_groups, remove_from_groups)
     if not fields:
-        raise _bad("Rien à mettre à jour : fournir `fields` et/ou "
+        raise _bad("Nothing to update: provide `fields` and/or "
                    "add_to_groups/remove_from_groups.")
     if dry_run:
         if current is not None:
@@ -482,7 +482,7 @@ def _update_one(c, entity: str, id: str, fields: Optional[dict] = None,
         return c.update_company(id, **fields)
     if entity == "deal":
         if not group_id:
-            raise _bad("group_id requis pour entity='deal'.")
+            raise _bad("group_id required for entity='deal'.")
         return c.update_deal(group_id, id, object_type=object_type, **fields)
     if entity == "note":
         return c.update_note(id, **fields)
@@ -494,7 +494,7 @@ def _update_one(c, entity: str, id: str, fields: Optional[dict] = None,
         return c.update_task(id, **fields)
     if entity == "reminder":
         return c.update_reminder(id, **fields)
-    raise _bad(f"entity doit être l'un de {_UPDATE_ENTITIES}.")
+    raise _bad(f"entity must be one of {_UPDATE_ENTITIES}.")
 
 
 def _delete_one(c, entity: str, id: str, group_id: Optional[str] = None,
@@ -512,7 +512,7 @@ def _delete_one(c, entity: str, id: str, group_id: Optional[str] = None,
         return c.delete_company(id)
     if entity == "deal":
         if not group_id:
-            raise _bad("group_id requis pour entity='deal'.")
+            raise _bad("group_id required for entity='deal'.")
         return c.delete_deal(group_id, id, object_type=object_type)
     if entity == "note":
         return c.delete_note(id)
@@ -522,16 +522,16 @@ def _delete_one(c, entity: str, id: str, group_id: Optional[str] = None,
         return c.delete_task(id)
     if entity == "reminder":
         return c.delete_reminder(id)
-    raise _bad(f"entity doit être l'un de {_DELETE_ENTITIES}.")
+    raise _bad(f"entity must be one of {_DELETE_ENTITIES}.")
 
 
 def _mark_one(c, id: str, done: bool, completed_at: Optional[str] = None,
               dry_run: bool = False):
-    """`op="mark_done"` / `op="mark_todo"` sur UNE tâche.
+    """`op="mark_done"` / `op="mark_todo"` on ONE task.
 
-    L'aperçu relit la tâche : il fait voir ce qui va être clos (titre,
-    échéance) et son `completedAt` actuel — refermer une tâche déjà close, ou
-    en rouvrir une jamais complétée, est un no-op silencieux côté Folk."""
+    The preview re-reads the task: it shows what is about to be closed (title,
+    due date) and its current `completedAt` — closing an already closed task, or
+    reopening one never completed, is a silent no-op on Folk's side."""
     if dry_run:
         current = c.get_task(id)
         return {"id": id,
@@ -542,29 +542,29 @@ def _mark_one(c, id: str, done: bool, completed_at: Optional[str] = None,
     return c.mark_task_todo(id)
 
 
-# 50 reste une limite d'ergonomie d'appel (pas de constat précis dérrière),
-# indépendante de la cadence ci-dessous.
+# 50 remains a call-ergonomics limit (no precise finding behind it),
+# independent of the rate below.
 _BULK_MAX_ITEMS = 50
 
-# Folk documente 600 req/min (10 req/s) par clé. Le goulot d'un lot n'est PAS
-# cette cadence — c'est la latence réseau par appel, non recouverte tant que
-# les appels étaient séquentiels (un délai de courtoisie fixe entre appels
-# n'accélère rien, il ajoute juste une pause après une attente déjà payée).
-# `_BULK_CONCURRENCY` appels en vol en parallèle recouvrent cette latence ;
-# `_RateLimiter` plafonne la cadence D'ENVOI combinée (tous workers confondus)
-# à ~8 req/s, sous les 10 req/s documentés avec marge pour le trafic
-# concurrent d'autres appels sur la même clé. `_request` gère déjà les 429
-# (retry sur Retry-After) : le régulateur vise à rester sous la limite en
-# usage normal, pas à s'y substituer.
+# Folk documents 600 req/min (10 req/s) per key. A batch's bottleneck is NOT
+# that rate — it is the per-call network latency, not overlapped as long as
+# calls were sequential (a fixed courtesy delay between calls
+# speeds nothing up, it just adds a pause after a wait already paid for).
+# `_BULK_CONCURRENCY` parallel in-flight calls overlap this latency;
+# `_RateLimiter` caps the combined SEND rate (all workers together)
+# at ~8 req/s, under the documented 10 req/s with margin for the
+# concurrent traffic of other calls on the same key. `_request` already handles 429s
+# (retry on Retry-After): the limiter aims to stay under the limit in
+# normal use, not to replace it.
 _BULK_CONCURRENCY = 6
 _BULK_MIN_INTERVAL_S = 0.125  # ~8 req/s
 
 
 class _RateLimiter:
-    """Espace les DISPATCHES d'appel à un intervalle minimum PARTAGÉ entre tous
-    les workers — un délai par-worker ne suffirait pas : N workers respectant
-    chacun leur propre délai peuvent quand même émettre N fois plus vite que
-    prévu au global."""
+    """Spaces call DISPATCHES at a minimum interval SHARED across all
+    workers — a per-worker delay would not suffice: N workers each respecting
+    their own delay can still emit N times faster than
+    intended overall."""
 
     def __init__(self, min_interval_s: float):
         self._min_interval = min_interval_s
@@ -582,9 +582,9 @@ class _RateLimiter:
 
 
 def _bulk_fatal(exc: Exception) -> bool:
-    """Erreurs d'auth/connexion : on abandonne tout le lot (répéter la même
-    erreur N fois ne sert à rien). Tout le reste (un enregistrement rejeté,
-    422 Folk…) reste une erreur PAR ITEM qui n'interrompt pas le lot."""
+    """Auth/connection errors: we abandon the whole batch (repeating the same
+    error N times is pointless). Everything else (a rejected record,
+    Folk 422…) remains a PER-ITEM error that does not interrupt the batch."""
     from oto.tools.common.errors import UpstreamHTTPError
     import requests
     if isinstance(exc, UpstreamHTTPError):
@@ -593,22 +593,22 @@ def _bulk_fatal(exc: Exception) -> bool:
 
 
 def _bulk_run(items: list, fn) -> list[tuple[int, bool, object]]:
-    """Exécute `fn(item)` pour chaque item EN PARALLÈLE (jusqu'à
-    `_BULK_CONCURRENCY` appels HTTP en vol, cadence combinée plafonnée par
-    `_RateLimiter`) plutôt qu'en séquence avec une pause fixe après chaque
-    appel — c'est la latence réseau par appel qui dominait le temps total, pas
-    la cadence Folk, et une boucle séquentielle ne pouvait jamais la recouvrir.
+    """Runs `fn(item)` for each item IN PARALLEL (up to
+    `_BULK_CONCURRENCY` in-flight HTTP calls, combined rate capped by
+    `_RateLimiter`) rather than sequentially with a fixed pause after each
+    call — it is the per-call network latency that dominated total time, not
+    Folk's rate, and a sequential loop could never overlap it.
 
-    Renvoie une liste de `(index, ok, valeur_ou_message_erreur)` — comme avant
-    mais PAS nécessairement dans l'ordre de soumission : chaque appelant ne se
-    fie qu'à l'`index` porté par le tuple, jamais à la position dans la liste
-    (vérifié aux 4 call-sites). Une erreur FATALE (auth/connexion) annule les
-    appels pas encore démarrés et relève l'exception — même contrat qu'avant
-    (le lot entier est perdu, pas de reçu partiel), simplement détecté plus
-    tôt grâce au parallélisme."""
+    Returns a list of `(index, ok, value_or_error_message)` — as before
+    but NOT necessarily in submission order: each caller relies only
+    on the `index` carried by the tuple, never on the position in the list
+    (verified at the 4 call sites). A FATAL error (auth/connection) cancels the
+    calls not yet started and re-raises the exception — same contract as before
+    (the whole batch is lost, no partial receipt), just detected
+    earlier thanks to the parallelism."""
     if len(items) > _BULK_MAX_ITEMS:
-        raise _bad(f"trop d'éléments ({len(items)}) — max {_BULK_MAX_ITEMS} par appel, "
-                   f"découper en plusieurs appels.")
+        raise _bad(f"too many items ({len(items)}) — max {_BULK_MAX_ITEMS} per call, "
+                   f"split into several calls.")
     limiter = _RateLimiter(_BULK_MIN_INTERVAL_S)
     results: list[Optional[tuple[int, bool, object]]] = [None] * len(items)
 
@@ -634,42 +634,42 @@ def _bulk_run(items: list, fn) -> list[tuple[int, bool, object]]:
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /v1/users/me`. Ce que la doc de Folk établit, cité :
+    `GET /v1/users/me`. What Folk's docs establish, quoted:
 
-    - **authentifié** — « Authentication Required: `bearerApiKeyAuth` (HTTP Bearer
-      scheme with API key) » ;
-    - **sans effet de bord** — un GET qui rend « The current user associated with
-      the API key » (`id`, `fullName`, `email`). Il lit l'identité que porte la
-      clé, il ne touche à rien ;
-    - **le coût** : la doc ne mentionne AUCUN crédit ni facturation, ni sur cet
-      endpoint ni ailleurs — le régime est une limite de débit, « 600 requests per
-      minute ». ⚠️ Ce n'est pas la même chose qu'une ligne qui dirait « gratuit » :
-      l'absence de compteur de crédits dans toute la doc est un argument fort, pas
-      une preuve. Si Folk introduisait un jour une facturation à l'appel, c'est ici
-      qu'il faudrait revenir.
+    - **authenticated** — "Authentication Required: `bearerApiKeyAuth` (HTTP Bearer
+      scheme with API key)";
+    - **no side effects** — a GET that returns "The current user associated with
+      the API key" (`id`, `fullName`, `email`). It reads the identity the
+      key carries, it touches nothing;
+    - **the cost**: the docs mention NO credit or billing, neither on this
+      endpoint nor elsewhere — the regime is a rate limit, "600 requests per
+      minute". ⚠️ That is not the same as a line saying "free":
+      the absence of a credit counter in the whole doc is a strong argument, not
+      proof. If Folk ever introduced per-call billing, this is where
+      to come back.
 
-    Ne lit PAS le quota. Les en-têtes `X-RateLimit-*` sont pourtant servis sur cette
-    réponse : les remonter ferait une sonde `auth+quota`. Ce n'est pas fait ici parce
-    que le débit par minute n'est pas un solde — il ne dit rien de ce qui reste à
-    dépenser, seulement de la cadence. Le rendre laisserait croire à une jauge.
+    Does NOT read the quota. The `X-RateLimit-*` headers are served on this
+    response though: surfacing them would make it an `auth+quota` probe. That is not done here because
+    the per-minute rate is not a balance — it says nothing about what remains to
+    be spent, only about the pace. Returning it would suggest a gauge.
 
-    **Authentifié ≠ utilisable** (classe nommée sur oto#69, cf. attio/pennylane) :
-    Folk n'expose aucun scope granulaire par clé — un `id` présent EST la preuve
-    d'utilisabilité, il n'y a rien de plus fin à distinguer ici. C'est pour ça que
-    la garde ci-dessous porte sur l'identité, pas sur un `active`/`scope` séparé.
+    **Authenticated ≠ usable** (class named on oto#69, cf. attio/pennylane):
+    Folk exposes no granular per-key scope — a present `id` IS the proof
+    of usability, there is nothing finer to distinguish here. That is why
+    the guard below checks the identity, not a separate `active`/`scope`.
     """
     from oto.tools.folk.client import FolkClient
 
     utilisateur = FolkClient(api_key=fields["key"]).get_current_user()
     if not (utilisateur or {}).get("id"):
-        # Une réponse 200 sans identité : la clé passe l'authentification mais ne
-        # désigne personne. Le taire rendrait un verdict « connecté » sur un
-        # compte qu'on ne peut pas nommer.
+        # A 200 response without identity: the key passes authentication but
+        # designates no one. Staying silent would yield a "connected" verdict on an
+        # account we cannot name.
         raise RuntimeError(
-            "Folk a répondu sans identifier l'utilisateur de cette clé — "
-            f"réponse inattendue : {str(utilisateur)[:200]}")
+            "Folk answered without identifying this key's user — "
+            f"unexpected response: {str(utilisateur)[:200]}")
 
 
 def register(mcp: FastMCP) -> None:
@@ -679,32 +679,32 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> FolkClient:
         key, _ = access.resolve_api_key("folk")
-        # Rédaction des champs sensibles : plus au niveau client — appliquée à la
-        # frontière des tools par `FieldRedactionMiddleware` (policy de l'org active).
+        # Redaction of sensitive fields: no longer at client level — applied at the
+        # tool boundary by `FieldRedactionMiddleware` (policy of the active org).
         return FolkClient(api_key=key)
 
     def _validate_subscribed_events(events: list) -> None:
         if not events:
-            raise _bad("subscribed_events : au moins un événement requis.")
+            raise _bad("subscribed_events: at least one event required.")
         for e in events:
             event_type = (e or {}).get("eventType")
             if event_type not in WEBHOOK_EVENT_TYPES:
                 raise _bad(
-                    f"eventType invalide : {event_type!r}. Valeurs valides : "
+                    f"invalid eventType: {event_type!r}. Valid values: "
                     + ", ".join(sorted(WEBHOOK_EVENT_TYPES))
                 )
 
-    # --- le record CRM : un tool, le verbe en `op` ---------------------------
+    # --- the CRM record: one tool, the verb as `op` --------------------------
     #
-    # `op` par défaut = "search", une LECTURE : aucune op d'écriture n'est
-    # atteignable sans l'avoir nommée. Les quatre ops mutantes
-    # (create/update/delete/add_to_group) prennent une paire de params
-    # mutuellement exclusifs : le singulier (un seul record, résultat/preview
-    # renvoyé directement) OU le pluriel (jusqu'à 50, reçu bulk). Folk n'a
-    # d'endpoint batch nulle part (vérifié sur ce connecteur, le MCP officiel
-    # Folk, et un MCP tiers) — le pluriel boucle sur les méthodes
-    # single-record, en parallèle à cadence plafonnée (`_bulk_run`) et renvoie
-    # un reçu allégé, jamais N corps de réponse complets.
+    # Default `op` = "search", a READ: no write op is
+    # reachable without naming it. The four mutating ops
+    # (create/update/delete/add_to_group) take a pair of mutually
+    # exclusive params: the singular (a single record, result/preview
+    # returned directly) OR the plural (up to 50, bulk receipt). Folk has
+    # no batch endpoint anywhere (verified on this connector, Folk's official
+    # MCP, and a third-party MCP) — the plural loops over the
+    # single-record methods, in parallel at a capped rate (`_bulk_run`) and returns
+    # a lightweight receipt, never N full response bodies.
 
     @mcp.tool()
     def folk_record(
@@ -897,50 +897,50 @@ def register(mcp: FastMCP) -> None:
                 omitted, the task is stamped as completed now. Not accepted by
                 op="mark_todo".
                 op="update" solo — Folk API field names, camelCase (e.g.
-                {"jobTitle": "CTO"}, {"industry": "SaaS"}, ou champs custom d'un
-                deal). Optionnel si seuls `add_to_groups`/`remove_from_groups`
-                sont fournis.
-                **Champs CUSTOM d'une person/company** (ex. Status d'un groupe) :
-                les passer SOUS `customFieldValues`, keyés par group_id —
+                {"jobTitle": "CTO"}, {"industry": "SaaS"}, or custom fields of a
+                deal). Optional if only `add_to_groups`/`remove_from_groups`
+                are provided.
+                **CUSTOM fields of a person/company** (e.g. a group's Status):
+                pass them UNDER `customFieldValues`, keyed by group_id —
                 `{"customFieldValues": {"<group_id>": {"Status": "Follow-up"}}}`.
-                Un champ custom passé à plat (`{"Status": …}`) est rejeté (422
-                "Unrecognized key"). La structure se découvre via op="search"
-                (customFieldValues groupée par group_id).
-                ✅ **Patch PARTIEL : les champs que tu ne cites pas sont
-                CONSERVÉS.** L'API Folk remplace cet objet en entier ; l'outil
-                relit la fiche et fusionne champ par champ avant d'écrire, donc
-                envoyer un seul champ n'efface plus les autres. Pour VIDER un
-                champ, envoie-le explicitement à `null` ou `""` — une valeur
-                fournie est écrite telle quelle. Si la fiche ne peut pas être
-                relue, l'appel est REFUSÉ plutôt qu'écrit à l'aveugle.
-                ⚠️ Un champ custom peut porter une valeur que tu n'as JAMAIS
-                envoyée : folk remplit tout seul ses « AI fields », réglage
-                invisible depuis l'API. ⚠️ Ça n'arrive PAS qu'à l'entrée dans un
-                groupe — mesuré le 04/09/2026 sur un `op="update"` ordinaire qui
-                n'envoyait que deux champs : un troisième est revenu peuplé en
-                relecture, `null` au read-back précédent. Une valeur relue n'est
-                donc pas une preuve de ce que TU as écrit. Relis la fiche si la
-                valeur t'engage, et ne conclus jamais d'un read-back que ton
-                écriture a porté.
+                A custom field passed flat (`{"Status": …}`) is rejected (422
+                "Unrecognized key"). The structure can be discovered via op="search"
+                (customFieldValues grouped by group_id).
+                ✅ **PARTIAL patch: the fields you don't cite are
+                KEPT.** The Folk API replaces this object entirely; the tool
+                re-reads the record and merges field by field before writing, so
+                sending a single field no longer erases the others. To CLEAR a
+                field, send it explicitly as `null` or `""` — a provided
+                value is written as is. If the record cannot be
+                re-read, the call is REFUSED rather than written blindly.
+                ⚠️ A custom field may carry a value you NEVER
+                sent: folk fills its "AI fields" on its own, a setting
+                invisible from the API. ⚠️ This does NOT only happen on entering a
+                group — measured on 2026-09-04 on an ordinary `op="update"` that
+                sent only two fields: a third came back populated on
+                re-read, `null` at the previous read-back. A value read back is
+                therefore not proof of what YOU wrote. Re-read the record if the
+                value commits you, and never conclude from a read-back that your
+                write took effect.
             filters: op="search" — Field → value, matched with `like` (e.g.
                 {"fullName": "Dupont", "emails": "@otomata.tech"} for people,
                 {"name": "Otomata"} for companies).
-                Le `like` de Folk est un **« contient », insensible à la casse**,
-                identique sur people et companies (mesuré le 07/09/2026 : un fragment
-                interne à un mot, ou à cheval sur une espace, remonte la fiche).
-                ⚠️ **Le vrai piège d'un `count=0` est le PÉRIMÈTRE** : la recherche
-                ne voit que l'espace Folk du credential résolu pour l'org ACTIVE —
-                une fiche qui vit dans l'espace d'une autre org rend `count=0`. Or `count=0` se lit « cette
-                fiche n'existe pas » et le geste suivant est une CRÉATION, donc un
-                doublon : **vérifie l'org active (`_org=`) avant de conclure à
-                l'absence et de créer.** For another operator, pass
+                Folk's `like` is a case-insensitive **"contains"**,
+                identical on people and companies (measured on 2026-09-07: a fragment
+                inside a word, or straddling a space, returns the record).
+                ⚠️ **The real trap of a `count=0` is the SCOPE**: the search
+                only sees the Folk workspace of the credential resolved for the ACTIVE org —
+                a record living in another org's workspace yields `count=0`. Yet `count=0` reads "this
+                record doesn't exist" and the next move is a CREATION, hence a
+                duplicate: **check the active org (`_org=`) before concluding it is
+                absent and creating.** For another operator, pass
                 {field: {op: value}} — op ∈ eq, not_eq, like, not_like, empty,
                 not_empty, gt (dates), in / not_in (relations).
-                **Relations (`groups`, `companies`) : la valeur est l'id NU** —
+                **Relations (`groups`, `companies`): the value is the BARE id** —
                 `{"groups": "grp_…"}` (= `group_id`), `{"groups": {"not_in":
-                "grp_…"}}`, `{"groups": {"in": ["grp_…", "grp_…"]}}`. Ne l'imbrique
-                PAS en `{"in": {"id": […]}}` : l'outil ajoute lui-même le `[id]` du
-                paramètre Folk, et la forme imbriquée est REFUSÉE. For `note` and
+                "grp_…"}}`, `{"groups": {"in": ["grp_…", "grp_…"]}}`. Do NOT nest
+                it as `{"in": {"id": […]}}`: the tool adds the `[id]` of the Folk
+                parameter itself, and the nested form is REFUSED. For `note` and
                 `reminder`, Folk only has ONE filter: {"entity_id": "<id>"} (the
                 person/company/deal the note or reminder hangs off) — or pass
                 `entity_id` directly, same thing.
@@ -967,11 +967,11 @@ def register(mcp: FastMCP) -> None:
                 and `truncated: true` says more exists. Ask for a bigger
                 `max_results` to go deeper; there is no way to ask Folk for
                 "the newest 10" more cheaply than reading one page of 30.
-            add_to_groups: op="update" — rattacher une **person** ou **company**
-                À des groupes (`folk_group` pour les IDs), sans toucher ses
-                autres groupes — solo mode only.
-            remove_from_groups: op="update" — détacher une **person** ou
-                **company** DE des groupes, sans toucher ses autres groupes —
+            add_to_groups: op="update" — attach a **person** or **company**
+                TO groups (`folk_group` for the IDs), without touching its
+                other groups — solo mode only.
+            remove_from_groups: op="update" — detach a **person** or
+                **company** FROM groups, without touching its other groups —
                 solo mode only.
             group_id: the group concerned by the call, meaning set by op/entity —
                 op="search" on `person`/`company`: LIST THE MEMBERS of that group
@@ -979,8 +979,8 @@ def register(mcp: FastMCP) -> None:
                 op="add_to_group": the TARGET group the record(s) join;
                 REQUIRED for `entity="deal"` on every other op (the group where
                 the deal lives — on create, all record(s) land in this one group,
-                Folk deals aren't creatable across groups in a single call). Ne
-                PAS le passer pour person/company hors des deux cas ci-dessus.
+                Folk deals aren't creatable across groups in a single call). Do
+                NOT pass it for person/company outside the two cases above.
             entity_id: the PARENT record (person `per_…`, company `com_…`, or
                 object `obj_…`) a sub-record hangs off. **Required** for
                 entity="interaction" on search/get/update/delete — Folk has no
@@ -1006,42 +1006,42 @@ def register(mcp: FastMCP) -> None:
                 company custom objects (e.g. Deals AND Events AND Projects) —
                 auto-discovery can't guess which one is "deal" and will raise
                 asking you to disambiguate.
-            dry_run: write ops only — n'écrit RIEN. create: preview
-                `would_create`, zéro appel réseau. update / add_to_group : relit
-                l'état courant et renvoie un diff `{"changes": {field: {"from",
-                "to"}}}` (solo) ou `would_update`/`would_add` (bulk). delete :
-                relit chaque record et renvoie `would_delete` (le record actuel),
-                pour vérifier ce qui serait détruit avant de le faire. Pour
-                `entity="note"` (pas de get-par-id côté Folk), dégrade en
-                `{"fields": ..., "current_available": False}` (update) ou un
-                record `None` + `"current_available": False` (delete) — aperçu
-                sans le "from". Une interaction, elle, a toujours son
-                `entity_id` (les trois ops l'exigent), donc son diff est
-                toujours réel.
+            dry_run: write ops only — writes NOTHING. create: `would_create`
+                preview, zero network calls. update / add_to_group: re-reads
+                the current state and returns a diff `{"changes": {field: {"from",
+                "to"}}}` (solo) or `would_update`/`would_add` (bulk). delete:
+                re-reads each record and returns `would_delete` (the current record),
+                to check what would be destroyed before doing it. For
+                `entity="note"` (no get-by-id on Folk's side), degrades to
+                `{"fields": ..., "current_available": False}` (update) or a
+                `None` record + `"current_available": False` (delete) — preview
+                without the "from". An interaction, on the other hand, always has its
+                `entity_id` (all three ops require it), so its diff is
+                always real.
         """
         def _require_deal_group() -> None:
-            """Commun aux 5 ops qui acceptent entity="deal" (pas add_to_group,
-            qui le refuse d'entrée) : group_id d'abord (raise si absent, AVANT
-            tout appel réseau), puis résout `object_type` une seule fois si
-            l'appelant ne l'a pas donné. Ne PAS résoudre plus haut (avant le
-            dispatch par op) : `add_to_group` rejette entity="deal" sans jamais
-            avoir besoin de group_id ni de réseau — y résoudre quand même
-            ferait un appel réseau inutile avant un refus qui n'en a pas besoin
-            (vécu : cassait `test_add_to_group_deal_entity_rejected`, qui
-            n'attend aucun appel client)."""
+            """Common to the 5 ops that accept entity="deal" (not add_to_group,
+            which rejects it upfront): group_id first (raise if absent, BEFORE
+            any network call), then resolves `object_type` once if
+            the caller didn't give it. Do NOT resolve higher up (before the
+            per-op dispatch): `add_to_group` rejects entity="deal" without ever
+            needing group_id or the network — resolving there anyway
+            would make a useless network call before a refusal that doesn't need one
+            (experienced: it broke `test_add_to_group_deal_entity_rejected`, which
+            expects no client call)."""
             nonlocal object_type
             if not group_id:
-                raise _bad("group_id requis pour entity='deal'.")
+                raise _bad("group_id required for entity='deal'.")
             if object_type is None:
                 object_type = _resolve_deal_object_type(_client(), group_id)
 
-        # Un paramètre qui ne s'applique pas à CE couple (op, entity) doit être
-        # refusé, jamais ignoré : silencieusement avalé, il fait croire à un
-        # filtre appliqué ou à un parent pris en compte. C'est la même famille
-        # d'erreur que la claim corrigée en tête de module — une lecture qui
-        # rend moins que ce que l'appelant croit avoir demandé.
+        # A parameter that does not apply to THIS (op, entity) pair must be
+        # rejected, never ignored: silently swallowed, it makes the caller believe a
+        # filter was applied or a parent was taken into account. It is the same family
+        # of error as the claim corrected at the top of the module — a read that
+        # returns less than what the caller thinks they asked for.
         if when is not None and not (op == "search" and entity == "interaction"):
-            raise _bad("`when` ne vaut que pour op='search' sur "
+            raise _bad("`when` only applies to op='search' on "
                        "entity='interaction' (past | upcoming | all).")
         if entity_id is not None and not (
                 (op == "search" and entity in ("note", "reminder", "interaction",
@@ -1049,34 +1049,34 @@ def register(mcp: FastMCP) -> None:
                 or (op in ("get", "delete", "update")
                     and entity == "interaction")):
             raise _bad(
-                f"`entity_id` ne vaut pas pour op='{op}' entity='{entity}'. "
-                + ("À la création, l'entité porteuse est un CHAMP du record — "
-                   "elle peut différer d'un item à l'autre dans un lot — donc "
-                   "`item={'entity_id': 'per_…', …}`, pas un paramètre de "
-                   "l'appel." if op == "create" else
-                   "C'est l'entité PORTEUSE d'une note/interaction/tâche/"
-                   "rappel (search), ou celle qui rend une interaction "
-                   "adressable (get/update/delete). Pour lister les membres "
-                   "d'un groupe : `group_id`."))
+                f"`entity_id` does not apply to op='{op}' entity='{entity}'. "
+                + ("At creation, the owning entity is a FIELD of the record — "
+                   "it can differ from one item to another in a batch — so "
+                   "`item={'entity_id': 'per_…', …}`, not a parameter of "
+                   "the call." if op == "create" else
+                   "It is the OWNING entity of a note/interaction/task/"
+                   "reminder (search), or the one that makes an interaction "
+                   "addressable (get/update/delete). To list the members "
+                   "of a group: `group_id`."))
 
         if op == "search":
             if entity not in _SEARCH_ENTITIES:
-                raise _bad(f"op='search' : entity doit être l'un de {_SEARCH_ENTITIES}.")
+                raise _bad(f"op='search': entity must be one of {_SEARCH_ENTITIES}.")
             f = dict(filters or {})
             if entity == "interaction":
                 if f:
                     raise _bad(
-                        "op='search' entity='interaction' : Folk n'expose aucun "
-                        "filtre ici — passer `entity_id` (la personne/société "
-                        "porteuse) et, au besoin, `when`.")
+                        "op='search' entity='interaction': Folk exposes no "
+                        "filter here — pass `entity_id` (the owning person/company) "
+                        "and, if needed, `when`.")
                 _need(entity_id, "entity_id", "search (entity='interaction')")
                 c = _client()
                 bucket = when or "past"
-                # On tire `max_results + 1` par seau, pas la collection
-                # entière : Folk ne filtre pas les interactions et les sert
-                # par pages de 30, donc un contact actif en a des centaines
-                # (mesuré : >360 sur une seule fiche). Le +1 sert à SAVOIR
-                # qu'il en reste sans payer une page de plus pour le dire.
+                # We fetch `max_results + 1` per bucket, not the whole
+                # collection: Folk doesn't filter interactions and serves them
+                # in pages of 30, so an active contact has hundreds
+                # (measured: >360 on a single record). The +1 is used to KNOW
+                # that more remain without paying one more page to say so.
                 cap = max_results + 1
                 past = (c.list_past_interactions(entity_id, max_items=cap)
                         if bucket in ("past", "all") else [])
@@ -1085,18 +1085,18 @@ def register(mcp: FastMCP) -> None:
                 found = past + upcoming
                 results = found[:max_results]
                 out = {"entity": entity, "when": bucket, "count": len(results),
-                       # `count` est ici ce qui est RENDU, pas le total du
-                       # workspace : sur les autres entités on connaît le
-                       # total parce qu'on a tout tiré, ici on a délibérément
-                       # arrêté. Le dire, plutôt que de laisser lire un
-                       # `count` comme un inventaire.
+                       # `count` here is what is RETURNED, not the workspace
+                       # total: on other entities we know the
+                       # total because we fetched everything, here we deliberately
+                       # stopped. Say so, rather than letting a
+                       # `count` be read as an inventory.
                        "truncated": len(found) > max_results,
                        "results": results}
                 if bucket == "all":
-                    # Les deux listes viennent d'endpoints distincts et le
-                    # record ne dit pas de laquelle il sort : sans ce détail,
-                    # un `count` agrégé ne se relit pas. `past` est en tête,
-                    # donc la césure se déduit de la position.
+                    # The two lists come from distinct endpoints and the
+                    # record doesn't say which one it came from: without this detail,
+                    # an aggregated `count` can't be interpreted. `past` comes first,
+                    # so the split is deduced from the position.
                     n_past = min(len(past), len(results))
                     out.update(past_count=n_past,
                                upcoming_count=len(results) - n_past)
@@ -1104,16 +1104,16 @@ def register(mcp: FastMCP) -> None:
             if entity == "task":
                 if entity_id:
                     if "entity" in f:
-                        raise _bad("passer `entity_id` OU filters={'entity': …}, "
-                                   "pas les deux.")
+                        raise _bad("pass `entity_id` OR filters={'entity': …}, "
+                                   "not both.")
                     f["entity"] = entity_id
                 c = _client()
                 try:
                     found = c.list_tasks(f)
                 except ValueError as e:
-                    # Le client valide champs ET opérateurs contre la doc Folk :
-                    # sa ValueError nomme déjà ce qui existe, on la rend telle
-                    # quelle plutôt qu'en « erreur interne ».
+                    # The client validates fields AND operators against the Folk docs:
+                    # its ValueError already names what exists, we return it as
+                    # is rather than as an "internal error".
                     raise _bad(str(e))
                 return {"entity": entity, "count": len(found),
                         "results": found[:max_results]}
@@ -1123,26 +1123,26 @@ def register(mcp: FastMCP) -> None:
                 unknown = set(f) - _SUBRECORD_FILTERS
                 if unknown:
                     raise _bad(
-                        f"op='search' entity='{entity}' : filtre(s) inconnu(s) "
-                        f"{sorted(unknown)} — Folk n'expose que "
-                        f"{sorted(_SUBRECORD_FILTERS)} sur les notes/rappels.")
+                        f"op='search' entity='{entity}': unknown filter(s) "
+                        f"{sorted(unknown)} — Folk only exposes "
+                        f"{sorted(_SUBRECORD_FILTERS)} on notes/reminders.")
                 if group_id:
                     raise _bad(
-                        f"op='search' entity='{entity}' : Folk ne filtre pas les "
-                        "notes/rappels par groupe — passer "
+                        f"op='search' entity='{entity}': Folk does not filter "
+                        "notes/reminders by group — pass "
                         "filters={'entity_id': '<person/company/deal id>'}.")
             if entity == "deal":
                 _require_deal_group()
             if entity in _GROUP_ENTITIES and group_id:
-                # Appartenance à un groupe : le client traduit en filter[groups][in][id].
+                # Group membership: the client translates it to filter[groups][in][id].
                 f["groups"] = group_id
             if entity in ("person", "company", "deal"):
                 from oto.tools.folk.client import filter_params
                 try:
-                    # Validation AVANT tout appel réseau : le client refuse une
-                    # forme de filtre qu'il transformerait en non-sens (oto#146)
-                    # et sa ValueError écrit la forme attendue — rendue telle
-                    # quelle plutôt qu'en « erreur interne ».
+                    # Validation BEFORE any network call: the client rejects a
+                    # filter shape it would turn into nonsense (oto#146)
+                    # and its ValueError spells out the expected shape — returned as
+                    # is rather than as an "internal error".
                     filter_params(f)
                 except ValueError as e:
                     raise _bad(str(e))
@@ -1163,8 +1163,8 @@ def register(mcp: FastMCP) -> None:
         if op == "get":
             if entity not in _GET_ENTITIES:
                 raise _bad(
-                    f"op='get' : entity doit être l'un de {_GET_ENTITIES} — Folk "
-                    "n'a pas d'endpoint get-par-id pour les notes (les lister : "
+                    f"op='get': entity must be one of {_GET_ENTITIES} — Folk "
+                    "has no get-by-id endpoint for notes (list them: "
                     "op='search', entity='note').")
             _need(id, "id", op)
             if entity == "deal":
@@ -1176,10 +1176,10 @@ def register(mcp: FastMCP) -> None:
 
         if op == "create":
             if (item is None) == (items is None):
-                raise _bad("op='create' : fournir soit `item` (un seul record) soit "
-                           "`items` (plusieurs) — pas les deux, pas ni l'un ni l'autre.")
+                raise _bad("op='create': provide either `item` (a single record) or "
+                           "`items` (several) — not both, not neither.")
             if entity not in _CREATE_ENTITIES:
-                raise _bad(f"op='create' : entity doit être l'un de {_CREATE_ENTITIES}.")
+                raise _bad(f"op='create': entity must be one of {_CREATE_ENTITIES}.")
             if entity == "deal":
                 _require_deal_group()
             c = _client()
@@ -1202,16 +1202,16 @@ def register(mcp: FastMCP) -> None:
 
         if op == "update":
             if (id is None) == (items is None):
-                raise _bad("op='update' : fournir soit `id` (+ fields/add_to_groups/"
-                           "remove_from_groups) pour UN record, soit `items` pour "
-                           "plusieurs — pas les deux, pas ni l'un ni l'autre.")
+                raise _bad("op='update': provide either `id` (+ fields/add_to_groups/"
+                           "remove_from_groups) for ONE record, or `items` for "
+                           "several — not both, not neither.")
             if entity not in _UPDATE_ENTITIES:
-                raise _bad(f"op='update' : entity doit être l'un de {_UPDATE_ENTITIES}.")
+                raise _bad(f"op='update': entity must be one of {_UPDATE_ENTITIES}.")
             if entity in _ENTITY_ID_REQUIRED and entity_id is None and not (
                     items and all("entity_id" in it for it in items)):
-                # En lot, chaque item peut porter le sien (plusieurs
-                # interactions sur des fiches différentes) ; sinon il faut
-                # celui de l'appel.
+                # In a batch, each item may carry its own (several
+                # interactions on different records); otherwise the
+                # call's one is needed.
                 _need(entity_id, "entity_id", f"{op} (entity='{entity}')")
             if entity == "deal":
                 _require_deal_group()
@@ -1226,7 +1226,7 @@ def register(mcp: FastMCP) -> None:
 
             def _one(it):
                 if "id" not in it:
-                    raise _bad("chaque item doit contenir 'id'.")
+                    raise _bad("each item must contain 'id'.")
                 return _update_one(
                     c, entity, it["id"], fields=it.get("fields"),
                     group_id=group_id, object_type=object_type,
@@ -1246,16 +1246,16 @@ def register(mcp: FastMCP) -> None:
 
         if op == "delete":
             if (id is None) == (ids is None):
-                raise _bad("op='delete' : fournir soit `id` (un seul record) soit "
-                           "`ids` (plusieurs) — pas les deux, pas ni l'un ni l'autre.")
+                raise _bad("op='delete': provide either `id` (a single record) or "
+                           "`ids` (several) — not both, not neither.")
             if entity not in _DELETE_ENTITIES:
-                raise _bad(f"op='delete' : entity doit être l'un de {_DELETE_ENTITIES}.")
+                raise _bad(f"op='delete': entity must be one of {_DELETE_ENTITIES}.")
             if entity == "deal":
                 _require_deal_group()
             if entity in _ENTITY_ID_REQUIRED:
-                # Exigé ICI plutôt que dans `_delete_one` : sinon un dry_run
-                # sans `entity_id` rendrait un aperçu vide au lieu de dire ce
-                # qui manque, et l'appel réel échouerait juste après.
+                # Required HERE rather than in `_delete_one`: otherwise a dry_run
+                # without `entity_id` would return an empty preview instead of saying what
+                # is missing, and the real call would fail right after.
                 _need(entity_id, "entity_id", f"{op} (entity='{entity}')")
             c = _client()
             if id is not None:
@@ -1279,23 +1279,23 @@ def register(mcp: FastMCP) -> None:
 
         if op in ("mark_done", "mark_todo"):
             if entity not in _MARK_ENTITIES:
-                raise _bad(f"op='{op}' : entity doit être l'un de "
-                           f"{_MARK_ENTITIES} — seule la tâche a une notion de "
-                           "complétion (un rappel se déclenche tout seul, il "
-                           "ne se termine pas).")
+                raise _bad(f"op='{op}': entity must be one of "
+                           f"{_MARK_ENTITIES} — only the task has a notion of "
+                           "completion (a reminder triggers on its own, it "
+                           "does not complete).")
             if (id is None) == (ids is None):
-                raise _bad(f"op='{op}' : fournir soit `id` (une seule tâche) "
-                           "soit `ids` (plusieurs) — pas les deux, pas ni l'un "
-                           "ni l'autre.")
+                raise _bad(f"op='{op}': provide either `id` (a single task) "
+                           "or `ids` (several) — not both, not "
+                           "neither.")
             done = op == "mark_done"
             completed_at = (fields or {}).get("completedAt") if done else None
             unknown = set(fields or {}) - ({"completedAt"} if done else set())
             if unknown:
                 raise _bad(
-                    f"op='{op}' : champ(s) {sorted(unknown)} refusé(s) ici — "
-                    + ("seul `fields={'completedAt': …}` est accepté (défaut : "
-                       "maintenant)." if done
-                       else "cette op ne prend aucun champ."))
+                    f"op='{op}': field(s) {sorted(unknown)} rejected here — "
+                    + ("only `fields={'completedAt': …}` is accepted (default: "
+                       "now)." if done
+                       else "this op takes no fields."))
             c = _client()
             if id is not None:
                 result = _mark_one(c, id, done, completed_at=completed_at,
@@ -1315,17 +1315,17 @@ def register(mcp: FastMCP) -> None:
                     "failed": failed}
 
         if op == "add_to_group":
-            # Écrit par `_update_one(add_to_groups=[group_id])` : c'est lui qui
-            # relit les groupes actuels et réécrit l'union (`groups` est
-            # replace-all sur un PATCH Folk). Le contrat rendu à l'appelant est
-            # dans le docstring — ici on ne fait que valider et router.
+            # Written by `_update_one(add_to_groups=[group_id])`: it is the one that
+            # re-reads the current groups and rewrites the union (`groups` is
+            # replace-all on a Folk PATCH). The contract returned to the caller is
+            # in the docstring — here we only validate and route.
             _need(group_id, "group_id", op)
             if (id is None) == (ids is None):
-                raise _bad("op='add_to_group' : fournir soit `id` (un seul record) "
-                           "soit `ids` (plusieurs) — pas les deux, pas ni l'un ni "
-                           "l'autre.")
+                raise _bad("op='add_to_group': provide either `id` (a single record) "
+                           "or `ids` (several) — not both, not "
+                           "neither.")
             if entity not in _GROUP_ENTITIES:
-                raise _bad(f"op='add_to_group' : entity doit être l'un de "
+                raise _bad(f"op='add_to_group': entity must be one of "
                            f"{_GROUP_ENTITIES}.")
             c = _client()
             if id is not None:
@@ -1344,15 +1344,15 @@ def register(mcp: FastMCP) -> None:
             return {"total": len(ids), "succeeded": len(ids) - len(failed),
                     "failed": failed}
 
-        raise _bad("op doit être 'search', 'get', 'create', 'update', 'delete', "
-                   "'add_to_group', 'mark_done' ou 'mark_todo'")
+        raise _bad("op must be 'search', 'get', 'create', 'update', 'delete', "
+                   "'add_to_group', 'mark_done' or 'mark_todo'")
 
     # --- groups + group custom fields + group members -------------------------
     #
-    # Pas de "get a group" côté API Folk (seuls list/create/update existent) :
-    # le dry_run d'op="update"/"remove_member"/"update_member" relit list_groups()/
-    # list_group_members() et filtre sur l'id, même limitation déjà rencontrée
-    # sur notes/reminders (pas de filtre serveur, filtré côté client).
+    # No "get a group" on the Folk API side (only list/create/update exist):
+    # the dry_run of op="update"/"remove_member"/"update_member" re-reads list_groups()/
+    # list_group_members() and filters on the id, same limitation already met
+    # on notes/reminders (no server filter, filtered client-side).
 
     @mcp.tool()
     def folk_group(
@@ -1494,8 +1494,8 @@ def register(mcp: FastMCP) -> None:
             if visibility is not None:
                 group_fields["visibility"] = visibility
             if not group_fields:
-                raise _bad("op='update' requiert name et/ou visibility "
-                           "(pas `fields` — réservé à op='update_custom_field').")
+                raise _bad("op='update' requires name and/or visibility "
+                           "(not `fields` — reserved for op='update_custom_field').")
             c = _client()
             if dry_run:
                 current = next((g for g in c.list_groups() if g.get("id") == group_id), None)
@@ -1560,7 +1560,7 @@ def register(mcp: FastMCP) -> None:
                 current = next(
                     (m for m in c.list_group_members(group_id) if m.get("id") == user_id), None)
                 if current is None:
-                    raise _bad(f"user_id {user_id!r} introuvable dans ce groupe "
+                    raise _bad(f"user_id {user_id!r} not found in this group "
                                "(folk_group op='members').")
                 return {"dry_run": True, "would_remove": current}
             return c.remove_group_member(group_id, user_id)
@@ -1574,17 +1574,17 @@ def register(mcp: FastMCP) -> None:
                 current = next(
                     (m for m in c.list_group_members(group_id) if m.get("id") == user_id), None)
                 if current is None:
-                    raise _bad(f"user_id {user_id!r} introuvable dans ce groupe "
+                    raise _bad(f"user_id {user_id!r} not found in this group "
                                "(folk_group op='members').")
                 return {"dry_run": True, "user_id": user_id,
                          "changes": {"role": {"from": current.get("role"), "to": role}}}
             return c.update_group_member(group_id, user_id, role)
 
-        raise _bad("op doit être l'un de 'list', 'create', 'update', 'custom_fields', "
+        raise _bad("op must be one of 'list', 'create', 'update', 'custom_fields', "
                    "'get_custom_field', 'create_custom_field', 'update_custom_field', "
                    "'members', 'add_member', 'remove_member', 'update_member'")
 
-    # --- users (membres du workspace, lecture seule) ------------------------
+    # --- users (workspace members, read-only) -------------------------------
 
     @mcp.tool()
     def folk_user(op: Literal["list", "get"] = "list", user_id: str = "me") -> dict:
@@ -1605,14 +1605,14 @@ def register(mcp: FastMCP) -> None:
             return {"users": _client().list_users()}
         if op == "get":
             return _client().get_user(user_id)
-        raise _bad("op doit être 'list' ou 'get'")
+        raise _bad("op must be 'list' or 'get'")
 
     # --- webhooks -------------------------------------------------------------
     #
-    # Ressource globale (pas d'`entity`, pas de group_id/object_type, pas de
-    # mode bulk — un workspace en a peu). `dry_run` suit la même convention que
-    # `folk_record` (preview `would_create` en création, diff `changes` en
-    # update, aucun appel réseau mutant).
+    # Global resource (no `entity`, no group_id/object_type, no bulk
+    # mode — a workspace has few). `dry_run` follows the same convention as
+    # `folk_record` (`would_create` preview on create, `changes` diff on
+    # update, no mutating network call).
 
     @mcp.tool()
     def folk_webhook(
@@ -1718,8 +1718,8 @@ def register(mcp: FastMCP) -> None:
         if op == "update":
             _need(webhook_id, "webhook_id", op)
             if not fields:
-                raise _bad("op='update' requiert fields : au moins un champ à mettre "
-                           "à jour (name, targetUrl, subscribedEvents, status).")
+                raise _bad("op='update' requires fields: at least one field to "
+                           "update (name, targetUrl, subscribedEvents, status).")
             if "subscribedEvents" in fields:
                 _validate_subscribed_events(fields["subscribedEvents"])
             c = _client()
@@ -1730,4 +1730,4 @@ def register(mcp: FastMCP) -> None:
                                     for k, v in fields.items()}}
             return c.update_webhook(webhook_id, **fields)
 
-        raise _bad("op doit être 'list', 'create' ou 'update'")
+        raise _bad("op must be 'list', 'create' or 'update'")

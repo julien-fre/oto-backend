@@ -1,33 +1,33 @@
-"""Brevo — emailing & CRM via l'API PUBLIQUE v3 (clé `api-key`).
+"""Brevo — emailing & CRM via the PUBLIC v3 API (`api-key` key).
 
-Wrappe `oto.tools.brevo.BrevoClient`. Clé résolue par appel via
-`access.resolve_api_key("brevo")` — byo (clé du membre ou credential partagé de
-l'org). Pas de clé plateforme : un compte Brevo = les contacts de son propriétaire.
+Wraps `oto.tools.brevo.BrevoClient`. Key resolved per call via
+`access.resolve_api_key("brevo")` — byo (the member's key or the org's shared
+credential). No platform key: a Brevo account = its owner's contacts.
 
-⚠️ **Distinct du connecteur `brevoauto`** (automations, API privée + session
-navigateur). Même éditeur, surfaces disjointes : la clé v3 n'ouvre pas l'authoring
-d'automations, et la session navigateur n'ouvre pas ces tools.
+⚠️ **Distinct from the `brevoauto` connector** (automations, private API + browser
+session). Same vendor, disjoint surfaces: the v3 key does not open automation
+authoring, and the browser session does not open these tools.
 
-**Écritures dangereuses volontairement absentes** : envoi d'une campagne
-(`sendNow` / statut `sent`), suppression de contact / liste / campagne / template,
-purge des hard bounces. On conçoit, on mesure, on s'envoie un test — le départ d'un
-envoi de masse et les suppressions restent dans l'UI Brevo. `brevo_send_email` reste
-exposé : c'est du transactionnel unitaire, destinataires explicites.
+**Dangerous writes deliberately absent**: sending a campaign
+(`sendNow` / `sent` status), deleting a contact / list / campaign / template,
+purging hard bounces. We design, we measure, we send ourselves a test — launching
+a mass send and deletions stay in the Brevo UI. `brevo_send_email` stays
+exposed: it is single transactional sending, explicit recipients.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur brevo)** : un
-tool par OBJET métier, le verbe en paramètre `op` — `brevo_contact`, `brevo_list`
-(listes + dossiers + segments), `brevo_template`, `brevo_campaign`,
-`brevo_transactional`. Le défaut d'`op` est TOUJOURS une lecture : ce connecteur
-envoie de vrais emails, un appel sans `op` ne doit rien déclencher.
+**Consolidated surface (ADR 0047 §Amendment, applied to the brevo connector)**: one
+tool per business OBJECT, the verb in the `op` parameter — `brevo_contact`, `brevo_list`
+(lists + folders + segments), `brevo_template`, `brevo_campaign`,
+`brevo_transactional`. The default `op` is ALWAYS a read: this connector
+sends real emails, a call without `op` must trigger nothing.
 
-Trois tools restent SEULS, leurs paramètres ne recouvrant pas ceux de leurs voisins :
-- `brevo_send_email` — 11 paramètres de rédaction (`to`/`cc`/`bcc`/`sender`/
-  `html_content`/`scheduled_at`…) dont un seul (`template_id`) existe ailleurs ;
-- `brevo_import_contacts` / `brevo_export_contacts` — jobs **asynchrones** rendant
-  un `{"processId"}` (pas des données), sur des paramètres de lot (`contacts`,
-  `file_url`, `new_list`, `contact_filter`, `export_attributes`) qu'aucune autre
-  op n'utilise. Les fusionner ne ferait qu'empiler des variantes disjointes.
-`brevo_account` reste seul aussi : un seul booléen, c'est la fiche du compte.
+Three tools stay STANDALONE, their parameters not overlapping those of their neighbors:
+- `brevo_send_email` — 11 drafting parameters (`to`/`cc`/`bcc`/`sender`/
+  `html_content`/`scheduled_at`…) of which only one (`template_id`) exists elsewhere;
+- `brevo_import_contacts` / `brevo_export_contacts` — **asynchronous** jobs returning
+  a `{"processId"}` (not data), on batch parameters (`contacts`,
+  `file_url`, `new_list`, `contact_filter`, `export_attributes`) that no other
+  op uses. Merging them would only stack disjoint variants.
+`brevo_account` stays standalone too: a single boolean, it is the account sheet.
 """
 from __future__ import annotations
 
@@ -41,11 +41,11 @@ from .. import access
 from ..connectors import verify as connector_verify
 
 
-def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
-    """Sonde « tester la connexion » : la clé authentifie-t-elle vraiment ?
+def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: probe contract, unused here)
+    """"Test the connection" probe: does the key really authenticate?
 
-    `GET /account` est sans effet de bord et refusé (401) par une clé invalide.
-    Lève — le message remonte tel quel à l'UI.
+    `GET /account` has no side effect and is refused (401) by an invalid key.
+    Raises — the message bubbles up to the UI as is.
     """
     from oto.tools.brevo import BrevoClient
     BrevoClient(api_key=fields["key"]).get_account()
@@ -64,20 +64,20 @@ def register(mcp: FastMCP) -> None:
         return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
     def _need(value, name: str, op: str):
-        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
+        """Mandatory argument for THIS op — actionable error, never a fallback."""
         if value is None:
-            raise _bad(f"op='{op}' requiert {name}")
+            raise _bad(f"op='{op}' requires {name}")
         return value
 
-    # --- Compte ---------------------------------------------------------------
+    # --- Account --------------------------------------------------------------
 
     @mcp.tool()
     def brevo_account(senders: bool = True) -> dict:
-        """Compte Brevo : société, plan, crédits email/SMS restants.
+        """Brevo account: company, plan, remaining email/SMS credits.
 
         Args:
-            senders: joindre les expéditeurs vérifiés — leur `email` est requis
-                pour envoyer un email ou créer une campagne.
+            senders: include the verified senders — their `email` is required
+                to send an email or create a campaign.
         """
         client = _client()
         out: dict[str, Any] = {"account": client.get_account()}
@@ -108,51 +108,51 @@ def register(mcp: FastMCP) -> None:
         filter: Optional[str] = None,
         sort: Optional[str] = None,
     ) -> dict:
-        """Un contact Brevo — lister, lire, créer/mettre à jour, statistiques, schéma.
+        """A Brevo contact — list, read, create/update, statistics, schema.
 
-        `op` :
-        - **"list"** (défaut) : liste les contacts (paginé, **max 1000 par appel**).
-        - **"get"** : fiche d'un contact (attributs, listes, statistiques d'envoi).
-        - **"stats"** : statistiques de campagnes d'un contact (ouvertures, clics,
+        `op`:
+        - **"list"** (default): lists contacts (paginated, **max 1000 per call**).
+        - **"get"**: a contact's sheet (attributes, lists, sending statistics).
+        - **"stats"**: a contact's campaign statistics (opens, clicks,
           bounces).
-        - **"attributes"** : attributs de contact déclarés au compte (nom, catégorie,
-          type). **À lire avant d'écrire des `attributes`** : un attribut inconnu est
-          refusé. Aucun paramètre.
-        - **"upsert"** : crée un contact, ou le met à jour s'il existe
-          (`update_enabled`). Renvoie `{"id": …}` à la création, un objet vide sur
-          une mise à jour.
-        - **"update"** : met à jour un contact **existant**. Renvoie un objet vide au
-          succès. La voie pour **désinscrire d'une liste** (`unlink_list_ids`) ou
-          **blacklister** (`email_blacklisted=True`, le contact ne recevra plus rien).
+        - **"attributes"**: contact attributes declared on the account (name, category,
+          type). **Read before writing `attributes`**: an unknown attribute is
+          rejected. No parameters.
+        - **"upsert"**: creates a contact, or updates it if it exists
+          (`update_enabled`). Returns `{"id": …}` on creation, an empty object on
+          an update.
+        - **"update"**: updates an **existing** contact. Returns an empty object on
+          success. The way to **unsubscribe from a list** (`unlink_list_ids`) or
+          **blacklist** (`email_blacklisted=True`, the contact will receive nothing anymore).
 
-        Import/export de masse = `brevo_import_contacts` / `brevo_export_contacts`
-        (jobs asynchrones). Lire les contacts bloqués =
+        Bulk import/export = `brevo_import_contacts` / `brevo_export_contacts`
+        (asynchronous jobs). Reading blocked contacts =
         `brevo_transactional(op="blocked")`.
 
         Args:
-            op: list (défaut) | get | stats | attributes | upsert | update.
-            identifier: op="get"/"stats"/"update" — email par défaut ; sinon id,
-                téléphone ou EXT_ID.
+            op: list (default) | get | stats | attributes | upsert | update.
+            identifier: op="get"/"stats"/"update" — email by default; otherwise id,
+                phone or EXT_ID.
             identifier_type: `email_id` | `contact_id` | `phone_id` | `ext_id`.
-            email: op="upsert" — l'email du contact à créer/mettre à jour.
-            attributes: op="upsert"/"update" — attributs Brevo en MAJUSCULES
-                (`{"PRENOM": "Alex", "NOM": "Laporte"}`) — ils doivent exister au
-                compte (cf. op="attributes").
-            list_ids: op="upsert"/"update" — listes auxquelles inscrire le contact ;
-                op="list" — restreindre à des listes. **Exclusif avec `segment_id`.**
-            unlink_list_ids: op="update" — listes desquelles le désinscrire.
-            email_blacklisted: op="update" — `True` = blacklister.
-            update_enabled: op="upsert" — mettre à jour si le contact existe déjà.
-            ext_id: op="upsert" — identifiant externe.
-            limit: op="list" — taille de page (max 1000).
+            email: op="upsert" — the email of the contact to create/update.
+            attributes: op="upsert"/"update" — Brevo attributes in UPPERCASE
+                (`{"PRENOM": "Alex", "NOM": "Laporte"}`) — they must exist on the
+                account (see op="attributes").
+            list_ids: op="upsert"/"update" — lists to subscribe the contact to;
+                op="list" — restrict to some lists. **Mutually exclusive with `segment_id`.**
+            unlink_list_ids: op="update" — lists to unsubscribe it from.
+            email_blacklisted: op="update" — `True` = blacklist.
+            update_enabled: op="upsert" — update if the contact already exists.
+            ext_id: op="upsert" — external identifier.
+            limit: op="list" — page size (max 1000).
             offset: op="list" — pagination.
-            segment_id: op="list" — restreindre à un segment. **Exclusif avec
+            segment_id: op="list" — restrict to a segment. **Mutually exclusive with
                 `list_ids`.**
             modified_since: op="list" — ISO 8601 UTC (`2026-01-31T00:00:00.000Z`).
             created_since: op="list" — ISO 8601 UTC.
-            filter: op="list" — filtre sur attributs, opérateur `equals` SEULEMENT —
-                ex. `equals(FIRSTNAME,"Alex")`. Pas de `contains` ni `>`.
-            sort: op="list" — `asc` | `desc` (défaut `desc`, par date de création).
+            filter: op="list" — filter on attributes, `equals` operator ONLY —
+                e.g. `equals(FIRSTNAME,"Alex")`. No `contains` or `>`.
+            sort: op="list" — `asc` | `desc` (default `desc`, by creation date).
         """
         client = _client()
 
@@ -177,8 +177,8 @@ def register(mcp: FastMCP) -> None:
                 _need(identifier, "identifier", op), attributes=attributes,
                 list_ids=list_ids, unlink_list_ids=unlink_list_ids,
                 identifier_type=identifier_type, email_blacklisted=email_blacklisted)
-        raise _bad("op doit être 'list', 'get', 'stats', 'attributes', 'upsert' "
-                   "ou 'update'")
+        raise _bad("op must be 'list', 'get', 'stats', 'attributes', 'upsert' "
+                   "or 'update'")
 
     @mcp.tool()
     def brevo_import_contacts(
@@ -188,14 +188,14 @@ def register(mcp: FastMCP) -> None:
         update_existing_contacts: bool = True,
         new_list: Optional[dict] = None,
     ) -> dict:
-        """Import de masse **asynchrone**. Renvoie `{"processId": …}` (pas les contacts).
+        """**Asynchronous** bulk import. Returns `{"processId": …}` (not the contacts).
 
-        **La voie au-delà de 150 contacts** — `brevo_list(op="add")` plafonne là.
+        **The way to go beyond 150 contacts** — `brevo_list(op="add")` caps there.
 
         Args:
             contacts: `[{"email": …, "attributes": {…}}, …]`.
-            file_url: alternative — CSV distant (séparateur `;`).
-            new_list: `{"listName": …, "folderId": …}` pour créer la liste au vol.
+            file_url: alternative — remote CSV (`;` separator).
+            new_list: `{"listName": …, "folderId": …}` to create the list on the fly.
         """
         return _client().import_contacts(
             json_body=contacts, list_ids=list_ids, file_url=file_url,
@@ -204,18 +204,18 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def brevo_export_contacts(contact_filter: Optional[dict] = None,
                               export_attributes: Optional[list[str]] = None) -> dict:
-        """Export **asynchrone** des contacts. Renvoie `{"processId": …}`, pas les données.
+        """**Asynchronous** contact export. Returns `{"processId": …}`, not the data.
 
-        Pour lire des contacts directement, préférer `brevo_contact(op="list")` (paginé).
+        To read contacts directly, prefer `brevo_contact(op="list")` (paginated).
 
         Args:
             contact_filter: `{"listIds": [1]}` | `{"segmentId": 2}` |
-                `{"emailBlacklisted": true}`. Défaut = tous les contacts actifs.
+                `{"emailBlacklisted": true}`. Default = all active contacts.
         """
         return _client().export_contacts(
             contact_filter=contact_filter, export_attributes=export_attributes)
 
-    # --- Listes, dossiers, segments -------------------------------------------
+    # --- Lists, folders, segments ---------------------------------------------
 
     @mcp.tool()
     def brevo_list(
@@ -231,42 +231,42 @@ def register(mcp: FastMCP) -> None:
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
-        """Une liste de contacts Brevo — et les dossiers/segments qui l'entourent.
+        """A Brevo contact list — and the folders/segments around it.
 
-        `op` :
-        - **"list"** (défaut) : listes de contacts du compte, ou d'un dossier si
+        `op`:
+        - **"list"** (default): the account's contact lists, or those of a folder if
           `folder_id`.
-        - **"get"** : détail d'une liste — nom, dossier, nombre de contacts et de
-          blacklistés.
-        - **"contacts"** : contacts d'une liste (paginé, **max 500 par appel**).
-        - **"create"** : crée une liste. `folder_id` est **obligatoire**
-          (cf. op="folders").
-        - **"update"** : renomme une liste, ou la déplace vers un autre dossier.
-        - **"add"** / **"remove"** : ajoute ou retire des contacts **EXISTANTS**
-          d'une liste. ⚠️ **Max 150 contacts par appel**, et un SEUL type
-          d'identifiant (`emails` OU `ids`) — au-delà, l'API refuse : utiliser
-          `brevo_import_contacts`, qui crée aussi les contacts absents. Renvoie
-          `{contacts: {success: [...], failure: [...]}}` — **lire `failure`**, un
-          contact inconnu échoue sans faire échouer l'appel. `all_contacts=True`
-          (op="remove" seulement) vide la liste entière.
-        - **"folders"** : dossiers de listes. Leur `id` est requis pour op="create".
-        - **"segments"** : segments (listes dynamiques définies par un filtre).
-          Lecture seule, et l'`id` d'un segment se passe à
+        - **"get"**: a list's details — name, folder, number of contacts and of
+          blacklisted ones.
+        - **"contacts"**: a list's contacts (paginated, **max 500 per call**).
+        - **"create"**: creates a list. `folder_id` is **mandatory**
+          (see op="folders").
+        - **"update"**: renames a list, or moves it to another folder.
+        - **"add"** / **"remove"**: adds or removes **EXISTING** contacts
+          to/from a list. ⚠️ **Max 150 contacts per call**, and a SINGLE identifier
+          type (`emails` OR `ids`) — beyond that, the API refuses: use
+          `brevo_import_contacts`, which also creates missing contacts. Returns
+          `{contacts: {success: [...], failure: [...]}}` — **read `failure`**, an
+          unknown contact fails without failing the call. `all_contacts=True`
+          (op="remove" only) empties the entire list.
+        - **"folders"**: list folders. Their `id` is required for op="create".
+        - **"segments"**: segments (dynamic lists defined by a filter).
+          Read-only, and a segment's `id` is passed to
           `brevo_contact(op="list", segment_id=…)`.
 
         Args:
-            op: list (défaut) | get | contacts | create | update | add | remove |
+            op: list (default) | get | contacts | create | update | add | remove |
                 folders | segments.
-            list_id: op="get"/"contacts"/"update"/"add"/"remove" — la liste ciblée.
-            name: op="create"/"update" — nom de la liste.
-            folder_id: op="create" (obligatoire) / "update" (déplacement) /
-                "list" (filtrer sur un dossier).
-            emails: op="add"/"remove" — contacts par email (max 150).
-            ids: op="add"/"remove" — contacts par id Brevo (max 150). Exclusif
-                avec `emails`.
-            all_contacts: op="remove" — vide la liste entière.
+            list_id: op="get"/"contacts"/"update"/"add"/"remove" — the targeted list.
+            name: op="create"/"update" — the list name.
+            folder_id: op="create" (mandatory) / "update" (move) /
+                "list" (filter on a folder).
+            emails: op="add"/"remove" — contacts by email (max 150).
+            ids: op="add"/"remove" — contacts by Brevo id (max 150). Mutually exclusive
+                with `emails`.
+            all_contacts: op="remove" — empties the entire list.
             modified_since: op="contacts" — ISO 8601 UTC.
-            limit: taille de page (list, contacts, folders, segments).
+            limit: page size (list, contacts, folders, segments).
             offset: pagination (list, contacts, folders, segments).
         """
         client = _client()
@@ -296,10 +296,10 @@ def register(mcp: FastMCP) -> None:
             return client.list_folders(limit=limit, offset=offset)
         if op == "segments":
             return client.list_segments(limit=limit, offset=offset)
-        raise _bad("op doit être 'list', 'get', 'contacts', 'create', 'update', "
-                   "'add', 'remove', 'folders' ou 'segments'")
+        raise _bad("op must be 'list', 'get', 'contacts', 'create', 'update', "
+                   "'add', 'remove', 'folders' or 'segments'")
 
-    # --- Email transactionnel --------------------------------------------------
+    # --- Transactional email ---------------------------------------------------
 
     @mcp.tool()
     def brevo_send_email(
@@ -315,19 +315,19 @@ def register(mcp: FastMCP) -> None:
         tags: Optional[list[str]] = None,
         scheduled_at: Optional[str] = None,
     ) -> dict:
-        """**Envoie réellement** un email transactionnel. Renvoie `{"messageId": …}`.
+        """**Actually sends** a transactional email. Returns `{"messageId": …}`.
 
-        Deux modes exclusifs :
-        - **template** : `template_id` + `params` (variables `{{params.NOM}}`) ;
-        - **direct** : `subject` + `html_content` + `sender`.
+        Two mutually exclusive modes:
+        - **template**: `template_id` + `params` (variables `{{params.NOM}}`);
+        - **direct**: `subject` + `html_content` + `sender`.
 
-        Pour un envoi de masse à une liste, c'est une campagne — pas ce tool.
+        For a mass send to a list, that is a campaign — not this tool.
 
         Args:
-            to: `[{"email": "a@b.c", "name": "Alex"}]` — max 99 destinataires.
-            sender: `{"email": …, "name": …}`. Doit être un expéditeur **vérifié**
-                du compte (cf. `brevo_account`), sinon Brevo refuse l'envoi.
-            scheduled_at: ISO 8601 UTC, jusqu'à 72 h dans le futur.
+            to: `[{"email": "a@b.c", "name": "Alex"}]` — max 99 recipients.
+            sender: `{"email": …, "name": …}`. Must be a **verified** sender
+                of the account (see `brevo_account`), otherwise Brevo refuses the send.
+            scheduled_at: ISO 8601 UTC, up to 72 h in the future.
         """
         return _client().send_email(
             to=to, subject=subject, html_content=html_content, sender=sender,
@@ -351,41 +351,41 @@ def register(mcp: FastMCP) -> None:
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
-        """L'email transactionnel envoyé et sa délivrabilité (routes `/smtp/*`).
+        """Sent transactional email and its deliverability (`/smtp/*` routes).
 
-        `op` :
-        - **"logs"** (défaut) : emails transactionnels envoyés. Dates au format
-          `YYYY-MM-DD`. Pour savoir ce qu'un email est DEVENU (délivré, ouvert,
-          bounce), c'est op="events".
-        - **"content"** : le contenu HTML d'un envoi précis (`uuid`, renvoyé par
+        `op`:
+        - **"logs"** (default): sent transactional emails. Dates in `YYYY-MM-DD`
+          format. To know what an email BECAME (delivered, opened,
+          bounce), use op="events".
+        - **"content"**: the HTML content of a specific send (`uuid`, returned by
           op="logs").
-        - **"events"** : événements de délivrabilité — **la source de vérité par
+        - **"events"**: deliverability events — **the source of truth per
           email**.
-        - **"report"** : compteurs agrégés du transactionnel (envoyés, délivrés,
-          ouverts, clics…). `by_day=False` (défaut) = un total sur la période ;
-          `by_day=True` = une ligne par jour.
-        - **"blocked"** : contacts bloqués (hard bounce, plainte spam,
-          désinscription). Diagnostic de délivrabilité : **un contact bloqué ne
-          reçoit plus rien, silencieusement.**
-        - **"blocked_domains"** : les domaines bloqués du compte (liste simple,
-          sans pagination).
+        - **"report"**: aggregated transactional counters (sent, delivered,
+          opened, clicks…). `by_day=False` (default) = one total over the period;
+          `by_day=True` = one row per day.
+        - **"blocked"**: blocked contacts (hard bounce, spam complaint,
+          unsubscribe). Deliverability diagnostic: **a blocked contact
+          receives nothing anymore, silently.**
+        - **"blocked_domains"**: the account's blocked domains (simple list,
+          no pagination).
 
         Args:
-            op: logs (défaut) | content | events | report | blocked | blocked_domains.
-            email: op="logs"/"events" — filtrer sur un destinataire.
-            template_id: op="logs"/"events" — filtrer sur un template.
-            message_id: op="logs" — filtrer sur un message.
-            uuid: op="content" — l'uuid de l'envoi dont on veut le HTML.
+            op: logs (default) | content | events | report | blocked | blocked_domains.
+            email: op="logs"/"events" — filter on a recipient.
+            template_id: op="logs"/"events" — filter on a template.
+            message_id: op="logs" — filter on a message.
+            uuid: op="content" — the uuid of the send whose HTML you want.
             event: op="events" — `delivered` | `opened` | `clicks` | `hardBounces` |
                 `softBounces` | `spam` | `blocked` | `unsubscribed` | `invalid` |
-                `deferred` | `requests` | `error`. Omis = tous.
-            days: op="events"/"report" — fenêtre glissante en jours (alternative
-                aux dates).
+                `deferred` | `requests` | `error`. Omitted = all.
+            days: op="events"/"report" — sliding window in days (alternative
+                to the dates).
             start_date: `YYYY-MM-DD`.
             end_date: `YYYY-MM-DD`.
-            by_day: op="report" — une ligne par jour au lieu d'un total.
-            tag: op="report" — restreindre à un tag d'envoi.
-            limit: taille de page (logs, events, blocked).
+            by_day: op="report" — one row per day instead of a total.
+            tag: op="report" — restrict to a send tag.
+            limit: page size (logs, events, blocked).
             offset: pagination (logs, events, blocked).
         """
         client = _client()
@@ -408,8 +408,8 @@ def register(mcp: FastMCP) -> None:
             return client.list_blocked(domains=False, limit=limit, offset=offset)
         if op == "blocked_domains":
             return client.list_blocked(domains=True)
-        raise _bad("op doit être 'logs', 'content', 'events', 'report', 'blocked' "
-                   "ou 'blocked_domains'")
+        raise _bad("op must be 'logs', 'content', 'events', 'report', 'blocked' "
+                   "or 'blocked_domains'")
 
     @mcp.tool()
     def brevo_template(
@@ -426,29 +426,29 @@ def register(mcp: FastMCP) -> None:
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
-        """Un template transactionnel Brevo.
+        """A Brevo transactional template.
 
-        `op` :
-        - **"list"** (défaut) : les templates du compte. `template_id` → un seul,
-          avec son HTML.
-        - **"create"** : crée un template. Renvoie `{"id": …}`.
-        - **"update"** : met à jour un template (champs fournis seulement).
+        `op`:
+        - **"list"** (default): the account's templates. `template_id` → just one,
+          with its HTML.
+        - **"create"**: creates a template. Returns `{"id": …}`.
+        - **"update"**: updates a template (provided fields only).
 
         Args:
-            op: list (défaut) | create | update.
-            template_id: op="list" — n'en renvoyer qu'un (avec son HTML) ;
-                op="update" — le template ciblé (obligatoire).
-            template_name: op="create" (obligatoire) / "update" — le nom.
-            subject: op="create" (obligatoire) / "update" — l'objet de l'email.
-            sender: op="create" (obligatoire) / "update" — `{"email": …, "name": …}`,
-                expéditeur **vérifié** du compte (cf. `brevo_account`).
-            html_content: HTML du corps. Variables : `{{params.NOM}}`,
+            op: list (default) | create | update.
+            template_id: op="list" — return only one (with its HTML);
+                op="update" — the targeted template (mandatory).
+            template_name: op="create" (mandatory) / "update" — the name.
+            subject: op="create" (mandatory) / "update" — the email subject.
+            sender: op="create" (mandatory) / "update" — `{"email": …, "name": …}`,
+                **verified** sender of the account (see `brevo_account`).
+            html_content: HTML of the body. Variables: `{{params.NOM}}`,
                 `{{contact.PRENOM}}`.
-            reply_to: op="create" — adresse de réponse.
-            tag: op="create" — tag du template.
-            is_active: op="create" (défaut `True`) / "update" — actif ou non.
-            active_only: op="list" — ne lister que les templates actifs.
-            limit: op="list" — taille de page.
+            reply_to: op="create" — reply address.
+            tag: op="create" — template tag.
+            is_active: op="create" (default `True`) / "update" — active or not.
+            active_only: op="list" — list only active templates.
+            limit: op="list" — page size.
             offset: op="list" — pagination.
         """
         client = _client()
@@ -469,9 +469,9 @@ def register(mcp: FastMCP) -> None:
                 _need(template_id, "template_id", op), template_name=template_name,
                 subject=subject, sender=sender, html_content=html_content,
                 is_active=is_active)
-        raise _bad("op doit être 'list', 'create' ou 'update'")
+        raise _bad("op must be 'list', 'create' or 'update'")
 
-    # --- Campagnes email --------------------------------------------------------
+    # --- Email campaigns ----------------------------------------------------------
 
     @mcp.tool()
     def brevo_campaign(
@@ -493,45 +493,45 @@ def register(mcp: FastMCP) -> None:
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
-        """Une campagne email Brevo — concevoir, mesurer, s'envoyer un test.
+        """A Brevo email campaign — design, measure, send yourself a test.
 
-        `op` :
-        - **"list"** (défaut) : les campagnes email. `campaign_id` → une seule
-          campagne. **Le HTML est exclu des réponses** (volume) ; il reste lisible
-          dans l'UI.
-        - **"create"** : crée une campagne en **brouillon**. Renvoie `{"id": …}`.
-          Ne l'envoie pas : l'envoi (`sendNow`) n'est volontairement pas exposé —
-          le départ se déclenche depuis l'UI Brevo, après relecture. Utiliser
-          op="test" pour se l'envoyer à soi d'abord.
-        - **"update"** : met à jour une campagne **non encore envoyée**.
-        - **"test"** : ⚠️ **envoie réellement** un test de la campagne aux adresses
-          données (pas aux destinataires). Ces adresses doivent **exister comme
-          contacts** du compte Brevo, sinon l'API refuse.
-        - **"report"** : URL publique de partage d'une campagne envoyée.
-        - **"ab_test"** : résultat d'A/B test d'une campagne.
+        `op`:
+        - **"list"** (default): email campaigns. `campaign_id` → a single
+          campaign. **The HTML is excluded from responses** (volume); it remains readable
+          in the UI.
+        - **"create"**: creates a campaign as a **draft**. Returns `{"id": …}`.
+          Does not send it: sending (`sendNow`) is deliberately not exposed —
+          the send is triggered from the Brevo UI, after review. Use
+          op="test" to send it to yourself first.
+        - **"update"**: updates a campaign **not yet sent**.
+        - **"test"**: ⚠️ **actually sends** a test of the campaign to the given
+          addresses (not to the recipients). These addresses must **exist as
+          contacts** of the Brevo account, otherwise the API refuses.
+        - **"report"**: public share URL of a sent campaign.
+        - **"ab_test"**: A/B test result of a campaign.
 
         Args:
-            op: list (défaut) | create | update | test | report | ab_test.
-            campaign_id: op="list" (une seule campagne) / "update" / "test" /
-                "report" / "ab_test" — la campagne ciblée.
+            op: list (default) | create | update | test | report | ab_test.
+            campaign_id: op="list" (a single campaign) / "update" / "test" /
+                "report" / "ab_test" — the targeted campaign.
             status: op="list" — `draft` | `sent` | `queued` | `suspended` |
                 `archive` | `inProcess`.
             statistics: op="list" — `globalStats` | `linksStats` | `statsByDomain` |
-                `statsByDevice` | `statsByBrowser` — joint les stats.
-            name: op="create" (obligatoire) — nom de la campagne.
-            sender: op="create" (obligatoire) — `{"email": …, "name": …}`,
-                expéditeur **vérifié** (cf. `brevo_account`).
-            subject: op="create" — l'objet de l'email.
-            html_content: op="create" — le HTML du corps.
-            template_id: op="create" — partir d'un template plutôt que d'un
+                `statsByDevice` | `statsByBrowser` — attaches the stats.
+            name: op="create" (mandatory) — the campaign name.
+            sender: op="create" (mandatory) — `{"email": …, "name": …}`,
+                **verified** sender (see `brevo_account`).
+            subject: op="create" — the email subject.
+            html_content: op="create" — the HTML of the body.
+            template_id: op="create" — start from a template rather than an
                 `html_content`.
             recipients: op="create" — `{"listIds": [1,2], "exclusionListIds": [3]}`.
-            preview_text: op="create" — le pré-header.
-            reply_to: op="create" — adresse de réponse.
-            fields: op="update" — clés camelCase Brevo : `name`, `subject`,
+            preview_text: op="create" — the pre-header.
+            reply_to: op="create" — reply address.
+            fields: op="update" — Brevo camelCase keys: `name`, `subject`,
                 `htmlContent`, `sender`, `recipients`, `previewText`.
-            email_to: op="test" — les adresses du test (contacts existants).
-            limit: op="list" — taille de page.
+            email_to: op="test" — the test addresses (existing contacts).
+            limit: op="list" — page size.
             offset: op="list" — pagination.
         """
         client = _client()
@@ -557,5 +557,5 @@ def register(mcp: FastMCP) -> None:
         if op == "ab_test":
             return client.campaign_ab_test_result(
                 _need(campaign_id, "campaign_id", op))
-        raise _bad("op doit être 'list', 'create', 'update', 'test', 'report' "
-                   "ou 'ab_test'")
+        raise _bad("op must be 'list', 'create', 'update', 'test', 'report' "
+                   "or 'ab_test'")

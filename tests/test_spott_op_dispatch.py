@@ -145,7 +145,7 @@ def test_application_list_routes_by_job_candidate_or_listing(client):
 
 
 def test_application_list_rejects_job_and_candidate_together(client):
-    with pytest.raises(McpError, match="pas les deux"):
+    with pytest.raises(McpError, match="not both"):
         _tool("spott_application")(op="list", job_id="v1", candidate_id="c1")
     client.applications_by_job.assert_not_called()
     client.applications_by_candidate.assert_not_called()
@@ -282,16 +282,16 @@ def test_people_and_users_and_placements_stay_standalone(client):
 # --- refus & garde-fous d'écriture ---------------------------------------------
 
 @pytest.mark.parametrize("tool,ops", [
-    ("spott_candidate", "'list', 'get', 'search', 'create' ou 'update'"),
-    ("spott_job", "'list', 'get' ou 'search'"),
-    ("spott_application", "'list', 'create' ou 'move'"),
-    ("spott_note", "'list' ou 'create'"),
-    ("spott_client", "'list', 'get', 'search' ou 'contacts'"),
+    ("spott_candidate", "'list', 'get', 'search', 'create' or 'update'"),
+    ("spott_job", "'list', 'get' or 'search'"),
+    ("spott_application", "'list', 'create' or 'move'"),
+    ("spott_note", "'list' or 'create'"),
+    ("spott_client", "'list', 'get', 'search' or 'contacts'"),
 ])
 def test_unknown_op_is_refused_with_the_allowed_list(client, tool, ops):
     """Une op inconnue doit lever en NOMMANT les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être") as e:
+    with pytest.raises(McpError, match="op must be") as e:
         _tool(tool)(op="nope")
     assert ops in str(e.value)
 
@@ -356,7 +356,7 @@ def test_upstream_401_becomes_a_readable_tool_error(client):
 
     client.list_candidates.side_effect = UpstreamHTTPError(
         401, {"message": "invalid api key"}, service="spott")
-    with pytest.raises(McpError, match="clé API"):
+    with pytest.raises(McpError, match="API key"):
         _tool("spott_candidate")()
 
 

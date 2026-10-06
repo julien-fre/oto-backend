@@ -1,35 +1,35 @@
-"""Déclaration de registre du connecteur `pennylaneged`.
+"""Registry declaration of the `pennylaneged` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# pennylaneged : GED (bac documentaire) Pennylane via l'API PRIVÉE de la SPA
-# (`app.pennylane.com/companies/{cid}/dms`, cookie + CSRF tournant). DISTINCT du
-# connecteur keyé `pennylane` (API publique) : credential = session navigateur,
-# pas une clé API → l'API publique ne porte aucun scope DMS. Exécution =
-# **Browserbase** : l'user se logue 1× via Live View (`pennylaneged_connect_start`),
-# sa session persiste dans un Context = le credential (coffre). Upload =
-# control plane ici (URL S3 présignée) + PUT des octets EN LOCAL (RGPD, issue #31).
-# Expérimental (API interne RE) : hors socle, installable depuis la library.
-# **byo_org** : la session peut être configurée au niveau USER, ÉQUIPE ou ORG
-# (cas cabinet : une seule connexion Pennylane partagée par la team pour pousser
-# dans les GED clients — cascade user > groupe > org). `personal_session=True`
-# reste = catégorie « session navigateur » côté UI (orthogonal au partage).
-# Deux modules d'outils : la GED (`pennylaneged`) et la SESSION (login Live View +
-# sonde de vérification). Séparés le 2026-09-03 — la sonde de login n'a rien à voir
-# avec le bac documentaire, et les mêler avait fini par mettre 600 lignes dans un
-# fichier. L'ordre compte : `pennylaneged` est importé d'abord, `pennylaneged_session`
-# en dérive (origine + seams d'erreur).
+# pennylaneged: Pennylane GED (document tray) via the SPA's PRIVATE API
+# (`app.pennylane.com/companies/{cid}/dms`, cookie + rotating CSRF). DISTINCT from the
+# keyed `pennylane` connector (public API): credential = browser session,
+# not an API key → the public API carries no DMS scope. Execution =
+# **Browserbase**: the user logs in once via Live View (`pennylaneged_connect_start`),
+# their session persists in a Context = the credential (vault). Upload =
+# control plane here (presigned S3 URL) + PUT of the bytes LOCALLY (GDPR, issue #31).
+# Experimental (reverse-engineered internal API): outside the core set, installable from the library.
+# **byo_org**: the session can be configured at USER, TEAM or ORG level
+# (accounting-firm case: a single Pennylane connection shared by the team to push
+# into client GEDs — cascade user > group > org). `personal_session=True`
+# remains = "browser session" category on the UI side (orthogonal to sharing).
+# Two tool modules: the GED (`pennylaneged`) and the SESSION (Live View login +
+# verification probe). Split on 2026-09-03 — the login probe has nothing to do
+# with the document tray, and mixing them had ended up putting 600 lines in a
+# file. Order matters: `pennylaneged` is imported first, `pennylaneged_session`
+# derives from it (origin + error seams).
 CONNECTOR = _c(
     "pennylaneged", ["pennylaneged"], auth_modes={"byo_user", "byo_org"},
     modules=("pennylaneged", "pennylaneged_session"),
     personal_session=True, secret_kind="cookie",
     label="Pennylane GED",
-    help="bac documentaire Pennylane (session Browserbase)",
+    help="Pennylane document tray (Browserbase session)",
     publisher="Pennylane", href="https://app.pennylane.com",
 )
 
@@ -37,8 +37,8 @@ CATEGORY = "Finance"
 LOGO_DOMAIN = "pennylane.com"
 
 DESCRIPTION = (
-    "Le bac documentaire (GED) de Pennylane, via ta session Pennylane connectée "
-    "par navigateur hébergé — pas la clé API publique du connecteur "
-    "`pennylane`, qui n'a aucun accès à ces documents. Configurable au niveau "
-    "d'un utilisateur, d'une équipe ou de toute l'organisation."
+    "Pennylane's document tray (GED), via your Pennylane session connected "
+    "through a hosted browser — not the public API key of the "
+    "`pennylane` connector, which has no access to these documents. Configurable at the level "
+    "of a user, a team or the whole organization."
 )

@@ -309,7 +309,7 @@ def test_sans_acces_au_connecteur_la_lecture_est_refusee_avant_la_table(
                         lambda rid, cle: lus.append(rid))
 
     def _refus(*a, **k):
-        raise McpError(ErrorData(code=-32602, message="Aucun credential apollo"))
+        raise McpError(ErrorData(code=-32602, message="No `apollo` credential configured for you"))
     monkeypatch.setattr(access, "resolve_credential", _refus)
     monkeypatch.setattr(apollo_client, "ApolloClient", lambda **kw: MagicMock())
     m = FastMCP("t")

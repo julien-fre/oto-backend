@@ -1,44 +1,44 @@
-"""Déclaration de registre du connecteur `threecx`.
+"""Registry declaration of the `threecx` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# threecx : standard téléphonique 3CX (v20), en lecture : journal d'appels et
-# enregistrements. Multi-champs (ADR 0011), byo-only : l'adresse du standard
-# (`base_url`, une DESTINATION → garde d'egress dans `tools/threecx.py`) + UN des
-# deux accès, choisi par `auth_mode` (`field_discriminator`) — un client API
-# (`client_id`/`client_secret`, que 3CX réserve à certaines licences) ou un compte
-# utilisateur (`username`/`password`). `when=` rend chaque paire requise dans SON
-# mode seulement : la pose refuse une paire incomplète.
+# threecx: 3CX phone system (v20), read-only: call log and
+# recordings. Multi-field (ADR 0011), byo-only: the address of the phone system
+# (`base_url`, a DESTINATION → egress guard in `tools/threecx.py`) + ONE of the
+# two credentials, chosen by `auth_mode` (`field_discriminator`) — an API client
+# (`client_id`/`client_secret`, which 3CX reserves for certain licenses) or a user
+# account (`username`/`password`). `when=` makes each pair required in ITS mode
+# only: setup refuses an incomplete pair.
 AUTH_MODES = ("api_client", "user")
 
 CONNECTOR = _c(
     "threecx", ["threecx"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
-    label="3CX", help="téléphonie, en lecture : journal d'appels et enregistrements",
+    label="3CX", help="telephony, read-only: call log and recordings",
     href="https://www.3cx.com", field_discriminator="auth_mode", credential_fields=(
         CredentialField(
-            "base_url", "Adresse du standard", secret=False,
-            help="L'adresse https du client web 3CX, ex. https://votre-societe.3cx.fr"),
+            "base_url", "Phone system address", secret=False,
+            help="The https address of the 3CX web client, e.g. https://your-company.3cx.fr"),
         CredentialField(
-            "auth_mode", "Accès", secret=False, choices=AUTH_MODES,
-            help="api_client : un client API de la console d'administration 3CX "
-                 "(Intégrations > API). user : un compte 3CX."),
+            "auth_mode", "Access", secret=False, choices=AUTH_MODES,
+            help="api_client: an API client from the 3CX admin console "
+                 "(Integrations > API). user: a 3CX account."),
         CredentialField(
             "client_id", "Client ID", secret=False, when=("api_client",),
-            help="L'identifiant du client API ; son rôle borne ce qui est visible "
-                 "(System Admin pour tout le standard)."),
+            help="The API client identifier; its role bounds what is visible "
+                 "(System Admin for the whole phone system)."),
         CredentialField(
-            "client_secret", "Clé API", secret=True, when=("api_client",)),
+            "client_secret", "API key", secret=True, when=("api_client",)),
         CredentialField(
-            "username", "Identifiant du compte 3CX", secret=False, when=("user",),
-            help="Les droits de ce compte bornent ce qui est visible ; la double "
-                 "authentification doit y être désactivée."),
+            "username", "3CX account username", secret=False, when=("user",),
+            help="This account's rights bound what is visible; two-factor "
+                 "authentication must be disabled on it."),
         CredentialField(
-            "password", "Mot de passe du compte 3CX", secret=True, when=("user",),
+            "password", "3CX account password", secret=True, when=("user",),
             whitespace_significant=True),
     ),
 )
@@ -48,7 +48,7 @@ PUBLISHER = "3CX"
 LOGO_DOMAIN = "3cx.com"
 
 DESCRIPTION = (
-    "Le journal d'appels d'un standard 3CX (appelant, appelé, durée, statut) et "
-    "l'audio de ses enregistrements. En lecture seulement. Accès par un client API "
-    "ou par un compte 3CX : ses droits bornent ce qui est visible."
+    "The call log of a 3CX phone system (caller, callee, duration, status) and "
+    "the audio of its recordings. Read-only. Access through an API client "
+    "or a 3CX account: its rights bound what is visible."
 )

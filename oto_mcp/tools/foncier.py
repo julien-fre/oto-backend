@@ -1,62 +1,62 @@
-"""Foncier — données de site / parcelle / adresse (open data France, sans clé).
+"""Foncier — site / parcel / address data (French open data, no key).
 
-Regroupe au même endroit ce qui caractérise un **site** (par opposition à
-l'identité entreprise, namespace `fr`) : géocodage, cadastre, bâti existant,
-risques/ICPE, productible solaire, signaux de conso électrique, valorisation
-immobilière par comparables. Tous les clients viennent de `france-opendata`
-(open data, pas de clé).
+Groups in one place what characterizes a **site** (as opposed to company
+identity, namespace `fr`): geocoding, cadastre, existing buildings,
+risks/ICPE, solar yield, electricity consumption signals, real-estate
+valuation by comparables. All clients come from `france-opendata`
+(open data, no key).
 
-ADR 0010 (namespaces cohérents) : `foncier_icpe` (Géorisques) et les tools DVF
-étaient auparavant dispersés sous `fr` / `dvf` — regroupés ici. `foncier_permis_search`
-(Sit@del) interroge l'API DiDo `/rows` **en live** (filtre serveur commune/dept/année) —
-le pendant requêtable du productible solaire ; l'ingestion de masse via CSV national
-(276 Mo) reste réservée aux consommateurs qui croisent les sources (cf. GR), hors oto.
+ADR 0010 (coherent namespaces): `foncier_icpe` (Géorisques) and the DVF tools
+used to be scattered under `fr` / `dvf` — grouped here. `foncier_permis_search`
+(Sit@del) queries the DiDo API `/rows` **live** (server-side commune/dept/year filter) —
+the queryable counterpart of the solar yield; bulk ingestion via the national CSV
+(276 MB) stays reserved for consumers that cross sources (cf. GR), outside oto.
 
-Connecteur open-data : pas de credential. Exposé seulement si activé en DB
-(cran d'activation, ADR 0010) — register_all gate sur `connector_activation`.
+Open-data connector: no credential. Exposed only if activated in DB
+(activation notch, ADR 0010) — register_all gates on `connector_activation`.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur foncier)** : un
-tool par OBJET métier, le verbe en paramètre `op` — 14 tools JSON → 8.
+**Consolidated surface (ADR 0047 §Amendment, applied to the foncier connector)**: one
+tool per business OBJECT, the verb as an `op` parameter — 14 JSON tools → 8.
 
-⚠️ Le connecteur est en **LECTURE SEULE** : open data, aucune écriture, aucun
-crédit consommé. Aucune op n'a d'effet de bord, donc les défauts d'`op` sont des
-lectures comme le reste. Ce qui coûte ici c'est le VOLUME balayé en amont : les
-deux gardes anti-scan national sont conservées telles quelles (`foncier_permis_search`
-exige un scope commune/dept/demandeur, `foncier_conso_elec` exige un périmètre).
+⚠️ The connector is **READ-ONLY**: open data, no writes, no
+credit consumed. No op has side effects, so the `op` defaults are
+reads like the rest. What costs here is the VOLUME swept upstream: the
+two national-scan guards are kept as they were (`foncier_permis_search`
+requires a commune/dept/applicant scope, `foncier_conso_elec` requires a perimeter).
 
-| avant                          | après                                    |
+| before                         | after                                    |
 | ------------------------------ | ---------------------------------------- |
 | `foncier_reverse`              | `foncier_site(op="adresse")`             |
-| `foncier_parcelle`             | `foncier_site(op="parcelle")` — défaut   |
+| `foncier_parcelle`             | `foncier_site(op="parcelle")` — default  |
 | `foncier_bati`                 | `foncier_site(op="bati")`                |
 | `foncier_productible_solaire`  | `foncier_site(op="solaire")`             |
-| `foncier_prix_m2`              | `foncier_dvf(op="prix_m2")` — défaut     |
+| `foncier_prix_m2`              | `foncier_dvf(op="prix_m2")` — default    |
 | `foncier_comparables`          | `foncier_dvf(op="comparables")`          |
 | `foncier_comparables_adresse`  | `foncier_dvf(op="comparables_adresse")`  |
-| `foncier_dpe_adresse`          | `foncier_dpe(op="adresse")` — défaut     |
+| `foncier_dpe_adresse`          | `foncier_dpe(op="adresse")` — default    |
 | `foncier_dpe_stats`            | `foncier_dpe(op="stats")`                |
 
-`foncier_site` est keyé par le POINT : ses quatre ops prennent exactement
-`lat`/`lon` (+ `kwc` pour la seule op solaire). CINQ tools restent SEULS — leurs
-paramètres ne recouvrent pas ceux de leurs voisins, et un `oneOf` de variantes
-disjointes pèse ce que pesaient les tools séparés (le critère est l'homogénéité
-des paramètres, pas le comptage) :
-- `foncier_geocode` : clé = une adresse en texte libre (+ ses filtres CP/commune),
-  aucun `lat`/`lon` — c'est l'ENTRÉE du namespace (adresse → point), pas une
-  lecture au point ; son repli sur le code postal lui est propre ;
-- `foncier_isochrone` : partage `lat`/`lon` avec `foncier_site`, mais ajoute quatre
-  paramètres disjoints (budget temps OU distance, mode, sens) et rend une ZONE
-  (polygone) au lieu d'une caractéristique du point — il doublerait le schéma de
-  `foncier_site` pour une seule op ;
-- `foncier_permis_search` : neuf paramètres, dont l'axe DEMANDEUR (`siren`/`siret`)
-  qui n'existe nulle part ailleurs dans le namespace ;
-- `foncier_conso_elec` : scope année × périmètre × bande de MWh, deux étages de réseau ;
-- `foncier_icpe` : clé `siret` ou `code_insee` (registre Géorisques, pagination
-  propre), aucun paramètre partagé.
+`foncier_site` is keyed by the POINT: its four ops take exactly
+`lat`/`lon` (+ `kwc` for the solar op only). FIVE tools stay ALONE — their
+parameters don't overlap those of their neighbors, and a `oneOf` of disjoint
+variants weighs what the separate tools weighed (the criterion is parameter
+homogeneity, not the count):
+- `foncier_geocode`: key = a free-text address (+ its postcode/commune filters),
+  no `lat`/`lon` — it is the ENTRY of the namespace (address → point), not a
+  read at a point; its postcode fallback is its own;
+- `foncier_isochrone`: shares `lat`/`lon` with `foncier_site`, but adds four
+  disjoint parameters (time budget OR distance, mode, direction) and returns a ZONE
+  (polygon) instead of a characteristic of the point — it would double the schema of
+  `foncier_site` for a single op;
+- `foncier_permis_search`: nine parameters, including the APPLICANT axis (`siren`/`siret`)
+  which exists nowhere else in the namespace;
+- `foncier_conso_elec`: scope year × perimeter × MWh band, two grid tiers;
+- `foncier_icpe`: key `siret` or `code_insee` (Géorisques register, its own
+  pagination), no shared parameter.
 
-Les trois variantes rendues `*_app` (MCP Apps SEP-1865) sont HORS périmètre de la
-consolidation — elles renvoient un composant d'UI, pas du JSON. Leur prose nomme
-encore les tools d'avant : la table ci-dessus donne la correspondance.
+The three variants rendered `*_app` (MCP Apps SEP-1865) are OUT of the scope of the
+consolidation — they return a UI component, not JSON. Their prose still names
+the old tools: the table above gives the mapping.
 """
 from __future__ import annotations
 
@@ -68,62 +68,63 @@ from .. import output_projection
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-# Import OPTIONNEL de prefab_ui (extra `fastmcp[apps]`) au niveau MODULE — et NON
-# local à register() : les tools *_app ci-dessous annotent leur retour `-> Card`,
-# et FastMCP résout les type-hints (via get_type_hints, d'autant que
-# `from __future__ import annotations` les rend lazy) contre `fn.__globals__`,
-# le namespace MODULE. Un import local laisse `Card` indéfini au module →
-# `NameError: name 'Card' is not defined` à l'enregistrement (issue #69), ce qui
-# désactivait TOUS les tools foncier *_app en prod. S'il manque (extra `apps`
-# absent), on n'enregistre pas les *_app — les tools JSON restent (dégradation
-# gracieuse, même principe que « si le rendu échoue, utiliser le tool JSON »).
+# OPTIONAL import of prefab_ui (extra `fastmcp[apps]`) at MODULE level — and NOT
+# local to register(): the *_app tools below annotate their return `-> Card`,
+# and FastMCP resolves the type hints (via get_type_hints, especially since
+# `from __future__ import annotations` makes them lazy) against `fn.__globals__`,
+# the MODULE namespace. A local import leaves `Card` undefined at module level →
+# `NameError: name 'Card' is not defined` at registration (issue #69), which
+# disabled ALL foncier *_app tools in prod. If it's missing (extra `apps`
+# absent), the *_app tools are not registered — the JSON tools remain (graceful
+# degradation, same principle as "if rendering fails, use the JSON tool").
 try:
     from prefab_ui.components import (  # type: ignore
         Card, Column, DataTable, DataTableColumn, Heading, Text,
     )
     _PREFAB_UI_AVAILABLE = True
-# noqa: SILENT — extra `apps` absent ⇒ pas de tool *_app, les tools JSON restent
+# noqa: SILENT — extra `apps` absent ⇒ no *_app tool, the JSON tools remain
 except Exception:  # pragma: no cover - extra `apps` absent
     _PREFAB_UI_AVAILABLE = False
 
 
-# Tailles de page autorisées par l'API DiDo (Sit@del) — inliné (ex-import
-# france_opendata.sitadel, retiré au B4 : plus aucune dép directe à la lib).
+# Page sizes allowed by the DiDo API (Sit@del) — inlined (formerly imported from
+# france_opendata.sitadel, removed at B4: no direct dependency on the lib anymore).
 _DIDO_PAGE_SIZES = (10, 20, 50, 100)
 
-# Géocodage — détection « la requête porte un numéro de voie » ("227 rue X"), ce qui
-# rend l'absence de candidat `housenumber` suspecte plutôt que normale.
+# Geocoding — detects "the query carries a street number" ("227 rue X"), which
+# makes the absence of a `housenumber` candidate suspicious rather than normal.
 _NUMBERED_ADDRESS_RE = re.compile(r"^\s*\d{1,4}\s*(?:bis|ter|quater)?\s+\S", re.I)
 _POSTCODE_RE = re.compile(r"\b\d{5}\b")
 
 
-# Ops de chaque tool consolidé. SOURCE UNIQUE : la validation d'entrée ET le
-# message de refus en dérivent (`_ops_error`), donc une op ajoutée ne peut pas
-# être acceptée sans être annoncée à l'agent, ni l'inverse.
+# Ops of each consolidated tool. SINGLE SOURCE: input validation AND the
+# refusal message derive from it (`_ops_error`), so an added op can't be
+# accepted without being announced to the agent, nor the reverse.
 _SITE_OPS = ("parcelle", "bati", "solaire", "adresse")
 _DVF_OPS = ("prix_m2", "comparables", "comparables_adresse")
 _DPE_OPS = ("adresse", "stats", "tertiaire")
 
-# `years` n'a PAS le même défaut selon l'op DVF (2 ans pour les mutations brutes
-# d'une commune, 3 pour les stats et le voisinage d'une adresse) : le paramètre
-# fusionné vaut donc `None` par défaut et se résout ici, pour ne changer le
-# comportement d'AUCUNE des trois lectures.
+# `years` does NOT have the same default depending on the DVF op (2 years for the raw
+# mutations of a commune, 3 for the stats and the neighborhood of an address): the
+# merged parameter is therefore `None` by default and resolved here, so as to change
+# the behavior of NONE of the three reads.
 _DVF_YEARS_DEFAULT = {"prix_m2": 3, "comparables": 2, "comparables_adresse": 3}
 
-# Fichiers Sit@del servis par DiDo. SOURCE UNIQUE : le refus d'un `kind` inconnu en
-# dérive. Sans ce contrôle, la valeur partait telle quelle jusqu'à la lib, dont le
-# `ValueError` remontait en 500 opaque — indiscernable d'une vraie panne.
+# Sit@del files served by DiDo. SINGLE SOURCE: the refusal of an unknown `kind`
+# derives from it. Without this check, the value went as-is down to the lib, whose
+# `ValueError` surfaced as an opaque 500 — indistinguishable from a real outage.
 _PERMIS_KINDS = ("logements", "locaux", "amenager")
 
-# Plafond DUR des sources ADEME DataFair (BEGES, DPE tertiaire) : `size` y est borné
-# à 10 000 côté serveur, sans le dire. On l'annonce plutôt que de le laisser découvrir.
+# HARD cap of the ADEME DataFair sources (BEGES, tertiary DPE): `size` is bounded
+# to 10,000 server-side, without saying so. We announce it rather than let it be discovered.
 _SOURCE_SIZE_CAP = 10_000
 
-# Libellés EXACTS du secteur d'activité ERP du DPE tertiaire (ADEME). La source
-# filtre en phrase exacte (`secteur_activite:"…"`), pas en texte libre : une valeur
-# approchante rend 0, indiscernable d'un vrai vide. Relevé le 2026-09-09 sur
-# `values_agg` du dataset j9ol0fwjqckyf49vr29nknbu (32 valeurs, ~560 k diagnostics) ;
-# se rafraîchit par ce même appel si l'ADEME en ajoute.
+# EXACT labels of the ERP activity sector of the tertiary DPE (ADEME). The source
+# filters on the exact phrase (`secteur_activite:"…"`), not free text: an
+# approximate value returns 0, indistinguishable from a real empty. Taken on 2026-09-09 from
+# `values_agg` of dataset j9ol0fwjqckyf49vr29nknbu (32 values, ~560k diagnostics);
+# refreshed by that same call if ADEME adds some. These are French DATA values
+# matched at runtime: kept in French.
 _DPE_TERTIAIRE_SECTEURS = (
     "M : Magasins de vente, centres commerciaux",
     "autres tertiaires non ERP",
@@ -162,15 +163,15 @@ _DPE_TERTIAIRE_SECTEURS = (
 
 
 def _secteur_tertiaire(valeur: str) -> str:
-    """Résout `secteur` vers un libellé ERP EXACT, ou refuse en les nommant.
+    """Resolves `secteur` to an EXACT ERP label, or refuses by naming them.
 
-    La source ne fait PAS de recherche libre : elle compare la phrase entière. Les
-    trois exemples que cette doc servait ("hospital", "enseignement", "bureaux")
-    rendaient donc 0, et ce zéro était indiscernable d'un secteur sans diagnostic.
-    Un filtre qui ne mord pas doit le dire — il ne peut pas rendre un vide crédible.
+    The source does NOT do free search: it compares the whole phrase. The three
+    examples this doc used to give ("hospital", "enseignement", "bureaux") therefore
+    returned 0, and that zero was indistinguishable from a sector with no diagnostic.
+    A filter that doesn't bite must say so — it can't return a credible empty.
 
-    Un mot ambigu n'est pas tranché à notre place : "bureaux" désigne trois libellés
-    (159 000 lignes réparties), on les nomme et l'appelant choisit.
+    An ambiguous word is not settled on our behalf: "bureaux" designates three labels
+    (159,000 rows spread across them), we name them and the caller chooses.
     """
     v = (valeur or "").strip()
     exact = {s.casefold(): s for s in _DPE_TERTIAIRE_SECTEURS}
@@ -193,13 +194,13 @@ def _secteur_tertiaire(valeur: str) -> str:
 
 
 def _borne(limit: Optional[int]) -> int:
-    """`limit` effectivement demandé à la source.
+    """`limit` actually requested from the source.
 
-    `limit <= 0` veut dire « sans plafond » partout dans ce namespace — c'était vrai
-    de `foncier_conso_elec` mais pas de `foncier_dpe(op="tertiaire")`, où `-1` partait
-    tel quel en taille de page et rendait UNE ligne (donc `total: 1`, qui se lisait
-    comme « ce département n'a qu'un diagnostic »). Le même paramètre ne peut pas
-    vouloir dire deux choses.
+    `limit <= 0` means "no cap" everywhere in this namespace — that was true
+    of `foncier_conso_elec` but not of `foncier_dpe(op="tertiaire")`, where `-1` went
+    as-is as the page size and returned ONE row (hence `total: 1`, which read
+    as "this département has only one diagnostic"). The same parameter can't
+    mean two things.
     """
     if limit is None or limit <= 0:
         return _SOURCE_SIZE_CAP
@@ -207,12 +208,12 @@ def _borne(limit: Optional[int]) -> int:
 
 
 def _marquer_troncature(res: dict, borne: int, compte: Optional[int] = None) -> dict:
-    """Nomme la coupe quand `total` a saturé sur la borne.
+    """Names the cut when `total` has saturated on the bound.
 
-    `total` de ces lectures est le nombre de lignes RENDUES, jamais la population :
-    il sature sur `limit` sans qu'aucun champ ne le dise, et un appelant qui garde le
-    défaut lit une troncature comme un compte. Une coupe qui ne se nomme pas est un
-    faux chiffre, pas une réponse partielle.
+    `total` in these reads is the number of rows RETURNED, never the population:
+    it saturates on `limit` without any field saying so, and a caller who keeps the
+    default reads a truncation as a count. A cut that isn't named is a
+    false figure, not a partial answer.
     """
     if not isinstance(res, dict):
         return res
@@ -220,38 +221,38 @@ def _marquer_troncature(res: dict, borne: int, compte: Optional[int] = None) -> 
     tronque = isinstance(n, int) and n >= borne
     res["tronque"] = tronque
     if tronque:
-        plafond = ", plafond dur de la source" if borne >= _SOURCE_SIZE_CAP else ""
-        # ⚠️ **Quand la coupe porte sur un AUTRE compte que `total`, le dire — sinon
-        # l'avertissement ment lui aussi** (#859, 10/09/2026). Sur une lecture avec
-        # seuillage, la borne tombe sur les lignes LUES et `total` ne compte que les
-        # retenues : un `total: 2` avec `lignes_lues: 60` annonçait « total = 60 est
-        # le nombre de lignes RENDUES », deux fois faux. Mesuré sur un département
-        # entier : 2 annoncés, 61 réels — un gisement faux à 97 %, sous un
-        # avertissement censé sauver la mise.
+        plafond = ", hard cap of the source" if borne >= _SOURCE_SIZE_CAP else ""
+        # ⚠️ **When the cut applies to a DIFFERENT count than `total`, say so — otherwise
+        # the warning lies too** (#859, 2026-09-10). On a read with
+        # thresholding, the bound falls on the rows READ and `total` only counts the
+        # retained ones: a `total: 2` with `lignes_lues: 60` announced "total = 60 is
+        # the number of rows RETURNED", wrong twice. Measured on a whole
+        # département: 2 announced, 61 real — a deposit wrong by 97%, under a
+        # warning meant to save the stake.
         retenus = res.get("total")
         if compte is not None and isinstance(retenus, int) and retenus != n:
             res["avertissement_troncature"] = (
-                f"{n} lignes ont été LUES et la coupe est tombée là ({borne}"
-                f"{plafond}) — en AMONT du seuillage. `total` = {retenus} ne compte "
-                f"que les lignes retenues PARMI ces {n} : ce n'est ni la population "
-                f"ni un compte de ce qui existe. Relancer avec `limit=-1` pour "
-                f"connaître le gisement réel."
+                f"{n} rows were READ and the cut fell there ({borne}"
+                f"{plafond}) — UPSTREAM of the thresholding. `total` = {retenus} only counts "
+                f"the rows retained AMONG these {n}: it is neither the population "
+                f"nor a count of what exists. Rerun with `limit=-1` to "
+                f"learn the real size."
             )
         else:
             res["avertissement_troncature"] = (
-                f"`total` = {n} est le nombre de lignes RENDUES, pas la population : "
-                f"la coupe est tombée sur la borne ({borne}{plafond}). Resserrer les "
-                "filtres ou monter `limit` — ne pas lire ce chiffre comme un compte."
+                f"`total` = {n} is the number of rows RETURNED, not the population: "
+                f"the cut fell on the bound ({borne}{plafond}). Tighten the "
+                "filters or raise `limit` — don't read this figure as a count."
             )
     return res
 
 
 def _annee_servie(transport: dict) -> Optional[str]:
-    """Le millésime RÉELLEMENT rendu, lu sur les lignes — pas celui qu'on a demandé.
+    """The vintage ACTUALLY returned, read from the rows — not the one requested.
 
-    `/api/foncier/odre/conso` ré-écho l'année demandée dans `annee`, même quand elle
-    n'existe pas dans la source : comparer ce champ à la demande, c'est comparer une
-    valeur à elle-même. La seule attestation d'un millésime est portée par les lignes.
+    `/api/foncier/odre/conso` re-echoes the requested year in `annee`, even when it
+    doesn't exist in the source: comparing that field to the request is comparing a
+    value to itself. The only attestation of a vintage is carried by the rows.
     """
     for sig in (transport.get("signals") or []):
         an = sig.get("annee")
@@ -261,63 +262,63 @@ def _annee_servie(transport: dict) -> Optional[str]:
 
 
 def _millesime(transport: Optional[dict], annee: str, reseau: str) -> Optional[str]:
-    """Nomme ce que l'étage transport n'a pas rendu, et pourquoi il a pu ne rien rendre.
+    """Names what the transmission tier didn't return, and why it may have returned nothing.
 
-    Un zéro d'étage se lit « aucun site raccordé au transport » alors qu'il veut dire
-    aussi souvent « ce millésime n'existe pas encore ». ODRÉ retarde sur Enedis, et
-    l'année courante est justement celle qu'un appelant choisit naturellement côté
-    distribution : croiser les deux efface tout l'étage transport sans un mot.
+    A tier zero reads as "no site connected to transmission" when it just as often
+    means "this vintage doesn't exist yet". ODRÉ lags behind Enedis, and
+    the current year is exactly the one a caller naturally picks on the
+    distribution side: crossing the two erases the whole transmission tier without a word.
     """
     if reseau not in ("transport", "les_deux") or not isinstance(transport, dict):
         return None
     demandee = str(annee)[:4]
     if not transport.get("total"):
-        # Le service peut rendre les millésimes qu'il a (champ additif) : s'il le fait,
-        # on NOMME l'année à rejouer au lieu de la faire deviner. S'il ne le fait pas,
-        # on dit quand même que le zéro est ambigu — on n'invente aucune année.
+        # The service may return the vintages it has (additive field): if it does,
+        # we NAME the year to replay instead of making the caller guess. If it doesn't,
+        # we still say the zero is ambiguous — we invent no year.
         dispo = transport.get("annees_disponibles") or []
-        connu = (" Millésimes réellement servis par ODRÉ : "
+        connu = (" Vintages actually served by ODRÉ: "
                  + ", ".join(str(a) for a in dispo) + ".") if dispo else ""
         return (
-            f"étage transport (ODRÉ/RTE) : 0 ligne pour {demandee}. Ce jeu retarde sur "
-            "Enedis — un zéro ici veut dire « millésime absent de la source » aussi "
-            "souvent que « aucun site raccordé au réseau de transport ». Ne pas lire ce "
-            "résultat comme un périmètre complet ; rejouer sur un millésime que la "
-            f"source porte avant de conclure.{connu}"
+            f"transmission tier (ODRÉ/RTE): 0 rows for {demandee}. This dataset lags behind "
+            "Enedis — a zero here means \"vintage absent from the source\" as "
+            "often as \"no site connected to the transmission grid\". Don't read this "
+            "result as a complete perimeter; replay on a vintage the "
+            f"source carries before concluding.{connu}"
         )
     servie = _annee_servie(transport)
     if servie and servie != demandee:
         return (
-            f"distribution {demandee} vs transport {servie} — les deux étages ne sont "
-            "pas alignés, ne pas sommer sans le dire"
+            f"distribution {demandee} vs transmission {servie} — the two tiers are "
+            "not aligned, don't sum without saying so"
         )
     return None
 
 
-# Rubriques de la nomenclature ICPE dont l'activité EST une consommation d'énergie.
-# Sert à LIRE une fiche, pas à mesurer : la quantité déclarée porte sur l'activité
-# classée (m³ stockés, MW installés…), jamais sur des kWh. C'est ce que l'API donne
-# de plus proche d'un « gros consommateur » quand la conso réseau manque — une
-# présomption sourcée par son codeAIOT, au même titre que le régime ou le statut IED.
+# Headings of the ICPE nomenclature whose activity IS an energy consumption.
+# Used to READ a record, not to measure: the declared quantity relates to the classified
+# activity (m³ stored, MW installed…), never to kWh. It's the closest the API gets
+# to a "large consumer" when grid consumption is missing — a presumption sourced by its
+# codeAIOT, just like the regime or the IED status.
 _RUBRIQUES_ENERGIE = {
-    "2910": "combustion (chaudières, moteurs)",
+    "2910": "combustion (boilers, engines)",
     "3110": "combustion ≥ 50 MW (IED)",
-    "2915": "chauffage par fluides caloporteurs",
-    "2920": "compression et réfrigération",
-    "2921": "refroidissement évaporatif (tours aéroréfrigérantes)",
-    "4735": "ammoniac — froid industriel",
-    "1185": "fluides frigorigènes fluorés — froid",
+    "2915": "heating by heat-transfer fluids",
+    "2920": "compression and refrigeration",
+    "2921": "evaporative cooling (cooling towers)",
+    "4735": "ammonia — industrial cooling",
+    "1185": "fluorinated refrigerants — cooling",
 }
 
 _ICPE_MAX_RUBRIQUES = 10
 
 
 def _compact_rubriques(brutes: list) -> tuple[list, list, bool]:
-    """Rubriques déclarées d'une fiche ICPE, les « énergie » d'abord.
+    """Declared headings of an ICPE record, the "energy" ones first.
 
-    Rend `(rubriques, rubriques_energie, tronquees)`. Une fiche de gros site en
-    porte parfois trente : on plafonne, mais en faisant PASSER DEVANT celles qui
-    portent le signal — sinon la troncature mange précisément ce qu'on cherche.
+    Returns `(rubriques, rubriques_energie, tronquees)`. A large-site record
+    sometimes carries thirty: we cap, but by putting AHEAD those that
+    carry the signal — otherwise truncation eats precisely what we're looking for.
     """
     rubriques = [
         {
@@ -345,7 +346,7 @@ def _compact_rubriques(brutes: list) -> tuple[list, list, bool]:
 
 def _ops_error(ops: tuple[str, ...]) -> str:
     quoted = [f"'{o}'" for o in ops]
-    return "op doit être " + ", ".join(quoted[:-1]) + f" ou {quoted[-1]}"
+    return "op must be " + ", ".join(quoted[:-1]) + f" ou {quoted[-1]}"
 
 
 def _bad(msg: str) -> McpError:
@@ -353,15 +354,15 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable qui NOMME l'op et
-    l'argument, jamais un fallback.
+    """Mandatory argument for THIS op — actionable error that NAMES the op and
+    the argument, never a fallback.
 
-    Une valeur VIDE compte comme absente : `adresse=""` sur `op='comparables_adresse'`
-    partirait géocoder le vide et rendrait un voisinage arbitraire, qui passerait
-    pour une réponse.
+    An EMPTY value counts as absent: `adresse=""` on `op='comparables_adresse'`
+    would go geocode nothing and return an arbitrary neighborhood, which would pass
+    for an answer.
     """
     if value is None or (isinstance(value, (str, list)) and not value):
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
@@ -373,10 +374,10 @@ def register(mcp: FastMCP) -> None:
     from ..fod import foncier as fod_foncier
     from ..fod import urba as fod_urba  # georisques (ICPE) — servi par FOD depuis B3
 
-    # Données de site servies par le service FOD dédié (ADR 0028) — le backend
-    # n'exécute plus ces appels in-process. Objets proxy à surface identique aux
-    # clients france_opendata (mêmes méthodes/signatures) → seuls ces bindings
-    # changent, les corps des tools restent inchangés.
+    # Site data served by the dedicated FOD service (ADR 0028) — the backend
+    # no longer runs these calls in-process. Proxy objects with a surface identical to the
+    # france_opendata clients (same methods/signatures) → only these bindings
+    # change, the tool bodies remain unchanged.
     ban = fod_foncier.ban
     cadastre = fod_foncier.cadastre
     bdtopo = fod_foncier.bdtopo
@@ -391,10 +392,10 @@ def register(mcp: FastMCP) -> None:
     dvf = fod_foncier.dvf
     dpe = fod_foncier.dpe
     sitadel = fod_foncier.sitadel
-    # georisques (ICPE) : servi par FOD (B3), partagé avec urba — même proxy.
+    # georisques (ICPE): served by FOD (B3), shared with urba — same proxy.
     georisques = fod_urba.georisques
 
-    # --- géocodage (BAN — Base Adresse Nationale) ----------------------------
+    # --- geocoding (BAN — Base Adresse Nationale) ----------------------------
 
     @mcp.tool()
     def foncier_geocode(
@@ -430,10 +431,10 @@ def register(mcp: FastMCP) -> None:
         res = ban.search(adresse, limit=limit, postcode=code_postal, citycode=code_commune)
         if not _NUMBERED_ADDRESS_RE.match(adresse) or _has_housenumber(res):
             return res
-        # Le code postal se cache à DEUX endroits : l'argument et la chaîne. Mesuré sur
-        # le cas #324 (« 227 rue Saint-Fuscien 80000 Amiens ») — retirer le seul argument
-        # ne change rien, c'est le CP écrit dans le texte qui écrase le tronçon ; sans lui
-        # la BAN rend le bon numéro à 0.98 au lieu d'une locality à 0.57.
+        # The postcode hides in TWO places: the argument and the string. Measured on
+        # case #324 ("227 rue Saint-Fuscien 80000 Amiens") — removing the argument alone
+        # changes nothing, it's the postcode written in the text that overrides the stretch; without it
+        # the BAN returns the right number at 0.98 instead of a locality at 0.57.
         relaxed = " ".join(_POSTCODE_RE.sub(" ", adresse).split())
         if relaxed != adresse or code_postal:
             retry = ban.search(relaxed, limit=limit, postcode=None, citycode=code_commune)
@@ -441,7 +442,7 @@ def register(mcp: FastMCP) -> None:
                 return [{**c, "relaxed": "postcode"} for c in retry]
         return [{**c, "warning": "no_housenumber_match"} for c in res]
 
-    # --- le site au point : adresse / cadastre / bâti / solaire ---------------
+    # --- the site at a point: address / cadastre / buildings / solar ---------------
 
     @mcp.tool()
     def foncier_site(
@@ -497,12 +498,12 @@ def register(mcp: FastMCP) -> None:
             return bdtopo.bati_parcelle(
                 parcelle["geometry"], contenance_m2=parcelle.get("contenance_m2"))
 
-        # Structurellement inatteignable (garde d'entrée ci-dessus) — filet contre
-        # un `return None` implicite si une op était ajoutée à `_SITE_OPS` sans sa
-        # branche : mieux vaut refuser que rendre « rien » pour un succès.
+        # Structurally unreachable (input guard above) — a safety net against
+        # an implicit `return None` if an op were added to `_SITE_OPS` without its
+        # branch: better to refuse than to return "nothing" as a success.
         raise _bad(_ops_error(_SITE_OPS))
 
-    # --- isochrone / zone de chalandise (IGN Géoplateforme) ------------------
+    # --- isochrone / catchment area (IGN Géoplateforme) ------------------
 
     @mcp.tool()
     def foncier_isochrone(lat: float, lon: float, minutes: Optional[float] = None,
@@ -527,10 +528,10 @@ def register(mcp: FastMCP) -> None:
         return ign.isochrone(lat, lon, minutes=minutes, metres=metres,
                              profile=prof, direction=direction)
 
-    # --- permis d'urbanisme (Sit@del / SDES, API DiDo live) ------------------
+    # --- planning permits (Sit@del / SDES, live DiDo API) ------------------
 
     def _snap_page_size(limit: int) -> int:
-        """Cale `limit` sur une taille de page DiDo autorisée (10/20/50/100)."""
+        """Snaps `limit` to an allowed DiDo page size (10/20/50/100)."""
         return next((s for s in _DIDO_PAGE_SIZES if s >= limit), _DIDO_PAGE_SIZES[-1])
 
     @mcp.tool()
@@ -587,15 +588,15 @@ def register(mcp: FastMCP) -> None:
         """
         if kind not in _PERMIS_KINDS:
             raise _bad(
-                f"kind={kind!r} n'est pas un fichier Sit@del. Valeurs admises : "
+                f"kind={kind!r} is not a Sit@del file. Allowed values: "
                 + ", ".join(f"'{k}'" for k in _PERMIS_KINDS)
-                + ". (Une valeur hors énumération partait jusqu'à la source et "
-                "revenait en 500 opaque, impossible à distinguer d'une panne.)"
+                + ". (A value outside the enumeration used to go all the way to the source and "
+                "come back as an opaque 500, impossible to tell apart from an outage.)"
             )
         if not code_commune and not dept and not siren and not siret:
             raise ValueError(
-                "Renseigner `code_commune`, `dept`, `siren` ou `siret` "
-                "(un scan national sans filtre est proscrit)."
+                "Provide `code_commune`, `dept`, `siren` or `siret` "
+                "(an unfiltered national scan is prohibited)."
             )
         page_size = _snap_page_size(max(1, limit))
         res = sitadel.search(
@@ -613,7 +614,7 @@ def register(mcp: FastMCP) -> None:
         res["kind"] = kind
         return res
 
-    # --- consommation électrique par adresse (Enedis) ------------------------
+    # --- electricity consumption by address (Enedis) ------------------------
 
     @mcp.tool()
     def foncier_conso_elec(
@@ -712,8 +713,8 @@ def register(mcp: FastMCP) -> None:
                     annee, dept=dept, code_commune=code_commune, code_epci=code_epci,
                     naf2=naf2, secteur=secteur, min_mwh=min_mwh, limit=limit,
                 )
-                # Ici la coupe porte sur les LIGNES lues, avant l'agrégation en sites
-                # et avant `min_mwh` : `total` (des sites) ne peut pas la révéler.
+                # Here the cut applies to the ROWS read, before aggregation into sites
+                # and before `min_mwh`: `total` (of sites) can't reveal it.
                 _marquer_troncature(out["distribution"], _borne(limit),
                                     compte=out["distribution"].get("lignes_lues"))
             else:
@@ -723,11 +724,11 @@ def register(mcp: FastMCP) -> None:
                     min_mwh=min_mwh, max_mwh=max_mwh, limit=limit,
                 )
         if reseau in ("transport", "les_deux"):
-            # `site_unique=True` (défaut de la lib) ne garde que les IRIS à UN point de
-            # livraison. Le tool le forçait sans l'exposer : les IRIS agrégés — 59 % des
-            # MWh du transport, dont le premier consommateur de France — étaient donc
-            # invisibles, et Saint-Jean-de-Maurienne rendait 0 alors que la donnée existe.
-            # La maille de l'appelant gouverne les deux étages, avec le même sens.
+            # `site_unique=True` (the lib's default) only keeps the IRIS with ONE delivery
+            # point. The tool forced it without exposing it: aggregated IRIS — 59% of
+            # transmission MWh, including France's top consumer — were therefore
+            # invisible, and Saint-Jean-de-Maurienne returned 0 though the data exists.
+            # The caller's grain governs both tiers, with the same meaning.
             out["transport"] = odre.consommation_transport(
                 annee, dept=dept, code_commune=code_commune, min_mwh=min_mwh,
                 site_unique=(maille == "site"), limit=limit,
@@ -736,7 +737,7 @@ def register(mcp: FastMCP) -> None:
         out["avertissement_millesime"] = _millesime(out.get("transport"), annee, reseau)
         return out
 
-    # --- risques industriels / ICPE (Géorisques) — repris de `fr` ------------
+    # --- industrial risks / ICPE (Géorisques) — taken over from `fr` ------------
 
     _ICPE_KEEP = (
         "raisonSociale", "siret", "adresse1", "codePostal", "codeInsee", "commune",
@@ -825,9 +826,9 @@ def register(mcp: FastMCP) -> None:
             return output_projection.project(res, items_path="signaux", fields=fields)
         refuses = [n for n, v in (("departement", departement), ("polluant", polluant)) if v]
         if refuses:
-            raise _bad(f"op='installations' n'accepte pas {', '.join(refuses)} (réservé à op='emissions')")
+            raise _bad(f"op='installations' does not accept {', '.join(refuses)} (reserved for op='emissions')")
         if not siret and not code_insee:
-            raise _bad("op='installations' requiert siret ou code_insee")
+            raise _bad("op='installations' requires siret or code_insee")
         res = georisques.installations_classees(siret=siret, code_insee=code_insee, page=page)
         return output_projection.project({
             "results": res.get("results", 0),
@@ -883,12 +884,12 @@ def register(mcp: FastMCP) -> None:
         )
         if full:
             return res
-        # `raw` recopie la ligne BDNB dont chaque colonne est déjà rendue, remise en
-        # forme, dans le même enregistrement : de la duplication pure, que le défaut
-        # retire (ADR 0047).
+        # `raw` copies the BDNB row whose every column is already returned, reshaped,
+        # in the same record: pure duplication, which the default
+        # removes (ADR 0047).
         return output_projection.project(res, items_path="signaux", item_drop=("raw",))
 
-    # --- valorisation immobilière (DVF+ Cerema, depuis 2014) — repris de `dvf` -
+    # --- real-estate valuation (DVF+ Cerema, since 2014) — taken over from `dvf` -
 
     @mcp.tool()
     def foncier_dvf(
@@ -982,7 +983,7 @@ def register(mcp: FastMCP) -> None:
 
         raise _bad(_ops_error(_DVF_OPS))
 
-    # --- performance énergétique (DPE, ADEME) --------------------------------
+    # --- energy performance (DPE, ADEME) --------------------------------
 
     @mcp.tool()
     def foncier_dpe(
@@ -1071,7 +1072,7 @@ def register(mcp: FastMCP) -> None:
 
         raise _bad(_ops_error(_DPE_OPS))
 
-    # --- bilans GES déclarés (BEGES, ADEME) ---------------------------------
+    # --- declared GHG assessments (BEGES, ADEME) ---------------------------------
 
     @mcp.tool()
     def foncier_beges(
@@ -1134,36 +1135,36 @@ def register(mcp: FastMCP) -> None:
                            departement=departement, obligee=obligee, size=borne)
         return _marquer_troncature(res, borne)
 
-    # --- MCP Apps : variantes à interface rendue (SEP-1865) ------------------
-    # Quelques tools "flagship" *_app qui renvoient une UI (carte + table) rendue
-    # par le host (Claude.ai, iframe sandbox) au lieu de JSON brut — utile quand
-    # l'utilisateur veut VOIR une synthèse de site / des comparables.
+    # --- MCP Apps: variants with a rendered interface (SEP-1865) ------------------
+    # A few "flagship" *_app tools that return a UI (map + table) rendered
+    # by the host (Claude.ai, sandboxed iframe) instead of raw JSON — useful when
+    # the user wants to SEE a site summary / comparables.
     #
-    # Import OPTIONNEL de prefab_ui (extra `fastmcp[apps]`) : s'il manque (venv
-    # editable pas réinstallé), on n'enregistre simplement PAS ces tools — les
-    # tools JSON ci-dessus restent disponibles (dégradation gracieuse, même
-    # principe que « si le rendu échoue, utiliser les tools JSON équivalents »).
+    # OPTIONAL import of prefab_ui (extra `fastmcp[apps]`): if it's missing (editable
+    # venv not reinstalled), we simply do NOT register these tools — the JSON
+    # tools above remain available (graceful degradation, same
+    # principle as "if rendering fails, use the equivalent JSON tools").
     if not _PREFAB_UI_AVAILABLE:
         return
 
-    # Libellés FR curés pour les clés connues ; sinon on humanise la clé brute,
-    # ce qui rend les renderers robustes à la forme exacte renvoyée par les
-    # clients france_opendata (pas de dépendance dure à un nom de champ).
+    # Curated labels for the known keys; otherwise we humanize the raw key,
+    # which makes the renderers robust to the exact shape returned by the
+    # france_opendata clients (no hard dependency on a field name).
     _LABELS = {
-        "label": "Adresse", "score": "Score géocodage", "citycode": "Code INSEE",
-        "postcode": "Code postal", "city": "Commune", "lat": "Latitude",
-        "lon": "Longitude", "idu": "Identifiant parcelle", "commune": "Commune",
-        "code_insee": "Code INSEE", "section": "Section", "numero": "Numéro",
-        "contenance_m2": "Contenance (m²)", "surface_bati_m2": "Surface bâtie (m²)",
-        "surface_sol_m2": "Emprise au sol (m²)", "ces_reel": "CES réel",
-        "nb_batiments": "Bâtiments", "hauteur_max_m": "Hauteur max (m)",
-        "usages": "Usages", "valeur_fonciere": "Prix (€)", "surface": "Surface (m²)",
-        "surface_reelle_bati": "Surface bâtie (m²)", "prix_m2": "€/m²",
+        "label": "Address", "score": "Geocoding score", "citycode": "INSEE code",
+        "postcode": "Postcode", "city": "Commune", "lat": "Latitude",
+        "lon": "Longitude", "idu": "Parcel ID", "commune": "Commune",
+        "code_insee": "INSEE code", "section": "Section", "numero": "Number",
+        "contenance_m2": "Area (m²)", "surface_bati_m2": "Built area (m²)",
+        "surface_sol_m2": "Ground footprint (m²)", "ces_reel": "Actual CES",
+        "nb_batiments": "Buildings", "hauteur_max_m": "Max height (m)",
+        "usages": "Uses", "valeur_fonciere": "Price (€)", "surface": "Area (m²)",
+        "surface_reelle_bati": "Built area (m²)", "prix_m2": "€/m²",
         "eur_m2": "€/m²", "date_mutation": "Date", "date": "Date",
-        "adresse": "Adresse", "type_local": "Type", "distance_m": "Distance (m)",
-        "annee": "Année", "year": "Année", "median": "Médiane €/m²",
-        "mediane": "Médiane €/m²", "moyenne": "Moyenne €/m²", "mean": "Moyenne €/m²",
-        "min": "Min €/m²", "max": "Max €/m²", "count": "Ventes", "nb": "Ventes",
+        "adresse": "Address", "type_local": "Type", "distance_m": "Distance (m)",
+        "annee": "Year", "year": "Year", "median": "Median €/m²",
+        "mediane": "Median €/m²", "moyenne": "Mean €/m²", "mean": "Mean €/m²",
+        "min": "Min €/m²", "max": "Max €/m²", "count": "Sales", "nb": "Sales",
     }
 
     def _label(k: str) -> str:
@@ -1171,7 +1172,7 @@ def register(mcp: FastMCP) -> None:
 
     def _fmt(v: object) -> str:
         if isinstance(v, bool):
-            return "oui" if v else "non"
+            return "yes" if v else "no"
         if isinstance(v, float):
             return f"{v:,.0f}".replace(",", " ") if abs(v) >= 100 else f"{v:.2f}"
         return str(v)
@@ -1232,7 +1233,7 @@ def register(mcp: FastMCP) -> None:
         """
         hits = ban.search(adresse, limit=1)
         if not hits:
-            return _message_card("Adresse introuvable", f"Aucun résultat BAN pour « {adresse} ».")
+            return _message_card("Address not found", f"No BAN result for « {adresse} ».")
         top = hits[0]
         lat, lon = top.get("lat"), top.get("lon")
         parcelle = cadastre.parcelle_at(lat, lon) if lat is not None and lon is not None else None
@@ -1240,7 +1241,7 @@ def register(mcp: FastMCP) -> None:
         if parcelle and parcelle.get("geometry"):
             try:
                 bati = bdtopo.bati_parcelle(parcelle["geometry"], contenance_m2=parcelle.get("contenance_m2"))
-            # noqa: SILENT — couche bâti optionnelle sur la fiche site
+            # noqa: SILENT — optional buildings layer on the site sheet
             except Exception:
                 bati = None
         with Card() as card:
@@ -1248,12 +1249,12 @@ def register(mcp: FastMCP) -> None:
                 Heading(str(top.get("label") or adresse))
                 _facts(_scalars(top))
                 if parcelle:
-                    Heading("Parcelle cadastrale")
+                    Heading("Cadastral parcel")
                     _facts(_scalars(parcelle))
                 else:
-                    Text("Pas de parcelle cadastrale au point géocodé.")
+                    Text("No cadastral parcel at the geocoded point.")
                 if bati and not bati.get("error"):
-                    Heading("Bâti existant")
+                    Heading("Existing buildings")
                     _facts(_scalars(bati))
         return card
 
@@ -1291,11 +1292,11 @@ def register(mcp: FastMCP) -> None:
         with Card() as card:
             with Column(gap=4):
                 Heading(f"Comparables — {adresse}")
-                _facts(_scalars(res))  # headline stats (médiane locale, etc.)
+                _facts(_scalars(res))  # headline stats (local median, etc.)
                 if records:
                     _table(records)
                 else:
-                    Text("Aucune vente comparable trouvée dans le rayon demandé.")
+                    Text("No comparable sale found within the requested radius.")
         return card
 
     @mcp.tool(app=True)
@@ -1319,9 +1320,9 @@ def register(mcp: FastMCP) -> None:
         per_year = _first_record_list(res)
         with Card() as card:
             with Column(gap=4):
-                Heading(f"Prix au m² — {code_commune}")
+                Heading(f"Price per m² — {code_commune}")
                 _facts(_scalars(res))
                 if per_year:
-                    Heading("Par année")
+                    Heading("By year")
                     _table(per_year)
         return card

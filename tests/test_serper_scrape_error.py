@@ -78,7 +78,7 @@ def test_scrape_5xx_becomes_managed_mcp_error(scrape):
     with pytest.raises(McpError) as ei:
         fn("https://example.com/page")
     # message actionnable, pas un stacktrace ; et droppé par la taxonomie Sentry
-    assert "Scrape impossible" in ei.value.error.message
+    assert "Cannot scrape this URL" in ei.value.error.message
     assert "example.com/page" in ei.value.error.message
     assert _is_expected_error(ei.value) is True
 
@@ -90,7 +90,7 @@ def test_scrape_404_becomes_managed_mcp_error(scrape):
     calls["exc"] = RuntimeError("Serper scrape 404: Page not found.")
     with pytest.raises(McpError) as ei:
         fn("https://example.com/page-morte")
-    assert "n'existe pas" in ei.value.error.message
+    assert "does not exist" in ei.value.error.message
     assert "page-morte" in ei.value.error.message
     assert _is_expected_error(ei.value) is True
 
@@ -114,7 +114,7 @@ def test_scrape_402_n_est_pas_masque_en_url_non_scrapable(scrape):
     calls["exc"] = RuntimeError("Serper scrape 402: Not enough credits")
     with pytest.raises(McpError) as ei:
         fn("https://example.com/page")
-    assert "Scrape impossible" not in ei.value.error.message
+    assert "Cannot scrape this URL" not in ei.value.error.message
     assert error_taxonomy.classify(ei.value).code == "quota_exhausted"
 
 

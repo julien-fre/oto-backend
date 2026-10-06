@@ -1,32 +1,32 @@
-"""Les liens qu'on rend à un utilisateur — et à quoi ils ressemblent CHEZ LUI.
+"""The links we give a user — and what they look like ON THEIR SIDE.
 
-Un client d'un partenaire recevait des liens vers notre tableau de bord : un produit
-qu'il n'a pas. La première correction a fait suivre l'ADRESSE au tenant — insuffisant,
-et le code du partenaire le prouve : **aucun de ses chemins ne ressemble aux nôtres**
-(`/network/<org>/knowledge/<id>` là où nous servons `/docs/<id>`), et pour certaines
-de nos vues il **n'a aucun équivalent** — ses tableaux n'existent pas. Coller nos
-chemins sous son domaine aurait donc fabriqué des liens morts, ce qui est pire qu'un
-lien à notre marque : un lien mort ne se diagnostique pas, il se subit.
+A partner's customer was receiving links to our dashboard: a product
+they do not have. The first fix made the ADDRESS follow the tenant — insufficient,
+and the partner's code proves it: **none of its paths look like ours**
+(`/network/<org>/knowledge/<id>` where we serve `/docs/<id>`), and for some
+of our views it has **no equivalent** — its tables do not exist. Gluing our
+paths under its domain would thus have manufactured dead links, which is worse than a
+link to our brand: a dead link cannot be diagnosed, it can only be endured.
 
-D'où un patron par TYPE de lien, déclaré par le tenant, et une règle simple :
+Hence one pattern per link TYPE, declared by the tenant, and a simple rule:
 
-    pas de patron ⟹ pas de lien.
+    no pattern ⟹ no link.
 
-**Deux familles, et les confondre casse un parcours** :
+**Two families, and confusing them breaks a flow**:
 
-- un lien **AFFICHÉ** (un tableau, une page partagée) peut ne pas exister : on n'écrit
-  rien plutôt que d'envoyer quelque part. `link_for` rend alors `None`, et l'appelant
-  omet le lien — il a toujours de quoi se rendre utile sans lui.
-- une **REDIRECTION** (le retour d'une connexion OAuth) doit TOUJOURS aboutir : on ne
-  peut pas « ne pas rediriger ». Sans patron, elle retombe sur la nôtre — l'utilisateur
-  voit notre marque une fois, ce qui vaut mieux qu'une page blanche au milieu d'une
-  connexion. C'est `redirect_for`, et c'est le seul chemin qui replie ainsi.
+- a **DISPLAYED** link (a table, a shared page) may not exist: we write
+  nothing rather than send somewhere. `link_for` then returns `None`, and the caller
+  omits the link — it always has enough to be useful without it.
+- a **REDIRECT** (the return from an OAuth connection) must ALWAYS land: we
+  cannot "not redirect". Without a pattern, it falls back to ours — the user
+  sees our brand once, which beats a blank page in the middle of a
+  connection. That is `redirect_for`, and it is the only path that falls back this way.
 
-⚠️ **Mis à jour le 10/09/2026 (oto#63).** Le partenaire décrit plus haut a désormais
-une page de tableau ; tant que sa ligne de tenant ne la déclare pas, ses comptes
-reçoivent `null`. Un `null` NU disait « introuvable » à qui le lisait — d'où
-`raison_sans_lien`, qui dit pourquoi l'adresse manque, et `patron_reclame`, qui ne fait
-payer un paramètre coûteux (l'org de l'appelant) qu'au produit qui le réclame.
+⚠️ **Updated 10/09/2026 (oto#63).** The partner described above now has
+a table page; until its tenant row declares it, its accounts
+receive `null`. A BARE `null` said "not found" to whoever read it — hence
+`raison_sans_lien`, which says why the address is missing, and `patron_reclame`, which
+only charges an expensive parameter (the caller's org) to the product that requires it.
 """
 from __future__ import annotations
 
@@ -38,29 +38,29 @@ from . import config
 
 logger = logging.getLogger(__name__)
 
-# Nos propres chemins, par type. Source unique : ce que le tenant `oto` sert, et le
-# défaut de tout tenant qui ne déclare rien. `{…}` = paramètres nommés du lien.
+# Our own paths, by type. Single source: what the `oto` tenant serves, and the
+# default of any tenant that declares nothing. `{…}` = the link's named parameters.
 DEFAULT_PATHS: dict[str, str] = {
     "home": "",
     "table": "/data/{id}",
     "public_doc": "/p/d/{token}",
-    # ⚠️ A dit `/docs/{id}` du 2026-08-13 (41e7928) au 2026-08-28 — un chemin que
-    # NOTRE tableau de bord ne route pas : son routeur ne connaît que la section
-    # `/documents` (sans id), et son attrape-tout renvoie tout chemin inconnu sur
-    # `/overview`. Le lien n'aurait donc pas affiché d'erreur : il aurait ouvert la
-    # page d'accueil en se faisant passer pour la page demandée. Il n'a jamais eu
-    # d'appelant, ce qui l'a gardé invisible — et c'est très exactement le lien mort
-    # que ce module existe pour interdire, posé chez nous. Le VRAI chemin d'une page,
-    # celui que le front lui-même écrit (`searchNav.ts`,
-    # `ProjectDetailView`), l'ouvre DANS son projet : une page n'a pas d'écran à elle.
-    # Conséquence : ce patron réclame `project_id`, et un appel qui ne le passe pas ne
-    # rend aucun lien (garde de `_render`) — jamais une adresse à trous.
+    # ⚠️ Said `/docs/{id}` from 2026-08-13 (41e7928) to 2026-08-28 — a path that
+    # OUR dashboard does not route: its router only knows the `/documents` section
+    # (without an id), and its catch-all sends any unknown path to
+    # `/overview`. The link would thus not have shown an error: it would have opened the
+    # home page while passing itself off as the requested page. It never had
+    # a caller, which kept it invisible — and it is exactly the dead link
+    # this module exists to forbid, planted at home. The REAL path of a page,
+    # the one the front itself writes (`searchNav.ts`,
+    # `ProjectDetailView`), opens it INSIDE its project: a page has no screen of its own.
+    # Consequence: this pattern requires `project_id`, and a call that does not pass it
+    # returns no link (`_render` guard) — never an address with holes.
     "doc": "/projects/{project_id}?doc={id}",
     "project": "/projects/{id}",
-    # L'espace facturation du tableau de bord (`/org/billing`, cf. le routeur
-    # d'oto-dashboard) — c'est là que les factures se téléchargent. Un tenant qui
-    # ne déclare pas ce patron n'a pas cette vue : l'e-mail part alors sans bouton,
-    # plutôt qu'avec un lien mort.
+    # The dashboard's billing area (`/org/billing`, cf. oto-dashboard's
+    # router) — that is where invoices are downloaded. A tenant that
+    # does not declare this pattern does not have this view: the e-mail then goes out without a button,
+    # rather than with a dead link.
     "billing": "/org/billing",
     "connectors": "/connectors",
     "connector_return": "/connectors?connector={connector}",
@@ -69,30 +69,30 @@ DEFAULT_PATHS: dict[str, str] = {
 
 
 def _tenant_of(sub: Optional[str]):
-    """L'entrée de registre du tenant de ce compte, ou None (tenant primaire inclus)."""
+    """The registry entry of this account's tenant, or None (primary tenant included)."""
     if not sub:
         return None
     try:
         from . import tenancy
         registre = tenancy.current()
-        # `entry_for_slug` rend None pour le tenant primaire comme pour un slug
-        # inconnu — la distinction ne servait à personne ici, et la refaire à la
-        # main était la deuxième copie d'une recherche qui n'a qu'un sens.
+        # `entry_for_slug` returns None for the primary tenant as for an unknown
+        # slug — the distinction served no one here, and redoing it by
+        # hand was the second copy of a lookup that has only one meaning.
         return registre.entry_for_slug(registre.tenant_of(sub))
-    except Exception:  # noqa: BLE001 — un lien ne casse jamais un appel
-        logger.warning("résolution du tenant impossible pour un lien (fail-open)",
+    except Exception:  # noqa: BLE001 — a link never breaks a call
+        logger.warning("tenant resolution impossible for a link (fail-open)",
                        exc_info=True)
         return None
 
 
 def _render(base: str, path: str, params: dict) -> Optional[str]:
-    """Assemble base + patron. Un paramètre manquant ANNULE le lien plutôt que de
-    produire une adresse à trous (`/network//knowledge/12`), qui mènerait à une page
-    d'erreur en se faisant passer pour un lien valide."""
+    """Assemble base + pattern. A missing parameter CANCELS the link rather than
+    producing an address with holes (`/network//knowledge/12`), which would lead to an
+    error page while passing itself off as a valid link."""
     try:
         rendu = path.format(**{k: v for k, v in params.items() if v is not None})
     except (KeyError, IndexError):
-        logger.warning("lien non rendu : le patron %r attend un paramètre absent", path)
+        logger.warning("link not rendered: pattern %r expects a missing parameter", path)
         return None
     if "{" in rendu or "//" in rendu.lstrip("https:").lstrip("/"):
         return None
@@ -100,11 +100,11 @@ def _render(base: str, path: str, params: dict) -> Optional[str]:
 
 
 def link_for(kind: str, *, sub: Optional[str] = None, **params: Any) -> Optional[str]:
-    """Le lien de type `kind` à MONTRER à ce compte, ou **None** s'il n'existe pas
-    chez lui.
+    """The link of type `kind` to SHOW this account, or **None** if it does not exist
+    on its side.
 
-    `None` n'est pas une erreur : c'est la réponse juste quand le produit de
-    l'utilisateur n'a pas cette vue. L'appelant écrit alors sa réponse sans lien.
+    `None` is not an error: it is the right answer when the user's product
+    does not have this view. The caller then writes its answer without a link.
     """
     entry = _tenant_of(sub)
     if entry is None:
@@ -113,38 +113,38 @@ def link_for(kind: str, *, sub: Optional[str] = None, **params: Any) -> Optional
 
     patrons = getattr(entry, "link_paths", None) or {}
     if kind not in patrons:
-        return None                       # le tenant n'a pas cette vue : pas de lien
+        return None                       # the tenant does not have this view: no link
     base = (entry.dashboard_url or "").rstrip("/")
     if not base:
-        return None                       # un patron sans adresse ne mène nulle part
+        return None                       # a pattern without an address leads nowhere
     return _render(base, str(patrons[kind]), params)
 
 
 def ou_poser_la_cle(sub: Optional[str], *, org: Any = None,
                     connecteur: Optional[str] = None) -> str:
-    """Le complément « sur <page connecteurs> (connecteur X) » d'une phrase qui dit OÙ
-    poser une clé — ou une chaîne VIDE quand le produit du compte ne déclare pas de page
-    connecteurs. La phrase reste vraie sans lui : « pose ta propre clé » plutôt que
-    « pose ta propre clé sur <une page qui n'existe pas> ».
+    """The complement " at <connectors page> (connector X)" of a sentence that says WHERE
+    to set a key — or an EMPTY string when the account's product declares no connectors
+    page. The sentence stays true without it: "set your own key" rather than
+    "set your own key at <a page that does not exist>".
 
-    ⚠️ Vécu le 2026-09-11 (oto-backend#935) : les refus de credential
-    (`access/resolve.py`) et la carte connecteur (`connectors/readiness.py`) collaient
-    `/account` — NOTRE chemin — sous l'adresse du tenant du compte. Chez le seul tenant
-    tiers déclaré, cette page répond 404 : c'est exactement le lien mort que ce module
-    interdit. Le chemin vient désormais du patron `connectors` du tenant ; un tenant qui
-    ne le déclare pas ne reçoit AUCUNE adresse, jamais la nôtre.
+    ⚠️ Lived on 2026-09-11 (oto-backend#935): credential refusals
+    (`access/resolve.py`) and the connector card (`connectors/readiness.py`) glued
+    `/account` — OUR path — under the account's tenant address. On the only
+    declared third-party tenant, that page answers 404: it is exactly the dead link this module
+    forbids. The path now comes from the tenant's `connectors` pattern; a tenant that
+    does not declare it receives NO address, never ours.
 
-    `org` n'est lu que par un patron qui le réclame (`/org/{org}/connectors`) ; absent,
-    le lien est annulé plutôt que rendu à trous (cf. `_render`)."""
+    `org` is only read by a pattern that requires it (`/org/{org}/connectors`); when absent,
+    the link is cancelled rather than rendered with holes (cf. `_render`)."""
     url = link_for("connectors", sub=sub, org=org)
     if not url:
         return ""
-    return f" sur {url}" + (f" (connecteur {connecteur.capitalize()})" if connecteur else "")
+    return f" at {url}" + (f" (connector {connecteur.capitalize()})" if connecteur else "")
 
 
-# Le NOM de l'objet, pour dire à un humain ce qui n'a pas d'adresse.
-_NOMS = {"table": "tableau", "doc": "page", "project": "projet",
-         "public_doc": "page publique", "connectors": "connecteurs"}
+# The NAME of the object, to tell a human what has no address.
+_NOMS = {"table": "table", "doc": "page", "project": "project",
+         "public_doc": "public page", "connectors": "connectors"}
 
 
 def _chemin_pour(kind: str, sub: Optional[str]) -> Optional[str]:
@@ -155,22 +155,22 @@ def _chemin_pour(kind: str, sub: Optional[str]) -> Optional[str]:
 
 
 def patron_reclame(kind: str, param: str, *, sub: Optional[str] = None) -> bool:
-    """Le patron de lien de ce compte pour `kind` porte-t-il `{param}` ?
+    """Does this account's link pattern for `kind` carry `{param}`?
 
-    Sert à ne payer un paramètre coûteux QUE lorsque le produit qui recevra le lien le
-    réclame : chez nous un tableau s'ouvre par son seul id, et résoudre l'org de
-    l'appelant pour rien sur chaque ligne d'une liste serait une requête par ligne."""
+    Used to pay for an expensive parameter ONLY when the product that will receive the link
+    requires it: on our side a table opens by its id alone, and resolving the
+    caller's org for nothing on every row of a list would be one query per row."""
     chemin = _chemin_pour(kind, sub)
     return bool(chemin) and "{" + param + "}" in str(chemin)
 
 
 def raison_sans_lien(kind: str, *, sub: Optional[str] = None, **params: Any) -> Optional[str]:
-    """POURQUOI `link_for` ne rend rien — `None` s'il rend bien un lien.
+    """WHY `link_for` returns nothing — `None` if it does return a link.
 
-    `None` n'est pas une erreur (cf. la tête de ce module), mais un `null` NU était
-    indiscernable d'un objet introuvable (oto#63) : l'appelant cherchait une panne qui
-    n'existe pas, ou concluait que l'objet n'existe pas. Mêmes branches que
-    `link_for`, dans le même ordre — une lecture du registre, deux formulations."""
+    `None` is not an error (cf. the head of this module), but a BARE `null` was
+    indistinguishable from a not-found object (oto#63): the caller hunted for a failure that
+    does not exist, or concluded the object does not exist. Same branches as
+    `link_for`, in the same order — one registry read, two phrasings."""
     if link_for(kind, sub=sub, **params) is not None:
         return None
     nom = _NOMS.get(kind, kind)
@@ -178,32 +178,32 @@ def raison_sans_lien(kind: str, *, sub: Optional[str] = None, **params: Any) -> 
     if entry is None:
         chemin = DEFAULT_PATHS.get(kind)
         if chemin is None:
-            return f"aucune page de {nom} n'existe dans ce produit"
+            return f"no {nom} page exists in this product"
     else:
         patrons = getattr(entry, "link_paths", None) or {}
         if kind not in patrons:
-            return (f"le produit de ce compte ne déclare aucune page de {nom} : il n'y a "
-                    f"pas d'adresse à donner. Le {nom} existe bel et bien — c'est "
-                    "l'adresse qui manque, pas lui")
+            return (f"this account's product declares no {nom} page: there is "
+                    f"no address to give. The {nom} does exist — it is "
+                    "the address that is missing, not the object")
         if not (entry.dashboard_url or "").strip():
-            return (f"le produit de ce compte déclare une page de {nom}, mais aucune "
-                    "adresse de base : aucun lien ne peut être construit")
+            return (f"this account's product declares a {nom} page, but no "
+                    "base address: no link can be built")
         chemin = str(patrons[kind])
     poses = {k for k, v in params.items() if v is not None}
     manquants = sorted(set(re.findall(r"\{(\w+)\}", str(chemin))) - poses)
     if manquants:
-        return ("l'adresse de ce produit réclame "
-                + ", ".join(f"`{m}`" for m in manquants) + ", que ce contexte ne porte pas"
-                + (" — passe `_org=` pour la fixer" if "org" in manquants else ""))
-    return "aucune adresse n'a pu être construite : le patron déclaré est illisible"
+        return ("this product's address requires "
+                + ", ".join(f"`{m}`" for m in manquants) + ", which this context does not carry"
+                + (" — pass `_org=` to set it" if "org" in manquants else ""))
+    return "no address could be built: the declared pattern is unreadable"
 
 
 def redirect_for(kind: str, *, sub: Optional[str] = None, **params: Any) -> str:
-    """Le lien de type `kind` vers lequel on REDIRIGE. Toujours une adresse.
+    """The link of type `kind` we REDIRECT to. Always an address.
 
-    Utilisé au retour d'un consentement OAuth : à ce moment le navigateur DOIT
-    atterrir quelque part. Sans patron chez le tenant, on sert le nôtre — voir notre
-    marque une fois vaut mieux qu'une page blanche au milieu d'une connexion.
+    Used on return from an OAuth consent: at that moment the browser MUST
+    land somewhere. Without a pattern on the tenant, we serve ours — seeing our
+    brand once beats a blank page in the middle of a connection.
     """
     return (link_for(kind, sub=sub, **params)
             or _render(config.dashboard_url(), DEFAULT_PATHS.get(kind, ""), params)

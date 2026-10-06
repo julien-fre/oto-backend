@@ -1,15 +1,15 @@
-"""Socle partagé des modules du connecteur `pennylane` — oto-backend#872.
+"""Shared base of the `pennylane` connector modules — oto-backend#872.
 
-Le connecteur tient sur plusieurs modules (`tools/pennylane*.py`, cf.
-`Connector.modules` au registre). Ce fichier porte ce qu'ils ont en commun :
-la résolution de la clé, les deux formes d'erreur, et surtout la **traduction
-d'un refus amont en exception**.
+The connector spans several modules (`tools/pennylane*.py`, see
+`Connector.modules` in the registry). This file holds what they have in common:
+key resolution, the two error shapes, and above all the **translation
+of an upstream refusal into an exception**.
 
-Pourquoi un fichier plutôt qu'une copie par module : le client d'oto-core rend
-un refus comme une *valeur* (`{"error": "422", "details": …}`) et non comme une
-exception. La pièce qui rattrape ça ne doit exister qu'une fois — dupliquée,
-elle diverge, et c'est le module oublié qui écrira dans une comptabilité sans
-que personne le voie.
+Why one file rather than a copy per module: the oto-core client returns
+a refusal as a *value* (`{"error": "422", "details": …}`) and not as an
+exception. The piece that catches this must exist only once — duplicated,
+it diverges, and the forgotten module is the one that will write into an accounting system without
+anyone noticing.
 """
 from __future__ import annotations
 
@@ -20,27 +20,27 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from ..mcp_errors import McpError
 from .. import access
 
-if TYPE_CHECKING:  # l'annotation de `_client()` seulement — jamais évaluée
+if TYPE_CHECKING:  # annotation of `_client()` only — never evaluated
     from oto.tools.pennylane import PennylaneClient
 
 
 def _client() -> PennylaneClient:
-    """Le client Pennylane pour la clé de CET appelant.
+    """The Pennylane client for THIS caller's key.
 
-    L'import réel est fait dans le corps, pas au chargement du module : les
-    tests remplacent `PennylaneClient` sur le package, et un import différé est
-    ce qui leur laisse la main.
+    The real import is done in the body, not at module load: tests replace
+    `PennylaneClient` on the package, and a deferred import is
+    what lets them do so.
 
-    Le type de retour est annoté avec la classe NUE, et pas seulement pour la
-    lecture : la sonde de version-skew lit cette annotation pour savoir contre
-    quel client vérifier que les méthodes appelées ici existent dans l'oto-core
-    épinglé. Sans elle, ce module passerait à travers ce contrôle.
+    The return type is annotated with the BARE class, and not only for
+    readability: the version-skew probe reads this annotation to know against
+    which client to check that the methods called here exist in the pinned
+    oto-core. Without it, this module would slip through that check.
     """
     from oto.tools.pennylane import PennylaneClient
 
     key, _is_platform = access.resolve_api_key("pennylane")
-    # Rédaction appliquée à la frontière des tools par `FieldRedactionMiddleware`
-    # (policy de l'org active), plus au niveau client.
+    # Redaction applied at the tools boundary by `FieldRedactionMiddleware`
+    # (policy of the active org), no longer at client level.
     return PennylaneClient(api_key=key)
 
 
@@ -49,23 +49,23 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
+    """Mandatory argument for THIS op — actionable error, never a fallback."""
     if value is None:
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
 def _ecrit(appel, geste: str):
-    """EXÉCUTE une écriture Pennylane et rend son retour, ou LÈVE en orientant.
+    """EXECUTE a Pennylane write and return its result, or RAISE with guidance.
 
-    Prend une fonction, pas un résultat : depuis oto-core#77 le client lève sur
-    refus amont, et une exception levée dans l'argument n'atteindrait jamais un
-    contrôle placé après l'appel. Le geste doit se produire ici, sous la garde.
+    Takes a function, not a result: since oto-core#77 the client raises on
+    upstream refusal, and an exception raised in the argument would never reach
+    a check placed after the call. The action must happen here, under the guard.
 
-    La taxonomie du backend classe déjà `UpstreamHTTPError` ; ce que cette garde
-    ajoute lui est propre au connecteur : dire à l'agent QUOI FAIRE. Un 401/403
-    sur Pennylane n'est presque jamais un argument à corriger, c'est un droit qui
-    manque à la clé — et rien ne le montrait avant l'échec.
+    The backend's taxonomy already classifies `UpstreamHTTPError`; what this guard
+    adds is specific to the connector: telling the agent WHAT TO DO. A 401/403
+    on Pennylane is almost never an argument to correct, it is a permission
+    missing from the key — and nothing showed it before the failure.
     """
     from oto.tools.common.errors import UpstreamHTTPError
 
@@ -74,21 +74,21 @@ def _ecrit(appel, geste: str):
     except UpstreamHTTPError as e:
         st, detail = e.status_code, str(e.body)[:400]
     except RuntimeError as e:
-        # Refus sans statut HTTP : réseau, débit limité, corps illisible.
-        raise _bad(f"Pennylane n'a pas répondu à {geste} : {e}") from e
+        # Refusal without an HTTP status: network, rate limiting, unreadable body.
+        raise _bad(f"Pennylane did not respond to {geste}: {e}") from e
 
     if st in (401, 403):
         raise _bad(
-            f"Pennylane a refusé {geste} ({st}) : c'est un DROIT qui manque à la "
-            "clé, pas un argument à corriger — rejouer à l'identique échouera "
-            "pareil. Chaque utilisateur pose sa propre clé, avec son propre "
-            "périmètre : qu'un tool soit monté ne prouve donc AUCUN droit. Lis "
-            "les droits réels de la clé avec `pennylane_ref(kind=\"company\")`, "
-            f"champ `scopes`, puis dis à l'utilisateur lequel manque. Détail : {detail}")
+            f"Pennylane refused {geste} ({st}): this is a PERMISSION missing from the "
+            "key, not an argument to correct — replaying it identically will fail "
+            "the same way. Each user sets their own key, with their own "
+            "scope: a tool being mounted therefore proves NO permission. Read "
+            "the key's actual permissions with `pennylane_ref(kind=\"company\")`, "
+            f"`scopes` field, then tell the user which one is missing. Detail: {detail}")
     if st == 422:
-        raise _bad(f"Pennylane a refusé le CONTENU de {geste} ({st}) : les valeurs "
-                   f"envoyées ne passent pas ses contrôles. Détail : {detail}")
+        raise _bad(f"Pennylane refused the CONTENT of {geste} ({st}): the values "
+                   f"sent do not pass its checks. Detail: {detail}")
     if st == 404:
-        raise _bad(f"Pennylane ne trouve pas la cible de {geste} ({st}) : l'id "
-                   f"n'existe pas dans CETTE société. Détail : {detail}")
-    raise _bad(f"Pennylane a refusé {geste} ({st}). Détail : {detail}")
+        raise _bad(f"Pennylane cannot find the target of {geste} ({st}): the id "
+                   f"does not exist in THIS company. Detail: {detail}")
+    raise _bad(f"Pennylane refused {geste} ({st}). Detail: {detail}")

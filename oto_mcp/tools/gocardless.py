@@ -1,13 +1,13 @@
-"""GoCardless — prélèvements SEPA (lecture seule).
+"""GoCardless — SEPA direct debits (read-only).
 
-Clé résolue par appel via `access.resolve_api_key("gocardless")` : modèle
-clé-per-user (comme Pennylane/Attio), pas de clé plateforme. Chaque
-utilisateur pose sa propre clé GoCardless — ses prélèvements ne sont
-visibles que par lui.
+Key resolved per call via `access.resolve_api_key("gocardless")`: per-user
+key model (like Pennylane/Attio), no platform key. Each
+user sets their own GoCardless key — their direct debits are
+visible only to them.
 
-Surface strictement en lecture : GoCardless est une source (réconciliation,
-traitement des échecs). Aucune mutation exposée — un agent ne peut pas
-annuler un prélèvement.
+Strictly read-only surface: GoCardless is a source (reconciliation,
+handling of failures). No mutation exposed — an agent cannot
+cancel a direct debit.
 """
 from __future__ import annotations
 
@@ -20,20 +20,20 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ALONE.
 
-    ⚠️ `GoCardlessClient.fetch()` NE LÈVE JAMAIS sur un refus HTTP — il rend un
-    dict `{"error", "status_code", "details"}` (choix du client, pour ses
-    boucles de pagination qui doivent pouvoir s'arrêter proprement plutôt que
-    lever au milieu d'une collecte). `list_creditors()` (déjà dans le client —
-    les comptes marchands du token, le plus proche d'une identité chez
-    GoCardless) hérite du même silence : sans lire ce dict et lever soi-même,
-    un token mort répondrait `ok:true` — classe nouvelle, distincte des trois
-    déjà nommées dans l'issue (un CLIENT qui n'échoue jamais par exception,
-    quel que soit le code HTTP amont).
+    ⚠️ `GoCardlessClient.fetch()` NEVER RAISES on an HTTP refusal — it returns a
+    dict `{"error", "status_code", "details"}` (the client's choice, for its
+    pagination loops, which must be able to stop cleanly rather than
+    raise in the middle of a collection). `list_creditors()` (already in the client —
+    the token's merchant accounts, the closest thing to an identity at
+    GoCardless) inherits the same silence: without reading that dict and raising ourselves,
+    a dead token would answer `ok:true` — a new class, distinct from the three
+    already named in the issue (a CLIENT that never fails by exception,
+    whatever the upstream HTTP code).
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    un token GoCardless (live ou sandbox) porte le périmètre entier du compte.
+    **Authenticated ≠ usable** (class oto#69): does not distinguish scopes —
+    a GoCardless token (live or sandbox) carries the account's entire scope.
     """
     from oto.tools.gocardless import GoCardlessClient
 
@@ -47,8 +47,8 @@ def _verify(fields: dict, config: dict | None = None) -> None:
     raise RuntimeError(f"GoCardless: {detail}")
 
 
-# Vue par défaut d'un versement : de quoi le reconnaître sur le relevé et le
-# rapprocher. `fx`, `tax_currency`, `metadata` et `links` reviennent sur `full=True`.
+# Default view of a payout: enough to recognize it on the statement and
+# reconcile it. `fx`, `tax_currency`, `metadata` and `links` come back on `full=True`.
 _PAYOUT_KEYS = ("id", "amount", "deducted_fees", "currency", "status",
                 "arrival_date", "created_at", "reference")
 
@@ -63,16 +63,16 @@ def register(mcp: FastMCP) -> None:
     connector_verify.register("gocardless", _verify)
 
     def _client() -> GoCardlessClient:
-        # Garde d'accès = la résolution du credential : une clé posée au niveau de
-        # la compta (équipe) ne se résout que pour ses membres (ADR 0053 D1). Plus de
-        # `require_namespace` : gocardless n'est pas grant_only au registre → c'était
-        # un no-op (ADR 0031).
+        # Access guard = credential resolution: a key set at the accounting
+        # (team) level only resolves for its members (ADR 0053 D1). No more
+        # `require_namespace`: gocardless is not grant_only in the registry → it was
+        # a no-op (ADR 0031).
         key, _is_platform = access.resolve_api_key("gocardless")
         return GoCardlessClient(api_key=key)
 
     @mcp.tool()
     def gocardless_creditors() -> list:
-        """Comptes marchands GoCardless (compte encaisseur)."""
+        """GoCardless merchant accounts (collecting account)."""
         return _client().list_creditors()
 
     @mcp.tool()
@@ -83,14 +83,14 @@ def register(mcp: FastMCP) -> None:
         customer: Optional[str] = None,
         since: Optional[str] = None,
     ) -> list:
-        """Liste de prélèvements (1 page).
+        """List of direct debits (1 page).
 
         Args:
             status: failed, confirmed, paid_out, submitted, cancelled, charged_back…
-            limit: taille de page (max 500).
-            mandate: filtrer par mandat (MD…).
-            customer: filtrer par customer (CU…).
-            since: ISO8601, prélèvements créés après cette date.
+            limit: page size (max 500).
+            mandate: filter by mandate (MD…).
+            customer: filter by customer (CU…).
+            since: ISO8601, direct debits created after this date.
         """
         return _client().list_payments(
             status=status, limit=limit, mandate=mandate,
@@ -99,7 +99,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def gocardless_payment(payment_id: str) -> dict:
-        """Détail brut d'un prélèvement (PM…)."""
+        """Raw detail of a direct debit (PM…)."""
         return _client().get_payment(payment_id)
 
     @mcp.tool()
@@ -112,20 +112,20 @@ def register(mcp: FastMCP) -> None:
         until: Optional[str] = None,
         full: bool = False,
     ) -> dict:
-        """Versements groupés reçus en banque (payouts, PO…), 1 page.
+        """Grouped payouts received in the bank (payouts, PO…), 1 page.
 
-        Montants en CENTIMES : `amount` = net versé, `deducted_fees` = frais
-        déjà retenus. Le détail paiement par paiement : `gocardless_payout`.
+        Amounts in CENTS: `amount` = net paid out, `deducted_fees` = fees
+        already withheld. The payment-by-payment detail: `gocardless_payout`.
 
         Args:
             status: pending, paid, bounced.
-            limit: taille de page (max 500).
+            limit: page size (max 500).
             currency: EUR, GBP…
-            reference: libellé exact du virement sur le relevé bancaire.
-            since / until: ISO8601, bornes (exclues) sur la création du
-                versement — une date nue vaut minuit UTC. Pour remonter plus
-                loin qu'une page, rapprocher `until` du plus ancien rendu.
-            full: True = l'objet brut (fx, taxes, metadata, links).
+            reference: exact label of the transfer on the bank statement.
+            since / until: ISO8601, bounds (exclusive) on the payout's
+                creation — a bare date means midnight UTC. To go back further
+                than one page, move `until` closer to the oldest returned.
+            full: True = the raw object (fx, taxes, metadata, links).
         """
         rows = _client().list_payouts(
             status=status, limit=limit, currency=currency, reference=reference,
@@ -135,15 +135,15 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def gocardless_payout(payout_id: str) -> dict:
-        """Un versement (PO…) et TOUTES ses lignes, pour le lettrer.
+        """A payout (PO…) and ALL its lines, to match it.
 
-        `items` : une ligne par mouvement — `type` (payment_paid_out,
+        `items`: one line per movement — `type` (payment_paid_out,
         payment_failed, payment_charged_back, payment_refunded, refund,
         refund_funds_returned, gocardless_fee, app_fee, revenue_share,
-        surcharge_fee), `amount` signé en CENTIMES, `links.payment` (PM…) à
-        passer à `gocardless_payment_party` pour le client. GoCardless ne sert
-        les lignes que des versements créés il y a moins de 6 mois (HTTP 410
-        au-delà).
+        surcharge_fee), signed `amount` in CENTS, `links.payment` (PM…) to
+        pass to `gocardless_payment_party` for the customer. GoCardless only serves
+        the lines of payouts created less than 6 months ago (HTTP 410
+        beyond that).
         """
         return _client().payout_detail(payout_id)
 
@@ -154,25 +154,25 @@ def register(mcp: FastMCP) -> None:
         action: Optional[str] = None,
         limit: int = 50,
     ) -> list:
-        """Timeline d'events. Motif d'échec : action='failed' sur un payment."""
+        """Events timeline. Failure reason: action='failed' on a payment."""
         return _client().list_events(
             payment=payment, mandate=mandate, action=action, limit=limit,
         )
 
     @mcp.tool()
     def gocardless_payment_party(payment_id: str) -> dict:
-        """Résout payment → mandat → customer (email, société, metadata aplatis).
+        """Resolves payment → mandate → customer (email, company, metadata flattened).
 
-        ⚠️ La metadata GoCardless peut ne pas porter d'identifiant client
-        externe (selon le marchand).
+        ⚠️ GoCardless metadata may not carry an external customer
+        identifier (depending on the merchant).
         """
         return _client().payment_party(payment_id)
 
     @mcp.tool()
     def gocardless_failure_reason(payment_id: str) -> dict:
-        """Motif du dernier échec d'un prélèvement (cause, description,
-        will_attempt_retry). Si will_attempt_retry est True, GoCardless va
-        retenter — ne pas émettre d'avoir tant que ce n'est pas False."""
+        """Reason for a direct debit's latest failure (cause, description,
+        will_attempt_retry). If will_attempt_retry is True, GoCardless will
+        retry — do not issue a credit note until it is False."""
         return _client().failure_reason(payment_id)
 
     @mcp.tool()
@@ -180,20 +180,20 @@ def register(mcp: FastMCP) -> None:
         since: Optional[str] = None,
         limit: int = 200,
     ) -> list:
-        """Prélèvements refusés enrichis, en un seul appel.
+        """Rejected direct debits, enriched, in a single call.
 
-        Renvoie une ligne par échec avec client (nom/email), montant,
-        charge_date, failed_at, cause/reason_code, will_attempt_retry et
-        état du mandat — la chaîne payment→mandat→customer + le motif sont
-        résolus côté serveur. Triés par date d'échec décroissante.
+        Returns one row per failure with customer (name/email), amount,
+        charge_date, failed_at, cause/reason_code, will_attempt_retry and
+        mandate state — the payment→mandate→customer chain + the reason are
+        resolved server-side. Sorted by failure date, descending.
 
-        ⚠️ Faits seulement, pas d'action décidée : « relancer vs refaire un
-        mandat » reste un jugement métier (agent/guide). Et tant que
-        will_attempt_retry est True, ne rien émettre — GoCardless va retenter.
+        ⚠️ Facts only, no action decided: "retry vs redo a
+        mandate" remains a business judgment (agent/guide). And as long as
+        will_attempt_retry is True, issue nothing — GoCardless will retry.
 
         Args:
-            since: ISO8601 (ex '2026-05-25'). Filtre sur created_at : un
-                paiement créé avant mais échoué après ne ressort pas.
-            limit: taille de page des failed à enrichir (max 500).
+            since: ISO8601 (e.g. '2026-05-25'). Filter on created_at: a
+                payment created before but failed after does not show up.
+            limit: page size of the failed to enrich (max 500).
         """
         return _client().failed_payments(since=since, limit=limit)

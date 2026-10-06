@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `supabase`.
+"""Registry declaration of the `supabase` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ PUBLISHER = "Supabase"
 LOGO_DOMAIN = "supabase.com"
 
 DESCRIPTION = (
-    "Le Management API de Supabase : lister et configurer les projets, la "
-    "configuration d'authentification, consulter les logs. Pas les données de "
-    "l'application elle-même (les tables Postgres du projet) — seulement son "
+    "The Supabase Management API: list and configure projects, the "
+    "authentication configuration, and read the logs. Not the application's own "
+    "data (the project's Postgres tables) — only its "
     "administration."
 )

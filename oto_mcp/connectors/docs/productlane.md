@@ -1,43 +1,43 @@
-## prerequisite — clé API v2 productlane
+## prerequisite — productlane API v2 key
 
-crée une clé dans Productlane (Settings → API), puis colle-la dans oto.
-- ⚠️ **une clé v1 ne marche pas ici.** L'API v2 est une API distincte, avec ses propres clés ; v1 s'arrête le **20/11/2026**. Si la clé est refusée en 401 alors qu'elle « marche ailleurs », c'est presque toujours ça
-- byo-only : pas de clé oto partagée — ce sont les conversations de tes clients, chaque organisation pose la sienne
-- la clé porte des **scopes** (`threads:read`, `threads:write`, `contacts:*`, `companies:*`, `projects:*`, `issues:*`, `changelogs:*`, `docs:*`, `tags:*`, `snippets:*`, `portal:read`) : un refus **403** veut dire qu'il en manque un, pas que la clé est mauvaise
-- certaines familles demandent un **plan** : les extraits de réponse et la diffusion de changelog exigent Pro, les étiquettes de changelog et le portail client exigent Scale
-- ⚠️ **Linear doit être connecté côté Productlane** pour tout ce qui touche à la roadmap (projets, issues, liens depuis un fil) : ce n'est pas une roadmap autonome
+create a key in Productlane (Settings → API), then paste it into oto.
+- ⚠️ **a v1 key does not work here.** The v2 API is a separate API, with its own keys; v1 shuts down on **2026-11-20**. If the key is rejected with a 401 even though it "works elsewhere", this is almost always the cause
+- byo-only: no shared oto key — these are your customers' conversations, each organization sets up its own
+- the key carries **scopes** (`threads:read`, `threads:write`, `contacts:*`, `companies:*`, `projects:*`, `issues:*`, `changelogs:*`, `docs:*`, `tags:*`, `snippets:*`, `portal:read`): a **403** refusal means one is missing, not that the key is bad
+- some families require a **plan**: reply snippets and changelog broadcast require Pro, changelog tags and the customer portal require Scale
+- ⚠️ **Linear must be connected on the Productlane side** for anything touching the roadmap (projects, issues, links from a thread): it is not a standalone roadmap
 
-## usage — la boîte de retours clients, et ce qu'on en fait
+## usage — the customer feedback inbox, and what to do with it
 
-- « qu'est-ce que nos clients demandent ? » → `productlane_threads(op="search", status="open")`, ou `productlane_roadmap(op="projects", sort="total_score")` pour classer par poids des retours rattachés plutôt que par date
-- « lire une conversation en entier » → `productlane_threads(op="get", thread_id="…", expand=["messages","comments"])`
-- « répondre au client » → `productlane_threads(op="send", thread_id="…", content="…")` — ⚠️ **cela part vraiment**, par le canal d'où vient le fil
-- « laisser une note à l'équipe » → `productlane_threads(op="comment", …)` : visible des coéquipiers seulement, rien ne sort
-- « rattacher ce retour à la roadmap » → `productlane_threads(op="link", thread_id="…", issue_ids=[…])` : c'est ce geste qui fait monter le score d'un projet
-- « qui a demandé ça ? » → `productlane_contacts(op="search", …)` puis `op="issues"` / `op="projects"` sur le contact
-- « publier une note de version » → `productlane_changelogs(op="create", fields={…})`, puis `op="update"` avec `{"published": true}` pour la rendre visible
-- « prévenir les abonnés » → `productlane_changelogs(op="broadcast", changelog_id="…", email=true, dry_run=false)`
-- « ce que dit notre aide en ligne » → `productlane_docs(op="articles", title_contains="…")`
-- vérifier ce que la clé a le droit de faire, avant de buter dessus → `productlane_workspace(op="me")` : il rend les scopes accordés et ne demande aucun droit
+- "what are our customers asking for?" → `productlane_threads(op="search", status="open")`, or `productlane_roadmap(op="projects", sort="total_score")` to rank by the weight of attached feedback rather than by date
+- "read a whole conversation" → `productlane_threads(op="get", thread_id="…", expand=["messages","comments"])`
+- "reply to the customer" → `productlane_threads(op="send", thread_id="…", content="…")` — ⚠️ **this really goes out**, through the channel the thread came from
+- "leave a note for the team" → `productlane_threads(op="comment", …)`: visible to teammates only, nothing goes out
+- "link this feedback to the roadmap" → `productlane_threads(op="link", thread_id="…", issue_ids=[…])`: this is the gesture that raises a project's score
+- "who asked for this?" → `productlane_contacts(op="search", …)` then `op="issues"` / `op="projects"` on the contact
+- "publish a release note" → `productlane_changelogs(op="create", fields={…})`, then `op="update"` with `{"published": true}` to make it visible
+- "notify subscribers" → `productlane_changelogs(op="broadcast", changelog_id="…", email=true, dry_run=false)`
+- "what our online help says" → `productlane_docs(op="articles", title_contains="…")`
+- check what the key is allowed to do, before running into it → `productlane_workspace(op="me")`: it returns the granted scopes and requires no right
 
-## note — publier n'est pas diffuser
+## note — publishing is not broadcasting
 
-⚠️ **`op="broadcast"` n'a AUCUN effet sur `published`** — c'est écrit noir sur blanc côté éditeur. Les deux gestes sont indépendants, et les confondre coûte cher dans les deux sens :
-- diffuser un changelog **non publié** envoie à tes abonnés un lien vers une page invisible
-- publier sans diffuser ne prévient personne
+⚠️ **`op="broadcast"` has NO effect on `published`** — the vendor spells it out. The two gestures are independent, and mixing them up is costly in both directions:
+- broadcasting an **unpublished** changelog sends your subscribers a link to an invisible page
+- publishing without broadcasting notifies no one
 
-publier = `productlane_changelogs(op="update", fields={"published": true})`. diffuser = `op="broadcast"`, qui est en **dry-run par défaut** : il faut `dry_run=false` pour que quelque chose parte, et il n'y a ni annulation ni rappel.
+publish = `productlane_changelogs(op="update", fields={"published": true})`. broadcast = `op="broadcast"`, which is **dry-run by default**: you need `dry_run=false` for anything to go out, and there is no cancel or recall.
 
-## note — la roadmap est un miroir de Linear
+## note — the roadmap is a mirror of Linear
 
-⚠️ **une écriture peut réussir ici pendant que la synchro Linear échoue** : l'éditeur la journalise de son côté et **ne la remonte pas dans la réponse**. Un succès sur `update_project` / `update_issue` ne prouve donc pas que Linear a suivi.
-- la **création** part de Linear (l'issue y est déposée d'abord) : sans Linear connecté, elle échoue franchement
-- `team_id`, `state_id`, `assignee_id`, `linear_status_id` sont des identifiants **Linear** — les lire par `productlane_roadmap(op="workflows", team_id="…")` et `op="statuses"`, jamais les coder en dur
-- sur une issue, `status` n'est pas une énumération fixe : ce sont les workflow states de l'équipe Linear, propres à chaque espace de travail
-- `priority` suit la numérotation Linear : **`0` = aucune priorité, `1` = urgente**, puis 2, 3, 4 par urgence décroissante. Ce n'est pas une échelle croissante
+⚠️ **a write can succeed here while the Linear sync fails**: the vendor logs it on its side and **does not surface it in the response**. A success on `update_project` / `update_issue` therefore does not prove that Linear followed.
+- **creation** starts from Linear (the issue is filed there first): without Linear connected, it fails outright
+- `team_id`, `state_id`, `assignee_id`, `linear_status_id` are **Linear** identifiers — read them via `productlane_roadmap(op="workflows", team_id="…")` and `op="statuses"`, never hardcode them
+- on an issue, `status` is not a fixed enum: these are the Linear team's workflow states, specific to each workspace
+- `priority` follows Linear numbering: **`0` = no priority, `1` = urgent**, then 2, 3, 4 in decreasing urgency. It is not an ascending scale
 
-## note — trois autres pièges
+## note — three other pitfalls
 
-- ⚠️ **`productlane_contacts(op="block", block_type="DOMAIN")` coupe toute une organisation** d'un seul appel, et l'expéditeur n'en est pas informé. `"EMAIL"` ne vise qu'une adresse
-- ⚠️ **`productlane_companies(op="merge")` est irréversible, et le sens compte** : l'entreprise `company_id` survit, celle de `source_id` est supprimée
-- ⚠️ **`productlane_docs(op="accept")` peut répondre `superseded`** au lieu de `accepted` : le brouillon ne s'applique plus proprement, l'article ayant bougé sous lui. C'est un succès HTTP qui n'a **rien appliqué** — lire le statut rendu, pas seulement l'absence d'erreur
+- ⚠️ **`productlane_contacts(op="block", block_type="DOMAIN")` cuts off an entire organization** in a single call, and the sender is not told. `"EMAIL"` targets only one address
+- ⚠️ **`productlane_companies(op="merge")` is irreversible, and direction matters**: the `company_id` company survives, the one in `source_id` is deleted
+- ⚠️ **`productlane_docs(op="accept")` can answer `superseded`** instead of `accepted`: the draft no longer applies cleanly, the article having moved underneath it. It is an HTTP success that **applied nothing** — read the returned status, not just the absence of an error

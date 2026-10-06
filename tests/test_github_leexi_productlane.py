@@ -216,7 +216,7 @@ def test_la_diffusion_part_vraiment_quand_on_le_demande():
 def test_la_diffusion_sans_canal_est_refusee_avant_tout_appel():
     fake = _Fake()
     with _with("oto.tools.productlane.client.ProductlaneClient", fake):
-        with pytest.raises(McpError, match="au moins un canal"):
+        with pytest.raises(McpError, match="at least one channel"):
             _call("productlane", "productlane_changelogs", op="broadcast",
                   changelog_id="c1", dry_run=False)
     assert fake.calls == []
@@ -288,8 +288,8 @@ def test_le_404_github_parle_de_DROITS_pas_dun_nom_mal_ecrit():
 
     msg = _upstream_message(UpstreamHTTPError(404, {"message": "Not Found"},
                                               service="github"))
-    assert "jeton" in msg.lower()
-    assert "privée" in msg or "PRIVÉE" in msg
+    assert "token" in msg.lower()
+    assert "private" in msg or "PRIVATE" in msg
 
 
 def test_le_403_leexi_nomme_les_scopes_qui_engagent_la_facturation():
@@ -297,7 +297,7 @@ def test_le_403_leexi_nomme_les_scopes_qui_engagent_la_facturation():
     from oto.tools.common.errors import UpstreamHTTPError
 
     msg = _upstream_message(UpstreamHTTPError(403, {}, service="leexi"))
-    assert "write_users" in msg and "licences" in msg
+    assert "write_users" in msg and "licenses" in msg
 
 
 def test_le_404_leexi_rappelle_la_portee_dacces():
@@ -305,7 +305,7 @@ def test_le_404_leexi_rappelle_la_portee_dacces():
     from oto.tools.common.errors import UpstreamHTTPError
 
     msg = _upstream_message(UpstreamHTTPError(404, {}, service="leexi"))
-    assert "portée" in msg
+    assert "scope" in msg
 
 
 def test_le_401_productlane_nomme_le_piege_de_la_cle_v1():
@@ -352,7 +352,7 @@ def test_la_sonde_github_refuse_une_reponse_qui_nidentifie_personne():
     sonde exige de savoir QUI est le jeton, pas seulement qu'un serveur a parlé."""
     from oto_mcp.tools.github import _verify
     with _with("oto.tools.github.client.GitHubClient", _Fake(retour={})):
-        with pytest.raises(ValueError, match="identifier le compte"):
+        with pytest.raises(ValueError, match="identifying the account"):
             _verify({"token": "t", "base_url": ""})
 
 
@@ -435,5 +435,5 @@ def test_la_recherche_github_annonce_sa_troncature():
 
 def test_la_recherche_sans_terme_est_refusee():
     with _with("oto.tools.github.client.GitHubClient", _Fake()):
-        with pytest.raises(McpError, match="`q` requis"):
+        with pytest.raises(McpError, match="`q` required"):
             _call("github", "github_search", op="code")

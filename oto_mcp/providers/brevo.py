@@ -1,22 +1,22 @@
-"""Déclaration de registre du connecteur `brevo`.
+"""Registry declaration of the `brevo` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# brevo : API PUBLIQUE v3 (`api.brevo.com/v3`, header `api-key`). Une clé porte
-# tout le compte (pas de scope) → byo. Ne PAS confondre avec `brevoauto`
-# (automations, session navigateur) : surfaces disjointes, credentials distincts.
+# brevo: PUBLIC v3 API (`api.brevo.com/v3`, `api-key` header). One key covers
+# the whole account (no scope) → byo. Do NOT confuse with `brevoauto`
+# (automations, browser session): disjoint surfaces, distinct credentials.
 CONNECTOR = _c(
     "brevo", ["brevo"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Brevo",
-    help="emailing & CRM (contacts, listes, transactionnel, campagnes, deals)",
+    help="emailing & CRM (contacts, lists, transactional, campaigns, deals)",
     publisher="Brevo", href="https://app.brevo.com",
-    # 2 modules, 1 namespace : le CRM natif est un sous-domaine distinct, sorti
-    # pour tenir la taille de fichier. `brevo_crm_*` → namespace_of = `brevo`.
+    # 2 modules, 1 namespace: the native CRM is a distinct subdomain, split out
+    # to keep file size down. `brevo_crm_*` → namespace_of = `brevo`.
     modules=("brevo", "brevo_crm"),
 )
 
@@ -24,8 +24,8 @@ CATEGORY = "Prospection"
 LOGO_DOMAIN = "brevo.com"
 
 DESCRIPTION = (
-    "Emailing et CRM Brevo (ex-Sendinblue) : contacts, listes, campagnes, "
-    "envois transactionnels et deals du CRM natif. Une seule clé porte tout le "
-    "compte — à ne pas confondre avec `brevoauto`, qui pilote les automations "
-    "via une session navigateur distincte."
+    "Brevo (formerly Sendinblue) emailing and CRM: contacts, lists, campaigns, "
+    "transactional sends and native CRM deals. A single key covers the whole "
+    "account — not to be confused with `brevoauto`, which drives automations "
+    "through a separate browser session."
 )

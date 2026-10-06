@@ -81,8 +81,8 @@ def test_droit_echu_refus_qui_nomme_la_cause(live, gagnant):
     with pytest.raises(McpError) as e:
         _resoudre()
     msg = str(e.value)
-    assert "n'est active ni pour cette org ni pour toi" in msg
-    assert "essai terminé ou abonnement requis" in msg
+    assert "is active neither for this org nor for you" in msg
+    assert "trial ended or subscription required" in msg
 
 
 def test_un_canal_suit_le_droit_de_son_porteur(live, gagnant):
@@ -114,7 +114,7 @@ def test_configurer_une_connexion_ne_change_pas(live, gagnant):
 def test_sans_org_de_contexte_refus_nomme(live, gagnant):
     with pytest.raises(McpError) as e:
         _resoudre()
-    assert "aucune org qui la porte ne couvre cet appel" in str(e.value)
+    assert "no org that holds it covers this call" in str(e.value)
 
 
 def test_un_connecteur_sans_option_payante_n_est_pas_concerne(live, gagnant):
@@ -127,7 +127,7 @@ def test_endpoint_anonyme_droit_echu_refuse_vivant_servi(live, gagnant):
     E.grant(org, "unipile", "offered", value=1, expires_at=HIER)
     with pytest.raises(McpError) as e:
         resolve_anon._resolve_credential_anon("unipile", "auto", org)
-    assert "essai terminé ou abonnement requis" in str(e.value)
+    assert "trial ended or subscription required" in str(e.value)
     E.grant(org, "unipile", "subscription", value=1, expires_at=DEMAIN)
     assert resolve_anon._resolve_credential_anon("unipile", "auto", org).is_platform
 
@@ -163,7 +163,7 @@ def test_un_droit_personnel_sert_sa_personne_seule(live, gagnant, partout):
     assert _resoudre(sub=sub).is_platform is True
     with pytest.raises(McpError) as e:
         _resoudre(sub=_sub())
-    assert "n'est active ni pour cette org ni pour toi" in str(e.value)
+    assert "is active neither for this org nor for you" in str(e.value)
 
 
 def test_sans_org_servie_seule_la_personne_partout_ouvre(live, gagnant, monkeypatch):
@@ -176,7 +176,7 @@ def test_sans_org_servie_seule_la_personne_partout_ouvre(live, gagnant, monkeypa
         sub=s, org=o, membre=False, org_heritee=False))
     with pytest.raises(McpError) as e:
         _resoudre(sub=sub)
-    assert "ne t'est pas ouverte à titre personnel" in str(e.value)
+    assert "is not open to you personally" in str(e.value)
     E.grant(None, "unipile", "offered", value=1, sub=sub)
     assert _resoudre(sub=sub).is_platform is True
 
@@ -188,5 +188,5 @@ def test_l_endpoint_anonyme_ne_lit_que_l_org(live, gagnant):
     E.grant(org, "unipile", "offered", value=1, sub=_sub())
     with pytest.raises(McpError) as e:
         resolve_anon._resolve_credential_anon("unipile", "auto", org)
-    assert ("n'est pas active pour cette org : essai terminé ou abonnement requis ; "
-            "une clé `unipile` propre reste servie.") in str(e.value)
+    assert ("is not active for this org: trial ended or subscription required; "
+            "your own `unipile` key is still served.") in str(e.value)

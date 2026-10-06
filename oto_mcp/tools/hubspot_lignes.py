@@ -1,24 +1,24 @@
-"""HubSpot — pousser les lignes d'un tableau en contacts ou entreprises, PAR RÉFÉRENCE.
+"""HubSpot — push the rows of a table as contacts or companies, BY REFERENCE.
 
-Second module du connecteur (`hubspot` tient les objets, listes et propriétés) : il ne
-porte que `hubspot_push_rows`. `hubspot_object op=create|update` prenait la fiche en
-ARGUMENTS (`properties={"email": …, "firstname": …}`), une personne par appel. Ici
-l'agent désigne des lignes ; le serveur les lit, crée ou met à jour, associe, range dans
-une liste, écrit en retour l'id HubSpot et l'état sur chaque ligne, et ne rend que des
-comptes. La mécanique commune vit dans `datastore/par_reference.py`.
+Second module of the connector (`hubspot` holds objects, lists and properties): it only
+carries `hubspot_push_rows`. `hubspot_object op=create|update` took the record as
+ARGUMENTS (`properties={"email": …, "firstname": …}`), one person per call. Here
+the agent designates rows; the server reads them, creates or updates, associates, files into
+a list, writes the HubSpot id and the state back on each row, and only returns
+counts. The shared mechanics live in `datastore/par_reference.py`.
 
-**Rapprocher sans deviner.** Un enregistrement existe-t-il déjà ? On le demande à
-HubSpot par la propriété d'unicité (`email` pour un contact, `domain` pour une
-entreprise), en UN appel de recherche `IN` pour tout le lot — jamais un appel par ligne
-(le plafond d'une app privée est de 190 requêtes / 10 s). Deux enregistrements pour la
-même valeur : la ligne échoue (`hubspot_ambiguous_match`) plutôt que d'en choisir un.
-Une ligne qui porte déjà son id HubSpot désigne cet enregistrement, sans recherche.
+**Match without guessing.** Does a record already exist? We ask
+HubSpot by the uniqueness property (`email` for a contact, `domain` for a
+company), in ONE `IN` search call for the whole batch — never one call per row
+(a private app's ceiling is 190 requests / 10 s). Two records for the
+same value: the row fails (`hubspot_ambiguous_match`) rather than picking one.
+A row that already carries its HubSpot id designates that record, without a search.
 
-**Un existant n'est pas touché par défaut** (`on_existing="skip"`) : un CRM client ne se
-réécrit pas avec les valeurs d'un tableau sans qu'on l'ait demandé (`update`), et la
-réponse dit combien d'existants sont restés intacts et comment les mettre à jour. Deux
-lignes d'un même lot à la même valeur de rapprochement désignent UN enregistrement : la
-seconde retrouve celui que la première vient de créer.
+**An existing record is not touched by default** (`on_existing="skip"`): a customer CRM is not
+rewritten with the values of a table without being asked (`update`), and the
+answer says how many existing records were left intact and how to update them. Two
+rows of the same batch with the same matching value designate ONE record: the
+second finds the one the first just created.
 """
 from __future__ import annotations
 
@@ -31,16 +31,16 @@ from ..datastore import par_reference as pr
 from ..datastore.identite import AdresseJson as Adresse
 from .hubspot import _scope_refusal
 
-#: La propriété qui dit « c'est le même enregistrement », par type d'objet.
+#: The property that says "it's the same record", per object type.
 CLE_PAR_DEFAUT = {"contacts": "email", "companies": "domain"}
 CREE, MAJ, EXISTE, ECHEC = "created", "updated", "exists", "failed"
-#: HubSpot plafonne une page de recherche, et une liste de valeurs `IN`, à 100.
+#: HubSpot caps a search page, and a list of `IN` values, at 100.
 _PAGE = 100
 
 
 def _cle(v) -> Optional[str]:
-    """La valeur de rapprochement, comparée sans casse (HubSpot range emails et
-    domaines en minuscules)."""
+    """The matching value, compared case-insensitively (HubSpot stores emails and
+    domains in lowercase)."""
     if v is None:
         return None
     s = str(v).strip().lower()
@@ -48,26 +48,26 @@ def _cle(v) -> Optional[str]:
 
 
 def _constantes(constants, mapping: dict[str, str]) -> dict:
-    """Les propriétés FIXES d'un lot (`lifecyclestage`, un lot d'import…), écrites
-    sur chaque enregistrement. Pas une colonne : une valeur connue de l'appelant, qui
-    ne dit rien d'une personne. Une propriété à la fois fixe et lue d'une colonne est
-    refusée plutôt que tranchée en silence."""
+    """The FIXED properties of a batch (`lifecyclestage`, an import batch…), written
+    on every record. Not a column: a value known to the caller, which
+    says nothing about a person. A property that is both fixed and read from a column is
+    refused rather than silently arbitrated."""
     if constants is None:
         return {}
     if not isinstance(constants, dict):
         raise pr.refus("hubspot_constants_shape",
-                       "`constants` est un objet {propriété: valeur}. Rien n'a été envoyé.")
+                       "`constants` is an object {property: value}. Nothing was sent.")
     doublons = sorted(k for k in constants if k in mapping)
     if doublons:
         raise pr.refus("hubspot_constant_mapped",
-                       f"propriété(s) à la fois fixe(s) et lue(s) d'une colonne : "
-                       f"{', '.join(doublons)}. Rien n'a été envoyé.")
+                       f"propert(y/ies) both fixed and read from a column: "
+                       f"{', '.join(doublons)}. Nothing was sent.")
     out: dict = {}
     for k, v in constants.items():
         if not (isinstance(k, str) and k) or not isinstance(v, (str, int, float, bool)):
             raise pr.refus("hubspot_constants_shape",
-                           "`constants` : noms non vides, valeurs scalaires. "
-                           "Rien n'a été envoyé.")
+                           "`constants`: non-empty names, scalar values. "
+                           "Nothing was sent.")
         out[k] = ("true" if v else "false") if isinstance(v, bool) else v
     return out
 
@@ -83,7 +83,7 @@ def _proprietes(ligne: dict, mapping: dict[str, str]) -> tuple[dict, Optional[st
         elif isinstance(v, (str, int, float)):
             props[prop] = v
         elif isinstance(v, list) and all(isinstance(x, (str, int, float)) for x in v):
-            # Une propriété à choix multiples HubSpot s'écrit `a;b;c`.
+            # A HubSpot multi-select property is written `a;b;c`.
             props[prop] = ";".join(str(x) for x in v)
         else:
             return {}, "unsupported_value"
@@ -91,8 +91,8 @@ def _proprietes(ligne: dict, mapping: dict[str, str]) -> tuple[dict, Optional[st
 
 
 def _avis_existants(n: int, on_existing: str) -> dict:
-    """Ce que la réponse dit des existants laissés intacts : combien, et comment les
-    mettre à jour. Rien quand aucun ne l'a été."""
+    """What the answer says about existing records left intact: how many, and how to
+    update them. Nothing when none were."""
     if not n:
         return {}
     return {"existing_left_untouched": (
@@ -112,7 +112,7 @@ def register(mcp: FastMCP) -> None:
 
     def _existants(c: HubSpotClient, object_type: str, prop: str,
                    valeurs: list[str]) -> dict[str, list[str]]:
-        """{valeur: [ids]} pour les valeurs déjà présentes chez HubSpot."""
+        """{value: [ids]} for the values already present in HubSpot."""
         trouves: dict[str, list[str]] = {}
         for i in range(0, len(valeurs), _PAGE):
             tranche = valeurs[i:i + _PAGE]
@@ -133,8 +133,8 @@ def register(mcp: FastMCP) -> None:
 
     def _associer(c: HubSpotClient, object_type: str, object_id: str,
                   vers: str, vers_id: str) -> None:
-        # L'association PAR DÉFAUT de HubSpot (API v4) : aucun identifiant de type
-        # d'association à deviner, c'est HubSpot qui choisit celui du couple d'objets.
+        # HubSpot's DEFAULT association (API v4): no association type identifier
+        # to guess, HubSpot picks the one for the object pair.
         c._request("PUT", f"/crm/v4/objects/{object_type}/{object_id}/associations/"
                           f"default/{vers}/{vers_id}")
 
@@ -206,23 +206,23 @@ def register(mcp: FastMCP) -> None:
         prop_cle = match_property or CLE_PAR_DEFAUT[object_type]
         if prop_cle not in mapping:
             raise pr.refus("hubspot_match_unmapped",
-                           f"`{prop_cle}` (la propriété de rapprochement) doit figurer "
-                           "dans `field_mapping`. Rien n'a été envoyé.")
+                           f"`{prop_cle}` (the matching property) must appear "
+                           "in `field_mapping`. Nothing was sent.")
         if (associate_with is None) != (associate_id_column is None):
             raise pr.refus("hubspot_association_incomplete",
-                           "`associate_with` et `associate_id_column` vont ensemble. "
-                           "Rien n'a été envoyé.")
+                           "`associate_with` and `associate_id_column` go together. "
+                           "Nothing was sent.")
         lot = pr.ouvrir(datastore, row_ids=row_ids, filter=filter,
                         colonne_etat=status_column, limite=batch_size)
         inconnues = pr.colonnes_inconnues(
             lot, [*mapping.values(), *([associate_id_column] if associate_id_column else [])])
         if inconnues:
             raise pr.refus("push_rows_unknown_columns",
-                           f"colonnes absentes du tableau : {', '.join(inconnues)}. "
-                           "Rien n'a été envoyé.", columns=inconnues)
+                           f"columns missing from the table: {', '.join(inconnues)}. "
+                           "Nothing was sent.", columns=inconnues)
 
         recu = pr.Recu()
-        # Première passe, sans appel : ce qui part, ce qui est écarté, et pourquoi.
+        # First pass, no call: what goes out, what is set aside, and why.
         a_pousser: list[tuple[str, dict, Optional[str], Optional[str]]] = []
         traitees = 0
         for ligne in lot.lignes:
@@ -253,9 +253,9 @@ def register(mcp: FastMCP) -> None:
                                              "status_column": status_column})
 
         c = _client() if a_pousser else None
-        # `pousses` = ce qui rejoint la liste ; `ecrits` = ce qui a été créé ou modifié
-        # chez HubSpot (la quantité facturée). Un existant laissé intact (`list_only`)
-        # est dans le premier, jamais dans le second.
+        # `pousses` = what joins the list; `ecrits` = what was created or modified
+        # in HubSpot (the billed quantity). An existing record left intact (`list_only`)
+        # is in the first, never in the second.
         pousses: list[str] = []
         ecrits = 0
         try:
@@ -263,8 +263,8 @@ def register(mcp: FastMCP) -> None:
                 fiche = c.get_list(list_id) or {}
                 if (fiche.get("list") or fiche).get("processingType") == "DYNAMIC":
                     raise pr.refus("hubspot_list_dynamic",
-                                   f"la liste {list_id} est DYNAMIC : ses membres sont "
-                                   "recalculés par HubSpot. Rien n'a été envoyé.")
+                                   f"list {list_id} is DYNAMIC: its members are "
+                                   "recomputed by HubSpot. Nothing was sent.")
             a_chercher = sorted({_cle(p.get(prop_cle)) for _, p, connu, _ in a_pousser
                                  if connu is None} - {None})
             existants = _existants(c, object_type, prop_cle, a_chercher) if a_chercher else {}
@@ -274,7 +274,7 @@ def register(mcp: FastMCP) -> None:
                 raise scope from None
             raise
 
-        # Une ligne non envoyée (budget, arrêt) n'est pas « traitée » : elle reste.
+        # A row not sent (budget, stop) is not "processed": it stays.
         traitees -= len(a_pousser)
         for rid, props, connu, vers_id in a_pousser:
             if recu.budget_epuise():
@@ -291,8 +291,8 @@ def register(mcp: FastMCP) -> None:
                     continue
                 cible = ids[0] if ids else None
             if cible is not None and on_existing != "update":
-                # Un existant qu'on ne TOUCHE pas : ni propriété, ni association. Il
-                # rejoint la liste seulement si on l'a demandé (`list_only`).
+                # An existing record we do NOT touch: no property, no association. It
+                # joins the list only if asked (`list_only`).
                 recu.compter(EXISTE)
                 if on_existing == "list_only":
                     pousses.append(cible)
@@ -311,8 +311,8 @@ def register(mcp: FastMCP) -> None:
                         pr.ecrire(lot, rid, {status_column: ECHEC,
                                              f"{status_column}.comment": "hubspot_not_created"})
                         continue
-                    # Le lot la retrouve : une ligne suivante à la même valeur désigne
-                    # CET enregistrement, au lieu d'en créer un second.
+                    # The batch finds it again: a later row with the same value designates
+                    # THIS record, instead of creating a second one.
                     cle = _cle(props.get(prop_cle))
                     if cle is not None:
                         existants[cle] = [cible]
@@ -345,7 +345,7 @@ def register(mcp: FastMCP) -> None:
                 id_column: cible, f"{id_column}.comment": f"hubspot {object_type}",
                 status_column: etat})
             if ecrit:
-                # L'enregistrement EXISTE chez HubSpot : ce code dit que la ligne ne le sait pas.
+                # The record EXISTS in HubSpot: this code says the row does not know it.
                 recu.echec(rid, f"writeback_{ecrit}")
 
         if list_id and pousses:
@@ -356,8 +356,8 @@ def register(mcp: FastMCP) -> None:
             except UpstreamHTTPError as e:
                 recu.arret = recu.arret or f"hubspot_list_http_{getattr(e, 'status_code', None)}"
 
-        # La ligne FACTURÉE compte les enregistrements écrits, comme N appels à
-        # hubspot_object l'auraient fait (`tool_calls.quantity`).
+        # The BILLED line counts the records written, as N calls to
+        # hubspot_object would have (`tool_calls.quantity`).
         session_org.note_call_trace(quantity=ecrits)
         return recu.rendre(lot, selectionnees=len(lot.lignes), dry_run=False,
                            traitees=traitees, object_type=object_type,

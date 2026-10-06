@@ -1,7 +1,7 @@
-"""Kaspr — enrichissement contacts B2B depuis URL LinkedIn (emails + téléphones).
+"""Kaspr — B2B contact enrichment from a LinkedIn URL (emails + phone numbers).
 
-Provider user-only : pas de quota plateforme, chaque user pose sa clé sur
-`/account`. Kaspr facture en crédits à l'enrichissement.
+User-only provider: no platform quota, each user sets their key on
+`/account`. Kaspr bills credits per enrichment.
 """
 from __future__ import annotations
 
@@ -14,18 +14,18 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..connectors import verify as connector_verify
 
-# La normalisation du slug LinkedIn (URL → slug nu, sinon Kaspr 500) vit dans le
-# client oto-core (`oto.tools.kaspr.client.linkedin_slug`), pas ici — logique
-# canonique partagée par tous les consommateurs. Ce wrapper ne fait que traduire
-# une erreur Kaspr en McpError actionnable.
+# The LinkedIn slug normalization (URL → bare slug, otherwise Kaspr 500) lives in the
+# oto-core client (`oto.tools.kaspr.client.linkedin_slug`), not here — canonical
+# logic shared by all consumers. This wrapper only translates
+# a Kaspr error into an actionable McpError.
 
 
-def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
-    """Sonde « tester la connexion » : la clé authentifie-t-elle vraiment ?
+def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: probe contract, unused here)
+    """"Test the connection" probe: does the key really authenticate?
 
-    `verify_key()` (oto-core) fait un POST sentinel sans effet de bord ni crédit
-    consommé (Kaspr n'a pas de `/me`) — 401 sur clé invalide. Lève — le message
-    remonte tel quel à l'UI.
+    `verify_key()` (oto-core) does a sentinel POST with no side effect and no credit
+    consumed (Kaspr has no `/me`) — 401 on an invalid key. Raises — the message
+    bubbles up as-is to the UI.
     """
     from oto.tools.kaspr.client import KasprClient
     KasprClient(api_key=fields["key"]).verify_key()
@@ -69,7 +69,7 @@ def register(mcp: FastMCP) -> None:
         if effective_data is None and with_phone:
             effective_data = ["workEmail", "phone"]
         try:
-            # Le client oto-core normalise linkedin_id (URL → slug) avant l'appel.
+            # The oto-core client normalizes linkedin_id (URL → slug) before the call.
             result = client.enrich_linkedin(
                 linkedin_id=linkedin_id,
                 name=name,
@@ -77,67 +77,67 @@ def register(mcp: FastMCP) -> None:
                 data_to_get=effective_data,
             )
         except ValueError as e:
-            # Refus LOCAL du client oto-core — un nom de `dataToGet` hors des
-            # trois que Kaspr accepte. Son message NOMME déjà les valeurs
-            # acceptées : on le rend tel quel plutôt que de le noyer sous une
-            # hypothèse de profil introuvable (même forme que `tools/cognism.py`).
+            # LOCAL refusal by the oto-core client — a `dataToGet` name outside the
+            # three Kaspr accepts. Its message already NAMES the accepted
+            # values: we return it as-is rather than drowning it under a
+            # profile-not-found hypothesis (same shape as `tools/cognism.py`).
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         except Exception as e:
-            # ⚠️ Un 5xx de Kaspr NE PROUVE PAS une panne : Kaspr rend 500 sur au
-            # moins deux fautes d'entrée connues — une URL complète au lieu du
-            # slug nu (relevé le 15/06) et un `dataToGet` inconnu (reproduit le
-            # 01/09 : `["emails","phones","company"]` → 500 `TypeError: Cannot
-            # read properties of undefined (reading 'push')`). Le message disait
-            # « ce n'est pas ton entrée » : une affirmation qu'on ne peut pas
-            # faire, et qui fermait la seule piste correcte dans le cas le plus
-            # atteignable. Il NOMME donc les deux fautes, et borne la reprise.
+            # ⚠️ A Kaspr 5xx DOES NOT PROVE an outage: Kaspr returns 500 on at
+            # least two known input faults — a full URL instead of the
+            # bare slug (seen on 15/06) and an unknown `dataToGet` (reproduced on
+            # 01/09: `["emails","phones","company"]` → 500 `TypeError: Cannot
+            # read properties of undefined (reading 'push')`). The message said
+            # "it's not your input": a claim we cannot
+            # make, and which closed off the only correct lead in the most
+            # reachable case. It therefore NAMES both faults, and bounds the retry.
             #
-            # La reprise bornée à UNE tentative différée est cohérente avec le
-            # drapeau machine : cette McpError(INVALID_PARAMS) est classée
-            # `invalid_input` / `retryable: false` par `error_taxonomy`, où
-            # `retryable` veut dire « rejouable TEL QUEL ». Rejouer tel quel n'est
-            # justement pas le premier geste ici — c'est corriger l'entrée.
+            # The retry bounded to ONE deferred attempt is consistent with the
+            # machine flag: this McpError(INVALID_PARAMS) is classified
+            # `invalid_input` / `retryable: false` by `error_taxonomy`, where
+            # `retryable` means "replayable AS IS". Replaying as is is
+            # precisely not the first move here — it is fixing the input.
             resp = getattr(e, "response", None)
             status = getattr(resp, "status_code", None)
             if status and status >= 500:
-                msg = (f"Kaspr a rendu une erreur serveur ({status}) — ce qu'il rend "
-                       "AUSSI sur une requête malformée. Vérifie `linkedin_id` (slug "
-                       "nu ou URL de profil, jamais un nom ni une recherche) et "
-                       "`data_to_get` (seuls workEmail, directEmail et phone "
-                       "existent). Si l'entrée est correcte : une seule nouvelle "
-                       "tentative, différée.")
+                msg = (f"Kaspr returned a server error ({status}) — which it ALSO "
+                       "returns on a malformed request. Check `linkedin_id` (bare "
+                       "slug or profile URL, never a name or a search) and "
+                       "`data_to_get` (only workEmail, directEmail and phone "
+                       "exist). If the input is correct: a single new "
+                       "attempt, deferred.")
             elif status == 402:
-                # 402 = crédits insuffisants sur le COMPTE Kaspr. Le message
-                # générique en-dessous renvoyait l'agent vérifier le profil
-                # LinkedIn — la seule piste qui ne peut RIEN donner ici, et qui
-                # se solde par une relecture du slug puis une nouvelle tentative
-                # identique. Relevé le 2026-09-02 (appel 1345911) : un 402 rendu
-                # comme « Vérifie le profil LinkedIn (slug ou URL valide) ».
-                # Le client oto-core retire déjà `phone` et rejoue UNE fois quand
-                # il était demandé : un 402 qui remonte jusqu'ici est donc un
-                # refus du compte, pas un choix de champs à revoir.
-                msg = ("Kaspr a refusé l'appel faute de crédits (402) — c'est le "
-                       "compte Kaspr qui est à sec, pas ton entrée. Le profil et "
-                       "`data_to_get` n'y sont pour rien : ni les corriger ni "
-                       "réessayer n'y changera quoi que ce soit tant que le compte "
-                       "n'est pas rechargé.")
+                # 402 = insufficient credits on the Kaspr ACCOUNT. The generic message
+                # below sent the agent to check the LinkedIn profile
+                # — the only lead that can yield NOTHING here, and which
+                # ends in a re-read of the slug then an identical new attempt.
+                # Seen on 2026-09-02 (call 1345911): a 402 rendered
+                # as "Check the LinkedIn profile (valid slug or URL)".
+                # The oto-core client already drops `phone` and replays ONCE when
+                # it was requested: a 402 that bubbles up to here is therefore a
+                # refusal by the account, not a choice of fields to revisit.
+                msg = ("Kaspr refused the call for lack of credits (402) — it is the "
+                       "Kaspr account that is out of credits, not your input. The profile and "
+                       "`data_to_get` have nothing to do with it: neither fixing them nor "
+                       "retrying will change anything until the account is "
+                       "topped up.")
             elif status == 429:
-                # 429 = Kaspr limite le DÉBIT (otomata-tech/oto#144). La branche
-                # générique rendait « Vérifie le profil LinkedIn » — vingt fois en
-                # trente secondes le 28/08/2026 —, la seule piste qui ne peut rien
-                # donner quand il suffit d'attendre. Levé en `UpstreamHTTPError`
-                # 429 et non en McpError : la taxonomie le classe alors
-                # `rate_limited` / `retryable: true`, le seul verdict juste ici (une
-                # McpError serait `invalid_input` / `retryable: false`).
+                # 429 = Kaspr rate-limits (otomata-tech/oto#144). The generic
+                # branch returned "Check the LinkedIn profile" — twenty times in
+                # thirty seconds on 28/08/2026 —, the only lead that can yield nothing
+                # when all that is needed is to wait. Raised as `UpstreamHTTPError`
+                # 429 and not as McpError: the taxonomy then classifies it
+                # `rate_limited` / `retryable: true`, the only right verdict here (an
+                # McpError would be `invalid_input` / `retryable: false`).
                 from oto.tools.common.errors import UpstreamHTTPError
                 raise UpstreamHTTPError(429, (
-                    "Kaspr limite le débit (429) — ni le profil ni `data_to_get` "
-                    "n'y sont pour rien. Espace tes appels : attends quelques "
-                    "secondes, puis rejoue le même appel à l'identique."),
+                    "Kaspr is rate limiting (429) — neither the profile nor `data_to_get` "
+                    "has anything to do with it. Space out your calls: wait a few "
+                    "seconds, then replay the exact same call."),
                     service="kaspr") from e
             else:
-                msg = (f"Kaspr n'a pas pu enrichir `{linkedin_id}` ({e}). Vérifie le "
-                       f"profil LinkedIn (slug ou URL valide).")
+                msg = (f"Kaspr could not enrich `{linkedin_id}` ({e}). Check the "
+                       f"LinkedIn profile (valid slug or URL).")
             raise McpError(ErrorData(code=INVALID_PARAMS, message=msg))
         if is_platform:
             access.record_platform_usage("kaspr")

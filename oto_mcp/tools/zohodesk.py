@@ -1,10 +1,10 @@
 """Zoho Desk — support tickets, threads, contacts, articles (Help Center KB).
 
-Credential = OAuth2 (self-client) à 5 champs : client_id + client_secret +
-refresh_token + org_id (en-tête `orgId` requis) + data_center (région, non-secret)
-→ modèle générique multi-champs (ADR 0011), résolu par appel via
-`access.resolve_credential_fields("zohodesk")`. byo_user. Token d'accès dérivé/caché
-en mémoire côté client.
+Credential = OAuth2 (self-client) with 5 fields: client_id + client_secret +
+refresh_token + org_id (`orgId` header required) + data_center (region, non-secret)
+→ generic multi-field model (ADR 0011), resolved per call via
+`access.resolve_credential_fields("zohodesk")`. byo_user. Access token derived/cached
+in memory on the client side.
 """
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access, status_hints
 from ..connectors import verify as connector_verify
 
-# Zoho héberge par data center régional : l'API Desk ET le refresh OAuth sont liés à
-# leur région d'émission (un self-client `.eu` tapant `desk.zoho.com`/`accounts.zoho.com`
-# est rejeté par un `invalid_client` opaque — même gotcha que le connecteur CRM). Le
-# champ `data_center` du credential sélectionne les domaines API (`desk.zoho.<tld>`) et
-# OAuth (`accounts.zoho.<tld>`). Régions reconnues :
+# Zoho hosts per regional data center: the Desk API AND the OAuth refresh are tied to
+# their issuing region (a `.eu` self-client hitting `desk.zoho.com`/`accounts.zoho.com`
+# is rejected with an opaque `invalid_client` — same gotcha as the CRM connector). The
+# credential's `data_center` field selects the API domains (`desk.zoho.<tld>`) and
+# OAuth domains (`accounts.zoho.<tld>`). Recognized regions:
 _DC_DOMAINS = {
     "com": ("https://desk.zoho.com", "https://accounts.zoho.com"),
     "eu": ("https://desk.zoho.eu", "https://accounts.zoho.eu"),
@@ -34,47 +34,47 @@ _DC_DOMAINS = {
 
 
 def _resolve_dc_domains(data_center: Optional[str]) -> tuple[str, str]:
-    """`(api_domain, accounts_url)` pour la région Zoho Desk déclarée. Région manquante
-    ou non reconnue → `McpError` actionnable, **jamais** de repli silencieux sur `com`
-    (ce repli masquait la vraie cause d'un `invalid_client` : self-client posé sur une
-    autre région). `com` reste pleinement valide — on exige juste un choix reconnu."""
+    """`(api_domain, accounts_url)` for the declared Zoho Desk region. Missing
+    or unrecognized region → actionable `McpError`, **never** a silent fallback to `com`
+    (that fallback masked the real cause of an `invalid_client`: self-client set up on
+    another region). `com` remains fully valid — we just require a recognized choice."""
     dc = (data_center or "").strip().lower()
     if dc not in _DC_DOMAINS:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-            (f"Data center Zoho non reconnu : {data_center!r}." if dc
-             else "Data center Zoho manquant.")
-            + " Renseigne ta région dans le champ « Data center » du connecteur Zoho Desk —"
-            " l'une de : com, eu, in, au, jp, ca. Elle est visible dans l'URL quand tu es"
-            " connecté·e à Zoho Desk (ex. desk.zoho.eu → « eu », desk.zoho.com → « com »)."
+            (f"Unrecognized Zoho data center: {data_center!r}." if dc
+             else "Zoho data center missing.")
+            + " Fill in your region in the \"Data center\" field of the Zoho Desk connector —"
+            " one of: com, eu, in, au, jp, ca. It is visible in the URL when you are"
+            " signed in to Zoho Desk (e.g. desk.zoho.eu → \"eu\", desk.zoho.com → \"com\")."
         )))
     return _DC_DOMAINS[dc]
 
 
-# Surface Desk → scope OAuth qui la débloque. Sert la sonde ET le diagnostic : un
-# `SCOPE_MISMATCH` brut de Zoho ne dit PAS quel scope manque (feedback #299), alors
-# que c'est la seule information dont on a besoin pour régénérer le self-client.
+# Desk surface → OAuth scope that unlocks it. Serves the probe AND the diagnosis: a
+# raw `SCOPE_MISMATCH` from Zoho does NOT say which scope is missing (feedback #299),
+# while that is the only information needed to regenerate the self-client.
 _DESK_SCOPES = (
-    ("départements", "Desk.basic.READ", lambda c: c.list_departments()),
+    ("departments", "Desk.basic.READ", lambda c: c.list_departments()),
     ("tickets", "Desk.tickets.READ", lambda c: c.list_tickets(limit=1)),
     ("contacts", "Desk.contacts.READ", lambda c: c.list_contacts(limit=1)),
     ("articles (KB)", "Desk.articles.READ", lambda c: c.list_articles(limit=1)),
 )
 
 
-def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (contrat de sonde)
-    """Sonde SANS effet de bord, en deux temps — même patron que le connecteur CRM.
+def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (probe contract)
+    """Probe with NO side effects, in two steps — same pattern as the CRM connector.
 
-    1. **refresh OAuth** : valide client_id + client_secret + refresh_token + région.
-    2. **lecture réelle de chaque surface Desk** (`per_page`/`limit` = 1) : un token
-       Zoho peut authentifier avec des scopes PARTIELS — cas vécu, les articles
-       répondaient 200 pendant que tickets/contacts/départements rendaient un
-       `SCOPE_MISMATCH` opaque. Aucune surface lisible ⇒ échec, en citant le scope
-       accordé et ceux qui manquent (le credential est inutilisable). Au moins une
-       lisible ⇒ succès : le credential marche, même si restreint.
+    1. **OAuth refresh**: validates client_id + client_secret + refresh_token + region.
+    2. **real read of each Desk surface** (`per_page`/`limit` = 1): a Zoho
+       token can authenticate with PARTIAL scopes — a real case, articles
+       answered 200 while tickets/contacts/departments returned an opaque
+       `SCOPE_MISMATCH`. No readable surface ⇒ failure, citing the granted scope
+       and the missing ones (the credential is unusable). At least one
+       readable ⇒ success: the credential works, even if restricted.
     """
     from oto.tools.zohodesk.client import ZohoDeskClient
 
-    from .zoho import _zoho_error_hint  # même famille, source unique du diagnostic
+    from .zoho import _zoho_error_hint  # same family, single source of the diagnosis
 
     status_hints.require_complete("zohodesk", fields)
     api_domain, accounts_url = _resolve_dc_domains(fields.get("data_center"))
@@ -85,8 +85,8 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
             "client_secret": fields.get("client_secret"),
             "refresh_token": fields.get("refresh_token"),
         }, timeout=20).json()
-    except Exception as e:  # noqa: BLE001 — réseau / réponse illisible
-        raise ValueError(f"échec de connexion Zoho Desk : {type(e).__name__}") from e
+    except Exception as e:  # noqa: BLE001 — network / unreadable response
+        raise ValueError(f"Zoho Desk connection failed: {type(e).__name__}") from e
     if "access_token" not in tok:
         raise ValueError(_zoho_error_hint(tok.get("error") or tok))
     granted = tok.get("scope", "")
@@ -100,19 +100,19 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
     for label, scope, call in _DESK_SCOPES:
         try:
             call(client)
-            return  # au moins une surface lisible → credential utilisable
-        # noqa: SILENT — scope manquant collecté puis rendu dans le message de la sonde
-        except Exception as e:  # noqa: BLE001 — l'erreur provider EST le retour de sonde
+            return  # at least one readable surface → credential usable
+        # noqa: SILENT — missing scope collected then returned in the probe message
+        except Exception as e:  # noqa: BLE001 — the provider error IS the probe's return
             if "SCOPE" in str(e).upper():
                 missing.append(f"{label} → {scope}")
     if missing:
-        extra = f" (scope accordé : {granted})" if granted else ""
+        extra = f" (granted scope: {granted})" if granted else ""
         raise ValueError(
-            "le token authentifie mais n'ouvre AUCUNE surface Zoho Desk" + extra
-            + " — scopes attendus : " + " ; ".join(missing)
-            + ". Régénère le self-client Desk avec ces scopes.")
-    raise ValueError("connexion Zoho Desk établie mais aucune surface lisible "
-                     "(org_id erroné, ou départements/tickets inaccessibles).")
+            "the token authenticates but opens NO Zoho Desk surface" + extra
+            + " — expected scopes: " + " ; ".join(missing)
+            + ". Regenerate the Desk self-client with these scopes.")
+    raise ValueError("Zoho Desk connection established but no readable surface "
+                     "(wrong org_id, or departments/tickets inaccessible).")
 
 
 def register(mcp: FastMCP) -> None:

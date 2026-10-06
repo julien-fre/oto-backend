@@ -1,37 +1,37 @@
-"""Déclaration de registre du connecteur `signwell`.
+"""Registry declaration of the `signwell` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# signwell : signature électronique — documents envoyés pour signature, modèles,
-# envois groupés, webhooks (26 opérations, couverture complète de l'API publique).
-# Le client vit dans oto-core (`oto.tools.signwell`), les outils dans
-# `tools/signwell.py` (documents, modèles) et `tools/signwell_envois.py` (envois
-# groupés, webhooks, compte).
+# signwell: electronic signature — documents sent for signature, templates,
+# bulk sends, webhooks (26 operations, full coverage of the public API).
+# The client lives in oto-core (`oto.tools.signwell`), the tools in
+# `tools/signwell.py` (documents, templates) and `tools/signwell_envois.py` (bulk
+# sends, webhooks, account).
 #
-# **byo-only, par nature** : une clé SignWell agit au nom du compte qui l'a créée —
-# c'est ce nom qui figure sur les invitations et dans la piste d'audit du document
-# signé. Une clé plateforme enverrait des contrats au nom de quelqu'un d'autre.
+# **byo-only, by nature**: a SignWell key acts on behalf of the account that created it —
+# that name is what appears on the invitations and in the audit trail of the signed
+# document. A platform key would send contracts in someone else's name.
 #
-# ⚠️ ENVOIE à de vraies personnes : un document envoyé, un rappel, un envoi groupé
-# partent en courriel. Les outils créent un BROUILLON par défaut, et un envoi
-# groupé est un aperçu tant que `dry_run=False` n'est pas passé.
+# ⚠️ SENDS to real people: a sent document, a reminder, a bulk send
+# go out by email. The tools create a DRAFT by default, and a bulk
+# send is a preview until `dry_run=False` is passed.
 CONNECTOR = _c(
     "signwell", ["signwell"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key",
     modules=("signwell", "signwell_envois"),
     label="SignWell",
-    help="signature électronique : envoyer un document à signer, suivre, récupérer le PDF signé",
+    help="electronic signature: send a document to sign, track it, retrieve the signed PDF",
     href="https://www.signwell.com",
     credential_fields=(
         CredentialField(
-            "key", "Clé d'API SignWell", secret=True,
-            help="SignWell → Settings → API → « Create API key ». La clé agit au nom "
-                 "du compte qui la crée : les invitations partent sous ce nom."),
+            "key", "SignWell API key", secret=True,
+            help="SignWell → Settings → API → \"Create API key\". The key acts on behalf "
+                 "of the account that creates it: invitations go out under that name."),
     ),
 )
 
@@ -40,8 +40,8 @@ PUBLISHER = "SignWell"
 LOGO_DOMAIN = "signwell.com"
 
 DESCRIPTION = (
-    "La signature électronique avec SignWell, depuis ton assistant : envoyer un "
-    "contrat ou un NDA à signer, placer les champs, suivre qui a signé, relancer, "
-    "récupérer le PDF signé, travailler depuis des modèles ou en envoi groupé. "
-    "Chacun pose sa propre clé : les documents partent au nom de son compte."
+    "Electronic signature with SignWell, from your assistant: send a "
+    "contract or an NDA to sign, place the fields, track who has signed, send reminders, "
+    "retrieve the signed PDF, work from templates or in bulk sends. "
+    "Everyone sets their own key: documents go out in the name of their account."
 )

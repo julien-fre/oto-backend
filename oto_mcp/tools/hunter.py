@@ -1,7 +1,7 @@
-"""Hunter.io — emails par domaine + email finder + verifier.
+"""Hunter.io — emails by domain + email finder + verifier.
 
-Clé résolue par appel : user key (`/account`) prioritaire, sinon platform
-key + quota daily (member). Guest doit poser sa propre clé.
+Key resolved per call: user key (`/account`) first, otherwise platform
+key + daily quota (member). A guest must set their own key.
 """
 from __future__ import annotations
 
@@ -17,32 +17,32 @@ from .. import access, output_projection
 
 
 def _verify(fields: dict, config: dict | None = None) -> dict:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth+quota`.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth+quota`.
 
-    `GET https://api.hunter.io/v2/account`. Ce que la doc de Hunter établit, cité :
+    `GET https://api.hunter.io/v2/account`. What Hunter's docs establish, quoted:
 
-    - **authentifié** — la clé est exigée (`api_key` en query, `X-API-KEY`, ou
-      `Authorization: Bearer`) ;
-    - **sans effet de bord** — un GET d'information de compte ;
-    - **gratuit, et là c'est ÉCRIT** — « All these calls are free. », de la section
-      « Account & API management ». Contrairement à Folk et Pennylane, où il fallait
-      se contenter de l'absence de compteur de crédits comme indice : ici la doc
-      l'affirme.
+    - **authenticated** — the key is required (`api_key` in the query, `X-API-KEY`, or
+      `Authorization: Bearer`);
+    - **no side effect** — a GET of account information;
+    - **free, and here it is WRITTEN** — "All these calls are free.", from the
+      "Account & API management" section. Unlike Folk and Pennylane, where we had to
+      settle for the absence of a credit counter as a hint: here the docs
+      state it.
 
-    Première sonde `auth+quota` : elle lit le SOLDE, pas seulement l'authentification.
-    C'est ce qui la rend capable de distinguer les deux refus qu'un appelant confond
-    toujours — une clé fausse (qu'il faut remplacer) et un compte à sec (qu'il faut
-    recharger). Reconnecter dans le second cas ne sert à rien, et c'est pourtant le
-    réflexe.
+    First `auth+quota` probe: it reads the BALANCE, not just the authentication.
+    That is what lets it tell apart the two refusals a caller always confuses —
+    a wrong key (which must be replaced) and an empty account (which must be
+    topped up). Reconnecting in the second case is useless, and yet it is the
+    reflex.
 
-    Le solde est RENDU, jamais affiché sur la fiche : un chiffre affiché promettrait
-    une fraîcheur que la plateforme ne tient qu'en interrogeant, et interroger coûte.
-    La fiche porte le verdict et sa date ; le chiffre vit dans la réponse de ce test,
-    avec l'instant où il a été lu.
+    The balance is RETURNED, never shown on the card: a displayed number would promise
+    a freshness the platform only keeps by querying, and querying costs.
+    The card carries the verdict and its date; the number lives in this test's
+    response, with the instant it was read.
 
-    **Authentifié ≠ utilisable** (classe nommée sur oto#69, cf. attio/pennylane) :
-    ici l'axe n'est pas le SCOPE mais le SOLDE — `QuotaEpuise` ci-dessous EST la
-    distinction, une clé à sec authentifie très bien et ne peut plus rien chercher.
+    **Authenticated ≠ usable** (class named on oto#69, cf. attio/pennylane):
+    here the axis is not the SCOPE but the BALANCE — `QuotaEpuise` below IS the
+    distinction, an empty key authenticates just fine and can no longer search anything.
     """
     from oto.tools.hunter.client import HunterClient
 
@@ -50,7 +50,7 @@ def _verify(fields: dict, config: dict | None = None) -> dict:
     data = (infos or {}).get("data") or {}
     if not data:
         raise RuntimeError(
-            f"Hunter a répondu sans information de compte : {str(infos)[:200]}")
+            f"Hunter answered without account information: {str(infos)[:200]}")
 
     requetes = (data.get("requests") or {}).get("searches") or {}
     disponible, utilise = requetes.get("available"), requetes.get("used")
@@ -58,20 +58,20 @@ def _verify(fields: dict, config: dict | None = None) -> dict:
         restant = disponible - utilise
         if restant <= 0:
             raise connector_verify.QuotaEpuise(
-                f"La clé Hunter est bonne, mais le compte est à sec : "
-                f"{utilise} recherches utilisées sur {disponible}. Recharge le "
-                "compte chez Hunter — reconnecter n'y changerait rien.")
+                f"The Hunter key is valid, but the account is empty: "
+                f"{utilise} searches used out of {disponible}. Top up the "
+                "account at Hunter — reconnecting would change nothing.")
         return {"quota": {
             "restant": restant, "utilise": utilise, "inclus": disponible,
-            # L'UNITÉ, sans quoi un nombre nu se lit comme on veut : ce sont des
-            # recherches, pas des euros ni des appels.
+            # The UNIT, without which a bare number reads however one likes: these are
+            # searches, not euros or calls.
             "unite": "recherches",
-            # L'INSTANT : ce chiffre vieillit dès qu'il est lu, et rien ne le
-            # rafraîchit tant que personne ne re-teste.
+            # The INSTANT: this number ages as soon as it is read, and nothing
+            # refreshes it until someone re-tests.
             "mesure_a": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
         }}
-    # Le solde n'est pas lisible : la clé authentifie, on le dit, et on ne fabrique
-    # pas un quota qu'on n'a pas mesuré.
+    # The balance is not readable: the key authenticates, we say so, and we do not
+    # fabricate a quota we did not measure.
     return {}
 
 
@@ -91,7 +91,7 @@ def register(mcp: FastMCP) -> None:
         """List public emails found on a company domain (Hunter domain-search).
 
         Useful to discover existing email patterns and contacts.
-        Coût : 1 crédit Hunter par tranche de 10 emails.
+        Cost: 1 Hunter credit per batch of 10 emails.
 
         Args:
             domain: Company domain (e.g. "gallimard.fr").
@@ -106,8 +106,8 @@ def register(mcp: FastMCP) -> None:
         result = client.domain_search(domain=domain, limit=limit)
         if is_platform:
             access.record_platform_usage("hunter")
-        # Défaut resserré (#36) : l'économie qui demande à être connue ne sert personne
-        # — mesuré, aucun agent ne passait l'ancien `compact=True`.
+        # Tightened default (#36): a saving that has to be asked for serves no one
+        # — measured, no agent ever passed the old `compact=True`.
         if not full:
             result = output_projection.project(
                 result, items_path="data.emails",
@@ -124,7 +124,7 @@ def register(mcp: FastMCP) -> None:
         """Find a specific person's email at a company (Hunter email-finder).
 
         Provide either (`first_name` + `last_name`) or `full_name`.
-        Coût : 1 crédit Hunter par appel.
+        Cost: 1 Hunter credit per call.
         """
         client, is_platform = _client()
         result = client.email_finder(
@@ -138,7 +138,7 @@ def register(mcp: FastMCP) -> None:
     def hunter_email_verify(email: str) -> dict:
         """Verify a single email's deliverability (Hunter email-verifier).
 
-        Coût : 1 crédit Hunter par appel.
+        Cost: 1 Hunter credit per call.
         """
         client, is_platform = _client()
         result = client.email_verifier(email=email)

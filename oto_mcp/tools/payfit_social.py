@@ -1,22 +1,22 @@
-"""PayFit — protection sociale complémentaire (mutuelle, prévoyance) et documents.
+"""PayFit — complementary social protection (health insurance, provident fund) and documents.
 
-Module frère de `payfit.py` (même clé, même client, monté par `Connector.modules`).
-Le client, les gardes, le rendu de fichier et la sonde vivent dans `payfit_garde`.
+Sibling module of `payfit.py` (same key, same client, mounted by `Connector.modules`).
+The client, the guards, the file rendering and the probe live in `payfit_garde`.
 
-⚠️ **Deux niveaux qu'il ne faut pas confondre.** Les contrats de MUTUELLE et de
-PRÉVOYANCE sont ceux de l'ENTREPRISE (référence, population, option, taux patronal
-et salarial) ; l'affiliation est celle d'UN CONTRAT DE TRAVAIL. Lire le premier ne
-dit pas qui est affilié : `affiliatedContractIds` le dit dans un sens,
-`healthInsuranceContractIds` d'un `payfit_contract(fr=True)` dans l'autre.
+⚠️ **Two levels that must not be confused.** HEALTH INSURANCE and
+PROVIDENT FUND contracts belong to the COMPANY (reference, population, option, employer
+and employee rate); affiliation belongs to ONE EMPLOYMENT CONTRACT. Reading the former does not
+say who is affiliated: `affiliatedContractIds` says it in one direction,
+`healthInsuranceContractIds` of a `payfit_contract(fr=True)` in the other.
 
-**Aucune écriture n'est câblée** (24/09/2026) : `op="affiliate"` et
-`op="regularize"` rendent le refus nommé `payfit_write_not_wired`
-(`payfit_garde.not_wired`), sans clé ni appel à PayFit.
+**No write is wired** (24/09/2026): `op="affiliate"` and
+`op="regularize"` return the named refusal `payfit_write_not_wired`
+(`payfit_garde.not_wired`), with no key and no call to PayFit.
 
-Les documents fiscaux (`income_tax`) et de retraite automatique (`auto_enrolment`)
-sont **britanniques**. Il n'existe **aucun équivalent français** : ni DSN, ni
-attestation, ni export fiscal FR dans cette API — un `payfit_document` sur une
-entreprise française rendra une liste vide, et c'est la réponse juste.
+The tax documents (`income_tax`) and automatic pension enrolment documents (`auto_enrolment`)
+are **British**. There is **no French equivalent**: no DSN, no
+certificate, no FR tax export in this API — a `payfit_document` on a
+French company will return an empty list, and that is the right answer.
 """
 from __future__ import annotations
 
@@ -41,10 +41,10 @@ def register(mcp: FastMCP) -> None:
         effective_date: Optional[str] = None,
         fields: Optional[list] = None,
     ) -> dict:
-        """Complementary health insurance (mutuelle) and provident fund
-        (prévoyance) of a French PayFit company — the company's contracts, read only.
+        """Complementary health insurance and provident fund
+        of a French PayFit company — the company's contracts, read only.
 
-        `kind` picks the family: `health` (mutuelle) or `provident` (prévoyance).
+        `kind` picks the family: `health` (health insurance) or `provident` (provident fund).
         Both read with the same scope upstream.
 
         `op`:
@@ -77,12 +77,12 @@ def register(mcp: FastMCP) -> None:
             return S.rows((env or {}).get("contracts"), "contracts", "idContrat",
                           fields=fields)
         if op == "affiliate":
-            famille = "mutuelle" if kind == "health" else "prévoyance"
-            raise not_wired(op, f"remplacé l'affiliation {famille} du contrat",
+            famille = "health insurance" if kind == "health" else "provident fund"
+            raise not_wired(op, f"replaced the contract's {famille} affiliation",
                             contract_id=contract_id,
                             insurance_contract_ids=insurance_contract_ids)
         if op == "regularize":
-            raise not_wired(op, "demandé une régularisation de mutuelle",
+            raise not_wired(op, "requested a health insurance regularization",
                             contract_id=contract_id,
                             insurance_contract_ids=insurance_contract_ids,
                             effective_date=effective_date)

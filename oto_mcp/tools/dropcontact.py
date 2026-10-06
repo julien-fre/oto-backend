@@ -28,19 +28,19 @@ def _bad(msg: str) -> McpError:
 def _upstream_message(e) -> str:
     status = e.status_code
     if status == 401:
-        return "Dropcontact a rejeté la clé API (401) — vérifie la clé configurée sur ce connecteur."
+        return "Dropcontact rejected the API key (401) — check the key configured on this connector."
     if status == 403:
-        return "Dropcontact : quota du token dépassé (403) — recharge des crédits ou attends le renouvellement."
+        return "Dropcontact: token quota exceeded (403) — top up credits or wait for the renewal."
     if status == 429:
-        return "Dropcontact : trop de requêtes (429, limite 60/s) — réessaie dans un instant."
+        return "Dropcontact: too many requests (429, limit 60/s) — retry in a moment."
     if status in (500, 503, 504, 524):
-        return f"Dropcontact est momentanément indisponible (HTTP {status}) — réessaie dans un moment."
-    return f"Dropcontact a refusé la requête (HTTP {status}): {e.body}"
+        return f"Dropcontact is temporarily unavailable (HTTP {status}) — retry in a while."
+    return f"Dropcontact refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : POST 0-crédit (contact vide), authentifie
-    la clé sans consommer de quota."""
+    """"Test the connection" probe: 0-credit POST (empty contact), authenticates
+    the key without consuming quota."""
     from oto.tools.dropcontact.client import DropcontactClient
     DropcontactClient(api_key=fields["key"]).check_credits()
 

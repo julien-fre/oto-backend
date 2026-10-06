@@ -57,27 +57,27 @@ def _bad(msg: str) -> McpError:
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"Waalaxy a rejeté la clé (HTTP {status}) — vérifie la clé API posée sur ce "
-                "connecteur (Waalaxy : Settings → CRM Sync → API key, format zpka_… ; plan Advanced ou "
-                "Business requis).")
+        return (f"Waalaxy rejected the key (HTTP {status}) — check the API key set on this "
+                "connector (Waalaxy: Settings → CRM Sync → API key, format zpka_… ; Advanced or "
+                "Business plan required).")
     if status == 404:
-        return f"Waalaxy : ressource introuvable (HTTP 404) — {e.body}"
+        return f"Waalaxy: resource not found (HTTP 404) — {e.body}"
     if status in (400, 422):
-        return f"Waalaxy : paramètres refusés (HTTP {status}) — {e.body}"
+        return f"Waalaxy: parameters refused (HTTP {status}) — {e.body}"
     if status == 429:
-        return "Waalaxy : trop de requêtes (429) — réessaie dans un instant."
+        return "Waalaxy: too many requests (429) — retry in a moment."
     if status in (500, 502, 503, 504):
-        return f"Waalaxy est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Waalaxy a refusé la requête (HTTP {status}) : {e.body}"
+        return f"Waalaxy is temporarily unavailable (HTTP {status}) — retry later."
+    return f"Waalaxy refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """« Tester la connexion » : GET /integrations/test, prévu exactement pour ça."""
+    """"Test the connection": GET /integrations/test, designed for exactly that."""
     from oto.tools.waalaxy.client import WaalaxyClient
     res = WaalaxyClient(api_key=fields["key"]).test_connection()
     if res is not True:
-        raise RuntimeError(f"Waalaxy /integrations/test n'a pas répondu true : {res!r} "
-                           "(clé sans accès API ? plan Advanced/Business requis)")
+        raise RuntimeError(f"Waalaxy /integrations/test did not answer true: {res!r} "
+                           "(key without API access? Advanced/Business plan required)")
 
 
 def _receipt(raw: Any, prospects: List[Dict[str, Any]], campaign_id: Optional[str]) -> Dict[str, Any]:
@@ -90,7 +90,7 @@ def _receipt(raw: Any, prospects: List[Dict[str, Any]], campaign_id: Optional[st
     if not isinstance(items, list):
         return {"total": total, "imported": 0, "items": [],
                 "failed": [{"index": None, "url": None, "code": "unexpected_response",
-                            "message": "Waalaxy a répondu 200 sans tableau `result`"}],
+                            "message": "Waalaxy answered 200 without a `result` array"}],
                 "raw": raw, **({"enrolled": 0} if campaign_id else {})}
     imported = enrolled = 0
     failed: List[Dict[str, Any]] = []
@@ -123,11 +123,11 @@ def _receipt(raw: Any, prospects: List[Dict[str, Any]], campaign_id: Optional[st
     if campaign_id:
         out["enrolled"] = enrolled
     if len(items) != total:
-        out["warning"] = (f"Waalaxy a rendu {len(items)} résultats pour {total} prospects envoyés — "
-                          "l'appariement par position est incertain, vérifie dans l'app")
+        out["warning"] = (f"Waalaxy returned {len(items)} results for {total} prospects sent — "
+                          "matching by position is uncertain, check in the app")
         for i in range(len(items), total):
             failed.append({"index": i, "url": prospects[i].get("url"), "code": "no_result",
-                           "message": "aucun résultat rendu par Waalaxy pour ce prospect"})
+                           "message": "no result returned by Waalaxy for this prospect"})
     return out
 
 
@@ -149,7 +149,7 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
         except (requests.ConnectionError, requests.Timeout) as e:
-            raise _bad(f"Waalaxy injoignable (réseau/timeout) — réessaie plus tard. {e}")
+            raise _bad(f"Waalaxy unreachable (network/timeout) — retry later. {e}")
 
     @mcp.tool()
     def waalaxy_prospect_list(op: Literal["list"] = "list") -> object:
@@ -161,7 +161,7 @@ def register(mcp: FastMCP) -> None:
         (no pagination: every list comes back).
         """
         if op != "list":
-            raise _bad("op inconnu — seul op='list' existe (l'API Waalaxy ne crée pas de liste)")
+            raise _bad("unknown op — only op='list' exists (the Waalaxy API does not create lists)")
         return _run(lambda: _client().list_prospect_lists())
 
     @mcp.tool()
@@ -175,8 +175,8 @@ def register(mcp: FastMCP) -> None:
         `cant_add_prospect_campaign_is_archived`.
         """
         if op != "list":
-            raise _bad("op inconnu — seul op='list' existe (l'API Waalaxy ne crée ni ne "
-                       "démarre de campagne)")
+            raise _bad("unknown op — only op='list' exists (the Waalaxy API neither creates nor "
+                       "starts campaigns)")
         return _run(lambda: _client().list_campaigns())
 
     @mcp.tool()
@@ -238,23 +238,23 @@ def register(mcp: FastMCP) -> None:
         that would be POSTed, without calling Waalaxy.
         """
         if op != "add":
-            raise _bad("op inconnu — seul op='add' existe (l'API Waalaxy est import-only)")
+            raise _bad("unknown op — only op='add' exists (the Waalaxy API is import-only)")
         if (prospect is None) == (prospects is None):
-            raise _bad("passe exactement un de `prospect` (un seul) ou `prospects` (liste)")
+            raise _bad("pass exactly one of `prospect` (a single one) or `prospects` (list)")
         batch = [prospect] if prospect is not None else list(prospects or [])
         if not batch:
-            raise _bad("`prospects` est vide")
+            raise _bad("`prospects` is empty")
         if len(batch) > MAX_PROSPECTS_PER_CALL:
-            raise _bad(f"max {MAX_PROSPECTS_PER_CALL} prospects par appel (reçu {len(batch)}) — "
-                       "découpe en plusieurs appels")
+            raise _bad(f"max {MAX_PROSPECTS_PER_CALL} prospects per call (received {len(batch)}) — "
+                       "split into several calls")
         if not prospect_list_id:
-            raise _bad("`prospect_list_id` requis — récupère-le via waalaxy_prospect_list")
+            raise _bad("`prospect_list_id` required — get it via waalaxy_prospect_list")
         for i, p in enumerate(batch):
             if not isinstance(p, dict) or not p.get("url"):
-                raise _bad(f"prospects[{i}] : `url` (profil LinkedIn) requis")
+                raise _bad(f"prospects[{i}]: `url` (LinkedIn profile) required")
             if "linkedin.com/" not in str(p["url"]):
-                raise _bad(f"prospects[{i}] : `url` doit être une URL de profil LinkedIn "
-                           f"(reçu {p['url']!r})")
+                raise _bad(f"prospects[{i}]: `url` must be a LinkedIn profile URL "
+                           f"(received {p['url']!r})")
         flags = dict(
             campaign_id=campaign_id,
             can_create_duplicates=can_create_duplicates,

@@ -59,8 +59,8 @@ def test_un_pdf_sans_ancre_pour_chaque_signataire_est_refuse_et_le_brouillon_sup
     mcp._faux.ancres = 1
     msg = _refus(mcp, "yousign_creer", nom="Accord", pdf_base64=PDF, nom_fichier="a.pdf",
                  signataires=[ALICE, BOB])
-    assert "1 ancre(s) de signature pour 2 signataire(s)" in msg
-    assert "{{sN|signature|largeur|hauteur}}" in msg
+    assert "1 signature anchor(s) for 2 signer(s)" in msg
+    assert "{{sN|signature|width|height}}" in msg
     (demande_id,) = mcp._faux.demandes
     assert mcp._faux.supprimees == [demande_id]
 
@@ -118,7 +118,7 @@ def test_le_credential_se_resout_en_byo(mcp, monkeypatch):
 def test_une_liste_de_signataires_vide_est_refusee_sans_rien_creer(mcp):
     msg = _refus(mcp, "yousign_creer", nom="Accord", pdf_base64=PDF, nom_fichier="a.pdf",
                  signataires=[])
-    assert "au moins un signataire" in msg
+    assert "at least one signer" in msg
     assert mcp._faux.demandes == {}
 
 
@@ -132,7 +132,7 @@ def test_un_signataire_sans_email_est_refuse_sans_rien_creer(mcp):
 def test_un_base64_invalide_est_refuse_sans_rien_creer(mcp):
     msg = _refus(mcp, "yousign_creer", nom="Accord", pdf_base64="pas du base64 !",
                  nom_fichier="a.pdf", signataires=[ALICE])
-    assert "base64 valide" in msg
+    assert "valid base64" in msg
     assert mcp._faux.demandes == {}
 
 
@@ -155,8 +155,8 @@ def test_un_brouillon_impossible_a_supprimer_est_nomme(mcp):
     msg = _refus(mcp, "yousign_creer", nom="Accord", pdf_base64=PDF, nom_fichier="a.pdf",
                  signataires=[ALICE])
     (demande_id,) = mcp._faux.demandes
-    assert f"le brouillon {demande_id} n'a pas pu être supprimé" in msg
-    assert "à retirer à la main" in msg
+    assert f"draft {demande_id} could not be deleted" in msg
+    assert "to be removed by hand" in msg
 
 
 def test_un_refus_de_cle_dit_quoi_faire(mcp):
@@ -165,8 +165,8 @@ def test_un_refus_de_cle_dit_quoi_faire(mcp):
         401, {"detail": "Unauthorized"}, service="yousign")
     msg = _refus(mcp, "yousign_creer", nom="Accord", pdf_base64=PDF, nom_fichier="a.pdf",
                  signataires=[ALICE])
-    assert "refuse cette clé (401)" in msg
-    assert "environnement" in msg
+    assert "rejects this key (401)" in msg
+    assert "environment" in msg
 
 
 def test_un_fichier_absent_est_nomme(mcp):
@@ -174,7 +174,7 @@ def test_un_fichier_absent_est_nomme(mcp):
     mcp._faux.telecharge = b""
     msg = _refus(mcp, "yousign_document_signe", demande_id=c["demande_id"],
                  document_id=c["document_id"])
-    assert "aucun fichier" in msg
+    assert "returned no file" in msg
 
 
 def test_un_5xx_amont_reste_ce_quil_est(mcp):
@@ -191,4 +191,4 @@ def test_un_5xx_amont_reste_ce_quil_est(mcp):
 
     mcp._faux.activate_signature_request = _active
     msg = _refus(mcp, "yousign_envoyer", demande_id=c["demande_id"])
-    assert "refusé la requête" not in msg
+    assert "refused the request" not in msg

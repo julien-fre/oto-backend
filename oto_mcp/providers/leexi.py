@@ -1,53 +1,53 @@
-"""Déclaration de registre du connecteur `leexi`.
+"""Registry declaration of the `leexi` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# leexi : intelligence conversationnelle (appels, transcripts, notes de réunion)
-# — même famille que `fireflies`, `grain` et `granola`, d'où la catégorie
-# Knowledge et le même régime BYO.
+# leexi: conversation intelligence (calls, transcripts, meeting notes)
+# — same family as `fireflies`, `grain` and `granola`, hence the Knowledge
+# category and the same BYO regime.
 #
-# ⚠️ Auth **Basic** à DEUX champs (`KEY_ID` + `KEY_SECRET`), pas une clé unique.
-# D'où `secret_kind="fields"` et **pas** `keyed` : la résolution passe par
-# `access.resolve_credential_fields`, qui rend les deux champs (`resolve_api_key`
-# n'en rendrait qu'un). Les deux se génèrent côté Leexi dans Settings → Company
-# Settings → API Keys, et demandent un compte ADMIN — ce n'est pas une clé qu'un
-# utilisateur ordinaire peut se créer.
+# ⚠️ **Basic** auth with TWO fields (`KEY_ID` + `KEY_SECRET`), not a single key.
+# Hence `secret_kind="fields"` and **not** `keyed`: resolution goes through
+# `access.resolve_credential_fields`, which returns both fields (`resolve_api_key`
+# would only return one). Both are generated on the Leexi side in Settings → Company
+# Settings → API Keys, and require an ADMIN account — it is not a key an
+# ordinary user can create for themselves.
 #
-# `key_id` est déclaré NON secret : c'est l'identifiant que Leexi affiche dans sa
-# liste de clés, et le rendre lisible permet de voir LAQUELLE est posée sans
-# jamais exposer le secret qui va avec — même partage que `posthog` entre sa clé
-# et son hôte.
+# `key_id` is declared NOT secret: it is the identifier Leexi shows in its
+# key list, and making it readable lets you see WHICH one is set without
+# ever exposing the secret that goes with it — same split as `posthog` between its key
+# and its host.
 #
-# ⚠️ **Une clé neuve ne porte que `read_calls`.** Tout le reste — et nommément
-# `write_users`/`write_teams`, qui engagent les LICENCES FACTURÉES du client —
-# doit être accordé explicitement par un admin Leexi. Le connecteur ne peut pas
-# contourner ce cran et n'essaie pas : les outils d'écriture existent, l'amont
-# répond 403 si la clé ne les porte pas, et le message le dit.
+# ⚠️ **A new key only carries `read_calls`.** Everything else — and namely
+# `write_users`/`write_teams`, which commit the customer's BILLED LICENSES —
+# must be granted explicitly by a Leexi admin. The connector cannot
+# get around that notch and does not try: the write tools exist, upstream
+# answers 403 if the key does not carry them, and the message says so.
 #
-# BYOK strict (`byo_user` + `byo_org`, aucun mode plateforme) : ce sont les
-# conversations enregistrées du client, il ne peut pas y avoir de clé oto
-# partagée qui donnerait à l'un les appels de l'autre.
+# Strict BYOK (`byo_user` + `byo_org`, no platform mode): these are the customer's
+# recorded conversations, there cannot be a shared oto key that would give
+# one party the other's calls.
 CONNECTOR = _c(
     "leexi", ["leexi"], auth_modes={"byo_user", "byo_org"},
     secret_kind="fields",
     credential_fields=(
         CredentialField(
             "key_id", "API Key ID", secret=False,
-            help="Identifiant de la clé, généré dans Leexi → Settings → "
-                 "Company Settings → API Keys (compte admin requis)."),
+            help="Key identifier, generated in Leexi → Settings → "
+                 "Company Settings → API Keys (admin account required)."),
         CredentialField(
             "key_secret", "Key Secret", secret=True,
-            help="Le secret associé, montré UNE seule fois à la création de "
-                 "la clé côté Leexi."),
+            help="The associated secret, shown ONLY ONCE when the key is "
+                 "created on the Leexi side."),
     ),
     label="Leexi",
-    help="appels et réunions enregistrés, transcripts, notes, équipes — "
-         "l'intelligence conversationnelle de l'organisation",
+    help="recorded calls and meetings, transcripts, notes, teams — "
+         "the organization's conversation intelligence",
     href="https://www.leexi.ai",
 )
 
@@ -56,8 +56,8 @@ PUBLISHER = "Leexi"
 LOGO_DOMAIN = "leexi.ai"
 
 DESCRIPTION = (
-    "Les appels et réunions enregistrés par Leexi : transcripts, notes de "
-    "synthèse, équipes — même famille que Fireflies, Grain et Granola. "
-    "Authentification à deux champs générés par un compte admin, dans Settings "
+    "The calls and meetings recorded by Leexi: transcripts, summary notes, "
+    "teams — same family as Fireflies, Grain and Granola. "
+    "Authentication with two fields generated by an admin account, in Settings "
     "→ API Keys."
 )

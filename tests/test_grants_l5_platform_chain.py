@@ -132,8 +132,8 @@ def test_edge_quota_produces_the_same_refusal_as_before(vault, monkeypatch):
     _edges(monkeypatch, [_edge(quota=7)])
     with pytest.raises(McpError) as e:
         access._resolve_credential_impl("fullenrich", "auto", "granted-sub")
-    assert "Quota plateforme fullenrich dépassé aujourd'hui (7/7)" in str(e.value)
-    assert "la clé `env`" in str(e.value)
+    assert "Platform quota fullenrich exceeded today (7/7)" in str(e.value)
+    assert "key `env`" in str(e.value)
 
 
 def test_user_edge_beats_org_edge(vault, monkeypatch):

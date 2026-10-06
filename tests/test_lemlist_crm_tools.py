@@ -77,7 +77,7 @@ def test_un_op_inconnu_est_refuse_avant_tout_appel(name, module, extra):
     key, cls = _with_fake_client()
     with key, cls as client_cls:
         inst = client_cls.return_value
-        with pytest.raises(Exception, match="op inconnu"):
+        with pytest.raises(Exception, match="unknown op"):
             _tool(name, module).fn(op="teleport", **extra)
         assert not inst.method_calls
 

@@ -179,7 +179,7 @@ def test_jobs_search_estime_un_credit_par_offre_rendue():
         cls.return_value.search_jobs.return_value = {"metadata": {}, "data": [_JOB] * 4}
         out = _tool("theirstack_jobs_search").fn(company_names=["PUIG & FILS"])
     assert out["credits_estimes"] == 4
-    assert "barème publié" in out["credits_estimes_source"]
+    assert "published rate card" in out["credits_estimes_source"]
     assert "credit-balance" in out["credits_estimes_source"]
 
 
@@ -256,7 +256,7 @@ def test_upstream_402_becomes_an_actionable_tool_error():
     with patch("oto.tools.theirstack.client.TheirStackClient") as cls:
         cls.return_value.search_companies.side_effect = UpstreamHTTPError(
             402, {"detail": "Not enough credits"}, service="theirstack")
-        with pytest.raises(McpError, match="crédits"):
+        with pytest.raises(McpError, match="credits"):
             _tool("theirstack_companies_search").fn(company_names=["X"])
 
 

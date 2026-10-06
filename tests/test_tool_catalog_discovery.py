@@ -150,8 +150,8 @@ def test_zero_resultat_sur_ecart_de_boite_ne_dit_PAS_reformule():
     h = catalogue.hint_zero_resultat({"mounted_for_org": 42, "listing_for_org": 196,
                                  "note": "..."})
     assert "oto_call" in h
-    assert "n'existe pas" in h          # il nie explicitement la conclusion fautive
-    assert "reformule" not in h.lower() and "Repère le domaine" not in h
+    assert "doesn't exist" in h          # il nie explicitement la conclusion fautive
+    assert "rephrase" not in h.lower() and "find the domain" not in h.lower()
 
 
 def test_sans_ecart_le_hint_reste_celui_qui_fait_reformuler():

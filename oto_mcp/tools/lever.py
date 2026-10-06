@@ -1,12 +1,12 @@
-"""Lever ATS — opportunities (candidats), postings, stages, notes.
+"""Lever ATS — opportunities (candidates), postings, stages, notes.
 
-Wrappe `oto.tools.lever.LeverClient` (API key, Basic auth). Clé résolue par appel
-via `access.resolve_api_key("lever")` — byo (clé user sur /account ou credential
-partagé de l'org). Pas de clé plateforme.
+Wraps `oto.tools.lever.LeverClient` (API key, Basic auth). Key resolved per call
+via `access.resolve_api_key("lever")` — byo (user key on /account or the org's
+shared credential). No platform key.
 
-Vocabulaire : un candidat dans un pipeline = une **opportunity** ; un poste = un
-**posting**. Les écritures exigent un `perform_as` (id d'un user Lever — voir
-`lever_users`). Pagination : passer le `next` d'une réponse à `offset`.
+Vocabulary: a candidate in a pipeline = an **opportunity**; a job = a
+**posting**. Writes require a `perform_as` (id of a Lever user — see
+`lever_users`). Pagination: pass the `next` of a response as `offset`.
 """
 from __future__ import annotations
 
@@ -19,16 +19,16 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """Probe for "test the connection" — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /v1/users` (`list_users`, déjà dans le client), `limit=1` — le plus
-    petit format disponible, Lever n'exposant ni `/me` ni solde. Basic auth
-    (clé en username, mot de passe vide), lecture sans effet de bord. Aucune
-    mention de coût ni de limite de débit particulière pour cet appel.
+    `GET /v1/users` (`list_users`, already in the client), `limit=1` — the
+    smallest format available, since Lever exposes neither `/me` nor a balance.
+    Basic auth (key as username, empty password), read with no side effects. No
+    mention of any cost or particular rate limit for this call.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    une clé Lever porte le périmètre entier du compte, pas de permission
-    granulaire par ressource.
+    **Authenticated ≠ usable** (oto#69 class): does not distinguish scopes —
+    a Lever key carries the account's entire scope, no granular per-resource
+    permission.
     """
     from oto.tools.lever.client import LeverClient
 

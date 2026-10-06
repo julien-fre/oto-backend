@@ -140,7 +140,7 @@ def test_une_revocation_garde_son_refus_a_elle(pret):
     with pytest.raises(ValueError) as e:
         identities.resolve_operated_account_id(qui, "LINKEDIN")
     assert not isinstance(e.value, account_suspension.PreteurEnPause)
-    assert "révoquée" in str(e.value)
+    assert "revoked" in str(e.value)
 
 
 def test_choisir_un_compte_prete_par_un_compte_en_pause_est_un_refus_nomme(pret):

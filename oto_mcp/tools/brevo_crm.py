@@ -1,15 +1,15 @@
-"""Brevo — CRM natif (deals, companies, tasks, notes, pipelines), API v3.
+"""Brevo — native CRM (deals, companies, tasks, notes, pipelines), v3 API.
 
-Second module du connecteur `brevo` (cf. `Connector.modules` au registre) : même
-clé, même client, sous-domaine distinct. Les tools restent préfixés `brevo_` — le
-namespace du gate d'activation est le 1er token (`brevo`).
+Second module of the `brevo` connector (see `Connector.modules` in the registry): same
+key, same client, distinct subdomain. Tools remain prefixed `brevo_` — the
+activation gate's namespace is the 1st token (`brevo`).
 
-Surface générique (`entity` en paramètre) plutôt que 4×4 tools : les quatre objets
-partagent list/get/create/update. Les asymétries de l'API (chemin `/companies` hors
-`/crm`, pagination par page, préfixe `filters[]`/`filter[]`) sont absorbées par
-`oto.tools.brevo.CrmMixin`, pas ici.
+Generic surface (`entity` as a parameter) rather than 4×4 tools: the four objects
+share list/get/create/update. The API's asymmetries (`/companies` path outside
+`/crm`, pagination by page, `filters[]`/`filter[]` prefix) are absorbed by
+`oto.tools.brevo.CrmMixin`, not here.
 
-Suppressions non exposées (cohérent avec `tools/brevo.py`).
+Deletions not exposed (consistent with `tools/brevo.py`).
 """
 from __future__ import annotations
 
@@ -36,43 +36,43 @@ def register(mcp: FastMCP) -> None:
         filters: Optional[dict] = None,
         sort_by: Optional[str] = None,
     ) -> dict:
-        """Liste des objets du CRM Brevo.
+        """List Brevo CRM objects.
 
         Args:
             entity: `deals` | `companies` | `tasks` | `notes`.
-            filters: clés BRUTES de l'entité —
-                deals : `{"attributes.deal_name": "Acme", "linkedContactsIds": "12"}` ;
-                companies : `{"attributes.name": "Acme"}` ;
-                tasks : `{"status": "done", "type": …, "contacts": "12"}` ;
-                notes : `{"entity": "deals", "entityIds": "<id>"}`.
+            filters: RAW keys of the entity —
+                deals: `{"attributes.deal_name": "Acme", "linkedContactsIds": "12"}`;
+                companies: `{"attributes.name": "Acme"}`;
+                tasks: `{"status": "done", "type": …, "contacts": "12"}`;
+                notes: `{"entity": "deals", "entityIds": "<id>"}`.
         """
         return _client().crm_list(
             entity, limit=limit, offset=offset, filters=filters, sort_by=sort_by)
 
     @mcp.tool()
     def brevo_crm_get(entity: str, object_id: str) -> dict:
-        """Récupère un objet du CRM Brevo par id (`deals`|`companies`|`tasks`|`notes`)."""
+        """Fetch a Brevo CRM object by id (`deals`|`companies`|`tasks`|`notes`)."""
         return _client().crm_get(entity, object_id)
 
     @mcp.tool()
     def brevo_crm_create(entity: str, payload: dict) -> dict:
-        """Crée un objet du CRM Brevo. Renvoie `{"id": …}`.
+        """Create a Brevo CRM object. Returns `{"id": …}`.
 
-        `payload` en camelCase Brevo. Champs requis :
-        - **deals** : `name` (+ `attributes` : `deal_stage`, `amount`, `close_date`…)
-        - **companies** : `name` (+ `attributes`, `linkedContactsIds`)
-        - **tasks** : `name`, `taskTypeId` (cf. `brevo_crm_meta`), `date` (ISO 8601)
-        - **notes** : `text` (+ `contactIds`, `dealIds`, `companyIds`)
+        `payload` in Brevo camelCase. Required fields:
+        - **deals**: `name` (+ `attributes`: `deal_stage`, `amount`, `close_date`…)
+        - **companies**: `name` (+ `attributes`, `linkedContactsIds`)
+        - **tasks**: `name`, `taskTypeId` (see `brevo_crm_meta`), `date` (ISO 8601)
+        - **notes**: `text` (+ `contactIds`, `dealIds`, `companyIds`)
 
-        Les `attributes` personnalisés se lisent via `brevo_crm_meta`.
+        Custom `attributes` are read via `brevo_crm_meta`.
         """
         return _client().crm_create(entity, payload)
 
     @mcp.tool()
     def brevo_crm_update(entity: str, object_id: str, payload: dict) -> dict:
-        """Met à jour un objet du CRM Brevo (champs fournis seulement).
+        """Update a Brevo CRM object (provided fields only).
 
-        Pour rattacher/détacher des objets liés, utiliser `brevo_crm_link`.
+        To attach/detach linked objects, use `brevo_crm_link`.
         """
         return _client().crm_update(entity, object_id, payload)
 
@@ -85,10 +85,10 @@ def register(mcp: FastMCP) -> None:
         link_ids: Optional[list[str]] = None,
         unlink_ids: Optional[list[str]] = None,
     ) -> dict:
-        """Rattache/détache des objets liés — `deals` et `companies` seulement.
+        """Attach/detach linked objects — `deals` and `companies` only.
 
-        `link_ids`/`unlink_ids` visent l'objet complémentaire : les **companies**
-        d'un deal, les **deals** d'une company.
+        `link_ids`/`unlink_ids` target the complementary object: the **companies**
+        of a deal, the **deals** of a company.
         """
         return _client().crm_link(
             entity, object_id, link_contact_ids=link_contact_ids,
@@ -97,13 +97,13 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def brevo_crm_meta(entity: Optional[str] = None) -> dict:
-        """Métadonnées du CRM Brevo : pipelines + étapes, types de tâche, attributs.
+        """Brevo CRM metadata: pipelines + stages, task types, attributes.
 
-        À lire avant `brevo_crm_create` : un `deal_stage` se désigne par l'`id`
-        d'étape du pipeline, un `taskTypeId` par l'id de son type.
+        Read before `brevo_crm_create`: a `deal_stage` is designated by the pipeline's
+        stage `id`, a `taskTypeId` by the id of its type.
 
         Args:
-            entity: `deals` | `companies` → joint leurs attributs personnalisés.
+            entity: `deals` | `companies` → attaches their custom attributes.
         """
         client = _client()
         out: dict[str, Any] = {

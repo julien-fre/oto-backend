@@ -1,22 +1,22 @@
-"""Déclaration de registre du connecteur `snitcher`.
+"""Registry declaration of the `snitcher` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# snitcher : identification des visiteurs du site web — quelles ENTREPRISES
-# visitent, avec sessions/événements par visite (dont les valeurs des
-# formulaires soumis), contacts (reveal email = crédit payant), segments,
-# tags et custom fields. keyed api_key (Bearer Personal Access Token,
-# dashboard → Settings → Account → API), byo-only : un PAT est lié à UN
-# compte Snitcher, une clé plateforme n'aurait pas de sens.
+# snitcher: website visitor identification — which COMPANIES
+# visit, with sessions/events per visit (including submitted form
+# values), contacts (email reveal = paid credit), segments,
+# tags and custom fields. keyed api_key (Bearer Personal Access Token,
+# dashboard → Settings → Account → API), byo-only: a PAT is bound to ONE
+# Snitcher account, a platform key would make no sense.
 CONNECTOR = _c(
     "snitcher", ["snitcher"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Snitcher",
-    help="identification des entreprises qui visitent votre site : "
+    help="identify the companies visiting your site: "
          "organisations, sessions, contacts, segments, tags, custom fields",
     href="https://snitcher.com", credential_fields=(
         CredentialField("key", "Personal Access Token", secret=True,
@@ -30,8 +30,8 @@ PUBLISHER = "Snitcher"
 LOGO_DOMAIN = "snitcher.com"
 
 DESCRIPTION = (
-    "Identifier les entreprises qui visitent ton site web, avec leurs sessions "
-    "et événements de visite (dont les valeurs de formulaires soumis) : "
-    "organisations, contacts (reveal email au crédit), segments, tags et champs "
-    "personnalisés."
+    "Identify the companies visiting your website, with their sessions "
+    "and visit events (including submitted form values): "
+    "organisations, contacts (email reveal by credit), segments, tags and custom "
+    "fields."
 )

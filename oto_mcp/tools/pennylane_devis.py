@@ -1,18 +1,18 @@
-"""Devis Pennylane — créer un devis, le lire, le lister, son PDF, le facturer.
+"""Pennylane quotes — create a quote, read it, list it, its PDF, invoice it.
 
-Troisième module du connecteur `pennylane` (cf. `Connector.modules` au
-registre) : même clé, même client, domaine distinct. Un devis précède la
-facture quand le client l'exige (outil achats, bon pour accord) ; une pro forma
-n'en tient pas lieu.
+Third module of the `pennylane` connector (see `Connector.modules` in the
+registry): same key, same client, distinct domain. A quote precedes the
+invoice when the customer requires it (purchasing tool, purchase order); a pro forma
+does not stand in for it.
 
-**Un devis n'a pas de brouillon.** Pennylane le crée au statut `pending` (en
-attente d'acceptation) ; rien ne part chez le client tant qu'on ne le lui
-transmet pas. Le statut ne bouge que par `op="set_status"`.
+**A quote has no draft.** Pennylane creates it with status `pending` (awaiting
+acceptance); nothing goes to the customer until it is sent to them.
+The status only moves through `op="set_status"`.
 
-**Plusieurs instances Pennylane dans une même org** (par exemple une instance
-personnelle et celle de la société) : sans `_instance`, c'est la cascade qui
-choisit — la clé personnelle d'abord. Pour deviser ou facturer au nom de la
-société, passer `_instance="org:<id>:pennylane"`.
+**Several Pennylane instances in the same org** (for example a personal
+instance and the company's): without `_instance`, the cascade
+chooses — the personal key first. To quote or invoice on behalf of the
+company, pass `_instance="org:<id>:pennylane"`.
 """
 from __future__ import annotations
 
@@ -43,60 +43,60 @@ def register(mcp: FastMCP) -> None:
         status: Optional[str] = None,
         max_pages: Optional[int] = None,
     ) -> dict:
-        """DEVIS de vente (quotes) — le document qui précède la facture.
+        """Sales QUOTES — the document that precedes the invoice.
 
-        `op` :
-        - "list" : rend `{quotes: [...]}`, les devis, filtrables par `status` et
-          `customer_id` (filtre serveur). ⚠️ Sans `max_pages`, TOUT l'historique revient — commencer petit.
-        - "get" (`quote_id`) : le devis complet, dont `status`, `quote_number`,
-          `public_file_url` (le PDF) et `linked_invoices`.
-        - "lines" (`quote_id`) : rend `{quote_id, lines: [...]}`, ses lignes.
-        - "pdf" (`quote_id`) : rend `{quote_id, quote_number, public_file_url,
-          filename}` — le lien du PDF à joindre à un mail. ⚠️ Le lien EXPIRE
-          (30 minutes) : le relire juste avant de s'en servir, jamais le stocker.
-        - "create" : crée le devis (`customer_id`, `date`, `deadline` = fin de
-          validité, `lines`). Pas de brouillon : il naît `pending`. Le client doit
-          exister (`pennylane_customer`). Annonce à l'utilisateur le client, les
-          lignes et la validité avant d'appeler.
-        - "set_status" (`quote_id`, `status`) : pending | accepted | denied |
-          invoiced | expired — par exemple `accepted` quand le client a signé.
-        - "to_invoice" (`quote_id`) : crée une facture client qui reprend le devis
-          (client, lignes), toujours en **brouillon** ; la finaliser et l'envoyer
-          restent des gestes de `pennylane_invoice`, après validation humaine.
-          Demande le scope `customer_invoices:all` en plus de `quotes:all`.
+        `op`:
+        - "list": returns `{quotes: [...]}`, the quotes, filterable by `status` and
+          `customer_id` (server-side filter). ⚠️ Without `max_pages`, the WHOLE history comes back — start small.
+        - "get" (`quote_id`): the full quote, including `status`, `quote_number`,
+          `public_file_url` (the PDF) and `linked_invoices`.
+        - "lines" (`quote_id`): returns `{quote_id, lines: [...]}`, its lines.
+        - "pdf" (`quote_id`): returns `{quote_id, quote_number, public_file_url,
+          filename}` — the PDF link to attach to an email. ⚠️ The link EXPIRES
+          (30 minutes): re-read it just before using it, never store it.
+        - "create": creates the quote (`customer_id`, `date`, `deadline` = end of
+          validity, `lines`). No draft: it is born `pending`. The customer must
+          exist (`pennylane_customer`). Announce the customer, lines
+          and validity to the user before calling.
+        - "set_status" (`quote_id`, `status`): pending | accepted | denied |
+          invoiced | expired — for example `accepted` when the customer has signed.
+        - "to_invoice" (`quote_id`): creates a customer invoice that takes over the quote
+          (customer, lines), always as a **draft**; finalizing and sending it
+          remain actions of `pennylane_invoice`, after human validation.
+          Requires the `customer_invoices:all` scope in addition to `quotes:all`.
 
-        Les lignes ont le schéma STRICT des factures (tout écart → 400 opaque) —
-        une ligne = UNE des 2 formes : produit `{product_id: int, quantity:
-        number}` (overrides possibles : label, raw_currency_unit_price, unit,
-        vat_rate), ou libre `{label: str, quantity: number, unit: str,
-        raw_currency_unit_price: str, vat_rate: str}`, tous requis. Une REMISE
-        est une ligne libre à prix négatif (`raw_currency_unit_price: "-100.00"`).
-        `vat_rate` = code Pennylane : 20 %→"FR_200", 10 %→"FR_100", 5,5 %→"FR_55",
-        exonéré→"exempt".
+        The lines have the invoices' STRICT schema (any deviation → opaque 400) —
+        a line = ONE of 2 forms: product `{product_id: int, quantity:
+        number}` (possible overrides: label, raw_currency_unit_price, unit,
+        vat_rate), or free `{label: str, quantity: number, unit: str,
+        raw_currency_unit_price: str, vat_rate: str}`, all required. A DISCOUNT
+        is a free line with a negative price (`raw_currency_unit_price: "-100.00"`).
+        `vat_rate` = Pennylane code: 20 %→"FR_200", 10 %→"FR_100", 5.5 %→"FR_55",
+        exempt→"exempt".
 
-        Plusieurs instances Pennylane dans une org (perso et société) : sans
-        `_instance`, la clé personnelle répond d'abord. Pour un devis au nom de la
-        société, passer `_instance="org:<id>:pennylane"`.
+        Several Pennylane instances in an org (personal and company): without
+        `_instance`, the personal key answers first. For a quote on behalf of the
+        company, pass `_instance="org:<id>:pennylane"`.
 
         Args:
-            op: "list" (défaut) | "get" | "lines" | "pdf" | "create" | "set_status"
+            op: "list" (default) | "get" | "lines" | "pdf" | "create" | "set_status"
                 | "to_invoice".
-            quote_id: requis pour get / lines / pdf / set_status / to_invoice.
-            customer_id: op="create" (requis) ; op="list" (filtre).
-            date: op="create" — date du devis (YYYY-MM-DD).
-            deadline: op="create" — fin de validité (YYYY-MM-DD).
-            lines: op="create" — lignes au schéma strict ci-dessus.
-            free_text: op="create" — texte libre imprimé sur le PDF (conditions,
-                référence de commande du client…).
-            external_reference: op="create" — trace de la source ; op="to_invoice" —
-                référence de la facture créée.
-            quote_template_id: op="create" — modèle de rendu du devis.
-            customer_invoice_template_id: op="to_invoice" — modèle de la facture.
-            status: op="set_status" (requis) ; op="list" (filtre).
-            max_pages: op="list" — borne la pagination.
+            quote_id: required for get / lines / pdf / set_status / to_invoice.
+            customer_id: op="create" (required); op="list" (filter).
+            date: op="create" — quote date (YYYY-MM-DD).
+            deadline: op="create" — end of validity (YYYY-MM-DD).
+            lines: op="create" — lines in the strict schema above.
+            free_text: op="create" — free text printed on the PDF (terms,
+                customer's order reference…).
+            external_reference: op="create" — source trace; op="to_invoice" —
+                reference of the created invoice.
+            quote_template_id: op="create" — rendering template of the quote.
+            customer_invoice_template_id: op="to_invoice" — template of the invoice.
+            status: op="set_status" (required); op="list" (filter).
+            max_pages: op="list" — bounds the pagination.
         """
         if status is not None and status not in _STATUTS:
-            raise _bad(f"status inconnu : {status!r} — attendu : {', '.join(_STATUTS)}")
+            raise _bad(f"unknown status: {status!r} — expected: {', '.join(_STATUTS)}")
         c = _client()
         if op == "list":
             return {"quotes": c.list_quotes(max_pages=max_pages, status=status,
@@ -110,7 +110,7 @@ def register(mcp: FastMCP) -> None:
             devis = c.get_quote(_need(quote_id, "quote_id", op))
             url = (devis or {}).get("public_file_url")
             if not url:
-                raise _bad(f"Pennylane n'a rendu aucun lien PDF pour le devis {quote_id}.")
+                raise _bad(f"Pennylane returned no PDF link for quote {quote_id}.")
             return {"quote_id": quote_id, "quote_number": devis.get("quote_number"),
                     "public_file_url": url, "filename": devis.get("filename")}
         if op == "create":
@@ -120,16 +120,16 @@ def register(mcp: FastMCP) -> None:
                 deadline=_need(deadline, "deadline", op),
                 lines=_need(lines, "lines", op),
                 external_reference=external_reference, pdf_free_text=free_text,
-                quote_template_id=quote_template_id), "la création de devis")
+                quote_template_id=quote_template_id), "quote creation")
         if op == "set_status":
             return _ecrit(lambda: c.update_quote_status(
                 _need(quote_id, "quote_id", op), _need(status, "status", op)),
-                "le changement de statut du devis")
+                "quote status change")
         if op == "to_invoice":
             return _ecrit(lambda: c.create_invoice_from_quote(
                 _need(quote_id, "quote_id", op), draft=True,
                 external_reference=external_reference,
                 customer_invoice_template_id=customer_invoice_template_id),
-                "la facturation du devis")
-        raise _bad("op doit être 'list', 'get', 'lines', 'pdf', 'create', "
-                   "'set_status' ou 'to_invoice'")
+                "quote invoicing")
+        raise _bad("op must be 'list', 'get', 'lines', 'pdf', 'create', "
+                   "'set_status' or 'to_invoice'")

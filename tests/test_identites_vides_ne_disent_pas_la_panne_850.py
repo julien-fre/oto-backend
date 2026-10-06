@@ -57,8 +57,8 @@ def test_une_liste_vide_DIT_que_les_couches_resolvent(couches_bonnes):
 def test_elle_dit_de_NE_PAS_s_en_servir_pour_expliquer_un_echec(couches_bonnes):
     """Le cœur du signal : c'est l'usage en corroboration qui a coûté une journée."""
     note = I._why_empty(couches_bonnes, "slack", "canal")["scope_note"]
-    assert "n'en conclus pas qu'un appel qui échoue" in note
-    assert "registre d'identités" in note
+    assert "do not conclude that a failing call fails for this reason" in note
+    assert "identity registry" in note
 
 
 def test_elle_nomme_la_lecture_qui_TRANCHE_vraiment(couches_bonnes):

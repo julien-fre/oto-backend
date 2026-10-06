@@ -59,7 +59,7 @@ def test_une_cle_refusee_leve(monkeypatch):
 
 def test_un_solde_ILLISIBLE_echoue_plutot_que_d_inventer(monkeypatch):
     _brancher(monkeypatch, _FauxClient({"foo": "bar"}))
-    with pytest.raises(RuntimeError, match="sans solde"):
+    with pytest.raises(RuntimeError, match="without a readable"):
         L._verify(_fields("k"))
 
 

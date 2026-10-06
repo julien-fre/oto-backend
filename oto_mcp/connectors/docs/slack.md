@@ -1,20 +1,20 @@
-## prerequisite — il te faut une app Slack installée sur ton workspace
+## prerequisite — you need a Slack app installed on your workspace
 
-oto n'a pas encore d'app Slack publiée (« connecter en un clic ») : tu crées **ta** app dans ton workspace et tu colles ses tokens ici. Une manœuvre unique par workspace, ~5 minutes.
-- **bot token** (`xoxb-`) : lire les canaux, poster sous l'identité de l'app. C'est le token nominal.
-- **user token** (`xoxp-`) : poster **en ton nom**, et chercher (`search:read` n'existe qu'en user token). Optionnel.
-- l'un des deux suffit. Avec **les deux**, oto lit avec le bot et te fait **choisir qui écrit** à chaque envoi : `author="me"` (en ton nom) ou `author="app"` (sous le nom de l'app) — sans précision, l'envoi est refusé plutôt que parti sous le mauvais nom. La réponse dit qui a écrit et dans quel canal, et si ce canal est partagé avec l'extérieur.
-- à défaut, un admin peut te grant la clé plateforme de ton org
+oto does not yet have a published Slack app ("connect in one click"): you create **your** app in your workspace and paste its tokens here. A one-time task per workspace, ~5 minutes.
+- **bot token** (`xoxb-`): read channels, post under the app's identity. This is the default token.
+- **user token** (`xoxp-`): post **in your name**, and search (`search:read` only exists as a user token). Optional.
+- either one is enough. With **both**, oto reads with the bot and makes you **choose who writes** on each send: `author="me"` (in your name) or `author="app"` (under the app's name) — with no choice, the send is refused rather than going out under the wrong name. The response says who wrote and in which channel, and whether that channel is shared externally.
+- otherwise, an admin can grant you your org's platform key
 
-## setup — créer l'app en collant un manifeste (le plus court)
+## setup — create the app by pasting a manifest (the shortest way)
 
-1. va sur [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → choisis **From a manifest** (pas « AI agent » ni « Starter app » : ce sont des gabarits d'app conversationnelle, sans rapport)
-2. choisis le workspace. L'éditeur qui s'ouvre est **déjà rempli** d'un exemple (`display_information: name: Demo App`) : **sélectionne tout et remplace-le** — coller par-dessus sans vider soude les deux manifestes et Slack refuse (« Nested mappings are not allowed in compact mappings »). Le manifeste à mettre à la place, qui déclare déjà tous les scopes dont les outils oto ont besoin :
+1. go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → choose **From a manifest** (not "AI agent" nor "Starter app": those are conversational-app templates, unrelated)
+2. choose the workspace. The editor that opens is **already filled** with an example (`display_information: name: Demo App`): **select all and replace it** — pasting over it without clearing welds the two manifests together and Slack refuses ("Nested mappings are not allowed in compact mappings"). The manifest to put in its place, which already declares all the scopes the oto tools need:
 
 ```yaml
 display_information:
   name: Oto
-  description: Lit et écrit dans Slack pour votre agent Oto
+  description: Reads and writes in Slack for your Oto agent
 features:
   bot_user:
     display_name: Oto
@@ -46,28 +46,28 @@ settings:
   token_rotation_enabled: false
 ```
 
-3. **Create**, puis **Install to Workspace** et autorise
-4. dans **OAuth & Permissions**, copie le **Bot User OAuth Token** (`xoxb-`) et, si tu veux poster en ton nom, le **User OAuth Token** (`xoxp-`)
-5. colle-les ici — rien d'autre à configurer
+3. **Create**, then **Install to Workspace** and authorize
+4. in **OAuth & Permissions**, copy the **Bot User OAuth Token** (`xoxb-`) and, if you want to post in your name, the **User OAuth Token** (`xoxp-`)
+5. paste them here — nothing else to configure
 
-*(sans manifeste : **Blank app**, puis déclare les mêmes scopes à la main dans OAuth & Permissions avant d'installer. Le manifeste évite exactement cette étape.)*
+*(without a manifest: **Blank app**, then declare the same scopes by hand in OAuth & Permissions before installing. The manifest avoids exactly this step.)*
 
-⚠️ **un scope ne remplace pas l'appartenance au canal.** sans appartenance, Slack répond `not_in_channel` — ce qui ressemble à tort à un problème de token. deux cas, et un seul est automatisable :
-- **canal public** : `slack_join_channel` fait entrer l'app toute seule (c'est à quoi sert le scope `channels:join` du manifeste ci-dessus)
-- **canal privé** : aucune API Slack ne permet de s'y inviter. un humain déjà membre doit taper `/invite @Oto` dans le canal — oto ne peut pas le faire à sa place, et le dit au lieu de laisser croire à une panne
+⚠️ **a scope does not replace channel membership.** without membership, Slack answers `not_in_channel` — which wrongly looks like a token problem. two cases, and only one can be automated:
+- **public channel**: `slack_join_channel` gets the app in on its own (this is what the manifest's `channels:join` scope above is for)
+- **private channel**: no Slack API lets you invite yourself. a human who is already a member must type `/invite @Oto` in the channel — oto cannot do it for them, and says so instead of letting you believe it's an outage
 
-référence Slack : [créer une app depuis un manifeste](https://api.slack.com/reference/manifests) · [installer avec oauth v2](https://api.slack.com/authentication/oauth-v2)
+Slack reference: [create an app from a manifest](https://api.slack.com/reference/manifests) · [install with oauth v2](https://api.slack.com/authentication/oauth-v2)
 
-## setup — un second workspace, une seconde installation
+## setup — a second workspace, a second installation
 
-un token Slack est émis **par installation** : deux workspaces = deux jeux de tokens indépendants. Refais l'installation dans le second workspace (le même manifeste), puis pose ses tokens comme un second workspace du connecteur (section « plusieurs workspaces »).
+a Slack token is issued **per installation**: two workspaces = two independent sets of tokens. Redo the installation in the second workspace (same manifest), then set its tokens as a second workspace of the connector (section "several workspaces").
 
-## usage — ce que tu peux faire
+## usage — what you can do
 
-envoie et lis des messages slack depuis claude — en ton nom ou sous celui de l'app, selon les tokens posés.
-- « envoie un message dans #general » → `slack_post_message`
-- « dm jean par email » → `slack_find_user_by_email` puis `slack_open_dm` puis `slack_post_message`
-- « lis les derniers messages de ce canal » → `slack_read_history` (messages de premier niveau ; `oldest`/`latest` pour ne lire qu'une fenêtre)
-- « qu'est-ce qui s'est dit dans ce fil ? » → `slack_read_thread` — les **réponses** d'un fil, que `slack_read_history` ne rend pas (il n'en montre que le compteur)
-- « fais entrer oto dans #canal » → `slack_join_channel` (canaux publics uniquement)
-- « réagis 👍 à ce message » → `slack_add_reaction`
+send and read slack messages from claude — in your name or under the app's, depending on the tokens set.
+- "send a message in #general" → `slack_post_message`
+- "dm jean by email" → `slack_find_user_by_email` then `slack_open_dm` then `slack_post_message`
+- "read the latest messages of this channel" → `slack_read_history` (top-level messages; `oldest`/`latest` to read only a window)
+- "what was said in this thread?" → `slack_read_thread` — a thread's **replies**, which `slack_read_history` does not return (it only shows the count)
+- "get oto into #channel" → `slack_join_channel` (public channels only)
+- "react 👍 to this message" → `slack_add_reaction`

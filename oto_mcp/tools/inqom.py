@@ -1,35 +1,35 @@
-"""Inqom — production comptable FR, en LECTURE SEULE : dossiers, référentiels, balance,
-écritures, pièces.
+"""Inqom — French accounting production, READ-ONLY: dossiers, reference data, balance,
+entries, documents.
 
-Credential = clés d'application (`client_id`/`client_secret`) + identifiants du
-compte Inqom au nom duquel le jeton agit (`username`/`password`), résolus par
-appel via `access.resolve_credential_fields("inqom")` (ADR 0011). Le jeton porte
-les droits de ce compte : ce qu'il ne voit pas, aucun outil ne le voit.
+Credential = application keys (`client_id`/`client_secret`) + credentials of the
+Inqom account on whose behalf the token acts (`username`/`password`), resolved per
+call via `access.resolve_credential_fields("inqom")` (ADR 0011). The token carries
+the rights of this account: what it does not see, no tool sees.
 
-**Surface (ADR 0047 §Amendement)** :
-- `inqom_company` — découverte, sans paramètre : les cabinets/PME accessibles ;
-- `inqom_dossier` (list/get) — les dossiers d'un cabinet, la fiche d'un dossier ;
-- `inqom_ref` (kind=accounts|journals|periods) — référentiels d'un dossier ;
-- `inqom_balance` — balance sur une période ;
-- `inqom_entry_line` (list/count) — lignes d'écriture paginées, ou filtrées par
-  préfixes de compte ;
-- `inqom_entry_create` — l'écriture NON CÂBLÉE : il rend le refus nommé
-  `inqom_write_not_wired`, qui décrit les écritures qu'il aurait créées ;
-- `inqom_document` — l'URL de téléchargement d'une pièce.
+**Surface (ADR 0047 §Amendment)**:
+- `inqom_company` — discovery, no parameter: the accessible firms/SMEs;
+- `inqom_dossier` (list/get) — a firm's dossiers, a dossier's record;
+- `inqom_ref` (kind=accounts|journals|periods) — a dossier's reference data;
+- `inqom_balance` — balance over a period;
+- `inqom_entry_line` (list/count) — paginated entry lines, or filtered by
+  account prefixes;
+- `inqom_entry_create` — the NOT WIRED write: it returns the named refusal
+  `inqom_write_not_wired`, which describes the entries it would have created;
+- `inqom_document` — the download URL of a document.
 
-**Aucune écriture n'est câblée** (décision du 30/09/2026, même traitement que PayFit) :
-`inqom_entry_create` ne résout pas la clé, ne construit pas le client et n'appelle
-jamais Inqom, quel que soit l'argument — `ecriture_non_cablee.refus`. L'écriture
-comptable se fait dans Inqom même.
+**No write is wired** (decision of 30/09/2026, same treatment as PayFit):
+`inqom_entry_create` does not resolve the key, does not build the client and never
+calls Inqom, whatever the argument — `ecriture_non_cablee.refus`. Accounting
+entry is done in Inqom itself.
 
-**Filtre par préfixes** : l'API ne filtre que sur UN compte exact. Pour « les
-comptes 6 et 7 », l'outil lit toutes les lignes de la période et garde celles
-dont le compte commence par un préfixe. Lire tout a un second usage : une ligne
-de charge ne porte pas son fournisseur, il est sur la ligne de tiers (40x/41x)
-de la même écriture, que l'outil rattache (`third_party_accounts`).
+**Prefix filter**: the API only filters on ONE exact account. For "accounts
+6 and 7", the tool reads all the lines of the period and keeps those
+whose account starts with a prefix. Reading everything has a second use: an expense
+line does not carry its supplier, it is on the third-party line (40x/41x)
+of the same entry, which the tool attaches (`third_party_accounts`).
 
-Hôte fixe (`api.inqom.com`) : aucun champ du credential ne désigne une
-destination, donc pas de garde d'egress (`oto_mcp/egress.py`) à poser ici.
+Fixed host (`api.inqom.com`): no credential field designates a
+destination, so no egress guard (`oto_mcp/egress.py`) to set here.
 """
 from __future__ import annotations
 
@@ -46,11 +46,11 @@ from . import ecriture_non_cablee
 
 _NAME = "inqom"
 _CHAMPS = ("client_id", "client_secret", "username", "password")
-# Écritures décrites dans le refus : au-delà, un compte. Le refus est journalisé.
+# Entries described in the refusal: beyond that, a count. The refusal is logged.
 _DECRITES_MAX = 20
-_PAGE = 1000  # lignes par page, côté Inqom comme côté filtre
-_SCAN_PAGES_MAX = 50  # borne d'une lecture filtrée : au-delà, resserrer la période
-_TIERS = ("40", "41")  # comptes de tiers : fournisseurs, clients
+_PAGE = 1000  # lines per page, on the Inqom side as on the filter side
+_SCAN_PAGES_MAX = 50  # bound of a filtered read: beyond it, narrow the period
+_TIERS = ("40", "41")  # third-party accounts: suppliers, customers
 
 
 def _bad(msg: str) -> McpError:
@@ -58,47 +58,47 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable, jamais de repli."""
+    """Required argument for THIS op — actionable error, never a fallback."""
     if value is None or value == "":
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
 def _refuse_ignored(op: str, hint: str, **provided) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention.
-    Testé sur `is not None` : `False` ou `0` fournis sont une intention aussi."""
+    """An argument provided that THIS op does not use is an error of intent.
+    Tested on `is not None`: a provided `False` or `0` is an intent too."""
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op='{op}' n'utilise pas {name} — {hint}")
+            raise _bad(f"op='{op}' does not use {name} — {hint}")
 
 
 def _champs(fields: dict) -> dict:
-    """Les quatre champs, NON VIDES. Un champ vide passé au client y lèverait un
-    `MissingCredential` au nom de la lib : on le refuse ici, au nom du connecteur."""
+    """The four fields, NON-EMPTY. An empty field passed to the client would raise a
+    `MissingCredential` there in the lib's name: we refuse it here, in the connector's name."""
     vides = [n for n in _CHAMPS if not (fields.get(n) or "").strip()]
     if vides:
-        raise ValueError(f"credential Inqom incomplet : {', '.join(vides)} vide(s)")
+        raise ValueError(f"incomplete Inqom credential: {', '.join(vides)} empty")
     return {n: fields[n] for n in _CHAMPS}
 
 
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"Inqom : accès refusé (HTTP {status}) — clés d'application ou "
-                "identifiants du compte invalides, ou droit qui manque à ce compte.")
+        return (f"Inqom: access denied (HTTP {status}) — invalid application keys or "
+                "account credentials, or a right missing from this account.")
     if status == 404:
-        return "Inqom : introuvable (HTTP 404) — dossier ou ressource inexistant, ou hors des droits du compte."
+        return "Inqom: not found (HTTP 404) — dossier or resource does not exist, or is outside the account's rights."
     if status == 429:
-        return "Inqom : trop de requêtes (429) — réessaie dans un instant."
+        return "Inqom: too many requests (429) — retry in a moment."
     if status >= 500:
-        return f"Inqom est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Inqom a refusé la requête (HTTP {status}) : {str(e.body)[:400]}"
+        return f"Inqom is temporarily unavailable (HTTP {status}) — retry later."
+    return f"Inqom refused the request (HTTP {status}): {str(e.body)[:400]}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » : `list_companies()`, le plus petit appel
-    authentifié sans paramètre. Une liste vide est un état possible (compte sans
-    affectation), jamais un refus."""
+    """"Test the connection" probe: `list_companies()`, the smallest authenticated
+    call with no parameter. An empty list is a possible state (account with no
+    assignment), never a refusal."""
     from oto.tools.common.errors import UpstreamHTTPError
     from oto.tools.inqom import InqomClient
 
@@ -115,8 +115,8 @@ def _verify(fields: dict, config: dict | None = None) -> None:
 
 
 def _total(lines: list, sens: str) -> Optional[str]:
-    """Somme des montants `sens` (DebitAmount|CreditAmount) des lignes, ou None si un
-    montant est illisible : la description ne refuse rien, elle décrit ce qui se lit."""
+    """Sum of the `sens` amounts (DebitAmount|CreditAmount) of the lines, or None if an
+    amount is unreadable: the description refuses nothing, it describes what can be read."""
     total = Decimal(0)
     for ln in lines:
         v = ln.get(sens) if isinstance(ln, dict) else None
@@ -130,9 +130,9 @@ def _total(lines: list, sens: str) -> Optional[str]:
 
 
 def _ecritures_decrites(entries) -> list[dict]:
-    """Ce que chaque écriture aurait posé : journal, date, référence, nombre de lignes
-    et totaux. Tolérant — le refus ne dépend pas de la forme des arguments. Les
-    libellés et comptes des lignes n'y figurent pas : le refus est journalisé."""
+    """What each entry would have posted: journal, date, reference, line count
+    and totals. Tolerant — the refusal does not depend on the shape of the arguments. The
+    labels and accounts of the lines do not appear: the refusal is logged."""
     if not isinstance(entries, list):
         return []
     out = []
@@ -150,20 +150,20 @@ def _ecritures_decrites(entries) -> list[dict]:
 
 
 def _prefixes(values) -> tuple[str, ...]:
-    """Les préfixes demandés, nettoyés : une liste vide ou un préfixe blanc est une
-    erreur, pas « tous les comptes »."""
+    """The requested prefixes, cleaned: an empty list or a blank prefix is an
+    error, not "all accounts"."""
     if not isinstance(values, list) or not values:
-        raise _bad("account_prefixes : une liste non vide de préfixes est requise (ex. [\"6\", \"7\"])")
+        raise _bad("account_prefixes: a non-empty list of prefixes is required (e.g. [\"6\", \"7\"])")
     nets = tuple(str(v).strip() for v in values)
     if not all(nets):
-        raise _bad("account_prefixes : préfixe vide")
+        raise _bad("account_prefixes: empty prefix")
     return nets
 
 
 def _filtrer(lines: list[dict], prefixes: tuple[str, ...]) -> list[dict]:
-    """Les lignes dont le compte commence par un préfixe, triées par date d'écriture,
-    chacune avec les comptes de tiers de SON écriture (`third_party_accounts`).
-    `lines` doit être la période ENTIÈRE : une écriture coupée perdrait son tiers."""
+    """The lines whose account starts with a prefix, sorted by entry date,
+    each with the third-party accounts of ITS entry (`third_party_accounts`).
+    `lines` must be the ENTIRE period: a cut entry would lose its third party."""
     tiers: dict = {}
     for ln in lines:
         compte = str(ln.get("AccountNumber") or "")
@@ -231,14 +231,14 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "n'existe que sur op='get'", dossier_id=dossier_id)
+            _refuse_ignored(op, "only exists on op='get'", dossier_id=dossier_id)
             cid = _need(company_id, "company_id", op)
             return {"dossiers": _run(lambda: client.list_dossiers(cid))}
         if op == "get":
-            _refuse_ignored(op, "n'existe que sur op='list'", company_id=company_id)
+            _refuse_ignored(op, "only exists on op='list'", company_id=company_id)
             did = _need(dossier_id, "dossier_id", op)
             return {"dossier": _run(lambda: client.get_dossier(did))}
-        raise _bad("op doit être 'list' ou 'get'")
+        raise _bad("op must be 'list' or 'get'")
 
     @mcp.tool()
     def inqom_ref(
@@ -267,13 +267,13 @@ def register(mcp: FastMCP) -> None:
             rows = _run(lambda: client.list_accounts(
                 dossier_id, number_prefix=number_prefix, account_type=account_type))
             return {"accounts": rows}
-        _refuse_ignored(f"kind={kind}", "n'existe que sur kind='accounts'",
+        _refuse_ignored(f"kind={kind}", "only exists on kind='accounts'",
                         number_prefix=number_prefix, account_type=account_type)
         if kind == "journals":
             return {"journals": _run(lambda: client.list_journals(dossier_id))}
         if kind == "periods":
             return {"periods": _run(lambda: client.list_accounting_periods(dossier_id))}
-        raise _bad("kind doit être 'accounts', 'journals' ou 'periods'")
+        raise _bad("kind must be 'accounts', 'journals' or 'periods'")
 
     @mcp.tool()
     def inqom_balance(
@@ -309,14 +309,14 @@ def register(mcp: FastMCP) -> None:
 
     def _periode_entiere(client, dossier_id: int, start_date: str, end_date: str,
                          journal_id: Optional[int]) -> list[dict]:
-        """Toutes les lignes de la période, page après page. Le compte amont borne
-        d'avance ; la boucle s'arrête à la première page incomplète."""
+        """All the lines of the period, page after page. The upstream count bounds
+        it in advance; the loop stops at the first incomplete page."""
         total = _run(lambda: client.count_entry_lines(
             dossier_id, start_date, end_date)).get("TotalPagesCount") or 0
         if total > _SCAN_PAGES_MAX:
-            raise _bad(f"account_prefixes : la période compte {total} pages de {_PAGE} "
-                       f"lignes, au-delà des {_SCAN_PAGES_MAX} qu'une lecture filtrée "
-                       "parcourt — resserre start_date / end_date (un mois, un trimestre)")
+            raise _bad(f"account_prefixes: the period has {total} pages of {_PAGE} "
+                       f"lines, beyond the {_SCAN_PAGES_MAX} that a filtered read "
+                       "walks — narrow start_date / end_date (a month, a quarter)")
         lines: list[dict] = []
         for n in range(1, _SCAN_PAGES_MAX + 1):
             lot = _run(lambda: client.list_entry_lines(
@@ -325,8 +325,8 @@ def register(mcp: FastMCP) -> None:
             lines.extend(lot)
             if len(lot) < _PAGE:
                 return lines
-        raise _bad(f"account_prefixes : plus de {_SCAN_PAGES_MAX} pages lues sans fin de "
-                   "période — resserre start_date / end_date")
+        raise _bad(f"account_prefixes: more than {_SCAN_PAGES_MAX} pages read without the end of "
+                   "the period — narrow start_date / end_date")
 
     @mcp.tool()
     def inqom_entry_line(
@@ -366,19 +366,19 @@ def register(mcp: FastMCP) -> None:
             journal_id: op="list" only — one journal.
         """
         if account_prefixes is not None and account_number is not None:
-            raise _bad("account_number et account_prefixes s'excluent — un compte exact "
-                       "OU des préfixes")
+            raise _bad("account_number and account_prefixes are mutually exclusive — one exact account "
+                       "OR prefixes")
         client = _client()
         if op == "count":
-            _refuse_ignored(op, "n'existe que sur op='list'",
+            _refuse_ignored(op, "only exists on op='list'",
                             page_number=page_number, journal_id=journal_id)
         elif op != "list":
-            raise _bad("op doit être 'list' ou 'count'")
+            raise _bad("op must be 'list' or 'count'")
         page = 1 if page_number is None else page_number
         if account_prefixes is not None:
             prefixes = _prefixes(account_prefixes)
             if page < 1:
-                raise _bad(f"page_number commence à 1 — reçu {page}")
+                raise _bad(f"page_number starts at 1 — got {page}")
             lines = _filtrer(_periode_entiere(client, dossier_id, start_date, end_date,
                                               journal_id), prefixes)
             count = {"TotalLinesCount": len(lines), "TotalPagesCount": -(-len(lines) // _PAGE)}
@@ -414,13 +414,13 @@ def register(mcp: FastMCP) -> None:
         n = len(entries) if isinstance(entries, list) else 0
         raise ecriture_non_cablee.refus(
             _NAME, "Inqom", "create",
-            f"créé {n} écriture(s) comptable(s)"
-            + (f" dans le dossier {dossier_id}" if dossier_id is not None else ""),
+            f"created {n} accounting entry(ies)"
+            + (f" in dossier {dossier_id}" if dossier_id is not None else ""),
             ecritures=decrites, ecritures_non_decrites=(n - len(decrites)) or None)
 
     @mcp.tool()
     def inqom_document(dossier_id: int, document_id: int) -> dict:
-        """The download URL of an accounting document (pièce) — `document_id` is
+        """The download URL of an accounting document — `document_id` is
         the `AccountingDocument.Id` carried by an entry line.
 
         Args:

@@ -1,19 +1,19 @@
-"""Urbanisme — ce qui qualifie / grève un lieu (open data France, sans clé).
+"""Urban planning — what qualifies / encumbers a place (France open data, no key).
 
-Pendant du namespace `foncier` (qui décrit le **site physique** : géocodage,
-cadastre, bâti, solaire, conso). `urba` couvre l'**enveloppe réglementaire et
-territoriale** d'un point ou d'une commune :
-- zonage PLU/PLUi opposable (Géoportail de l'Urbanisme),
-- risques naturels/technologiques recensés + aléa retrait-gonflement des argiles,
-- Quartiers Prioritaires de la Ville (zonage fiscal),
-- secteurs d'intervention EPFIF (maîtrise foncière, Île-de-France),
-- socio-démographie communale (INSEE Mélodi) et à l'IRIS/quartier (parquet INSEE bundlé).
+Counterpart of the `foncier` namespace (which describes the **physical site**: geocoding,
+cadastre, buildings, solar, consumption). `urba` covers the **regulatory and
+territorial envelope** of a point or a commune:
+- enforceable PLU/PLUi zoning (Géoportail de l'Urbanisme),
+- recorded natural/technological risks + clay shrink-swell hazard,
+- Quartiers Prioritaires de la Ville (tax zoning),
+- EPFIF intervention sectors (land control, Île-de-France),
+- commune-level socio-demographics (INSEE Mélodi) and at IRIS/neighbourhood level (bundled INSEE parquet).
 
-Tous les clients viennent de `france-opendata` (open data, pas de clé). Géocoder
-l'adresse au préalable via `foncier_geocode` (→ lat/lon + code INSEE).
+All clients come from `france-opendata` (open data, no key). Geocode the
+address beforehand via `foncier_geocode` (→ lat/lon + INSEE code).
 
-Connecteur open-data : pas de credential. Exposé seulement si activé en DB
-(cran d'activation, ADR 0010) — register_all gate sur `connector_activation`.
+Open-data connector: no credential. Exposed only if enabled in DB
+(activation gate, ADR 0010) — register_all gates on `connector_activation`.
 """
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ from ..mcp_errors import McpError
 def register(mcp: FastMCP) -> None:
     from ..fod import urba as fod_urba
 
-    # Enveloppe réglementaire servie par le service FOD dédié (ADR 0028 B3) — le
-    # backend n'exécute plus ces appels (dont l'IRIS DuckDB) in-process. Objets proxy
-    # à surface identique aux clients france_opendata → seuls ces bindings changent.
+    # Regulatory envelope served by the dedicated FOD service (ADR 0028 B3) — the
+    # backend no longer runs these calls (including the IRIS DuckDB) in-process. Proxy objects
+    # with the same surface as the france_opendata clients → only these bindings change.
     gpu = fod_urba.gpu
     georisques = fod_urba.georisques
     qpv = fod_urba.qpv
@@ -41,7 +41,7 @@ def register(mcp: FastMCP) -> None:
     annuaire = fod_urba.annuaire
     epfif = fod_urba.epfif
 
-    # --- zonage PLU/PLUi (Géoportail de l'Urbanisme) -------------------------
+    # --- PLU/PLUi zoning (Géoportail de l'Urbanisme) -------------------------
 
     @mcp.tool()
     def urba_zonage(lat: float, lon: float) -> dict:
@@ -80,7 +80,7 @@ def register(mcp: FastMCP) -> None:
         return fod_reglement.extraits(idurba, zone=zone, query=query,
                                       max_extraits=max_extraits, context_lignes=context_lignes)
 
-    # --- risques (Géorisques) ------------------------------------------------
+    # --- risks (Géorisques) ------------------------------------------------
 
     @mcp.tool()
     def urba_risques(code_insee: str) -> dict:
@@ -189,7 +189,7 @@ def register(mcp: FastMCP) -> None:
         """
         return qpv.near_point(lon, lat, radius_m=rayon_m)
 
-    # --- EPFIF (maîtrise foncière, Île-de-France) ----------------------------
+    # --- EPFIF (land control, Île-de-France) ---------------------------------
 
     @mcp.tool()
     def urba_epfif(code_insee: str) -> dict:
@@ -203,7 +203,7 @@ def register(mcp: FastMCP) -> None:
         """
         return epfif.lookup(code_insee)
 
-    # --- socio-démographie communale (INSEE Mélodi) --------------------------
+    # --- commune socio-demographics (INSEE Mélodi) ---------------------------
 
     @mcp.tool()
     def urba_socio(code_insee: str) -> dict:
@@ -227,12 +227,12 @@ def register(mcp: FastMCP) -> None:
         for key, fn in blocks.items():
             try:
                 out[key] = fn()
-            # noqa: SILENT — l'échec par couche est rendu dans la ligne de résultat
-            except Exception as e:  # noqa: BLE001 — dégrader par bloc
+            # noqa: SILENT — the per-layer failure is rendered in the result row
+            except Exception as e:  # noqa: BLE001 — degrade per block
                 out[key] = {"error": f"{type(e).__name__}: {e}"}
         return out
 
-    # --- recensement à l'IRIS / quartier (INSEE, parquet bundlé) --------------
+    # --- census at IRIS / neighbourhood level (INSEE, bundled parquet) --------
 
     @mcp.tool()
     def urba_iris(code: str) -> dict:

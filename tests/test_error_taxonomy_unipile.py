@@ -34,7 +34,7 @@ def test_not_connected_is_managed():
 
 def test_network_error_is_NOT_dropped():
     # réseau = transitoire (panne potentielle) → reste reporté à Sentry
-    e = UnipileError("Unipile: erreur réseau (ConnectionError).")
+    e = UnipileError("Unipile: network error (ConnectionError).")
     assert _is_upstream_managed_error(e) is False
     assert _is_expected_error(e) is False
 

@@ -1,22 +1,22 @@
-"""Pipedrive CRM — deals, personnes, organisations, activités, notes, leads.
+"""Pipedrive CRM — deals, persons, organizations, activities, notes, leads.
 
-Wrappe `oto.tools.pipedrive.PipedriveClient`. Credential = **token API personnel**
-(`api_token`) + `company_domain` facultatif (non secret, route vers le data center
-du compte) → modèle générique multi-champs (ADR 0011), résolu par appel via
-`access.resolve_credential_fields("pipedrive")`. byo_user OU byo_org, pas de clé
-plateforme (le token EST le grant).
+Wraps `oto.tools.pipedrive.PipedriveClient`. Credential = **personal API token**
+(`api_token`) + optional `company_domain` (non-secret, routes to the account's
+data center) → generic multi-field model (ADR 0011), resolved per call via
+`access.resolve_credential_fields("pipedrive")`. byo_user OR byo_org, no platform
+key (the token IS the grant).
 
-**Surface consolidée (ADR 0047 §Amendement)** : un tool par OBJET métier, le verbe
-en paramètre `op` — 13 tools → 5. Le module portait DÉJÀ l'axe `entity` (comme
-hubspot/salesforce) : deals/persons/organizations/activities/products/pipelines/
-stages partagent les mêmes verbes en API v2, donc leur CRUD + leur schéma tiennent
-dans un seul `pipedrive_record`. La **recherche** garde son tool
-(`pipedrive_search`) : ses paramètres lui sont propres (`term`, `exact_match`,
-`fields` = les champs INTERROGÉS, à ne pas confondre avec `include_fields`/
-`custom_fields` du CRUD), et son `op` ne choisit pas un verbe mais la portée —
-mono-entité ou transverse (`/itemSearch`). Ce que Pipedrive n'a pas porté en v2
-garde son objet dédié (`pipedrive_note`, `pipedrive_lead`, `pipedrive_users`) — la
-frontière est dans l'API (v1, pagination offset), autant l'assumer.
+**Consolidated surface (ADR 0047 §Amendment)**: one tool per business OBJECT, the verb
+in the `op` parameter — 13 tools → 5. The module ALREADY carried the `entity` axis (like
+hubspot/salesforce): deals/persons/organizations/activities/products/pipelines/
+stages share the same verbs in the v2 API, so their CRUD + their schema fit
+in a single `pipedrive_record`. **Search** keeps its tool
+(`pipedrive_search`): its parameters are its own (`term`, `exact_match`,
+`fields` = the fields SEARCHED, not to be confused with `include_fields`/
+`custom_fields` of the CRUD), and its `op` does not choose a verb but the scope —
+single-entity or cross-entity (`/itemSearch`). What Pipedrive has not ported to v2
+keeps its dedicated object (`pipedrive_note`, `pipedrive_lead`, `pipedrive_users`) — the
+boundary is in the API (v1, offset pagination), so we might as well own it.
 """
 from __future__ import annotations
 
@@ -34,14 +34,14 @@ def _domain(company_domain: Optional[str]) -> Optional[str]:
     return (company_domain or "").strip().strip(".") or None
 
 
-def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde)
-    """Sonde SANS effet de bord, en deux temps (auth PUIS accès réel) :
+def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: probe contract)
+    """Probe with NO side effect, in two steps (auth THEN real access):
 
-    1. `GET /users/me` : valide le token et le `company_domain` s'il est fourni
-       (un sous-domaine erroné ne résout pas / renvoie 401) ;
-    2. lecture réelle d'un deal : un token peut authentifier alors que
-       l'utilisateur porteur n'a pas la permission « deals » — capté ici plutôt
-       qu'au premier appel de l'agent.
+    1. `GET /users/me`: validates the token and the `company_domain` if provided
+       (a wrong subdomain does not resolve / returns 401);
+    2. real read of a deal: a token can authenticate while
+       the holding user lacks the "deals" permission — caught here rather
+       than on the agent's first call.
     """
     from oto.tools.pipedrive.client import PipedriveClient
 
@@ -51,16 +51,16 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
     )
     try:
         client.get_current_user()
-    except Exception as e:  # noqa: BLE001 — l'erreur provider EST le retour de la sonde
+    except Exception as e:  # noqa: BLE001 — the provider error IS the probe's return
         raise ValueError(
-            f"token API Pipedrive refusé (Settings → Personal preferences → API) : {e}"
+            f"Pipedrive API token refused (Settings → Personal preferences → API): {e}"
         ) from e
     try:
         client.list_records("deals", limit=1)
     except Exception as e:  # noqa: BLE001
         raise ValueError(
-            f"token valide, mais la lecture des deals est refusée (permissions du "
-            f"profil Pipedrive) : {e}") from e
+            f"token valid, but reading deals is refused (permissions of the "
+            f"Pipedrive profile): {e}") from e
 
 
 def register(mcp: FastMCP) -> None:
@@ -74,18 +74,18 @@ def register(mcp: FastMCP) -> None:
             company_domain=_domain(creds.get("company_domain")),
         )
 
-    # ---- helpers de dispatch (patron `op=`, ADR 0047) --------------------
+    # ---- dispatch helpers (`op=` pattern, ADR 0047) ----------------------
 
     def _bad(msg: str) -> McpError:
         return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
     def _need(value, name: str, op: str):
-        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
+        """Mandatory argument for THIS op — actionable error, never a fallback."""
         if value is None:
-            raise _bad(f"op='{op}' requiert {name}")
+            raise _bad(f"op='{op}' requires {name}")
         return value
 
-    # ---- les objets de l'API v2 : CRUD générique + schéma ----------------
+    # ---- the v2 API objects: generic CRUD + schema ------------------------
 
     @mcp.tool()
     def pipedrive_record(
@@ -181,10 +181,10 @@ def register(mcp: FastMCP) -> None:
         if op == "fields":
             return _client().list_fields(entity, limit=limit, cursor=cursor)
 
-        raise _bad("op doit être 'list', 'get', 'create', 'update', 'delete' "
-                   "ou 'fields'")
+        raise _bad("op must be 'list', 'get', 'create', 'update', 'delete' "
+                   "or 'fields'")
 
-    # ---- recherche : dans une entité, ou transverse ----------------------
+    # ---- search: within one entity, or cross-entity -----------------------
 
     @mcp.tool()
     def pipedrive_search(
@@ -245,7 +245,7 @@ def register(mcp: FastMCP) -> None:
                 search_for_related_items=search_for_related_items, limit=limit,
                 cursor=cursor)
 
-        raise _bad("op doit être 'entity' ou 'all'")
+        raise _bad("op must be 'entity' or 'all'")
 
     # ---- notes (API v1) --------------------------------------------------
 
@@ -286,15 +286,15 @@ def register(mcp: FastMCP) -> None:
         if op == "create":
             content = _need(content, "content", op)
             if not any([deal_id, person_id, org_id, lead_id]):
-                raise _bad("op='create' requiert une cible : deal_id, person_id, "
-                           "org_id ou lead_id")
+                raise _bad("op='create' requires a target: deal_id, person_id, "
+                           "org_id or lead_id")
             return _client().create_note(
                 content, deal_id=deal_id, person_id=person_id, org_id=org_id,
                 lead_id=lead_id)
 
-        raise _bad("op doit être 'list' ou 'create'")
+        raise _bad("op must be 'list' or 'create'")
 
-    # ---- leads (CRUD resté en API v1) ------------------------------------
+    # ---- leads (CRUD stayed in v1 API) ------------------------------------
 
     @mcp.tool()
     def pipedrive_lead(
@@ -339,7 +339,7 @@ def register(mcp: FastMCP) -> None:
         if op == "create":
             title = _need(title, "title", op)
             if not (person_id or organization_id):
-                raise _bad("op='create' requiert person_id ou organization_id")
+                raise _bad("op='create' requires person_id or organization_id")
             value = ({"amount": amount, "currency": currency or "EUR"}
                      if amount is not None else None)
             return _client().create_lead(
@@ -347,9 +347,9 @@ def register(mcp: FastMCP) -> None:
                 owner_id=owner_id, value=value,
                 expected_close_date=expected_close_date)
 
-        raise _bad("op doit être 'list' ou 'create'")
+        raise _bad("op must be 'list' or 'create'")
 
-    # ---- utilisateurs du compte (API v1) ---------------------------------
+    # ---- account users (v1 API) -------------------------------------------
 
     @mcp.tool()
     def pipedrive_users() -> dict:

@@ -1,34 +1,34 @@
-"""Les verbes « lire l'état / déconnecter » d'un connecteur OAuth — déclarés
-par son module, dérivés partout. Décalque symétrique de `connector_flow` (`flow.py`,
-verbe « connecter ») pour le couple statut/déconnexion (oto-dashboard#125).
+"""The "read status / disconnect" verbs of an OAuth connector — declared
+by its module, derived everywhere. Symmetric counterpart of `connector_flow` (`flow.py`,
+the "connect" verb) for the status/disconnect pair (oto-dashboard#125).
 
-**Le problème que ça ferme.** `me.connector_connect` a un registre (`declare`) alimenté
-au niveau MODULE par chaque connecteur à flux : un seul chemin fixe, dérivé partout.
-Les deux autres moitiés du même geste — « suis-je connecté ? », « déconnecte-moi » —
-n'avaient pas d'équivalent : le dashboard construisait encore son URL à partir du NOM
-du connecteur (`/api/${name}/oauth/status`, `DELETE /api/${name}/oauth`), pour les
-connecteurs OAuth d'alors (atlassian, folkmcp, google). Ce module ferme la moitié
-`disconnect` ; `status` reste déclarable ICI (même forme que `declare`), mais rien ne
-l'appelle dans ce lot.
+**The problem this closes.** `me.connector_connect` has a registry (`declare`) fed
+at MODULE level by each flow connector: a single fixed path, derived everywhere.
+The two other halves of the same gesture — "am I connected?", "disconnect me" —
+had no equivalent: the dashboard still built its URL from the connector NAME
+(`/api/${name}/oauth/status`, `DELETE /api/${name}/oauth`), for the OAuth
+connectors of the time (atlassian, folkmcp, google). This module closes the
+`disconnect` half; `status` stays declarable HERE (same shape as `declare`), but
+nothing calls it in this batch.
 
-⚠️ **Il ne reste qu'un déclarant depuis le 2026-09-09** : `google`. Atlassian et folkmcp
-sont partis avec la fédération MCP (ADR 0069). Le registre garde sa forme — un seam ne
-se replie pas parce qu'il n'a plus qu'un occupant.
+⚠️ **Only one declarer remains since 2026-09-09**: `google`. Atlassian and folkmcp
+left with the MCP federation (ADR 0069). The registry keeps its shape — a seam is
+not folded away because it has only one occupant left.
 
-**Pourquoi `status` existe sans être câblé.** La contrainte 1 d'oto-dashboard#125
-(arbitrage du 04/09/2026) interdit à `me.connector_status` d'interroger un module
-`auth.*` en parallèle de `/api/me` : son état DOIT venir d'`access.status_for`, la
-MÊME source, jamais d'un second appel qui pourrait diverger. Le verbe `status` de ce
-registre est donc de l'infrastructure symétrique (même forme que `disconnect`, pour
-qu'un futur connecteur qui voudrait un lecteur dédié n'ait pas à inventer un second
-patron) — `capabilities/connectors/oauth_status.py` ne branche QUE `disconnect`
-dessus, jamais `status`.
+**Why `status` exists without being wired.** Constraint 1 of oto-dashboard#125
+(ruling of 04/09/2026) forbids `me.connector_status` from querying an `auth.*`
+module in parallel with `/api/me`: its state MUST come from `access.status_for`,
+the SAME source, never from a second call that could diverge. The `status` verb
+of this registry is therefore symmetric infrastructure (same shape as
+`disconnect`, so that a future connector wanting a dedicated reader does not have
+to invent a second pattern) — `capabilities/connectors/oauth_status.py` wires
+ONLY `disconnect` to it, never `status`.
 
-**Ce que le seam garantit.** Une déclaration pure au niveau MODULE (comme
-`connector_flow.declare`), lisible dès l'import, sans effet de bord. Les callables
-eux-mêmes peuvent importer paresseusement leur module `auth.*` (celui-ci monte des
-clients HTTP et lit sa config au chargement) — la déclaration ne les force pas à
-charger avant l'appel réel, exactement comme `federated_oauth._federation()._module()`.
+**What the seam guarantees.** A pure MODULE-level declaration (like
+`connector_flow.declare`), readable at import, with no side effect. The callables
+themselves can lazily import their `auth.*` module (it builds HTTP clients and
+reads its config at load) — the declaration does not force them to load before
+the actual call, exactly like `federated_oauth._federation()._module()`.
 """
 from __future__ import annotations
 
@@ -44,10 +44,10 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class StatusFlow:
     connector: str
-    # (ctx) -> dict, jamais appelé par ce lot (cf. docstring du module) — `None` =
-    # non déclaré, ce qui est le cas du seul connecteur câblé aujourd'hui.
+    # (ctx) -> dict, never called by this batch (see the module docstring) — `None` =
+    # not declared, which is the case of the only connector wired today.
     status: Optional[Callable[..., dict]] = None
-    # (ctx) -> dict — le seul verbe réellement branché par ce lot.
+    # (ctx) -> dict — the only verb actually wired by this batch.
     disconnect: Optional[Callable[..., dict]] = None
 
 
@@ -56,9 +56,9 @@ _FLOWS: dict[str, StatusFlow] = {}
 
 def declare_status(connector: str, *, status: Optional[Callable[..., dict]] = None,
                     disconnect: Optional[Callable[..., dict]] = None) -> None:
-    """Déclare les verbes statut/déconnexion de ce connecteur OAuth. Appelé au
-    niveau MODULE (comme `connector_flow.declare`) : une déclaration pure, lisible dès
-    l'import, sans attendre le montage FastMCP."""
+    """Declare the status/disconnect verbs of this OAuth connector. Called at
+    MODULE level (like `connector_flow.declare`): a pure declaration, readable at
+    import, without waiting for the FastMCP mount."""
     _FLOWS[connector] = StatusFlow(connector=connector, status=status, disconnect=disconnect)
 
 
@@ -71,10 +71,10 @@ def entries() -> dict[str, StatusFlow]:
 
 
 async def _run(fabrique: Callable[..., dict], ctx) -> dict:
-    """Exécute le callable déclaré et rend sa forme brute — même discipline que
-    `connector_flow.start` : un flux peut être asynchrone (fournisseur hébergé) ou
-    synchrone-mais-bloquant (révocation HTTP, cf. `google_oauth.revoke`), et dans les
-    deux cas le serveur mono-loop ne doit jamais l'exécuter en bloquant."""
+    """Run the declared callable and return its raw shape — same discipline as
+    `connector_flow.start`: a flow can be asynchronous (hosted provider) or
+    synchronous-but-blocking (HTTP revocation, see `google_oauth.revoke`), and in
+    both cases the single-loop server must never run it in a blocking way."""
     if inspect.iscoroutinefunction(fabrique):
         out = await fabrique(ctx)
     else:
@@ -83,19 +83,19 @@ async def _run(fabrique: Callable[..., dict], ctx) -> dict:
             out = await out
     if not isinstance(out, dict):
         raise TypeError(
-            f"le verbe déclaré doit rendre un dict (reçu {type(out).__name__})")
+            f"the declared verb must return a dict (got {type(out).__name__})")
     return out
 
 
 async def read_status(connector: str, ctx) -> dict:
     f = _FLOWS[connector].status
     if f is None:
-        raise KeyError(f"« {connector} » n'a pas de lecteur de statut déclaré ici")
+        raise KeyError(f"\"{connector}\" has no status reader declared here")
     return await _run(f, ctx)
 
 
 async def disconnect(connector: str, ctx) -> dict:
     f = _FLOWS[connector].disconnect
     if f is None:
-        raise KeyError(f"« {connector} » n'a pas de verbe disconnect déclaré ici")
+        raise KeyError(f"\"{connector}\" has no disconnect verb declared here")
     return await _run(f, ctx)

@@ -267,7 +267,7 @@ def test_dry_run_delete_submission_previews_and_writes_nothing():
         out = _fn(m, "tally_submission")(
             op="delete", form_id="F", submission_id="S1", dry_run=True)
     assert out["dry_run"] is True
-    assert "non" in out["recoverable"]        # pas de corbeille pour les réponses
+    assert out["recoverable"].startswith("no")        # pas de corbeille pour les réponses
     inst.delete_submission.assert_not_called()
 
 
@@ -287,7 +287,7 @@ def test_dry_run_remove_user_names_the_key_revocation():
         out = _fn(m, "tally_account")(
             op="remove_user", organization_id="O", user_id="U1", dry_run=True)
     assert out["current"]["email"] == "a@b.c"
-    assert "clés API" in out["warning"]
+    assert "API keys" in out["warning"]
     inst.remove_organization_user.assert_not_called()
 
 
@@ -378,6 +378,6 @@ def test_ambiguous_401_does_not_blame_the_key():
         msg = _upstream_message(e, ctx)
         # même SANS contexte : on ne suppose jamais que la clé est en cause,
         # parce que Tally rend 401 pour un gate de plan aussi souvent.
-        assert "ne veut PAS dire" in msg
+        assert "does NOT mean" in msg
         assert 'tally_account(op="me")' in msg
-    assert "n'ouvre pas" in _upstream_message(e, "workspace_write")
+    assert "does not open" in _upstream_message(e, "workspace_write")

@@ -1,15 +1,15 @@
 """Slack — outbound messaging + reads on behalf of the authenticated user.
 
-Per-user : chaque user pose son propre **user token** (`xoxp-`) sur
-`/account` (provider `slack`), ou un admin lui grant la clé plateforme
-(bootstrappée depuis `SLACK_USER_TOKEN`). La clé est résolue par appel via
-`access.resolve_api_key("slack")` — pas de token serveur partagé en clair.
+Per-user: each user sets their own **user token** (`xoxp-`) on
+`/account` (provider `slack`), or an admin grants them the platform key
+(bootstrapped from `SLACK_USER_TOKEN`). The key is resolved per call via
+`access.resolve_api_key("slack")` — no shared server token in clear text.
 
-Un compte (un workspace) porte jusqu'à deux identités : l'app (`xoxb-`) et une
-personne (`xoxp-`). Les LECTURES sont routées par le client (canal → bot, DM →
-utilisateur). Les ÉCRITURES (poster, supprimer, réagir) prennent `author` :
-choisi par l'appelant, refusé s'il est ambigu ou sans jeton — jamais déduit
-(décision du 23/09). L'app publiée, installable en un clic, reste une cible :
+An account (a workspace) carries up to two identities: the app (`xoxb-`) and a
+person (`xoxp-`). READS are routed by the client (channel → bot, DM →
+user). WRITES (post, delete, react) take `author`:
+chosen by the caller, refused if ambiguous or without a token — never inferred
+(decision of 23/09). The published app, installable in one click, remains a target:
 otomata-tech/oto#3.
 """
 from __future__ import annotations
@@ -25,55 +25,55 @@ from ..mcp_errors import McpError
 from ..connectors import verify as connector_verify
 
 
-#: Ce qui, dans le corps d'`auth.test`, IDENTIFIE l'application — et rien d'autre.
-#: Slack ne rend pas tous ces champs pour tous les jetons (`bot_id`/`app_id` n'existent
-#: que côté bot) : on relaie ce qu'il a RÉELLEMENT rendu, jamais une clé fabriquée à
-#: vide. Une valeur qu'on n'a pas ne se rend pas par son défaut.
+#: What, in the body of `auth.test`, IDENTIFIES the application — and nothing else.
+#: Slack does not return all these fields for all tokens (`bot_id`/`app_id` only exist
+#: on the bot side): we relay what it ACTUALLY returned, never a key fabricated as
+#: empty. A value we do not have is not returned as its default.
 _IDENTITE = ("app_id", "bot_id", "team", "team_id", "url", "user", "user_id")
 
 
-def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001 (config: contrat de sonde)
-    """Sonde « tester la connexion » Slack (signal #217) : un token peut être POSÉ,
-    authentifier, et pourtant manquer les scopes de lecture → `slack_list_channels`
-    échoue en `missing_scope` et tout le reste est inatteignable (pas d'ID de channel).
-    Deux étages, message actionnable : (1) `auth.test` passe avec TOUT token vivant
-    quels que soient ses scopes → sépare « token mort » de « token OK, scope manquant » ;
-    (2) une lecture réelle de channels (`channels:read`) — son `missing_scope` est LE
-    diagnostic qui manquait.
+def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001 (config: probe contract)
+    """Slack "test the connection" probe (signal #217): a token can be SET,
+    authenticate, and still lack the read scopes → `slack_list_channels`
+    fails with `missing_scope` and everything else is unreachable (no channel ID).
+    Two stages, actionable message: (1) `auth.test` passes with ANY live token
+    whatever its scopes → separates "dead token" from "token OK, scope missing";
+    (2) a real channel read (`channels:read`) — its `missing_scope` is THE
+    diagnostic that was missing.
 
-    ⚠️ **Le corps d'`auth.test` est RENDU, plus jeté** (signaux 802/814, 08/09/2026).
-    Il était appelé pour son seul succès, et c'est la réponse qui portait le fait
-    manquant : l'identité de l'application. Un credential remplacé par les jetons d'une
-    AUTRE app Slack authentifie parfaitement — et repart de zéro sur les appartenances
-    de canaux, qui appartiennent à l'app, pas à la clé. Vécu sur l'org 196 : quatre
-    canaux clients privés illisibles six jours durant, un `not_in_channel` qui est le
-    MÊME code qu'un canal jamais rejoint, et un « a rejoint le canal » réécrit six fois
-    par jour dans le canal d'un client — le seul remède connu, faute de savoir que
-    l'app avait changé. La sonde ne juge pas ce changement : elle rend de quoi le
-    constater, ce qui n'existait nulle part.
+    ⚠️ **The body of `auth.test` is now RETURNED, no longer thrown away** (signals 802/814, 08/09/2026).
+    It was called for its success alone, and it is the response that carried the missing
+    fact: the application's identity. A credential replaced with the tokens of ANOTHER
+    Slack app authenticates perfectly — and starts from zero on channel memberships,
+    which belong to the app, not the key. Lived on org 196: four private
+    customer channels unreadable for six days, a `not_in_channel` that is the
+    SAME code as a never-joined channel, and a "joined the channel" rewritten six times
+    a day in a customer's channel — the only known remedy, for lack of knowing that
+    the app had changed. The probe does not judge this change: it returns what is needed to
+    notice it, which existed nowhere.
 
-    ⚠️ **Un `auth.test` par jeton posé, chacun avec le sien.** L'appel unique d'avant
-    partait sur le jeton UTILISATEUR dès qu'il y en avait un (`default_as_user`) : il
-    n'identifiait donc JAMAIS l'app du bot, qui est précisément celle qui porte les
-    appartenances. Deux jetons = deux identités distinctes, et les confondre ferait
-    répondre « oui, même app » à un changement de bot.
+    ⚠️ **One `auth.test` per token set, each with its own.** The previous single call
+    went out on the USER token as soon as there was one (`default_as_user`): it
+    therefore NEVER identified the bot's app, which is precisely the one that carries
+    the memberships. Two tokens = two distinct identities, and confusing them would
+    answer "yes, same app" to a bot change.
 
-    ⚠️ **Conséquence assumée** : un jeton bot mort à côté d'un jeton utilisateur vivant
-    FAIT désormais échouer la sonde, là où elle passait au vert sans l'avoir regardé.
-    C'est un vert de moins, pas un rouge de plus — la moitié bot du credential n'était
-    tout simplement jamais testée, et c'est elle qui lit les canaux."""
+    ⚠️ **Accepted consequence**: a dead bot token next to a live user token
+    now MAKES the probe fail, where it used to pass green without having looked.
+    It is one green fewer, not one red more — the bot half of the credential was
+    simply never tested, and it is the one that reads channels."""
     from oto.tools.slack.client import SlackClient, SlackError
 
     bot = (fields.get("bot_token") or "").strip() or None
     user = (fields.get("user_token") or "").strip() or None
-    if not bot and not user:  # credential mono-champ legacy (token brut) → routé au préfixe
+    if not bot and not user:  # legacy single-field credential (raw token) → routed by prefix
         raw = next((str(v).strip() for v in fields.values() if str(v or "").strip()), "")
         if raw.startswith("xoxb-"):
             bot = raw
         elif raw:
             user = raw
     if not bot and not user:
-        raise ValueError("aucun token Slack posé (bot_token `xoxb-` ou user_token `xoxp-`)")
+        raise ValueError("no Slack token set (bot_token `xoxb-` or user_token `xoxp-`)")
 
     client = SlackClient(bot_token=bot, user_token=user, default_as_user=bool(user))
     identite: dict = {}
@@ -83,139 +83,139 @@ def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001 (
         try:
             corps = client._request("POST", "auth.test", as_user=(genre == "user"))
         except SlackError as e:
-            # Le genre est NOMMÉ : avec deux jetons posés, « token Slack invalide »
-            # tout court laisse chercher lequel des deux reposer.
+            # The kind is NAMED: with two tokens set, a bare "invalid Slack token"
+            # leaves you hunting for which of the two to set again.
             raise ValueError(
-                f"token Slack invalide (`{genre}`, {e.error}) — repose un "
-                f"`{'xoxb-' if genre == 'bot' else 'xoxp-'}` valide") from None
+                f"invalid Slack token (`{genre}`, {e.error}) — set a valid "
+                f"`{'xoxb-' if genre == 'bot' else 'xoxp-'}` again") from None
         identite[genre] = {c: corps[c] for c in _IDENTITE if corps.get(c)}
     try:
         client.list_channels(types="public_channel")
     except SlackError as e:
         if e.error == "missing_scope":
             raise ValueError(
-                "token Slack authentifié mais SCOPES insuffisants : il manque "
-                "`channels:read` (sans lui, aucun ID de channel n'est découvrable → "
-                "`slack_read_history` inatteignable). Réinstalle l'app Slack avec "
+                "Slack token authenticated but SCOPES insufficient: "
+                "`channels:read` is missing (without it, no channel ID is discoverable → "
+                "`slack_read_history` unreachable). Reinstall the Slack app with "
                 "`channels:read`, `groups:read`, `channels:history`, `groups:history`.") from None
-        raise ValueError(f"lecture Slack échouée ({e.error})") from None
+        raise ValueError(f"Slack read failed ({e.error})") from None
     return {"identity": identite}
 
 
-# Où se donne un droit Slack. Écrit UNE fois : cette marche à suivre est longue,
-# et elle n'a pas sa place dans une docstring (recopiée dans chaque session, ~470
-# outils) — elle vit dans le refus, payé une seule fois, au moment où il sert.
+# Where a Slack right is granted. Written ONCE: this procedure is long,
+# and it has no place in a docstring (copied into every session, ~470
+# tools) — it lives in the refusal, paid for once, at the moment it is needed.
 _OU_DONNER_UN_DROIT = (
-    "api.slack.com/apps → ton app → OAuth & Permissions → Scopes, puis RÉINSTALLE "
-    "l'app dans le workspace (un droit ajouté n'est porté par le token qu'à la "
-    "réinstallation) et repose le nouveau token sur /account"
+    "api.slack.com/apps → your app → OAuth & Permissions → Scopes, then REINSTALL "
+    "the app in the workspace (an added right is only carried by the token after "
+    "reinstallation) and set the new token on /account"
 )
-# Un canal privé ne se rejoint par AUCUNE API : c'est le seul geste qui reste humain.
+# A private channel cannot be joined through ANY API: it is the only action that stays human.
 _GESTE_INVITATION = (
-    "un humain déjà membre du canal doit y taper `/invite` suivi du nom de ton app Slack"
+    "a human who is already a member of the channel must type `/invite` followed by the name of your Slack app there"
 )
 
 
-# Qui ÉCRIT dans Slack. Un compte peut porter deux identités — l'app (jeton de bot
-# `xoxb-`) et une personne (jeton utilisateur `xoxp-`) — et le client routait les
-# écritures sur la seconde dès qu'elle existait : un agent postait en ton nom sans
-# l'avoir choisi, ou sous le nom de l'app sans pouvoir faire autrement. Décision du
-# 23/09 : l'auteur se CHOISIT. Ambigu = refus nommé, la même règle que pour le
-# workspace — un message parti sous le mauvais nom ne se reprend pas.
+# Who WRITES in Slack. An account can carry two identities — the app (bot token
+# `xoxb-`) and a person (user token `xoxp-`) — and the client used to route
+# writes to the second as soon as it existed: an agent posted in your name without
+# having chosen it, or under the app's name without being able to do otherwise. Decision of
+# 23/09: the author is CHOSEN. Ambiguous = named refusal, the same rule as for the
+# workspace — a message that went out under the wrong name cannot be taken back.
 Auteur = Literal["me", "app"]
 
 
 def _refus_auteur(message: str) -> McpError:
-    """Refus CURÉ : `McpError` INVALID_PARAMS, jamais une `ValueError` nue. La
-    taxonomie d'erreurs ne rend à l'agent le texte d'une exception que si elle est
-    curée ; une `ValueError` sans cause amont devient « Erreur interne du serveur »,
-    message perdu et compté comme un bug. Vécu au premier envoi en prod (v1.334.0) :
-    le refus était juste, l'agent n'en a lu que l'opacité."""
+    """CURATED refusal: `McpError` INVALID_PARAMS, never a bare `ValueError`. The
+    error taxonomy only returns an exception's text to the agent if it is
+    curated; a `ValueError` without an upstream cause becomes "Internal server error",
+    message lost and counted as a bug. Lived on the first send in prod (v1.334.0):
+    the refusal was right, the agent only read the opacity."""
     return McpError(ErrorData(code=INVALID_PARAMS, message=message))
 
 
 def _auteur(bot: bool, user: bool, author: Optional[str]) -> bool:
-    """`as_user` à employer pour une écriture, ou un refus qui dit quoi passer.
+    """`as_user` to use for a write, or a refusal that says what to pass.
 
-    Un seul jeton posé : il sert, rien à choisir. Les deux : l'appelant nomme
-    l'auteur. Un auteur demandé sans le jeton qui le porte : refus, jamais un repli
-    sur l'autre identité."""
+    A single token set: it is used, nothing to choose. Both: the caller names
+    the author. An author requested without the token that carries it: refusal, never a fallback
+    to the other identity."""
     if author is None:
         if bot and user:
             raise _refus_auteur(
-                "Ce workspace porte deux identités Slack : précise qui écrit — "
-                "`author=\"me\"` (en ton nom, jeton utilisateur) ou `author=\"app\"` "
-                "(sous le nom de l'app, jeton de bot). Aucun défaut n'est pris : un "
-                "message parti sous le mauvais nom ne se reprend pas.")
+                "This workspace carries two Slack identities: specify who writes — "
+                "`author=\"me\"` (in your name, user token) or `author=\"app\"` "
+                "(under the app's name, bot token). No default is taken: a "
+                "message that went out under the wrong name cannot be taken back.")
         return bool(user)
     if author == "me" and not user:
         raise _refus_auteur(
-            "`author=\"me\"` impossible : ce workspace n'a pas de jeton utilisateur "
-            "(`xoxp-`). Seule l'app peut y écrire (`author=\"app\"`), ou pose un jeton "
-            "utilisateur sur la fiche du connecteur.")
+            "`author=\"me\"` impossible: this workspace has no user token "
+            "(`xoxp-`). Only the app can write there (`author=\"app\"`), or set a user "
+            "token on the connector card.")
     if author == "app" and not bot:
         raise _refus_auteur(
-            "`author=\"app\"` impossible : ce workspace n'a pas de jeton de bot "
-            "(`xoxb-`). Seule ta personne peut y écrire (`author=\"me\"`), ou pose le "
-            "jeton de bot de l'app sur la fiche du connecteur.")
+            "`author=\"app\"` impossible: this workspace has no bot token "
+            "(`xoxb-`). Only you can write there (`author=\"me\"`), or set the "
+            "app's bot token on the connector card.")
     return author == "me"
 
 
 def _refus(e, channel: Optional[str] = None) -> ValueError:
-    """Traduit un rejet Slack en refus ACTIONNABLE — signaux #510/#532/#549.
+    """Translates a Slack rejection into an ACTIONABLE refusal — signals #510/#532/#549.
 
-    Un `Slack API error: not_in_channel` remonté tel quel ressemble à une panne :
-    l'exécution planifiée du signal #549 a échoué deux matins de suite sans que
-    personne sache que le geste manquant était une invitation. Chaque code porte
-    ici la sortie, et quand oto ne PEUT pas la faire, il le dit au lieu de laisser
-    croire à un incident.
+    A `Slack API error: not_in_channel` surfaced as is looks like an outage:
+    the scheduled run of signal #549 failed two mornings in a row without
+    anyone knowing the missing action was an invitation. Each code carries
+    its way out here, and when oto CANNOT do it, it says so instead of letting
+    people believe in an incident.
 
-    ⚠️ Le refus est levé `from e` : `error_taxonomy` cherche le statut amont en
-    REMONTANT la chaîne de causes. Couper la chaîne ferait compter ce 4xx de
-    credential comme un bug backend dans Sentry.
+    ⚠️ The refusal is raised `from e`: `error_taxonomy` looks for the upstream status by
+    WALKING UP the cause chain. Cutting the chain would make this credential 4xx
+    count as a backend bug in Sentry.
     """
     code = getattr(e, "error", None) or "unknown"
-    cible = ("`" + channel + "`") if channel else "ce canal"
+    cible = ("`" + channel + "`") if channel else "this channel"
 
     if code == "missing_scope":
-        # Slack NOMME lui-même le droit qui manque : on le relaie, on ne le devine
-        # pas (sondé le 28/08 : `needed=groups:history` sur un fil de canal privé).
+        # Slack ITSELF NAMES the missing right: we relay it, we do not guess
+        # it (probed on 28/08: `needed=groups:history` on a private channel thread).
         needed = getattr(e, "needed", None)
         provided = getattr(e, "provided", None)
         if needed:
-            msg = ("Slack refuse : il manque le droit `" + needed + "` sur le token de "
-                   "ce workspace (plusieurs séparés par une virgule = l'un suffit).")
+            msg = ("Slack refuses: the right `" + needed + "` is missing on this "
+                   "workspace's token (several separated by a comma = any one is enough).")
         else:
-            msg = ("Slack refuse pour droits insuffisants mais ne nomme pas lequel : "
-                   "compare les droits du token au manifeste de la fiche du connecteur.")
-        msg += " Donne-le sur " + _OU_DONNER_UN_DROIT + "."
+            msg = ("Slack refuses for insufficient rights but does not name which: "
+                   "compare the token's rights to the manifest on the connector card.")
+        msg += " Grant it at " + _OU_DONNER_UN_DROIT + "."
         if provided:
-            msg += " Droits vus par Slack sur ce token : " + provided + "."
+            msg += " Rights seen by Slack on this token: " + provided + "."
         return ValueError(msg)
 
     if code == "not_in_channel":
         return ValueError(
-            "Slack refuse : l'app n'est pas membre de " + cible + ". Si le canal est "
-            "PUBLIC, appelle `slack_join_channel` dessus et rappelle. S'il est PRIVÉ, "
-            "aucune API Slack ne permet de s'y inviter : " + _GESTE_INVITATION + ".")
+            "Slack refuses: the app is not a member of " + cible + ". If the channel is "
+            "PUBLIC, call `slack_join_channel` on it and call again. If it is PRIVATE, "
+            "no Slack API lets you invite yourself: " + _GESTE_INVITATION + ".")
 
     if code == "channel_not_found":
         return ValueError(
-            "Slack ne voit pas " + cible + " : soit l'ID est faux, soit c'est un canal "
-            "privé où l'app n'est pas — Slack rend le même code dans les deux cas. "
-            "Vérifie l'ID avec `slack_list_channels` ; s'il est privé, "
+            "Slack cannot see " + cible + ": either the ID is wrong, or it is a private "
+            "channel the app is not in — Slack returns the same code in both cases. "
+            "Check the ID with `slack_list_channels`; if it is private, "
             + _GESTE_INVITATION + ".")
 
     if code == "is_archived":
         return ValueError(
-            "Slack refuse : " + cible + " est archivé — on n'y poste plus et on ne le "
-            "rejoint plus. Désarchive-le dans Slack, ou vise un autre canal.")
+            "Slack refuses: " + cible + " is archived — it can no longer be posted to or "
+            "joined. Unarchive it in Slack, or target another channel.")
 
-    # Défaut : on NOMME le code Slack sans rien broder autour. Et pas de « sur ce
-    # canal » quand l'appel n'en visait pas un (recherche d'utilisateur, ouverture
-    # de DM) — une localisation inventée envoie chercher au mauvais endroit.
-    return ValueError("Slack refuse (" + code + ")"
-                      + (" sur " + cible if channel else "") + ".")
+    # Default: we NAME the Slack code without embellishing. And no "on this
+    # channel" when the call did not target one (user lookup, DM opening)
+    # — an invented location sends people looking in the wrong place.
+    return ValueError("Slack refuses (" + code + ")"
+                      + (" on " + cible if channel else "") + ".")
 
 
 def register(mcp: FastMCP) -> None:
@@ -224,34 +224,34 @@ def register(mcp: FastMCP) -> None:
 
     @contextmanager
     def _traduit(channel: Optional[str] = None):
-        """Seam unique des appels Slack : tout rejet amont ressort actionnable.
-        `except SlackError` est ÉTROIT — une décision de traduction, pas un filet
-        (le refus reste bruyant, et sa cause reste dans la chaîne).
+        """Single seam for Slack calls: every upstream rejection comes out actionable.
+        `except SlackError` is NARROW — a translation decision, not a safety net
+        (the refusal stays loud, and its cause stays in the chain).
 
-        ⚠️ C'est un CONTEXTE, et volontairement : la sonde version-skew
-        (`test_tools_client_methods_exist`) ne compte que les attributs **appelés**
-        sur le client. Passer la méthode en RÉFÉRENCE à une fonction d'enrobage
-        sortirait le module entier de sa couverture EN SILENCE — le trou vécu sur
-        apollo. Ici `client.replies(…)` reste un appel littéral, donc vérifié
-        contre l'oto-core épinglé."""
+        ⚠️ It is a CONTEXT, deliberately: the version-skew probe
+        (`test_tools_client_methods_exist`) only counts the attributes **called**
+        on the client. Passing the method BY REFERENCE to a wrapper function
+        would take the whole module out of its coverage SILENTLY — the hole lived through on
+        apollo. Here `client.replies(…)` stays a literal call, hence verified
+        against the pinned oto-core."""
         try:
             yield
         except SlackError as e:
             raise _refus(e, channel) from e
 
     def _jetons() -> tuple[Optional[str], Optional[str], bool]:
-        # BYO multi-champs (#25) : bot token (xoxb-) et/ou user token (xoxp-),
-        # résolus par (sub, org active) via la cascade credential (user > groupe
-        # actif > org active). ⚠️ C'est CE résultat qui dit quelles identités le
-        # compte porte — jamais les attributs du client, qui retombe sur des clés
-        # d'environnement quand un champ est vide.
+        # Multi-field BYO (#25): bot token (xoxb-) and/or user token (xoxp-),
+        # resolved by (sub, active org) via the credential cascade (user > active
+        # group > active org). ⚠️ It is THIS result that says which identities the
+        # account carries — never the client's attributes, which fall back to
+        # environment keys when a field is empty.
         rc = access.resolve_credential("slack", want="byo")
         f = rc.fields
         bot = f.get("bot_token") or None
         user = f.get("user_token") or None
         if not bot and not user:
-            # Fallback legacy : credential pré-multichamps = token unique brut (non
-            # JSON → rc.fields vide). Lu via rc.key, routé par préfixe.
+            # Legacy fallback: pre-multi-field credential = single raw token (not
+            # JSON → rc.fields empty). Read via rc.key, routed by prefix.
             raw = (rc.key or "").strip()
             if raw.startswith("xoxb-"):
                 bot = raw
@@ -260,23 +260,23 @@ def register(mcp: FastMCP) -> None:
         return bot, user, rc.is_platform
 
     def _client() -> tuple[SlackClient, bool]:
-        # LECTURES : le client route lui-même (canal → bot, DM → utilisateur).
+        # READS: the client routes itself (channel → bot, DM → user).
         bot, user, is_platform = _jetons()
         return SlackClient(bot_token=bot, user_token=user,
                            default_as_user=bool(user)), is_platform
 
     def _ecrivain(author: Optional[str]) -> tuple[SlackClient, bool, str]:
-        # ÉCRITURES : l'auteur est choisi (`_auteur`), puis tenu pour tout l'appel.
+        # WRITES: the author is chosen (`_auteur`), then held for the whole call.
         bot, user, is_platform = _jetons()
         as_user = _auteur(bool(bot), bool(user), author)
         client = SlackClient(bot_token=bot, user_token=user, default_as_user=as_user)
         return client, is_platform, "me" if as_user else "app"
 
     def _ou(client: SlackClient, channel: str) -> dict:
-        """OÙ le message est arrivé, en clair. Un ID ne dit ni son nom ni à qui on
-        parle : le 02/09, une réponse destinée à Tulina est partie sur le canal de
-        JB. `shared_externally` dit qu'un tiers lit. Le message est PARTI quand on
-        arrive ici : un échec de lecture se nomme, il n'annule rien."""
+        """WHERE the message landed, in clear. An ID says neither its name nor who
+        we are talking to: on 02/09, a reply meant for Tulina went to JB's
+        channel. `shared_externally` says a third party reads. The message has GONE OUT when
+        we get here: a read failure is named, it cancels nothing."""
         try:
             info = client.channel_info(channel).get("channel") or {}
         except (SlackError, ValueError) as e:
@@ -423,21 +423,21 @@ def register(mcp: FastMCP) -> None:
                                   oldest=oldest, latest=latest, inclusive=inclusive)
         msgs = data.get("messages") or []
         if not msgs:
-            # Slack lève `thread_not_found` sur un ts inconnu ; un `ok:true` vide
-            # n'a jamais été observé. Refuser plutôt que rendre un fil fantôme.
+            # Slack raises `thread_not_found` on an unknown ts; an empty `ok:true`
+            # has never been observed. Refuse rather than return a phantom thread.
             raise ValueError(
-                "Slack rend un fil vide pour `" + thread_ts + "` dans `" + channel
-                + "` — vérifie le ts du message parent avec `slack_read_history`.")
+                "Slack returns an empty thread for `" + thread_ts + "` in `" + channel
+                + "` — check the parent message's ts with `slack_read_history`.")
         parent = msgs[0]
-        # ⚠️ Piège sondé le 28/08 : appelé avec le `ts` d'une RÉPONSE, Slack ne rend
-        # PAS le fil — il rend ce seul message, en `ok:true`. Rendu tel quel, ça dit
-        # « ce fil n'a aucune réponse » : le message rassurant qui dispense d'enquêter,
-        # sur l'erreur d'appel la plus probable. Slack donne le bon ts, on le rend.
+        # ⚠️ Trap probed on 28/08: called with the `ts` of a REPLY, Slack does NOT return
+        # the thread — it returns that single message, with `ok:true`. Returned as is, it says
+        # "this thread has no reply": the reassuring message that excuses investigating,
+        # on the most likely calling error. Slack gives the right ts, we return it.
         vrai_parent = parent.get("thread_ts")
         if vrai_parent and vrai_parent != parent.get("ts"):
             raise ValueError(
-                "`thread_ts` pointe une RÉPONSE, pas le parent du fil : Slack n'a "
-                "donc rendu que ce message, et rien du fil. Rappelle avec "
+                "`thread_ts` points to a REPLY, not the thread's parent: Slack "
+                "therefore returned only that message, and nothing of the thread. Call again with "
                 "thread_ts=`" + vrai_parent + "`.")
         _record_if_platform(is_platform)
         return {
@@ -459,24 +459,24 @@ def register(mcp: FastMCP) -> None:
             channel: Channel ID (C…). Get it from `slack_list_channels`.
         """
         client, is_platform = _client()
-        # Résoudre le canal AVANT de tenter : `conversations.info` répond y compris
-        # sur un canal public dont on n'est pas membre (sondé). C'est ce qui permet
-        # de refuser un canal privé sans jamais faire semblant de le rejoindre —
-        # d'autant que `conversations.join` rend `missing_scope` sur un privé comme
-        # sur un ID faux, donc son erreur ne distingue rien.
+        # Resolve the channel BEFORE attempting: `conversations.info` answers even
+        # on a public channel we are not a member of (probed). This is what lets us
+        # refuse a private channel without ever pretending to join it —
+        # especially since `conversations.join` returns `missing_scope` on a private one as
+        # on a wrong ID, so its error distinguishes nothing.
         with _traduit(channel):
             info = client.channel_info(channel).get("channel") or {}
         nom = info.get("name") or channel
         if info.get("is_archived"):
             raise ValueError(
-                "#" + nom + " est archivé : on ne peut ni le rejoindre ni y poster.")
+                "#" + nom + " is archived: it can be neither joined nor posted to.")
         if info.get("is_member"):
             return {"channel": info, "joined": False, "already_member": True}
         if info.get("is_private"):
             raise ValueError(
-                "#" + nom + " est un canal privé : aucune API Slack ne permet de s'y "
-                "inviter (`conversations.join` ne vaut que pour les canaux publics). "
-                "oto ne peut pas le faire à ta place — " + _GESTE_INVITATION + ".")
+                "#" + nom + " is a private channel: no Slack API lets you invite yourself "
+                "(`conversations.join` only applies to public channels). "
+                "oto cannot do it for you — " + _GESTE_INVITATION + ".")
         with _traduit(channel):
             client.join_channel(channel)
         _record_if_platform(is_platform)

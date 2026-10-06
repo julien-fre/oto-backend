@@ -1,21 +1,21 @@
-"""Déclaration de registre du connecteur `typeform`.
+"""Registry declaration of the `typeform` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# typeform : formulaires en ligne, en LECTURE SEULE — espaces de travail,
-# formulaires, définition d'un formulaire, réponses. Aucune écriture, aucun
-# webhook. byo (user OU org), résolu via `resolve_credential_fields` :
-# un jeton personnel agit au nom de son créateur et porte ses scopes, pas de
-# clé plateforme partagée.
-# DEUX champs : le jeton, et la région du compte. Typeform a trois hôtes (un
-# par data center) et les RÉPONSES d'un compte ne se lisent que dans le sien :
-# ailleurs, la liste revient vide sans erreur. La région se DÉCLARE à la pose,
-# jeu fermé (`choices`) — jamais une URL libre, donc aucune destination saisie.
+# typeform: online forms, READ ONLY — workspaces,
+# forms, a form's definition, responses. No writes, no
+# webhooks. byo (user OR org), resolved via `resolve_credential_fields`:
+# a personal token acts in the name of its creator and carries its scopes, no
+# shared platform key.
+# TWO fields: the token, and the account's region. Typeform has three hosts (one
+# per data center) and an account's RESPONSES can only be read in its own:
+# elsewhere, the list comes back empty without error. The region is DECLARED at setup,
+# closed set (`choices`) — never a free URL, hence no typed-in destination.
 CONNECTOR = _c(
     "typeform", ["typeform"], auth_modes={"byo_user", "byo_org"},
     secret_kind="fields", label="Typeform",

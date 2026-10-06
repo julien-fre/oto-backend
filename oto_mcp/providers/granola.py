@@ -1,20 +1,20 @@
-"""Déclaration de registre du connecteur `granola`.
+"""Registry declaration of the `granola` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). Cf. `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# granola : notes de réunion, transcripts, résumés IA, dossiers, journal
-# d'audit, webhook endpoints. keyed api_key (Bearer), byo-only (pas de clé
-# plateforme) — clé personnelle (tout membre Business) ou clé workspace
-# (admin, Enterprise), toutes deux un Bearer simple ici.
+# granola: meeting notes, transcripts, AI summaries, folders, audit
+# log, webhook endpoints. keyed api_key (Bearer), byo-only (no platform
+# key) — personal key (any Business member) or workspace key
+# (admin, Enterprise), both a simple Bearer here.
 CONNECTOR = _c(
     "granola", ["granola"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Granola",
-    help="notes de réunion, transcripts, résumés IA, dossiers, audit, webhooks",
+    help="meeting notes, transcripts, AI summaries, folders, audit, webhooks",
     href="https://granola.ai",
 )
 
@@ -23,7 +23,7 @@ PUBLISHER = "Granola"
 LOGO_DOMAIN = "granola.ai"
 
 DESCRIPTION = (
-    "Les notes de réunion prises par Granola : transcripts, résumés générés par "
-    "IA, dossiers, journal d'audit et endpoints de webhook. Clé personnelle "
-    "(tout abonnement Business) ou clé workspace (admin, Enterprise)."
+    "The meeting notes taken by Granola: transcripts, AI-generated "
+    "summaries, folders, audit log and webhook endpoints. Personal key "
+    "(any Business subscription) or workspace key (admin, Enterprise)."
 )

@@ -110,7 +110,7 @@ def test_availability_annotations():
     # connecteur unipile s'ouvre sur `linkedin_unipile_*` depuis l'ADR 0010
     # §Amendement (le namespace porte la capacité + le fournisseur).
     unipile = next(l for l in cat.splitlines() if l.startswith("• linkedin_unipile_*"))
-    assert "compte à connecter" in unipile
+    assert "account to connect" in unipile
 
 
 def test_injected_into_server_instructions():

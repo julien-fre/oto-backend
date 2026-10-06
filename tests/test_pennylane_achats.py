@@ -72,15 +72,15 @@ def test_update_pose_le_vat_rate_d_une_ligne_et_ne_transmet_que_les_champs_fourn
 
 
 def test_update_refuse_une_liste_de_lignes_en_disant_la_forme_attendue(client):
-    with pytest.raises(McpError, match="OBJET"):
+    with pytest.raises(McpError, match="OBJECT"):
         _tool()(op="update", invoice_id=42, invoice_lines=[{"id": 9}])
     client.update_supplier_invoice.assert_not_called()
 
 
 def test_update_traduit_le_refus_de_forme_du_client_en_erreur_nommee(client):
     client.update_supplier_invoice.side_effect = ValueError(
-        "invoice_lines.update : chaque ligne exige son `id`")
-    with pytest.raises(McpError, match="exige son `id`"):
+        "invoice_lines.update: each line requires its `id`")
+    with pytest.raises(McpError, match="requires its `id`"):
         _tool()(op="update", invoice_id=42, invoice_lines={"update": [{"vat_rate": "x"}]})
 
 
@@ -98,7 +98,7 @@ def test_import_garde_eur_par_defaut_et_refuse_un_objet_de_lignes(client):
     _tool()(invoice_lines=[{"currency_amount": "120.00", "currency_tax": "20.00",
                             "vat_rate": "FR_200"}], **base)
     assert client.import_supplier_invoice.call_args.kwargs["currency"] == "EUR"
-    with pytest.raises(McpError, match="LISTE"):
+    with pytest.raises(McpError, match="LIST"):
         _tool()(invoice_lines={"update": []}, **base)
 
 
@@ -107,5 +107,5 @@ def test_un_refus_amont_de_validation_remonte_et_ne_passe_pas_pour_un_succes(cli
 
     client.validate_supplier_invoice_accounting.side_effect = UpstreamHTTPError(
         422, {"error": "Entry lines are not balanced"}, service="pennylane")
-    with pytest.raises(McpError, match="CONTENU"):
+    with pytest.raises(McpError, match="CONTENT"):
         _tool()(op="validate", invoice_id=42)

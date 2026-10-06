@@ -1,11 +1,11 @@
-"""Recruitee ATS — candidats, offers (postes), notes.
+"""Recruitee ATS — candidates, offers (jobs), notes.
 
-Wrappe `oto.tools.recruitee.RecruiteeClient`. Credential à 2 champs (API token +
-company id) → modèle générique multi-champs (ADR 0011), résolu par appel via
-`access.resolve_credential_fields("recruitee")`. byo_user (pas de quota plateforme :
-le credential EST le grant).
+Wrappe `oto.tools.recruitee.RecruiteeClient`. 2-field credential (API token +
+company id) → generic multi-field model (ADR 0011), resolved per call via
+`access.resolve_credential_fields("recruitee")`. byo_user (no platform quota:
+the credential IS the grant).
 
-Vocabulaire : un poste = une **offer** ; un candidat est rattaché à une/des offers.
+Vocabulary: a job = an **offer**; a candidate is attached to one or more offers.
 """
 from __future__ import annotations
 
@@ -18,15 +18,15 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /c/<company_id>/candidates` (déjà dans le client — `list_candidates`),
-    `limit=1` — le plus petit format disponible, Recruitee n'exposant ni `/me`
-    ni solde. Bearer token + `company_id` (les deux champs du credential),
-    lecture sans effet de bord.
+    `GET /c/<company_id>/candidates` (already in the client — `list_candidates`),
+    `limit=1` — the smallest available shape, since Recruitee exposes neither `/me`
+    nor a balance. Bearer token + `company_id` (the credential's two fields),
+    read-only with no side effects.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    un token personnel Recruitee porte le périmètre entier du compte qui l'a créé.
+    **Authenticated ≠ usable** (class oto#69): does not distinguish scope —
+    a personal Recruitee token carries the full scope of the account that created it.
     """
     from oto.tools.recruitee.client import RecruiteeClient
 

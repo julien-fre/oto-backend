@@ -1,32 +1,32 @@
-"""Google Drive — surface oto-core (DriveClient) exposée par-utilisateur, multi-compte.
+"""Google Drive — oto-core surface (DriveClient) exposed per-user, multi-account.
 
-Gestion des fichiers/dossiers du Drive du user : lister, organiser (déplacer,
-renommer, dossiers), supprimer, partager. Scope `/auth/drive` **complet**
-(restricted) — pour voir/gérer TOUS les fichiers, pas seulement ceux créés par
-oto. Compte par défaut ou ciblé par `account`. Per-user via OAuth.
+Management of the user's Drive files/folders: list, organize (move,
+rename, folders), delete, share. **Full** `/auth/drive` scope
+(restricted) — to see/manage ALL files, not only those created by
+oto. Default account or targeted by `account`. Per-user via OAuth.
 
-L'**upload** local→Drive reste côté CLI (pas de FS serveur). La LECTURE, elle, est
-exposée en entier et sans disque : `op="download"` pour les fichiers binaires/
-uploadés, `op="export"` pour les Google natifs (Docs/Sheets/Slides — leur contenu
-ne se télécharge pas, il se convertit). Les deux rendent le contenu à l'agent
-(inline texte, ou URL signée pour un binaire). L'argument « pas de FS » ne valait
-pas pour l'export : convertir en mémoire n'écrit rien (signal #329 — sans lui,
-impossible d'ingérer les notes de réunion Gemini autrement qu'au copier-coller).
+Local→Drive **upload** stays on the CLI side (no server FS). READING, however, is
+fully exposed and diskless: `op="download"` for binary/uploaded files,
+`op="export"` for Google-native ones (Docs/Sheets/Slides — their content
+cannot be downloaded, it is converted). Both return the content to the agent
+(inline text, or a signed URL for a binary). The "no FS" argument did not hold
+for export: converting in memory writes nothing (signal #329 — without it,
+impossible to ingest Gemini meeting notes other than by copy-paste).
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au produit `drive` du
-connecteur `google`)** : un tool par OBJET métier, le verbe en paramètre `op` —
-`drive_file` (list/metadata/download/export/create_folder/update/delete), tous
-scopés par le même fichier/dossier (`file_id`) et le même `account`.
-`drive_access` reste SEUL : son vocabulaire (`email`/`role`/`remove`/`notify`)
-est celui d'un AUTRE objet — la permission — et ne recouvre aucun paramètre de
-`drive_file`. Le fusionner mettrait « changer qui voit ce fichier » dans la même
-énumération d'`op` que « supprimer ce fichier » : deux gestes irréversibles à une
-faute de frappe l'un de l'autre, pour zéro paramètre factorisé.
+**Consolidated surface (ADR 0047 §Amendment, applied to the `drive` product of the
+`google` connector)**: one tool per business OBJECT, the verb as an `op` parameter —
+`drive_file` (list/metadata/download/export/create_folder/update/delete), all
+scoped by the same file/folder (`file_id`) and the same `account`.
+`drive_access` stays ALONE: its vocabulary (`email`/`role`/`remove`/`notify`)
+is that of ANOTHER object — the permission — and overlaps no parameter of
+`drive_file`. Merging it would put "change who sees this file" in the same
+`op` enumeration as "delete this file": two irreversible gestures one
+typo apart, for zero shared parameters.
 
-⚠️ Ce module ÉCRIT sur les données personnelles du user. `op` vaut `"list"` par
-défaut (une LECTURE) : un appel sans `op` ne peut ni supprimer ni modifier. Les
-arguments obligatoires d'une op manquants lèvent une erreur nommant l'op et
-l'argument — jamais de repli silencieux.
+⚠️ This module WRITES to the user's personal data. `op` defaults to `"list"`
+(a READ): a call without `op` can neither delete nor modify. Missing required
+arguments of an op raise an error naming the op and
+the argument — never a silent fallback.
 """
 from __future__ import annotations
 
@@ -46,16 +46,16 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
+    """Required argument for THIS op — actionable error, never a fallback.
 
-    Vaut d'abord pour les ops destructrices : un `file_id` absent doit dire lequel
-    manque, pas partir chez Google avec `None` (ni, pire, viser autre chose)."""
+    Applies first to destructive ops: a missing `file_id` must say which one
+    is missing, not go off to Google with `None` (or, worse, target something else)."""
     if value is None:
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
-# Formats d'export offerts à l'agent (un mot, pas un mime à recopier).
+# Export formats offered to the agent (a single word, not a mime to copy out).
 _EXPORT_MIME = {
     "markdown": "text/markdown",
     "md": "text/markdown",
@@ -66,8 +66,8 @@ _EXPORT_MIME = {
     "csv": "text/csv",
 }
 
-# Défaut par type SOURCE : un tableur n'a pas de markdown, une présentation non plus.
-# Sert aussi de test « est-ce un natif Google ? » — sinon c'est op="download".
+# Default per SOURCE type: a spreadsheet has no markdown, nor does a presentation.
+# Also serves as the "is it Google-native?" test — otherwise it is op="download".
 _DEFAULT_EXPORT_BY_SOURCE = {
     "application/vnd.google-apps.document": "text/markdown",
     "application/vnd.google-apps.spreadsheet": "text/csv",
@@ -86,15 +86,15 @@ def _client_for_user(account: Optional[str] = None):
 
 
 _GOOGLE_CLIENT_TIMEOUT_S = 20
-# oto-backend#867 lot 2 — voir gmail.py::_client_for_user_async pour la
-# justification (même mécanisme de rafraîchissement de jeton, même méthode).
+# oto-backend#867 lot 2 — see gmail.py::_client_for_user_async for the
+# rationale (same token-refresh mechanism, same method).
 async def _client_for_user_async(account: Optional[str] = None):
     try:
         return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
                                       timeout=_GOOGLE_CLIENT_TIMEOUT_S)
     except asyncio.TimeoutError:
-        raise _bad(f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
-                   "(rafraîchissement de jeton) — réessaie.")
+        raise _bad(f"Google did not respond within {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                   "(token refresh) — try again.")
 
 
 def register(mcp: FastMCP) -> None:
@@ -197,8 +197,8 @@ def register(mcp: FastMCP) -> None:
             account: email of the Google account to use (default if omitted).
         """
         if (sheet is not None or max_rows is not None) and op != "download":
-            raise _bad(f"`sheet`/`max_rows` ne valent que pour op='download' d'un "
-                       f"tableur .xlsx (reçu op='{op}').")
+            raise _bad(f"`sheet`/`max_rows` only apply to op='download' of an "
+                       f".xlsx spreadsheet (received op='{op}').")
         client = await _client_for_user_async(account)
 
         if op == "list":
@@ -229,17 +229,17 @@ def register(mcp: FastMCP) -> None:
             fid = _need(file_id, "file_id", op)
             mime = _EXPORT_MIME.get((format or "").strip().lower()) if format else None
             if format and not mime:
-                raise _bad(f"format « {format} » inconnu — attendu : "
+                raise _bad(f"unknown format \"{format}\" — expected: "
                            f"{', '.join(sorted(_EXPORT_MIME))}.")
             if mime is None:
                 meta = await asyncio.to_thread(client.get_file_metadata, fid)
                 src = (meta.get("mimeType") or "")
                 mime = _DEFAULT_EXPORT_BY_SOURCE.get(src)
                 if mime is None:
-                    # Pas un natif Google : l'export ne s'applique pas, le download si.
-                    raise _bad(f"« {meta.get('name') or fid} » n'est pas un document "
-                               f"Google natif (mimeType {src or 'inconnu'}) : son contenu "
-                               f"se lit avec op='download', pas op='export'.")
+                    # Not Google-native: export does not apply, download does.
+                    raise _bad(f"\"{meta.get('name') or fid}\" is not a native Google "
+                               f"document (mimeType {src or 'unknown'}): its content "
+                               f"is read with op='download', not op='export'.")
             try:
                 f = await asyncio.to_thread(client.export_file_bytes, fid, mime)
             except Exception as e:
@@ -260,8 +260,8 @@ def register(mcp: FastMCP) -> None:
         if op == "update":
             fid = _need(file_id, "file_id", op)
             if not new_name and not move_to_folder:
-                raise _bad("op='update' requiert `new_name` (renommer) et/ou "
-                           "`move_to_folder` (déplacer).")
+                raise _bad("op='update' requires `new_name` (rename) and/or "
+                           "`move_to_folder` (move).")
             out: dict = {}
             if new_name:
                 out["renamed"] = await asyncio.to_thread(client.rename_file, fid,
@@ -275,8 +275,8 @@ def register(mcp: FastMCP) -> None:
             return await asyncio.to_thread(client.delete_file,
                                            _need(file_id, "file_id", op))
 
-        raise _bad("op doit être 'list', 'metadata', 'download', 'export', "
-                   "'create_folder', 'update' ou 'delete'")
+        raise _bad("op must be 'list', 'metadata', 'download', 'export', "
+                   "'create_folder', 'update' or 'delete'")
 
     @mcp.tool()
     async def drive_access(

@@ -1,11 +1,11 @@
-"""Santé — établissements sanitaires & médico-sociaux (open data France, sans clé).
+"""Health — healthcare & medico-social establishments (French open data, no key).
 
-- **FINESS** : annuaire des établissements (sanitaire + médico-social), data.gouv.
-- **HAS ESSMS** : évaluations qualité des ESSMS (référentiel HAS), lues en DuckDB
-  sur parquet distant — nécessite l'extra `france-opendata[sante]`.
+- **FINESS**: directory of establishments (healthcare + medico-social), data.gouv.
+- **HAS ESSMS**: quality evaluations of ESSMS (HAS framework), read with DuckDB
+  over remote parquet — requires the `france-opendata[sante]` extra.
 
-Connecteur open-data : pas de credential. Exposé seulement si activé en DB
-(cran d'activation, ADR 0010) — register_all gate sur `connector_activation`.
+Open-data connector: no credential. Exposed only if activated in the DB
+(activation notch, ADR 0010) — register_all gates on `connector_activation`.
 """
 from __future__ import annotations
 
@@ -17,12 +17,12 @@ from fastmcp import FastMCP
 def register(mcp: FastMCP) -> None:
     from ..fod import sante as fod_sante
 
-    # FINESS + HAS ESSMS (DuckDB distant) servis par le service FOD (ADR 0028 B3) —
-    # plus d'exécution in-process. Proxies à surface identique aux clients france_opendata.
+    # FINESS + HAS ESSMS (remote DuckDB) served by the FOD service (ADR 0028 B3) —
+    # no more in-process execution. Proxies with the same surface as the france_opendata clients.
     finess = fod_sante.finess
     has = fod_sante.has
 
-    # --- annuaire FINESS -----------------------------------------------------
+    # --- FINESS directory ----------------------------------------------------
 
     @mcp.tool()
     def sante_finess_search(
@@ -49,7 +49,7 @@ def register(mcp: FastMCP) -> None:
         """FINESS establishment by exact code (ET or EJ), or null."""
         return finess.by_code(finess)
 
-    # --- évaluations qualité ESSMS (HAS) -------------------------------------
+    # --- ESSMS quality evaluations (HAS) -------------------------------------
 
     @mcp.tool()
     def sante_essms_search(

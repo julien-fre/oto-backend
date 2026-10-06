@@ -1,13 +1,13 @@
-"""Le compte Google — le porteur que les services (gmail, drive, sheets, calendar,
-tasks, chat depuis le split du 2026-09-26 ; bigquery depuis le 2026-10-02) empruntent.
+"""The Google account — the carrier that the services (gmail, drive, sheets, calendar,
+tasks, chat since the 2026-09-26 split; bigquery since 2026-10-02) borrow.
 
-Un seul outil, en lecture : `google_accounts` — les comptes connectés et, pour
-chacun, les services qu'il a AUTORISÉS. C'est la question qui n'existait pas avant le
-split (un consentement = les six scopes) et que chaque service pose désormais :
-`drive_file` sur un compte qui n'a autorisé que Gmail est refusé en nommant la carte
-à ouvrir. `gmail_list_accounts` reste (compat des procédures écrites) ; c'est ici que
-« quels comptes, avec quels droits ? » se pose désormais — comptes PARTAGÉS par
-l'équipe ou l'org compris, puisqu'un appel peut les nommer en `account`.
+A single, read-only tool: `google_accounts` — the connected accounts and, for
+each, the services it has AUTHORISED. This is the question that did not exist before the
+split (one consent = the six scopes) and that each service now raises:
+`drive_file` on an account that only authorised Gmail is refused, naming the card
+to open. `gmail_list_accounts` stays (compat with written procedures); this is where
+"which accounts, with which rights?" is now asked — accounts SHARED by
+the team or org included, since a call can name them in `account`.
 """
 from __future__ import annotations
 

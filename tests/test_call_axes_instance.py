@@ -65,7 +65,7 @@ def test_pin_instance_rejects_connector_mismatch():
 def test_pin_instance_rejects_other_members_instance(monkeypatch):
     monkeypatch.setattr(roles, "is_org_member", lambda sub, org: True)
     ref = instance_refs.make_member_ref(8, "quelqu_un_d_autre", "zoho")
-    with pytest.raises(McpError, match="autre membre"):
+    with pytest.raises(McpError, match="another member"):
         asyncio.run(call_axes._pin_instance(ref, "zoho_record"))
     assert session_org.current_call_instance() is None
 
@@ -73,7 +73,7 @@ def test_pin_instance_rejects_other_members_instance(monkeypatch):
 def test_pin_instance_rejects_group_non_reader(monkeypatch):
     monkeypatch.setattr(roles, "can_read_group", lambda sub, gid: False)
     ref = instance_refs.make_group_ref(3, "zoho")
-    with pytest.raises(McpError, match="groupe"):
+    with pytest.raises(McpError, match="group"):
         asyncio.run(call_axes._pin_instance(ref, "zoho_record"))
 
 
@@ -164,7 +164,7 @@ def test_resolution_missing_instance_hard_error_no_fallback(resolution, monkeypa
     resolution[("org", "5", "zoho", "")] = "SECRET-AUTRE"
     tok = _pin("org:5:zoho:parti")   # account `parti` retiré du coffre
     try:
-        with pytest.raises(McpError, match="ne résout plus"):
+        with pytest.raises(McpError, match="no longer resolves"):
             access._resolve_credential_impl("zoho", "auto", "u")
     finally:
         session_org.reset_call_instance(tok)
@@ -197,7 +197,7 @@ def test_resolution_project_binding_reguards_caller(resolution, monkeypatch):
         {"target_type": "connecteur", "target_ref": "zoho",
          "config": {"instance_ref": "org:5:zoho"}}])
     monkeypatch.setattr(roles, "is_org_member", lambda sub, org: False)
-    with pytest.raises(McpError, match="pas membre"):
+    with pytest.raises(McpError, match="not a member"):
         access._resolve_credential_impl("zoho", "auto", "u")
 
 
@@ -223,7 +223,7 @@ def test_resolution_multiple_bindings_actionable_error(resolution, monkeypatch):
          "config": {"instance_ref": "org:5:zoho"}},
         {"target_type": "connecteur", "target_ref": "zoho",
          "config": {"instance_ref": "member:5:u:zoho:alx"}}])
-    with pytest.raises(McpError, match="PLUSIEURS instances"):
+    with pytest.raises(McpError, match="SEVERAL"):
         access._resolve_credential_impl("zoho", "auto", "u")
 
 
@@ -239,4 +239,4 @@ def test_resolution_foreign_provider_ref_ignored(resolution, monkeypatch):
             access._resolve_credential_impl("hunter", "byo", "u")
     finally:
         session_org.reset_call_instance(tok)
-    assert "ne résout plus" not in str(ei.value)   # erreur cascade, pas instance
+    assert "no longer resolves" not in str(ei.value)   # erreur cascade, pas instance

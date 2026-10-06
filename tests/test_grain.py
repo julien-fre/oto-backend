@@ -112,7 +112,7 @@ def test_recording_list_refuses_recording_only_params():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("grain_recording")).fn
-        with pytest.raises(McpError, match="op='list' n'utilise pas"):
+        with pytest.raises(McpError, match="op='list' does not use"):
             fn(op="list", recording_id="rec_1")
         cls.return_value.list_recordings.assert_not_called()
     finally:
@@ -123,9 +123,9 @@ def test_recording_get_requires_id_and_refuses_list_filters():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("grain_recording")).fn
-        with pytest.raises(McpError, match="requiert .recording_id."):
+        with pytest.raises(McpError, match="requires .recording_id."):
             fn(op="get")
-        with pytest.raises(McpError, match="op='get' n'utilise pas"):
+        with pytest.raises(McpError, match="op='get' does not use"):
             fn(op="get", recording_id="rec_1", filter={"team": "t1"})
 
         cls.return_value.get_recording.return_value = {"id": "rec_1"}
@@ -140,7 +140,7 @@ def test_recording_update_requires_title():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("grain_recording")).fn
-        with pytest.raises(McpError, match="requiert .title."):
+        with pytest.raises(McpError, match="requires .title."):
             fn(op="update", recording_id="rec_1")
 
         cls.return_value.update_recording.return_value = {}
@@ -154,7 +154,7 @@ def test_recording_tag_untag():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("grain_recording")).fn
-        with pytest.raises(McpError, match="requiert .tag."):
+        with pytest.raises(McpError, match="requires .tag."):
             fn(op="tag", recording_id="rec_1")
 
         cls.return_value.add_tag.return_value = {}
@@ -172,9 +172,9 @@ def test_recording_share_user_and_team():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("grain_recording")).fn
-        with pytest.raises(McpError, match="requiert .user_id."):
+        with pytest.raises(McpError, match="requires .user_id."):
             fn(op="share_user", recording_id="rec_1")
-        with pytest.raises(McpError, match="requiert .team_id."):
+        with pytest.raises(McpError, match="requires .team_id."):
             fn(op="share_team", recording_id="rec_1")
 
         cls.return_value.share_with_user.return_value = {}
@@ -216,9 +216,9 @@ def test_recording_file_download_requires_id_and_refuses_upload_params():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("grain_recording_file")).fn
-        with pytest.raises(McpError, match="requiert .recording_id."):
+        with pytest.raises(McpError, match="requires .recording_id."):
             fn(op="download")
-        with pytest.raises(McpError, match="op='download' n'utilise pas"):
+        with pytest.raises(McpError, match="op='download' does not use"):
             fn(op="download", recording_id="rec_1", filename="x.mp4")
 
         cls.return_value.download_recording.return_value = b"\x00\x01\x02"
@@ -232,9 +232,9 @@ def test_recording_file_create_upload_url_requires_filename():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("grain_recording_file")).fn
-        with pytest.raises(McpError, match="requiert .filename."):
+        with pytest.raises(McpError, match="requires .filename."):
             fn(op="create_upload_url")
-        with pytest.raises(McpError, match="op='create_upload_url' n'utilise pas"):
+        with pytest.raises(McpError, match="op='create_upload_url' does not use"):
             fn(op="create_upload_url", filename="x.mp4", recording_id="rec_1")
 
         cls.return_value.create_upload_url.return_value = {"url": "https://...", "uuid": "u1"}
@@ -248,7 +248,7 @@ def test_hook_create_requires_url_and_type():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("grain_hook")).fn
-        with pytest.raises(McpError, match="requiert .hook_url. et .hook_type."):
+        with pytest.raises(McpError, match="requires .hook_url. and .hook_type."):
             fn(op="create")
 
         cls.return_value.create_hook.return_value = {"id": "hook_1"}
@@ -263,9 +263,9 @@ def test_hook_delete_requires_id_and_refuses_create_params():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("grain_hook")).fn
-        with pytest.raises(McpError, match="requiert .hook_id."):
+        with pytest.raises(McpError, match="requires .hook_id."):
             fn(op="delete")
-        with pytest.raises(McpError, match="op='delete' n'utilise pas"):
+        with pytest.raises(McpError, match="op='delete' does not use"):
             fn(op="delete", hook_id="hook_1", hook_url="https://example.com")
 
         cls.return_value.delete_hook.return_value = {"deleted": True}

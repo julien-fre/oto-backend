@@ -1,82 +1,82 @@
-"""Attio CRM — CRUD complet records + notes/tasks/lists/entries/comments/meta.
+"""Attio CRM — full CRUD on records + notes/tasks/lists/entries/comments/meta.
 
-Couvre create/read/update/delete sur companies, people, deals, et
-create/list/delete pour notes (l'API Attio ne permet pas d'éditer le corps
-d'une note), et create/list/update/delete pour tasks (update limité à
-`deadline_at`, `is_completed`, `linked_records`, `assignees` côté API).
+Covers create/read/update/delete on companies, people, deals, and
+create/list/delete for notes (the Attio API does not allow editing a note's
+body), and create/list/update/delete for tasks (update limited to
+`deadline_at`, `is_completed`, `linked_records`, `assignees` on the API side).
 
-Clé résolue par appel via `access.resolve_api_key("attio")`. Comme Attio
-n'a pas de quota par défaut (cf. `access._QUOTA_DEFAULTS`), seuls les
-admins (avec une `ATTIO_API_KEY` serveur) ou les users avec leur propre
-clé posée sur `/account` peuvent appeler ces tools.
+Key resolved per call via `access.resolve_api_key("attio")`. Since Attio
+has no default quota (see `access._QUOTA_DEFAULTS`), only
+admins (with a server `ATTIO_API_KEY`) or users with their own
+key set on `/account` can call these tools.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur attio)** : un
-tool par OBJET métier, le verbe en paramètre `op` — 56 tools → 10. Attio est un
-CRM À OBJETS : le motif `create_X`/`get_X`/`update_X`/`delete_X`/`list_X` s'y
-répétait à l'identique sur une douzaine d'objets, avec les MÊMES paramètres à
-chaque fois. C'est le cas nominal de l'amendement.
+**Consolidated surface (ADR 0047 §Amendment, applied to the attio connector)**: one
+tool per business OBJECT, the verb in the `op` parameter — 56 tools → 10. Attio is an
+OBJECT-BASED CRM: the `create_X`/`get_X`/`update_X`/`delete_X`/`list_X` pattern was
+repeated identically there on a dozen objects, with the SAME parameters each
+time. This is the nominal case of the amendment.
 
-- `attio_record` (18 → 1) — companies/people/deals partagent la MÊME ressource
-  côté client (`AttioResource`) et donc la même signature : l'objet devient un
-  paramètre (`object=`), comme `module=` chez zoho.
+- `attio_record` (18 → 1) — companies/people/deals share the SAME resource
+  on the client side (`AttioResource`) and therefore the same signature: the object becomes a
+  parameter (`object=`), like `module=` at zoho.
 - `attio_note` (4 → 1) · `attio_task` (5 → 1) · `attio_list` (5 → 1)
   · `attio_entry` (5 → 1) · `attio_workspace_member` (2 → 1)
-  · `attio_meeting` (5 → 1, meeting + ses enregistrements + le transcript : tout
-  est keyé par `meeting_id`) · `attio_object` (3 → 1) · `attio_attribute` (4 → 1).
-- `attio_comment` (5 → 1) fusionne comments ET threads : un thread n'est que le
-  fil d'une conversation de commentaires, les deux se désignent par le MÊME
-  tuple d'ancrage (`parent_object`+`parent_record_id`, ou `list_id`+`entry_id`,
-  ou `thread_id`) — supprimer un commentaire de tête supprime d'ailleurs le
-  thread. Params recouvrants ⟹ un seul objet.
+  · `attio_meeting` (5 → 1, meeting + its recordings + the transcript: everything
+  is keyed by `meeting_id`) · `attio_object` (3 → 1) · `attio_attribute` (4 → 1).
+- `attio_comment` (5 → 1) merges comments AND threads: a thread is just the
+  string of a comment conversation, both are designated by the SAME
+  anchor tuple (`parent_object`+`parent_record_id`, or `list_id`+`entry_id`,
+  or `thread_id`) — deleting a head comment deletes the
+  thread anyway. Overlapping params ⟹ a single object.
 
-**Ce qui n'a PAS été fusionné**, et pourquoi (le critère est l'homogénéité des
-paramètres, pas le comptage) :
-- `attio_entry` reste séparé d'`attio_list`. Les deux partagent `list_id_or_slug`
-  et rien d'autre : les ops de liste travaillent sur le CONTENEUR (`name`,
-  `api_slug`, `workspace_access`), celles d'entrée sur son CONTENU (`entry_id`,
+**What was NOT merged**, and why (the criterion is parameter homogeneity,
+not the count):
+- `attio_entry` stays separate from `attio_list`. The two share `list_id_or_slug`
+  and nothing else: list ops work on the CONTAINER (`name`,
+  `api_slug`, `workspace_access`), entry ops on its CONTENT (`entry_id`,
   `entry_values`, `parent_record_id`, `filter`, `sorts`,
-  `overwrite_multiselect`). Fusionner produirait un `oneOf` de variantes
-  disjointes — le poids de schéma des deux tools, plus l'ambiguïté.
-- `attio_note` et `attio_task` restent séparés : ils ne partagent que `content`.
-  Une note s'ancre par `parent_object`/`parent_record_id` + `title`, une tâche
-  par `linked_object`/`linked_record_id` + `deadline`/`assignee_id`, et l'API ne
-  permet pas les mêmes verbes (pas d'update de note).
-- `attio_object` (définitions d'objets) et `attio_attribute` (schéma d'un objet
-  OU d'une liste) restent séparés : leurs identifiants ne se recouvrent pas
-  (`object_id_or_slug` vs le couple `target`+`identifier`, où `target` vaut
-  "objects" OU "lists"). Les confondre ferait porter à un même `identifier` deux
-  sens selon l'op.
+  `overwrite_multiselect`). Merging would produce a `oneOf` of disjoint
+  variants — the schema weight of both tools, plus the ambiguity.
+- `attio_note` and `attio_task` stay separate: they only share `content`.
+  A note is anchored by `parent_object`/`parent_record_id` + `title`, a task
+  by `linked_object`/`linked_record_id` + `deadline`/`assignee_id`, and the API does not
+  allow the same verbs (no note update).
+- `attio_object` (object definitions) and `attio_attribute` (schema of an object
+  OR a list) stay separate: their identifiers do not overlap
+  (`object_id_or_slug` vs the `target`+`identifier` pair, where `target` is
+  "objects" OR "lists"). Conflating them would make a single `identifier` carry two
+  meanings depending on the op.
 
-**Ce que chaque listing sait faire, et ce qu'il ne saura jamais** (relevé le
-27/08/2026 par différentiel contre l'API réelle, cf.
-`tests/test_attio_listing_window.py` ici et dans oto-core). Quatre signaux
-d'usage — dont #586 et #597, resignalé onze jours plus tard — venaient d'une
-procédure quotidienne qui n'atteignait PAS les comptes rendus d'appels du jour :
+**What each listing can do, and what it never will** (recorded on
+27/08/2026 by differential against the real API, see
+`tests/test_attio_listing_window.py` here and in oto-core). Four usage
+signals — including #586 and #597, re-reported eleven days later — came from a
+daily procedure that did NOT reach the day's call reports:
 
-| objet      | pagination                    | tri                   | fenêtre de date          |
+| object     | pagination                    | sort                  | date window              |
 |------------|-------------------------------|-----------------------|--------------------------|
-| `note`     | `limit` (déf. 10, max 50) + `offset` | **aucun**      | **aucune**               |
-| `task`     | `limit` (déf. 500, max 1000) + `offset` | `sort`       | **aucune**               |
-| `meeting`  | `limit` (déf. 50, max 200) + `cursor` | `sort`          | `ends_from`/`starts_before` |
+| `note`     | `limit` (def. 10, max 50) + `offset` | **none**       | **none**                 |
+| `task`     | `limit` (def. 500, max 1000) + `offset` | `sort`      | **none**                 |
+| `meeting`  | `limit` (def. 50, max 200) + `cursor` | `sort`          | `ends_from`/`starts_before` |
 
-⚠️ Attio **AVALE** les paramètres de requête qu'il ne connaît pas en rendant 200
-(`/v2/notes` accepte `sort=`, `created_at[gte]` et même `zzz_inconnu=x` sans
-rien filtrer). D'où la règle tenue ici : on n'expose que ce que l'amont honore
-VRAIMENT, et un tri ou une date qui n'existent pas ne sont pas simulés côté
-client sur une page tronquée — ce serait un filtre qui ment. Deux paramètres
-mentaient d'ailleurs déjà : `attio_task(completed=)` partait en `completed=`
-alors qu'Attio attend `is_completed` (corrigé dans oto-core, le nom du tool ne
-change pas), et `attio_meeting(offset=)` était ignoré par l'API (`offset=2000`
-rendait la même première page) — remplacé par `cursor`, et l'ancien argument est
-désormais REFUSÉ en le nommant plutôt qu'accepté sans effet.
+⚠️ Attio **SWALLOWS** query parameters it does not know, returning 200
+(`/v2/notes` accepts `sort=`, `created_at[gte]` and even `zzz_unknown=x` without
+filtering anything). Hence the rule held here: we only expose what upstream
+REALLY honors, and a sort or date that does not exist is not simulated on the client
+side over a truncated page — that would be a lying filter. Two parameters
+were in fact already lying: `attio_task(completed=)` went out as `completed=`
+whereas Attio expects `is_completed` (fixed in oto-core, the tool name does not
+change), and `attio_meeting(offset=)` was ignored by the API (`offset=2000`
+returned the same first page) — replaced by `cursor`, and the old argument is
+now REFUSED by naming it rather than accepted with no effect.
 
-⚠️ Ce module ÉCRIT sur un CRM RÉEL (données clients) : `op="create"`/`"update"`/
-`"delete"` d'`attio_record`, `attio_note`, `attio_task`, `attio_list`,
-`attio_entry` et `attio_comment` — et son SCHÉMA : `op="create"`/`"create_option"`/
-`"create_status"` d'`attio_attribute` (oto#256), que l'API ne sait pas défaire
-(aucun DELETE sur un attribut, une option ou une étape). Le défaut de CHAQUE tool est une LECTURE
-(`op="list"`, `"query"` ou `"threads"`) — un appel sans `op` ne peut ni écrire ni
-supprimer. Une op inconnue est refusée AVANT même la résolution de la clé.
+⚠️ This module WRITES to a REAL CRM (customer data): `op="create"`/`"update"`/
+`"delete"` of `attio_record`, `attio_note`, `attio_task`, `attio_list`,
+`attio_entry` and `attio_comment` — and its SCHEMA: `op="create"`/`"create_option"`/
+`"create_status"` of `attio_attribute` (oto#256), which the API cannot undo
+(no DELETE on an attribute, an option or a stage). The default of EVERY tool is a READ
+(`op="list"`, `"query"` or `"threads"`) — a call without `op` can neither write nor
+delete. An unknown op is refused BEFORE even resolving the key.
 """
 from __future__ import annotations
 
@@ -93,11 +93,11 @@ from oto.tools.common.errors import UpstreamHTTPError
 from .. import access
 from ..connectors import verify as connector_verify
 
-# Ops de chaque objet, dans l'ordre lectures → écritures. Source unique : le
-# SCHÉMA MCP (`Literal` → `enum` JSON : depuis la consolidation le verbe n'est
-# plus dans le nom du tool, donc c'est l'enum qui l'annonce au client), la
-# validation d'entrée ET le message de refus en dérivent — une op ajoutée ne peut
-# pas être acceptée sans être annoncée (ni l'inverse).
+# Ops of each object, in reads → writes order. Single source: the
+# MCP SCHEMA (`Literal` → JSON `enum`: since the consolidation the verb is
+# no longer in the tool name, so the enum is what announces it to the client), input
+# validation AND the refusal message derive from it — an added op cannot
+# be accepted without being announced (nor the reverse).
 _RecordObject = Literal["companies", "people", "deals"]
 _RecordOp = Literal["list", "get", "search", "create", "update", "merge", "delete"]
 _NoteOp = Literal["list", "get", "create", "delete"]
@@ -107,10 +107,10 @@ _EntryOp = Literal["query", "get", "create", "update", "delete"]
 _MemberOp = Literal["list", "get"]
 _CommentOp = Literal["threads", "thread", "get", "create", "delete"]
 _MeetingOp = Literal["list", "get", "recordings", "recording", "transcript"]
-# Tris admis par l'amont — l'enum du schéma évite un aller-retour sur un 400
-# opaque (« Query params validation error », sans dire ce qui était permis).
-# ⚠️ Pas d'équivalent sur les notes : `/v2/notes` n'a AUCUN tri (il AVALE le
-# paramètre en rendant 200), donc rien à déclarer là-bas.
+# Sorts accepted by upstream — the schema enum avoids a round trip on an opaque
+# 400 ("Query params validation error", without saying what was allowed).
+# ⚠️ No equivalent on notes: `/v2/notes` has NO sort (it SWALLOWS the
+# parameter, returning 200), so nothing to declare there.
 _TaskSort = Literal["created_at:asc", "created_at:desc",
                      "completed_at:asc", "completed_at:desc"]
 _MeetingSort = Literal["start_asc", "start_desc"]
@@ -132,10 +132,10 @@ _ATTRIBUTE_OPS = get_args(_AttributeOp)
 
 
 def _one_of(name: str, values: tuple[str, ...]) -> str:
-    """Message de refus DÉRIVÉ de la liste des valeurs admises — jamais recopié à
-    la main : une op ajoutée au tuple s'annonce toute seule."""
+    """Refusal message DERIVED from the list of accepted values — never copied by
+    hand: an op added to the tuple announces itself."""
     quoted = [f"'{v}'" for v in values]
-    return f"{name} doit être " + ", ".join(quoted[:-1]) + " ou " + quoted[-1]
+    return f"{name} must be " + ", ".join(quoted[:-1]) + " or " + quoted[-1]
 
 
 def _bad(msg: str) -> McpError:
@@ -143,97 +143,97 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
+    """Mandatory argument for THIS op — actionable error, never a fallback.
 
-    Une valeur VIDE compte comme absente : `attributes={}` sur `op='create'`
-    créerait un record vide dans le CRM, et sur `op='update'` un PATCH qui ne
-    change rien — deux écritures qui passeraient pour un succès alors que rien
-    n'a été demandé.
+    An EMPTY value counts as absent: `attributes={}` on `op='create'`
+    would create an empty record in the CRM, and on `op='update'` a PATCH that
+    changes nothing — two writes that would pass for a success when nothing
+    was asked.
     """
     if value is None or (isinstance(value, (str, list, dict)) and not value):
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
-# --- Ce qu'Attio a dit, l'agent doit le lire (oto#42) -------------------------
+# --- What Attio said, the agent must read it (oto#42) -------------------------
 #
-# `AttioClient._request` (oto-core) REÇOIT le corps d'erreur d'Attio et le range dans
-# le message d'une `Exception` NUE :
+# `AttioClient._request` (oto-core) RECEIVES Attio's error body and puts it in
+# the message of a BARE `Exception`:
 #     Exception(f"Attio API {status} on {method} /{endpoint}: {response.text[:2000]}")
-# La taxonomie du backend, elle, cherche le statut amont sur un ATTRIBUT de l'exception
-# (`error_taxonomy._upstream_status` : `.status_code` / `.status` / `.response.status_code`).
-# Une exception nue n'en porte aucun ⟹ le refus d'Attio n'est reconnu à AUCUNE étape et
-# tombe en (5) « interne », la seule branche qui n'écho RIEN du message (anti-fuite).
-# L'agent lit « Erreur interne du serveur. », `retryable: false`, et Sentry ouvre une
-# issue de bug backend pour un 4xx tiers parfaitement normal.
+# The backend taxonomy, for its part, looks for the upstream status on an ATTRIBUTE of the exception
+# (`error_taxonomy._upstream_status`: `.status_code` / `.status` / `.response.status_code`).
+# A bare exception carries none ⟹ Attio's refusal is recognized at NO step and
+# falls into (5) "internal", the only branch that echoes NOTHING of the message (anti-leak).
+# The agent reads "Erreur interne du serveur.", `retryable: false`, and Sentry opens an
+# backend bug issue for a perfectly normal third-party 4xx.
 #
-# Mesuré sur le signal #610 (2026-08-28) : trois créations de company refusées en 400
-# `uniqueness_conflict`, Attio nommant le champ (« slug "domains" ») ET l'enregistrement
-# déjà porteur du domaine. Rien de tout ça n'est sorti ; l'agent a conclu à un bug de
-# suffixe public `.co.uk` et dépensé quatre appels à isoler une cause qui n'existait pas.
+# Measured on signal #610 (2026-08-28): three company creations refused with 400
+# `uniqueness_conflict`, Attio naming the field ("slug "domains"") AND the record
+# already holding the domain. None of that came out; the agent concluded a bug with the
+# `.co.uk` public suffix and spent four calls isolating a cause that did not exist.
 #
-# On re-type donc au seul point où le backend touche ce client. Pas en `McpError` : elle
-# écraserait le verdict machine (`code` / `retryable`) que la taxonomie sait dériver du
-# statut — message curé et verdict juste sont mutuellement exclusifs par ce chemin-là.
-# `UpstreamHTTPError` est le porteur canonique d'oto-core, déjà honoré par la taxonomie.
+# So we re-type at the only point where the backend touches this client. Not as `McpError`: it
+# would overwrite the machine verdict (`code` / `retryable`) that the taxonomy can derive from the
+# status — curated message and correct verdict are mutually exclusive on that path.
+# `UpstreamHTTPError` is oto-core's canonical carrier, already honored by the taxonomy.
 _UPSTREAM_RE = re.compile(r"\AAttio API (\d{3}) on ([A-Z]+) /(\S*?): (.*)\Z", re.S)
-# oto-core lève ce texte-là AVANT de composer le message à statut (branche 429 dédiée).
+# oto-core raises this text BEFORE composing the status message (dedicated 429 branch).
 _RATE_LIMITED = "Rate limit exceeded"
 
-# Bornes de ce qu'on laisse traverser du corps amont. Un corps d'erreur tiers peut
-# porter des données du workspace : on ne le relaie JAMAIS en bloc.
-_BODY_KEEP = ("code", "path", "message")   # et rien d'autre
-_MAX_MESSAGE = 400                         # caractères de la phrase d'Attio
-_MAX_OPAQUE = 120                          # caractères d'un corps non JSON
-_CUT_OTO_CORE = 2000                       # `response.text[:2000]` chez oto-core
-# ⚠️ Couplage DÉCLARÉ (et tenu par le banc) avec `error_taxonomy._LONG_ID`, qui
-# remplace tout jeton de ≥ 20 caractères par `[id]` : `unknown_filter_attribute_slug`
-# (29 c.) se rendrait « attio HTTP 400: [id] — … », c'est-à-dire un `[id]` en tête de
-# message qui se lit comme un identifiant caviardé alors que c'est le NOM du refus.
-# Un code trop long est donc omis plutôt que servi méconnaissable — la phrase d'Attio,
-# elle, le redit toujours en clair (« Unknown attribute slug: … »).
+# Bounds on what we let through of the upstream body. A third-party error body can
+# carry workspace data: we NEVER relay it wholesale.
+_BODY_KEEP = ("code", "path", "message")   # and nothing else
+_MAX_MESSAGE = 400                         # characters of Attio's sentence
+_MAX_OPAQUE = 120                          # characters of a non-JSON body
+_CUT_OTO_CORE = 2000                       # `response.text[:2000]` in oto-core
+# ⚠️ DECLARED coupling (and enforced by the test bench) with `error_taxonomy._LONG_ID`, which
+# replaces any token of ≥ 20 characters with `[id]`: `unknown_filter_attribute_slug`
+# (29 c.) would render as "attio HTTP 400: [id] — …", i.e. an `[id]` at the head of the
+# message that reads like a redacted identifier when it is the NAME of the refusal.
+# A code that is too long is therefore omitted rather than served unrecognizable — Attio's sentence,
+# for its part, always restates it in clear ("Unknown attribute slug: …").
 _MAX_CODE = 19
 
 
 def _upstream_body(raw: str) -> str:
-    """Le corps d'erreur d'Attio réduit à ce qu'un agent peut UTILISER, borné.
+    """Attio's error body reduced to what an agent can USE, bounded.
 
-    Attio répond une enveloppe JSON `{status_code, type, code, message, path?}`. On
-    n'en relaie que `_BODY_KEEP` : `code` (nature du refus), `path` (le champ fautif
-    quand Attio le donne) et `message` (la phrase actionnable), tronquée à
-    `_MAX_MESSAGE`. Tout le reste est écarté PAR CONSTRUCTION — une clé qu'Attio
-    ajouterait demain ne traverse pas, elle n'est pas dans la liste.
+    Attio answers with a JSON envelope `{status_code, type, code, message, path?}`. We
+    relay only `_BODY_KEEP`: `code` (nature of the refusal), `path` (the faulty field
+    when Attio gives it) and `message` (the actionable sentence), truncated to
+    `_MAX_MESSAGE`. Everything else is dropped BY CONSTRUCTION — a key that Attio
+    would add tomorrow does not get through, it is not in the list.
 
-    ⚠️ Ce qui traverse quand même vient du workspace de l'appelant, atteint avec le
-    credential de l'appelant (l'id du record en conflit, l'id demandé introuvable) :
-    aucune frontière de tenant n'est franchie. Ce qu'on borne est le VOLUME et
-    l'INCONNU, pas un secret. La taxonomie passe ensuite son `scrub`, qui remplace
-    tout jeton de ≥ 20 caractères par `[id]` — les identifiants n'arrivent donc pas
-    lisibles jusqu'à l'agent, le champ et la raison si.
+    ⚠️ What gets through anyway comes from the caller's workspace, reached with the
+    caller's credential (the id of the conflicting record, the requested id not found):
+    no tenant boundary is crossed. What we bound is the VOLUME and
+    the UNKNOWN, not a secret. The taxonomy then runs its `scrub`, which replaces
+    any token of ≥ 20 characters with `[id]` — identifiers therefore do not reach
+    the agent readable, the field and the reason do.
 
-    Corps non JSON (page d'erreur d'un frontal, « Service Unavailable ») : on n'en
-    rend qu'une amorce d'une ligne de `_MAX_OPAQUE` caractères — assez pour voir que
-    l'amont n'a pas répondu en API, jamais un document entier.
+    Non-JSON body (a front end's error page, "Service Unavailable"): we only
+    return a one-line snippet of `_MAX_OPAQUE` characters — enough to see that
+    upstream did not answer as an API, never an entire document.
     """
     try:
         data = json.loads(raw)
-    # noqa: SILENT — un corps non JSON n'est pas une panne : on le dit et on le borne
+    # noqa: SILENT — a non-JSON body is not a failure: we say so and bound it
     except Exception:
         data = None
     if not isinstance(data, dict):
         amorce = " ".join(raw.split())[:_MAX_OPAQUE]
         if not amorce:
-            return "corps d'erreur vide"
-        # Un corps qui COMMENCE comme du JSON sans se refermer n'est pas un corps
-        # malformé d'Attio : c'est oto-core qui coupe à `response.text[:2000]` avant
-        # de composer son message. Le dire, sinon on renvoie l'agent enquêter chez
-        # l'amont sur une amputation qui est la nôtre.
+            return "empty error body"
+        # A body that STARTS like JSON without closing is not a malformed Attio
+        # body: it is oto-core cutting at `response.text[:2000]` before
+        # composing its message. Say so, otherwise we send the agent investigating
+        # upstream over an amputation that is ours.
         if raw.lstrip().startswith(("{", "[")):
-            return f"corps JSON tronqué à {_CUT_OTO_CORE} c. en amont : {amorce}…"
-        return f"corps non JSON : {amorce}"
+            return f"JSON body truncated at {_CUT_OTO_CORE} c. upstream: {amorce}…"
+        return f"non-JSON body: {amorce}"
 
-    # La liste blanche SÉLECTIONNE : ce qui n'y est pas n'existe plus après cette
-    # ligne, sans qu'aucune branche en dessous ait à s'en souvenir.
+    # The whitelist SELECTS: what is not in it no longer exists after this
+    # line, without any branch below having to remember it.
     retenu = {cle: data.get(cle) for cle in _BODY_KEEP}
 
     bouts: list[str] = []
@@ -242,52 +242,52 @@ def _upstream_body(raw: str) -> str:
         bouts.append(code.strip())
     chemin = retenu["path"]
     if isinstance(chemin, list) and chemin:
-        bouts.append("champ " + ", ".join(str(p)[:60] for p in chemin[:5]))
+        bouts.append("field " + ", ".join(str(p)[:60] for p in chemin[:5]))
     message = retenu["message"]
     if isinstance(message, str) and message.strip():
         phrase = " ".join(message.split())
         if len(phrase) > _MAX_MESSAGE:
-            phrase = phrase[:_MAX_MESSAGE].rstrip() + "… (tronqué)"
+            phrase = phrase[:_MAX_MESSAGE].rstrip() + "… (truncated)"
         bouts.append(phrase)
-    return " — ".join(bouts) or "corps d'erreur sans champ exploitable"
+    return " — ".join(bouts) or "error body with no usable field"
 
 
 def _as_upstream(exc: Exception) -> Optional[UpstreamHTTPError]:
-    """`UpstreamHTTPError` équivalente si `exc` est un refus d'Attio, sinon `None`.
+    """Equivalent `UpstreamHTTPError` if `exc` is an Attio refusal, else `None`.
 
-    Le statut n'existe QUE dans le texte composé par oto-core : on le relit. Un format
-    qui aurait dérivé ne correspond plus ⟹ `None` ⟹ l'exception d'origine remonte
-    inchangée (jamais pire qu'aujourd'hui), et le banc
-    `test_le_format_compose_par_oto_core_est_celui_qu_on_relit` rougit pour le dire —
-    c'est LUI l'alarme de dérive, pas un silence en prod.
+    The status exists ONLY in the text composed by oto-core: we re-read it. A format
+    that has drifted no longer matches ⟹ `None` ⟹ the original exception bubbles up
+    unchanged (never worse than today), and the test
+    `test_le_format_compose_par_oto_core_est_celui_qu_on_relit` goes red to say so —
+    it is THE drift alarm, not a silence in prod.
     """
     texte = str(exc)
     if texte.strip() == _RATE_LIMITED:
-        # Sans ce cas, une limite de débit d'Attio se rend « interne, ne réessaie
-        # pas » — l'exact inverse de ce qu'il faut faire.
-        return UpstreamHTTPError(429, "Attio a limité le débit.", service="attio")
+        # Without this case, an Attio rate limit renders as "internal, do not retry"
+        # — the exact opposite of what is needed.
+        return UpstreamHTTPError(429, "Attio rate-limited the request.", service="attio")
     trouve = _UPSTREAM_RE.match(texte)
     if trouve is None:
         return None
     status, method, endpoint, corps = trouve.groups()
     return UpstreamHTTPError(
         int(status),
-        f"{_upstream_body(corps)} (sur {method} /{endpoint})",
+        f"{_upstream_body(corps)} (on {method} /{endpoint})",
         service="attio",
     )
 
 
 def _rendre_le_refus_lisible(client):
-    """Pose le re-typage sur l'UNIQUE sortie HTTP du client, et rend le client.
+    """Install the re-typing on the client's ONLY HTTP exit, and return the client.
 
-    Toutes les ressources d'`AttioClient` appellent `self.client._request(...)` :
-    envelopper cette méthode sur l'INSTANCE couvre les dix tools et toutes leurs ops
-    d'un seul geste — au lieu d'une cinquantaine de sites d'appel dont un seul oublié
-    se tairait exactement comme aujourd'hui.
+    All of `AttioClient`'s resources call `self.client._request(...)`:
+    wrapping this method on the INSTANCE covers the ten tools and all their ops
+    in one gesture — instead of fifty-odd call sites of which a single forgotten one
+    would stay silent exactly as today.
 
-    Si oto-core renommait `_request`, on rend le client tel quel : on retombe sur le
-    comportement d'avant ce lot, jamais sur une panne de tous les appels Attio. Le
-    banc, lui, exige que la méthode existe — la dérive est bruyante là où on la lit.
+    If oto-core renamed `_request`, we return the client as is: we fall back to the
+    behavior from before this batch, never to an outage of all Attio calls. The
+    test bench, for its part, requires the method to exist — drift is loud where we read it.
     """
     interne = getattr(client, "_request", None)
     if not callable(interne):
@@ -307,47 +307,47 @@ def _rendre_le_refus_lisible(client):
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` + DROITS.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` + RIGHTS.
 
-    `GET /v2/self` — le SEUL endpoint Attio qui ne suit pas la forme `{"data":
-    ...}` du reste de l'API : une introspection RFC 7662. Ce que la doc établit,
-    cité :
+    `GET /v2/self` — the ONLY Attio endpoint that does not follow the `{"data":
+    ...}` shape of the rest of the API: an RFC 7662 introspection. What the docs
+    establish, quoted:
 
-    - **authentifié** — Bearer token, comme tout le reste de l'API ;
-    - **sans effet de bord** — « Identify the current access token, the
-      workspace it is linked to, and any permissions it has » ;
-    - **le coût** — aucune mention de crédit ni de limite de débit particulière
-      pour cet appel. Absence de compteur, indice fort, pas une preuve.
+    - **authenticated** — Bearer token, like the rest of the API;
+    - **no side effect** — "Identify the current access token, the
+      workspace it is linked to, and any permissions it has";
+    - **the cost** — no mention of credit or of a particular rate limit
+      for this call. Absence of a counter, a strong hint, not proof.
 
-    **Authentifié ≠ utilisable** (classe nommée sur oto#69, avec pennylane) — DEUX
-    formes du même verdict creux, toutes deux vérifiées explicitement :
+    **Authenticated ≠ usable** (class named on oto#69, with pennylane) — TWO
+    forms of the same hollow verdict, both explicitly checked:
 
-    ⚠️ Une clé morte ne LÈVE PAS ici : Attio répond 200 avec `{"active": false}`
-    (contrat d'introspection), jamais un 401 — le laisser passer sous silence
-    dirait « connecté » d'un token révoqué.
+    ⚠️ A dead key does NOT RAISE here: Attio answers 200 with `{"active": false}`
+    (introspection contract), never a 401 — letting it pass silently
+    would say "connected" for a revoked token.
 
-    Va plus loin que l'authentification, même raison que la sonde Pennylane :
-    `scope` est une CHAÎNE espace-séparée de permissions, et Attio scope son API
-    objet par objet (`companies:read`, `people:write`…) — un token actif mais
-    SANS AUCUN scope authentifie et ne peut rien faire, le verdict creux que
-    cette sonde existe pour empêcher.
+    Goes further than authentication, same reason as the Pennylane probe:
+    `scope` is a space-separated STRING of permissions, and Attio scopes its API
+    object by object (`companies:read`, `people:write`…) — an active token but
+    WITH NO scope authenticates and can do nothing, the hollow verdict that
+    this probe exists to prevent.
 
-    Ne lit PAS de quota : Attio n'a pas de solde consommable par défaut
-    (`access._QUOTA_DEFAULTS` ne le liste pas).
+    Does NOT read a quota: Attio has no consumable balance by default
+    (`access._QUOTA_DEFAULTS` does not list it).
     """
     from oto.tools.attio.client import AttioClient
 
     infos = AttioClient(api_key=fields["key"])._request("GET", "self") or {}
     if not infos.get("active"):
         raise RuntimeError(
-            "Attio dit ce token INACTIF (révoqué ou expiré) — reconnecte-toi "
-            f"depuis Attio. Réponse : {str(infos)[:200]}")
+            "Attio says this token is INACTIVE (revoked or expired) — reconnect "
+            f"from Attio. Response: {str(infos)[:200]}")
     if not (infos.get("scope") or "").strip():
         raise RuntimeError(
-            "La clé authentifie bien (workspace « "
-            f"{infos.get('workspace_name') or '?'} » reconnu) mais ne porte AUCUN "
-            "scope : elle ne pourra lire ni écrire quoi que ce soit. Régénère-la "
-            "chez Attio en cochant les permissions voulues.")
+            "The key does authenticate (workspace \""
+            f"{infos.get('workspace_name') or '?'}\" recognized) but carries NO "
+            "scope: it will be able to neither read nor write anything. Regenerate it "
+            "at Attio ticking the desired permissions.")
 
 
 def register(mcp: FastMCP) -> None:
@@ -357,9 +357,9 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> tuple[AttioClient, bool]:
         key, is_platform = access.resolve_api_key("attio")
-        # `_rendre_le_refus_lisible` : ce qu'Attio répond en erreur doit atteindre
-        # l'agent, borné (oto#42) — sinon un 400 qui NOMME le champ fautif se rend
-        # « Erreur interne du serveur. ».
+        # `_rendre_le_refus_lisible`: what Attio answers on error must reach
+        # the agent, bounded (oto#42) — otherwise a 400 that NAMES the faulty field renders as
+        # "Erreur interne du serveur.".
         return _rendre_le_refus_lisible(AttioClient(api_key=key)), is_platform
 
     def _record_if_platform(is_platform: bool) -> None:
@@ -443,18 +443,18 @@ def register(mcp: FastMCP) -> None:
             limit: op="list"/"search" — max records (default 50).
             offset: op="list" — pagination offset.
         """
-        # Refus AVANT toute résolution de credential : une op (ou un objet)
-        # inconnu n'atteint jamais le client — donc jamais, par un chemin dérivé,
-        # une écriture sur le CRM.
+        # Refuse BEFORE any credential resolution: an unknown op (or object)
+        # never reaches the client — hence never, via a derived path,
+        # a write to the CRM.
         if op not in _RECORD_OPS:
             raise _bad(_one_of("op", _RECORD_OPS))
         if object not in _RECORD_OBJECTS:
             raise _bad(_one_of("object", _RECORD_OBJECTS))
-        # #880 — le client laisse `filters` écraser `query` sans rien dire : les deux
-        # ensemble ne feraient qu'une des deux recherches.
+        # #880 — the client lets `filters` overwrite `query` silently: both
+        # together would only perform one of the two searches.
         if op == "search" and query and filter:
-            raise _bad("op='search' : query OU filter, pas les deux — le filtre "
-                       "remplacerait la recherche par nom sans le dire")
+            raise _bad("op='search': query OR filter, not both — the filter "
+                       "would replace the name search without saying so")
         client, is_platform = _client()
         resource = getattr(client, object)
 
@@ -463,18 +463,18 @@ def register(mcp: FastMCP) -> None:
         elif op == "get":
             result = resource.get(_need(record_id, "record_id", op))
         elif op == "search":
-            # `query` n'est comparé qu'au NOM (oto-core : `name $contains`) — une
-            # adresse ou un domaine ne s'y trouvent pas (#880) ; le filtre Attio, lui,
-            # atteint n'importe quel attribut.
+            # `query` is only compared to the NAME (oto-core: `name $contains`) — an
+            # address or a domain is not found there (#880); the Attio filter, for its part,
+            # reaches any attribute.
             if not query and not filter:
-                raise _bad("op='search' requiert query (sous-chaîne du nom) ou filter "
-                           "(objet filtre Attio, ex. {\"email_addresses\": \"…\"})")
+                raise _bad("op='search' requires query (substring of the name) or filter "
+                           "(Attio filter object, e.g. {\"email_addresses\": \"…\"})")
             result = resource.search(query=query, filters=filter, limit=limit)
         elif op == "create":
             values = dict(_need(attributes, "attributes", op))
-            # `owner` est obligatoire côté workspace pour un deal : sans lui la
-            # création échoue. On retombe sur le 1er workspace member plutôt que
-            # de faire échouer l'agent sur un champ qu'il ne peut pas deviner.
+            # `owner` is mandatory on the workspace side for a deal: without it
+            # creation fails. We fall back on the 1st workspace member rather than
+            # failing the agent on a field it cannot guess.
             if object == "deals" and "owner" not in values:
                 members = client.workspace_members.list().get("data", [])
                 if members:
@@ -484,22 +484,22 @@ def register(mcp: FastMCP) -> None:
                     }]
             result = resource.create(**values)
         elif op == "update":
-            # #887 — PATCH ajoute aux multisélections ; PUT (overwrite) les remplace.
+            # #887 — PATCH appends to multiselects; PUT (overwrite) replaces them.
             result = resource.update(_need(record_id, "record_id", op),
                                      overwrite_multiselect=overwrite_multiselect,
                                      **_need(attributes, "attributes", op))
         elif op == "merge":
-            # #886 — irréversible : les deux fiches d'origine ne se lisent plus, Attio
-            # en crée une troisième. Les deux ids sont exigés, jamais devinés.
+            # #886 — irreversible: the two original records can no longer be read, Attio
+            # creates a third. Both ids are required, never guessed.
             result = resource.merge(_need(record_id, "record_id", op),
                                     _need(secondary_record_id, "secondary_record_id", op))
         elif op == "delete":
             result = resource.delete(_need(record_id, "record_id", op))
         else:
-            # Structurellement inatteignable (garde d'entrée ci-dessus) — filet
-            # contre un `return None` implicite si une op était ajoutée au tuple
-            # sans sa branche : mieux vaut refuser que rendre « rien » pour un
-            # succès. Même filet dans chaque tool ci-dessous.
+            # Structurally unreachable (input guard above) — safety net
+            # against an implicit `return None` if an op were added to the tuple
+            # without its branch: better to refuse than to return "nothing" as a
+            # success. Same safety net in each tool below.
             raise _bad(_one_of("op", _RECORD_OPS))
 
         _record_if_platform(is_platform)
@@ -679,9 +679,9 @@ def register(mcp: FastMCP) -> None:
         - **"list"** (default): list all Attio lists accessible to the token.
         - **"get"**: get a single list by ID or slug.
         - **"views"**: list the saved views of a list.
-        - **"create"** — ⚠️ WRITES: create a new list. `api_slug` et
-          `workspace_member_access` sont requis par l'API Attio ; le client les
-          dérive/défaut automatiquement (slug depuis le nom, accès membre vide).
+        - **"create"** — ⚠️ WRITES: create a new list. `api_slug` and
+          `workspace_member_access` are required by the Attio API; the client
+          derives/defaults them automatically (slug from the name, empty member access).
         - **"update"** — ⚠️ WRITES: update an existing list (name, api_slug,
           access controls), via `attributes`.
 
@@ -895,13 +895,13 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
 
         if op == "threads":
-            # Gotcha empirique : `GET /threads` sans filtre répond 400. On le dit
-            # ici, actionnable, plutôt que de laisser remonter l'erreur opaque.
+            # Empirical gotcha: `GET /threads` without a filter answers 400. We say so
+            # here, actionable, rather than letting the opaque error bubble up.
             if not (parent_object or parent_record_id or list_id or entry_id):
                 raise _bad(
-                    "op='threads' requiert un filtre de parent : parent_object + "
-                    "parent_record_id (ou list_id + entry_id) — l'API Attio "
-                    "répond 400 sur une liste de threads non filtrée.")
+                    "op='threads' requires a parent filter: parent_object + "
+                    "parent_record_id (or list_id + entry_id) — the Attio API "
+                    "answers 400 on an unfiltered thread list.")
             result = client.threads.list(
                 parent_object=parent_object,
                 parent_record_id=parent_record_id,

@@ -1,35 +1,35 @@
-"""Google Analytics 4 — lecture par CLÉ DE COMPTE DE SERVICE : propriétés,
-rapports, temps réel, catalogue des dimensions et métriques, événements clés.
+"""Google Analytics 4 — read access via a SERVICE ACCOUNT KEY: properties,
+reports, realtime, catalogue of dimensions and metrics, key events.
 
-Wrappe `oto.tools.google_analytics.GA4Client` (Admin + Data API v1beta).
-Credential à UN champ secret (`secret_kind="fields"`, résolu par
-`access.resolve_credential_fields`) : `service_account_json`, le fichier JSON de
-la clé, entier. Pas l'OAuth du connecteur `google` : le consentement d'un
-utilisateur au scope `analytics.readonly` est bloqué par Google pour notre
-application (cf. `providers/google_analytics.py`).
+Wraps `oto.tools.google_analytics.GA4Client` (Admin + Data API v1beta).
+Credential with ONE secret field (`secret_kind="fields"`, resolved by
+`access.resolve_credential_fields`): `service_account_json`, the key's JSON
+file, whole. Not the OAuth of the `google` connector: a user's consent to the
+`analytics.readonly` scope is blocked by Google for our
+application (see `providers/google_analytics.py`).
 
-**Cinq tools, lecture seule** — le client n'a aucune méthode d'écriture, et le
-scope demandé (`analytics.readonly`) l'interdirait :
+**Five tools, read-only** — the client has no write method, and the
+requested scope (`analytics.readonly`) would forbid it:
 
-- `ga4_properties` — comptes et propriétés que le compte de service voit (et,
-  sur demande, leurs flux de données) ;
-- `ga4_report` — `:runReport`, les 30 derniers jours complets par défaut ;
-- `ga4_realtime` — `:runRealtimeReport` ;
-- `ga4_metadata` — les dimensions et métriques utilisables sur une propriété ;
-- `ga4_key_events` — les événements clés configurés.
+- `ga4_properties` — accounts and properties the service account sees (and,
+  on request, their data streams);
+- `ga4_report` — `:runReport`, the last 30 full days by default;
+- `ga4_realtime` — `:runRealtimeReport`;
+- `ga4_metadata` — the dimensions and metrics usable on a property;
+- `ga4_key_events` — the configured key events.
 
-**Deux refus nommés**, parce que ce sont les deux fautes probables :
-- un nom de dimension ou de métrique invalide (400 `INVALID_ARGUMENT`) → le
-  message de Google, qui nomme le champ fautif, plus le renvoi vers `ga4_metadata` ;
-- un compte de service sans accès à la propriété (403) → l'email du compte de
-  service, à ajouter comme Lecteur dans GA4.
+**Two named refusals**, because these are the two likely mistakes:
+- an invalid dimension or metric name (400 `INVALID_ARGUMENT`) → Google's
+  message, which names the offending field, plus a pointer to `ga4_metadata`;
+- a service account without access to the property (403) → the service
+  account's email, to add as a Viewer in GA4.
 
-**Projection** : un rapport GA4 brut répète le nom de chaque colonne et enveloppe
-chaque cellule (`{"value": "12"}`) ; la vue par défaut est une TABLE (`columns` +
-`rows`, métriques typées) qui garde les avertissements de fiabilité (échantillonnage,
-seuils). Le catalogue d'une propriété dépasse 450 entrées (mesuré le 25/09/2026) :
-sa vue par défaut rend les noms d'API groupés par catégorie, le détail d'une entrée
-se demande par `search`. `full=True` rend partout la réponse brute.
+**Projection**: a raw GA4 report repeats each column's name and wraps
+each cell (`{"value": "12"}`); the default view is a TABLE (`columns` +
+`rows`, typed metrics) that keeps the reliability warnings (sampling,
+thresholds). A property's catalogue exceeds 450 entries (measured on 25/09/2026):
+its default view returns the API names grouped by category, the detail of an entry
+is requested via `search`. `full=True` returns the raw response everywhere.
 """
 from __future__ import annotations
 
@@ -45,11 +45,11 @@ from ..mcp_errors import McpError
 _CONNECTOR = "google_analytics"
 _FIELD = "service_account_json"
 _DEFAULT_LIMIT = 100
-# `include_streams` fait un appel par propriété : au-delà, on refuse plutôt que de
-# faire attendre l'agent sur des dizaines d'appels qu'il n'a pas vus venir.
+# `include_streams` makes one call per property: beyond that, we refuse rather than
+# make the agent wait on dozens of calls it did not see coming.
 _MAX_STREAM_PROPERTIES = 25
-_METADATA_HINT = ("vérifie les noms avec `ga4_metadata` (noms d'API comme `activeUsers`, "
-                  "`eventName` — pas les libellés de l'interface GA4)")
+_METADATA_HINT = ("check the names with `ga4_metadata` (API names like `activeUsers`, "
+                  "`eventName` — not the GA4 interface labels)")
 
 
 def _bad(msg: str) -> McpError:
@@ -57,35 +57,35 @@ def _bad(msg: str) -> McpError:
 
 
 def _upstream_message(e) -> str:
-    """Le refus amont, traduit en conduite. Lu sur la CLASSE du refus (le statut
-    canonique Google, classé par le client), jamais sur le texte."""
+    """The upstream refusal, translated into guidance. Read from the refusal's CLASS (the
+    canonical Google status, classified by the client), never from the text."""
     from oto.tools.google_analytics import (GA4InvalidArgument, GA4PermissionDenied,
                                             GA4ServiceDisabled, ServiceAccountAuthError)
     if isinstance(e, GA4InvalidArgument):
-        return (f"GA4 a refusé la requête : {e.message.strip()} — {_METADATA_HINT}. "
-                "Certaines combinaisons dimension × métrique sont aussi incompatibles.")
+        return (f"GA4 refused the request: {e.message.strip()} — {_METADATA_HINT}. "
+                "Some dimension × metric combinations are also incompatible.")
     if isinstance(e, GA4PermissionDenied):
-        quoi = e.resource or "cette ressource"
-        return (f"Le compte de service {e.client_email} n'a pas accès à {quoi}. Ajoute "
-                "cet email comme Lecteur de la propriété dans GA4 (Administration → "
-                "Gestion des accès à la propriété) ; `ga4_properties` liste ce qu'il "
-                "voit déjà.")
+        quoi = e.resource or "this resource"
+        return (f"The service account {e.client_email} does not have access to {quoi}. Add "
+                "this email as a Viewer of the property in GA4 (Admin → "
+                "Property access management); `ga4_properties` lists what it "
+                "already sees.")
     if isinstance(e, GA4ServiceDisabled):
-        return ("Une API Google Analytics n'est pas activée dans le projet Google Cloud "
-                "du compte de service : active « Google Analytics Data API » et « Google "
-                "Analytics Admin API » (console Google Cloud → API et services), puis "
-                f"réessaie. Détail Google : {e.message}")
+        return ("A Google Analytics API is not enabled in the service account's "
+                "Google Cloud project: enable \"Google Analytics Data API\" and \"Google "
+                "Analytics Admin API\" (Google Cloud console → APIs & Services), then "
+                f"retry. Google detail: {e.message}")
     if isinstance(e, ServiceAccountAuthError):
-        return (f"Google refuse d'émettre un jeton pour cette clé de compte de service "
-                f"({e.body}) : clé supprimée ou révoquée, ou compte de service désactivé "
-                "— un administrateur doit déposer une nouvelle clé JSON.")
+        return (f"Google refuses to issue a token for this service account key "
+                f"({e.body}): key deleted or revoked, or service account disabled "
+                "— an administrator must upload a new JSON key.")
     status = e.status_code
     if status == 429:
-        return ("GA4 : quota de requêtes de la propriété atteint (429) — réessaie plus "
-                "tard, ou réduis la taille des rapports.")
+        return ("GA4: the property's request quota is reached (429) — retry later, "
+                "or reduce the size of the reports.")
     if status >= 500:
-        return f"GA4 est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"GA4 a refusé la requête (HTTP {status}) : {getattr(e, 'message', '') or e.body}"
+        return f"GA4 is temporarily unavailable (HTTP {status}) — retry later."
+    return f"GA4 refused the request (HTTP {status}): {getattr(e, 'message', '') or e.body}"
 
 
 def _count_properties(summaries: list) -> int:
@@ -93,12 +93,12 @@ def _count_properties(summaries: list) -> int:
 
 
 def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001
-    """Sonde « tester la connexion » : `accountSummaries`, sans effet de bord.
+    """"Test the connection" probe: `accountSummaries`, with no side effect.
 
-    Rend QUI la clé authentifie (l'email du compte de service) et ce qu'elle voit
-    (comptes, propriétés). ⚠️ Zéro propriété visible est un REFUS, pas un vert : la
-    clé est valide mais le connecteur ne peut rien lire — le cas d'un compte de
-    service qu'on a oublié d'ajouter comme Lecteur dans GA4."""
+    Returns WHO the key authenticates (the service account's email) and what it sees
+    (accounts, properties). ⚠️ Zero visible properties is a REFUSAL, not a green: the
+    key is valid but the connector can read nothing — the case of a service
+    account that was forgotten as a Viewer in GA4."""
     from oto.tools.common.errors import UpstreamHTTPError
     from oto.tools.google_analytics import GA4Client
 
@@ -115,9 +115,9 @@ def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001
     n = _count_properties(summaries)
     if n == 0:
         raise connector_verify.NonAutorise(
-            f"La clé authentifie ({client.client_email}) mais ne voit aucune propriété "
-            "GA4 : ajoute cet email comme Lecteur de la propriété dans GA4 "
-            "(Administration → Gestion des accès à la propriété).")
+            f"The key authenticates ({client.client_email}) but sees no GA4 property: "
+            "add this email as a Viewer of the property in GA4 "
+            "(Admin → Property access management).")
     return {"identity": {"service_account": client.client_email,
                          "accounts": len(summaries), "properties": n}}
 
@@ -143,7 +143,7 @@ def _compact_meta_entry(entry: dict) -> dict:
 def _by_category(entries: list) -> dict:
     grouped: dict[str, list] = {}
     for e in entries:
-        grouped.setdefault(e.get("category") or "(sans catégorie)", []).append(e.get("apiName"))
+        grouped.setdefault(e.get("category") or "(no category)", []).append(e.get("apiName"))
     return grouped
 
 
@@ -167,8 +167,8 @@ def register(mcp: FastMCP) -> None:
     def _table(resp: dict, prop: str, **echo) -> dict:
         out = {"property": prop, **{k: v for k, v in echo.items() if v is not None},
                **flatten_report(resp)}
-        out["projection"] = ("vue en table (colonnes = dimensions puis métriques) ; "
-                             "full=True rend la réponse brute de GA4")
+        out["projection"] = ("table view (columns = dimensions then metrics); "
+                             "full=True returns GA4's raw response")
         return out
 
     @mcp.tool()
@@ -192,8 +192,8 @@ def register(mcp: FastMCP) -> None:
             n = _count_properties(summaries)
             if include_streams and n > _MAX_STREAM_PROPERTIES:
                 raise ValueError(
-                    f"{n} propriétés visibles : include_streams ferait {n} appels. "
-                    "Liste d'abord les propriétés, puis cible celle qui t'intéresse.")
+                    f"{n} visible properties: include_streams would make {n} calls. "
+                    "List the properties first, then target the one you are interested in.")
             if full:
                 out = {"accountSummaries": summaries, "property_count": n}
                 if include_streams:
@@ -359,8 +359,8 @@ def register(mcp: FastMCP) -> None:
                 return out
             out = {p: _by_category(meta.get(p) or []) for p in parts}
             out["counts"] = {p: len(meta.get(p) or ()) for p in parts}
-            out["projection"] = ("noms d'API par catégorie ; `search` rend le détail des "
-                                 "entrées qui correspondent, full=True le brut")
+            out["projection"] = ("API names by category; `search` returns the detail of "
+                                 "the matching entries, full=True the raw response")
             return out
         return _run(_go)
 

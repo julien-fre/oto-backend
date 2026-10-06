@@ -112,12 +112,12 @@ def test_catalog_forwards_only_its_kinds_filter(client):
 # --- refus -------------------------------------------------------------------------
 
 @pytest.mark.parametrize("tool,kwargs,match", [
-    ("nextmotion_practitioner", {}, "exige `clinic_id`"),
-    ("nextmotion_practitioner", {"op": "get"}, "exige `doctor_id`"),
-    ("nextmotion_appointment", {"op": "delete"}, "exige `appointment_id`"),
+    ("nextmotion_practitioner", {}, "requires `clinic_id`"),
+    ("nextmotion_practitioner", {"op": "get"}, "requires `doctor_id`"),
+    ("nextmotion_appointment", {"op": "delete"}, "requires `appointment_id`"),
     ("nextmotion_appointment", {"op": "reschedule", "appointment_id": X},
-     "exige `visit_type_opening_hour_id`, `time_slot`"),
-    ("nextmotion_catalog", {"kind": "treatment_type", "op": "get"}, "exige `item_id`"),
+     "requires `visit_type_opening_hour_id`, `time_slot`"),
+    ("nextmotion_catalog", {"kind": "treatment_type", "op": "get"}, "requires `item_id`"),
 ])
 def test_missing_required_argument_is_named(client, tool, kwargs, match):
     with pytest.raises(McpError, match=match):
@@ -149,13 +149,13 @@ def test_missing_required_argument_is_named(client, tool, kwargs, match):
     ("nextmotion_product", {"op": "get", "product_id": X, "offset": 0}, "`offset`"),
 ])
 def test_an_argument_the_op_does_not_use_is_refused(client, tool, kwargs, match):
-    with pytest.raises(McpError, match=f"n'utilise pas {match}"):
+    with pytest.raises(McpError, match=f"does not use {match}"):
         _tool(tool)(**kwargs)
     assert not client.method_calls
 
 
 def test_unknown_op_is_refused(client):
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool("nextmotion_appointment")(op="cancel", appointment_id=X)
 
 
@@ -297,12 +297,12 @@ def test_non_employee_403_is_read_on_status_code_and_error_code(client):
     client.list_doctors.side_effect = UpstreamHTTPError(
         403, {"errors": [{"code": "non_employee_access_denied", "message": "x"}]},
         service="nextmotion")
-    with pytest.raises(McpError, match="pas employé de cette clinique"):
+    with pytest.raises(McpError, match="is not an employee of this clinic"):
         _tool("nextmotion_practitioner")(clinic_id=C)
 
 
 def test_client_value_error_becomes_invalid_params(client):
-    client.get_doctor.side_effect = ValueError("doctor_id doit être un UUID")
+    client.get_doctor.side_effect = ValueError("doctor_id must be a UUID")
     with pytest.raises(McpError, match="UUID"):
         _tool("nextmotion_practitioner")(op="get", doctor_id="42")
 
@@ -313,7 +313,7 @@ def test_an_empty_resolved_key_never_builds_a_client(monkeypatch):
                         lambda **kw: built.append(kw))
     monkeypatch.setattr("oto_mcp.access.resolve_api_key",
                         lambda provider, account=None: ("  ", False))
-    with pytest.raises(McpError, match="aucune clé"):
+    with pytest.raises(McpError, match="no API key"):
         _tool("nextmotion_clinic")()
     assert not built
 
@@ -447,7 +447,7 @@ def test_periode_sans_invoiced_time_lisible_leve(client):
 @pytest.mark.parametrize("kwargs,match", [
     ({"invoiced_from": "2026-01-01", "limit": 10}, "`limit`"),
     ({"invoiced_from": "01/01/2026"}, "YYYY-MM-DD"),
-    ({"invoiced_from": "2026-02-01", "invoiced_to": "2026-01-01"}, "postérieur"),
+    ({"invoiced_from": "2026-02-01", "invoiced_to": "2026-01-01"}, "is after"),
     ({"invoiced_from": "2026-01-01", "max_pages": 0}, "max_pages"),
     ({"invoiced_from": "2026-01-01", "max_pages": 101}, "max_pages"),
 ])

@@ -1,14 +1,14 @@
-"""Capacité « démarrer le flux de connexion d'un connecteur » — UN chemin, tous les flux.
+"""Capability "start a connector's connection flow" — ONE path, all flows.
 
-ADR 0042 §Convergence des surfaces. Avant : chaque connecteur à flux exposait son propre
-chemin (`/api/zoho/oauth/start`, `/api/salesforce/oauth/start`), le front avait donc une
-fonction cliente par connecteur et une liste de noms en dur pour décider laquelle appeler.
-Le nom du connecteur voyage désormais en **paramètre de chemin** (précédent :
-`/api/me/connectors/{name}/session/start`), et ce qu'il faut fournir est décrit par le
-catalogue (`connect.params`) — le dashboard rend un formulaire générique.
+ADR 0042 §Surface convergence. Before: each flow connector exposed its own
+path (`/api/zoho/oauth/start`, `/api/salesforce/oauth/start`), so the front end had one
+client function per connector and a hard-coded list of names to decide which to call.
+The connector name now travels as a **path parameter** (precedent:
+`/api/me/connectors/{name}/session/start`), and what must be supplied is described by the
+catalog (`connect.params`) — the dashboard renders a generic form.
 
-Le geste lui-même reste chez le connecteur (`connector_flow.declare`, appelé depuis son
-module) : cette capacité ne fait que router, garder, et traduire un refus.
+The gesture itself stays with the connector (`connector_flow.declare`, called from its
+module): this capability only routes, guards, and translates a refusal.
 """
 from __future__ import annotations
 
@@ -23,44 +23,44 @@ from ..registry import CAPABILITIES
 
 
 class ConnectorConnectInput(BaseModel):
-    name: str                                   # le connecteur, depuis le chemin
-    params: Optional[dict] = None               # les valeurs de `connect.params`
+    name: str                                   # the connector, from the path
+    params: Optional[dict] = None               # the values of `connect.params`
 
 
 class ConnectorConnectStarted(BaseModel):
-    """Le flux est AMORCÉ, rien n'est connecté. Une 200 ici ne dit qu'une chose :
-    « voici l'URL de consentement à ouvrir ». Le credential n'existera qu'au retour
-    du fournisseur sur le callback — un client qui traite cette réponse comme un
-    succès de connexion affichera « connecté » à quelqu'un qui n'a encore rien
-    autorisé. Pour l'état réel, sonder la carte du connecteur (`oto_instance
-    op=verify`) après le retour.
+    """The flow is STARTED, nothing is connected. A 200 here says only one thing:
+    "here is the consent URL to open". The credential will only exist once the
+    provider returns to the callback — a client that treats this response as a
+    connection success will show "connected" to someone who has not yet authorized
+    anything. For the real state, poll the connector's card (`oto_instance
+    op=verify`) after the return.
 
-    `auth_url` est à ouvrir dans un NAVIGATEUR : c'est une page de consentement
-    humaine, pas un appel d'API. Elle est à usage unique et porte un `state` à durée
-    de vie courte — la stocker pour plus tard donne un lien mort.
+    `auth_url` is to be opened in a BROWSER: it is a human consent page,
+    not an API call. It is single-use and carries a short-lived `state` — storing
+    it for later gives a dead link.
 
-    **La forme ne dépend PAS du connecteur** — c'est la raison d'être de ce chemin
-    unique. `auth_url` est commun à tous les flux ; ce qu'un connecteur veut échoter
-    en plus vit sous `details`, à lui, et n'est jamais nécessaire pour agir (Zoho y
-    met `connector`, Salesforce le `scope` retenu). Un client qui lit `details`
-    accepte de savoir quel connecteur il branche : le seam ne le lui demande pas.
-    (Le refus de connecteur, lui, n'arrive jamais ici : un connecteur sans flux
-    déclaré répond 400 `no_connection_flow`.)"""
+    **The shape does NOT depend on the connector** — that is the whole point of this
+    single path. `auth_url` is common to all flows; whatever a connector wants to echo
+    in addition lives under `details`, its own, and is never needed to act (Zoho puts
+    `connector` there, Salesforce the `scope` it kept). A client that reads `details`
+    accepts knowing which connector it is wiring up: the seam does not ask it to.
+    (A connector refusal never arrives here: a connector with no declared flow
+    answers 400 `no_connection_flow`.)"""
 
     auth_url: str
     details: dict = Field(
         default_factory=dict,
-        description="Écho propre au connecteur — jamais requis pour ouvrir "
-                    "`auth_url`. Son contenu appartient au module du connecteur et "
-                    "peut changer sans que ce contrat bouge.")
+        description="Connector-specific echo — never required to open "
+                    "`auth_url`. Its content belongs to the connector's module and "
+                    "may change without this contract moving.")
 
 
 async def _connect(ctx: ResolvedCtx, inp: ConnectorConnectInput) -> dict:
     if not connector_flow.supports(inp.name):
         raise AuthzDenied(
             400, "no_connection_flow",
-            f"« {inp.name} » n'a pas de flux de connexion : son credential se pose "
-            "au formulaire de la fiche.")
+            f"\"{inp.name}\" has no connection flow: its credential is set "
+            "in the card's form.")
     return (await connector_flow.start(inp.name, ctx, inp.params or {})).as_dict()
 
 
@@ -71,13 +71,13 @@ CAPABILITIES += [
         Input=ConnectorConnectInput,
         authz=ORG_MEMBER,
         Output=ConnectorConnectStarted,
-        mcp=None,     # les faces MCP par connecteur existent déjà (oto_zoho_connect…)
+        mcp=None,     # the per-connector MCP faces already exist (oto_zoho_connect…)
         errors=(DeclaredError(400, "no_connection_flow",
-                              "ce connecteur n'a pas de flux de connexion : sa "
-                              "clé se POSE, elle ne se demande pas"),),
+                              "this connector has no connection flow: its "
+                              "key is SET, not requested"),),
         rest=RestBinding(verb="POST", path="/api/me/connectors/{name}/connect"),
-        description=("Démarre le flux de connexion déclaré par ce connecteur et renvoie "
-                     "l'URL de consentement à ouvrir. Les valeurs attendues sont "
-                     "décrites par `connect.params` du catalogue."),
+        description=("Starts the connection flow declared by this connector and returns "
+                     "the consent URL to open. The expected values are "
+                     "described by `connect.params` in the catalog."),
     ),
 ]

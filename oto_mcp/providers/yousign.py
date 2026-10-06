@@ -1,34 +1,34 @@
-"""Déclaration de registre du connecteur `yousign`.
+"""Registry declaration of the `yousign` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# byo (user OU org), résolu via `resolve_credential(want="byo")` comme forager :
-# chacun connecte SA propre clé Yousign — PAS de clé plateforme partagée (une clé
-# agit au nom du compte qui l'a créée). Deux champs : la clé, et l'environnement.
-# Yousign a DEUX HÔTES (sandbox, production) et une clé de l'un est refusée par
-# l'autre : l'environnement se DÉCLARE à la pose, il ne se devine pas. Écrit
-# réellement (envoie une demande de signature à des tiers) : à la différence de
-# gocardless (lecture seule), l'activation notifie des personnes réelles.
+# byo (user OR org), resolved via `resolve_credential(want="byo")` like forager:
+# everyone connects THEIR OWN Yousign key — NO shared platform key (a key
+# acts on behalf of the account that created it). Two fields: the key, and the environment.
+# Yousign has TWO HOSTS (sandbox, production) and a key from one is rejected by
+# the other: the environment is DECLARED at setup, it is not guessed. Really
+# writes (sends a signature request to third parties): unlike
+# gocardless (read-only), activation notifies real people.
 CONNECTOR = _c(
     "yousign", ["yousign"], availability="self_serve",
     auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
-    label="Yousign", help="signature électronique (demandes, statut, document signé)",
+    label="Yousign", help="electronic signature (requests, status, signed document)",
     credential_fields=(
         CredentialField(
-            "key", "Clé d'API Yousign", secret=True,
-            help="Yousign → Développeurs → Clés d'API. La clé agit au nom du compte "
-                 "qui la crée : les invitations partent sous ce nom."),
+            "key", "Yousign API key", secret=True,
+            help="Yousign → Developers → API keys. The key acts on behalf of the account "
+                 "that creates it: invitations go out under that name."),
         CredentialField(
-            "environment", "Environnement", secret=False, required=False,
+            "environment", "Environment", secret=False, required=False,
             choices=("production", "sandbox"),
-            help="« sandbox » pour une clé du bac à sable Yousign ; vide ou "
-                 "« production » sinon. Une clé d'un environnement est refusée "
-                 "par l'autre."),
+            help="\"sandbox\" for a Yousign sandbox key; empty or "
+                 "\"production\" otherwise. A key from one environment is rejected "
+                 "by the other."),
     ),
 )
 
@@ -37,9 +37,9 @@ PUBLISHER = "Yousign"
 LOGO_DOMAIN = "yousign.com"
 
 DESCRIPTION = (
-    "Signature électronique : créer une demande de signature à partir d'un "
-    "PDF avec ses signataires, l'activer (envoie les invitations), suivre son "
-    "statut et récupérer le document signé. Chacun connecte sa propre clé "
-    "Yousign, en production ou dans le bac à sable (à préciser à la pose) — pas "
-    "de clé plateforme partagée."
+    "Electronic signature: create a signature request from a "
+    "PDF with its signers, activate it (sends the invitations), track its "
+    "status and retrieve the signed document. Everyone connects their own "
+    "Yousign key, in production or in the sandbox (to be specified at setup) — no "
+    "shared platform key."
 )

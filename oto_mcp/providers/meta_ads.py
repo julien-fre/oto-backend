@@ -1,25 +1,25 @@
-"""Déclaration de registre du connecteur `meta_ads` — les campagnes Facebook et
-Instagram d'un compte publicitaire Meta, par la Marketing API. LECTURE SEULE.
+"""Registry declaration of the `meta_ads` connector — the Facebook and
+Instagram campaigns of a Meta ad account, through the Marketing API. READ-ONLY.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# Même famille qu'`instagram_meta` (application Meta de l'instance, coordonnées
-# posées au palier plateforme, flux hébergé par oto), mais PAS le même produit :
-# Facebook Login for Business sur graph.facebook.com, un `config_id` au lieu d'une
-# liste de permissions, et un jeton d'utilisateur système (BISU) qui n'expire pas
-# — donc aucune passe de renouvellement.
+# Same family as `instagram_meta` (the instance's Meta application, credentials
+# set at the platform tier, flow hosted by oto), but NOT the same product:
+# Facebook Login for Business on graph.facebook.com, a `config_id` instead of a
+# list of permissions, and a system-user token (BISU) that does not expire
+# — hence no renewal pass.
 #
-# ⚠️ Sans App Review (accès « Advanced »), l'application reste en accès
-# « Standard » : elle fonctionne, mais fortement limitée en débit. La fiche le dit.
+# ⚠️ Without App Review ("Advanced" access), the application stays on
+# "Standard" access: it works, but is heavily rate-limited. The card says so.
 CONNECTOR = _c(
     "meta_ads", ["meta_ads"],
     auth_modes={"byo_user"},
-    # Le consentement naît du compte Facebook de la personne, pas de son org.
+    # Consent comes from the person's Facebook account, not from their org.
     personal_session=True, secret_kind="oauth",
     label="Meta Ads",
     help="Your Facebook & Instagram ad accounts: campaigns, ad sets, ads and their "
@@ -29,7 +29,7 @@ CONNECTOR = _c(
 )
 
 CATEGORY = "Marketing"
-# Qui reçoit l'appel : Meta — son API officielle, son dialogue de consentement.
+# Who receives the call: Meta — its official API, its consent dialog.
 PUBLISHER = "Meta"
 LOGO_DOMAIN = "facebook.com"
 

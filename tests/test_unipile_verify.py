@@ -57,14 +57,14 @@ def test_verify_passes_config_dsn_to_client(monkeypatch):
 def test_verify_raises_without_api_key():
     with pytest.raises(ValueError) as e:
         unipile._verify({})
-    assert "absente" in str(e.value)
+    assert "missing" in str(e.value)
 
 
 def test_verify_raises_when_no_account_connected(monkeypatch):
     _patch_client(monkeypatch, [])
     with pytest.raises(ValueError) as e:
         unipile._verify(_fields("k"))
-    assert "aucun compte connecté" in str(e.value)
+    assert "no connected account" in str(e.value)
 
 
 def test_verify_propagates_provider_error(monkeypatch):

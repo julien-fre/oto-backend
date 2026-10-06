@@ -75,7 +75,7 @@ def _mount(monkeypatch, *, byo: bool = True, is_platform=None, quota=None,
         if not byo:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message="Aucun credential configuré pour toi sur `apollo`"))
+                message="No `apollo` credential configured for you"))
         return MagicMock(key="k-byo")
 
     monkeypatch.setattr(access, "resolve_credential", _resolve)
@@ -145,8 +145,8 @@ def test_the_refusal_names_the_cost_not_the_data_boundary(monkeypatch):
     with pytest.raises(McpError) as e:
         _tool(m, "apollo_reveal_phone")(webhook_url=_WEBHOOK, person_id="p1")
     msg = e.value.error.message or ""
-    assert "9 crédits" in msg
-    assert "séquences" not in msg, "le motif « tes propres données » ne vaut pas ici"
+    assert "9 credits" in msg
+    assert "sequences" not in msg, "le motif « tes propres données » ne vaut pas ici"
 
 
 # --------------------------------------------------------------------------- #
@@ -321,8 +321,8 @@ def test_the_personal_emails_refusal_names_the_cost_not_the_data_boundary(monkey
         _tool(m, "apollo_match_person")(person_id="p1", reveal_personal_emails=True)
     msg = e.value.error.message or ""
     assert "reveal_personal_emails" in msg
-    assert re.search(r"factur|crédit", msg), "le motif est le coût, il doit se dire"
-    assert "séquences" not in msg, "le motif « tes propres données » ne vaut pas ici"
+    assert re.search(r"bills|credit", msg), "le motif est le coût, il doit se dire"
+    assert "sequences" not in msg, "le motif « tes propres données » ne vaut pas ici"
 
 
 def test_a_personal_emails_reveal_never_rides_the_shared_meter(monkeypatch):

@@ -27,7 +27,7 @@ class _Faux:
 def test_le_champ_nomme_est_expurge_et_les_autres_restent():
     r = secret_repr.expurge(_Faux("stripe", SECRET, 3), "cle")
     assert SECRET not in r
-    assert "cle=<expurgé>" in r
+    assert "cle=<redacted>" in r
     assert "nom='stripe'" in r and "n=3" in r
     assert r.startswith("_Faux(")
 
@@ -35,7 +35,7 @@ def test_le_champ_nomme_est_expurge_et_les_autres_restent():
 def test_un_champ_inconnu_LEVE():
     """Le mode d'échec qui compte : une faute de frappe rendrait la protection
     muette — le repr continuerait d'imprimer la clé, et rien ne le dirait."""
-    with pytest.raises(ValueError, match="n'a pas de champ"):
+    with pytest.raises(ValueError, match="has no field"):
         secret_repr.expurge(_Faux("stripe", SECRET), "clé")
 
 

@@ -1,15 +1,14 @@
-## usage — urbanisme & territoire
+## usage — urban planning & territory
 
-l'enveloppe réglementaire et territoriale d'un point ou d'une commune — open data, sans clé. géocode l'adresse d'abord (`foncier_geocode`).
-- `urba_zonage(lat, lon)` — zonage plu/plui opposable (géoportail de l'urbanisme), avec le règlement pdf si dispo
-- `urba_risques(code_insee)` / `urba_argiles(lat, lon)` — risques naturels/technologiques et aléa retrait-gonflement des argiles
-- `urba_qpv(code_insee)` / `urba_qpv_proximite(lat, lon)` — quartiers prioritaires de la ville
-- `urba_epfif(code_insee)` / `urba_socio(code_insee)` — secteurs epfif (île-de-france) et profil socio-démo insee
+the regulatory and territorial envelope of a point or a commune — open data, no key. geocode the address first (`foncier_geocode`).
+- `urba_zonage(lat, lon)` — enforceable plu/plui zoning (géoportail de l'urbanisme), with the pdf regulation if available
+- `urba_risques(code_insee)` / `urba_argiles(lat, lon)` — natural/technological risks and clay shrink-swell hazard
+- `urba_qpv(code_insee)` / `urba_qpv_proximite(lat, lon)` — priority neighbourhoods (quartiers prioritaires de la ville)
+- `urba_epfif(code_insee)` / `urba_socio(code_insee)` — epfif sectors (île-de-france) and insee socio-demographic profile
 
-## usage — qui décide, qui répond, sur une cible publique
+## usage — who decides, who answers, on a public target
 
-sur une commune ou un établissement public, le décideur est un **élu** et l'interlocuteur un **service** : ni l'un ni l'autre n'est un dirigeant sirene, et l'enrichissement payant ne les trouve pas.
+at a commune or a public body, the decision-maker is an **elected official** and the contact a **department**: neither is a sirene executive, and paid enrichment does not find them.
 
-- `urba_annuaire(op="maires", code_commune= | departement=)` — le maire, avec la date de sa prise de fonction (utile pour savoir si l'interlocuteur a changé depuis la dernière campagne). `op="presidents_epci"` + `siren=` (celui de l'epci) pour une intercommunalité — seul le président est rendu, pas les milliers de conseillers communautaires. la date de naissance et le sexe, présents dans le fichier source, ne sont **pas** rendus. rapprocher sur le code insee, jamais sur le nom : « sainte-marie » existe des dizaines de fois.
-- `urba_annuaire(op="services", code_commune= | siren= | type_service=)` — les services publics (~36 000 mairies, préfectures, ddfip…) avec standard, courriel et `responsables` : le **responsable nommé**, sa fonction, souvent son courriel direct. un champ que la source a mal sérialisé sort dans `champs_illisibles`, pas en vide silencieux. ⚠️ servi par opendatasoft : l'egress depuis la box de prod a été vérifié le 11/09/2026.
-
+- `urba_annuaire(op="maires", code_commune= | departement=)` — the mayor, with their start-of-term date (useful to know whether the contact has changed since the last campaign). `op="presidents_epci"` + `siren=` (the epci's) for an intercommunality — only the president is returned, not the thousands of community councillors. the date of birth and sex, present in the source file, are **not** returned. match on the insee code, never on the name: "sainte-marie" exists dozens of times.
+- `urba_annuaire(op="services", code_commune= | siren= | type_service=)` — public services (~36,000 town halls, prefectures, ddfip…) with switchboard, email and `responsables`: the **named head**, their title, often their direct email. a field the source serialized badly comes out in `champs_illisibles`, not as a silent blank. ⚠️ served by opendatasoft: egress from the prod box was verified on 11/09/2026.

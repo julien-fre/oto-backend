@@ -91,7 +91,7 @@ def test_un_credential_incomplet_est_refuse_en_le_disant(coeur, monkeypatch):
                                                         "password": ""})
     with pytest.raises(McpError) as e:
         asyncio.run(_outil(coeur, "planity_list_salons")())
-    assert "mot de passe" in str(e.value)
+    assert "password" in str(e.value)
 
 
 def test_un_refus_d_auth_de_planity_dit_de_reposer_le_credential(coeur):
@@ -107,7 +107,7 @@ def test_un_refus_d_auth_de_planity_dit_de_reposer_le_credential(coeur):
     with pytest.raises(McpError) as e:
         asyncio.run(_outil(coeur, "planity_list_salons")())
     msg = str(e.value)
-    assert "mot de passe" in msg and "credential" in msg
+    assert "password" in msg and "credential" in msg
 
 
 def test_aucun_refus_ne_recrache_le_credential(coeur):

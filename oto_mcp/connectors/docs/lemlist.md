@@ -1,63 +1,63 @@
-## prerequisite — clé api lemlist
+## prerequisite — lemlist api key
 
-crée une clé API dans [lemlist](https://app.lemlist.com) (Settings → Integrations → API), puis colle-la dans oto (page compte / connecteurs).
-- chacun voit SES données : ta propre clé est requise
+create an API key in [lemlist](https://app.lemlist.com) (Settings → Integrations → API), then paste it into oto (account / connectors page).
+- everyone sees THEIR data: your own key is required
 
-## usage — l'API lemlist en entier
+## usage — the whole lemlist API
 
-le connecteur reflète les **141 routes documentées**, sans exception. par famille :
+the connector mirrors the **141 documented routes**, without exception. by family:
 
-**campagnes** — `lemlist_list_campaigns`, `lemlist_campaign`, `lemlist_sequence`, `lemlist_schedule`, `lemlist_get_campaign_stats`
-- « crée une campagne "Q4 outbound", ajoute une étape email à J+3 »
-- « qu'est-ce qui bloque le lancement de cette campagne ? » (sender manquant, DNS, limite journalière)
-- « mets la fenêtre d'envoi sur 8h-12h du lundi au jeudi », « duplique-la pour l'équipe NL »
-- « stats de la campagne X », « compare mes 5 campagnes du trimestre »
+**campaigns** — `lemlist_list_campaigns`, `lemlist_campaign`, `lemlist_sequence`, `lemlist_schedule`, `lemlist_get_campaign_stats`
+- "create a campaign "Q4 outbound", add an email step at D+3"
+- "what is blocking the launch of this campaign?" (missing sender, DNS, daily limit)
+- "set the sending window to 8am-12pm Monday to Thursday", "duplicate it for the NL team"
+- "stats for campaign X", "compare my 5 campaigns this quarter"
 
 **leads** — `lemlist_create_lead`, `lemlist_lead`, `lemlist_enrich*`
-- « ajoute ce lead, trouve son email et vérifie-le »
-- un lead déjà dans une campagne n'est pas une erreur : `lemlist_create_lead` rend `created: false` avec `reason` (`already_in_other_campaign` / `already_in_campaign`) — le contact est déjà pris, compte-le comme tel
-- un lead créé ne dit pas s'il part : `lemlist_create_lead` rend `review_state: "unknown"` (lemlist ne le dit pas, et `isPaused` est écarté car il ne distingue pas la revue du départ). Pour le savoir, `lemlist_campaign(op="reports")` : si `reviewedCount` ou `inSequenceLeadCount` montent avec l'ajout, le lead part
-- « mets ce lead en pause sur toutes les campagnes », « marque-le intéressé »
-- « importe les leads du filtre HubSpot X dans cette campagne »
+- "add this lead, find their email and verify it"
+- a lead already in a campaign is not an error: `lemlist_create_lead` returns `created: false` with `reason` (`already_in_other_campaign` / `already_in_campaign`) — the contact is already taken, count it as such
+- a created lead does not say whether it goes out: `lemlist_create_lead` returns `review_state: "unknown"` (lemlist does not say, and `isPaused` is ruled out because it does not distinguish review from sending). To find out, use `lemlist_campaign(op="reports")`: if `reviewedCount` or `inSequenceLeadCount` go up with the addition, the lead goes out
+- "pause this lead on all campaigns", "mark them as interested"
+- "import the leads from HubSpot filter X into this campaign"
 
-**CRM lemlist** — `lemlist_contact`, `lemlist_company`, `lemlist_team(op="fields")`
-- ⚠️ un **contact** n'est pas un **lead** : le lead est l'exemplaire d'une personne DANS une campagne, le contact est la personne elle-même. c'est la confusion la plus coûteuse ici.
+**lemlist CRM** — `lemlist_contact`, `lemlist_company`, `lemlist_team(op="fields")`
+- ⚠️ a **contact** is not a **lead**: the lead is a person's copy INSIDE a campaign, the contact is the person themselves. this is the most costly confusion here.
 
-**inbox** — `lemlist_inbox` (conversations, brouillons, libellés) et `lemlist_inbox_send`
-**désinscriptions** — `lemlist_unsubscribe` : ⚠️ **trois listes distinctes** (emails/domaines v1, variables v2, drapeau do-not-contact d'un contact) ; écrire dans l'une n'écrit pas dans les autres
-**signaux** — `lemlist_watchlist` : boîtes qui recrutent, levées, changements de poste…
-**le reste** — `lemlist_task`, `lemlist_database` (base partagée + personas), `lemlist_team`, `lemlist_mailbox` (connexion SMTP/IMAP + lemwarm), `lemlist_deliverability`, `lemlist_webhook`, `lemlist_get_activities`
+**inbox** — `lemlist_inbox` (conversations, drafts, labels) and `lemlist_inbox_send`
+**unsubscribes** — `lemlist_unsubscribe`: ⚠️ **three distinct lists** (v1 emails/domains, v2 variables, a contact's do-not-contact flag); writing to one does not write to the others
+**signals** — `lemlist_watchlist`: companies that are hiring, fundraising, job changes…
+**the rest** — `lemlist_task`, `lemlist_database` (shared base + personas), `lemlist_team`, `lemlist_mailbox` (SMTP/IMAP connection + lemwarm), `lemlist_deliverability`, `lemlist_webhook`, `lemlist_get_activities`
 
-## note — ce qui envoie, et ce qui est masqué par défaut
+## note — what sends, and what is hidden by default
 
-quatre tools envoient ou **arment** l'envoi. tous les quatre sont **masqués par défaut** — ils restent appelables, il faut juste les activer (`oto_enable_tool <nom>`) :
+four tools send or **arm** sending. all four are **hidden by default** — they remain callable, you just have to enable them (`oto_enable_tool <name>`):
 
-- `lemlist_campaign_start` — démarrer la campagne déroule la séquence pour tous ses leads lancés
-- `lemlist_launch_lead` — sortir un lead de la revue manuelle
-- `lemlist_inbox_send` — email / LinkedIn / WhatsApp **directs** : ni campagne, ni séquence, ni revue devant eux, le message part
-- `lemlist_campaign_auto_review` — n'envoie rien lui-même, mais fait partir tout lead **ajouté** ensuite : avec lui, `lemlist_create_lead` devient un envoi
+- `lemlist_campaign_start` — starting the campaign runs the sequence for all its launched leads
+- `lemlist_launch_lead` — take a lead out of manual review
+- `lemlist_inbox_send` — **direct** email / LinkedIn / WhatsApp: no campaign, no sequence, no review in front of them, the message goes out
+- `lemlist_campaign_auto_review` — sends nothing itself, but makes every lead **added** afterwards go out: with it, `lemlist_create_lead` becomes a send
 
-tout le reste travaille sur de la donnée ou sur une campagne qui n'a encore rien à envoyer.
+everything else works on data or on a campaign that has nothing to send yet.
 
-⚠️ **une campagne créée par l'API naît `state=running`**, contrairement à ce que son `status` (« draft ») laisse croire — vérifié en live le 31/08. elle n'envoie rien tant qu'aucun lead n'est lancé, mais `lemlist_campaign(op="start")` répond « already running » et c'est `op="pause"` qui est le vrai interrupteur. pour construire tranquillement : créer puis mettre en pause. (une campagne **dupliquée**, elle, naît bien en pause.)
+⚠️ **a campaign created by the API is born `state=running`**, contrary to what its `status` ("draft") suggests — verified live on 31/08. it sends nothing as long as no lead is launched, but `lemlist_campaign(op="start")` answers "already running" and `op="pause"` is the real switch. to build one calmly: create, then pause. (a **duplicated** campaign, on the other hand, is born paused.)
 
-pause ≠ rappel : mettre en pause arrête la progression, pas ce qui est déjà programmé.
+pause ≠ recall: pausing stops progression, not what is already scheduled.
 
-deux surfaces envoient **indirectement**, et restent visibles en le disant : une watch list réglée sur `push_to_campaign` alimente une campagne toute seule, et `lemlist_mailbox(op="lemwarm_start")` envoie — mais dans le réseau de chauffe, jamais vers un prospect.
+two surfaces send **indirectly**, and stay visible by saying so: a watch list set to `push_to_campaign` feeds a campaign on its own, and `lemlist_mailbox(op="lemwarm_start")` sends — but within the warm-up network, never to a prospect.
 
-## note — pièges de l'API lemlist
+## note — lemlist API pitfalls
 
-- **supprimer un lead ≠ le désinscrire**, et lemlist sert les deux par la même route, le défaut étant le doux. ici les deux ops sont nommées à part (`op="delete"` vs `op="unsubscribe"`).
-- **`lemlist_lead(op="pause")` sans `campaign_id` met le lead en pause sur TOUTES les campagnes**, pas sur une.
-- **`lemlist_contact(op="list_manage")` AJOUTE par défaut** ; `action="remove"` retire.
-- supprimer une étape est refusé tant que la campagne tourne — mets-la en pause d'abord.
-- les enrichissements dépensent des crédits (`lemlist_team(op="credits")` les compte).
+- **deleting a lead ≠ unsubscribing them**, and lemlist serves both through the same route, the default being the soft one. here the two ops are named separately (`op="delete"` vs `op="unsubscribe"`).
+- **`lemlist_lead(op="pause")` without `campaign_id` pauses the lead on ALL campaigns**, not just one.
+- **`lemlist_contact(op="list_manage")` ADDS by default**; `action="remove"` removes.
+- deleting a step is refused while the campaign is running — pause it first.
+- enrichments spend credits (`lemlist_team(op="credits")` counts them).
 
-## note — écarts doc↔API relevés en live (31/08/2026)
+## note — doc↔API gaps found live (31/08/2026)
 
-le connecteur les absorbe déjà ; c'est ici pour comprendre un message d'erreur, pas pour agir.
+the connector already absorbs them; this is here to understand an error message, not to act on.
 
-- `lemlist_task(op="create")` exige `record_id` (le contact ou le lead), que la doc lemlist dit optionnel.
-- `lemlist_watchlist(op="create")` : lis `op="filters"` avant — chaque type a ses filtres obligatoires, les valeurs doivent venir de `op="filter_values"`, et les nombres voyagent en chaînes.
-- `lemlist_campaign(op="export_leads")` filtre sur `state="all"` par défaut : le défaut de lemlist rend une liste vide qui se lit « pas de leads ».
-- ce que ce compte ne permet pas (limite de plan, pas un bug) : les étapes LinkedIn (`Upgrade your plan`), les endpoints CRM (`crm_filters`, `crm_users`, `import_crm` → « Endpoint not available » sans intégration CRM), et l'historique d'une watch list (bêta non activée).
+- `lemlist_task(op="create")` requires `record_id` (the contact or the lead), which the lemlist doc says is optional.
+- `lemlist_watchlist(op="create")`: read `op="filters"` first — each type has its own mandatory filters, values must come from `op="filter_values"`, and numbers travel as strings.
+- `lemlist_campaign(op="export_leads")` filters on `state="all"` by default: lemlist's default returns an empty list that reads as "no leads".
+- what this account does not allow (plan limit, not a bug): LinkedIn steps (`Upgrade your plan`), the CRM endpoints (`crm_filters`, `crm_users`, `import_crm` → "Endpoint not available" without a CRM integration), and a watch list's history (beta not enabled).

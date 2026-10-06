@@ -1,44 +1,44 @@
-"""Aide PARTAGÉE « marquer une ligne de coffre rejetée » (oto#25 lot b2).
+"""SHARED helper "mark a vault row as rejected" (oto#25 lot b2).
 
-Extrait de `capabilities/connectors/verify.py` (seul écrivain jusqu'ici, sous les
-noms privés `_FLAGGABLE` / `_record_health`) pour que les modules qui RECONNAISSENT
-eux-mêmes un grant mort (le motif `invalid_grant` et ses équivalents — aujourd'hui
-salesforce et zoho ; google au refresh reste EXCLU, WIP concurrent sur son retour
-OAuth) marquent la ligne RÉELLEMENT servie sans dupliquer le geste
-ni sa garde. `verify.py` importe ce module à la place de ses définitions locales —
-refactor pur, son comportement ne change pas.
+Extracted from `capabilities/connectors/verify.py` (sole writer until now, under the
+private names `_FLAGGABLE` / `_record_health`) so that modules that THEMSELVES
+RECOGNIZE a dead grant (the `invalid_grant` pattern and its equivalents — today
+salesforce and zoho; google on refresh stays EXCLUDED, concurrent WIP on its OAuth
+return) mark the row ACTUALLY served without duplicating the gesture
+or its guard. `verify.py` imports this module in place of its local definitions —
+pure refactor, its behavior does not change.
 
-Deux éléments :
+Two elements:
 
-- `FLAGGABLE_SCOPES` : les paliers dont la portée ne dépasse pas l'org (ou l'unique
-  utilisateur) de celui qui déclenche le marquage. `tenant` et `platform` en sont
-  TOUJOURS exclus — partagés par des orgs entières (ou plusieurs tenants), le hoquet
-  d'un seul appelant n'a pas à les peindre en rouge pour tout le monde. `USER` (scope
-  LEGACY `("user", sub)` d'avant ADR 0033 — plus aucun connecteur vivant n'y écrit
-  depuis le retrait de la fédération MCP, 2026-09-09, mais des lignes y DORMENT)
-  y est aussi narrow que `MEMBER` — un seul utilisateur —
-  et n'atteint jamais `verify.py` (sa cascade ne produit que `MEMBER`/`group`/`org` :
-  cf. `access/cascade.py`, qui yield `CascadeRung("user", credentials_store.MEMBER,
-  …)` — la chaîne "user" y est un MODE, pas un `entity_type`). L'élargir ici ne
-  change donc rien à ce que `verify.py` marque, et l'a laissé couvrir ce scope avec
-  la MÊME garde plutôt qu'une seconde.
-- `record_health(provider, scope, ok, error)` : persiste `meta.health_ko` +
-  `meta.health_reason` (merge, best-effort). `scope=None` → no-op. C'est la fonction
-  qu'utilise `verify.py`, qui gère elle-même le DÉMARQUAGE (`ok=True` efface
-  `health_ko`) — un geste que ce lot (b2) ne touche pas (b3, à venir).
-- `mark_rejected(entity_type, entity_id, provider, account, error)` : la façade que
-  ce lot ajoute pour un module qui connaît son ENTITÉ directement (pas de `ResolvedCtx`
-  ni de scope pré-calculé) — bâtit le scope, applique la MÊME garde, ne démarque
-  jamais (toujours `ok=False`) : marquer un rejet réel n'est jamais un fallback qui
-  avale l'erreur, l'appelant RE-LÈVE toujours après l'avoir appelée.
+- `FLAGGABLE_SCOPES`: the tiers whose scope does not exceed the org (or the single
+  user) of the one triggering the marking. `tenant` and `platform` are ALWAYS
+  excluded — shared by whole orgs (or several tenants), one caller's hiccup must not
+  paint them red for everyone. `USER` (LEGACY scope `("user", sub)` from before
+  ADR 0033 — no live connector has written there since the removal of MCP federation,
+  2026-09-09, but rows lie DORMANT there)
+  is as narrow as `MEMBER` there — a single user —
+  and never reaches `verify.py` (its cascade only produces `MEMBER`/`group`/`org`:
+  see `access/cascade.py`, which yields `CascadeRung("user", credentials_store.MEMBER,
+  …)` — the "user" string there is a MODE, not an `entity_type`). Widening it here
+  therefore changes nothing about what `verify.py` marks, and lets it cover this scope
+  with the SAME guard rather than a second one.
+- `record_health(provider, scope, ok, error)`: persists `meta.health_ko` +
+  `meta.health_reason` (merge, best-effort). `scope=None` → no-op. This is the function
+  used by `verify.py`, which handles UNMARKING itself (`ok=True` clears
+  `health_ko`) — a gesture this lot (b2) does not touch (b3, to come).
+- `mark_rejected(entity_type, entity_id, provider, account, error)`: the facade this
+  lot adds for a module that knows its ENTITY directly (no `ResolvedCtx` nor
+  pre-computed scope) — builds the scope, applies the SAME guard, never unmarks
+  (always `ok=False`): marking a real rejection is never a fallback that swallows the
+  error, the caller ALWAYS RE-RAISES after calling it.
 
-- `suivre_appel(trace, quota_epuise)` : le suivi AU MOMENT DE L'APPEL — un refus
-  `quota_exhausted` marque la ligne servie `no_quota`, le premier succès l'efface
-  (cf. la section « Crédits épuisés » plus bas).
+- `suivre_appel(trace, quota_epuise)`: tracking AT CALL TIME — a `quota_exhausted`
+  refusal marks the served row `no_quota`, the first success clears it
+  (see the "Credits exhausted" section below).
 
-Lu par `connectors/readiness.py` (via `access.credential_rejection_for`, qui lit
-`credentials_store.credential_health`) — jamais l'inverse, ce module ne connaît pas
-ses lecteurs.
+Read by `connectors/readiness.py` (via `access.credential_rejection_for`, which reads
+`credentials_store.credential_health`) — never the other way around, this module does
+not know its readers.
 """
 from __future__ import annotations
 
@@ -48,28 +48,28 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import credentials_store, providers
 
-# Paliers dont on accepte de FLAGUER la clé — cf. docstring du module ci-dessus.
+# Tiers whose key we accept to FLAG — see the module docstring above.
 FLAGGABLE_SCOPES = (credentials_store.USER, credentials_store.MEMBER,
                     "group", credentials_store.ORG)
 
-#: Le verdict « la clé authentifie, le compte est à sec » — même nom que celui de la
-#: sonde (`connectors.verify.NO_QUOTA`), défini au coffre qui le range et le relit.
+#: The verdict "the key authenticates, the account is dry" — same name as the probe's
+#: (`connectors.verify.NO_QUOTA`), defined in the vault that stores and re-reads it.
 NO_QUOTA = credentials_store.NO_QUOTA_VERDICT
 
 
 def record_health(provider: str, scope: "tuple | None", ok: bool,
                   error: "str | None", verdict: "str | None" = None) -> None:
-    """Persiste l'état de santé du credential testé (`meta.health_ko` + raison +
-    `meta.health_verdict`) — lu par `status_for` (fiche) et
-    `access.credential_rejection_for`, donc par le verdict `ready` de la carte
-    connecteur. Merge (n'écrase rien), best-effort. `scope` = `(entity_type,
-    entity_id, account)` de la ligne RÉELLEMENT testée/servie ; `None` (clé partagée
-    au-delà de la garde) → on ne flague pas. `verdict` = le classement de l'échec
-    (`no_quota`, `unauthorized`…) quand il est connu : c'est lui qui fait dire à la
-    carte « recharge » plutôt que « repose la clé ».
+    """Persists the health state of the tested credential (`meta.health_ko` + reason +
+    `meta.health_verdict`) — read by `status_for` (sheet) and
+    `access.credential_rejection_for`, hence by the connector card's `ready` verdict.
+    Merge (overwrites nothing), best-effort. `scope` = `(entity_type,
+    entity_id, account)` of the row ACTUALLY tested/served; `None` (key shared
+    beyond the guard) → we don't flag. `verdict` = the failure's classification
+    (`no_quota`, `unauthorized`…) when known: it is what makes the card say
+    "top up" rather than "set the key again".
 
-    ⚠️ Seule fonction qui DÉMARQUE (`ok=True` efface `health_ko`/`health_reason`/
-    `health_verdict`) — `mark_rejected` ci-dessous ne l'appelle qu'avec `ok=False`."""
+    ⚠️ The only function that UNMARKS (`ok=True` clears `health_ko`/`health_reason`/
+    `health_verdict`) — `mark_rejected` below only calls it with `ok=False`."""
     if scope is None:
         return
     try:
@@ -77,49 +77,49 @@ def record_health(provider: str, scope: "tuple | None", ok: bool,
             scope[0], scope[1], provider, scope[2],
             {"health_ko": (not ok), "health_reason": (error if not ok else None),
              "health_verdict": (verdict if not ok else None)})
-    # noqa: SILENT — dette déclarée : le flag de santé non écrit devrait se journaliser (#424, verdict C)
-    except Exception:  # noqa: BLE001 — la santé est un bonus, jamais bloquant
+    # noqa: SILENT — declared debt: the unwritten health flag should be logged (#424, verdict C)
+    except Exception:  # noqa: BLE001 — health is a bonus, never blocking
         pass
 
 
 def mark_rejected(entity_type: Optional[str], entity_id: Optional[str],
                   provider: str, account: str, error: "str | None",
                   verdict: "str | None" = None) -> None:
-    """Marque `health_ko` sur `(entity_type, entity_id, provider, account)` — jamais
-    sur un scope hors `FLAGGABLE_SCOPES` (tenant/plateforme), jamais si `entity_id`
-    est absent. Pour un module qui RECONNAÎT lui-même un grant mort sur la ligne
-    qu'il sait être la bonne (jamais par déduction générique) — l'appelant RE-LÈVE
-    toujours l'exception d'origine juste après : marquer n'est jamais un fallback
-    qui avale l'erreur réelle."""
+    """Marks `health_ko` on `(entity_type, entity_id, provider, account)` — never
+    on a scope outside `FLAGGABLE_SCOPES` (tenant/platform), never if `entity_id`
+    is absent. For a module that ITSELF RECOGNIZES a dead grant on the row
+    it knows to be the right one (never by generic deduction) — the caller ALWAYS
+    RE-RAISES the original exception right after: marking is never a fallback
+    that swallows the real error."""
     if entity_type not in FLAGGABLE_SCOPES or not entity_id:
         return
     record_health(provider, (entity_type, entity_id, account or ""), False, error,
                   verdict)
 
 
-# --- Crédits épuisés, vus AU MOMENT DE L'APPEL (option (a), 25/09/2026) ---------
+# --- Credits exhausted, seen AT CALL TIME (option (a), 2026-09-25) ---------------
 #
-# La sonde `oto_instance op=verify` classait déjà un 402 en `no_quota` — mais personne
-# ne la rejoue avant de travailler. Un agent tombait sur « crédits épuisés » en plein
-# travail, la carte du connecteur restait verte, et personne ne rechargeait : 13
-# signaux (theirstack, AI Ark…) avant ce lot. Désormais le refus d'un APPEL marque la
-# clé qui l'a servi, et le premier appel réussi sur cette même clé efface la marque.
+# The `oto_instance op=verify` probe already classified a 402 as `no_quota` — but
+# nobody replays it before working. An agent would hit "credits exhausted" mid-work,
+# the connector's card stayed green, and nobody topped up: 13 signals (theirstack,
+# AI Ark…) before this lot. Now a CALL's refusal marks the key that served it, and the
+# first successful call on that same key clears the mark.
 #
-# Coût sur le chemin chaud : le relevé d'appel porte déjà la ligne servie
-# (`access.resolve` → `credential_row`) ; l'effacement n'écrit qu'une fois par clé et
-# par process (`_SANS_MARQUE`), sous condition (la marque doit être `no_quota`), et
-# hors de la boucle d'événements.
+# Cost on the hot path: the call record already carries the served row
+# (`access.resolve` → `credential_row`); clearing writes only once per key and per
+# process (`_SANS_MARQUE`), conditionally (the mark must be `no_quota`), and
+# outside the event loop.
 
-#: Clés dont on sait, depuis le démarrage de ce process, qu'elles ne portent pas de
-#: marque `no_quota` (un effacement conditionnel y est déjà passé). Une marque posée
-#: les en retire. Perdu au redémarrage : on repaie alors UNE écriture conditionnelle.
+#: Keys known, since this process started, to carry no `no_quota` mark (a
+#: conditional clear already went through). A mark being set removes them from it.
+#: Lost on restart: we then pay ONE conditional write again.
 _SANS_MARQUE: set = set()
 
 
 def _ligne(row) -> Optional[tuple]:
-    """`(entity_type, entity_id, porteur, account)` de la ligne servie, porteur
-    normalisé (une délégation range sa clé sous le porteur : cf. `verify.py`), ou None
-    si la ligne n'est pas marquable (tenant, plateforme, pas d'entité)."""
+    """`(entity_type, entity_id, carrier, account)` of the served row, carrier
+    normalized (a delegation stores its key under the carrier: see `verify.py`), or None
+    if the row is not markable (tenant, platform, no entity)."""
     if not row:
         return None
     entity_type, entity_id, provider, account = row
@@ -130,8 +130,8 @@ def _ligne(row) -> Optional[tuple]:
 
 
 def marquer_quota_epuise(row, message: "str | None") -> None:
-    """Sync (DB) : marque `no_quota` la ligne servie — no-op hors `FLAGGABLE_SCOPES`
-    (une clé plateforme ou tenant n'est JAMAIS peinte en rouge pour tout le monde)."""
+    """Sync (DB): marks the served row `no_quota` — no-op outside `FLAGGABLE_SCOPES`
+    (a platform or tenant key is NEVER painted red for everyone)."""
     ligne = _ligne(row)
     if ligne is None:
         return
@@ -140,16 +140,16 @@ def marquer_quota_epuise(row, message: "str | None") -> None:
 
 
 def effacer_quota_epuise(row) -> None:
-    """Sync (DB) : sur un appel RÉUSSI, lève une marque `no_quota` de la ligne servie
-    — une seule écriture conditionnelle par clé et par process, jamais une autre
-    marque (un rejet `unauthorized` ne se lève qu'à la sonde ou à la repose)."""
+    """Sync (DB): on a SUCCESSFUL call, lifts a `no_quota` mark from the served row
+    — a single conditional write per key and per process, never another
+    mark (an `unauthorized` rejection is only lifted by the probe or by re-setting)."""
     ligne = _ligne(row)
     if ligne is None or ligne in _SANS_MARQUE:
         return
     try:
         credentials_store.clear_health_if_verdict(*ligne, verdict=NO_QUOTA)
-    # noqa: SILENT — dette déclarée : l'effacement non écrit laisse la carte rouge jusqu'à la sonde (#424, verdict C)
-    except Exception:  # noqa: BLE001 — la santé est un bonus, jamais bloquant
+    # noqa: SILENT — declared debt: an unwritten clear leaves the card red until the probe (#424, verdict C)
+    except Exception:  # noqa: BLE001 — health is a bonus, never blocking
         return
     _SANS_MARQUE.add(ligne)
 
@@ -160,10 +160,10 @@ def _a_effacer(row) -> bool:
 
 
 async def suivre_appel(trace: Optional[dict], quota_epuise: "str | None") -> None:
-    """Après un appel d'outil : `quota_epuise` = le message du refus `quota_exhausted`
-    (la clé servie est marquée), `None` = succès (une marque `no_quota` de la clé
-    servie est levée). Hors de la boucle, best-effort : le suivi de santé ne doit
-    jamais changer le résultat de l'appel qu'il observe."""
+    """After a tool call: `quota_epuise` = the message of the `quota_exhausted` refusal
+    (the served key is marked), `None` = success (a `no_quota` mark on the
+    served key is lifted). Outside the loop, best-effort: health tracking must
+    never change the result of the call it observes."""
     row = (trace or {}).get("credential_row")
     if row is None:
         return

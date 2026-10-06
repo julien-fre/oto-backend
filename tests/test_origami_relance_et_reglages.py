@@ -37,9 +37,9 @@ def test_le_refus_dit_de_relancer_UNE_fois_et_de_faire_verifier():
     with pytest.raises(McpError) as e:
         O._refuse_si_rien_n_a_ete_fait({"id": "run-x", "status": "completed", "actions": []})
     msg = e.value.error.message
-    assert "relance origami_campaign_create" in msg
-    assert "UNE fois" in msg and "l'API ne voit pas" in msg
-    assert "ne relance pas en boucle" in msg
+    assert "retry origami_campaign_create" in msg
+    assert "ONCE" in msg and "the API does not see" in msg
+    assert "do not retry in a loop" in msg
 
 
 def test_la_creation_ne_promet_plus_des_reglages_persistes():

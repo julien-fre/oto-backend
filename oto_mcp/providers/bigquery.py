@@ -1,29 +1,29 @@
-"""Déclaration de registre du connecteur `bigquery` — Google BigQuery, sur le compte Google.
+"""Registry declaration of the `bigquery` connector — Google BigQuery, on the Google account.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE. La forme commune
-aux services Google vit chez le porteur du compte (`providers/google.service`) —
-ici, ce qui distingue CELUI-CI (septième service, 2026-10-02).
+Sole home of its entry: `providers/__init__.py` AGGREGATES it. The shape shared
+by the Google services lives with the account holder (`providers/google.service`) —
+here, only what distinguishes THIS one (seventh service, 2026-10-02).
 """
 from __future__ import annotations
 
 from .google import service
 
-# Google BigQuery : la personne autorise CE service sur son compte Google, depuis cette
-# carte (scope `bigquery`) ; les requêtes voient exactement ce que SES droits IAM
-# voient, et sont facturées au projet qu'elle désigne. Lecture seule tenue par les
-# tools (dry run SELECT exigé, plafond d'octets facturés sur chaque requête).
+# Google BigQuery: the person authorizes THIS service on their Google account, from this
+# card (scope `bigquery`); queries see exactly what THEIR IAM rights
+# see, and are billed to the project they designate. Read-only enforced by the
+# tools (SELECT dry run required, billed-bytes cap on every query).
 CONNECTOR = service(
     "bigquery",
     label="Google BigQuery",
-    help="ton entrepôt BigQuery — explorer projets, datasets et tables, lancer des "
-         "requêtes SQL en lecture ; scope `bigquery`, accordé sur ton compte Google",
+    help="your BigQuery warehouse — explore projects, datasets and tables, run "
+         "read-only SQL queries; scope `bigquery`, granted on your Google account",
     href="https://console.cloud.google.com/bigquery",
 )
 
 CATEGORY = "Dev"
 LOGO_DOMAIN = "cloud.google.com"
 DESCRIPTION = (
-    "Google BigQuery, sur ton compte Google : parcourir projets, datasets et schémas, "
-    "aperçu gratuit d'une table, requêtes SQL en lecture seule (SELECT) avec estimation "
-    "du coût et plafond d'octets facturés. Tes droits IAM BigQuery s'appliquent."
+    "Google BigQuery, on your Google account: browse projects, datasets and schemas, "
+    "free table preview, read-only SQL queries (SELECT) with cost estimate "
+    "and billed-bytes cap. Your BigQuery IAM rights apply."
 )

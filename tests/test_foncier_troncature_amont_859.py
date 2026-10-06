@@ -27,14 +27,14 @@ def test_la_coupe_sur_les_lignes_LUES_ne_parle_pas_de_lignes_rendues():
     res = _marquer_troncature({"total": 2, "lignes_lues": 60}, 60, compte=60)
     a = res["avertissement_troncature"]
     assert res["tronque"] is True
-    assert "60 lignes ont été LUES" in a
-    assert "RENDUES" not in a, "l'ancien texte parlait de lignes rendues — c'était faux"
+    assert "60 rows were READ" in a
+    assert "RETURNED" not in a, "l'ancien texte parlait de lignes rendues — c'était faux"
 
 
 def test_l_avertissement_dit_les_DEUX_nombres_et_ce_que_chacun_est():
     """Sans les deux, l'appelant ne peut pas savoir lequel il a sous les yeux."""
     a = _marquer_troncature({"total": 2}, 60, compte=60)["avertissement_troncature"]
-    assert "`total` = 2" in a and "PARMI ces 60" in a
+    assert "`total` = 2" in a and "AMONG these 60" in a
 
 
 def test_l_avertissement_nomme_le_GESTE_qui_donne_le_vrai_chiffre():
@@ -46,7 +46,7 @@ def test_l_avertissement_nomme_le_GESTE_qui_donne_le_vrai_chiffre():
 
 def test_l_ordre_est_NOMME_parce_que_c_est_la_cause():
     a = _marquer_troncature({"total": 2}, 60, compte=60)["avertissement_troncature"]
-    assert "AMONT du seuillage" in a
+    assert "UPSTREAM of the thresholding" in a
 
 
 def test_une_coupe_SANS_seuillage_garde_son_texte_d_origine():
@@ -54,14 +54,14 @@ def test_une_coupe_SANS_seuillage_garde_son_texte_d_origine():
     message est juste et ne doit pas changer — un lot qui corrige un cas ne doit pas
     réécrire le cas voisin qui allait bien."""
     a = _marquer_troncature({"total": 200}, 200)["avertissement_troncature"]
-    assert "nombre de lignes RENDUES" in a and "AMONT" not in a
+    assert "number of rows RETURNED" in a and "UPSTREAM" not in a
 
 
 def test_un_compte_EGAL_au_total_retombe_sur_le_texte_simple():
     """Si la coupe porte sur le même nombre, il n'y a pas deux chiffres à
     distinguer : inventer une nuance ici ajouterait du bruit."""
     a = _marquer_troncature({"total": 60}, 60, compte=60)["avertissement_troncature"]
-    assert "nombre de lignes RENDUES" in a
+    assert "number of rows RETURNED" in a
 
 
 def test_sous_la_borne_rien_n_est_annonce():

@@ -1,16 +1,16 @@
-## prerequisite — ta clé api attio
+## prerequisite — your attio api key
 
-attio expose une clé api par workspace. va dans les [réglages développeur de ton workspace attio](https://app.attio.com), section **api**, et crée une clé (access token).
-- colle-la dans oto sur ton compte (`/account`), connecteur **attio**
-- pas de clé plateforme partagée : chacun pose la sienne
-- pense à cocher les droits records + notes + tasks + lists selon ce que tu veux faire ; pour toucher au schéma (attributs, options, étapes de deal), le droit `object_configuration:read-write` (`list_configuration:read-write` pour une liste)
-- note : le connecteur mcp attio officiel est souvent préféré ; oto garde le code pour les implems custom
+attio exposes one api key per workspace. go to your [attio workspace's developer settings](https://app.attio.com), **api** section, and create a key (access token).
+- paste it into oto on your account (`/account`), **attio** connector
+- no shared platform key: everyone sets their own
+- remember to tick the records + notes + tasks + lists permissions depending on what you want to do; to touch the schema (attributes, options, deal stages), the `object_configuration:read-write` permission (`list_configuration:read-write` for a list)
+- note: the official attio mcp connector is often preferred; oto keeps the code for custom implementations
 
-## usage — ce que tu peux faire
+## usage — what you can do
 
-pilote ton crm attio (companies, people, deals) + notes, tasks, lists et comments depuis claude.
-- « cherche l'entreprise acme » → `attio_record(op="search", object="companies")`, puis `attio_record(op="get", object="companies")` pour le détail
-- « crée un contact jean dupont chez acme » → `attio_record(op="create", object="people")`
-- « ajoute une note sur ce deal » → `attio_note(op="create")` (titre + markdown, attaché au record)
-- « liste mes tâches en cours » → `attio_task(op="list")`, et `attio_task(op="create")` pour en ajouter une
-- « ajoute l'étape négociation à mes deals » → `attio_attribute(op="statuses", target="objects", identifier="deals", attribute="stage")` pour relire l'existant, puis `attio_attribute(op="create_status", title=…)` ; même geste pour une option de sélection (`op="create_option"`) ou un attribut neuf (`op="create"`, `definition`). ⚠️ écrit le schéma du crm, et l'api attio ne sait pas le défaire
+drive your attio crm (companies, people, deals) + notes, tasks, lists and comments from claude.
+- "look up the company acme" → `attio_record(op="search", object="companies")`, then `attio_record(op="get", object="companies")` for the details
+- "create a contact jean dupont at acme" → `attio_record(op="create", object="people")`
+- "add a note on this deal" → `attio_note(op="create")` (title + markdown, attached to the record)
+- "list my open tasks" → `attio_task(op="list")`, and `attio_task(op="create")` to add one
+- "add the negotiation stage to my deals" → `attio_attribute(op="statuses", target="objects", identifier="deals", attribute="stage")` to re-read what exists, then `attio_attribute(op="create_status", title=…)`; same gesture for a select option (`op="create_option"`) or a new attribute (`op="create"`, `definition`). ⚠️ writes the crm schema, and the attio api cannot undo it

@@ -109,7 +109,7 @@ def test_extract_rejects_empty_or_oversized_batch():
     from oto_mcp.mcp_errors import McpError
     key, cls = _with_fake_client()
     with key, cls:
-        with pytest.raises(McpError, match="au moins une"):
+        with pytest.raises(McpError, match="at least one"):
             _tool("tavily_extract").fn(urls=[])
         with pytest.raises(McpError, match="20 URLs"):
             _tool("tavily_extract").fn(urls=[f"https://a.com/{i}" for i in range(21)])
@@ -123,7 +123,7 @@ def test_search_asks_for_a_basic_answer_by_default():
 
 
 @pytest.mark.parametrize("status,needle", [(432, "plan"), (433, "pay-as-you-go"),
-                                           (401, "clé API")])
+                                           (401, "API key")])
 def test_upstream_refusals_become_actionable_tool_errors(status, needle):
     from oto_mcp.mcp_errors import McpError
     from oto.tools.common.errors import UpstreamHTTPError

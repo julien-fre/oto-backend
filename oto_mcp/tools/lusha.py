@@ -1,16 +1,16 @@
 """Lusha — contact search + enrich (email/phone reveal) in one call.
 
-Clé résolue par appel via `access.resolve_api_key("lusha")` — provider
-byo-only (user key posée sur /account, ou credential partagé de l'org
-active). Pas de clé plateforme.
+Key resolved per call via `access.resolve_api_key("lusha")` — byo-only
+provider (user key set on /account, or the active org's shared credential).
+No platform key.
 
-Un seul endpoint câblé pour l'instant : search-and-enrich (jusqu'à 100
-contacts par appel, identifiés par email/LinkedIn/nom+société/id Lusha).
-Chaque contact peut échouer INDIVIDUELLEMENT (`results[].error` :
-NOT_FOUND, COMPLIANCE_RESTRICTED, ENRICH_FAILED) sans faire échouer l'appel
-entier — ce n'est PAS un mode bulk "boucle sur du single-record" comme
-folk : Lusha accepte nativement un lot dans une seule requête HTTP,
-donc aucun `_bulk_run` ici.
+Only one endpoint wired for now: search-and-enrich (up to 100
+contacts per call, identified by email/LinkedIn/name+company/Lusha id).
+Each contact can fail INDIVIDUALLY (`results[].error`:
+NOT_FOUND, COMPLIANCE_RESTRICTED, ENRICH_FAILED) without failing the whole
+call — this is NOT a "loop over single-record" bulk mode like
+folk: Lusha natively accepts a batch in a single HTTP request,
+hence no `_bulk_run` here.
 """
 from __future__ import annotations
 
@@ -32,15 +32,15 @@ def _bad(msg: str) -> McpError:
 
 
 def _verify(fields: dict, config: dict | None = None) -> dict:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth+quota`.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth+quota`.
 
-    `GET /account/usage`. Ce que la doc Lusha établit : « the Account Usage
+    `GET /account/usage`. What the Lusha docs establish: "the Account Usage
     endpoint itself has no charge for checking your balance (it's a utility
-    endpoint for monitoring) » — écrit noir sur blanc, pas seulement une
-    absence de compteur.
+    endpoint for monitoring)" — written in black and white, not just an
+    absence of counter.
 
-    Le solde (`remaining`) distingue une clé morte d'un compte à sec —
-    recharger n'est pas reconnecter.
+    The balance (`remaining`) tells a dead key from an empty account —
+    topping up is not reconnecting.
     """
     from oto.tools.lusha.client import LushaClient
 
@@ -48,13 +48,13 @@ def _verify(fields: dict, config: dict | None = None) -> dict:
     restant = infos.get("remaining")
     if not isinstance(restant, int):
         raise RuntimeError(
-            f"Lusha a répondu sans solde de crédits lisible : {str(infos)[:200]}")
+            f"Lusha answered without a readable credit balance: {str(infos)[:200]}")
     if restant <= 0:
         raise connector_verify.QuotaEpuise(
-            "La clé Lusha est bonne, mais le compte est à sec (0 crédit "
-            "restant). Recharge le compte chez Lusha — reconnecter n'y "
-            "changerait rien.")
-    return {"quota": {"restant": restant, "unite": "crédits"}}
+            "The Lusha key is good, but the account is empty (0 credits "
+            "left). Top up the account at Lusha — reconnecting would "
+            "change nothing.")
+    return {"quota": {"restant": restant, "unite": "credits"}}
 
 
 def register(mcp: FastMCP) -> None:
@@ -105,16 +105,16 @@ def register(mcp: FastMCP) -> None:
                 incomplete rather than dropping them.
         """
         if not contacts:
-            raise _bad("contacts : au moins un contact requis.")
+            raise _bad("contacts: at least one contact required.")
         if len(contacts) > _MAX_CONTACTS_PER_CALL:
             raise _bad(
-                f"{len(contacts)} contacts — Lusha plafonne search-and-enrich "
-                f"à {_MAX_CONTACTS_PER_CALL} par appel, découper en plusieurs appels.")
+                f"{len(contacts)} contacts — Lusha caps search-and-enrich "
+                f"at {_MAX_CONTACTS_PER_CALL} per call, split into several calls.")
         if reveal:
             unknown = set(reveal) - _REVEAL_VALUES
             if unknown:
                 raise _bad(
-                    f"reveal : valeur(s) inconnue(s) {sorted(unknown)} — "
-                    f"attendu parmi {sorted(_REVEAL_VALUES)}.")
+                    f"reveal: unknown value(s) {sorted(unknown)} — "
+                    f"expected among {sorted(_REVEAL_VALUES)}.")
         return _client().search_and_enrich(
             contacts, reveal=reveal, include_partial_profiles=include_partial_profiles)

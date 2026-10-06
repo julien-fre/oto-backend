@@ -1,20 +1,20 @@
-## prerequisite — ta clé api promptwatch
+## prerequisite — your promptwatch api key
 
-promptwatch expose une clé api par projet (ou par organisation). va dans **settings → api keys** sur le [dashboard promptwatch](https://promptwatch.com), et crée une clé.
-- colle-la dans oto sur ton compte (`/account`), connecteur **promptwatch**
-- byo uniquement : ta clé ou celle partagée de ton org, pas de clé plateforme (pas d'accord commercial otomata↔promptwatch)
-- si ta clé est **org-level** (couvre plusieurs projets), renseigne aussi le **project id** — utilise `promptwatch_project` pour lister les projets accessibles et récupérer son id. une clé **project-level** est déjà scopée, laisse ce champ vide.
+promptwatch exposes one api key per project (or per organization). go to **settings → api keys** on the [promptwatch dashboard](https://promptwatch.com), and create a key.
+- paste it into oto on your account (`/account`), **promptwatch** connector
+- byo only: your key or your org's shared one, no platform key (no otomata↔promptwatch commercial agreement)
+- if your key is **org-level** (covers several projects), also fill in the **project id** — use `promptwatch_project` to list the accessible projects and retrieve its id. a **project-level** key is already scoped, leave this field empty.
 
-## usage — visibilité ia de ta marque
+## usage — your brand's ai visibility
 
-suit comment ta marque/produit apparaît dans les réponses de chatgpt, claude, gemini… sur un ensemble de prompts organisés en monitors, avec analytics de visibilité/sentiment/citations et génération de contenu pour combler les manques.
-- « crée un monitor pour suivre "crm alternatives" » → `promptwatch_monitor` (op `create`), puis `promptwatch_prompt` (op `create` ou `bulk_create`) pour y attacher des prompts
-- « comment évolue notre visibilité ce mois-ci » → `promptwatch_visibility` (op `time_series`), et `op="competitor_heatmap"` pour se comparer aux concurrents
-- « que disent les réponses ia sur nous, positif ou négatif » → `promptwatch_response` (op `sentiment_distribution` ou `sentiment_time_series`)
-- « quels sites sont cités le plus souvent » → `promptwatch_citation` (op `top_pages`, `domains_over_time`, `llm_sources`…)
-- « quels prompts on ne couvre pas encore, et propose du contenu » → `promptwatch_content` (op `gap_prompts`, `gap_recommendations`, puis `create` en mode CREATE ou OPTIMIZE)
-- « publie ce contenu sur notre cms » → `promptwatch_publishing` (op `push_draft` puis `publish_live`, après avoir listé les connexions cms avec `op="list_connections"`)
-- « où en sont les créneaux de contenu planifiés par l'agent » → `promptwatch_content_agent` (op `list_slots`, `accept_slot`, `publish_slot_now`)
-- « des pubs concurrentes apparaissent dans les réponses ia ? » → `promptwatch_ads`, et pour l'e-commerce (position des produits, top marchands) → `promptwatch_shopping`
-- « organise mes prompts par tag ou par thème » → `promptwatch_taxonomy` (tags/topics), `promptwatch_persona` (angle d'audience) et `promptwatch_brand` (concurrents suivis)
-- « suivi de pages précises (les nôtres ou d'un concurrent) citées par l'ia » → `promptwatch_page_tracker`, distinct du crawl de site (`promptwatch_sitemap`, santé seo incluse)
+tracks how your brand/product appears in the answers of chatgpt, claude, gemini… over a set of prompts organized into monitors, with visibility/sentiment/citations analytics and content generation to fill the gaps.
+- "create a monitor to track "crm alternatives"" → `promptwatch_monitor` (op `create`), then `promptwatch_prompt` (op `create` or `bulk_create`) to attach prompts to it
+- "how is our visibility evolving this month" → `promptwatch_visibility` (op `time_series`), and `op="competitor_heatmap"` to compare against competitors
+- "what do ai answers say about us, positive or negative" → `promptwatch_response` (op `sentiment_distribution` or `sentiment_time_series`)
+- "which sites are cited most often" → `promptwatch_citation` (op `top_pages`, `domains_over_time`, `llm_sources`…)
+- "which prompts aren't covered yet, and suggest content" → `promptwatch_content` (op `gap_prompts`, `gap_recommendations`, then `create` in CREATE or OPTIMIZE mode)
+- "publish this content on our cms" → `promptwatch_publishing` (op `push_draft` then `publish_live`, after listing the cms connections with `op="list_connections"`)
+- "where do the content slots planned by the agent stand" → `promptwatch_content_agent` (op `list_slots`, `accept_slot`, `publish_slot_now`)
+- "are competitor ads showing up in ai answers?" → `promptwatch_ads`, and for e-commerce (product position, top merchants) → `promptwatch_shopping`
+- "organize my prompts by tag or by topic" → `promptwatch_taxonomy` (tags/topics), `promptwatch_persona` (audience angle) and `promptwatch_brand` (tracked competitors)
+- "tracking of specific pages (ours or a competitor's) cited by ai" → `promptwatch_page_tracker`, distinct from the site crawl (`promptwatch_sitemap`, seo health included)

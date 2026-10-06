@@ -1,36 +1,36 @@
-"""Ce que la chaîne de grants DÉSIGNE — la résolution de 0053, isolée (lot L7).
+"""What the grants chain POINTS TO — the 0053 resolution, isolated (batch L7).
 
-Une lecture impossible LÈVE : elle ne signifie jamais « clé absente, essayer plus
-bas ». Seul l'observateur de comparaison peut absorber une erreur de cette chaîne.
+A read that is impossible RAISES: it never means "key absent, try further
+down". Only the comparison observer may absorb an error from this chain.
 
-**Pourquoi ce module existe à part.** C'est la moitié du lot qui SURVIT : quand
-`walk_cascade` sera retiré (PR 3), l'observation et son compteur disparaissent, mais
-ceci reste — c'est la résolution servie. Les tenir dans le même fichier aurait mélangé
-ce qu'on installe et ce qu'on jette.
+**Why this module exists separately.** It is the half of the batch that SURVIVES: when
+`walk_cascade` is removed (PR 3), the observation and its counter disappear, but
+this stays — it is the served resolution. Keeping them in the same file would have mixed
+what we install with what we throw away.
 
-**Ce qu'il calcule**, tel que [0053-D2](blueprint) le pose :
+**What it computes**, as [0053-D2](blueprint) lays it out:
 
-1. l'**ensemble atteignable** — les instances des scopes dont le sujet est MEMBRE,
-   plus celles qui lui descendent par une arête de `grants` vivante ;
-2. la **désignation** — l'appel qui nomme une instance et le binding de procédure
-   priment, mais ils court-circuitent déjà la marche en amont (`resolve`), donc ce
-   qui reste ici est la **proximité** : `user > group > org > platform`.
+1. the **reachable set** — the instances of the scopes the subject is a MEMBER of,
+   plus those that come down to them through a live `grants` edge;
+2. the **designation** — the call that names an instance and the procedure binding
+   take precedence, but they already short-circuit the walk upstream (`resolve`), so
+   what remains here is **proximity**: `user > group > org > platform`.
 
-Il n'y a aucune restriction par-dessus : 0053-D1 — restreindre, c'est PLACER
-l'ownership au bon niveau, jamais poser une interdiction par-dessus (la table
-`connector_acl` n'est plus lue depuis le 24/09/2026).
+There is no restriction on top: 0053-D1 — restricting means PLACING
+ownership at the right level, never laying a prohibition on top (the `connector_acl`
+table has not been read since 2026-09-24).
 
-**Deux règles de méthode, tenues mécaniquement :**
+**Two method rules, held mechanically:**
 
-1. **Aucune règle n'est recopiée.** Les crans du connecteur sont lus à leur SOURCE —
-   le registre (`is_byo_user`, `org_shareable`, `auth_modes`), la suspension d'une
-   instance, les arêtes de `grants`. Ce module écrit une TRAVERSÉE différente, pas
-   une seconde copie des gates. Même discipline que
-   `connectors/instance_visibility.py`, qui inverse déjà le walker sans le cloner.
-2. **La désignation porte sur le PALIER, pas sur le compte.** Le choix de compte
-   multi-identités est un cran de l'instance (0053-D9), pas une autorisation :
-   `rung_for_pick` le délègue à la SONDE que `resolve` a composée, et ne le rejoue
-   jamais.
+1. **No rule is copied.** The connector's notches are read at their SOURCE —
+   the registry (`is_byo_user`, `org_shareable`, `auth_modes`), an instance's
+   suspension, the `grants` edges. This module writes a different TRAVERSAL, not
+   a second copy of the gates. Same discipline as
+   `connectors/instance_visibility.py`, which already inverts the walker without cloning it.
+2. **The designation concerns the TIER, not the account.** The choice of a
+   multi-identity account is a notch of the instance (0053-D9), not an authorization:
+   `rung_for_pick` delegates it to the PROBE that `resolve` composed, and never
+   replays it.
 """
 from __future__ import annotations
 
@@ -45,63 +45,63 @@ from . import heritage, scope
 
 logger = logging.getLogger(__name__)
 
-# Les deux NUANCES du trou — « le coffre accorde, la chaîne ne sait pas le dire ».
-# Elles vivent ici parce que c'est la résolution qui les CONSTATE ; `chain_shadow` les
-# reprend telles quelles dans son vocabulaire de classes, sans les redéclarer (une
-# valeur servie déclarée deux fois finit par diverger).
+# The two NUANCES of the hole — "the vault grants, the chain cannot say so".
+# They live here because it is the resolution that OBSERVES them; `chain_shadow` takes
+# them over as they are in its class vocabulary, without redeclaring them (a
+# served value declared twice ends up diverging).
 FREE_TIER_HORS_MODELE = "free_tier_hors_modele"
 PARTAGE_HORS_MODELE = "partage_hors_modele"
 
-# ── L'ensemble atteignable, et sa désignation ─────────────────────────────────
+# ── The reachable set, and its designation ────────────────────────────────────
 
 @dataclass(frozen=True)
 class ChainPick:
-    """Ce que la chaîne DÉSIGNERAIT. `mode` parle le même vocabulaire que
-    `CascadeRung.mode`, pour que la comparaison soit une égalité et pas une
-    traduction. `via` dit POURQUOI l'instance est atteignable — appartenance au
-    scope propriétaire (D1, premier membre de phrase) ou arête de grant (second)."""
+    """What the chain WOULD DESIGNATE. `mode` speaks the same vocabulary as
+    `CascadeRung.mode`, so that the comparison is an equality and not a
+    translation. `via` says WHY the instance is reachable — membership of the
+    owning scope (D1, first clause) or a grant edge (second)."""
     mode: str                       # user | group | org | tenant | platform
     entity_type: Optional[str]
     entity_id: Optional[str]
-    via: str = "appartenance"       # appartenance | grant
+    via: str = "appartenance"       # appartenance (membership) | grant
     group_id: Optional[int] = None
 
 
 def _group_ids(sub: str, org: Optional[int]) -> list[int]:
-    """Toutes les équipes du sujet dans l'org de contexte — **toutes**, pas l'active.
-    C'est là que 0053-D2 élargit, et l'élargissement est le sujet de la mesure."""
+    """All of the subject's teams in the context org — **all** of them, not the active one.
+    This is where 0053-D2 widens, and the widening is the subject of the measurement."""
     if org is None:
         return []
     return sorted(int(g["group_id"]) for g in group_store.list_groups_for_user(sub, org))
 
 
 def _platform_pick(sub: str, provider: str, org: Optional[int]) -> "tuple[Optional[ChainPick], Optional[str]]":
-    """Le palier plateforme vu par la CHAÎNE SEULE, et rien d'autre.
+    """The platform tier seen by the CHAIN ALONE, and nothing else.
 
-    Rend `(pick, hors_modele)`. À la différence de `grants_chain.platform_rung`,
-    aucun gate `CHAIN_CONNECTORS` : L7 fait de la chaîne l'unique autorité, donc la
-    question « et pour un connecteur non basculé ? » est précisément celle qu'on
-    mesure. Les arêtes sont lues par la MÊME fonction que le chemin servi
-    (`db_grants.edges_for`) — pas une requête recopiée.
+    Returns `(pick, hors_modele)`. Unlike `grants_chain.platform_rung`,
+    no `CHAIN_CONNECTORS` gate: L7 makes the chain the sole authority, so the
+    question "what about a connector that has not been switched over?" is precisely the one
+    we measure. Edges are read by the SAME function as the served path
+    (`db_grants.edges_for`) — not a copied query.
 
-    **`hors_modele` nomme la NUANCE du trou**, et ce n'est plus un booléen. Une ligne
-    du coffre peut accorder de deux façons que la chaîne ne sait pas encore dire, et
-    elles n'ont ni le même remède ni la même lecture :
+    **`hors_modele` names the NUANCE of the hole**, and it is no longer a boolean. A vault
+    row can grant in two ways the chain cannot yet express, and
+    they have neither the same remedy nor the same reading:
 
-    - **ouverte à tous** (`share_mode='open'`, aucune allowlist) ⟹ il manque l'arête
-      « tout le monde » ;
-    - **fermée sur une allowlist** (`share_down`) ⟹ il manque les arêtes NOMINATIVES
-      de cette allowlist. Le semis de L5 ne couvrait que `CHAIN_CONNECTORS`, donc
-      toute clé fermée hors de cette liste est dans ce cas.
+    - **open to all** (`share_mode='open'`, no allowlist) ⟹ the "everyone" edge
+      is missing;
+    - **closed on an allowlist** (`share_down`) ⟹ the NAMED edges of that
+      allowlist are missing. L5's seeding only covered `CHAIN_CONNECTORS`, so
+      every closed key outside that list falls in this case.
 
-    Les distinguer n'est pas un raffinement : sans la seconde, une divergence
-    parfaitement explicable tombait en `inconnu` — la classe qui doit rester à zéro
-    pour autoriser le retrait — et fermait la porte pour une raison fausse. Vécu le
-    2026-08-29 : 17 observations sur `aiark` et `apify`, deux clés FERMÉES accordées
-    à une org, sans une seule arête.
+    Distinguishing them is not a refinement: without the second, a perfectly
+    explainable divergence fell into `inconnu` — the class that must stay at zero
+    to allow the removal — and closed the door for a wrong reason. Seen on
+    2026-08-29: 17 observations on `aiark` and `apify`, two CLOSED keys granted
+    to an org, without a single edge.
 
-    La forme est lue au coffre, à sa source, sans rejouer la règle d'accès de
-    l'ancien chemin : on regarde ce que l'instance EST, pas qui elle autorise."""
+    The shape is read from the vault, at its source, without replaying the access rule of
+    the old path: we look at what the instance IS, not who it authorizes."""
     nominatifs = grants_chain.grantee_scopes(sub, org)
     hors_modele = None
     for inst in credentials_store.list_platform_instances(provider):
@@ -113,24 +113,24 @@ def _platform_pick(sub: str, provider: str, org: Optional[int]) -> "tuple[Option
                 if (e["grantee_kind"], e["grantee_id"]) == grants_chain.EVERYONE
                 and e.get("revoked_at") is None]
         if not edges:
-            # Rien à dire sur CETTE instance : on note de quelle nuance de trou il
-            # s'agirait si l'ancien chemin, lui, accordait. La première rencontrée
-            # gagne — même ordre que l'ancien chemin (récente d'abord).
+            # Nothing to say about THIS instance: we note which nuance of hole it
+            # would be if the old path did grant. The first one met
+            # wins — same order as the old path (most recent first).
             if hors_modele is None:
                 ouverte = (inst.get("share_mode") != "closed"
                            and not (inst.get("share_down") or []))
                 hors_modele = (FREE_TIER_HORS_MODELE if ouverte
                                else PARTAGE_HORS_MODELE)
             continue
-        # Une arête qui NOMME l'appelant prime sur « tout le monde », vivante ou non :
-        # sans cette priorité, révoquer l'accès d'une personne sur une clé ouverte ne
-        # couperait rien (l'arête « tout le monde » la re-accorderait aussitôt) — le
-        # mode de panne exact que L5 avait éliminé en refusant sans repli.
+        # An edge that NAMES the caller takes precedence over "everyone", live or not:
+        # without this priority, revoking a person's access on an open key would
+        # cut nothing (the "everyone" edge would immediately re-grant it) — the
+        # exact failure mode L5 had eliminated by refusing without fallback.
         if nomme:
             if any(e.get("revoked_at") is None for e in nomme):
                 return (ChainPick("platform", credentials_store.PLATFORM,
                                   inst["label"], via="grant"), hors_modele)
-            # Toutes révoquées : la chaîne REFUSE cette instance, sans repli (D6).
+            # All revoked: the chain REFUSES this instance, without fallback (D6).
             return (None, hors_modele)
         if tous:
             return (ChainPick("platform", credentials_store.PLATFORM, inst["label"],
@@ -140,30 +140,30 @@ def _platform_pick(sub: str, provider: str, org: Optional[int]) -> "tuple[Option
 
 def _paliers(sub: str, provider: str, org: Optional[int], want: str,
              *, group=scope._UNSET):
-    """Les paliers ATTEIGNABLES, dans l'ordre, en **générateur** — et la nuance du
-    trou en valeur de retour (PEP 380, lue par `StopIteration.value`).
+    """The REACHABLE tiers, in order, as a **generator** — and the nuance of the
+    hole as the return value (PEP 380, read through `StopIteration.value`).
 
-    ⚠️ **Générateur et non liste, et ce n'est pas un détail de style.** Une liste
-    sonderait TOUS les paliers à chaque appel — le membre, chaque équipe, l'org, le
-    tenant, plus les instances plateforme — sur le chemin le plus chaud du produit,
-    pour un résultat dont on ne consomme presque toujours que le premier élément. Le
-    générateur rend le coût nominal identique à celui d'aujourd'hui : on ne sonde le
-    palier suivant que si le précédent n'a rien rendu.
+    ⚠️ **Generator and not list, and this is not a style detail.** A list
+    would probe ALL tiers on every call — the member, each team, the org, the
+    tenant, plus the platform instances — on the product's hottest path,
+    for a result of which almost always only the first element is consumed. The
+    generator keeps the nominal cost identical to today's: the next tier is only
+    probed if the previous one returned nothing.
 
-    ⚠️ **Et ce n'est pas une forme AJOUTÉE : c'est celle que la traversée avait
-    perdue.** Le chemin historique (`walk_cascade`) est un générateur — un compte
-    nommé absent au palier membre passait la main au palier org, contrat écrit dans
-    son code. La chaîne l'a remplacé par un `return` au premier palier qui DÉTIENT une
-    clé, et la lecture, elle, résout au fetch : un miss devenait un refus sec au lieu
-    d'un repli (#673). Céder au lieu de retourner rend le repli, sans rien réécrire de
-    la lecture.
+    ⚠️ **And this is not an ADDED shape: it is the one the traversal had
+    lost.** The historical path (`walk_cascade`) is a generator — a named account
+    missing at the member tier passed the hand to the org tier, a contract written in
+    its code. The chain replaced it with a `return` at the first tier that HOLDS a
+    key, and the read resolves at fetch: a miss became a flat refusal instead of
+    a fallback (#673). Yielding instead of returning restores the fallback, without rewriting anything in
+    the read.
 
-    Les crans du connecteur (byo_user, org-partageable, palier plateforme déclaré,
-    instance suspendue) sont lus à leur source — ce sont des propriétés de
-    l'instance, pas des autorisations, et ils valent des deux côtés de la fenêtre.
+    The connector's notches (byo_user, org-shareable, declared platform tier,
+    suspended instance) are read at their source — they are properties of the
+    instance, not authorizations, and they hold on both sides of the window.
     """
     porteur = providers.credential_provider(provider)
-    # Projet PARTAGÉ (#480) : mêmes gardes que le walker, lues au même verdict.
+    # SHARED project (#480): same guards as the walker, read at the same verdict.
     cles = heritage.du_contexte(sub, org)
     org_cles = heritage.org_partagee(org, cles)
     if org is not None and providers.is_byo_user(porteur):
@@ -172,13 +172,13 @@ def _paliers(sub: str, provider: str, org: Optional[int], want: str,
                 porteur, account=None)
                 and not credentials_store.instance_suspended(
                     credentials_store.MEMBER, credentials_store.member_id(org, sub), porteur)):
-            # Le drapeau free-tier ne sert QUE si la chaîne se tait.
+            # The free-tier flag is only used if the chain stays silent.
             yield ChainPick("user", credentials_store.MEMBER,
                             credentials_store.member_id(org, sub))
     if porteur in providers.ORG_SHAREABLE_PROVIDERS:
-        # À proximité égale, l'équipe ACTIVE d'abord — c'est la voie la plus
-        # favorable au sens de D5, et ça rend la désignation déterministe quand le
-        # sujet appartient à plusieurs équipes qui détiennent toutes une clé.
+        # At equal proximity, the ACTIVE team first — it is the most
+        # favourable path in the sense of D5, and it makes the designation deterministic when the
+        # subject belongs to several teams that all hold a key.
         active = scope.current_group(sub) if group is scope._UNSET else group
         active = active() if callable(active) else active
         gids = _group_ids(sub, org)
@@ -186,22 +186,22 @@ def _paliers(sub: str, provider: str, org: Optional[int], want: str,
             gids = [int(active)] + [g for g in gids if g != int(active)]
         if cles is not None and cles.groupe_herite is not None \
                 and cles.groupe_herite not in gids:
-            gids.append(cles.groupe_herite)   # l'équipe propriétaire, prêtée (#480)
+            gids.append(cles.groupe_herite)   # the owning team, lent (#480)
         for gid in gids:
             if group_store.has_group_secret(gid, porteur):
                 yield ChainPick("group", "group", str(gid), group_id=gid)
         if org_cles is not None:
             if org_store.has_org_secret(org_cles, porteur):
                 yield ChainPick("org", "org", str(org_cles))
-        # Étage TENANT (L-clés PR 1) : le même que dans le walker, lu à la même source
-        # (`rung_tenant` — le sub qualifié, jamais l'org). Sans lui, chaque clé tenant
-        # servie compterait une divergence `inconnu` que ce lot aurait créée.
+        # TENANT tier (L-keys PR 1): the same as in the walker, read from the same source
+        # (`rung_tenant` — the qualified sub, never the org). Without it, every served tenant
+        # key would count an `inconnu` divergence that this batch would have created.
         slug = tenant_vault.rung_tenant(sub)
         if slug is not None:
             if (credentials_store.has_credential(credentials_store.TENANT, slug, porteur)
                     and not credentials_store.instance_suspended(
                         credentials_store.TENANT, slug, porteur)):
-                # Même arête que le walker : MUETTE ⟹ appartenance ; REFUSE ⟹ suite.
+                # Same edge as the walker: SILENT ⟹ membership; REFUSES ⟹ move on.
                 verdict = grants_chain.tenant_rung(slug, porteur, org)
                 if verdict is None or verdict.granted:
                     yield ChainPick("tenant", credentials_store.TENANT, slug,
@@ -212,28 +212,28 @@ def _paliers(sub: str, provider: str, org: Optional[int], want: str,
             pick, hors_modele = _platform_pick(sub, porteur, org_cles)
             if pick is not None:
                 yield pick
-            # La nuance ne se calcule QUE si la chaîne se tait — le `_platform_pick`
-            # ci-dessus est le seul passage qui lit les instances plateforme, et elle
-            # en sort. La rendre ici la garde attachée à sa passe : la sortir du
-            # générateur demanderait une seconde lecture sur le connecteur le plus
-            # trafiqué (une clé ouverte EST le cas où la chaîne se tait).
+            # The nuance is only computed if the chain stays silent — the `_platform_pick`
+            # above is the only pass that reads the platform instances, and it comes
+            # out of it. Returning it here keeps it attached to its pass: taking it out of the
+            # generator would require a second read on the busiest
+            # connector (an open key IS the case where the chain stays silent).
             return hors_modele
     return None
 
 
 def chain_verdict(sub: str, provider: str, *, org: Optional[int],
                   want: str = "auto") -> "tuple[Optional[ChainPick], Optional[str]]":
-    """L'instance que 0053-D2 DÉSIGNERAIT, **et** la nuance du trou si elle se tait.
+    """The instance that 0053-D2 WOULD DESIGNATE, **and** the nuance of the hole if it is silent.
 
-    La désignation reste ce qu'elle était : le PREMIER palier atteignable. Ce que la
-    traversée a regagné (#673) sert à la LECTURE, pas à la comparaison — le relevé de
-    fenêtre compare des désignations, et lui donner une liste ferait bouger ce qu'il
-    mesure au moment où on corrige autre chose.
+    The designation stays what it was: the FIRST reachable tier. What the
+    traversal regained (#673) serves the READ, not the comparison — the window
+    report compares designations, and handing it a list would shift what it
+    measures at the moment we fix something else.
 
-    On ne consomme donc qu'un élément : les paliers suivants ne sont jamais sondés si
-    le premier répond. La nuance, elle, est la valeur de RETOUR du générateur — elle
-    n'existe que lorsqu'il s'épuise sans rien céder, c'est-à-dire exactement quand la
-    chaîne se tait.
+    So only one element is consumed: the following tiers are never probed if
+    the first one answers. The nuance is the RETURN value of the generator — it
+    only exists when it is exhausted without yielding anything, that is exactly when the
+    chain is silent.
     """
     paliers = _paliers(sub, provider, org, want)
     try:
@@ -244,44 +244,44 @@ def chain_verdict(sub: str, provider: str, *, org: Optional[int],
 
 def chain_paliers(sub: str, provider: str, *, org: Optional[int],
                   want: str = "auto", group=scope._UNSET):
-    """Les paliers atteignables DANS L'ORDRE — ce que la lecture parcourt.
+    """The reachable tiers IN ORDER — what the read walks through.
 
-    C'est la surface que `rung_for_picks` consomme : elle s'arrête au premier palier
-    qui RÉPOND, là où `chain_verdict` s'arrête au premier qui EXISTE. La différence
-    entre les deux est tout le sujet de #673.
+    This is the surface `rung_for_picks` consumes: it stops at the first tier
+    that ANSWERS, where `chain_verdict` stops at the first one that EXISTS. The difference
+    between the two is the whole subject of #673.
     """
     return _paliers(sub, provider, org, want, group=group)
 
 
 def chain_winner(sub: str, provider: str, *, org: Optional[int],
                  want: str = "auto") -> Optional[ChainPick]:
-    """`chain_verdict` sans son drapeau — la vue qui se lit, et celle que la PR 2
-    promouvra en résolution servie."""
+    """`chain_verdict` without its flag — the view that gets read, and the one PR 2
+    will promote to the served resolution."""
     return chain_verdict(sub, provider, org=org, want=want)[0]
 
 
 
 def rung_for_picks(paliers, probe, sub: str, provider: str, org: Optional[int]):
-    """Le premier palier qui RÉPOND, en parcourant les paliers atteignables.
+    """The first tier that ANSWERS, walking through the reachable tiers.
 
-    ⚠️ **C'est le repli, et il était mort.** La chaîne désigne un palier sur la
-    PRÉSENCE d'un credential (`has_credential(account=None)` — n'importe quel compte) ;
-    la lecture, elle, résout au FETCH, avec la sélection de compte nommé. Les deux ne
-    répondent donc pas toujours la même chose : un compte nommé absent au palier
-    membre existe « en présence » et manque « au fetch ». Le chemin historique passait
-    alors la main au palier suivant — « l'org a eu, le membre non », contrat écrit
-    dans son code. Désigner UN palier puis rendre `None` sur un miss transformait ce
-    repli en **refus sec** (#673).
+    ⚠️ **This is the fallback, and it was dead.** The chain designates a tier on the
+    PRESENCE of a credential (`has_credential(account=None)` — any account);
+    the read resolves at FETCH, with named-account selection. The two therefore do not
+    always answer the same thing: a named account missing at the member tier
+    exists "in presence" and is missing "at fetch". The historical path then
+    passed the hand to the next tier — "the org had it, the member didn't", a contract
+    written in its code. Designating ONE tier and then returning `None` on a miss turned this
+    fallback into a **flat refusal** (#673).
 
-    On parcourt donc, et le coût reste celui d'avant : le générateur ne sonde le
-    palier suivant que si le précédent n'a rien rendu, et le cas nominal s'arrête au
-    premier.
+    So we walk through, and the cost stays what it was: the generator only probes the
+    next tier if the previous one returned nothing, and the nominal case stops at the
+    first.
     """
     return next(rungs_for_picks(paliers, probe, sub, provider, org), None)
 
 
 def rungs_for_picks(paliers, probe, sub: str, provider: str, org: Optional[int]):
-    """Les réponses de la sonde, sans consommer les paliers suivants en avance."""
+    """The probe's answers, without consuming the following tiers in advance."""
     for pick in paliers:
         rung = rung_for_pick(pick, probe, sub, provider, org)
         if rung is not None:
@@ -290,21 +290,21 @@ def rungs_for_picks(paliers, probe, sub: str, provider: str, org: Optional[int])
 
 def rung_for_pick(pick: Optional[ChainPick], probe, sub: str, provider: str,
                   org: Optional[int]):
-    """Le barreau SERVI correspondant à la désignation de la chaîne, ou None.
+    """The SERVED rung corresponding to the chain's designation, or None.
 
-    **On ne réécrit pas le FETCH, on réutilise les sondes.** Le walker faisait deux
-    choses : traverser (l'ordre des barreaux, les gates) et lire (la sonde, avec sa
-    sélection de compte multi-identités, sa suspension, son déchiffrement du seul
-    gagnant). L7 ne remplace que la **traversée** ; la lecture reste la sonde que
-    `resolve` a déjà composée. C'est ce qui fait qu'inverser l'autorité ne rejoue
-    aucune règle de compte — donc n'en fait diverger aucune.
+    **We do not rewrite the FETCH, we reuse the probes.** The walker did two
+    things: traverse (the order of the rungs, the gates) and read (the probe, with its
+    multi-identity account selection, its suspension, its decryption of the winner
+    only). L7 only replaces the **traversal**; the read stays the probe that
+    `resolve` already composed. This is what makes inverting the authority replay
+    no account rule — hence makes none of them diverge.
 
-    Rend un `cascade.CascadeRung`, la même forme que ce que `cascade_winner` rendait :
-    tout ce qui suit dans `resolve` (garde du compte nommé, quota, `ResolvedCredential`)
-    est alors inchangé, ligne pour ligne."""
+    Returns a `cascade.CascadeRung`, the same shape as what `cascade_winner` returned:
+    everything that follows in `resolve` (named-account guard, quota, `ResolvedCredential`)
+    is then unchanged, line for line."""
     if pick is None:
         return None
-    from . import cascade  # import tardif : `cascade` est un frère, pas une dépendance
+    from . import cascade  # late import: `cascade` is a sibling, not a dependency
     if pick.mode == "user":
         hit = probe.member(sub, org, provider)
         if hit is None:
@@ -325,20 +325,20 @@ def rung_for_pick(pick: Optional[ChainPick], probe, sub: str, provider: str,
         payload, account = hit if isinstance(hit, tuple) else (hit, "")
         return cascade.CascadeRung("org", "org", pick.entity_id, payload, account)
     if pick.mode == "tenant":
-        # ⚠️ **Ce barreau manquait, et son absence était INVISIBLE.** Sans lui, une
-        # désignation `tenant` retombait dans la branche plateforme ci-dessous : la
-        # sonde `probe.tenant` n'était jamais appelée, la clé SERVIE devenait celle de
-        # la plateforme, et `tenant_budget.enforce` — conditionné à `win.mode ==
-        # "tenant"` chez l'appelant — était sauté. Le shadow, lui, comparait deux
-        # DÉSIGNATIONS et voyait un `accord` : le drapeau aurait annulé en silence la
-        # pièce 1 des L-clés, qui est en prod. Dormant tant qu'aucune clé de tenant
-        # n'est posée ; la première pose l'aurait réveillé.
-        # Le `via` vient de la DÉSIGNATION (la chaîne a déjà lu l'arête tenant→org) :
-        # le relire ici en ferait une seconde source, et deux sources d'un même
-        # verdict finissent par diverger. Il est TRADUIT dans le vocabulaire du
-        # walker — qui dit `local` là où la chaîne dit `appartenance` — parce que le
-        # barreau servi doit être celui que le walker aurait produit, à l'octet :
-        # `status.py` lit `via == "local"` pour dire « clé perso configurée ».
+        # ⚠️ **This rung was missing, and its absence was INVISIBLE.** Without it, a
+        # `tenant` designation fell through into the platform branch below: the
+        # `probe.tenant` probe was never called, the SERVED key became the platform's,
+        # and `tenant_budget.enforce` — conditioned on `win.mode ==
+        # "tenant"` in the caller — was skipped. The shadow compared two
+        # DESIGNATIONS and saw an `accord`: the flag would have silently cancelled
+        # piece 1 of L-keys, which is in prod. Dormant as long as no tenant key
+        # is set; the first one set would have woken it.
+        # The `via` comes from the DESIGNATION (the chain already read the tenant→org edge):
+        # re-reading it here would make a second source, and two sources of one
+        # verdict end up diverging. It is TRANSLATED into the walker's
+        # vocabulary — which says `local` where the chain says `appartenance` — because the
+        # served rung must be the one the walker would have produced, byte for byte:
+        # `status.py` reads `via == "local"` to mean "personal key configured".
         hit = probe.tenant(pick.entity_id, provider)
         if hit is None:
             return None
@@ -346,10 +346,10 @@ def rung_for_pick(pick: Optional[ChainPick], probe, sub: str, provider: str,
         return cascade.CascadeRung("tenant", credentials_store.TENANT, pick.entity_id,
                                    payload, account,
                                    via="grant" if pick.via == "grant" else "local")
-    # Palier plateforme : la sonde rend le grant résolu (label + secret + quota). La
-    # chaîne a déjà dit QUELLE instance ; la sonde de `resolve` lit celle que l'ancien
-    # chemin lirait. Tant que les deux désignent la même, c'est la même clé — et quand
-    # elles divergent, la fenêtre de shadow l'a dit avant qu'on bascule.
+    # Platform tier: the probe returns the resolved grant (label + secret + quota). The
+    # chain already said WHICH instance; `resolve`'s probe reads the one the old
+    # path would read. As long as both designate the same one, it is the same key — and when
+    # they diverge, the shadow window said so before we switched over.
     grant = probe.platform(sub, provider, org)
     if not grant:
         return None

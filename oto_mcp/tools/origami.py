@@ -1,43 +1,43 @@
-"""Origami — campagnes email + LinkedIn : tables de leads, campagnes, lancement, stats.
+"""Origami — email + LinkedIn campaigns: lead tables, campaigns, launch, stats.
 
-Wrappe `oto.tools.origami.client.OrigamiClient` (API v2 `origami.chat/api/v2`, Bearer
-`og_live_…`). keyed `api_key`, byo-only (pas de clé plateforme) : l'org connecte SON
-compte Origami — les crédits d'enrichissement et les envois sont les siens.
+Wraps `oto.tools.origami.client.OrigamiClient` (API v2 `origami.chat/api/v2`, Bearer
+`og_live_…`). keyed `api_key`, byo-only (no platform key): the org connects ITS
+Origami account — enrichment credits and sends are its own.
 
-⚠️ **NOTE DE CONCEPTION — premier montage tiers dont l'écriture ENVOIE.** Les montages
-HTTP « génériques » d'oto sont pensés lecture-seule (le connecteur `http` s'annonce
-GET-only au catalogue) ; les connecteurs qui écrivent (folk, lemlist, notion…) écrivent
-dans un CRM ou un outil, pas vers des tiers. La valeur d'Origami est dans le POST :
-créer une table depuis un CSV, upserter des lignes, faire rédiger une campagne par
-l'agent Origami, et **la lancer** — ce qui envoie des emails et des messages LinkedIn
-à des personnes réelles, à l'échelle, sans retour arrière. C'est donc le premier
-connecteur tiers d'oto dont l'écriture sort de la plateforme vers des inconnus ; le
-mainteneur décide si c'est acceptable. Tout est implémenté proprement et CHAQUE tool
-mutant est gaté par la convention `dry_run` oto-wide (la validation tourne, l'appel
-final est sauté, la réponse porte `dry_run: true` + un aperçu) ; le lancement est
-`dry_run=True` PAR DÉFAUT — il faut passer `dry_run=False` pour envoyer.
+⚠️ **DESIGN NOTE — first third-party integration whose write SENDS.** oto's
+"generic" HTTP integrations are designed read-only (the `http` connector announces itself as
+GET-only in the catalog); connectors that write (folk, lemlist, notion…) write
+into a CRM or a tool, not toward third parties. Origami's value is in the POST:
+create a table from a CSV, upsert rows, have the Origami agent draft a campaign,
+and **launch it** — which sends emails and LinkedIn messages
+to real people, at scale, with no way back. It is therefore oto's first
+third-party connector whose write leaves the platform toward strangers; the
+maintainer decides whether that is acceptable. Everything is implemented cleanly and EVERY mutating
+tool is gated by the oto-wide `dry_run` convention (validation runs, the final
+call is skipped, the response carries `dry_run: true` + a preview); launching is
+`dry_run=True` BY DEFAULT — you must pass `dry_run=False` to send.
 
-Faits d'API vérifiés en live les 16–17/08/2026 et portés par les docstrings des
-tools (l'agent doit les lire, il n'y a pas d'autre endroit) :
-- listes en enveloppe `{items[], nextCursor}` (50/page) — `origami_rows` suit
-  `nextCursor` côté serveur jusqu'à `max_pages` ;
-- l'upsert n'accepte que des colonnes `input`, adressées par leur SLUG (tirets) ;
-  slug inconnu → 400 `UNKNOWN_FIELDS` — on lit les colonnes AVANT d'écrire ;
-- l'upload est du JSON (base64), jamais du multipart ; un CSV `mode: "table"` CRÉE
-  une table ;
-- la campagne se crée par un run AGENTIQUE (202 `{agent, run}`, à suivre via
-  `origami_run_get`) ; pas de `GET /campaigns` global (lister par table) et pas de
-  `GET /runs/{id}` (le run se lit sous son agent) ; `GET /sequences?workspaceId=`
-  est la seule vue qui voit toutes les séquences d'un workspace ;
-- `blockPriorContacts=True` supprime de la campagne toute personne DÉJÀ enrôlée
-  auparavant, MÊME dans un brouillon supprimé jamais envoyé ;
-- le lancement peut répondre 200 avec `launch.blocked.missingChannels` : aucun compte
-  émetteur pour ces canaux, RIEN n'est parti ;
-- la suppression est en deux temps, et le 2e temps peut répondre 200 sans supprimer :
-  on re-GET et on n'affirme « supprimée » que sur un 404.
+API facts verified live on 16–17/08/2026 and carried by the tool
+docstrings (the agent must read them, there is nowhere else):
+- lists in an envelope `{items[], nextCursor}` (50/page) — `origami_rows` follows
+  `nextCursor` server-side up to `max_pages`;
+- upsert only accepts `input` columns, addressed by their SLUG (dashes);
+  unknown slug → 400 `UNKNOWN_FIELDS` — we read the columns BEFORE writing;
+- upload is JSON (base64), never multipart; a CSV with `mode: "table"` CREATES
+  a table;
+- the campaign is created by an AGENTIC run (202 `{agent, run}`, to follow via
+  `origami_run_get`); no global `GET /campaigns` (list by table) and no
+  `GET /runs/{id}` (the run is read under its agent); `GET /sequences?workspaceId=`
+  is the only view that sees all the sequences of a workspace;
+- `blockPriorContacts=True` removes from the campaign anyone ALREADY enrolled
+  before, EVEN in a deleted draft that was never sent;
+- launch can answer 200 with `launch.blocked.missingChannels`: no sender
+  account for those channels, NOTHING went out;
+- deletion is two-step, and the 2nd step can answer 200 without deleting:
+  we re-GET and only claim "deleted" on a 404.
 
-Les appels au client sont écrits en clair (`c.list_tables(…)`) : c'est ce qui les rend
-vérifiables par la sonde version-skew (`test_tools_client_methods_exist`).
+Client calls are written in plain sight (`c.list_tables(…)`): that is what makes them
+verifiable by the version-skew probe (`test_tools_client_methods_exist`).
 """
 from __future__ import annotations
 
@@ -53,13 +53,13 @@ from mcp.types import ErrorData, INVALID_PARAMS, INVALID_REQUEST
 from .. import access
 from ..connectors import verify as connector_verify
 
-# Plafond de l'API par appel d'upsert (au-delà : 400).
+# API cap per upsert call (beyond: 400).
 _UPSERT_MAX_ROWS = 100
-# Pages suivies au maximum par `origami_rows(op="list")` — 50 lignes/page ⇒ 20 pages =
-# 1 000 lignes, la taille raisonnable d'un retour d'outil ; au-delà, l'agent relance
-# avec le `cursor` rendu.
+# Maximum pages followed by `origami_rows(op="list")` — 50 rows/page ⇒ 20 pages =
+# 1,000 rows, a reasonable size for a tool return; beyond that, the agent calls again
+# with the returned `cursor`.
 _ROWS_MAX_PAGES_CAP = 20
-# Lignes montrées dans l'aperçu d'un upload CSV en dry_run.
+# Rows shown in the preview of a CSV upload in dry_run.
 _CSV_PREVIEW_ROWS = 5
 
 
@@ -72,37 +72,37 @@ def _upstream_message(e) -> str:
     code = body.get("code") if isinstance(body, dict) else None
     detail = body.get("error") if isinstance(body, dict) else body
     if status in (401, 403):
-        return (f"Origami a rejeté la clé API (HTTP {status}, {code}) — vérifie la clé "
-                "`og_live_…` configurée sur ce connecteur (Origami : Settings → API keys).")
+        return (f"Origami rejected the API key (HTTP {status}, {code}) — check the "
+                "`og_live_…` key configured on this connector (Origami: Settings → API keys).")
     if status == 402:
-        return (f"Origami : crédits ou plan insuffisant (402, {code}) — {detail}. "
-                "Recharge le compte, ou réduis la portée (enrich=False, moins de lignes).")
+        return (f"Origami: insufficient credits or plan (402, {code}) — {detail}. "
+                "Top up the account, or reduce the scope (enrich=False, fewer rows).")
     if status == 404:
-        return f"Origami : ressource introuvable (404, {code}) — vérifie l'id. {detail}"
+        return f"Origami: resource not found (404, {code}) — check the id. {detail}"
     if status == 400 and code == "UNKNOWN_FIELDS":
-        return (f"Origami a refusé des clés de ligne (400 UNKNOWN_FIELDS) : {detail} — "
-                "les clés d'`rows` et `match_columns` sont les SLUGS des colonnes d'entrée "
-                "(`origami_tables(op='columns')` → items[].slug, avec des tirets), jamais "
-                f"les noms affichés. Détails : {body.get('details') if isinstance(body, dict) else ''}")
+        return (f"Origami refused some row keys (400 UNKNOWN_FIELDS): {detail} — "
+                "the keys of `rows` and `match_columns` are the SLUGS of the input columns "
+                "(`origami_tables(op='columns')` → items[].slug, with dashes), never "
+                f"the displayed names. Details: {body.get('details') if isinstance(body, dict) else ''}")
     if status == 409:
-        return f"Origami : conflit (409, {code}) — {detail}"
+        return f"Origami: conflict (409, {code}) — {detail}"
     if status == 429:
-        return (f"Origami : limite atteinte (429, {code}) — {detail}. Réessaie dans un "
-                "instant (100 req/min par org ; les runs d'agent concurrents sont plafonnés "
-                "par le plan).")
+        return (f"Origami: limit reached (429, {code}) — {detail}. Try again in a "
+                "moment (100 req/min per org; concurrent agent runs are capped "
+                "by the plan).")
     if status in (500, 502, 503, 504):
-        return f"Origami est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Origami a refusé la requête (HTTP {status}, {code}): {detail}"
+        return f"Origami is temporarily unavailable (HTTP {status}) — try again later."
+    return f"Origami refused the request (HTTP {status}, {code}): {detail}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : lister les workspaces (lecture, sans effet)."""
+    """"Test the connection" probe: list the workspaces (read, no side effects)."""
     from oto.tools.origami.client import OrigamiClient
     OrigamiClient(api_key=fields["key"]).list_workspaces(limit=1)
 
 
 def _items(envelope: Any) -> list:
-    """Les `items` d'une enveloppe liste v2 (tolérant : une liste nue passe aussi)."""
+    """The `items` of a v2 list envelope (tolerant: a bare list passes too)."""
     if isinstance(envelope, dict):
         items = envelope.get("items")
         return items if isinstance(items, list) else []
@@ -110,7 +110,7 @@ def _items(envelope: Any) -> list:
 
 
 def _column_slugs(columns_envelope: Any) -> tuple[set[str], set[str]]:
-    """(slugs d'ENTRÉE, tous les slugs) lus d'un `GET /tables/{id}/columns`."""
+    """(INPUT slugs, all slugs) read from a `GET /tables/{id}/columns`."""
     inputs, all_slugs = set(), set()
     for col in _items(columns_envelope):
         if not isinstance(col, dict) or not col.get("slug"):
@@ -122,12 +122,12 @@ def _column_slugs(columns_envelope: Any) -> tuple[set[str], set[str]]:
 
 
 def _parse_csv_preview(csv_text: str) -> dict:
-    """En-tête + N premières lignes + compte total, pour l'aperçu d'un upload."""
+    """Header + first N rows + total count, for the preview of an upload."""
     reader = csv.reader(io.StringIO(csv_text))
     header = next(reader, None)
     if not header or not any(h.strip() for h in header):
-        raise _bad("`csv_text` n'a pas de ligne d'en-tête : la première ligne doit porter "
-                   "les noms de colonnes.")
+        raise _bad("`csv_text` has no header row: the first line must carry "
+                   "the column names.")
     preview, count = [], 0
     for row in reader:
         if not any(cell.strip() for cell in row):
@@ -139,31 +139,31 @@ def _parse_csv_preview(csv_text: str) -> dict:
 
 
 def _refuse_si_rien_n_a_ete_fait(res: dict) -> dict:
-    """Un déroulé TERMINÉ qui n'a produit AUCUNE action est REFUSÉ (#627, oto#175).
+    """A COMPLETED run that produced NO action is REFUSED (#627, oto#175).
 
-    Mesuré le 31/08 : un enrôlement incrémental a rendu un texte affirmant
-    « 19/19 personnes ajoutées, ouverture conservée mot pour mot », avec une
-    liste d'actions VIDE. Puis le 09/09/2026 (signal 830) : trois créations de
-    campagne de suite sur la même table, chacune « completed » en ~90 s avec
-    `actions: []`, chacune répondant en prose confiante « Created the draft
-    campaign … People enrolled: 15 » en nommant une campagne et un slug qui
-    n'existent pas — `origami_campaigns(op='list_for_table')` rendait VIDE après
-    les trois. Le drapeau `aucune_action` posé le 03/09 a été le seul
-    discriminateur sur sept appels ; mais un drapeau se lit ou ne se lit pas, et
-    la prose voyageait quand même.
+    Measured on 31/08: an incremental enrolment returned text claiming
+    "19/19 people added, opening kept word for word", with an EMPTY action
+    list. Then on 09/09/2026 (signal 830): three campaign creations in a row
+    on the same table, each "completed" in ~90 s with `actions: []`, each
+    answering in confident prose "Created the draft campaign … People
+    enrolled: 15" and naming a campaign and a slug that do not exist —
+    `origami_campaigns(op='list_for_table')` returned EMPTY after all three.
+    The `aucune_action` flag added on 03/09 was the only discriminator across
+    seven calls; but a flag either gets read or it doesn't, and the prose
+    still travelled.
 
-    ⚠️ **Le pire assemblage possible pour un agent sans surveillance** : une
-    prose de succès et une trace vide. La prose vient du modèle d'en face, on
-    ne la contrôle pas ; ce qu'on contrôle, c'est qu'elle ne soit PAS servie
-    comme un succès : le déroulé est rendu en ERREUR, qui nomme la cause (aucune
-    action, la campagne annoncée n'existe pas) et le geste (vérifier la table,
-    relancer la création). Décision d'Alexis du 12/09/2026.
+    ⚠️ **The worst possible combination for an unattended agent**: success
+    prose and an empty trace. The prose comes from the model on the other
+    side and we don't control it; what we do control is that it is NOT served
+    as a success: the run is returned as an ERROR, which names the cause (no
+    action, the announced campaign does not exist) and the remedy (check the
+    table, retry the creation). Decision by Alexis on 12/09/2026.
 
-    ⚠️ **La garde se tait sur ce qu'elle ne voit pas.** La liste d'actions n'est
-    pas dans le contrat documenté du fournisseur : on la cherche à la racine
-    puis sous `response`, et on ne refuse QUE si on l'a trouvée et qu'elle est
-    vide. Absente, on ne dit rien — une garde qui devine une forme fabrique des
-    fausses alertes, ce qui coûte la confiance qu'elle est censée servir.
+    ⚠️ **The guard stays silent about what it cannot see.** The action list is
+    not in the provider's documented contract: we look for it at the root,
+    then under `response`, and we refuse ONLY if we found it and it is empty.
+    If it is absent, we say nothing — a guard that guesses a shape produces
+    false alarms, which costs the trust it is meant to serve.
     """
     if not isinstance(res, dict):
         return res
@@ -180,24 +180,24 @@ def _refuse_si_rien_n_a_ete_fait(res: dict) -> dict:
             raise McpError(ErrorData(
                 code=INVALID_REQUEST,
                 message=(
-                    f"Déroulé Origami `{res.get('id') or '?'}` terminé (`{statut}`) SANS "
-                    "AUCUNE ACTION : il n'a rien créé ni modifié, quoi qu'en dise sa "
-                    "prose — la campagne et le slug qu'elle nomme n'existent pas, et "
-                    "aucune personne n'a été enrôlée. Ne rapporte rien de ce déroulé "
-                    "comme fait. Geste : vérifie l'état réel avec "
-                    "origami_campaigns(op='list_for_table', table_id=…) — s'il n'y a "
-                    "pas de campagne, relance origami_campaign_create (même table, même "
-                    "brief), UNE fois : ⚠️ un déroulé refusé ainsi a pu laisser dans "
-                    "l'interface Origami un brouillon « Ready to launch » que l'API ne "
-                    "voit pas, et chaque relance en ajoute un ; dis-le à l'humain, qui "
-                    "vérifie la liste des campagnes dans Origami et supprime les "
-                    "doublons, et ne relance pas en boucle (pendant une panne du "
-                    "fournisseur, huit relances de suite n'ont rien créé). Si le brief "
-                    "visait une campagne existante, lis-la avec "
-                    "op='get' et op='people' (un nombre de personnes trouvées qui monte "
-                    "sans que les contactées suivent signale des séquences sans "
-                    "destinataire). Le défaut est chez le fournisseur : son déroulé se "
-                    "termine « terminé » au lieu de « en erreur »."),
+                    f"Origami run `{res.get('id') or '?'}` finished (`{statut}`) WITH "
+                    "NO ACTION: it created and changed nothing, whatever its "
+                    "prose says — the campaign and slug it names do not exist, and "
+                    "no person was enrolled. Do not report anything from this run "
+                    "as done. Remedy: check the real state with "
+                    "origami_campaigns(op='list_for_table', table_id=…) — if there is "
+                    "no campaign, retry origami_campaign_create (same table, same "
+                    "brief), ONCE: ⚠️ a run refused this way may have left a "
+                    "\"Ready to launch\" draft in the Origami interface that the API "
+                    "does not see, and every retry adds one; tell the human, who "
+                    "checks the campaign list in Origami and deletes the "
+                    "duplicates, and do not retry in a loop (during a provider "
+                    "outage, eight retries in a row created nothing). If the brief "
+                    "targeted an existing campaign, read it with "
+                    "op='get' and op='people' (a number of people found that climbs "
+                    "without the contacted count following signals sequences with no "
+                    "recipient). The defect is on the provider's side: its run "
+                    "ends \"completed\" instead of \"in error\"."),
                 data={"aucune_action": True, "run_id": res.get("id"), "status": statut,
                       "steps_completed": faites}))
         break
@@ -253,13 +253,13 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: _client().list_workspaces(cursor=cursor, search=search))
         if op == "create":
             if not name or not name.strip():
-                raise _bad("op='create' : `name` requis.")
+                raise _bad("op='create': `name` is required.")
             if len(name) > 80:
-                raise _bad("op='create' : `name` ≤ 80 caractères.")
+                raise _bad("op='create': `name` ≤ 80 characters.")
             if dry_run:
                 return {"dry_run": True, "would_create": {"name": name.strip()}}
             return _run(lambda: _client().create_workspace(name.strip()))
-        raise _bad(f"`op` invalide : {op!r} (attendu : list | create).")
+        raise _bad(f"Invalid `op`: {op!r} (expected: list | create).")
 
     # --- tables -------------------------------------------------------------
 
@@ -295,9 +295,9 @@ def register(mcp: FastMCP) -> None:
         if op == "list":
             return _run(lambda: _client().list_tables(workspace_id=workspace_id, cursor=cursor))
         if op not in ("get", "columns"):
-            raise _bad(f"`op` invalide : {op!r} (attendu : list | get | columns).")
+            raise _bad(f"Invalid `op`: {op!r} (expected: list | get | columns).")
         if not table_id:
-            raise _bad(f"op='{op}' : `table_id` requis.")
+            raise _bad(f"op='{op}': `table_id` is required.")
         if op == "get":
             return _run(lambda: _client().get_table(
                 table_id, include="stats" if include_stats else None))
@@ -307,8 +307,8 @@ def register(mcp: FastMCP) -> None:
 
     def _list_rows(c: OrigamiClient, table_id: str, cursor: Optional[str],
                    max_pages: int, limit: Optional[int]) -> dict:
-        """Suit `nextCursor` côté serveur jusqu'à `max_pages` ; rend `cursor` (le
-        prochain à passer) quand il reste des pages — l'agent sait qu'il n'a pas tout vu."""
+        """Follows `nextCursor` server-side up to `max_pages`; returns `cursor` (the
+        next one to pass) when pages remain — the agent knows it hasn't seen everything."""
         items: list = []
         total = None
         pages = 0
@@ -328,26 +328,26 @@ def register(mcp: FastMCP) -> None:
 
     def _upsert_rows(c: OrigamiClient, table_id: str, rows: list, match_columns: list,
                      enrich: bool, dry_run: bool) -> dict:
-        # Validation IDENTIQUE avec et sans dry_run ; seul l'appel final est sauté.
+        # IDENTICAL validation with and without dry_run; only the final call is skipped.
         if not isinstance(rows, list) or not rows or not all(isinstance(r, dict) for r in rows):
-            raise _bad("op='upsert' : `rows` = liste non vide de dicts {slug: valeur}.")
+            raise _bad("op='upsert': `rows` = non-empty list of dicts {slug: value}.")
         if len(rows) > _UPSERT_MAX_ROWS:
-            raise _bad(f"op='upsert' : {len(rows)} lignes > {_UPSERT_MAX_ROWS} par appel — "
-                       "découpe en plusieurs appels.")
+            raise _bad(f"op='upsert': {len(rows)} rows > {_UPSERT_MAX_ROWS} per call — "
+                       "split into several calls.")
         if not match_columns or not all(isinstance(m, str) and m for m in match_columns):
-            raise _bad("op='upsert' : `match_columns` requis (slugs de colonnes d'entrée, "
-                       "ex. ['email']) — c'est la clé de correspondance insert/update.")
+            raise _bad("op='upsert': `match_columns` is required (input column slugs, "
+                       "e.g. ['email']) — it is the insert/update match key.")
         missing = [i for i, r in enumerate(rows)
                    if any(r.get(m) in (None, "") for m in match_columns)]
         if missing:
-            raise _bad(f"op='upsert' : valeur de match vide sur les lignes {missing[:20]} "
-                       f"(colonnes {match_columns}) — l'API refuse (MISSING_MATCH_VALUE).")
+            raise _bad(f"op='upsert': empty match value on rows {missing[:20]} "
+                       f"(columns {match_columns}) — the API refuses (MISSING_MATCH_VALUE).")
         keys = set()
         for r in rows:
             keys |= set(r)
-        # Vérification des slugs contre les colonnes RÉELLES : un slug inconnu ou une
-        # colonne non-input est refusé ici (message qui nomme les slugs valides) au
-        # lieu d'un 400 UNKNOWN_FIELDS amont. Dégradé explicite si la lecture échoue.
+        # Check the slugs against the REAL columns: an unknown slug or a non-input
+        # column is refused here (message naming the valid slugs) instead of an
+        # upstream 400 UNKNOWN_FIELDS. Explicit degraded mode if the read fails.
         inputs, all_slugs = _column_slugs(c.list_columns(table_id))
         check: dict = {"columns_available": bool(all_slugs)}
         if all_slugs:
@@ -356,11 +356,11 @@ def register(mcp: FastMCP) -> None:
             bad_match = sorted(m for m in match_columns if m not in inputs)
             if unknown or non_input or bad_match:
                 raise _bad(
-                    "op='upsert' : clés refusées — "
-                    + (f"slugs inconnus {unknown} ; " if unknown else "")
-                    + (f"colonnes non-input {non_input} ; " if non_input else "")
-                    + (f"match_columns hors colonnes d'entrée {bad_match} ; " if bad_match else "")
-                    + f"slugs d'entrée valides : {sorted(inputs)}.")
+                    "op='upsert': keys refused — "
+                    + (f"unknown slugs {unknown}; " if unknown else "")
+                    + (f"non-input columns {non_input}; " if non_input else "")
+                    + (f"match_columns outside the input columns {bad_match}; " if bad_match else "")
+                    + f"valid input slugs: {sorted(inputs)}.")
             check.update(input_slugs_used=sorted(keys), match_columns=list(match_columns))
         if dry_run:
             return {"dry_run": True, "table_id": table_id,
@@ -416,18 +416,18 @@ def register(mcp: FastMCP) -> None:
             dry_run: op="upsert" — validate + preview, write nothing.
         """
         if not table_id:
-            raise _bad("`table_id` requis.")
+            raise _bad("`table_id` is required.")
         if op == "list":
             if max_pages < 1:
                 raise _bad("`max_pages` ≥ 1.")
             if limit is not None and not (1 <= limit <= 200):
-                raise _bad("`limit` entre 1 et 200.")
+                raise _bad("`limit` between 1 and 200.")
             pages = min(max_pages, _ROWS_MAX_PAGES_CAP)
             return _run(lambda: _list_rows(_client(), table_id, cursor, pages, limit))
         if op == "upsert":
             return _run(lambda: _upsert_rows(_client(), table_id, rows or [],
                                              match_columns or [], enrich, dry_run))
-        raise _bad(f"`op` invalide : {op!r} (attendu : list | upsert).")
+        raise _bad(f"Invalid `op`: {op!r} (expected: list | upsert).")
 
     # --- upload CSV → table -------------------------------------------------
 
@@ -461,18 +461,18 @@ def register(mcp: FastMCP) -> None:
             dry_run: preview the parsed CSV, upload nothing.
         """
         if not workspace_id:
-            raise _bad("`workspace_id` requis.")
+            raise _bad("`workspace_id` is required.")
         if not filename or not filename.lower().endswith(".csv"):
-            raise _bad("`filename` doit se terminer par .csv (un CSV en mode table/append).")
+            raise _bad("`filename` must end with .csv (a CSV in table/append mode).")
         if not csv_text or not csv_text.strip():
-            raise _bad("`csv_text` vide.")
+            raise _bad("`csv_text` is empty.")
         if mode not in ("table", "append"):
-            raise _bad(f"`mode` invalide : {mode!r} (table | append).")
+            raise _bad(f"Invalid `mode`: {mode!r} (table | append).")
         if mode == "append" and not table_id:
-            raise _bad("mode='append' : `table_id` requis.")
+            raise _bad("mode='append': `table_id` is required.")
         parsed = _parse_csv_preview(csv_text)
         if parsed["rows"] == 0:
-            raise _bad("`csv_text` n'a que l'en-tête : aucune ligne de données.")
+            raise _bad("`csv_text` has only the header: no data rows.")
         spec: dict = {"filename": filename, "mode": mode,
                       "content": base64.b64encode(csv_text.encode("utf-8")).decode("ascii")}
         if mode == "append":
@@ -482,25 +482,25 @@ def register(mcp: FastMCP) -> None:
                     "would_upload": {"filename": filename, "mode": mode,
                                      "table_id": table_id, **parsed}}
         result = _run(lambda: _client().upload_documents(workspace_id, [spec]))
-        # L'identifiant de la table créée est CE que l'appelant veut : il conditionne
-        # l'appel suivant (upsert, campagne). Remonté au premier niveau plutôt que laissé
-        # à `result.results[0].table.id` — mesuré : un harnais l'a raté à cette profondeur.
-        # Une entrée `kind: "error"` est remontée aussi, au lieu d'un succès muet.
+        # The id of the created table is WHAT the caller wants: it conditions the next
+        # call (upsert, campaign). Surfaced at the top level rather than left at
+        # `result.results[0].table.id` — measured: a harness missed it at that depth.
+        # A `kind: "error"` entry is surfaced too, instead of a silent success.
         first = ((result or {}).get("results") or [{}])[0] if isinstance(result, dict) else {}
         first = first if isinstance(first, dict) else {}
         created = first.get("table") if isinstance(first.get("table"), dict) else {}
-        # Forme mesurée le 17/08/2026 : `results[0].table.{id,slug}` ; `tableId` à plat
-        # accepté aussi, au cas où l'API le renverrait comme pour le mode append.
+        # Shape measured on 17/08/2026: `results[0].table.{id,slug}`; a flat `tableId`
+        # is accepted too, in case the API returns it as in append mode.
         new_id = created.get("id") or first.get("tableId")
         out = {"workspace_id": workspace_id, "filename": filename, "mode": mode,
                "rows_sent": parsed["rows"], "columns": parsed["columns"],
                "table_id": new_id or (table_id if mode == "append" else None),
                "table_slug": created.get("slug"), "result": result}
         if isinstance(first, dict) and first.get("kind") == "error":
-            out["error"] = first.get("error") or first.get("message") or "upload refusé (kind=error)"
+            out["error"] = first.get("error") or first.get("message") or "upload refused (kind=error)"
         return out
 
-    # --- campaigns (lecture) ------------------------------------------------
+    # --- campaigns (read) ---------------------------------------------------
 
     @mcp.tool()
     def origami_campaigns(
@@ -539,12 +539,12 @@ def register(mcp: FastMCP) -> None:
         """
         if op == "list_for_table":
             if not table_id:
-                raise _bad("op='list_for_table' : `table_id` requis.")
+                raise _bad("op='list_for_table': `table_id` is required.")
             return _run(lambda: _client().list_campaigns(table_id))
         if op not in ("get", "stats", "people"):
-            raise _bad(f"`op` invalide : {op!r} (attendu : list_for_table | get | stats | people).")
+            raise _bad(f"Invalid `op`: {op!r} (expected: list_for_table | get | stats | people).")
         if not campaign_id:
-            raise _bad(f"op='{op}' : `campaign_id` requis.")
+            raise _bad(f"op='{op}': `campaign_id` is required.")
         if op == "get":
             return _run(lambda: _client().get_campaign(campaign_id))
         if op == "stats":
@@ -552,7 +552,7 @@ def register(mcp: FastMCP) -> None:
         return _run(lambda: _client().campaign_people(
             campaign_id, cursor=cursor, status=status, search=search))
 
-    # --- campaigns (écriture) -----------------------------------------------
+    # --- campaigns (write) --------------------------------------------------
 
     @mcp.tool()
     def origami_campaign_create(
@@ -624,35 +624,35 @@ def register(mcp: FastMCP) -> None:
             dry_run: preview only.
         """
         if not table_id:
-            raise _bad("`table_id` requis.")
+            raise _bad("`table_id` is required.")
         if not instructions or not instructions.strip():
-            raise _bad("`instructions` requis (le brief de la campagne).")
+            raise _bad("`instructions` is required (the campaign brief).")
         if len(instructions) > 10_000:
-            raise _bad("`instructions` ≤ 10 000 caractères.")
+            raise _bad("`instructions` ≤ 10 000 characters.")
         settings = {"blockPriorContacts": bool(block_prior_contacts),
                     "blockActiveDuplicates": bool(block_active_duplicates)}
         if dry_run:
             return {"dry_run": True, "table_id": table_id,
                     "would_create": {"instructions": instructions, "settings": settings},
-                    "next": "origami_run_get(agent_id, run_id) puis origami_campaigns(op='list_for_table')"}
+                    "next": "origami_run_get(agent_id, run_id) then origami_campaigns(op='list_for_table')"}
         result = _run(lambda: _client().create_campaign(table_id, instructions, settings=settings))
         agent_id = ((result or {}).get("agent") or {}).get("id")
         run_id = ((result or {}).get("run") or {}).get("id")
         return {"table_id": table_id, "agent_id": agent_id, "run_id": run_id,
-                # #627 : `settings` est ce qui a été DEMANDÉ, pas ce qui s'applique.
-                # L'agent Origami peut enrôler dans une campagne qui EXISTE déjà ;
-                # ce sont alors les réglages de CELLE-CI qui gouvernent, et les nôtres
-                # sont sans effet — tout en étant renvoyés ici, ce qui les fait lire
-                # comme acquis. L'écho reste (des appelants le lisent), la note dit
-                # ce qu'il vaut.
+                # #627: `settings` is what was REQUESTED, not what applies.
+                # The Origami agent may enrol into a campaign that ALREADY exists;
+                # THAT campaign's settings then govern, and ours have
+                # no effect — while still being returned here, which makes them read
+                # as granted. The echo stays (callers read it), the note says
+                # what it is worth.
                 "settings": settings,
                 "settings_note": (
-                    "réglages DEMANDÉS pour une campagne créée par cet appel. Si "
-                    "l'agent enrôle dans une campagne EXISTANTE, ce sont les "
-                    "réglages de celle-là qui s'appliquent et ceux-ci n'ont aucun "
-                    "effet — lis ce qui gouverne vraiment avec "
-                    "origami_campaigns(op='get', campaign_id=…) → settings. Aucun "
-                    "verbe ne modifie les réglages d'une campagne existante."),
+                    "settings REQUESTED for a campaign created by this call. If "
+                    "the agent enrols into an EXISTING campaign, that campaign's "
+                    "settings apply and these have no "
+                    "effect — read what really governs with "
+                    "origami_campaigns(op='get', campaign_id=…) → settings. No "
+                    "verb changes the settings of an existing campaign."),
                 "response": result,
                 "next": ("poll origami_run_get(agent_id, run_id) until status != 'running', "
                          "then origami_campaigns(op='list_for_table', table_id) — nothing "
@@ -680,7 +680,7 @@ def register(mcp: FastMCP) -> None:
             include: optional CSV of "stats", "transcript".
         """
         if not agent_id or not run_id:
-            raise _bad("`agent_id` et `run_id` requis (rendus par origami_campaign_create).")
+            raise _bad("`agent_id` and `run_id` are required (returned by origami_campaign_create).")
         res = _run(lambda: _client().get_run(agent_id, run_id, include=include))
         return _refuse_si_rien_n_a_ete_fait(res)
 
@@ -732,7 +732,7 @@ def register(mcp: FastMCP) -> None:
             dry_run: default True = preview only. Pass False to send.
         """
         if not campaign_id:
-            raise _bad("`campaign_id` requis.")
+            raise _bad("`campaign_id` is required.")
         return _run(lambda: _launch(_client(), campaign_id, dry_run))
 
     @mcp.tool()
@@ -746,7 +746,7 @@ def register(mcp: FastMCP) -> None:
         `inFlightSending` messages already handed to the provider still go out.
         """
         if not campaign_id:
-            raise _bad("`campaign_id` requis.")
+            raise _bad("`campaign_id` is required.")
         result = _run(lambda: _client().pause_campaign(campaign_id, dry_run=dry_run))
         return {"dry_run": True, "preview": result} if dry_run else result
 
@@ -762,22 +762,22 @@ def register(mcp: FastMCP) -> None:
         account and their sequences did not resume.
         """
         if not campaign_id:
-            raise _bad("`campaign_id` requis.")
+            raise _bad("`campaign_id` is required.")
         result = _run(lambda: _client().resume_campaign(campaign_id, dry_run=dry_run))
         return {"dry_run": True, "preview": result} if dry_run else result
 
     def _delete(c: OrigamiClient, campaign_id: str, confirm: bool, dry_run: bool) -> dict:
         if not confirm or dry_run:
-            # Étape 1 (ou aperçu forcé) : DELETE sans confirm = aperçu d'impact, rien
-            # n'est retiré. `dryRun=true` force l'aperçu même si confirm est posé.
+            # Step 1 (or forced preview): DELETE without confirm = impact preview, nothing
+            # is removed. `dryRun=true` forces the preview even if confirm is set.
             preview = c.delete_campaign(campaign_id, confirm=confirm, dry_run=dry_run)
             return {"dry_run": True, "campaign_id": campaign_id, "deleted": False,
                     "preview": preview,
                     "note": ("nothing removed — pass confirm=True (and dry_run=False) to "
                              "delete; the tool then re-reads the campaign and reports "
                              "whether it is really gone")}
-        # Étape 2 : suppression réelle, puis re-GET — le 2e temps peut répondre 200
-        # sans supprimer ; seule un 404 prouve la disparition.
+        # Step 2: real deletion, then re-GET — the 2nd step may answer 200
+        # without deleting; only a 404 proves it is gone.
         result = c.delete_campaign(campaign_id, confirm=True)
         really_gone: Optional[bool]
         after: Any = None
@@ -820,7 +820,7 @@ def register(mcp: FastMCP) -> None:
             dry_run: preview only, even if confirm=True.
         """
         if not campaign_id:
-            raise _bad("`campaign_id` requis.")
+            raise _bad("`campaign_id` is required.")
         return _run(lambda: _delete(_client(), campaign_id, confirm, dry_run))
 
     # --- sequences ----------------------------------------------------------
@@ -828,12 +828,12 @@ def register(mcp: FastMCP) -> None:
     def _list_sequences(c: OrigamiClient, workspace_id: str, cursor: Optional[str],
                         max_pages: int, status: Optional[str], channel: Optional[str],
                         recipient: Optional[str]) -> dict:
-        """Suit `nextCursor` côté serveur jusqu'à `max_pages` (50 séquences/page), comme
-        `_list_rows`. Rend `cursor` quand il reste des pages, `truncated: true` — l'agent
-        sait qu'il n'a pas tout vu. Ajoute `campaign_ids`, la liste DISTINCTE des
-        campagnes rencontrées : c'est le seul moyen d'énumérer les campagnes d'un
-        workspace, et une première page seule en fait croire une là où il y en a quatre
-        (mesuré le 17/08/2026 : 50 séquences / 1 campagne sur une page, 369 / 4 en tout)."""
+        """Follows `nextCursor` server-side up to `max_pages` (50 sequences/page), like
+        `_list_rows`. Returns `cursor` when pages remain, `truncated: true` — the agent
+        knows it hasn't seen everything. Adds `campaign_ids`, the DISTINCT list of
+        campaigns encountered: it is the only way to enumerate a workspace's
+        campaigns, and a first page alone suggests one where there are four
+        (measured on 17/08/2026: 50 sequences / 1 campaign on one page, 369 / 4 in all)."""
         items: list = []
         pages = 0
         next_cursor = cursor
@@ -885,10 +885,10 @@ def register(mcp: FastMCP) -> None:
             recipient: list mode — filter on recipient.
         """
         if bool(workspace_id) == bool(sequence_id):
-            raise _bad("Passe exactement un de `workspace_id` (liste) ou `sequence_id` (détail).")
+            raise _bad("Pass exactly one of `workspace_id` (list) or `sequence_id` (detail).")
         if sequence_id:
             return _run(lambda: _client().get_sequence(sequence_id))
         if max_pages < 1:
-            raise _bad("`max_pages` doit être ≥ 1.")
+            raise _bad("`max_pages` must be ≥ 1.")
         return _run(lambda: _list_sequences(_client(), workspace_id, cursor, max_pages,
                                             status, channel, recipient))

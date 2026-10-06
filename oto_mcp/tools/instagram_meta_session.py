@@ -1,26 +1,26 @@
-"""Instagram (statistiques) — le jeton d'un appel, et sa survie.
+"""Instagram (statistiques) — a call's token, and its survival.
 
-L'autre moitié du connecteur : `auth/instagram_meta.py` porte l'ACQUISITION (le
-clic « Connecter », le retour de consentement, ce que la fiche affiche) ; ici on
-sert — résoudre le jeton d'un appel, le renouveler à temps, et refuser en nommant
-la cause. La ligne entre les deux est celle du déclencheur.
+The other half of the connector: `auth/instagram_meta.py` carries ACQUISITION (the
+"Connect" click, the consent return, what the card displays); here we
+serve — resolve a call's token, renew it in time, and refuse by naming
+the cause. The line between the two is the trigger.
 
-⚠️ **Ce jeton ne se renouvelle que tant qu'il vit.** Meta n'émet pas de
-`refresh_token` sur ce produit : une autorisation laissée dormir soixante jours
-n'est pas dégradée, elle est PERDUE, et seule l'utilisatrice peut la refaire. D'où
-deux déclencheurs de renouvellement plutôt qu'un :
+⚠️ **This token can only be renewed while it is alive.** Meta issues no
+`refresh_token` on this product: an authorization left dormant for sixty days
+is not degraded, it is LOST, and only the user can redo it. Hence
+two renewal triggers rather than one:
 
-- **à l'usage**, très en avance (dès 53 jours restants sur 60), pour qu'un usage
-  même espacé suffise à tenir la connexion ;
-- **et une passe QUOTIDIENNE** (`renouveler_les_jetons`, travail de maintenance
-  `instagram-tokens`), parce qu'un renouvellement paresseux meurt de non-usage :
-  une personne qui ne consulte pas ses statistiques pendant deux mois perdrait sa
-  connexion *sans avoir rien fait*, et rien ne l'en aurait prévenue. Ce n'est pas
-  un mode de panne qu'on peut demander à l'utilisatrice de prévenir.
+- **on use**, very early (from 53 days remaining out of 60), so that even
+  infrequent use is enough to keep the connection alive;
+- **and a DAILY pass** (`renouveler_les_jetons`, maintenance job
+  `instagram-tokens`), because lazy renewal dies of disuse:
+  a person who does not check their statistics for two months would lose their
+  connection *without having done anything*, and nothing would have warned them. This is not
+  a failure mode we can ask the user to prevent.
 
-Trois refus, trois gestes différents, et c'est pourquoi ils ne se ressemblent pas :
-pas de compte connecté (autoriser), autorisation expirée (ré-autoriser — on dit la
-DATE), panne d'appel (réessayer). Meta les rend tous les trois en 400.
+Three refusals, three different actions, which is why they do not look alike:
+no connected account (authorize), expired authorization (re-authorize — we state the
+DATE), call outage (retry). Meta returns all three as a 400.
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ from ..auth.instagram_meta import CONNECTOR, _coeur, _ctx_org, _row, _scope
 from ..connectors import health as connector_health
 from ..mcp_errors import McpError
 
-if TYPE_CHECKING:  # l'annotation seulement — jamais évaluée à l'exécution
+if TYPE_CHECKING:  # the annotation only — never evaluated at runtime
     from oto.tools.instagram_meta import InstagramClient
 
 logger = logging.getLogger("oto_mcp.tools.instagram_meta")
@@ -47,69 +47,69 @@ _MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
 
 
 class InstagramReauthRequired(RuntimeError):
-    """L'autorisation est morte : il faut un NOUVEAU consentement, pas un retry.
+    """The authorization is dead: a NEW consent is needed, not a retry.
 
-    Le message porté par cette exception est celui qu'on montre à l'utilisatrice —
-    il nomme la date et le geste. Type distinct parce que les appelants s'en
-    servent pour marquer la ligne de coffre (`connector_health`) sans confondre
-    avec une panne passagère, qui elle ne doit rien marquer du tout."""
+    The message carried by this exception is the one shown to the user —
+    it names the date and the action. Distinct type because callers use it
+    to mark the vault row (`connector_health`) without confusing it
+    with a transient outage, which must not mark anything at all."""
 
 
 def _date_fr(horodatage: Optional[str]) -> str:
-    """« 8 novembre 2026 » — une date qu'on lit, pas un ISO 8601 qu'on déchiffre.
+    """"8 novembre 2026" — a date you read, not an ISO 8601 you decipher.
 
-    Un message d'expiration sans date se lit comme une panne ; avec la date, il se
-    lit comme ce qu'il est. Horodatage illisible ⇒ chaîne vide, et l'appelant dit
-    la phrase sans la date plutôt que d'afficher `None`."""
+    An expiry message without a date reads as an outage; with the date, it
+    reads as what it is. Unreadable timestamp ⇒ empty string, and the caller says
+    the sentence without the date rather than displaying `None`."""
     dt = _coeur().parse_ts(horodatage)
     return f"{dt.day} {_MOIS[dt.month - 1]} {dt.year}" if dt else ""
 
 
 def _message_expire(expires_at: Optional[str]) -> str:
-    """⚠️ **Sans adresse, et c'est délibéré.** Ce message citait notre tableau de bord en
-    dur ; servi à l'agent d'un partenaire, il l'envoyait chez nous pour un geste qu'il
-    doit faire chez lui. Le bon lien dépend du COMPTE (`config.dashboard_url_for`) —
-    or ni cette fonction ni les deux autres sites de ce module ne tiennent le `sub` :
-    ils sont appelés depuis le marquage de santé et depuis le traducteur de refus, qui
-    ne portent qu'une entité. Propager le compte jusqu'ici serait une refonte sans
-    rapport avec le défaut ; nommer la page sans l'adresser dit la même chose à un agent
-    et n'envoie personne au mauvais endroit. Ne pas « remettre le lien » sans le `sub`.
+    """⚠️ **No address, and that is deliberate.** This message used to hard-code our dashboard;
+    served to a partner's agent, it sent them to us for an action they
+    must perform on their own side. The right link depends on the ACCOUNT (`config.dashboard_url_for`) —
+    yet neither this function nor the two other sites in this module hold the `sub`:
+    they are called from the health marking and from the refusal translator, which
+    only carry an entity. Propagating the account up to here would be a refactor
+    unrelated to the defect; naming the page without addressing it says the same thing to an agent
+    and sends no one to the wrong place. Do not "put the link back" without the `sub`.
     """
     quand = _date_fr(expires_at)
     return (
-        f"Ton autorisation Instagram a expiré{f' le {quand}' if quand else ''} — "
-        "elle vaut 60 jours et ne peut plus être renouvelée une fois passée. "
-        "Reconnecte ton compte depuis ta page connecteurs, connecteur « Instagram "
-        "(statistiques) ».")
+        f"Your Instagram authorization expired{f' on {quand}' if quand else ''} — "
+        "it is valid for 60 days and cannot be renewed once past. "
+        "Reconnect your account from your connectors page, connector \"Instagram "
+        "(statistiques)\".")
 
 
 def resolve_token(sub: str) -> tuple[str, str]:
-    """`(jeton, user_id)` du compte connecté — renouvelé D'ABORD si besoin.
+    """`(token, user_id)` of the connected account — renewed FIRST if needed.
 
-    Trois refus, et chacun nomme sa cause parce qu'ils appellent trois gestes
-    différents : aucun compte connecté (il faut autoriser), autorisation expirée
-    (il faut ré-autoriser, et on dit la date), coffre incohérent (il manque le
-    `user_id`, la reconnexion le repose).
+    Three refusals, and each names its cause because they call for three different
+    actions: no connected account (authorize), expired authorization
+    (re-authorize, and we state the date), inconsistent vault (the
+    `user_id` is missing, reconnecting sets it again).
 
-    Le renouvellement préventif est joué ICI, avant de rendre le jeton, et son
-    échec n'est jamais avalé : servir un jeton dont on sait qu'il va mourir
-    déplacerait la panne d'un appel plus loin, où plus rien ne dirait pourquoi."""
+    Preventive renewal is performed HERE, before returning the token, and its
+    failure is never swallowed: serving a token we know is about to die
+    would move the failure one call later, where nothing would say why."""
     org_id = _ctx_org(sub)
     entity_type, entity_id = _scope(org_id, sub)
     row = _row(org_id, sub)
     if not row or not row.get("secret"):
         from .. import config
         raise RuntimeError(
-            "Aucun compte Instagram connecté. Autorise oto depuis ta page "
-            f"connecteurs ({config.dashboard_url_for(sub)}/, connecteur « Instagram "
-            "(statistiques) ») — la connexion se fait avec ton compte Instagram, "
-            "sans Facebook.")
+            "No Instagram account connected. Authorize oto from your connectors "
+            f"page ({config.dashboard_url_for(sub)}/, connector \"Instagram "
+            "(statistiques)\") — the connection is made with your Instagram account, "
+            "without Facebook.")
     meta = row.get("meta") or {}
     user_id = str(meta.get("user_id") or "")
     if not user_id:
         raise RuntimeError(
-            "Le compte Instagram connecté n'a pas d'identifiant de compte "
-            "professionnel enregistré : reconnecte-le depuis ta page connecteurs.")
+            "The connected Instagram account has no professional account "
+            "identifier on record: reconnect it from your connectors page.")
     coeur = _coeur()
     expires_at, connected_at = meta.get("expires_at"), meta.get("connected_at")
     if coeur.is_expired(expires_at, connected_at):
@@ -124,33 +124,33 @@ def resolve_token(sub: str) -> tuple[str, str]:
 
 def _marquer_mort(entity_type: str, entity_id: str, account: str,
                   expires_at: Optional[str]) -> None:
-    """Inscrit le rejet sur la ligne que l'appel utilise VRAIMENT.
+    """Records the rejection on the row the call REALLY uses.
 
-    C'est ce qui rend la fiche capable de dire « autorisation expirée, à
-    reconnecter » AVANT qu'on appelle : sans marquage, l'utilisatrice ne découvre
-    l'expiration qu'en essayant, et la carte affiche « connecté » sur un compte qui
-    ne l'est plus."""
+    This is what lets the card say "authorization expired, to
+    reconnect" BEFORE anyone calls: without marking, the user only discovers
+    the expiry by trying, and the card shows "connected" on an account that
+    no longer is."""
     connector_health.mark_rejected(entity_type, entity_id, CONNECTOR, account,
                                    _message_expire(expires_at))
 
 
 def _renouveler(coeur, entity_type: str, entity_id: str, account: str,
                 jeton: str, meta: dict, expires_at: Optional[str]) -> str:
-    """Échange le jeton contre un neuf de 60 jours et réécrit la ligne. Rend le neuf.
+    """Exchanges the token for a new 60-day one and rewrites the row. Returns the new one.
 
-    **Un seul renouvellement pour les deux chemins** — l'appel d'une utilisatrice et
-    la passe quotidienne. Ils diffèrent par ce qui les déclenche, pas par ce qu'ils
-    écrivent : les séparer aurait fait deux endroits où réécrire une échéance, donc
-    un jour deux façons de l'écrire, dont une fausse.
+    **A single renewal for both paths** — a user's call and
+    the daily pass. They differ by what triggers them, not by what they
+    write: separating them would have made two places to rewrite an expiry, hence
+    one day two ways of writing it, one of them wrong.
 
-    Le secret est remplacé ENTIER (pour ce connecteur, le blob EST le jeton) et le
-    `meta` re-passé COMPLET : `set_credential` sans `meta` l'écrase par `{}`, ce qui
-    effacerait l'identifiant de compte et l'échéance — c'est-à-dire tout ce qui
-    permet de servir, puis de renouveler la fois suivante.
+    The secret is replaced WHOLE (for this connector, the blob IS the token) and the
+    `meta` passed back COMPLETE: `set_credential` without `meta` overwrites it with `{}`, which
+    would erase the account identifier and the expiry — that is, everything that
+    makes it possible to serve, then to renew the next time.
 
-    Le marquage de santé est effacé ICI : un renouvellement réussi est la seule
-    preuve que la ligne remarche, et sans cet effacement la fiche resterait rouge
-    sur une connexion saine (même raison que la rotation Google).
+    The health marking is cleared HERE: a successful renewal is the only
+    proof that the row works again, and without this clearing the card would stay red
+    on a healthy connection (same reason as the Google rotation).
     """
     try:
         frais = coeur.refresh_long_lived(jeton, expires_at=expires_at)
@@ -158,51 +158,51 @@ def _renouveler(coeur, entity_type: str, entity_id: str, account: str,
         _marquer_mort(entity_type, entity_id, account, expires_at)
         raise InstagramReauthRequired(_message_expire(expires_at)) from e
     except Exception as e:
-        # Panne passagère : on ne marque RIEN — marquer ferait dire à la fiche
-        # « autorisation morte » sur une autorisation vivante, et enverrait
-        # l'utilisatrice refaire un consentement dont elle n'a pas besoin. On ne
-        # sert pas non plus le jeton qu'on vient d'échouer à prolonger : la panne
-        # se dirait alors un appel plus loin, où plus rien ne l'expliquerait.
+        # Transient outage: we mark NOTHING — marking would make the card say
+        # "authorization dead" about a living authorization, and would send
+        # the user to redo a consent they do not need. We also do not
+        # serve the token we just failed to extend: the outage would then surface
+        # one call later, where nothing would explain it.
         raise RuntimeError(
-            f"Le renouvellement de l'autorisation Instagram n'a pas abouti : {e} "
-            "Ce n'est pas ton autorisation qui est en cause — réessaie.") from e
+            f"Renewing the Instagram authorization did not succeed: {e} "
+            "Your authorization is not at fault — retry.") from e
     maintenant = coeur.utcnow()
     neuf = dict(meta)
     neuf["expires_at"] = coeur.iso(maintenant + timedelta(seconds=frais["expires_in"]))
     neuf["refreshed_at"] = coeur.iso(maintenant)
     neuf.pop("health_ko", None)
     neuf.pop("health_reason", None)
-    # `set_by` = le propriétaire du consentement, lu sur la ligne elle-même :
-    # l'écrire au nom d'un travail système ferait mentir « qui a posé cette clé ».
-    # ⚠️ Le découpage n'est valide QU'au palier membre, où `entity_id` vaut
-    # `{org}:{sub}`. Au scope `user`, `entity_id` EST le sub — et un sub qualifié
-    # (tenant) y ressemble à s'y méprendre : on attribuerait la ligne à la moitié
-    # d'un identifiant. Ce connecteur n'écrit qu'en membre ; la garde est là pour
-    # que ça reste vrai si un autre palier s'ajoute.
+    # `set_by` = the owner of the consent, read from the row itself:
+    # writing it on behalf of a system job would make "who set this key" lie.
+    # ⚠️ The split is only valid at the member tier, where `entity_id` is
+    # `{org}:{sub}`. At `user` scope, `entity_id` IS the sub — and a qualified sub
+    # (tenant) looks deceptively like it: we would attribute the row to half of an
+    # identifier. This connector only writes at member level; the guard is here
+    # so that this stays true if another tier is added.
     sub = (str(entity_id).partition(":")[2]
            if entity_type == credentials_store.MEMBER else "")
     credentials_store.set_credential(entity_type, entity_id, CONNECTOR,
                                      frais["access_token"], set_by=sub or None,
                                      meta=neuf, account=account)
-    logger.info("instagram_meta : autorisation renouvelée (%s, jusqu'au %s)",
+    logger.info("instagram_meta: authorization renewed (%s, until %s)",
                 entity_id, neuf["expires_at"])
     return frais["access_token"]
 
 
-# --- la passe quotidienne ------------------------------------------------------
+# --- the daily pass ------------------------------------------------------------
 
 def renouveler_les_jetons(*, dry_run: bool = False) -> dict:
-    """Renouvelle toutes les autorisations qui approchent du terme. Ne lève jamais.
+    """Renews all authorizations nearing their term. Never raises.
 
-    **Le renouvellement paresseux ne suffit pas ici, et ce n'est pas un confort.**
-    Un jeton Meta ne se renouvelle que tant qu'il vit : une personne qui ne consulte
-    pas ses statistiques pendant deux mois perdrait sa connexion *sans avoir rien
-    fait*, et rien ne l'en aurait prévenue. Une passe quotidienne est la seule chose
-    qui rende la survie de la connexion indépendante de l'usage.
+    **Lazy renewal is not enough here, and this is not a convenience.**
+    A Meta token can only be renewed while it is alive: a person who does not check
+    their statistics for two months would lose their connection *without having done anything*,
+    and nothing would have warned them. A daily pass is the only thing
+    that makes the connection's survival independent of use.
 
-    Fail-open par LIGNE : une autorisation morte — le cas normal après une
-    révocation — ne doit pas empêcher de renouveler les autres. Elle est marquée,
-    comptée, et la passe continue.
+    Fail-open per ROW: a dead authorization — the normal case after a
+    revocation — must not prevent renewing the others. It is marked,
+    counted, and the pass continues.
     """
     from ..db import _conn as db_conn
 
@@ -211,8 +211,8 @@ def renouveler_les_jetons(*, dry_run: bool = False) -> dict:
     try:
         coeur = _coeur()
     except RuntimeError as e:
-        # oto-core trop ancien : le connecteur ne sert pas non plus, il n'y a rien
-        # à renouveler. On le DIT plutôt que de rendre un zéro rassurant.
+        # oto-core too old: the connector does not serve either, there is nothing
+        # to renew. We SAY so rather than returning a reassuring zero.
         return {**sortie, "note": str(e)}
     with db_conn._connect() as conn:
         lignes = conn.execute(
@@ -232,10 +232,10 @@ def renouveler_les_jetons(*, dry_run: bool = False) -> dict:
             expires_at = meta.get("expires_at")
             emis = meta.get("refreshed_at") or meta.get("connected_at")
             if coeur.is_expired(expires_at, emis):
-                # Rien à renouveler : c'est un consentement qu'il faut. On marque,
-                # pour que la fiche le dise sans attendre le prochain appel — et
-                # pas à blanc : « à blanc » veut dire qu'on n'écrit RIEN, y compris
-                # ce marquage, sinon la commande ment sur ce qu'elle fait.
+                # Nothing to renew: a consent is what is needed. We mark,
+                # so the card says so without waiting for the next call — and
+                # not in dry-run: "dry-run" means we write NOTHING, including
+                # this marking, otherwise the command lies about what it does.
                 if not dry_run:
                     _marquer_mort(entity_type, entity_id, account, expires_at)
                 sortie["expires"] += 1
@@ -246,38 +246,38 @@ def renouveler_les_jetons(*, dry_run: bool = False) -> dict:
                 _renouveler(coeur, entity_type, entity_id, account, row["secret"],
                             meta, expires_at)
             sortie["renouveles"] += 1
-        except Exception:  # noqa: BLE001 — une ligne morte n'arrête pas la passe
+        except Exception:  # noqa: BLE001 — a dead row does not stop the pass
             sortie["echecs"] += 1
-            logger.warning("instagram_meta : renouvellement en échec pour %s",
+            logger.warning("instagram_meta: renewal failed for %s",
                            entity_id, exc_info=True)
     return sortie
 
 
-# --- le client d'un appel -------------------------------------------------------
+# --- a call's client ------------------------------------------------------------
 
 def _bad(msg: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
 
 async def _client() -> InstagramClient:
-    """Le client Instagram de CET appelant, jeton renouvelé si besoin.
+    """The Instagram client of THIS caller, token renewed if needed.
 
-    Le nom et l'annotation de retour NON quotée sont un contrat : la sonde de
-    version-skew (`tests/test_tools_client_methods_exist.py`) reconnaît les
-    fabriques appelées `_client` et lit la classe qu'elles rendent pour vérifier,
-    au tag oto-core épinglé, que chaque méthode appelée par les outils existe.
-    Renommer cette fonction ou quoter son annotation sort le connecteur de cette
-    couverture EN SILENCE — et c'est le connecteur qui en a le plus besoin, son
-    cœur vivant dans l'autre dépôt.
+    The name and the UNQUOTED return annotation are a contract: the version-skew
+    probe (`tests/test_tools_client_methods_exist.py`) recognizes factories
+    named `_client` and reads the class they return to verify,
+    at the pinned oto-core tag, that every method the tools call exists.
+    Renaming this function or quoting its annotation takes the connector out of that
+    coverage SILENTLY — and this is the connector that needs it most, its
+    core living in the other repo.
 
-    Tout part au FIL D'EXÉCUTION : la résolution touche la base, le renouvellement
-    parle à Meta, et le client lui-même est synchrone. Ce serveur est mono-loop
-    (`docs/event-loop-perf.md`) — un seul de ces trois appels joué dans la boucle
-    la fige le temps que l'amont réponde.
+    Everything goes to a THREAD: resolution touches the database, renewal
+    talks to Meta, and the client itself is synchronous. This server is single-loop
+    (`docs/event-loop-perf.md`) — any one of these three calls played in the loop
+    freezes it until upstream answers.
 
-    `renew` est le RATTRAPAGE, pas la politique : il ne joue que si Meta rejette le
-    jeton en plein appel (révocation, rotation), une seule fois, et il réécrit le
-    coffre au passage. Le renouvellement normal, lui, a déjà eu lieu au-dessus.
+    `renew` is the CATCH-UP, not the policy: it only fires if Meta rejects the
+    token mid-call (revocation, rotation), once, and it rewrites the
+    vault along the way. The normal renewal has already happened above.
     """
     from .. import access
 
@@ -285,11 +285,11 @@ async def _client() -> InstagramClient:
     try:
         jeton, user_id = await asyncio.to_thread(resolve_token, sub)
     except RuntimeError as e:
-        # `InstagramReauthRequired` en est une : les deux portent déjà le message
-        # qu'on montre, l'un pour l'expiration (avec sa date), l'autre pour un
-        # compte non connecté ou un coffre incohérent. Les distinguer ici ne
-        # changerait rien à ce qu'on rend — ce qui les distingue vraiment, c'est
-        # que l'un marque la ligne de coffre et l'autre non, et c'est fait plus tôt.
+        # `InstagramReauthRequired` is one: both already carry the message
+        # we show, one for expiry (with its date), the other for an
+        # unconnected account or an inconsistent vault. Distinguishing them here
+        # would change nothing about what we return — what really distinguishes them is
+        # that one marks the vault row and the other does not, and that is done earlier.
         raise _bad(str(e)) from e
 
     def renouveler_a_chaud() -> str:
@@ -304,51 +304,51 @@ async def _client() -> InstagramClient:
 
 
 async def appeler(geste: str, fn, *args):
-    """Joue un appel du cœur hors de la boucle et traduit ses refus.
+    """Plays a core call off the loop and translates its refusals.
 
-    Le point n'est pas d'attraper : c'est de **ne pas confondre**. Un jeton mort et
-    une panne d'Instagram remontent tous deux en `RuntimeError` du cœur, et les
-    présenter pareil coûte dans les deux sens — l'un fait réessayer sans fin une
-    connexion qu'il faut refaire, l'autre fait refaire un consentement dont personne
-    n'avait besoin.
+    The point is not to catch: it is **not to confuse**. A dead token and
+    an Instagram outage both surface as `RuntimeError` from the core, and
+    presenting them alike costs in both directions — one makes the user retry endlessly a
+    connection that needs redoing, the other makes them redo a consent nobody
+    needed.
 
-    ⚠️ Le texte d'une exception amont ne traverse cette frontière que pour les
-    erreurs que le cœur RÉDIGE lui-même (`InstagramError`), et celles-là ne portent
-    ni URL ni corps brut — c'est une propriété tenue là-bas, et testée là-bas. Pour
-    tout le reste on rend le TYPE, jamais le message : sur cette API le jeton voyage
-    en paramètre d'URL, et une exception d'une couche intermédiaire pourrait le
-    porter jusque dans un transcript d'agent.
+    ⚠️ The text of an upstream exception only crosses this boundary for the
+    errors the core WRITES itself (`InstagramError`), and those carry
+    neither URL nor raw body — a property held over there, and tested over there. For
+    everything else we return the TYPE, never the message: on this API the token travels
+    as a URL parameter, and an exception from an intermediate layer could carry it
+    all the way into an agent transcript.
     """
     coeur = _coeur()
     try:
         return await asyncio.to_thread(fn, *args)
     except InstagramReauthRequired as e:
-        # Le rattrapage a essayé et Meta a refusé : le message porte déjà la date.
+        # The catch-up tried and Meta refused: the message already carries the date.
         raise _bad(str(e)) from e
     except coeur.InstagramAuthExpired as e:
-        # Meta rejette le jeton alors que l'échéance stockée le disait vivant :
-        # c'est une RÉVOCATION, pas une expiration — dire « expiré le <date> »
-        # serait faux, et enverrait chercher une échéance qui n'y est pour rien.
+        # Meta rejects the token while the stored expiry said it was alive:
+        # this is a REVOCATION, not an expiry — saying "expired on <date>"
+        # would be false, and would send them looking for an expiry that is not at fault.
         raise _bad(
-            "Instagram ne reconnaît plus l'autorisation de ce compte : elle a été "
-            "révoquée, ou le compte a changé. Reconnecte-le depuis ta page "
-            "connecteurs, connecteur « Instagram (statistiques) ».") from e
+            "Instagram no longer recognizes this account's authorization: it was "
+            "revoked, or the account changed. Reconnect it from your connectors "
+            "page, connector \"Instagram (statistiques)\".") from e
     except (coeur.InstagramApiError, ValueError) as e:
-        raise _bad(f"Instagram n'a pas pu servir {geste} : {e}") from e
+        raise _bad(f"Instagram could not serve {geste}: {e}") from e
     except Exception as e:
-        logger.warning("instagram_meta : %s a échoué — %s", geste, type(e).__name__)
+        logger.warning("instagram_meta: %s failed — %s", geste, type(e).__name__)
         raise _bad(
-            f"Instagram n'a pas répondu à {geste} ({type(e).__name__}). Ce n'est pas "
-            "un refus d'autorisation — réessaie, et si ça dure, c'est chez Instagram "
-            "que ça se passe.") from e
+            f"Instagram did not respond for {geste} ({type(e).__name__}). This is not "
+            "an authorization refusal — retry, and if it persists, the problem is on "
+            "Instagram's side.") from e
 
 
 def avertir_au_demarrage() -> None:
-    """Ce que l'exploitant doit savoir AU BOOT, en une ligne. Ne lève jamais."""
+    """What the operator needs to know AT BOOT, in one line. Never raises."""
     ig_auth.avertir_au_demarrage()
     try:
         _coeur()
     except RuntimeError as e:
         logger.warning(
-            "instagram_meta : connecteur monté mais le cœur n'est pas installé — "
-            "les outils `instagram_meta_*` refuseront en le disant. Détail : %s", e)
+            "instagram_meta: connector mounted but the core is not installed — "
+            "the `instagram_meta_*` tools will refuse, saying so. Detail: %s", e)

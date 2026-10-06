@@ -221,7 +221,7 @@ def test_fields_vide_est_refuse(feed):
     """Demande ambiguë : la traiter comme « pas de projection » rendrait silencieusement
     PLUS que le défaut — l'inverse de ce que l'appelant demandait."""
     from oto_mcp.mcp_errors import McpError
-    with pytest.raises(McpError, match="liste vide"):
+    with pytest.raises(McpError, match="empty list"):
         feed(op="feed", limit=40, fields=[])
 
 
@@ -267,7 +267,7 @@ def test_une_enveloppe_illisible_leve_au_lieu_de_rendre_une_page_vide(feed, clie
     from oto_mcp.mcp_errors import McpError
     client.get_feed.return_value = {"items": [], "cursor": None, "count": 0,
                                     "_raw": {"data": {}}}
-    with pytest.raises(McpError, match="structure inattendue"):
+    with pytest.raises(McpError, match="unexpected structure"):
         feed(op="feed")
 
 

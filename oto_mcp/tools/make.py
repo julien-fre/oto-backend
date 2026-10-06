@@ -1,12 +1,12 @@
-"""Make (ex-Integromat) — automatisation de workflows (scénarios + exécutions).
+"""Make (ex-Integromat) — workflow automation (scenarios + executions).
 
-Wrappe `oto.tools.make.MakeClient`. Credential à 2 champs (API token + base URL
-de la zone, Make est régionalisé : eu1/us1/eu2…) → modèle générique multi-champs
-(ADR 0011), résolu par appel via `access.resolve_credential_fields("make")`.
-byo_user (pas de quota plateforme : le credential EST le grant).
+Wraps `oto.tools.make.MakeClient`. 2-field credential (API token + zone base URL,
+Make is regionalized: eu1/us1/eu2…) → generic multi-field model
+(ADR 0011), resolved per call via `access.resolve_credential_fields("make")`.
+byo_user (no platform quota: the credential IS the grant).
 
-Vocabulaire Make : un workflow = un **scénario** ; il appartient à une **équipe**
-(team), elle-même dans une **organisation**. Lister les scénarios exige un team_id.
+Make vocabulary: a workflow = a **scenario**; it belongs to a **team**,
+itself within an **organization**. Listing scenarios requires a team_id.
 """
 from __future__ import annotations
 
@@ -19,14 +19,14 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /organizations` (déjà dans le client — `list_organizations`), le
-    premier appel de découverte du connecteur, pas un endpoint inventé pour la
-    sonde : Make n'expose ni `/me` ni solde. `raise_for_upstream` (typé).
+    `GET /organizations` (already in the client — `list_organizations`), the
+    connector's first discovery call, not an endpoint invented for the
+    probe: Make exposes neither `/me` nor a balance. `raise_for_upstream` (typed).
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    un token Make porte le périmètre entier du compte pour sa zone.
+    **Authenticated ≠ usable** (oto#69 class): does not distinguish scope —
+    a Make token carries the account's entire scope for its zone.
     """
     from oto.tools.make import MakeClient
 

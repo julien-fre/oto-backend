@@ -1,24 +1,24 @@
-"""HelloStock administration — les LECTURES de la marketplace (demandes, offres,
-membres, positionnements).
+"""HelloStock administration — the READS of the marketplace (requests, offers,
+members, positionings).
 
-Wrappe `oto.tools.hellostock.HelloStockAdminClient` (API admin `/api/admin`,
-contrat OpenAPI 3.1). Jeton personnel `hs_…` par utilisateur, compte administrateur
-exigé ; la traduction des refus vit dans `hellostock_socle.py`. Les trois gestes
-qui écrivent sont dans `hellostock_ecritures.py`.
+Wraps `oto.tools.hellostock.HelloStockAdminClient` (admin API `/api/admin`,
+OpenAPI 3.1 contract). Personal `hs_…` token per user, administrator account
+required; the translation of refusals lives in `hellostock_socle.py`. The three
+actions that write are in `hellostock_ecritures.py`.
 
-**Un outil par objet, verbe en `op`** (ADR 0047) : `list` (défaut) et `get`. Les
-positionnements n'ont qu'une lecture, donc un outil sans `op`.
+**One tool per object, verb in `op`** (ADR 0047): `list` (default) and `get`.
+Positionings only have a read, hence a tool without `op`.
 
-**Listes projetées par défaut** (cliquet `tests/test_sorties_listes_projetees.py`) :
-chaque objet déclare les colonnes que son défaut retire, la réponse les NOMME, et
-`full=True` rend la page entière. Ce qui part : les champs libres du formulaire
-d'origine (`data`, sans borne de taille), l'attribution publicitaire
-(`provenance`), les URL de photos, et pour un membre la fiche entreprise que
-`company`/`sector`/`location` résument déjà. Une fiche (`op="get"`) n'est jamais
-projetée : c'est l'étape où l'on lit tout.
+**Lists projected by default** (ratchet `tests/test_sorties_listes_projetees.py`):
+each object declares the columns its default removes, the response NAMES them, and
+`full=True` returns the whole page. What goes: the free fields of the original
+form (`data`, no size bound), the advertising attribution
+(`provenance`), photo URLs, and for a member the company record that
+`company`/`sector`/`location` already summarize. A record (`op="get"`) is never
+projected: it is the step where everything is read.
 
-**Le curseur est exposé tel quel** : `nextCursor` de la page précédente, nul sur la
-dernière. `total` compte tout ce qui répond aux filtres.
+**The cursor is exposed as-is**: `nextCursor` of the previous page, null on the
+last. `total` counts everything matching the filters.
 """
 from __future__ import annotations
 
@@ -41,12 +41,12 @@ _Limit = Annotated[int, Field(ge=1, le=200, description=(
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : une demande lue, `limit=1`, sans effet de bord.
+    """« Test the connection » probe: one request read, `limit=1`, no side effect.
 
-    Elle éprouve les DEUX conditions d'usage d'un coup — un jeton que HelloStock
-    connaît (sinon 401) ET un compte administrateur (sinon 403) —, puisque toutes les
-    routes de cette API exigent les deux. Le préfixe `hs_` se vérifie avant l'appel :
-    un secret d'une autre forme serait refusé en 401 sans que rien ne dise pourquoi.
+    It tests BOTH conditions of use at once — a token HelloStock
+    knows (otherwise 401) AND an administrator account (otherwise 403) —, since all
+    the routes of this API require both. The `hs_` prefix is checked before the call:
+    a secret of any other shape would be refused with a 401 without anything saying why.
     """
     from oto.tools.common.errors import UpstreamHTTPError
     from oto.tools.hellostock import HelloStockAdminClient
@@ -54,8 +54,8 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
     token = (fields.get("key") or "").strip()
     if not token.startswith("hs_"):
         raise ValueError(
-            "Ce n'est pas un jeton d'API HelloStock : ils commencent par « hs_ ». "
-            "Crée-en un depuis hellostock.fr → Mon espace → Réglages → « Jetons d'API ».")
+            "This is not a HelloStock API token: they start with « hs_ ». "
+            "Create one from hellostock.fr → Mon espace → Réglages → « Jetons d'API ».")
     try:
         HelloStockAdminClient(token=token).list_demandes(limit=1)
     except UpstreamHTTPError as e:
@@ -108,7 +108,7 @@ def register(mcp: FastMCP) -> None:
         """
         if op == "get":
             if demande_id is None:
-                raise _bad("op='get' : `demande_id` requis.")
+                raise _bad("op='get': `demande_id` required.")
             _hors_op("get", status=status, since=since, until=until,
                      departement=departement, matiere=matiere, service=service, q=q,
                      cursor=cursor)
@@ -162,7 +162,7 @@ def register(mcp: FastMCP) -> None:
         """
         if op == "get":
             if offre_id is None:
-                raise _bad("op='get' : `offre_id` requis.")
+                raise _bad("op='get': `offre_id` required.")
             _hors_op("get", status=status, since=since, until=until,
                      departement=departement, matiere=matiere, certificat=certificat,
                      q=q, cursor=cursor)
@@ -212,7 +212,7 @@ def register(mcp: FastMCP) -> None:
         """
         if op == "get":
             if membre_id is None:
-                raise _bad("op='get' : `membre_id` requis.")
+                raise _bad("op='get': `membre_id` required.")
             _hors_op("get", q=q, sector=sector, service=service, is_admin=is_admin,
                      has_offres=has_offres, has_demandes=has_demandes, cursor=cursor)
             return _run(lambda: _client().get_user(membre_id))

@@ -156,7 +156,7 @@ def test_linear_nomme_le_rejet_de_cle_au_lieu_de_recopier_lamont():
         [{"message": "Authentication required, not authenticated",
           "extensions": {"code": "AUTHENTICATION_ERROR"}}], status_code=200)
     msg = _upstream_message(e)
-    assert "rejeté la clé" in msg, msg
+    assert "rejected the API key" in msg, msg
     assert "linear.app/settings/api" in msg
 
 
@@ -173,7 +173,7 @@ def test_une_autre_erreur_graphql_reste_relayee():
         [{"message": "Field 'nope' doesn't exist",
           "extensions": {"code": "INVALID_INPUT"}}], status_code=200)
     msg = _upstream_message(e)
-    assert "rejeté la clé" not in msg
+    assert "rejected the API key" not in msg
     assert "nope" in msg
 
 
@@ -202,7 +202,7 @@ def test_la_sonde_enregistre_le_message_nomme_pas_celui_de_lamont(monkeypatch):
     monkeypatch.setattr(lc, "LinearClient", _Client)
     with pytest.raises(McpError) as ei:
         _verify({"key": "lin_revoquee"})
-    assert "rejeté la clé" in ei.value.error.message
+    assert "rejected the API key" in ei.value.error.message
 
 
 def test_toute_cause_de_liste_vide_est_nommee_dans_la_description_servie():

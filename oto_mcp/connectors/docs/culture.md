@@ -1,5 +1,5 @@
-## usage — spectacle vivant (open data culture)
+## usage — live performance (culture open data)
 
-source publique du Ministère de la Culture, sans clé.
-- `culture_spectacle_search` / `culture_spectacle_get` — recherche d'entreprises et de licences du spectacle vivant
-- `culture_spectacle_stats` — agrégats (volumes par zone, période…)
+public source of the Ministère de la Culture, no key.
+- `culture_spectacle_search` / `culture_spectacle_get` — search for live-performance companies and licences
+- `culture_spectacle_stats` — aggregates (volumes by area, period…)

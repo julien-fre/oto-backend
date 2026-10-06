@@ -1,40 +1,40 @@
-"""Capacités génériques « lire l'état / déconnecter » d'un consentement OAuth —
-un chemin fixe qui ne nomme pas le connecteur, symétrique de `me.connector_connect`
-(`connect.py`). Ferme les items 2/3 d'oto-dashboard#125 : le widget du dashboard
-construisait `/api/${name}/oauth/status` et `DELETE /api/${name}/oauth`, les deux
-derniers endroits où un nom de connecteur voyageait dans une URL.
+"""Generic capabilities "read the state / disconnect" of an OAuth consent —
+a fixed path that does not name the connector, symmetric to `me.connector_connect`
+(`connect.py`). Closes items 2/3 of oto-dashboard#125: the dashboard widget
+built `/api/${name}/oauth/status` and `DELETE /api/${name}/oauth`, the last
+two places where a connector name traveled in a URL.
 
-**Portée : google, câblé ICI.** ⚠️ Ils étaient TROIS jusqu'au 2026-09-09 — atlassian
-et folkmcp sont partis avec la fédération MCP (ADR 0069). Un connecteur hors de cette
-liste répond `400 no_oauth_status` : ce n'est pas une garde défensive gratuite, c'est
-le même principe que `connector_flow.supports()` — un geste qui n'est pas déclaré
-n'est pas mimé en silence.
+**Scope: google, wired HERE.** ⚠️ There were THREE until 2026-09-09 — atlassian
+and folkmcp left with the MCP federation (ADR 0069). A connector outside this
+list answers `400 no_oauth_status`: this is not a gratuitous defensive guard, it is
+the same principle as `connector_flow.supports()` — a gesture that is not declared
+is not silently mimicked.
 
-⚠️ **Le chemin est resté GÉNÉRIQUE alors qu'il ne sert plus qu'un connecteur**, et
-c'est délibéré : `/api/me/connectors/{name}/…` est le contrat que le dashboard appelle,
-il ne se replie pas sur `/api/google/…` parce que la liste a rétréci. Le jour où un
-second connecteur OAuth veut ces verbes, il lui suffit d'un `declare_status`.
+⚠️ **The path stayed GENERIC even though it now serves only one connector**, and
+that is deliberate: `/api/me/connectors/{name}/…` is the contract the dashboard calls,
+it does not fall back to `/api/google/…` because the list shrank. The day a
+second OAuth connector wants these verbs, a `declare_status` is all it needs.
 
-**Contrainte 1 (bloquante, arbitrage du 04/09/2026) — `me.connector_status` ne crée pas
-une seconde vérité.** Son état est dérivé d'`access.status_for(sub)`, la MÊME source
-que `/api/me` (cf. `capabilities/me_account.py::_me`) — jamais un appel parallèle à
-`google_oauth.list_accounts` qui pourrait diverger. C'est pour ça que ce fichier
-n'importe AUCUN module `auth.*` dans le chemin de lecture (`_status`) : seul
-`_disconnect` (et le wrapper ci-dessous) l'importe, paresseusement, à l'appel.
+**Constraint 1 (blocking, ruling of 04/09/2026) — `me.connector_status` does not create
+a second truth.** Its state is derived from `access.status_for(sub)`, the SAME source
+as `/api/me` (see `capabilities/me_account.py::_me`) — never a parallel call to
+`google_oauth.list_accounts` that could diverge. That is why this file
+imports NO `auth.*` module in the read path (`_status`): only
+`_disconnect` (and the wrapper below) imports it, lazily, at call time.
 
-⚠️ **google est multi-compte, et `access.status_for` ne porte qu'UNE identité par
-défaut** (`ProviderStatus.identity_id`/`identity_label`, singulier — héritage du temps
-où Google était mono-compte). Le contrat commun ci-dessous (`connected`, `set_at`,
-`health_ko`, `health_reason`) ne porte donc RIEN de spécifique à google au-delà : forcer
-un champ `accounts` ici irait le chercher dans une autre lecture
-(`google_oauth.list_accounts`), soit exactement la seconde vérité que la contrainte 1
-interdit. La richesse multi-compte continue de passer par `connectors.identities`
-(op=list) — hors de ce lot (option A explicitement écartée, cf. oto-dashboard#125).
+⚠️ **google is multi-account, and `access.status_for` only carries ONE default
+identity** (`ProviderStatus.identity_id`/`identity_label`, singular — a legacy of when
+Google was single-account). The common contract below (`connected`, `set_at`,
+`health_ko`, `health_reason`) therefore carries NOTHING google-specific beyond that: forcing
+an `accounts` field here would fetch it from another read
+(`google_oauth.list_accounts`), which is exactly the second truth that constraint 1
+forbids. The multi-account richness keeps going through `connectors.identities`
+(op=list) — outside this batch (option A explicitly ruled out, see oto-dashboard#125).
 
-**Contrainte 2 (bloquante, décision d'Alexis) — `me.connector_disconnect` est
-irréversible, sans double étape.** Un seul appel : révoque chez le fournisseur quand le
-mécanisme le permet, et DANS TOUS LES CAS retire (ou marque) la ligne locale. Le contrat
-de sortie est `FederationDisconnected` (`ok`, `disconnected`), réutilisé tel quel.
+**Constraint 2 (blocking, Alexis's decision) — `me.connector_disconnect` is
+irreversible, with no two-step.** A single call: revokes at the provider when the
+mechanism allows it, and IN ALL CASES removes (or marks) the local row. The output
+contract is `FederationDisconnected` (`ok`, `disconnected`), reused as is.
 """
 from __future__ import annotations
 
@@ -50,24 +50,24 @@ from ..federated_oauth import FederationDisconnected
 from ..registry import CAPABILITIES
 
 
-# --- Entrée / sortie ---------------------------------------------------------
+# --- Input / output ----------------------------------------------------------
 
 class ConnectorOAuthStatusInput(BaseModel):
-    name: str                                    # connecteur, depuis le chemin
+    name: str                                    # connector, from the path
 
 
 class ConnectorOAuthDisconnectInput(BaseModel):
-    name: str                                    # connecteur, depuis le chemin
+    name: str                                    # connector, from the path
 
 
 class ConnectorOAuthStatus(BaseModel):
-    """État d'un consentement OAuth — dérivé d'`access.status_for` (contrainte 1).
-    `connected: false` avec `set_at: null` est l'état normal d'un compte jamais
-    connecté.
+    """State of an OAuth consent — derived from `access.status_for` (constraint 1).
+    `connected: false` with `set_at: null` is the normal state of an account that was
+    never connected.
 
-    `health_ko`/`health_reason` (oto#25 lot a) sont `None` tant que rien n'a été
-    constaté — jamais `False` : ce contrat ne sait pas confirmer une santé bonne,
-    seulement en rapporter le rejet, une fois écrit (même politique que
+    `health_ko`/`health_reason` (oto#25 batch a) are `None` as long as nothing has been
+    observed — never `False`: this contract cannot confirm good health,
+    only report its rejection, once written (same policy as
     `connector_link.LinkState`)."""
     connected: bool
     set_at: Optional[str] = None
@@ -76,21 +76,21 @@ class ConnectorOAuthStatus(BaseModel):
 
 
 def _require_oauth(name: str) -> None:
-    """Un connecteur qui n'a pas déclaré ses verbes ici n'est pas mimé en silence —
-    même principe que `connector_flow.supports()`. Aujourd'hui : google, et personne
-    d'autre (atlassian et folkmcp sont partis avec la fédération, ADR 0069)."""
+    """A connector that has not declared its verbs here is not silently mimicked —
+    same principle as `connector_flow.supports()`. Today: google, and nobody
+    else (atlassian and folkmcp left with the federation, ADR 0069)."""
     if not flow_status.supports(name):
         raise AuthzDenied(
             400, "no_oauth_status",
-            f"« {name} » n'a pas d'état OAuth générique : ce n'est pas un des "
-            "connecteurs couverts (google). Son credential se lit par "
-            "`connectors.me` comme les autres.")
+            f"“{name}” has no generic OAuth state: it is not one of the "
+            "covered connectors (google). Its credential is read through "
+            "`connectors.me` like the others.")
 
 
 def _status(ctx: ResolvedCtx, inp: ConnectorOAuthStatusInput) -> dict:
     _require_oauth(inp.name)
-    # SOURCE UNIQUE (contrainte 1) : la MÊME lecture que `/api/me`
-    # (`capabilities/me_account.py::_me`), jamais un second appel à `auth.*`.
+    # SINGLE SOURCE (constraint 1): the SAME read as `/api/me`
+    # (`capabilities/me_account.py::_me`), never a second call to `auth.*`.
     snapshot = access.status_for(ctx.sub)
     entry = (snapshot.get("providers") or {}).get(inp.name) or {}
     return {
@@ -106,15 +106,15 @@ async def _disconnect(ctx: ResolvedCtx, inp: ConnectorOAuthDisconnectInput) -> d
     return await flow_status.disconnect(inp.name, ctx)
 
 
-# --- Câblage (déclaration IMPORT-TIME, comme `connector_flow.declare` — cf.
-# `flow_status.py`). L'import d'`auth.*` reste À L'APPEL (dans le wrapper), pas ici :
-# ce module monte des clients HTTP et lit sa config au chargement. ----------------
+# --- Wiring (IMPORT-TIME declaration, like `connector_flow.declare` — see
+# `flow_status.py`). The `auth.*` import stays AT CALL TIME (in the wrapper), not here:
+# this module mounts HTTP clients and reads its config at load. -----------------
 
 def _google_disconnect(ctx: ResolvedCtx) -> dict:
     from ...auth import google as google_oauth
-    # `account=None` = TOUS les comptes du sub, même comportement que
-    # `federated_oauth._google_revoke` sans paramètre — le geste générique n'a pas de
-    # notion de compte nommé (celle-là reste `connectors.identities`, hors de ce lot).
+    # `account=None` = ALL of the sub's accounts, same behavior as
+    # `federated_oauth._google_revoke` without a parameter — the generic gesture has no
+    # notion of a named account (that one stays `connectors.identities`, outside this batch).
     google_oauth.revoke(ctx.sub, account=None)
     return {"ok": True, "disconnected": True}
 
@@ -129,15 +129,15 @@ CAPABILITIES += [
         Input=ConnectorOAuthStatusInput,
         authz=SUB_ONLY,
         Output=ConnectorOAuthStatus,
-        mcp=None,     # geste de lecture d'écran (dashboard) ; pas de pendant agent utile
+        mcp=None,     # screen read gesture (dashboard); no useful agent counterpart
         errors=(DeclaredError(400, "no_oauth_status",
-                              "ce connecteur n'a pas d'état OAuth générique "
-                              "(hors google)"),),
+                              "this connector has no generic OAuth state "
+                              "(other than google)"),),
         rest=RestBinding("GET", "/api/me/connectors/{name}/oauth-status"),
-        description=("Mon consentement OAuth pour ce connecteur (google) est-il posé, "
-                     "et depuis quand — dérivé de la même source que `/api/me`. "
-                     "`connected: false` avec `set_at: null` est l'état normal d'un "
-                     "compte jamais connecté."),
+        description=("Is my OAuth consent for this connector (google) set, "
+                     "and since when — derived from the same source as `/api/me`. "
+                     "`connected: false` with `set_at: null` is the normal state of an "
+                     "account that was never connected."),
     ),
     Capability(
         key="me.connector_disconnect",
@@ -147,14 +147,14 @@ CAPABILITIES += [
         Output=FederationDisconnected,
         mcp=None,
         errors=(DeclaredError(400, "no_oauth_status",
-                              "ce connecteur n'a pas d'état OAuth générique "
-                              "(hors google)"),),
+                              "this connector has no generic OAuth state "
+                              "(other than google)"),),
         rest=RestBinding("DELETE", "/api/me/connectors/{name}/oauth"),
-        description=("Révoque mon consentement OAuth pour ce connecteur (google) — "
-                     "chez le fournisseur quand le mécanisme le "
-                     "permet, et dans tous les cas retire la ligne locale. UN SEUL "
-                     "appel, irréversible : jamais d'état intermédiaire en attente de "
-                     "confirmation. Idempotent : `disconnected: false` veut dire qu'il "
-                     "n'y avait rien à retirer, pas que le retrait a échoué."),
+        description=("Revokes my OAuth consent for this connector (google) — "
+                     "at the provider when the mechanism "
+                     "allows it, and in all cases removes the local row. A SINGLE "
+                     "call, irreversible: never an intermediate state waiting for "
+                     "confirmation. Idempotent: `disconnected: false` means there was "
+                     "nothing to remove, not that the removal failed."),
     ),
 ]

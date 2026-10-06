@@ -1,26 +1,26 @@
-"""Déclaration de registre du connecteur `brevoauto`.
+"""Registry declaration of the `brevoauto` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# brevoauto : automations (workflows marketing) via l'API PRIVÉE de l'éditeur
-# (`workflow-apis.brevo.com/v1`). Connecteur SÉPARÉ du `brevo` keyé (API publique
-# v3, plus bas) car le credential diffère — session navigateur ici, clé API là ;
-# même éditeur, deux surfaces disjointes (la clé v3 n'ouvre pas l'authoring
-# d'automations). Même partition que pennylane / pennylaneged.
-# Exécution = **Browserbase** (Chrome distant hébergé) : l'user se logue 1× via
-# Live View (`brevoauto_connect_start`), sa session persiste dans un Context = le
-# credential per-user (coffre). Pas de browser sur la box, pas d'export de cookie.
-# personal_session (session physiologiquement per-user). Expérimental (API non
-# documentée) : hors socle, installable depuis la library.
+# brevoauto: automations (marketing workflows) via the vendor's PRIVATE API
+# (`workflow-apis.brevo.com/v1`). Connector SEPARATE from the keyed `brevo` (public
+# v3 API, further down) because the credential differs — browser session here, API key there;
+# same vendor, two disjoint surfaces (the v3 key doesn't open automation
+# authoring). Same split as pennylane / pennylaneged.
+# Execution = **Browserbase** (hosted remote Chrome): the user logs in once via
+# Live View (`brevoauto_connect_start`), their session persists in a Context = the
+# per-user credential (vault). No browser on the box, no cookie export.
+# personal_session (a session that is inherently per-user). Experimental (undocumented
+# API): outside the base set, installable from the library.
 CONNECTOR = _c(
     "brevoauto", ["brevoauto"], auth_modes={"byo_user"}, personal_session=True,
     secret_kind="cookie",
-    label="Brevo (automation)", help="automations marketing (session Browserbase)",
+    label="Brevo (automation)", help="marketing automations (Browserbase session)",
     publisher="Brevo", href="https://app.brevo.com/automation/automations",
 )
 
@@ -28,8 +28,8 @@ CATEGORY = "Automatisation"
 LOGO_DOMAIN = "brevo.com"
 
 DESCRIPTION = (
-    "Les automations (workflows marketing) de Brevo, pilotées via ta session "
-    "Brevo connectée par navigateur hébergé — pas la clé API v3 (connecteur "
-    "`brevo` séparé, qui ne donne aucun accès à cet éditeur d'automations). "
-    "Expérimental : l'API n'est pas documentée publiquement."
+    "Brevo's automations (marketing workflows), driven through your Brevo "
+    "session connected via a hosted browser — not the v3 API key (separate "
+    "`brevo` connector, which gives no access to this automation editor). "
+    "Experimental: the API is not publicly documented."
 )

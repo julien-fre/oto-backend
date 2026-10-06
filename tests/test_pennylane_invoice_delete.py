@@ -46,7 +46,7 @@ def test_delete_calls_client_delete_invoice(client):
 
 
 def test_delete_requires_invoice_id(client):
-    with pytest.raises(McpError, match="op='delete' requiert invoice_id"):
+    with pytest.raises(McpError, match="op='delete' requires invoice_id"):
         _tool("pennylane_invoice")(op="delete")
     client.delete_invoice.assert_not_called()
 
@@ -71,7 +71,7 @@ def test_delete_returns_the_client_result_on_success(client):
 
 
 def test_unknown_op_names_delete_among_the_allowed_ops(client):
-    with pytest.raises(McpError, match="op doit être.*'delete'"):
+    with pytest.raises(McpError, match="op must be.*'delete'"):
         _tool("pennylane_invoice")(op="nope")
     client.delete_invoice.assert_not_called()
 

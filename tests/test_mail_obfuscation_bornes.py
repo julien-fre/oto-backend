@@ -67,5 +67,5 @@ def test_les_motifs_obfusques_se_decodent_toujours():
     )
     assert M.lire(page) == {
         "adresses": ["bureau@exemple.org", "contact@exemple.fr"],
-        "motifs": ["joomla-hidden-mail", "mailto en entités HTML"],
+        "motifs": ["joomla-hidden-mail", "mailto in HTML entities"],
     }

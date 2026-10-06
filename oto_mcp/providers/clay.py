@@ -1,50 +1,50 @@
-"""Déclaration de registre du connecteur `clay`.
+"""Registry declaration for the `clay` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# UNE carte, DEUX sortes d'entrées nommées (multi-compte dérivé de `fields`) :
-#   · kind=api   — la clé Public API (routines, recherche, tables Enterprise).
-#     Clé PERSONNELLE côté Clay (liée à un utilisateur et à ses crédits).
-#   · kind=table — le webhook entrant d'UNE table Clay (source « Monitor webhook »),
-#     seul chemin d'ÉCRITURE de lignes dans Clay. Autant d'entrées que de tables ;
-#     le nom de l'entrée est le nom de la table que l'agent passe à `clay_push_rows`.
-# `kind` vit dans `meta` (`in_meta`) : les tools listent les tables et trouvent
-# l'entrée api SANS déchiffrer. Le discriminant masque les champs de l'autre sorte
-# et `validate_fields` les écarte à l'écriture.
-# Aucun endpoint ne crée un webhook de table : il se copie depuis l'UI Clay. Le champ
-# `webhook` accepte donc l'URL OU la commande cURL que Clay affiche (URL + jeton en
-# en-tête), relue par `oto.tools.clay.parse_curl` à la résolution.
-# byo seul, pas de clé plateforme : chaque appel consomme les crédits Clay du client.
+# ONE card, TWO kinds of named entries (multi-account derived from `fields`):
+#   · kind=api   — the Public API key (routines, search, Enterprise tables).
+#     PERSONAL key on Clay's side (tied to a user and their credits).
+#   · kind=table — the incoming webhook of ONE Clay table ("Monitor webhook" source),
+#     the only WRITE path for rows into Clay. As many entries as tables;
+#     the entry name is the table name the agent passes to `clay_push_rows`.
+# `kind` lives in `meta` (`in_meta`): the tools list the tables and find
+# the api entry WITHOUT decrypting. The discriminator hides the other kind's fields
+# and `validate_fields` drops them on write.
+# No endpoint creates a table webhook: it is copied from the Clay UI. The `webhook`
+# field therefore accepts the URL OR the cURL command Clay displays (URL + token in
+# a header), re-read by `oto.tools.clay.parse_curl` at resolution.
+# byo only, no platform key: each call consumes the customer's Clay credits.
 CONNECTOR = _c(
     "clay", ["clay"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
     label="Clay",
-    help="enrichissement GTM — routines, recherche people/companies, et écriture "
-         "de lignes dans tes tables Clay (webhooks)",
+    help="GTM enrichment — routines, people/companies search, and writing "
+         "rows into your Clay tables (webhooks)",
     href="https://www.clay.com",
     account_noun="table",
     field_discriminator="kind",
     credential_fields=(
         CredentialField("kind", "Type", secret=False, choices=("table", "api"),
                         in_meta=True,
-                        help="`table` = une table Clay où écrire des lignes (webhook) ; "
-                             "`api` = ta clé Public API (routines, recherche)"),
-        # `whitespace_significant` : une commande cURL collée VIT de ses espaces —
-        # le nettoyage par défaut (retrait de tout blanc) la rendrait illisible.
-        CredentialField("webhook", "Webhook URL ou commande cURL", secret=True,
+                        help="`table` = a Clay table to write rows into (webhook); "
+                             "`api` = your Public API key (routines, search)"),
+        # `whitespace_significant`: a pasted cURL command LIVES on its spaces —
+        # the default cleanup (stripping all whitespace) would make it unreadable.
+        CredentialField("webhook", "Webhook URL or cURL command", secret=True,
                         when=("table",), whitespace_significant=True,
-                        help="dans Clay : + Add → Monitor webhook, puis copie l'URL "
-                             "ou la commande cURL entière (le jeton d'auth est repris)"),
-        CredentialField("auth_token", "Jeton d'auth", secret=True, required=False,
+                        help="in Clay: + Add → Monitor webhook, then copy the URL "
+                             "or the whole cURL command (the auth token is picked up)"),
+        CredentialField("auth_token", "Auth token", secret=True, required=False,
                         when=("table",),
-                        help="facultatif — seulement si tu as ajouté un jeton au webhook "
-                             "et collé l'URL seule"),
+                        help="optional — only if you added a token to the webhook "
+                             "and pasted the URL alone"),
         CredentialField("api_key", "API key", secret=True, when=("api",),
-                        help="Settings → Account → API keys dans Clay"),
+                        help="Settings → Account → API keys in Clay"),
     ),
 )
 
@@ -53,9 +53,9 @@ PUBLISHER = "Clay"
 LOGO_DOMAIN = "clay.com"
 
 DESCRIPTION = (
-    "Tes tables Clay : ajoute chaque table par son webhook (colle la commande cURL "
-    "que Clay affiche) et oto y écrit des lignes. Avec ta clé API Clay en plus : "
-    "lancer tes routines (fonctions, workflows), chercher dans la base people/"
-    "companies de Clay et lire tes tables (Enterprise). Chaque appel consomme tes "
-    "crédits Clay."
+    "Your Clay tables: add each table by its webhook (paste the cURL command "
+    "Clay displays) and oto writes rows into it. With your Clay API key as well: "
+    "run your routines (functions, workflows), search Clay's people/"
+    "companies database and read your tables (Enterprise). Each call consumes your "
+    "Clay credits."
 )

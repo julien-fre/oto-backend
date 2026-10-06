@@ -531,7 +531,7 @@ def test_start_is_not_reachable_as_an_op_of_the_visible_tool():
         inst = client_cls.return_value
         tool = _tool("lemlist_campaign")
 
-        with pytest.raises(Exception, match="op inconnu"):
+        with pytest.raises(Exception, match="unknown op"):
             tool.fn(op="start", campaign_id="cam_1")
         inst.start_campaign.assert_not_called()
 
@@ -549,7 +549,7 @@ def test_auto_review_is_refused_before_any_call(op, extra, key_name):
         inst = client_cls.return_value
         tool = _tool("lemlist_campaign")
 
-        with pytest.raises(Exception, match="lead ajouté SANS revue"):
+        with pytest.raises(Exception, match="added lead go out WITHOUT review"):
             tool.fn(op=op, settings={key_name: True}, **extra)
 
         # Refusé AU BORD : aucun aller-retour, donc rien qui puisse partir.
@@ -565,7 +565,7 @@ def test_create_refuses_settings_rather_than_dropping_them():
         inst = client_cls.return_value
         tool = _tool("lemlist_campaign")
 
-        with pytest.raises(Exception, match="ne s'applique pas à la création"):
+        with pytest.raises(Exception, match="does not apply at creation"):
             tool.fn(op="create", name="Q4", settings={"stopOnEmailReplied": True})
         inst.create_campaign.assert_not_called()
 
@@ -593,7 +593,7 @@ def test_update_refuses_an_empty_patch():
         inst = client_cls.return_value
         tool = _tool("lemlist_campaign")
 
-        with pytest.raises(Exception, match="rien à mettre à jour"):
+        with pytest.raises(Exception, match="nothing to update"):
             tool.fn(op="update", campaign_id="cam_1")
         inst.update_campaign.assert_not_called()
 
@@ -691,7 +691,7 @@ def test_sequence_refuses_incomplete_calls_locally():
             tool.fn(op="delete_step", sequence_id="seq_1")
         with pytest.raises(Exception, match="variant"):
             tool.fn(op="ab_winner", sequence_id="seq_1", step_id="stp_1")
-        with pytest.raises(Exception, match="op inconnu"):
+        with pytest.raises(Exception, match="unknown op"):
             tool.fn(op="rename_step", sequence_id="seq_1")
         assert not inst.method_calls
 
@@ -720,5 +720,5 @@ def test_schedule_update_uses_the_api_key_names():
         inst.update_schedule.assert_called_once_with(
             "skd_1", {"end": "17:00", "secondsToWait": 600})
 
-        with pytest.raises(Exception, match="rien à mettre à jour"):
+        with pytest.raises(Exception, match="nothing to update"):
             tool.fn(op="update", schedule_id="skd_1")

@@ -15,8 +15,8 @@ from fastmcp import FastMCP
 def register(mcp: FastMCP) -> None:
     from ..fod import frenchtech as fod_frenchtech
 
-    # Écosystème French Tech servi par le service FOD (ADR 0028 B3) — proxy à surface
-    # identique à FrenchTechClient (Aix-Marseille par défaut côté FOD).
+    # French Tech ecosystem served by the FOD service (ADR 0028 B3) — proxy with a
+    # surface identical to FrenchTechClient (Aix-Marseille by default on the FOD side).
     ft = fod_frenchtech.ft
 
     @mcp.tool()
@@ -63,7 +63,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def frenchtech_appels(query: Optional[str] = None, all_results: bool = False) -> dict:
-        """List calls for projects / competitions / AMI (appels à candidatures)."""
+        """List calls for projects / competitions / AMI (calls for expressions of interest)."""
         return ft.list_appels(query=query, all_results=all_results)
 
     @mcp.tool()

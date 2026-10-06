@@ -38,7 +38,7 @@ def _declarer(monkeypatch, valeur) -> None:
 
 def test_absente_le_demarrage_est_refuse(monkeypatch):
     monkeypatch.delenv("OTO_ENTITLEMENT_DEFAULTS", raising=False)
-    with pytest.raises(RuntimeError, match="OTO_ENTITLEMENT_DEFAULTS absente"):
+    with pytest.raises(RuntimeError, match="OTO_ENTITLEMENT_DEFAULTS is missing"):
         A.verifier_defauts()
 
 
@@ -47,7 +47,7 @@ def test_une_cle_du_catalogue_sans_defaut_refuse_le_demarrage(monkeypatch, retir
     _declarer(monkeypatch, {k: v for k, v in COMPLETE.items() if k != retiree})
     with pytest.raises(RuntimeError) as e:
         A.verifier_defauts()
-    assert "défaut non déclaré pour" in str(e.value) and retiree in str(e.value)
+    assert "default not declared for" in str(e.value) and retiree in str(e.value)
 
 
 @pytest.mark.parametrize("ajout, code", [

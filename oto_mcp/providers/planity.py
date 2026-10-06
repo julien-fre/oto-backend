@@ -1,58 +1,57 @@
-"""Déclaration de registre du connecteur `planity`.
+"""Registry declaration of the `planity` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# planity : agenda + caisse d'un salon, EN NATIF (kind=tools). Le connecteur
-# s'authentifie avec l'email et le mot de passe du compte Planity, posés au coffre
-# (`basic_auth`, palier membre). Le client vit dans oto-core
-# (`oto.tools.planity`), les outils dans `tools/planity*.py` — les noms `planity_*`
-# et leurs schémas n'ont pas bougé (des agents et la fiche les connaissent) ; les
-# ajouts de 2026-09-09 sont additifs.
+# planity: a salon's calendar + till, NATIVE (kind=tools). The connector
+# authenticates with the Planity account's email and password, stored in the vault
+# (`basic_auth`, member tier). The client lives in oto-core
+# (`oto.tools.planity`), the tools in `tools/planity*.py` — the `planity_*` names
+# and their schemas have not changed (agents and the listing know them); the
+# additions of 2026-09-09 are additive.
 #
-# ⚠️ Ce connecteur a été `kind="mount"` jusqu'au 2026-09-09 : les mêmes outils
-# étaient servis par un serveur MCP autonome que nous opérions, à qui le backend
-# rejouait le `basic_auth` du coffre par requête. Le format stocké et le
-# credential ne changent pas d'un iota — ce qui change est qu'il n'y a plus
-# d'intermédiaire à opérer, donc plus de passerelle à annoncer dans la fiche.
+# ⚠️ This connector was `kind="mount"` until 2026-09-09: the same tools
+# were served by a standalone MCP server that we operated, to which the backend
+# replayed the vault's `basic_auth` per request. The stored format and the
+# credential do not change one iota — what changes is that there is no longer an
+# intermediary to operate, hence no gateway left to announce in the listing.
 #
-# ⚠️ L'ÉDITEUR, C'EST NOUS (corrigé le 2026-09-02). La fiche a annoncé jusque-là
-# « Planity » comme éditeur, avec le logo planity.com : ça se lisait comme une
-# intégration officielle, alors que le connecteur est le NÔTRE et qu'il
-# s'authentifie avec l'email et le mot de passe Planity de l'utilisateur — ce que
-# la fiche engage de plus lourd, et qui n'y figurait pas.
+# ⚠️ THE PUBLISHER IS US (corrected on 2026-09-02). The listing used to announce
+# "Planity" as publisher, with the planity.com logo: it read as an official
+# integration, whereas the connector is OURS and it authenticates with the user's
+# Planity email and password — the heaviest commitment the listing makes, and one
+# that was missing from it.
 CONNECTOR = _c(
     "planity", ["planity"],
     auth_modes={"byo_user"}, secret_kind="basic_auth",
-    # Trente-deux outils en quatre modules. La ligne de partage suit les familles
-    # de SOURCES, pas un découpage de confort : le référentiel, les clientes et
-    # l'agenda (`planity`) ; les agrégats servis par les lambdas de statistiques
-    # (`planity_stats`) ; le détail de la caisse, ticket par ticket (`planity_pos`) ;
-    # ce qui bouge en stock (`planity_stock`). Et parce qu'un fichier de plus de
-    # cinq cents lignes ne se relit pas.
+    # Thirty-two tools in four modules. The dividing line follows the families
+    # of SOURCES, not a convenience split: reference data, customers and
+    # the calendar (`planity`); the aggregates served by the statistics lambdas
+    # (`planity_stats`); till detail, receipt by receipt (`planity_pos`);
+    # what moves in stock (`planity_stock`). And because a file of more than
+    # five hundred lines cannot be re-read.
     modules=("planity", "planity_stats", "planity_pos", "planity_stock"),
     label="Planity",
-    help="agenda + caisse Planity (RDV, clients, CA, stats) — oto rejoue ta "
-         "connexion Planity avec ton email et ton mot de passe",
+    help="Planity calendar + till (appointments, customers, revenue, stats) — oto "
+         "replays your Planity login with your email and password",
     href="https://pro.planity.com",
 )
 
 CATEGORY = "Métier"
-# Déclaré, pas laissé au défaut : « Otomata » est aussi ce que rend l'ABSENCE de
-# constante, et un oubli ne doit pas se confondre avec ce choix-ci.
+# Declared, not left to the default: "Otomata" is also what the ABSENCE of a
+# constant returns, and an oversight must not be confused with this choice.
 PUBLISHER = "Otomata"
-# Pas le logo de Planity : le connecteur est le nôtre, pas une intégration
-# officielle de Planity. Monogramme côté UI.
+# Not Planity's logo: the connector is ours, not an official Planity
+# integration. Monogram on the UI side.
 SANS_LOGO_DE_MARQUE = True
 
 DESCRIPTION = (
-    "L'agenda et la caisse Planity d'un salon : rendez-vous, clients, chiffre "
-    "d'affaires et statistiques. Lecture seule. Planity n'ayant pas d'API "
-    "publique, oto rejoue lui-même ta connexion avec l'email et le mot de passe "
-    "de ton compte Planity — il n'utilise rien d'autre, et ce qu'il peut lire est "
-    "ce que ce compte peut lire."
+    "A salon's Planity calendar and till: appointments, customers, revenue "
+    "and statistics. Read-only. Since Planity has no public API, oto itself "
+    "replays your login with your Planity account's email and password — it uses "
+    "nothing else, and what it can read is what that account can read."
 )

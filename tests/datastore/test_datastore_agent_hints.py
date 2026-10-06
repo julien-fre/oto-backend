@@ -47,4 +47,4 @@ def test_row_not_found_hint_points_to_business_key():
 
 def test_row_not_found_hint_without_key_stays_simple():
     msg = _row_not_found_hint(_Store(key=None), "ns", "zzz")
-    assert "introuvable" in msg and "_id" in msg
+    assert "not found" in msg and "_id" in msg

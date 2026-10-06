@@ -1,29 +1,29 @@
-"""Gmail — surface oto-core (GmailClient) exposée par-utilisateur, multi-compte.
+"""Gmail — oto-core surface (GmailClient) exposed per user, multi-account.
 
-Chaque user connecte un ou plusieurs comptes Google sur
-`https://manage.oto.cx/` (section Google) via le flow OAuth unifié (scope
-`gmail.modify`). Les tools `gmail_*` agissent sur le compte par défaut, ou sur
-le compte ciblé par le paramètre `account` (l'adresse email).
+Each user connects one or more Google accounts on
+`https://manage.oto.cx/` (Google section) through the unified OAuth flow (scope
+`gmail.modify`). The `gmail_*` tools act on the default account, or on the
+account targeted by the `account` parameter (the email address).
 
-Pas de clé plateforme : l'accès est strictement per-user via OAuth (comme le
-datastore et WhatsApp), donc pas de `resolve_api_key` ici.
+No platform key: access is strictly per-user via OAuth (like the
+datastore and WhatsApp), so no `resolve_api_key` here.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au produit gmail)** : un tool
-par OBJET métier, le verbe en paramètre `op` — `gmail_message` (search/get/
-attachment/drafts/archive/trash : tout ce qui désigne un message de la boîte, par
-requête ou par id). Deux tools restent SEULS :
-- `gmail_list_accounts` : aucun paramètre (il énumère les `account` que les autres
-  consomment) — même cas que `zoho_modules`, fusionner de la découverte pure
-  n'homogénéise rien ;
-- `gmail_compose` : ses ~12 paramètres de rédaction (body/to/subject/reply_to/cc/
-  bcc/html/from_name/markdown/attachments/mode/sign) ne recouvrent AUCUN paramètre des
-  ops ci-dessus — c'est une variante disjointe, qui pèserait dans le schéma
-  exactement ce qu'elle pèse aujourd'hui séparée (critère = homogénéité des
-  paramètres, pas le comptage).
+**Consolidated surface (ADR 0047 §Amendment, applied to the gmail product)**: one tool
+per business OBJECT, the verb as an `op` parameter — `gmail_message` (search/get/
+attachment/drafts/archive/trash: everything that designates a message in the mailbox, by
+query or by id). Two tools stay ALONE:
+- `gmail_list_accounts`: no parameter (it enumerates the `account` values the others
+  consume) — same case as `zoho_modules`, merging pure discovery
+  homogenizes nothing;
+- `gmail_compose`: its ~12 composition parameters (body/to/subject/reply_to/cc/
+  bcc/html/from_name/markdown/attachments/mode/sign) overlap NONE of the parameters of
+  the ops above — it is a disjoint variant, which would weigh in the schema
+  exactly what it weighs today separate (criterion = parameter
+  homogeneity, not counting).
 
-⚠️ Ce module ÉCRIT sur la boîte de l'utilisateur : `op="archive"`/`op="trash"`
-(gmail_message) et `gmail_compose` (envoi réel). Le défaut de `gmail_message` est
-`op="search"` — une LECTURE : un appel sans `op` ne peut ni écrire ni supprimer.
+⚠️ This module WRITES to the user's mailbox: `op="archive"`/`op="trash"`
+(gmail_message) and `gmail_compose` (real send). The default of `gmail_message` is
+`op="search"` — a READ: a call without `op` can neither write nor delete.
 """
 from __future__ import annotations
 
@@ -40,14 +40,14 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access, file_content, file_source
 from ..auth import google as google_oauth
 
-# Ops de `gmail_message`, dans l'ordre lectures → écritures. Source unique : la
-# validation d'entrée ET le message de refus en dérivent, donc une op ajoutée ne
-# peut pas être acceptée sans être annoncée (ni l'inverse).
+# Ops of `gmail_message`, in reads → writes order. Single source: input
+# validation AND the refusal message derive from it, so an added op
+# cannot be accepted without being announced (nor the reverse).
 _MESSAGE_READ_OPS = ("search", "get", "attachment", "drafts")
 _MESSAGE_WRITE_OPS = ("archive", "trash")
 _MESSAGE_OPS = _MESSAGE_READ_OPS + _MESSAGE_WRITE_OPS
 _MESSAGE_OPS_ERROR = (
-    "op doit être 'search', 'get', 'attachment', 'drafts', 'archive' ou 'trash'")
+    "op must be 'search', 'get', 'attachment', 'drafts', 'archive' or 'trash'")
 
 
 def _bad(msg: str) -> McpError:
@@ -55,22 +55,22 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
+    """Required argument for THIS op — actionable error, never a fallback.
 
-    Une valeur VIDE compte comme absente : `message_ids=[]` sur `op='trash'`
-    rendrait un `{"trashed": []}` qui passerait pour un succès alors que rien n'a
-    été demandé, et `query=""` sur `op='search'` ratisserait la boîte entière.
+    An EMPTY value counts as absent: `message_ids=[]` on `op='trash'`
+    would return a `{"trashed": []}` that passes for a success although nothing was
+    requested, and `query=""` on `op='search'` would sweep the whole mailbox.
     """
     if value is None or (isinstance(value, (str, list)) and not value):
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
 def _client_for_user(account: Optional[str] = None):
-    """Instancie un GmailClient oto-core avec les credentials du user.
+    """Instantiates an oto-core GmailClient with the user's credentials.
 
-    `account` (email) cible un compte précis ; None = compte par défaut.
-    Lève une McpError actionnable si aucun compte Google n'est connecté.
+    `account` (email) targets a specific account; None = default account.
+    Raises an actionable McpError if no Google account is connected.
     """
     sub = access.current_user_sub_or_raise()
     try:
@@ -82,31 +82,31 @@ def _client_for_user(account: Optional[str] = None):
 
 
 _GOOGLE_CLIENT_TIMEOUT_S = 20
-# oto-backend#867 lot 2 — `_client_for_user` peut déclencher un rafraîchissement de
-# jeton (`google_oauth.credentials_for` → `_refresh_access_token`, HTTP synchrone
-# 15s), dans un handler `async def` : hors boucle + borné, même méthode que la liste
-# d'identités Unipile (lot 1) et les routes FOD (lot 2). Les appels à l'API Gmail,
-# eux, sont déjà en `to_thread` — seule la construction du client (donc le refresh)
-# tournait encore dans la boucle.
+# oto-backend#867 lot 2 — `_client_for_user` can trigger a token refresh
+# (`google_oauth.credentials_for` → `_refresh_access_token`, synchronous HTTP
+# 15s), inside an `async def` handler: off the loop + bounded, same method as the
+# Unipile identity list (lot 1) and the FOD routes (lot 2). The Gmail API calls
+# are already in `to_thread` — only the client construction (hence the refresh)
+# still ran in the loop.
 async def _client_for_user_async(account: Optional[str] = None):
     try:
         return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
                                       timeout=_GOOGLE_CLIENT_TIMEOUT_S)
     except asyncio.TimeoutError:
-        raise _bad(f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
-                   "(rafraîchissement de jeton) — réessaie.")
+        raise _bad(f"Google did not respond within {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                   "(token refresh) — retry.")
 
 
 _ATTACHMENTS_TIMEOUT_S = 90
 
 
 def _resolve_attachments(attachments):
-    """Résout des refs `file_source` en fichiers TEMPORAIRES (le GmailClient attend
-    des CHEMINS locaux pour ses pièces jointes, or le serveur n'a pas le disque de
-    l'utilisateur). `attachments` = liste de `{"kind":"drive|gmail|url|project_file", …}` (cf.
-    file_source.resolve). Renvoie `(paths, cleanup)` — l'appelant DOIT appeler
-    `cleanup()` en finally. Lève FileSourceError sur une ref illisible (nettoie
-    d'abord le temp déjà écrit)."""
+    """Resolves `file_source` refs into TEMPORARY files (the GmailClient expects
+    local PATHS for its attachments, but the server does not have the user's disk).
+    `attachments` = list of `{"kind":"drive|gmail|url|project_file", …}` (see
+    file_source.resolve). Returns `(paths, cleanup)` — the caller MUST call
+    `cleanup()` in a finally. Raises FileSourceError on an unreadable ref (first
+    cleans up the temp already written)."""
     if not attachments:
         return [], (lambda: None)
     tmpdir = tempfile.mkdtemp(prefix="oto-gmail-att-")
@@ -118,7 +118,7 @@ def _resolve_attachments(attachments):
         paths = []
         for i, src in enumerate(attachments):
             rf = file_source.resolve(src)
-            # basename défensif : jamais laisser un filename traverser le tmpdir.
+            # defensive basename: never let a filename traverse the tmpdir.
             name = os.path.basename(rf.filename or "") or f"attachment-{i}"
             path = os.path.join(tmpdir, name)
             with open(path, "wb") as f:
@@ -131,13 +131,13 @@ def _resolve_attachments(attachments):
 
 
 def _signed_html(body: str, html: Optional[str], markdown: bool, signature: str) -> str:
-    """Le corps HTML du message, signature du compte apposée après `--`.
+    """The message's HTML body, with the account's signature appended after `--`.
 
-    L'API Gmail n'appose JAMAIS la signature : c'est le client web qui l'ajoute à la
-    composition (oto#178, retours 794/795). La signature est du HTML, donc le corps
-    doit l'être aussi : `html` tel quel, sinon le markdown rendu — le même rendu que
-    GmailClient ferait lui-même —, sinon le texte brut échappé, sauts de ligne gardés
-    (`markdown=False` veut dire « pas de markdown », pas « pas de HTML »)."""
+    The Gmail API NEVER appends the signature: it is the web client that adds it at
+    composition (oto#178, feedback 794/795). The signature is HTML, so the body
+    must be too: `html` as is, otherwise the rendered markdown — the same rendering
+    GmailClient would do itself —, otherwise the escaped plain text, line breaks kept
+    (`markdown=False` means "no markdown", not "no HTML")."""
     if html is not None:
         corps = html
     elif markdown:
@@ -246,16 +246,16 @@ def register(mcp: FastMCP) -> None:
                 max 5000).
             account: email of the Google account to use (default if omitted).
         """
-        # Refus AVANT toute résolution de credential : une op inconnue n'atteint
-        # jamais le client — donc jamais, par un chemin dérivé, une écriture.
+        # Refusal BEFORE any credential resolution: an unknown op never reaches
+        # the client — hence never, by a derived path, a write.
         if op not in _MESSAGE_OPS:
             raise _bad(_MESSAGE_OPS_ERROR)
         if (sheet is not None or max_rows is not None) and op != "attachment":
-            raise _bad(f"`sheet`/`max_rows` ne valent que pour op='attachment' d'un "
-                       f"tableur .xlsx (reçu op='{op}').")
+            raise _bad(f"`sheet`/`max_rows` only apply to op='attachment' of an "
+                       f".xlsx spreadsheet (got op='{op}').")
         client = await _client_for_user_async(account)
 
-        # ---- lectures --------------------------------------------------------
+        # ---- reads -----------------------------------------------------------
         if op == "search":
             messages = await asyncio.to_thread(
                 client.search, _need(query, "query", op), max_results)
@@ -285,43 +285,43 @@ def register(mcp: FastMCP) -> None:
             drafts = await asyncio.to_thread(client.list_drafts, max_results)
             return {"drafts": drafts, "count": len(drafts)}
 
-        # ---- écritures -------------------------------------------------------
+        # ---- writes ----------------------------------------------------------
         if op == "archive":
             results = await asyncio.to_thread(
                 client.archive_messages, _need(message_ids, "message_ids", op))
             return {"archived": results}
 
         if op == "trash":
-            # Gmail n'a pas de corbeille en lot : c'est un appel par message,
-            # donc une boucle — et donc une écriture PARTIELLE possible. Si le
-            # 3ᵉ échoue, les deux premiers SONT à la corbeille ; laisser
-            # l'exception nue remonter ne dirait à l'agent qu'« échec », il
-            # conclurait « rien n'est parti » et rejouerait une écriture déjà
-            # faite. C'est le défaut que décrit le signal #227 (une action
-            # appliquée dont l'appelant n'apprend rien), et la même faute que
-            # #600 : annoncer un échec sur un succès. On nomme les trois lots.
+            # Gmail has no batch trash: it is one call per message,
+            # hence a loop — and hence a PARTIAL write is possible. If the
+            # 3rd fails, the first two ARE in the trash; letting the bare
+            # exception bubble up would only tell the agent "failed", it would
+            # conclude "nothing went through" and replay a write already
+            # done. That is the defect described by signal #227 (an applied
+            # action the caller learns nothing about), and the same fault as
+            # #600: announcing a failure on a success. We name the three batches.
             ids = list(_need(message_ids, "message_ids", op))
             trashed: list = []
             for i, mid in enumerate(ids):
                 try:
                     res = await asyncio.to_thread(client.trash_message, mid)
-                except Exception as e:  # noqa: BLE001 — re-levée nommée, avec l'état réel
+                except Exception as e:  # noqa: BLE001 — re-raised named, with the real state
                     restants = ids[i + 1:]
                     raise _bad(
-                        "Corbeille PARTIELLE — l'écriture s'arrête au premier "
-                        "échec, mais ce qui précède a bien eu lieu. "
-                        f"DÉJÀ à la corbeille ({len(trashed)}) : {trashed}. "
-                        f"ÉCHEC sur `{mid}` : {type(e).__name__}: {e}. "
-                        f"NON TENTÉS ({len(restants)}) : {restants}. "
-                        "Ne rejoue que les non-tentés — retenter les premiers "
-                        "n'est pas nécessaire."
+                        "PARTIAL trash — the write stops at the first "
+                        "failure, but what precedes did happen. "
+                        f"ALREADY in the trash ({len(trashed)}): {trashed}. "
+                        f"FAILED on `{mid}`: {type(e).__name__}: {e}. "
+                        f"NOT ATTEMPTED ({len(restants)}): {restants}. "
+                        "Only replay the not-attempted ones — retrying the first "
+                        "ones is not necessary."
                     ) from e
                 trashed.append(res.get("id", mid))
             return {"trashed": trashed}
 
-        # Structurellement inatteignable (garde d'entrée ci-dessus) — filet contre
-        # un `return None` implicite si une op était ajoutée à `_MESSAGE_OPS` sans
-        # sa branche : mieux vaut refuser que rendre « rien » pour un succès.
+        # Structurally unreachable (input guard above) — a safety net against
+        # an implicit `return None` if an op were added to `_MESSAGE_OPS` without
+        # its branch: better to refuse than to return "nothing" as a success.
         raise _bad(_MESSAGE_OPS_ERROR)
 
     @mcp.tool()
@@ -388,46 +388,46 @@ def register(mcp: FastMCP) -> None:
                   (ids from oto_project_files op=list)
         """
         if mode not in ("send", "draft"):
-            raise _bad("mode doit être 'send' ou 'draft'.")
+            raise _bad("mode must be 'send' or 'draft'.")
         client = await _client_for_user_async(account)
         signature_etat = "disabled"
         if sign:
             try:
                 signature = await asyncio.to_thread(client.get_signature)
             except Exception as e:
-                # Pas d'envoi SANS la signature attendue en silence : refus nommé,
-                # avec le geste qui aboutit si l'appelant accepte de s'en passer.
-                raise _bad(f"Lecture de la signature Gmail impossible ({e}) — rien "
-                           "n'a été envoyé. Réessaie, ou passe `sign=False` pour "
-                           "composer sans signature.")
+                # No send WITHOUT the signature silently expected: named refusal,
+                # with the gesture that works if the caller accepts doing without it.
+                raise _bad(f"Could not read the Gmail signature ({e}) — nothing "
+                           "was sent. Retry, or pass `sign=False` to "
+                           "compose without a signature.")
             if signature:
                 html = _signed_html(body, html, markdown, signature)
                 signature_etat = "appended"
             else:
                 signature_etat = "none_configured"
         try:
-            # oto-backend#867 lot 2 — chaque pièce jointe (drive/gmail/url) est
-            # résolue par un appel HTTP synchrone (file_source.resolve), en série :
-            # hors boucle + borné, même méthode que le rafraîchissement de jeton
-            # ci-dessus. 90s et non 20s : un envoi tolère l'attente de vraies
-            # pièces jointes (jusqu'à 25 Mo chacune) — ce qui ne doit pas arriver,
-            # c'est que ça gèle tout le processus pendant ce temps.
+            # oto-backend#867 lot 2 — each attachment (drive/gmail/url) is
+            # resolved by a synchronous HTTP call (file_source.resolve), in series:
+            # off the loop + bounded, same method as the token refresh
+            # above. 90s and not 20s: a send tolerates waiting for real
+            # attachments (up to 25 MB each) — what must not happen
+            # is freezing the whole process in the meantime.
             att = await asyncio.wait_for(
                 asyncio.to_thread(_resolve_attachments, attachments),
                 timeout=_ATTACHMENTS_TIMEOUT_S)
         except asyncio.TimeoutError:
-            raise _bad(f"Récupération des pièces jointes trop longue "
-                      f"(> {_ATTACHMENTS_TIMEOUT_S}s) — réessaie.")
+            raise _bad(f"Fetching the attachments took too long "
+                      f"(> {_ATTACHMENTS_TIMEOUT_S}s) — retry.")
         except file_source.FileSourceError as e:
             raise _bad(str(e))
         att_paths, _cleanup = att
 
         def _acte(res: object) -> dict:
-            """Le retour NOMME l'acte. Sans ce champ, « envoyé » et « brouillon » ne se
-            distinguent qu'au NOMBRE de clés rendues (3 vs 2) — une différence qu'il faut
-            déjà connaître pour la lire. Un agent qui rapporte « brouillon créé » après un
-            envoi réel n'a pas menti : il n'avait rien à lire qui le dise.
-            Payé le 14/08 : trois mails partis chez une cliente."""
+            """The return NAMES the act. Without this field, "sent" and "draft" can only
+            be told apart by the NUMBER of keys returned (3 vs 2) — a difference you
+            must already know about to read it. An agent that reports "draft created" after
+            a real send did not lie: it had nothing to read that said so.
+            Paid for on 14/08: three emails sent to a client."""
             out = dict(res) if isinstance(res, dict) else {"result": res}
             out["kind"] = "draft" if mode == "draft" else "sent"
             out["signature"] = signature_etat
@@ -449,7 +449,7 @@ def register(mcp: FastMCP) -> None:
                     )
                 ))
             if not to:
-                raise _bad("`to` requis pour un nouveau message (ou fournis `reply_to` pour répondre).")
+                raise _bad("`to` is required for a new message (or provide `reply_to` to reply).")
             if mode == "draft":
                 return _acte(await asyncio.to_thread(
                     lambda: client.create_draft(

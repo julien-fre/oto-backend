@@ -1,29 +1,29 @@
-"""Outils Productlane — retours clients, roadmap, changelogs, centre d'aide.
+"""Productlane tools — customer feedback, roadmap, changelogs, help center.
 
-Wrappe `oto.tools.productlane.client.ProductlaneClient` (API **v2**, Bearer).
-Huit outils, un par famille de l'API amont.
+Wraps `oto.tools.productlane.client.ProductlaneClient` (API **v2**, Bearer).
+Eight tools, one per upstream API family.
 
-Trois choses à savoir avant de lire un résultat :
+Three things to know before reading a result:
 
-- ⚠️ **La roadmap est adossée à Linear.** Projets et issues naissent dans Linear
-  puis sont reflétés ici ; `team_id`, `state_id`, `assignee_id` et
-  `linear_status_id` sont des identifiants LINEAR. Surtout : une écriture peut
-  réussir localement pendant que la synchro Linear échoue — l'éditeur la
-  journalise de son côté et ne la remonte pas. Un succès ne prouve donc pas que
-  Linear a suivi.
+- ⚠️ **The roadmap is backed by Linear.** Projects and issues are born in Linear
+  then mirrored here; `team_id`, `state_id`, `assignee_id` and
+  `linear_status_id` are LINEAR identifiers. Above all: a write can
+  succeed locally while the Linear sync fails — the vendor logs it on its
+  side and does not surface it. A success therefore does not prove that
+  Linear followed.
 
-- ⚠️ **Un seul geste écrit à des tiers** : `productlane_changelogs
-  op='broadcast'`, qui envoie un email aux contacts abonnés et publie dans
-  Slack. Il est en **dry-run par défaut**, comme l'envoi d'email de `lightfield`
-  et le lancement de campagne d'`origami` — les trois seuls appels du dépôt qui
-  sortent de l'organisation.
+- ⚠️ **Only one gesture writes to third parties**: `productlane_changelogs
+  op='broadcast'`, which sends an email to subscribed contacts and posts to
+  Slack. It is **dry-run by default**, like `lightfield`'s email send
+  and `origami`'s campaign launch — the only three calls in the repo that
+  leave the organization.
 
-- **Pagination par curseur**, jamais par numéro de page : chaque liste rend
-  `{data, page:{cursor, has_more}}`, et c'est `has_more` qui dit s'il reste
-  quelque chose — pas la taille de `data`, qu'une dernière page peut rendre vide.
+- **Cursor pagination**, never by page number: each list returns
+  `{data, page:{cursor, has_more}}`, and `has_more` says whether anything
+  remains — not the size of `data`, which a last page can return empty.
 
-Les appels au client sont écrits en clair (`_client().list_threads(…)`) : c'est
-ce qui les rend vérifiables par la sonde version-skew
+Client calls are written out in plain form (`_client().list_threads(…)`): that is
+what makes them verifiable by the version-skew probe
 (`test_tools_client_methods_exist`).
 """
 from __future__ import annotations
@@ -43,11 +43,11 @@ def _bad(msg: str) -> McpError:
 
 
 def _upstream_message(e) -> str:
-    """Traduit un refus de Productlane en message actionnable.
+    """Translate a Productlane refusal into an actionable message.
 
-    L'enveloppe d'erreur v2 porte `{error: {code, message, request_id}}` : le
-    `code` et le `request_id` sont ce qui permet au client de retrouver l'appel
-    dans ses journaux, donc ils sont remontés tels quels.
+    The v2 error envelope carries `{error: {code, message, request_id}}`: the
+    `code` and the `request_id` are what lets the customer find the call in
+    their logs, so they are passed through as-is.
     """
     status = e.status_code
     body = e.body if isinstance(e.body, dict) else {}
@@ -56,46 +56,46 @@ def _upstream_message(e) -> str:
     rid = err.get("request_id") or body.get("request_id")
     suffixe = f" [request_id {rid}]" if rid else ""
     if status == 401:
-        return ("Productlane a rejeté la clé (401) — vérifie la clé configurée "
-                "sur ce connecteur. ⚠️ Une clé **v1** ne marche pas ici : l'API "
-                "v2 est distincte, et sa clé se crée à part." + suffixe)
+        return ("Productlane rejected the key (401) — check the key configured "
+                "on this connector. ⚠️ A **v1** key does not work here: the v2 API "
+                "is separate, and its key is created separately." + suffixe)
     if status == 403:
-        return (f"Productlane a refusé l'accès (403{f', {code}' if code else ''}) "
-                "— la clé existe mais il lui manque le scope de cette opération, "
-                "ou le plan de l'espace de travail ne la couvre pas (les "
-                "extraits et certaines étiquettes demandent Pro ou Scale)."
+        return (f"Productlane denied access (403{f', {code}' if code else ''}) "
+                "— the key exists but lacks the scope for this operation, "
+                "or the workspace plan does not cover it (snippets and some "
+                "tags require Pro or Scale)."
                 + suffixe)
     if status == 404:
-        return f"Productlane : ressource introuvable (404) — vérifie l'identifiant.{suffixe}"
+        return f"Productlane: resource not found (404) — check the identifier.{suffixe}"
     if status in (400, 422):
         if code == "validation_failed":
-            return ("Productlane a refusé la demande (validation_failed) — sur "
-                    "l'envoi d'un message, cela veut souvent dire que "
-                    "l'intégration du canal déduit (email, Slack, Teams) n'est "
-                    "pas configurée pour cet espace de travail, pas que le "
-                    f"contenu est mauvais.{suffixe}")
-        return (f"Productlane a refusé la requête (HTTP {status}"
-                f"{f', {code}' if code else ''}) : {e.body}{suffixe}")
+            return ("Productlane rejected the request (validation_failed) — when "
+                    "sending a message, this often means that the integration "
+                    "for the inferred channel (email, Slack, Teams) is not "
+                    "configured for this workspace, not that the "
+                    f"content is bad.{suffixe}")
+        return (f"Productlane rejected the request (HTTP {status}"
+                f"{f', {code}' if code else ''}): {e.body}{suffixe}")
     if status == 429:
-        return ("Productlane : trop de requêtes (429) — 1000 lectures/minute et "
-                "60 écritures/minute par clé. Réessaie dans un instant." + suffixe)
+        return ("Productlane: too many requests (429) — 1000 reads/minute and "
+                "60 writes/minute per key. Try again in a moment." + suffixe)
     if status in (500, 502, 503, 504):
-        return (f"Productlane est momentanément indisponible (HTTP {status}) — "
-                f"réessaie plus tard.{suffixe}")
-    return f"Productlane a refusé la requête (HTTP {status}): {e.body}{suffixe}"
+        return (f"Productlane is temporarily unavailable (HTTP {status}) — "
+                f"try again later.{suffixe}")
+    return f"Productlane rejected the request (HTTP {status}): {e.body}{suffixe}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : `GET /me`.
+    """"Test the connection" probe: `GET /me`.
 
-    Appelable par TOUTE clé authentifiée, quels que soient ses scopes — c'est ce
-    qui en fait la bonne sonde : elle sépare « clé invalide » (401) de « clé
-    valide mais sans le droit demandé » (403 ailleurs). Sonder une ressource
-    confondrait les deux et ferait afficher rouge sur une clé saine mais
-    volontairement restreinte.
+    Callable by ANY authenticated key, whatever its scopes — that is what
+    makes it the right probe: it separates "invalid key" (401) from "valid
+    key but without the requested right" (403 elsewhere). Probing a resource
+    would conflate the two and show red on a healthy but deliberately
+    restricted key.
 
-    Elle rend en prime les scopes accordés, donc de quoi expliquer un refus
-    AVANT de le provoquer.
+    It also returns the granted scopes, so there is enough to explain a refusal
+    BEFORE provoking it.
     """
     from oto.tools.productlane.client import ProductlaneClient
     ProductlaneClient(api_key=fields["key"]).me()
@@ -121,13 +121,13 @@ def register(mcp: FastMCP) -> None:
 
     def _need(value, nom: str, op: str):
         if not value:
-            raise _bad(f"op='{op}' : `{nom}` requis.")
+            raise _bad(f"op='{op}': `{nom}` is required.")
         return value
 
     def _bad_op(op: str, attendus: str):
-        return _bad(f"`op` invalide : {op!r} (attendu : {attendus}).")
+        return _bad(f"`op` invalid: {op!r} (expected: {attendus}).")
 
-    # --- fils ----------------------------------------------------------------
+    # --- threads -------------------------------------------------------------
 
     @mcp.tool()
     def productlane_threads(
@@ -154,55 +154,55 @@ def register(mcp: FastMCP) -> None:
         cursor: Optional[str] = None,
         limit: int = 50,
     ) -> Any:
-        """Productlane — les fils de retour client : ce que les clients ont dit.
+        """Productlane — customer feedback threads: what customers have said.
 
-        C'est la boîte de réception du produit. Un fil porte une conversation
-        (messages, tous canaux fondus), des commentaires internes, une douleur
-        (`pain_level`) et des liens vers la roadmap.
+        This is the product's inbox. A thread carries a conversation
+        (messages, all channels merged), internal comments, a pain level
+        (`pain_level`) and links to the roadmap.
 
-        ⚠️ **Deux plans qu'il ne faut pas confondre** : `send` envoie un message
-        AU CLIENT, par le canal d'où vient le fil (email, Slack, live chat,
-        Teams) — c'est une communication sortante réelle. `comment` écrit une
-        note visible de l'équipe seulement. Rien dans la forme des deux appels ne
-        le rappelle : c'est le nom de l'`op` qui le dit.
+        ⚠️ **Two planes that must not be confused**: `send` sends a message
+        TO THE CUSTOMER, through the channel the thread came from (email, Slack, live chat,
+        Teams) — it is a real outbound communication. `comment` writes a
+        note visible to the team only. Nothing in the shape of the two calls
+        tells you so: it is the name of the `op` that does.
 
         `op`:
-        - `search` — liste les fils (filtres : statut, onglet, douleur, origine,
-          contact, entreprise, assigné, étiquette, fenêtre de dates).
-        - `get` — un fil ; `expand=['messages','comments']` inline la conversation.
-        - `create` — ouvre un fil et **upsert son contact par email**
-          (`fields` : text, pain_level, contact_email requis).
-        - `update` — met à jour (`fields`). ⚠️ `tag_ids` REMPLACE les étiquettes.
+        - `search` — list threads (filters: status, tab, pain, origin,
+          contact, company, assignee, tag, date window).
+        - `get` — one thread; `expand=['messages','comments']` inlines the conversation.
+        - `create` — open a thread and **upsert its contact by email**
+          (`fields`: text, pain_level, contact_email required).
+        - `update` — update (`fields`). ⚠️ `tag_ids` REPLACES the tags.
         - `delete` — soft-delete.
-        - `messages` — la conversation du fil, du plus ancien au plus récent.
-        - `send` — ⚠️ **envoie un message au client** (`content`).
+        - `messages` — the thread's conversation, oldest to newest.
+        - `send` — ⚠️ **sends a message to the customer** (`content`).
         - `comments` / `comment` / `update_comment` / `delete_comment` —
-          les notes INTERNES du fil.
-        - `link` — relie le fil à des issues et/ou projets Linear
-          (`issue_ids`/`project_ids`) : c'est le geste qui transforme un retour
-          en demande tracée sur la roadmap, et qui fait monter le score d'un projet.
+          the thread's INTERNAL notes.
+        - `link` — link the thread to Linear issues and/or projects
+          (`issue_ids`/`project_ids`): this is the gesture that turns feedback
+          into a tracked request on the roadmap, and that raises a project's score.
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            thread_id: le fil visé (toutes les op sauf search et create).
-            comment_id: le commentaire visé (update_comment, delete_comment).
+            op: the operation, see above.
+            thread_id: the target thread (all ops except search and create).
+            comment_id: the target comment (update_comment, delete_comment).
             status: op='search'/'create'/'update' — open | snoozed | done.
             tab: op='search' — open | new | needs-response | my | snoozed | done.
             pain_level: UNKNOWN | LOW | MEDIUM | HIGH.
-            origin: op='search'/'create' — canal d'origine (email, slack, portal…).
-            contact_id: op='search' — filtre par contact.
-            company_id: op='search' — filtre par entreprise.
-            assignee_id: op='search' — filtre par assigné.
-            tag_id: op='search' — filtre par étiquette.
-            issue_ids: op='link' — issues Linear à relier.
-            project_ids: op='link' — projets Linear à relier.
-            expand: op='get' — messages et/ou comments à inliner.
-            content: op='send'/'comment'/'update_comment' — le texte.
-            fields: op='create'/'update' — le corps du fil.
-            created_after: op='search' — borne basse (ISO 8601).
-            created_before: op='search' — borne haute (ISO 8601).
-            cursor: page suivante (rendu par `page.cursor`).
-            limit: lignes par page (1-200, défaut 50).
+            origin: op='search'/'create' — origin channel (email, slack, portal…).
+            contact_id: op='search' — filter by contact.
+            company_id: op='search' — filter by company.
+            assignee_id: op='search' — filter by assignee.
+            tag_id: op='search' — filter by tag.
+            issue_ids: op='link' — Linear issues to link.
+            project_ids: op='link' — Linear projects to link.
+            expand: op='get' — messages and/or comments to inline.
+            content: op='send'/'comment'/'update_comment' — the text.
+            fields: op='create'/'update' — the thread body.
+            created_after: op='search' — lower bound (ISO 8601).
+            created_before: op='search' — upper bound (ISO 8601).
+            cursor: next page (returned as `page.cursor`).
+            limit: rows per page (1-200, default 50).
         """
         c = _client()
         if op == "search":
@@ -279,39 +279,39 @@ def register(mcp: FastMCP) -> None:
         cursor: Optional[str] = None,
         limit: int = 50,
     ) -> Any:
-        """Productlane — les personnes qui ont écrit, et leurs entreprises.
+        """Productlane — the people who wrote in, and their companies.
 
-        Un contact relie une conversation à une organisation cliente : c'est ce
-        qui permet de dire « ce retour vient d'un client à tel niveau ».
+        A contact links a conversation to a customer organization: that is what
+        lets you say "this feedback comes from a customer at such a tier".
 
-        ⚠️ **Bloquer coupe la communication sans prévenir l'intéressé.** Un
-        expéditeur bloqué ne peut plus ouvrir de fil ni écrire sur un fil
-        existant, et n'en est pas informé. `block_type='DOMAIN'` coupe **toute une
-        organisation** d'un seul appel — à ne pas confondre avec `'EMAIL'`, qui
-        ne vise qu'une adresse.
+        ⚠️ **Blocking cuts communication without telling the person concerned.** A blocked
+        sender can no longer open a thread or write on an existing thread,
+        and is not told. `block_type='DOMAIN'` cuts off **an entire
+        organization** in a single call — not to be confused with `'EMAIL'`, which
+        targets only one address.
 
         `op`:
-        - `search` / `get` / `create` / `update` / `delete` — le contact.
-          ⚠️ `update` avec `is_subscribed: false` **désabonne** des diffusions de
-          changelog : c'est une préférence de communication, pas un champ neutre.
-        - `companies` / `add_company` / `remove_company` — ses appartenances.
-          L'ajout est idempotent et devient la principale s'il n'en avait aucune.
-        - `issues` / `projects` — ce à quoi ses fils sont reliés sur la roadmap.
-        - `blocked` / `block` / `unblock` — les expéditeurs bloqués.
+        - `search` / `get` / `create` / `update` / `delete` — the contact.
+          ⚠️ `update` with `is_subscribed: false` **unsubscribes** from changelog
+          broadcasts: it is a communication preference, not a neutral field.
+        - `companies` / `add_company` / `remove_company` — its memberships.
+          Adding is idempotent and becomes the primary one if it had none.
+        - `issues` / `projects` — what its threads are linked to on the roadmap.
+        - `blocked` / `block` / `unblock` — blocked senders.
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            contact_id: le contact visé.
-            company_id: l'entreprise (add_company, remove_company).
-            blocked_id: l'entrée bloquée à retirer (unblock).
-            email: op='search' — filtre par email exact.
-            name_contains: op='search' — filtre par nom partiel.
-            external_id: op='search' — filtre par identifiant externe.
-            block_type: op='block'/'blocked' — EMAIL (une adresse) ou DOMAIN (tout un domaine).
-            value: op='block' — l'adresse ou le domaine à bloquer.
-            fields: op='create'/'update' — le corps du contact (email requis à la création).
-            cursor: page suivante.
-            limit: lignes par page (1-200, défaut 50).
+            op: the operation, see above.
+            contact_id: the target contact.
+            company_id: the company (add_company, remove_company).
+            blocked_id: the blocked entry to remove (unblock).
+            email: op='search' — filter by exact email.
+            name_contains: op='search' — filter by partial name.
+            external_id: op='search' — filter by external identifier.
+            block_type: op='block'/'blocked' — EMAIL (one address) or DOMAIN (a whole domain).
+            value: op='block' — the address or domain to block.
+            fields: op='create'/'update' — the contact body (email required on creation).
+            cursor: next page.
+            limit: rows per page (1-200, default 50).
         """
         c = _client()
         if op == "search":
@@ -384,33 +384,33 @@ def register(mcp: FastMCP) -> None:
         cursor: Optional[str] = None,
         limit: int = 50,
     ) -> Any:
-        """Productlane — les entreprises clientes, jumelées aux customers Linear.
+        """Productlane — customer companies, paired with Linear customers.
 
-        ⚠️ **Le miroir Linear est asynchrone** : le customer est provisionné une
-        fois un domaine posé, les changements d'identité s'y propagent plus tard,
-        et une suppression y agit après coup. Ne rien voir côté Linear juste
-        après un appel est un délai, pas une panne.
+        ⚠️ **The Linear mirror is asynchronous**: the customer is provisioned once
+        a domain is set, identity changes propagate there later,
+        and a deletion takes effect there afterwards. Seeing nothing on the Linear side right
+        after a call is a delay, not an outage.
 
-        ⚠️ `merge` est **irréversible, et le sens compte** : l'entreprise
-        `company_id` SURVIT, celle de `source_id` est supprimée. Ses fils,
-        contacts et votes passent à la survivante, dont seules les propriétés
-        VIDES sont complétées.
+        ⚠️ `merge` is **irreversible, and direction matters**: the company
+        `company_id` SURVIVES, the one in `source_id` is deleted. Its threads,
+        contacts and votes move to the survivor, of which only EMPTY properties
+        are filled in.
 
         `op`: `search` | `get` | `create` | `update` | `delete` (soft) |
-        `merge` | `linear_options` (statuts et tiers Linear disponibles —
-        rend `null` si Linear n'est pas connecté, ce qui est une réponse et pas
-        une erreur).
+        `merge` | `linear_options` (available Linear statuses and tiers —
+        returns `null` if Linear is not connected, which is an answer and not
+        an error).
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            company_id: l'entreprise visée — sur merge, celle qui SURVIT.
-            source_id: op='merge' — l'entreprise ABSORBÉE (supprimée).
-            domain: op='search' — filtre par domaine.
-            name_contains: op='search' — filtre par nom partiel.
-            external_id: op='search' — filtre par identifiant externe.
-            fields: op='create'/'update' — le corps (name requis à la création).
-            cursor: page suivante.
-            limit: lignes par page (1-200, défaut 50).
+            op: the operation, see above.
+            company_id: the target company — on merge, the one that SURVIVES.
+            source_id: op='merge' — the ABSORBED company (deleted).
+            domain: op='search' — filter by domain.
+            name_contains: op='search' — filter by partial name.
+            external_id: op='search' — filter by external identifier.
+            fields: op='create'/'update' — the body (name required on creation).
+            cursor: next page.
+            limit: rows per page (1-200, default 50).
         """
         c = _client()
         if op == "search":
@@ -458,40 +458,40 @@ def register(mcp: FastMCP) -> None:
         cursor: Optional[str] = None,
         limit: int = 50,
     ) -> Any:
-        """Productlane — la roadmap : projets et issues, **adossés à Linear**.
+        """Productlane — the roadmap: projects and issues, **backed by Linear**.
 
-        ⚠️ **Linear doit être connecté**, et trois asymétries en découlent :
-        la CRÉATION part de Linear (sans lui, elle échoue) ; la mise à jour et la
-        suppression réussissent localement **même si la synchro Linear échoue**
-        (l'éditeur la journalise et ne la remonte pas) ; et `team_id`,
-        `state_id`, `assignee_id`, `linear_status_id` sont des identifiants
-        LINEAR, à lire par `op='workflows'` / `op='statuses'` ou via le
-        connecteur Linear.
+        ⚠️ **Linear must be connected**, and three asymmetries follow:
+        CREATION starts from Linear (without it, it fails); update and
+        deletion succeed locally **even if the Linear sync fails**
+        (the vendor logs it and does not surface it); and `team_id`,
+        `state_id`, `assignee_id`, `linear_status_id` are LINEAR
+        identifiers, to be read via `op='workflows'` / `op='statuses'` or via the
+        Linear connector.
 
-        ⚠️ `sort='total_score'` classe par poids des retours clients rattachés —
-        c'est la vraie question « qu'est-ce que nos clients demandent le plus ? »,
-        que l'ordre par date ne répond pas.
+        ⚠️ `sort='total_score'` ranks by the weight of attached customer feedback —
+        it answers the real question "what do our customers ask for the most?",
+        which ordering by date does not.
 
-        ⚠️ Sur une issue, `status` n'est PAS une énumération fixe : ce sont les
-        workflow states de l'équipe Linear, propres à chaque espace de travail.
-        Les lire par `op='workflows'` plutôt que d'en coder un en dur.
+        ⚠️ On an issue, `status` is NOT a fixed enum: these are the
+        workflow states of the Linear team, specific to each workspace.
+        Read them via `op='workflows'` rather than hardcoding one.
 
-        ⚠️ `priority` suit la numérotation Linear : `0` = aucune, `1` = urgente,
-        puis 2, 3, 4 par urgence décroissante. Ce n'est pas une échelle croissante.
+        ⚠️ `priority` follows Linear numbering: `0` = none, `1` = urgent,
+        then 2, 3, 4 in decreasing urgency. It is not an ascending scale.
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            project_id: le projet visé.
-            issue_id: l'issue visée.
-            team_id: op='workflows' (requis) et création — l'équipe LINEAR.
+            op: the operation, see above.
+            project_id: the target project.
+            issue_id: the target issue.
+            team_id: op='workflows' (required) and creation — the LINEAR team.
             state: op='projects'/'create_project' — backlog | planned | started |
                 completed | canceled.
-            status: op='issues' — workflow state Linear (cf. op='workflows').
-            name_contains: filtre par nom partiel.
+            status: op='issues' — Linear workflow state (see op='workflows').
+            name_contains: filter by partial name.
             sort: created_at | total_score.
-            fields: corps de création ou de mise à jour.
-            cursor: page suivante.
-            limit: lignes par page (1-200, défaut 50).
+            fields: creation or update body.
+            cursor: next page.
+            limit: rows per page (1-200, default 50).
         """
         c = _client()
         if op == "projects":
@@ -560,43 +560,43 @@ def register(mcp: FastMCP) -> None:
         cursor: Optional[str] = None,
         limit: int = 50,
     ) -> Any:
-        """Productlane — les notes de version, et leur diffusion aux abonnés.
+        """Productlane — release notes, and their broadcast to subscribers.
 
-        ⚠️ **`op='broadcast'` est le seul appel de ce connecteur qui écrit à des
-        tiers** : email aux contacts abonnés et/ou publication dans les canaux
-        Slack configurés. Sans annulation ni rappel possible. Il est donc en
-        **dry-run par défaut** — `dry_run=false` pour envoyer pour de vrai.
+        ⚠️ **`op='broadcast'` is the only call in this connector that writes to
+        third parties**: email to subscribed contacts and/or a post to the configured
+        Slack channels. It cannot be cancelled or recalled. It is therefore
+        **dry-run by default** — `dry_run=false` to really send.
 
-        ⚠️ **Publier et diffuser sont deux gestes distincts**, et l'éditeur est
-        formel : la diffusion ne touche JAMAIS `published`. On peut donc diffuser
-        un changelog non publié, et les destinataires recevraient un lien vers
-        une page invisible. Publier = `op='update'` avec `{"published": true}`.
+        ⚠️ **Publishing and broadcasting are two distinct gestures**, and the vendor is
+        explicit: broadcasting NEVER touches `published`. An unpublished
+        changelog can therefore be broadcast, and recipients would receive a link to
+        an invisible page. Publish = `op='update'` with `{"published": true}`.
 
         `op`: `search` | `get` | `create` | `update` | `delete` (soft) |
         `broadcast` | `tags` | `create_tag` | `update_tag` | `delete_tag`.
 
-        ⚠️ Les étiquettes de changelog ne sont PAS celles des fils
-        (`productlane_tags`) : deux familles distinctes côté amont, et l'une
-        demande le plan Scale. `delete_tag` est une suppression DURE, qui détache
-        aussi l'étiquette de tous les changelogs.
+        ⚠️ Changelog tags are NOT thread tags
+        (`productlane_tags`): two distinct families upstream, and one
+        requires the Scale plan. `delete_tag` is a HARD delete, which also detaches
+        the tag from all changelogs.
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            changelog_id: le changelog visé.
-            tag_id: l'étiquette de changelog visée.
-            published: op='search' — filtre publiés / non publiés.
-            language: op='search'/'get' — sert la ligne de traduction.
-            title_contains: op='search' — filtre par titre partiel.
-            fields: op='create'/'update'/'update_tag' — le corps.
-            email: op='broadcast' — écrire aux contacts abonnés.
-            slack: op='broadcast' — publier dans les canaux Slack.
-            subject: op='broadcast' — objet de l'email.
-            message: op='broadcast' — texte d'accompagnement.
-            sender_name: op='broadcast' — nom d'expéditeur affiché.
-            from_email: op='broadcast' — adresse d'expédition.
-            dry_run: op='broadcast' — True (défaut) décrit l'envoi sans le faire.
-            cursor: page suivante.
-            limit: lignes par page (1-200, défaut 50).
+            op: the operation, see above.
+            changelog_id: the target changelog.
+            tag_id: the target changelog tag.
+            published: op='search' — filter published / unpublished.
+            language: op='search'/'get' — serves the translation row.
+            title_contains: op='search' — filter by partial title.
+            fields: op='create'/'update'/'update_tag' — the body.
+            email: op='broadcast' — write to subscribed contacts.
+            slack: op='broadcast' — post to the Slack channels.
+            subject: op='broadcast' — email subject.
+            message: op='broadcast' — accompanying text.
+            sender_name: op='broadcast' — displayed sender name.
+            from_email: op='broadcast' — sending address.
+            dry_run: op='broadcast' — True (default) describes the send without doing it.
+            cursor: next page.
+            limit: rows per page (1-200, default 50).
         """
         c = _client()
         if op == "search":
@@ -619,21 +619,21 @@ def register(mcp: FastMCP) -> None:
         if op == "broadcast":
             _need(changelog_id, "changelog_id", op)
             if not email and not slack:
-                raise _bad("op='broadcast' : choisis au moins un canal — "
-                           "`email=true` (contacts abonnés) et/ou `slack=true`.")
+                raise _bad("op='broadcast': choose at least one channel — "
+                           "`email=true` (subscribed contacts) and/or `slack=true`.")
             if dry_run:
                 return {
                     "dry_run": True,
-                    "would": "diffuser ce changelog à des tiers",
+                    "would": "broadcast this changelog to third parties",
                     "changelog_id": changelog_id,
                     "canaux": [n for n, v in (("email", email),
                                               ("slack", slack)) if v],
                     "subject": subject, "sender_name": sender_name,
                     "from_email": from_email, "message": message,
-                    "avertissement": ("l'envoi est irréversible et ne modifie "
-                                      "PAS `published` — un changelog non publié "
-                                      "serait diffusé vers une page invisible"),
-                    "pour_envoyer": "rappeler avec dry_run=false",
+                    "avertissement": ("sending is irreversible and does NOT modify "
+                                      "`published` — an unpublished changelog "
+                                      "would be broadcast to an invisible page"),
+                    "pour_envoyer": "call again with dry_run=false",
                 }
             return _run(lambda: c.broadcast_changelog(
                 changelog_id, email=email or None, slack=slack or None,
@@ -678,42 +678,42 @@ def register(mcp: FastMCP) -> None:
         cursor: Optional[str] = None,
         limit: int = 50,
     ) -> Any:
-        """Productlane — le centre d'aide : articles, groupes, et relecture.
+        """Productlane — the help center: articles, groups, and review.
 
-        Deux chemins d'écriture, qui ne servent pas la même chose : l'écriture
-        DIRECTE (`create` / `update` / `delete`) applique tout de suite ; le
-        BROUILLON (`create_draft` puis `accept` ou `decline`) propose un
-        changement à relire.
+        Two write paths, which do not serve the same purpose: DIRECT writes
+        (`create` / `update` / `delete`) apply immediately; the
+        DRAFT (`create_draft` then `accept` or `decline`) proposes a
+        change for review.
 
-        ⚠️ **`accept` peut répondre `superseded` au lieu de `accepted`** : le
-        brouillon ne s'applique plus proprement parce que l'article a bougé
-        sous lui. C'est un succès HTTP qui n'a **rien appliqué** — lire le statut
-        rendu, pas seulement l'absence d'erreur.
+        ⚠️ **`accept` can answer `superseded` instead of `accepted`**: the
+        draft no longer applies cleanly because the article moved
+        underneath it. It is an HTTP success that **applied nothing** — read the returned
+        status, not just the absence of an error.
 
-        ⚠️ La visibilité n'est pas binaire : `public`, `agent` (visible des
-        agents IA), `internal`, `unlisted`. `all` n'existe qu'en filtre de liste
-        — un article ne peut pas « être » de visibilité `all`.
+        ⚠️ Visibility is not binary: `public`, `agent` (visible to
+        AI agents), `internal`, `unlisted`. `all` only exists as a list filter
+        — an article cannot "be" of visibility `all`.
 
-        ⚠️ `update` avec `allow_image_removal` autorise la réécriture à
-        SUPPRIMER des images absentes du nouveau contenu ; sans lui, elles sont
-        conservées. C'est un garde-fou de l'éditeur contre une perte par recopie
-        partielle — le désactiver est une décision.
+        ⚠️ `update` with `allow_image_removal` allows the rewrite to
+        DELETE images absent from the new content; without it, they are
+        kept. It is a vendor safeguard against loss through partial
+        re-copying — turning it off is a decision.
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            article_id: l'article visé.
-            group_id: le groupe visé (ou la cible d'un move ; null dégroupe).
-            draft_id: le brouillon visé (draft, accept, decline).
-            article_ids: op='move' — les articles à déplacer.
-            visibility: public | agent | internal | unlisted (+ all en filtre).
+            op: the operation, see above.
+            article_id: the target article.
+            group_id: the target group (or the target of a move; null ungroups).
+            draft_id: the target draft (draft, accept, decline).
+            article_ids: op='move' — the articles to move.
+            visibility: public | agent | internal | unlisted (+ all as a filter).
             kind: op='articles' — doc | link | all. op='create_draft' — edit | create | delete.
             status: op='drafts' — draft | open | accepted | rejected | superseded.
-            published: op='articles' — filtre publiés / non publiés.
-            title_contains: op='articles' — filtre par titre partiel.
-            language: sert ou écrit une ligne de traduction.
-            fields: corps de création ou de mise à jour (content en markdown).
-            cursor: page suivante.
-            limit: lignes par page (1-200, défaut 50).
+            published: op='articles' — filter published / unpublished.
+            title_contains: op='articles' — filter by partial title.
+            language: serves or writes a translation row.
+            fields: creation or update body (content in markdown).
+            cursor: next page.
+            limit: rows per page (1-200, default 50).
         """
         c = _client()
         if op == "articles":
@@ -771,7 +771,7 @@ def register(mcp: FastMCP) -> None:
                           "groups | create_group | update_group | delete_group | "
                           "drafts | draft | create_draft | accept | decline")
 
-    # --- étiquettes de fil ----------------------------------------------------
+    # --- thread tags ----------------------------------------------------------
 
     @mcp.tool()
     def productlane_tags(
@@ -785,26 +785,26 @@ def register(mcp: FastMCP) -> None:
         cursor: Optional[str] = None,
         limit: int = 50,
     ) -> Any:
-        """Productlane — les étiquettes de FIL et leurs groupes.
+        """Productlane — THREAD tags and their groups.
 
-        ⚠️ Ce ne sont pas les étiquettes de changelog (`productlane_changelogs
-        op='tags'`) : deux familles distinctes côté amont, aux règles
-        différentes. Celles-ci vivent toujours dans un groupe — `tag_group_id`
-        est obligatoire à la création, avec `name`, `color` et `icon`.
+        ⚠️ These are not changelog tags (`productlane_changelogs
+        op='tags'`): two distinct families upstream, with different
+        rules. These always live in a group — `tag_group_id`
+        is mandatory on creation, along with `name`, `color` and `icon`.
 
-        `op`: `list` | `get` | `create` | `update` | `delete` (soft — l'étiquette
-        est retirée de tous les fils) | `groups` | `group` | `create_group` |
-        `update_group` | `delete_group` (le groupe doit être VIDE).
+        `op`: `list` | `get` | `create` | `update` | `delete` (soft — the tag
+        is removed from all threads) | `groups` | `group` | `create_group` |
+        `update_group` | `delete_group` (the group must be EMPTY).
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            tag_id: l'étiquette visée.
-            group_id: le groupe d'étiquettes visé.
-            name_contains: op='list' — filtre par nom partiel.
-            fields: le corps — création d'étiquette : name, color, icon,
-                tag_group_id (les quatre requis) ; groupe : name, color.
-            cursor: page suivante.
-            limit: lignes par page (1-200, défaut 50).
+            op: the operation, see above.
+            tag_id: the target tag.
+            group_id: the target tag group.
+            name_contains: op='list' — filter by partial name.
+            fields: the body — tag creation: name, color, icon,
+                tag_group_id (all four required); group: name, color.
+            cursor: next page.
+            limit: rows per page (1-200, default 50).
         """
         c = _client()
         f = fields or {}
@@ -863,40 +863,40 @@ def register(mcp: FastMCP) -> None:
         cursor: Optional[str] = None,
         limit: int = 50,
     ) -> Any:
-        """Productlane — l'identité de la clé, le portail public, les extraits.
+        """Productlane — key identity, the public portal, snippets.
 
-        `op='me'` est le point de départ utile : il rend les scopes accordés à
-        la clé et la sélection d'équipe Linear de l'espace de travail. C'est de
-        quoi expliquer un refus AVANT de le provoquer, et il ne demande aucun
+        `op='me'` is the useful starting point: it returns the scopes granted to
+        the key and the workspace's Linear team selection. That is enough to
+        explain a refusal BEFORE provoking it, and it requires no
         scope.
 
         `op`:
-        - `me` — identité de la clé, scopes, équipes Linear.
-        - `roadmap` — la roadmap PUBLIQUE telle que le portail la rend ;
-          `contact_email` la rend du point de vue d'un contact.
-        - `portal` — ce qu'un contact voit dans son portail de support
-          (`contact_email` requis, plan Scale).
-        - `instances` — les instances de portail. ⚠️ Le portail **Main (Root) est
-          implicite** : il n'y figure pas, et se désigne ailleurs par un
-          `portal_instance_id` nul. Une liste vide ne veut pas dire « pas de portail ».
+        - `me` — key identity, scopes, Linear teams.
+        - `roadmap` — the PUBLIC roadmap as the portal renders it;
+          `contact_email` renders it from a contact's point of view.
+        - `portal` — what a contact sees in their support portal
+          (`contact_email` required, Scale plan).
+        - `instances` — portal instances. ⚠️ The **Main (Root) portal is
+          implicit**: it is not listed, and is designated elsewhere by a null
+          `portal_instance_id`. An empty list does not mean "no portal".
         - `snippets` / `snippet` / `create_snippet` / `update_snippet` /
-          `delete_snippet` / `folders` — les modèles de réponse (plan Pro).
-          ⚠️ Leur corps est du **HTML**, pas du markdown.
-        - `import_file` — stocke un fichier depuis une URL publique et rend une
-          URL CDN réutilisable dans un changelog ou un article.
+          `delete_snippet` / `folders` — reply templates (Pro plan).
+          ⚠️ Their body is **HTML**, not markdown.
+        - `import_file` — store a file from a public URL and return a
+          CDN URL reusable in a changelog or an article.
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            snippet_id: l'extrait visé.
-            folder_id: op='snippets' — filtre par dossier ; création — le dossier cible.
-            contact_email: op='roadmap'/'portal' — le point de vue d'un contact.
-            language: op='roadmap' — la langue servie.
-            title_contains: op='snippets' — filtre par titre partiel.
-            url: op='import_file' — l'URL publique du fichier à stocker.
-            file_name: op='import_file' — nom donné au fichier stocké.
-            fields: op='create_snippet'/'update_snippet' — title et html.
-            cursor: page suivante.
-            limit: lignes par page (1-200, défaut 50).
+            op: the operation, see above.
+            snippet_id: the target snippet.
+            folder_id: op='snippets' — filter by folder; creation — the target folder.
+            contact_email: op='roadmap'/'portal' — a contact's point of view.
+            language: op='roadmap' — the language served.
+            title_contains: op='snippets' — filter by partial title.
+            url: op='import_file' — the public URL of the file to store.
+            file_name: op='import_file' — name given to the stored file.
+            fields: op='create_snippet'/'update_snippet' — title and html.
+            cursor: next page.
+            limit: rows per page (1-200, default 50).
         """
         c = _client()
         f = fields or {}

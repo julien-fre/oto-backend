@@ -328,7 +328,7 @@ def test_a_completed_run_without_a_provider_status_says_so(fake, cle, reponse):
     fake.routes[("POST", "/v1/run")] = [Resp(200, _run(providerResponse=reponse))]
     out = _outil("monid_run")(provider=PROVIDER, endpoint=ENDPOINT)
     assert out["done"] is True and out["provider_ok"] is None
-    assert out["next_step"] and "statut HTTP" in out["next_step"]
+    assert out["next_step"] and "no HTTP status" in out["next_step"]
 
 
 def test_a_waited_run_that_completes_without_a_provider_response(fake, cle):
@@ -715,8 +715,8 @@ def test_the_wallet_is_refused_under_the_platform_key(fake, cle):
         _outil("monid_wallet")()
     assert e.value.error.code == INVALID_PARAMS
     assert classify(e.value).code == "invalid_input"
-    assert "clé de la plateforme" in e.value.error.message
-    assert "402" in e.value.error.message and "propre clé Monid" in e.value.error.message
+    assert "under the platform key" in e.value.error.message
+    assert "402" in e.value.error.message and "your own Monid key" in e.value.error.message
     assert fake.log == []
 
 

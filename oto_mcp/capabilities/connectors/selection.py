@@ -1,20 +1,20 @@
-"""Capacités « sélection de connecteurs » — marketplace (ADR 0019).
+"""Capabilities "connector selection" — marketplace (ADR 0019).
 
-Per-membre, scopé à l'org active (`SUB_ONLY` injecte `ctx.org_id`). Trois faits
-distincts (cf. `connector_selection`) : exposition (`connector_activation`, plafond),
-proposition (`orgs.default_connectors`), sélection (`user_selected_connectors`).
+Per-member, scoped to the active org (`SUB_ONLY` injects `ctx.org_id`). Three distinct
+facts (cf. `connector_selection`): exposure (`connector_activation`, the ceiling),
+proposal (`orgs.default_connectors`), selection (`user_selected_connectors`).
 
-- `connectors.me` (lecture) = catalogue exposé pour l'org active, fusionné avec
-  l'état per-membre (`not_selected` | `active` | `paused`) + `recommended` (baseline org).
-  Source unique consommée par le dashboard (library + « mes connecteurs »).
-- `connectors.select` / `.pause` / `.unselect` (mutation) = installe / met en pause /
-  retire un connecteur. Garde : refuser un connecteur non-exposé pour l'org active
-  (le plafond d'exposition `connector_activation` n'est jamais relâché).
+- `connectors.me` (read) = the catalog exposed for the active org, merged with
+  the per-member state (`not_selected` | `active` | `paused`) + `recommended` (org baseline).
+  Single source consumed by the dashboard (library + "my connectors").
+- `connectors.select` / `.pause` / `.unselect` (mutation) = installs / pauses /
+  removes a connector. Guard: refuse a connector not exposed for the active org
+  (the `connector_activation` exposure ceiling is never relaxed).
 
-Handlers SYNC (les adaptateurs n'awaitent pas). Régime NOMINAL (ADR 0050) :
-« non-sélectionné = masqué » — le seed d'un nouveau (sub, org) installe le socle
-curé `default_active` ; sélectionner/mettre en pause a un effet de visibilité à la
-session suivante (`session_visibility`).
+SYNC handlers (the adapters don't await). NOMINAL regime (ADR 0050):
+"not selected = hidden" — seeding a new (sub, org) installs the curated
+`default_active` base; selecting/pausing takes visibility effect at the next
+session (`session_visibility`).
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from ...connectors import selection as connector_selection
 from .._authz import ORG_ADMIN_OF, SUB_ONLY
 from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
 from ..registry import CAPABILITIES
-from .kit import (BulkSelectInput, BulkSelectResult,  # noqa: F401 — ré-exportés
+from .kit import (BulkSelectInput, BulkSelectResult,  # noqa: F401 — re-exported
                   OrgRecommendedConnectors, RecommendInput, UnsetDefaultInput,
                   UnsetDefaultResult, _bulk_select, _recommend, _unset_default)
 from .catalog_card import (AuthDescriptor, ConnectFlow, CredentialField,
@@ -44,239 +44,238 @@ from .catalog_card import (AuthDescriptor, ConnectFlow, CredentialField,
 
 logger = logging.getLogger(__name__)
 
-# Mapping placeholder de route {id} → champ Input `org_id` (routes réelles en {id}).
+# Route placeholder {id} → `org_id` Input field mapping (real routes use {id}).
 _ID = {"id": "org_id"}
 
 
 class MyConnectorsInput(BaseModel):
-    """Filtre/projection de `connectors.me`. Défaut = **compact** (identité + état) :
-    la vue pleine (doc_sections/auth/credential_fields/…) gonfle le payload à ~90 KB
-    pour 55 connecteurs et dépasse le plafond de tokens MCP (oto-backend#109).
+    """Filter/projection of `connectors.me`. Default = **compact** (identity + state):
+    the full view (doc_sections/auth/credential_fields/…) bloats the payload to ~90 KB
+    for 55 connectors and exceeds the MCP token ceiling (oto-backend#109).
 
-    `name` = lecture d'état d'UN connecteur. Il était déclaré sur `oto_connector`
-    (pour select/pause/…) mais **ignoré en silence** sur op=list → l'agent qui le
-    passait recevait le catalogue entier (~30k tokens en verbose) sans le moindre
-    warning (feedback #326). Un `name` qui ne matche rien lève, jamais une liste
-    vide : un filtre muet est ce qui a coûté le contexte."""
-    verbose: bool = False                # True = payload complet (dashboard / setup credential)
-    state: Optional[str] = None          # filtre : not_selected | active | paused
-    # filtre : UN connecteur (lecture d'état ciblée). Nom exact, ou libellé / namespace /
-    # mot du nom (#1112 : « linkedin » trouve `linkedin_unipile` ET `aiark`, dont les
-    # outils sont `linkedin_aiark_*`) — plusieurs candidats sont TOUS rendus.
+    `name` = state read of ONE connector. It was declared on `oto_connector`
+    (for select/pause/…) but **silently ignored** on op=list → the agent that
+    passed it received the whole catalog (~30k tokens in verbose) without the slightest
+    warning (feedback #326). A `name` that matches nothing raises, never an empty
+    list: a mute filter is what cost the context."""
+    verbose: bool = False                # True = full payload (dashboard / credential setup)
+    state: Optional[str] = None          # filter: not_selected | active | paused
+    # filter: ONE connector (targeted state read). Exact name, or label / namespace /
+    # word of the name (#1112: "linkedin" finds `linkedin_unipile` AND `aiark`, whose
+    # tools are `linkedin_aiark_*`) — several candidates are ALL returned.
     name: Optional[str] = None
 
 
 class ConnectorActionInput(BaseModel):
-    name: str                            # nom de connecteur (registre providers/)
+    name: str                            # connector name (providers/ registry)
 
 
 class ReachableInstance(BaseModel):
-    """Une clé du connecteur qui existe à portée du membre SANS être la sienne
-    (équipe dont il est membre, autre org) — de la découvrabilité, pas un droit :
-    l'usage passe par un pin (`_group=`/`_org=`/`_instance=`) et reste re-gardé à
-    l'appel."""
+    """A key of the connector that exists within the member's reach WITHOUT being theirs
+    (a team they belong to, another org) — discoverability, not a right: usage goes
+    through a pin (`_group=`/`_org=`/`_instance=`) and is re-guarded at call time."""
     kind: Literal["group", "org"]
     id: int
     name: str
 
 
 class MyConnectorRow(BaseModel):
-    """Un connecteur du catalogue vu par le membre : la carte + SON état à lui.
+    """A catalog connector as seen by the member: the card + THEIR state.
 
-    **Deux projections sortent du même champ**, selon `verbose` (l'enveloppe l'écho) :
+    **Two projections come out of the same field**, depending on `verbose` (the envelope echoes it):
 
-    - `verbose=false` (défaut) — identité + axes de tri + état : les huit clés de
-      `_COMPACT_KEYS`, plus l'état per-membre. C'est ce que lit une LISTE.
-    - `verbose=true` — la même ligne PLUS toute la carte publique du catalogue,
-      section « carte » ci-dessous. C'est ce que lit une CARTE, et ce dont dépend le
-      formulaire de credential.
+    - `verbose=false` (default) — identity + sort axes + state: the eight keys of
+      `_COMPACT_KEYS`, plus the per-member state. This is what a LIST reads.
+    - `verbose=true` — the same row PLUS the whole public catalog card,
+      "card" section below. This is what a CARD reads, and what the credential form
+      depends on.
 
-    Un champ de la carte est donc `Optional` parce qu'il est absent en compact, pas
-    parce qu'il serait parfois nul en verbeux : en `verbose=true` les treize sont
-    toujours présents (`base = c`, la ligne entière — cf. `_me`). `null` y garde son
-    sens propre, énoncé champ par champ.
+    A card field is therefore `Optional` because it is absent in compact, not
+    because it would sometimes be null in verbose: with `verbose=true` all thirteen are
+    always present (`base = c`, the whole row — cf. `_me`). `null` keeps its own
+    meaning there, stated field by field.
 
-    ⚠️ Le docstring disait jusqu'au 2026-09-01 que « la forme large est celle du
-    dashboard, elle n'est pas figée ici » — et l'ouverture aux champs additionnels en
-    découlait. Levé (#667) : dès qu'un intégrateur hors du dépôt en dépend, « pas
-    figée » veut dire « cassable sans préavis, et sans qu'on sache qui casse ». Les
-    treize clés de premier niveau que servait le mode verbeux sans les déclarer sont
-    désormais nommées (cf. `catalog_card.py` pour les objets).
+    ⚠️ The docstring said until 2026-09-01 that "the wide form is the dashboard's, it is
+    not frozen here" — and the openness to additional fields followed from it. Lifted
+    (#667): as soon as an integrator outside the repo depends on it, "not frozen"
+    means "breakable without notice, and without knowing who breaks". The thirteen
+    top-level keys that verbose mode served without declaring them are now
+    named (cf. `catalog_card.py` for the objects).
 
-    `extra="allow"` est retiré (oto-backend#742) : le cliquet
-    `tests/connectors/test_carte_connecteur_declaree.py`, posé par #738, a vécu —
-    c'est désormais lui le garde-fou mécanique contre le prochain champ non déclaré.
-    Un champ oublié disparaîtrait du payload plutôt que de rester toléré en silence."""
+    `extra="allow"` is removed (oto-backend#742): the ratchet
+    `tests/connectors/test_carte_connecteur_declaree.py`, put in place by #738, has served —
+    it is now the mechanical safeguard against the next undeclared field.
+    A forgotten field would disappear from the payload rather than stay silently tolerated."""
 
     name: str
     label: Optional[str] = None
     help: Optional[str] = None
-    family: Optional[str] = None            # axe builder (dérivé)
-    category: Optional[str] = None          # axe utilisateur (curé)
+    family: Optional[str] = None            # builder axis (derived)
+    category: Optional[str] = None          # user axis (curated)
     availability: Optional[str] = None
-    # None = absence DÉCLARÉE de logo de marque (générique/maison) → monogramme
-    # côté UI, pas un chargement raté.
+    # None = DECLARED absence of a brand logo (generic/in-house) → monogram
+    # on the UI side, not a failed load.
     logo_url: Optional[str] = None
-    # NATURE du credential attendu — api_key|basic_auth|fields|oauth|cookie|none
-    # — pas son état : `none` dit « ce connecteur marche sans qu'on apporte quoi
-    # que ce soit », et ne dit rien de la clé posée (ça, c'est `providers[name]`
-    # de `/api/me`). Le seul champ d'auth du mode compact ; cf. `_COMPACT_KEYS`.
+    # NATURE of the expected credential — api_key|basic_auth|fields|oauth|cookie|none
+    # — not its state: `none` says "this connector works without bringing anything
+    # at all", and says nothing about the key that is set (that is `providers[name]`
+    # of `/api/me`). The only auth field of compact mode; cf. `_COMPACT_KEYS`.
     secret_kind: Optional[str] = None
     state: Literal["not_selected", "active", "paused"]
-    # QUI a posé l'installation (ADR 0050 §E7) — présent seulement quand `state` ≠
-    # `not_selected`. `kit` = installé par ton organisation (un retrait du kit le
-    # retire) ; `membre` = par toi ; `admin` = poussé à toi par un admin ; `socle` =
-    # d'office par la plateforme ; `inconnue` = posé avant que la plateforme ne le
-    # trace — ce dernier n'est jamais retiré par un geste d'org.
+    # WHO set the installation (ADR 0050 §E7) — present only when `state` ≠
+    # `not_selected`. `kit` = installed by your organization (removal from the kit
+    # removes it); `membre` = by you; `admin` = pushed to you by an admin; `socle` =
+    # by default by the platform; `inconnue` = set before the platform
+    # tracked it — the latter is never removed by an org gesture.
     origin: Optional[Literal["socle", "kit", "admin", "membre", "inconnue"]] = None
-    # Date (« AAAA-MM-JJ HH:MM:SS », UTC) à laquelle TU as retiré ce connecteur — présent seulement quand
-    # `state` = `not_selected` et que le retrait vient de toi. Aucun geste d'org (kit,
-    # poussée) ne le réinstalle tant qu'il est posé ; le réinstaller toi-même l'efface.
+    # Date ("YYYY-MM-DD HH:MM:SS", UTC) at which YOU removed this connector — present only when
+    # `state` = `not_selected` and the removal came from you. No org gesture (kit,
+    # push) reinstalls it while it is set; reinstalling it yourself clears it.
     removed_at: Optional[str] = None
-    # Baseline proposée par l'ORG (ADR 0019), jamais l'état du membre : un
-    # connecteur `recommended` peut très bien être `not_selected`.
+    # Baseline proposed by the ORG (ADR 0019), never the member's state: a
+    # `recommended` connector may very well be `not_selected`.
     recommended: bool
-    # Nombre de procédures d'org qui citent un namespace du connecteur — dérivé
-    # des bodies de guide, best-effort (0 sur incident de lecture, pas d'erreur).
+    # Number of org procedures that cite a namespace of the connector — derived
+    # from the guide bodies, best-effort (0 on a read incident, no error).
     guide_ref_count: int
-    doctrine_ref_count: int                # ALIAS déprécié (retrait 29/10/2026, #519)
-    paid_option: Optional[str] = None       # option payante requise (couche 3), None = aucune
-    # `true` = l'option est levée OU aucune n'est requise. Ne dit RIEN du credential :
-    # un connecteur `option_ok` reste inutilisable sans clé posée.
+    doctrine_ref_count: int                # deprecated ALIAS (removal 29/10/2026, #519)
+    paid_option: Optional[str] = None       # required paid option (layer 3), None = none
+    # `true` = the option is lifted OR none is required. Says NOTHING about the credential:
+    # an `option_ok` connector remains unusable without a key set.
     option_ok: bool
-    # Présent SEULEMENT si une clé est à portée sans être installée (la ligne se
-    # distingue au lieu d'ajouter un champ vide sur 40 lignes). Son ABSENCE ne
-    # prouve pas qu'il n'y en a aucune : le batch ne couvre pas « ma clé membre
-    # dans une autre org » (limite assumée d'`access.reachable_instances_map`).
+    # Present ONLY if a key is within reach without being installed (the row
+    # stands out instead of adding an empty field on 40 rows). Its ABSENCE does not
+    # prove there is none: the batch does not cover "my member key
+    # in another org" (accepted limit of `access.reachable_instances_map`).
     reachable_instances: Optional[list[ReachableInstance]] = None
-    # ── Aptitude EFFECTIVE (#476) — présents SEULEMENT sur une lecture ciblée
-    # (`name=`), cf. `readiness` sur l'enveloppe. `state` répond « l'ai-je installé ? »,
-    # `ready` répond « est-ce que ça marche ? » : ORTHOGONAUX, et le signal est né de
-    # leur confusion. Détail des couches et du coût : `connectors/readiness.py`.
+    # ── EFFECTIVE readiness (#476) — present ONLY on a targeted read
+    # (`name=`), cf. `readiness` on the envelope. `state` answers "did I install it?",
+    # `ready` answers "does it work?": ORTHOGONAL, and the signal was born from
+    # confusing them. Layer details and cost: `connectors/readiness.py`.
     ready: Optional[bool] = None
-    # La PREMIÈRE couche qui manque : paid_option_off | no_credential | over_quota |
-    # credential_rejected | pending_step. Absent quand `ready` est vrai.
+    # The FIRST layer that is missing: paid_option_off | no_credential | over_quota |
+    # credential_rejected | pending_step. Absent when `ready` is true.
     not_ready: Optional[str] = None
-    next_step: Optional[str] = None         # le geste, rendu tel quel (jamais reformulé)
-    # ── Credential DISPONIBLE (#1112) — sur TOUT le catalogue, pas seulement en
-    # lecture ciblée. Présent quand une clé ou un compte existe pour toi à un palier
-    # de la cascade, MÊME si `state` vaut `not_selected` : c'est la ligne qui manquait
-    # quand deux agents ont lu `not_selected` comme « non connecté ». Troisième axe,
-    # « vérifié vivant », jamais calculé ici : `credential.next_step` nomme l'outil.
+    next_step: Optional[str] = None         # the gesture, rendered as is (never reworded)
+    # ── AVAILABLE credential (#1112) — on the WHOLE catalog, not only on a
+    # targeted read. Present when a key or an account exists for you at a level of the
+    # cascade, EVEN if `state` is `not_selected`: this is the line that was missing
+    # when two agents read `not_selected` as "not connected". Third axis,
+    # "verified alive", never computed here: `credential.next_step` names the tool.
     credential: Optional[CredentialPresence] = None
 
-    # ── La CARTE (`verbose=true` seulement) ──────────────────────────────────────
-    # Les treize clés que `providers.public_catalog()` pose sur la ligne entière.
-    # Servies depuis toujours, déclarées depuis le 2026-09-01 (#667) : sans elles au
-    # contrat, un front tiers ne pouvait pas rendre un formulaire de credential, alors
-    # que la donnée arrivait. L'ordre suit celui du producteur, pour que les deux
-    # listes se relisent côte à côte.
+    # ── The CARD (`verbose=true` only) ───────────────────────────────────────────
+    # The thirteen keys that `providers.public_catalog()` puts on the whole row.
+    # Served all along, declared since 2026-09-01 (#667): without them in the
+    # contract, a third-party front end could not render a credential form, even
+    # though the data arrived. The order follows the producer's, so the two
+    # lists can be read side by side.
     #
-    # Description curée 2-3 phrases (carte catalogue). `""` si non rédigée — le front
-    # retombe alors sur `help`, ce que `null` ne dirait pas.
+    # Curated 2-3 sentence description (catalog card). `""` if not written — the front end
+    # then falls back on `help`, which `null` would not say.
     description: Optional[str] = None
     doc_sections: Optional[list[DocSection]] = None
-    href: Optional[str] = None              # site du connecteur ; `null` = aucun
-    publisher: Optional[str] = None         # éditeur (curé)
+    href: Optional[str] = None              # connector's website; `null` = none
+    publisher: Optional[str] = None         # publisher (curated)
     auth_modes: Optional[list[str]] = None  # ⊆ {byo_user, byo_org, platform}
-    # Catégorie « session navigateur » (le credential est une session, pas une clé).
+    # "Browser session" category (the credential is a session, not a key).
     personal_session: Optional[bool] = None
-    # Le descripteur d'auth unifié (ADR 0024) — c'est LUI qui pilote le widget de
-    # credential, `secret_kind` n'en étant que le scalaire de tri gardé en compact.
+    # The unified auth descriptor (ADR 0024) — it is what drives the credential
+    # widget, `secret_kind` being only the sort scalar kept in compact.
     auth: Optional[AuthDescriptor] = None
-    namespaces: Optional[list[str]] = None  # préfixes des outils possédés
-    # DÉRIVÉ de `auth.fields`, pas recopié — donc toujours identique. Les deux clés
-    # sont servies, les deux sont déclarées : dépréciera qui voudra, mais pas en
-    # silence (la forme d'une dépréciation de nom servi est #519, et elle se date).
+    namespaces: Optional[list[str]] = None  # prefixes of the owned tools
+    # DERIVED from `auth.fields`, not copied — hence always identical. Both keys
+    # are served, both are declared: deprecate whoever wants, but not silently
+    # (the shape of a served-name deprecation is #519, and it is dated).
     credential_fields: Optional[list[CredentialField]] = None
     free_tier: Optional[FreeTier] = None
-    # Le connecteur propose-t-il de choisir une identité/cible par défaut (ADR 0024) ?
+    # Does the connector offer to pick a default identity/target (ADR 0024)?
     identities: Optional[bool] = None
-    # Le connecteur a-t-il enregistré une sonde de credential sans effet de bord ? Si
-    # oui, la carte affiche « tester la connexion » à côté de l'état « clé posée ».
+    # Has the connector registered a side-effect-free credential probe? If
+    # so, the card shows "test the connection" next to the "key set" state.
     verifiable: Optional[bool] = None
     connect: Optional[ConnectFlow] = None
 
 
 class ToolboxScope(BaseModel):
-    """L'écart entre l'org pour laquelle la SESSION a été montée et celle que l'appel
-    ÉPINGLE (#577). Présent seulement quand les deux diffèrent — cf. `_toolbox_scope`."""
+    """The gap between the org the SESSION was mounted for and the one the call
+    PINS (#577). Present only when the two differ — cf. `_toolbox_scope`."""
     mounted_for_org: Optional[int] = None
     listing_for_org: Optional[int] = None
     note: str
 
 
 class NameMatch(BaseModel):
-    """`name` n'était pas un nom exact : ce qu'il a trouvé, et par où (#1112). Absent
-    sur un nom exact. Plusieurs candidats = tous rendus en lignes, aucun n'est choisi
-    à la place de l'appelant."""
+    """`name` was not an exact name: what it found, and how (#1112). Absent
+    on an exact name. Several candidates = all returned as rows, none is chosen
+    in place of the caller."""
     query: str
     candidates: list[str]
     note: str
 
 
 class MyConnectors(BaseModel):
-    """Le catalogue exposé à l'org active, fusionné avec l'état per-membre.
-    Source UNIQUE de la library ET de « mes connecteurs » du dashboard."""
+    """The catalog exposed to the active org, merged with the per-member state.
+    UNIQUE source of the dashboard's library AND "my connectors"."""
     connectors: list[MyConnectorRow]
-    # Écho de la projection demandée — dit au client si les lignes portent la carte
-    # complète ou la vue compacte (les deux formes sortent du MÊME champ).
+    # Echo of the requested projection — tells the client whether the rows carry the
+    # full card or the compact view (both shapes come out of the SAME field).
     verbose: bool
-    # `computed` (lecture ciblée `name=`) | `not_computed` (catalogue : trop cher,
-    # cf. `connectors/readiness.py`) | `unavailable` (la lecture des couches a échoué).
-    # DIT toujours quelque chose : une absence muette de `ready` se lisait « rien à
-    # signaler », et c'est ce raccourci qui a coûté cinq jours (#476).
+    # `computed` (targeted `name=` read) | `not_computed` (catalog: too expensive,
+    # cf. `connectors/readiness.py`) | `unavailable` (reading the layers failed).
+    # ALWAYS says something: a mute absence of `ready` read as "nothing to
+    # report", and that shortcut cost five days (#476).
     readiness: str = "not_computed"
-    readiness_hint: Optional[str] = None    # le geste pour l'obtenir, quand on ne l'a pas
-    # `computed` | `unavailable` (#1112) — le calcul de `credential` sur les lignes.
-    # `unavailable` = le snapshot ne s'est pas lu : une ligne SANS `credential` ne dit
-    # alors RIEN (elle ne veut pas dire « rien n'est connecté »).
+    readiness_hint: Optional[str] = None    # the gesture to get it, when we don't have it
+    # `computed` | `unavailable` (#1112) — the computation of `credential` on the rows.
+    # `unavailable` = the snapshot could not be read: a row WITHOUT `credential` then says
+    # NOTHING (it does not mean "nothing is connected").
     credentials: str = "computed"
     name_match: Optional[NameMatch] = None
     toolbox_scope: Optional[ToolboxScope] = None
 
 
 class ConnectorSelectionState(BaseModel):
-    """État de sélection d'UN connecteur pour le membre, après mutation. Forme
-    commune à `select` / `pause` / `unselect` — même objet (l'appartenance du
-    connecteur à la toolbox), les extras diffèrent selon le verbe."""
+    """Selection state of ONE connector for the member, after a mutation. Common
+    shape for `select` / `pause` / `unselect` — same object (the connector's
+    membership in the toolbox), the extras differ by verb."""
     connector: str
     state: Literal["active", "paused", "not_selected"]
-    # `select` seulement : les outils du connecteur, lus du registre BOOT. Vide si
-    # le registre n'est pas réchauffé (script hors serveur) — pas un connecteur
-    # sans outils.
+    # `select` only: the connector's tools, read from the BOOT registry. Empty if
+    # the registry is not warmed up (script outside the server) — not a connector
+    # without tools.
     tools: Optional[list[str]] = None
-    # `select` seulement : le mode d'emploi de l'instant — les outils ne sont PAS
-    # montés dans la conversation courante (registre figé à l'ouverture), il faut
-    # passer par `oto_call` ou rouvrir une conversation.
+    # `select` only: the instructions of the moment — the tools are NOT mounted in the
+    # current conversation (registry frozen at open), you must go
+    # through `oto_call` or reopen a conversation.
     hint: Optional[str] = None
-    # `unselect` seulement, toujours `True` sur un succès (oto#42/oto-backend#868) :
-    # un retrait qui n'a rien trouvé REFUSE désormais (`connector_not_selected`, 404)
-    # au lieu de rendre `removed: false` sur un 200 — un succès qui n'a rien fait est
-    # pire qu'un refus, même pattern que l'unlink de projet (`d3c5de40`).
+    # `unselect` only, always `True` on success (oto#42/oto-backend#868):
+    # a removal that found nothing now REFUSES (`connector_not_selected`, 404)
+    # instead of returning `removed: false` on a 200 — a success that did nothing is
+    # worse than a refusal, same pattern as the project unlink (`d3c5de40`).
     removed: Optional[bool] = None
 
 
 def _visible_catalog(ctx: ResolvedCtx) -> list[dict]:
-    """Catalogue exposé pour l'org active du caller — miroir du filtrage de
-    `api_routes_public.connectors_catalog` : activation (plafond).
+    """Catalog exposed for the caller's active org — mirror of the filtering in
+    `api_routes_public.connectors_catalog`: activation (ceiling).
 
-    ⚠️ **La ligne servie sort d'ici avec sa cardinalité EFFECTIVE**, pas celle du code
-    (oto-backend#732). `providers.public_catalog()` pose `auth.cardinality` depuis le
-    registre, qui est pur et ne peut donc pas lire une surcharge d'org — or c'est cette
-    clé que le panneau de connexion du dashboard lit pour décider s'il propose un second
-    compte. Le seam est ICI et pas au call-site : c'est le point de passage unique de la
-    carte vers `connectors.me` ET `oto_search`, donc le seul endroit où l'on ne peut pas
-    en oublier un."""
+    ⚠️ **The served row leaves here with its EFFECTIVE cardinality**, not the code's
+    (oto-backend#732). `providers.public_catalog()` sets `auth.cardinality` from the
+    registry, which is pure and therefore cannot read an org override — yet that is the
+    key the dashboard's connection panel reads to decide whether to offer a second
+    account. The seam is HERE and not at the call site: it is the single passage point
+    from the card to `connectors.me` AND `oto_search`, hence the only place where one
+    cannot be forgotten."""
     exposed = connector_activation.exposed_connectors(ctx.org_id)
     out = [c for c in providers.public_catalog() if c["name"] in exposed]
     return connector_cardinality.overlay_for_org(out, ctx.org_id)
 
 
 def _guide_refs_by_ns(org_id: int | None) -> dict[str, set]:
-    """namespace → ensemble des guides de l'org qui le référencent (`<tool:slug>`).
-    Vide si pas d'org. Dérivation pure depuis les bodies de guide (posture
-    « guide-only », ADR 0024) — best-effort, ne fait jamais échouer la lecture."""
+    """namespace → set of the org's guides that reference it (`<tool:slug>`).
+    Empty if no org. Pure derivation from the guide bodies ("guide-only"
+    posture, ADR 0024) — best-effort, never makes the read fail."""
     if not org_id:
         return {}
     try:
@@ -286,54 +285,54 @@ def _guide_refs_by_ns(org_id: int | None) -> dict[str, set]:
             for ns in tool_registry.namespaces_in(d.get("body_md") or ""):
                 refs.setdefault(ns, set()).add(slug)
         return refs
-    # noqa: SILENT — refs de guide illisibles ⇒ overlay vide, catalogue servi
+    # noqa: SILENT — unreadable guide refs ⇒ empty overlay, catalog served
     except Exception:
         return {}
 
 
-# Champs conservés en mode COMPACT (défaut MCP) : identité + axes de tri + état.
-# Les gros champs (doc_sections/auth/credential_fields/description/namespaces) ne
-# reviennent qu'en `verbose=True` (dashboard, setup credential). Cf. #109.
-# `secret_kind` est dans le COMPACT, et pas seulement dans la carte verbeuse :
-# c'est le seul scalaire qui distingue « ce connecteur ne demande aucune clé »
-# (open data — `none`) de « il en demande une que tu n'as pas encore ». Sans lui
-# au chargement, un tableau ne peut pas le dire, et l'absence d'entrée dans
-# `providers` ne suffit PAS à trancher : `scaleway` et `http` en sont absents eux
-# aussi tout en exigeant un credential. Le front
-# affichait donc « Not connected » sur OpenStreetMap jusqu'à ce qu'on ouvre la
-# carte, où le verbeux disait « Included » (constaté en prod le 2026-08-29).
-# Scalaire déjà calculé, aucun coût : le compact évite `auth`/`credential_fields`
-# pour leurs listes, pas pour un mot.
+# Fields kept in COMPACT mode (MCP default): identity + sort axes + state.
+# The big fields (doc_sections/auth/credential_fields/description/namespaces) only
+# come back with `verbose=True` (dashboard, credential setup). Cf. #109.
+# `secret_kind` is in the COMPACT, and not only in the verbose card:
+# it is the only scalar that distinguishes "this connector asks for no key"
+# (open data — `none`) from "it asks for one you don't have yet". Without it
+# at load time, a table cannot say so, and the absence of an entry in
+# `providers` is NOT enough to decide: `scaleway` and `http` are absent from it too
+# while requiring a credential. The front end
+# therefore showed "Not connected" on OpenStreetMap until the card was opened,
+# where the verbose said "Included" (observed in prod on 2026-08-29).
+# Already-computed scalar, no cost: compact avoids `auth`/`credential_fields`
+# for their lists, not for a single word.
 _COMPACT_KEYS = ("name", "label", "help", "family", "category", "availability",
                  "logo_url", "secret_kind")
 
 
 def _toolbox_scope(sub: str) -> Optional[dict]:
-    """L'écart entre l'org pour laquelle la SESSION a été montée et celle que l'appel
-    épingle — ou None s'il n'y en a pas (signal #577).
+    """The gap between the org the SESSION was mounted for and the one the call
+    pins — or None if there is none (signal #577).
 
-    Prouvé par différentiel sur la prod le 28/08/2026. La boîte à outils d'une session
-    MCP est calculée AU HANDSHAKE (`session_visibility.compute_hidden_tools`, appelé à
-    `on_initialize`) : à cet instant aucun jeton `_org=` n'existe, donc `current_org`
-    retombe sur l'org MAISON. Une session planifiée épingle ensuite `_org=` à CHAQUE
-    appel — mais le registre d'outils, lui, est figé pour la maison. Le sub qui fait
-    tourner la procédure de #577 a pour maison l'org 42 (`folk`, `grain` sélectionnés)
-    et travaille sur l'org 196 (treize connecteurs, dont `granola`, `slack`, `linear`).
-    D'où « aucun outil de connecteur ne remonte » — alors que les sept cités ont tous
-    répondu du premier coup via `oto_call`.
+    Proven by differential on prod on 28/08/2026. An MCP session's toolbox is
+    computed AT THE HANDSHAKE (`session_visibility.compute_hidden_tools`, called at
+    `on_initialize`): at that moment no `_org=` token exists, so `current_org`
+    falls back on the HOME org. A scheduled session then pins `_org=` on EACH
+    call — but the tool registry is frozen for the home. The sub running
+    the #577 procedure has org 42 as home (`folk`, `grain` selected)
+    and works on org 196 (thirteen connectors, including `granola`, `slack`, `linear`).
+    Hence "no connector tool comes up" — whereas the seven cited all
+    answered first time via `oto_call`.
 
-    C'est un défaut de VISIBILITÉ, jamais d'accès ni de credential. Nulle part la carte
-    ne le disait : trois matinées (20-22/08) de faux rapports « Linear est en panne ».
+    This is a VISIBILITY defect, never an access or credential one. Nowhere did the card
+    say so: three mornings (20-22/08) of false "Linear is down" reports.
 
-    Ne se dit QUE sur écart réel : un champ toujours présent devient du bruit qu'on
-    cesse de lire. Pas de jeton d'appel (face REST du dashboard) ⟹ pas de session MCP
-    dont la boîte pourrait diverger ⟹ rien à annoncer.
+    Said ONLY on a real gap: an always-present field becomes noise that people
+    stop reading. No call token (the dashboard's REST face) ⟹ no MCP session
+    whose box could diverge ⟹ nothing to announce.
 
-    ⚠️ DEUX consommateurs depuis le 03/09 : cette carte, et `oto_list_my_tools`
-    (`tools/meta.py`). Posé ici seul, l'aveu n'était lu que par qui appelait déjà
-    `oto_connector` — or un agent qui cherche un outil appelle `oto_list_my_tools`, et
-    y lisait une liste vide sans un mot. Ne prend qu'un `sub` pour cette raison : le
-    fait est une propriété de la SESSION, pas des connecteurs."""
+    ⚠️ TWO consumers since 03/09: this card, and `oto_list_my_tools`
+    (`tools/meta.py`). Put here alone, the admission was only read by whoever already called
+    `oto_connector` — yet an agent looking for a tool calls `oto_list_my_tools`, and
+    read an empty list there without a word. Takes only a `sub` for that reason: the
+    fact is a property of the SESSION, not of the connectors."""
     call_org = session_org.current_call_org()
     if call_org is None:
         return None
@@ -344,50 +343,50 @@ def _toolbox_scope(sub: str) -> Optional[dict]:
         "mounted_for_org": home,
         "listing_for_org": call_org,
         "note": (
-            f"La boîte à outils de cette session a été montée pour l'org {home} (ton "
-            f"org maison au moment du handshake), pas pour l'org {call_org} que cet "
-            f"appel épingle : les outils des connecteurs actifs ici peuvent ne PAS "
-            f"être listés. Ils restent appelables par "
-            f"`oto_call(name=..., arguments={{...}})` — un outil absent de la liste "
-            f"n'est PAS un connecteur en panne."),
+            f"This session's toolbox was mounted for org {home} (your "
+            f"home org at handshake time), not for org {call_org} that this "
+            f"call pins: the tools of the connectors active here may NOT "
+            f"be listed. They remain callable through "
+            f"`oto_call(name=..., arguments={{...}})` — a tool missing from the list "
+            f"is NOT a broken connector."),
     }
 
 
-# ── Retrouver un connecteur par ce que l'appelant en SAIT (#1112) ─────────────────
-# L'agent ne connaît pas `linkedin_unipile` : il sait « LinkedIn », le libellé de la
-# carte. `name="linkedin"` répondait « inconnu ou indisponible » — un refus sec, que
-# l'agent a relu « pas de LinkedIn » et rendu à l'utilisateur. Même chose pour
-# `linkedin_aiark`, qui est le NAMESPACE des outils du connecteur `aiark`.
+# ── Finding a connector by what the caller KNOWS of it (#1112) ─────────────────
+# The agent doesn't know `linkedin_unipile`: it knows "LinkedIn", the card's label.
+# `name="linkedin"` answered "unknown or unavailable" — a curt refusal, which
+# the agent read as "no LinkedIn" and handed back to the user. Same for
+# `linkedin_aiark`, which is the NAMESPACE of the `aiark` connector's tools.
 #
-# Le registre `providers/` est la seule source (le catalogue n'est pas une table,
-# #905) : aucun alias persisté, on lit ce que chaque connecteur déclare déjà — son nom,
-# son libellé, ses namespaces.
+# The `providers/` registry is the only source (the catalog is not a table,
+# #905): no persisted alias, we read what each connector already declares — its name,
+# its label, its namespaces.
 
-# Au-delà, la lecture ciblée cesse d'en être une : le verdict d'aptitude (~244 ms
-# l'unité, `connectors/readiness.py`) n'est pas calculé, et on le dit.
+# Beyond this, the targeted read stops being one: the readiness verdict (~244 ms
+# each, `connectors/readiness.py`) is not computed, and we say so.
 _CANDIDATS_DIAGNOSTIQUES = 5
 
 
 def _normalise(texte: str) -> str:
-    """Casse, accents et séparateurs neutralisés : « LinkedIn », `linkedin`,
-    `linked-in` ne diffèrent pas pour qui cherche."""
+    """Case, accents and separators neutralized: "LinkedIn", `linkedin`,
+    `linked-in` don't differ for whoever searches."""
     plat = unicodedata.normalize("NFKD", texte or "")
     plat = "".join(ch for ch in plat if not unicodedata.combining(ch)).lower()
     return " ".join(re.split(r"[^a-z0-9]+", plat)).strip()
 
 
 def _formes(c: dict) -> set[str]:
-    """Les noms sous lesquels on peut DÉSIGNER ce connecteur : nom, libellé,
-    namespaces — normalisés."""
+    """The names under which this connector can be REFERRED TO: name, label,
+    namespaces — normalized."""
     return {f for f in (_normalise(c.get("name") or ""), _normalise(c.get("label") or ""),
                         *(_normalise(ns) for ns in c.get("namespaces") or [])) if f}
 
 
 def _resoudre_nom(catalog: list[dict], demande: str) -> list[dict]:
-    """Les lignes que `demande` désigne : le nom exact d'abord (seul), sinon toute
-    ligne dont une forme (nom, libellé, namespace) ÉGALE la demande ou en contient
-    chaque mot. « linkedin » → `linkedin_unipile` (libellé) et `aiark` (namespace
-    `linkedin_aiark`). Vide = rien ne correspond ; c'est à l'appelant de refuser."""
+    """The rows that `demande` designates: the exact name first (alone), otherwise every
+    row one of whose forms (name, label, namespace) EQUALS the request or contains
+    each of its words. "linkedin" → `linkedin_unipile` (label) and `aiark` (namespace
+    `linkedin_aiark`). Empty = nothing matches; it is up to the caller to refuse."""
     exact = [c for c in catalog if c["name"] == demande]
     if exact:
         return exact
@@ -406,9 +405,9 @@ def _resoudre_nom(catalog: list[dict], demande: str) -> list[dict]:
 
 
 def _suggestions(catalog: list[dict], demande: str, n: int = 5) -> list[str]:
-    """Les noms PROCHES de `demande` (orthographe, préfixe) — ce qu'un refus propose
-    au lieu d'un « inconnu » sec. Nom exact du connecteur, jamais son libellé : c'est
-    lui que l'appel suivant doit porter."""
+    """The names CLOSE to `demande` (spelling, prefix) — what a refusal offers
+    instead of a curt "unknown". The connector's exact name, never its label: it is
+    what the next call must carry."""
     q = _normalise(demande)
     if not q:
         return []
@@ -423,43 +422,43 @@ def _suggestions(catalog: list[dict], demande: str, n: int = 5) -> list[str]:
 
 
 def _refus_nom_inconnu(catalog: list[dict], demande: str) -> AuthzDenied:
-    """Le refus d'un nom qui ne désigne rien — NOMMÉ et qui propose (#1112)."""
+    """The refusal of a name that designates nothing — NAMED and offering suggestions (#1112)."""
     proches = _suggestions(catalog, demande)
     if proches:
-        suite = (f" Noms proches : {', '.join(f'`{n}`' for n in proches)} — relance avec "
-                 f"l'un d'eux (`oto_connector(op='list', name='{proches[0]}')`).")
+        suite = (f" Close names: {', '.join(f'`{n}`' for n in proches)} — retry with "
+                 f"one of them (`oto_connector(op='list', name='{proches[0]}')`).")
     else:
-        suite = (" Aucun nom proche : `oto_connector(op='list')` sans `name` rend le "
-                 "catalogue compact avec les noms exacts.")
+        suite = (" No close name: `oto_connector(op='list')` without `name` returns the "
+                 "compact catalog with the exact names.")
     return AuthzDenied(
         404, "unknown_connector",
-        f"Aucun connecteur disponible pour ton org active ne s'appelle `{demande}` ni ne "
-        f"porte ce libellé (ou il n'est pas ouvert à ton org).{suite} Ce refus ne dit "
-        f"RIEN de tes connexions : il porte sur le nom.",
+        f"No connector available to your active org is named `{demande}` or carries "
+        f"this label (or it is not open to your org).{suite} This refusal says "
+        f"NOTHING about your connections: it concerns the name.",
         details={"query": demande, "suggestions": proches})
 
 
 def _with_readiness(ctx: ResolvedCtx, row: dict) -> dict:
-    """Pose `ready` / `not_ready` / `next_step` sur LA ligne demandée, et renvoie ce
-    que l'enveloppe doit dire du calcul.
+    """Sets `ready` / `not_ready` / `next_step` on THE requested row, and returns what
+    the envelope must say about the computation.
 
-    Fail-VISIBLE et non fail-open : si les couches ne se lisent pas, on rend
-    `readiness:"unavailable"` au lieu d'omettre `ready` en silence. Omettre serait
-    reproduire le défaut même de #476 — une absence que l'appelant lit « rien à
-    signaler »."""
+    Fail-VISIBLE and not fail-open: if the layers cannot be read, we return
+    `readiness:"unavailable"` instead of silently omitting `ready`. Omitting would
+    reproduce the very defect of #476 — an absence the caller reads as "nothing to
+    report"."""
     try:
         diag = connector_readiness.diagnose(
             ctx.sub, row["name"], org=ctx.org_id,
-            # Explicite : `credential_mode_for` le re-dériverait sinon (73 % du temps
-            # d'une carte mesurée), et surtout le contexte doit être celui du SUJET.
+            # Explicit: `credential_mode_for` would otherwise re-derive it (73 % of the time
+            # of a measured card), and above all the context must be the SUBJECT's.
             group=access.current_group(ctx.sub))
     except Exception:
-        logger.warning("readiness indisponible pour %s (fail-visible)", row["name"],
+        logger.warning("readiness unavailable for %s (fail-visible)", row["name"],
                        exc_info=True)
         return {"readiness": "unavailable",
-                "readiness_hint": ("L'état réel n'a pas pu être lu (couches "
-                                   "clé/option indisponibles) — `state` ci-dessus ne "
-                                   "dit QUE ta sélection, pas si le connecteur marche.")}
+                "readiness_hint": ("The real state could not be read (key/option "
+                                   "layers unavailable) — `state` above says "
+                                   "ONLY your selection, not whether the connector works.")}
     if diag is None:
         row["ready"] = True
     else:
@@ -488,37 +487,37 @@ def _me_projection(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
     removed = connector_selection.list_removed(ctx.sub, org_id)
     recommended = set(org_store.get_org_default_connectors(ctx.org_id) or []) if ctx.org_id else set()
     doc_refs = _guide_refs_by_ns(ctx.org_id)
-    # Découvrabilité : une clé peut exister à portée (équipe dont je suis membre,
-    # autre org) sans que la cascade la lise — le connecteur paraît alors « vide »
-    # dans la library alors qu'il est utilisable en épinglant. Jusqu'ici l'info
-    # n'existait qu'APRÈS un appel raté (erreur « rien ne résout »), donc jamais si
-    # le connecteur n'est pas installé (l'appel meurt au dispatch). Une passe
-    # BATCHÉE, hors boucle, pour ne pas payer N×M requêtes.
+    # Discoverability: a key may exist within reach (a team I belong to,
+    # another org) without the cascade reading it — the connector then looks "empty"
+    # in the library even though it is usable by pinning. Until now the info
+    # only existed AFTER a failed call ("nothing resolves" error), hence never if
+    # the connector is not installed (the call dies at dispatch). One
+    # BATCHED pass, outside the loop, so as not to pay N×M queries.
     reach = access.reachable_instances_map(ctx.sub, ctx.org_id)
     catalog = _visible_catalog(ctx)
     name_match: Optional[dict] = None
     if inp.name:
         trouves = _resoudre_nom(catalog, inp.name)
         if not trouves:
-            # Non exposé pour l'org active, restreint par le RBAC d'org, ou nom inconnu
-            # — indistinguables côté membre (même verdict que `_require_exposed`). Mais
-            # le refus PROPOSE : un « inconnu » sec a été relu « pas connecté » (#1112).
+            # Not exposed for the active org, restricted by the org RBAC, or unknown name
+            # — indistinguishable on the member side (same verdict as `_require_exposed`). But
+            # the refusal OFFERS suggestions: a curt "unknown" was read as "not connected" (#1112).
             raise _refus_nom_inconnu(catalog, inp.name)
         if [c["name"] for c in trouves] != [inp.name]:
             name_match = {
                 "query": inp.name,
                 "candidates": [c["name"] for c in trouves],
-                "note": (f"`{inp.name}` n'est pas un nom exact : "
-                         + (f"il désigne `{trouves[0]['name']}`." if len(trouves) == 1 else
-                            f"{len(trouves)} connecteurs y répondent, tous rendus — "
-                            f"aucun n'est choisi à ta place.")
-                         + " Les gestes (select/pause/unselect) prennent le nom exact."),
+                "note": (f"`{inp.name}` is not an exact name: "
+                         + (f"it designates `{trouves[0]['name']}`." if len(trouves) == 1 else
+                            f"{len(trouves)} connectors match it, all returned — "
+                            f"none is chosen for you.")
+                         + " The gestures (select/pause/unselect) take the exact name."),
             }
         catalog = trouves
-    # Credential DISPONIBLE (#1112), sur toutes les lignes — la même fonction que
-    # `oto_list_my_tools`. Fail-VISIBLE : un snapshot illisible se DIT dans
-    # l'enveloppe, sinon des lignes sans `credential` se reliraient « rien n'est
-    # connecté », la conclusion même qu'on répare.
+    # AVAILABLE credential (#1112), on all rows — the same function as
+    # `oto_list_my_tools`. Fail-VISIBLE: an unreadable snapshot SAYS SO in the
+    # envelope, otherwise rows without `credential` would be read again as "nothing is
+    # connected", the very conclusion being repaired.
     presence, credentials = credential_presence.lire(ctx.sub, org=ctx.org_id)
     # L'option couche 3 se juge par (option, porteur du credential) : les canaux d'un
     # compte hébergé partagent l'option ET la clé de leur porteur, donc le même verdict.
@@ -540,68 +539,68 @@ def _me_projection(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
         for ns in c.get("namespaces") or []:
             refset |= doc_refs.get(ns, set())
         base = c if inp.verbose else {k: c.get(k) for k in _COMPACT_KEYS}
-        # URL de retour de consentement — sur la projection AUTHENTIFIÉE seulement.
-        # `providers.public_catalog()` alimente aussi `/api/connectors`, servie sans
-        # auth : le descripteur public reste sans URL (cf. `connector_flow.describe`).
-        # Elle est DÉRIVÉE de l'environnement, jamais écrite : c'est la valeur que le
-        # client doit enregistrer chez son fournisseur, et une prose codée en dur ment
-        # dès qu'on la lit depuis la preprod (vécu : un `redirect_uri_mismatch`
-        # incompréhensible côté client).
-        # `app_ready` suit la même règle (réponse propre au DEMANDEUR, donc jamais au
-        # catalogue public) : il dit au front s'il reste une app à poser avant de
-        # pouvoir consentir. Sans lui, l'écran de connexion promettait le pire cas à
-        # tout le monde — « pose d'abord les identifiants de l'application », y compris
-        # à qui n'a plus rien à poser depuis qu'oto publie la sienne.
+        # Consent return URL — on the AUTHENTICATED projection only.
+        # `providers.public_catalog()` also feeds `/api/connectors`, served without
+        # auth: the public descriptor stays without a URL (cf. `connector_flow.describe`).
+        # It is DERIVED from the environment, never written: it is the value the
+        # client must register with its provider, and hard-coded prose lies
+        # as soon as it is read from preprod (experienced: an incomprehensible
+        # `redirect_uri_mismatch` on the client side).
+        # `app_ready` follows the same rule (answer specific to the REQUESTER, hence never to the
+        # public catalog): it tells the front end whether an app remains to be set before
+        # being able to consent. Without it, the connection screen promised the worst case to
+        # everyone — "first set the application's credentials", including to whoever has nothing left to set
+        # since oto publishes its own.
         if inp.verbose and base.get("connect"):
             from ...connectors import flow as connector_flow
             base = {**base, "connect": {
                 **base["connect"],
                 "callback_url": connector_flow.callback_url(c["name"]),
                 "app_ready": connector_flow.app_ready(c["name"], ctx.sub)}}
-        # Couche 3 (option payante) sur la surface USER — sans ça le front ne peut pas
-        # dire LAQUELLE des 3 conditions manque (le bandeau « État pour toi », ADR 0044) :
-        # `mode==forbidden` conflate option/activation/RBAC. `option_ok=True` si aucune
-        # option requise. Verbose seulement (compact = catalogue).
+        # Layer 3 (paid option) on the USER surface — without it the front end cannot
+        # say WHICH of the 3 conditions is missing (the "State for you" banner, ADR 0044):
+        # `mode==forbidden` conflates option/activation/RBAC. `option_ok=True` if no
+        # option is required. Verbose only (compact = catalog).
         opt = access.paid_option_for(c["name"])
-        # `option_ok` = SOURCE UNIQUE `access.option_open` (partagée avec status_for) :
-        # pas d'option ⟹ ok ; sinon BYO (clé propre) OU has_option. Un seul endroit
-        # décide « utilisable » → plus de divergence carte « clé d'org » + « Bloqué ».
+        # `option_ok` = SINGLE SOURCE `access.option_open` (shared with status_for):
+        # no option ⟹ ok; otherwise BYO (own key) OR has_option. One single place
+        # decides "usable" → no more divergence "org key" card + "Blocked".
         row = {
             **base,
             "state": state,
             "recommended": c["name"] in recommended,
             "guide_ref_count": len(refset),
-            "doctrine_ref_count": len(refset),   # ALIAS déprécié (retrait 29/10/2026)
+            "doctrine_ref_count": len(refset),   # deprecated ALIAS (removal 29/10/2026)
             "paid_option": opt,
             "option_ok": _option_ok(c["name"]),
         }
-        # Présent SEULEMENT si une instance est à portée → la ligne se distingue au
-        # lieu d'ajouter un champ vide sur 40 lignes. Volontairement distinct de
-        # `recommended` (= baseline de l'org) : surcharger ce dernier ferait mentir
-        # le réglage d'org. C'est de la VISIBILITÉ : l'accès se juge à l'appel.
+        # Present ONLY if an instance is within reach → the row stands out instead of
+        # adding an empty field on 40 rows. Deliberately distinct from
+        # `recommended` (= the org's baseline): overloading the latter would make
+        # the org setting lie. This is VISIBILITY: access is judged at call time.
         if reach.get(c["name"]):
             row["reachable_instances"] = reach[c["name"]]
         if c["name"] in presence:
             row["credential"] = presence[c["name"]]
-        # Provenance et retrait (ADR 0050 §E7) : posés seulement quand ils disent
-        # quelque chose, pour la même raison que `reachable_instances`.
+        # Provenance and removal (ADR 0050 §E7): set only when they say
+        # something, for the same reason as `reachable_instances`.
         if c["name"] in detail:
             row["origin"] = detail[c["name"]]["origin"]
         elif c["name"] in removed:
-            # Déjà une chaîne : la fabrique de lignes de `db` rend les horodatages en
-            # « AAAA-MM-JJ HH:MM:SS » (UTC, sans fuseau) — servie telle quelle.
+            # Already a string: `db`'s row factory renders timestamps as
+            # "YYYY-MM-DD HH:MM:SS" (UTC, no timezone) — served as is.
             row["removed_at"] = str(removed[c["name"]])
         connectors.append(row)
     out: dict = {"connectors": connectors, "verbose": inp.verbose,
                  "credentials": credentials}
     if name_match is not None:
         out["name_match"] = name_match
-    # Verdict d'aptitude (#476) — sur une lecture CIBLÉE seulement. Mesuré sur la prod
-    # le 28/08/2026 : le rendre sur tout le catalogue coûte 1 993 ms pour 90
-    # connecteurs, sur un serveur MONO-LOOP. On ne le calcule donc pas — mais on le
-    # DIT, sinon l'absence de `ready` se relit « rien à signaler », qui est
-    # précisément le raccourci qu'on répare. Une recherche par libellé peut rendre
-    # quelques candidats (#1112) : chacun reçoit son verdict, dans une borne.
+    # Readiness verdict (#476) — on a TARGETED read only. Measured on prod
+    # on 28/08/2026: rendering it on the whole catalog costs 1,993 ms for 90
+    # connectors, on a SINGLE-LOOP server. So we don't compute it — but we
+    # SAY so, otherwise the absence of `ready` is read as "nothing to report", which is
+    # precisely the shortcut being repaired. A search by label may return
+    # a few candidates (#1112): each gets its verdict, within a bound.
     if inp.name and connectors and len(connectors) <= _CANDIDATS_DIAGNOSTIQUES:
         verdicts = [_with_readiness(ctx, row) for row in connectors]
         out.update(next((v for v in verdicts if v["readiness"] == "unavailable"),
@@ -609,14 +608,14 @@ def _me_projection(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
     else:
         out["readiness"] = "not_computed"
         out["readiness_hint"] = (
-            "Aptitude non calculée sur un catalogue (trop cher pour un serveur "
-            "mono-loop). TROIS axes, à ne pas confondre : `state` = ta SÉLECTION dans "
-            "la toolbox (`not_selected` ne veut PAS dire non connecté) ; `credential` "
-            "= une clé ou un compte existe pour toi (absent = aucun ne résout) ; "
-            "vivant = jamais vérifié ici, `credential.next_step` nomme l'outil qui le "
-            "vérifie. Pour l'aptitude d'un connecteur, redemande-le seul — "
-            "`oto_connector(op='list', name='<connecteur>')` rend `ready` et, s'il "
-            "ne l'est pas, l'étape qui manque.")
+            "Readiness not computed on a catalog (too expensive for a "
+            "single-loop server). THREE axes, not to be confused: `state` = your SELECTION in "
+            "the toolbox (`not_selected` does NOT mean not connected); `credential` "
+            "= a key or an account exists for you (absent = none resolves); "
+            "alive = never verified here, `credential.next_step` names the tool that "
+            "verifies it. For a connector's readiness, ask for it alone — "
+            "`oto_connector(op='list', name='<connector>')` returns `ready` and, if it "
+            "isn't, the missing step.")
     tb = _toolbox_scope(ctx.sub)
     if tb is not None:
         out["toolbox_scope"] = tb
@@ -624,25 +623,25 @@ def _me_projection(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
 
 
 def _require_exposed(ctx: ResolvedCtx, name: str) -> None:
-    """Plafond : un connecteur non-exposé pour l'org active ne peut être ni
-    sélectionné ni mis en pause (deny-by-default jamais relâché)."""
+    """Ceiling: a connector not exposed for the active org can be neither
+    selected nor paused (deny-by-default never relaxed)."""
     if name not in connector_activation.exposed_connectors(ctx.org_id):
-        # Un geste ne se résout PAS par libellé (il écrit) : il exige le nom exact, mais
-        # son refus propose les noms proches, comme la lecture (#1112).
+        # A gesture is NOT resolved by label (it writes): it requires the exact name, but
+        # its refusal offers the close names, like the read (#1112).
         raise _refus_nom_inconnu(_visible_catalog(ctx), name)
 
 
-# Guidage post-activation (oto-backend#111). Le registre d'outils d'une session MCP est
-# FIGÉ à l'ouverture de la conversation : un connecteur activé en cours de session n'y
-# monte pas ses outils (le hot-reload `tools/list_changed` n'est pas appliqué par
-# claude.ai). Le pont fiable = `oto_call` (dispatch universel, ADR 0036) ; sinon, nouvelle
-# conversation. On le DIT à l'agent au moment où il installe, pour qu'il enchaîne sans
-# conclure « la capacité n'existe pas ».
+# Post-activation guidance (oto-backend#111). An MCP session's tool registry is
+# FROZEN when the conversation opens: a connector activated mid-session does not mount
+# its tools there (the `tools/list_changed` hot-reload is not applied by
+# claude.ai). The reliable bridge = `oto_call` (universal dispatch, ADR 0036); otherwise, a new
+# conversation. We TELL the agent at the moment it installs, so it carries on without
+# concluding "the capability doesn't exist".
 def _connector_tools(name: str) -> list[str]:
-    """Noms des tools du connecteur, depuis le registre BOOT (immunisé à la
-    visibilité de session) — la moitié « découverte » de #186 : le hint ordonnait
-    « appelle via oto_call » sans donner UN SEUL nom, et l'introspection de session
-    ne voyait pas les tools d'un connecteur fraîchement activé."""
+    """Names of the connector's tools, from the BOOT registry (immune to
+    session visibility) — the "discovery" half of #186: the hint ordered
+    "call via oto_call" without giving ONE SINGLE name, and session
+    introspection did not see the tools of a freshly activated connector."""
     from ... import providers, tool_registry
     from ...tool_visibility import namespace_of
     con = providers.REGISTRY.get(name)
@@ -651,29 +650,29 @@ def _connector_tools(name: str) -> list[str]:
 
 
 def _activation_hint(name: str, tools: list[str]) -> str:
-    listing = (f" Ses outils : {', '.join(tools[:12])}." if tools
-               else " (noms indisponibles — oto_tool_schema les décrit à la demande).")
-    return (f"`{name}` est actif. Ses outils ne sont pas encore montés dans CETTE conversation "
-            f"(le registre d'outils est figé à l'ouverture) —{listing} Appelle-les DÈS "
-            f"MAINTENANT via `oto_call(name=…, arguments={{…}})` (schéma d'un outil : "
-            f"`oto_tool_schema`), ou ouvre une NOUVELLE conversation pour les voir listés.")
+    listing = (f" Its tools: {', '.join(tools[:12])}." if tools
+               else " (names unavailable — oto_tool_schema describes them on demand).")
+    return (f"`{name}` is active. Its tools are not yet mounted in THIS conversation "
+            f"(the tool registry is frozen at open) —{listing} Call them RIGHT "
+            f"NOW via `oto_call(name=…, arguments={{…}})` (a tool's schema: "
+            f"`oto_tool_schema`), or open a NEW conversation to see them listed.")
 
 
 def _org_du_geste(ctx: ResolvedCtx) -> int:
-    """L'org sous laquelle un geste du membre range sa sélection — une org RÉELLE,
-    jamais l'ancienne sentinelle `0` (#959). Ce `ctx.org_id or 0` écrivait des lignes
-    qu'aucune lecture ne rend plus depuis la fin du « perso sans org » (ADR 0030 §8) :
-    sans org active, le geste est REFUSÉ par son nom plutôt que rangé hors de vue."""
+    """The org under which a member's gesture files their selection — a REAL org,
+    never the old `0` sentinel (#959). That `ctx.org_id or 0` wrote rows
+    that no read returns anymore since the end of "personal without org" (ADR 0030 §8):
+    with no active org, the gesture is REFUSED by name rather than filed out of sight."""
     if not ctx.org_id:
         raise AuthzDenied(400, "no_active_org",
-                          "Aucune org active : une sélection de connecteur se range sous "
-                          "une org — choisis-en une avec oto_use_org.")
+                          "No active org: a connector selection is filed under "
+                          "an org — pick one with oto_use_org.")
     return ctx.org_id
 
 
 _REFUS_SANS_ORG = DeclaredError(400, "no_active_org",
-                                "aucune org active : une sélection se range sous une org "
-                                "réelle, jamais hors de vue")
+                                "no active org: a selection is filed under a real "
+                                "org, never out of sight")
 
 
 def _select(ctx: ResolvedCtx, inp: ConnectorActionInput) -> dict:
@@ -693,17 +692,17 @@ def _pause(ctx: ResolvedCtx, inp: ConnectorActionInput) -> dict:
 
 
 def _unselect(ctx: ResolvedCtx, inp: ConnectorActionInput) -> dict:
-    # oto#42/oto-backend#868 — un retrait qui ne retire rien ne répond plus `ok`
-    # (`removed: false` par-dessus un 200 se lisait comme un succès idempotent ;
-    # `setExposure` côté dashboard ne lit d'ailleurs pas ce champ et pose l'état
-    # local dès que l'appel n'a pas levé). REFUSE nommément, sur le même patron
-    # que l'unlink de projet (`d3c5de40`) : un succès qui n'a rien fait est pire
-    # qu'un refus.
+    # oto#42/oto-backend#868 — a removal that removes nothing no longer answers `ok`
+    # (`removed: false` on top of a 200 read as an idempotent success;
+    # `setExposure` on the dashboard side doesn't read that field anyway and sets the
+    # local state as soon as the call didn't raise). REFUSES by name, on the same pattern
+    # as the project unlink (`d3c5de40`): a success that did nothing is worse
+    # than a refusal.
     if not connector_selection.unselect(ctx.sub, inp.name, _org_du_geste(ctx)):
         raise AuthzDenied(404, "connector_not_selected",
-                          f"`{inp.name}` n'est pas dans ta sélection active pour cette org — "
-                          "rien n'a été retiré (déjà désinstallé, ou jamais installé ici). "
-                          "`connectors.me` te dit ce qui l'est.")
+                          f"`{inp.name}` is not in your active selection for this org — "
+                          "nothing was removed (already uninstalled, or never installed here). "
+                          "`connectors.me` tells you what is.")
     return {"connector": inp.name, "state": "not_selected", "removed": True}
 
 
@@ -730,10 +729,10 @@ CAPABILITIES += [
                     "(key resolves, paid option open, no step left) plus `not_ready`/`next_step` "
                     "when it doesn't; the whole catalog returns readiness:not_computed.",
         errors=(DeclaredError(404, "unknown_connector",
-                              "nom inconnu du registre, connecteur non exposé "
-                              "pour l'org active, ou restreint par une règle — "
-                              "les trois sont indistinguables côté membre, et "
-                              "tous se règlent par la même demande à un admin"),),
+                              "name unknown to the registry, connector not exposed "
+                              "for the active org, or restricted by a rule — "
+                              "the three are indistinguishable on the member side, and "
+                              "all are resolved by the same request to an admin"),),
         rest=RestBinding("GET", "/api/me/connectors"),
     ),
     Capability(
@@ -744,10 +743,10 @@ CAPABILITIES += [
                     "conversation (the tool registry is frozen at open) — the response `hint` "
                     "tells you to reach them right away via oto_call, or open a new conversation.",
         errors=(DeclaredError(404, "unknown_connector",
-                              "nom inconnu du registre, connecteur non exposé "
-                              "pour l'org active, ou restreint par une règle — "
-                              "les trois sont indistinguables côté membre, et "
-                              "tous se règlent par la même demande à un admin"),
+                              "name unknown to the registry, connector not exposed "
+                              "for the active org, or restricted by a rule — "
+                              "the three are indistinguishable on the member side, and "
+                              "all are resolved by the same request to an admin"),
                 _REFUS_SANS_ORG),
         rest=RestBinding("POST", "/api/me/connectors/{name}/select"),
     ),
@@ -757,10 +756,10 @@ CAPABILITIES += [
         description="Pause an installed connector (state=paused): kept installed but its tools "
                     "are hidden. Resume by selecting it again.",
         errors=(DeclaredError(404, "unknown_connector",
-                              "nom inconnu du registre, connecteur non exposé "
-                              "pour l'org active, ou restreint par une règle — "
-                              "les trois sont indistinguables côté membre, et "
-                              "tous se règlent par la même demande à un admin"),
+                              "name unknown to the registry, connector not exposed "
+                              "for the active org, or restricted by a rule — "
+                              "the three are indistinguishable on the member side, and "
+                              "all are resolved by the same request to an admin"),
                 _REFUS_SANS_ORG),
         rest=RestBinding("POST", "/api/me/connectors/{name}/pause"),
     ),
@@ -772,9 +771,9 @@ CAPABILITIES += [
                     "it wasn't in your active selection for this org — it never answers ok on a "
                     "removal that found nothing.",
         errors=(DeclaredError(404, "connector_not_selected",
-                              "le connecteur n'est pas dans ta sélection active pour "
-                              "cette org : déjà retiré, jamais installé ici, ou "
-                              "installé sous une autre org active"),
+                              "the connector is not in your active selection for "
+                              "this org: already removed, never installed here, or "
+                              "installed under another active org"),
                 _REFUS_SANS_ORG),
         rest=RestBinding("DELETE", "/api/me/connectors/{name}"),
     ),
@@ -797,16 +796,16 @@ CAPABILITIES += [
                     "kit that your org has since cut stays in it: installed, hidden for "
                     "everyone, back on its own when reopened (listed in `cut`). "
                     "connectors = connector names ([] empties the kit).",
-        errors=(DeclaredError(404, "unknown_org", "org inconnue"),
+        errors=(DeclaredError(404, "unknown_org", "unknown org"),
                 DeclaredError(404, "unknown_connector",
-                              "un connecteur AJOUTÉ au kit est inconnu du registre — rien "
-                              "n'est écrit"),
+                              "a connector ADDED to the kit is unknown to the registry — nothing "
+                              "is written"),
                 DeclaredError(409, "org_disabled",
-                              "un connecteur AJOUTÉ au kit n'est pas disponible pour les "
-                              "membres de l'org (l'org l'a coupé) — rien n'est écrit"),
+                              "a connector ADDED to the kit is not available to the "
+                              "org's members (the org cut it) — nothing is written"),
                 DeclaredError(409, "platform_disabled",
-                              "un connecteur AJOUTÉ au kit est coupé par la plateforme — "
-                              "rien n'est écrit"),),
+                              "a connector ADDED to the kit is cut by the platform — "
+                              "nothing is written"),),
         rest=RestBinding("PUT", "/api/orgs/{id}/default-connectors", _ID),
     ),
     Capability(
@@ -822,13 +821,13 @@ CAPABILITIES += [
                     "now), skipped, and the per-population detail in `changes`. Members' "
                     "agents see it at their NEXT conversation.",
         errors=(DeclaredError(404, "unknown_connector",
-                              "nom inconnu du registre"),
+                              "name unknown to the registry"),
                 DeclaredError(409, "org_disabled",
-                              "l'org a désactivé ce connecteur : l'activer pour "
-                              "tous contredirait sa propre gouvernance"),
+                              "the org has disabled this connector: enabling it for "
+                              "everyone would contradict its own governance"),
                 DeclaredError(409, "platform_disabled",
-                              "la plateforme a coupé ce connecteur : l'org ne peut pas "
-                              "l'installer"),),
+                              "the platform has cut this connector: the org cannot "
+                              "install it"),),
         rest=RestBinding("POST", "/api/orgs/{id}/connectors/{name}/bulk-select", _ID),
     ),
     Capability(

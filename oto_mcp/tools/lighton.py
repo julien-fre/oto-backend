@@ -1,20 +1,20 @@
-"""LightOn — indexation documentaire souveraine (API v3, api.lighton.ai) :
-retrieval hybride (search), RAG groundé (ask), parse → Markdown, extraction
-structurée, ingestion par workspace.
+"""LightOn — sovereign document indexing (API v3, api.lighton.ai):
+hybrid retrieval (search), grounded RAG (ask), parse → Markdown, structured
+extraction, per-workspace ingestion.
 
-Wrappe `oto.tools.lighton.LightOnClient` (v3 — l'API v2 de l'applicatif
-Paradigm est dépréciée et n'est plus couverte). Credential à 3 champs
-(clé API + base URL optionnelle instance privée + `workspace_id` par défaut
-optionnel) → modèle générique multi-champs (ADR 0011), résolu par appel via
-`access.resolve_credential_fields("lighton")`. BYO only (le compte LightOn
-appartient au client — le credential EST le grant).
+Wraps `oto.tools.lighton.LightOnClient` (v3 — the v2 API of the Paradigm
+app is deprecated and no longer covered). 3-field credential
+(API key + optional base URL for private instance + optional default
+`workspace_id`) → generic multi-field model (ADR 0011), resolved per call via
+`access.resolve_credential_fields("lighton")`. BYO only (the LightOn account
+belongs to the customer — the credential IS the grant).
 
-Le `workspace_id` du credential fait de l'instance (ADR 0038) « une clé × un
-workspace » : une instance liée à un projet scope par défaut search/ask/upload
-sur son workspace ; l'argument explicite du tool prime toujours.
+The credential's `workspace_id` makes the instance (ADR 0038) "one key × one
+workspace": an instance linked to a project scopes search/ask/upload by default
+to its workspace; the tool's explicit argument always wins.
 
-Facturation LightOn (lighton.ai/pricing) : ingestion à la page, retrieval à
-la requête (search ET ask), stockage vectoriel au Go.
+LightOn billing (lighton.ai/pricing): ingestion per page, retrieval per
+query (search AND ask), vector storage per GB.
 """
 from __future__ import annotations
 
@@ -29,30 +29,30 @@ from ..connectors import verify as connector_verify
 
 
 def _check_base_url(base_url) -> None:
-    """Garde d'egress sur l'URL d'instance privée, quand elle est posée.
+    """Egress guard on the private-instance URL, when set.
 
-    Vide = le SaaS, une constante de la lib. Renseignée, elle désigne une
-    instance auto-hébergée — donc potentiellement un hôte du réseau interne de
-    la plateforme (`oto_mcp/egress.py`)."""
+    Empty = the SaaS, a constant of the lib. Filled in, it designates a
+    self-hosted instance — hence potentially a host on the platform's internal
+    network (`oto_mcp/egress.py`)."""
     valeur = (base_url or "").strip()
     if valeur:
         egress.check_url(valeur, connector="lighton")
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET workspaces` (déjà dans le client — `list_workspaces`) : LightOn
-    facture l'ingestion (à la page), le retrieval (`search`/`ask`, à la
-    requête) et le stockage vectoriel — PAS listé workspaces, une opération de
-    gestion, pas de retrieval. Aucun `/me` ni solde par ailleurs.
+    `GET workspaces` (already in the client — `list_workspaces`): LightOn
+    bills ingestion (per page), retrieval (`search`/`ask`, per
+    query) and vector storage — NOT listing workspaces, a management
+    operation, not retrieval. No `/me` or balance otherwise.
 
-    ⚠️ `LightOnClient._request` lève un `RuntimeError` NU (pas de `status_code`
-    typé) sur un refus — tombe en `unknown`, jamais `unauthorized`. Aucun
-    modèle de clé scopée par ressource documenté chez LightOn : honnête plutôt
-    que précis, rouvrable si le client se met à typer ses erreurs.
+    ⚠️ `LightOnClient._request` raises a BARE `RuntimeError` (no typed
+    `status_code`) on a refusal — lands on `unknown`, never `unauthorized`. No
+    per-resource scoped key model documented at LightOn: honest rather
+    than precise, reopenable if the client starts typing its errors.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope.
+    **Authenticated ≠ usable** (oto#69 class): does not distinguish scope.
     """
     from oto.tools.lighton import LightOnClient
 
@@ -80,8 +80,8 @@ def register(mcp: FastMCP) -> None:
         return int(raw) if raw.isdigit() else None
 
     def _run(fn):
-        """Exécute un appel LightOn : traduit une erreur en McpError
-        actionnable (401 clé / 403 droits du compte / 5xx retry)."""
+        """Runs a LightOn call: translates an error into an actionable
+        McpError (401 key / 403 account rights / 5xx retry)."""
         creds = _creds()
         client = _client(creds)
         try:
@@ -91,18 +91,18 @@ def register(mcp: FastMCP) -> None:
         except RuntimeError as e:
             msg = str(e)
             if msg.startswith("LightOn 401"):
-                msg = "Clé LightOn invalide ou révoquée (401). Vérifie la clé posée."
+                msg = "LightOn key invalid or revoked (401). Check the key you set."
             elif msg.startswith("LightOn 403"):
-                msg = ("Le compte LightOn de cette clé n'a pas accès à cette "
-                       f"ressource/opération (403). {msg}")
+                msg = ("The LightOn account for this key has no access to this "
+                       f"resource/operation (403). {msg}")
             elif msg.startswith("LightOn 5"):
-                msg = (f"LightOn est momentanément indisponible ({msg}). "
-                       "Réessaie dans un moment.")
+                msg = (f"LightOn is temporarily unavailable ({msg}). "
+                       "Try again in a moment.")
             raise McpError(ErrorData(code=INVALID_PARAMS, message=msg))
         except Exception as e:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"LightOn n'a pas pu traiter la requête ({e})."))
+                message=f"LightOn could not process the request ({e})."))
 
     def _resolve_source(source: dict):
         try:
@@ -111,9 +111,9 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
     def _strip_images(payload: dict) -> dict:
-        """Retire les images de page base64 des résultats retrieval — l'API v3
-        les joint D'OFFICE sur /ask (~250 Ko PAR chunk, vécu 23/07 : 3 chunks
-        = 820 Ko de réponse), intenable dans un contexte LLM."""
+        """Strips the base64 page images from retrieval results — the v3 API
+        attaches them BY DEFAULT on /ask (~250 KB PER chunk, seen 23/07: 3 chunks
+        = 820 KB of response), untenable in an LLM context."""
         for r in payload.get("results", []) or []:
             if isinstance(r, dict):
                 r.pop("image", None)
@@ -259,13 +259,13 @@ def register(mcp: FastMCP) -> None:
                 List available ones with `lighton_workspaces`.
             title: display title (default: filename).
         """
-        # gate workspace AVANT de résoudre la source (pas de download inutile)
+        # gate on workspace BEFORE resolving the source (no useless download)
         wid = workspace_id or _default_workspace(_creds())
         if not wid:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message="workspace_id requis (aucun workspace par défaut "
-                        "configuré sur le connecteur) — liste-les via "
+                message="workspace_id required (no default workspace "
+                        "configured on the connector) — list them via "
                         "lighton_workspaces."))
         rf = _resolve_source(source)
         return _run(lambda c, ws: c.upload_file_bytes(

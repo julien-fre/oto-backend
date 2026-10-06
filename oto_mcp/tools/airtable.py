@@ -1,56 +1,56 @@
-"""Airtable — bases, tables, champs, lignes, commentaires, pièces jointes, sync CSV.
+"""Airtable — bases, tables, fields, rows, comments, attachments, CSV sync.
 
-Couvre TOUTE la section « Base data » de la Web API Airtable (records CRUD + upsert,
-commentaires CRUD, upload de pièce jointe, sync CSV) et les compagnons sans lesquels un
-agent ne peut rien faire : schéma d'une base (tables + champs), création/renommage de
-tables et de champs, liste des bases accordées, identité du token.
+Covers the WHOLE "Base data" section of the Airtable Web API (records CRUD + upsert,
+comments CRUD, attachment upload, CSV sync) and the companions without which an
+agent can do nothing: a base's schema (tables + fields), creating/renaming
+tables and fields, the list of granted bases, the token's identity.
 
-Clé résolue par appel via `access.resolve_api_key("airtable")` — **BYO only** (user ou
-org) : un PAT Airtable est attaché à des bases nommément accordées dans un workspace
-donné, une clé plateforme partagée n'aurait aucun sens (elle exposerait les bases
-d'Otomata à toutes les orgs).
+Key resolved per call via `access.resolve_api_key("airtable")` — **BYO only** (user or
+org): an Airtable PAT is attached to bases explicitly granted in a given
+workspace, a shared platform key would make no sense (it would expose
+Otomata's bases to every org).
 
-**Surface consolidée (ADR 0047 §Amendement)** : un tool par OBJET, le verbe en paramètre
-`op` — 22 endpoints → 7 tools. La découpe suit l'homogénéité des PARAMÈTRES :
+**Consolidated surface (ADR 0047 §Amendment)**: one tool per OBJECT, the verb as an `op`
+parameter — 22 endpoints → 7 tools. The split follows the homogeneity of the PARAMETERS:
 
-- `airtable_record` (8 → 1) — tout est keyé par `base_id` + `table` ; l'upsert n'est
-  qu'un `performUpsert` sur le même PATCH que l'update, donc pas un tool à part.
-- `airtable_comment` (4 → 1) — ancrage plus profond (`+ record_id`, `+ comment_id`) et
-  `text`/`parent_comment_id` ne recouvrent aucun paramètre de record.
-- `airtable_table` (3 → 1) — le CONTENEUR : `name`, `description`, `fields[]`.
-- `airtable_field` (3 → 1) — reste séparé de `airtable_table` pour la même raison
-  qu'`attio_object` / `attio_attribute` : `type` + `options` (une forme d'objet PAR type
-  de champ Airtable) n'existent nulle part ailleurs, les fusionner ferait porter à
-  `name`/`description` deux sens selon l'op. `op="list"` = le schéma de base filtré sur
-  la table : une vraie lecture, qui donne les `fld…` stables.
-- `airtable_base` (3 → 1) — le seul tool dont l'entrée n'est pas keyée par une base.
-- `airtable_attachment` (1) et `airtable_sync` (1) restent seuls : autre HÔTE
-  (`content.airtable.com`, corps base64) pour l'un, corps **`text/csv` brut** et limites
-  de débit propres (20 req/5 min) pour l'autre. Mettre un chemin non-JSON dans
-  `airtable_record` polluerait sa signature pour tous les autres verbes.
+- `airtable_record` (8 → 1) — everything is keyed by `base_id` + `table`; upsert is
+  just a `performUpsert` on the same PATCH as update, so not a separate tool.
+- `airtable_comment` (4 → 1) — deeper anchoring (`+ record_id`, `+ comment_id`) and
+  `text`/`parent_comment_id` overlap no record parameter.
+- `airtable_table` (3 → 1) — the CONTAINER: `name`, `description`, `fields[]`.
+- `airtable_field` (3 → 1) — stays separate from `airtable_table` for the same reason
+  as `attio_object` / `attio_attribute`: `type` + `options` (one object shape PER
+  Airtable field type) exist nowhere else, merging them would make
+  `name`/`description` carry two meanings depending on the op. `op="list"` = the base schema filtered on
+  the table: a real read, which gives the stable `fld…` ids.
+- `airtable_base` (3 → 1) — the only tool whose entry is not keyed by a base.
+- `airtable_attachment` (1) and `airtable_sync` (1) stay on their own: different HOST
+  (`content.airtable.com`, base64 body) for one, **raw `text/csv` body** and own rate
+  limits (20 req/5 min) for the other. Putting a non-JSON path in
+  `airtable_record` would pollute its signature for all the other verbs.
 
-⚠️ Ce module ÉCRIT dans une base Airtable RÉELLE. Le défaut de chaque tool à `op` est une
-LECTURE (`"list"` ou `"schema"`) : un appel sans `op` ne peut ni écrire ni supprimer, et
-une op inconnue est refusée AVANT même la résolution de la clé. Les deux tools qui n'ont
-AUCUNE lecture possible (`airtable_attachment`, `airtable_sync`) n'ont délibérément pas
-de paramètre `op` : un verbe unique n'a pas de verbe à choisir, et leurs paramètres de
-charge utile (le fichier, le CSV) sont tous obligatoires — aucun appel nu ne peut muter.
+⚠️ This module WRITES to a REAL Airtable base. The default of every tool with an `op` is a
+READ (`"list"` or `"schema"`): a call without `op` can neither write nor delete, and
+an unknown op is refused BEFORE even resolving the key. The two tools that have
+NO possible read (`airtable_attachment`, `airtable_sync`) deliberately have no
+`op` parameter: a single verb has no verb to choose, and their payload parameters
+(the file, the CSV) are all mandatory — no bare call can mutate.
 
-⚠️ **`typecast` vaut `False` par défaut, et c'est un choix.** Chez Airtable ce n'est pas
-une conversion de confort : c'est une **mutation de schéma déclenchée par une écriture de
-donnée** (il crée l'option manquante d'un select, voire un enregistrement dans la table
-liée d'un champ *linked record*), et il ne demande que le scope `data.records:write`. Un
-`op="create"` avec une valeur mal orthographiée élargirait donc en silence le schéma
-d'une base client. Ici l'écriture échoue franchement ; `typecast=True` est un geste
-explicite de l'appelant.
+⚠️ **`typecast` defaults to `False`, and that is a choice.** At Airtable it is not
+a convenience conversion: it is a **schema mutation triggered by a data write**
+(it creates the missing option of a select, even a record in the linked table of a
+*linked record* field), and it only requires the `data.records:write` scope. An
+`op="create"` with a misspelled value would therefore silently widen the schema of
+a customer's base. Here the write fails outright; `typecast=True` is an
+explicit gesture by the caller.
 
-⚠️ **Lots et débit.** L'API refuse plus de **10 records par requête** (create / update /
-delete) et plafonne à **5 requêtes/seconde par base** ; un 429 impose **30 secondes**
-d'attente. Le client oto-core ne boucle pas : c'est ce module qui découpe en lots de 10,
-espace les requêtes de 200 ms et plafonne à `_MAX_ITEMS` records par appel — plafond
-DÉRIVÉ du budget d'invoke de 45 s (`api/routes.py`), pas deviné. Sur 429 on **n'attend
-pas** les 30 s (l'appel mourrait en timeout sans dire ce qui a été écrit) : on s'arrête et
-on rend un reçu partiel qui NOMME ce qui est passé et ce qui ne l'est pas.
+⚠️ **Batches and rate.** The API refuses more than **10 records per request** (create /
+update / delete) and caps at **5 requests/second per base**; a 429 imposes **30 seconds**
+of waiting. The oto-core client does not loop: this module splits into batches of 10,
+spaces requests by 200 ms and caps at `_MAX_ITEMS` records per call — a cap
+DERIVED from the 45 s invoke budget (`api/routes.py`), not guessed. On a 429 we **do not
+wait** the 30 s (the call would die in a timeout without saying what was written): we stop and
+return a partial receipt that NAMES what went through and what did not.
 """
 from __future__ import annotations
 
@@ -64,8 +64,8 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..connectors import verify as connector_verify
 
-# Ops de chaque objet, lectures → écritures. Source unique : le SCHÉMA MCP
-# (`Literal` → `enum` JSON), la validation d'entrée ET le message de refus en dérivent.
+# The ops of each object, reads → writes. Single source: the MCP SCHEMA
+# (`Literal` → JSON `enum`), input validation AND the refusal message all derive from it.
 _RecordOp = Literal["list", "get", "create", "update", "upsert", "delete"]
 _CommentOp = Literal["list", "create", "update", "delete"]
 _TableOp = Literal["schema", "create", "update"]
@@ -78,21 +78,21 @@ _TABLE_OPS = get_args(_TableOp)
 _FIELD_OPS = get_args(_FieldOp)
 _BASE_OPS = get_args(_BaseOp)
 
-# Plafond DUR d'Airtable sur create/update/delete multiples. Recopié ici plutôt que
-# lu sur `AirtableClient` : le module ne doit pas dépendre d'un attribut de classe pour
-# une valeur qui gouverne le découpage. `test_batch_size_matches_the_core_client` casse
-# si oto-core change d'avis.
+# Airtable's HARD cap on multiple create/update/delete. Copied here rather than
+# read from `AirtableClient`: the module must not depend on a class attribute for
+# a value that governs the splitting. `test_batch_size_matches_the_core_client` breaks
+# if oto-core changes its mind.
 _BATCH_SIZE = 10
-# Plafond d'items par appel, DÉRIVÉ du budget d'invoke (45 s, `api/routes.py`) :
-# 200 records = 20 requêtes de 10 × (200 ms de courtoisie + ~300 ms de latence) ≈ 10 s.
+# Cap on items per call, DERIVED from the invoke budget (45 s, `api/routes.py`):
+# 200 records = 20 requests of 10 × (200 ms courtesy + ~300 ms latency) ≈ 10 s.
 _MAX_ITEMS = 200
-# 5 requêtes/seconde par base côté Airtable → 200 ms entre deux requêtes.
+# 5 requests/second per base on Airtable's side → 200 ms between two requests.
 _RATE_DELAY = 0.2
-# Plafond de pages lues en une fois — même raison (une base peut avoir 100 000 lignes).
+# Cap on pages read at once — same reason (a base can have 100,000 rows).
 _MAX_PAGES = 25
-# Au-delà, la `filterByFormula` ne tient plus dans une query string : Airtable expose
-# `POST …/listRecords`, qui prend les MÊMES critères dans le corps. Le basculement est
-# automatique et déterministe — un agent n'a pas à connaître cette limite d'URL.
+# Beyond this, the `filterByFormula` no longer fits in a query string: Airtable exposes
+# `POST …/listRecords`, which takes the SAME criteria in the body. The switch is
+# automatic and deterministic — an agent need not know about this URL limit.
 _FORMULA_URL_LIMIT = 8000
 
 
@@ -101,65 +101,65 @@ def _bad(msg: str) -> McpError:
 
 
 def _one_of(name: str, values: tuple[str, ...]) -> str:
-    """Message de refus DÉRIVÉ des valeurs admises — une op ajoutée s'annonce seule."""
+    """Refusal message DERIVED from the allowed values — an added op announces itself."""
     quoted = [f"'{v}'" for v in values]
-    return f"{name} doit être " + ", ".join(quoted[:-1]) + " ou " + quoted[-1]
+    return f"{name} must be " + ", ".join(quoted[:-1]) + " or " + quoted[-1]
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op. Une valeur VIDE compte comme absente : un
-    `fields={}` sur `op='update'` serait un PATCH qui ne change rien et passerait pour
-    un succès."""
+    """Mandatory argument for THIS op. An EMPTY value counts as absent: a
+    `fields={}` on `op='update'` would be a PATCH that changes nothing and would pass for
+    a success."""
     if value is None or (isinstance(value, (str, list, dict)) and not value):
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
 def _exactly_one(solo, plural, solo_name: str, plural_name: str, op: str):
-    """Paire singulier/pluriel mutuellement exclusive — jamais de « liste de 1 » à
-    interpréter. Le singulier rend le résultat direct, le pluriel un reçu de lot."""
+    """Mutually exclusive singular/plural pair — never a "list of 1" to
+    interpret. The singular returns the result directly, the plural a batch receipt."""
     if (solo is None) == (plural is None):
         raise _bad(
-            f"op='{op}' requiert EXACTEMENT un de `{solo_name}` (un seul) ou "
-            f"`{plural_name}` (plusieurs), pas les deux ni aucun."
+            f"op='{op}' requires EXACTLY one of `{solo_name}` (a single one) or "
+            f"`{plural_name}` (several), not both and not neither."
         )
 
 
 def _upstream_message(e) -> str:
-    """Traduit un refus Airtable en message actionnable — le code seul ne dit rien."""
+    """Translate an Airtable refusal into an actionable message — the code alone says nothing."""
     hints = {
-        401: "token Airtable invalide ou révoqué (PAT `pat…`, airtable.com/create/tokens).",
-        403: "le token n'a pas le scope requis, OU cette base ne lui a pas été accordée "
-             "— les deux se règlent dans les réglages du PAT.",
-        404: "base, table, champ ou record introuvable — vérifier `base_id` (app…), le "
-             "nom/id de table, et que la base est bien accordée au token.",
-        422: "Airtable a refusé la donnée : nom de champ inconnu, type incompatible, ou "
-             "option de select absente (dans ce dernier cas, `typecast=True` la créerait).",
-        429: "limite de débit Airtable atteinte (5 req/s par base) — Airtable exige "
-             "30 secondes avant de réessayer.",
+        401: "invalid or revoked Airtable token (PAT `pat…`, airtable.com/create/tokens).",
+        403: "the token lacks the required scope, OR this base was not granted to it "
+             "— both are fixed in the PAT settings.",
+        404: "base, table, field or record not found — check `base_id` (app…), the "
+             "table name/id, and that the base is actually granted to the token.",
+        422: "Airtable refused the data: unknown field name, incompatible type, or "
+             "missing select option (in the latter case, `typecast=True` would create it).",
+        429: "Airtable rate limit reached (5 req/s per base) — Airtable requires "
+             "30 seconds before retrying.",
     }
     hint = hints.get(getattr(e, "status_code", None), "")
     return f"{e}" + (f" — {hint}" if hint else "")
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » — DEUX étages, parce que l'auth seule ne prouve rien.
+    """"Test the connection" probe — TWO stages, because auth alone proves nothing.
 
-    Le mode d'échec dominant d'Airtable n'est pas un mauvais token : c'est un PAT valide,
-    tous scopes cochés, auquel on a oublié d'accorder la moindre base. `GET /meta/bases`
-    répond alors **200 avec une liste vide**, pas une erreur — une sonde qui s'arrête à
-    l'auth validerait donc un credential incapable de lire quoi que ce soit.
+    Airtable's dominant failure mode is not a bad token: it is a valid PAT,
+    all scopes ticked, to which no base was ever granted. `GET /meta/bases`
+    then answers **200 with an empty list**, not an error — a probe that stops at
+    auth would therefore validate a credential unable to read anything.
     """
     from oto.tools.airtable.client import AirtableClient
 
     client = AirtableClient(api_key=fields["key"])
     client.whoami()  # auth
-    bases = (client.list_bases() or {}).get("bases") or []  # scope + octroi
+    bases = (client.list_bases() or {}).get("bases") or []  # scope + grant
     if not bases:
         raise RuntimeError(
-            "token Airtable valide, mais AUCUNE base ne lui est accordée : ouvrir "
-            "airtable.com/create/tokens, éditer le token et ajouter la ou les bases "
-            "dans « Access » (les scopes seuls ne suffisent pas)."
+            "valid Airtable token, but NO base is granted to it: open "
+            "airtable.com/create/tokens, edit the token and add the base(s) "
+            "under \"Access\" (scopes alone are not enough)."
         )
 
 
@@ -169,28 +169,28 @@ def _chunks(items: list, size: int) -> list[list]:
 
 def _check_items(items: list, name: str) -> list:
     if not isinstance(items, list):
-        raise _bad(f"`{name}` doit être une liste.")
+        raise _bad(f"`{name}` must be a list.")
     if len(items) > _MAX_ITEMS:
         raise _bad(
-            f"`{name}` : {len(items)} items pour un maximum de {_MAX_ITEMS} par appel "
-            f"(Airtable plafonne à 10 par requête et 5 requêtes/s par base ; au-delà "
-            f"l'appel dépasserait son budget de temps). Découper l'appel."
+            f"`{name}`: {len(items)} items for a maximum of {_MAX_ITEMS} per call "
+            f"(Airtable caps at 10 per request and 5 requests/s per base; beyond that "
+            f"the call would exceed its time budget). Split the call."
         )
     return items
 
 
 def _norm_records(records: list, *, need_id: bool, op: str) -> list[dict]:
-    """Normalise vers la forme Airtable `{"id"?: …, "fields": {…}}`.
+    """Normalize to Airtable's `{"id"?: …, "fields": {…}}` shape.
 
-    Un item SANS clé `fields` est pris pour la carte de champs elle-même
-    (`{"Name": "Ada"}` ⟹ `{"fields": {"Name": "Ada"}}`) : c'est la forme qu'un appelant
-    écrit spontanément. Corollaire assumé : une table dont une colonne s'appellerait
-    littéralement « fields » doit utiliser la forme explicite.
+    An item WITHOUT a `fields` key is taken to be the field map itself
+    (`{"Name": "Ada"}` ⟹ `{"fields": {"Name": "Ada"}}`): this is the shape a caller
+    writes spontaneously. Accepted corollary: a table with a column literally named
+    "fields" must use the explicit form.
     """
     out: list[dict] = []
     for i, item in enumerate(records):
         if not isinstance(item, dict):
-            raise _bad(f"`records[{i}]` doit être un objet, reçu {type(item).__name__}.")
+            raise _bad(f"`records[{i}]` must be an object, got {type(item).__name__}.")
         if "fields" in item and isinstance(item["fields"], dict):
             rec = {"fields": item["fields"]}
             if item.get("id"):
@@ -200,11 +200,11 @@ def _norm_records(records: list, *, need_id: bool, op: str) -> list[dict]:
             if item.get("id"):
                 rec["id"] = item["id"]
         if not rec["fields"]:
-            raise _bad(f"`records[{i}]` n'a aucun champ à écrire.")
+            raise _bad(f"`records[{i}]` has no field to write.")
         if need_id and "id" not in rec:
             raise _bad(
-                f"op='{op}' : `records[{i}]` n'a pas d'`id`. Pour rapprocher des lignes "
-                f"sur une valeur métier plutôt que sur leur id, utiliser op='upsert'."
+                f"op='{op}': `records[{i}]` has no `id`. To match rows "
+                f"on a business value rather than on their id, use op='upsert'."
             )
         out.append(rec)
     return out
@@ -221,7 +221,7 @@ def register(mcp: FastMCP) -> None:
         return AirtableClient(api_key=key)
 
     def _run(fn):
-        """Traduit un refus d'Airtable (ou une garde du client) en erreur actionnable."""
+        """Translate an Airtable refusal (or a client guard) into an actionable error."""
         try:
             return fn()
         except ValueError as e:
@@ -230,25 +230,25 @@ def register(mcp: FastMCP) -> None:
             raise _bad(_upstream_message(e))
 
     def _batched(items: list, call, *, key: str, also: tuple[str, ...] = ()) -> dict:
-        """Découpe en lots de 10, espace les requêtes, rend un reçu HONNÊTE.
+        """Split into batches of 10, space out the requests, return an HONEST receipt.
 
-        La boucle vit ICI et pas dans le client oto-core parce que c'est ici qu'on peut
-        en rendre compte : le budget d'invoke (45 s) et le reçu partiel appartiennent à
-        la couche qui répond à l'agent. Un client qui découperait en douce rendrait « ça
-        a marché » ou lèverait, sans jamais pouvoir dire « 30 écrits sur 50 ».
+        The loop lives HERE and not in the oto-core client because this is where it can be
+        reported on: the invoke budget (45 s) and the partial receipt belong to the
+        layer that answers the agent. A client that quietly split would return "it
+        worked" or raise, without ever being able to say "30 written out of 50".
 
-        `call(chunk)` fait UNE requête. Trois régimes d'échec, délibérément distincts :
-        - **401/403** → la clé est mauvaise pour toute la suite : on lève tout de suite
-          plutôt que de répéter N fois le même refus.
-        - **429** → on s'ARRÊTE (Airtable veut 30 s, le budget d'invoke est de 45 s) et
-          on rend le reçu partiel : l'appelant sait exactement où reprendre.
-        - **autre 4xx** → l'échec est propre à ce lot : on l'enregistre et on continue.
+        `call(chunk)` makes ONE request. Three failure regimes, deliberately distinct:
+        - **401/403** → the key is wrong for everything that follows: raise right away
+          rather than repeat the same refusal N times.
+        - **429** → we STOP (Airtable wants 30 s, the invoke budget is 45 s) and
+          return the partial receipt: the caller knows exactly where to resume.
+        - **other 4xx** → the failure is specific to this batch: record it and carry on.
         """
         done: list = []
-        # Listes SECONDAIRES rendues par Airtable qu'un lot ne doit pas perdre : sur un
-        # upsert, `createdRecords`/`updatedRecords` sont la seule chose qui dise ce qui
-        # a été CRÉÉ plutôt que rapproché — les laisser tomber rendrait un reçu qui
-        # compte juste et ne répond pas à la question qu'on pose à un upsert.
+        # SECONDARY lists returned by Airtable that a batch must not lose: on an
+        # upsert, `createdRecords`/`updatedRecords` are the only thing saying what was
+        # CREATED rather than matched — dropping them would return a receipt that
+        # counts right and does not answer the question asked of an upsert.
         extra: dict[str, list] = {k: [] for k in also}
         failed: list[dict] = []
         aborted: Optional[str] = None
@@ -271,9 +271,9 @@ def register(mcp: FastMCP) -> None:
                                "error": _upstream_message(e)})
                 continue
             except ValueError as e:
-                # Garde du client (taille de lot) : c'est un défaut de CE code, pas un
-                # refus d'Airtable. Il doit crier une fois, pas se déguiser en N échecs
-                # amont dans le reçu.
+                # Client guard (batch size): that is a defect of THIS code, not an
+                # Airtable refusal. It must shout once, not disguise itself as N
+                # upstream failures in the receipt.
                 raise _bad(str(e))
             done.extend(result.get(key) or [])
             for k in also:
@@ -288,20 +288,20 @@ def register(mcp: FastMCP) -> None:
         if aborted:
             receipt["aborted"] = aborted
             receipt["resume_hint"] = (
-                f"{len(done)} item(s) traités avant la limite de débit. Attendre 30 s et "
-                f"relancer avec les items restants."
+                f"{len(done)} item(s) processed before the rate limit. Wait 30 s and "
+                f"retry with the remaining items."
             )
         return receipt
 
     def _paginate(fetch, key: str, limit: int) -> dict:
-        """Suit l'`offset` opaque d'Airtable jusqu'à `limit` items ou `_MAX_PAGES`.
+        """Follow Airtable's opaque `offset` up to `limit` items or `_MAX_PAGES`.
 
-        `fetch(offset, page_size)` rend UNE page. La taille demandée RÉTRÉCIT à
-        l'approche du plafond, pour que la dernière page tombe pile dessus — sans ça il
-        faudrait couper la page finale, et l'`offset` rendu reprendrait APRÈS les items
-        jetés : une poignée de lignes disparaîtrait en silence, alors même que la
-        réponse annonce où reprendre. Rien n'est donc jamais tronqué ici ; s'il reste
-        des pages, la réponse le DIT (`more` + `offset`).
+        `fetch(offset, page_size)` returns ONE page. The requested size SHRINKS as
+        the cap approaches, so that the last page lands exactly on it — otherwise
+        the final page would have to be cut, and the returned `offset` would resume AFTER the
+        discarded items: a handful of rows would silently vanish, even though the
+        response announces where to resume. Nothing is ever truncated here; if pages
+        remain, the response SAYS so (`more` + `offset`).
         """
         items: list = []
         offset: Optional[str] = None
@@ -405,8 +405,8 @@ def register(mcp: FastMCP) -> None:
             user_locale: with cell_format="string", e.g. "fr".
             return_fields_by_field_id: key returned cells by `fld…` id instead of name.
         """
-        # Refus AVANT toute résolution de credential : une op inconnue n'atteint jamais
-        # le client, donc jamais, par un chemin dérivé, une écriture sur la base.
+        # Refuse BEFORE any credential resolution: an unknown op never reaches
+        # the client, so never, through a derived path, a write to the base.
         if op not in _RECORD_OPS:
             raise _bad(_one_of("op", _RECORD_OPS))
         client = _client()
@@ -416,8 +416,8 @@ def register(mcp: FastMCP) -> None:
 
             def _page(off, size):
                 if long_formula:
-                    # Mêmes critères, dans le CORPS : une formule de cette taille ferait
-                    # dépasser la longueur d'URL admise et Airtable la rejetterait.
+                    # Same criteria, in the BODY: a formula of this size would exceed the
+                    # allowed URL length and Airtable would reject it.
                     body = {k: v for k, v in {
                         "fields": select_fields,
                         "filterByFormula": filter_by_formula,
@@ -484,9 +484,9 @@ def register(mcp: FastMCP) -> None:
             ), key="records")
 
         if op == "upsert":
-            merge = _need(merge_on, "merge_on (1 à 3 noms de champs)", op)
+            merge = _need(merge_on, "merge_on (1 to 3 field names)", op)
             if not isinstance(merge, list) or not 1 <= len(merge) <= 3:
-                raise _bad("`merge_on` doit être une liste de 1 à 3 noms de champs.")
+                raise _bad("`merge_on` must be a list of 1 to 3 field names.")
             items = _norm_records(
                 _check_items(_need(records, "records", op), "records"),
                 need_id=False, op=op)
@@ -510,7 +510,7 @@ def register(mcp: FastMCP) -> None:
                         key="records")
 
     # ==================================================================
-    # Commentaires
+    # Comments
     # ==================================================================
 
     @mcp.tool()
@@ -619,8 +619,8 @@ def register(mcp: FastMCP) -> None:
                           if t.get("id") == table_id or t.get("name") == table_id]
                 if not tables:
                     raise _bad(
-                        f"aucune table `{table_id}` dans la base {base_id} — appeler "
-                        f"op='schema' sans `table_id` pour voir celles qui existent."
+                        f"no table `{table_id}` in base {base_id} — call "
+                        f"op='schema' without `table_id` to see the ones that exist."
                     )
             return {"tables": tables, "count": len(tables)}
 
@@ -631,14 +631,14 @@ def register(mcp: FastMCP) -> None:
             ))
 
         if name is None and description is None:
-            raise _bad("op='update' requiert `name` et/ou `description`")
+            raise _bad("op='update' requires `name` and/or `description`")
         return _run(lambda: client.update_table(
             base_id, _need(table_id, "table_id", op),
             name=name, description=description,
         ))
 
     # ==================================================================
-    # Champs
+    # Fields
     # ==================================================================
 
     @mcp.tool()
@@ -694,8 +694,8 @@ def register(mcp: FastMCP) -> None:
             if match is None:
                 known = ", ".join(f"{t.get('name')} ({t.get('id')})" for t in tables[:20])
                 raise _bad(
-                    f"aucune table `{table_id}` dans la base {base_id}. "
-                    f"Tables existantes : {known or '(aucune)'}"
+                    f"no table `{table_id}` in base {base_id}. "
+                    f"Existing tables: {known or '(none)'}"
                 )
             fields = match.get("fields") or []
             return {
@@ -713,14 +713,14 @@ def register(mcp: FastMCP) -> None:
 
         if type is not None or options is not None:
             raise _bad(
-                "op='update' ne transmet ni `type` ni `options` — l'API Airtable ne "
-                "permet PAS de changer le type ou les options d'un champ existant. "
-                "Recréer le champ (op='create') est la seule voie."
+                "op='update' does not send `type` or `options` — the Airtable API does "
+                "NOT allow changing the type or options of an existing field. "
+                "Recreating the field (op='create') is the only way."
             )
         if name is None and description is None:
             raise _bad(
-                "op='update' requiert `name` et/ou `description` — l'API Airtable ne "
-                "permet PAS de changer le `type` ni les `options` d'un champ existant."
+                "op='update' requires `name` and/or `description` — the Airtable API does "
+                "NOT allow changing the `type` or `options` of an existing field."
             )
         return _run(lambda: client.update_field(
             base_id, table_id, _need(field_id, "field_id", op),
@@ -728,7 +728,7 @@ def register(mcp: FastMCP) -> None:
         ))
 
     # ==================================================================
-    # Bases et identité du token
+    # Bases and token identity
     # ==================================================================
 
     @mcp.tool()
@@ -766,15 +766,15 @@ def register(mcp: FastMCP) -> None:
 
         if op == "list":
             out = _run(lambda: _paginate(
-                # `GET /meta/bases` n'a pas de `pageSize` : il rend 1000 bases par page,
-                # `size` est donc ignoré ici. `max_bases` borne le nombre de PAGES lues,
-                # pas la coupe du résultat — on ne jette jamais ce qu'on a déjà lu.
+                # `GET /meta/bases` has no `pageSize`: it returns 1000 bases per page,
+                # so `size` is ignored here. `max_bases` bounds the number of PAGES read,
+                # not the cut of the result — we never throw away what we have already read.
                 lambda off, _size: client.list_bases(offset=off), "bases", max_bases))
             if not out["bases"]:
                 out["hint"] = (
-                    "Aucune base accordée à ce token. Ouvrir airtable.com/create/tokens, "
-                    "éditer le token, et ajouter la ou les bases dans « Access » — les "
-                    "scopes seuls ne donnent accès à rien."
+                    "No base granted to this token. Open airtable.com/create/tokens, "
+                    "edit the token, and add the base(s) under \"Access\" — scopes "
+                    "alone give access to nothing."
                 )
             return out
 
@@ -788,7 +788,7 @@ def register(mcp: FastMCP) -> None:
         ))
 
     # ==================================================================
-    # Pièces jointes — pas de paramètre `op` : un seul verbe, tout obligatoire
+    # Attachments — no `op` parameter: a single verb, everything mandatory
     # ==================================================================
 
     @mcp.tool()
@@ -824,7 +824,7 @@ def register(mcp: FastMCP) -> None:
         ))
 
     # ==================================================================
-    # Sync CSV — pas de paramètre `op` non plus
+    # CSV sync — no `op` parameter either
     # ==================================================================
 
     @mcp.tool()

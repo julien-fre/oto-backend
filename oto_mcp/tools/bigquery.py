@@ -1,37 +1,37 @@
-"""Google BigQuery — surface oto-core (BigQueryClient) exposée par-utilisateur, multi-compte.
+"""Google BigQuery — oto-core surface (BigQueryClient) exposed per user, multi-account.
 
-Septième service du compte Google (2026-10-02) : scope `bigquery`, accordé depuis sa
-carte. Les requêtes tournent sous l'identité de la personne — ses droits IAM, pas
-ceux d'une clé partagée — et sont facturées au projet qu'elle désigne (`project`).
+Seventh service of the Google account (2026-10-02): scope `bigquery`, granted from its
+card. Queries run under the person's identity — their IAM rights, not
+those of a shared key — and are billed to the project they designate (`project`).
 
-**Quatre tools, lecture seule** :
-- `bigquery_catalog` — projets → datasets → tables, un niveau par appel ;
-- `bigquery_table` — schéma d'une table (+ aperçu GRATUIT par `tabledata.list`) ;
-- `bigquery_query` — SQL standard, SELECT seulement ;
-- `bigquery_results` — reprendre une requête pas finie à temps, ou la page suivante.
+**Four tools, read-only**:
+- `bigquery_catalog` — projects → datasets → tables, one level per call;
+- `bigquery_table` — a table's schema (+ FREE preview via `tabledata.list`);
+- `bigquery_query` — standard SQL, SELECT only;
+- `bigquery_results` — resume a query that didn't finish in time, or fetch the next page.
 
-**Le scope permet d'écrire** (`bigquery.readonly` ne permet pas de requêter, cf.
-`auth/google.SERVICE_SCOPES`) : la lecture seule est donc tenue ICI, pas par Google.
-Chaque requête passe d'abord par un dry run (`jobs.insert`), dont le `statementType`
-doit être `SELECT` — DML, DDL, scripts et procédures sont refusés avant tout
-lancement. Jamais déduit du texte SQL : un `WITH … DELETE` ou un commentaire en tête
-tromperait une lecture de chaîne.
+**The scope allows writing** (`bigquery.readonly` doesn't allow querying, see
+`auth/google.SERVICE_SCOPES`): read-only is therefore enforced HERE, not by Google.
+Every query first goes through a dry run (`jobs.insert`), whose `statementType`
+must be `SELECT` — DML, DDL, scripts and procedures are refused before any
+launch. Never inferred from the SQL text: a `WITH … DELETE` or a leading comment
+would fool a string reading.
 
-**Le coût est borné à chaque requête** : le dry run estime les octets lus ; au-delà
-du plafond (`max_gb_billed`, 10 Go par défaut, 1 To au plus), refus AVANT de lancer,
-estimation à l'appui. La requête part ensuite avec `maximumBytesBilled` = ce plafond
-— la garde est aussi chez Google, pas seulement chez nous.
+**Cost is bounded on every query**: the dry run estimates the bytes read; above
+the cap (`max_gb_billed`, 10 GB by default, 1 TB at most), refusal BEFORE launching,
+with the estimate attached. The query then goes out with `maximumBytesBilled` = that cap
+— the guard is at Google too, not only on our side.
 
-**Le temps est borné** : l'invocation REST d'un tool coupe à 45 s. La requête attend
-au plus 20 s ; pas finie → `status="running"` + `job_id`, à reprendre par
-`bigquery_results`. Les lignes rendues sont plafonnées (`max_rows` ≤ 1 000, et
-~200 Ko par page) ; la suite se lit par `page_token`, et le mieux reste d'agréger en
+**Time is bounded**: a tool's REST invocation cuts off at 45 s. The query waits
+at most 20 s; not finished → `status="running"` + `job_id`, to resume with
+`bigquery_results`. Returned rows are capped (`max_rows` ≤ 1,000, and
+~200 KB per page); the rest is read via `page_token`, and the best approach is still to aggregate in
 SQL.
 
-**Compte partagé** : un compte Google partagé par l'org ou l'équipe est accepté,
-comme pour Gmail (décision du 04/10/2026) — la requête tourne alors avec les droits
-IAM et la facturation de celui qui l'a connecté. Les fonctions distantes et `ML.*`
-sont facturées hors du plafond d'octets.
+**Shared account**: a Google account shared by the org or team is accepted,
+as for Gmail (decision of 04/10/2026) — the query then runs with the IAM rights
+and billing of whoever connected it. Remote functions and `ML.*`
+are billed outside the byte cap.
 """
 from __future__ import annotations
 
@@ -49,24 +49,24 @@ from ..auth import google as google_oauth
 
 _GB = 1024 ** 3
 _DEFAULT_MAX_GB = 10.0
-# Plafond DUR d'une requête (≈ 6 $ au tarif à la demande) : l'argument ne le dépasse pas.
+# HARD cap of a query (≈ $6 at on-demand pricing): the argument cannot exceed it.
 _HARD_MAX_GB = 1024.0
 _DEFAULT_ROWS = 100
 _MAX_ROWS = 1000
 _MAX_PREVIEW_ROWS = 100
-# Attente côté BigQuery, sous les 45 s de l'invocation REST (dry run + jeton compris).
+# Wait on the BigQuery side, under the 45 s of the REST invocation (dry run + token included).
 _QUERY_WAIT_MS = 20_000
-# Reprise : construction du client (jusqu'à 20 s) + cette attente restent sous 45 s.
+# Resume: client construction (up to 20 s) + this wait stay under 45 s.
 _RESULTS_WAIT_MS = 15_000
-# Poids rendu d'une page : 1 000 lignes d'une table large pèseraient des mégaoctets.
-# Au-delà, les lignes sont tronquées et la suite se lit par `page_token`.
+# Rendered weight of a page: 1,000 rows of a wide table would weigh megabytes.
+# Beyond that, rows are truncated and the rest is read via `page_token`.
 _MAX_OUT_BYTES = 200_000
-# Identifiants passés à l'API (projet, dataset, table, job, location) : jamais un
-# `/`, un `?` ou un `..` — ils ne vont pas dans un chemin d'URL.
+# Identifiers passed to the API (project, dataset, table, job, location): never a
+# `/`, a `?` or a `..` — they don't go into a URL path.
 _IDENT = re.compile(r"^[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)*(:[A-Za-z0-9_\-]+)?$")
 _SEGMENT = re.compile(r"^[A-Za-z0-9_\-$]+$")
-# Un nom de table admet plus (lettres Unicode, espaces) : on n'y refuse que ce qui
-# changerait le chemin ou la requête HTTP.
+# A table name allows more (Unicode letters, spaces): we only refuse what
+# would change the path or the HTTP request.
 _TABLE = re.compile(r"^[^/?#%\\\x00-\x1f]+$")
 _LABELS = {"source": "oto"}
 _SELECT = "SELECT"
@@ -78,72 +78,72 @@ def _bad(msg: str) -> McpError:
 
 def _ident(value: Optional[str], name: str, *, segment: bool = False,
            table: bool = False) -> Optional[str]:
-    """Un identifiant BigQuery sûr à passer à l'API, ou un refus nommé.
+    """A BigQuery identifier safe to pass to the API, or a named refusal.
 
-    `segment` : un seul segment (dataset, job, location) — pas de point ;
-    `table` : un nom de table (plus permissif, jamais `/`, `?`, `#`, `%`, `..`)."""
+    `segment`: a single segment (dataset, job, location) — no dot;
+    `table`: a table name (more permissive, never `/`, `?`, `#`, `%`, `..`)."""
     if value is None:
         return None
     v = str(value).strip()
     motif = _TABLE if table else _SEGMENT if segment else _IDENT
     if not v or ".." in v or not motif.fullmatch(v):
-        raise _bad(f"`{name}` : identifiant BigQuery invalide ({v!r}) — lettres, chiffres, "
-                   "`_`, `-` seulement.")
+        raise _bad(f"`{name}`: invalid BigQuery identifier ({v!r}) — letters, digits, "
+                   "`_`, `-` only.")
     return v
 
 
 def _http_error(e, project: Optional[str] = None) -> McpError:
-    """`HttpError` → conduite à tenir, lue sur la RAISON BigQuery (jamais le texte)."""
+    """`HttpError` → what to do next, read from the BigQuery REASON (never the text)."""
     from oto.tools.google.bigquery.lib.bigquery_client import parse_http_error
     err = parse_http_error(e)
     status, reason, detail = err["status"], err["reason"], err["message"].strip()
-    where = f" dans le projet {project}" if project else ""
+    where = f" in project {project}" if project else ""
     if reason == "invalidQuery":
-        msg = (f"BigQuery a refusé la requête : {detail} — vérifie les noms de colonnes "
-               "avec `bigquery_table` (SQL standard, tables en `projet.dataset.table`).")
+        msg = (f"BigQuery refused the query: {detail} — check the column names "
+               "with `bigquery_table` (standard SQL, tables as `project.dataset.table`).")
     elif reason == "bytesBilledLimitExceeded":
-        msg = (f"BigQuery a arrêté la requête au plafond d'octets facturés : {detail} — "
-               "filtre davantage (colonne de partition, moins de colonnes) ou relève "
+        msg = (f"BigQuery stopped the query at the billed-bytes cap: {detail} — "
+               "filter more (partition column, fewer columns) or raise "
                "`max_gb_billed`.")
     elif reason == "accessNotConfigured" or "has not been used in project" in detail:
-        msg = ("L'API BigQuery n'est pas activée dans le projet Google Cloud du client "
-               "OAuth qui a émis la connexion — configuration de ce client, à faire par "
-               "son administrateur (console Google Cloud → API et services → BigQuery "
-               f"API) ; reconnecter le compte n'y change rien. Détail Google : {detail}")
+        msg = ("The BigQuery API is not enabled in the Google Cloud project of the OAuth "
+               "client that issued the connection — a configuration of that client, to be done by "
+               "its administrator (Google Cloud console → APIs & Services → BigQuery "
+               f"API); reconnecting the account changes nothing. Google detail: {detail}")
     elif reason == "accessDenied" or status == 403:
         if "jobs.create" in detail:
-            msg = (f"Ton compte Google ne peut pas lancer de requête{where} (permission "
-                   "`bigquery.jobs.create`, rôle « BigQuery Job User ») — choisis un autre "
-                   "projet de facturation (`bigquery_catalog` liste les tiens) ou demande "
-                   f"ce rôle à un administrateur. Détail Google : {detail}")
+            msg = (f"Your Google account cannot run queries{where} (permission "
+                   "`bigquery.jobs.create`, role \"BigQuery Job User\") — pick another "
+                   "billing project (`bigquery_catalog` lists yours) or ask an "
+                   f"administrator for this role. Google detail: {detail}")
         else:
-            msg = (f"Ton compte Google n'a pas accès à cette ressource BigQuery : {detail} "
-                   "— il faut le rôle « BigQuery Data Viewer » sur le dataset.")
+            msg = (f"Your Google account has no access to this BigQuery resource: {detail} "
+                   "— it needs the \"BigQuery Data Viewer\" role on the dataset.")
     elif reason == "notFound" or status == 404:
-        msg = (f"BigQuery ne trouve pas la ressource : {detail} — vérifie le nom, et "
-               "`location` pour un dataset hors des multi-régions US/EU.")
+        msg = (f"BigQuery cannot find the resource: {detail} — check the name, and "
+               "`location` for a dataset outside the US/EU multi-regions.")
     elif reason in ("quotaExceeded", "rateLimitExceeded") or status == 429:
-        msg = f"BigQuery : quota ou débit atteint — réessaie plus tard. Détail : {detail}"
+        msg = f"BigQuery: quota or rate limit reached — try again later. Detail: {detail}"
     elif status and status >= 500:
-        msg = f"BigQuery est momentanément indisponible (HTTP {status}) — réessaie plus tard."
+        msg = f"BigQuery is temporarily unavailable (HTTP {status}) — try again later."
     else:
-        msg = f"BigQuery a refusé la requête (HTTP {status}, {reason or '?'}) : {detail}"
+        msg = f"BigQuery refused the request (HTTP {status}, {reason or '?'}): {detail}"
     return _bad(msg)
 
 
 async def _call(fn, *args, _project: Optional[str] = None, **kwargs):
-    """Appel client hors boucle ; tout `HttpError` devient une erreur nommée.
+    """Client call off the event loop; any `HttpError` becomes a named error.
 
-    `_project` ne sert QU'AU message du refus (il n'est pas transmis à `fn`)."""
+    `_project` is ONLY used for the refusal message (it is not passed to `fn`)."""
     from googleapiclient.errors import HttpError
     try:
         return await asyncio.to_thread(fn, *args, **kwargs)
     except HttpError as e:
         raise _http_error(e, _project)
     except TypeError as e:
-        # googleapiclient refuse un identifiant hors motif (`^[^/]+$`) par un
-        # TypeError brut : c'est un argument invalide, pas une panne.
-        raise _bad(f"BigQuery : argument refusé ({e}).") from None
+        # googleapiclient refuses an identifier outside the pattern (`^[^/]+$`) with a
+        # raw TypeError: it's an invalid argument, not an outage.
+        raise _bad(f"BigQuery: argument refused ({e}).") from None
 
 
 def _client_for_user(account: Optional[str] = None):
@@ -157,21 +157,21 @@ def _client_for_user(account: Optional[str] = None):
 
 
 _GOOGLE_CLIENT_TIMEOUT_S = 20
-# oto-backend#867 lot 2 — voir gmail.py::_client_for_user_async pour la
-# justification (même mécanisme de rafraîchissement de jeton, même méthode).
+# oto-backend#867 lot 2 — see gmail.py::_client_for_user_async for the
+# rationale (same token-refresh mechanism, same method).
 async def _client_for_user_async(account: Optional[str] = None):
     try:
         return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
                                       timeout=_GOOGLE_CLIENT_TIMEOUT_S)
     except asyncio.TimeoutError:
-        raise _bad(f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
-                   "(rafraîchissement de jeton) — réessaie.")
+        raise _bad(f"Google did not respond within {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                   "(token refresh) — try again.")
 
 
 async def _billing_project(client, project: Optional[str]) -> str:
-    """Le projet qui exécute (et paie) la requête : explicite, sinon le SEUL projet
-    visible. Plusieurs → refus qui les nomme, jamais un choix au hasard (c'est une
-    facture)."""
+    """The project that runs (and pays for) the query: explicit, otherwise the ONLY visible
+    project. Several → a refusal that names them, never a random pick (it's an
+    invoice)."""
     if project:
         return project
     listed = await _call(client.list_projects, 50)
@@ -179,19 +179,19 @@ async def _billing_project(client, project: Optional[str]) -> str:
     if len(ids) == 1:
         return ids[0]
     if not ids:
-        raise _bad("Ton compte Google ne voit aucun projet BigQuery : il en faut un pour "
-                   "exécuter (et facturer) les requêtes.")
+        raise _bad("Your Google account sees no BigQuery project: you need one to "
+                   "run (and bill) queries.")
     shown = ", ".join(ids[:15]) + (" …" if len(ids) > 15 else "")
-    raise _bad(f"Précise `project`, le projet qui exécute et paie la requête : {shown}.")
+    raise _bad(f"Specify `project`, the project that runs and pays for the query: {shown}.")
 
 
 def _cap_gb(max_gb_billed: Optional[float]) -> float:
     if max_gb_billed is None:
         return _DEFAULT_MAX_GB
     if max_gb_billed <= 0:
-        raise _bad("max_gb_billed doit être > 0.")
+        raise _bad("max_gb_billed must be > 0.")
     if max_gb_billed > _HARD_MAX_GB:
-        raise _bad(f"max_gb_billed est plafonné à {_HARD_MAX_GB:g} Go par requête.")
+        raise _bad(f"max_gb_billed is capped at {_HARD_MAX_GB:g} GB per query.")
     return float(max_gb_billed)
 
 
@@ -203,12 +203,12 @@ def _gb(n: Any) -> Optional[float]:
 
 def _rows_cap(max_rows: int, hard: int = _MAX_ROWS) -> int:
     if max_rows < 1:
-        raise _bad("max_rows doit être ≥ 1.")
+        raise _bad("max_rows must be ≥ 1.")
     return min(max_rows, hard)
 
 
 def _table_view(schema: Optional[dict], raw_rows: Optional[list]) -> dict:
-    """Vue compacte : `columns` (nom, type) + `rows` en listes, dans l'ordre du schéma."""
+    """Compact view: `columns` (name, type) + `rows` as lists, in schema order."""
     from oto.tools.google.bigquery.lib.bigquery_client import rows_to_records
     fields = (schema or {}).get("fields") or []
     names = [f["name"] for f in fields]
@@ -222,13 +222,13 @@ def _table_view(schema: Optional[dict], raw_rows: Optional[list]) -> dict:
 
 
 def _result(resp: dict, project: str) -> dict:
-    """Réponse `jobs.query` / `getQueryResults` → résultat rendu à l'agent."""
+    """`jobs.query` / `getQueryResults` response → result returned to the agent."""
     ref = resp.get("jobReference") or {}
     job = {"job_id": ref.get("jobId"), "location": ref.get("location") or resp.get("location"),
            "project": ref.get("projectId") or project}
     if not resp.get("jobComplete"):
         return {"status": "running", **job,
-                "hint": "requête encore en cours — reprends avec `bigquery_results(job_id, "
+                "hint": "query still running — resume with `bigquery_results(job_id, "
                         "project, location)`."}
     out = {"status": "done", **_table_view(resp.get("schema"), resp.get("rows"))}
     poids_tronque = _borner_poids(out)
@@ -242,18 +242,18 @@ def _result(resp: dict, project: str) -> dict:
     out.update(job)
     if resp.get("pageToken"):
         out["page_token"] = resp["pageToken"]
-        out["hint"] = ("lignes tronquées — page suivante par `bigquery_results(job_id, "
-                       "project, location, page_token)`, ou mieux : agrège en SQL.")
+        out["hint"] = ("rows truncated — next page via `bigquery_results(job_id, "
+                       "project, location, page_token)`, or better: aggregate in SQL.")
     if poids_tronque:
         out["truncated_bytes"] = True
-        out["hint"] = (f"page tronquée à ~{_MAX_OUT_BYTES // 1000} Ko ({out['row_count']} "
-                       "lignes rendues) — sélectionne moins de colonnes, réduis `max_rows`, "
-                       "ou agrège en SQL.")
+        out["hint"] = (f"page truncated to ~{_MAX_OUT_BYTES // 1000} KB ({out['row_count']} "
+                       "rows returned) — select fewer columns, reduce `max_rows`, "
+                       "or aggregate in SQL.")
     return out
 
 
 def _borner_poids(out: dict) -> bool:
-    """Tronque `out["rows"]` pour rester sous `_MAX_OUT_BYTES` ; vrai si tronqué."""
+    """Truncate `out["rows"]` to stay under `_MAX_OUT_BYTES`; true if truncated."""
     total = 0
     for i, row in enumerate(out["rows"]):
         total += len(json.dumps(row, default=str, ensure_ascii=False)) + 1
@@ -289,7 +289,7 @@ def register(mcp: FastMCP) -> None:
             account: email of the Google account to use (default if omitted).
         """
         if dataset and not project:
-            raise _bad("`dataset` demande `project`.")
+            raise _bad("`dataset` requires `project`.")
         project = _ident(project, "project")
         dataset = _ident(dataset, "dataset", segment=True)
         client = await _client_for_user_async(account)
@@ -333,7 +333,7 @@ def register(mcp: FastMCP) -> None:
         p, d, t = (_ident(p, "project"), _ident(d, "dataset", segment=True),
                    _ident(t, "table", table=True))
         if not 0 <= preview_rows <= _MAX_PREVIEW_ROWS:
-            raise _bad(f"preview_rows doit être entre 0 et {_MAX_PREVIEW_ROWS}.")
+            raise _bad(f"preview_rows must be between 0 and {_MAX_PREVIEW_ROWS}.")
         client = await _client_for_user_async(account)
         meta = await _call(client.get_table, p, d, t, _project=p)
         part = meta.get("timePartitioning") or meta.get("rangePartitioning")
@@ -355,8 +355,8 @@ def register(mcp: FastMCP) -> None:
             page = await _call(client.list_rows, p, d, t, preview_rows, _project=p)
             out["preview"] = _table_view(meta.get("schema"), page.get("rows"))["rows"]
         elif preview_rows:
-            out["preview_note"] = (f"aperçu impossible sur une {(meta.get('type') or 'ressource').lower()} "
-                                   "(seule une table stockée se lit sans requête) — passe par `bigquery_query`.")
+            out["preview_note"] = (f"preview impossible on a {(meta.get('type') or 'resource').lower()} "
+                                   "(only a stored table can be read without a query) — use `bigquery_query`.")
         return {k: v for k, v in out.items() if v is not None}
 
     @mcp.tool()
@@ -413,7 +413,7 @@ def register(mcp: FastMCP) -> None:
             account: email of the Google account to use (default if omitted).
         """
         if not sql or not sql.strip():
-            raise _bad("sql est vide.")
+            raise _bad("sql is empty.")
         project = _ident(project, "project")
         location = _ident(location, "location", segment=True)
         cap = _cap_gb(max_gb_billed)
@@ -430,8 +430,8 @@ def register(mcp: FastMCP) -> None:
                            _project=billing)
         stype = plan.get("statement_type")
         if stype != _SELECT:
-            raise _bad(f"Lecture seule : seules les requêtes SELECT sont acceptées (celle-ci "
-                       f"est {stype or 'de type inconnu'}). Rien n'a été exécuté.")
+            raise _bad(f"Read-only: only SELECT queries are accepted (this one "
+                       f"is {stype or 'of unknown type'}). Nothing was executed.")
         estimate_gb = round(plan["bytes_processed"] / _GB, 3)
         within = plan["bytes_processed"] <= cap * _GB
         if dry_run:
@@ -441,9 +441,9 @@ def register(mcp: FastMCP) -> None:
                                 for f in (plan.get("schema") or {}).get("fields") or []],
                     "referenced_tables": plan["referenced_tables"], "project": billing}
         if not within:
-            raise _bad(f"Requête refusée avant exécution : elle lirait ~{estimate_gb:g} Go, "
-                       f"au-delà du plafond de {cap:g} Go. Réduis les colonnes, filtre sur la "
-                       "colonne de partition, ou relève `max_gb_billed` si c'est voulu.")
+            raise _bad(f"Query refused before execution: it would read ~{estimate_gb:g} GB, "
+                       f"above the cap of {cap:g} GB. Reduce the columns, filter on the "
+                       "partition column, or raise `max_gb_billed` if intended.")
 
         resp = await _call(client.query, sql, billing, location=location, params=params,
                            max_results=rows, timeout_ms=_QUERY_WAIT_MS,

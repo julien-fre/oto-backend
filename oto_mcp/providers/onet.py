@@ -1,24 +1,24 @@
-"""Déclaration de registre du connecteur `onet`.
+"""Registry declaration of the `onet` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# onet : le référentiel des métiers du Department of Labor des États-Unis (O*NET
-# Web Services v2) — recherche d'un métier, sa description, ses tâches, ses
-# intitulés de poste. keyed api_key (en-tête `X-API-Key`), byo-only : la clé est
-# gratuite mais nominative (inscription développeur, conditions d'usage acceptées
-# par son titulaire), aucune clé plateforme n'est posée.
+# onet: the US Department of Labor's occupation reference (O*NET
+# Web Services v2) — search an occupation, its description, its tasks, its
+# job titles. keyed api_key (`X-API-Key` header), byo-only: the key is
+# free but personal (developer sign-up, terms of use accepted
+# by its holder), no platform key is set.
 CONNECTOR = _c(
     "onet", ["onet"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="O*NET",
-    help="référentiel des métiers aux États-Unis : trouver un code O*NET-SOC, "
-         "lire la description d'un métier, ses tâches et ses intitulés de poste",
+    help="US occupation reference: find an O*NET-SOC code, "
+         "read an occupation's description, its tasks and its job titles",
     href="https://services.onetcenter.org", credential_fields=(
-        CredentialField("key", "Clé API", secret=True,
+        CredentialField("key", "API key", secret=True,
                         help="services.onetcenter.org → Sign up (gratuit) → "
                              "My Account → API keys"),
     ),
@@ -29,8 +29,8 @@ PUBLISHER = "O*NET (U.S. Department of Labor)"
 LOGO_DOMAIN = "onetcenter.org"
 
 DESCRIPTION = (
-    "Le référentiel des métiers du Department of Labor des États-Unis : "
-    "recherche par mot-clé ou par code, puis pour chaque métier sa description, "
-    "ses tâches et les intitulés de poste réellement rencontrés. Le code "
-    "O*NET-SOC trouvé ici donne le code SOC des statistiques de salaires."
+    "The US Department of Labor's occupation reference: "
+    "search by keyword or by code, then for each occupation its description, "
+    "its tasks and the job titles actually encountered. The "
+    "O*NET-SOC code found here gives the SOC code of wage statistics."
 )

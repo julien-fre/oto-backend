@@ -1,20 +1,20 @@
-"""Déclaration de registre du connecteur `grain`.
+"""Registry declaration of the `grain` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). Cf. `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# grain : enregistrements de réunion, transcripts, partage, webhooks,
-# données d'organisation. keyed api_key (Bearer + header Public-Api-Version),
-# byo-only (pas de clé plateforme) — Personal Access Token (par user) ou
-# Workspace Access Token (admin, accès à toutes les données du workspace).
+# grain: meeting recordings, transcripts, sharing, webhooks,
+# organization data. keyed api_key (Bearer + Public-Api-Version header),
+# byo-only (no platform key) — Personal Access Token (per user) or
+# Workspace Access Token (admin, access to all workspace data).
 CONNECTOR = _c(
     "grain", ["grain"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Grain",
-    help="enregistrements de réunion, transcripts, partage, webhooks, org",
+    help="meeting recordings, transcripts, sharing, webhooks, org",
     href="https://grain.com",
 )
 
@@ -23,7 +23,7 @@ PUBLISHER = "Grain"
 LOGO_DOMAIN = "grain.com"
 
 DESCRIPTION = (
-    "Les réunions enregistrées par Grain : transcripts, partage, webhooks et "
-    "données d'organisation. Jeton personnel ou jeton workspace (accès admin à "
-    "toutes les données de l'espace)."
+    "The meetings recorded by Grain: transcripts, sharing, webhooks and "
+    "organization data. Personal token or workspace token (admin access to "
+    "all of the workspace's data)."
 )

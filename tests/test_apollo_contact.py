@@ -199,7 +199,7 @@ def test_unknown_op_is_refused_before_any_credential_is_resolved(monkeypatch):
     fn, calls, _c, _u = _mount(monkeypatch)
     with pytest.raises(McpError) as e:
         fn(op="delete", contact_id="c1")
-    assert "op inconnu" in str(e.value)
+    assert "unknown op" in str(e.value)
     assert not calls, "une op inconnue ne doit pas atteindre la résolution de clé"
 
 
@@ -278,7 +278,7 @@ def test_contact_id_is_required(monkeypatch, op):
     fn, _calls, _c, _u = _mount(monkeypatch, _ok_client())
     with pytest.raises(McpError) as e:
         fn(op=op, title="CTO")
-    assert "contact_id requis" in str(e.value)
+    assert "contact_id required" in str(e.value)
 
 
 # ----------------------------------------------------------------------
@@ -299,7 +299,7 @@ def test_update_without_any_field_is_refused(monkeypatch):
     fn, _calls, c, _u = _mount(monkeypatch, _ok_client())
     with pytest.raises(McpError) as e:
         fn(op="update", contact_id="c1")
-    assert "aucun champ à modifier" in str(e.value)
+    assert "no field to modify" in str(e.value)
     assert not c.update_contact.called
 
 
@@ -337,7 +337,7 @@ def test_an_account_field_id_on_a_contact_is_refused_by_modality(monkeypatch):
         fn(op="update", contact_id="c1",
            typed_custom_fields={"694095a80f1b6000110fc556": 42})
     msg = str(e.value)
-    assert "n'appartiennent pas à l'objet contact" in msg
+    assert "do not belong to the contact object" in msg
     assert "ARR du compte" in msg and "account" in msg
     assert not c.update_contact.called
 
@@ -347,7 +347,7 @@ def test_typed_custom_fields_must_be_a_mapping(monkeypatch):
     fn, _calls, _c, _u = _mount(monkeypatch, c)
     with pytest.raises(McpError) as e:
         fn(op="update", contact_id="c1", typed_custom_fields=["60c39ed82bd02f01154c470a"])
-    assert "objet {id_du_champ: valeur}" in str(e.value)
+    assert "{field_id: value}" in str(e.value)
     assert not c.update_contact.called
 
 
@@ -367,7 +367,7 @@ def test_an_unreadable_catalogue_does_not_block_the_write_but_is_reported(monkey
     out = fn(op="update", contact_id="c1",
              typed_custom_fields={"60c39ed82bd02f01154c470a": "2026-08-07"})
     assert c.update_contact.called
-    assert "ids non vérifiés" in out["field_validation"]
+    assert "ids not verified" in out["field_validation"]
     assert "Master" in out["field_validation"]
 
 
@@ -416,7 +416,7 @@ def test_dry_run_carries_the_fail_open_note_too(monkeypatch):
     fn, _calls, _c, _u = _mount(monkeypatch, c)
     out = fn(op="update", contact_id="c1",
              typed_custom_fields={"x": 1}, dry_run=True)
-    assert "ids non vérifiés" in out["field_validation"]
+    assert "ids not verified" in out["field_validation"]
 
 
 # ----------------------------------------------------------------------
@@ -442,7 +442,7 @@ def test_422_explains_that_a_person_id_is_not_a_contact_id(monkeypatch):
     fn, _calls, _c, _u = _mount(monkeypatch, c)
     with pytest.raises(McpError) as e:
         fn(op="get", contact_id="5f3a")
-    assert "id de PERSONNE" in str(e.value)
+    assert "PERSON id" in str(e.value)
 
 
 def test_other_upstream_errors_are_not_swallowed(monkeypatch):
@@ -525,7 +525,7 @@ def test_a_422_on_a_write_does_not_lecture_about_person_ids(monkeypatch):
     with pytest.raises(McpError) as e:
         fn(op="update", contact_id="c1", contact_stage_id="nope")
     msg = str(e.value)
-    assert "VALEUR est invalide" in msg
+    assert "a VALUE is invalid" in msg
     assert "contact_stage_id invalide" in msg, "le message amont doit survivre"
 
 
@@ -542,7 +542,7 @@ def test_a_picklist_written_with_its_label_is_refused_and_the_options_are_named(
         fn(op="update", contact_id="c1",
            typed_custom_fields={"617ff4041e711500a401c25e": "New Customer"})
     msg = str(e.value)
-    assert "liste de choix" in msg
+    assert "invalid picklist values" in msg
     assert "617ff4041e711500a401c25f" in msg, "l'id de l'option valide doit être nommé"
     assert not c.update_contact.called
 
@@ -585,7 +585,7 @@ def test_a_readable_but_empty_catalogue_REFUSES_instead_of_failing_open(monkeypa
     fn, _calls, _c, _u = _mount(monkeypatch, c)
     with pytest.raises(McpError) as e:
         fn(op="update", contact_id="c1", typed_custom_fields={"whatever": 1})
-    assert "inconnus" in str(e.value)
+    assert "unknown to this Apollo team" in str(e.value)
     assert not c.update_contact.called
 
 
@@ -595,7 +595,7 @@ def test_an_unexpected_catalogue_shape_still_fails_open_with_a_note(monkeypatch)
     fn, _calls, _c, _u = _mount(monkeypatch, c)
     out = fn(op="update", contact_id="c1", typed_custom_fields={"x": 1})
     assert c.update_contact.called
-    assert "ids non vérifiés" in out["field_validation"]
+    assert "ids not verified" in out["field_validation"]
 
 
 def test_the_fail_open_note_survives_a_non_dict_reply(monkeypatch):
@@ -609,7 +609,7 @@ def test_the_fail_open_note_survives_a_non_dict_reply(monkeypatch):
     fn, _calls, _c, _u = _mount(monkeypatch, c)
     out = fn(op="update", contact_id="c1", typed_custom_fields={"x": 1})
     assert out["result"] == ["surprise"]
-    assert "ids non vérifiés" in out["field_validation"]
+    assert "ids not verified" in out["field_validation"]
 
 
 # --- charge utile vide déguisée ----------------------------------------------
@@ -621,7 +621,7 @@ def test_an_empty_typed_custom_fields_is_not_a_modification(monkeypatch):
     fn, _calls, _c, _u = _mount(monkeypatch, c)
     with pytest.raises(McpError) as e:
         fn(op="update", contact_id="c1", typed_custom_fields={})
-    assert "aucun champ à modifier" in str(e.value)
+    assert "no field to modify" in str(e.value)
     assert not c.update_contact.called
 
 
@@ -796,7 +796,7 @@ def test_create_field_requires_a_label(monkeypatch):
     fn, _calls, _c, _u = _mount(monkeypatch, c)
     with pytest.raises(McpError) as e:
         fn(op="create_field", field_type="textarea")
-    assert "`label` requis" in str(e.value)
+    assert "`label` required" in str(e.value)
     assert not c.create_custom_field.called
 
 
@@ -812,7 +812,7 @@ def test_creating_a_field_that_already_exists_is_REFUSED_with_its_id(monkeypatch
     with pytest.raises(McpError) as e:
         fn(op="create_field", label="Personalized opener", field_type="textarea")
     msg = str(e.value)
-    assert "existe déjà" in msg and "existing1" in msg
+    assert "already exists" in msg and "existing1" in msg
     assert not c.create_custom_field.called
 
 
@@ -835,7 +835,7 @@ def test_create_field_says_so_when_it_could_not_check_for_duplicates(monkeypatch
     fn, _calls, _c, _u = _mount(monkeypatch, c)
     out = fn(op="create_field", label="Personalized opener", field_type="textarea")
     assert c.create_custom_field.called
-    assert "doublons non vérifiés" in out["field_validation"]
+    assert "duplicates not verified" in out["field_validation"]
 
 
 def test_create_field_dry_run_creates_nothing(monkeypatch):

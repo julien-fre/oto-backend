@@ -69,7 +69,7 @@ def test_client_for_user_lent_rend_une_erreur_nommee(monkeypatch, module):
 
     monkeypatch.setattr(module, "_client_for_user", _lent)
     _, _, err = _joue(module._client_for_user_async(None))
-    assert err is not None and "répondu" in err.error.message, (
+    assert err is not None and "did not respond" in err.error.message, (
         f"{module.__name__}: un Google lent doit rendre une McpError nommée, "
         f"pas un gel — reçu {err!r}")
 

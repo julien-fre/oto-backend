@@ -1,13 +1,13 @@
-"""Datastore — stockage de données structurées légères par user (PG natif, ADR 0016).
+"""Datastore — lightweight structured data storage per user (native PG, ADR 0016).
 
-Chaque user a son propre set de "datastores". Schéma libre : chaque row = un
-dict JSON (stocké en JSONB, types préservés), les champs apparaissent au fur et
-à mesure. Trois champs auto-managés exposés à plat : `_id`, `_created_at`,
-`_updated_at`. Aucune dépendance externe — surface plateforme self-contained.
+Each user has their own set of "datastores". Free schema: each row = a JSON
+dict (stored as JSONB, types preserved), fields appear as they go. Three
+auto-managed fields exposed flat: `_id`, `_created_at`,
+`_updated_at`. No external dependency — self-contained platform surface.
 
-Surface (« moins d'outils, plus d'args ») : `data_write`/`data_rows`/`data_share`
-fondent append↔update / get↔list / share↔unshare via un arg de mode. Les
-destructifs (delete_datastore, delete_row) et la création restent séparés.
+Surface ("fewer tools, more args"): `data_write`/`data_rows`/`data_share`
+merge append↔update / get↔list / share↔unshare via a mode arg. The
+destructive ones (delete_datastore, delete_row) and creation stay separate.
 """
 from __future__ import annotations
 
@@ -61,23 +61,23 @@ _MARQUE_Q_SCOPE = "<<recherche_q_scope>>"
 
 
 def _inserer(fn, phrases: dict):
-    """Remplace chaque marque de la description servie par sa phrase. Une marque
-    absente LÈVE : une description qui aurait perdu sa phrase servirait l'écriture sans
-    son vocabulaire, et personne ne le verrait."""
+    """Replaces each marker of the served description with its sentence. A missing
+    marker RAISES: a description that had lost its sentence would serve the write without
+    its vocabulary, and nobody would see it."""
     for marque, phrase in phrases.items():
         if marque not in (fn.__doc__ or ""):
-            raise RuntimeError(f"{fn.__name__} : marque {marque} absente de la "
+            raise RuntimeError(f"{fn.__name__}: marker {marque} missing from the "
                                "description")
         fn.__doc__ = fn.__doc__.replace(marque, phrase)
     return fn
 
 
 def _avec_la_phrase_des_couches(fn):
-    """Insère dans la description servie la phrase des couches, tenue par
-    `couches.DESCRIPTION_ECRITURE` — la même que sert la face REST (oto#91) —,
-    l'annonce datée des mots dépréciés, DÉRIVÉE de la date qui les refusera, celle
-    de `""`/`[]` qui remplaceront la valeur en place (oto#140 J2), et celle de la
-    fusion sur la clé métier qui se DEMANDE (`upsert`, oto#141)."""
+    """Inserts into the served description the layers sentence, held by
+    `couches.DESCRIPTION_ECRITURE` — the same one the REST face serves (oto#91) —,
+    the dated announcement of deprecated words, DERIVED from the date that will refuse them, the one
+    on `""`/`[]` that will replace the value in place (oto#140 J2), and the one on
+    merging on the business key, which is REQUESTED (`upsert`, oto#141)."""
     return _inserer(fn, {
         _MARQUE_COUCHES: couches.DESCRIPTION_ECRITURE,
         _MARQUE_MOTS_DEPRECIES: mots_deprecies.DESCRIPTION_ECRITURE,
@@ -89,9 +89,9 @@ def _avec_la_phrase_des_couches(fn):
 
 
 def _avec_la_regle_de_cle(fn):
-    """Ce que la clé métier déclarée fait à l'écriture (oto#141), et la règle des
-    colonnes non déclarées (oto#124), DÉRIVÉES de leur date — les mêmes phrases que
-    `data_patch_schema` et la face REST."""
+    """What the declared business key does on write (oto#141), and the rule on
+    undeclared columns (oto#124), DERIVED from their date — the same sentences as
+    `data_patch_schema` and the REST face."""
     return _inserer(fn, {
         _MARQUE_CLE_METIER: upsert_implicite.description_cle_schema(),
         _MARQUE_COLONNES: (colonnes_non_declarees.description_schema() + " "
@@ -106,8 +106,8 @@ def _avec_la_recherche(fn):
 
 
 def _avec_la_creation(fn):
-    """Ce que la création dit du schéma de naissance (oto#124), DÉRIVÉ de la date —
-    la même phrase que la face REST (`POST /api/datastores`)."""
+    """What creation says about the birth schema (oto#124), DERIVED from the date —
+    the same sentence as the REST face (`POST /api/datastores`)."""
     return _inserer(fn, {_MARQUE_COLONNES: colonnes_non_declarees.description_creation()})
 
 
@@ -116,18 +116,18 @@ def _store_for(sub: str):
 
 
 def _acting_store():
-    """Store du datastore pour l'acteur courant, pour les tools NON-gouvernance
+    """Datastore store for the current actor, for the NON-governance tools
     (list/read/write/schema).
 
-    - User authentifié (`sub`) → son store, contexte = son org active (inchangé).
-    - Endpoint MCP `secret` avec opt-in datastore (ADR 0032) → store agissant SOUS
-      L'ORG propriétaire du projet (sub-less), **scopé aux tableaux LIÉS au projet**
-      (anti-fuite #193) et en **lecture seule** sauf opt-in write séparé.
-    - Sinon (endpoint sans login SANS opt-in) → McpError « Unauthenticated ».
+    - Authenticated user (`sub`) → their store, context = their active org (unchanged).
+    - MCP `secret` endpoint with datastore opt-in (ADR 0032) → store acting UNDER
+      THE ORG that owns the project (sub-less), **scoped to the tables LINKED to the project**
+      (anti-leak #193) and **read-only** unless a separate write opt-in.
+    - Otherwise (login-less endpoint WITHOUT opt-in) → McpError "Unauthenticated".
 
-    Les tools de GOUVERNANCE/destructifs (create/delete/rename/share) n'utilisent PAS
-    ce seam : ils gardent `current_user_sub_or_raise()` → jamais exposés sur un endpoint
-    sans user identifié."""
+    The GOVERNANCE/destructive tools (create/delete/rename/share) do NOT use
+    this seam: they keep `current_user_sub_or_raise()` → never exposed on an endpoint
+    without an identified user."""
     sub = access.current_user_sub_from_token()
     if sub:
         return make_store(sub)
@@ -138,142 +138,142 @@ def _acting_store():
             allowed_ns_ids=_anon_project_tableau_ns_ids(
                 subdomain_project.current_anon_project_id()),
             read_only=not subdomain_project.current_anon_datastore_writable())
-    access.current_user_sub_or_raise()  # pas d'opt-in → lève « Unauthenticated »
+    access.current_user_sub_or_raise()  # no opt-in → raises "Unauthenticated"
 
 
 def _anon_project_tableau_ns_ids(project_id: Optional[int]) -> frozenset:
-    """Ids des datastores LIÉS au projet (`project_links` type tableau) — le datastore
-    exposé sur un endpoint partagé est scopé à CES tableaux, jamais tout le datastore de
-    l'org (anti-fuite #193). L'identifiant est celui que `db.list_project_links` a
-    résolu (`datastore_id`) : un lien par NOM y est résolu dans la portée du propriétaire
-    du projet, un nom ambigu ou hors portée n'expose RIEN (#365) — la même règle que le
-    rail et la page partagée, écrite une fois. project_id None / erreur / aucun lien ⇒
-    frozenset() (rien d'exposé, jamais de fallback ouvert)."""
+    """Ids of the datastores LINKED to the project (`project_links` of type tableau) — the datastore
+    exposed on a shared endpoint is scoped to THESE tables, never the whole datastore of
+    the org (anti-leak #193). The identifier is the one `db.list_project_links`
+    resolved (`datastore_id`): a link by NAME is resolved there within the scope of the project's
+    owner, an ambiguous or out-of-scope name exposes NOTHING (#365) — the same rule as
+    the rail and the shared page, written once. project_id None / error / no link ⇒
+    frozenset() (nothing exposed, never an open fallback)."""
     if project_id is None:
         return frozenset()
     try:
         return frozenset(int(l["datastore_id"]) for l in db.list_project_links(int(project_id))
                          if l.get("target_type") == "tableau"
                          and l.get("datastore_id") is not None)
-    # noqa: SILENT — hint anonyme : ensemble vide plutôt qu'une liste fausse
+    # noqa: SILENT — anonymous hint: empty set rather than a wrong list
     except Exception:  # noqa: BLE001
         return frozenset()
 
 
 def _project_hint(datastore: str) -> Optional[str]:
-    """Suggestion inverse run→lien (ADR 0035 B5) : écrire sous PROJET ACTIF dans un
-    datastore NON lié au projet ⇒ suggérer le lien — aujourd'hui c'est de la
-    discipline LLM (« pense à linker »), ici le substrat le rappelle au moment de
-    l'acte. Jamais bloquant, jamais d'auto-link (le lien est une décision).
-    Best-effort : toute erreur ⇒ None."""
+    """Inverse run→link suggestion (ADR 0035 B5): writing under an ACTIVE PROJECT into a
+    datastore NOT linked to the project ⇒ suggest the link — today it is LLM
+    discipline ("remember to link"), here the substrate reminds at the moment of
+    the act. Never blocking, never auto-link (the link is a decision).
+    Best-effort: any error ⇒ None."""
     try:
         pid = access.current_project()
         if pid is None:
             return None
         links = db.list_project_links(int(pid))
-        # ⚠️ **La dette notée ici le 08/09 est REPRISE (09/09/2026)**, et exactement
-        # comme elle le prescrivait : par un alias et une date, pas par un remplacement
-        # de texte. `db.list_project_links` pose désormais `datastore` ET `namespace`
-        # sur chaque lien `tableau` ; `/api/me/projects` sert donc les deux aux trois
-        # fronts, et le doublon tombe à `RETRAIT_DATASTORE` (08/11/2026) avec les 24
-        # chemins REST et la clé doublée des réponses du datastore.
+        # ⚠️ **The debt noted here on 08/09 is PAID BACK (09/09/2026)**, exactly
+        # as it prescribed: by an alias and a date, not by a text
+        # replacement. `db.list_project_links` now sets `datastore` AND `namespace`
+        # on every `tableau` link; `/api/me/projects` therefore serves both to the three
+        # fronts, and the duplicate drops at `RETRAIT_DATASTORE` (08/11/2026) along with the 24
+        # REST paths and the doubled key of the datastore responses.
         #
-        # On lit la clé NEUVE. ⚠️ Lire celle qui va disparaître était le vrai piège :
-        # le jour du retrait, l'ensemble serait redevenu vide et le hint aurait suggéré
-        # de lier un tableau DÉJÀ lié, à chaque appel et pour tout le monde, sans
-        # qu'aucune erreur ne le signale — c'est le défaut qu'on avait déjà payé en
-        # lisant la mauvaise des deux, dans l'autre sens.
-        # ⚠️ **Un lien se désigne sous DEUX formes, et ce hint n'en comparait qu'une**
-        # (#858, 10/09/2026). `list_project_links` enrichit chaque lien `tableau` du
-        # NOM de son tableau sous `datastore` ; mais une écriture vise couramment son
-        # ID. Un tableau lié par id, écrit par id, tombait donc à côté : le hint
-        # affirmait « pas lié » sur un lien posé sept minutes plus tôt. Quatre
-        # sous-agents successifs l'ont cru, deux l'ont remonté comme une action à
-        # faire, un a proposé de créer le lien — un doublon évité de justesse.
-        # Le voisin immédiat (`_anon_project_tableau_ns_ids`) résolvait DÉJÀ les deux
-        # formes, trente lignes plus haut, en le disant dans sa docstring.
+        # We read the NEW key. ⚠️ Reading the one that will disappear was the real trap:
+        # on removal day, the set would have become empty again and the hint would have suggested
+        # linking a table ALREADY linked, on every call and for everyone, without
+        # any error signalling it — it is the defect we had already paid for by
+        # reading the wrong one of the two, the other way round.
+        # ⚠️ **A link is designated in TWO forms, and this hint only compared one**
+        # (#858, 10/09/2026). `list_project_links` enriches each `tableau` link with the
+        # NAME of its table under `datastore`; but a write commonly targets its
+        # ID. A table linked by id, written by id, therefore missed: the hint
+        # claimed "not linked" on a link set seven minutes earlier. Four
+        # successive sub-agents believed it, two reported it up as an action
+        # to take, one proposed creating the link — a duplicate narrowly avoided.
+        # The immediate neighbour (`_anon_project_tableau_ns_ids`) ALREADY resolved both
+        # forms, thirty lines above, stating so in its docstring.
         cible = str(datastore).strip()
         tableaux = [l for l in links if l.get("target_type") == "tableau"]
         formes = {str(l.get("datastore") or "").strip() for l in tableaux}
         formes |= {str(l.get("target_ref") or "").strip() for l in tableaux}
         if cible in formes:
             return None
-        # ⚠️ **Et dans le doute, ce hint se TAIT.** Il reste un cas qu'on ne peut pas
-        # trancher sans une requête de plus : la cible est un id, un lien porte un
-        # nom, et rien ici ne dit si ce nom EST ce tableau. Affirmer « pas lié » y
-        # rejouerait exactement le défaut qu'on corrige, alors que se taire ne coûte
-        # qu'un rappel. Le hint n'a jamais été bloquant : son silence est gratuit,
-        # son erreur ne l'est pas.
+        # ⚠️ **And when in doubt, this hint stays SILENT.** One case remains that cannot be
+        # settled without one more query: the target is an id, a link carries a
+        # name, and nothing here says whether that name IS this table. Claiming "not linked" there
+        # would replay exactly the defect we are fixing, whereas staying silent costs
+        # only a reminder. The hint has never been blocking: its silence is free,
+        # its error is not.
         if cible.isdigit() and any(not f.isdigit() for f in formes if f):
             return None
-        return (f"ce tableau `{datastore}` n'est pas lié au projet actif (#{pid}) — "
-                f"si c'est une sortie du projet, lie-le : `oto_project op=link "
-                f"project_id={pid} target_type=tableau target_ref=<id du datastore> "
-                "(+ slot='<name>' s'il réalise un slot de procédure)`.")
-    # noqa: SILENT — dette déclarée : le hint de projet disparaît en silence (#424, verdict C)
+        return (f"this table `{datastore}` is not linked to the active project (#{pid}) — "
+                f"if it is an output of the project, link it: `oto_project op=link "
+                f"project_id={pid} target_type=tableau target_ref=<datastore id> "
+                "(+ slot='<name>' if it fulfils a procedure slot)`.")
+    # noqa: SILENT — declared debt: the project hint disappears silently (#424, verdict C)
     except Exception:  # noqa: BLE001
         return None
 
 
 def _omitted_run_hint(e: RowLocked) -> Optional[str]:
-    """Le refus ENSEIGNE la faute la plus fréquente : `_run_id` omis (#547).
+    """The refusal TEACHES the most frequent fault: omitted `_run_id` (#547).
 
-    Même seam que #515 — reformuler le refus du point de vue de l'APPELANT. Mesuré le
-    29/08/2026 sur une campagne : 31 écritures refusées sur 100, **toutes** sur une
-    ligne que l'appelant tenait lui-même, le jeton passé à la réservation (140/140)
-    puis omis à l'écriture. Un refus qui décrit l'état du monde (« réservée par w8 »)
-    laisse déduire la faute ; celui-ci la NOMME, mais seulement quand il peut la
-    prouver.
+    Same seam as #515 — rephrase the refusal from the CALLER's point of view. Measured on
+    29/08/2026 on a campaign: 31 writes refused out of 100, **all** on a
+    row the caller itself held, the token passed at claim time (140/140)
+    then omitted at write time. A refusal that describes the state of the world ("reserved by w8")
+    lets one deduce the fault; this one NAMES it, but only when it can
+    prove it.
 
-    Trois conditions, toutes nécessaires :
-    - l'appel ne porte AUCUN run — c'est précisément la faute ;
-    - le bail est tenu par un run identifié ;
-    - ce run appartient au MÊME sub que l'appelant. ⚠️ Sans ce dernier test on
-      révélerait à un tiers le jeton qui lève le verrou : `_run_id` n'autorise rien,
-      il NOMME (cf. `call_axes._pin_run`) — l'imprimer dans un refus adressé à
-      quelqu'un d'autre ferait du verrou une étiquette.
+    Three conditions, all necessary:
+    - the call carries NO run — that is precisely the fault;
+    - the lease is held by an identified run;
+    - that run belongs to the SAME sub as the caller. ⚠️ Without this last test we
+      would reveal to a third party the token that lifts the lock: `_run_id` authorizes nothing,
+      it NAMES (see `call_axes._pin_run`) — printing it in a refusal addressed to
+      someone else would turn the lock into a label.
 
-    Best-effort : toute erreur ⇒ None. Un refus ne tombe pas parce qu'un indice manque.
+    Best-effort: any error ⇒ None. A refusal does not fail because a hint is missing.
     """
     try:
         from .. import session_org
         if session_org.current_call_run():
-            return None                      # l'appel porte un run : autre cause
+            return None                      # the call carries a run: another cause
         run = getattr(e, "claimed_run", None)
         if not run:
-            return None                      # bail sans run (worker seul) : rien à dire
+            return None                      # lease without a run (worker only): nothing to say
         sub = access.current_user_sub_from_token()
         head = db.get_run_head(str(run))
         if not sub or not head or head.get("sub") != sub:
-            return None                      # pas le tien : on ne nomme pas le run
-        return (f"Tu n'as passé aucun `_run_id` sur cet appel, et cette ligne est tenue "
-                f"par TON run `{run}` — tu l'as probablement omis : repasse "
-                f"`_run_id={run}` sur CHAQUE appel jusqu'à `run_finish`, il n'est pas "
-                f"hérité d'un appel au suivant.")
-    # noqa: SILENT — un indice absent ne doit jamais masquer le refus lui-même
+            return None                      # not yours: we don't name the run
+        return (f"You passed no `_run_id` on this call, and this row is held "
+                f"by YOUR run `{run}` — you probably omitted it: pass "
+                f"`_run_id={run}` again on EVERY call until `run_finish`, it is not "
+                f"inherited from one call to the next.")
+    # noqa: SILENT — a missing hint must never mask the refusal itself
     except Exception:  # noqa: BLE001
         return None
 
 
 def _row_locked_message(e: RowLocked) -> str:
-    """Le texte servi pour un refus de ligne réservée : le message du refus, plus
-    l'indice d'omission de `_run_id` quand il est prouvé (#547)."""
+    """The text served for a reserved-row refusal: the refusal's message, plus
+    the `_run_id` omission hint when it is proven (#547)."""
     hint = _omitted_run_hint(e)
     return f"{e} {hint}" if hint else str(e)
 
 
-# Borne d'un lot de suppressions (#1268) : chaque ligne est une transaction, le lot
-# reste un appel court.
+# Bound on a delete batch (#1268): each row is a transaction, the batch
+# stays a short call.
 MAX_DELETE_IDS = 500
 
 
 def _delete_rows(store, datastore: str, id, expected_revision, ids) -> dict:
-    """Face MCP du lot de suppressions (#1268) : `ids` = des `_id`, ou des
+    """MCP face of the delete batch (#1268): `ids` = `_id`s, or
     `{id, expected_revision}`.
 
-    ⚠️ **Tout le lot est VÉRIFIÉ avant la première suppression** : un élément illisible
-    au 30e rang ne doit pas laisser 29 lignes déjà parties. Les refus PAR LIGNE (bail,
-    révision), eux, ne coupent pas le lot : ils sont rendus avec leur ligne."""
+    ⚠️ **The whole batch is VERIFIED before the first deletion**: an unreadable item
+    at the 30th position must not leave 29 rows already gone. PER-ROW refusals (lease,
+    revision), on the other hand, do not cut the batch: they are returned with their row."""
     def refus(message: str):
         return McpError(ErrorData(code=INVALID_PARAMS, message=message))
     if id is not None or expected_revision is not None:
@@ -303,14 +303,14 @@ def _delete_rows(store, datastore: str, id, expected_revision, ids) -> dict:
         try:
             jetons.verifier_champs(id=row_id)
             items.append((row_id, revision_attendue(attendue)))
-        except ValueError as e:                  # JetonMalPlace, révision illisible
+        except ValueError as e:                  # JetonMalPlace, unreadable revision
             raise refus(f"`ids[{rang}]`: {e}")
     try:
         bilan = store.delete_rows(datastore, items)
     except DatastoreNotFound as e:
         raise refus(_inconnu(datastore, e))
     except DatastoreReadOnly:
-        raise refus(f"datastore `{datastore}` partagé en lecture seule")
+        raise refus(f"datastore `{datastore}` shared read-only")
     refused = []
     for row_id, e in bilan["refused"]:
         entree = {"id": row_id,
@@ -324,16 +324,16 @@ def _delete_rows(store, datastore: str, id, expected_revision, ids) -> dict:
 
 
 def _adresse_de_couche_valide(champ: str, present: set, declared: set) -> bool:
-    """`effectif.origine` vise-t-il une couche d'une colonne CONNUE ? (#350)
+    """Does `effectif.origine` target a layer of a KNOWN column? (#350)
 
-    ⚠️ Reconnaissance exacte, jamais rapprochement : la couche doit être l'un des trois
-    noms que le serveur connaît, et la colonne doit être présente sur la page ou
-    déclarée au schéma. `effectif.bidule` reste inconnu, `inconnue.origine` aussi — on
-    ne se tait que sur ce qui est réellement adressable.
+    ⚠️ Exact recognition, never approximation: the layer must be one of the three
+    names the server knows, and the column must be present on the page or
+    declared in the schema. `effectif.bidule` stays unknown, `inconnue.origine` too — we
+    stay silent only on what is really addressable.
 
-    Le schéma ne déclare PAS les couches : elles sont natives et universelles (toute
-    colonne en a), donc `declared` ne les contiendra jamais. C'est ce qui rendait
-    l'avertissement inévitable dès que la couche était vide sur toute la page."""
+    The schema does NOT declare the layers: they are native and universal (every
+    column has them), so `declared` will never contain them. That is what made
+    the warning unavoidable as soon as the layer was empty across the whole page."""
     base, point, couche = champ.partition(".")
     if not point or couche not in dsv2.LAYER_KEYS:
         return False
@@ -341,33 +341,32 @@ def _adresse_de_couche_valide(champ: str, present: set, declared: set) -> bool:
 
 
 def _datastore_keys(store, datastore: str) -> set[str]:
-    """Clés réellement présentes dans les DONNÉES du datastore (relevé borné).
+    """Keys actually present in the datastore's DATA (bounded sampling).
 
-    Troisième juge, après le schéma et la page : une colonne ORPHELINE — présente
-    en base, sortie du schéma par un renommage — n'est ni déclarée ni forcément sur
-    la page tirée. L'annoncer « inconnue, vérifie l'orthographe » désignerait encore
-    une cause fausse ; elle existe, elle n'est simplement plus au format.
-    Indisponible ⇒ set() (on ne se tait pas sur un doute, on garde l'accusation la
-    moins coûteuse : signaler)."""
+    Third judge, after the schema and the page: an ORPHAN column — present
+    in the database, dropped from the schema by a rename — is neither declared nor necessarily on
+    the page drawn. Announcing it as "unknown, check the spelling" would again point to
+    a wrong cause; it exists, it is simply no longer in the format.
+    Unavailable ⇒ set() (we don't stay silent on a doubt, we keep the least
+    costly accusation: signal)."""
     try:
         ns_id = store._resolve(datastore)
         return set(db.datastore_row_keys(ns_id))
-    # noqa: SILENT — clés de datastore illisibles ⇒ pas d'avertissement de frappe
+    # noqa: SILENT — unreadable datastore keys ⇒ no typo warning
     except Exception:  # noqa: BLE001
         return set()
 
 
 def _targeted_columns(filter: Optional[dict], filters: Optional[list]) -> set[str]:
-    """Les colonnes qu'un appel VISE, quelle que soit la forme employée.
+    """The columns a call TARGETS, whatever form is used.
 
-    Les deux formes doivent nourrir l'avertissement anti-faute de frappe : une colonne
-    mal orthographiée dans `fields` rendrait moins de lignes sans rien dire, ce qui est
-    exactement le piège que cet avertissement existe pour fermer — et le rouvrir sur la
-    forme NEUVE serait le rouvrir là où l'agent a le plus besoin d'aide.
+    Both forms must feed the anti-typo warning: a misspelled column in `fields` would return fewer
+    rows without saying anything, which is exactly the trap this warning exists to close — and reopening it on the
+    NEW form would be reopening it where the agent most needs help.
 
-    Le suffixe de couche est retiré (`email.comment` vise la colonne `email`), et les
-    colonnes système sont écartées : elles ne figurent jamais dans `data`, les annoncer
-    inconnues désignerait une cause fausse."""
+    The layer suffix is removed (`email.comment` targets the `email` column), and the
+    system columns are set aside: they never appear in `data`, announcing them as
+    unknown would point to a wrong cause."""
     vise = set(filter or {})
     for f in (filters or []):
         if not isinstance(f, dict):
@@ -380,23 +379,23 @@ def _targeted_columns(filter: Optional[dict], filters: Optional[list]) -> set[st
 
 
 def _unknown_filter_keys(store, datastore: str, filter, filters=None) -> set[str]:
-    """Clés de `filter`/`filters` absentes de TOUTES les lignes d'un échantillon du datastore
-    (feedback #163 : filtre sur colonne inexistante = 0 résultat silencieux,
-    indiscernable d'un « aucune ligne ne matche »). Chemin résultat-vide seulement.
-    Datastore vide ou erreur ⇒ set() (rien d'affirmable, pas de faux warning).
+    """Keys of `filter`/`filters` absent from ALL the rows of a datastore sample
+    (feedback #163: filter on a nonexistent column = silent 0 results,
+    indistinguishable from "no row matches"). Empty-result path only.
+    Empty datastore or error ⇒ set() (nothing assertable, no false warning).
 
-    ⚠️ Le schéma prime sur l'échantillon, pour la même raison que la projection :
-    une colonne déclarée mais peu renseignée peut manquer aux 50 lignes tirées, et
-    l'annoncer inconnue enverrait chercher une faute d'orthographe qui n'existe
-    pas. Un filtre légitime sur une colonne rare rend 0 ligne — c'est une réponse,
-    pas un symptôme."""
-    # Le schéma est lu à part : s'il est indisponible, on RETOMBE sur l'échantillon
-    # au lieu d'éteindre l'avertissement. Le mettre dans le try commun ferait
-    # disparaître un signal utile à la première anicroche de lecture de schéma —
-    # exactement le genre de silence que ce warning existe pour combattre.
+    ⚠️ The schema takes precedence over the sample, for the same reason as the projection:
+    a declared but sparsely filled column may be missing from the 50 rows drawn, and
+    announcing it as unknown would send someone looking for a spelling mistake that does not
+    exist. A legitimate filter on a rare column returns 0 rows — that is an answer,
+    not a symptom."""
+    # The schema is read separately: if it is unavailable, we FALL BACK on the sample
+    # instead of switching the warning off. Putting it in the shared try would make
+    # a useful signal disappear at the first hiccup reading the schema —
+    # exactly the kind of silence this warning exists to fight.
     try:
         known = set(dsv2.top_level_keys(store.get_schema(datastore)))
-    # noqa: SILENT — schéma illisible ⇒ repli sur l'échantillon, l'avertissement survit
+    # noqa: SILENT — unreadable schema ⇒ fall back on the sample, the warning survives
     except Exception:  # noqa: BLE001
         known = set()
     try:
@@ -406,132 +405,132 @@ def _unknown_filter_keys(store, datastore: str, filter, filters=None) -> set[str
         for r in sample:
             known |= set(r.keys())
         unknown = {k for k in _targeted_columns(filter, filters) if k not in known}
-        # Même dernier recours que la projection : une orpheline existe en base
-        # sans être ni déclarée ni forcément dans l'échantillon.
+        # Same last resort as the projection: an orphan exists in the database
+        # without being declared nor necessarily in the sample.
         return {k for k in unknown
                 if k not in _datastore_keys(store, datastore)} if unknown else set()
-    # noqa: SILENT — dernier recours : colonne orpheline non déclarée, pas d'avertissement
+    # noqa: SILENT — last resort: undeclared orphan column, no warning
     except Exception:  # noqa: BLE001
         return set()
 
 
 def _inconnu(datastore: str, e: DatastoreNotFound) -> str:
-    """« inconnu » — et, quand le tableau existe dans une autre org de l'appelant, OÙ et
-    QUOI passer (#631). L'indice vient du store (`datastore/hors_org`), la même recherche
-    que la face REST ; sans indice, le refus nu d'avant."""
+    """"unknown" — and, when the table exists in another org of the caller, WHERE and
+    WHAT to pass (#631). The hint comes from the store (`datastore/hors_org`), the same lookup
+    as the REST face; without a hint, the bare refusal as before."""
     indice = getattr(e, "indice", None)
-    return f"datastore `{datastore}` inconnu" + (f" — {indice}" if indice else "")
+    return f"datastore `{datastore}` unknown" + (f" — {indice}" if indice else "")
 
 
 def _introuvable(row_id: object, piste: Optional[str]) -> str:
-    """Le refus « introuvable » du chemin d'écriture (#517) — la forme se DÉCRIT, elle
-    ne se montre pas.
+    """The "not found" refusal of the write path (#517) — the form is DESCRIBED, it
+    is not shown.
 
-    La première version montrait un identifiant en exemple, « cinq groupes
-    hexadécimaux ». Le 29/08 à 15:24, un agent y a lu un modèle à remplir et a rendu
-    `6738f4c2-57c0-43b9-9d78-XXXXXXXXXXXX` — douze X à la place du groupe qu'il ne
-    connaissait pas. Un exemple dans un refus est un gabarit : on n'en met plus. Et
-    quand ce qui est reçu n'a même pas la forme d'un identifiant, on le dit — c'est la
-    preuve qu'il a été inventé, pas altéré."""
+    The first version showed an identifier as an example, "five hexadecimal
+    groups". On 29/08 at 15:24, an agent read a template to fill in there and returned
+    `6738f4c2-57c0-43b9-9d78-XXXXXXXXXXXX` — twelve X's in place of the group it did not
+    know. An example in a refusal is a template: we no longer put any. And
+    when what is received does not even have the shape of an identifier, we say so — it is
+    proof that it was made up, not altered."""
     try:
         uuid.UUID(str(row_id))
         forme = ""
     except (ValueError, AttributeError, TypeError):
-        forme = " (et ce n'est pas la forme d'un identifiant de ligne)"
-    return (f"row `{row_id}` introuvable{forme} — un identifiant de ligne est un UUID de "
-            "36 caractères rendu par `data_write`/`data_claim_next` : on ne l'invente "
-            "pas, on le relit dans la réponse qui l'a rendu"
+        forme = " (and this is not the shape of a row identifier)"
+    return (f"row `{row_id}` not found{forme} — a row identifier is a 36-character "
+            "UUID returned by `data_write`/`data_claim_next`: it is not made "
+            "up, it is read back from the reply that returned it"
             + (f" ; {piste}" if piste else ""))
 
 
-# Le rendu d'un claim À VIDE dit aussi ce qu'on ne fait PAS ensuite. Le 29/08 à 15:24,
-# un travail a reçu `row: null` puis a écrit quand même — le pronom d'alors (`@claimed`,
-# retiré depuis), puis un identifiant fabriqué. Rien n'est passé, mais le rendu du claim
-# ne l'avait pas averti.
-_HINT_RIEN_TENU = (" — tu ne tiens AUCUNE ligne : n'écris rien, n'invente aucun "
-                   "identifiant, termine ton travail (`run_finish`)")
-_HINT_FILE_VIDE = ("plus rien à claim (file vide pour ce filtre, ou tout est sous bail "
-                   "actif)" + _HINT_RIEN_TENU)
+# The rendering of an EMPTY claim also says what NOT to do next. On 29/08 at 15:24,
+# a job received `row: null` then wrote anyway — the pronoun of the time (`@claimed`,
+# since removed), then a fabricated identifier. Nothing got through, but the claim's
+# rendering had not warned it.
+_HINT_RIEN_TENU = (" — you hold NO row: write nothing, invent no "
+                   "identifier, finish your work (`run_finish`)")
+_HINT_FILE_VIDE = ("nothing left to claim (queue empty for this filter, or everything is under an "
+                   "active lease)" + _HINT_RIEN_TENU)
 
 
-# #727 : sans run, le claim rendait une vraie ligne ET posait un bail — mais un bail se
-# tient par son RUN (`_lease_guard`), donc l'écriture était refusée APRÈS l'enquête, et le
-# claim suivant, sous run, rendait une autre ligne. Le refus nomme le geste manquant et ne
-# pose rien. Jamais de run implicite : ouvrir un déroulé à la place de l'appelant lui
-# attribuerait un fait qu'il n'a pas posé.
+# #727: without a run, the claim returned a real row AND set a lease — but a lease is
+# held by its RUN (`_lease_guard`), so the write was refused AFTER the investigation, and the
+# next claim, under a run, returned another row. The refusal names the missing gesture and sets
+# nothing. Never an implicit run: opening a trace in the caller's place would
+# attribute to it a fact it did not set.
 _REFUS_SANS_RUN = (
-    "`data_claim_next` refusé : aucun run actif sur cet appel — RIEN n'a été réservé, la "
-    "ligne reste à l'agent suivant. Une réservation se tient par son run : hors run, tu "
-    "enquêterais sur une ligne que tu ne pourrais pas écrire. Ouvre ton travail avec "
-    "`run_start`, puis passe son `run_id` en `_run_id=` sur CET appel et sur chaque "
-    "écriture qui suit.")
+    "`data_claim_next` refused: no active run on this call — NOTHING was reserved, the "
+    "row stays with the next agent. A reservation is held by its run: outside a run, you "
+    "would investigate a row you could not write. Open your work with "
+    "`run_start`, then pass its `run_id` as `_run_id=` on THIS call and on every "
+    "write that follows.")
 
 
 def _hint_file_vide(perimetre: dict, filter: Optional[dict]) -> str:
-    """Rien servi : la file est vide POUR CE PÉRIMÈTRE, et il se nomme (#517) — un
-    filtre qui contredit la déclaration du tableau ne doit pas se lire « file
-    vide ». La suite ne change pas : l'agent ne tient rien, il n'écrit rien."""
+    """Nothing served: the queue is empty FOR THIS SCOPE, and it is named (#517) — a
+    filter that contradicts the table's declaration must not read as "queue
+    empty". What follows does not change: the agent holds nothing, it writes nothing."""
     if not perimetre:
         return _HINT_FILE_VIDE
     return claimable.phrase_vide(perimetre, filter) + _HINT_RIEN_TENU
 
 
 def _row_not_found_hint(store, datastore: str, row_id: object) -> str:
-    """Message actionnable d'un lookup `id` raté (feedback #161 : le param `id`
-    cherche par `_id` UUID technique ; quand le schéma déclare une clé métier —
-    souvent nommée `id` — l'agent passe naturellement SA valeur et tombe sur
-    « introuvable » sans piste). Si une ligne matche la clé métier, on le dit."""
-    msg = f"row `{row_id}` introuvable (le param `id` cherche par `_id` technique)"
+    """Actionable message for a failed `id` lookup (feedback #161: the `id` param
+    searches by technical `_id` UUID; when the schema declares a business key —
+    often named `id` — the agent naturally passes ITS value and hits
+    "not found" with no lead). If a row matches the business key, we say so."""
+    msg = f"row `{row_id}` not found (the `id` param searches by technical `_id`)"
     try:
         key = store.declared_key(datastore)
         if key:
             hit = store.cursor_rows(datastore, filter={key: row_id}, limit=1)["rows"]
             if hit:
-                return (f"{msg} ; une ligne a bien `{key}={row_id}` (clé métier) — "
-                        f"utilise `filter={{\"{key}\": \"{row_id}\"}}`, son `_id` est "
+                return (f"{msg} ; a row does have `{key}={row_id}` (business key) — "
+                        f"use `filter={{\"{key}\": \"{row_id}\"}}`, its `_id` is "
                         f"`{hit[0].get('_id')}`")
-            return f"{msg} ; pour la clé métier `{key}`, utilise `filter={{\"{key}\": …}}`"
-    # noqa: SILENT — dette déclarée : le hint « ligne introuvable » disparaît (#424, verdict C)
+            return f"{msg} ; for the business key `{key}`, use `filter={{\"{key}\": …}}`"
+    # noqa: SILENT — declared debt: the "row not found" hint disappears (#424, verdict C)
     except Exception:  # noqa: BLE001
         pass
     return msg
 
 
 def _project_row(row: dict, fields: list[str]) -> dict:
-    """Projette une row sur `fields` (sous-ensemble de colonnes, feedback #191) en
-    gardant TOUJOURS `_id` — sans lui l'agent ne pourrait plus adresser/mettre à jour
-    la ligne. Une colonne DÉCLARÉE est toujours dans la row servie (à `null` sans valeur,
-    oto#182) et sort donc à `null` ; un nom non déclaré et absent est omis."""
+    """Projects a row onto `fields` (subset of columns, feedback #191) while
+    ALWAYS keeping `_id` — without it the agent could no longer address/update
+    the row. A DECLARED column is always in the served row (as `null` when it has no value,
+    oto#182) and therefore comes out as `null`; an undeclared and absent name is omitted."""
     if TOUT in fields:
-        # `["*"]` demande TOUT — pas une colonne nommée `*`. Le jeton est légitime sur
-        # `oto_doc` et sur le feed depuis toujours ; le refuser ici rendait `_id` seul à
-        # un agent qui croyait demander la ligne entière (inventaire du 29/08).
+        # `["*"]` asks for EVERYTHING — not a column named `*`. The token has always been legitimate on
+        # `oto_doc` and on the feed; refusing it here returned `_id` alone to
+        # an agent that believed it was asking for the whole row (inventory of 29/08).
         return row
     keep = set(fields)
     keep.add("_id")
     return {k: v for k, v in row.items() if k in keep}
 
 
-TOUT = "*"  # `fields=["*"]` — « toutes les colonnes », le même jeton que sur oto_doc
+TOUT = "*"  # `fields=["*"]` — "all columns", the same token as on oto_doc
 
 
 def _adresse(datastore: str, id=None):
-    """Les champs d'ADRESSE d'un appel : vérifiés, puis le tableau résolu — le MÊME
-    geste sur tous les verbes (#517).
+    """The ADDRESS fields of a call: verified, then the table resolved — the SAME
+    gesture on all verbs (#517).
 
-    Écrit une fois plutôt que six : les deux faces ont divergé exactement une fois, et
-    en silence — `slot:` était résolu par les opérations de schéma et passé brut par
-    celles de lignes, qui répondaient « datastore inconnu » sur un jeton parfaitement
-    valide.
+    Written once rather than six times: the two faces diverged exactly once, and
+    silently — `slot:` was resolved by the schema operations and passed raw by
+    the row ones, which answered "datastore unknown" on a perfectly valid
+    token.
 
-    ⚠️ **Ne prend plus ni `store`, ni `worker`, ni `ligne`** (07/09/2026) : ces trois
-    paramètres n'existaient que pour `@claimed`, qui lisait le bail du run courant pour
-    transformer un pronom en identifiant. Le pronom retiré, `id` n'est plus que VÉRIFIÉ
-    — et le vérifier reste nécessaire, parce que c'est là que l'agent qui l'écrit encore
-    reçoit un refus qui nomme le geste qui aboutit, au lieu de « ligne introuvable ».
+    ⚠️ **No longer takes `store`, `worker`, nor `ligne`** (07/09/2026): these three
+    parameters existed only for `@claimed`, which read the current run's lease to
+    turn a pronoun into an identifier. With the pronoun removed, `id` is only VERIFIED
+    — and verifying it remains necessary, because that is where an agent that still writes it
+    receives a refusal that names the gesture that succeeds, instead of "row not found".
 
-    Le refus traverse la surface en `INVALID_PARAMS` — il PORTE la conduite à tenir, et
-    une erreur interne l'effacerait au moment précis où elle sert."""
+    The refusal crosses the surface as `INVALID_PARAMS` — it CARRIES the course of action, and
+    an internal error would erase it at the very moment it is useful."""
     try:
         return jetons.resoudre(datastore, id, resoudre_slot=_ns)
     except jetons.JetonMalPlace as e:
@@ -539,66 +538,66 @@ def _adresse(datastore: str, id=None):
 
 
 def _ns(datastore: str) -> str:
-    """Adressage par SLOT (ADR 0035 B3) : `slot:<name>` = le tableau bindé sous ce
-    nom par le PROJET ACTIF (`access.resolve_slot_tableau` — erreur actionnable si
-    pas de projet actif / slot non bindé / binding pendouillant, JAMAIS de fallback).
-    Un nom nu passe inchangé (zéro magie sur les noms littéraux).
+    """SLOT addressing (ADR 0035 B3): `slot:<name>` = the table bound under that
+    name by the ACTIVE PROJECT (`access.resolve_slot_tableau` — actionable error if
+    no active project / slot not bound / dangling binding, NEVER a fallback).
+    A bare name passes unchanged (zero magic on literal names).
 
-    Corps déplacé dans `access.resolve_datastore_ref` (source unique) : les capacités
-    du datastore en ont besoin aussi, et l'avoir gardé ici a laissé `slot:` non résolu
-    sur leur face MCP."""
+    Body moved to `access.resolve_datastore_ref` (single source): the datastore
+    capabilities need it too, and having kept it here left `slot:` unresolved
+    on their MCP face."""
     return access.resolve_datastore_ref(datastore)
 
 
 def _destinataire(email: str, recipient_sub: str) -> dict:
-    """Le compte qui va recevoir l'accès — jamais deviné.
+    """The account that will receive access — never guessed.
 
-    Face MCP du même geste que `capabilities/datastore/sharing._destinataire`.
-    Les deux existent (dette assumée : `data_*` en MCP, `/api/datastore/*` en
-    REST) et c'est CELLE-CI que les agents empruntent. Corriger l'autre seule
-    aurait fermé la porte de derrière en laissant la principale ouverte.
+    MCP face of the same gesture as `capabilities/datastore/sharing._destinataire`.
+    Both exist (accepted debt: `data_*` in MCP, `/api/datastore/*` in
+    REST) and it is THIS one that agents take. Fixing the other alone
+    would have closed the back door while leaving the main one open.
 
-    ⚠️ Une adresse ne désigne pas un compte : dix en portent deux (mesuré le
-    05/09/2026). Partager sur l'une d'elles ouvrait le tableau à celui que
-    `fetchone()` rendait en premier, sans que le propriétaire l'apprenne.
+    ⚠️ An address does not designate an account: ten of them carry two (measured on
+    05/09/2026). Sharing on one of them opened the table to whichever one
+    `fetchone()` returned first, without the owner finding out.
     """
     email = (email or "").strip()
     recipient_sub = (recipient_sub or "").strip()
     if email and recipient_sub:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message="donne `email` OU `recipient_sub`, pas les deux : ils peuvent "
-                    "désigner des comptes différents, et le partage réussirait vers "
-                    "une cible que rien ne nommerait."))
+            message="give `email` OR `recipient_sub`, not both: they may "
+                    "designate different accounts, and the share would succeed toward "
+                    "a target that nothing would name."))
     if recipient_sub:
         row = db.get_user(recipient_sub)
         if not row:
             raise McpError(ErrorData(code=INVALID_PARAMS,
-                                     message=f"aucun compte oto avec le sub `{recipient_sub}`"))
+                                     message=f"no oto account with the sub `{recipient_sub}`"))
         return row
     if not email:
         raise McpError(ErrorData(code=INVALID_PARAMS,
-                                 message="`email` (ou `recipient_sub`) est requis."))
+                                 message="`email` (or `recipient_sub`) is required."))
     porteurs = db.get_users_by_email(email)
     if not porteurs:
         raise McpError(ErrorData(code=INVALID_PARAMS,
-                                 message=f"aucun utilisateur oto avec l'email {email}"))
+                                 message=f"no oto user with the email {email}"))
     if len(porteurs) > 1:
         subs = ", ".join(f"`{u['sub']}`" for u in porteurs)
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=f"L'adresse `{email}` désigne {len(porteurs)} comptes : {subs}. "
-                    "Reprends avec `recipient_sub` (sans `email`) pour dire lequel tu vises."))
+            message=f"The address `{email}` designates {len(porteurs)} accounts: {subs}. "
+                    "Retry with `recipient_sub` (without `email`) to say which one you mean."))
     return porteurs[0]
 
 
 def register(mcp: FastMCP) -> None:
 
-    # ⚠️ Le docstring nomme `ns_id` DÉLIBÉRÉMENT (oto#176). Ce catalogue ne rendait
-    # le numéro que sous `id` pendant que `data_rows` prescrivait `ns_id` comme « la
-    # forme à employer » : l'agent cherchait la clé prescrite dans la seule remise
-    # qui ne l'avait pas. Le registre sert désormais les deux — le texte le dit, sans
-    # quoi la clé existe pour qui la connaît déjà, c'est-à-dire pour personne.
+    # ⚠️ The docstring names `ns_id` DELIBERATELY (oto#176). This catalog only returned
+    # the number under `id` while `data_rows` prescribed `ns_id` as "the
+    # form to use": the agent looked for the prescribed key in the only reply
+    # that lacked it. The registry now serves both — the text says so, without
+    # which the key exists for whoever already knows it, i.e. for nobody.
     @mcp.tool()
     def data_list_datastores() -> dict:
         """List the datastores of the active org: the org's and your teams' tables,
@@ -616,16 +615,16 @@ def register(mcp: FastMCP) -> None:
         store = _acting_store()
         return {"datastores": store.list_datastores()}
 
-    # ⚠️ Cette description a dit « unique per user » jusqu'au 04/09/2026, quand le code
-    # créait des tableaux d'ORG depuis toujours. Le mensonge est réparé DEUX FOIS ce
-    # jour-là : d'abord le texte (`ab6d0eff`), puis le comportement lui-même (ADR 0068,
-    # le tableau naît personnel) — et c'est le second qui rend le premier obsolète.
-    # Le récit vit ICI et pas dans le docstring : une description est une instruction
-    # relue à chaque appel, et y CITER la formule fautive, même pour la démentir, c'est
-    # la re-servir au modèle.
-    # `tests/test_description_dit_le_proprietaire.py` lit le défaut réel dans le code
-    # puis exige que le texte servi nomme ce défaut-là — jamais l'inverse. C'est lui qui
-    # a refusé de virer au vert quand le défaut a changé, avant que ce texte ne bouge.
+    # ⚠️ This description said "unique per user" until 04/09/2026, when the code
+    # had always created ORG tables. The lie was fixed TWICE that
+    # day: first the text (`ab6d0eff`), then the behaviour itself (ADR 0068,
+    # the table is born personal) — and it is the second that makes the first obsolete.
+    # The story lives HERE and not in the docstring: a description is an instruction
+    # reread on every call, and QUOTING the faulty phrasing there, even to deny it, is
+    # re-serving it to the model.
+    # `tests/test_description_dit_le_proprietaire.py` reads the real default in the code
+    # then requires the served text to name that default — never the reverse. It is what
+    # refused to turn green when the default changed, before this text moved.
     @mcp.tool()
     @_avec_la_creation
     def data_create_datastore(datastore: Adresse, schema: Optional[dict] = None) -> dict:
@@ -660,12 +659,12 @@ def register(mcp: FastMCP) -> None:
         """
         sub = access.current_user_sub_or_raise()
         if not datastore or not datastore.strip():
-            raise McpError(ErrorData(code=INVALID_PARAMS, message="datastore requis"))
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="datastore required"))
         if datastore.strip().lower().startswith(access.SLOT_PREFIX):
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=("un slot binde un tableau EXISTANT — crée le datastore avec son "
-                         "nom réel, puis binde-le au projet "
+                message=("a slot binds an EXISTING table — create the datastore under its "
+                         "real name, then bind it to the project "
                          "(`oto_project op=link target_type=tableau … slot='<name>'`).")))
         store = _store_for(sub)
         try:
@@ -673,13 +672,13 @@ def register(mcp: FastMCP) -> None:
         except DatastoreExists:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"datastore `{datastore}` existe déjà",
+                message=f"datastore `{datastore}` already exists",
             ))
         except ValueError as e:
-            # Le schéma de naissance refusé (oto#124) : le tableau n'a pas été créé.
+            # The birth schema was refused (oto#124): the table was not created.
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"{e} — le tableau `{datastore.strip()}` n'a PAS été créé."))
+                message=f"{e} — the table `{datastore.strip()}` was NOT created."))
 
     @mcp.tool()
     def data_delete_datastore(datastore: Adresse) -> dict:
@@ -694,9 +693,9 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(datastore, e)))
         except DatastoreForbidden:
             raise McpError(ErrorData(code=INVALID_PARAMS,
-                                     message=f"tu n'as pas le droit de supprimer `{datastore}`"))
-        # L'identité de ce qui vient d'être supprimé, pas l'écho de l'adresse : le
-        # tableau n'existe plus, donc c'est la SEULE trace que l'appelant en garde.
+                                     message=f"you are not allowed to delete `{datastore}`"))
+        # The identity of what was just deleted, not an echo of the address: the
+        # table no longer exists, so this is the ONLY trace the caller keeps of it.
         return {"ok": True, **identite.de_releve(store.dernier_tableau, datastore)}
 
     @mcp.tool()
@@ -715,11 +714,11 @@ def register(mcp: FastMCP) -> None:
         sub = access.current_user_sub_or_raise()
         datastore = _ns(datastore)
         if not new_name or not new_name.strip():
-            raise McpError(ErrorData(code=INVALID_PARAMS, message="new_name requis"))
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="new_name required"))
         if new_name.strip().lower().startswith(access.SLOT_PREFIX):
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message="`slot:` est réservé à l'adressage — choisis un nom réel."))
+                message="`slot:` is reserved for addressing — pick a real name."))
         store = _store_for(sub)
         try:
             return store.rename_datastore(datastore, new_name)
@@ -727,7 +726,7 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(datastore, e)))
         except DatastoreForbidden:
             raise McpError(ErrorData(code=INVALID_PARAMS,
-                                     message=f"tu n'as pas le droit de renommer `{datastore}`"))
+                                     message=f"you are not allowed to rename `{datastore}`"))
         except DatastoreExists as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
@@ -871,7 +870,7 @@ def register(mcp: FastMCP) -> None:
           writing a "final" state does NOT free the row (#317). Release is a gesture
           of the LOCK — data_release, or closing your run — never an inference from
           a business value.
-        - step labels: `lifecycle.labels: {"a_qualifier": "À qualifier", …}` — the
+        - step labels: `lifecycle.labels: {"a_qualifier": "To qualify", …}` — the
           name a screen shows for each state instead of its code. Presentation
           only: no write reads it, a row still carries the code. Each key must be a
           state of `states` (an unknown one is REFUSED and named), each value a
@@ -917,8 +916,8 @@ def register(mcp: FastMCP) -> None:
         datastore = _ns(datastore)
         try:
             out: dict = {}
-            # Schéma posé/effacé — sauf si l'appel ne vise QUE le toggle sémantique
-            # (schema omis + semantic fourni) : on ne veut pas effacer le schéma alors.
+            # Schema set/cleared — unless the call targets ONLY the semantic toggle
+            # (schema omitted + semantic given): the schema must not be cleared then.
             if schema is not None or semantic_search is None:
                 out = store.set_schema(datastore, schema)
             if semantic_search is not None:
@@ -928,13 +927,13 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(datastore, e)))
         except DatastoreReadOnly:
             raise McpError(ErrorData(code=INVALID_PARAMS,
-                                     message=f"datastore `{datastore}` partagé en lecture seule"))
+                                     message=f"datastore `{datastore}` shared read-only"))
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
-    # `data_drop_column` (purge d'une colonne morte, #296) n'est PAS ici : c'est une
-    # capacité (`capabilities/datastore/columns.py`) — un verbe de plateforme naît
-    # capacité, ADR 0042 §Convergence des surfaces.
+    # `data_drop_column` (purging a dead column, #296) is NOT here: it is a
+    # capability (`capabilities/datastore/columns.py`) — a platform verb is born
+    # as a capability, ADR 0042 §Convergence of surfaces.
 
     @mcp.tool()
     @_avec_la_phrase_des_couches
@@ -1218,95 +1217,95 @@ def register(mcp: FastMCP) -> None:
         """
         store = _acting_store()
         try:
-            # Vérifié et résolu ICI, avant tout le reste, pour que le refus éventuel
-            # sorte par le même chemin actionnable que les autres (ValueError →
-            # INVALID_PARAMS). C'est aussi ce qui rend à l'agent qui écrit encore
-            # `@claimed` — retiré le 07/09/2026 — un refus qui NOMME le geste qui
-            # aboutit, plutôt que le « datastore inconnu » du stockage.
+            # Checked and resolved HERE, before anything else, so that any refusal
+            # comes out through the same actionable path as the others (ValueError →
+            # INVALID_PARAMS). It is also what gives the agent that still writes
+            # `@claimed` — removed on 07/09/2026 — a refusal that NAMES the gesture
+            # that succeeds, rather than the storage's "unknown datastore".
             datastore, id = _adresse(datastore, id)
-            # Refus qui NOMME le paramètre et sa forme, au moment où l'appelant peut
-            # encore corriger — jamais un `invalid_input` nu.
+            # Refusals that NAME the parameter and its shape, while the caller can
+            # still correct — never a bare `invalid_input`.
             cibles = fcg.chemins_forces(force)
             layers = dsl.check(layers)
             vers = dsver.check(versions)
             empties = dsl.check_empties(empties)
-            # Un lot ne rend aucune ligne : une forme de ligne demandée n'y vaudrait
-            # rien — refusée, pas ignorée.
+            # A batch returns no row: a requested row shape would be meaningless
+            # there — refused, not ignored.
             if rows is not None and (versions is not None or layers != dsl.DEFAUT
                                     or empties != dsl.EMPTIES_DEFAUT):
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                    "`layers`/`versions` règlent la LIGNE rendue : un lot (`rows=`) n'en "
-                    "rend aucune. Retire-les, ou écris une ligne seule (`row=`).")))
+                    "`layers`/`versions` set the shape of the returned ROW: a batch "
+                    "(`rows=`) returns none. Remove them, or write a single row (`row=`).")))
             jetons.verifier_contenu(row)
             jetons.verifier_contenu(rows)
-            # ⚠️ **`key` n'a de sens QUE sur un lot** — il nomme la colonne de dédup de
-            # `write_rows`. Sur une écriture unitaire il n'était passé à rien : ni à
-            # `append_row`, ni à `update_row`. **Silencieusement ignoré.**
+            # ⚠️ **`key` only makes sense on a batch** — it names the dedup column of
+            # `write_rows`. On a single-row write it was passed to nothing: neither to
+            # `append_row` nor to `update_row`. **Silently ignored.**
             #
-            # Mesuré le 09/09/2026, et c'est ce que ça coûte : une campagne a écrit dix
-            # fois `data_write(datastore=…, key="@claimed", row={…})` en croyant viser
-            # la ligne qu'elle tenait. Les dix appels ont rendu 200 et créé dix lignes
-            # neuves sans clé métier ; les trois lignes réservées sont sorties en échec
-            # sans avoir jamais été écrites. **172 500 jetons pour un paramètre qui ne
-            # faisait rien.** Chez nous un paramètre offert SERA réglé — c'est la règle,
-            # pas l'accident.
+            # Measured on 09/09/2026, and this is what it costs: a campaign wrote ten
+            # times `data_write(datastore=…, key="@claimed", row={…})` believing it was
+            # targeting the row it held. All ten calls returned 200 and created ten
+            # new rows with no business key; the three reserved rows ended in failure
+            # without ever having been written. **172,500 tokens for a parameter that
+            # did nothing.** Here, an offered parameter WILL be honored — that is the
+            # rule, not the accident.
             #
-            # On vise l'AXE, pas la valeur : tout `key` inopérant sur ce chemin est
-            # refusé. Ne fermer que `@claimed` corrigerait un cas et laisserait la
-            # classe entière — le prochain agent écrirait `key="_id"` ou `key="siren"`
-            # et repartirait pour dix écritures muettes.
+            # We target the AXIS, not the value: any `key` that is inoperative on this
+            # path is refused. Closing only `@claimed` would fix one case and leave
+            # the whole class — the next agent would write `key="_id"` or `key="siren"`
+            # and go off for ten silent writes.
             #
-            # Une exception, et une seule : `key` qui nomme la clé métier DÉCLARÉE,
-            # avec sa valeur dans `row` et sans `id=` : l'écriture DÉSIGNE alors la
-            # ligne par sa clé (oto#141, passé au store), sans `upsert` (signaux 986,
-            # 1125, 1135, 1154 — l'idiome « upsert sur la clé » s'écrit ainsi).
+            # One exception, and only one: `key` naming the DECLARED business key,
+            # with its value in `row` and without `id=`: the write then DESIGNATES the
+            # row by its key (oto#141, passed to the store), without `upsert` (signals
+            # 986, 1125, 1135, 1154 — the "upsert on the key" idiom is written this way).
             if key is not None and rows is None:
                 declaree = (store.get_schema(datastore) or {}).get("key")
                 if not jetons.key_unitaire_redondant(key, declaree, row, id):
                     raise McpError(ErrorData(
                         code=INVALID_PARAMS,
                         message=jetons.refus_de_key_sans_lot(key, declaree)))
-            # MÊME axe que `key` juste au-dessus : une précondition sans ligne désignée
-            # ne compare rien. Offerte, elle sera réglée ; ignorée, l'écriture partirait
-            # sans la protection que l'appelant croit avoir demandée.
+            # SAME axis as `key` just above: a precondition with no designated row
+            # compares nothing. Offered, it will be honored; ignored, the write would
+            # go through without the protection the caller thinks they asked for.
             if expected_revision is not None and (id is None or rows is not None):
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                    "`expected_revision` ne vaut qu'avec `id=` — la ligne que tu as lue : "
-                    "sans elle il n'y a rien à comparer, et rien n'est écrit.")))
-            # oto#141, MÊME axe : `id=` vise déjà sa ligne, il n'y a rien à fusionner.
+                    "`expected_revision` only applies with `id=` — the row you read: "
+                    "without it there is nothing to compare, and nothing is written.")))
+            # oto#141, SAME axis: `id=` already targets its row, there is nothing to merge.
             if upsert and id is not None:
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                    "`upsert=true` ne vaut que SANS `id=` : avec `id=`, l'écriture vise "
-                    "déjà sa ligne et ne fusionne rien. Rien n'est écrit — retire l'un "
-                    "des deux.")))
+                    "`upsert=true` only applies WITHOUT `id=`: with `id=`, the write "
+                    "already targets its row and merges nothing. Nothing is written — "
+                    "drop one of the two.")))
             if rows is not None:
                 if row is not None or id is not None:
                     raise McpError(ErrorData(code=INVALID_PARAMS,
-                                             message="passer `rows` (batch) OU `row`/`id`, pas les deux"))
+                                             message="pass `rows` (batch) OR `row`/`id`, not both"))
                 if not isinstance(rows, list):
-                    raise McpError(ErrorData(code=INVALID_PARAMS, message="rows doit être une liste de dicts"))
+                    raise McpError(ErrorData(code=INVALID_PARAMS, message="rows must be a list of dicts"))
                 recap = store.write_rows(datastore, rows, key=key,
                                          readonly_override=readonly_override,
                                          origine_override=origine_override,
                                          donnees_d_origine=donnees_d_origine,
                                          force=cibles, upsert=upsert)
-                # Le lot a une ENVELOPPE (son corps n'est pas une ligne) : elle porte
-                # l'identité entière — le nom CANONIQUE, plus l'écho de la chaîne
-                # reçue, et le numéro à employer ensuite.
+                # The batch has an ENVELOPE (its body is not a row): it carries
+                # the full identity — the CANONICAL name, plus the echo of the string
+                # received, and the number to use next.
                 out = {**identite.de_releve(store.dernier_tableau, datastore),
                        **recap}
             else:
                 if row is None:
                     raise McpError(ErrorData(code=INVALID_PARAMS,
-                                             message="fournir `row` (objet) ou `rows` (liste d'objets, mode batch)"))
+                                             message="provide `row` (object) or `rows` (list of objects, batch mode)"))
                 if not isinstance(row, dict):
-                    raise McpError(ErrorData(code=INVALID_PARAMS, message="row doit être un dict"))
+                    raise McpError(ErrorData(code=INVALID_PARAMS, message="row must be a dict"))
                 out = store.append_row(datastore, row,
                                        readonly_override=readonly_override,
                                        origine_override=origine_override,
                                        donnees_d_origine=donnees_d_origine,
                                        force=cibles, upsert=upsert,
-                                       # oto#141 : `key=` nommé = DÉSIGNATION.
+                                       # oto#141: a named `key=` = DESIGNATION.
                                        key=key, layers=layers, versions=vers,
                                        **dsl.relayer_empties(empties)) \
                     if id is None \
@@ -1315,17 +1314,17 @@ def register(mcp: FastMCP) -> None:
                                           origine_override=origine_override,
                                           donnees_d_origine=donnees_d_origine,
                                           force=cibles,
-                                          # `RevisionConflict` est une `ValueError` :
-                                          # INVALID_PARAMS, le texte du refus REST.
+                                          # `RevisionConflict` is a `ValueError`:
+                                          # INVALID_PARAMS, the text of the REST refusal.
                                           expected_revision=expected_revision,
                                           layers=layers, versions=vers,
                                           **dsl.relayer_empties(empties))
-            # Champs posés hors du format déclaré (#294) : l'écriture est acceptée (un
-            # champ libre reste un droit du contrat), mais elle n'est plus silencieuse.
-            # Le NUMÉRO du tableau part avec (`ns_id`) : l'écriture est le geste que
-            # l'agent répète, et il doit pouvoir en relire l'adresse à employer. Le
-            # nom, lui, ne s'ajoute PAS ici — le corps d'une écriture de ligne seule
-            # EST la ligne, et `datastore` y serait en collision avec une colonne.
+            # Fields set outside the declared format (#294): the write is accepted (a
+            # free field remains a right of the contract), but it is no longer silent.
+            # The table NUMBER goes with it (`ns_id`): the write is the gesture the
+            # agent repeats, and it must be able to re-read the address to use. The
+            # name, however, is NOT added here — the body of a single-row write
+            # IS the row, and `datastore` would collide with a column there.
             out = {**out, **store.off_schema_report(),
                    **identite.numero(store.dernier_tableau)}
             if rows is None:
@@ -1333,10 +1332,10 @@ def register(mcp: FastMCP) -> None:
             hint = _project_hint(datastore)
             return {**out, "project_hint": hint} if hint else out
         except (RowValidationError, BusinessKeyRequired) as e:
-            # oto#135 : la face MCP n'a pas d'enveloppe structurée — la charge à
-            # renvoyer (`details.a_renvoyer`, rendue telle quelle par REST) finit le
-            # message. AVANT `ValueError`, dont les deux dérivent. oto#151 : le refus
-            # de clé métier la porte aussi.
+            # oto#135: the MCP face has no structured envelope — the payload to
+            # resend (`details.a_renvoyer`, rendered as-is by REST) ends the
+            # message. BEFORE `ValueError`, from which both derive. oto#151: the
+            # business-key refusal carries it too.
             raise McpError(ErrorData(code=INVALID_PARAMS, message=(
                 str(e) + charge_a_renvoyer.clause(e.details))))
         except ValueError as e:
@@ -1344,36 +1343,36 @@ def register(mcp: FastMCP) -> None:
         except DatastoreNotFound as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(datastore, e)))
         except DatastoreReadOnly:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"datastore `{datastore}` partagé en lecture seule"))
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"datastore `{datastore}` shared read-only"))
         except RowNotFound:
-            # #517 : ce refus arrive au SEUL moment où l'agent peut encore corriger.
-            # « Introuvable » tout court le laisse réessayer SANS identifiant — et une
-            # écriture sans identifiant CRÉE une ligne au lieu d'en corriger une. On lui
-            # rend donc les deux choses qui manquent : à quoi ressemble un identifiant,
-            # et ce que son propre travail tient déjà.
+            # #517: this refusal arrives at the ONLY moment the agent can still correct.
+            # A bare "Not found" lets it retry WITHOUT an identifier — and a write
+            # without an identifier CREATES a row instead of correcting one. So we
+            # hand back the two missing things: what an identifier looks like,
+            # and what its own work already holds.
             try:
                 piste = store.claimed_hint(datastore)
-            # noqa: SILENT — une piste est un bonus : échouer à la calculer ne doit jamais remplacer un refus actionnable par une erreur interne
+            # noqa: SILENT — a lead is a bonus: failing to compute it must never replace an actionable refusal with an internal error
             except Exception:  # noqa: BLE001
                 piste = None
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_introuvable(id, piste)))
         except RowLocked as e:
-            # #317 : un refus, pas un 500. Sans cette traduction l'agent voit « Erreur
-            # interne du serveur » là où il lui faut QUI tient la ligne, JUSQU'À QUAND,
-            # et COMMENT lever — vécu en production le 15/08, sur une campagne bloquée.
-            # Le message de l'exception porte déjà les trois ; `_row_locked_message` y
-            # ajoute la CAUSE quand elle est prouvée (`_run_id` omis, #547).
+            # #317: a refusal, not a 500. Without this translation the agent sees "Internal
+            # server error" where it needs WHO holds the row, UNTIL WHEN,
+            # and HOW to release — lived in production on 15/08, on a blocked campaign.
+            # The exception's message already carries all three; `_row_locked_message`
+            # adds the CAUSE when it is proven (`_run_id` omitted, #547).
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_row_locked_message(e)))
 
     @mcp.tool()
     def data_claim_next(datastore: Adresse, worker: str, filter: Optional[dict] = None,
                         lease_s: int = 900, max_claims: Optional[int] = None,
-                        # ⚠️ `dsl.DEFAUT`, jamais un littéral. `layers.py` promet que
-                        # « le défaut se lit ici et nulle part ailleurs, pour qu'une
-                        # bascule soit un seul geste » — cette surface le codait en dur
-                        # et démentait la promesse en silence. Elle est la lecture qu'un
-                        # agent répète le PLUS : la bascule l'aurait laissée derrière,
-                        # et le défaut aurait divergé là où ça se voit le moins.
+                        # ⚠️ `dsl.DEFAUT`, never a literal. `layers.py` promises that
+                        # "the default is read here and nowhere else, so that a
+                        # switch is a single gesture" — this surface hardcoded it
+                        # and silently broke the promise. It is the read an
+                        # agent repeats the MOST: the switch would have left it behind,
+                        # and the default would have diverged where it is least visible.
                         layers: str = dsl.DEFAUT,
                         filters: Optional[list] = None,
                         empties: str = dsl.EMPTIES_DEFAUT) -> dict:
@@ -1511,11 +1510,11 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(datastore, e)))
         except DatastoreReadOnly:
             raise McpError(ErrorData(code=INVALID_PARAMS,
-                                     message=f"datastore `{datastore}` partagé en lecture seule"))
-        # L'IDENTITÉ du tableau, pas l'écho de l'adresse reçue (cf. `datastore/
-        # identite.py`) : `datastore` est son nom canonique et `ns_id` son NUMÉRO.
-        # C'est LA remise où le numéro compte — la boucle des agents part d'ici, et
-        # ce qu'ils relisent dans une réponse est ce qu'ils réemploient ensuite.
+                                     message=f"datastore `{datastore}` shared read-only"))
+        # The table's IDENTITY, not an echo of the address received (see `datastore/
+        # identite.py`): `datastore` is its canonical name and `ns_id` its NUMBER.
+        # This is THE handover where the number matters — the agents' loop starts here,
+        # and what they read back in a response is what they reuse afterwards.
         return {**identite.de_releve(store.dernier_tableau, datastore), "row": row,
                 **({"warning": warnings[0]} if warnings else {}),
                 **({} if row else {"hint": _hint_file_vide(perimetre, filter)})}
@@ -1548,12 +1547,12 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(datastore, e)))
         except DatastoreReadOnly:
             raise McpError(ErrorData(code=INVALID_PARAMS,
-                                     message=f"datastore `{datastore}` partagé en lecture seule"))
-        # ⚠️ DEUX situations opposées partageaient ce `false` et cet indice (#517) :
-        # « il n'y avait rien à rendre » (bénin) et « la ligne est à un autre travail »
-        # (échec). Une flotte a branché sa borne d'arrêt dessus et s'est coupée à cinq
-        # fiches sur cent, le 29/08. La réponse porte donc la RAISON — vocabulaire
-        # fermé, lisible par une machine — et l'indice dit LAQUELLE des deux.
+                                     message=f"datastore `{datastore}` shared read-only"))
+        # ⚠️ TWO opposite situations shared this `false` and this hint (#517):
+        # "there was nothing to release" (benign) and "the row belongs to another job"
+        # (failure). A fleet wired its stop limit to it and cut itself off at five
+        # records out of a hundred, on 29/08. The response therefore carries the REASON —
+        # closed vocabulary, machine-readable — and the hint says WHICH of the two.
         return {**identite.de_releve(store.dernier_tableau, datastore),
                 "id": id, "released": issue["released"],
                 "reason": issue["reason"],
@@ -1570,8 +1569,8 @@ def register(mcp: FastMCP) -> None:
         q_scope: recherche.PorteeRecherche | None = None,
         order_by: str | None = None, order_dir: str = "desc",
         filters: Optional[list[dict]] = None, layers: str = dsl.DEFAUT,
-        # ⚠️ `dsver.DEFAUT`, jamais un littéral — même promesse que `layers.DEFAUT` :
-        # le défaut se lit à un seul endroit pour qu'une bascule soit un seul geste.
+        # ⚠️ `dsver.DEFAUT`, never a literal — same promise as `layers.DEFAUT`:
+        # the default is read in one place only so that a switch is a single gesture.
         versions: Optional[list[str]] = None,
         empties: str = dsl.EMPTIES_DEFAUT,
     ) -> dict:
@@ -1636,7 +1635,7 @@ def register(mcp: FastMCP) -> None:
             id: `_id` of one row ; omit = list rows.
             filter: dict `{column: value}` — exact match. A column may instead take
                 ONE operator: `{"posted_at": {"gte": "2026-06-01"}}`,
-                `{"author": {"contains": "sylvie"}}`, `{"status": {"ne": "traité"}}`,
+                `{"author": {"contains": "sylvie"}}`, `{"status": {"ne": "processed"}}`,
                 `{"idcc": {"in": ["573", "86"]}}`, `{"email": {"not_empty": true}}`.
                 Ops: eq, ne, contains, in, gt, gte, lt, lte, empty, not_empty.
                 The system columns are filterable too — `_updated_at`/`_created_at`
@@ -1709,9 +1708,9 @@ def register(mcp: FastMCP) -> None:
             jetons.verifier_champs(fields=fields, filter=filter, filters=filters)
             layers = dsl.check(layers)
             empties = dsl.check_empties(empties)
-            # Refus qui NOMME le paramètre, la valeur reçue et ce qui est admis — il
-            # traverse en INVALID_PARAMS comme les autres refus d'adresse, au seul
-            # moment où l'appelant peut encore corriger.
+            # Refusal that NAMES the parameter, the value received and what is allowed — it
+            # goes out as INVALID_PARAMS like the other address refusals, at the only
+            # moment the caller can still correct.
             vers = dsver.check(versions)
             if count_only:
                 total = store.count_rows(datastore, filter=filter, q=q,
@@ -1720,13 +1719,13 @@ def register(mcp: FastMCP) -> None:
             if id is not None:
                 row = store.get_row(datastore, id, layers=layers,
                                     versions=vers, **dsl.relayer_empties(empties))
-                # ⚠️ Le NUMÉRO ne s'ajoute PAS ici, et c'est délibéré : cette remise
-                # n'a pas d'enveloppe, son corps EST la ligne — et c'est exactement
-                # l'objet que la plateforme invite à relire puis republier tel quel
-                # (promotion de `_id`, #354/#390). Une clé de réponse posée dedans
-                # reviendrait en écriture et y créerait une colonne fantôme, ou
-                # ferait perdre la ligne sur un tableau qui refuse l'inconnu. La page
-                # ci-dessous, elle, a une enveloppe : le numéro y tient sans risque.
+                # ⚠️ The NUMBER is NOT added here, and that is deliberate: this handover
+                # has no envelope, its body IS the row — and it is exactly
+                # the object the platform invites you to re-read and then republish as is
+                # (promotion of `_id`, #354/#390). A response key placed inside it
+                # would come back on write and create a phantom column there, or
+                # make the row get lost on a table that refuses unknown fields. The page
+                # below, on the other hand, has an envelope: the number fits there safely.
                 return _project_row(row, fields) if fields else row
             page = store.cursor_rows(datastore, filter=filter, limit=limit,
                                      cursor=cursor, q=q, q_scope=q_scope,
@@ -1734,83 +1733,83 @@ def register(mcp: FastMCP) -> None:
                                      order_by=order_by, order_dir=order_dir,
                                      layers=layers, versions=vers, fields=fields,
                                      **dsl.relayer_empties(empties))
-            # Projetée dès `cursor_rows` (oto-backend#980, lot 2) : `_row_to_dict` ne
-            # fabrique plus les couches des colonnes non demandées, plutôt que les
-            # fabriquer puis les jeter ici. `page["rows"]` sort déjà à la bonne forme.
+            # Projected from `cursor_rows` onward (oto-backend#980, batch 2): `_row_to_dict` no
+            # longer builds the layers of unrequested columns, rather than
+            # building then discarding them here. `page["rows"]` already comes out in the right shape.
             rows = page["rows"]
             out = {"rows": rows, "count": len(rows),
                    "next_cursor": page["next_cursor"],
-                   # La réponse DÉCLARE ce qu'elle sert : « pas demandée » et « absente
-                   # de cette case » cessent de se ressembler.
-                   # ⚠️ Depuis `vers`, la valeur que CETTE face vient de valider — pas
-                   # depuis la réponse du store. Le relayer ferait dépendre la face
-                   # d'une clé qu'elle connaît déjà, et deux sources pour un même fait
-                   # finissent toujours par diverger.
+                   # The response DECLARES what it serves: "not requested" and "absent
+                   # from this cell" stop looking alike.
+                   # ⚠️ From `vers`, the value THIS face just validated — not
+                   # from the store's response. Relaying it would make the face depend
+                   # on a key it already knows, and two sources for the same fact
+                   # always end up diverging.
                    "versions_servies": list(vers),
                    **identite.numero(store.dernier_tableau)}
-            # Tri typé (#336) : l'écart (valeurs hors type/options, cases vides —
-            # rangées en queue) se DIT, sinon le tri a l'air délibéré et ment.
+            # Typed sort (#336): the gap (values outside type/options, empty cells —
+            # put at the tail) is STATED, otherwise the sort looks deliberate and lies.
             if page.get("order_health"):
                 out["order_health"] = page["order_health"]
-            # Projection sur des colonnes absentes de TOUTES les lignes = même piège
-            # silencieux que le filter (#163) : on le signale sans bloquer.
-            # ⚠️ Le SCHÉMA d'abord, l'échantillon seulement à défaut : une colonne
-            # déclarée mais renseignée sur 12 lignes de 500 est absente d'une page
-            # où aucune des 12 ne figure (dans une row JSONB stockée, une colonne vide
-            # n'existe pas ; la row servie la complète à `null` depuis oto#182, mais
-            # seulement pour le DÉCLARÉ — le reste de ce raisonnement tient). L'annoncer « inconnue — vérifie l'orthographe » ne
-            # rate pas seulement sa cible, ça DÉSIGNE UNE CAUSE FAUSSE : l'appelant
-            # relit son appel, qui est juste, et conclut que le champ n'existe pas.
+            # Projection on columns absent from ALL rows = same silent trap
+            # as the filter (#163): we flag it without blocking.
+            # ⚠️ The SCHEMA first, the sample only as a fallback: a column
+            # declared but filled in on 12 rows out of 500 is absent from a page
+            # where none of the 12 appears (in a stored JSONB row, an empty column
+            # does not exist; the served row fills it in with `null` since oto#182, but
+            # only for the DECLARED ones — the rest of this reasoning holds). Announcing it as "unknown — check the spelling" does
+            # not just miss its target, it POINTS TO A FALSE CAUSE: the caller
+            # re-reads their call, which is correct, and concludes the field does not exist.
             if fields and page["rows"]:
                 present = {k for r in page["rows"] for k in r}
                 declared = dsv2.top_level_keys(store.get_schema(datastore))
                 unknown = [f for f in fields
                            if f != TOUT and f not in present and f not in declared]
-                # Dernier recours AVANT d'accuser : une colonne peut n'être ni
-                # déclarée ni sur cette page, et exister quand même ailleurs dans le
-                # tableau (colonne orpheline d'un renommage). L'appeler « faute
-                # d'orthographe » serait encore désigner une cause fausse. Le relevé
-                # des clés du datastore tranche — et il ne coûte que sur ce chemin-là,
-                # celui où on s'apprête à écrire un avertissement.
+                # Last resort BEFORE accusing: a column may be neither
+                # declared nor on this page, and still exist elsewhere in the
+                # table (orphan column left by a rename). Calling it a "spelling
+                # mistake" would again point to a false cause. The survey
+                # of the datastore's keys settles it — and it only costs on this path,
+                # the one where we are about to write a warning.
                 if unknown:
                     unknown = [f for f in unknown
                                if f not in _datastore_keys(store, datastore)]
-                # QUATRIÈME juge (#350) : une ADRESSE DE COUCHE — `effectif.origine`,
-                # `contact.comment` — est une projection parfaitement valide. Elle
-                # n'apparaît dans `present` que si la couche est renseignée sur AU
-                # MOINS une ligne de la page, et jamais dans `declared` (le schéma
-                # déclare des colonnes, pas leurs couches, qui sont natives et
-                # universelles). Sur une page où la couche est vide partout,
-                # l'avertissement accusait donc une adresse juste — et l'appelant,
-                # relisant un appel correct, en conclut que l'annotation n'existe pas
-                # sur ce tableau. Encore une cause fausse désignée, la troisième de la
-                # journée : le refus doit se taire quand il n'a rien à reprocher.
+                # FOURTH judge (#350): a LAYER ADDRESS — `effectif.origine`,
+                # `contact.comment` — is a perfectly valid projection. It
+                # only appears in `present` if the layer is filled in on AT
+                # LEAST one row of the page, and never in `declared` (the schema
+                # declares columns, not their layers, which are native and
+                # universal). On a page where the layer is empty everywhere,
+                # the warning therefore accused a correct address — and the caller,
+                # re-reading a correct call, concludes the annotation does not exist
+                # on this table. Yet another false cause pointed to, the third of the
+                # day: the refusal must stay silent when it has nothing to reproach.
                 if unknown:
                     unknown = [f for f in unknown
                                if not _adresse_de_couche_valide(f, present, declared)]
                 if unknown:
                     out["warning"] = (
-                        f"colonne(s) de `fields` inconnue(s) dans ce datastore : "
-                        f"{', '.join(unknown)} — vérifie l'orthographe (absentes du résultat)")
-            # 0 résultat filtré ≠ « la donnée n'existe pas » : si une clé du filter
-            # n'apparaît dans AUCUNE ligne échantillonnée, c'est probablement une
-            # colonne mal orthographiée — on le SIGNALE (non bloquant, feedback #163).
+                        f"unknown `fields` column(s) in this datastore: "
+                        f"{', '.join(unknown)} — check the spelling (absent from the result)")
+            # 0 filtered results ≠ "the data does not exist": if a key of the filter
+            # appears in NO sampled row, it is probably a
+            # misspelled column — we FLAG it (non-blocking, feedback #163).
             if (filter or filters) and not out["rows"]:
                 unknown = _unknown_filter_keys(store, datastore, filter, filters)
                 if unknown:
                     out["warning"] = (
-                        f"colonne(s) de filter inconnue(s) dans ce datastore : "
-                        f"{', '.join(sorted(unknown))} — vérifie l'orthographe "
-                        "(0 résultat peut venir de là)")
+                        f"unknown filter column(s) in this datastore: "
+                        f"{', '.join(sorted(unknown))} — check the spelling "
+                        "(0 results may come from that)")
             return out
         except InvalidCursor:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message="`cursor` invalide (repartir sans cursor)"))
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="invalid `cursor` (restart without a cursor)"))
         except DatastoreNotFound as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(datastore, e)))
         except RowNotFound:
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message=_row_not_found_hint(store, datastore, id)))
-        except ValueError as e:  # filtre malformé / opérateur inconnu → actionnable
+        except ValueError as e:  # malformed filter / unknown operator → actionable
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
     @mcp.tool()
@@ -1946,20 +1945,20 @@ def register(mcp: FastMCP) -> None:
         except DatastoreNotFound as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(datastore, e)))
         except DatastoreReadOnly:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"datastore `{datastore}` partagé en lecture seule"))
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"datastore `{datastore}` shared read-only"))
         except RowNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"row `{id}` introuvable"))
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"row `{id}` not found"))
         except RowLocked as e:
-            # #317 : un refus, pas un 500. Sans cette traduction l'agent voit « Erreur
-            # interne du serveur » là où il lui faut QUI tient la ligne, JUSQU'À QUAND,
-            # et COMMENT lever — vécu en production le 15/08, sur une campagne bloquée.
-            # Le message de l'exception porte déjà les trois ; `_row_locked_message` y
-            # ajoute la CAUSE quand elle est prouvée (`_run_id` omis, #547).
+            # #317: a refusal, not a 500. Without this translation the agent sees "Internal
+            # server error" where it needs WHO holds the row, UNTIL WHEN,
+            # and HOW to release — lived in production on 15/08, on a blocked campaign.
+            # The exception's message already carries all three; `_row_locked_message`
+            # adds the CAUSE when it is proven (`_run_id` omitted, #547).
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_row_locked_message(e)))
         except ValueError as e:
-            # `RevisionConflict` (oto#217) et la précondition illisible : leur message
-            # dit ce qui a changé et quoi faire. Sans cette branche elles sortiraient en
-            # « Erreur interne du serveur » — le défaut déjà payé sur `RowLocked`.
+            # `RevisionConflict` (oto#217) and the unreadable precondition: their message
+            # says what changed and what to do. Without this branch they would come out as
+            # "Internal server error" — the defect already paid for on `RowLocked`.
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         return {"ok": True, "id": id}
 
@@ -1998,29 +1997,29 @@ def register(mcp: FastMCP) -> None:
         datastore = _ns(datastore)
         recipient = _destinataire(email, recipient_sub)
 
-        # Le partage est une action de GOUVERNANCE (owner ∪ escalade roles.py).
+        # Sharing is a GOVERNANCE action (owner ∪ roles.py escalation).
         try:
-            # Le store est gardé : la résolution y relève le tableau (numéro + nom
-            # canonique), et c'est ce que la réponse doit porter — pas l'écho de
-            # l'adresse reçue.
+            # The store is guarded: resolution there picks up the table (number +
+            # canonical name), and that is what the response must carry — not an echo of
+            # the address received.
             store_partage = _store_for(sub)
             ns_id = store_partage.resolve_ns_id(datastore)
         except DatastoreNotFound as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(datastore, e)))
         if not ownership.can_govern(sub, ownership.TYPE_RESSOURCE_DATASTORE, str(ns_id)):
             raise McpError(ErrorData(code=INVALID_PARAMS,
-                                     message=f"tu n'as pas le droit de gérer le partage de `{datastore}`"))
+                                     message=f"you are not allowed to manage sharing for `{datastore}`"))
 
-        # Ce qu'on rend nomme le compte SERVI, pas l'argument reçu : appelé par
-        # `recipient_sub`, `email` est vide, et « partagé avec ␣ » serait faux.
-        # `..._sub` est le seul identifiant qui désigne un compte et un seul.
+        # What we return names the account SERVED, not the argument received: when called by
+        # `recipient_sub`, `email` is empty, and "shared with ␣" would be false.
+        # `..._sub` is the only identifier that designates one account and only one.
         cible = recipient.get("email") or recipient["sub"]
 
         if remove:
             removed = ownership.revoke(ownership.TYPE_RESSOURCE_DATASTORE, str(ns_id), "user", recipient["sub"])
             if not removed:
                 raise McpError(ErrorData(code=INVALID_PARAMS,
-                                         message=f"pas de partage actif pour {cible} sur {datastore}"))
+                                         message=f"no active share for {cible} on {datastore}"))
             return {"ok": True,
                     **identite.de_releve(store_partage.dernier_tableau, datastore),
                     "unshared_with": cible,
@@ -2035,17 +2034,17 @@ def register(mcp: FastMCP) -> None:
                 "shared_with": cible,
                 "shared_with_sub": recipient["sub"], "permission": permission}
 
-    # --- MCP App : variante à interface rendue du datastore (SEP-1865) --------
-    # `data_app` rend le contenu d'un datastore INLINE (carte + table triable /
-    # cherchable) au lieu de seulement renvoyer un lien dashboard (`data_url`).
-    # Import OPTIONNEL de prefab_ui (extra `fastmcp[apps]`) : absent → on
-    # n'enregistre pas l'app, les tools JSON ci-dessus suffisent (dégradation
-    # gracieuse, même pattern que foncier.py).
+    # --- MCP App: rendered-UI variant of the datastore (SEP-1865) --------
+    # `data_app` renders a datastore's content INLINE (card + sortable /
+    # searchable table) instead of only returning a dashboard link (`data_url`).
+    # OPTIONAL import of prefab_ui (extra `fastmcp[apps]`): absent → the app is
+    # not registered, the JSON tools above are enough (graceful
+    # degradation, same pattern as foncier.py).
     try:
         from prefab_ui.components import (  # type: ignore
             Card, Column, DataTable, DataTableColumn, Heading, Text,
         )
-    # noqa: SILENT — extra `apps` absent ⇒ pas d'app, les tools JSON suffisent
+    # noqa: SILENT — extra `apps` absent ⇒ no app, the JSON tools are enough
     except Exception:  # pragma: no cover - extra `apps` absent
         return
 
@@ -2058,8 +2057,8 @@ def register(mcp: FastMCP) -> None:
         return isinstance(v, (str, int, float, bool)) or v is None
 
     def _compact(v: object, limit: int = 90) -> str:
-        """Résumé 1-ligne d'une valeur imbriquée pour une cellule DataTable :
-        liste → `n × {aperçu du 1er item}` ; dict → JSON compact. Tronqué."""
+        """1-line summary of a nested value for a DataTable cell:
+        list → `n × {preview of the 1st item}`; dict → compact JSON. Truncated."""
         try:
             if isinstance(v, list):
                 head = json.dumps(v[0], ensure_ascii=False, default=str) if v else ""
@@ -2077,21 +2076,21 @@ def register(mcp: FastMCP) -> None:
                 Text(message)
         return card
 
-    # ── conscience du schéma v2 (ADR 0046) ───────────────────────────────────
-    # Un datastore typé porte des fields imbriqués (`object`/`list` → occupant{},
-    # contacts[], signaux[]) + des rôles `title`/`status` (+ lifecycle). La table
-    # plate collapsait tout ça en `n × {...}` : une fiche perdait sa structure. On
-    # rend donc (1) la liste avec les colonnes DANS L'ORDRE du schéma, (2) une
-    # fiche seule en détail — sous-records dépliés en sous-tables.
+    # ── schema v2 awareness (ADR 0046) ───────────────────────────────────────
+    # A typed datastore carries nested fields (`object`/`list` → occupant{},
+    # contacts[], signaux[]) + `title`/`status` roles (+ lifecycle). The flat
+    # table collapsed all of that into `n × {...}`: a record lost its structure. So we
+    # render (1) the list with the columns IN SCHEMA ORDER, (2) a single
+    # record in detail — sub-records unfolded into sub-tables.
     def _fdefs(schema: Optional[dict]) -> list:
         return [f for f in (schema or {}).get("fields") or [] if isinstance(f, dict)]
 
     def _role_key(schema: Optional[dict], role: str) -> Optional[str]:
-        """La clé du champ qui joue ce rôle à l'écran.
+        """The key of the field that plays this role on screen.
 
-        ⚠️ `title` passe par `dsv2.title_field` (#317) : la désignation vit désormais
-        dans `display`, et cette fonction ne doit pas garder une seconde lecture de
-        `role` — deux chemins pour la même question finissent par diverger."""
+        ⚠️ `title` goes through `dsv2.title_field` (#317): the designation now lives
+        in `display`, and this function must not keep a second reading of
+        `role` — two paths for the same question end up diverging."""
         if role == "title":
             return (dsv2.title_field(schema) or {}).get("key")
         for f in _fdefs(schema):
@@ -2100,9 +2099,9 @@ def register(mcp: FastMCP) -> None:
         return None
 
     def _ordered_keys(schema: Optional[dict], present: list) -> list:
-        """Clés présentes réordonnées selon l'ordre de déclaration du schéma ;
-        les clés hors-schéma (dont les méta) sont appendues en fin. Sans schéma =
-        ordre d'apparition inchangé (comportement 0016)."""
+        """Present keys reordered by the schema's declaration order;
+        keys outside the schema (including meta) are appended at the end. Without a schema =
+        order of appearance unchanged (0016 behavior)."""
         decl = [f["key"] for f in _fdefs(schema) if f.get("key")]
         if not decl:
             return list(present)
@@ -2117,11 +2116,11 @@ def register(mcp: FastMCP) -> None:
 
     def _rows_table(records: list, *, show_meta: bool,
                     schema: Optional[dict] = None) -> None:
-        """Rend une liste de dicts en DataTable triable/cherchable (cellules
-        scalaires uniquement). Les colonnes méta (`_id`/`_created_at`/
-        `_updated_at`) sont masquées par défaut pour une vue épurée — `data_rows`
-        les expose en JSON quand il faut agir (ex. `_id` pour un update). Avec un
-        `schema` v2, les colonnes suivent l'ORDRE de déclaration des fields."""
+        """Render a list of dicts as a sortable/searchable DataTable (scalar
+        cells only). The meta columns (`_id`/`_created_at`/
+        `_updated_at`) are hidden by default for a clean view — `data_rows`
+        exposes them as JSON when you need to act (e.g. `_id` for an update). With a
+        v2 `schema`, the columns follow the fields' declaration ORDER."""
         rows, keys = [], []
         for r in records:
             row = {}
@@ -2129,8 +2128,8 @@ def register(mcp: FastMCP) -> None:
                 if k in _META and not show_meta:
                     continue
                 if not _is_scalar(v):
-                    # Sous-record / liste (schéma v2, ADR 0046) : résumé compact au
-                    # lieu de dropper la colonne (une fiche sans ses contacts[] mentait).
+                    # Sub-record / list (schema v2, ADR 0046): compact summary
+                    # instead of dropping the column (a record without its contacts[] lied).
                     v = _compact(v)
                 row[k] = v
                 if k not in keys:
@@ -2142,16 +2141,16 @@ def register(mcp: FastMCP) -> None:
         DataTable(columns=cols, rows=rows, search=True, paginated=len(rows) > 20, pageSize=20)
 
     def _status_line(schema: Optional[dict], value: object) -> None:
-        """Ligne « Statut : X » enrichie du cycle de vie : (terminal) ou les
-        suites autorisées, pour que l'agent sache quoi faire ensuite."""
-        txt = f"Statut : {value}"
+        """"Status: X" line enriched with the lifecycle: (terminal) or the
+        allowed next states, so the agent knows what to do next."""
+        txt = f"Status: {value}"
         lc = dsv2.lifecycle_of(schema)
         if lc:
             if dsv2.is_terminal_status(schema, value):
                 txt += " (terminal)"
             else:
-                # oto#63 : plus d'enrobage d'une chaîne en liste — un bloc stocké
-                # hors forme est DIT sur la ligne, pas deviné.
+                # oto#63: no more wrapping a string into a list — a stored block
+                # of the wrong shape is STATED on the line, not guessed.
                 try:
                     nxt = (dsv2.table_des_transitions(
                         str(dsv2.status_field(schema)["key"]), lc) or {}).get(
@@ -2160,19 +2159,19 @@ def register(mcp: FastMCP) -> None:
                     txt += f" — {e}"
                     nxt = []
                 if nxt:
-                    txt += f" — suites : {', '.join(nxt)}"
+                    txt += f" — next: {', '.join(nxt)}"
         Text(txt)
 
     def _render_composite(key: str, value: object, fdef: Optional[dict]) -> None:
-        """Déplie un field imbriqué : `list` de sous-records → sous-DataTable ;
-        `list` de scalaires → puces ; `object` → paires clé/valeur. C'est le cœur
-        de l'adaptation v2 (avant, un `contacts[]` finissait en `3 × {...}`)."""
+        """Unfold a nested field: `list` of sub-records → sub-DataTable;
+        `list` of scalars → bullets; `object` → key/value pairs. This is the core
+        of the v2 adaptation (before, a `contacts[]` ended up as `3 × {...}`)."""
         ftype = (fdef or {}).get("type")
         Heading(_label(key))
         if ftype == "list" or isinstance(value, list):
             items = value if isinstance(value, list) else []
             if not items:
-                Text("(vide)")
+                Text("(empty)")
             elif all(isinstance(it, dict) for it in items):
                 _rows_table(items, show_meta=True,
                             schema=(fdef or {}).get("of"))
@@ -2182,22 +2181,22 @@ def register(mcp: FastMCP) -> None:
         elif ftype == "object" or isinstance(value, dict):
             d = value if isinstance(value, dict) else {}
             if not d:
-                Text("(vide)")
+                Text("(empty)")
             else:
                 for k, v in d.items():
-                    Text(f"{_label(k)} : {v if _is_scalar(v) else _compact(v, 200)}")
+                    Text(f"{_label(k)}: {v if _is_scalar(v) else _compact(v, 200)}")
 
     def _fiche_card(record: dict, schema: Optional[dict], url: str,
                     *, show_meta: bool) -> "Card":
-        """Vue DÉTAIL d'UNE fiche : titre (`display="title"`), statut+lifecycle,
-        scalaires en clé/valeur, puis chaque sous-record déplié. La valeur de v2."""
+        """DETAIL view of ONE record: title (`display="title"`), status+lifecycle,
+        scalars as key/value, then each sub-record unfolded. The v2 value-add."""
         by_key = {f["key"]: f for f in _fdefs(schema) if f.get("key")}
         title_key = _role_key(schema, "title")
         status_key = _role_key(schema, "status")
         biz_key = (schema or {}).get("key")
         title = (record.get(title_key) if title_key else None) \
             or (record.get(biz_key) if biz_key else None) \
-            or record.get("_id") or "Fiche"
+            or record.get("_id") or "Record"
         scalars, composites = [], []
         for k in _ordered_keys(schema, list(record.keys())):
             if k in (title_key, status_key):
@@ -2217,15 +2216,15 @@ def register(mcp: FastMCP) -> None:
                 if status_key and record.get(status_key) is not None:
                     _status_line(schema, record.get(status_key))
                 for k, v in scalars:
-                    Text(f"{_label(k)} : {'' if v is None else v}")
-                Text(f"éditer : {url}")
+                    Text(f"{_label(k)}: {'' if v is None else v}")
+                Text(f"edit: {url}")
                 for k, v, fdef in composites:
                     _render_composite(k, v, fdef)
         return card
 
     def _pick_fiche(rows: list, schema: Optional[dict], row: str) -> Optional[dict]:
-        """Retrouve UNE fiche par `row` : match sur `_id`, la clé métier déclarée
-        (`schema.key`), ou la valeur du field titre — le repère naturel pour l'agent."""
+        """Find ONE record by `row`: match on `_id`, the declared business key
+        (`schema.key`), or the title field's value — the agent's natural landmark."""
         biz_key = (schema or {}).get("key")
         title_key = _role_key(schema, "title")
         target = str(row)
@@ -2242,11 +2241,11 @@ def register(mcp: FastMCP) -> None:
         row: str | None = None,
         limit: int = 100,
         show_meta: bool = False,
-    ):  # pas d'annotation de retour `-> Card` : avec `from __future__ import
-        # annotations`, fastmcp résout les hints contre les globals du module au
-        # build du schéma, or `Card` (prefab_ui) est importé LOCAL à register() →
-        # NameError fatal au démarrage (data_app hors try/except de register_all,
-        # crash-loop prod vécu 2026-06-28). Le corps marche par closure. Cf. #69.
+    ):  # no return annotation `-> Card`: with `from __future__ import
+        # annotations`, fastmcp resolves the hints against the module globals at
+        # schema build time, but `Card` (prefab_ui) is imported LOCALLY in register() →
+        # fatal NameError at startup (data_app outside register_all's try/except,
+        # prod crash-loop lived 2026-06-28). The body works through closure. See #69.
         """Rendered datastore browser (MCP App / interactive card).
 
         Visual variant of `data_url` that renders the data INLINE instead of just
@@ -2288,13 +2287,13 @@ def register(mcp: FastMCP) -> None:
             spaces = store.list_datastores()
             if not spaces:
                 return _message_card(
-                    "Aucun datastore",
-                    "Crée-en un avec data_create_datastore, puis écris avec data_write.",
+                    "No datastore",
+                    "Create one with data_create_datastore, then write with data_write.",
                 )
             index = [
                 {"datastore": s["datastore"],
-                 "structure": "typée" if _fdefs(s.get("schema")) else "libre",
-                 "partage": "oui" if s.get("shared") else "non",
+                 "structure": "typed" if _fdefs(s.get("schema")) else "free",
+                 "partage": "yes" if s.get("shared") else "no",
                  "lien": s.get("url", "")}
                 for s in spaces
             ]
@@ -2311,37 +2310,37 @@ def register(mcp: FastMCP) -> None:
             schema = store.get_schema(datastore)
         except DatastoreNotFound:
             return _message_card(
-                "Datastore introuvable",
-                f"Aucun datastore « {datastore} » sur ton compte.",
+                "Datastore not found",
+                f"No datastore “{datastore}” on your account.",
             )
         except ValueError as e:
-            # Filtre mal formé (opérateur inconnu…) : refusé nommément — un tableau
-            # vide ici se lirait « la donnée n'existe pas » (oto#74).
+            # Malformed filter (unknown operator…): refused by name — an empty
+            # table here would read as "the data does not exist" (oto#74).
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
-        # Vue DÉTAIL d'une fiche : `row` explicite, ou `filter` qui isole 1 ligne.
+        # DETAIL view of a record: explicit `row`, or a `filter` that isolates 1 row.
         fiche = None
         if row is not None:
             fiche = _pick_fiche(rows, schema, row)
             if fiche is None:
                 return _message_card(
-                    "Fiche introuvable",
-                    f"Aucune fiche « {row} » dans « {datastore} ».",
+                    "Record not found",
+                    f"No record “{row}” in “{datastore}”.",
                 )
         elif filter and len(rows) == 1:
             fiche = rows[0]
         if fiche is not None:
             return _fiche_card(fiche, schema, url, show_meta=show_meta)
 
-        suffix = f" (filtre {filter})" if filter else ""
+        suffix = f" (filter {filter})" if filter else ""
         with Card() as card:
             with Column(gap=4):
                 Heading(datastore)
-                Text(f"{len(rows)} ligne(s){suffix} · éditer : {url}")
+                Text(f"{len(rows)} row(s){suffix} · edit: {url}")
                 if rows:
                     _rows_table(rows, show_meta=show_meta, schema=schema)
                 elif filter:
-                    Text("Aucune ligne pour ce filtre.")
+                    Text("No rows for this filter.")
                 else:
-                    Text("Aucune ligne.")
+                    Text("No rows.")
         return card

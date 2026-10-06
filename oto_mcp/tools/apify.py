@@ -1,22 +1,22 @@
-"""Apify — louer un scraper déjà écrit plutôt que d'en écrire un (apify.com).
+"""Apify — rent an already-written scraper instead of writing one (apify.com).
 
-Wrappe `oto.tools.apify.client.ApifyClient` (API v2). keyed `api_key` (Bearer),
-byo-only : chaque user/org connecte SON compte — un actor se facture à l'usage.
+Wraps `oto.tools.apify.client.ApifyClient` (API v2). keyed `api_key` (Bearer),
+byo-only: each user/org connects THEIR account — an actor is billed by usage.
 
-Apify n'est pas un scraper mais un **catalogue de scrapers** (les *actors*) : Google
-Maps, LinkedIn, Instagram, Amazon, Booking, TikTok… Chaque actor a son propre JSON
-d'entrée, décrit sur sa fiche du Store. D'où le parcours :
+Apify is not a scraper but a **catalog of scrapers** (the *actors*): Google
+Maps, LinkedIn, Instagram, Amazon, Booking, TikTok… Each actor has its own input
+JSON, described on its Store page. Hence the path:
 
-1. `apify_store_search("google maps")` → trouver l'actor et son identifiant.
-2. `apify_actor(id)` → lire sa fiche (options par défaut, mémoire, timeout).
-3. `apify_run_sync(id, input)` → lancer et récupérer les résultats (≤ 300 s),
-   ou `apify_run` + `apify_run_status` + `apify_dataset_items` pour un job long.
+1. `apify_store_search("google maps")` → find the actor and its identifier.
+2. `apify_actor(id)` → read its card (default options, memory, timeout).
+3. `apify_run_sync(id, input)` → launch and fetch the results (≤ 300 s),
+   or `apify_run` + `apify_run_status` + `apify_dataset_items` for a long job.
 
-Un actor qui tourne coûte : poser `max_items` / `timeout_secs` /
-`max_total_charge_usd` AU LANCEMENT est la seule protection — après, c'est facturé.
+A running actor costs money: setting `max_items` / `timeout_secs` /
+`max_total_charge_usd` AT LAUNCH is the only protection — afterwards, it is billed.
 
-Les appels au client sont écrits en clair (`_client().run(…)`) et non dispatchés par
-nom : c'est ce qui les rend vérifiables par la sonde version-skew.
+Calls to the client are written out in plain (`_client().run(…)`) and not dispatched
+by name: that is what makes them verifiable by the version-skew probe.
 """
 from __future__ import annotations
 
@@ -38,27 +38,27 @@ def _bad(msg: str) -> McpError:
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"Apify a rejeté le token (HTTP {status}) — vérifie la clé configurée "
-                "sur ce connecteur (Apify : Settings → API & Integrations).")
+        return (f"Apify rejected the token (HTTP {status}) — check the key configured "
+                "on this connector (Apify: Settings → API & Integrations).")
     if status == 402:
-        return ("Apify : crédits/plan insuffisants (402) — recharge le compte, ou "
-                "réduis la portée du run (max_items).")
+        return ("Apify: insufficient credits/plan (402) — top up the account, or "
+                "narrow the run's scope (max_items).")
     if status == 404:
-        return (f"Apify : introuvable (404) — vérifie l'identifiant. Un actor s'écrit "
-                f"`username/actor-name` (ou son id), un run/dataset est un id opaque. {e.body}")
+        return (f"Apify: not found (404) — check the identifier. An actor is written "
+                f"`username/actor-name` (or its id), a run/dataset is an opaque id. {e.body}")
     if status == 408:
-        return ("Apify : le run a dépassé les 300 s du mode synchrone — relance avec "
-                "`apify_run`, puis `apify_run_status` et `apify_dataset_items`.")
+        return ("Apify: the run exceeded the 300 s of synchronous mode — relaunch with "
+                "`apify_run`, then `apify_run_status` and `apify_dataset_items`.")
     if status == 429:
-        return "Apify : trop de requêtes (429) — réessaie dans un instant."
+        return "Apify: too many requests (429) — retry in a moment."
     if status in (500, 502, 503, 504):
-        return f"Apify est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Apify a refusé la requête (HTTP {status}): {e.body}"
+        return f"Apify is temporarily unavailable (HTTP {status}) — retry later."
+    return f"Apify refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : liste les actors du compte — appel
-    authentifié, gratuit, qui échoue si le token est invalide."""
+    """"Test the connection" probe: lists the account's actors — an
+    authenticated, free call that fails if the token is invalid."""
     from oto.tools.apify.client import ApifyClient
     ApifyClient(api_key=fields["key"]).actors(limit=1)
 
@@ -75,7 +75,7 @@ def register(mcp: FastMCP) -> None:
 
     @contextmanager
     def _upstream():
-        """Traduit un refus d'Apify en erreur d'outil actionnable."""
+        """Turn an Apify refusal into an actionable tool error."""
         try:
             yield
         except ValueError as e:
@@ -83,7 +83,7 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
 
-    # --- trouver l'actor ----------------------------------------------------
+    # --- find the actor -----------------------------------------------------
 
     @mcp.tool()
     def apify_store_search(
@@ -130,7 +130,7 @@ def register(mcp: FastMCP) -> None:
         with _upstream():
             return _client().actor(actor_id)
 
-    # --- lancer -------------------------------------------------------------
+    # --- launch -------------------------------------------------------------
 
     @mcp.tool()
     def apify_run_sync(
@@ -214,7 +214,7 @@ def register(mcp: FastMCP) -> None:
         with _upstream():
             return _client().abort_run(run_id, gracefully=gracefully)
 
-    # --- lire la sortie -----------------------------------------------------
+    # --- read the output ----------------------------------------------------
 
     @mcp.tool()
     def apify_dataset_items(

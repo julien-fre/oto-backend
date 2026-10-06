@@ -227,7 +227,7 @@ def test_workspace_list_refuses_target_params():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("snitcher_workspace")).fn
-        with pytest.raises(McpError, match="op='list' n'utilise pas"):
+        with pytest.raises(McpError, match="op='list' does not use"):
             fn(op="list", workspace_uuid="ws_1")
         cls.return_value.list_workspaces.assert_not_called()
 
@@ -245,7 +245,7 @@ def test_workspace_me_and_segments():
         cls.return_value.get_me.return_value = {"data": {"name": "J"}}
         assert fn(op="me") == {"data": {"name": "J"}}
 
-        with pytest.raises(McpError, match="requiert .workspace_uuid."):
+        with pytest.raises(McpError, match="requires .workspace_uuid."):
             fn(op="segments")
         cls.return_value.list_segments.return_value = {"data": []}
         fn(op="segments", workspace_uuid="ws_1")
@@ -258,13 +258,13 @@ def test_workspace_create_update_invite_create_tag_required_params():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("snitcher_workspace")).fn
-        with pytest.raises(McpError, match="requiert .url."):
+        with pytest.raises(McpError, match="requires .url."):
             fn(op="create")
-        with pytest.raises(McpError, match="requiert .usage_limit."):
+        with pytest.raises(McpError, match="requires .usage_limit."):
             fn(op="update", workspace_uuid="ws_1")
-        with pytest.raises(McpError, match="requiert .email."):
+        with pytest.raises(McpError, match="requires .email."):
             fn(op="invite", workspace_uuid="ws_1")
-        with pytest.raises(McpError, match="requiert .tag_name."):
+        with pytest.raises(McpError, match="requires .tag_name."):
             fn(op="create_tag", workspace_uuid="ws_1")
 
         cls.return_value.create_workspace.return_value = {"data": {"uuid": "ws_new"}}
@@ -284,10 +284,10 @@ def test_organisation_list_date_exclusivity_and_search():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("snitcher_organisation")).fn
-        with pytest.raises(McpError, match="mutuellement exclusifs"):
+        with pytest.raises(McpError, match="mutually exclusive"):
             fn(workspace_uuid="ws_1", op="list", date="2026-08-01", date_from="2026-07-01")
 
-        with pytest.raises(McpError, match="requiert .filters."):
+        with pytest.raises(McpError, match="requires .filters."):
             fn(workspace_uuid="ws_1", op="search")
 
         filters = {"operator": "AND", "conditions": [
@@ -304,9 +304,9 @@ def test_organisation_get_tag_untag():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("snitcher_organisation")).fn
-        with pytest.raises(McpError, match="requiert .organisation_uuid."):
+        with pytest.raises(McpError, match="requires .organisation_uuid."):
             fn(workspace_uuid="ws_1", op="get")
-        with pytest.raises(McpError, match="requiert .tag_name."):
+        with pytest.raises(McpError, match="requires .tag_name."):
             fn(workspace_uuid="ws_1", op="tag", organisation_uuid="org_1")
 
         cls.return_value.add_organisation_tag.return_value = None
@@ -326,9 +326,9 @@ def test_contact_list_requires_exactly_one_of_org_domain():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("snitcher_contact")).fn
-        with pytest.raises(McpError, match="EXACTEMENT UN"):
+        with pytest.raises(McpError, match="EXACTLY ONE"):
             fn(workspace_uuid="ws_1", op="list")
-        with pytest.raises(McpError, match="EXACTEMENT UN"):
+        with pytest.raises(McpError, match="EXACTLY ONE"):
             fn(workspace_uuid="ws_1", op="list", organisation_uuid="org_1", domain="acme.com")
 
         cls.return_value.list_contacts.return_value = {"data": []}
@@ -343,9 +343,9 @@ def test_contact_reveal_email_requires_contact_uuid():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("snitcher_contact")).fn
-        with pytest.raises(McpError, match="requiert .contact_uuid."):
+        with pytest.raises(McpError, match="requires .contact_uuid."):
             fn(workspace_uuid="ws_1", op="reveal_email")
-        with pytest.raises(McpError, match="n'utilise pas"):
+        with pytest.raises(McpError, match="does not use"):
             fn(workspace_uuid="ws_1", op="reveal_email", contact_uuid="c_1", domain="acme.com")
 
         cls.return_value.reveal_contact_email.return_value = {"data": {"email": "j@acme.com"}}
@@ -361,7 +361,7 @@ def test_session_routes_to_org_or_workspace_endpoint():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("snitcher_session")).fn
-        with pytest.raises(McpError, match="mutuellement exclusifs"):
+        with pytest.raises(McpError, match="mutually exclusive"):
             fn(workspace_uuid="ws_1", date="2026-08-01", date_to="2026-08-10")
         with pytest.raises(McpError, match="workspace-wide"):
             fn(workspace_uuid="ws_1", organisation_uuid="org_1", segment_uuid="seg_1")
@@ -383,11 +383,11 @@ def test_custom_field_definition_ops():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("snitcher_custom_field")).fn
-        with pytest.raises(McpError, match="requiert .name. et .type."):
+        with pytest.raises(McpError, match="requires .name. and .type."):
             fn(workspace_uuid="ws_1", op="create")
-        with pytest.raises(McpError, match="requiert .key."):
+        with pytest.raises(McpError, match="requires .key."):
             fn(workspace_uuid="ws_1", op="get")
-        with pytest.raises(McpError, match="immuable"):
+        with pytest.raises(McpError, match="immutable"):
             fn(workspace_uuid="ws_1", op="update", key="tier", type="text")
 
         cls.return_value.create_custom_field.return_value = {"data": {"key": "industry"}}
@@ -403,11 +403,11 @@ def test_custom_field_value_ops_require_organisation():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("snitcher_custom_field")).fn
-        with pytest.raises(McpError, match="requiert .organisation_uuid."):
+        with pytest.raises(McpError, match="requires .organisation_uuid."):
             fn(workspace_uuid="ws_1", op="values")
-        with pytest.raises(McpError, match="requiert .key. et .value."):
+        with pytest.raises(McpError, match="requires .key. and .value."):
             fn(workspace_uuid="ws_1", op="set", organisation_uuid="org_1")
-        with pytest.raises(McpError, match="requiert .values."):
+        with pytest.raises(McpError, match="requires .values."):
             fn(workspace_uuid="ws_1", op="set_many", organisation_uuid="org_1")
 
         cls.return_value.set_custom_field_value.return_value = {"data": {}}

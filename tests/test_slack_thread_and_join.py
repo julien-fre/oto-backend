@@ -192,7 +192,7 @@ def test_un_canal_PRIVE_est_refuse_SANS_meme_tenter_de_le_rejoindre(slack):
     with pytest.raises(ValueError) as e:
         _fn(m, "slack_join_channel")(channel="C0BHBS9CCD6")
     msg = str(e.value)
-    assert "privé" in msg and "/invite" in msg
+    assert "private" in msg and "/invite" in msg
     assert "product-core" in msg
     client.join_channel.assert_not_called()
 
@@ -225,7 +225,7 @@ def test_un_canal_introuvable_dit_les_DEUX_causes_possibles(slack):
     with pytest.raises(ValueError) as e:
         _fn(m, "slack_join_channel")(channel="C000000DEAD")
     msg = str(e.value)
-    assert "privé" in msg and "/invite" in msg and "slack_list_channels" in msg
+    assert "private" in msg and "/invite" in msg and "slack_list_channels" in msg
 
 
 # --- les refus : actionnables, et hors du bruit Sentry -------------------------
@@ -242,7 +242,7 @@ def test_missing_scope_nomme_le_droit_que_SLACK_dit_manquer(slack):
     msg = str(e.value)
     assert "groups:history" in msg          # le droit exact, nommé
     assert "OAuth & Permissions" in msg     # où le donner
-    assert "réinstall" in msg.lower()       # et pourquoi ça ne suffit pas de l'ajouter
+    assert "reinstallation" in msg.lower()       # et pourquoi ça ne suffit pas de l'ajouter
     assert "chat:write,im:history" in msg   # ce que Slack a vu, pour lever le doute
 
 
@@ -254,7 +254,7 @@ def test_missing_scope_sans_needed_n_invente_aucun_scope(slack):
     with pytest.raises(ValueError) as e:
         _fn(m, "slack_read_thread")(channel="C1", thread_ts="1.1")
     msg = str(e.value)
-    assert "ne nomme pas" in msg and "history" not in msg
+    assert "does not name which" in msg and "history" not in msg
 
 
 def test_not_in_channel_donne_les_deux_gestes_selon_le_type_de_canal(slack):

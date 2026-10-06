@@ -1,34 +1,34 @@
-"""Sélecteur d'identité connectée (ADR 0024) — surface unifiée « lister / choisir
-une identité », backend PAR CONNECTEUR.
+"""Connected-identity selector (ADR 0024) — unified "list / choose an identity"
+surface, with a backend PER CONNECTOR.
 
-Trois modèles de stockage coexistent derrière la même surface (on n'en force pas un
-seul — l'unification est au niveau surface, pas stockage) :
-- **Google** : N credentials du coffre (`account=email`), défaut = `meta.is_default`.
-- **Unipile** : 1 clé → N identités distantes (handles opaques renvoyés par l'API),
-  choix per-canal dans `unipile_accounts`. **BYO-only** : sous clé plateforme (revente)
-  on garde le hosted-auth qui crée un compte dédié (pas d'exposition cross-client).
-- **Backend déclaré par le connecteur** (`register()`, patron `browser_session`) :
-  la logique d'énumération vit dans SON module `tools/<name>.py` (ex. `pennylaneged` :
-  les sociétés du cabinet = les GED cibles), le défaut dans le `meta` du credential.
+Three storage models coexist behind the same surface (we don't force a single one —
+the unification is at the surface level, not the storage level):
+- **Google**: N vault credentials (`account=email`), default = `meta.is_default`.
+- **Unipile**: 1 key → N remote identities (opaque handles returned by the API),
+  per-channel choice in `unipile_accounts`. **BYO-only**: under a platform key (resale)
+  we keep the hosted-auth that creates a dedicated account (no cross-client exposure).
+- **Backend declared by the connector** (`register()`, `browser_session` pattern):
+  the enumeration logic lives in ITS OWN module `tools/<name>.py` (e.g. `pennylaneged`:
+  the firm's companies = the target GEDs), the default in the credential's `meta`.
 
-Contrat commun `Identity` = `{id, label, status, is_default, channel}` (`channel` None
-hors multi-canal — fuite assumée : unipile est par-canal, Google par-service). Champs
-additifs pour un compte PARTAGÉ (#55) : `granted=True` + `owner={sub,email,name}`, plus
-`via_group={id,name}` si l'accès vient d'un groupe (extension 2026-09, `None` sinon) —
-le `label` le préfère à `owner` quand présent : « équipe Croissance » identifie mieux
-un compte partagé que le nom de qui l'a historiquement connecté.
+Common `Identity` contract = `{id, label, status, is_default, channel}` (`channel` None
+outside multi-channel — accepted leak: unipile is per-channel, Google per-service).
+Additive fields for a SHARED account (#55): `granted=True` + `owner={sub,email,name}`,
+plus `via_group={id,name}` if the access comes from a group (2026-09 extension, `None`
+otherwise) — the `label` prefers it over `owner` when present: "Growth team" identifies
+a shared account better than the name of whoever historically connected it.
 
-**Comptes accordés (otomata-private#55)** : un compte dont le propriétaire a accordé
-l'opération au user (`connector_account_grants`) apparaît dans la liste et peut être
-sélectionné — la sélection pose le pointeur `unipile_operated_accounts` (elle ne touche
-JAMAIS la ligne de connexion `unipile_accounts` du grantee). La validation du select
-d'un compte accordé = le grant lui-même (deny-by-default), pas `cli.list_accounts`
-(en revente le grantee n'a pas de clé BYO). Résolution à l'appel :
-`resolve_operated_account_id` (revalidée contre les grants vivants, backstop dur).
+**Granted accounts (otomata-private#55)**: an account whose owner granted the operation
+to the user (`connector_account_grants`) appears in the list and can be selected —
+the selection sets the `unipile_operated_accounts` pointer (it NEVER touches the
+grantee's `unipile_accounts` connection row). Validation of the select for a granted
+account = the grant itself (deny-by-default), not `cli.list_accounts` (under resale the
+grantee has no BYO key). Resolution at call time: `resolve_operated_account_id`
+(revalidated against live grants, hard backstop).
 
-⚠️ Un backend enregistré peut être **async** (ex. exécution Browserbase) :
-`list_identities`/`select_identity` renvoient alors un awaitable — les capacités
-(`capabilities/connectors/identities.py`) awaitent le résultat le cas échéant.
+⚠️ A registered backend may be **async** (e.g. Browserbase execution):
+`list_identities`/`select_identity` then return an awaitable — the capabilities
+(`capabilities/connectors/identities.py`) await the result when applicable.
 """
 from __future__ import annotations
 
@@ -36,31 +36,31 @@ import asyncio
 
 
 def _tableau_de_bord(sub) -> str:
-    """Le tableau de bord de CE compte — celui de son produit, pas le nôtre.
+    """The dashboard of THIS account — that of its product, not ours.
 
-    Import tardif, comme tout le reste de ce module."""
+    Late import, like everything else in this module."""
     from .. import config
     return config.dashboard_url_for(sub)
 
-# oto-backend#867 — délai DÉFENDABLE pour UN appel HTTP Unipile hors boucle,
-# borné côté backend (le client oto-core n'expose pas de `timeout` par appel :
-# son défaut est `(10, 120)` — 120s de LECTURE, mesuré responsable d'un gel de
-# production de 87.8s le 04/09). Mesuré sur les jours « chroniques » de cet
-# endpoint : 2-4s en temps normal, 19.9-23.3s les jours lents qui répondaient
-# quand même, 46.2-87.9s les jours qui ont gelé la boucle. 25s couvre la quasi-
-# totalité des réponses réelles observées et coupe fermement les deux pires.
+# oto-backend#867 — DEFENSIBLE timeout for ONE off-loop Unipile HTTP call,
+# bounded on the backend side (the oto-core client exposes no per-call `timeout`:
+# its default is `(10, 120)` — 120s of READ, measured as responsible for a
+# production freeze of 87.8s on 04/09). Measured on the "chronic" days of this
+# endpoint: 2-4s normally, 19.9-23.3s on slow days that still answered,
+# 46.2-87.9s on the days that froze the loop. 25s covers nearly all of the
+# real responses observed and firmly cuts the two worst.
 _UNIPILE_TIMEOUT_S = 25
 
 
 async def _call_unipile(fn, *args):
-    """Un appel Unipile (méthode SYNC du client oto-core), hors boucle et borné.
+    """One Unipile call (SYNC method of the oto-core client), off-loop and bounded.
 
-    `asyncio.to_thread` le sort de la boucle d'événements (sinon TOUT le
-    processus — MCP, REST, sondes de veille — attend Unipile, #867).
-    `asyncio.wait_for` le borne à `_UNIPILE_TIMEOUT_S` : au-delà, lève
-    `TimeoutError` — le thread continue en arrière-plan jusqu'à sa vraie fin
-    (impossible d'interrompre un `requests` en cours), mais l'APPELANT reçoit
-    une erreur nommée au lieu d'un gel."""
+    `asyncio.to_thread` takes it out of the event loop (otherwise the WHOLE
+    process — MCP, REST, standby probes — waits on Unipile, #867).
+    `asyncio.wait_for` bounds it to `_UNIPILE_TIMEOUT_S`: beyond that, it raises
+    `TimeoutError` — the thread keeps running in the background until it truly ends
+    (an in-flight `requests` call can't be interrupted), but the CALLER gets
+    a named error instead of a freeze."""
     return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout=_UNIPILE_TIMEOUT_S)
 
 
@@ -69,10 +69,10 @@ def supports(connector: str) -> bool:
 
 
 def register(connector: str, lister, selector) -> None:
-    """Déclare le backend d'identités d'un connecteur (appelé à l'import de son
-    module `tools/*`, comme `browser_session.register`). `lister(sub)` →
-    list[Identity] ; `selector(sub, identity_id)` → Identity (ValueError si l'id
-    n'est pas joignable par le credential — anti-binding). Sync ou async."""
+    """Declares a connector's identity backend (called on import of its
+    `tools/*` module, like `browser_session.register`). `lister(sub)` →
+    list[Identity]; `selector(sub, identity_id)` → Identity (ValueError if the id
+    is not reachable by the credential — anti-binding). Sync or async."""
     _LISTERS[connector] = lister
     _SELECTORS[connector] = selector
 
@@ -81,12 +81,12 @@ SCOPES = ("member", "org", "group")
 
 
 def list_identities(sub: str, connector: str, scope: str = "member"):
-    """Identités joignables par le credential résolu du `sub` pour `connector`.
-    [] si non supporté (ou rien à choisir, ex. clé plateforme unipile). Peut
-    renvoyer un awaitable (backend async enregistré via `register`).
-    `scope` (Phase 2) : `org`/`group` listent les comptes nommés du palier partagé
-    — backend keyed générique seulement ; les backends spécifiques (google,
-    unipile) sont par-membre, un autre scope y répond []."""
+    """Identities reachable by the `sub`'s resolved credential for `connector`.
+    [] if unsupported (or nothing to choose, e.g. unipile platform key). May
+    return an awaitable (async backend registered via `register`).
+    `scope` (Phase 2): `org`/`group` list the named accounts of the shared tier
+    — generic keyed backend only; the specific backends (google,
+    unipile) are per-member, another scope gets []."""
     fn = _LISTERS.get(connector)
     if not fn:
         return []
@@ -96,38 +96,38 @@ def list_identities(sub: str, connector: str, scope: str = "member"):
 
 
 def select_identity(sub: str, connector: str, identity_id: str, scope: str = "member"):
-    """Choisit l'identité `identity_id`. Lève `ValueError` si non supporté ou si
-    l'id n'existe pas pour ce credential (anti-binding arbitraire). Peut renvoyer
-    un awaitable (backend async enregistré via `register`). `scope` : cf.
-    `list_identities` ; le contrôle d'accès du palier partagé (admin d'org /
-    d'équipe) vit dans la capacité, pas ici."""
+    """Chooses the identity `identity_id`. Raises `ValueError` if unsupported or if
+    the id doesn't exist for this credential (anti arbitrary binding). May return
+    an awaitable (async backend registered via `register`). `scope`: see
+    `list_identities`; the access control of the shared tier (org /
+    team admin) lives in the capability, not here."""
     fn = _SELECTORS.get(connector)
     if not fn:
-        raise ValueError(f"Le connecteur `{connector}` ne gère pas le choix de compte.")
+        raise ValueError(f"The connector `{connector}` does not support account selection.")
     if scope != "member":
         if connector not in _KEYED:
-            raise ValueError(f"Le connecteur `{connector}` n'a de comptes qu'au palier membre.")
+            raise ValueError(f"The connector `{connector}` only has accounts at the member tier.")
         return fn(sub, identity_id, scope)
     return fn(sub, identity_id)
 
 
-# --- Google : N credentials du coffre (account=email) -----------------------
+# --- Google: N vault credentials (account=email) ----------------------------
 
 def _google_list(sub: str, service: "str | None" = None) -> list[dict]:
-    """Les comptes Google du membre — TOUS pour le compte, ceux qui ont AUTORISÉ
-    `service` pour la carte d'un service (split du 2026-09-26) : `oto_identity(
-    connector='drive')` ne doit pas proposer un compte que `drive_file` refusera."""
+    """The member's Google accounts — ALL of them for the account, those that
+    AUTHORIZED `service` for a service's card (split of 2026-09-26): `oto_identity(
+    connector='drive')` must not offer an account that `drive_file` will refuse."""
     from ..auth import google as google_oauth
     ok = (lambda a: a.get("google_email") and (
         service is None or service in google_oauth.services_granted(a.get("scopes"))))
     mine = [{"id": a["google_email"], "label": a["google_email"], "status": "ok",
              "is_default": a["is_default"], "channel": None}
             for a in google_oauth.list_accounts(sub) if ok(a)]
-    # Les comptes PARTAGÉS par l'équipe ou l'org (2026-09-27) : joignables par
-    # `_account=`, étiquetés comme tels — jamais le défaut du membre (il reste le sien).
+    # Accounts SHARED by the team or org (2026-09-27): reachable via
+    # `_account=`, labeled as such — never the member's default (it stays their own).
     vus = {i["id"] for i in mine}
     partages = [{"id": a["google_email"],
-                 "label": f"{a['google_email']} (partagé : {'équipe' if a.get('scope') == 'group' else 'org'})",
+                 "label": f"{a['google_email']} (shared: {'team' if a.get('scope') == 'group' else 'org'})",
                  "status": "ok", "is_default": False, "channel": None, "shared": a.get("scope")}
                 for a in google_oauth.list_shared_accounts(sub)
                 if ok(a) and a["google_email"] not in vus]
@@ -138,21 +138,21 @@ def _google_select(sub: str, identity_id: str) -> dict:
     from .. import access, db
     org = access.current_org(sub)
     if org is None or not db.set_default_google_account(sub, org, identity_id):
-        raise ValueError(f"Compte Google inconnu : {identity_id}")
+        raise ValueError(f"Unknown Google account: {identity_id}")
     return {"id": identity_id, "is_default": True, "channel": None}
 
 
-# --- Unipile : 1 clé → N identités distantes (BYO-only) ---------------------
-# + comptes ACCORDÉS par leur propriétaire (#55, tout mode — y compris revente).
+# --- Unipile: 1 key → N remote identities (BYO-only) ------------------------
+# + accounts GRANTED by their owner (#55, any mode — including resale).
 
 def _own_unipile_account_id(sub: str, provider: str) -> str | None:
-    """Compte Unipile connecté PROPRE de `sub` sur ce canal — le binding VIVANT de
-    l'org de contexte (le binding est un ACTE par org, modèle explicite : un siège
-    plateforme connecté ailleurs se propose à l'ADOPTION au connect, jamais en
-    fallback silencieux ici — l'ex-#221 auto a été retiré, il rendait le disconnect
-    incohérent). Seul cross-org restant : **BYO** (#172) — la clé membre me suit dans
-    une autre org → compte pris dans la MÊME org que la clé (`personal_instance_org`),
-    clé et compte appariés. None si aucun."""
+    """`sub`'s OWN connected Unipile account on this channel — the LIVE binding of
+    the context org (the binding is an ACT per org, explicit model: a platform seat
+    connected elsewhere is offered for ADOPTION at connect, never as a silent
+    fallback here — the former auto #221 was removed, it made disconnect
+    inconsistent). Only remaining cross-org case: **BYO** (#172) — the member key
+    follows me into another org → account taken from the SAME org as the key
+    (`personal_instance_org`), key and account paired. None if there is none."""
     from .. import access, providers, db
     org = access.current_org(sub)
     acc = db.get_unipile_account_id(sub, org, provider)
@@ -166,8 +166,8 @@ def _own_unipile_account_id(sub: str, provider: str) -> str | None:
 
 
 def _own_account_ids(sub: str, provider: str) -> set[str]:
-    """Tous les `account_id` VIVANTS propres au sub sur ce canal (toutes orgs) — set
-    de garde du pin `_account=` (le sien, en plus des comptes accordés)."""
+    """All of the sub's own LIVE `account_id`s on this channel (all orgs) — guard
+    set for the `_account=` pin (their own, in addition to granted accounts)."""
     from .. import db
     p = provider.upper()
     return {a["account_id"] for a in db.list_unipile_accounts(sub)
@@ -175,12 +175,12 @@ def _own_account_ids(sub: str, provider: str) -> set[str]:
 
 
 def refuser_si_preteur_en_pause(sub: str, provider: str, account_id: str) -> None:
-    """Lève `PreteurEnPause` si `account_id` est prêté à `sub` par un compte EN PAUSE.
+    """Raises `PreteurEnPause` if `account_id` is lent to `sub` by a PAUSED account.
 
-    À appeler là où un compte prêté n'est pas (ou plus) opérable, AVANT le refus
-    générique : sans elle, la pause du prêteur se lirait « autorisation révoquée ou
-    compte déconnecté », et le bénéficiaire irait redemander un prêt qui n'a jamais
-    été retiré (#898, arbitrage du 23/09/2026 : option A)."""
+    To be called wherever a lent account is not (or no longer) operable, BEFORE the
+    generic refusal: without it, the lender's pause would read as "authorization
+    revoked or account disconnected", and the beneficiary would go ask again for a
+    loan that was never withdrawn (#898, decision of 23/09/2026: option A)."""
     from .. import db
     preteur = db.suspended_lenders_for(sub, provider).get(account_id)
     if preteur:
@@ -188,8 +188,8 @@ def refuser_si_preteur_en_pause(sub: str, provider: str, account_id: str) -> Non
 
 
 def _preteur_en_pause(pret: dict, provider: str, account_id: str):
-    """Le refus nommé d'un prêt retenu, depuis une ligne de prêt (`owner_sub`,
-    `owner_email`) — un seul libellé pour les deux chemins qui le lèvent."""
+    """The named refusal of a withheld loan, from a loan row (`owner_sub`,
+    `owner_email`) — a single wording for the two paths that raise it."""
     from .. import account_suspension
     return account_suspension.PreteurEnPause(
         pret.get("owner_email") or pret["owner_sub"],
@@ -197,20 +197,20 @@ def _preteur_en_pause(pret: dict, provider: str, account_id: str):
 
 
 def resolve_operated_account_id(sub: str, provider: str) -> str | None:
-    """Compte Unipile opéré par `sub` sur ce canal (LE point de résolution #55/0051).
+    """Unipile account operated by `sub` on this channel (THE #55/0051 resolution point).
 
-    **Pin d'appel `_account=` (ADR 0051)** : identité opérée épinglée POUR
-    CET APPEL — prime sur le pointeur maison, ÉPHÉMÈRE (aucun état écrit). Gardé :
-    compte ACCORDÉ (#55 vivant) OU compte PROPRE du sub ; un pin non opérable LÈVE
-    (jamais de repli muet sur une autre identité).
+    **Call pin `_account=` (ADR 0051)**: operated identity pinned FOR THIS
+    CALL — takes precedence over the home pointer, EPHEMERAL (no state written).
+    Guarded: GRANTED account (live #55) OR the sub's OWN account; a non-operable pin
+    RAISES (never a silent fallback to another identity).
 
-    Sinon, pointeur « identité maison » posé → REVALIDÉ contre les grants VIVANTS à
-    chaque appel (révocation ou déconnexion du owner = effet immédiat, backstop
-    dur). Pointeur invalide → `ValueError` EXPLICITE, jamais de repli silencieux
-    sur le compte propre : l'agent croirait agir comme le owner et agirait comme
-    soi (un message parti sous la mauvaise identité est irréversible).
-    Pas de pin ni de pointeur → compte connecté propre (org de contexte OU instance
-    perso cross-org, #172)."""
+    Otherwise, a "home identity" pointer set → REVALIDATED against LIVE grants on
+    every call (owner revocation or disconnection = immediate effect, hard
+    backstop). Invalid pointer → EXPLICIT `ValueError`, never a silent fallback
+    to the own account: the agent would believe it acts as the owner and would act
+    as itself (a message sent under the wrong identity is irreversible).
+    No pin and no pointer → own connected account (context org OR cross-org
+    personal instance, #172)."""
     from .. import db, session_org
     pin = session_org.current_call_account()
     if pin:
@@ -218,27 +218,27 @@ def resolve_operated_account_id(sub: str, provider: str) -> str | None:
             return pin
         refuser_si_preteur_en_pause(sub, provider, pin)
         raise ValueError(
-            f"Le compte {provider.title()} épinglé (`_account=`) n'est ni le "
-            "tien ni un compte qui t'est accordé — ou il n'est plus opérable. Liste les "
-            "identités opérables avec oto_identity(op='list').")
+            f"The pinned {provider.title()} account (`_account=`) is neither "
+            "yours nor an account granted to you — or it is no longer operable. List the "
+            "operable identities with oto_identity(op='list').")
     op = db.get_operated_account(sub, provider)
     if op:
         if op["account_id"] in db.granted_accounts_for(sub, provider):
             return op["account_id"]
-        # Le pointeur N'EST PAS effacé : c'est lui qui fait revenir le prêt au réveil.
+        # The pointer is NOT cleared: it's what makes the loan come back on wake-up.
         refuser_si_preteur_en_pause(sub, provider, op["account_id"])
         raise ValueError(
-            f"Le compte {provider.title()} qui t'était accordé n'est plus opérable "
-            "(autorisation révoquée ou compte déconnecté par son propriétaire). "
-            "Resélectionne ton identité (oto_identity(op='set') ou "
+            f"The {provider.title()} account that was granted to you is no longer operable "
+            "(authorization revoked or account disconnected by its owner). "
+            "Reselect your identity (oto_identity(op='set') or "
             f"{_tableau_de_bord(sub)}/console/connectors).")
     return _own_unipile_account_id(sub, provider)
 
 
 def _unipile_chosen(sub: str, provider: str) -> str | None:
-    """Compte effectivement opéré pour l'affichage `is_default` (pointeur valide
-    sinon compte propre) — version fail-soft de `resolve_operated_account_id`
-    (une liste d'identités ne doit pas lever sur un pointeur orphelin)."""
+    """Account actually operated, for the `is_default` display (valid pointer,
+    otherwise own account) — fail-soft version of `resolve_operated_account_id`
+    (an identity list must not raise on an orphaned pointer)."""
     from .. import db
     op = db.get_operated_account(sub, provider)
     if op and op["account_id"] in db.granted_accounts_for(sub, provider):
@@ -247,34 +247,34 @@ def _unipile_chosen(sub: str, provider: str) -> str | None:
 
 
 def _unipile_client(sub: str):
-    """(client, byo) — résout clé+DSN du credential BYO ; None si non-BYO/absent."""
+    """(client, byo) — resolves key+DSN of the BYO credential; None if non-BYO/absent."""
     from .. import access
     if access.credential_mode_for(sub, "unipile") not in access.BYO_MODES:
-        return None  # revente (clé plateforme) → hosted-auth, pas de sélecteur
+        return None  # resale (platform key) → hosted-auth, no selector
     rc = access.resolve_credential("unipile", want="byo", sub=sub)
     from oto.tools.unipile import make_unipile_client
-    # dsn apparié à la clé (défaut api.unipile.com côté oto-core) — une clé qui vit
-    # sur un tenant distinct porte son dsn dans la config du credential.
+    # dsn paired with the key (default api.unipile.com on the oto-core side) — a key that lives
+    # on a distinct tenant carries its dsn in the credential's config.
     return make_unipile_client(api_key=rc.key, dsn=rc.config.get("dsn"))
 
 
 async def _unipile_live_status_map(sub: str) -> dict:
-    """Statut LIVE des comptes hébergés, lu sur la clé PLATEFORME Unipile :
+    """LIVE status of hosted accounts, read on the Unipile PLATFORM key:
     `{account_id: status}`.
 
-    Le mode revente / hosted-auth persiste les comptes en DB et n'interroge PAS
-    Unipile → un compte réellement mort (checkpoint, credentials expirés, révoqué
-    par l'utilisateur) affichait « ok » à tort (#201). Le vrai statut n'est lisible
-    qu'en listant les comptes de l'abonnement (`list_accounts().sources[].status`).
+    The resale / hosted-auth mode persists accounts in the DB and does NOT query
+    Unipile → a really dead account (checkpoint, expired credentials, revoked
+    by the user) wrongly displayed "ok" (#201). The real status is only readable
+    by listing the subscription's accounts (`list_accounts().sources[].status`).
 
-    ⚠️ Mais ce `sources[].status` de compte peut LUI AUSSI rester « OK » alors que
-    la SESSION est morte (checkpoint / cookie li_at tourné) → un vrai appel se prend
-    un 401 mais la carte disait « connecté » (#236). On confirme donc la liveness
-    par une sonde `account_alive` (GET users/me → 401 = mort) et on rétrograde en
-    'disconnected'. Chemin PICKER d'identités SEUL (hors boucle /api/me chaude —
-    budget assumé, un appel users/me par compte hébergé, au clic sur le sélecteur).
-    Fail-soft : `{}` si indisponible (l'appelant retombe sur « ok », comportement
-    d'avant) ; sonde best-effort PAR compte (un incident garde le status de compte)."""
+    ⚠️ But this account `sources[].status` can ITSELF stay "OK" while
+    the SESSION is dead (checkpoint / rotated li_at cookie) → a real call gets
+    a 401 but the card said "connected" (#236). So we confirm liveness
+    with an `account_alive` probe (GET users/me → 401 = dead) and downgrade to
+    'disconnected'. Identity PICKER path ONLY (outside the hot /api/me loop —
+    accepted budget, one users/me call per hosted account, on clicking the selector).
+    Fail-soft: `{}` if unavailable (the caller falls back to "ok", the
+    previous behavior); best-effort probe PER account (an incident keeps the account status)."""
     from .. import access
     try:
         rc = access.resolve_credential("unipile", want="auto", sub=sub)
@@ -286,30 +286,30 @@ async def _unipile_live_status_map(sub: str) -> dict:
             if not aid:
                 continue
             status = (a.get("sources") or [{}])[0].get("status")
-            try:  # sonde de vraie liveness (#236) : users/me 401 = session morte
+            try:  # real liveness probe (#236): users/me 401 = dead session
                 if not await _call_unipile(cli.account_alive, aid):
                     status = "disconnected"
-            # noqa: SILENT — best-effort : garde le statut de compte sur incident de sonde
+            # noqa: SILENT — best-effort: keeps the account status on probe incident
             except Exception:
-                pass  # best-effort : garde le status de compte sur incident sonde
+                pass  # best-effort: keeps the account status on probe incident
             out[aid] = status
         return out
-    # noqa: SILENT — sonde de statut live indisponible ⇒ statut stocké conservé
+    # noqa: SILENT — live status probe unavailable ⇒ stored status kept
     except Exception:
         return {}
 
 
 async def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
-    """Identités hébergées joignables par `sub`. `canal` (LINKEDIN/WHATSAPP/…) =
-    ne rendre que celles de CE canal — ce que voit la carte d'un connecteur de canal
-    depuis le split du 2026-08-28. None = tous les canaux (chemin d'appel qui ne
-    connaît pas de canal)."""
+    """Hosted identities reachable by `sub`. `canal` (LINKEDIN/WHATSAPP/…) =
+    return only those of THIS channel — what a channel connector's card sees
+    since the 2026-08-28 split. None = all channels (call path that doesn't
+    know a channel)."""
     from .. import db
     granted = [g for g in db.list_account_grants_to(sub) if g.get("active")]
     out = []
     cli = _unipile_client(sub)
-    # Statut live des comptes hébergés (clé plateforme), résolu au plus une fois et
-    # seulement si un compte non-BYO le requiert (#201). Fail-soft → "ok".
+    # Live status of hosted accounts (platform key), resolved at most once and
+    # only if a non-BYO account requires it (#201). Fail-soft → "ok".
     _live: dict = {}
 
     async def _live_status(account_id: str) -> str:
@@ -318,23 +318,23 @@ async def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
         return _live["map"].get(account_id) or "ok"
 
     def _statut_mesure(account_id: str) -> bool:
-        """La sonde a-t-elle RÉPONDU pour ce compte ?
+        """Did the probe ANSWER for this account?
 
-        oto#42, règle 1 : une valeur qu'on n'a pas pu établir n'est jamais rendue
-        par son défaut — et « ok » est le pire des défauts, il affirme que ça
-        marche. La sonde est fail-soft (map vide si elle échoue en bloc, compte
-        absent si elle a échoué pour lui seul), et l'appelant retombait alors sur
-        « ok » sans qu'aucune trace ne l'en avertisse : un compte réellement mort
-        s'affichait connecté, ce qui est le défaut #201/#236 par un troisième
-        chemin — celui de la PANNE DE SONDE, pas celui du statut périmé.
-        On ne change pas la valeur servie (le front la lit), on dit si elle a été
-        MESURÉE. Faux ⟹ `status` est le statut stocké, pas un constat."""
+        oto#42, rule 1: a value we couldn't establish is never rendered
+        by its default — and "ok" is the worst of defaults, it asserts that it
+        works. The probe is fail-soft (empty map if it fails wholesale, account
+        missing if it failed for it alone), and the caller then fell back on
+        "ok" without any trace warning it: a really dead account
+        showed up as connected, which is the #201/#236 defect through a third
+        path — that of the PROBE OUTAGE, not that of the stale status.
+        We don't change the served value (the front reads it), we say whether it was
+        MEASURED. False ⟹ `status` is the stored status, not an observation."""
         return account_id in _live.get("map", {})
-    if cli is not None:  # BYO : les comptes de la clé (liste existante)
-        # oto-backend#867 — NE PLUS avaler l'échec : c'est ICI la liste elle-même
-        # (pas une sonde de statut annexe), donc un Unipile lent ou en panne doit
-        # rendre une erreur nommée (`_list`, capabilities/connectors/identities.py,
-        # convertit en `unipile_list_failed`), jamais une liste vide silencieuse.
+    if cli is not None:  # BYO: the key's accounts (existing list)
+        # oto-backend#867 — NO LONGER swallow the failure: this is the list itself
+        # HERE (not a side status probe), so a slow or down Unipile must
+        # return a named error (`_list`, capabilities/connectors/identities.py,
+        # converts it to `unipile_list_failed`), never a silent empty list.
         accounts = await _call_unipile(cli.list_accounts)
         for a in accounts:
             ch = (a.get("type") or "").upper() or None
@@ -347,17 +347,17 @@ async def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
                 "channel": ch,
             })
     else:
-        # Revente (clé plateforme / hosted-auth) : les comptes PROPRES connectés
-        # DANS L'ORG DE CONTEXTE. Toujours listés — même sans grant et sans
-        # « choix » à faire, un compte connecté DOIT apparaître (feedback #132 :
-        # `identities: []` alors qu'un LinkedIn hébergé était connecté = faux
-        # négatif, l'agent concluait à tort « aucun compte » et renvoyait
-        # l'utilisateur au dashboard). Filtre org = scope membre ADR 0033 B4,
-        # aligné sur `status_for` et la résolution d'appel (`get_unipile_account_id`) :
-        # un compte d'une AUTRE org n'est pas opérable ici → le lister serait un
-        # faux positif (bouton « Use this account » inerte, vécu 2026-07-08).
+        # Resale (platform key / hosted-auth): the OWN accounts connected
+        # IN THE CONTEXT ORG. Always listed — even without a grant and with no
+        # "choice" to make, a connected account MUST appear (feedback #132:
+        # `identities: []` while a hosted LinkedIn was connected = false
+        # negative, the agent wrongly concluded "no account" and sent
+        # the user back to the dashboard). Org filter = member scope ADR 0033 B4,
+        # aligned with `status_for` and the call resolution (`get_unipile_account_id`):
+        # an account from ANOTHER org is not operable here → listing it would be a
+        # false positive (inert "Use this account" button, experienced 2026-07-08).
         accounts = db.list_unipile_accounts(sub)
-        if accounts:  # org résolue seulement s'il y a quelque chose à filtrer
+        if accounts:  # org resolved only if there is something to filter
             from .. import access
             org = access.current_org(sub)
             accounts = [a for a in accounts if a.get("org_id") == org]
@@ -366,29 +366,29 @@ async def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
                 "id": a["account_id"],
                 "label": a.get("account_name") or a["account_id"],
                 "status": await _live_status(a["account_id"]),
-                # Ne se dit QUE sur écart : un champ toujours présent devient du bruit
-                # qu'on cesse de lire. Absent ⟹ le statut a bien été mesuré.
+                # Said ONLY on a discrepancy: an always-present field becomes noise
+                # that people stop reading. Absent ⟹ the status was indeed measured.
                 **({} if _statut_mesure(a["account_id"]) else {
                     "status_measured": False,
                     "status_hint": (
-                        "la sonde de liveness n'a pas répondu pour ce compte : "
-                        "`status` est le dernier état CONNU, pas un constat. Un "
-                        "compte mort peut s'y afficher « ok ». Rejoue pour mesurer."),
+                        "the liveness probe did not answer for this account: "
+                        "`status` is the last KNOWN state, not an observation. A dead "
+                        "account may show up there as \"ok\". Retry to measure."),
                 }),
                 "is_default": a["account_id"] == _unipile_chosen(sub, a["provider"]),
                 "channel": a["provider"],
             })
-    # Comptes ACCORDÉS (#55), tout mode. Une clé BYO partagée liste déjà le compte
-    # du owner → on ANNOTE l'entrée existante plutôt que de la dupliquer.
+    # GRANTED accounts (#55), any mode. A shared BYO key already lists the owner's
+    # account → we ANNOTATE the existing entry rather than duplicate it.
     seen = {i["id"]: i for i in out}
     for g in granted:
         owner = {"sub": g["owner_sub"], "email": g.get("owner_email"),
                  "name": g.get("owner_name"),
                  "org": g.get("owner_org_id"), "org_name": g.get("owner_org_name")}
-        # Reçu via un groupe (extension #55, 2026-09) : dit CE QUI porte l'accès,
-        # pas seulement qui possède le compte — un membre qui ne connaît pas le
-        # propriétaire sait quand même reconnaître « l'équipe Croissance ». None
-        # sur un grant nominatif (`via_group_id` absent ou vide, ex. #55 originel).
+        # Received via a group (#55 extension, 2026-09): says WHAT carries the access,
+        # not just who owns the account — a member who doesn't know the
+        # owner still recognizes "the Growth team". None
+        # on a named grant (`via_group_id` absent or empty, e.g. original #55).
         via_group_id = g.get("via_group_id")
         via_group = ({"id": via_group_id, "name": g.get("via_group_name")}
                      if via_group_id else None)
@@ -399,9 +399,9 @@ async def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
             existing["via_group"] = via_group
             continue
         if via_group:
-            libelle = f"compte d'équipe ({via_group['name'] or via_group_id})"
+            libelle = f"team account ({via_group['name'] or via_group_id})"
         else:
-            libelle = f"compte de {g.get('owner_name') or g.get('owner_email') or g['owner_sub']}"
+            libelle = f"account of {g.get('owner_name') or g.get('owner_email') or g['owner_sub']}"
         out.append({
             "id": g["account_id"],
             "label": f"{g.get('account_name') or g['account_id']} — {libelle}",
@@ -413,38 +413,38 @@ async def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
             "via_group": via_group,
         })
     if canal:
-        # Filtre APRÈS l'annotation des comptes accordés : un compte accordé du bon
-        # canal doit rester listé (c'est la seule identité que certains grantees
-        # ont). Un compte dont le canal est INCONNU (`channel=None` — vu en BYO quand
-        # Unipile ne renvoie pas `type`) ne se rattache à aucune carte de canal : le
-        # taire ici vaut mieux que de le faire apparaître sous les six.
+        # Filter AFTER annotating granted accounts: a granted account of the right
+        # channel must stay listed (it's the only identity some grantees
+        # have). An account whose channel is UNKNOWN (`channel=None` — seen in BYO when
+        # Unipile doesn't return `type`) attaches to no channel card: silencing it
+        # here is better than making it appear under all six.
         _c = canal.upper()
         out = [i for i in out if (i.get("channel") or "").upper() == _c]
     return out
 
 
 async def _unipile_select(sub: str, identity_id: str, canal: str | None = None) -> dict:
-    """Choisit l'identité opérée. `canal` (carte d'un connecteur de canal) = garde :
-    on ne bascule pas son identité Telegram depuis la carte WhatsApp. Le canal RÉEL
-    est celui du COMPTE, jamais celui qu'on suppose — d'où une garde sur le résultat
-    plutôt qu'un filtre sur l'entrée : les trois chemins de sélection (compte accordé,
-    retour à soi, bascule BYO) le découvrent chacun à leur façon, et un seul endroit
-    doit trancher."""
+    """Chooses the operated identity. `canal` (a channel connector's card) = guard:
+    you don't switch your Telegram identity from the WhatsApp card. The REAL channel
+    is the ACCOUNT's, never the one we assume — hence a guard on the result
+    rather than a filter on the input: the three selection paths (granted account,
+    return to self, BYO switch) each discover it in their own way, and a single place
+    must decide."""
     from .. import db
 
     def _exige_canal(trouve: str | None) -> None:
-        """Refuse AVANT d'écrire si le compte n'est pas du canal de la carte.
+        """Refuses BEFORE writing if the account is not of the card's channel.
 
-        Après l'écriture il serait trop tard : poser le pointeur puis lever
-        laisserait l'identité opérée changée par un appel qui a rendu une erreur."""
+        After the write it would be too late: setting the pointer then raising
+        would leave the operated identity changed by a call that returned an error."""
         if canal and (trouve or "").upper() != canal.upper():
             raise ValueError(
-                f"Ce compte est un compte {(trouve or 'inconnu').title()} : il ne se "
-                f"choisit pas depuis la carte {canal.title()}. Passe par la carte de "
-                "son canal.")
-    # 1) Compte ACCORDÉ (#55) : pose le POINTEUR « identité opérée » — ne touche
-    #    JAMAIS la ligne de connexion `unipile_accounts` du grantee. La validation
-    #    = le grant vivant (deny-by-default), pas la clé.
+                f"This account is a {(trouve or 'unknown').title()} account: it can't be "
+                f"chosen from the {canal.title()} card. Use the card of "
+                "its channel.")
+    # 1) GRANTED account (#55): sets the "operated identity" POINTER — NEVER touches
+    #    the grantee's `unipile_accounts` connection row. Validation
+    #    = the live grant (deny-by-default), not the key.
     recus = db.list_account_grants_to(sub)
     g = next((r for r in recus
               if r.get("active") and r["account_id"] == identity_id), None)
@@ -453,58 +453,58 @@ async def _unipile_select(sub: str, identity_id: str, canal: str | None = None) 
         db.set_operated_account(sub, g["provider"], identity_id, g["owner_sub"])
         return {"id": identity_id, "channel": g["provider"], "is_default": True,
                 "granted": True}
-    # 1bis) Compte prêté par un compte EN PAUSE (#898) : le grant existe, il est
-    #    retenu — le dire, plutôt que de tomber plus bas sur « compte inconnu ».
+    # 1bis) Account lent by a PAUSED account (#898): the grant exists, it is withheld
+    #    — say so, rather than falling further down to "unknown account".
     retenu = next((r for r in recus
                    if r.get("owner_suspended") and r["account_id"] == identity_id), None)
     if retenu:
         raise _preteur_en_pause(retenu, retenu["provider"], identity_id)
-    # 2) Retour à SOI (tout mode, y compris revente) : efface le pointeur du canal.
+    # 2) Return to SELF (any mode, including resale): clears the channel's pointer.
     own = next((a for a in db.list_unipile_accounts(sub)
                 if a["account_id"] == identity_id), None)
     if own:
         _exige_canal(own["provider"])
         db.clear_operated_account(sub, own["provider"])
         return {"id": identity_id, "channel": own["provider"], "is_default": True}
-    # 3) Chemin BYO existant : choisir un compte de SA clé (bascule la connexion).
+    # 3) Existing BYO path: choose an account of ITS key (switches the connection).
     cli = _unipile_client(sub)
     if cli is None:
-        raise ValueError("Choix de compte indisponible (clé plateforme — passe par "
-                         "la connexion hébergée).")
-    # oto-backend#867 — même règle que `_unipile_list` : une panne/lenteur Unipile ici
-    # doit se dire, pas se confondre avec un id inconnu (`unknown_identity`, 404) — le
-    # capable layer (`_set_default`) distingue ce `RuntimeError` d'un `ValueError`.
+        raise ValueError("Account selection unavailable (platform key — use "
+                         "the hosted connection).")
+    # oto-backend#867 — same rule as `_unipile_list`: an Unipile outage/slowness here
+    # must be stated, not confused with an unknown id (`unknown_identity`, 404) — the
+    # capable layer (`_set_default`) distinguishes this `RuntimeError` from a `ValueError`.
     try:
         accounts = await _call_unipile(cli.list_accounts)
     except Exception as e:
-        raise RuntimeError(f"Unipile n'a pas répondu pour choisir ce compte : {e}") from e
+        raise RuntimeError(f"Unipile did not answer when choosing this account: {e}") from e
     match = next((a for a in accounts if a.get("id") == identity_id), None)
-    if match is None:  # anti-binding : l'id DOIT exister sur la clé (ou être accordé)
-        raise ValueError(f"Compte Unipile inconnu sur cette clé : {identity_id}")
+    if match is None:  # anti-binding: the id MUST exist on the key (or be granted)
+        raise ValueError(f"Unknown Unipile account on this key: {identity_id}")
     ch = (match.get("type") or "LINKEDIN").upper()
     _exige_canal(ch)
-    # Scope membre (ADR 0033 B4) : le binding vaut dans l'org de contexte. BYO →
-    # pas un siège plateforme (platform_seat=False), cohérent avec unipile_connect.
-    # Bascule de connexion = retour-à-soi sur ce canal → efface le pointeur opéré (#55).
+    # Member scope (ADR 0033 B4): the binding applies in the context org. BYO →
+    # not a platform seat (platform_seat=False), consistent with unipile_connect.
+    # Connection switch = return-to-self on this channel → clears the operated pointer (#55).
     from .. import access
     org = access.current_org(sub)
     if org is None:
-        raise ValueError("Aucune org de contexte — impossible de rattacher le compte.")
+        raise ValueError("No context org — unable to attach the account.")
     db.set_unipile_account(sub, identity_id, match.get("name"), org_id=org,
                            provider=ch, platform_seat=False)
     db.clear_operated_account(sub, ch)
     return {"id": identity_id, "channel": ch, "is_default": True}
 
 
-# --- Backend keyed GÉNÉRIQUE : N credentials du coffre (account=label libre) ---
-# Pour tout connecteur multi-compte (`Connector.auth_multi_account`) SANS backend
-# spécifique (google en a un) : les comptes = les lignes du coffre au scope MEMBRE de
-# l'org de contexte, le défaut = `meta.is_default`. Ex. « 2 Zoho » (self-clients FR/US).
+# --- GENERIC keyed backend: N vault credentials (account=free label) ---
+# For any multi-account connector (`Connector.auth_multi_account`) WITHOUT a specific
+# backend (google has one): the accounts = the vault rows at the MEMBER scope of the
+# context org, the default = `meta.is_default`. E.g. "2 Zoho" (FR/US self-clients).
 
 def keyed_entity(sub: str, scope: str) -> "tuple[str, str] | None":
-    """L'entité du coffre visée par un `scope` (member | org | group) pour `sub`, ou
-    None sans org/équipe de contexte. Phase 2 (2026-08-25) : les comptes nommés
-    existent aussi aux paliers partagés."""
+    """The vault entity targeted by a `scope` (member | org | group) for `sub`, or
+    None without a context org/team. Phase 2 (2026-08-25): named accounts
+    also exist at the shared tiers."""
     from .. import access, credentials_store
     org = access.current_org(sub)
     if org is None:
@@ -528,7 +528,7 @@ def _keyed_list(sub: str, connector: str, scope: str = "member") -> list[dict]:
         meta = row.get("meta") or {}
         out.append({
             "id": acct,
-            "label": meta.get("label") or acct or "(défaut)",
+            "label": meta.get("label") or acct or "(default)",
             "status": "ok",
             "is_default": bool(meta.get("is_default")),
             "channel": None,
@@ -540,11 +540,11 @@ def _keyed_select(sub: str, connector: str, identity_id: str, scope: str = "memb
     from .. import credentials_store
     ent = keyed_entity(sub, scope)
     if ent is None:
-        raise ValueError("Aucune org/équipe de contexte — impossible de choisir un compte.")
+        raise ValueError("No context org/team — unable to choose an account.")
     accounts = [r["account"] for r in credentials_store.list_accounts(ent[0], ent[1], connector)]
     if identity_id not in accounts:
-        raise ValueError(f"Compte `{identity_id}` inconnu pour {connector}.")
-    # Défaut UNIQUE : pose is_default sur la ligne choisie, le retire des autres.
+        raise ValueError(f"Unknown account `{identity_id}` for {connector}.")
+    # UNIQUE default: sets is_default on the chosen row, removes it from the others.
     for acct in accounts:
         credentials_store.update_meta(ent[0], ent[1], connector, acct,
                                       {"is_default": acct == identity_id})
@@ -553,29 +553,29 @@ def _keyed_select(sub: str, connector: str, identity_id: str, scope: str = "memb
 
 def rename_identity(sub: str, connector: str, identity_id: str, new_name: str,
                     scope: str = "member") -> dict:
-    """Renomme un compte nommé du backend keyed générique — le nom EST l'identifiant
-    que l'agent passe en `_account=`, donc c'est la ligne du coffre qui change
-    (`credentials_store.rename_account` : rechiffrement, l'instance suit). Lève
-    `ValueError` (connecteur sans comptes du coffre, compte inconnu, nom vide ou déjà
-    pris) ; le contrôle d'accès du palier vit dans la capacité."""
+    """Renames a named account of the generic keyed backend — the name IS the identifier
+    that the agent passes as `_account=`, so it's the vault row that changes
+    (`credentials_store.rename_account`: re-encryption, the instance follows). Raises
+    `ValueError` (connector without vault accounts, unknown account, empty or already
+    taken name); the tier's access control lives in the capability."""
     from .. import credentials_store
     if connector not in _KEYED:
-        raise ValueError(f"Le connecteur `{connector}` n'a pas de comptes renommables.")
+        raise ValueError(f"The connector `{connector}` has no renamable accounts.")
     new_name = (new_name or "").strip()
     if not new_name:
-        raise ValueError("Le nouveau nom est vide.")
+        raise ValueError("The new name is empty.")
     ent = keyed_entity(sub, scope)
     if ent is None:
-        raise ValueError("Aucune org/équipe de contexte — impossible de renommer un compte.")
+        raise ValueError("No context org/team — unable to rename an account.")
     rows = {r["account"]: r for r in credentials_store.list_accounts(ent[0], ent[1], connector)}
     if identity_id not in rows:
-        raise ValueError(f"Compte `{identity_id}` inconnu pour {connector}.")
+        raise ValueError(f"Unknown account `{identity_id}` for {connector}.")
     if new_name == identity_id:
         return {"id": identity_id, "is_default": bool((rows[identity_id].get("meta") or {})
                                                         .get("is_default"))}
     if new_name in rows:
-        # `rename_account` écraserait la ligne d'arrivée (upsert) : une clé perdue.
-        raise ValueError(f"Un compte `{new_name}` existe déjà pour {connector}.")
+        # `rename_account` would overwrite the destination row (upsert): a lost key.
+        raise ValueError(f"An account `{new_name}` already exists for {connector}.")
     credentials_store.rename_account(ent[0], ent[1], connector, identity_id, new_name)
     return {"id": new_name, "is_default": bool((rows[identity_id].get("meta") or {})
                                                 .get("is_default"))}
@@ -583,17 +583,17 @@ def rename_identity(sub: str, connector: str, identity_id: str, new_name: str,
 
 _LISTERS = {"google": _google_list, "unipile": _unipile_list}
 _SELECTORS = {"google": _google_select, "unipile": _unipile_select}
-# Connecteurs servis par le backend keyed GÉNÉRIQUE (seul à connaître les paliers
-# partagés) — rempli par `_register_keyed_multi_account`.
+# Connectors served by the GENERIC keyed backend (the only one that knows the shared
+# tiers) — filled by `_register_keyed_multi_account`.
 _KEYED: set[str] = set()
 
 
 def _register_keyed_multi_account() -> None:
-    """Enregistre le backend keyed générique pour tout connecteur multi-compte
-    (`Connector.auth_multi_account` — depuis 2026-08-25, toute clé d'API l'est par
-    défaut ; la liste curée a été retirée le 29/08) qui n'a pas
-    déjà un backend spécifique (google, unipile). Closures liant le nom du
-    connecteur (défaut d'arg = capture par valeur)."""
+    """Registers the generic keyed backend for every multi-account connector
+    (`Connector.auth_multi_account` — since 2026-08-25, every API key is one by
+    default; the curated list was removed on 29/08) that doesn't already
+    have a specific backend (google, unipile). Closures binding the connector's
+    name (arg default = capture by value)."""
     from .. import providers
     for con in providers._REGISTRY_LIST:
         name = con.name
@@ -605,22 +605,22 @@ def _register_keyed_multi_account() -> None:
 
 
 def _register_hosted_channels() -> None:
-    """Un backend d'identités par CANAL hébergé (split du 2026-08-28).
+    """One identity backend per hosted CHANNEL (split of 2026-08-28).
 
-    `oto_identity(connector='whatsapp')` doit rendre les comptes WhatsApp, pas les
-    six canaux : depuis que chaque canal a sa carte, une liste non filtrée y ferait
-    apparaître un LinkedIn qu'aucun bouton de cette carte ne peut opérer. Même corps
-    (`_unipile_list`/`_unipile_select`) avec un canal en plus — la résolution, les
-    grants et le statut live restent UN seul chemin.
+    `oto_identity(connector='whatsapp')` must return the WhatsApp accounts, not the
+    six channels: since each channel has its own card, an unfiltered list would show
+    a LinkedIn there that no button on this card can operate. Same body
+    (`_unipile_list`/`_unipile_select`) with an added channel — resolution, grants
+    and live status remain ONE single path.
 
-    (Ces connecteurs ne passent pas par le backend keyed générique : `hosted` ⟹
-    `auth_multi_account` faux — leurs comptes ne sont pas des lignes du coffre.)"""
+    (These connectors don't go through the generic keyed backend: `hosted` ⟹
+    `auth_multi_account` false — their accounts are not vault rows.)"""
     from .. import providers
     for con in providers._REGISTRY_LIST:
         if not con.hosted_channel:
             continue
-        # `_ch` capturé par valeur : sans le défaut d'argument, les six backends
-        # fermeraient sur la même variable de boucle (donc sur le dernier canal).
+        # `_ch` captured by value: without the argument default, the six backends
+        # would close over the same loop variable (hence over the last channel).
         _LISTERS[con.name] = (
             lambda sub, scope="member", _ch=con.hosted_channel: _unipile_list(sub, _ch))
         _SELECTORS[con.name] = (
@@ -629,17 +629,17 @@ def _register_hosted_channels() -> None:
 
 
 def _register_google_services() -> None:
-    """Un backend d'identités par SERVICE Google (split du 2026-09-26) : même corps
-    que le compte, filtré sur le scope autorisé. Enregistré AVANT le backend keyed
-    générique — qui, sinon, prendrait ces connecteurs multi-compte pour des clés du
-    coffre à leur nom (aucune ligne n'y vit : liste toujours vide, sans un mot).
-    Population dérivée du registre (`credential_of == "google"`), jamais écrite."""
+    """One identity backend per Google SERVICE (split of 2026-09-26): same body
+    as the account, filtered on the authorized scope. Registered BEFORE the generic
+    keyed backend — which would otherwise take these multi-account connectors for vault
+    keys under their name (no row lives there: always-empty list, without a word).
+    Population derived from the registry (`credential_of == "google"`), never written."""
     from .. import providers
     for con in providers._REGISTRY_LIST:
         if con.credential_of != "google":
             continue
-        # `_s` capturé par valeur : sans le défaut d'argument, les six backends
-        # fermeraient sur la même variable de boucle (donc sur le dernier service).
+        # `_s` captured by value: without the argument default, the six backends
+        # would close over the same loop variable (hence over the last service).
         _LISTERS[con.name] = (
             lambda sub, scope="member", _s=con.name: _google_list(sub, service=_s))
         _SELECTORS[con.name] = _google_select

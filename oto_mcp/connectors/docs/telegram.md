@@ -1,16 +1,16 @@
-## prerequisite — connecte ton compte Telegram
+## prerequisite — connect your Telegram account
 
-ton compte Telegram est connecté par un flux hébergé (login par numéro + code).
-- la clé d'abonnement vit sur le connecteur **Compte Unipile** (ta clé BYO, ou celle de la plateforme avec l'option **messagerie hébergée** accordée par un admin) ;
-- puis « Connecter mon compte Telegram » ici. pas de cookie à coller ni d'extension.
+your Telegram account is connected through a hosted flow (login by number + code).
+- the subscription key lives on the **Unipile account** connector (your BYO key, or the platform's with the **hosted messaging** option granted by an admin);
+- then "Connect my Telegram account" here. no cookie to paste, no extension.
 
-## usage — lire et répondre depuis ton compte
+## usage — read and reply from your account
 
-`telegram_chat(op=list|read|send)` — tu agis comme toi-même, sous ton propre compte.
-- « lis mes dernières conversations Telegram »
-- « réponds à [contact] dans Telegram »
-- « résume ce fil Telegram »
+`telegram_chat(op=list|read|send)` — you act as yourself, under your own account.
+- "read my latest Telegram conversations"
+- "reply to [contact] on Telegram"
+- "summarize this Telegram thread"
 
-## note — pas de boîtes, une liste plate
+## note — no inboxes, a flat list
 
-Telegram ne range pas ses fils par boîte : la liste des conversations est plate, contrairement à LinkedIn.
+Telegram does not sort its threads into inboxes: the conversation list is flat, unlike LinkedIn.

@@ -1,22 +1,22 @@
-"""Déclaration de registre du connecteur `hubspot`.
+"""Registry declaration of the `hubspot` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# byo keyed api_key, hors socle (opt-in, installables depuis la library), pas de
-# clé plateforme (chacun pose la sienne). Inertes tant que non activés en DB
-# (connector_activation, deny-by-default), comme foncier/sante.
+# byo keyed api_key, outside the base set (opt-in, installable from the library), no
+# platform key (everyone sets their own). Inert until activated in DB
+# (connector_activation, deny-by-default), like foncier/sante.
 CONNECTOR = _c(
     "hubspot", ["hubspot"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="HubSpot",
-    help="CRM (contacts, companies, deals, tickets, notes, listes/segments, propriétés)",
+    help="CRM (contacts, companies, deals, tickets, notes, lists/segments, properties)",
     href="https://app.hubspot.com",
-    # `hubspot_lignes` ne porte que `hubspot_push_rows` : les lignes d'un tableau
-    # poussées PAR RÉFÉRENCE. Même namespace, donc même activation.
+    # `hubspot_lignes` only carries `hubspot_push_rows`: the rows of a table
+    # pushed BY REFERENCE. Same namespace, hence same activation.
     modules=("hubspot", "hubspot_lignes"),
 )
 
@@ -25,7 +25,7 @@ PUBLISHER = "HubSpot"
 LOGO_DOMAIN = "hubspot.com"
 
 DESCRIPTION = (
-    "Le CRM HubSpot : contacts, entreprises (companies), deals, tickets, notes, "
-    "listes et propriétés personnalisées. Hors socle, à activer par org ; pas "
-    "de clé plateforme, chacun pose la sienne."
+    "The HubSpot CRM: contacts, companies, deals, tickets, notes, "
+    "lists and custom properties. Outside the base set, to be activated per org; no "
+    "platform key, everyone sets their own."
 )

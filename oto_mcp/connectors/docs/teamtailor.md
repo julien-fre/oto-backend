@@ -1,14 +1,14 @@
-## prerequisite — ta clé api teamtailor
+## prerequisite — your teamtailor api key
 
-il te faut une clé **api teamtailor**.
-- dans teamtailor, va dans **settings → integrations → API keys** et génère une clé
-- colle-la dans tes [clés de connecteurs](https://manage.oto.cx/) (ou laisse ton org partager la sienne)
-- doc éditeur : [teamtailor.com](https://www.teamtailor.com)
+you need a teamtailor **api** key.
+- in teamtailor, go to **settings → integrations → API keys** and generate a key
+- paste it into your [connector keys](https://manage.oto.cx/) (or let your org share its own)
+- vendor docs: [teamtailor.com](https://www.teamtailor.com)
 
-## usage — ce que tu peux faire
+## usage — what you can do
 
-pilote ton ats teamtailor : candidats, jobs, candidatures.
-- « liste les candidats » → `teamtailor_candidates` (filtre `email`), détail d'un candidat → `teamtailor_candidate`
-- « crée un candidat jean dupont » → `teamtailor_create_candidate` (attributs `first-name`, `last-name`, `email`, `phone`, `pitch`, `tags`…)
-- « quels jobs sont ouverts ? » → `teamtailor_jobs` (`status` open/draft/archived/unlisted)
-- « montre les candidatures sur le job 99 » → `teamtailor_job_applications` (filtre `job_id`)
+drive your teamtailor ats: candidates, jobs, applications.
+- "list the candidates" → `teamtailor_candidates` (`email` filter), one candidate's detail → `teamtailor_candidate`
+- "create a candidate john doe" → `teamtailor_create_candidate` (attributes `first-name`, `last-name`, `email`, `phone`, `pitch`, `tags`…)
+- "which jobs are open?" → `teamtailor_jobs` (`status` open/draft/archived/unlisted)
+- "show the applications on job 99" → `teamtailor_job_applications` (`job_id` filter)

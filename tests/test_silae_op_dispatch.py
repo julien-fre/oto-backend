@@ -113,7 +113,7 @@ def test_dossier_defaults_to_the_reachable_list(client):
 def test_dossier_list_refuses_a_dossier_filter(client):
     """`silae_dossier(numero_dossier="001")` sans op rendrait la liste COMPLÈTE : un
     résultat crédible à côté de la demande. Refus nommant l'op qui l'honore."""
-    with pytest.raises(McpError, match="op='list' n'utilise pas numero_dossier"):
+    with pytest.raises(McpError, match="op='list' does not use numero_dossier"):
         _tool("silae_dossier")(numero_dossier="001")
     client.list_dossiers.assert_not_called()
 
@@ -157,7 +157,7 @@ def test_employee_list_refuses_arguments_it_would_ignore(client):
     """L'ancien tool s'appelait `silae_employee(numero_dossier, matricule_salarie)` :
     un appelant qui garde ce réflexe doit recevoir une erreur, pas le trombinoscope
     complet du dossier."""
-    with pytest.raises(McpError, match="op='list' n'utilise pas matricule_salarie"):
+    with pytest.raises(McpError, match="op='list' does not use matricule_salarie"):
         _tool("silae_employee")(numero_dossier="001", matricule_salarie="0001")
     client.list_salaries.assert_not_called()
 
@@ -224,15 +224,15 @@ def test_variables_to_enter_stays_a_single_capability(client):
 # --- refus --------------------------------------------------------------------
 
 @pytest.mark.parametrize("tool,kwargs,expected", [
-    ("silae_dossier", {}, "'list', 'numbers', 'info' ou 'current_period'"),
-    ("silae_employee", {"numero_dossier": "001"}, "'list', 'get' ou 'jobs'"),
+    ("silae_dossier", {}, "'list', 'numbers', 'info' or 'current_period'"),
+    ("silae_employee", {"numero_dossier": "001"}, "'list', 'get' or 'jobs'"),
     ("silae_payslip", {"numero_dossier": "001", "periode": "2026-05"},
-     "'list', 'header', 'lines' ou 'totals'"),
+     "'list', 'header', 'lines' or 'totals'"),
 ])
 def test_unknown_op_is_refused_with_the_allowed_list(client, tool, kwargs, expected):
     """Une op inconnue doit lever en nommant les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être") as e:
+    with pytest.raises(McpError, match="op must be") as e:
         _tool(tool)(op="nope", **kwargs)
     assert expected in str(e.value)   # les ops valides sont NOMMÉES dans le message
 

@@ -1,33 +1,33 @@
-## prerequisite — une clé Mistral, entraînement désactivé
+## prerequisite — a Mistral key, training disabled
 
-crée une clé API sur la [console Mistral](https://console.mistral.ai/api-keys), puis colle-la dans oto au niveau de l'organisation.
-- **avant le premier enregistrement d'un client**, désactive l'usage de tes données pour l'entraînement dans les réglages du compte Mistral : ce sont des voix de particuliers, souvent chez eux
-- par défaut chaque organisation paie sa propre minute d'audio chez Mistral (hébergement dans l'UE) ; une org sans clé propre peut se voir accorder une instance plateforme (clé, langue et vocabulaire de cette instance), et sa propre instance passe toujours avant
+create an API key on the [Mistral console](https://console.mistral.ai/api-keys), then paste it into oto at the organization level.
+- **before a customer's first recording**, disable the use of your data for training in the Mistral account settings: these are the voices of private individuals, often at home
+- by default each organization pays for its own audio minute at Mistral (EU hosting); an org without its own key may be granted a platform instance (that instance's key, language and vocabulary), and its own instance always takes precedence
 
-## setup — langue et vocabulaire
+## setup — language and vocabulary
 
-deux réglages facultatifs sur l'instance, non secrets :
-- **langue** : le code de la langue parlée (`fr` si vide). `auto` laisse Mistral la détecter
-- **vocabulaire** : les mots du métier à bien orthographier (ouvrages, matériaux, noms propres), séparés par des virgules ou des retours à la ligne. Mistral ne prend que des mots isolés : une expression est découpée en ses mots, et les mots de moins de 3 lettres sont écartés (« pompe à chaleur » → `pompe`, `chaleur`). 100 mots au plus ; ce qui est écarté est signalé dans la réponse
+two optional settings on the instance, non-secret:
+- **language**: the code of the spoken language (`fr` if empty). `auto` lets Mistral detect it
+- **vocabulary**: the business words to spell correctly (structures, materials, proper names), separated by commas or line breaks. Mistral only takes isolated words: an expression is split into its words, and words under 3 letters are discarded ("pompe à chaleur" → `pompe`, `chaleur`). 100 words at most; what is discarded is reported in the response
 
-une instance = une clé × une langue × un vocabulaire ; un projet se rattache à l'instance voulue par un slot.
+one instance = one key × one language × one vocabulary; a project attaches to the desired instance through a slot.
 
-## usage — un enregistrement devient une page du projet (asynchrone)
+## usage — a recording becomes a project page (asynchronous)
 
-- « transcris la visite déposée sur le projet » → `transcription_create(source={"kind":"project_file","project_id":…,"file_id":…}, _project=…)` — les ids viennent de `oto_project_files op=list`
-- `vocabulary` (facultatif) complète, pour cet enregistrement, le vocabulaire de l'instance (noms propres, matériaux du chantier) ; `vocabulary_replace=true` l'utilise seul. 100 mots au plus au total, l'instance passe avant
-- le fichier est lu côté serveur, jamais transporté par la conversation (100 Mo au plus, jusqu'à 3 h d'audio ; un fichier de projet reste limité à 25 Mo au dépôt)
-- **l'appel ne bloque pas** : il rend tout de suite `{job_id, status:"pending"}` — un enregistrement de 30 min prend de 20 s à 5 min à transcrire, en tâche de fond
-- relire `transcription_status(job_id)` jusqu'à `status:"done"` (ou `"failed"` avec `error`) : c'est là que revient la page « Transcription — <fichier> — <date> » (id, titre, lien), un paragraphe par tour de parole avec locuteur et instant en tête (« Locuteur 1 [03:12] »…), le nombre de mots, la durée et les locuteurs — jamais le texte, qui se lit ensuite comme toute page du projet
+- "transcribe the visit dropped on the project" → `transcription_create(source={"kind":"project_file","project_id":…,"file_id":…}, _project=…)` — the ids come from `oto_project_files op=list`
+- `vocabulary` (optional) supplements, for this recording, the instance's vocabulary (proper names, site materials); `vocabulary_replace=true` uses it alone. 100 words at most in total, the instance takes precedence
+- the file is read server-side, never carried through the conversation (100 MB at most, up to 3 h of audio; a project file remains limited to 25 MB at upload)
+- **the call does not block**: it immediately returns `{job_id, status:"pending"}` — a 30 min recording takes 20 s to 5 min to transcribe, as a background task
+- re-read `transcription_status(job_id)` until `status:"done"` (or `"failed"` with `error`): that is where the page "Transcription — <file> — <date>" comes back (id, title, link), one paragraph per speaker turn with the speaker and the moment at the head ("Locuteur 1 [03:12]"…), the word count, the duration and the speakers — never the text, which is then read like any project page
 
-## usage — depuis un programme (API REST, jeton `oto_…`)
+## usage — from a program (REST API, `oto_…` token)
 
-- l'audio lui-même : `curl -H "Authorization: Bearer $OTO_TOKEN" -F file=@reunion.ogg -F vocabulary="Voxtral, Otomata" https://mcp.oto.cx/api/me/projects/<id>/transcriptions/upload` → `202 {job_id, status:"pending"}`
-- un fichier que oto sait déjà atteindre : `POST /api/me/projects/<id>/transcriptions` avec `{"source":{"kind":"project_file","file_id":…}}` (ou `url`, `drive`, `gmail`)
-- relire `GET /api/me/transcriptions/<job_id>` : sur `done`, en plus de la page, `transcript` rend les tours de parole en données — `[{speaker, start, end, text}]`, en secondes
+- the audio itself: `curl -H "Authorization: Bearer $OTO_TOKEN" -F file=@reunion.ogg -F vocabulary="Voxtral, Otomata" https://mcp.oto.cx/api/me/projects/<id>/transcriptions/upload` → `202 {job_id, status:"pending"}`
+- a file oto already knows how to reach: `POST /api/me/projects/<id>/transcriptions` with `{"source":{"kind":"project_file","file_id":…}}` (or `url`, `drive`, `gmail`)
+- re-read `GET /api/me/transcriptions/<job_id>`: on `done`, in addition to the page, `transcript` returns the speaker turns as data — `[{speaker, start, end, text}]`, in seconds
 
-## note — ce que le connecteur corrige, et ce qu'il ne fait pas
+## note — what the connector corrects, and what it does not do
 
-- les segments répétés à l'identique sont fusionnés ; les locuteurs « parasites » que la diarisation invente pour une phrase sont rattachés au locuteur voisin (on garde au plus 3 locuteurs, chacun pesant au moins 10 % de l'enregistrement)
-- rien ne se transcrit sans appel : on ne paie que ce qui est demandé
-- la transcription ne tire aucune conclusion du texte : c'est la procédure du projet qui dit quoi en faire (fiche de visite, compte rendu…)
+- identically repeated segments are merged; the "parasite" speakers that diarization invents for a single sentence are attached to the neighboring speaker (at most 3 speakers are kept, each weighing at least 10 % of the recording)
+- nothing is transcribed without a call: you only pay for what is requested
+- the transcription draws no conclusion from the text: it is the project's procedure that says what to do with it (visit sheet, report…)

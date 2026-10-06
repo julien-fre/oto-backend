@@ -1,40 +1,40 @@
-"""Datastore — la file de REVUE rendue (`data_review_app`) : une ligne à la fois, deux
-boutons, dans la conversation.
+"""Datastore — the rendered REVIEW queue (`data_review_app`): one row at a time, two
+buttons, in the conversation.
 
-Pourquoi ça existe : une procédure s'arrête souvent sur une étape HUMAINE (« une
-personne relit les leads en attente et les lance un par un ») et cette étape vivait
-hors du chat — dashboard, tableur, outil tiers. La carte l'y ramène : la prochaine
-ligne au statut `pending`, deux gestes (`approve` / `reject`), puis la suivante.
+Why it exists: a procedure often stops at a HUMAN step ("a person reviews the pending
+leads and launches them one by one") and that step lived outside the chat —
+dashboard, spreadsheet, third-party tool. The card brings it back in: the next row
+at status `pending`, two gestures (`approve` / `reject`), then the next one.
 
-**La seule app qui ÉCRIT.** `data_app` et `oto_doc_app` restent en lecture seule ;
-l'exception est bornée, et chaque borne est revérifiée côté serveur au clic :
-- UNE colonne (le statut), deux valeurs fixées par l'appel du modèle et figées dans
-  la carte ; une valeur hors des `options` déclarées est refusée ;
-- UNE ligne, désignée par son `_id`, et écrite seulement si elle est TOUJOURS à
-  `pending` — une ligne passée ailleurs entre-temps est sautée, jamais écrasée ;
-- le droit d'écrire est celui du store (`_resolve(write=True)`), comme `data_write`.
-La carte n'envoie et ne lance rien dans aucun autre outil : elle écrit un statut. En fin de
-file seulement, un bouton « Continue in chat » POSTE, au clic, un message factuel de
-l'utilisateur (« Done reviewing: 2 launched, 1 skipped. ») pour que l'agent reprenne ; le
-bilan voyage dans les arguments du bouton — fourni par le client, affiché, jamais une garde.
+**The only app that WRITES.** `data_app` and `oto_doc_app` stay read-only;
+the exception is bounded, and each bound is rechecked server-side at click time:
+- ONE column (the status), two values fixed by the model's call and frozen in
+  the card; a value outside the declared `options` is refused;
+- ONE row, designated by its `_id`, and written only if it is STILL at
+  `pending` — a row moved elsewhere in the meantime is skipped, never overwritten;
+- the right to write is the store's (`_resolve(write=True)`), like `data_write`.
+The card sends and launches nothing in any other tool: it writes a status. Only at the end of the
+queue, a "Continue in chat" button POSTS, on click, a factual message from the
+user ("Done reviewing: 2 launched, 1 skipped.") so the agent resumes; the
+tally travels in the button's arguments — supplied by the client, displayed, never a guard.
 
-Le texte VU par l'utilisateur (carte, avis, refus) est en anglais — même règle que les
-messages atteignables par un utilisateur extérieur (`docs/conventions.md`).
+The text SEEN by the user (card, notices, refusals) is in English — same rule as the
+messages reachable by an outside user (`docs/conventions.md`).
 
-Mécanique (`FastMCPApp`, extra `fastmcp[apps]`) :
-- `data_review_app` = point d'entrée, visible du modèle, spine `data_*`.
-- `data_review_decide` = outil APP-ONLY : absent de `tools/list` (zéro coût de
-  contexte), appelé par le bouton sous un nom HACHÉ `<hash>_data_review_decide` ;
-  son nom nu est introuvable, le modèle ne peut pas l'appeler.
-  ⚠️ Ce chemin CONTOURNE la visibilité de session (fastmcp retrouve un outil d'app
-  « même masqué par un transform ») ET les axes d'appel : `namespace_of` d'un nom
-  haché n'est pas `data`, donc `CallContextMiddleware` n'y lit ni `_project` ni
-  `_org`. D'où : le contexte de l'appel d'entrée est FIGÉ dans les arguments du
-  bouton au rendu, puis REPOSÉ ici par les gardes des axes eux-mêmes
-  (`call_axes.PROJECT` / `call_axes.ORG`, appartenance vérifiée).
-  ⚠️ Qu'un outil app-only soit absent de `tools/list` est marqué FIXME côté fastmcp
-  (le spec veut qu'il y figure, filtré par le host) : un bump au-delà du pin `<3.5`
-  peut le faire réapparaître dans le contexte du modèle — relire ce module ce jour-là.
+Mechanics (`FastMCPApp`, extra `fastmcp[apps]`):
+- `data_review_app` = entry point, visible to the model, `data_*` spine.
+- `data_review_decide` = APP-ONLY tool: absent from `tools/list` (zero context
+  cost), called by the button under a HASHED name `<hash>_data_review_decide`;
+  its bare name cannot be found, the model cannot call it.
+  ⚠️ This path BYPASSES session visibility (fastmcp finds an app tool
+  "even hidden by a transform") AND the call axes: `namespace_of` of a hashed
+  name is not `data`, so `CallContextMiddleware` reads neither `_project` nor
+  `_org` there. Hence: the entry call's context is FROZEN in the button's
+  arguments at render time, then RESET here by the axes' own guards
+  (`call_axes.PROJECT` / `call_axes.ORG`, membership verified).
+  ⚠️ An app-only tool being absent from `tools/list` is marked FIXME on the fastmcp side
+  (the spec wants it listed, filtered by the host): a bump beyond the `<3.5` pin
+  may make it reappear in the model's context — reread this module that day.
 """
 from __future__ import annotations
 
@@ -59,19 +59,19 @@ from ..mcp_errors import McpError
 APP_NAME = "oto-data-review"
 DECIDE = "data_review_decide"
 
-# Une carte inline se lit d'un coup d'œil (guide de design Claude : 4-5 données, 2
-# actions). Au-delà, c'est `data_app` qu'il faut ouvrir.
+# An inline card is read at a glance (Claude design guide: 4-5 data points, 2
+# actions). Beyond that, `data_app` is what should be opened.
 _MAX_CHAMPS = 4
 
-# La carte suit la charte du partenaire (hairlines, pastilles, 13 px) mais PEINT avec les
-# variables du host (SEP-1865 `styles.variables`) : les valeurs de repli ne servent qu'à
-# un host qui n'en fournit pas, en clair comme en sombre. ⚠️ TOUTE couleur passe par une
-# variable du host, accent compris : un host peut servir des fonds sombres sans poser
-# la classe `.dark` — une couleur réglée par `.dark` seule restait claire sur fond
-# sombre (vu dans un vrai host, pastille ambre illisible). Aucune ressource distante (CSP
-# du host) : la police est celle du host. ⚠️ Le CADRE est celui du host (bordure et coins
-# de l'iframe) : la page reste transparente et sans marge, et la carte ne redessine ni
-# bordure ni arrondi — sinon un second fond apparaît derrière ses coins.
+# The card follows the partner's style guide (hairlines, pills, 13 px) but PAINTS with the
+# host's variables (SEP-1865 `styles.variables`): the fallback values only serve a host
+# that provides none, in light and dark alike. ⚠️ EVERY color goes through a host
+# variable, accent included: a host may serve dark backgrounds without setting
+# the `.dark` class — a color set by `.dark` alone stayed light on a dark
+# background (seen in a real host, unreadable amber pill). No remote resource (host
+# CSP): the font is the host's. ⚠️ The FRAME is the host's (border and corners
+# of the iframe): the page stays transparent and margin-free, and the card redraws neither
+# border nor rounding — otherwise a second background appears behind its corners.
 _CSS = """
 html,body{margin:0;padding:0;background:transparent!important}
 .pf-app-root{padding:0;background:transparent;
@@ -134,12 +134,12 @@ def _label(value: object) -> str:
 
 
 def _status_def(schema: Optional[dict], column: Optional[str]) -> Optional[dict]:
-    """La colonne de statut : celle NOMMÉE, sinon le champ `role: "status"`, sinon la
-    colonne de file (`declaration.status_field`).
+    """The status column: the NAMED one, otherwise the `role: "status"` field, otherwise the
+    queue column (`declaration.status_field`).
 
-    On ne lit PAS le `lifecycle` pour décider des boutons : son interprétation est en
-    cours de retrait (#317). Les valeurs viennent de l'appel, et seules les `options`
-    déclarées les bornent."""
+    We do NOT read the `lifecycle` to decide the buttons: its interpretation is being
+    removed (#317). The values come from the call, and only the declared `options`
+    bound them."""
     by_key = {f["key"]: f for f in _fields(schema)}
     if column:
         return by_key.get(column) or {"key": column}
@@ -173,9 +173,9 @@ def _titre(row: dict, schema: Optional[dict]) -> str:
 
 def _champs(row: dict, schema: Optional[dict], column: str,
             fields: Optional[list]) -> tuple[list[tuple[str, str]], list[str]]:
-    """Les données montrées : `fields` si l'appel les nomme, sinon les premiers champs
-    REMPLIS dans l'ordre du schéma (hors titre, statut, notes, méta et couches). Les
-    champs `role: "note"` sortent à part — c'est ce qu'un relecteur lit en premier."""
+    """The data shown: `fields` if the call names them, otherwise the first FILLED
+    fields in schema order (excluding title, status, notes, meta and layers). The
+    `role: "note"` fields come out separately — it is what a reviewer reads first."""
     decl = _fields(schema)
     labels = {f["key"]: f.get("label") or _label(f["key"]) for f in decl}
     title_key = (declaration.title_field(schema) or {}).get("key")
@@ -200,10 +200,10 @@ def _champs(row: dict, schema: Optional[dict], column: str,
 
 
 def _porte_un_gabarit(*valeurs: object) -> bool:
-    """Une valeur figée dans un bouton passe par le moteur de gabarits du rendu
-    (`CallTool.arguments` interpole `{{ clé }}` côté client) : elle n'arriverait pas
-    au serveur telle qu'écrite. On refuse à l'ouverture plutôt que d'écrire autre chose
-    que ce que le modèle a demandé."""
+    """A value frozen in a button goes through the renderer's template engine
+    (`CallTool.arguments` interpolates `{{ key }}` client-side): it would not reach
+    the server as written. We refuse at opening rather than write something other
+    than what the model asked for."""
     def _walk(v):
         if isinstance(v, str):
             yield v
@@ -229,8 +229,8 @@ def _refus(message: str) -> McpError:
 
 
 def _compte(valeur: object) -> int:
-    """Un compteur du bilan, relu depuis les arguments du bouton : fourni par le
-    client, donc rejouable — borné, affiché, jamais une garde."""
+    """A tally counter, reread from the button's arguments: supplied by the
+    client, hence replayable — bounded, displayed, never a guard."""
     try:
         return min(max(int(valeur), 0), 100_000)
     except (TypeError, ValueError):
@@ -247,7 +247,7 @@ def register(mcp: FastMCP) -> None:
             H4, Button, Column, Div, Slot, Span, Text,
         )
         from prefab_ui.rx import ERROR, RESULT
-    # noqa: SILENT — extra `apps` absent ⇒ pas de carte, `data_write` reste la voie
+    # noqa: SILENT — extra `apps` absent ⇒ no card, `data_write` remains the way
     except Exception:  # pragma: no cover - extra `apps` absent
         return
 
@@ -269,18 +269,18 @@ def register(mcp: FastMCP) -> None:
         return CallTool(
             data_review_decide,
             arguments={**ctx, "id": row_id, "value": value},
-            # Le renderer range `structuredContent` dans `$result`, et un Slot ne peint
-            # qu'un COMPOSANT (clé `type` au premier niveau). Le gestionnaire rend une
-            # enveloppe PrefabApp (`$prefab`/`view`/`css`) : poser `$result` entier
-            # laissait la carte d'avant affichée, clic après clic. On pose sa `view`.
+            # The renderer puts `structuredContent` in `$result`, and a Slot only paints
+            # a COMPONENT (`type` key at the top level). The handler returns a
+            # PrefabApp envelope (`$prefab`/`view`/`css`): setting the whole `$result`
+            # left the previous card displayed, click after click. We set its `view`.
             on_success=SetState("carte", RESULT.view),
             on_error=ShowToast(ERROR, variant="error"),
         )
 
     def _fin(ctx: dict):
-        """Fin de file. Rien tranché dans cette carte : rien à résumer. Sinon le bilan,
-        et UN bouton qui poste ce bilan comme message de l'utilisateur — factuel, jamais
-        une consigne au modèle ; les compteurs viennent du client (affichage seul)."""
+        """End of queue. Nothing decided in this card: nothing to summarize. Otherwise the tally,
+        and ONE button that posts this tally as the user's message — factual, never
+        an instruction to the model; the counters come from the client (display only)."""
         oui, non = ctx.get("approve_count") or 0, ctx.get("reject_count") or 0
         if not oui and not non:
             with Div(css_class="rc-stack"):
@@ -363,7 +363,7 @@ def register(mcp: FastMCP) -> None:
                 else:
                     store.update_row(ds, row_id, {col: value})
                     info = f"{titre} · {_label(value)}"
-                    # Le bilan ne bouge que sur une écriture réelle.
+                    # The tally only moves on a real write.
                     cle = "approve_count" if value == ctx["approve"] else "reject_count"
                     ctx = {**ctx, cle: (ctx.get(cle) or 0) + 1}
                     ton = "rc-dot-ok" if value == ctx["approve"] else ""
@@ -394,7 +394,7 @@ def register(mcp: FastMCP) -> None:
         org: Optional[int] = None,
         approve_count: int = 0,
         reject_count: int = 0,
-    ):  # pas d'annotation de retour : même gotcha que data_app (#69).
+    ):  # no return annotation: same gotcha as data_app (#69).
         """Button handler of `data_review_app` — app-only, never listed to the model."""
         ctx = {"datastore": datastore, "column": column, "pending": pending,
                "approve": approve, "reject": reject, "filter": filter,
@@ -404,8 +404,8 @@ def register(mcp: FastMCP) -> None:
                "reject_count": _compte(reject_count)}
         undo: list = []
         try:
-            # Le contexte figé au rendu, reposé par les gardes des axes (cf. docstring
-            # du module) : le projet co-pose son org ; sinon l'org seule.
+            # The context frozen at render time, reset by the axes' guards (see module
+            # docstring): the project co-sets its org; otherwise the org alone.
             if project is not None:
                 undo.extend(await call_axes.PROJECT.pin_for(project, DECIDE))
             elif org is not None:
@@ -426,7 +426,7 @@ def register(mcp: FastMCP) -> None:
         fields: Optional[list[str]] = None,
         approve_label: Optional[str] = None,
         reject_label: Optional[str] = None,
-    ):  # pas d'annotation de retour : même gotcha que data_app (#69).
+    ):  # no return annotation: same gotcha as data_app (#69).
         """Review queue card (MCP App) — ONE row at a time, two buttons, in the chat.
 
         For a procedure's HUMAN step ("a person reviews the pending leads and
@@ -478,10 +478,10 @@ def register(mcp: FastMCP) -> None:
                             "A value contains `{{`, which the card renderer would "
                             "read as a template: it would not reach the click as "
                             "written.")
-        # Figé dans chaque bouton : le clic arrive sans axes (cf. docstring du module).
-        # L'org est celle EFFECTIVE de cet appel (seam `current_org` : jeton, run,
-        # maison) — pas seulement le jeton `_org=`, sinon un appel résolu sous l'org
-        # d'un run cliquerait sous la maison.
+        # Frozen in each button: the click arrives without axes (see module docstring).
+        # The org is the EFFECTIVE one of this call (`current_org` seam: token, run,
+        # home) — not just the `_org=` token, otherwise a call resolved under a run's
+        # org would click under the home org.
         ctx = {"datastore": ds, "column": fdef["key"], "pending": pending,
                "approve": approve, "reject": reject, "filter": filter or None,
                "fields": fields or None, "approve_label": approve_label,

@@ -60,22 +60,22 @@ def _tool(name: str):
 
 _ECRITURES = [
     ("payfit_collaborator", {"op": "create", "first_name": "Ada", "last_name": "Test",
-                             "personal_email": "ada@exemple.test"}, "collaborateur"),
+                             "personal_email": "ada@exemple.test"}, "collaborator"),
     # Arguments manquants : le refus ne dépend de rien, il ne demande pas de compléter.
-    ("payfit_collaborator", {"op": "create"}, "collaborateur"),
+    ("payfit_collaborator", {"op": "create"}, "collaborator"),
     ("payfit_contract", {"op": "create", "collaborator_id": K, "job_title": "Poste",
-                         "start_date": "2026-02-01"}, "contrat"),
+                         "start_date": "2026-02-01"}, "contract"),
     ("payfit_absence", {"op": "create", "contract_id": K,
                         "absence_type": "fr_conges_payes",
                         "begin_date": "2026-02-02", "end_date": "2026-02-06"}, "absence"),
-    ("payfit_absence", {"op": "cancel", "absence_id": K}, "annulé"),
+    ("payfit_absence", {"op": "cancel", "absence_id": K}, "cancelled"),
     ("payfit_insurance", {"op": "affiliate", "contract_id": K,
-                          "insurance_contract_ids": [K2]}, "mutuelle"),
+                          "insurance_contract_ids": [K2]}, "health insurance"),
     ("payfit_insurance", {"op": "affiliate", "kind": "provident", "contract_id": K,
-                          "insurance_contract_ids": [K2]}, "prévoyance"),
+                          "insurance_contract_ids": [K2]}, "provident fund"),
     ("payfit_insurance", {"op": "regularize", "contract_id": K,
                           "insurance_contract_ids": [K2],
-                          "effective_date": "2026-01-01"}, "régularisation"),
+                          "effective_date": "2026-01-01"}, "regularization"),
 ]
 
 
@@ -87,7 +87,7 @@ def test_une_ecriture_ne_part_jamais_et_le_dit(rien_ne_part, tool, kwargs, actio
     assert err.data["code"] == "payfit_write_not_wired"
     assert err.data["retryable"] is False and err.data["op"] == kwargs["op"]
     assert "payfit_write_not_wired" in err.message
-    assert "rien n'a été envoyé à PayFit" in err.message
+    assert "nothing was sent to PayFit" in err.message
     assert action in err.message, f"le refus ne nomme pas l'action : {err.message}"
 
 

@@ -64,7 +64,7 @@ def test_job_post_no_filters_passes_empty_dict(client):
 
 
 def test_job_post_bad_op(client):
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool("forager_job_post")(op="bogus")
 
 
@@ -88,21 +88,21 @@ def test_organization_website_by_domain(client):
 
 
 def test_organization_website_requires_exactly_one_identifier(client):
-    with pytest.raises(McpError, match="exactement un"):
+    with pytest.raises(McpError, match="exactly one"):
         _tool("forager_organization")(op="website")
-    with pytest.raises(McpError, match="exactement un"):
+    with pytest.raises(McpError, match="exactly one"):
         _tool("forager_organization")(op="website", domain="acme.com", organization_id=5)
     client.lookup_website.assert_not_called()
 
 
 def test_organization_search_refuses_website_params(client):
-    with pytest.raises(McpError, match="op='search' n'utilise pas domain"):
+    with pytest.raises(McpError, match="op='search' does not use domain"):
         _tool("forager_organization")(domain="acme.com")
     client.search_organizations.assert_not_called()
 
 
 def test_organization_website_refuses_filters(client):
-    with pytest.raises(McpError, match="n'utilise pas filters"):
+    with pytest.raises(McpError, match="does not use filters"):
         _tool("forager_organization")(op="website", domain="acme.com", filters={"page": 2})
     client.lookup_website.assert_not_called()
 
@@ -121,9 +121,9 @@ def test_person_lookup_ops_route_to_the_right_method(client, op, method):
 
 
 def test_person_lookup_requires_exactly_one_identifier(client):
-    with pytest.raises(McpError, match="exactement un"):
+    with pytest.raises(McpError, match="exactly one"):
         _tool("forager_person")(op="detail")
-    with pytest.raises(McpError, match="exactement un"):
+    with pytest.raises(McpError, match="exactly one"):
         _tool("forager_person")(op="detail", person_id=1, linkedin_public_identifier="janedoe")
 
 
@@ -133,7 +133,7 @@ def test_person_reverse_by_email(client):
 
 
 def test_person_reverse_by_email_requires_email(client):
-    with pytest.raises(McpError, match="op='reverse_by_email' requiert email"):
+    with pytest.raises(McpError, match="op='reverse_by_email' requires email"):
         _tool("forager_person")(op="reverse_by_email")
     client.lookup_person_by_email.assert_not_called()
 
@@ -144,7 +144,7 @@ def test_person_reverse_by_phone(client):
 
 
 def test_person_do_contacts_enrichment_only_on_work_emails(client):
-    with pytest.raises(McpError, match="do_contacts_enrichment ne s'applique qu'à op='work_emails'"):
+    with pytest.raises(McpError, match="do_contacts_enrichment only applies to op='work_emails'"):
         _tool("forager_person")(op="detail", person_id=1, do_contacts_enrichment=True)
     client.lookup_person_detail.assert_not_called()
 
@@ -163,7 +163,7 @@ def test_person_role_search_refuses_identifier_params(client):
     """The refusal must name what was actually refused (`person_id`) and a
     hint the caller can act on — not a garbled reference to `filters`, which
     wasn't even passed here."""
-    with pytest.raises(McpError, match=r"op='role_search' n'utilise pas person_id — sélectionne par filtres"):
+    with pytest.raises(McpError, match=r"op='role_search' does not use person_id — selects by filters"):
         _tool("forager_person")(op="role_search", person_id=1)
     client.search_person_roles.assert_not_called()
 
@@ -171,13 +171,13 @@ def test_person_role_search_refuses_identifier_params(client):
 def test_person_detail_do_contacts_enrichment_false_is_still_refused(client):
     """`False` is a real, meaningful value here (not "unset") — the refusal
     guard must not treat it as absent via a truthiness check."""
-    with pytest.raises(McpError, match="do_contacts_enrichment ne s'applique qu'à op='work_emails'"):
+    with pytest.raises(McpError, match="do_contacts_enrichment only applies to op='work_emails'"):
         _tool("forager_person")(op="detail", person_id=1, do_contacts_enrichment=False)
     client.lookup_person_detail.assert_not_called()
 
 
 def test_person_bad_op(client):
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool("forager_person")(op="bogus", person_id=1)
 
 
@@ -208,13 +208,13 @@ def test_feedback_phone_number(client):
 
 
 def test_feedback_email_ops_require_email(client):
-    with pytest.raises(McpError, match="requiert email"):
+    with pytest.raises(McpError, match="requires email"):
         _tool("forager_feedback")(op="personal_email", contact_status="valid", is_correct_person=True)
     client.submit_personal_email_feedback.assert_not_called()
 
 
 def test_feedback_phone_number_refuses_email_param(client):
-    with pytest.raises(McpError, match="n'utilise pas email"):
+    with pytest.raises(McpError, match="does not use email"):
         _tool("forager_feedback")(
             op="phone_number", contact_status="connected", is_correct_person=True,
             phone_number="+1", email="jane@acme.com",
@@ -223,7 +223,7 @@ def test_feedback_phone_number_refuses_email_param(client):
 
 
 def test_feedback_bad_op(client):
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool("forager_feedback")(op="bogus", contact_status="valid", is_correct_person=True)
 
 
@@ -253,7 +253,7 @@ def test_account_me(client):
 
 
 def test_account_me_refuses_date_range(client):
-    with pytest.raises(McpError, match="op='me' n'a pas de plage de dates"):
+    with pytest.raises(McpError, match="op='me' has no date range"):
         _tool("forager_account")(date_created_start="2026-01-01")
     client.get_current_user.assert_not_called()
 
@@ -273,13 +273,13 @@ def test_account_balance_totals(client):
 
 
 def test_account_balance_totals_refuses_page(client):
-    with pytest.raises(McpError, match="page ne s'applique pas"):
+    with pytest.raises(McpError, match="page does not apply"):
         _tool("forager_account")(op="balance_totals", page=1)
     client.get_balance_change_totals.assert_not_called()
 
 
 def test_account_bad_op(client):
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool("forager_account")(op="bogus")
 
 

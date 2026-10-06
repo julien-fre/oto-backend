@@ -1,15 +1,15 @@
-"""Factures d'ACHAT Pennylane — importer, lire, corriger, valider.
+"""Pennylane PURCHASE invoices — import, read, correct, validate.
 
-Module du connecteur `pennylane` (cf. `Connector.modules` au registre) : même
-clé, même client, domaine distinct — comme le grand livre et les devis.
+Module of the `pennylane` connector (see `Connector.modules` in the registry): same
+key, same client, distinct domain — like the general ledger and quotes.
 
-Cycle : `pennylane_upload_file` dépose le PDF, `op="import"` crée la facture
-(avec `import_as_incomplete=True`, elle arrive en `accounting_status =
-validation_needed`), `op="update"` la corrige (libellé, dates, montants, et le
-`vat_rate` de ses LIGNES), `op="validate"` la passe en `complete`.
+Cycle: `pennylane_upload_file` uploads the PDF, `op="import"` creates the invoice
+(with `import_as_incomplete=True`, it arrives as `accounting_status =
+validation_needed`), `op="update"` corrects it (label, dates, amounts, and the
+`vat_rate` of its LINES), `op="validate"` moves it to `complete`.
 
-**La validation est une écriture comptable ENGAGEANTE** : jamais implicite,
-jamais dans un import, et l'API n'expose pas le geste inverse.
+**Validation is a COMMITTING accounting entry**: never implicit,
+never inside an import, and the API does not expose the reverse action.
 """
 from __future__ import annotations
 
@@ -45,69 +45,69 @@ def register(mcp: FastMCP) -> None:
         invoice_number: Optional[str] = None,
         label: Optional[str] = None,
     ) -> dict | list:
-        """Factures d'ACHAT (factures fournisseurs reçues) — le côté « dépenses ».
+        """PURCHASE invoices (supplier invoices received) — the "expenses" side.
 
-        `op` :
-        - "list" : l'inventaire des factures reçues, à confronter aux décaissements
-          (rapprochement bancaire) ou pour repérer ce qui reste à payer. ⚠️ Sans
-          `max_pages`, TOUT l'historique revient — commencer petit.
-        - "get" (`invoice_id`) : la facture, dont `accounting_status` (draft |
+        `op`:
+        - "list": the inventory of received invoices, to be checked against disbursements
+          (bank reconciliation) or to spot what remains to be paid. ⚠️ Without
+          `max_pages`, the WHOLE history comes back — start small.
+        - "get" (`invoice_id`): the invoice, including `accounting_status` (draft |
           archived | entry | validation_needed | complete).
-        - "lines" (`invoice_id`) : ses lignes, avec leur `id` et leur `vat_rate` —
-          les `id` à passer à `op="update"`.
-        - "import" : crée la facture depuis un PDF déjà posté
-          (`pennylane_upload_file` → `file_attachment_id`). Pennylane ne fait PAS
-          d'OCR : YOU (ayant lu le PDF) fournis les champs, montants en STRING.
-          Le HT (`currency_amount_before_tax`) est exigé au niveau FACTURE et
-          REFUSÉ dans une ligne : une ligne ne porte que `currency_amount` (TTC)
-          et `currency_tax`, plus son `vat_rate`. `import_as_incomplete=True` la
-          laisse en `validation_needed`.
-        - "update" (`invoice_id`) : corrige une facture pas encore validée — les
-          champs de facture fournis (`label`, `date`, `deadline`,
-          `invoice_number`, `supplier_id`, montants, `external_reference`,
-          `currency`) et les lignes, via `invoice_lines` = un OBJET
+        - "lines" (`invoice_id`): its lines, with their `id` and their `vat_rate` —
+          the `id`s to pass to `op="update"`.
+        - "import": creates the invoice from an already posted PDF
+          (`pennylane_upload_file` → `file_attachment_id`). Pennylane does NOT do
+          OCR: YOU (having read the PDF) supply the fields, amounts as STRINGs.
+          The excl.-VAT amount (`currency_amount_before_tax`) is required at INVOICE level and
+          REFUSED inside a line: a line only carries `currency_amount` (incl. VAT)
+          and `currency_tax`, plus its `vat_rate`. `import_as_incomplete=True` leaves it
+          in `validation_needed`.
+        - "update" (`invoice_id`): corrects an invoice not yet validated — the
+          invoice fields provided (`label`, `date`, `deadline`,
+          `invoice_number`, `supplier_id`, amounts, `external_reference`,
+          `currency`) and the lines, via `invoice_lines` = an OBJECT
           `{"update": [{"id": …, "vat_rate": …}], "create": [...], "delete":
-          [{"id": …}]}` (ici pas une liste). La référence ne documente aucun
-          refus sur une facture déjà `complete` : si Pennylane refuse, le refus
-          remonte tel quel.
-        - "validate" (`invoice_id`) : passe la facture en `complete` — l'écriture
-          comptable est posée. ⚠️ Geste ENGAGEANT et sans retour par l'API : ne
-          l'appeler QUE sur demande explicite de l'utilisateur, facture par
-          facture, jamais dans la foulée d'un import. Refus 422 si les lignes
-          d'écriture ne sont pas équilibrées.
+          [{"id": …}]}` (not a list here). The reference documents no
+          refusal on an already `complete` invoice: if Pennylane refuses, the refusal
+          is surfaced as is.
+        - "validate" (`invoice_id`): moves the invoice to `complete` — the accounting
+          entry is posted. ⚠️ COMMITTING action with no way back through the API: only
+          call it on explicit user request, invoice by
+          invoice, never right after an import. 422 refusal if the entry
+          lines are not balanced.
 
-        `vat_rate` d'une ligne = code Pennylane : 20 %→"FR_200", 10 %→"FR_100",
-        5,5 %→"FR_55", exonéré→"exempt". Codes d'AUTOLIQUIDATION de la référence
-        v2 : `intracom_21`, `intracom_55`, `intracom_85`, `intracom_100`,
+        A line's `vat_rate` = Pennylane code: 20 %→"FR_200", 10 %→"FR_100",
+        5.5 %→"FR_55", exempt→"exempt". REVERSE-CHARGE codes of the v2
+        reference: `intracom_21`, `intracom_55`, `intracom_85`, `intracom_100`,
         `extracom`, `crossborder`, `FR_85_construction`, `FR_100_construction`,
-        `FR_200_construction`. La référence ne les définit pas au-delà de leur nom
-        et ne connaît AUCUN `intracom_200` : pour une acquisition intra-UE à 20 %,
-        demander le bon code à l'utilisateur (question comptable), ne pas deviner.
+        `FR_200_construction`. The reference does not define them beyond their name
+        and knows NO `intracom_200`: for an intra-EU acquisition at 20 %,
+        ask the user for the right code (accounting question), do not guess.
 
-        Plusieurs instances Pennylane dans une org (perso et société) : sans
-        `_instance`, la clé personnelle répond d'abord. Pour les achats de la
-        société, passer `_instance="org:<id>:pennylane"`.
+        Several Pennylane instances in an org (personal and company): without
+        `_instance`, the personal key answers first. For the company's
+        purchases, pass `_instance="org:<id>:pennylane"`.
 
         Args:
-            op: "list" (défaut) | "get" | "lines" | "import" | "update" | "validate".
-            invoice_id: requis pour get / lines / update / validate.
-            max_pages: op="list" / "lines" — borne la pagination.
-            file_attachment_id: op="import" — id renvoyé par `pennylane_upload_file`.
-            supplier_id: op="import" (requis) / "update" — fournisseur existant
+            op: "list" (default) | "get" | "lines" | "import" | "update" | "validate".
+            invoice_id: required for get / lines / update / validate.
+            max_pages: op="list" / "lines" — bounds the pagination.
+            file_attachment_id: op="import" — id returned by `pennylane_upload_file`.
+            supplier_id: op="import" (required) / "update" — existing supplier
                 (`pennylane_supplier`).
-            date / deadline: op="import" (requis) / "update" — dates ISO (facture /
-                échéance).
+            date / deadline: op="import" (required) / "update" — ISO dates (invoice /
+                due date).
             currency_amount_before_tax / currency_amount / currency_tax:
-                op="import" (requis) / "update" — HT / TTC / TVA de la FACTURE, en
+                op="import" (required) / "update" — excl. VAT / incl. VAT / VAT of the INVOICE, as
                 STRING.
-            invoice_lines: op="import" — LISTE de ≥1 ligne (`currency_amount`,
-                `currency_tax`, `vat_rate`, et `ledger_account_id` au besoin) ;
-                op="update" — OBJET {create|update|delete}.
-            currency: défaut EUR à l'import ; à l'update, seulement pour la changer.
-            external_reference: clé d'idempotence / de trace.
-            import_as_incomplete: op="import" — laisse la facture en
+            invoice_lines: op="import" — LIST of ≥1 line (`currency_amount`,
+                `currency_tax`, `vat_rate`, and `ledger_account_id` if needed);
+                op="update" — OBJECT {create|update|delete}.
+            currency: default EUR on import; on update, only to change it.
+            external_reference: idempotency / trace key.
+            import_as_incomplete: op="import" — leaves the invoice in
                 `validation_needed`.
-            invoice_number / label: numéro fournisseur / libellé comptable.
+            invoice_number / label: supplier number / accounting label.
         """
         c = _client()
         if op == "list":
@@ -120,7 +120,7 @@ def register(mcp: FastMCP) -> None:
         if op == "import":
             lignes = _need(invoice_lines, "invoice_lines", op)
             if not isinstance(lignes, list):
-                raise _bad("op='import' : invoice_lines est une LISTE de lignes")
+                raise _bad("op='import': invoice_lines is a LIST of lines")
             return _ecrit(lambda: c.import_supplier_invoice(
                 file_attachment_id=_need(file_attachment_id, "file_attachment_id", op),
                 supplier_id=_need(supplier_id, "supplier_id", op),
@@ -133,7 +133,7 @@ def register(mcp: FastMCP) -> None:
                 external_reference=external_reference,
                 import_as_incomplete=import_as_incomplete,
                 invoice_number=invoice_number, label=label,
-            ), "l'import de facture d'achat")
+            ), "supplier invoice import")
         if op == "update":
             ident = _need(invoice_id, "invoice_id", op)
             valeurs = {"label": label, "date": date, "deadline": deadline,
@@ -144,18 +144,18 @@ def register(mcp: FastMCP) -> None:
                        "external_reference": external_reference}
             champs = {k: valeurs[k] for k in _CHAMPS_FACTURE if valeurs[k] is not None}
             if invoice_lines is not None and not isinstance(invoice_lines, dict):
-                raise _bad("op='update' : invoice_lines est un OBJET "
-                           "{create|update|delete: [...]}, pas une liste — pour "
-                           "changer le vat_rate d'une ligne : {\"update\": "
-                           "[{\"id\": <id de op='lines'>, \"vat_rate\": …}]}")
+                raise _bad("op='update': invoice_lines is an OBJECT "
+                           "{create|update|delete: [...]}, not a list — to "
+                           "change a line's vat_rate: {\"update\": "
+                           "[{\"id\": <id from op='lines'>, \"vat_rate\": …}]}")
             try:
                 return _ecrit(lambda: c.update_supplier_invoice(
                     ident, fields=champs, invoice_lines=invoice_lines),
-                    "la correction de facture d'achat")
+                    "supplier invoice correction")
             except ValueError as e:
-                raise _bad(f"op='update' : {e}") from e
+                raise _bad(f"op='update': {e}") from e
         if op == "validate":
             return _ecrit(lambda: c.validate_supplier_invoice_accounting(
                 _need(invoice_id, "invoice_id", op)),
-                "la validation comptable de facture d'achat")
-        raise _bad("op doit être 'list', 'get', 'lines', 'import', 'update' ou 'validate'")
+                "supplier invoice accounting validation")
+        raise _bad("op must be 'list', 'get', 'lines', 'import', 'update' or 'validate'")

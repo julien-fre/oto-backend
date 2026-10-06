@@ -1,28 +1,28 @@
 ## prerequisite — API Key ID + Key Secret leexi
 
-génère une paire de clés dans Leexi (Settings → Company Settings → API Keys → *add*), puis colle les **deux** valeurs dans oto : l'`API Key ID` et le `Key Secret`.
-- ⚠️ **le secret n'est montré qu'UNE fois**, à la création — s'il est perdu, il faut recréer une paire
-- compte **admin Leexi requis** pour créer une clé : ce n'est pas un réglage qu'un utilisateur ordinaire peut faire
-- byo-only : pas de clé oto partagée — ce sont les appels enregistrés de ton entreprise, chaque organisation pose la sienne
-- ⚠️ **une clé neuve ne porte que `read_calls`.** Tout le reste — `read_users`, `read_teams`, `read_meeting_events`, `write_calls`, `write_meeting_events`, et surtout `write_users` / `write_teams` **qui engagent tes licences facturées** — doit être coché explicitement par un admin. Le bouton « tester la connexion » se contente donc de `read_calls` : c'est le seul scope qu'une clé par défaut possède, et sonder ailleurs ferait passer une clé saine pour une clé morte
-- une **portée d'accès aux appels** se règle aussi côté Leexi, à côté des scopes : toute l'entreprise (défaut), l'accès d'un utilisateur donné, ou des règles d'accès. Elle décide quels appels la clé voit
+generate a key pair in Leexi (Settings → Company Settings → API Keys → *add*), then paste **both** values into oto: the `API Key ID` and the `Key Secret`.
+- ⚠️ **the secret is shown only ONCE**, at creation — if it is lost, a new pair must be created
+- **Leexi admin account required** to create a key: it is not a setting an ordinary user can change
+- byo-only: no shared oto key — these are your company's recorded calls, each organization sets its own
+- ⚠️ **a new key only carries `read_calls`.** Everything else — `read_users`, `read_teams`, `read_meeting_events`, `write_calls`, `write_meeting_events`, and above all `write_users` / `write_teams` **which commit your billed licenses** — must be explicitly ticked by an admin. The "test the connection" button therefore settles for `read_calls`: it is the only scope a default key has, and probing elsewhere would make a healthy key pass for a dead one
+- a **call access scope** is also set on the Leexi side, next to the scopes: the whole company (default), a given user's access, or access rules. It decides which calls the key sees
 
-## usage — ce qui s'est dit au téléphone, et ce qu'on en a retenu
+## usage — what was said on the phone, and what was retained from it
 
-- « de quoi a-t-on parlé avec ce client ? » → `leexi_calls(op="search", customer_email_address=["…"])` puis `op="get"` sur l'uuid rendu : c'est `get` qui rend le **transcript** et les topics, `search` n'a que les métadonnées
-- « le compte rendu de ce rendez-vous » → `leexi_notes(op="list", call_uuid="…")` — les notes sont les sorties des prompts Leexi, et c'est là que vit le résumé, plutôt que dans le transcript brut
-- « les appels de la semaine » → `leexi_calls(op="search", date_filter="performed_at", date_from="…", date_to="…")`
-- « les appels de tel commercial » → `leexi_calls(op="search", owner_uuid=["…"])`, l'uuid venant de `leexi_users(op="list")`
-- « enregistre ce rendez-vous à venir » → `leexi_meetings(op="create", fields={…})`, puis `op="launch_bot"` pour y envoyer l'assistant
-- importer un enregistrement existant → `leexi_calls(op="presign", extension="mp3")`, téléverser le fichier sur l'URL rendue, puis `leexi_calls(op="create", fields={… "recording_s3_key": "…"})`
+- "what did we talk about with this customer?" → `leexi_calls(op="search", customer_email_address=["…"])` then `op="get"` on the returned uuid: `get` is what returns the **transcript** and the topics, `search` only has the metadata
+- "the minutes of this meeting" → `leexi_notes(op="list", call_uuid="…")` — notes are the outputs of Leexi prompts, and that is where the summary lives, rather than in the raw transcript
+- "this week's calls" → `leexi_calls(op="search", date_filter="performed_at", date_from="…", date_to="…")`
+- "this salesperson's calls" → `leexi_calls(op="search", owner_uuid=["…"])`, the uuid coming from `leexi_users(op="list")`
+- "record this upcoming meeting" → `leexi_meetings(op="create", fields={…})`, then `op="launch_bot"` to send the assistant to it
+- import an existing recording → `leexi_calls(op="presign", extension="mp3")`, upload the file to the returned URL, then `leexi_calls(op="create", fields={… "recording_s3_key": "…"})`
 
-## note — quatre choses qui trompent
+## note — four things that mislead
 
-- ⚠️ **une liste vide n'est pas forcément une erreur** : si la portée d'accès de la clé ne couvre aucun appel, `leexi_calls(op="search")` rend une liste vide, et c'est un réglage valide. De même, un **404** sur `op="get"` peut vouloir dire « hors de la portée de cette clé », pas « n'existe pas » — Leexi répond 404 exprès sur ce qu'une clé n'a pas le droit de voir
-- ⚠️ **un appel tout juste créé n'a pas encore ses notes** : la création est asynchrone (quelques minutes), et les complétions de prompt — résumé, chapitrage — arrivent APRÈS. Relire plus tard plutôt que de conclure qu'elles manquent
-- ⚠️ **`leexi_users(op="deactivate")` ne supprime rien** : les appels et l'historique restent, les sessions tombent, et la licence se libère. Pour réactiver, `op="update"` avec `{"active": true}` — ce qui reprend une licence facturée
-- ⚠️ **une équipe qui porte encore des utilisateurs ou des appels ne se supprime pas** (422) : la désactiver avec `leexi_teams(op="update", fields={"active": false})`, ce que l'éditeur recommande
+- ⚠️ **an empty list is not necessarily an error**: if the key's access scope covers no call, `leexi_calls(op="search")` returns an empty list, and that is a valid setting. Likewise, a **404** on `op="get"` can mean "outside this key's scope", not "does not exist" — Leexi answers 404 on purpose for what a key is not allowed to see
+- ⚠️ **a call that was just created does not have its notes yet**: creation is asynchronous (a few minutes), and the prompt completions — summary, chaptering — arrive AFTER. Re-read later rather than conclude they are missing
+- ⚠️ **`leexi_users(op="deactivate")` deletes nothing**: calls and history stay, sessions drop, and the license is freed. To reactivate, `op="update"` with `{"active": true}` — which takes back a billed license
+- ⚠️ **a team that still carries users or calls cannot be deleted** (422): deactivate it with `leexi_teams(op="update", fields={"active": false})`, which the vendor recommends
 
-## note — les limites d'usage
+## note — usage limits
 
-50 requêtes/minute, et seulement **10/minute pour la création d'appel**. Un import en masse doit donc s'étaler ; le connecteur respecte le `Retry-After` de Leexi en lecture, mais ne rejoue jamais une écriture (l'API n'a pas de clé d'idempotence, et un rejeu créerait un doublon).
+50 requests/minute, and only **10/minute for call creation**. A bulk import must therefore be spread out; the connector honors Leexi's `Retry-After` on reads, but never replays a write (the API has no idempotency key, and a replay would create a duplicate).

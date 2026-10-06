@@ -84,7 +84,7 @@ def test_le_fetch_qui_lit_ne_paie_rien(monkeypatch):
     assert "alert(1)" not in out["content"], "script/style ne sont pas du texte"
     assert out["title"] == "ACME"
     assert out["cout"] == {"serper_credits": 0, "browser_session": False}
-    assert out["tentatives"] == [{"cran": "http", "verdict": "lu"}]
+    assert out["tentatives"] == [{"cran": "http", "verdict": "read"}]
 
 
 # ── ① échoue → ② ────────────────────────────────────────────────────────────
@@ -108,7 +108,7 @@ def test_une_coquille_vide_escalade_aussi(monkeypatch):
                      serper={"markdown": "du vrai contenu rendu par le JS " * 20})
     out = lire(url="https://x.fr")
     assert out["chemin"] == "serper"
-    assert "coquille vide" in out["tentatives"][0]["verdict"]
+    assert "empty shell" in out["tentatives"][0]["verdict"]
 
 
 def test_sans_cle_serper_le_cran_est_saute_et_dit(monkeypatch):
@@ -412,8 +412,8 @@ def test_la_lecture_a_un_budget_et_dit_ce_qu_elle_a_tente(monkeypatch):
 
     res = W._fetch_http("https://acme.fr/")
     assert res["ok"] is False
-    assert "délai" in res["verdict"], f"verdict opaque : {res['verdict']!r}"
-    assert "redirection" in res["verdict"], \
+    assert "timeout" in res["verdict"], f"verdict opaque : {res['verdict']!r}"
+    assert "redirect" in res["verdict"], \
         "le verdict doit dire ce qu'il a tenté, pas seulement qu'il a renoncé"
     assert horloge["t"] <= W._DEADLINE_S + 20.0, \
         "le budget doit couper AVANT d'épuiser les 5 redirections"

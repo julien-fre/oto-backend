@@ -158,7 +158,7 @@ def test_erreur_amont_classee_sur_status(construits, egress_vu, monkeypatch):
     inst, _ = construits
     _creds(monkeypatch, _USER)
     inst.download_recording.side_effect = UpstreamHTTPError(403, "texte libre", service="3cx")
-    with pytest.raises(McpError, match="accès refusé"):
+    with pytest.raises(McpError, match="access denied"):
         _tool("threecx_recording")(42)
 
 
@@ -234,7 +234,7 @@ def test_export_lit_toute_la_periode_et_rend_un_csv(construits, egress_vu, monke
 @pytest.mark.parametrize("kw", [{"top": 10}, {"skip": 0}, {"fields": ["*"]}])
 def test_export_refuse_les_arguments_de_page(construits, egress_vu, monkeypatch, kw):
     _creds(monkeypatch, _USER)
-    with pytest.raises(McpError, match="n'utilise pas"):
+    with pytest.raises(McpError, match="does not use"):
         _tool("threecx_call")("2026-09-30", "2026-10-01", op="export", **kw)
     construits[0].list_calls.assert_not_called()
 
@@ -247,7 +247,7 @@ def test_export_borne(construits, egress_vu, monkeypatch):
     monkeypatch.setattr(X, "_EXPORT_PAGES_MAX", 2)
     inst.list_calls.return_value = {"calls": [{}], "next_skip": 1}
     _render_capture(monkeypatch)
-    with pytest.raises(McpError, match="resserre"):
+    with pytest.raises(McpError, match="narrow"):
         _tool("threecx_call")("2026-09-30", "2026-10-01", op="export")
     assert inst.list_calls.call_count == 2
 

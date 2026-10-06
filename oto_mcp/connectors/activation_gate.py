@@ -1,30 +1,30 @@
-"""Garde d'appel de l'activation d'un connecteur — refus nommé `connector_disabled`.
+"""Call guard for a connector's activation — named refusal `connector_disabled`.
 
-La visibilité de session masque les outils d'un connecteur coupé, mais elle est
-**fail-open** (gouvernance d'affichage, ADR 0031) et `oto_call` la traverse par
-construction (ADR 0036) : mesuré le 24/09/2026 (oto-backend#1064), un outil d'un
-connecteur coupé — master plateforme OFF, ou override d'org OFF — était SERVI par
-`oto_call`, handler exécuté. Cette garde-ci est le contrôle d'appel qui manquait.
+Session visibility hides the tools of a disabled connector, but it is
+**fail-open** (display governance, ADR 0031) and `oto_call` crosses it by
+construction (ADR 0036): measured on 24/09/2026 (oto-backend#1064), a tool of a
+disabled connector — platform master OFF, or org override OFF — was SERVED by
+`oto_call`, handler executed. This guard is the call-time control that was missing.
 
-**Un seul point de passage pour les deux chemins** : elle se joue une fois que le
-contexte de l'appel est posé (axes `_org=`/`_group=`/`_project=`, org du run), donc
-contre l'org et l'équipe sous lesquelles la cible va RÉSOUDRE — pas l'org maison.
-Le middleware de contexte (`CallContextMiddleware`, appel direct) et `oto_call`
-(qui rejoue ce contexte hors chaîne) l'appellent au même endroit : juste après
-`run_org.pin_for_call`, juste avant le handler.
+**A single passage point for both paths**: it plays once the call context
+is set (axes `_org=`/`_group=`/`_project=`, the run's org), hence
+against the org and team under which the target will RESOLVE — not the home org.
+The context middleware (`CallContextMiddleware`, direct call) and `oto_call`
+(which replays that context outside the chain) call it at the same place: right after
+`run_org.pin_for_call`, right before the handler.
 
-**Fail-closed** : une lecture d'activation qui échoue fait échouer l'appel, elle
-ne le laisse pas passer. Sans sub (stdio local), rien n'est gardé : la surface
-multi-utilisateur seule est visée.
-Les outils plateforme (`oto_*`, `data_*`, `run_*`…) n'ont pas de connecteur au
-registre : l'activation ne les garde jamais.
+**Fail-closed**: an activation read that fails makes the call fail, it
+does not let it through. Without a sub (local stdio), nothing is guarded: only the
+multi-user surface is targeted.
+Platform tools (`oto_*`, `data_*`, `run_*`…) have no connector in the
+registry: activation never guards them.
 
-**L'org SUSPENDUE** (`org_suspension`) passe par ici aussi, et AVANT l'activation :
-c'est le même seam (l'org sous laquelle l'appel résout, `_org` et run compris), pour
-les deux chemins. Refus nommé `org_suspended`. Elle garde AUSSI les outils de
-plateforme écrits à la main (`org_suspension.outil_garde`) : sans ça, `data_write` ou
-`run_start` continuaient dans une org suspendue, directement comme par `oto_call`.
-Les capacités, elles, sont gardées dans leur adaptateur.
+**The SUSPENDED org** (`org_suspension`) goes through here too, and BEFORE activation:
+it is the same seam (the org under which the call resolves, `_org` and run included), for
+both paths. Named refusal `org_suspended`. It ALSO guards hand-written platform
+tools (`org_suspension.outil_garde`): without that, `data_write` or
+`run_start` kept going in a suspended org, directly as well as through `oto_call`.
+Capabilities, for their part, are guarded in their adapter.
 """
 from __future__ import annotations
 
@@ -42,16 +42,16 @@ CODE = "connector_disabled"
 
 
 def _refus_suspendue(org: Optional[int], **cible) -> Optional[ErrorData]:
-    """L'erreur à rendre si l'org sous laquelle l'appel résout est suspendue."""
+    """The error to return if the org under which the call resolves is suspended."""
     if (texte := org_suspension.refus(org)):
-        return ErrorData(code=INVALID_PARAMS, message=f"Refus `{org_suspension.CODE}` : {texte}",
+        return ErrorData(code=INVALID_PARAMS, message=f"Refusal `{org_suspension.CODE}`: {texte}",
                          data={"code": org_suspension.CODE, "retryable": False,
                                "org_id": org, **cible})
     return None
 
 
 def _refus_outil_plateforme(tool_name: str) -> Optional[ErrorData]:
-    """Sync (threadpool) : la suspension seule, pour un outil sans connecteur."""
+    """Sync (threadpool): the suspension alone, for a tool without a connector."""
     sub = call_axes.current_user_sub_from_token()
     if not sub:
         return None
@@ -59,9 +59,9 @@ def _refus_outil_plateforme(tool_name: str) -> Optional[ErrorData]:
 
 
 def _refus(connector: str) -> Optional[ErrorData]:
-    """Sync (threadpool) : l'erreur à rendre si `connector` est coupé pour l'org et
-    l'équipe sous lesquelles l'appel résout, sinon `None`. L'identité se lit ici, pas
-    dans la boucle : la canonicaliser peut toucher la base (drain d'alias)."""
+    """Sync (threadpool): the error to return if `connector` is disabled for the org and
+    team under which the call resolves, otherwise `None`. The identity is read here, not
+    in the loop: canonicalizing it may touch the database (alias drain)."""
     sub = call_axes.current_user_sub_from_token()
     if not sub:
         return None
@@ -72,35 +72,35 @@ def _refus(connector: str) -> Optional[ErrorData]:
     cran = activation.cran_qui_coupe(connector, org, group)
     if cran is None:
         return None
-    ou = f"l'organisation {org}" if org is not None else "ton compte (aucune organisation active)"
+    ou = f"organization {org}" if org is not None else "your account (no active organization)"
     if cran == "org":
-        pourquoi = f"désactivé pour {ou} par un réglage de l'organisation"
-        geste = (f"un admin de l'org l'active : oto_connector_activation(op='set', "
+        pourquoi = f"disabled for {ou} by an organization setting"
+        geste = (f"an org admin enables it: oto_connector_activation(op='set', "
                  f"scope='org', org_id={org}, name='{connector}', enabled=true).")
     elif cran == "tenant":
-        pourquoi = "coupé par l'hébergeur de ton organisation, pour toute son offre"
-        geste = ("seul un admin de cet hébergeur (le tenant) le rouvre, depuis son "
-                 "tableau de bord ; aucune organisation ni équipe ne le peut.")
+        pourquoi = "disabled by your organization's host, for its entire offering"
+        geste = ("only an admin of that host (the tenant) reopens it, from their "
+                 "dashboard; no organization or team can.")
     elif cran == "group":
-        pourquoi = f"coupé par ton équipe {group}"
-        geste = (f"un chef de l'équipe retire la coupure : oto_connector_activation("
+        pourquoi = f"disabled by your team {group}"
+        geste = (f"a team lead removes the cut: oto_connector_activation("
                  f"op='clear', scope='group', group_id={group}, name='{connector}').")
     else:
-        pourquoi = f"désactivé par la plateforme pour {ou}"
-        geste = ("seul un admin de la plateforme peut l'ouvrir : une organisation ne "
-                 "le peut pas, le plafond plateforme n'est jamais relâché.")
+        pourquoi = f"disabled by the platform for {ou}"
+        geste = ("only a platform admin can open it: an organization cannot, "
+                 "the platform ceiling is never relaxed.")
     return ErrorData(
         code=INVALID_PARAMS,
-        message=(f"Refus `{CODE}` : le connecteur `{connector}` est {pourquoi}. L'appel "
-                 f"n'est servi ni directement ni par oto_call. Pour l'activer, {geste}"),
+        message=(f"Refusal `{CODE}`: the connector `{connector}` is {pourquoi}. The call "
+                 f"is served neither directly nor through oto_call. To enable it, {geste}"),
         data={"code": CODE, "retryable": False, "connector": connector,
               "org_id": org, "group_id": group, "scope": cran},
     )
 
 
 async def require_active(tool_name: str) -> None:
-    """Lève `connector_disabled` si l'outil `tool_name` appartient à un connecteur
-    coupé pour l'appel courant. À appeler APRÈS la pose du contexte d'appel."""
+    """Raises `connector_disabled` if the tool `tool_name` belongs to a connector
+    disabled for the current call. To be called AFTER the call context is set."""
     con = providers.connector_for_namespace(namespace_of(tool_name))
     if con is None:
         if org_suspension.outil_garde(tool_name):

@@ -59,7 +59,7 @@ def test_reveal_and_include_partial_profiles_default_to_none(client_cls):
 
 def test_rejects_empty_contacts_before_any_call(client_cls):
     inst = _instance(client_cls)
-    with pytest.raises(McpError, match="au moins un"):
+    with pytest.raises(McpError, match="at least one"):
         _register_and_call("lusha_search_and_enrich", contacts=[])
     inst.search_and_enrich.assert_not_called()
 

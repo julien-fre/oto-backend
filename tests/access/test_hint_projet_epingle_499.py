@@ -55,9 +55,9 @@ def test_un_projet_lisible_qui_epingle_est_NOMME_avec_son_geste(wired, monkeypat
     f = _epingles([{"id": 59, "name": "Développement commercial"}])
     monkeypatch.setattr(db, "projects_pinning_instance", f)
     txt = access._reachable_hint("u1", 35, "zoho")
-    assert "le projet #59 « Développement commercial » épingle déjà" in txt
+    assert "project #59 « Développement commercial » already pins" in txt
     assert "_project=59" in txt
-    assert "lie l'instance à ton projet" not in txt, (
+    assert "link the instance to your project" not in txt, (
         "le conseil de lier renvoie refaire un geste déjà fait")
     # Les instances à portée restent listées : le hint ajoute, il ne remplace pas.
     assert "group=2" in txt
@@ -66,7 +66,7 @@ def test_un_projet_lisible_qui_epingle_est_NOMME_avec_son_geste(wired, monkeypat
 def test_sans_projet_qui_epingle_le_conseil_de_lier_reste(wired, monkeypatch):
     monkeypatch.setattr(db, "projects_pinning_instance", _epingles([]))
     txt = access._reachable_hint("u1", 35, "zoho")
-    assert "lie l'instance à ton projet (oto_project op=link)" in txt
+    assert "link the instance to your project (oto_project op=link)" in txt
     assert "_project=" not in txt
 
 
@@ -101,7 +101,7 @@ def test_un_projet_qui_epingle_suffit_meme_sans_cle_a_portee(wired, monkeypatch)
     txt = access._reachable_hint("u1", 35, "zoho")
     assert "_project=59" in txt
     # La réserve « aux frais de l'entité » vaut aussi pour un projet épinglé.
-    assert "aux frais de l'entité" in txt
+    assert "at the expense of the entity" in txt
     assert vide.appels, "« sans clé à portée » doit venir de la portée LUE, vide"
 
 
@@ -119,7 +119,7 @@ def test_un_hoquet_de_lecture_rend_le_hint_d_avant(wired, monkeypatch):
     monkeypatch.setattr(ownership, "accessible_project_ids", _boom)
     txt = access._reachable_hint("u1", 35, "zoho")
     assert "group=2" in txt
-    assert "lie l'instance à ton projet" in txt
+    assert "link the instance to your project" in txt
 
 
 # ── la requête, sur une vraie base ───────────────────────────────────────────

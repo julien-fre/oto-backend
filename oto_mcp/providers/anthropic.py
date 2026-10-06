@@ -1,42 +1,42 @@
-"""Déclaration de registre du porteur de clé `anthropic`.
+"""Registry declaration of the `anthropic` key carrier.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). Cf. `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# ⚠️ `kind="credential"` : AUCUN outil. Cet objet ne sert qu'à porter la clé
-# que la plateforme utilise POUR LE COMPTE de l'org — un agent programmé la
-# consomme, aucun tool ne l'expose. Un connecteur ordinaire à namespaces vides
-# se présenterait comme un connecteur sans en avoir les effets ; le type
-# distinct laisse l'écran dire ce que c'est.
+# ⚠️ `kind="credential"`: NO tool. This object only serves to carry the key
+# that the platform uses ON BEHALF OF the org — a scheduled agent consumes
+# it, no tool exposes it. An ordinary connector with empty namespaces
+# would present itself as a connector without having its effects; the
+# distinct type lets the screen say what it is.
 #
-# `byo_org` seul : la clé est celle de l'ORGANISATION, pas d'une personne —
-# c'est elle qui paie les tours, et un agent programmé survit à son auteur.
+# `byo_org` only: the key is the ORGANIZATION's, not a person's —
+# it is what pays for the turns, and a scheduled agent outlives its author.
 CONNECTOR = _c(
     "anthropic", [], kind="credential", auth_modes={"byo_org"}, keyed=True,
-    # ⚠️ MONO-compte, déclaré : la dérivation rendrait `multi` (api_key), et
-    # l'écran proposerait de poser une deuxième clé que rien ne saurait choisir.
-    # Un passage tourne sur UNE clé — deux dépôts pour la même org, ce serait deux
-    # factures pour un même travail, et le worker n'a aucun critère pour trancher.
+    # ⚠️ SINGLE-account, declared: the derivation would yield `multi` (api_key), and
+    # the screen would offer to set a second key that nothing could choose between.
+    # A run uses ONE key — two deposits for the same org would be two
+    # invoices for the same work, and the worker has no criterion to decide.
     cardinality="mono",
-    # `fields` (14/09/2026) : la clé, et le WORKSPACE d'une clé d'organisation. Une
-    # clé créée pour toute l'organisation Anthropic, et non dans un workspace, fait
-    # refuser chaque requête qui ne nomme pas le workspace à facturer (en-tête
-    # `anthropic-workspace-id`). Le workspace n'est pas secret et vit dans `meta`
-    # (`in_meta`) : le chiffré garde la clé BRUTE, et les clés déjà déposées se
-    # relisent à l'identique. Le worker le reçoit au claim, à côté de la clé.
+    # `fields` (14/09/2026): the key, and the WORKSPACE of an organization key. A
+    # key created for the whole Anthropic organization, and not in a workspace, makes
+    # every request that does not name the workspace to bill be refused (header
+    # `anthropic-workspace-id`). The workspace is not secret and lives in `meta`
+    # (`in_meta`): the encrypted blob keeps the RAW key, and keys already deposited
+    # read back identically. The worker receives it at claim, next to the key.
     secret_kind="fields", label="Anthropic",
     credential_fields=(
-        CredentialField("key", "Clé d'API", secret=True),
+        CredentialField("key", "API key", secret=True),
         CredentialField(
             "workspace_id", "Workspace", secret=False, required=False, in_meta=True,
-            help="Seulement pour une clé d'ORGANISATION (créée hors d'un workspace) : "
-                 "l'identifiant du workspace à facturer. Vide pour une clé de workspace."),
+            help="Only for an ORGANIZATION key (created outside a workspace): "
+                 "the id of the workspace to bill. Empty for a workspace key."),
     ),
-    help="Clé de modèle Anthropic — utilisée par les agents programmés de l'organisation, jamais par un outil",
+    help="Anthropic model key — used by the organization's scheduled agents, never by a tool",
     href="https://console.anthropic.com/settings/keys",
 )
 

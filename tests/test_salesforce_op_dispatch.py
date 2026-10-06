@@ -226,7 +226,7 @@ def test_all_or_none_defaut_false_comme_salesforce(client):
 # --- salesforce_record : les gardes des bulk restent branchées SUR LE TOOL ------
 
 def test_bulk_refuse_un_lot_vide_sans_appeler_salesforce(client):
-    with pytest.raises(McpError, match="au moins un"):
+    with pytest.raises(McpError, match="at least one"):
         _tool("salesforce_record")(sobject="Contact", op="bulk_create", items=[])
     client.create_records.assert_not_called()
 
@@ -312,7 +312,7 @@ def test_describe_projette_et_verbose_reste_la_porte_de_sortie(client):
 def test_une_op_inconnue_est_refusee_en_nommant_les_ops_valides(client, tool, base):
     """Jamais de repli silencieux sur le défaut : l'agent croirait sa demande
     honorée alors qu'il a obtenu autre chose."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool(tool)(op="nope", **base)
     assert not client.method_calls, "une op inconnue a atteint le client"
 
@@ -327,7 +327,7 @@ def test_une_op_inconnue_ne_resout_meme_pas_le_credential(monkeypatch):
         raise AssertionError("credential résolu pour une op inconnue")
 
     monkeypatch.setattr(access, "resolve_credential", _boum)
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool("salesforce_record")(sobject="Contact", op="destroy")
 
 
@@ -371,7 +371,7 @@ def test_le_message_de_refus_nomme_chaque_op_de_note(op):
 ])
 def test_un_argument_obligatoire_manquant_nomme_lop_et_largument(
         client, tool, base, op, kwargs, manquant):
-    with pytest.raises(McpError, match=f"op='{op}' requiert {manquant}"):
+    with pytest.raises(McpError, match=f"op='{op}' requires {manquant}"):
         _tool(tool)(op=op, **base, **kwargs)
     assert not client.method_calls, "l'appel est parti malgré l'argument manquant"
 
@@ -379,6 +379,6 @@ def test_un_argument_obligatoire_manquant_nomme_lop_et_largument(
 def test_un_record_id_vide_est_refuse_pas_transmis(client):
     """`record_id=""` viserait l'URL de COLLECTION : la suppression manquerait sa
     cible au lieu d'échouer franchement."""
-    with pytest.raises(McpError, match="requiert record_id"):
+    with pytest.raises(McpError, match="requires record_id"):
         _tool("salesforce_record")(sobject="Contact", op="delete", record_id="   ")
     client.delete_record.assert_not_called()

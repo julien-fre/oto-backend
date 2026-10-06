@@ -36,14 +36,14 @@ def test_rename_moves_the_vault_row_and_keeps_default(monkeypatch):
 def test_rename_refuses_a_taken_name(monkeypatch):
     # rename_account fait un upsert : laisser passer écraserait la clé d'arrivée.
     renames = _coffre(monkeypatch, [{"account": "a", "meta": {}}, {"account": "b", "meta": {}}])
-    with pytest.raises(ValueError, match="existe déjà"):
+    with pytest.raises(ValueError, match="already exists"):
         ci.rename_identity("u", "zoho", "a", "b")
     assert renames == []
 
 
 @pytest.mark.parametrize("ident,nom,motif", [
-    ("absent", "x", "inconnu"),
-    ("a", "   ", "vide"),
+    ("absent", "x", "Unknown"),
+    ("a", "   ", "empty"),
 ])
 def test_rename_refuses_unknown_or_empty(monkeypatch, ident, nom, motif):
     _coffre(monkeypatch, [{"account": "a", "meta": {}}])
@@ -59,7 +59,7 @@ def test_rename_same_name_is_a_noop(monkeypatch):
 
 def test_rename_refused_on_connector_without_vault_accounts():
     # google/unipile ont leurs propres backends : pas de lignes du coffre à renommer.
-    with pytest.raises(ValueError, match="renommables"):
+    with pytest.raises(ValueError, match="renamable"):
         ci.rename_identity("u", "google", "x@y", "z")
 
 
@@ -92,10 +92,10 @@ def test_every_multi_account_connector_documents_its_accounts():
     multi = [c for c in providers._REGISTRY_LIST if c.auth_multi_account]
     assert len(multi) > 20
     for con in multi:
-        noun = con.account_noun or "compte"
+        noun = con.account_noun or "account"
         titres = [s.title for s in con.doc_sections]
-        assert f"plusieurs {noun}s" in titres, con.name
-        corps = next(s.body_md for s in con.doc_sections if s.title == f"plusieurs {noun}s")
+        assert f"multiple {noun}s" in titres, con.name
+        corps = next(s.body_md for s in con.doc_sections if s.title == f"multiple {noun}s")
         assert f"connector='{con.name}'" in corps and "_account" in corps
 
 
@@ -103,7 +103,7 @@ def test_single_account_connector_has_no_multi_account_section():
     mono = [c for c in providers._REGISTRY_LIST if not c.auth_multi_account]
     assert mono
     for con in mono:
-        assert not any(s.title.startswith("plusieurs ") and "_account" in s.body_md
+        assert not any(s.title.startswith("multiple ") and "_account" in s.body_md
                        for s in con.doc_sections), con.name
 
 
@@ -114,8 +114,8 @@ def test_ambiguity_names_the_accounts_without_gender_agreement(monkeypatch):
         {"account": "alpha", "meta": {}}, {"account": "beta", "meta": {}}])
     monkeypatch.setattr(access, "account_noun", lambda p: "société")
     with pytest.raises(McpError) as e:
-        cascade._shared_auto_account("org", "1", "zoho", "pour ton org", scope="org")
+        cascade._shared_auto_account("org", "1", "zoho", "for your org", scope="org")
     msg = e.value.error.message
-    assert msg.startswith("Plusieurs sociétés `zoho` pour ton org (`alpha`, `beta`)")
+    assert msg.startswith("Multiple sociétés `zoho` for your org (`alpha`, `beta`)")
     assert "configurés" not in msg and "marqué" not in msg
     assert "_account=" in msg and "scope='org'" in msg

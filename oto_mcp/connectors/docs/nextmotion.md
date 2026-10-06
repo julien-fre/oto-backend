@@ -1,88 +1,88 @@
-## prerequisite — ta clé api nextmotion
+## prerequisite — your nextmotion api key
 
-connecte-toi à l'[application web Nextmotion](https://app.nextmotion.net), puis **Settings → API Keys** → génère une clé et copie-la : elle n'est plus affichée ensuite. colle-la dans tes clés de connecteur oto sous `nextmotion`.
-- la clé agit **au nom de l'utilisateur qui l'a générée**, sur les cliniques dont il est employé ; elle n'expire pas, se révoque par « Reroll » ou suppression au même endroit
-- l'accès API est inclus dans l'offre Scale, ou en option payante à partir de l'offre Growth (grille publique [nextmotion.net/tarifs](https://www.nextmotion.net/tarifs)) ; qui peut générer une clé selon le rôle dans la clinique n'est pas documenté
-- BYO seulement : pas de clé oto partagée
+log in to the [Nextmotion web app](https://app.nextmotion.net), then **Settings → API Keys** → generate a key and copy it: it is not shown again afterwards. paste it into your oto connector keys under `nextmotion`.
+- the key acts **on behalf of the user who generated it**, on the clinics where they are employed; it does not expire, and is revoked by "Reroll" or deletion in the same place
+- API access is included in the Scale plan, or as a paid option from the Growth plan (public pricing [nextmotion.net/tarifs](https://www.nextmotion.net/tarifs)); who can generate a key depending on role in the clinic is not documented
+- BYO only: no shared oto key
 
-## usage — agenda, catalogue, ventes, leads, patients, statistiques, stock et agrégats
+## usage — calendar, catalogue, sales, leads, patients, statistics, stock and aggregates
 
-commence par `nextmotion_clinic()` : chaque autre outil demande un `clinic_id`.
-- « qui travaille dans la clinique ? » → `nextmotion_practitioner(op="list", clinic_id=…)`
-- « l'agenda du jour » → `nextmotion_appointment(op="list", clinic_id=…, date="AAAA-MM-JJ")`
-- « quels créneaux libres ? » → `nextmotion_availability(clinic_id=…, start_date=…, end_date=…)`
-- « déplace ce rendez-vous » → prends UN créneau de `nextmotion_availability`, puis `nextmotion_appointment(op="reschedule", appointment_id=…, visit_type_opening_hour_id=<id du créneau>, time_slot=<time_slot du créneau>)`
-- « qu'est-ce qu'on propose, à quel prix ? » → `nextmotion_catalog(kind="visit_type"|"treatment_type"|"treatment_pricing"|…, clinic_id=…)`
-- « les devis / factures » → `nextmotion_quote(op="list", clinic_id=…)`, `nextmotion_invoice(op="list", clinic_id=…)`
-- « les factures de janvier » → `nextmotion_invoice(op="list", clinic_id=…, invoiced_from="2026-01-01", invoiced_to="2026-01-31")`
-- « quels lots expirent bientôt, qu'est-ce qui est en rupture ? » → `nextmotion_product(op="list", clinic_id=…, expiring_within_days=30)` ou `stock_state="low"|"out"`
-- « quelles salles, quels appareils, quelles plages, qui est absent ? » → `nextmotion_calendar(kind="room"|"device"|"opening_hour"|"absence", clinic_id=…)` (`show_all=True` pour toute la clinique, pas seulement l'utilisateur de la clé)
-- « les demandes de rendez-vous en ligne à traiter » → `nextmotion_calendar(kind="appointment_request", clinic_id=…, request_status="new")`
-- « où en sont les patients du jour ? » → `nextmotion_journey(clinic_id=…, start_date="AAAA-MM-JJ", end_date="AAAA-MM-JJ")`
-- « forfaits, répartitions comptables, produits du catalogue » → `nextmotion_catalog(kind="treatment_package"|"accounting_distribution"|"global_product", clinic_id=…)` ; les soins d'un forfait → `op="items"`, la répartition par praticien d'un tarif ou d'un forfait → `op="distributions"`
-- « qui a payé quoi, par quel moyen ? » → `nextmotion_payment(op="list", clinic_id=…)` ou `invoice_id=…` pour une facture
-- « le chiffre d'affaires par mois, par type de soin » → `nextmotion_statistics(kind="appointment_income"|"treatment_types"|"treatment_types_income", clinic_id=…, period_type="month")`
-- « combien ce patient a-t-il facturé, payé ? » → `nextmotion_patient_stats(patient_id=…)` avec l'id servi par un rendez-vous, un devis ou une facture
-- « le pipeline des prospects » → `nextmotion_lead(op="list", clinic_id=…)`, et les libellés de source ou de statut → `nextmotion_setting(kind="object_label", clinic_id=…, label_types=["lead_source"])`
-- « d'où viennent nos patients, quel âge, quel genre ? » → `nextmotion_patient_demographics(clinic_id=…, by=["department","age_band"])` — effectifs seulement ; le profil socio-démographique d'une commune (population, revenus) se lit en open data : `urba_socio(code_insee)`
-- « nos machines tournent-elles ? » → `nextmotion_device_usage(clinic_id=…, start_date=…, end_date=…, period_type="month")` — 93 jours au plus par appel
-- « abonnement Nextmotion, moyens de paiement, gabarits, modèles de questionnaires, webhooks » → `nextmotion_setting(kind="feature"|"payment_medium"|"communication_template"|"document_template"|"survey_form"|"webhook", clinic_id=…)`
-- « qui est ce patient ? » → `nextmotion_patient(op="get", patient_id=…)` avec l'id servi par un rendez-vous, un devis, une facture ; « retrouve Mme X » → `nextmotion_patient(op="list", clinic_id=…, search="X")`
-- « crée / corrige la fiche d'un patient » → `nextmotion_patient(op="create", clinic_id=…, data={"email": …, "first_name": …, "last_name": …, "gender": …})` ou `op="update", patient_id=…`
-- « ajoute une salle, un appareil, une absence, une plage » → `nextmotion_calendar(kind=…, op="create", clinic_id=…, data={…})` ; modifier / supprimer → `op="update"|"delete", item_id=…`
-- « déplace ou modifie ce rendez-vous » → `nextmotion_appointment(op="update", appointment_id=…, data={"calendar_event": {"start_time": …, "end_time": …}})`
-- « crée un type de soin, un forfait, change un tarif » → `nextmotion_catalog(kind="treatment_type"|"treatment_package"|…, op="create"|"update", …, data={…})` ; lignes d'un forfait → `op="add_item"|"set_items"`, répartition par praticien → `op="set_distributions"`
-- « valide ce devis, encaisse cette facture, fais un avoir » → `nextmotion_quote(op="validate", quote_id=…)`, `nextmotion_invoice(op="pay", invoice_id=…, data={"card": "100.00"})`, `nextmotion_invoice(op="credit_note", clinic_id=…, data={"patient": …, "items": [...]})`
-- « ajoute ce prospect, convertis-le en patient » → `nextmotion_lead(op="create", clinic_id=…, data={…})`, `nextmotion_lead(op="convert", lead_id=…)`
-- « note cet appel, envoie le devis par email » → `nextmotion_communication(kind="call"|"message", clinic_id=…, data={…})`
+start with `nextmotion_clinic()`: every other tool asks for a `clinic_id`.
+- "who works at the clinic?" → `nextmotion_practitioner(op="list", clinic_id=…)`
+- "today's calendar" → `nextmotion_appointment(op="list", clinic_id=…, date="YYYY-MM-DD")`
+- "which slots are free?" → `nextmotion_availability(clinic_id=…, start_date=…, end_date=…)`
+- "move this appointment" → pick ONE slot from `nextmotion_availability`, then `nextmotion_appointment(op="reschedule", appointment_id=…, visit_type_opening_hour_id=<slot id>, time_slot=<slot time_slot>)`
+- "what do we offer, at what price?" → `nextmotion_catalog(kind="visit_type"|"treatment_type"|"treatment_pricing"|…, clinic_id=…)`
+- "the quotes / invoices" → `nextmotion_quote(op="list", clinic_id=…)`, `nextmotion_invoice(op="list", clinic_id=…)`
+- "January's invoices" → `nextmotion_invoice(op="list", clinic_id=…, invoiced_from="2026-01-01", invoiced_to="2026-01-31")`
+- "which batches expire soon, what is out of stock?" → `nextmotion_product(op="list", clinic_id=…, expiring_within_days=30)` or `stock_state="low"|"out"`
+- "which rooms, which devices, which slots, who is absent?" → `nextmotion_calendar(kind="room"|"device"|"opening_hour"|"absence", clinic_id=…)` (`show_all=True` for the whole clinic, not only the key's user)
+- "online appointment requests to handle" → `nextmotion_calendar(kind="appointment_request", clinic_id=…, request_status="new")`
+- "where are today's patients at?" → `nextmotion_journey(clinic_id=…, start_date="YYYY-MM-DD", end_date="YYYY-MM-DD")`
+- "packages, accounting distributions, catalogue products" → `nextmotion_catalog(kind="treatment_package"|"accounting_distribution"|"global_product", clinic_id=…)`; a package's treatments → `op="items"`, a pricing's or package's per-practitioner distribution → `op="distributions"`
+- "who paid what, by which means?" → `nextmotion_payment(op="list", clinic_id=…)` or `invoice_id=…` for one invoice
+- "revenue by month, by treatment type" → `nextmotion_statistics(kind="appointment_income"|"treatment_types"|"treatment_types_income", clinic_id=…, period_type="month")`
+- "how much has this patient been invoiced, paid?" → `nextmotion_patient_stats(patient_id=…)` with the id served by an appointment, a quote or an invoice
+- "the prospect pipeline" → `nextmotion_lead(op="list", clinic_id=…)`, and the source or status labels → `nextmotion_setting(kind="object_label", clinic_id=…, label_types=["lead_source"])`
+- "where do our patients come from, what age, what gender?" → `nextmotion_patient_demographics(clinic_id=…, by=["department","age_band"])` — headcounts only; a municipality's socio-demographic profile (population, income) is read in open data: `urba_socio(code_insee)`
+- "are our machines running?" → `nextmotion_device_usage(clinic_id=…, start_date=…, end_date=…, period_type="month")` — 93 days at most per call
+- "Nextmotion subscription, payment means, templates, questionnaire models, webhooks" → `nextmotion_setting(kind="feature"|"payment_medium"|"communication_template"|"document_template"|"survey_form"|"webhook", clinic_id=…)`
+- "who is this patient?" → `nextmotion_patient(op="get", patient_id=…)` with the id served by an appointment, a quote, an invoice; "find Mrs X" → `nextmotion_patient(op="list", clinic_id=…, search="X")`
+- "create / fix a patient's record" → `nextmotion_patient(op="create", clinic_id=…, data={"email": …, "first_name": …, "last_name": …, "gender": …})` or `op="update", patient_id=…`
+- "add a room, a device, an absence, a slot" → `nextmotion_calendar(kind=…, op="create", clinic_id=…, data={…})`; edit / delete → `op="update"|"delete", item_id=…`
+- "move or edit this appointment" → `nextmotion_appointment(op="update", appointment_id=…, data={"calendar_event": {"start_time": …, "end_time": …}})`
+- "create a treatment type, a package, change a price" → `nextmotion_catalog(kind="treatment_type"|"treatment_package"|…, op="create"|"update", …, data={…})`; a package's lines → `op="add_item"|"set_items"`, per-practitioner distribution → `op="set_distributions"`
+- "validate this quote, collect this invoice, make a credit note" → `nextmotion_quote(op="validate", quote_id=…)`, `nextmotion_invoice(op="pay", invoice_id=…, data={"card": "100.00"})`, `nextmotion_invoice(op="credit_note", clinic_id=…, data={"patient": …, "items": [...]})`
+- "add this prospect, convert them into a patient" → `nextmotion_lead(op="create", clinic_id=…, data={…})`, `nextmotion_lead(op="convert", lead_id=…)`
+- "log this call, send the quote by email" → `nextmotion_communication(kind="call"|"message", clinic_id=…, data={…})`
 
-## note — factures par période : un parcours complet, borné
+## note — invoices by period: a complete, bounded walk
 
-- l'API Nextmotion ne filtre pas les factures par date et ne documente pas leur ordre : l'outil lit **toutes** les pages (100 factures par appel) et garde celles dont `invoiced_time` tombe dans la période, bornes incluses
-- le parcours est plafonné par `max_pages` (20 par défaut, 100 au plus) ; la réponse dit `pages_lues`, `factures_parcourues` et `complet`
-- `complet: false` = résultat **partiel** : relance avec `offset=<offset_suivant>` et la même période pour lire la suite
-- avec une période, `limit` est refusé et `offset` est le point de départ du parcours
-- pas de filtre de période sur les devis : un devis n'a pas de date de facturation, et sa date d'émission peut être vide
+- the Nextmotion API does not filter invoices by date and does not document their order: the tool reads **all** the pages (100 invoices per call) and keeps those whose `invoiced_time` falls within the period, bounds included
+- the walk is capped by `max_pages` (20 by default, 100 at most); the response gives `pages_lues`, `factures_parcourues` and `complet`
+- `complet: false` = **partial** result: rerun with `offset=<offset_suivant>` and the same period to read the rest
+- with a period, `limit` is refused and `offset` is the starting point of the walk
+- no period filter on quotes: a quote has no invoicing date, and its issue date can be empty
 
-## note — stock produits : pas de lien avec les factures
+## note — product stock: no link to invoices
 
-- `nextmotion_product` lit le stock de la clinique (un lot par ligne : numéro de lot, péremption, niveaux de stock, prix unitaire, produit et marque) ; un lot se crée, se corrige (niveaux, péremption) et se supprime
-- l'API Nextmotion n'expose **aucun consommable ni lot par facture ou par soin** : une ligne de facture porte l'acte et ses montants, jamais les lots consommés, et rien ne relie un lot à une facture ou à un patient
+- `nextmotion_product` reads the clinic's stock (one batch per line: batch number, expiry, stock levels, unit price, product and brand); a batch can be created, edited (levels, expiry) and deleted
+- the Nextmotion API exposes **no consumable or batch per invoice or per treatment**: an invoice line carries the act and its amounts, never the batches consumed, and nothing links a batch to an invoice or to a patient
 
-## note — patientèle et appareils : des agrégats, jamais une ligne
+## note — patient base and devices: aggregates, never a row
 
-- `nextmotion_patient_demographics` lit toute la liste des patients pour **compter** : par code postal, département, ville, pays, genre ou tranche d'âge ; aucune ligne, aucun id, aucun nom ne sort, et **une case de moins de 10 patients est masquée** (seul le total masqué est rendu) — croiser beaucoup de dimensions masque beaucoup : commence large
-- l'âge sort en tranche (0-17, 18-24, 25-34, 35-44, 45-54, 55-64, 65+), jamais en date de naissance ; le département se déduit d'un code postal français, « étranger » si le pays n'est pas la France
-- `nextmotion_device_usage` compte, par appareil, les rendez-vous tenus, leurs minutes et les non tenus, en lisant l'agenda jour par jour : c'est l'usage **réservé**, pas l'usage réel de la machine (tirs, durée effective), que Nextmotion ne connaît pas ; aucun taux d'occupation, l'API ne donne pas la capacité d'un appareil
+- `nextmotion_patient_demographics` reads the whole patient list to **count**: by postal code, department, city, country, gender or age band; no row, no id, no name comes out, and **a cell of fewer than 10 patients is masked** (only the masked total is returned) — crossing many dimensions masks a lot: start broad
+- age comes out as a band (0-17, 18-24, 25-34, 35-44, 45-54, 55-64, 65+), never as a date of birth; the department is deduced from a French postal code, "étranger" if the country is not France
+- `nextmotion_device_usage` counts, per device, the appointments held, their minutes and those not held, by reading the calendar day by day: it is the **booked** usage, not the machine's real usage (shots, actual duration), which Nextmotion does not know; no occupancy rate, the API does not give a device's capacity
 
-## note — données de santé : ce qui n'est pas servi
+## note — health data: what is not served
 
-- **aucun contenu médical** : antécédents, photos et médias, ordonnances et leur signature, consentements signés, soins réalisés, consultations, visites et leurs notes, réponses aux questionnaires restent hors du connecteur, comme le chat avec les patients ; ni devis ni facture ne se créent ici (Nextmotion ne les crée que sous une consultation)
-- **ne se suppriment pas** : un patient, une facture, un paiement (une pièce comptable se corrige par un avoir ou une mise à jour)
-- **tout ce qui sort passe par une liste blanche** écrite d'après la spec : un champ que Nextmotion ajouterait demain ne sort pas, et `fields=["*"]` rend la vue par défaut, jamais le brut
-- **l'identité du patient sort par `nextmotion_patient` seul** : nom, prénom, email, téléphone, date de naissance, âge, genre, adresse, code postal, ville, pays, consentements de contact, numéro de patient, archivé — **jamais** les commentaires du praticien, la photo ni les coordonnées GPS, et `doctor_comments` est refusé en écriture
-- **ailleurs, le patient n'est servi que par son id** (rendez-vous, parcours, devis, factures, paiements, appels, avoirs, aperçus `dry_run` compris) ; quand l'identité est utile, cet id se résout par `nextmotion_patient(op="get", patient_id=…)`. `nextmotion_patient_stats` rend ses totaux financiers et ses dates de visite
-- **un lead sert son identité de contact** (nom, prénom, email, téléphone) ; ses notes et sa référence externe s'écrivent mais ne ressortent jamais ; aucune recherche par nom de lead n'est proposée
-- **la personne d'une demande en ligne n'est pas relue** : ni nom, ni coordonnées, ni date de naissance ; elle s'écrit (création d'une demande) mais ne ressort pas
-- retirés aussi : commentaires du praticien, titres, notes et textes de rappel des évènements d'agenda, titres de devis/facture, détails de ligne, document PDF, lien vers le soin réalisé, numéro, notes et transcription d'un appel, destinataire d'un message, et tout texte libre, **sans option pour obtenir le brut**
-- restent en texte les libellés du catalogue (type de visite, nom d'une ligne ou d'un sous-tarif, détail d'un tarif), les étiquettes (source, statut, soin souhaité et zone d'un lead) et le nom des praticiens ; si un praticien a saisi le nom d'un patient dans un libellé de ligne, il passerait
+- **no medical content**: history, photos and media, prescriptions and their signature, signed consents, treatments performed, consultations, visits and their notes, questionnaire answers stay outside the connector, like the chat with patients; neither quotes nor invoices are created here (Nextmotion only creates them under a consultation)
+- **cannot be deleted**: a patient, an invoice, a payment (an accounting document is corrected by a credit note or an update)
+- **everything that goes out passes through an allowlist** written from the spec: a field Nextmotion adds tomorrow does not come out, and `fields=["*"]` returns the default view, never the raw
+- **the patient's identity comes out through `nextmotion_patient` alone**: last name, first name, email, phone, date of birth, age, gender, address, postal code, city, country, contact consents, patient number, archived — **never** the practitioner's comments, the photo or the GPS coordinates, and `doctor_comments` is refused on write
+- **elsewhere, the patient is served only by id** (appointments, journey, quotes, invoices, payments, calls, credit notes, `dry_run` previews included); when the identity is useful, this id is resolved with `nextmotion_patient(op="get", patient_id=…)`. `nextmotion_patient_stats` returns its financial totals and its visit dates
+- **a lead serves its contact identity** (last name, first name, email, phone); its notes and its external reference can be written but never come back out; no search by lead name is offered
+- **the person of an online request is not read back**: no name, no contact details, no date of birth; it can be written (creating a request) but does not come back out
+- also removed: practitioner comments, titles, notes and reminder texts of calendar events, quote/invoice titles, line details, PDF document, link to the treatment performed, number, notes and transcript of a call, recipient of a message, and any free text, **with no option to get the raw**
+- remaining as text: catalogue labels (visit type, name of a line or of a sub-pricing, detail of a pricing), tags (source, status, desired treatment and zone of a lead) and the practitioners' names; if a practitioner typed a patient's name into a line label, it would pass through
 
-## note — ventes : lignes complètes, statistiques, réglages
+## note — sales: full lines, statistics, settings
 
-- une ligne de devis ou de facture porte son prix, sa quantité, sa remise, sa marge (`markup`), sa TVA et ses sous-tarifs (`subpricing` : nature, prix, TVA, code comptable, part clinique ou praticien)
-- un paiement porte le montant par moyen (carte, espèces, chèque, virement, Stripe, avoir, moyens personnalisés) et sa facture, projetée comme dans `nextmotion_invoice`
-- les statistiques rendent des graphiques (`title`, `labels`, `datasets`) ; le bloc `meta` de l'API, non décrit, n'est pas servi
-- gabarits de communication et de documents, modèles de questionnaires : métadonnées et champs de fusion à la lecture (type, nom, activé), corps complet à l'écriture ; webhooks : leurs en-têtes, qui portent d'ordinaire un secret, s'écrivent mais ne sont jamais rendus, aperçu compris
+- a quote or invoice line carries its price, quantity, discount, margin (`markup`), VAT and its sub-pricings (`subpricing`: nature, price, VAT, accounting code, clinic or practitioner share)
+- a payment carries the amount per means (card, cash, cheque, transfer, Stripe, credit note, custom means) and its invoice, projected as in `nextmotion_invoice`
+- statistics return charts (`title`, `labels`, `datasets`); the API's `meta` block, undescribed, is not served
+- communication and document templates, questionnaire models: metadata and merge fields on read (type, name, enabled), full body on write; webhooks: their headers, which usually carry a secret, can be written but are never returned, preview included
 
-## note — écritures : un aperçu d'abord
+## note — writes: a preview first
 
-- **toute écriture a `dry_run=True` par défaut** (création, modification, suppression, report, validation, encaissement, avoir, conversion, envoi) : l'appel valide `data`, relit l'objet visé et rend ce qui partirait, sans rien écrire. passe `dry_run=False` pour agir
-- le corps passe en `data`, contrôlé contre les champs que la spec Nextmotion accepte pour CET op : **un champ inconnu est refusé, nommément**, jusque dans les objets imbriqués — jamais ignoré ; un champ requis manquant aussi
-- une liste « complète » remplace : `sub_visit_types` d'un type de visite, `pricings` d'un type de soin, `op="set_items"` d'un forfait, `op="set_distributions"` — un élément omis est supprimé
-- une valeur `null` n'est pas envoyée : on ne vide pas un champ par cet outil
-- `nextmotion_communication(kind="message")` **envoie** un email, SMS ou WhatsApp au patient, pour un devis, une facture ou un document administratif seulement — jamais une ordonnance, un consentement ou un document médical
-- **jamais de notification implicite** : la modification d'un rendez-vous préviendrait le patient par défaut (`send_appointment_modified_email|sms` valent `true` dans la spec) ; l'outil les envoie à `false` sauf si tu les passes à `true`, et l'aperçu dit qui serait prévenu (`notifie_le_patient`)
-- que Nextmotion prévienne le patient lors d'un report ou d'une suppression n'est pas documenté
-- les lignes d'un devis ou d'une facture ne s'éditent pas ici : chacune exige l'id d'un soin clinique ; une ligne d'avoir ne référence ni soin ni forfait extrait
-- `pay` et `credit_note` valident la pièce par défaut côté Nextmotion (`do_validate: true`) ; passe `do_validate: false` pour garder un brouillon
-- dérivé de la spec OpenAPI publique, jamais exercé avec une vraie clé
+- **every write has `dry_run=True` by default** (creation, modification, deletion, rescheduling, validation, collection, credit note, conversion, sending): the call validates `data`, re-reads the targeted object and returns what would go out, without writing anything. pass `dry_run=False` to act
+- the body goes in `data`, checked against the fields the Nextmotion spec accepts for THIS op: **an unknown field is refused, by name**, even in nested objects — never ignored; a missing required field too
+- a "complete" list replaces: a visit type's `sub_visit_types`, a treatment type's `pricings`, a package's `op="set_items"`, `op="set_distributions"` — an omitted element is deleted
+- a `null` value is not sent: a field cannot be emptied through this tool
+- `nextmotion_communication(kind="message")` **sends** an email, SMS or WhatsApp to the patient, for a quote, an invoice or an administrative document only — never a prescription, a consent or a medical document
+- **never an implicit notification**: editing an appointment would notify the patient by default (`send_appointment_modified_email|sms` are `true` in the spec); the tool sends them as `false` unless you pass them as `true`, and the preview says who would be notified (`notifie_le_patient`)
+- whether Nextmotion notifies the patient on a reschedule or a deletion is not documented
+- the lines of a quote or invoice are not edited here: each requires the id of a clinical treatment; a credit-note line references neither a treatment nor an extracted package
+- `pay` and `credit_note` validate the document by default on the Nextmotion side (`do_validate: true`); pass `do_validate: false` to keep a draft
+- derived from the public OpenAPI spec, never exercised with a real key

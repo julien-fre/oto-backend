@@ -1,37 +1,37 @@
-"""Info légale FR — jurisprudence, codes consolidés, conventions collectives.
+"""French legal info — case law, consolidated codes, collective agreements.
 
-Référence légale française (par opposition à l'identité entreprise, namespace `fr`) :
-le DROIT applicable, pas les données d'une société. Trois namespaces sous une même
-carte de connecteur (`droit` au registre, `providers/droit.py`) :
+French legal reference (as opposed to company identity, namespace `fr`):
+the applicable LAW, not a company's data. Three namespaces under a single
+connector card (`droit` in the registry, `providers/droit.py`):
 
-- `juris_*` — jurisprudence (fonds DILA Cass/CE + CEDH/CJUE/Judilibre live) ;
-- `loi_*`   — codes consolidés versionnés (LEGI, texte en vigueur à une date) ;
-- `ccn_*`   — conventions collectives de branche (KALI/DILA).
+- `juris_*` — case law (DILA Cass/CE collections + live CEDH/CJUE/Judilibre);
+- `loi_*`   — versioned consolidated codes (LEGI, text in force at a given date);
+- `ccn_*`   — sector-level collective agreements (KALI/DILA).
 
-Toutes ces sources sont servies par le **service FOD** (`fod/juris`/`fod/loi`/`fod/ccn`
-→ HTTP, `FOD_BASE_URL`), pas par un client lib en direct. Extraites du connecteur
-`sirene`/`fr` (elles y étaient crammées sous le libellé de l'époque « INSEE SIRENE »,
-éditeur « INSEE » — trompeur pour elles ; ce libellé-là a été corrigé le 2026-09-02).
+All these sources are served by the **FOD service** (`fod/juris`/`fod/loi`/`fod/ccn`
+→ HTTP, `FOD_BASE_URL`), not by a direct lib client. Extracted from the `sirene`/`fr`
+connector (they were crammed in there under the label of the time "INSEE SIRENE",
+publisher "INSEE" — misleading for them; that label was fixed on 2026-09-02).
 
-Connecteur open-data : pas de credential. Gaté par activation DB (ADR 0010).
+Open-data connector: no credential. Gated by DB activation (ADR 0010).
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur droit)** : un tool
-par OBJET métier, le verbe en paramètre `op` — 9 → 5 tools. La consolidation se fait
-**DANS chaque namespace, jamais entre eux** : `namespace_of` résout sur le préfixe
-DÉCLARÉ au registre (`juris`/`loi`/`ccn`), donc un tool `droit_*` — ou un tool qui
-mélangerait deux corpus — tomberait hors du gate de visibilité/activation. Chaque
-corpus garde le même couple « objet + résolveur de périmètre » :
+**Consolidated surface (ADR 0047 §Amendment, applied to the droit connector)**: one tool
+per business OBJECT, the verb as an `op` parameter — 9 → 5 tools. Consolidation happens
+**WITHIN each namespace, never across them**: `namespace_of` resolves on the prefix
+DECLARED in the registry (`juris`/`loi`/`ccn`), so a `droit_*` tool — or a tool that
+mixed two corpora — would fall outside the visibility/activation gate. Each
+corpus keeps the same pair "object + scope resolver":
 
-- `ccn_article` (op=search|get) + `ccn_conventions` (résout l'IDCC) ;
-- `loi_article` (op=get|versions|search) + `loi_codes` (résout l'alias de code) ;
-- `juris_decision` (op=search|get) — son périmètre (`fond`) est un enum fermé
-  documenté dans le tool, donc sans résolveur à part.
+- `ccn_article` (op=search|get) + `ccn_conventions` (resolves the IDCC);
+- `loi_article` (op=get|versions|search) + `loi_codes` (resolves the code alias);
+- `juris_decision` (op=search|get) — its scope (`fond`) is a closed enum
+  documented in the tool, hence no separate resolver.
 
-Les deux résolveurs restent SEULS : ils rendent un CONTENEUR (une convention KALI,
-un code LEGI), pas un article, et leur `query` est un substring de titre (ILIKE), pas
-la requête FTS à stemming français des tools d'article — même mot, sémantique
-différente. Tout est en LECTURE (open data) : aucune op n'écrit, ne supprime, ni ne
-consomme de crédit ; le défaut de chaque tool est donc une lecture sans risque.
+The two resolvers stay ALONE: they return a CONTAINER (a KALI convention,
+a LEGI code), not an article, and their `query` is a title substring (ILIKE), not
+the French-stemming FTS query of the article tools — same word, different
+semantics. Everything is READ-ONLY (open data): no op writes, deletes, or
+consumes credit; each tool's default is therefore a risk-free read.
 """
 from __future__ import annotations
 
@@ -47,20 +47,20 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable qui NOMME l'op et
-    l'argument, jamais un fallback (une citation de droit tirée d'un argument
-    deviné est fausse en silence)."""
+    """Argument required for THIS op — actionable error that NAMES the op and
+    the argument, never a fallback (a legal citation drawn from a guessed
+    argument is silently wrong)."""
     if value is None:
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
 def register(mcp: FastMCP) -> None:
     # --- Conventions collectives (KALI, via service FOD) ---
-    # Stock DILA complet (~290k articles, ~1,4k conteneurs) indexé FTS french +
-    # filtre IDCC par france-opendata-service (#6). Complément de fr_accords_* :
-    # ACCO = accords d'ENTREPRISE (qui a négocié quoi), KALI = le DROIT de la
-    # BRANCHE (le texte applicable : minima, congés, primes, classifications).
+    # Full DILA stock (~290k articles, ~1.4k containers) FTS-indexed french +
+    # IDCC filter by france-opendata-service (#6). Complements fr_accords_*:
+    # ACCO = COMPANY agreements (who negotiated what), KALI = the SECTOR's
+    # LAW (the applicable text: minima, leave, bonuses, classifications).
 
     @mcp.tool()
     def ccn_article(
@@ -109,7 +109,7 @@ def register(mcp: FastMCP) -> None:
                                   en_vigueur=en_vigueur, limit=limit, sort=sort)
         if op == "get":
             return fod_ccn.article(_need(kali_id, "kali_id", op))
-        raise _bad("op doit être 'search' ou 'get'")
+        raise _bad("op must be 'search' or 'get'")
 
     @mcp.tool()
     def ccn_conventions(
@@ -132,9 +132,9 @@ def register(mcp: FastMCP) -> None:
         from ..fod import ccn as fod_ccn
         return fod_ccn.conventions(idcc=idcc, query=query, limit=limit)
 
-    # --- Codes consolidés (LEGI, via service FOD) ---
-    # 22 codes français AVEC versions historiques : l'article en vigueur à une
-    # date donnée (une décision de 1992 cite l'art. 1128 CC → texte d'époque).
+    # --- Consolidated codes (LEGI, via FOD service) ---
+    # 22 French codes WITH historical versions: the article in force at a
+    # given date (a 1992 decision cites art. 1128 CC → text of that time).
 
     @mcp.tool()
     def loi_article(
@@ -155,7 +155,7 @@ def register(mcp: FastMCP) -> None:
         - **"get"** (default): consolidated text of a French code article
           (`code` + `num`), as in force at a given date.
         - **"versions"**: full version timeline of a code article (`code` +
-          `num`) — every rewriting with dates and états. Use to see WHEN an
+          `num`) — every rewriting with dates and statuses. Use to see WHEN an
           article changed before picking a `date` for op="get".
         - **"search"**: full-text search across French consolidated codes (LEGI).
           Find the article when you know the concept but not the number ("période
@@ -188,7 +188,7 @@ def register(mcp: FastMCP) -> None:
         if op == "search":
             return fod_loi.search(_need(query, "query", op), code=code,
                                   en_vigueur=en_vigueur, limit=limit)
-        raise _bad("op doit être 'get', 'versions' ou 'search'")
+        raise _bad("op must be 'get', 'versions' or 'search'")
 
     @mcp.tool()
     def loi_codes() -> dict:
@@ -199,8 +199,8 @@ def register(mcp: FastMCP) -> None:
         return fod_loi.codes()
 
     # --- Jurisprudence (fonds DILA + CEDH/CJUE/live, via service FOD) ---
-    # Cass (publiés + inédits), cours d'appel, CE/CAA/TA (bulk + live), Conseil
-    # constit, CNIL, CEDH, CJUE, Judilibre. Tri pertinence × autorité
+    # Cass (published + unpublished), courts of appeal, CE/CAA/TA (bulk + live), Conseil
+    # constit, CNIL, CEDH, CJUE, Judilibre. Ranking relevance × authority
     # (constit/CEDH/CJUE > Cass/CE > CAA/CA > TA/TJ/CNIL).
 
     @mcp.tool()
@@ -256,4 +256,4 @@ def register(mcp: FastMCP) -> None:
                                     date_max=date_max, limit=limit, expand=expand)
         if op == "get":
             return fod_juris.decision(_need(decision_id, "decision_id", op))
-        raise _bad("op doit être 'search' ou 'get'")
+        raise _bad("op must be 'search' or 'get'")

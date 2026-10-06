@@ -1,18 +1,18 @@
-## prerequisite — ta clé api spott
+## prerequisite — your spott api key
 
-il te faut une **clé api spott**.
-- dans spott, va dans **settings → api keys** et génère une clé
-- colle-la dans tes [clés de connecteurs](https://manage.oto.cx/) (ou laisse ton org partager la sienne)
-- doc éditeur : [api-docs.spott.io](https://api-docs.spott.io)
+you need a **spott api key**.
+- in spott, go to **settings → api keys** and generate a key
+- paste it into your [connector keys](https://manage.oto.cx/) (or let your org share its own)
+- vendor docs: [api-docs.spott.io](https://api-docs.spott.io)
 
-## usage — ce que tu peux faire
+## usage — what you can do
 
-pilote spott, l'ats **et** le crm d'un cabinet de recrutement : le candidat d'un côté, l'entreprise cliente de l'autre. un poste = un **job** (`vacancy` dans les urls de l'api), un candidat sur un poste = une **application** qui avance d'**étape** en étape.
-- « est-ce qu'on connaît déjà jean dupont ? » → `spott_people` (cherche candidats **et** contacts clients, flou) — à faire avant de créer quoi que ce soit
-- « liste les candidats » → `spott_candidate(op="list")`, détail → `spott_candidate` ; par critères → `spott_candidate(op="search")`
-- « crée un candidat » → `spott_candidate(op="create")` (`firstName`/`lastName` obligatoires), correction → `spott_candidate(op="update")`
-- « quels postes sont ouverts ? » → `spott_job(op="search")` avec le filtre `vacancy.stage.isOpen` ; la liste brute → `spott_job(op="list")`, détail → `spott_job`
-- « où en sont les candidatures du poste X ? » → `spott_application(op="list")` (`job_id`, ou `candidate_id` pour l'inverse)
-- « fais postuler ce candidat » → `spott_stages` (récupérer l'id d'étape) puis `spott_application(op="create")` ; « passe-le en entretien » → `spott_application(op="move")`
-- « note l'appel d'hier » → `spott_note(op="create")` (`links` vers le candidat, `source` phone/inPerson…), relire → `spott_note(op="list")`
-- côté crm : `spott_client(op="list")` (liste, ou recherche si tu passes `filters`), `spott_client`, `spott_client(op="contacts")`, et `spott_placements` pour les placements conclus et leurs honoraires
+drive spott, the ats **and** crm of a recruitment firm: the candidate on one side, the client company on the other. a position = a **job** (`vacancy` in the api urls), a candidate on a position = an **application** that moves forward from **stage** to **stage**.
+- "do we already know john smith?" → `spott_people` (searches candidates **and** client contacts, fuzzy) — do this before creating anything
+- "list the candidates" → `spott_candidate(op="list")`, detail → `spott_candidate` ; by criteria → `spott_candidate(op="search")`
+- "create a candidate" → `spott_candidate(op="create")` (`firstName`/`lastName` required), correction → `spott_candidate(op="update")`
+- "which positions are open?" → `spott_job(op="search")` with the `vacancy.stage.isOpen` filter ; the raw list → `spott_job(op="list")`, detail → `spott_job`
+- "where do the applications for position X stand?" → `spott_application(op="list")` (`job_id`, or `candidate_id` for the reverse)
+- "apply this candidate" → `spott_stages` (get the stage id) then `spott_application(op="create")` ; "move them to interview" → `spott_application(op="move")`
+- "log yesterday's call" → `spott_note(op="create")` (`links` to the candidate, `source` phone/inPerson…), read back → `spott_note(op="list")`
+- crm side: `spott_client(op="list")` (list, or search if you pass `filters`), `spott_client`, `spott_client(op="contacts")`, and `spott_placements` for closed placements and their fees

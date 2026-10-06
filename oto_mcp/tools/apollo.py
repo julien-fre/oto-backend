@@ -1,62 +1,62 @@
 """Apollo.io — B2B prospection (organizations, people, job postings, contacts,
 sequences, one-off emails, conversations).
 
-Wrappe `oto.tools.apollo.ApolloClient`. Deux régimes de clé selon ce qu'un
-endpoint interroge, PAS selon lecture/écriture :
+Wraps `oto.tools.apollo.ApolloClient`. Two key regimes depending on what an
+endpoint queries, NOT on read/write:
 
-- **Base partagée Apollo** (`mixed_companies/search`, `mixed_people/api_search`,
-  `people/match`, `organizations/*`) : `access.resolve_api_key("apollo")` — user
-  key (`/account`) prioritaire, sinon clé plateforme (free-tier, quota daily =
-  `default_quota` par user/jour). N'importe quelle clé rend la MÊME base (~28M
-  entreprises) → une clé plateforme mutualisée y est sans risque. Le quota
-  plateforme métré = les **crédits Apollo** (`people/match`, qui révèle un
-  contact) ; recherche org/people et job postings ne consomment pas de crédit →
-  non métrés. ⚠️ **Quota épuisé = refus NOMMÉ, jamais un fallback silencieux**
-  (oto-backend#710, signaux #311/#312/#313) : `resolve_api_key` lève une McpError
-  qui dit le compteur (`used/limit`) et qu'il repart à minuit — et
-  `apollo_match_person`, seul débiteur de ce quota, échote `platform_quota`
-  (`access.platform_quota_hint`, `oto_mcp/access/resolve.py`) dans sa réponse
-  QUAND la clé est plateforme, pour qu'un worker batch arbitre AVANT le refus au
-  lieu de le découvrir au milieu d'un lead.
-- **Espace de travail DU PROPRIÉTAIRE de la clé** (contacts, séquences, emails,
-  boîtes connectées, conversations — TOUT ce qui a été ajouté dans ce module) :
-  `access.resolve_credential("apollo", want="byo")`, JAMAIS `resolve_api_key`.
-  Ce n'est pas une distinction lecture/écriture — `apollo_email(op="search")` en
-  lecture rend `body_html`/`body_text` des emails ENVOYÉS PAR le propriétaire de
-  la clé ; `apollo_email_accounts` rend SES boîtes (signature HTML, score de
-  délivrabilité). Une clé plateforme mutualisée y exposerait les données privées
-  de son propriétaire à n'importe quel autre user d'oto. Et pour l'écriture
-  spécifiquement (enrôler des contacts, envoyer un email) : un envoi sur cette
-  clé partirait en plus depuis SA boîte, vers SES contacts — même verrou que
-  Lightfield `send_email` (oto-core 97c53ce, autorisé par le mainteneur le
-  19/08/2026 à deux conditions : le connecteur n'existe que si une org pose SA
-  clé, et l'envoi part d'une boîte que le propriétaire de cette clé a lui-même
-  connectée — condition #2 portée ici par le verrou local
-  `send_email_from_email_account_id` côté client oto-core). Les conversations
-  (transcripts d'appels/visios réels) sont byo-only pour la même raison
-  d'espace privé, plus un coût crédit conditionnel (1 si insights IA, 0 sinon)
-  pas métrable a priori côté quota plateforme. Les **contacts** (`apollo_contact`)
-  sont le cas le plus net de cette règle : un contact est le carnet d'adresses de
-  l'équipe qui pose la clé — d'où byo-only sur les TROIS ops, LECTURES COMPRISES,
-  alors qu'aucune ne coûte de crédit. Ne pas les confondre avec les `people/*`,
-  qui interrogent la base partagée : une personne trouvée là n'est un contact ici
-  que si l'équipe l'a enregistrée.
-- **Les REVEALS** (`apollo_reveal_phone`, et `apollo_match_person(reveal_personal_emails=True)`) :
-  byo-only aussi, mais pour un TROISIÈME motif — le COÛT, pas la frontière de
-  données. Ils interrogent bien la base partagée, donc rien n'empêcherait la clé
-  commune ; ce qui l'empêche est que le compteur (`record_platform_usage`) débite
-  1 unité par appel, le prix d'un match nu, alors qu'Apollo facture un supplément
-  par-dessus (~9 crédits pour un téléphone ; barème selon plan, non mesuré, pour
-  les emails personnels). `platform_quota` mentirait d'un facteur qu'on ne sait
-  pas nommer, et c'est le seul chiffre sur lequel un worker batch s'arrête.
+- **Shared Apollo database** (`mixed_companies/search`, `mixed_people/api_search`,
+  `people/match`, `organizations/*`): `access.resolve_api_key("apollo")` — user
+  key (`/account`) first, otherwise the platform key (free-tier, daily quota =
+  `default_quota` per user/day). Any key returns the SAME database (~28M
+  companies) → a pooled platform key is safe there. The metered platform quota =
+  the **Apollo credits** (`people/match`, which reveals a
+  contact); org/people search and job postings consume no credit →
+  not metered. ⚠️ **Exhausted quota = NAMED refusal, never a silent fallback**
+  (oto-backend#710, signals #311/#312/#313): `resolve_api_key` raises a McpError
+  that states the counter (`used/limit`) and that it resets at midnight — and
+  `apollo_match_person`, the only debtor of this quota, echoes `platform_quota`
+  (`access.platform_quota_hint`, `oto_mcp/access/resolve.py`) in its response
+  WHEN the key is the platform key, so that a batch worker can decide BEFORE the refusal
+  instead of discovering it in the middle of a lead.
+- **The key OWNER's WORKSPACE** (contacts, sequences, emails,
+  connected mailboxes, conversations — EVERYTHING added in this module):
+  `access.resolve_credential("apollo", want="byo")`, NEVER `resolve_api_key`.
+  This is not a read/write distinction — `apollo_email(op="search")` in
+  read mode returns `body_html`/`body_text` of the emails SENT BY the key owner;
+  `apollo_email_accounts` returns THEIR mailboxes (HTML signature, deliverability
+  score). A pooled platform key would expose its owner's private data
+  to any other oto user. And for writing
+  specifically (enrolling contacts, sending an email): a send on this
+  key would also go out from THEIR mailbox, to THEIR contacts — same lock as
+  Lightfield `send_email` (oto-core 97c53ce, authorized by the maintainer on
+  19/08/2026 under two conditions: the connector only exists if an org sets ITS
+  key, and the send goes out from a mailbox that the owner of this key has themselves
+  connected — condition #2 carried here by the local lock
+  `send_email_from_email_account_id` on the oto-core client side). Conversations
+  (transcripts of real calls/video meetings) are byo-only for the same private
+  space reason, plus a conditional credit cost (1 if AI insights, 0 otherwise)
+  that cannot be metered a priori on the platform quota side. The **contacts** (`apollo_contact`)
+  are the clearest case of this rule: a contact is the address book of the
+  team that sets the key — hence byo-only on ALL THREE ops, READS INCLUDED,
+  even though none costs a credit. Do not confuse them with `people/*`,
+  which query the shared database: a person found there is a contact here
+  only if the team has saved them.
+- **The REVEALS** (`apollo_reveal_phone`, and `apollo_match_person(reveal_personal_emails=True)`):
+  byo-only too, but for a THIRD reason — COST, not the data
+  boundary. They do query the shared database, so nothing would prevent the
+  common key; what prevents it is that the counter (`record_platform_usage`) debits
+  1 unit per call, the price of a bare match, whereas Apollo bills a surcharge
+  on top (~9 credits for a phone; plan-dependent scale, not measured, for
+  personal emails). `platform_quota` would lie by a factor we cannot
+  name, and it is the only figure a batch worker stops on.
 
-⚠️ Doc Apollo (pas vérifié depuis cet environnement, pas de clé disponible ici) :
-`add_contact_ids` et `/emailer_messages/{id}/activities` (stats email) exigent
-une clé « Master » et 403 sinon — à confirmer avec une clé réelle.
-La même exigence est documentée sur les TROIS endpoints contacts
-(`typed_custom_fields`, `contacts/{id}` en lecture et en PATCH) : là, plutôt que
-d'attendre, `apollo_contact` traduit le 403 en message qui NOMME le prérequis, et
-son écriture reste possible sans le catalogue (validation dégradée, annoncée).
+⚠️ Apollo doc (not verified from this environment, no key available here):
+`add_contact_ids` and `/emailer_messages/{id}/activities` (email stats) require
+a "Master" key and return 403 otherwise — to be confirmed with a real key.
+The same requirement is documented on the THREE contacts endpoints
+(`typed_custom_fields`, `contacts/{id}` for reads and PATCH): there, rather than
+waiting, `apollo_contact` translates the 403 into a message that NAMES the prerequisite, and
+its write remains possible without the catalog (degraded validation, announced).
 """
 from __future__ import annotations
 
@@ -83,74 +83,74 @@ def register(mcp: FastMCP) -> None:
     from oto.tools.apollo.client import ApolloClient, ApolloError
 
     def _client(units: int = 1) -> tuple[ApolloClient, bool]:
-        # `units` : taille du lot, pour que le quota de la clé commune soit vérifié
-        # pour tout le lot avant l'appel (oto#168).
+        # `units`: batch size, so that the common key's quota is checked
+        # for the whole batch before the call (oto#168).
         key, is_platform = access.resolve_api_key("apollo", units=units)
         return ApolloClient(api_key=key), is_platform
 
     _BYO_ESPACE_PRIVE = (
-        "ceci ne concerne QUE les séquences/emails/conversations (tes propres "
-        "données) : la recherche et l'enrichissement Apollo restent utilisables "
-        "sans ta propre clé.")
+        "this ONLY concerns sequences/emails/conversations (your own "
+        "data): Apollo search and enrichment remain usable "
+        "without your own key.")
 
-    # Les REVEALS d'Apollo — téléphone ET emails personnels — sont byo-only pour
-    # une raison DIFFÉRENTE de tout le reste de ce module : ce n'est pas une
-    # frontière de données, c'est le COÛT. Un reveal fait facturer à Apollo un
-    # SUPPLÉMENT par-dessus le match, pendant que le compteur plateforme
-    # (`record_platform_usage`) débite 1 unité par appel — le prix d'un match nu,
-    # quoi qu'il arrive. Or `platform_quota` existe précisément pour qu'un worker
-    # batch s'arrête AVANT le mur (oto-backend#710) : le laisser mentir casserait
-    # la seule mesure sur laquelle il s'appuie.
+    # Apollo's REVEALS — phone AND personal emails — are byo-only for
+    # a DIFFERENT reason than everything else in this module: it is not a data
+    # boundary, it is COST. A reveal makes Apollo bill a
+    # SURCHARGE on top of the match, while the platform counter
+    # (`record_platform_usage`) debits 1 unit per call — the price of a bare match,
+    # whatever happens. Yet `platform_quota` exists precisely so that a batch worker
+    # stops BEFORE the wall (oto-backend#710): letting it lie would break
+    # the only measure it relies on.
     #
-    # ⚠️ La MÊME règle pour les deux, délibérément. Ce qui les sépare est la
-    # taille de l'écart, pas sa nature : pour le téléphone il est mesuré (~9
-    # crédits là où un match nu en coûte 1) ; pour les emails personnels il ne
-    # l'est pas — Apollo les facture sur un pot distinct dont le barème dépend du
-    # plan, et aucune de nos mesures ne le chiffre. Un facteur inconnu n'est pas
-    # un facteur nul : ouvrir la clé commune au seul reveal dont on ignore le
-    # multiplicateur reviendrait à dire que le compteur ment moins quand on ne
-    # sait pas de combien. Le jour où l'écart est mesuré ET où le compteur sait
-    # le débiter, c'est là que la règle peut changer — pas avant.
+    # ⚠️ The SAME rule for both, deliberately. What separates them is
+    # the size of the gap, not its nature: for the phone it is measured (~9
+    # credits where a bare match costs 1); for personal emails it is not
+    # — Apollo bills them on a separate pot whose scale depends on the
+    # plan, and none of our measurements quantifies it. An unknown factor is not
+    # a zero factor: opening the common key to the only reveal whose
+    # multiplier we do not know would amount to saying the counter lies less when we do not
+    # know by how much. The day the gap is measured AND the counter knows how to debit
+    # it, that is when the rule can change — not before.
     _BYO_REVEAL_TELEPHONE = (
-        "le reveal de téléphone ne passe JAMAIS par la clé plateforme (Apollo le "
-        "facture ~9 crédits quand un match nu en coûte 1) : pose ta propre clé "
-        "Apollo. La recherche et `apollo_match_person` continuent de marcher sans.")
+        "the phone reveal NEVER goes through the platform key (Apollo bills it "
+        "~9 credits when a bare match costs 1): set your own Apollo key. "
+        "Search and `apollo_match_person` keep working without it.")
     _BYO_REVEAL_EMAILS_PERSO = (
-        "`reveal_personal_emails=True` ne passe JAMAIS par la clé plateforme : "
-        "Apollo facture ce reveal EN PLUS du match, sur un pot dont le barème "
-        "dépend du plan, alors que notre compteur ne sait débiter qu'un match nu "
-        "— pose ta propre clé Apollo. Sans elle `apollo_match_person` marche "
-        "toujours, il ne rend simplement pas les emails personnels.")
+        "`reveal_personal_emails=True` NEVER goes through the platform key: "
+        "Apollo bills this reveal ON TOP of the match, on a pot whose scale "
+        "depends on the plan, while our counter can only debit a bare match "
+        "— set your own Apollo key. Without it `apollo_match_person` still works, "
+        "it simply does not return the personal emails.")
 
     def _client_byo(precision: str = _BYO_ESPACE_PRIVE) -> ApolloClient:
-        """Client résolu SANS palier plateforme — pour tout appel qui écrit
-        (enrôlement, envoi), lit des données sensibles (conversations) ou
-        engage une dépense hors barème (les reveals : téléphone, emails
-        personnels).
+        """Client resolved WITHOUT a platform tier — for any call that writes
+        (enrollment, send), reads sensitive data (conversations) or
+        commits off-scale spending (the reveals: phone, personal
+        emails).
 
-        Apollo est le premier connecteur à mélanger les deux régimes dans le
-        MÊME module (recherche/enrichissement = platform_key_open, tout le
-        reste = byo-only) : le message générique de `resolve_credential`
-        (« Aucun credential configuré pour toi ») serait trompeur pour un
-        user qui voit déjà apollo_search_organizations fonctionner via la clé
-        plateforme et ne comprendrait pas pourquoi CET appel-ci le refuse.
-        D'où `precision` : le motif du refus n'est pas le même partout, et
-        servir « tes propres données » à qui bute sur un mur de COÛT l'enverrait
-        chercher au mauvais endroit."""
+        Apollo is the first connector to mix the two regimes in the
+        SAME module (search/enrichment = platform_key_open, everything
+        else = byo-only): the generic message of `resolve_credential`
+        ("No `apollo` credential configured for you") would be misleading for a
+        user who already sees apollo_search_organizations working via the platform
+        key and would not understand why THIS call refuses it.
+        Hence `precision`: the reason for the refusal is not the same everywhere, and
+        serving "your own data" to someone who hits a COST wall would send them
+        looking in the wrong place."""
         return ApolloClient(api_key=_cle_byo(precision).key)
 
     def _cle_byo(precision: str = _BYO_ESPACE_PRIVE):
-        """La clé Apollo BYO de l'appelant, résolue (cf. `_client_byo`) — pour qui a
-        besoin de sa PORTÉE en plus du client : un reveal de téléphone se commande
-        et se relit sous la clé qui le paie (`apollo_receiver.portee`)."""
+        """The caller's BYO Apollo key, resolved (see `_client_byo`) — for whoever
+        needs its SCOPE in addition to the client: a phone reveal is ordered
+        and read back under the key that pays for it (`apollo_receiver.portee`)."""
         try:
             return access.resolve_credential("apollo", want="byo")
         except McpError as e:
             msg = e.error.message or ""
-            if "Aucun credential" in msg:
-                # Seul CE message générique (absence totale de credential BYO) est
-                # ambigu ici — les autres (multi-compte, compte introuvable) sont
-                # déjà précis et n'ont rien à voir avec platform vs byo.
+            if "credential configured for" in msg:
+                # Only THIS generic message (total absence of a BYO credential) is
+                # ambiguous here — the others (multi-account, account not found) are
+                # already precise and have nothing to do with platform vs byo.
                 raise McpError(ErrorData(
                     code=INVALID_PARAMS, message=f"{msg} — {precision}"))
             raise
@@ -207,35 +207,35 @@ def register(mcp: FastMCP) -> None:
             employee_ranges=employee_ranges, revenue_min=revenue_min,
             revenue_max=revenue_max, locations=locations, keywords=keywords,
             technologies=technologies, org_ids=org_ids)
-        # Projection OPT-IN (`fields` omis ⇒ payload inchangé). Le défaut n'est pas
-        # touché ici : le choisir demanderait de mesurer quelles clés d'une fiche
-        # organisation ne servent jamais, comme `_CONTACT_NOISE` l'a été plus haut.
-        # Ce que ce lot corrige est l'ABSENCE de sortie : sans `fields`, une page à
-        # per_page=100 (~113 000 c.) dépasse la limite de sortie de certains clients
-        # MCP et l'appel devient inexploitable — signal #645.
+        # OPT-IN projection (`fields` omitted ⇒ payload unchanged). The default is not
+        # touched here: choosing it would require measuring which keys of an organization
+        # record are never useful, as `_CONTACT_NOISE` was above.
+        # What this batch fixes is the ABSENCE of an output: without `fields`, a page at
+        # per_page=100 (~113,000 chars) exceeds the output limit of some MCP
+        # clients and the call becomes unusable — signal #645.
         if not fields:
             return found
-        # `mixed_companies/search` rend DEUX listes — `organizations` et `accounts`
-        # (les sociétés déjà présentes dans le compte Apollo). Projeter la seule
-        # première laisserait `fields` sans effet visible sur la moitié du payload,
-        # ce qui est pire que pas de paramètre du tout. `project` est pur et tolère
-        # un chemin absent : le chaînage est sûr dans les deux sens.
+        # `mixed_companies/search` returns TWO lists — `organizations` and `accounts`
+        # (the companies already present in the Apollo account). Projecting only the
+        # first would leave `fields` with no visible effect on half the payload,
+        # which is worse than no parameter at all. `project` is pure and tolerates
+        # a missing path: chaining is safe both ways.
         out = output_projection.project(found, items_path="organizations",
                                         fields=fields)
         out = output_projection.project(out, items_path="accounts", fields=fields)
-        # Une clé demandée qu'aucune ligne ne porte tombait sans un mot, et
-        # l'appelant l'écrivait vide en aval (oto#174). On la nomme, avec la
-        # source qui la porte — même patron que `missing_properties` de HubSpot.
+        # A requested key that no row carries used to be dropped without a word, and
+        # the caller wrote it empty downstream (oto#174). We name it, with the
+        # source that carries it — same pattern as HubSpot's `missing_properties`.
         absentes = output_projection.missing_fields(
             found, items_paths=("organizations", "accounts"), fields=fields)
         if absentes:
             out["missing_fields"] = absentes
             out["missing_fields_hint"] = (
-                "Aucune organisation de cette page ne porte ces clés : la recherche "
-                "Apollo ne les rend pas. L'effectif exact (`estimated_num_employees`), "
-                "le secteur et le pays viennent d'`apollo_enrich_organization` "
-                "(ou `apollo_bulk_enrich_organizations`, 10 par appel) — ne les "
-                "écris pas vides.")
+                "No organization on this page carries these keys: Apollo search "
+                "does not return them. The exact headcount (`estimated_num_employees`), "
+                "the industry and the country come from `apollo_enrich_organization` "
+                "(or `apollo_bulk_enrich_organizations`, 10 per call) — do not "
+                "write them empty.")
         return out
 
     @mcp.tool(annotations=LECTURE)
@@ -310,29 +310,29 @@ def register(mcp: FastMCP) -> None:
             organization_locations=organization_locations,
             per_page=per_page, page=page)
 
-    # Le poids d'un match tient dans la fiche ORGANISATION imbriquée, et dans
-    # CINQ de ses clés : mesuré sur un match réel le 2026-09-11, `organization`
-    # pèse 55 404 caractères sur 60 701, dont `current_technologies` 32 321 à lui
-    # seul. L'appel DÉPASSAIT la limite de sortie d'un client MCP pour UNE seule
-    # personne — même mode de panne que le signal #645 sur
-    # `apollo_search_organizations`, et sur l'outil que toute construction de
-    # liste appelle en boucle. Sans ça, sourcer 50 contacts = 3 M de caractères.
+    # The weight of a match sits in the nested ORGANIZATION record, and in
+    # FIVE of its keys: measured on a real match on 2026-09-11, `organization`
+    # weighs 55,404 characters out of 60,701, of which `current_technologies` 32,321 alone.
+    # The call EXCEEDED an MCP client's output limit for a SINGLE
+    # person — same failure mode as signal #645 on
+    # `apollo_search_organizations`, and on the tool that every list
+    # building calls in a loop. Without this, sourcing 50 contacts = 3 M characters.
     #
-    # DENYLIST nommée, jamais une allowlist : `name`, `primary_domain`, `phone`,
-    # `industry`, `estimated_num_employees`, `short_description` restent, et une
-    # clé qu'Apollo ajouterait demain reste visible (leçon `fr_get`/`liste_idcc`).
-    # ⚠️ Et `organization` ne se retire PAS en bloc, contrairement à
-    # `_CONTACT_NOISE` : `people/match` ne rend aucun `organization_name` au
-    # premier niveau (vérifié le 2026-09-11), donc la retirer entière perdrait le
-    # nom de la boîte — ce que la fiche contact, elle, garde.
+    # Named DENYLIST, never an allowlist: `name`, `primary_domain`, `phone`,
+    # `industry`, `estimated_num_employees`, `short_description` stay, and a
+    # key that Apollo might add tomorrow stays visible (lesson `fr_get`/`liste_idcc`).
+    # ⚠️ And `organization` is NOT removed wholesale, unlike
+    # `_CONTACT_NOISE`: `people/match` returns no top-level `organization_name`
+    # (verified on 2026-09-11), so removing it entirely would lose the
+    # company name — which the contact record, for its part, keeps.
     _MATCH_ORG_NOISE = ("current_technologies", "technology_names",
                         "funding_events", "suborganizations", "keywords")
 
     def _light_org(person):
-        """Une fiche personne dont l'organisation a perdu ses blocs de masse.
+        """A person record whose organization has lost its heavy blocks.
 
-        Rend `(fiche, allégée?)` — le booléen dit s'il y avait quelque chose à
-        retirer, pour ne pas annoncer une projection qui n'a rien fait."""
+        Returns `(record, lightened?)` — the boolean says whether there was anything to
+        remove, so as not to announce a projection that did nothing."""
         if not isinstance(person, dict):
             return person, False
         org = person.get("organization")
@@ -343,21 +343,21 @@ def register(mcp: FastMCP) -> None:
             return person, False
         return {**person, "organization": allege}, True
 
-    # Le LOT a sa propre mesure, et ce n'est pas celle de l'unitaire. Mesuré le
-    # 2026-09-11 sur l'exemple de réponse que documente Apollo pour
-    # `people/bulk_match` (forme réelle, fiches répétées jusqu'à 10) : 88 740 c.
-    # servis bruts, 85 941 après la seule coupe de l'organisation — au-dessus des
-    # 60 693 c. qui débordaient déjà un client MCP pour UNE personne. Une fiche de lot
-    # pèse ~6 300 c., dont `employment_history` 2 525 et `account` 1 756 (la fiche
-    # SOCIÉTÉ du CRM Apollo de l'appelant, qui double `organization`). Ce qu'une
-    # construction de liste vient chercher — le nom révélé, l'intitulé, l'email, le
-    # LinkedIn, l'employeur — n'est dans aucun des deux. Un lot tronqué par le client
-    # est un lot perdu, et payé. DENYLIST nommée, comme au-dessus ; `full=True` rend tout.
+    # The BATCH has its own measurement, and it is not the single-call one. Measured on
+    # 2026-09-11 on the example response that Apollo documents for
+    # `people/bulk_match` (real shape, records repeated up to 10): 88,740 chars
+    # served raw, 85,941 after the organization cut alone — above the
+    # 60,693 chars that already overflowed an MCP client for ONE person. A batch record
+    # weighs ~6,300 chars, of which `employment_history` 2,525 and `account` 1,756 (the
+    # COMPANY record of the caller's Apollo CRM, which duplicates `organization`). What a
+    # list building comes looking for — the revealed name, the title, the email, the
+    # LinkedIn, the employer — is in neither. A batch truncated by the client
+    # is a lost batch, and a paid one. Named DENYLIST, as above; `full=True` returns everything.
     _LOT_PERSON_NOISE = ("employment_history", "account")
 
     def _light_match(person):
-        """Une fiche de LOT : l'organisation allégée (`_light_org`), puis les deux blocs
-        qui font le poids d'un lot. Rend `(fiche, allégée?)`, comme `_light_org`."""
+        """A BATCH record: the lightened organization (`_light_org`), then the two blocks
+        that make up a batch's weight. Returns `(record, lightened?)`, like `_light_org`."""
         person, allegee = _light_org(person)
         if not isinstance(person, dict):
             return person, allegee
@@ -366,17 +366,17 @@ def register(mcp: FastMCP) -> None:
 
     def _projection_bloc(lot: bool = False) -> dict:
         dropped = [f"organization.{k}" for k in _MATCH_ORG_NOISE]
-        why = ("blocs de masse de la fiche entreprise — 91 % du payload, et "
-               "l'appel dépassait la limite de sortie pour UNE personne")
+        why = ("heavy blocks of the company record — 91% of the payload, and "
+               "the call exceeded the output limit for ONE person")
         if lot:
             dropped = list(_LOT_PERSON_NOISE) + dropped
-            why = ("historique d'emploi, fiche société du CRM Apollo et blocs de masse "
-                   "de l'employeur — un lot de 10 dépassait la limite de sortie d'un "
-                   "client MCP")
+            why = ("employment history, Apollo CRM company record and heavy blocks "
+                   "of the employer — a batch of 10 exceeded the output limit of an "
+                   "MCP client")
         return {"dropped": dropped, "why": why, "how_to_get_everything": "full=True"}
 
     def _light_person(payload: dict) -> dict:
-        """Allège `person.organization` des cinq blocs de masse, et le DIT."""
+        """Lightens `person.organization` of the five heavy blocks, and SAYS so."""
         person, allegee = _light_org(payload.get("person"))
         if not allegee:
             return payload
@@ -384,21 +384,21 @@ def register(mcp: FastMCP) -> None:
         out["projection"] = _projection_bloc()
         return out
 
-    # ⚠️ Le reveal servait sa fiche ENTIÈRE — il était le seul des trois à ne pas
-    # être allégé, et c'est l'outil du signalement client. Mesuré sur un appel RÉEL
-    # en production le 2026-09-11 (org sur clé payante, une personne) : **65 374
-    # caractères**, dont `person.organization` 59 244 et `employment_history` 4 396.
-    # Le client MCP a REFUSÉ la réponse (`exceeds maximum allowed tokens`) : l'appel
-    # a coûté ses crédits, les numéros étaient commandés, et l'agent n'a rien pu
-    # lire — exactement la panne que la projection existe pour empêcher, sur le seul
-    # outil qui l'avait manquée. Allégé : 5 457 c., soit 92 % de moins.
+    # ⚠️ The reveal served its ENTIRE record — it was the only one of the three not
+    # to be lightened, and it is the customer-report tool. Measured on a REAL call
+    # in production on 2026-09-11 (org on a paid key, one person): **65,374
+    # characters**, of which `person.organization` 59,244 and `employment_history` 4,396.
+    # The MCP client REFUSED the response (`exceeds maximum allowed tokens`): the call
+    # cost its credits, the numbers were ordered, and the agent could read nothing —
+    # exactly the failure the projection exists to prevent, on the only
+    # tool that had missed it. Lightened: 5,457 chars, i.e. 92% less.
     #
-    # ⚠️ Et `phone_enrichment.request_id` N'EST PAS l'identifiant de sondage : Apollo
-    # en rend DEUX (`6aa46cf…` interne, et le `request_id` signé 64 bits au premier
-    # niveau) et son propre message dit d'employer « the top-level `request_id` ».
-    # Deux identifiants dont un seul marche, dans la même réponse, c'est un piège —
-    # on retire celui qui ne sonde rien et on le NOMME, le message d'Apollo restant
-    # là pour expliquer lequel vaut.
+    # ⚠️ And `phone_enrichment.request_id` is NOT the polling identifier: Apollo
+    # returns TWO (`6aa46cf…` internal, and the signed 64-bit `request_id` at the top
+    # level) and its own message says to use "the top-level `request_id`".
+    # Two identifiers of which only one works, in the same response, is a trap —
+    # we remove the one that polls nothing and NAME it, Apollo's message staying
+    # there to explain which one counts.
     _REVEAL_TRAP = ("phone_enrichment.request_id",)
 
     def _light_reveal(payload: dict) -> dict:
@@ -416,22 +416,22 @@ def register(mcp: FastMCP) -> None:
         bloc = _projection_bloc(lot=True)
         bloc["dropped"] = ([*_REVEAL_TRAP] if piege else []) + (
             bloc["dropped"] if allegee else [])
-        bloc["why"] = ("fiche entreprise, historique d'emploi et fiche société du CRM "
-                       "Apollo — 65 374 c. mesurés sur un reveal réel, refusés par le "
-                       "client ; plus l'identifiant de `phone_enrichment`, qui ne "
-                       "sonde RIEN (c'est `request_id` au premier niveau qui sonde)")
+        bloc["why"] = ("company record, employment history and Apollo CRM company "
+                       "record — 65,374 chars measured on a real reveal, refused by the "
+                       "client; plus the `phone_enrichment` identifier, which polls "
+                       "NOTHING (it is the top-level `request_id` that polls)")
         out["projection"] = bloc
         return out
 
-    # ⚠️ Le SONDAGE rend les mêmes fiches que le reveal, mais PAS sous la même forme :
-    # l'enveloppe du webhook, avec un tableau `webhook_result.people[]`, et non un
-    # `person` au premier niveau. Réappliquer `_light_reveal` tel quel ne mordrait
-    # sur rien (il lit `payload["person"]`) et passerait pour un correctif — la
-    # réponse resterait entière, ~15 000 c. par personne, et un lot de 50 ne tenait
-    # dans aucun contexte (otomata-tech/oto#186). On projette donc CHAQUE élément de
-    # `people[]` avec la coupe du lot, et on le DIT, sur le chemin réel.
+    # ⚠️ POLLING returns the same records as the reveal, but NOT in the same shape:
+    # the webhook envelope, with a `webhook_result.people[]` array, and not a
+    # top-level `person`. Reapplying `_light_reveal` as is would bite on
+    # nothing (it reads `payload["person"]`) and pass for a fix — the
+    # response would stay whole, ~15,000 chars per person, and a batch of 50 did not fit
+    # in any context (otomata-tech/oto#186). So we project EACH element of
+    # `people[]` with the batch cut, and we SAY so, on the real path.
     def _light_reveal_result(result: dict) -> tuple[dict, Optional[dict]]:
-        """`(enveloppe, bloc de projection | None)` — `None` : rien n'a été retiré."""
+        """`(envelope, projection block | None)` — `None`: nothing was removed."""
         wr = result.get("webhook_result")
         people = wr.get("people") if isinstance(wr, dict) else None
         if not isinstance(people, list):
@@ -445,15 +445,15 @@ def register(mcp: FastMCP) -> None:
         return out, bloc
 
     def _stringify_request_id(payload: dict) -> dict:
-        """`request_id` en CHAÎNE — Apollo en rend un à CHAQUE match, reveal ou pas.
+        """`request_id` as a STRING — Apollo returns one on EVERY match, reveal or not.
 
-        ⚠️ C'est un entier SIGNÉ 64 bits (~7,2e17, souvent négatif) : il dépasse
-        la précision d'un nombre JavaScript, et la réponse d'un outil traverse du
-        JSON jusqu'à des clients qui en sont faits. Mesuré en prod le 2026-09-11,
-        un match nu rendait `-4604290848231370000` — quatre zéros de queue, une
-        valeur que le float64 a déjà réécrite. Un agent qui repasse cet id à
-        `apollo_reveal_phone_result` sonde un identifiant qui n'existe pas.
-        `apollo_reveal_phone` le sérialisait déjà ; le match, non.
+        ⚠️ It is a SIGNED 64-bit integer (~7.2e17, often negative): it exceeds
+        the precision of a JavaScript number, and a tool's response travels as
+        JSON all the way to clients made of it. Measured in prod on 2026-09-11,
+        a bare match returned `-4604290848231370000` — four trailing zeros, a
+        value that float64 has already rewritten. An agent that passes this id to
+        `apollo_reveal_phone_result` polls an identifier that does not exist.
+        `apollo_reveal_phone` already serialized it; the match did not.
         """
         rid = payload.get("request_id")
         if rid is None or isinstance(rid, str):
@@ -513,9 +513,9 @@ def register(mcp: FastMCP) -> None:
             full: return Apollo's payload untouched, tech stack and all. Costs the
                 same — this is about size, not data you are missing.
         """
-        # Un reveal ne part jamais sur la clé commune — cf. `_BYO_REVEAL_*`
-        # ci-dessus. C'est le GESTE qui bascule, pas l'outil : `apollo_match_person`
-        # reste ouvert au palier plateforme tant qu'on ne demande aucun reveal.
+        # A reveal never goes out on the common key — see `_BYO_REVEAL_*`
+        # above. It is the ACTION that switches, not the tool: `apollo_match_person`
+        # stays open to the platform tier as long as no reveal is requested.
         if reveal_personal_emails:
             client, is_platform = _client_byo(_BYO_REVEAL_EMAILS_PERSO), False
         else:
@@ -537,32 +537,32 @@ def register(mcp: FastMCP) -> None:
         return result if full else _light_person(result)
 
     # ------------------------------------------------------------------
-    # Téléphone direct — le seul geste de ce module qui ne rend PAS son
-    # résultat. Apollo vérifie les numéros de son côté et les POSTe à une URL
-    # quelques minutes plus tard ; la réponse immédiate ne porte qu'un
-    # `request_id`. Cette URL est désormais la NÔTRE, générée à chaque reveal
-    # (`apollo_receiver.py`) : l'agent ne fournit plus d'adresse — une URL hors
-    # de son environnement, en argument d'outil, qu'un client MCP peut refuser.
-    # `apollo_reveal_phone_result` lit ce qu'Apollo nous a livré, et ne sonde
-    # Apollo (`webhook_result/{id}`, 0 crédit, 30 jours) qu'en repli.
+    # Direct phone — the only action of this module that does NOT return its
+    # result. Apollo verifies the numbers on its side and POSTs them to a URL
+    # a few minutes later; the immediate response only carries a
+    # `request_id`. That URL is now OURS, generated on each reveal
+    # (`apollo_receiver.py`): the agent no longer supplies an address — a URL outside
+    # its environment, as a tool argument, which an MCP client may refuse.
+    # `apollo_reveal_phone_result` reads what Apollo delivered to us, and only polls
+    # Apollo (`webhook_result/{id}`, 0 credit, 30 days) as a fallback.
     #
-    # Forme submit + poll : celle de `fullenrich_enrich_linkedin`/
-    # `fullenrich_result`, née du signal #252 (un sondage in-process de 131-147 s
-    # survivait à aucun client MCP, et les crédits étaient déjà dépensés).
+    # Submit + poll form: that of `fullenrich_enrich_linkedin`/
+    # `fullenrich_result`, born from signal #252 (an in-process poll of 131-147 s
+    # survived no MCP client, and the credits were already spent).
     # ------------------------------------------------------------------
 
-    # `webhook_url` est RETIRÉ du schéma servi mais toujours ACCEPTÉ
-    # (`exclude_args`) : une procédure écrite avant ce lot le passe encore, et la
-    # refuser (« Unexpected keyword argument ») casserait un reveal qui marchait.
-    # Il est IGNORÉ — l'URL d'Apollo est la nôtre — et la réponse le dit.
-    # ⚠️ `exclude_args` est déprécié depuis FastMCP 2.14 ; le jour où il disparaît,
-    # `test_apollo_receveur.py` rougit sur l'appel qui le porte encore.
+    # `webhook_url` is REMOVED from the served schema but still ACCEPTED
+    # (`exclude_args`): a procedure written before this batch still passes it, and
+    # refusing it ("Unexpected keyword argument") would break a reveal that worked.
+    # It is IGNORED — Apollo's URL is ours — and the response says so.
+    # ⚠️ `exclude_args` has been deprecated since FastMCP 2.14; the day it disappears,
+    # `test_apollo_receveur.py` goes red on the call that still carries it.
     _WEBHOOK_URL_RETIREE = (
         "`webhook_url` is no longer used and was ignored: oto receives Apollo's "
         "numbers itself. Collect them with apollo_reveal_phone_result.")
-    # Le choix est FAIT et écrit ici : l'avertissement de dépréciation, émis à
-    # chaque montage, ne dirait rien de plus et noierait les autres. Filtre au MOT
-    # près — tout autre avertissement de FastMCP reste visible.
+    # The choice is MADE and written here: the deprecation warning, emitted on
+    # each mount, would say nothing more and would drown out the others. Filter to the WORD
+    # — any other FastMCP warning stays visible.
     warnings.filterwarnings("ignore", message=r"The `exclude_args` parameter is deprecated",
                             category=DeprecationWarning)
 
@@ -603,8 +603,8 @@ def register(mcp: FastMCP) -> None:
         """
         cle = _cle_byo(_BYO_REVEAL_TELEPHONE)
         client = ApolloClient(api_key=cle.key)
-        # La commande naît AVANT l'appel : Apollo peut POSTer avant de nous rendre
-        # la main. Si elle ne peut pas naître, rien n'est encore payé — on lève.
+        # The order is born BEFORE the call: Apollo may POST before handing control
+        # back to us. If it cannot be born, nothing is paid yet — we raise.
         jeton, destination = apollo_receiver.commander(cle)
         try:
             out = client.match_person(
@@ -619,23 +619,23 @@ def register(mcp: FastMCP) -> None:
             apollo_receiver.abandonner(jeton)
             raise
 
-        # ⚠️ APOLLO N'A TROUVÉ PERSONNE ≠ APOLLO A ACCEPTÉ LE REVEAL. Le client
-        # oto-core traduit le 404 en `None` (et un corps peut revenir sans
-        # `person`) : sans cette branche, les deux cas tombaient dans le même
-        # « accepté, mais sans request_id » — un mensonge dans le sens le plus
-        # cher, celui qui RASSURE. L'agent attendrait un POST qui ne partira
-        # jamais, rendrait le lead pour traité, et ne réessaierait pas avec un
-        # identifiant plus fort. Même règle que partout ici : introuvable se dit
-        # « introuvable », jamais un repli silencieux.
+        # ⚠️ APOLLO FOUND NOBODY ≠ APOLLO ACCEPTED THE REVEAL. The oto-core client
+        # translates the 404 into `None` (and a body can come back without
+        # `person`): without this branch, both cases fell into the same
+        # "accepted, but without request_id" — a lie in the most
+        # costly direction, the one that REASSURES. The agent would wait for a POST that will
+        # never leave, treat the lead as handled, and not retry with a
+        # stronger identifier. Same rule as everywhere here: not found says
+        # "not found", never a silent fallback.
         #
-        # ⚠️ Et ce refus n'affirme RIEN sur le coût. Apollo facture l'APPEL, pas le
-        # résultat : il facture la coquille vide qu'il fabrique lui-même (~12
-        # crédits pour zéro donnée, oto-core `44acc08`), et rien n'a jamais montré
-        # qu'un non-match soit remboursé. Annoncer « no credit spent » puis
-        # « retry » présentait un SECOND appel payant comme offert — le texte servi
-        # pilote l'agent, et celui-là le poussait à repayer en croyant rattraper
-        # une erreur gratuite. Ici on ne mesure pas la facturation, donc on ne
-        # promet pas : on dit que ce n'est pas gratuit et on chiffre le réessai.
+        # ⚠️ And this refusal asserts NOTHING about cost. Apollo bills the CALL, not the
+        # result: it bills the empty shell it mints itself (~12
+        # credits for zero data, oto-core `44acc08`), and nothing has ever shown
+        # that a non-match is refunded. Announcing "no credit spent" then
+        # "retry" presented a SECOND billed call as free — the text served
+        # drives the agent, and that one pushed it to pay again believing it was making up
+        # for a free error. Here we do not measure billing, so we do not
+        # promise: we say it is not free and we quantify the retry.
         if not out.get("person"):
             apollo_receiver.abandonner(jeton)
             return _avec_avis({"matched": False, "next_step": (
@@ -648,18 +648,18 @@ def register(mcp: FastMCP) -> None:
                 "(person_id from apollo_search_people), never the same one again.")},
                 webhook_url)
 
-        # `request_id` est un entier signé 64 bits (~7,2e17) : il DÉPASSE la
-        # précision d'un nombre JavaScript (2^53), et la réponse d'un tool
-        # traverse du JSON jusqu'à des clients qui en sont faits. Le rendre en
-        # nombre, c'est le rendre faux d'une unité ou deux sans que rien ne le
-        # dise — et un id faux ne sonde rien. On le sert en CHAÎNE.
+        # `request_id` is a signed 64-bit integer (~7.2e17): it EXCEEDS the
+        # precision of a JavaScript number (2^53), and a tool's response
+        # travels as JSON all the way to clients made of it. Returning it as a
+        # number is making it wrong by one or two units without anything saying so —
+        # and a wrong id polls nothing. We serve it as a STRING.
         rid = out.get("request_id")
         result = {k: v for k, v in out.items() if k != "request_id"}
         if rid is None:
-            # Apollo a bien rendu une personne, mais pas d'id : les numéros
-            # arriveront chez oto, mais rien ne permet de les désigner. On le dit —
-            # un `next_step` qui promet un outil inutilisable est pire que pas de
-            # `next_step` du tout.
+            # Apollo did return a person, but no id: the numbers
+            # will arrive at oto, but nothing makes it possible to designate them. We say so —
+            # a `next_step` that promises an unusable tool is worse than no
+            # `next_step` at all.
             result["next_step"] = (
                 "Apollo matched this person and accepted the reveal, but returned "
                 "no request_id: the numbers cannot be looked up without it. "
@@ -710,10 +710,10 @@ def register(mcp: FastMCP) -> None:
                 person's Apollo id — every row whose value matches gets the number.
             phone_column: with `datastore`, the column the number is written to.
         """
-        # L'accès au connecteur D'ABORD : lit un reveal reçu qui résout la clé Apollo
-        # qui l'a payé, et personne d'autre (`apollo_receiver.portee`). Puis ce
-        # qu'Apollo NOUS a livré, sans appel ; le sondage d'Apollo n'est que le repli
-        # — POST pas encore arrivé, refusé, ou commande passée avant ce lot.
+        # Connector access FIRST: reading a received reveal resolves the Apollo key
+        # that paid for it, and nobody else (`apollo_receiver.portee`). Then what
+        # Apollo delivered TO US, with no call; Apollo polling is only the fallback
+        # — POST not yet arrived, refused, or order placed before this batch.
         cle = _cle_byo(_BYO_REVEAL_TELEPHONE)
         result = apollo_receiver.resultat_recu(request_id, cle)
         if result is None:
@@ -735,16 +735,16 @@ def register(mcp: FastMCP) -> None:
             return {"done": True, "written": apollo_receiver.ecrire_numeros(
                 result, datastore=datastore, row_id=row_id,
                 match_column=match_column, phone_column=phone_column)}
-        # ⚠️ Apollo RÉ-ÉCHOTE l'identifiant dans son enveloppe, en NOMBRE — et il
-        # arrive donc abîmé, comme partout ailleurs. Mesuré sur un sondage réel en
-        # production le 2026-09-12 : sondé avec `-8351464734221602674`, l'enveloppe
-        # rendait `-8351464734221603000` — 326 d'écart, la signature du float64.
-        # `_stringify_request_id` ne couvrait que le PREMIER niveau des réponses de
-        # `match`/`reveal` ; l'écho niché du sondage lui échappait. Un agent qui
-        # relit `result.request_id` (pour re-sonder plus tard, ou pour le ranger
-        # dans une ligne de tableau) range un identifiant qui ne sonde rien.
-        # Troisième fois que le même piège se présente à un niveau différent : il
-        # se ferme là où la valeur SORT, pas là où on l'a vue la dernière fois.
+        # ⚠️ Apollo RE-ECHOES the identifier in its envelope, as a NUMBER — and it
+        # therefore arrives damaged, as everywhere else. Measured on a real poll in
+        # production on 2026-09-12: polled with `-8351464734221602674`, the envelope
+        # returned `-8351464734221603000` — 326 off, the signature of float64.
+        # `_stringify_request_id` only covered the TOP level of the `match`/`reveal`
+        # responses; the poll's nested echo escaped it. An agent that re-reads
+        # `result.request_id` (to re-poll later, or to store it in a table row)
+        # stores an identifier that polls nothing.
+        # Third time the same trap shows up at a different level: it
+        # is closed where the value LEAVES, not where we saw it last time.
         result = _stringify_request_id(result)
         if full:
             return {"done": True, "result": result}
@@ -753,10 +753,10 @@ def register(mcp: FastMCP) -> None:
                 else {"done": True, "result": result})
 
     _BYO_REVEAL_LOT = (
-        "un lot qui RÉVÈLE (emails personnels ou téléphones) ne passe jamais par "
-        "la clé plateforme : Apollo facture ces reveals en plus du match, et par "
-        "PERSONNE — pose ta propre clé Apollo. Sans elle, le lot marche toujours, "
-        "il rend simplement les fiches sans ces reveals.")
+        "a batch that REVEALS (personal emails or phones) never goes through "
+        "the platform key: Apollo bills these reveals on top of the match, and per "
+        "PERSON — set your own Apollo key. Without it, the batch still works, "
+        "it simply returns the records without these reveals.")
 
     @mcp.tool(exclude_args=["webhook_url"])
     def apollo_bulk_match(
@@ -808,9 +808,9 @@ def register(mcp: FastMCP) -> None:
             client, is_platform = ApolloClient(api_key=cle.key), False
         else:
             client, is_platform = _client(units=len(people))
-        # L'URL de réception est la NÔTRE, et seulement quand des téléphones sont
-        # commandés (Apollo refuse une `webhook_url` sans eux). Née avant l'appel,
-        # sous la clé qui paie.
+        # The receiving URL is OURS, and only when phones are
+        # ordered (Apollo refuses a `webhook_url` without them). Born before the call,
+        # under the key that pays.
         jeton = destination = None
         if reveal_phone_number:
             jeton, destination = apollo_receiver.commander(cle)
@@ -829,34 +829,34 @@ def register(mcp: FastMCP) -> None:
                 apollo_receiver.abandonner(jeton)
             raise
 
-        # Ce qu'APOLLO a facturé : sa réponse porte `credits_consumed` (0 si rien de
-        # facturable n'a été trouvé, pas de crédit pour une personne sans
-        # correspondance ; +8 pour un mobile). C'est le chiffre des DEUX compteurs
-        # ci-dessous — jamais 1 pour l'appel, jamais `len(people)` quand l'amont dit
-        # le sien (oto#168). Réponse muette : on compte ce qu'on a soumis, le plus sûr
-        # pour le quota, mais EN LE DISANT au journal — un repli silencieux ferait
-        # passer une réponse inattendue pour un comptage juste.
+        # What APOLLO billed: its response carries `credits_consumed` (0 if nothing
+        # billable was found, no credit for a person without a
+        # match; +8 for a mobile). It is the figure of BOTH counters
+        # below — never 1 for the call, never `len(people)` when upstream states
+        # its own (oto#168). Silent response: we count what we submitted, the safest
+        # for the quota, but SAYING SO in the log — a silent fallback would make
+        # an unexpected response pass for a correct count.
         credits = out.get("credits_consumed")
         if not isinstance(credits, int) or isinstance(credits, bool) or credits < 0:
-            logger.warning("apollo_bulk_match : `credits_consumed` absent ou illisible "
-                           "(%r) dans la réponse d'Apollo — quota et quantité comptés "
-                           "sur les %d personnes soumises", credits, len(people))
+            logger.warning("apollo_bulk_match: `credits_consumed` missing or unreadable "
+                           "(%r) in Apollo's response — quota and quantity counted "
+                           "on the %d people submitted", credits, len(people))
             credits = len(people)
-        # Le quota de la clé commune. 0 ne débite rien (`record_platform_usage`
-        # plancherait à 1).
+        # The common key's quota. 0 debits nothing (`record_platform_usage`
+        # would floor at 1).
         if is_platform:
             if credits > 0:
                 access.record_platform_usage("apollo", credits)
             quota = access.platform_quota_hint("apollo")
             if quota is not None:
                 out = {**out, "platform_quota": quota}
-        # La ligne FACTURÉE (`tool_calls.quantity`, lue par la lentille d'usage et par
-        # le facturier d'un partenaire) est un AUTRE compteur que le quota ci-dessus.
-        # Inconditionnelle, clé commune OU propre, comme `fullenrich` : c'est
-        # `key_mode`, posé par le résolveur, qui dit s'il y a quelque chose à facturer.
-        # Sans elle `quantity` reste NULL, que le consommateur lit 1. Son unité est le
-        # CRÉDIT Apollo (oto#168), comme `serper` porte ses crédits : un 0 tracé dit
-        # « rien de facturé », pas « non mesuré ».
+        # The BILLED line (`tool_calls.quantity`, read by the usage lens and by a
+        # partner's biller) is ANOTHER counter than the quota above.
+        # Unconditional, common key OR own, like `fullenrich`: it is
+        # `key_mode`, set by the resolver, that says whether there is anything to bill.
+        # Without it `quantity` stays NULL, which the consumer reads as 1. Its unit is the
+        # Apollo CREDIT (oto#168), as `serper` carries its credits: a traced 0 says
+        # "nothing billed", not "not measured".
         session_org.note_call_trace(quantity=credits)
 
         out = _stringify_request_id(out)
@@ -885,24 +885,24 @@ def register(mcp: FastMCP) -> None:
         return client.get_job_postings(org_id)
 
     # ------------------------------------------------------------------
-    # Contacts — la frontière de données bascule ICI. Tout ce qui précède
-    # interroge la base PARTAGÉE Apollo (`mixed_*`, `people/match`,
-    # `organizations/*`) ; un CONTACT est une personne enregistrée dans
-    # l'espace de travail DU PROPRIÉTAIRE de la clé, avec les valeurs que SON
-    # équipe y a écrites (stage, propriétaire, listes, champs personnalisés).
-    # Même règle que les séquences et les emails, donc : `_client_byo()` sur
-    # les TROIS ops, y compris les deux lectures. Une clé plateforme
-    # mutualisée rendrait ici le carnet d'adresses de quelqu'un d'autre.
+    # Contacts — the data boundary shifts HERE. Everything above
+    # queries Apollo's SHARED database (`mixed_*`, `people/match`,
+    # `organizations/*`); a CONTACT is a person saved in the
+    # workspace of the KEY OWNER, with the values THEIR
+    # team wrote there (stage, owner, lists, custom fields).
+    # Same rule as sequences and emails, therefore: `_client_byo()` on
+    # ALL THREE ops, including the two reads. A pooled platform
+    # key would return someone else's address book here.
     #
-    # Les trois endpoints coûtent 0 crédit — c'est précisément ce qui rend
-    # `op="get"` utile : relire un contact qu'on possède déjà n'a aucune
-    # raison de repayer le crédit d'`apollo_match_person`.
+    # The three endpoints cost 0 credit — this is precisely what makes
+    # `op="get"` useful: re-reading a contact we already own has no
+    # reason to pay again the credit of `apollo_match_person`.
     # ------------------------------------------------------------------
 
-    # Écarté de la vue par défaut du catalogue de champs : plomberie de sync CRM
-    # et d'affichage. DENYLIST nommée, jamais une allowlist — une clé qu'Apollo
-    # ajouterait demain doit rester visible, pas disparaître en silence
-    # (leçon `fr_get`/`liste_idcc`, docs/conventions.md).
+    # Excluded from the default view of the field catalog: CRM sync and
+    # display plumbing. Named DENYLIST, never an allowlist — a key that Apollo
+    # might add tomorrow must stay visible, not vanish silently
+    # (lesson `fr_get`/`liste_idcc`, docs/conventions.md).
     _FIELD_NOISE = (
         "finder_view_ids", "finder_views", "icon_class", "project_workspace_id",
         "mapped_crm_field", "additional_mapped_crm_field",
@@ -910,45 +910,45 @@ def register(mcp: FastMCP) -> None:
         "picklist_value_set_id", "context", "group", "meta", "parent",
     )
 
-    # Vue de LISTE d'`op="search"` : deux blocs IMBRIQUÉS qu'Apollo recopie dans
-    # CHAQUE fiche et qui, à 25 lignes, pèsent plus que tout le reste réuni. Ce
-    # qui sert à choisir (`organization_name`, `account_id`, `title`, `email`,
-    # `typed_custom_fields`) reste — et `full=True` rend le brut. DENYLIST nommée :
-    # une clé qu'Apollo ajouterait demain reste visible (leçon `fr_get`).
+    # LIST view of `op="search"`: two NESTED blocks that Apollo copies into
+    # EACH record and that, at 25 rows, weigh more than everything else combined. What
+    # is useful for choosing (`organization_name`, `account_id`, `title`, `email`,
+    # `typed_custom_fields`) stays — and `full=True` returns the raw. Named DENYLIST:
+    # a key that Apollo might add tomorrow stays visible (lesson `fr_get`).
     _CONTACT_NOISE = ("organization", "account")
 
-    # Ce que veut dire un 422 DÉPEND de l'op, et se tromper de leçon est pire que
-    # ne rien dire : sur une lecture il ne peut désigner que l'id ; sur un PATCH il
-    # désigne aussi bien une VALEUR refusée (un stage inexistant, une date mal
-    # formée). Servir « ce n'est pas un id de contact » à qui vient d'écrire une
-    # mauvaise valeur l'envoie chercher au mauvais endroit.
+    # What a 422 means DEPENDS on the op, and teaching the wrong lesson is worse than
+    # saying nothing: on a read it can only designate the id; on a PATCH it
+    # equally designates a refused VALUE (a nonexistent stage, a malformed
+    # date). Serving "this is not a contact id" to someone who just wrote
+    # a bad value sends them looking in the wrong place.
     _WRONG_ID_422 = (
-        "Apollo ne trouve pas ce contact dans ton espace de travail (inexistant, "
-        "supprimé, ou appartenant à une autre équipe). ⚠️ Un id rendu par "
-        "apollo_search_people/apollo_match_person est un id de PERSONNE de la base "
-        "partagée, PAS un id de contact : une personne que ton équipe n'a jamais "
-        "enregistrée n'a pas de contact ici.")
+        "Apollo cannot find this contact in your workspace (nonexistent, "
+        "deleted, or belonging to another team). ⚠️ An id returned by "
+        "apollo_search_people/apollo_match_person is a PERSON id from the "
+        "shared database, NOT a contact id: a person your team never "
+        "saved has no contact here.")
     _REFUSED_WRITE_422 = (
-        "Apollo a refusé cette modification. Deux causes possibles, et le message "
-        "ci-dessus tranche : soit une VALEUR est invalide (contact_stage_id "
-        "inconnu, date mal formée, option de liste de choix inexistante), soit "
-        "`contact_id` ne désigne pas un contact de ton espace de travail — un id "
-        "d'apollo_search_people est un id de PERSONNE, pas de contact.")
+        "Apollo refused this modification. Two possible causes, and the message "
+        "above settles it: either a VALUE is invalid (unknown contact_stage_id, "
+        "malformed date, nonexistent picklist option), or "
+        "`contact_id` does not designate a contact of your workspace — an id "
+        "from apollo_search_people is a PERSON id, not a contact id.")
 
     def _contact_run(fn, *, on_422: str = _WRONG_ID_422):
-        """Traduit les deux refus PRÉVISIBLES de cette famille en erreur actionnable.
+        """Translates the two PREDICTABLE refusals of this family into an actionable error.
 
-        Le module n'a pas de table d'erreurs globale (ApolloError remonte tel quel,
-        message amont inclus) et c'est très bien pour la recherche. Ici deux statuts
-        ont une cause précise, que le message amont ne dit pas :
+        The module has no global error table (ApolloError bubbles up as is,
+        upstream message included) and that is fine for search. Here two statuses
+        have a precise cause, which the upstream message does not state:
 
-        - **403** = clé Apollo non-Master. C'est le cas NORMAL d'une clé scopée, pas
-          une panne — et « Apollo 403 sur contacts/… » n'apprend rien à qui ne sait
-          pas que ces endpoints ont ce prérequis.
-        - **422** = cf. `on_422`, qui dépend de l'op (lecture vs écriture).
+        - **403** = non-Master Apollo key. This is the NORMAL case of a scoped key, not
+          an outage — and "Apollo 403 on contacts/…" teaches nothing to whoever does not
+          know these endpoints have this prerequisite.
+        - **422** = see `on_422`, which depends on the op (read vs write).
 
-        Tout le reste remonte INTACT : le message amont d'Apollo nomme le champ
-        refusé, et c'est ce qui rend un 400 corrigeable.
+        Everything else bubbles up INTACT: Apollo's upstream message names the
+        refused field, and that is what makes a 400 fixable.
         """
         try:
             return fn()
@@ -957,36 +957,36 @@ def register(mcp: FastMCP) -> None:
         except ApolloError as e:
             if e.status_code == 403:
                 raise _bad(
-                    f"{e} — ces endpoints (champs personnalisés, lecture et écriture "
-                    "d'un contact) exigent une clé Apollo **Master**, ou le scope "
-                    "nommé correspondant. Une clé Apollo standard authentifie mais "
-                    "rend 403 ici. Régénère-la en Master dans Apollo → Settings → "
+                    f"{e} — these endpoints (custom fields, reading and writing "
+                    "a contact) require an Apollo **Master** key, or the matching named "
+                    "scope. A standard Apollo key authenticates but "
+                    "returns 403 here. Regenerate it as Master in Apollo → Settings → "
                     "Integrations → API.")
             if e.status_code == 422:
                 raise _bad(f"{e} — {on_422}")
             raise
 
     def _custom_fields() -> dict:
-        """Catalogue des champs personnalisés de CETTE équipe Apollo (0 crédit).
+        """Catalog of the custom fields of THIS Apollo team (0 credit).
 
-        ⚠️ Passe par `typed_custom_fields`, qu'Apollo marque déprécié au profit
-        de `GET /fields` — **sciemment**. Les deux ne rendent pas la même forme
-        d'id : celui-ci rend l'ObjectId NU, la clé exacte que `PATCH /contacts`
-        attend ; `/fields` rend un id PRÉFIXÉ de sa modalité
-        (`"account.6940…"`), qu'aucune doc n'autorise à découper. Le catalogue
-        « moderne » ferait donc écrire des clés qu'Apollo ignore en rendant 200.
+        ⚠️ Goes through `typed_custom_fields`, which Apollo marks deprecated in favor
+        of `GET /fields` — **deliberately**. The two do not return the same id
+        shape: this one returns the BARE ObjectId, the exact key that `PATCH /contacts`
+        expects; `/fields` returns an id PREFIXED with its modality
+        (`"account.6940…"`), which no doc allows us to split. The "modern"
+        catalog would therefore make us write keys that Apollo ignores while returning 200.
         """
         return _client_byo().list_typed_custom_fields() or {}
 
     def _field_index(catalog: Any) -> Optional[dict]:
-        """`{id: définition}` des champs du catalogue — **`None` si la forme
-        surprend**, `{}` si l'équipe n'en déclare aucun.
+        """`{id: definition}` of the catalog's fields — **`None` if the shape
+        surprises**, `{}` if the team declares none.
 
-        Les deux ne se valent pas et les confondre coûte cher dans les deux sens.
-        Forme illisible = on ne SAIT rien : refuser bloquerait une écriture
-        légitime au premier changement d'Apollo. Catalogue lu et vide = on sait
-        que l'id envoyé n'existe pas : laisser passer, c'est laisser Apollo
-        avaler l'écriture en rendant 200."""
+        The two are not equivalent and confusing them is costly both ways.
+        Unreadable shape = we know NOTHING: refusing would block a
+        legitimate write at the first Apollo change. Catalog read and empty = we know
+        the id sent does not exist: letting it through means letting Apollo
+        swallow the write while returning 200."""
         rows = catalog.get("typed_custom_fields") if isinstance(catalog, dict) else None
         if not isinstance(rows, list):
             return None
@@ -994,36 +994,36 @@ def register(mcp: FastMCP) -> None:
                 if isinstance(r, dict) and isinstance(r.get("id"), str)}
 
     def _is_contact_field(definition: dict) -> bool:
-        """Un champ sans `modality` déclarée est traité comme un champ de contact
-        — même défaut permissif partout, sinon la liste des ids « valides » et le
-        contrôle qui refuse ne parlent pas du même ensemble."""
+        """A field with no declared `modality` is treated as a contact field
+        — same permissive default everywhere, otherwise the list of "valid" ids and the
+        check that refuses do not speak about the same set."""
         return (definition.get("modality") or "contact") == "contact"
 
     def _check_custom_field_ids(values: dict) -> Optional[str]:
-        """Refuse un id de champ que cette équipe ne déclare pas — en nommant les
-        ids valides, sinon l'agent réessaie au hasard.
+        """Refuses a field id that this team does not declare — naming the valid
+        ids, otherwise the agent retries at random.
 
-        Rend une NOTE quand la validation n'a pas pu avoir lieu (catalogue
-        illisible), jamais None en silence : `GET typed_custom_fields` exige une
-        clé Master et rend 403 sinon, donc « pas validé » est le cas NORMAL
-        d'une clé scopée — et une écriture qui se dit vérifiée sans l'être est
-        pire que pas de vérification du tout.
+        Returns a NOTE when validation could not take place (unreadable
+        catalog), never None silently: `GET typed_custom_fields` requires a Master
+        key and returns 403 otherwise, so "not validated" is the NORMAL case
+        of a scoped key — and a write that claims to be verified without being so is
+        worse than no verification at all.
         """
         try:
             index = _field_index(_custom_fields())
         except McpError:
             raise
-        # noqa: SILENT — l'avertissement « ids non vérifiés » est rendu à l'agent
-        except Exception as e:  # noqa: BLE001 — le catalogue est un CONFORT, pas un verrou
-            return (f"ids non vérifiés : le catalogue des champs n'a pas pu être lu "
-                    f"({type(e).__name__}: {e}). `GET typed_custom_fields` demande "
-                    "une clé Apollo Master ; l'écriture, elle, est partie telle "
-                    "quelle — relis le contact avec op=\"get\" pour voir ce qui a "
-                    "réellement été enregistré.")
+        # noqa: SILENT — the "ids not verified" warning is returned to the agent
+        except Exception as e:  # noqa: BLE001 — the catalog is a CONVENIENCE, not a lock
+            return (f"ids not verified: the field catalog could not be read "
+                    f"({type(e).__name__}: {e}). `GET typed_custom_fields` requires "
+                    "an Apollo Master key; the write itself went out as "
+                    "is — re-read the contact with op=\"get\" to see what was "
+                    "actually saved.")
         if index is None:
-            return ("ids non vérifiés : le catalogue des champs n'a pas la forme "
-                    "attendue (Apollo a pu la changer). L'écriture est partie telle "
-                    'quelle — relis le contact avec op="get" pour la vérifier.')
+            return ("ids not verified: the field catalog does not have the expected "
+                    "shape (Apollo may have changed it). The write went out as "
+                    'is — re-read the contact with op="get" to verify it.')
 
         def _describe(i: str) -> str:
             d = index[i]
@@ -1035,25 +1035,25 @@ def register(mcp: FastMCP) -> None:
                       "type": d.get("type")}
                      for i, d in index.items() if _is_contact_field(d)]
             raise _bad(
-                f"champs personnalisés inconnus de cette équipe Apollo : {unknown}. "
-                f"Champs de CONTACT valides : {valid or 'aucun'}. "
-                "`typed_custom_fields` est keyé par ID (pas par nom) — lis-les avec "
+                f"custom fields unknown to this Apollo team: {unknown}. "
+                f"Valid CONTACT fields: {valid or 'none'}. "
+                "`typed_custom_fields` is keyed by ID (not by name) — read them with "
                 'apollo_contact(op="fields").')
 
         misfiled = sorted(i for i in values if not _is_contact_field(index[i]))
         if misfiled:
             detail = [f'{_describe(i)} → {index[i].get("modality")}' for i in misfiled]
             raise _bad(
-                f"ces champs n'appartiennent pas à l'objet contact : {detail}. "
-                "Un champ personnalisé est attaché à UN objet Apollo ; posé sur un "
-                "contact il n'est pas « presque bon », il est ignoré sans erreur.")
+                f"these fields do not belong to the contact object: {detail}. "
+                "A custom field is attached to ONE Apollo object; set on a "
+                "contact it is not \"almost right\", it is ignored without an error.")
 
-        # Une liste de choix n'accepte que l'ID d'une de ses options. Envoyer le
-        # LIBELLÉ est le piège que la description de l'outil nomme comme « la seule
-        # erreur qu'Apollo avale en silence » — le catalogue qu'on vient de lire
-        # porte déjà de quoi la refuser, ne pas s'en servir serait la documenter
-        # sans la fermer. On ne contrôle QUE ce que le catalogue déclare : une
-        # picklist dont les options sont absentes n'est pas contrôlée, pas refusée.
+        # A picklist only accepts the ID of one of its options. Sending the
+        # LABEL is the trap that the tool description names as "the only
+        # error Apollo swallows silently" — the catalog we just read
+        # already carries what is needed to refuse it, not using it would be documenting it
+        # without closing it. We only check WHAT the catalog declares: a
+        # picklist whose options are absent is not checked, not refused.
         wrong: list[str] = []
         for i, value in values.items():
             d = index[i]
@@ -1070,12 +1070,12 @@ def register(mcp: FastMCP) -> None:
             if off:
                 names = [{"id": o.get("id"), "name": o.get("name")}
                          for o in opts if isinstance(o, dict)]
-                wrong.append(f'{_describe(i)} : {off} — options valides {names}')
+                wrong.append(f'{_describe(i)}: {off} — valid options {names}')
         if wrong:
             raise _bad(
-                "valeurs de liste de choix invalides : " + " ; ".join(wrong) + ". "
-                "Une picklist Apollo s'écrit avec l'`id` de l'option, jamais avec "
-                "son libellé — le libellé est accepté en apparence puis ignoré.")
+                "invalid picklist values: " + " ; ".join(wrong) + ". "
+                "An Apollo picklist is written with the option's `id`, never with "
+                "its label — the label is apparently accepted then ignored.")
         return None
 
     @mcp.tool()
@@ -1179,7 +1179,7 @@ def register(mcp: FastMCP) -> None:
           without writing.
         """
         if op not in ("fields", "create_field", "search", "get", "update"):
-            raise _bad(f'op inconnu "{op}" — attendu: fields, create_field, search, '
+            raise _bad(f'unknown op "{op}" — expected: fields, create_field, search, '
                        'get, update')
 
         if op == "fields":
@@ -1189,8 +1189,8 @@ def register(mcp: FastMCP) -> None:
             index = _field_index(catalog)
             if index is None:
                 raise _bad(
-                    "le catalogue des champs personnalisés n'a pas la forme attendue "
-                    f"(Apollo a pu la changer) — brut : {str(catalog)[:400]}")
+                    "the custom field catalog does not have the expected shape "
+                    f"(Apollo may have changed it) — raw: {str(catalog)[:400]}")
             rows = [r for r in index.values()
                     if modality == "all"
                     or (r.get("modality") or "contact") == modality]
@@ -1203,27 +1203,27 @@ def register(mcp: FastMCP) -> None:
                 "projection": {
                     "dropped": list(_FIELD_NOISE),
                     "filtered_on": f"modality={modality}",
-                    "how_to_get_all_columns": "full=True (rend le catalogue brut)",
+                    "how_to_get_all_columns": "full=True (returns the raw catalog)",
                     "how_to_get_all_objects": 'modality="all"',
                 },
-                "how_to_use": ('les `id` ci-dessus sont les clés de '
-                               '`typed_custom_fields` sur op="update"'),
+                "how_to_use": ('the `id`s above are the keys of '
+                               '`typed_custom_fields` on op="update"'),
             }
 
         if op == "create_field":
             if not (label or "").strip():
-                raise _bad('op=create_field : `label` requis (le nom du champ).')
-            # Apollo ne déduplique PAS sur le libellé : un second appel crée un
-            # second champ homonyme, sans rien signaler. Les deux sortent au
-            # catalogue, la variable d'une séquence en désigne UN, et les écritures
-            # qui visent l'autre n'apparaissent nulle part. On regarde d'abord — et
-            # si le catalogue est illisible (clé non-Master), on ne bloque pas : on
-            # le DIT, comme partout ailleurs ici.
+                raise _bad('op=create_field: `label` required (the name of the field).')
+            # Apollo does NOT deduplicate on the label: a second call creates a
+            # second field with the same name, without signaling anything. Both show up in the
+            # catalog, a sequence variable designates ONE, and writes
+            # aimed at the other appear nowhere. We look first — and
+            # if the catalog is unreadable (non-Master key), we do not block: we SAY
+            # so, as everywhere else here.
             existing, dup_note = [], None
             try:
                 index = _field_index(_custom_fields())
                 if index is None:
-                    dup_note = ("doublons non vérifiés : catalogue illisible.")
+                    dup_note = ("duplicates not verified: unreadable catalog.")
                 else:
                     existing = [
                         {"id": i, "name": d.get("name") or d.get("label"),
@@ -1233,16 +1233,16 @@ def register(mcp: FastMCP) -> None:
                         and (d.get("modality") or "contact") == modality]
             except McpError:
                 raise
-            # noqa: SILENT — l'avertissement « doublons non vérifiés » est rendu à l'agent
+            # noqa: SILENT — the "duplicates not verified" warning is returned to the agent
             except Exception as e:  # noqa: BLE001
-                dup_note = (f"doublons non vérifiés : le catalogue n'a pas pu être "
-                            f"lu ({type(e).__name__}: {e}).")
+                dup_note = (f"duplicates not verified: the catalog could not be "
+                            f"read ({type(e).__name__}: {e}).")
             if existing:
                 raise _bad(
-                    f'un champ « {label} » existe déjà sur cet objet : {existing}. '
-                    "Apollo en créerait un SECOND, homonyme, que rien ne distingue — "
-                    "et une écriture qui viserait le mauvais n'apparaîtrait nulle "
-                    "part. Réutilise l'id ci-dessus, ou choisis un autre libellé.")
+                    f'a field "{label}" already exists on this object: {existing}. '
+                    "Apollo would create a SECOND one, with the same name, that nothing distinguishes — "
+                    "and a write aimed at the wrong one would appear nowhere. "
+                    "Reuse the id above, or choose another label.")
             if dry_run:
                 out = {"dry_run": True, "action": "create_field", "label": label,
                        "modality": modality, "field_type": field_type,
@@ -1268,15 +1268,15 @@ def register(mcp: FastMCP) -> None:
                 found, items_path="contacts", item_drop=_CONTACT_NOISE)
             out["projection"] = {
                 "dropped": list(_CONTACT_NOISE),
-                "why": ("deux blocs imbriqués qui pèsent plus que la fiche entière ; "
-                        "`organization_name` et `account_id` restent, de quoi "
-                        "rattacher sans les recharger"),
-                "how_to_get_everything": "full=True, ou op=\"get\" sur un id",
+                "why": ("two nested blocks that weigh more than the whole record; "
+                        "`organization_name` and `account_id` stay, enough to "
+                        "link without reloading them"),
+                "how_to_get_everything": "full=True, or op=\"get\" on an id",
             }
             return out
 
         if not contact_id:
-            raise _bad(f"contact_id requis pour op={op}")
+            raise _bad(f"contact_id required for op={op}")
 
         if op == "get":
             return _contact_run(lambda: _client_byo().get_contact(contact_id))
@@ -1294,19 +1294,19 @@ def register(mcp: FastMCP) -> None:
                 ("mobile_phone", mobile_phone), ("home_phone", home_phone),
                 ("other_phone", other_phone),
                 ("typed_custom_fields", typed_custom_fields),
-            # `{}` et `[]` sont écartés comme `None` : un `typed_custom_fields`
-            # VIDE n'exprime aucune modification, et le laisser passer produisait
-            # un PATCH sans effet rendu comme une écriture réussie.
+            # `{}` and `[]` are discarded like `None`: an EMPTY `typed_custom_fields`
+            # expresses no modification, and letting it through produced
+            # a no-op PATCH returned as a successful write.
             ) if v is not None and v != {} and v != []
         }
         if not payload:
             raise _bad(
-                "op=update : aucun champ à modifier — passe au moins un champ "
-                '(typed_custom_fields, title, email, contact_stage_id…). Les ids de '
-                'champs personnalisés se lisent avec apollo_contact(op="fields").')
+                "op=update: no field to modify — pass at least one field "
+                '(typed_custom_fields, title, email, contact_stage_id…). Custom field '
+                'ids are read with apollo_contact(op="fields").')
         if typed_custom_fields is not None and not isinstance(typed_custom_fields, dict):
-            raise _bad("typed_custom_fields doit être un objet {id_du_champ: valeur}, "
-                       'keyé par les ids rendus par apollo_contact(op="fields").')
+            raise _bad("typed_custom_fields must be an object {field_id: value}, "
+                       'keyed by the ids returned by apollo_contact(op="fields").')
 
         note = _check_custom_field_ids(typed_custom_fields) if typed_custom_fields else None
 
@@ -1321,16 +1321,16 @@ def register(mcp: FastMCP) -> None:
             on_422=_REFUSED_WRITE_422)
         if not note:
             return result
-        # La note ne doit pas dépendre de la FORME du retour d'Apollo : « je n'ai
-        # pas pu vérifier » est une information sur l'appel, pas sur la réponse.
+        # The note must not depend on the SHAPE of Apollo's return: "I could not
+        # verify" is information about the call, not about the response.
         return ({**result, "field_validation": note} if isinstance(result, dict)
                 else {"result": result, "field_validation": note})
 
     # ------------------------------------------------------------------
-    # Email accounts & schedules — prérequis en lecture, 0 crédit, mais BYO
-    # ONLY : la liste rend les boîtes/plannings DU PROPRIÉTAIRE de la clé
-    # (signature HTML, score de délivrabilité, seuils quotidiens...) — la clé
-    # plateforme appartient à quelqu'un d'autre, sa boîte n'a rien à faire là.
+    # Email accounts & schedules — read prerequisite, 0 credit, but BYO
+    # ONLY: the list returns the KEY OWNER's mailboxes/schedules
+    # (HTML signature, deliverability score, daily thresholds...) — the platform
+    # key belongs to someone else, its mailbox has no business here.
     # ------------------------------------------------------------------
 
     @mcp.tool()
@@ -1398,7 +1398,7 @@ def register(mcp: FastMCP) -> None:
         validates but skips the actual API call.
         """
         if op not in ("search", "create", "update", "activate", "deactivate", "archive"):
-            raise _bad(f'op inconnu "{op}" — attendu: search, create, update, activate, '
+            raise _bad(f'unknown op "{op}" — expected: search, create, update, activate, '
                        'deactivate, archive')
 
         client = _client_byo()
@@ -1408,7 +1408,7 @@ def register(mcp: FastMCP) -> None:
         try:
             if op == "create":
                 if not name or not emailer_schedule_id:
-                    raise ValueError("name et emailer_schedule_id requis pour créer une séquence")
+                    raise ValueError("name and emailer_schedule_id required to create a sequence")
                 if dry_run:
                     return {"dry_run": True, "action": "create", "name": name,
                             "emailer_schedule_id": emailer_schedule_id,
@@ -1419,7 +1419,7 @@ def register(mcp: FastMCP) -> None:
                     max_emails_per_day=max_emails_per_day, emailer_steps=emailer_steps)
 
             if not sequence_id:
-                raise ValueError("sequence_id requis")
+                raise ValueError("sequence_id required")
 
             if op == "update":
                 fields: dict[str, Any] = {}
@@ -1495,11 +1495,11 @@ def register(mcp: FastMCP) -> None:
           key only — the events are the key owner's OWN sequences.
         """
         if op not in ("add", "update_status", "activity"):
-            raise _bad(f'op inconnu "{op}" — attendu: add, update_status, activity')
+            raise _bad(f'unknown op "{op}" — expected: add, update_status, activity')
 
         if op == "activity":
             if not contact_id:
-                raise _bad("contact_id requis pour op=activity")
+                raise _bad("contact_id required for op=activity")
             client = _client_byo()
             try:
                 return client.get_contact_sequence_activity(
@@ -1511,13 +1511,13 @@ def register(mcp: FastMCP) -> None:
         try:
             if op == "add":
                 if not sequence_id:
-                    raise ValueError("sequence_id requis")
+                    raise ValueError("sequence_id required")
                 if not send_email_from_email_account_id:
                     raise ValueError(
-                        "send_email_from_email_account_id requis — obtiens-le via "
+                        "send_email_from_email_account_id required — get it via "
                         "apollo_email_accounts()")
                 if not contact_ids and not label_names:
-                    raise ValueError("contact_ids ou label_names requis")
+                    raise ValueError("contact_ids or label_names required")
                 if dry_run:
                     return {"dry_run": True, "action": "add", "sequence_id": sequence_id,
                             "send_email_from_email_account_id": send_email_from_email_account_id,
@@ -1530,11 +1530,11 @@ def register(mcp: FastMCP) -> None:
 
             if op == "update_status":
                 if not emailer_campaign_ids:
-                    raise ValueError("emailer_campaign_ids requis")
+                    raise ValueError("emailer_campaign_ids required")
                 if not contact_ids:
-                    raise ValueError("contact_ids requis")
+                    raise ValueError("contact_ids required")
                 if mode not in ("mark_as_finished", "remove", "stop"):
-                    raise ValueError('mode doit être "mark_as_finished", "remove" ou "stop"')
+                    raise ValueError('mode must be "mark_as_finished", "remove" or "stop"')
                 if dry_run:
                     return {"dry_run": True, "action": "update_status", "mode": mode,
                             "emailer_campaign_ids": emailer_campaign_ids,
@@ -1600,7 +1600,7 @@ def register(mcp: FastMCP) -> None:
           Master API key, not verified from this environment.
         """
         if op not in ("draft", "send", "status", "search", "content", "stats"):
-            raise _bad(f'op inconnu "{op}" — attendu: draft, send, status, search, '
+            raise _bad(f'unknown op "{op}" — expected: draft, send, status, search, '
                        'content, stats')
 
         client = _client_byo()
@@ -1608,7 +1608,7 @@ def register(mcp: FastMCP) -> None:
             if op == "draft":
                 if not contact_id and not in_response_to_emailer_message_id:
                     raise ValueError(
-                        "contact_id requis, sauf en réponse à un fil "
+                        "contact_id required, except when replying to a thread "
                         "(in_response_to_emailer_message_id)")
                 return client.create_email_draft(
                     contact_id=contact_id, subject=subject, body_html=body_html,
@@ -1620,14 +1620,14 @@ def register(mcp: FastMCP) -> None:
 
             if op == "send":
                 if not message_id:
-                    raise ValueError("message_id requis")
+                    raise ValueError("message_id required")
                 if dry_run:
                     return {"dry_run": True, "action": "send", "message_id": message_id}
                 return client.send_email_now(message_id, surface=surface)
 
             if op == "status":
                 if not message_id:
-                    raise ValueError("message_id requis")
+                    raise ValueError("message_id required")
                 return client.check_email_send_status(message_id)
             if op == "search":
                 return client.search_emails(
@@ -1637,18 +1637,18 @@ def register(mcp: FastMCP) -> None:
                     per_page=per_page, page=page)
             if op == "content":
                 if not ids:
-                    raise ValueError("ids requis (au moins un)")
+                    raise ValueError("ids required (at least one)")
                 return client.get_email_content(ids, body_format=body_format)
             if op == "stats":
                 if not message_id:
-                    raise ValueError("message_id requis")
+                    raise ValueError("message_id required")
                 return client.get_email_stats(message_id)
         except ValueError as e:
             raise _bad(str(e))
 
     # ------------------------------------------------------------------
-    # Conversations — byo-only sur TOUS les ops : transcripts d'appels/visios
-    # réels + coût crédit conditionnel (imprévisible, pas métrable a priori).
+    # Conversations — byo-only on ALL ops: transcripts of real calls/video meetings
+    # + conditional credit cost (unpredictable, not meterable a priori).
     # ------------------------------------------------------------------
 
     @mcp.tool()
@@ -1687,7 +1687,7 @@ def register(mcp: FastMCP) -> None:
           once ready.
         """
         if op not in ("search", "get", "export", "export_status"):
-            raise _bad(f'op inconnu "{op}" — attendu: search, get, export, export_status')
+            raise _bad(f'unknown op "{op}" — expected: search, get, export, export_status')
 
         client = _client_byo()
         try:
@@ -1699,15 +1699,15 @@ def register(mcp: FastMCP) -> None:
                     per_page=per_page, page=page)
             if op == "get":
                 if not conversation_id:
-                    raise ValueError("conversation_id requis")
+                    raise ValueError("conversation_id required")
                 return client.get_conversation(conversation_id)
             if op == "export":
                 if not start_time or not end_time or not email:
-                    raise ValueError("start_time, end_time et email requis")
+                    raise ValueError("start_time, end_time and email required")
                 return client.export_conversations(start_time, end_time, email)
             if op == "export_status":
                 if not export_id:
-                    raise ValueError("export_id requis")
+                    raise ValueError("export_id required")
                 return client.get_conversations_export(export_id)
         except ValueError as e:
             raise _bad(str(e))

@@ -1,11 +1,11 @@
-## prerequisite — autorise Google Tasks sur ton compte Google
+## prerequisite — authorize Google Tasks on your Google account
 
-depuis cette carte, clique **connecter** : Google te demande d'autoriser **Google Tasks seulement** (scope `tasks`) sur le compte que tu choisis. le compte Google lui-même (adresse, jeton) est porté par le connecteur **Compte Google** — un même compte peut autoriser plusieurs services, un service à la fois, sans réautoriser les autres.
-- plusieurs comptes Google : chaque outil agit sur le compte par défaut, ou sur celui que tu cibles par `account=<email>` ; `google_accounts` dit lesquels ont autorisé Google Tasks
-- un compte qui n'a pas autorisé Google Tasks est refusé par les outils en nommant cette carte — reviens ici pour l'autoriser
+from this card, click **connect**: Google asks you to authorize **Google Tasks only** (scope `tasks`) on the account you choose. the Google account itself (address, token) is carried by the **Google account** connector — one account can authorize several services, one service at a time, without re-authorizing the others.
+- several Google accounts: each tool acts on the default account, or on the one you target with `account=<email>`; `google_accounts` says which ones have authorized Google Tasks
+- an account that has not authorized Google Tasks is refused by the tools, naming this card — come back here to authorize it
 
-## usage — listes de tâches
+## usage — task lists
 
-`tasks_lists` et `tasks_task(op=list|get|create|update|complete|delete)` — sous le compte choisi.
-- « ajoute une tâche `relancer X` pour lundi »
-- « quelles tâches sont en retard ? »
+`tasks_lists` and `tasks_task(op=list|get|create|update|complete|delete)` — under the chosen account.
+- "add a task `follow up X` for Monday"
+- "which tasks are overdue?"

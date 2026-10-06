@@ -1,11 +1,11 @@
 """Ashby ATS — candidates, jobs, applications, notes.
 
-Wrappe `oto.tools.ashby.AshbyClient` (API key, Basic auth). Clé résolue par appel
-via `access.resolve_api_key("ashby")` — byo (clé user sur /account ou credential
-partagé de l'org). Pas de clé plateforme.
+Wraps `oto.tools.ashby.AshbyClient` (API key, Basic auth). Key resolved per call
+via `access.resolve_api_key("ashby")` — byo (user key on /account or the org's
+shared credential). No platform key.
 
-⚠️ Ashby est une API **RPC POST** paginée par `cursor` : passer le `nextCursor`
-d'une réponse (quand `moreDataAvailable` est vrai) au paramètre `cursor` suivant.
+⚠️ Ashby is a **POST RPC** API paginated by `cursor`: pass the `nextCursor`
+of a response (when `moreDataAvailable` is true) to the next `cursor` parameter.
 """
 from __future__ import annotations
 

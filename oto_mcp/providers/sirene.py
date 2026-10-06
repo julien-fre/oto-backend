@@ -1,43 +1,43 @@
-"""Déclaration de registre du connecteur `sirene`.
+"""Registry declaration of the `sirene` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# `fr` (APIs live SIRENE/Recherche Entreprises/INPI/BODACC/BOAMP) + `fr_groupe`
-# (chaîne capitalistique : mandataires personnes morales du RNE, #337) + `fr_stock`
-# (stock SIRENE parquet, ex-connecteur `sirene_stock`, fusionné 2026-06-22 :
-# même domaine entreprises FR, namespace fr_stock_* → namespace_of="fr").
-# default_quota=0 (illimité) : données entreprise FR ouvertes à tous, sans
-# crédits. La plupart des fr_* sont open-data/parquet (aucune clé) ; seuls
-# fr_siret/fr_avis_sirene/fr_headquarters touchent la clé INSEE partagée —
-# non métrée. Le seul plafond restant = le rate limit INSEE (30 req/min) sur
-# la clé partagée, remonté tel quel (429) sans throttle oto.
+# `fr` (live APIs SIRENE/Recherche Entreprises/INPI/BODACC/BOAMP) + `fr_groupe`
+# (capital chain: legal-entity officers from the RNE, #337) + `fr_stock`
+# (SIRENE parquet stock, former `sirene_stock` connector, merged 2026-06-22:
+# same FR companies domain, fr_stock_* namespace → namespace_of="fr").
+# default_quota=0 (unlimited): FR company data open to everyone, without
+# credits. Most fr_* are open-data/parquet (no key); only
+# fr_siret/fr_avis_sirene/fr_headquarters touch the shared INSEE key —
+# unmetered. The only remaining cap = the INSEE rate limit (30 req/min) on
+# the shared key, passed through as-is (429) without oto throttling.
 CONNECTOR = _c(
     "sirene", ["fr"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
     secret_kind="api_key", default_quota=0, platform_key_open=True,
-    label="Entreprises FR & marchés publics",
-    help="identité, dirigeants, bilans, BODACC, appels d'offres BOAMP, aides et "
-         "subventions, accords d'entreprise, Egapro, stock SIRENE",
+    label="FR companies & public procurement",
+    help="identity, officers, financial statements, BODACC, BOAMP tenders, aids and "
+         "subsidies, company agreements, Egapro, SIRENE stock",
     href="https://api.insee.fr", modules=("fr", "fr_stock", "fr_groupe"),
 )
 
 CATEGORY = "Data FR"
-# L'éditeur n'est PAS l'INSEE : sur les 25 outils, les marchés publics (BOAMP),
-# les aides, les accords d'entreprise et Egapro viennent d'autres administrations.
-# Le libellé et l'éditeur disaient « INSEE SIRENE » jusqu'au 2026-09-02 — une
-# étiquette sous laquelle personne ne cherche un appel d'offres.
-PUBLISHER = "INSEE, INPI, DILA et open data FR"
+# The publisher is NOT INSEE: of the 25 tools, public procurement (BOAMP),
+# aids, company agreements and Egapro come from other administrations.
+# The label and publisher said "INSEE SIRENE" until 2026-09-02 — a
+# label under which nobody looks for a tender.
+PUBLISHER = "INSEE, INPI, DILA and FR open data"
 DESCRIPTION = (
-    "Les données d'entreprise françaises unifiées : recherche "
-    "multicritère, fiche agrégée (identité + bilans INPI + événements "
-    "BODACC), dirigeants, marchés publics BOAMP, aides "
-    "publiques, accords d'entreprise et index Egapro. Inclut le "
-    "stock SIRENE complet (~43 M "
-    "d'établissements) pour le batch : sièges, établissements, "
-    "recherche NAF/commune."
+    "Unified French company data: multi-criteria "
+    "search, aggregated profile (identity + INPI financial statements + BODACC "
+    "events), officers, BOAMP public procurement, public "
+    "aids, company agreements and the Egapro index. Includes the "
+    "full SIRENE stock (~43 M "
+    "establishments) for batch: head offices, establishments, "
+    "NAF/municipality search."
 )
 LOGO_DOMAIN = "insee.fr"

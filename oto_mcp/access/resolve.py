@@ -1,19 +1,19 @@
-"""La résolution RÉELLE d'un credential — le chemin chaud (ADR 0024/0038).
+"""The REAL resolution of a credential — the hot path (ADR 0024/0038).
 
-`resolve_credential` est la vue publique ; `_resolve_credential_impl` marche la
-cascade UNE fois avec la sonde de fetch (seul le gagnant est déchiffré) et rend
-un `ResolvedCredential` (clé + origine + config non-secrète). Trois chemins
-court-circuitent la marche, dans cet ordre de spécificité : l'instance épinglée
-par l'appel (`_instance=`), celle bindée par le projet, puis la cascade.
-`resolve_anon._resolve_credential_anon` en est le miroir org-only, pour l'endpoint
-MCP publié (ADR 0032) où il n'y a personne dont on puisse prendre le compte par
-défaut ; le type rendu vit dans `resolved_credential` (tous deux extraits d'ici le
-2026-08-29, cliquet des 500 lignes, #584).
+`resolve_credential` is the public view; `_resolve_credential_impl` walks the
+cascade ONCE with the fetch probe (only the winner is decrypted) and returns
+a `ResolvedCredential` (key + origin + non-secret config). Three paths
+short-circuit the walk, in this order of specificity: the instance pinned
+by the call (`_instance=`), the one bound by the project, then the cascade.
+`resolve_anon._resolve_credential_anon` is its org-only mirror, for the published
+MCP endpoint (ADR 0032) where there is nobody whose default account could be
+taken; the returned type lives in `resolved_credential` (both extracted from here on
+2026-08-29, 500-line ratchet, #584).
 
-Dépend de tout ce qui est en dessous : `scope` (contexte, épinglages du projet),
-`rbac` (garde d'instance, hint d'erreur), `cascade` (le walker),
-`quotas` (le plafond du palier plateforme). Les vues minces qui s'appuient
-dessus (`resolve_api_key`, `resolve_credential_fields`…) vivent dans `views`.
+Depends on everything below it: `scope` (context, project pins),
+`rbac` (instance guard, error hint), `cascade` (the walker),
+`quotas` (the platform tier's ceiling). The thin views built on top of it
+(`resolve_api_key`, `resolve_credential_fields`…) live in `views`.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from typing import Optional
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-# `links` : où poser une clé SELON LE PRODUIT du compte — pas de patron, pas de lien
+# `links`: where to set a key ACCORDING TO THE ACCOUNT'S PRODUCT — no template, no link
 # (oto-backend#935, cf. `links.ou_poser_la_cle`).
 from .. import links
 from .. import (providers, credentials_store, db, group_store, instance_refs, org_store,
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 class CredentialUnavailable(McpError):
-    """Aucune clé atteignable ; distinct d'un compte ambigu ou d'un refus d'accès."""
+    """No reachable key; distinct from an ambiguous account or an access refusal."""
 
 
 def resolve_credential(provider: str, want: str = "auto",
@@ -45,21 +45,21 @@ def resolve_credential(provider: str, want: str = "auto",
                        emit_on_failure: bool = True,
                        check_usage: bool = True,
                        units: int = 1) -> ResolvedCredential:
-    """Vue publique de la résolution. Sur **échec** (McpError actionnable — credential
-    absent / quota dépassé / accès RBAC refusé), émet un événement de monitoring
-    `kind='connector'` dans le flux unifié (ADR 0017) AVANT de relever : c'est LE
-    signal d'un connecteur qui ne résout pas pour un user/org, invisible jusqu'ici
-    (un compte actif sans clé valide n'apparaissait nulle part). `emit_on_failure=False`
-    pour les **sondes** qui avalent la McpError, afin de ne pas fausser le signal.
-    `check_usage=False` pour CONFIGURER une connexion : mêmes gardes d'accès et
-    choix de compte, mais aucun quota d'usage ni débit tenant. Une exécution d'outil
-    garde toujours le défaut `True`. `units` = consommation que l'appel va débiter
-    (taille d'un lot) : le quota de la clé commune est vérifié pour CE montant, pas
-    pour 1 (`used + units > limit` refuse). Cascade : voir `_resolve_credential_impl`."""
+    """Public view of the resolution. On **failure** (actionable McpError — credential
+    missing / quota exceeded / RBAC access refused), emits a monitoring event
+    `kind='connector'` into the unified stream (ADR 0017) BEFORE re-raising: it is THE
+    signal of a connector that does not resolve for a user/org, invisible until now
+    (an active account without a valid key showed up nowhere). `emit_on_failure=False`
+    for **probes** that swallow the McpError, so as not to skew the signal.
+    `check_usage=False` to CONFIGURE a connection: same access guards and
+    account choice, but no usage quota or tenant debit. A tool execution
+    always keeps the default `True`. `units` = consumption the call is about to debit
+    (batch size): the shared key's quota is checked for THIS amount, not
+    for 1 (`used + units > limit` refuses). Cascade: see `_resolve_credential_impl`."""
     if sub is None:
-        # Endpoint MCP ANONYME (ADR 0032) : pas de sub → résolution contre l'org
-        # propriétaire du projet (org secret > grant org > clé plateforme ouverte),
-        # sans quota per-sub (le rate-limit du sous-domaine borne l'abus).
+        # ANONYMOUS MCP endpoint (ADR 0032): no sub → resolution against the project's
+        # owning org (org secret > org grant > open platform key),
+        # without per-sub quota (the subdomain's rate limit bounds abuse).
         from .. import subdomain_project
         anon = subdomain_project.current_anon_context()
         if anon is not None:
@@ -77,54 +77,54 @@ def resolve_credential(provider: str, want: str = "auto",
 
 
 def _note_resolved_instance(rc: ResolvedCredential) -> ResolvedCredential:
-    """Verse au relevé de l'appel le ref de la ligne du coffre qui a RÉELLEMENT servi
-    (allowlist `server._TRACED_ARGS`) — l'empreinte que le journal ne portait pas.
+    """Adds to the call's trace the ref of the vault row that ACTUALLY served
+    (allowlist `server._TRACED_ARGS`) — the fingerprint the journal did not carry.
 
-    Le journal disait quel outil et quelle org ; jamais SOUS QUELLE CLÉ. Or c'est
-    précisément la question d'une bascule d'accès (« l'appel est-il passé par
-    l'arête ou par l'ancien chemin ? ») et celle d'un incident de credential
-    (« quelle instance a été appelée ? »). Best-effort et no-op hors appel MCP : un
-    relevé ne fait jamais échouer une résolution."""
+    The journal said which tool and which org; never UNDER WHICH KEY. Yet that is
+    precisely the question of an access switchover ("did the call go through the
+    edge or the old path?") and of a credential incident
+    ("which instance was called?"). Best-effort and no-op outside an MCP call: a
+    trace never makes a resolution fail."""
     try:
         ref = instance_refs.ref_for_credential(
             rc.entity_type or "", rc.entity_id or "", rc.provider, rc.account)
-        # `instance` = l'empreinte pour le JOURNAL. `resolved_*` = de quoi le dire à
-        # l'AGENT au retour de l'appel (écho `_account`, `CallContextMiddleware`) :
-        # sans ça il poste sur l'un de ses deux workspaces sans jamais savoir lequel.
-        # Le connecteur est noté AVEC le compte : un outil composite peut résoudre un
-        # credential auxiliaire, et l'écho ne doit annoncer que le connecteur appelé.
-        # `key_mode` = SOUS QUELLE CLÉ l'appel passe (`user|group|org|tenant|
-        # platform`). Posé ici, au résolveur UNIQUE, donc tout tool keyed le
-        # porte sans qu'aucun tool ait à y penser — et un connecteur ajouté
-        # demain l'aura gratuitement.
-        # Ce que ça décide : le consommateur de facturation du partenaire (dépôt
-        # externe) ne facture QUE le mode `platform`.
-        # Un client sur SA propre clé paie déjà le fournisseur ; lui compter des
-        # crédits en plus n'a pas de sens (arbitrage du partenaire, 09/09).
-        # ⚠️ Le `mode` et pas `is_platform` : le booléen écrase user/group/org/
-        # tenant en un seul « non », alors que ce sont quatre origines qu'une
-        # facture peut avoir à distinguer.
-        # `credential_row` = la ligne du coffre ELLE-MÊME (pas son ref) : c'est ce
-        # que le suivi de santé marque quand l'amont refuse faute de crédits, et
-        # efface au premier succès (`connectors.health.suivre_appel`). Ni journalisé
-        # (hors `_TRACED_ARGS`) ni facturé.
+        # `instance` = the fingerprint for the JOURNAL. `resolved_*` = what lets us tell
+        # the AGENT on return from the call (`_account` echo, `CallContextMiddleware`):
+        # without it, it posts to one of its two workspaces without ever knowing which.
+        # The connector is noted WITH the account: a composite tool may resolve an
+        # auxiliary credential, and the echo must only announce the connector called.
+        # `key_mode` = UNDER WHICH KEY the call goes through (`user|group|org|tenant|
+        # platform`). Set here, at the SINGLE resolver, so every keyed tool
+        # carries it without any tool having to think about it — and a connector added
+        # tomorrow will get it for free.
+        # What it decides: the partner's billing consumer (external repo)
+        # bills ONLY the `platform` mode.
+        # A customer on THEIR own key already pays the provider; counting credits
+        # on top makes no sense (partner's ruling, 09/09).
+        # ⚠️ The `mode` and not `is_platform`: the boolean collapses user/group/org/
+        # tenant into a single "no", whereas these are four origins an
+        # invoice may need to distinguish.
+        # `credential_row` = the vault row ITSELF (not its ref): it is what
+        # the health tracking marks when upstream refuses for lack of credits, and
+        # clears on first success (`connectors.health.suivre_appel`). Neither journaled
+        # (outside `_TRACED_ARGS`) nor billed.
         session_org.note_call_trace(instance=ref, resolved_connector=rc.provider,
                                     resolved_account=rc.account,
                                     key_mode=rc.mode,
                                     credential_row=(rc.entity_type, rc.entity_id,
                                                     rc.provider, rc.account or ""))
     except Exception:  # noqa: BLE001
-        logger.debug("relevé d'instance échoué", exc_info=True)
+        logger.debug("instance trace failed", exc_info=True)
     return rc
 
 
 def _emit_connector_failure(provider: str, sub: str) -> None:
-    """Best-effort : une ligne `tool_calls(kind='connector', ok=False)` = « la
-    résolution de credential a échoué pour ce provider/sub ». Jamais bloquant, jamais
-    d'exception qui masquerait la McpError d'origine (le monitoring ne casse pas le service)."""
+    """Best-effort: a `tool_calls(kind='connector', ok=False)` row = "credential
+    resolution failed for this provider/sub". Never blocking, never an
+    exception that would mask the original McpError (monitoring does not break the service)."""
     try:
         org = scope.current_org(sub)
-    # noqa: SILENT — le signal d'usage ne casse jamais la résolution qu'il observe
+    # noqa: SILENT — the usage signal never breaks the resolution it observes
     except Exception:
         org = None
     try:
@@ -140,58 +140,58 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
                              account: Optional[str] = None, *,
                              check_usage: bool = True,
                              units: int = 1) -> ResolvedCredential:
-    """Résolveur substrat unique (ADR 0024) : marche la cascade EXACTE
-    user > groupe actif > org active > tenant [> grant plateforme] **une fois** et renvoie
-    le credential gagnant (clé + origine + config). `want="byo"` court-circuite le
-    palier plateforme (sémantique byo-only de `resolve_credential_fields`) ;
-    `want="auto"` inclut le grant plateforme + quota (sémantique `resolve_api_key`).
-    `sub` explicite = utilisable HORS contexte MCP (routes REST) ; None = sub courant.
-    `account` sélectionne le compte au palier MEMBRE en multi-compte (« 2 Zoho ») —
-    None ⇒ épinglage projet, sinon compte unique auto, sinon McpError (voir plus bas).
-    Lève une McpError actionnable si rien ne résout."""
+    """Single substrate resolver (ADR 0024): walks the EXACT cascade
+    user > active group > active org > tenant [> platform grant] **once** and returns
+    the winning credential (key + origin + config). `want="byo"` short-circuits the
+    platform tier (byo-only semantics of `resolve_credential_fields`);
+    `want="auto"` includes the platform grant + quota (semantics of `resolve_api_key`).
+    Explicit `sub` = usable OUTSIDE an MCP context (REST routes); None = current sub.
+    `account` selects the account at the MEMBER tier in multi-account ("2 Zoho") —
+    None ⇒ project pin, otherwise single auto account, otherwise McpError (see below).
+    Raises an actionable McpError if nothing resolves."""
     sub = sub or scope.current_user_sub_or_raise()
 
-    # Instance EXPLICITE de l'appel (`_instance=`, ADR 0038 §C/B6) : si le ref épinglé
-    # vise CE provider, on résout EXACTEMENT cette ligne du coffre — jamais de
-    # fallback (une instance demandée qui ne résout pas = erreur actionnable, pas
-    # une autre identité). Un ref d'un AUTRE provider est ignoré ici (il ne visait
-    # pas cette résolution — ex. résolution auxiliaire d'un tool composite).
-    # ⚠️ La comparaison se fait sur le PORTEUR du credential (délégation) : un ref
-    # d'instance nomme une ligne du COFFRE, et les six canaux unipile n'en ont pas —
-    # leurs clés vivent sous `unipile`. Comparer au nom nu ferait silencieusement
-    # ignorer le pin sur tout appel de canal (l'appel repartirait en cascade, donc
-    # potentiellement sur une AUTRE clé que celle demandée).
+    # EXPLICIT instance of the call (`_instance=`, ADR 0038 §C/B6): if the pinned ref
+    # targets THIS provider, we resolve EXACTLY that vault row — never a
+    # fallback (a requested instance that does not resolve = actionable error, not
+    # another identity). A ref for ANOTHER provider is ignored here (it did not target
+    # this resolution — e.g. auxiliary resolution of a composite tool).
+    # ⚠️ The comparison is made on the credential's CARRIER (delegation): an
+    # instance ref names a VAULT row, and the six unipile channels have none —
+    # their keys live under `unipile`. Comparing against the bare name would silently
+    # ignore the pin on every channel call (the call would fall back to the cascade, thus
+    # potentially onto ANOTHER key than the one requested).
     porteur = providers.credential_provider(provider)
     pinned = session_org.current_call_instance()
     if pinned is not None and getattr(pinned, "connector", None) == porteur:
-        # La LECTURE du coffre nomme le porteur, comme la comparaison au-dessus :
-        # la ligne épinglée est rangée sous lui, et `require_credential` REFUSE le
-        # nom d'un délégant. Passer le nom nu ici levait un `ValueError` brut sur
-        # tout appel de canal fait sous un pin — le pin était reconnu puis perdu.
+        # The vault READ names the carrier, like the comparison above:
+        # the pinned row is stored under it, and `require_credential` REFUSES a
+        # delegator's name. Passing the bare name here raised a raw `ValueError` on
+        # every channel call made under a pin — the pin was recognized then lost.
         return _resolve_pinned_instance(porteur, sub, pinned)
 
-    # Binding de PROJET (ADR 0038 B5) : le projet de l'appel (`_project=`) binde une
-    # instance pour ce provider → résolution EN DUR, RE-GARDÉE pour l'APPELANT (le
-    # binding a été gardé pour celui qui l'a posé ; l'appelant d'un projet partagé
-    # peut être un autre membre). `_instance=` explicite (ci-dessus) prime — le jeton
-    # le plus spécifique de l'appel.
+    # PROJECT binding (ADR 0038 B5): the call's project (`_project=`) binds an
+    # instance for this provider → HARD resolution, RE-GUARDED for the CALLER (the
+    # binding was guarded for whoever set it; the caller of a shared project
+    # may be another member). Explicit `_instance=` (above) takes precedence — the
+    # most specific token of the call.
     bound = scope.project_pinned_instance(porteur)
     if bound is not None:
-        if not heritage.instance_heritee(sub, bound):   # prêtée par un partage (#480)
+        if not heritage.instance_heritee(sub, bound):   # lent by a share (#480)
             rbac.guard_instance_access(sub, bound)
         return _resolve_pinned_instance(porteur, sub, bound)
 
-    # Scope MEMBRE (ADR 0033) : « ma clé » n'existe QUE dans l'org de contexte —
-    # posée dans l'org A, elle ne résout pas depuis l'org B. L'org est résolue via
-    # le seam `current_org` (session MCP ?? consultation ?? maison, ADR 0023) AVANT
-    # le premier palier : plus aucun credential per-user org-agnostique.
+    # MEMBER scope (ADR 0033): "my key" exists ONLY in the context org —
+    # set in org A, it does not resolve from org B. The org is resolved via
+    # the `current_org` seam (MCP session ?? consultation ?? home, ADR 0023) BEFORE
+    # the first tier: no more org-agnostic per-user credentials.
     active_org = scope.current_org(sub)
 
-    # Compte NOMMÉ par l'appelant — account explicite (param) > axe d'appel
-    # `_account=` (#108) > épinglage projet — résolu UNE fois, avant la marche :
-    # il sert à chaque palier (`_pick_account`) ET à la garde post-marche (un
-    # compte nommé introuvable partout LÈVE, jamais un repli — review #399 F2).
-    # None = rien de nommé (sélection automatique par palier).
+    # Account NAMED by the caller — explicit account (param) > call axis
+    # `_account=` (#108) > project pin — resolved ONCE, before the walk:
+    # it serves every tier (`_pick_account`) AND the post-walk guard (a
+    # named account not found anywhere RAISES, never a fallback — review #399 F2).
+    # None = nothing named (automatic selection per tier).
     named_account = None
     if cascade._is_multi_account(provider, active_org):
         named_account = (account if account is not None
@@ -200,14 +200,14 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
 
     def _pick_account(entity_type: str, entity_id: str, mprov: str, where: str,
                       scope: Optional[str] = None) -> tuple:
-        """Le compte EFFECTIF d'un palier multi-compte = compte nommé (cf.
-        `named_account`) > compte unique auto > défaut posé (`oto_identity(op='set')`)
-        > McpError — jamais de repli muet vers un AUTRE compte (anti-usurpation).
-        '' = mono legacy. Renvoie `(compte, explicite)` : un compte NOMMÉ par
-        l'appelant peut vivre à un palier plus bas (Phase 2 : l'org a « eu », le
-        membre non) — le palier qui ne l'a pas passe la main, et c'est la garde
-        POST-MARCHE qui lève s'il n'existe nulle part. Un compte choisi
-        automatiquement n'est jamais cherché ailleurs."""
+        """The EFFECTIVE account of a multi-account tier = named account (cf.
+        `named_account`) > single auto account > set default (`oto_identity(op='set')`)
+        > McpError — never a silent fallback to ANOTHER account (anti-impersonation).
+        '' = legacy mono. Returns `(account, explicit)`: an account NAMED by the
+        caller may live at a lower tier (Phase 2: the org "had" it, the
+        member did not) — the tier that does not have it hands over, and it is the
+        POST-WALK guard that raises if it exists nowhere. An automatically chosen
+        account is never looked for elsewhere."""
         if named_account is not None:
             return named_account, True
         return cascade._shared_auto_account(entity_type, entity_id, mprov, where, scope), False
@@ -217,24 +217,24 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
         return McpError(ErrorData(
             code=INVALID_PARAMS,
             message=(
-                f"{noun} `{eff}` introuvable pour `{mprov}` — vérifie avec "
-                f"oto_identity(op='list'), ou pose-le"
+                f"{noun} `{eff}` not found for `{mprov}` — check with "
+                f"oto_identity(op='list'), or set it"
                 f"{links.ou_poser_la_cle(sub, org=active_org)}."
             )))
 
     def _member_fetch(msub: str, morg: int, mprov: str) -> Optional[tuple]:
-        """Sonde MEMBRE du fetch : sélection du compte en multi-compte (« 2 Zoho »),
-        cf. `_pick_account`. Un compte explicite/épinglé introuvable LÈVE (on
-        n'agit pas sous une autre identité).
+        """MEMBER fetch probe: account selection in multi-account ("2 Zoho"),
+        cf. `_pick_account`. An explicit/pinned account not found RAISES (we do not
+        act under another identity).
 
-        Une instance SUSPENDUE (lot 2 / ADR 0044 §KeyStack) est traitée comme
-        absente : le barreau membre passe son tour et le niveau du dessous
-        (groupe/org/plateforme) prend le relais — même verdict que les sondes
-        PRESENCE/FETCH, sinon la résolution réelle contredit ce que le KeyStack
-        annonce (#401). Suspendre est un acte du membre sur SA clé : le relais est
-        le contrat, pas une usurpation. (Compte NOMMÉ suspendu : le relais ne va
-        jamais jusqu'à la clé plateforme — la garde post-marche du compte nommé
-        lève, review #399 F2.)"""
+        A SUSPENDED instance (batch 2 / ADR 0044 §KeyStack) is treated as
+        absent: the member rung passes its turn and the level below
+        (group/org/platform) takes over — same verdict as the PRESENCE/FETCH probes,
+        otherwise the real resolution contradicts what the KeyStack
+        announces (#401). Suspending is a member's act on THEIR key: the handover is
+        the contract, not an impersonation. (SUSPENDED NAMED account: the handover never
+        goes as far as the platform key — the named account's post-walk guard
+        raises, review #399 F2.)"""
         if not cascade._is_multi_account(mprov, morg):
             key = db.get_member_api_key(msub, morg, mprov)
             if key and db.member_instance_suspended(msub, morg, mprov):
@@ -242,27 +242,27 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
             return (key, "") if key else None
         eff, explicit = _pick_account(credentials_store.MEMBER,
                                       credentials_store.member_id(morg, msub),
-                                      mprov, "dans cette org")
+                                      mprov, "in this org")
         key = db.get_member_api_key(msub, morg, mprov, eff)
         if eff and not key and not explicit:
             raise _not_found(eff, mprov)
-        # Suspension PAR compte (le `account` de providers.instances.suspend) :
-        # une clé existante mais mise de côté saute le barreau — après le check
-        # « introuvable », qui garde sa sémantique (absent ≠ suspendu).
+        # Suspension PER account (the `account` of providers.instances.suspend):
+        # an existing but set-aside key skips the rung — after the
+        # "not found" check, which keeps its semantics (absent ≠ suspended).
         if key and db.member_instance_suspended(msub, morg, mprov, eff):
             return None
-        # Nommé mais absent ici : peut-être une clé partagée (équipe/org) — on
-        # passe la main, sans jamais prendre un autre compte à ce palier.
+        # Named but absent here: perhaps a shared key (team/org) — we
+        # hand over, never taking another account at this tier.
         return (key, eff) if key else None
 
     def _group_fetch(gid: int, mprov: str):
-        """Sonde ÉQUIPE du fetch : même sélection de compte que le membre (Phase 2).
-        Mono-compte → la lecture historique (account='')."""
-        # L'org de CONTEXTE, pas celle du groupe : une surcharge se lit sur le
-        # requérant (même seam que partout ailleurs).
+        """TEAM fetch probe: same account selection as the member (Phase 2).
+        Mono-account → the historical read (account='')."""
+        # The CONTEXT org, not the group's: an override is read on the
+        # requester (same seam as everywhere else).
         if not cascade._is_multi_account(mprov, active_org):
             return group_store.get_group_secret(gid, mprov)
-        eff, explicit = _pick_account("group", str(gid), mprov, "pour ton équipe",
+        eff, explicit = _pick_account("group", str(gid), mprov, "for your team",
                                       scope="group")
         key = group_store.get_group_secret(gid, mprov, eff)
         if eff and not key and not explicit:
@@ -270,13 +270,13 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
         return (key, eff) if key else None
 
     def _org_fetch(oid: int, mprov: str):
-        """Sonde ORG du fetch : même sélection de compte que le membre (Phase 2).
-        Un compte NOMMÉ absent ici passe la main comme les autres paliers — c'est
-        la garde post-marche qui lève (le walker peut ne jamais atteindre ce
-        barreau : org de contexte None, connecteur non org-partageable)."""
+        """ORG fetch probe: same account selection as the member (Phase 2).
+        A NAMED account absent here hands over like the other tiers — it is
+        the post-walk guard that raises (the walker may never reach this
+        rung: context org None, non-org-shareable connector)."""
         if not cascade._is_multi_account(mprov, oid):
             return org_store.get_org_secret(oid, mprov)
-        eff, explicit = _pick_account("org", str(oid), mprov, "pour ton org",
+        eff, explicit = _pick_account("org", str(oid), mprov, "for your org",
                                       scope="org")
         key = org_store.get_org_secret(oid, mprov, eff)
         if eff and not key and not explicit:
@@ -284,67 +284,67 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
         return (key, eff) if key else None
 
     def _tenant_fetch(slug: str, mprov: str):
-        """Sonde TENANT du fetch (L-clés PR 1) : même sélection de compte que l'org.
-        Le walker ne l'appelle que pour un sub d'un tenant tiers (`rung_tenant`)."""
+        """TENANT fetch probe (L-keys PR 1): same account selection as the org.
+        The walker only calls it for a sub of a third-party tenant (`rung_tenant`)."""
         if not cascade._is_multi_account(mprov, active_org):
             return tenant_vault.get_tenant_secret(slug, mprov)
         eff, explicit = _pick_account(credentials_store.TENANT, slug, mprov,
-                                      "pour ton tenant")
+                                      "for your tenant")
         key = tenant_vault.get_tenant_secret(slug, mprov, eff)
         if eff and not key and not explicit:
             raise _not_found(eff, mprov)
         return (key, eff) if key else None
 
-    # Marche unique de la cascade (walker) — la sonde fetch ne déchiffre que le
-    # gagnant ; le palier membre porte la sélection multi-compte ci-dessus.
-    # `group` passé en LAZY : l'équipe active (lookup DB) n'est résolue que si
-    # aucun barreau plus proche n'a gagné.
+    # Single walk of the cascade (walker) — the fetch probe only decrypts the
+    # winner; the member tier carries the multi-account selection above.
+    # `group` passed LAZILY: the active team (DB lookup) is only resolved if
+    # no closer rung has won.
     probe = cascade.CascadeProbe(member=_member_fetch, member_cross=cascade.FETCH_PROBE.member_cross,
                          legacy_user=cascade.FETCH_PROBE.legacy_user,
                          group=_group_fetch, org=_org_fetch, tenant=_tenant_fetch,
                          platform=cascade.FETCH_PROBE.platform)
-    # L7 (blueprint ADR 0053) — un DRAPEAU dit qui décide, la voie non retenue
-    # calcule à côté et se compare. Même sonde, mêmes gardes en aval : seule la
-    # traversée change. Détail et réversibilité : `chain_shadow.barreau_gagnant`.
+    # L7 (ADR 0053 blueprint) — a FLAG says who decides, the path not taken
+    # computes alongside and is compared. Same probe, same downstream guards: only the
+    # traversal changes. Detail and reversibility: `chain_shadow.barreau_gagnant`.
     win = chain_shadow.barreau_gagnant(
         provider, sub, active_org, probe=probe, want=want,
         group=lambda: scope.current_group(sub))
 
-    # Garde post-marche (review #399 F2) : un compte NOMMÉ (param/axe/épinglage)
-    # qui n'a gagné à AUCUN palier à clé lève « introuvable » — jamais une clé
-    # PLATEFORME en silence (le palier plateforme n'a pas de comptes : y répondre
-    # sous un autre credential que celui demandé serait une usurpation), jamais le
-    # message générique « aucune clé ». Couvre les barreaux que le walker n'atteint
-    # pas : org de contexte None, connecteur multi non org-partageable (google,
+    # Post-walk guard (review #399 F2): a NAMED account (param/axis/pin)
+    # that won at NO keyed tier raises "not found" — never a PLATFORM key
+    # silently (the platform tier has no accounts: answering there
+    # under a different credential than the one requested would be an impersonation), never the
+    # generic "no key" message. Covers the rungs the walker does not
+    # reach: context org None, multi non-org-shareable connector (google,
     # browser, planity…).
     if named_account and (win is None or win.mode == "platform"):
         raise _not_found(named_account, provider)
 
     if win is None:
-        lien_org = heritage.org_du_lien(sub, active_org)   # #480 : son compte, pas l'org
-        # byo-only : pas de palier plateforme (mounts basic_auth, multi-secrets).
+        lien_org = heritage.org_du_lien(sub, active_org)   # #480: their account, not the org
+        # byo-only: no platform tier (basic_auth mounts, multi-secrets).
         if want == "byo":
             raise CredentialUnavailable(ErrorData(
                 code=INVALID_PARAMS,
                 message=(
-                    f"Aucun credential `{provider}` configuré pour toi. Renseigne-le"
+                    f"No `{provider}` credential configured for you. Set it"
                     f"{links.ou_poser_la_cle(sub, org=lien_org, connecteur=provider)}."
                     + indices._revoked_hint(sub, active_org, provider)
                     + indices._reachable_hint(sub, active_org, provider)
                     + heritage.indice_refus(sub, active_org, provider)
                 ),
             ))
-        # Défense en profondeur : le palier plateforme n'existe que si le registre
-        # AUTORISE `platform` (gate DANS le walker) — un provider byo-only n'est
-        # JAMAIS résolu via une clé plateforme résiduelle (audité 2026-06-11).
+        # Defense in depth: the platform tier only exists if the registry
+        # ALLOWS `platform` (gate INSIDE the walker) — a byo-only provider is
+        # NEVER resolved via a residual platform key (audited 2026-06-11).
         raise CredentialUnavailable(ErrorData(
             code=INVALID_PARAMS,
-            # La clé se pose sur le PORTEUR (délégation) : renvoyer quelqu'un à
-            # « la section Whatsapp » de sa page compte, où il n'y a pas de champ,
-            # est un cul-de-sac. Le hint « une équipe a la clé » se cherche lui aussi
-            # sous le porteur — c'est là que les secrets partagés existent.
+            # The key is set on the CARRIER (delegation): sending someone to
+            # "the Whatsapp section" of their account page, where there is no field,
+            # is a dead end. The "a team has the key" hint is also looked up
+            # under the carrier — that is where shared secrets exist.
             message=(
-                f"Aucune clé `{porteur}` configurée pour toi. "
+                f"No `{porteur}` key configured for you. "
                 + indices._poser_ou_accorder(sub, lien_org, porteur)
                 + indices._revoked_hint(sub, active_org, porteur)
                 + indices._reachable_hint(sub, active_org, porteur)
@@ -353,40 +353,40 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
         ))
 
     if check_usage and win.mode == "tenant":
-        # Budget par org de l'arête tenant→org (L-clés PR 2) — no-op sans arête.
+        # Per-org budget of the tenant→org edge (L-keys PR 2) — no-op without an edge.
         tenant_budget.enforce(win.entity_id, porteur, active_org)
     if win.mode != "platform":
         return ResolvedCredential(provider, win.payload, False, win.mode,
                                   win.entity_type, win.entity_id, account=win.account)
-    if check_usage:  # option payante RELUE à chaque usage (ADR 0070 §7), sans repli
+    if check_usage:  # paid option RE-READ on every use (ADR 0070 §7), no fallback
         quotas.exiger_option_payante(provider, sub, active_org)
 
-    # ADR 0044 §F R3 : le palier plateforme lit les instances scope PLATFORM du
-    # coffre unifié (share_mode/share_down = accès ; meta.rate_limit* = quota).
-    # Le secret n'est déchiffré que pour l'instance gagnante.
-    # ⚠️ Le grant PLATEFORME porte le secret DÉCHIFFRÉ. On ne le déballe pas dans
-    # une variable de cette frame : les gardes de quota qui suivent peuvent lever,
-    # et une frame qui lève garde ses locales dans le traceback. `win` est un
-    # `CascadeRung`, dont le `repr` est expurgé (#564) ; un dict nu ne l'est pas.
-    # Une connexion configure le compte : elle ne consomme pas un appel fournisseur.
-    # Même choix de clé et mêmes gardes d'identité, sans débit tenant ni quota d'usage.
+    # ADR 0044 §F R3: the platform tier reads the PLATFORM-scope instances of the
+    # unified vault (share_mode/share_down = access; meta.rate_limit* = quota).
+    # The secret is only decrypted for the winning instance.
+    # ⚠️ The PLATFORM grant carries the DECRYPTED secret. We do not unpack it into
+    # a variable of this frame: the quota guards that follow may raise,
+    # and a raising frame keeps its locals in the traceback. `win` is a
+    # `CascadeRung`, whose `repr` is redacted (#564); a bare dict is not.
+    # A connection configures the account: it does not consume a provider call.
+    # Same key choice and same identity guards, without tenant debit or usage quota.
     used, limit = _win_quota(win, sub, provider, active_org) if check_usage else (0, 0)
     if limit and used >= limit:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
             message=(
-                f"Quota plateforme {provider} dépassé aujourd'hui ({used}/{limit}) "
-                f"pour la clé `{win.payload['label']}` — 0 restant, le compteur "
-                f"repart à minuit. Pose ta propre "
-                f"clé{links.ou_poser_la_cle(sub, org=active_org)} pour "
-                "lever la limite immédiatement."
+                f"Platform quota {provider} exceeded today ({used}/{limit}) "
+                f"for key `{win.payload['label']}` — 0 remaining, the counter "
+                f"resets at midnight. Set your own "
+                f"key{links.ou_poser_la_cle(sub, org=active_org)} to "
+                "lift the limit immediately."
             ),
         ))
 
     if limit and used + units > limit:
-        # Un lot débite `units` d'un coup APRÈS l'appel : vérifié à `used >= limit`
-        # seul, il passerait avec une unité restante et dépasserait le quota de la
-        # clé commune de `units - 1` (oto#168).
+        # A batch debits `units` at once AFTER the call: checked against `used >= limit`
+        # alone, it would pass with one unit remaining and exceed the shared key's
+        # quota by `units - 1` (oto#168).
         raise quotas.refus_lot(provider, win.payload["label"], used, limit, units,
                                links.ou_poser_la_cle(sub, org=active_org))
 
@@ -396,17 +396,17 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
 
 def _win_quota(win, sub: str, provider: str,
               active_org: Optional[int]) -> tuple[int, int]:
-    """(used, limit) du jour pour l'arête PLATEFORME gagnante `win`. `limit=0` =
-    illimité (registre sans plafond par défaut, OU quotas levés par le droit
-    `platform_unmetered` de la personne dans son org, ADR 0070 §7) — jamais un plafond
-    réel de 0, `quota_for` ne le rend pas.
+    """Today's (used, limit) for the winning PLATFORM edge `win`. `limit=0` =
+    unlimited (registry without a default ceiling, OR quotas lifted by the person's
+    `platform_unmetered` right in their org, ADR 0070 §7) — never a real ceiling
+    of 0, `quota_for` does not return one.
 
-    Fonction UNIQUE pour le couple : le refus ci-dessus, la sonde en lecture seule
-    `platform_quota_hint` (plus bas) et le mode affiché (`views.credential_mode_for`)
-    y passent. Le plafond lui-même vient de `quotas.plafond_du_jour`, que le snapshot
-    `/api/me` lit aussi. Un même chiffre calculé à deux endroits finit par diverger —
-    c'est la raison d'être du walker `cascade` pour la cascade elle-même (vécu
-    2026-07-07, règle d'option recopiée 3×), la même discipline s'applique ici."""
+    SINGLE function for the pair: the refusal above, the read-only probe
+    `platform_quota_hint` (below) and the displayed mode (`views.credential_mode_for`)
+    all go through it. The ceiling itself comes from `quotas.plafond_du_jour`, which the
+    `/api/me` snapshot also reads. The same number computed in two places ends up diverging —
+    that is why the `cascade` walker exists for the cascade itself (seen
+    2026-07-07, option rule copied 3×), the same discipline applies here."""
     used = quotas.usage_today(sub, provider)
     limit = quotas.plafond_du_jour(win.payload, provider,
                                    lambda: quotas.quotas_leves(sub, active_org))
@@ -414,22 +414,22 @@ def _win_quota(win, sub: str, provider: str,
 
 
 def platform_quota_hint(provider: str, sub: Optional[str] = None) -> Optional[dict]:
-    """Instantané en LECTURE SEULE du quota plateforme du jour pour `provider` —
-    ne déchiffre rien (sonde de PRÉSENCE, comme `status_for`/`GET /api/me`) et ne
-    consomme rien. Pour un connecteur qui débite ce quota À LA DÉPENSE
-    (`record_platform_usage`, ex. `apollo_match_person`), c'est ce qui permet à
-    un appelant de savoir ce qu'il reste SANS attendre le refus sec — un worker
-    batch peut arbitrer ses appels au lieu de découvrir la limite au milieu d'un
-    lead (oto-backend#710, signaux #311/#312/#313).
+    """READ-ONLY snapshot of today's platform quota for `provider` —
+    decrypts nothing (PRESENCE probe, like `status_for`/`GET /api/me`) and consumes
+    nothing. For a connector that debits this quota ON SPEND
+    (`record_platform_usage`, e.g. `apollo_match_person`), this is what lets
+    a caller know what remains WITHOUT waiting for the bare refusal — a batch
+    worker can arbitrate its calls instead of discovering the limit in the middle of a
+    lead (oto-backend#710, signals #311/#312/#313).
 
-    Marche la cascade en sonde de présence pour UN SEUL provider — `status_for`
-    fait la même chose pour TOUT le registre (coût acceptable une fois par
-    chargement de dashboard) ; un tool qui peut tourner des centaines de fois
-    dans un lot n'a besoin que d'UNE marche, sur CE provider.
+    Walks the cascade as a presence probe for a SINGLE provider — `status_for`
+    does the same for the WHOLE registry (acceptable cost once per
+    dashboard load); a tool that may run hundreds of times
+    in a batch only needs ONE walk, on THIS provider.
 
-    `None` : soit ce provider ne résoudrait pas en mode plateforme pour ce sub
-    (une clé BYO gagne avant, ou aucun grant — la question ne se pose pas),
-    soit aucun plafond (illimité, ou quotas levés par `platform_unmetered`, ADR 0070 §7)."""
+    `None`: either this provider would not resolve in platform mode for this sub
+    (a BYO key wins before, or no grant — the question does not arise),
+    or no ceiling (unlimited, or quotas lifted by `platform_unmetered`, ADR 0070 §7)."""
     sub = sub or scope.current_user_sub_or_raise()
     active_org = scope.current_org(sub)
     active_group = scope.current_group(sub)
@@ -445,45 +445,45 @@ def platform_quota_hint(provider: str, sub: Optional[str] = None) -> Optional[di
 
 
 def _resolve_pinned_instance(provider: str, sub: str, ref) -> ResolvedCredential:
-    """Résolution EN DUR d'une instance explicite (`_instance=` OU binding de projet,
-    ADR 0038 B6/B5) : lit exactement la ligne du coffre que le ref désigne. L'ACCÈS
-    a été gardé par `guard_instance_access` (à la pose pour l'axe ; re-gardé pour
-    l'APPELANT sur le chemin binding). Ligne absente = McpError actionnable, JAMAIS de fallback vers
-    un autre palier (§C : agir sous une autre identité que celle demandée est
-    interdit)."""
+    """HARD resolution of an explicit instance (`_instance=` OR project binding,
+    ADR 0038 B6/B5): reads exactly the vault row the ref designates. ACCESS
+    was guarded by `guard_instance_access` (at pin time for the axis; re-guarded for
+    the CALLER on the binding path). Row absent = actionable McpError, NEVER a fallback to
+    another tier (§C: acting under an identity other than the one requested is
+    forbidden)."""
     from .. import instance_refs
     if ref.level == "member":
-        # ⚠️ `ref.sub`, PAS le `sub` courant : un ref `member` prêté à un pair
-        # (share_side, ADR 0044) porte l'identité du PROPRIÉTAIRE, pas de
-        # l'emprunteur — l'emprunteur garde son propre contexte d'org ailleurs
-        # (`guard_instance_access` en co-pose l'org), mais la ligne du coffre à
-        # LIRE reste celle du propriétaire. Bug trouvé le 2026-09-02 : `sub`
-        # ici pointait l'emprunteur, donc TOUT prêt membre-à-membre échouait
-        # avec « l'instance ne résout plus » — message trompeur, la ligne
-        # existait, elle était juste cherchée sous la mauvaise identité.
+        # ⚠️ `ref.sub`, NOT the current `sub`: a `member` ref lent to a peer
+        # (share_side, ADR 0044) carries the OWNER's identity, not the
+        # borrower's — the borrower keeps their own org context elsewhere
+        # (`guard_instance_access` co-sets that org), but the vault row to
+        # READ remains the owner's. Bug found 2026-09-02: `sub`
+        # here pointed to the borrower, so EVERY member-to-member loan failed
+        # with "the instance no longer resolves" — a misleading message, the row
+        # existed, it was just looked up under the wrong identity.
         etype, eid = credentials_store.MEMBER, credentials_store.member_id(ref.org_id, ref.sub)
         mode = "user"
     elif ref.level == "group":
         etype, eid, mode = "group", str(ref.group_id), "group"
     elif ref.level == "org":
         etype, eid, mode = "org", str(ref.org_id), "org"
-    elif ref.level == "tenant":   # L-clés PR 1 — gardé par `guard_instance_access`
+    elif ref.level == "tenant":   # L-keys PR 1 — guarded by `guard_instance_access`
         etype, eid, mode = credentials_store.TENANT, ref.tenant, "tenant"
-    else:  # platform — refusé dès la pose par l'axe ; défense en profondeur ici.
+    else:  # platform — refused at pin time by the axis; defense in depth here.
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message="Ref d'instance `platform:` non résoluble en `_instance=` (B6)."))
+            message="`platform:` instance ref cannot be resolved via `_instance=` (B6)."))
     secret = credentials_store.get_credential(etype, eid, provider, ref.account)
     if not secret:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"L'instance `{instance_refs.format_ref(ref)}` ne résout plus "
-                     "(credential retiré ou compte renommé ?). Reliste avec "
-                     "oto_instance(op='list') — pas de repli vers une autre identité.")))
+            message=(f"Instance `{instance_refs.format_ref(ref)}` no longer resolves "
+                     "(credential removed or account renamed?). List again with "
+                     "oto_instance(op='list') — no fallback to another identity.")))
     try:
         return ResolvedCredential(provider, secret, False, mode, etype, eid,
                                   account=ref.account)
     finally:
-        # Le secret déchiffré ne reste pas lié dans cette frame (#564) : une
-        # exception qui la traverserait après coup n'aurait rien à ramasser.
+        # The decrypted secret does not stay bound in this frame (#564): an
+        # exception passing through it afterwards would have nothing to pick up.
         del secret

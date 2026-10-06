@@ -1,32 +1,32 @@
-## prerequisite — personal access token snitcher
+## prerequisite — snitcher personal access token
 
-génère un Personal Access Token dans Snitcher (app → Settings → Account → API → Generate New Token — voir la [doc REST API](https://docs.snitcher.com/product/rest-api/introduction)), puis colle-le dans oto.
-- byo-only : pas de clé oto partagée — un PAT est lié à UN compte Snitcher
-- limite de débit : 60 requêtes/minute par jeton (429 au-delà)
+generate a Personal Access Token in Snitcher (app → Settings → Account → API → Generate New Token — see the [REST API docs](https://docs.snitcher.com/product/rest-api/introduction)), then paste it into oto.
+- byo-only: no shared oto key — a PAT is bound to ONE Snitcher account
+- rate limit: 60 requests/minute per token (429 beyond that)
 
-## usage — quelles entreprises visitent votre site
+## usage — which companies visit your site
 
-snitcher identifie les ENTREPRISES derrière le trafic anonyme de votre site, en 5 tools :
-- « quels workspaces ai-je ? » → `snitcher_workspace(op="list")` — **toujours commencer là** : le `workspace_uuid` rendu est requis par tous les autres tools
-- « quelles entreprises ont visité le site cette semaine ? » → `snitcher_organisation(workspace_uuid="...", op="list", date_from="2026-08-17")`
-- « les entreprises revues ces 30 derniers jours avec plus de 5 pages vues » → `snitcher_organisation(op="search", filters={"operator": "AND", "conditions": [{"field": "last_seen", "comparison": "less_than_x_units_ago", "value": 30, "unit": "day"}, {"field": "pageviews", "comparison": "greater_than", "value": 5}]})` — ⚠️ conditions À PLAT seulement (les groupes imbriqués du spec sont refusés en vrai, 422), et champs limités au comportement de visite : last_seen, first_seen, tag, sessions, pageviews, time_on_site, url, referrer, source — PAS les firmographiques (name/industry/size → passer par `op="list", name="..."` ou un segment)
-- « que fait cette entreprise sur le site ? » → `snitcher_session(workspace_uuid="...", organisation_uuid="...")` — chaque session porte un tableau `events` : pageviews (avec time_on_page), soumissions de formulaires (AVEC les valeurs des champs), événements custom `track`, clics, téléchargements
-- « toutes les sessions d'hier » → `snitcher_session(workspace_uuid="...", date="2026-08-22")` — sans `organisation_uuid`, `date` ou `date_from` est requis
-- « qui sont les décideurs chez cette entreprise ? » → `snitcher_contact(op="list", organisation_uuid="..." | domain="acme.com")`
-- « révèle l'email de ce contact » → `snitcher_contact(op="reveal_email", contact_uuid="...")` — ⚠️ **dépense un crédit Snitcher**, confirmer l'intention avant
-- « tague cette entreprise "hot lead" » → `snitcher_workspace(op="create_tag", tag_name="hot lead")` puis `snitcher_organisation(op="tag", organisation_uuid="...", tag_name="hot lead")`
-- « quels segments existent ? » → `snitcher_workspace(op="segments")` — leurs uuids filtrent organisations et sessions
-- « note le tier de ce compte » → `snitcher_custom_field(op="set", organisation_uuid="...", key="account_tier", value="enterprise")` — `op="set_many"` pose jusqu'à 50 champs d'un coup, les clés inconnues sont créées automatiquement (type inféré)
+snitcher identifies the COMPANIES behind your site's anonymous traffic, in 5 tools:
+- "which workspaces do I have?" → `snitcher_workspace(op="list")` — **always start there**: the returned `workspace_uuid` is required by all the other tools
+- "which companies visited the site this week?" → `snitcher_organisation(workspace_uuid="...", op="list", date_from="2026-08-17")`
+- "companies seen in the last 30 days with more than 5 pageviews" → `snitcher_organisation(op="search", filters={"operator": "AND", "conditions": [{"field": "last_seen", "comparison": "less_than_x_units_ago", "value": 30, "unit": "day"}, {"field": "pageviews", "comparison": "greater_than", "value": 5}]})` — ⚠️ FLAT conditions only (the spec's nested groups are refused for real, 422), and fields limited to visit behavior: last_seen, first_seen, tag, sessions, pageviews, time_on_site, url, referrer, source — NOT firmographics (name/industry/size → go through `op="list", name="..."` or a segment)
+- "what does this company do on the site?" → `snitcher_session(workspace_uuid="...", organisation_uuid="...")` — each session carries an `events` array: pageviews (with time_on_page), form submissions (WITH the field values), custom `track` events, clicks, downloads
+- "all of yesterday's sessions" → `snitcher_session(workspace_uuid="...", date="2026-08-22")` — without `organisation_uuid`, `date` or `date_from` is required
+- "who are the decision-makers at this company?" → `snitcher_contact(op="list", organisation_uuid="..." | domain="acme.com")`
+- "reveal this contact's email" → `snitcher_contact(op="reveal_email", contact_uuid="...")` — ⚠️ **spends a Snitcher credit**, confirm intent first
+- "tag this company 'hot lead'" → `snitcher_workspace(op="create_tag", tag_name="hot lead")` then `snitcher_organisation(op="tag", organisation_uuid="...", tag_name="hot lead")`
+- "which segments exist?" → `snitcher_workspace(op="segments")` — their uuids filter organisations and sessions
+- "note this account's tier" → `snitcher_custom_field(op="set", organisation_uuid="...", key="account_tier", value="enterprise")` — `op="set_many"` sets up to 50 fields at once, unknown keys are created automatically (type inferred)
 
-## note — ⚠️ ce qui coûte, ce qui détruit, ce qui s'exclut
+## note — ⚠️ what costs, what destroys, what excludes
 
-- `snitcher_contact(op="reveal_email")` est le SEUL appel payant (crédits) — tout le reste est lecture ou écriture gratuite (tags, custom fields, admin workspace)
-- `snitcher_workspace(op="delete")` détruit le workspace ET son historique de visites — irréversible, à confirmer explicitement avec l'utilisateur
-- `date` (un jour) et `date_from`/`date_to` (une plage) sont mutuellement exclusifs partout où les deux existent
-- `visible_in_spotter=true` sur un custom field expose ses valeurs à tout script du site suivi (réponse Spotter) — off par défaut, à laisser off sauf besoin explicite
-- vider un multi-select ne passe PAS par `op="set"` avec une liste vide (refusé par l'API) — utiliser `op="clear"`
-- **testé en live le 2026-08-24** avec un vrai token trial (workspace de test) : 24 des 27 endpoints exercés — toutes les lectures, le cycle tag complet (create → attach → vérifié sur l'organisation → detach), le cycle custom-field complet (définitions + valeurs, nettoyé derrière) ; non exercés : reveal_email (crédit), create/delete workspace, invite
-- la forme des réponses VARIE par endpoint (confirmé en live) : les listes portent la pagination Laravel au niveau racine (`success`/`current_page`/`total`/`data`), les gets rendent l'objet nu sans enveloppe, les tags rendent `{success, message}`, les DELETE rendent un corps vide — ⚠️ ne JAMAIS supposer `result["data"]` partout : `get_organisation` par exemple rend l'objet nu, `result["data"]` y lève une KeyError
-- **le piège le plus fin est DANS `snitcher_custom_field`** : `op="set"` (un champ, PUT) rend l'objet valeur NU, mais `op="set_many"` (plusieurs champs, PATCH) rend `{"success", "data": [...]}` — même intention (« poser une valeur »), enveloppe différente selon le verbe. Chaque `op=` a sa forme documentée dans la description du tool, à relire avant de parser le retour plutôt que de deviner
-- `snitcher_custom_field(op="set_many")` crée bien les clés inconnues automatiquement, type inféré (confirmé : un `42` a créé un champ `number`) ; `op="values"` rend aussi les champs SYSTÈME fixes (name, website, description…, `source: "fixed"`) à côté des customs
-- `snitcher_contact(op="list", domain="...")` marche pour n'importe quelle entreprise, pas seulement les visiteurs identifiés (confirmé : 25 contacts sur un domaine tiers) — les emails restent `"[not-revealed]"` tant que le reveal payant n'a pas été fait
+- `snitcher_contact(op="reveal_email")` is the ONLY paid call (credits) — everything else is a read or a free write (tags, custom fields, workspace admin)
+- `snitcher_workspace(op="delete")` destroys the workspace AND its visit history — irreversible, to be explicitly confirmed with the user
+- `date` (one day) and `date_from`/`date_to` (a range) are mutually exclusive wherever both exist
+- `visible_in_spotter=true` on a custom field exposes its values to any script of the tracked site (Spotter response) — off by default, leave it off unless explicitly needed
+- emptying a multi-select does NOT go through `op="set"` with an empty list (refused by the API) — use `op="clear"`
+- **live-tested on 2026-08-24** with a real trial token (test workspace): 24 of the 27 endpoints exercised — all the reads, the full tag cycle (create → attach → verified on the organisation → detach), the full custom-field cycle (definitions + values, cleaned up afterwards); not exercised: reveal_email (credit), create/delete workspace, invite
+- the response shape VARIES by endpoint (confirmed live): lists carry Laravel pagination at the root level (`success`/`current_page`/`total`/`data`), gets return the bare object with no envelope, tags return `{success, message}`, DELETEs return an empty body — ⚠️ NEVER assume `result["data"]` everywhere: `get_organisation` for example returns the bare object, `result["data"]` raises a KeyError there
+- **the subtlest trap is IN `snitcher_custom_field`**: `op="set"` (one field, PUT) returns the BARE value object, but `op="set_many"` (several fields, PATCH) returns `{"success", "data": [...]}` — same intent ("set a value"), different envelope depending on the verb. Each `op=` has its form documented in the tool description, to be re-read before parsing the return rather than guessing
+- `snitcher_custom_field(op="set_many")` does create unknown keys automatically, type inferred (confirmed: a `42` created a `number` field); `op="values"` also returns the fixed SYSTEM fields (name, website, description…, `source: "fixed"`) alongside the custom ones
+- `snitcher_contact(op="list", domain="...")` works for any company, not just identified visitors (confirmed: 25 contacts on a third-party domain) — emails stay `"[not-revealed]"` until the paid reveal has been done

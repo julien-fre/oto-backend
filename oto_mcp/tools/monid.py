@@ -1,64 +1,64 @@
-"""Monid — la passerelle payante vers les endpoints de données de ~70 fournisseurs.
+"""Monid — the paid gateway to the data endpoints of ~70 providers.
 
-Wrappe `oto.tools.monid.MonidClient` (API `/v1`, Bearer, contrat OpenAPI 0.1.0). keyed
-`api_key`, régime d'`apify` : BYO par défaut, clé plateforme sur grant explicite — chaque
-appel est débité du portefeuille prépayé du workspace Monid dont la clé sert.
+Wraps `oto.tools.monid.MonidClient` (`/v1` API, Bearer, OpenAPI contract 0.1.0). keyed
+`api_key`, `apify` regime: BYO by default, platform key on explicit grant — each
+call is debited from the prepaid wallet of the Monid workspace whose key is used.
 
-**Quatre outils, un par objet, le verbe en `op`, le défaut est une lecture** (ADR 0047) :
-`monid_endpoint` (`discover` → `inspect`), `monid_run` (le seul qui dépense),
-`monid_runs` (`list` / `get` / `stop`), `monid_wallet`. Un argument qui ne s'applique
-pas à l'`op` choisie est REFUSÉ, jamais ignoré.
+**Four tools, one per object, the verb in `op`, the default is a read** (ADR 0047):
+`monid_endpoint` (`discover` → `inspect`), `monid_run` (the only one that spends),
+`monid_runs` (`list` / `get` / `stop`), `monid_wallet`. An argument that does not apply
+to the chosen `op` is REFUSED, never ignored.
 
-**Pas de dry_run sur `monid_run`**, comme les autres appels de données payants
-(`apify_run*`, theirstack) : le dry-run par défaut reste réservé aux gestes qui sortent
-de l'organisation. La protection d'un appel payant, c'est le prix lu à `inspect` et les
-paramètres de volume posés au lancement.
+**No dry_run on `monid_run`**, like the other paid data calls
+(`apify_run*`, theirstack): the default dry-run stays reserved for actions that leave
+the organization. The protection of a paid call is the price read at `inspect` and the
+volume parameters set at launch.
 
-⚠️ **La clé de la plateforme sert un workspace Monid PARTAGÉ** par toutes les orgs qui
-ont un grant. Sa liste de runs est donc celle des autres aussi (entrées, sorties, et des
-identifiants qui ouvriraient `get` et `stop`) : `monid_runs(op="list")` est refusé sous
-cette clé, en le nommant. `get` et `stop` restent ouverts par identifiant de run — opaque,
-rendu à qui l'a lancé (précédent apify, firecrawl). Le solde n'est pas servi non plus
-(`monid_wallet` refusé sous cette clé, en le nommant) : c'est celui du portefeuille
-partagé de la plateforme, pas celui de l'org qui a un grant — un lancement à court de
-fonds le dit par son 402.
+⚠️ **The platform key serves a Monid workspace SHARED** by all the orgs that
+have a grant. Its list of runs is therefore the others' too (inputs, outputs, and
+identifiers that would open `get` and `stop`): `monid_runs(op="list")` is refused under
+this key, naming it. `get` and `stop` stay open by run identifier — opaque,
+returned to whoever launched it (apify, firecrawl precedent). The balance is not served either
+(`monid_wallet` refused under this key, naming it): it is that of the platform's shared
+wallet, not that of the org holding a grant — a launch short of
+funds says so through its 402.
 
-⚠️ **Le lancement a un budget de temps, et il est court à dessein.** Un client MCP
-raccroche vers 60 s, et un worker du runner REJOUE un appel qui dépasse — donc paie deux
-fois. Tout se compte depuis l'entrée de l'outil, résolution de la clé comprise : la
-lecture du POST reçoit ce qui reste de `_RUN_BUDGET_S` une fois ôtés la connexion
-(`_CONNECT_S`, posée par le client) et le temps déjà passé, au plus `_RUN_READ_S` ; s'il
-reste moins de `_RUN_READ_MIN_S`, le lancement n'est PAS envoyé (rien n'est parti, rien
-n'est facturé). Puis l'attente d'un run accepté jusqu'à la même échéance ; une relecture
-partie juste avant la dépasse d'au plus ~10 s. Pire cas ≈ 55 s **en délais par socket**,
-tant que la connexion s'établit du premier coup : chaque adresse injoignable ajoute
-jusqu'à 10 s, et la résolution DNS n'est pas bornée. Un fournisseur synchrone plus lent
-que la lecture accordée rend donc une issue INCONNUE : le run existe peut-être.
+⚠️ **The launch has a time budget, and it is short on purpose.** An MCP client
+hangs up around 60 s, and a runner worker REPLAYS a call that overruns — hence pays twice.
+Everything is counted from the tool's entry, key resolution included: the
+POST read gets what remains of `_RUN_BUDGET_S` once the connection
+(`_CONNECT_S`, set by the client) and the time already spent are removed, at most `_RUN_READ_S`; if
+less than `_RUN_READ_MIN_S` remains, the launch is NOT sent (nothing went out, nothing
+is billed). Then the wait for an accepted run until the same deadline; a re-read
+started just before overruns it by ~10 s at most. Worst case ≈ 55 s **in per-socket timeouts**,
+as long as the connection is established on the first try: each unreachable address adds
+up to 10 s, and DNS resolution is not bounded. A synchronous provider slower
+than the granted read therefore yields an UNKNOWN outcome: the run may exist.
 
-⚠️ **Une issue inconnue n'est jamais re-tentée ici, et le refus le dit.** Monid n'a pas de
-clé d'idempotence : relancer un lancement perdu en vol peut payer deux fois. Le client
-marque ces cas (`may_have_run`) ; l'outil refuse en l'interdisant d'abord, puis en
-nommant `monid_runs(op="list")` — ou, sous la clé de la plateforme dont la liste est
-fermée, un administrateur. Ce refus part en `INTERNAL_ERROR`, pas en `INVALID_PARAMS` (écart
-VOULU au refus nommé des autres cas) : un « argument invalide » dit à l'agent de corriger
-et de rappeler, soit le chemin exact du double paiement. Conséquence assumée : n'étant pas
-une erreur « attendue » (`error_taxonomy._is_expected_error`), chaque issue inconnue
-remonte à Sentry — un run peut-être payé deux fois mérite ce signal, et un fournisseur
-synchrone plus lent que la lecture accordée en produira.
+⚠️ **An unknown outcome is never retried here, and the refusal says so.** Monid has no
+idempotency key: relaunching a launch lost in flight can pay twice. The client
+flags these cases (`may_have_run`); the tool refuses by forbidding it first, then by
+naming `monid_runs(op="list")` — or, under the platform key whose list is
+closed, an administrator. This refusal goes out as `INTERNAL_ERROR`, not `INVALID_PARAMS` (a
+DELIBERATE departure from the named refusal of the other cases): an "invalid argument" tells the agent to fix
+and call again, which is the exact path to double payment. Accepted consequence: not being
+an "expected" error (`error_taxonomy._is_expected_error`), each unknown outcome
+goes up to Sentry — a run possibly paid twice deserves that signal, and a synchronous
+provider slower than the granted read will produce some.
 
-**Une relecture qui échoue n'est pas un échec de l'outil** : le run a été accepté, on le
-rend avec la marche à suivre, et l'échec est journalisé. Une relecture qui rend autre
-chose que CE run (corps vide, liste, autre identifiant) compte comme un échec : elle ne
-remplace jamais le run accepté.
+**A failing re-read is not a tool failure**: the run was accepted, it is
+returned with the next step, and the failure is logged. A re-read that returns something other
+than THIS run (empty body, list, other identifier) counts as a failure: it never
+replaces the accepted run.
 
-**Métrage** (patron `tools/theirstack.py`) : un lancement qui rend un run compte 1 —
-`note_call_trace` toujours, `record_platform_usage` seulement sous la clé plateforme. Un
-débit de quota qui échoue ne cache jamais un run accepté : il est journalisé avec
-l'identifiant du run (pour rattraper le compte), et l'enveloppe est rendue.
+**Metering** (pattern `tools/theirstack.py`): a launch that returns a run counts 1 —
+`note_call_trace` always, `record_platform_usage` only under the platform key. A
+quota debit that fails never hides an accepted run: it is logged with
+the run's identifier (to catch up the count), and the envelope is returned.
 
-Les appels au client sont écrits en clair (`client.run(…)`) : c'est ce qui les rend
-vérifiables par la sonde version-skew (`test_tools_client_methods_exist`). Les bornes, la
-traduction des refus, l'enveloppe d'un run et les gardes vivent dans `monid_socle.py`.
+Client calls are written in plain sight (`client.run(…)`): that is what makes them
+checkable by the version-skew probe (`test_tools_client_methods_exist`). The bounds,
+the translation of refusals, a run's envelope and the guards live in `monid_socle.py`.
 """
 from __future__ import annotations
 
@@ -82,21 +82,21 @@ from .monid_socle import (_CONNECT_S, _DISCOVER_LIMIT_MAX, _DROP_ENDPOINT, _DROP
 logger = logging.getLogger(__name__)
 
 
-# --- la sonde -----------------------------------------------------------------
+# --- the probe ----------------------------------------------------------------
 
 def _verify(fields: dict, config: dict | None = None) -> Optional[dict]:  # noqa: ARG001
-    """Sonde « tester la connexion » : `GET /v1/auth/whoami`, gratuit, sans effet de bord
-    — jamais un run, jamais le portefeuille. Rend QUI la clé authentifie (workspace,
-    utilisateur) quand Monid le nomme ; le préfixe de la clé n'est pas vérifié ici (le
-    contrat et la CLI ne s'accordent pas dessus)."""
+    """"Test the connection" probe: `GET /v1/auth/whoami`, free, no side effect
+    — never a run, never the wallet. Returns WHO the key authenticates (workspace,
+    user) when Monid names them; the key prefix is not checked here (the
+    contract and the CLI do not agree on it)."""
     try:
         moi = MonidClient(api_key=fields["key"]).whoami()
     except MonidHTTPError as e:
         if e.status_code in (401, 403):
             raise connector_verify.NonAutorise(
-                "Monid refuse cette clé (401) : absente, mal formée ou révoquée — crée-en "
-                "une dans le tableau de bord Monid (API keys)." if e.status_code == 401 else
-                "Monid reconnaît la clé mais ne la rattache à aucun workspace (403).") from None
+                "Monid rejects this key (401): missing, malformed or revoked — create one "
+                "in the Monid dashboard (API keys)." if e.status_code == 401 else
+                "Monid recognizes the key but does not tie it to any workspace (403).") from None
         raise
     moi = moi if isinstance(moi, dict) else {}
     ws = moi.get("workspace") if isinstance(moi.get("workspace"), dict) else {}
@@ -163,15 +163,15 @@ def register(mcp: FastMCP) -> None:
             _hors_op("inspect", q=q, category=category, min_score=min_score,
                      limit=limit != 10, full=full)
             if not provider or not endpoint:
-                raise _bad("op='inspect' : `provider` et `endpoint` requis, tels que "
-                           "discover les a rendus.")
+                raise _bad("op='inspect': `provider` and `endpoint` required, as "
+                           "discover returned them.")
             client, is_platform = _client()
             return _appel(lambda: client.inspect(provider, endpoint), is_platform=is_platform)
         if op != "discover":
-            raise _bad(f"`op` invalide : {op!r} (attendu : discover, inspect).")
+            raise _bad(f"Invalid `op`: {op!r} (expected: discover, inspect).")
         _hors_op("discover", provider=provider, endpoint=endpoint)
         if not q:
-            raise _bad("op='discover' : `q` requis — décris le besoin en clair.")
+            raise _bad("op='discover': `q` required — describe the need in plain words.")
         _borne("limit", limit, 1, _DISCOVER_LIMIT_MAX)
         client, is_platform = _client()
         page = _appel(lambda: client.discover(q, limit=limit, category=category,
@@ -219,26 +219,26 @@ def register(mcp: FastMCP) -> None:
         _borne("wait_seconds", wait_seconds, 0, _WAIT_MAX_S)
         debut = time.monotonic()
         client, is_platform = _client()
-        # La lecture reçoit ce qui RESTE du budget : la résolution de la clé en a peut-être
-        # mangé. Trop peu → rien n'est envoyé (donc rien facturé), plutôt qu'un lancement
-        # voué à finir en issue inconnue ou à dépasser le raccrochage du client.
+        # The read gets what REMAINS of the budget: key resolution may have eaten some.
+        # Too little → nothing is sent (so nothing is billed), rather than a launch
+        # doomed to end in an unknown outcome or to overrun the client's hang-up.
         lecture = min(_RUN_READ_S, _RUN_BUDGET_S - _CONNECT_S - (time.monotonic() - debut))
         if lecture < _RUN_READ_MIN_S:
-            raise _bad("Lancement non envoyé : la résolution de la clé a consommé le budget "
-                       "de temps de l'appel. Rien n'est parti ni facturé, relance.")
+            raise _bad("Launch not sent: key resolution consumed the call's time "
+                       "budget. Nothing went out or was billed, try again.")
         run = _appel(lambda: client.run(provider, endpoint, body=body,
                                         query_params=query_params, path_params=path_params,
                                         timeout=lecture), is_platform=is_platform)
-        # Un run est revenu : il compte, quoi qu'il devienne ensuite.
+        # A run came back: it counts, whatever becomes of it next.
         session_org.note_call_trace(quantity=1)
         if is_platform:
             try:
                 access.record_platform_usage("monid", 1)
             except Exception:
-                # Le run est lancé et facturé : taire son identifiant pour un compteur
-                # pousserait l'agent à relancer, donc à payer deux fois.
-                logger.warning("monid_run : débit du quota plateforme ÉCHOUÉ pour le run %s "
-                               "(run lancé et rendu, le quota n'a PAS bougé)",
+                # The run is launched and billed: hiding its identifier over a counter
+                # would push the agent to relaunch, hence to pay twice.
+                logger.warning("monid_run: platform quota debit FAILED for run %s "
+                               "(run launched and returned, the quota did NOT move)",
                                run.get("runId"), exc_info=True)
         rid = run["runId"]
         if is_terminal(run) or wait_seconds == 0:
@@ -250,13 +250,13 @@ def register(mcp: FastMCP) -> None:
             relu = client.wait_for_run(rid, max_wait_s=reste)
         except (MonidHTTPError, MonidProtocolError, requests.exceptions.RequestException,
                 ValueError) as e:
-            logger.warning("monid_run : relecture du run %s échouée (%s)", rid, _cause(e))
+            logger.warning("monid_run: re-read of run %s failed (%s)", rid, _cause(e))
             return _enveloppe(run, run_id=rid, relecture=_relecture_ratee(run, _cause(e)))
         if not _est_un_run(relu, rid):
-            logger.warning("monid_run : relecture du run %s illisible (%s)", rid,
+            logger.warning("monid_run: re-read of run %s unreadable (%s)", rid,
                            type(relu).__name__)
             return _enveloppe(run, run_id=rid,
-                              relecture=_relecture_ratee(run, "réponse illisible"))
+                              relecture=_relecture_ratee(run, "unreadable response"))
         return _enveloppe(relu, run_id=rid)
 
     @mcp.tool()
@@ -294,7 +294,7 @@ def register(mcp: FastMCP) -> None:
             full: op="list" — whole items instead of projected ones.
         """
         if op not in ("list", "get", "stop"):
-            raise _bad(f"`op` invalide : {op!r} (attendu : list, get, stop).")
+            raise _bad(f"Invalid `op`: {op!r} (expected: list, get, stop).")
         if op == "list":
             _hors_op("list", run_id=run_id, wait_seconds=wait_seconds != 0)
             _borne("limit", limit, 1, _RUNS_LIMIT_MAX)
@@ -308,7 +308,7 @@ def register(mcp: FastMCP) -> None:
         _hors_op(op, limit=limit != 20, cursor=cursor, status=status, full=full,
                  wait_seconds=op == "stop" and wait_seconds != 0)
         if not run_id:
-            raise _bad(f"op='{op}' : `run_id` requis (le `runId` du run Monid).")
+            raise _bad(f"op='{op}': `run_id` required (the `runId` of the Monid run).")
         _borne("wait_seconds", wait_seconds, 0, _WAIT_MAX_S)
         client, is_platform = _client()
         if op == "stop":
@@ -316,10 +316,10 @@ def register(mcp: FastMCP) -> None:
             out = out if isinstance(out, dict) else {}
             rid = out.get("runId") or run_id
             return {"run_id": rid, "status": out.get("status"), "message": out.get("message"),
-                    "next_step": (f"L'arrêt est asynchrone : relis le run avec monid_runs("
-                                  f"op=\"get\", run_id=\"{rid}\") — il finit STOPPED, ou "
-                                  "COMPLETED s'il est facturé à l'usage (il règle alors ce "
-                                  "qu'il a consommé).")}
+                    "next_step": (f"The stop is asynchronous: re-read the run with monid_runs("
+                                  f"op=\"get\", run_id=\"{rid}\") — it ends STOPPED, or "
+                                  "COMPLETED if it is billed by usage (it then settles what "
+                                  "it consumed).")}
         if wait_seconds:
             run = _appel(lambda: client.wait_for_run(run_id, max_wait_s=wait_seconds),
                          is_platform=is_platform)

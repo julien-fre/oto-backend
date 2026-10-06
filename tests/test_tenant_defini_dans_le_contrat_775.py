@@ -19,7 +19,7 @@ from oto_mcp.capabilities.connectors.instances import (
 )
 from oto_mcp.capabilities.connectors.verify import VerifyResult
 
-_TERMES_ATTENDUS = ("tenant", "au-dessus", "hébergeur")
+_TERMES_ATTENDUS = ("tenant", "above", "host")
 
 
 # Tous les crans de l'échelle, les DEUX orthographes du plus proche comprises

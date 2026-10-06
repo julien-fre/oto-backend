@@ -1,16 +1,16 @@
-## prerequisite — clé api cloro
+## prerequisite — cloro api key
 
-crée une clé API dans [Cloro](https://cloro.dev), puis colle-la dans oto.
-- les members consomment un quota plateforme si aucune clé perso/org n'est posée
+create an API key in [Cloro](https://cloro.dev), then paste it into oto.
+- members consume a platform quota if no personal/org key is set
 
-## usage — veille ai-search + serp google en json
+## usage — ai-search monitoring + google serp as json
 
-interroge les moteurs IA (ChatGPT, Gemini, Perplexity, Copilot, Grok, Google AI Mode) et capture leurs réponses + sources — veille de marque « AI SEO » — plus la SERP/News Google en JSON propre. (les appels moteurs IA prennent ~30-45 s.)
-- « que dit ChatGPT de la marque X ? » (réponse + citations)
-- « compare ce que disent Gemini et Perplexity sur ce produit »
-- « SERP Google de `meilleur CRM` avec l'AI Overview »
-- « Google News sur cette entreprise »
+queries the AI engines (ChatGPT, Gemini, Perplexity, Copilot, Grok, Google AI Mode) and captures their answers + sources — "AI SEO" brand monitoring — plus Google SERP/News as clean JSON. (AI engine calls take ~30-45 s.)
+- "what does ChatGPT say about brand X?" (answer + citations)
+- "compare what Gemini and Perplexity say about this product"
+- "Google SERP for `best CRM` with the AI Overview"
+- "Google News on this company"
 
-## note — périmètre de projet (#605, 2026-08-29)
+## note — project perimeter (#605, 2026-08-29)
 
-sous un projet à `excluded_url_prefixes`, `cloro_google` (serp, news) et `cloro_ask` (sources/citations) écartent les résultats correspondants et le disent (`excluded_by_perimeter`). la réponse d'un moteur ia est de la prose : non filtrée. détail : `docs/projects.md`.
+under a project with `excluded_url_prefixes`, `cloro_google` (serp, news) and `cloro_ask` (sources/citations) drop the matching results and say so (`excluded_by_perimeter`). an AI engine's answer is prose: not filtered. details: `docs/projects.md`.

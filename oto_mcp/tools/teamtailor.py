@@ -1,12 +1,12 @@
-"""Teamtailor ATS — candidats, jobs, candidatures (JSON:API).
+"""Teamtailor ATS — candidates, jobs, applications (JSON:API).
 
-Wrappe `oto.tools.teamtailor.TeamtailorClient` (API key dans l'en-tête
-`Authorization: Token token=…`). Clé résolue par appel via
-`access.resolve_api_key("teamtailor")` — byo (clé user sur /account ou credential
-partagé de l'org). Pas de clé plateforme.
+Wraps `oto.tools.teamtailor.TeamtailorClient` (API key in the
+`Authorization: Token token=…` header). Key resolved per call via
+`access.resolve_api_key("teamtailor")` — byo (user key on /account or the org's
+shared credential). No platform key.
 
-⚠️ Réponses au format **JSON:API** : ressources sous `data` avec `{type, id,
-attributes, relationships}`. Pagination par `page_number`/`page_size`.
+⚠️ Responses are in **JSON:API** format: resources under `data` with `{type, id,
+attributes, relationships}`. Pagination by `page_number`/`page_size`.
 """
 from __future__ import annotations
 
@@ -19,17 +19,17 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /jobs` (déjà dans le client — `list_jobs`), `page_size=1` — le plus
-    petit format disponible, Teamtailor n'exposant ni `/me` ni solde. C'est
-    aussi une lecture RÉELLE du connecteur (`teamtailor_jobs`), pas un endpoint
-    inventé pour la sonde : si une clé valide ne peut pas lire les jobs, ce
-    tool est déjà cassé pour elle.
+    `GET /jobs` (already in the client — `list_jobs`), `page_size=1` — the
+    smallest format available, since Teamtailor exposes neither `/me` nor a
+    balance. It is also a REAL read of the connector (`teamtailor_jobs`), not an
+    endpoint invented for the probe: if a valid key can't read jobs, that
+    tool is already broken for it.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    aucune trace, dans la doc ou le client, d'une clé Teamtailor restreinte
-    par ressource (contrairement à Ashby, cf. décision de ne pas sonder ashby,
+    **Authenticated ≠ usable** (oto#69 class): doesn't distinguish scope —
+    no trace, in the docs or the client, of a Teamtailor key restricted
+    per resource (unlike Ashby, see the decision not to probe ashby,
     otomata-tech/oto#69).
     """
     from oto.tools.teamtailor.client import TeamtailorClient

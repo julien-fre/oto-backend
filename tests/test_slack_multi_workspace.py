@@ -54,7 +54,7 @@ def test_two_workspaces_without_a_name_is_an_actionable_error(monkeypatch):
     # credential configuré » (ce que rendait le chemin mono-compte). Et dans le
     # VOCABULAIRE de Slack — « plusieurs comptes » obligerait l'agent à traduire.
     msg = str(e.value)
-    assert "Plusieurs workspaces `slack`" in msg
+    assert "Multiple workspaces `slack`" in msg
     # Le refus doit porter le geste qui débloque, avec le nom EXACT du jeton — et
     # nommer les workspaces en présence, pour qu'aucun appel de liste ne soit requis.
     assert '_account=' in msg and "oto_identity(op='set'" in msg
@@ -80,4 +80,4 @@ def test_unknown_workspace_raises_instead_of_falling_back(monkeypatch):
     with pytest.raises(McpError) as e:
         access.resolve_credential("slack", want="byo", sub="u1",
                                   account="jamais-pose", emit_on_failure=False)
-    assert "jamais-pose" in str(e.value) and "introuvable" in str(e.value)
+    assert "jamais-pose" in str(e.value) and "not found" in str(e.value)

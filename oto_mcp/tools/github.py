@@ -1,31 +1,31 @@
-"""Outils GitHub — dépôts et code, issues, pull requests, organisations, Actions.
+"""GitHub tools — repositories and code, issues, pull requests, organizations, Actions.
 
-Wrappe `oto.tools.github.client.GitHubClient` (REST v3, Bearer). Sept outils, un
-par famille de l'API amont.
+Wraps `oto.tools.github.client.GitHubClient` (REST v3, Bearer). Seven tools, one
+per family of the upstream API.
 
-Quatre pièges de cette API sont traités ici plutôt que laissés à l'agent, parce
-qu'aucun ne se manifeste par une erreur :
+Four traps of this API are handled here rather than left to the agent, because
+none of them shows up as an error:
 
-- ⚠️ **Un 404 sur une ressource privée veut presque toujours dire « le jeton n'a
-  pas le droit »**, pas « n'existe pas » : GitHub masque l'existence exprès. Le
-  message de refus le dit, sinon on cherche une faute de frappe pendant une heure.
-- ⚠️ **Une pull request EST une issue** côté GitHub : `github_issues op='search'`
-  écarte donc les PR par défaut, faute de filtre amont. Sans ça, compter les
-  tickets d'un dépôt donne un nombre faux, souvent de beaucoup.
-- ⚠️ **`per_page` plafonne à 100 et GitHub rabote en silence** au-delà : le
-  client refuse localement, en nommant la borne, plutôt que de rendre 100 lignes
-  là où l'agent en croyait 500.
-- ⚠️ **La recherche s'arrête à 1 000 résultats** quel que soit `total_count` :
-  `github_search` remonte un drapeau de troncature plutôt que de laisser lire
-  « 12 000 résultats » comme une promesse.
+- ⚠️ **A 404 on a private resource almost always means "the token is not
+  allowed"**, not "does not exist": GitHub hides existence on purpose. The
+  refusal message says so, otherwise one looks for a typo for an hour.
+- ⚠️ **A pull request IS an issue** on GitHub's side: `github_issues op='search'`
+  therefore drops PRs by default, for lack of an upstream filter. Without that, counting
+  a repository's tickets gives a wrong number, often by a lot.
+- ⚠️ **`per_page` caps at 100 and GitHub silently trims** anything above: the
+  client refuses locally, naming the limit, rather than returning 100 rows
+  where the agent believed 500.
+- ⚠️ **Search stops at 1,000 results** whatever `total_count` says:
+  `github_search` surfaces a truncation flag rather than letting
+  "12,000 results" be read as a promise.
 
-⚠️ **`github_actions op='dispatch'` déclenche une exécution réelle** — donc
-potentiellement un déploiement. C'est le seul geste de ce connecteur qui agit
-hors de GitHub, et il est en **dry-run par défaut**, comme l'envoi d'email de
-`lightfield` et le lancement de campagne d'`origami`.
+⚠️ **`github_actions op='dispatch'` triggers a real run** — thus
+potentially a deployment. It is the only action of this connector that acts
+outside GitHub, and it is **dry-run by default**, like `lightfield`'s email sending
+and `origami`'s campaign launch.
 
-Les appels au client sont écrits en clair (`_client().list_issues(…)`) : c'est
-ce qui les rend vérifiables par la sonde version-skew
+Client calls are written in plain sight (`_client().list_issues(…)`): this is
+what makes them checkable by the version-skew probe
 (`test_tools_client_methods_exist`).
 """
 from __future__ import annotations
@@ -45,72 +45,72 @@ def _bad(msg: str) -> McpError:
 
 
 def _upstream_message(e) -> str:
-    """Traduit un refus de GitHub en message actionnable.
+    """Translate a GitHub refusal into an actionable message.
 
-    Le cas qui compte est le **404** : sur une ressource privée hors portée du
-    jeton, GitHub répond 404 plutôt que 403 pour ne pas divulguer son existence.
-    Rendre « introuvable » tel quel enverrait chercher une faute de frappe là où
-    il manque un scope.
+    The case that matters is **404**: on a private resource outside the token's
+    reach, GitHub answers 404 rather than 403 so as not to disclose its existence.
+    Returning "not found" as-is would send someone looking for a typo where
+    a scope is missing.
     """
     status = e.status_code
     body = e.body if isinstance(e.body, dict) else {}
     msg = body.get("message") or ""
     if status == 401:
-        return ("GitHub a rejeté le jeton (401) — il est invalide, expiré ou "
-                "révoqué. Repose-le sur ce connecteur.")
+        return ("GitHub rejected the token (401) — it is invalid, expired or "
+                "revoked. Set it again on this connector.")
     if status == 403:
-        return (f"GitHub a refusé (403) : {msg or 'accès non autorisé'}. Soit il "
-                "manque un scope au jeton (jeton classique) ou une permission / "
-                "le dépôt dans sa liste (jeton fine-grained), soit c'est une "
-                "limite d'usage secondaire — dans ce cas, réessaie plus tard.")
+        return (f"GitHub refused (403): {msg or 'unauthorized access'}. Either the "
+                "token is missing a scope (classic token) or a permission / "
+                "the repository in its list (fine-grained token), or it is a "
+                "secondary usage limit — in that case, retry later.")
     if status == 404:
-        return ("GitHub : introuvable (404). ⚠️ Sur une ressource PRIVÉE, GitHub "
-                "répond 404 quand le jeton n'a pas le droit de la voir, exprès, "
-                "pour ne pas divulguer son existence. Avant de suspecter le nom, "
-                "vérifie que le jeton couvre bien ce dépôt / cette organisation.")
+        return ("GitHub: not found (404). ⚠️ On a PRIVATE resource, GitHub "
+                "answers 404 when the token is not allowed to see it, on purpose, "
+                "so as not to disclose its existence. Before suspecting the name, "
+                "check that the token really covers this repository / organization.")
     if status == 405:
-        return (f"GitHub : opération impossible en l'état (405) : {msg}. Sur une "
-                "fusion, cela veut dire que la PR n'est pas fusionnable — "
-                "conflits, ou contrôles de branche en échec.")
+        return (f"GitHub: operation not possible in the current state (405): {msg}. On a "
+                "merge, this means the PR is not mergeable — "
+                "conflicts, or failing branch checks.")
     if status == 409:
-        return (f"GitHub : conflit (409) : {msg}. La référence a bougé depuis la "
-                "lecture — relis l'état frais et réessaie. Sur une écriture de "
-                "fichier, c'est le `sha` du blob qui est périmé ou absent.")
+        return (f"GitHub: conflict (409): {msg}. The reference moved since the "
+                "read — reread the fresh state and retry. On a file write, "
+                "it is the blob's `sha` that is stale or missing.")
     if status == 422:
-        return (f"GitHub a refusé la requête (422) : {msg or e.body}. C'est une "
-                "validation : champ manquant, valeur hors bornes, ou — sur la "
-                "recherche — au-delà des 1 000 résultats accessibles.")
+        return (f"GitHub refused the request (422): {msg or e.body}. It is a "
+                "validation: missing field, out-of-range value, or — on "
+                "search — beyond the 1,000 accessible results.")
     if status == 429:
-        return ("GitHub : trop de requêtes (429) — limite d'usage atteinte. "
-                "Réessaie dans un instant.")
+        return ("GitHub: too many requests (429) — usage limit reached. "
+                "Retry in a moment.")
     if status in (500, 502, 503, 504):
-        return f"GitHub est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"GitHub a refusé la requête (HTTP {status}): {e.body}"
+        return f"GitHub is temporarily unavailable (HTTP {status}) — retry later."
+    return f"GitHub refused the request (HTTP {status}): {e.body}"
 
 
 def _check_base_url(base_url) -> None:
-    """Garde d'egress sur l'URL d'API Enterprise Server, quand elle est posée.
+    """Egress guard on the Enterprise Server API URL, when it is set.
 
-    Vide = github.com, une constante de la lib : rien à contrôler. Renseignée,
-    elle désigne un serveur auto-hébergé — donc, potentiellement, un hôte du
-    réseau interne de la plateforme (`oto_mcp/egress.py`)."""
+    Empty = github.com, a constant of the lib: nothing to check. When filled in,
+    it designates a self-hosted server — thus, potentially, a host on the
+    platform's internal network (`oto_mcp/egress.py`)."""
     valeur = (base_url or "").strip()
     if valeur:
         egress.check_url(valeur, connector="github")
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : `GET /user`, puis l'état des quotas.
+    """The "test connection" probe: `GET /user`, then the quota state.
 
-    `/user` n'exige aucun scope particulier : il sépare « jeton invalide » (401)
-    de « jeton valide mais restreint » (403/404 ailleurs). Sonder un dépôt
-    confondrait les deux — et pire, un dépôt hors portée répondrait 404, ce qui
-    ferait afficher rouge sur un jeton parfaitement sain.
+    `/user` requires no particular scope: it separates "invalid token" (401)
+    from "valid but restricted token" (403/404 elsewhere). Probing a repository
+    would confuse the two — and worse, an out-of-reach repository would answer 404, which
+    would show red on a perfectly healthy token.
 
-    On ne PEUT PAS vérifier plus : les scopes d'un jeton classique ne sont
-    lisibles que dans un en-tête de réponse, et un jeton fine-grained n'expose
-    pas sa liste de dépôts. La sonde dit donc « ce jeton est vivant et voici
-    qui il est » — et c'est exactement ce qu'elle promet.
+    We CANNOT verify more: a classic token's scopes are only
+    readable in a response header, and a fine-grained token does not expose
+    its repository list. The probe therefore says "this token is alive and here is
+    who it is" — and that is exactly what it promises.
     """
     from oto.tools.github.client import GitHubClient
     _check_base_url(fields.get("base_url"))
@@ -119,8 +119,8 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
     who = client.me()
     if not isinstance(who, dict) or not who.get("login"):
         raise ValueError(
-            "GitHub a répondu sans identifier le compte — jeton inattendu, ou "
-            "URL d'API qui ne pointe pas vers une instance GitHub.")
+            "GitHub answered without identifying the account — unexpected token, or "
+            "API URL that does not point to a GitHub instance.")
 
 
 def register(mcp: FastMCP) -> None:
@@ -145,7 +145,7 @@ def register(mcp: FastMCP) -> None:
 
     def _need(value, nom: str, op: str):
         if value in (None, "", [], {}):
-            raise _bad(f"op='{op}' : `{nom}` requis.")
+            raise _bad(f"op='{op}': `{nom}` required.")
         return value
 
     def _repo(owner: Optional[str], repo: Optional[str], op: str):
@@ -154,9 +154,9 @@ def register(mcp: FastMCP) -> None:
         return owner, repo
 
     def _bad_op(op: str, attendus: str):
-        return _bad(f"`op` invalide : {op!r} (attendu : {attendus}).")
+        return _bad(f"`op` invalid: {op!r} (expected: {attendus}).")
 
-    # --- dépôts ---------------------------------------------------------------
+    # --- repositories ---------------------------------------------------------
 
     @mcp.tool()
     def github_repos(
@@ -181,44 +181,44 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         per_page: int = 30,
     ) -> Any:
-        """GitHub — les dépôts : fiche, branches, commits, tags, releases.
+        """GitHub — repositories: profile, branches, commits, tags, releases.
 
-        Le point d'entrée pour se repérer dans un dépôt avant d'en lire le code
-        (`github_files`) ou les tickets (`github_issues`).
+        The entry point for getting oriented in a repository before reading its code
+        (`github_files`) or its tickets (`github_issues`).
 
-        ⚠️ Un 404 sur un dépôt privé signale presque toujours un jeton sans le
-        droit, pas un nom erroné.
+        ⚠️ A 404 on a private repository almost always signals a token without the
+        right, not a wrong name.
 
-        ⚠️ `op='commit'` rend le commit AVEC son diff : GitHub plafonne à 300
-        fichiers et tronque au-delà sans le dire dans `files` — comparer à
-        `stats` pour s'en apercevoir.
+        ⚠️ `op='commit'` returns the commit WITH its diff: GitHub caps at 300
+        files and truncates beyond that without saying so in `files` — compare to
+        `stats` to notice.
 
-        ⚠️ `op='latest_release'` ignore les brouillons ET les préversions : ce
-        n'est pas le dernier tag créé.
+        ⚠️ `op='latest_release'` ignores drafts AND prereleases: it is
+        not the last tag created.
 
-        `op`: `mine` | `org` | `user` (listes de dépôts) · `get` · `branches` ·
-        `commits` · `commit` (avec diff) · `compare` (base…head) · `tags` ·
+        `op`: `mine` | `org` | `user` (repository lists) · `get` · `branches` ·
+        `commits` · `commit` (with diff) · `compare` (base…head) · `tags` ·
         `contributors` · `languages` · `topics` · `releases` · `release` ·
         `latest_release` · `create_release` · `update_release`.
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            owner: propriétaire du dépôt.
-            repo: nom du dépôt.
-            org: op='org' — l'organisation dont on liste les dépôts.
-            username: op='user' — le compte dont on liste les dépôts publics.
-            ref: op='commit' — branche, tag ou SHA.
-            base: op='compare' — la référence de départ.
-            head: op='compare' — la référence d'arrivée.
-            path: op='commits' — ne garder que les commits touchant ce chemin.
-            author: op='commits' — filtre par auteur.
-            since: op='commits' — borne basse (ISO 8601).
-            until: op='commits' — borne haute (ISO 8601).
-            release_id: op='release'/'update_release' — la release visée.
+            op: the operation, see above.
+            owner: repository owner.
+            repo: repository name.
+            org: op='org' — the organization whose repositories are listed.
+            username: op='user' — the account whose public repositories are listed.
+            ref: op='commit' — branch, tag or SHA.
+            base: op='compare' — the starting reference.
+            head: op='compare' — the ending reference.
+            path: op='commits' — only keep commits touching this path.
+            author: op='commits' — filter by author.
+            since: op='commits' — lower bound (ISO 8601).
+            until: op='commits' — upper bound (ISO 8601).
+            release_id: op='release'/'update_release' — the targeted release.
             sort: op='mine'/'org'/'user' — created | updated | pushed | full_name.
-            fields: op='create_release'/'update_release' — le corps (tag_name requis).
-            page: numéro de page.
-            per_page: lignes par page (1-100, défaut 30).
+            fields: op='create_release'/'update_release' — the body (tag_name required).
+            page: page number.
+            per_page: rows per page (1-100, default 30).
         """
         c = _client()
         if op == "mine":
@@ -278,7 +278,7 @@ def register(mcp: FastMCP) -> None:
                           "releases | release | latest_release | create_release | "
                           "update_release")
 
-    # --- fichiers -------------------------------------------------------------
+    # --- files ----------------------------------------------------------------
 
     @mcp.tool()
     def github_files(
@@ -292,35 +292,35 @@ def register(mcp: FastMCP) -> None:
         sha: Optional[str] = None,
         branch: Optional[str] = None,
     ) -> Any:
-        """GitHub — lire et écrire des fichiers du dépôt.
+        """GitHub — read and write repository files.
 
-        `op='read'` rend le TEXTE décodé ; `op='list'` rend le contenu d'un
-        dossier ; `op='readme'` trouve le README quel que soit son nom.
+        `op='read'` returns the decoded TEXT; `op='list'` returns the contents of a
+        directory; `op='readme'` finds the README whatever its name.
 
-        ⚠️ **Au-delà de 1 Mo, GitHub sert la métadonnée sans le contenu** : la
-        lecture le dit alors nommément plutôt que de rendre une chaîne vide qui
-        se lirait comme un fichier vide.
+        ⚠️ **Beyond 1 MB, GitHub serves the metadata without the content**: the
+        read then says so by name rather than returning an empty string that
+        would read as an empty file.
 
-        ⚠️ **Écrire par-dessus un fichier existant EXIGE son `sha`** (celui du
-        blob, rendu par `op='list'` ou par une lecture). Sans lui, GitHub répond
-        409 : c'est son contrôle de concurrence, qui garantit qu'on remplace bien
-        la version qu'on a lue et non une modification arrivée entre-temps.
-        L'omettre est normal pour une CRÉATION.
+        ⚠️ **Writing over an existing file REQUIRES its `sha`** (the
+        blob's, returned by `op='list'` or by a read). Without it, GitHub answers
+        409: it is its concurrency control, which guarantees we replace
+        the version we read and not a change that arrived in the meantime.
+        Omitting it is normal for a CREATION.
 
-        ⚠️ Chaque écriture est un **commit réel** sur la branche visée (`branch`,
-        ou la branche par défaut) — visible dans l'historique, et attribué au
-        porteur du jeton.
+        ⚠️ Each write is a **real commit** on the targeted branch (`branch`,
+        or the default branch) — visible in history, and attributed to the
+        token holder.
 
         Args:
             op: read | list | readme | write | delete.
-            owner: propriétaire du dépôt.
-            repo: nom du dépôt.
-            path: chemin du fichier ou du dossier.
-            ref: branche, tag ou SHA à lire (défaut : branche par défaut).
-            content: op='write' — le contenu texte à écrire.
-            message: op='write'/'delete' — le message de commit.
-            sha: op='write' (mise à jour) / 'delete' — le sha du blob existant.
-            branch: op='write'/'delete' — la branche cible.
+            owner: repository owner.
+            repo: repository name.
+            path: path of the file or directory.
+            ref: branch, tag or SHA to read (default: default branch).
+            content: op='write' — the text content to write.
+            message: op='write'/'delete' — the commit message.
+            sha: op='write' (update) / 'delete' — the existing blob's sha.
+            branch: op='write'/'delete' — the target branch.
         """
         c = _client()
         o, r = _repo(owner, repo, op)
@@ -337,7 +337,7 @@ def register(mcp: FastMCP) -> None:
             _need(path, "path", op)
             _need(message, "message", op)
             if content is None:
-                raise _bad("op='write' : `content` requis (le texte à écrire).")
+                raise _bad("op='write': `content` required (the text to write).")
             return _run(lambda: c.create_or_update_file(
                 o, r, path, message, content, sha=sha, branch=branch))
         if op == "delete":
@@ -377,50 +377,50 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         per_page: int = 30,
     ) -> Any:
-        """GitHub — les issues d'un dépôt, leurs commentaires et leurs étiquettes.
+        """GitHub — a repository's issues, their comments and their labels.
 
-        ⚠️ **Chez GitHub, une pull request EST une issue** : l'API rend les deux
-        mélangées. `op='search'` écarte donc les PR par défaut — sans quoi
-        « combien de tickets ouverts ? » donne un nombre faux, souvent de
-        beaucoup. `include_pull_requests=true` rend la réponse brute de l'API.
-        Ce tri se fait après pagination : une page de 30 dont 12 sont des PR en
-        rend 18, ce qui est normal.
+        ⚠️ **At GitHub, a pull request IS an issue**: the API returns the two
+        mixed together. `op='search'` therefore drops PRs by default — without which
+        "how many open tickets?" gives a wrong number, often by a lot.
+        `include_pull_requests=true` returns the API's raw response.
+        This sorting happens after pagination: a page of 30 of which 12 are PRs
+        returns 18, which is normal.
 
-        Réciproquement, et c'est utile : ces mêmes opérations marchent sur une PR
-        en passant son numéro — commentaires de fil, étiquettes, assignations et
-        jalons sont communs aux deux.
+        Conversely, and this is useful: these same operations work on a PR
+        by passing its number — thread comments, labels, assignments and
+        milestones are shared by both.
 
-        ⚠️ `op='update'` avec `labels` ou `assignees` **REMPLACE** la liste. Pour
-        ajouter sans écraser : `add_labels` / `assign`.
+        ⚠️ `op='update'` with `labels` or `assignees` **REPLACES** the list. To
+        add without overwriting: `add_labels` / `assign`.
 
-        ⚠️ `op='assign'` **ignore en silence** un compte sans accès en écriture
-        au dépôt : la réponse revient en succès sans l'avoir assigné. Comparer la
-        liste rendue à celle demandée.
+        ⚠️ `op='assign'` **silently ignores** an account without write access
+        to the repository: the response comes back as a success without having assigned it. Compare the
+        returned list with the requested one.
 
-        ⚠️ Créer une issue ou un commentaire **notifie** les abonnés du dépôt et
-        toute personne mentionnée. Il n'y a pas de brouillon d'issue chez GitHub.
+        ⚠️ Creating an issue or a comment **notifies** the repository's watchers and
+        anyone mentioned. There is no issue draft at GitHub.
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            owner: propriétaire du dépôt.
-            repo: nom du dépôt.
-            number: le numéro de l'issue (ou de la PR).
-            comment_id: le commentaire visé (update_comment, delete_comment).
+            op: the operation, see above.
+            owner: repository owner.
+            repo: repository name.
+            number: the issue's (or PR's) number.
+            comment_id: the targeted comment (update_comment, delete_comment).
             state: op='search' — open | closed | all.
-            labels: op='search' (filtre) ou add_labels / set_labels (écriture).
-            label: op='remove_label' — l'étiquette à retirer. op='create_label' — son nom.
-            assignees: op='assign'/'unassign' — les comptes visés.
-            assignee: op='search' — filtre par assigné.
-            creator: op='search' — filtre par auteur.
-            milestone: op='search' — filtre par jalon.
-            since: op='search'/'comments' — modifiés depuis (ISO 8601).
+            labels: op='search' (filter) or add_labels / set_labels (write).
+            label: op='remove_label' — the label to remove. op='create_label' — its name.
+            assignees: op='assign'/'unassign' — the targeted accounts.
+            assignee: op='search' — filter by assignee.
+            creator: op='search' — filter by author.
+            milestone: op='search' — filter by milestone.
+            since: op='search'/'comments' — modified since (ISO 8601).
             sort: op='search' — created | updated | comments.
-            body: op='comment'/'update_comment' — le texte du commentaire.
+            body: op='comment'/'update_comment' — the comment text.
             lock_reason: op='lock' — off-topic | too heated | resolved | spam.
-            include_pull_requests: op='search' — inclure les PR (défaut false).
-            fields: op='create'/'update'/'create_label'/'create_milestone' — le corps.
-            page: numéro de page.
-            per_page: lignes par page (1-100, défaut 30).
+            include_pull_requests: op='search' — include PRs (default false).
+            fields: op='create'/'update'/'create_label'/'create_milestone' — the body.
+            page: page number.
+            per_page: rows per page (1-100, default 30).
         """
         c = _client()
         o, r = _repo(owner, repo, op)
@@ -465,9 +465,9 @@ def register(mcp: FastMCP) -> None:
         if op == "set_labels":
             _need(number, "number", op)
             if labels is None:
-                raise _bad("op='set_labels' : `labels` requis — une liste vide "
-                           "retire toutes les étiquettes, ce qui est une "
-                           "intention, mais elle doit être écrite.")
+                raise _bad("op='set_labels': `labels` required — an empty list "
+                           "removes all labels, which is an "
+                           "intention, but it must be written out.")
             return _run(lambda: c.set_labels(o, r, number, labels))
         if op == "remove_label":
             _need(number, "number", op)
@@ -532,56 +532,56 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         per_page: int = 30,
     ) -> Any:
-        """GitHub — les pull requests : diff, revues, relecteurs, fusion.
+        """GitHub — pull requests: diff, reviews, reviewers, merging.
 
-        Les commentaires de FIL, étiquettes et assignations d'une PR passent par
-        `github_issues` avec le même numéro — c'est voulu côté GitHub. Ici vit ce
-        qui est propre à une PR : le diff, les revues, les commentaires ligne à
-        ligne, et la fusion.
+        A PR's THREAD comments, labels and assignments go through
+        `github_issues` with the same number — this is intended on GitHub's side. What lives here
+        is what is specific to a PR: the diff, reviews, line-by-line
+        comments, and merging.
 
-        ⚠️ **Une PR fusionnée est `closed`** : il n'existe pas d'état `merged`.
-        Pour les distinguer, lire `merged_at` (nul = fermée sans fusion), ou
+        ⚠️ **A merged PR is `closed`**: there is no `merged` state.
+        To tell them apart, read `merged_at` (null = closed without merging), or
         `op='merged'`.
 
-        ⚠️ **`mergeable` peut valoir `null`** sur `op='get'` : GitHub le calcule
-        en tâche de fond au premier appel. `null` veut dire « pas encore su » —
-        redemander, surtout ne pas le lire comme « non fusionnable ».
+        ⚠️ **`mergeable` may be `null`** on `op='get'`: GitHub computes it
+        in the background on the first call. `null` means "not known yet" —
+        ask again, above all do not read it as "not mergeable".
 
-        ⚠️ **`op='merge'` écrit sur la branche cible et n'est pas annulable d'un
-        clic.** Les trois méthodes diffèrent : `merge` ajoute un commit de
-        fusion, `squash` écrase la branche en un seul commit, `rebase` réécrit
-        les commits. Passer `sha` protège de la course : si la tête a bougé
-        depuis la lecture, GitHub refuse au lieu de fusionner autre chose.
+        ⚠️ **`op='merge'` writes to the target branch and cannot be undone with
+        one click.** The three methods differ: `merge` adds a merge
+        commit, `squash` squashes the branch into a single commit, `rebase` rewrites
+        the commits. Passing `sha` protects against the race: if the head moved
+        since the read, GitHub refuses instead of merging something else.
 
-        ⚠️ **Une revue sans `event` reste en ATTENTE** (`PENDING`) : rien n'est
-        publié, personne n'est notifié, et elle n'est visible que de son auteur.
-        C'est utile pour préparer, et c'est un piège quand on croyait approuver.
-        `APPROVE` peut débloquer une fusion protégée : c'est un acte de
-        gouvernance, pas un commentaire.
+        ⚠️ **A review without `event` stays PENDING** (`PENDING`): nothing is
+        published, nobody is notified, and it is only visible to its author.
+        This is useful for preparing, and a trap when you thought you were approving.
+        `APPROVE` can unblock a protected merge: it is an act of
+        governance, not a comment.
 
-        ⚠️ `op='files'` est plafonné à 3 000 fichiers et omet les gros `patch` ;
-        `op='commits'` à 250. Une PR massive est rendue incomplète, sans erreur.
+        ⚠️ `op='files'` is capped at 3,000 files and omits big `patch`es;
+        `op='commits'` at 250. A massive PR is returned incomplete, without error.
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            owner: propriétaire du dépôt.
-            repo: nom du dépôt.
-            number: le numéro de la PR.
-            review_id: op='submit_review' — la revue en attente à publier.
+            op: the operation, see above.
+            owner: repository owner.
+            repo: repository name.
+            number: the PR's number.
+            review_id: op='submit_review' — the pending review to publish.
             state: op='search' — open | closed | all.
-            base: op='search'/'create' — la branche cible.
-            head: op='search'/'create' — la branche source.
+            base: op='search'/'create' — the target branch.
+            head: op='search'/'create' — the source branch.
             sort: op='search' — created | updated | popularity | long-running.
             event: op='review'/'submit_review' — APPROVE | REQUEST_CHANGES | COMMENT.
-            body: op='review'/'submit_review' — le texte de la revue.
+            body: op='review'/'submit_review' — the review text.
             merge_method: op='merge' — merge | squash | rebase.
-            commit_title: op='merge' — titre du commit de fusion.
-            sha: op='merge' — la tête attendue (protection contre la course).
-            reviewers: op='request_review'/'remove_reviewers' — des comptes.
-            team_reviewers: op='request_review'/'remove_reviewers' — des slugs d'équipe.
-            fields: op='create'/'update'/'review_comment' — le corps.
-            page: numéro de page.
-            per_page: lignes par page (1-100, défaut 30).
+            commit_title: op='merge' — merge commit title.
+            sha: op='merge' — the expected head (race protection).
+            reviewers: op='request_review'/'remove_reviewers' — accounts.
+            team_reviewers: op='request_review'/'remove_reviewers' — team slugs.
+            fields: op='create'/'update'/'review_comment' — the body.
+            page: page number.
+            per_page: rows per page (1-100, default 30).
         """
         c = _client()
         o, r = _repo(owner, repo, op)
@@ -665,7 +665,7 @@ def register(mcp: FastMCP) -> None:
                           "submit_review | review_comments | review_comment | "
                           "reviewers | request_review | remove_reviewers")
 
-    # --- organisations --------------------------------------------------------
+    # --- organizations --------------------------------------------------------
 
     @mcp.tool()
     def github_orgs(
@@ -687,43 +687,43 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         per_page: int = 30,
     ) -> Any:
-        """GitHub — qui est dans l'organisation, dans une équipe, sur un dépôt.
+        """GitHub — who is in the organization, in a team, on a repository.
 
-        ⚠️ **Trois appartenances se ressemblent et ne sont pas la même chose** :
-        membre de l'ORGANISATION, membre d'une ÉQUIPE, collaborateur d'un DÉPÔT.
-        Retirer quelqu'un de l'un ne le retire pas des autres — c'est l'erreur la
-        plus fréquente ici. `remove_member` sort de l'organisation (et de toutes
-        ses équipes) ; `remove_team_member` ne touche que l'équipe ;
-        `remove_collaborator` ne touche qu'un dépôt, **et ne retire pas un accès
-        hérité d'une équipe**.
+        ⚠️ **Three memberships look alike and are not the same thing**:
+        member of the ORGANIZATION, member of a TEAM, collaborator on a REPOSITORY.
+        Removing someone from one does not remove them from the others — this is the
+        most frequent error here. `remove_member` leaves the organization (and all
+        its teams); `remove_team_member` only touches the team;
+        `remove_collaborator` only touches one repository, **and does not remove access
+        inherited from a team**.
 
-        ⚠️ **`members` ne montre que ce que le jeton a le droit de voir** : sans
-        le scope d'organisation, seuls les membres PUBLICS sortent — une liste
-        plus courte, sans erreur. Ce n'est donc pas un recensement.
+        ⚠️ **`members` only shows what the token is allowed to see**: without
+        the organization scope, only PUBLIC members come out — a shorter
+        list, with no error. It is therefore not a census.
 
-        ⚠️ `set_membership` et `add_collaborator` **envoient une invitation** :
-        l'accès n'est effectif qu'une fois acceptée (`pending` d'ici là).
-        `role='admin'` sur une organisation donne les droits de propriétaire.
+        ⚠️ `set_membership` and `add_collaborator` **send an invitation**:
+        access is only effective once accepted (`pending` until then).
+        `role='admin'` on an organization gives owner rights.
 
-        ⚠️ `permission` rend le niveau EFFECTIF (héritages d'équipe compris), ce
-        que la liste des collaborateurs directs ne dit pas.
+        ⚠️ `permission` returns the EFFECTIVE level (team inheritance included), which
+        the list of direct collaborators does not say.
 
-        `op='me'` (le compte du jeton) et `op='rate_limit'` (l'état des quotas,
-        sans les consommer) servent à diagnostiquer avant d'accuser un nom.
+        `op='me'` (the token's account) and `op='rate_limit'` (the quota state,
+        without consuming them) are for diagnosing before blaming a name.
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            org: l'organisation visée.
-            owner: propriétaire du dépôt (opérations de collaborateur).
-            repo: nom du dépôt (opérations de collaborateur).
-            team_slug: le slug de l'équipe (pas son nom affiché).
-            username: le compte visé.
-            role: admin | member (organisation) ; member | maintainer (équipe).
-            permission: pull | triage | push | maintain | admin (collaborateur).
+            op: the operation, see above.
+            org: the targeted organization.
+            owner: repository owner (collaborator operations).
+            repo: repository name (collaborator operations).
+            team_slug: the team's slug (not its display name).
+            username: the targeted account.
+            role: admin | member (organization); member | maintainer (team).
+            permission: pull | triage | push | maintain | admin (collaborator).
             filter: op='members' — 2fa_disabled | all.
             affiliation: op='collaborators' — outside | direct | all.
-            page: numéro de page.
-            per_page: lignes par page (1-100, défaut 30).
+            page: page number.
+            per_page: rows per page (1-100, default 30).
         """
         c = _client()
         if op == "me":
@@ -819,48 +819,48 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         per_page: int = 30,
     ) -> Any:
-        """GitHub Actions — workflows, exécutions, jobs, logs et artefacts.
+        """GitHub Actions — workflows, runs, jobs, logs and artifacts.
 
-        Lecture d'abord : `runs` puis `jobs` puis `logs` est le chemin normal
-        pour comprendre pourquoi un pipeline a échoué.
+        Read first: `runs` then `jobs` then `logs` is the normal path
+        to understand why a pipeline failed.
 
-        ⚠️ Lire `status` ET `conclusion` : une exécution `completed` peut avoir
-        échoué, et `conclusion` reste nul tant que le travail n'est pas fini.
+        ⚠️ Read `status` AND `conclusion`: a `completed` run may have
+        failed, and `conclusion` stays null while the work is not finished.
 
-        ⚠️ **`op='dispatch'` déclenche une exécution réelle** — donc
-        potentiellement un build, une publication ou un **déploiement**. Il est
-        en **dry-run par défaut** : `dry_run=false` pour déclencher vraiment. Le
-        workflow doit déclarer `workflow_dispatch`, sinon GitHub répond 404 — ici
-        un 404 veut dire « pas déclenchable », pas « n'existe pas ». La réponse
-        ne rend PAS l'exécution créée : la retrouver en listant les runs juste
-        après (il y a un court délai).
+        ⚠️ **`op='dispatch'` triggers a real run** — thus
+        potentially a build, a publication or a **deployment**. It is
+        **dry-run by default**: `dry_run=false` to really trigger. The
+        workflow must declare `workflow_dispatch`, otherwise GitHub answers 404 — here
+        a 404 means "not triggerable", not "does not exist". The response
+        does NOT return the created run: find it by listing the runs right
+        afterwards (there is a short delay).
 
-        ⚠️ `rerun` relance TOUTE l'exécution (minutes facturées, redéploiement
-        possible) ; `rerun_failed` ne rejoue que les jobs en échec — moins cher
-        et moins risqué. `cancel` interrompt un travail en cours.
+        ⚠️ `rerun` reruns the WHOLE run (billed minutes, possible
+        redeployment); `rerun_failed` only replays the failed jobs — cheaper
+        and less risky. `cancel` interrupts work in progress.
 
-        ⚠️ `logs` et `download` rendent une **URL signée éphémère** (~1 minute),
-        à télécharger **sans en-tête d'authentification** — le stockage refuse une
-        requête doublement authentifiée. `None` signale des logs expirés ou un
-        artefact périmé (90 jours par défaut).
+        ⚠️ `logs` and `download` return an **ephemeral signed URL** (~1 minute),
+        to be downloaded **without an authentication header** — the storage refuses a
+        doubly authenticated request. `None` signals expired logs or a
+        stale artifact (90 days by default).
 
         Args:
-            op: l'opération, cf. ci-dessus.
-            owner: propriétaire du dépôt.
-            repo: nom du dépôt.
-            workflow: id numérique ou nom de fichier (ci.yml) — le nom est plus stable.
-            run_id: l'exécution visée.
-            job_id: le job visé (job, logs).
-            artifact_id: l'artefact visé (artifact, download, delete_artifact).
-            ref: op='dispatch' — la branche ou le tag sur lequel tourner.
-            branch: op='runs' — filtre par branche.
-            event: op='runs' — filtre par événement déclencheur.
+            op: the operation, see above.
+            owner: repository owner.
+            repo: repository name.
+            workflow: numeric id or file name (ci.yml) — the name is more stable.
+            run_id: the targeted run.
+            job_id: the targeted job (job, logs).
+            artifact_id: the targeted artifact (artifact, download, delete_artifact).
+            ref: op='dispatch' — the branch or tag to run on.
+            branch: op='runs' — filter by branch.
+            event: op='runs' — filter by triggering event.
             status: op='runs' — queued | in_progress | completed | success | failure…
-            actor: op='runs' — filtre par déclencheur.
-            inputs: op='dispatch' — les entrées du workflow.
-            dry_run: op='dispatch' — True (défaut) décrit sans déclencher.
-            page: numéro de page.
-            per_page: lignes par page (1-100, défaut 30).
+            actor: op='runs' — filter by triggering actor.
+            inputs: op='dispatch' — the workflow's inputs.
+            dry_run: op='dispatch' — True (default) describes without triggering.
+            page: page number.
+            per_page: rows per page (1-100, default 30).
         """
         c = _client()
         o, r = _repo(owner, repo, op)
@@ -875,13 +875,13 @@ def register(mcp: FastMCP) -> None:
             if dry_run:
                 return {
                     "dry_run": True,
-                    "would": "déclencher une exécution réelle de ce workflow",
+                    "would": "trigger a real run of this workflow",
                     "repo": f"{o}/{r}", "workflow": workflow, "ref": ref,
                     "inputs": inputs or {},
-                    "avertissement": ("une exécution peut construire, publier "
-                                      "ou DÉPLOYER, et consomme des minutes "
-                                      "facturées"),
-                    "pour_declencher": "rappeler avec dry_run=false",
+                    "avertissement": ("a run may build, publish "
+                                      "or DEPLOY, and consumes billed "
+                                      "minutes"),
+                    "pour_declencher": "call again with dry_run=false",
                 }
             return _run(lambda: c.dispatch_workflow(o, r, workflow, ref, inputs))
         if op == "runs":
@@ -914,10 +914,10 @@ def register(mcp: FastMCP) -> None:
             _need(job_id, "job_id", op)
             return _run(lambda: {"job_id": job_id,
                                  "url": c.get_job_logs_url(o, r, job_id),
-                                 "note": ("URL signée valable ~1 minute, à "
-                                          "télécharger SANS en-tête "
-                                          "d'authentification ; null = logs "
-                                          "expirés ou absents")})
+                                 "note": ("signed URL valid ~1 minute, to "
+                                          "be downloaded WITHOUT an "
+                                          "authentication header; null = logs "
+                                          "expired or absent")})
         if op == "artifacts":
             return _run(lambda: c.list_artifacts(o, r, run_id=run_id,
                                                  per_page=per_page, page=page))
@@ -928,9 +928,9 @@ def register(mcp: FastMCP) -> None:
             _need(artifact_id, "artifact_id", op)
             return _run(lambda: {"artifact_id": artifact_id,
                                  "url": c.get_artifact_download_url(o, r, artifact_id),
-                                 "note": ("URL signée éphémère, sans en-tête "
-                                          "d'authentification ; null = artefact "
-                                          "expiré (90 jours par défaut)")})
+                                 "note": ("ephemeral signed URL, without an "
+                                          "authentication header; null = artifact "
+                                          "expired (90 days by default)")})
         if op == "delete_artifact":
             _need(artifact_id, "artifact_id", op)
             return _run(lambda: c.delete_artifact(o, r, artifact_id))
@@ -938,7 +938,7 @@ def register(mcp: FastMCP) -> None:
                           "rerun | rerun_failed | delete_run | jobs | job | logs | "
                           "artifacts | artifact | download | delete_artifact")
 
-    # --- recherche ------------------------------------------------------------
+    # --- search ---------------------------------------------------------------
 
     @mcp.tool()
     def github_search(
@@ -949,35 +949,35 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         per_page: int = 30,
     ) -> Any:
-        """GitHub — la recherche : dépôts, code, issues/PR, comptes, commits.
+        """GitHub — search: repositories, code, issues/PRs, accounts, commits.
 
-        `q` prend la syntaxe de qualificateurs de GitHub, passée telle quelle :
+        `q` takes GitHub's qualifier syntax, passed as-is:
         `repo:`, `org:`, `language:`, `is:issue` / `is:pr`, `state:`, `in:file`…
 
-        ⚠️ **Plafond de 1 000 résultats, quoi qu'annonce `total_count`.** Ce
-        compteur est une estimation du corpus, PAS le nombre de lignes
-        récupérables : au-delà, GitHub répond 422. La réponse porte donc un
-        `troncature` calculé, qui vaut vrai aussi quand GitHub a **abandonné la
-        recherche en cours de route** (`incomplete_results`) — deux causes
-        invisibles autrement.
+        ⚠️ **Cap of 1,000 results, whatever `total_count` announces.** This
+        counter is an estimate of the corpus, NOT the number of retrievable
+        rows: beyond that, GitHub answers 422. The response therefore carries a computed
+        `troncature`, which is also true when GitHub **gave up the
+        search midway** (`incomplete_results`) — two causes
+        invisible otherwise.
 
-        ⚠️ **La recherche de code a ses propres règles**, et elles expliquent la
-        plupart des « pourquoi ne trouve-t-il pas ? » : seule la branche par
-        défaut est indexée, les fichiers de plus de 384 Ko ne le sont pas, et il
-        faut au moins un terme réel — `repo:x` seul ne suffit pas. Elle ne rend
-        pas le contenu du fichier : le lire ensuite avec `github_files op='read'`.
+        ⚠️ **Code search has its own rules**, and they explain most of the
+        "why doesn't it find it?" questions: only the default branch is
+        indexed, files larger than 384 KB are not, and at least one real
+        term is needed — `repo:x` alone is not enough. It does not return
+        the file's content: read it afterwards with `github_files op='read'`.
 
-        ⚠️ Limite d'usage propre et basse (~30 requêtes/minute), un ordre de
-        grandeur sous le reste de l'API.
+        ⚠️ Its own, low usage limit (~30 requests/minute), an order of
+        magnitude below the rest of the API.
 
         Args:
             op: repos | code | issues | users | commits.
-            q: la requête, syntaxe GitHub (requise).
-            sort: dépend de op — stars/forks/updated (repos), indexed (code),
-                comments/created/updated (issues). Absent = par pertinence.
+            q: the query, GitHub syntax (required).
+            sort: depends on op — stars/forks/updated (repos), indexed (code),
+                comments/created/updated (issues). Absent = by relevance.
             order: asc | desc.
-            page: numéro de page.
-            per_page: lignes par page (1-100, défaut 30).
+            page: page number.
+            per_page: rows per page (1-100, default 30).
         """
         c = _client()
         _need(q, "q", op)
@@ -993,9 +993,9 @@ def register(mcp: FastMCP) -> None:
             payload = dict(payload)
             payload["troncature"] = {
                 "tronque": c.search_is_truncated(payload),
-                "pourquoi": ("GitHub ne sert que les 1 000 premiers résultats, "
-                             "et abandonne parfois la recherche en route "
-                             "(incomplete_results) — total_count n'est donc pas "
-                             "un nombre de lignes récupérables"),
+                "pourquoi": ("GitHub only serves the first 1,000 results, "
+                             "and sometimes gives up the search midway "
+                             "(incomplete_results) — total_count is thus not "
+                             "a number of retrievable rows"),
             }
         return payload

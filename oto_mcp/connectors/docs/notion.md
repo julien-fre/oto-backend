@@ -1,22 +1,22 @@
-## prerequisite — ton token d'intégration notion
+## prerequisite — your notion integration token
 
-notion s'ouvre via une **intégration interne**. crée-la sur [notion.so/my-integrations](https://www.notion.so/my-integrations), récupère l'**internal integration token**.
-- **partage les pages/databases voulues avec ton intégration** dans notion (menu `...` → connexions) — sinon elle ne voit rien
-- pour les **commentaires**, coche « read comments » et « insert comments » dans les capacités de l'intégration (décochées par défaut)
-- colle le token dans oto sur ton compte (`/account`), connecteur **notion**
+notion is accessed through an **internal integration**. create it at [notion.so/my-integrations](https://www.notion.so/my-integrations) and get the **internal integration token**.
+- **share the pages/databases you want with your integration** in notion (`...` menu → connections) — otherwise it sees nothing
+- for **comments**, tick "read comments" and "insert comments" in the integration's capabilities (unticked by default)
+- paste the token into oto on your account (`/account`), **notion** connector
 
-## usage — ce que tu peux faire
+## usage — what you can do
 
-lis et écris pages, databases et blocs notion partagés avec ton intégration.
-- « retrouve la page roadmap » → `notion_search` — un zéro peut vouloir dire « rien n'est partagé avec l'intégration » : la réponse porte alors un `warning` qui dit comment trancher (relancer avec `query=""`). une réponse rend au plus 100 objets : `has_more: true` → repasse son `next_cursor` en `cursor` pour la page suivante
-- « qu'est-ce qui a changé hier dans notion ? » → `notion_search` avec `query=""` et `edited_on="AAAA-MM-JJ"` (jour UTC) : tous les objets édités ce jour-là, en une réponse
-- « liste les lignes de cette base où statut = à faire » → `notion_query_database` (avec filtre)
-- « crée une page sous ce projet » → `notion_create_page`
-- « ajoute ce paragraphe à la page » → `notion_append_blocks` (`position="start"` pour écrire en haut)
-- « corrige cette phrase / réécris la section » → `notion_get_markdown` puis `notion_edit_markdown` (rechercher-remplacer)
-- « range cette page dans Archives » → `notion_move_page`
-- « commente / réponds au commentaire » → `notion_get_comments`, `notion_add_comment`
-- « ajoute une colonne Échéance à la base » → `notion_update_database` ; « crée une base » → `notion_create_database`
-- « crée une vue tableau filtrée sur À faire » → `notion_view`
+read and write notion pages, databases and blocks shared with your integration.
+- "find the roadmap page" → `notion_search` — a zero can mean "nothing is shared with the integration": the response then carries a `warning` saying how to tell (retry with `query=""`). a response returns at most 100 objects: `has_more: true` → pass its `next_cursor` back as `cursor` for the next page
+- "what changed yesterday in notion?" → `notion_search` with `query=""` and `edited_on="YYYY-MM-DD"` (UTC day): all objects edited that day, in one response
+- "list the rows of this database where status = to do" → `notion_query_database` (with filter)
+- "create a page under this project" → `notion_create_page`
+- "add this paragraph to the page" → `notion_append_blocks` (`position="start"` to write at the top)
+- "fix this sentence / rewrite the section" → `notion_get_markdown` then `notion_edit_markdown` (search-and-replace)
+- "file this page under Archives" → `notion_move_page`
+- "comment / reply to the comment" → `notion_get_comments`, `notion_add_comment`
+- "add a Due date column to the database" → `notion_update_database`; "create a database" → `notion_create_database`
+- "create a table view filtered on To do" → `notion_view`
 
-une base a une ou plusieurs **data sources** (API notion 2025-09-03) : `search` les rend sous l'objet `data_source`. les outils base acceptent l'id de la base OU de sa data source — jamais celui d'une **vue liée** (copie d'une base posée dans une autre page) : prends l'id de la base d'origine.
+a database has one or more **data sources** (notion API 2025-09-03): `search` returns them under the `data_source` object. the database tools accept the id of the database OR of its data source — never that of a **linked view** (a copy of a database placed in another page): use the id of the original database.

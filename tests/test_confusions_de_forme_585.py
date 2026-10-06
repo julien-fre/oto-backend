@@ -36,7 +36,7 @@ def _refus(**arguments) -> Exception:
 
 def test_op_list_sur_data_write_nomme_la_cle_en_trop_et_pointe_le_schema():
     msg = T._arg_error_message(_refus(op="list"))
-    assert "champ(s) non reconnu(s) : op" in msg, msg
-    assert "champ(s) requis absent(s) : datastore" in msg, msg
+    assert "unrecognized field(s): op" in msg, msg
+    assert "required field(s) missing: datastore" in msg, msg
     assert 'oto_tool_schema(name="data_write")' in msg, msg
     assert "Unexpected keyword argument" not in msg, msg

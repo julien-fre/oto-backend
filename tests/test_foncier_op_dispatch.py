@@ -286,7 +286,7 @@ def test_unknown_op_is_refused_and_names_the_valid_ops(clients, tool, expected_o
     with pytest.raises(McpError) as e:
         _tool(tool)(op="nope", **kwargs)
     msg = str(e.value)
-    assert "op doit être" in msg
+    assert "op must be" in msg
     for op in expected_ops:
         assert f"'{op}'" in msg, op
 
@@ -326,7 +326,7 @@ def test_missing_required_arg_names_the_op_and_the_arg(clients, tool, op, kwargs
 def test_an_empty_scope_counts_as_missing(clients, tool, op, kwargs):
     """Une chaîne vide n'est pas un scope : `adresse=""` partirait géocoder le vide
     et rendrait un voisinage arbitraire, qui passerait pour une réponse."""
-    with pytest.raises(McpError, match="requiert"):
+    with pytest.raises(McpError, match="requires"):
         _tool(tool)(op=op, **kwargs)
     for mock in clients.values():
         assert mock.mock_calls == []
@@ -421,7 +421,7 @@ def test_un_zero_de_l_etage_transport_se_nomme(clients):
     """
     out = _tool("foncier_conso_elec")(annee="2024", dept="33", reseau="les_deux")
     avert = out["avertissement_millesime"]
-    assert avert and "0 ligne" in avert and "2024" in avert
+    assert avert and "0 rows" in avert and "2024" in avert
     assert out["transport"]["total"] == 0
 
 
@@ -429,7 +429,7 @@ def test_le_zero_du_transport_se_nomme_aussi_quand_il_est_seul(clients):
     """`reseau="transport"` seul ne rendait AUCUN avertissement : l'ancien n'existait
     que pour `les_deux`, et un appel mono-étage sortait un `total: 0` nu."""
     out = _tool("foncier_conso_elec")(annee="2025", reseau="transport")
-    assert out["avertissement_millesime"] and "0 ligne" in out["avertissement_millesime"]
+    assert out["avertissement_millesime"] and "0 rows" in out["avertissement_millesime"]
 
 
 def test_l_avertissement_ne_compare_plus_l_annee_a_elle_meme(clients):
@@ -531,7 +531,7 @@ def test_un_total_qui_sature_sur_la_borne_est_nomme(clients):
     clients["beges"].bilans.return_value = {"total": 5, "bilans": []}
     out = _tool("foncier_beges")(departement="59", limit=5)
     assert out["tronque"] is True
-    assert "pas la population" in out["avertissement_troncature"]
+    assert "not the population" in out["avertissement_troncature"]
 
     clients["beges"].bilans.return_value = {"total": 504, "bilans": []}
     assert _tool("foncier_beges")(departement="59", limit=1000)["tronque"] is False

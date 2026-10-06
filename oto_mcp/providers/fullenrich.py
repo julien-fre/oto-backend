@@ -1,28 +1,28 @@
-"""Déclaration de registre du connecteur `fullenrich`.
+"""Registry declaration for the `fullenrich` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# ⚠️ **Sans `platform_key_open`, et c'est le lot L5** (blueprint ADR 0053) : le
-# premier connecteur dont l'accès à la clé plateforme passe par une ARÊTE de
-# `grants` et non plus par un flag + une allowlist dans la ligne du coffre
-# (`grants_chain.CHAIN_CONNECTORS`). Le flag n'avait qu'une fonction — empêcher
-# qu'un grant individuel FERME la clé partagée pour tous (le pansement de
-# l'incident du 31/07, oto-backend#245) — et cette fonction n'a plus d'objet :
-# `credentials_store.platform_grant` ne touche plus la ligne du coffre pour ce
-# connecteur, il pose une arête. Conséquence assumée et VRAIE : le catalogue
-# cesse d'annoncer un free-tier fullenrich (`public_catalog` le dérive de ce
-# flag) — sous le modèle de chaîne, la clé plateforme s'accorde, elle n'est pas
-# ouverte. Les neuf autres connecteurs à `platform_key_open` ne bougent pas
+# ⚠️ **No `platform_key_open`, and this is lot L5** (ADR 0053 blueprint): the
+# first connector whose access to the platform key goes through a `grants` EDGE
+# and no longer through a flag + an allowlist in the vault row
+# (`grants_chain.CHAIN_CONNECTORS`). The flag had only one function — preventing
+# an individual grant from CLOSING the shared key for everyone (the band-aid for the
+# 31/07 incident, oto-backend#245) — and that function no longer has a purpose:
+# `credentials_store.platform_grant` no longer touches the vault row for this
+# connector, it sets an edge. Accepted and TRUE consequence: the catalog
+# stops announcing a fullenrich free tier (`public_catalog` derives it from this
+# flag) — under the chain model, the platform key is granted, not
+# opened. The nine other connectors with `platform_key_open` do not change
 # (tripwire `tests/test_grants_l5_platform_chain.py`).
 CONNECTOR = _c(
     "fullenrich", ["fullenrich"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
     secret_kind="api_key", default_quota=5,
-    label="FullEnrich", help="enrichissement waterfall", href="https://app.fullenrich.com",
+    label="FullEnrich", help="waterfall enrichment", href="https://app.fullenrich.com",
 )
 
 CATEGORY = "Prospection"
@@ -30,7 +30,7 @@ PUBLISHER = "FullEnrich"
 LOGO_DOMAIN = "fullenrich.com"
 
 DESCRIPTION = (
-    "Enrichissement « waterfall » chez FullEnrich : combine plusieurs "
-    "fournisseurs de données pour retrouver l'email et le téléphone d'un "
-    "contact avec le meilleur taux de succès."
+    "\"Waterfall\" enrichment at FullEnrich: combines several "
+    "data providers to find a contact's email and phone "
+    "with the best success rate."
 )

@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `apollo`.
+"""Registry declaration of the `apollo` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ CONNECTOR = _c(
     "apollo", ["apollo"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
     secret_kind="api_key", default_quota=20, platform_key_open=True,
     label="Apollo.io",
-    help="prospection B2B (organizations, people, job postings)",
+    help="B2B prospecting (organizations, people, job postings)",
     href="https://app.apollo.io",
 )
 
@@ -20,7 +20,7 @@ PUBLISHER = "Apollo"
 LOGO_DOMAIN = "apollo.io"
 
 DESCRIPTION = (
-    "Prospection B2B chez Apollo.io : rechercher des organisations et des "
-    "personnes, lire les offres d'emploi publiées, enrichir un contact ou une "
-    "entreprise déjà trouvée. Consomme les crédits du compte connecté."
+    "B2B prospecting with Apollo.io: search organizations and "
+    "people, read published job postings, enrich a contact or a "
+    "company already found. Consumes the credits of the connected account."
 )

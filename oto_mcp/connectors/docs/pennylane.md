@@ -1,23 +1,23 @@
-## prerequisite — ta clé api pennylane
+## prerequisite — your pennylane api key
 
-chaque utilisateur pose sa propre clé pennylane — ta compta n'est visible que par toi.
-- connecte-toi sur [app.pennylane.com](https://app.pennylane.com)
-- va dans les paramètres, section api / intégrations, et crée une clé api (token personnel)
-- colle-la dans tes clés de connecteur oto sous `pennylane`
+each user sets their own pennylane key — your books are visible only to you.
+- sign in at [app.pennylane.com](https://app.pennylane.com)
+- go to settings, api / integrations section, and create an api key (personal token)
+- paste it into your oto connector keys under `pennylane`
 
-## usage — lire et lettrer ta compta
+## usage — read and reconcile your books
 
-interroge factures, transactions et balance, et solde les paiements non rapprochés.
-- `pennylane_trial_balance` la balance comptable sur une période, `pennylane_ref(kind="ledger_accounts")` le plan comptable
-- `pennylane_invoice(op="list")` / `pennylane_supplier_invoice(op="list")` les factures, `pennylane_transactions` les mouvements bancaires
-- `pennylane_match` lettre une transaction avec sa facture (réversible) pour ne pas laisser une facture payée en `late`
-- devis : `pennylane_quote(op="create")` (pas de brouillon : il naît `pending`) → `op="pdf"` pour le lien du PDF à joindre à un mail (lien qui expire, à relire juste avant) → `op="set_status"` (`accepted` à la signature) → `op="to_invoice"` crée la facture en **brouillon**, que `pennylane_invoice(op="finalize")` puis `op="send"` émettent **après validation humaine**
-- factures d'achat : `pennylane_upload_file` (le PDF) → `pennylane_supplier_invoice(op="import")` (avec `import_as_incomplete=true`, elle reste en `validation_needed`) → `op="lines"` (les `id` et `vat_rate` des lignes) → `op="update"` (libellé, dates, montants, et `invoice_lines={"update": [{"id": …, "vat_rate": …}]}`) → `op="validate"` la passe en `complete` : écriture comptable **engageante**, uniquement sur demande explicite de l'utilisateur, jamais dans la foulée d'un import
-- montants d'une facture d'achat : le HT (`currency_amount_before_tax`) est exigé au niveau de la facture et refusé dans une ligne ; une ligne porte `currency_amount` (TTC) et `currency_tax`
-- `vat_rate` d'autoliquidation (référence v2) : `intracom_21`, `intracom_55`, `intracom_85`, `intracom_100`, `extracom`, `crossborder`, `FR_85_construction`, `FR_100_construction`, `FR_200_construction` ; la référence ne les définit pas plus avant et n'a pas d'`intracom_200` — le bon code se décide avec le comptable
-- plusieurs instances pennylane dans une org (perso et société) : sans `_instance`, la clé personnelle répond d'abord — pour deviser ou facturer au nom de la société, passer `_instance="org:<id>:pennylane"`
-- flux avoir supervisé : `pennylane_ref(kind="products")` (résoudre le `product_id`, jamais le deviner) → `pennylane_invoice(op="find")` (anti-doublon) → `pennylane_invoice(op="credit_note")` (brouillon **standalone**, lignes en positif — la négativation « avoir » est appliquée côté serveur) → `pennylane_invoice(op="finalize")` puis `op="send"` **après validation humaine**
+query invoices, transactions and the trial balance, and settle unmatched payments.
+- `pennylane_trial_balance` the trial balance over a period, `pennylane_ref(kind="ledger_accounts")` the chart of accounts
+- `pennylane_invoice(op="list")` / `pennylane_supplier_invoice(op="list")` the invoices, `pennylane_transactions` the bank movements
+- `pennylane_match` matches a transaction to its invoice (reversible) so a paid invoice isn't left as `late`
+- quotes: `pennylane_quote(op="create")` (no draft: it is born `pending`) → `op="pdf"` for the PDF link to attach to an email (the link expires, re-read it just before sending) → `op="set_status"` (`accepted` on signature) → `op="to_invoice"` creates the invoice as a **draft**, which `pennylane_invoice(op="finalize")` then `op="send"` issue **after human validation**
+- supplier invoices: `pennylane_upload_file` (the PDF) → `pennylane_supplier_invoice(op="import")` (with `import_as_incomplete=true`, it stays in `validation_needed`) → `op="lines"` (the line `id`s and `vat_rate`s) → `op="update"` (label, dates, amounts, and `invoice_lines={"update": [{"id": …, "vat_rate": …}]}`) → `op="validate"` moves it to `complete`: a **binding** accounting entry, only on the user's explicit request, never right after an import
+- supplier invoice amounts: the pre-tax total (`currency_amount_before_tax`) is required at invoice level and rejected inside a line; a line carries `currency_amount` (incl. tax) and `currency_tax`
+- reverse-charge `vat_rate` (v2 reference): `intracom_21`, `intracom_55`, `intracom_85`, `intracom_100`, `extracom`, `crossborder`, `FR_85_construction`, `FR_100_construction`, `FR_200_construction`; the reference doesn't define them any further and has no `intracom_200` — the right code is decided with the accountant
+- several pennylane instances in an org (personal and company): without `_instance`, the personal key answers first — to quote or invoice on behalf of the company, pass `_instance="org:<id>:pennylane"`
+- supervised credit-note flow: `pennylane_ref(kind="products")` (resolve the `product_id`, never guess it) → `pennylane_invoice(op="find")` (duplicate check) → `pennylane_invoice(op="credit_note")` (**standalone** draft, lines in positive — the "credit note" negation is applied server-side) → `pennylane_invoice(op="finalize")` then `op="send"` **after human validation**
 
-## note — périmètre de projet (#605, 2026-08-29)
+## note — project scope (#605, 2026-08-29)
 
-`pennylane_upload_file` avec une source `{kind: "url"}` lit cette url côté serveur : sous un projet à `excluded_url_prefixes`, une url correspondante est refusée en nommant le motif (seam `file_source`). détail : `docs/projects.md`.
+`pennylane_upload_file` with a `{kind: "url"}` source reads that url server-side: under a project with `excluded_url_prefixes`, a matching url is refused, naming the reason (`file_source` seam). details: `docs/projects.md`.

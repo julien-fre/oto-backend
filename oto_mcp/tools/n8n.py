@@ -1,9 +1,9 @@
-"""n8n — automatisation de workflows (workflows + exécutions).
+"""n8n — workflow automation (workflows + executions).
 
-Wrappe `oto.tools.n8n.N8nClient`. Credential à 2 champs (API key + base URL de
-l'instance, le self-hosting/n8n Cloud impose une URL propre) → modèle générique
-multi-champs (ADR 0011), résolu par appel via `access.resolve_credential_fields("n8n")`.
-byo_user (pas de quota plateforme : le credential EST le grant).
+Wraps `oto.tools.n8n.N8nClient`. 2-field credential (API key + instance base URL,
+self-hosting/n8n Cloud requires its own URL) → generic multi-field model
+(ADR 0011), resolved per call via `access.resolve_credential_fields("n8n")`.
+byo_user (no platform quota: the credential IS the grant).
 """
 from __future__ import annotations
 
@@ -16,20 +16,20 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ALONE.
 
-    `GET /workflows` (déjà dans le client — `list_workflows`), `limit=1` — le
-    plus petit format disponible, n8n n'exposant ni `/me` ni solde.
+    `GET /workflows` (already in the client — `list_workflows`), `limit=1` — the
+    smallest format available, n8n exposing neither `/me` nor a balance.
 
-    ⚠️ `N8nClient._request` lève un `Exception` NU sur un refus HTTP (pas de
-    `status_code` typé) — comme ashby, mais SANS son mur : aucune trace d'un
-    modèle de clé scopée par ressource chez n8n (une API key n8n est liée au
-    compte utilisateur qui l'a créée, pas restreinte par endpoint). Le refus
-    tombe donc en `unknown` (jamais `unauthorized`) faute de code typé — honnête,
-    pas un renoncement : rouvrable si le client se met à typer ses erreurs.
+    ⚠️ `N8nClient._request` raises a BARE `Exception` on an HTTP refusal (no typed
+    `status_code`) — like ashby, but WITHOUT its wall: no trace of a
+    per-resource scoped key model at n8n (an n8n API key is tied to the
+    user account that created it, not restricted per endpoint). The refusal
+    therefore falls into `unknown` (never `unauthorized`) for lack of a typed code — honest,
+    not a surrender: reopenable if the client starts typing its errors.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    une clé n8n porte le périmètre entier du compte.
+    **Authenticated ≠ usable** (oto#69 class): does not distinguish scopes —
+    an n8n key carries the account's entire perimeter.
     """
     from oto.tools.n8n import N8nClient
 
@@ -46,9 +46,9 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> N8nClient:
         creds = access.resolve_credential_fields("n8n")
-        # n8n s'auto-héberge : une instance sur le réseau interne de la
-        # plateforme est exactement le cas que la garde doit refuser sans
-        # exception déclarée (`oto_mcp/egress.py`).
+        # n8n is self-hosted: an instance on the platform's internal
+        # network is exactly the case the guard must refuse without a
+        # declared exception (`oto_mcp/egress.py`).
         egress.check_url(creds.get("base_url") or "", connector="n8n")
         return N8nClient(api_key=creds.get("api_key"),
                          base_url=creds.get("base_url"))

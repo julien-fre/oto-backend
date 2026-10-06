@@ -1,33 +1,33 @@
-## prerequisite — un accès API V2 (client id + secret)
+## prerequisite — an API V2 access (client id + secret)
 
-Dans Sellsy : **Réglages → Portail développeur → API V2 → créer un accès**. Choisis un accès de type **personnel** (« personal ») : c'est celui qui délivre un jeton directement à partir du couple identifiant/secret, sans passage par un navigateur.
+In Sellsy: **Settings → Developer portal → API V2 → create an access**. Choose a **personal** access ("personal"): it is the one that issues a token directly from the id/secret pair, without going through a browser.
 
-Colle ensuite dans oto :
-- **Client ID** — l'identifiant de l'accès
-- **Client Secret** — son secret (affiché une seule fois côté Sellsy)
+Then paste into oto:
+- **Client ID** — the access identifier
+- **Client Secret** — its secret (shown only once on the Sellsy side)
 
-Coche les **droits (scopes)** correspondant à ce que l'agent devra faire : lecture seule pour consulter, écriture pour créer des tiers ou des documents. Un droit manquant se manifeste par un refus `HTTP 403` au moment de l'appel, pas à la connexion.
+Tick the **rights (scopes)** matching what the agent will need to do: read-only to look things up, write to create third parties or documents. A missing right shows up as an `HTTP 403` refusal at call time, not at connection time.
 
-byo uniquement : un compte Sellsy est celui d'une entreprise, il n'y a pas de clé partagée par oto. L'accès hérite des permissions du collaborateur auquel il est rattaché.
+byo only: a Sellsy account belongs to a company, there is no key shared by oto. The access inherits the permissions of the staff member it is attached to.
 
-## usage — le CRM et la facturation dans la même conversation
+## usage — CRM and invoicing in the same conversation
 
-Sellsy tient les deux bouts : qui sont les clients, et ce qui leur est facturé.
-- « quelles sociétés ont été créées ce mois-ci ? » → `sellsy_third_party` (op `search`)
-- « qui est Acme chez nous ? » → `sellsy_search` (plein texte, tous objets)
-- « où en est le pipeline ? » → `sellsy_opportunity`, puis op `move` pour changer d'étape
-- « liste les factures impayées » → `sellsy_document` (kind `invoice`, op `search`, filtre `status`)
-- « fais un devis pour ce client » → `sellsy_document` (kind `estimate`, op `create`) — il naît en brouillon
-- « quels articles au catalogue ? » → `sellsy_item` ; « les taux de TVA, les collaborateurs » → `sellsy_ref`
+Sellsy holds both ends: who the clients are, and what they are invoiced.
+- "which companies were created this month?" → `sellsy_third_party` (op `search`)
+- "who is Acme for us?" → `sellsy_search` (full text, all objects)
+- "where does the pipeline stand?" → `sellsy_opportunity`, then op `move` to change step
+- "list the unpaid invoices" → `sellsy_document` (kind `invoice`, op `search`, filter `status`)
+- "make a quote for this client" → `sellsy_document` (kind `estimate`, op `create`) — it is born as a draft
+- "which items are in the catalog?" → `sellsy_item`; "the VAT rates, the staff members" → `sellsy_ref`
 
-Les identifiants (étape de pipeline, taxe, collaborateur, champ personnalisé) se lisent avec `sellsy_ref` — ne jamais les deviner.
+Identifiers (pipeline step, tax, staff member, custom field) are read with `sellsy_ref` — never guess them.
 
-## note — écrire sans casser
+## note — writing without breaking things
 
-Deux réflexes valent d'être connus avant de laisser l'agent écrire.
+Two reflexes are worth knowing before letting the agent write.
 
-**Essayer à blanc.** `op="create"` accepte `dry_run=true` : Sellsy valide le corps et ne persiste rien. Utile avant une création en série, les champs obligatoires variant d'un compte à l'autre (numérotation, champs personnalisés).
+**Dry run.** `op="create"` accepts `dry_run=true`: Sellsy validates the body and persists nothing. Useful before a serial creation, since required fields vary from one account to another (numbering, custom fields).
 
-**Valider est irréversible.** Un document créé est un brouillon ; `op="validate"` sur une facture ou un avoir fige son numéro et le rend comptable. À réserver à une décision humaine. Un devis, lui, change simplement d'état (`op="status"`).
+**Validating is irreversible.** A created document is a draft; `op="validate"` on an invoice or a credit note freezes its number and makes it accounting-relevant. Reserve it for a human decision. A quote, by contrast, simply changes state (`op="status"`).
 
-Les quotas Sellsy se comptent par seconde, minute, jour et mois, et **chaque requête compte, même en erreur** : préférer `filters` + `fields` à un `all_pages` large.
+Sellsy quotas are counted per second, minute, day and month, and **every request counts, even in error**: prefer `filters` + `fields` over a wide `all_pages`.

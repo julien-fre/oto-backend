@@ -1,12 +1,12 @@
-## prerequisite — clé api figma
+## prerequisite — figma api key
 
-génère un personal access token dans [Figma](https://www.figma.com) (Settings → Security → Personal access tokens), puis colle-le dans oto.
-- byo : ta propre clé donne accès à TES fichiers
+generate a personal access token in [Figma](https://www.figma.com) (Settings → Security → Personal access tokens), then paste it into oto.
+- byo: your own key gives access to YOUR files
 
-## usage — fichiers, exports d'images et commentaires
+## usage — files, image exports and comments
 
-inspecte des fichiers Figma/FigJam, exporte des rendus d'images et gère les commentaires.
-- « donne la structure de ce fichier Figma (clé `abc123`) »
-- « exporte ces nodes en PNG @2x »
-- « liste les commentaires du fichier »
-- « poste un commentaire `à revoir` sur ce fichier »
+inspect Figma/FigJam files, export image renders and manage comments.
+- "give me the structure of this Figma file (key `abc123`)"
+- "export these nodes as PNG @2x"
+- "list the file's comments"
+- "post a comment `needs review` on this file"

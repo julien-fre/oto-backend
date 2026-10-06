@@ -1,9 +1,9 @@
 """Figma — files, image export, comments, FigJam extraction.
 
-Wrappe `oto.tools.figma.FigmaClient`. Token résolu par appel via
-`access.resolve_api_key("figma")` — byo. **Cache disque désactivé**
-(`cache_enabled=False`) : sur un host multi-utilisateur le cache fichier n'est
-pas clefé par token → fuite cross-user.
+Wraps `oto.tools.figma.FigmaClient`. Token resolved per call via
+`access.resolve_api_key("figma")` — byo. **Disk cache disabled**
+(`cache_enabled=False`): on a multi-user host the file cache is
+not keyed by token → cross-user leak.
 """
 from __future__ import annotations
 
@@ -16,26 +16,26 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /v1/me`. Ce que la doc Figma établit :
+    `GET /v1/me`. What the Figma docs establish:
 
-    - **authentifié** — jeton en en-tête `X-Figma-Token`, comme le reste de
-      l'API ;
-    - **sans effet de bord** — une lecture d'identité (`id`, `handle`, `email`) ;
-    - **le coût** — aucune mention de coût ni de limite de débit particulière
-      pour cet appel. Absence de mention, indice, pas une preuve.
+    - **authenticated** — token in the `X-Figma-Token` header, like the rest of
+      the API;
+    - **no side effects** — an identity read (`id`, `handle`, `email`);
+    - **the cost** — no mention of any particular cost or rate limit
+      for this call. Absence of mention is a hint, not proof.
 
-    ⚠️ **Quatrième règle d'oto#69 : une sonde ne transforme jamais sa propre
-    limite en verdict sur la clé.** `/v1/me` exige le scope `current_user:read`
-    — SÉPARÉ des scopes réels du connecteur (lecture de fichiers/design). Un
-    jeton légitimement scopé pour l'usage réel peut refuser CET appel sans être
-    cassé. Figma documente `403` pour un scope manquant et `401` pour un jeton
-    mort/invalide — deux codes distincts, donc distinguables : le 403 lève un
-    `RuntimeError` NU (jamais `NonAutorise`) pour tomber sur le verdict
-    `unknown` (« je ne sais pas »), PAS `unauthorized` (« remplace ta clé ») —
-    un faux négatif ici pousserait à révoquer une clé qui marche. Le vrai 401
-    lève `NonAutorise`, verdict `unauthorized` mérité.
+    ⚠️ **Fourth rule of oto#69: a probe never turns its own
+    limit into a verdict on the key.** `/v1/me` requires the `current_user:read` scope
+    — SEPARATE from the connector's real scopes (file/design reads). A
+    token legitimately scoped for real use may refuse THIS call without being
+    broken. Figma documents `403` for a missing scope and `401` for a dead/invalid
+    token — two distinct codes, hence distinguishable: the 403 raises a
+    BARE `RuntimeError` (never `NonAutorise`) so as to land on the verdict
+    `unknown` ("I don't know"), NOT `unauthorized` ("replace your key") —
+    a false negative here would push people to revoke a working key. The real 401
+    raises `NonAutorise`, a deserved `unauthorized` verdict.
     """
     import requests
     from oto.tools.figma.client import FigmaClient
@@ -47,18 +47,18 @@ def _verify(fields: dict, config: dict | None = None) -> None:
         status = e.response.status_code if e.response is not None else None
         if status == 403:
             raise RuntimeError(
-                "Figma refuse CET appel de vérification (403, scope "
-                "current_user:read) — ça ne dit RIEN de la clé pour l'usage "
-                "réel du connecteur (fichiers/design, un scope différent). "
-                "Non concluant, pas invalide.") from e
+                "Figma refuses THIS verification call (403, scope "
+                "current_user:read) — that says NOTHING about the key for the "
+                "connector's real use (files/design, a different scope). "
+                "Inconclusive, not invalid.") from e
         if status == 401:
             raise connector_verify.NonAutorise(
-                f"Figma refuse cette clé (401) : {str(e)[:200]}") from e
+                f"Figma refuses this key (401): {str(e)[:200]}") from e
         raise
     if not infos.get("id"):
         raise RuntimeError(
-            "Figma a répondu sans identifier d'utilisateur pour cette clé — "
-            f"réponse inattendue : {str(infos)[:200]}")
+            "Figma answered without identifying a user for this key — "
+            f"unexpected response: {str(infos)[:200]}")
 
 
 def register(mcp: FastMCP) -> None:

@@ -1,46 +1,46 @@
-"""Déclaration de registre du connecteur `reddit`.
+"""Registry declaration for the `reddit` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# reddit : lecture posts/subreddits/commentaires AVEC métriques (score,
-# num_comments, upvote_ratio, pagination, arbre imbriqué) via la passerelle
-# REST redditapis.com. L'API Reddit officielle est fermée en self-serve
-# (Responsible Builder Policy fin 2025) et le JSON anonyme est bloqué (403
-# IP datacenter) → l'ancien connecteur RSS (sans métriques) est remplacé.
-# Clé plateforme partagée (Otomata paie l'usage) + quota/jour pour borner le
-# coût ; BYO possible (l'org pose sa propre clé redditapis).
+# reddit: reads posts/subreddits/comments WITH metrics (score,
+# num_comments, upvote_ratio, pagination, nested tree) via the redditapis.com
+# REST gateway. The official Reddit API is closed to self-serve
+# (Responsible Builder Policy, late 2025) and anonymous JSON is blocked (403
+# on datacenter IPs) → the old RSS connector (no metrics) is replaced.
+# Shared platform key (Otomata pays for usage) + daily quota to bound the
+# cost; BYO possible (the org sets its own redditapis key).
 #
-# ⚠️ L'ÉDITEUR EST LA PASSERELLE, PAS REDDIT (corrigé le 2026-09-02). La fiche
-# a annoncé jusque-là « Reddit » comme éditeur, avec le logo reddit.com : on
-# attribuait à Reddit un service que Reddit ne rend pas — l'appel part chez
-# api.redditapis.com, un revendeur —, et la dépendance à cet intermédiaire
-# n'apparaissait nulle part avant l'installation. Le NOM du connecteur et de
-# ses tools ne bouge pas (des appelants s'y accrochent) : ce qui change est ce
-# que la fiche DIT.
+# ⚠️ THE PUBLISHER IS THE GATEWAY, NOT REDDIT (fixed on 2026-09-02). The listing
+# used to announce "Reddit" as the publisher, with the reddit.com logo: we
+# were attributing to Reddit a service Reddit does not provide — the call goes to
+# api.redditapis.com, a reseller —, and the dependency on that intermediary
+# appeared nowhere before installation. The NAME of the connector and of
+# its tools does not change (callers depend on it): what changes is what
+# the listing SAYS.
 CONNECTOR = _c(
     "reddit", ["reddit"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
     secret_kind="api_key", default_quota=100, platform_key_open=True,
     label="Reddit",
-    help="posts, subreddits & commentaires avec votes/métriques — via la "
-         "passerelle tierce redditapis.com, pas l'API de Reddit",
+    help="posts, subreddits & comments with votes/metrics — via the "
+         "third-party gateway redditapis.com, not Reddit's API",
     href="https://redditapis.com",
 )
 
 CATEGORY = "Web"
-PUBLISHER = "redditapis.com (passerelle tierce)"
-# Pas le logo de Reddit : le service rendu n'est pas le sien. Et redditapis.com
-# n'est pas une marque que l'utilisateur reconnaîtrait — monogramme côté UI.
+PUBLISHER = "redditapis.com (third-party gateway)"
+# Not Reddit's logo: the service rendered is not theirs. And redditapis.com
+# is not a brand the user would recognize — monogram on the UI side.
 SANS_LOGO_DE_MARQUE = True
 
 DESCRIPTION = (
-    "Lire des posts, subreddits et commentaires Reddit avec leurs métriques "
-    "(score, nombre de commentaires, ratio d'upvotes), via une passerelle "
-    "tierce (redditapis.com) — l'API officielle de Reddit est fermée au self- "
-    "serve. Clé plateforme partagée avec quota quotidien, ou clé de ta propre "
-    "passerelle."
+    "Read Reddit posts, subreddits and comments with their metrics "
+    "(score, comment count, upvote ratio), through a third-party "
+    "gateway (redditapis.com) — Reddit's official API is closed to self-"
+    "serve. Shared platform key with a daily quota, or a key from your own "
+    "gateway account."
 )

@@ -1,39 +1,39 @@
-"""SerpApi — recherche multi-moteurs (scope complet de l'API SerpApi).
+"""SerpApi — multi-engine search (full scope of the SerpApi API).
 
-Wrappe `oto.tools.serpapi.SerpAPIClient`. Un tool générique `serpapi_search`
-atteint **n'importe quel moteur** SerpApi (tous les verticaux Google + Bing,
+Wraps `oto.tools.serpapi.SerpAPIClient`. A generic `serpapi_search` tool
+reaches **any SerpApi engine** (all Google verticals + Bing,
 DuckDuckGo, Yahoo, Baidu, Yandex, YouTube, Walmart, Amazon, eBay, Home Depot,
 Apple App Store, Yelp, Naver, TripAdvisor, Brave, google_trends/finance/flights/
 hotels/events/play…).
 
-**Surface consolidée (ADR 0047 §Amendement appliqué à un connecteur)** : le
-moteur est un **axe `engine=`**, pas un tool par moteur — bing / youtube /
-walmart / amazon / ebay / google_events partagent exactement les mêmes
-paramètres (`query`, `country`, `language`, `location`, `page`, `count`,
-`domain`), seuls leurs NOMS natifs diffèrent, et `serpapi_search` les traduit.
-`serpapi_jobs` porte l'objet métier « offre d'emploi » (op=search|details).
-Restent des tools à part les verticaux dont le contrat n'est PAS une recherche
-par mot-clé — leurs paramètres ne recouvrent pas ceux des autres :
+**Consolidated surface (ADR 0047 §Amendment applied to a connector)**: the
+engine is an **`engine=` axis**, not one tool per engine — bing / youtube /
+walmart / amazon / ebay / google_events share exactly the same
+parameters (`query`, `country`, `language`, `location`, `page`, `count`,
+`domain`), only their native NAMES differ, and `serpapi_search` translates them.
+`serpapi_jobs` carries the business object "job posting" (op=search|details).
+Verticals whose contract is NOT a keyword search remain separate tools —
+their parameters do not overlap with the others':
 `serpapi_google_trends` (data_type/date), `serpapi_google_finance` (window),
-`serpapi_google_flights` (departure_id/arrival_id/dates, aucun `query`),
+`serpapi_google_flights` (departure_id/arrival_id/dates, no `query`),
 `serpapi_google_hotels` (check_in/check_out/adults).
 
-⚠️ **Un résultat VIDE n'est jamais resservi par un cache** (signal d'usage #456,
-2026-08-27) : SerpApi mémorisait une heure durant les réponses à zéro résultat —
-et le cache d'arête Cloudflare devant lui aussi — ce qui transformait une absence
-momentanée en absence PERMANENTE et fausse. Sur un connecteur qui sert
-d'indicateur d'activité (« une maison qui recrute se développe »), un zéro figé
-est indiscernable d'une vraie absence, et une campagne qui traite chaque ligne une
-seule fois n'a aucun moyen de le rattraper. La garantie est portée par le client
-oto-core (`_empty_must_be_fresh`) : un vide périmé est refait en forçant
-`no_cache`, un NON-vide garde le droit au cache. Elle vaut partout où le tableau
-de résultats est nommé — toujours pour `serpapi_jobs`, sur `results_key=` pour
+⚠️ **An EMPTY result is never served again from a cache** (usage signal #456,
+2026-08-27): SerpApi memorized zero-result answers for an hour —
+and so did the Cloudflare edge cache in front of it — which turned a
+momentary absence into a PERMANENT and false absence. On a connector that serves
+as an activity indicator ("a company that is hiring is growing"), a frozen zero
+is indistinguishable from a real absence, and a campaign that processes each row only
+once has no way to recover. The guarantee is carried by the oto-core client
+(`_empty_must_be_fresh`): a stale empty is redone by forcing
+`no_cache`, a NON-empty keeps the right to the cache. It holds wherever the results
+array is named — always for `serpapi_jobs`, on `results_key=` for
 `serpapi_search`.
 
-Clé résolue par appel via `access.resolve_api_key("serpapi")` : user key
-(`/account`) ou credential partagé de l'org si posé, sinon clé plateforme + quota
-daily pour les members. Pourquoi SerpApi en plus de Serper : SerpApi a des moteurs
-dédiés que Serper n'a pas (jobs, trends, finance, flights, hotels, marketplaces…).
+Key resolved per call via `access.resolve_api_key("serpapi")`: user key
+(`/account`) or the org's shared credential if set, otherwise platform key + daily
+quota for members. Why SerpApi in addition to Serper: SerpApi has
+dedicated engines that Serper does not (jobs, trends, finance, flights, hotels, marketplaces…).
 """
 from __future__ import annotations
 
@@ -45,17 +45,17 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, url_perimeter
 
-# Pas de sonde `verify` ici (otomata-tech/oto#69) : TOUTE l'API SerpApi
-# authentifie par `api_key` en QUERY STRING, sans alternative (confirmé sur la
-# doc du compte ET sur `SerpAPIClient._request`, qui fait de même pour la
-# recherche elle-même) — `tests/test_no_secrets_in_query_string.py` l'interdit
-# à raison (#284 : une clé en URL finit dans les logs de proxy et l'historique
-# amont). Aucun appel conforme = pas de sonde, cf. la règle posée dans l'issue.
+# No `verify` probe here (otomata-tech/oto#69): the WHOLE SerpApi API
+# authenticates by `api_key` in the QUERY STRING, with no alternative (confirmed in
+# the account docs AND in `SerpAPIClient._request`, which does the same for
+# the search itself) — `tests/test_no_secrets_in_query_string.py` forbids it
+# rightly (#284: a key in a URL ends up in proxy logs and upstream history).
+# No compliant call = no probe, see the rule set in the issue.
 
-# --- traduction des params partagés vers le nom natif de chaque moteur --------
-# Seuls les moteurs qui DIVERGENT de la convention Google/SerpApi sont listés ;
-# tout moteur absent utilise `_DEFAULT_PARAMS` (q / gl / hl / location), ce qui
-# couvre google_events et l'ensemble des verticaux google.
+# --- translation of shared params to each engine's native name -----------------
+# Only engines that DIVERGE from the Google/SerpApi convention are listed;
+# any engine absent uses `_DEFAULT_PARAMS` (q / gl / hl / location), which
+# covers google_events and all the google verticals.
 _ENGINE_PARAMS: dict[str, dict[str, str]] = {
     "bing": {"query": "q", "country": "cc", "language": "setlang", "count": "count"},
     "youtube": {"query": "search_query", "country": "gl", "language": "hl"},
@@ -66,7 +66,7 @@ _ENGINE_PARAMS: dict[str, dict[str, str]] = {
 _DEFAULT_PARAMS: dict[str, str] = {
     "query": "q", "country": "gl", "language": "hl", "location": "location",
 }
-# Défauts historiques des ex-tools typés — conservés à l'identique par moteur.
+# Historical defaults of the former typed tools — kept identical per engine.
 _ENGINE_DEFAULTS: dict[str, dict] = {
     "bing": {"count": 10},
     "walmart": {"page": 1},
@@ -84,7 +84,7 @@ def register(mcp: FastMCP) -> None:
         return SerpAPIClient(api_key=key), is_platform
 
     def _run(method: str, **kwargs) -> dict:
-        """Résout la clé, appelle la méthode du client, compte l'usage plateforme."""
+        """Resolve the key, call the client method, count platform usage."""
         client, is_platform = _client()
         result = getattr(client, method)(**kwargs)
         if is_platform:
@@ -95,17 +95,17 @@ def register(mcp: FastMCP) -> None:
         return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
     def _need(value, name: str, op: str):
-        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
+        """Mandatory argument for THIS op — actionable error, never a fallback."""
         if value is None:
-            raise _bad(f"op='{op}' requiert {name}")
+            raise _bad(f"op='{op}' requires {name}")
         return value
 
     def _shared_params(engine: str, **supplied) -> dict:
-        """Traduit les arguments partagés dans les noms natifs de `engine`.
+        """Translate the shared arguments into the native names of `engine`.
 
-        Un argument sans équivalent connu pour ce moteur est REFUSÉ (jamais
-        envoyé sous un nom deviné : un filtre mal nommé serait ignoré en
-        silence par SerpApi et rendrait un résultat faux sans erreur).
+        An argument with no known equivalent for this engine is REFUSED (never
+        sent under a guessed name: a badly named filter would be silently
+        ignored by SerpApi and would return a wrong result without an error).
         """
         spec = _ENGINE_PARAMS.get(engine, _DEFAULT_PARAMS)
         defaults = _ENGINE_DEFAULTS.get(engine, {})
@@ -119,13 +119,13 @@ def register(mcp: FastMCP) -> None:
             native = spec.get(name)
             if native is None:
                 raise _bad(
-                    f"`{name}` n'a pas d'équivalent connu pour engine='{engine}' — "
-                    f"passe-le dans `params` sous le nom attendu par ce moteur "
-                    f"(voir serpapi.com).")
+                    f"`{name}` has no known equivalent for engine='{engine}' — "
+                    f"pass it in `params` under the name this engine expects "
+                    f"(see serpapi.com).")
             out[native] = value
         return out
 
-    # --- recherche : tout le scope, un moteur par appel ----------------------
+    # --- search: the full scope, one engine per call -------------------------
     @mcp.tool()
     def serpapi_search(
         engine: str,
@@ -220,7 +220,7 @@ def register(mcp: FastMCP) -> None:
                  max_results=max_results, results_key=results_key),
             url_perimeter.perimeter_of_call())
 
-    # --- offres d'emploi (Google Jobs) --------------------------------------
+    # --- job postings (Google Jobs) ------------------------------------------
     @mcp.tool()
     def serpapi_jobs(
         op: Literal["search", "details"] = "search",
@@ -264,7 +264,7 @@ def register(mcp: FastMCP) -> None:
         """
         if op == "search":
             if query is None and company is None:
-                raise _bad("op='search' requiert query ou company")
+                raise _bad("op='search' requires query or company")
             return _run(
                 "search_jobs", query=query, company=company, location=location,
                 country=country, language=language, max_results=max_results,
@@ -273,9 +273,9 @@ def register(mcp: FastMCP) -> None:
         if op == "details":
             return _run("get_job_details", job_id=_need(job_id, "job_id", op))
 
-        raise _bad("op doit être 'search' ou 'details'")
+        raise _bad("op must be 'search' or 'details'")
 
-    # --- verticaux à contrat propre (params disjoints, non fusionnables) -----
+    # --- verticals with their own contract (disjoint params, not mergeable) --
     @mcp.tool()
     def serpapi_google_trends(
         query: str,

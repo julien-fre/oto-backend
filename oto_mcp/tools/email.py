@@ -1,25 +1,25 @@
-"""Email — envoi d'un message à contenu libre (rédigé par l'agent), per-org.
+"""Email — send a free-content message (written by the agent), per-org.
 
-L'adresse expéditrice appartient à un **connecteur email** de l'org (config keyée
-par connecteur dans `orgs.email_settings`) ; le **transport en dérive**
-(`providers.EMAIL_CONNECTOR_TRANSPORT`) :
-- connecteur **`scaleway`** → transport `mailer` : service Otomata `mailer.oto.zone`
-  (Scaleway TEM). Domaine vérifié côté TEM **et** dans l'allowlist `MAILER_FROM_DOMAINS`.
-  La clé d'envoi reste celle d'Otomata (pas de clé d'org).
-- connecteur **`resend`** → transport `resend` : BYOK, appel direct de l'API Resend
-  avec la **clé Resend de l'org** (coffre, `access.resolve_api_key("resend")`). Domaine
-  vérifié côté Resend par l'org.
+The sender address belongs to an **email connector** of the org (config keyed
+per connector in `orgs.email_settings`); the **transport derives from it**
+(`providers.EMAIL_CONNECTOR_TRANSPORT`):
+- connector **`scaleway`** → transport `mailer`: Otomata service `mailer.oto.zone`
+  (Scaleway TEM). Domain verified on the TEM side **and** in the `MAILER_FROM_DOMAINS` allowlist.
+  The sending key remains Otomata's (no org key).
+- connector **`resend`** → transport `resend`: BYOK, direct call to the Resend API
+  with the **org's Resend key** (vault, `access.resolve_api_key("resend")`). Domain
+  verified on the Resend side by the org.
 
-Autorisation **dynamique** selon le `from` résolu :
-- envoi depuis une adresse déclarée de l'org → **membre de l'org** suffit ;
-- repli **marque** = l'expéditeur de l'instance (`OTO_MAIL_FROM` ; org sans adresse configurée, `from` omis) →
-  réservé **super_admin** (c'est l'identité de marque de la plateforme).
+**Dynamic** authorization depending on the resolved `from`:
+- sending from a declared address of the org → **org member** is enough;
+- **brand** fallback = the instance's sender (`OTO_MAIL_FROM`; org with no configured address, `from` omitted) →
+  reserved to **super_admin** (it is the platform's brand identity).
 
-À distinguer de `gmail_compose`, qui écrit depuis la boîte Gmail de l'utilisateur
-(et qui, lui, rédige un BROUILLON par défaut — envoyer y est explicite).
+To be distinguished from `gmail_compose`, which writes from the user's Gmail mailbox
+(and which drafts a DRAFT by default — sending there is explicit).
 
-Spine : chargé explicitement dans `register_all`, hors gate d'activation, masqué
-par défaut (`PROTECTED_TOOLS`/`DEFAULT_HIDDEN_TOOLS` côté visibilité).
+Spine: loaded explicitly in `register_all`, outside the activation gate, hidden
+by default (`PROTECTED_TOOLS`/`DEFAULT_HIDDEN_TOOLS` on the visibility side).
 """
 from __future__ import annotations
 
@@ -40,61 +40,61 @@ logger = logging.getLogger(__name__)
 
 
 def _cle_d_org_absente(sub: str, org_id, connecteur: str, libelle: str) -> str:
-    """Le refus d'un envoi différé sans la clé d'org de son transport — il dit QUI la pose
-    et OÙ (oto#108). Il renvoyait vers `oto_set_org_secret`, un outil retiré le
-    25/06/2026 : la destination nommée n'existait plus."""
+    """The refusal of a scheduled send without the org key of its transport — it says WHO sets it
+    and WHERE (oto#108). It used to point to `oto_set_org_secret`, a tool removed on
+    25/06/2026: the named destination no longer existed."""
     from .. import detenteurs, links
-    return (f"Transport {libelle} sans clé d'org : un administrateur de l'org la pose"
-            f"{links.ou_poser_la_cle(sub, org=org_id, connecteur=connecteur)} avant de "
-            "programmer."
-            + detenteurs.phrase("Administrateurs de cette org",
+    return (f"{libelle} transport without an org key: an org administrator sets it"
+            f"{links.ou_poser_la_cle(sub, org=org_id, connecteur=connecteur)} before "
+            "scheduling."
+            + detenteurs.phrase("Administrators of this org",
                                 detenteurs.admins_de_l_org(sub, org_id)))
 
 
 _CC_MAX = 10
 
-# Une adresse en copie : `local@domaine.tld`, ASCII, rien d'autre. Un nom affiché, une
-# virgule ou un saut de ligne dans `cc` deviendraient des destinataires de plus ou un
-# en-tête injecté chez le relais ; une adresse que ce motif refuse se signale, elle ne
-# se corrige pas.
+# A cc address: `local@domain.tld`, ASCII, nothing else. A display name, a
+# comma or a line break in `cc` would become extra recipients or an injected
+# header at the relay; an address this pattern refuses is reported, not
+# corrected.
 _ADRESSE_RE = re.compile(
     r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*"
     r"@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}")
 
-# Plafond quotidien de DESTINATAIRES (`to` + `cc`) par org sur le transport COMMUN — le
-# relais de l'instance, sous SA clé et SON domaine (`OTO_MAILER_URL`). Décision d'Alexis
-# du 04/10/2026 : la copie est permise, mais un envoi sur la clé commune engage la
-# réputation de TOUS les envois de l'instance (activation, relances, résumés) ; une
-# org qui envoie avec SA clé (Resend, Scaleway TEM) n'a aucun plafond de plateforme.
-# 200 : vingt envois à dix copies, ou deux cents envois simples, par jour — au-dessus
-# d'une séquence d'onboarding pilotée à la main, en dessous d'un publipostage. Réglable
-# par instance (`OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS`), lu à chaque envoi.
+# Daily cap of RECIPIENTS (`to` + `cc`) per org on the COMMON transport — the
+# instance's relay, under ITS key and ITS domain (`OTO_MAILER_URL`). Alexis's decision
+# of 04/10/2026: cc is allowed, but a send on the common key puts the reputation of ALL
+# the instance's sends at stake (activation, reminders, summaries); an
+# org that sends with ITS key (Resend, Scaleway TEM) has no platform cap.
+# 200: twenty sends with ten copies, or two hundred plain sends, per day — above
+# a hand-driven onboarding sequence, below a mass mailing. Adjustable
+# per instance (`OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS`), read on every send.
 _PLAFOND_COMMUN_DEFAUT = 200
 
 
 def _plafond_commun() -> int:
-    """Le plafond du jour sur le transport commun. Une valeur illisible LÈVE : un
-    plafond deviné serait un plafond que personne n'a posé."""
+    """The day's cap on the common transport. An unreadable value RAISES: a
+    guessed cap would be a cap nobody set."""
     raw = os.environ.get("OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS")
     if raw is None:
         return _PLAFOND_COMMUN_DEFAUT
     try:
         valeur = int(raw)
     except ValueError:
-        raise RuntimeError(f"OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS illisible : {raw!r} "
-                           "(attendu un entier >= 0).")
+        raise RuntimeError(f"OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS unreadable: {raw!r} "
+                           "(expected an integer >= 0).")
     if valeur < 0:
-        raise RuntimeError(f"OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS négatif : {valeur}.")
+        raise RuntimeError(f"OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS negative: {valeur}.")
     return valeur
 
 
 def _garder_plafond_commun(sub: str, destinataires: int) -> None:
-    """Refuse un envoi sur le transport commun qui dépasserait le plafond du jour de
-    l'org de l'appel. Compté dans le journal des appels (`tool_calls.quantity` des
-    `email_send` passés sous `key_mode='platform'`, cf. `_metrer_commun`), remis à
-    zéro à minuit UTC : aucune table de plus. Le journal s'écrit à la fin de l'appel —
-    deux envois simultanés peuvent se croiser, le plafond est une borne de réputation,
-    pas un compte facturé."""
+    """Refuse a send on the common transport that would exceed the day's cap of
+    the calling org. Counted in the call log (`tool_calls.quantity` of the
+    `email_send` calls made under `key_mode='platform'`, see `_metrer_commun`), reset
+    to zero at midnight UTC: no extra table. The log is written at the end of the call —
+    two simultaneous sends can cross, the cap is a reputation bound,
+    not a billed count."""
     plafond = _plafond_commun()
     org = access.current_org(sub)
     deja = db.destinataires_communs_du_jour(org_id=org, sub=sub)
@@ -102,18 +102,18 @@ def _garder_plafond_commun(sub: str, destinataires: int) -> None:
         return
     raise McpError(ErrorData(
         code=INVALID_PARAMS,
-        message=(f"Plafond quotidien du transport commun atteint : {deja}/{plafond} "
-                 f"destinataire(s) aujourd'hui pour cette org, cet envoi en compte "
-                 f"{destinataires} (`to` + `cc`). Réessaie après minuit UTC, réduis les "
-                 "copies, ou envoie depuis une adresse d'un connecteur email de l'org "
-                 "(sa propre clé Resend ou Scaleway TEM : aucun plafond de plateforme)."),
+        message=(f"Daily cap of the common transport reached: {deja}/{plafond} "
+                 f"recipient(s) today for this org, this send counts "
+                 f"{destinataires} (`to` + `cc`). Try again after midnight UTC, reduce the "
+                 "copies, or send from an address of an email connector of the org "
+                 "(its own Resend or Scaleway TEM key: no platform cap)."),
         data={"code": "platform_email_daily_cap", "retryable": True,
               "limit": plafond, "used": deja, "units": destinataires}))
 
 
 def _metrer_commun(destinataires: int) -> None:
-    """Consigne au journal de l'appel ce qu'un envoi sur le transport commun a
-    consommé : c'est ce que `_garder_plafond_commun` relit."""
+    """Record in the call log what a send on the common transport
+    consumed: this is what `_garder_plafond_commun` reads back."""
     session_org.note_call_trace(quantity=destinataires, key_mode="platform")
 
 
@@ -122,33 +122,33 @@ def _err(msg: str, code: int = INVALID_PARAMS) -> McpError:
 
 
 def _sub_or_raise() -> str:
-    # Un échec d'identité MONTE (le seam le journalise avec sa raison, #464) : seul
-    # un appel réellement sans jeton est « non authentifié ».
+    # An identity failure PROPAGATES (the seam logs it with its reason, #464): only
+    # a call truly without a token is "unauthenticated".
     sub = current_user_sub_from_token()
     if not sub:
-        raise _err("Auth requise — ce tool ne marche que sur le transport HTTP authentifié.")
+        raise _err("Auth required — this tool only works over the authenticated HTTP transport.")
     return sub
 
 
 def _resolve_route(from_email: Optional[str]) -> tuple[str, dict]:
-    """Résout (sub, route) et APPLIQUE l'autorisation. `route` = {org_id, connector,
-    from_email, from_name, transport, reply_to, quiet_hours} ; from_email=None +
-    org sans expéditeur ⇒ marque par défaut. Lève McpError actionnable sinon.
+    """Resolve (sub, route) and APPLY the authorization. `route` = {org_id, connector,
+    from_email, from_name, transport, reply_to, quiet_hours}; from_email=None +
+    org without a sender ⇒ default brand. Raises an actionable McpError otherwise.
 
-    Le TRANSPORT dérive du CONNECTEUR de l'expéditeur (scaleway→mailer, resend→resend)."""
+    The TRANSPORT derives from the sender's CONNECTOR (scaleway→mailer, resend→resend)."""
     sub = _sub_or_raise()
     org = access.current_org(sub)
 
-    # Chemin org : une adresse déclarée d'un connecteur email de l'org active
+    # Org path: a declared address of an email connector of the active org
     if org is not None:
         match = org_store.resolve_sender(org, from_email)
         if match is not None:
             sender, connector = match
             if not roles.is_org_member(sub, org):
-                raise _err("Tu n'es pas membre de l'org active — passe `org=<id>` sur cet appel.")
+                raise _err("You are not a member of the active org — pass `org=<id>` on this call.")
             transport = providers.EMAIL_CONNECTOR_TRANSPORT.get(connector)
             if transport is None:
-                raise _err(f"Connecteur email inconnu pour « {sender.get('email')} » : {connector!r}.")
+                raise _err(f"Unknown email connector for \"{sender.get('email')}\": {connector!r}.")
             return sub, {
                 "org_id": org,
                 "connector": connector,
@@ -160,32 +160,32 @@ def _resolve_route(from_email: Optional[str]) -> tuple[str, dict]:
                 "footer": org_store.org_email_footer(org, connector),
             }
         if from_email is not None:
-            raise _err(f"« {from_email} » n'est pas une adresse déclarée d'un connecteur email de "
-                       "l'org active. Ajoute-la via `oto_org_settings(domain='email', op='set')`, ou omets `from_email`.")
+            raise _err(f"\"{from_email}\" is not a declared address of an email connector of "
+                       "the active org. Add it via `oto_org_settings(domain='email', op='set')`, or omit `from_email`.")
 
-    # Chemin marque (l'expéditeur de l'instance, `OTO_MAIL_FROM`) — super_admin uniquement
+    # Brand path (the instance's sender, `OTO_MAIL_FROM`) — super_admin only
     if from_email is not None:
-        raise _err("Aucune org active avec une adresse d'envoi configurée. Configure-la "
-                   "(`oto_org_settings(domain='email', op='set')`) ou passe la bonne org (`org=<id>`).")
+        raise _err("No active org with a configured sending address. Configure it "
+                   "(`oto_org_settings(domain='email', op='set')`) or pass the right org (`org=<id>`).")
     if not access.is_super_admin(sub):
-        raise _err("Ton org n'a pas d'adresse d'envoi configurée — demande à un org_admin "
-                   "de l'ajouter via `oto_org_settings(domain='email', op='set')`. L'envoi sous "
-                   f"l'adresse de la plateforme ({mailer._mail_from()}) est réservé au "
-                   "super_admin de la plateforme.")
+        raise _err("Your org has no configured sending address — ask an org_admin "
+                   "to add it via `oto_org_settings(domain='email', op='set')`. Sending under "
+                   f"the platform address ({mailer._mail_from()}) is reserved to the "
+                   "platform super_admin.")
     return sub, {"org_id": None, "connector": None, "from_email": None, "from_name": None,
                  "transport": "mailer", "reply_to": None, "quiet_hours": None, "footer": None}
 
 
 def _cle_de_l_org(connector: Optional[str]) -> bool:
-    """L'envoi part-il avec la clé de l'ORG ? Dérivé du registre, jamais d'une liste
-    recopiée : un connecteur email sans palier `platform` ne peut envoyer qu'avec une
-    clé apportée (cascade byo). Le repli marque (`connector=None`, clé commune du
-    mailer) rend False — notre pied y reste toujours.
+    """Does the send go out with the ORG's key? Derived from the registry, never from a
+    copied list: an email connector without a `platform` tier can only send with a
+    brought key (byo cascade). The brand fallback (`connector=None`, the mailer's common
+    key) returns False — our footer always stays there.
 
-    Si un connecteur email gagnait un jour un palier plateforme, ceci rendrait False
-    pour TOUS ses envois : notre pied reviendrait, faute de savoir au rendu (avant la
-    mise en file) quelle clé partira. C'est le côté sûr ; le séparer demanderait de
-    rendre le pied APRÈS la résolution de la clé."""
+    If an email connector ever gained a platform tier, this would return False
+    for ALL its sends: our footer would come back, since at render time (before
+    queuing) we can't know which key will be used. That is the safe side; separating it would require
+    rendering the footer AFTER the key is resolved."""
     c = providers.connector_for_provider(connector) if connector else None
     return c is not None and bool(c.auth_modes) and "platform" not in c.auth_modes
 
@@ -208,111 +208,111 @@ def register(mcp: FastMCP) -> None:
         force_now: bool = False,
         dry_run: bool = False,
     ) -> dict:
-        """Envoie un email à contenu libre depuis une adresse de TON org active,
-        rendu à la charte, avec au choix un bouton et UNE image de tête. Peut être
-        DIFFÉRÉ.
+        """Send a free-content email from an address of YOUR active org,
+        rendered in the brand template, with an optional button and ONE header image. Can be
+        SCHEDULED.
 
-        L'org déclare ses adresses expéditrices (`oto_org_settings domain=email`) ;
-        chacune envoie soit via le mailer Otomata (domaine vérifié côté TEM), soit
-        via la clé Resend de l'org. Usage type — séquences d'onboarding pilotées
-        par l'agent : lis l'état du compte cible, rédige un message ADAPTÉ, envoie,
-        puis trace dans le datastore pour ne pas relancer en double. Pour envoyer
-        depuis la boîte Gmail de l'utilisateur, c'est `gmail_compose` — attention, lui
-        rédige un BROUILLON par défaut, il faut `mode="send"` pour qu'il parte.
+        The org declares its sender addresses (`oto_org_settings domain=email`);
+        each one sends either via the Otomata mailer (domain verified on the TEM side), or
+        via the org's Resend key. Typical use — onboarding sequences driven
+        by the agent: read the target account's state, write a TAILORED message, send,
+        then record it in the datastore so as not to follow up twice. To send
+        from the user's Gmail mailbox, use `gmail_compose` — note that it
+        drafts a DRAFT by default, you need `mode="send"` for it to go out.
 
-        Envoi différé : par défaut l'org a une fenêtre « quiet hours » (ex. 20h–8h) ;
-        si tu composes dedans, l'envoi est AUTO-décalé au prochain créneau ouvert —
-        tu n'as rien à calculer. Laisse `send_at` vide dans ce cas. Pour une heure
-        précise, passe `send_at`. Pour forcer un envoi immédiat malgré les quiet
-        hours, `force_now=True`. Gère/annule la file : `oto_scheduled_emails(op='list'|'cancel')`.
+        Scheduled send: by default the org has a "quiet hours" window (e.g. 8pm–8am);
+        if you compose inside it, the send is AUTO-shifted to the next open slot —
+        you have nothing to compute. Leave `send_at` empty in that case. For a
+        specific time, pass `send_at`. To force an immediate send despite the quiet
+        hours, `force_now=True`. Manage/cancel the queue: `oto_scheduled_emails(op='list'|'cancel')`.
 
-        Pied de page : un envoi avec la clé de ton org (Resend, Scaleway TEM) porte le
-        pied de la PLATEFORME, sauf si l'org a déclaré SON désabonnement sur ce
-        connecteur — `oto_org_settings(domain='email', op='set', connector=…,
-        footer={"unsubscribe_url": "https://…"} ou {"unsubscribe_email": "…"})`,
-        org_admin : son pied remplace alors le nôtre. Rien ne le retire depuis cet
-        outil. L'envoi sous l'adresse de la plateforme garde toujours le nôtre. Le champ
-        `footer` de la réponse dit lequel part (`org` | `platform`).
+        Footer: a send with your org's key (Resend, Scaleway TEM) carries the
+        PLATFORM's footer, unless the org has declared ITS unsubscribe on this
+        connector — `oto_org_settings(domain='email', op='set', connector=…,
+        footer={"unsubscribe_url": "https://…"} or {"unsubscribe_email": "…"})`,
+        org_admin: its footer then replaces ours. Nothing removes it from this
+        tool. A send under the platform address always keeps ours. The `footer`
+        field of the response says which one goes out (`org` | `platform`).
 
-        Image de tête : `image_url` (https) + `image_alt` REQUIS ; l'URL publique
-        vient de `oto_upload_url(target="image")` (un upload, réutilisable).
+        Header image: `image_url` (https) + `image_alt` REQUIRED; the public URL
+        comes from `oto_upload_url(target="image")` (an upload, reusable).
 
-        Renvoie {sent, to, cc, subject, from, transport, footer} en envoi immédiat ;
-        {scheduled, id, scheduled_at, ...} si différé ; +`html` si dry_run.
+        Returns {sent, to, cc, subject, from, transport, footer} on an immediate send;
+        {scheduled, id, scheduled_at, ...} if scheduled; +`html` if dry_run.
 
         Args:
-            to: adresse email du destinataire.
-            cc: adresses en copie visible (liste, max 10), `nom@domaine.tld` sans nom
-                affiché. Pas de copie cachée. Sous l'adresse de la plateforme, `to` +
-                `cc` comptent dans un plafond quotidien de destinataires par org.
-            subject: objet (voix funnel oto : minuscules, vouvoiement).
-            body: corps en texte brut. Les lignes vides séparent les paragraphes ;
-                les sauts de ligne simples sont conservés. Le HTML est échappé
-                (n'injecte pas de balises). Écris du contenu réel, personnalisé —
-                jamais d'invention sur le compte du destinataire.
-            from_email: adresse expéditrice. DOIT être une adresse déclarée de l'org
-                active. Omise = l'adresse par défaut de l'org (ou l'adresse de la
-                plateforme si l'org n'en a aucune — super_admin uniquement).
-            cta_text: libellé d'un bouton d'action optionnel (ex. « ouvrir oto »).
-            cta_url: URL du bouton (requis si `cta_text` est fourni).
-            image_url: URL `https://` publique d'UNE image en tête du mail (480 px,
-                réduite sur mobile). Pour la publier : `oto_upload_url(target="image")`
-                → PUT le fichier → l'accusé rend `url` (permanente, réutilisable).
-            image_alt: texte de remplacement, REQUIS avec `image_url` — beaucoup de
-                clients bloquent les images, le mail doit garder son sens sans elle.
-            reply_to: adresse de réponse (défaut = celle du sender, sinon la boîte
-                du studio).
-            send_at: heure d'envoi souhaitée (ISO 8601, ex. "2026-06-24T08:00").
-                Sans fuseau = fuseau de l'org. Passée = programme à cette heure.
-            force_now: envoie tout de suite même dans la fenêtre quiet hours.
-            dry_run: si vrai, REND le HTML sans envoyer — pour relire avant l'envoi.
+            to: recipient's email address.
+            cc: visible copy addresses (list, max 10), `name@domain.tld` with no display
+                name. No hidden copy. Under the platform address, `to` +
+                `cc` count toward a daily cap of recipients per org.
+            subject: subject line (oto funnel voice: lowercase, formal "vous" address).
+            body: plain-text body. Blank lines separate paragraphs;
+                single line breaks are kept. HTML is escaped
+                (don't inject tags). Write real, personalized content —
+                never invent anything about the recipient's account.
+            from_email: sender address. MUST be a declared address of the active
+                org. Omitted = the org's default address (or the platform's
+                address if the org has none — super_admin only).
+            cta_text: label of an optional action button (e.g. "open oto").
+            cta_url: URL of the button (required if `cta_text` is provided).
+            image_url: public `https://` URL of ONE image at the top of the mail (480 px,
+                scaled down on mobile). To publish it: `oto_upload_url(target="image")`
+                → PUT the file → the receipt returns `url` (permanent, reusable).
+            image_alt: replacement text, REQUIRED with `image_url` — many
+                clients block images, the mail must keep its meaning without it.
+            reply_to: reply address (default = the sender's, otherwise the studio's
+                mailbox).
+            send_at: desired send time (ISO 8601, e.g. "2026-06-24T08:00").
+                Without a timezone = the org's timezone. In the past = schedules at that time.
+            force_now: send right away even within the quiet hours window.
+            dry_run: if true, RENDERS the HTML without sending — to proofread before sending.
         """
         to = (to or "").strip()
         subject = (subject or "").strip()
         if not to or "@" not in to:
-            raise _err("`to` doit être une adresse email valide.")
+            raise _err("`to` must be a valid email address.")
         if not subject:
-            raise _err("`subject` est requis.")
+            raise _err("`subject` is required.")
         if not (body or "").strip():
-            raise _err("`body` est requis.")
+            raise _err("`body` is required.")
         if cta_text and not cta_url:
-            raise _err("`cta_url` est requis avec `cta_text`.")
-        # Borné AVANT tout traitement : une liste de mille entrées identiques ne doit
-        # pas coûter mille validations pour finir dédoublonnée sous la borne.
+            raise _err("`cta_url` is required with `cta_text`.")
+        # Bounded BEFORE any processing: a list of a thousand identical entries must
+        # not cost a thousand validations only to end up deduplicated under the bound.
         if len(cc or []) > _CC_MAX:
-            raise _err(f"`cc` : {_CC_MAX} adresses au plus.")
+            raise _err(f"`cc`: at most {_CC_MAX} addresses.")
         copies: list[str] = []
         for a in cc or []:
             a = (a or "").strip()
             if len(a) > 254 or not _ADRESSE_RE.fullmatch(a):
-                raise _err(f"`cc` : adresse invalide {a!r} (attendu `nom@domaine.tld`, "
-                           "une adresse par élément, sans nom affiché).")
+                raise _err(f"`cc`: invalid address {a!r} (expected `name@domain.tld`, "
+                           "one address per item, no display name).")
             if a.lower() != to.lower() and a.lower() not in {c.lower() for c in copies}:
                 copies.append(a)
-        # Le gabarit porte les refus de l'image (alt manquant, `http://`) : on les
-        # déclenche AVANT de résoudre la route, pour que le refus d'un paramètre
-        # précède celui d'une autorisation — comme les vérifications juste au-dessus.
-        # La fonction est PURE : la rappeler au rendu ne coûte rien, et c'est ce qui
-        # permet de garder cet ordre tout en rendant, plus bas, à la bonne marque.
+        # The template carries the image refusals (missing alt, `http://`): we
+        # trigger them BEFORE resolving the route, so that a parameter refusal
+        # comes before an authorization one — like the checks just above.
+        # The function is PURE: calling it again at render time costs nothing, and that is what
+        # lets us keep this order while rendering, further down, with the right brand.
         try:
             mailer._image_html(image_url, image_alt)
         except ValueError as e:
             raise _err(str(e))
 
         sub, route = _resolve_route((from_email or "").strip() or None)
-        # La marque de CELUI QUI ENVOIE : un client du partenaire dont l'agent écrit à un
-        # prospect signait « oto, par otomata · oto.cx » en pied — le pied d'un
-        # produit qu'il n'a jamais vu, sous son propre nom de domaine d'envoi.
+        # The brand of THE SENDER: a partner's customer whose agent writes to a
+        # prospect used to sign "oto, par otomata · oto.cx" in the footer — the footer of a
+        # product they never saw, under their own sending domain name.
         #
-        # ⚠️ Dérivée du `sub` que la route vient d'authentifier, JAMAIS d'un appel
-        # d'auth de plus : celui-ci lèverait avant les refus de paramètre ci-dessus et
-        # inverserait l'ordre des erreurs de cet outil.
+        # ⚠️ Derived from the `sub` the route has just authenticated, NEVER from one more
+        # auth call: that one would raise before the parameter refusals above and
+        # invert the order of this tool's errors.
         marque_expediteur = config.front_for(sub)[1] or "oto"
-        # Le pied de l'ORG remplace le nôtre sur un envoi fait avec SA clé, et là
-        # seulement (décision d'Alexis du 12/09/2026, conformité) : apporter sa clé
-        # changeait le transport et pas le gabarit, si bien qu'un prospect froid lisait
-        # « vous avez un compte oto » et se voyait proposer de se désabonner auprès de
-        # nous. Sur la clé commune, jamais — la condition est ici, pas dans la route.
+        # The ORG's footer replaces ours on a send made with ITS key, and only there
+        # (Alexis's decision of 12/09/2026, compliance): bringing one's own key
+        # changed the transport and not the template, so a cold prospect read
+        # "vous avez un compte oto" and was offered to unsubscribe from
+        # us. On the common key, never — the condition is here, not in the route.
         pied_org = route.get("footer") if _cle_de_l_org(route["connector"]) else None
         pied = "org" if pied_org else "platform"
         html = mailer.render_composed_email(body, cta_text=cta_text, cta_url=cta_url,
@@ -327,14 +327,14 @@ def register(mcp: FastMCP) -> None:
             return {"sent": False, "dry_run": True, "to": to, "cc": copies, "subject": subject,
                     "from": from_hdr, "transport": transport, "footer": pied, "html": html}
 
-        # Quiet hours du CONNECTEUR de l'expéditeur (résolues dans la route). Repli
-        # marque (org=None / pas de connecteur) → désactivé (seul send_at diffère).
+        # Quiet hours of the sender's CONNECTOR (resolved in the route). Brand
+        # fallback (org=None / no connector) → disabled (only send_at defers).
         quiet = route.get("quiet_hours") or {"start": 0, "end": 0}
         try:
             when = scheduler.compute_scheduled_at(
                 datetime.now(timezone.utc), quiet, send_at, force_now)
         except ValueError:
-            raise _err(f"`send_at` invalide : {send_at!r} (attendu ISO 8601, ex. "
+            raise _err(f"`send_at` invalid: {send_at!r} (expected ISO 8601, e.g. "
                        "2026-06-24T08:00).")
 
         destinataires = 1 + len(copies)
@@ -342,7 +342,7 @@ def register(mcp: FastMCP) -> None:
             _garder_plafond_commun(sub, destinataires)
 
         if when is not None:
-            # Envoi différé → mise en file (HTML rendu + autz déjà figés).
+            # Scheduled send → queued (rendered HTML + authz already frozen).
             for nom, libelle in (("resend", "Resend"), ("scaleway", "Scaleway TEM")):
                 if transport == nom and not (org_id and org_store.has_org_secret(org_id, nom)):
                     raise _err(_cle_d_org_absente(sub, org_id, nom, libelle))
@@ -351,23 +351,23 @@ def register(mcp: FastMCP) -> None:
                 from_email=route["from_email"], from_name=route["from_name"],
                 reply_to=rt, transport=transport, scheduled_at=when, cc=copies)
             if transport == "mailer":
-                _metrer_commun(destinataires)   # compté le jour où il est programmé
-            logger.info("email_send différé #%d → %s à %s (transport=%s)",
+                _metrer_commun(destinataires)   # counted on the day it is scheduled
+            logger.info("email_send scheduled #%d → %s at %s (transport=%s)",
                         sched_id, to, when.isoformat(), transport)
             return {"sent": False, "scheduled": True, "id": sched_id,
                     "scheduled_at": when.isoformat(), "to": to, "cc": copies, "subject": subject,
                     "from": from_hdr, "transport": transport, "footer": pied}
 
-        # Envoi immédiat.
+        # Immediate send.
         if transport == "resend":
-            api_key, _key_is_platform = access.resolve_api_key("resend")  # cascade user > org ; lève si absente
+            api_key, _key_is_platform = access.resolve_api_key("resend")  # cascade user > org; raises if absent
             ok = mailer.send_via_resend(to, subject, html, api_key=api_key,
                                         from_email=from_hdr, reply_to=rt, cc=copies)
         elif transport == "scaleway":
-            f = access.resolve_credential_fields("scaleway")  # cascade → clé de l'org
+            f = access.resolve_credential_fields("scaleway")  # cascade → the org's key
             if not f.get("secret_key") or not f.get("project_id"):
-                raise _err("Connecteur Scaleway TEM non configuré pour ton org : pose "
-                           "`secret_key` + `project_id` (clé de TON compte Scaleway TEM).")
+                raise _err("Scaleway TEM connector not configured for your org: set "
+                           "`secret_key` + `project_id` (key of YOUR Scaleway TEM account).")
             ok = mailer.send_via_scaleway_tem(
                 to, subject, html, secret_key=f["secret_key"], project_id=f["project_id"],
                 region=f.get("region") or "fr-par",
@@ -380,12 +380,12 @@ def register(mcp: FastMCP) -> None:
                 image_url=image_url, image_alt=image_alt, brand=marque_expediteur, cc=copies)
 
         if not ok:
-            hint = ("clé Resend invalide/absente" if transport == "resend"
-                    else "clé/projet Scaleway TEM absent, ou domaine du `from` non vérifié "
-                         "dans ton compte Scaleway" if transport == "scaleway"
-                    else "mailer indisponible, ou domaine du `from` hors allowlist "
-                         "`MAILER_FROM_DOMAINS` (demande l'ajout à un super_admin)")
-            raise _err(f"Envoi échoué ({hint}). Rien n'a été envoyé.", code=INTERNAL_ERROR)
+            hint = ("Resend key invalid/missing" if transport == "resend"
+                    else "Scaleway TEM key/project missing, or `from` domain not verified "
+                         "in your Scaleway account" if transport == "scaleway"
+                    else "mailer unavailable, or `from` domain outside the allowlist "
+                         "`MAILER_FROM_DOMAINS` (ask a super_admin to add it)")
+            raise _err(f"Send failed ({hint}). Nothing was sent.", code=INTERNAL_ERROR)
         if transport == "mailer":
             _metrer_commun(destinataires)
         logger.info("email_send → %s (cc=%d, from=%r, transport=%s)", to, len(copies),

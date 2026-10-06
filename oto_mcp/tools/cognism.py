@@ -1,51 +1,51 @@
-"""Cognism — recherche société/personne B2B + reveal (email/téléphone) +
-enrichissement par identité.
+"""Cognism — B2B company/person search + reveal (email/phone) +
+identity enrichment.
 
-Connecteur classique (`kind="tools"`) sur l'API REST synchrone de Cognism
-(developers.cognism.com). Contrat LLM curé ici ; le client HTTP vit dans
-oto-core (`oto.tools.cognism.client.CognismClient`). Cascade de clé standard
-(`resolve_api_key("cognism")` : BYO user > BYO org) — pas de mode plateforme
-(clé partagée à l'échelle d'un org via BYO org, pas un grant Otomata).
+Classic connector (`kind="tools"`) on Cognism's synchronous REST API
+(developers.cognism.com). LLM contract curated here; the HTTP client lives in
+oto-core (`oto.tools.cognism.client.CognismClient`). Standard key cascade
+(`resolve_api_key("cognism")`: BYO user > BYO org) — no platform mode
+(key shared at org scale via BYO org, not an Otomata grant).
 
-La DSL de filtre (`filters`) est un dict passé quasi tel quel à Cognism — trop
-large (~150 champs, imbrication profonde) pour être modélisée champ par champ
-côté tool. Référence complète : guide `cognism-filters` (`oto_guide`,
-op=read, slug="cognism-filters"). Les champs à valeurs FERMÉES sont validés
-côté client AVANT l'appel réseau (typo d'enum → erreur explicite, pas une
-page vide silencieuse).
+The filter DSL (`filters`) is a dict passed almost as is to Cognism — too
+large (~150 fields, deep nesting) to be modeled field by field
+on the tool side. Full reference: `cognism-filters` guide (`oto_guide`,
+op=read, slug="cognism-filters"). CLOSED-value fields are validated
+client-side BEFORE the network call (enum typo → explicit error, not a
+silent empty page).
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur cognism)** :
-9 → 6 tools. L'axe homogène ici est la **cible** (contact = la personne /
-account = la société), pas le verbe : `search` et `redeem` prennent EXACTEMENT
-les mêmes paramètres des deux côtés (`filters`/`index_size`/`last_returned_key`
-d'une part, `ids`/`redeem_ids`/`merge_phones_and_locations` de l'autre), et
-`entitlement` n'en prend aucun. D'où `cognism_search`, `cognism_redeem` et
-`cognism_entitlement`, la cible en paramètre `op`.
+**Consolidated surface (ADR 0047 §Amendment, applied to the cognism connector)**:
+9 → 6 tools. The homogeneous axis here is the **target** (contact = the person /
+account = the company), not the verb: `search` and `redeem` take EXACTLY
+the same parameters on both sides (`filters`/`index_size`/`last_returned_key`
+on one hand, `ids`/`redeem_ids`/`merge_phones_and_locations` on the other), and
+`entitlement` takes none. Hence `cognism_search`, `cognism_redeem` and
+`cognism_entitlement`, the target in the `op` parameter.
 
-⚠️ **La frontière gratuit/payant est portée par le NOM DU TOOL, délibérément** :
-`cognism_search` = preview GRATUIT (flags `has*`, pas d'email/téléphone réel) ;
-`cognism_redeem` = reveal **facturé en crédits**, tool entier, aucune op gratuite
-dedans. Regrouper par objet métier (`cognism_contact(op=search|redeem|enrich)`)
-aurait noyé le seul fait qui coûte de l'argent dans une liste d'ops d'un tool de
-recherche gratuit — en plus de réunir trois jeux de paramètres disjoints. Corollaire :
-**`op` n'a de défaut nulle part dans ce module** — sur `cognism_redeem` parce
-qu'aucun crédit ne doit pouvoir partir sans une intention explicite, sur les deux
-autres parce que les cibles ne sont pas substituables (le `filters` d'une recherche
-société n'a pas la même racine que celui d'une recherche contact : une cible devinée
-rendrait une page vide ou fausse, pas une erreur).
+⚠️ **The free/paid boundary is carried by the TOOL NAME, deliberately**:
+`cognism_search` = FREE preview (`has*` flags, no real email/phone);
+`cognism_redeem` = reveal **billed in credits**, the whole tool, no free op
+inside. Grouping by business object (`cognism_contact(op=search|redeem|enrich)`)
+would have drowned the one fact that costs money in a list of ops of a free
+search tool — besides merging three disjoint parameter sets. Corollary:
+**`op` has no default anywhere in this module** — on `cognism_redeem` because
+no credit must be able to go out without an explicit intent, on the two
+others because the targets are not interchangeable (the `filters` of a company
+search does not have the same root as that of a contact search: a guessed target
+would return an empty or wrong page, not an error).
 
-Trois tools restent SEULS :
-- `cognism_enrich_contact` / `cognism_enrich_account` : variantes DISJOINTES —
-  11 et 8 paramètres d'identité dont 3 seulement en commun (`linkedin_url`,
-  `anchor_fields`, `min_match_score`) ; le reste (email/sha256/phone_number/
-  job_title/account_name/account_website… contre name/website/domain/country/city)
-  ne se recouvre pas, et même `min_match_score` n'a pas le même défaut amont
-  (30 contact / 40 account). Fusionnées, elles pèseraient au schéma exactement ce
-  qu'elles pèsent séparées (critère = homogénéité des paramètres, pas le comptage).
-- `cognism_filter_values` : découverte des valeurs autorisées d'un champ de filtre
-  DYNAMIQUE — son `kind` (technologies/regions/naics/…) est un vocabulaire sans
-  rapport avec la cible contact/account, le confondre avec `op` créerait deux sens
-  pour un même paramètre. Même cas que `zoho_modules`.
+Three tools stay STANDALONE:
+- `cognism_enrich_contact` / `cognism_enrich_account`: DISJOINT variants —
+  11 and 8 identity parameters of which only 3 in common (`linkedin_url`,
+  `anchor_fields`, `min_match_score`); the rest (email/sha256/phone_number/
+  job_title/account_name/account_website… vs name/website/domain/country/city)
+  does not overlap, and even `min_match_score` does not have the same upstream default
+  (30 contact / 40 account). Merged, they would weigh in the schema exactly what
+  they weigh separately (criterion = parameter homogeneity, not the count).
+- `cognism_filter_values`: discovery of the allowed values of a DYNAMIC filter
+  field — its `kind` (technologies/regions/naics/…) is a vocabulary unrelated
+  to the contact/account target, conflating it with `op` would create two meanings
+  for one parameter. Same case as `zoho_modules`.
 """
 from __future__ import annotations
 
@@ -60,34 +60,34 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `verify_key()` (déjà dans le client — un appel `GET
-    entitlement/contactEntitlementSubscription`, écrit dans oto-core pour
-    exactement cet usage : « Valide la clé via un appel entitlement. Lève la
-    HTTPError amont (401 = clé invalide) si KO. »). Bearer token, lecture sans
-    effet de bord.
+    `verify_key()` (already in the client — a `GET
+    entitlement/contactEntitlementSubscription` call, written in oto-core for
+    exactly this use: "Validate the key via an entitlement call. Raises the
+    upstream HTTPError (401 = invalid key) on failure."). Bearer token, read with no
+    side effect.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope
-    ici — l'entitlement Contact est une souscription DE BASE, pas une des deux
-    cibles (`contact`/`account`) que `_target()` refuse déjà en amont pour une
-    op inconnue.
+    **Authenticated ≠ usable** (class oto#69): does not distinguish scope
+    here — the Contact entitlement is a BASE subscription, not one of the two
+    targets (`contact`/`account`) that `_target()` already refuses upstream for an
+    unknown op.
     """
     from oto.tools.cognism.client import CognismClient
 
     CognismClient(api_key=fields["key"]).verify_key()
 
 
-# Les deux CIBLES du connecteur, valeurs de `op` : le contact (la personne) et
-# l'account (la société). Source unique — la validation d'entrée ET le message de
-# refus en dérivent, donc une cible ajoutée ne peut pas être acceptée sans être
-# annoncée (ni l'inverse).
+# The connector's two TARGETS, values of `op`: the contact (the person) and
+# the account (the company). Single source — input validation AND the
+# refusal message derive from it, so an added target cannot be accepted without being
+# announced (nor the reverse).
 _TARGETS = ("contact", "account")
-_TARGETS_ERROR = "op doit être 'contact' ou 'account'"
+_TARGETS_ERROR = "op must be 'contact' or 'account'"
 
-# Taille de page par défaut CHEZ COGNISM, qui diffère selon la cible (25 contacts,
-# 100 sociétés). `index_size=None` = « le défaut de la cible » : figer une valeur
-# unique changerait silencieusement la pagination d'un des deux côtés.
+# Default page size AT COGNISM, which differs by target (25 contacts,
+# 100 companies). `index_size=None` = "the target's default": freezing a single
+# value would silently change pagination on one of the two sides.
 _DEFAULT_INDEX_SIZE = {"contact": 25, "account": 100}
 
 
@@ -96,9 +96,9 @@ def _bad(msg: str) -> McpError:
 
 
 def _target(op: str) -> str:
-    """Valide `op` AVANT toute résolution de clé et tout appel réseau — une cible
-    inconnue ne doit jamais atteindre le client (donc jamais, par un chemin dérivé,
-    consommer un crédit)."""
+    """Validate `op` BEFORE any key resolution and any network call — an unknown
+    target must never reach the client (hence never, via a derived path,
+    consume a credit)."""
     if op not in _TARGETS:
         raise _bad(_TARGETS_ERROR)
     return op
@@ -114,11 +114,11 @@ def register(mcp: FastMCP) -> None:
         return CognismClient(api_key=key), is_platform
 
     def _run(fn):
-        """Exécute un appel Cognism : traduit une erreur en McpError actionnable
-        (ValueError = filtre invalide détecté côté client, pas d'appel réseau ;
-        5xx amont = réessayer ; 401 = clé invalide ; sinon = erreur Cognism telle
-        quelle) et compte l'usage plateforme sur succès (mode plateforme
-        actuellement non ouvert pour Cognism, no-op de fait)."""
+        """Run a Cognism call: translates an error into an actionable McpError
+        (ValueError = invalid filter detected client-side, no network call;
+        upstream 5xx = retry; 401 = invalid key; otherwise = Cognism error as
+        is) and counts platform usage on success (platform mode
+        currently not open for Cognism, de facto no-op)."""
         client, is_platform = _client()
         try:
             result = fn(client)
@@ -130,14 +130,14 @@ def register(mcp: FastMCP) -> None:
             resp = getattr(e, "response", None)
             status = getattr(resp, "status_code", None)
             if status and status >= 500:
-                msg = (f"Cognism a rendu une erreur serveur ({status}). Un 5xx amont "
-                       "ne prouve pas une panne : vérifie d'abord les paramètres de "
-                       "l'appel. Si l'entrée est correcte : une seule nouvelle "
-                       "tentative, différée.")
+                msg = (f"Cognism returned a server error ({status}). An upstream 5xx "
+                       "does not prove an outage: first check the call's "
+                       "parameters. If the input is correct: a single new "
+                       "attempt, deferred.")
             elif status == 401:
-                msg = "Clé Cognism invalide ou révoquée (401). Vérifie la clé posée."
+                msg = "Cognism key invalid or revoked (401). Check the key that was set."
             else:
-                msg = f"Cognism n'a pas pu traiter la requête ({e})."
+                msg = f"Cognism could not process the request ({e})."
             raise McpError(ErrorData(code=INVALID_PARAMS, message=msg))
         if is_platform:
             access.record_platform_usage("cognism")
@@ -231,9 +231,9 @@ def register(mcp: FastMCP) -> None:
         """
         target = _target(op)
         if not ids and not redeem_ids:
-            raise _bad(f"cognism_redeem(op='{target}') requiert `ids` ou "
-                       "`redeem_ids` — cet appel consomme des crédits, rien n'est "
-                       "deviné. Les deux viennent d'un `cognism_search` précédent.")
+            raise _bad(f"cognism_redeem(op='{target}') requires `ids` or "
+                       "`redeem_ids` — this call consumes credits, nothing is "
+                       "guessed. Both come from a previous `cognism_search`.")
         if target == "contact":
             return _run(lambda c: c.redeem_contacts(
                 ids=ids, redeem_ids=redeem_ids,

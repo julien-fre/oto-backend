@@ -170,4 +170,4 @@ def test_la_description_de_fields_nomme_toutes_les_cles_de_la_vue():
                            full=False, fields=None)["content"][0]
     for cle in set(personne) | set(societe):
         assert f"`{cle}`" in d, f"clé `{cle}` rendue par la vue, absente du texte servi"
-    assert "écarté en silence" in d
+    assert "silently discarded" in d

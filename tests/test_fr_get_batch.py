@@ -87,11 +87,11 @@ def test_batch_failure_is_per_siren(fr_get):
 
 
 def test_input_guards(fr_get):
-    with pytest.raises(McpError, match="pas les deux"):
+    with pytest.raises(McpError, match="not both"):
         fr_get(siren="1", sirens=["2"])
-    with pytest.raises(McpError, match="pas les deux"):
+    with pytest.raises(McpError, match="not both"):
         fr_get()
-    with pytest.raises(McpError, match="vide"):
+    with pytest.raises(McpError, match="is empty"):
         fr_get(sirens=["  "])
-    with pytest.raises(McpError, match="limité à 20"):
+    with pytest.raises(McpError, match="limited to 20"):
         fr_get(sirens=[str(i).zfill(9) for i in range(21)])

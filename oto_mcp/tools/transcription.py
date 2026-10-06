@@ -1,18 +1,18 @@
-"""Transcription — un audio du projet devient une page du projet (ADR 0074).
+"""Transcription — a project audio file becomes a project page (ADR 0074).
 
-Face MCP. Deux outils. `transcription_create` : l'agent désigne un fichier par sa
-RÉFÉRENCE (`file_source`, typiquement `project_file`), le serveur lit les octets
-et dépose un TRAVAIL — il ne bloque PAS l'agent (#674, arbitrage du 22/09/2026:
-un connecteur long ne doit jamais l'attendre en ligne). `transcription_status`
-relit ce travail : en cours, terminé (avec la page), ou en échec (avec le refus).
+MCP face. Two tools. `transcription_create`: the agent designates a file by its
+REFERENCE (`file_source`, typically `project_file`), the server reads the bytes
+and drops off a JOB — it does NOT block the agent (#674, ruling of 22/09/2026:
+a long connector must never make it wait online). `transcription_status`
+re-reads that job: running, done (with the page), or failed (with the refusal).
 
-Le dépôt et la relecture sont ceux de la ressource REST (`capabilities/transcription.py`,
-gardes et ordre documentés là) ; ce module ne porte que le projet ambiant (`_project`),
-la traduction des refus en erreur MCP, et la sonde du connecteur. Le travail de fond
-(appel Mistral, page) vit dans `oto_mcp/transcription_worker.py`.
+Dropping off and re-reading are those of the REST resource (`capabilities/transcription.py`,
+guards and order documented there); this module only carries the ambient project (`_project`),
+the translation of refusals into MCP errors, and the connector probe. The background work
+(Mistral call, page) lives in `oto_mcp/transcription_worker.py`.
 
-Credential à 3 champs (ADR 0011) : la clé (secret), la langue et le vocabulaire (non
-secrets) — une instance = une clé × un vocabulaire, rattachable à un projet par slot.
+3-field credential (ADR 0011): the key (secret), the language and the vocabulary (non
+secret) — one instance = one key × one vocabulary, attachable to a project by slot.
 """
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ def _refus(message: str) -> McpError:
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — couvre `auth` SEUL : `GET /v1/models` n'est
-    pas facturé et refuse une clé invalide. Elle ne dit rien du solde du compte."""
+    """"Test the connection" probe — covers `auth` ONLY: `GET /v1/models` is
+    not billed and rejects an invalid key. It says nothing about the account balance."""
     from oto.tools.mistral import MistralClient
 
     MistralClient(api_key=fields["api_key"]).list_models()
@@ -62,8 +62,8 @@ def register(mcp: FastMCP) -> None:
         """
         pid = access.current_project()
         if pid is None:
-            raise _refus("transcription_create écrit une page de projet : passe "
-                         "`_project=<id>` (le projet qui recevra la page).")
+            raise _refus("transcription_create writes a project page: pass "
+                         "`_project=<id>` (the project that will receive the page).")
         sub = access.current_user_sub_or_raise()
         try:
             ref = _transcription.deposer(
@@ -71,12 +71,12 @@ def register(mcp: FastMCP) -> None:
                 lambda: file_source.resolve(source, max_bytes=_transcription.MAX_AUDIO_BYTES),
                 vocabulary=vocabulary, vocabulary_replace=vocabulary_replace)
         except AuthzDenied as e:
-            # Le refus du résolveur de credential est déjà une erreur MCP actionnable
-            # (connecteur à activer, quota) : la rendre telle quelle, pas sa traduction.
+            # The credential resolver's refusal is already an actionable MCP error
+            # (connector to activate, quota): return it as-is, not its translation.
             if isinstance(e.__cause__, McpError):
                 raise e.__cause__ from None
             raise _refus(str(e)) from None
-        return {**ref, "note": "Relire avec transcription_status(job_id)."}
+        return {**ref, "note": "Re-read with transcription_status(job_id)."}
 
     @mcp.tool()
     def transcription_status(job_id: int) -> dict:

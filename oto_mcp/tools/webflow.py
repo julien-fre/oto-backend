@@ -1,65 +1,65 @@
 """Webflow — CMS (site/collections/items) + webhooks, API v2
 (developers.webflow.com/data).
 
-Wrappe `oto.tools.webflow.client.WebflowClient`. Credential = clé unique
-(`keyed=True`, `secret_kind="api_key"`, `access.resolve_api_key("webflow")`) :
-un Site API token Webflow est bound à UN site (vérifié contre
-`reference/authentication/site-token` — « Site tokens are created per site »),
-donc AUCUN `site_id` à saisir ni à faire voyager ici — le client (oto-core)
-le résout lui-même via `GET /sites` au premier appel qui en a besoin, mis en
-cache pour la durée de vie du client. byo-only (pas de clé plateforme).
+Wraps `oto.tools.webflow.client.WebflowClient`. Credential = single key
+(`keyed=True`, `secret_kind="api_key"`, `access.resolve_api_key("webflow")`):
+a Webflow Site API token is bound to ONE site (verified against
+`reference/authentication/site-token` — "Site tokens are created per site"),
+so NO `site_id` to enter or to carry around here — the client (oto-core)
+resolves it itself via `GET /sites` on the first call that needs it, cached
+for the lifetime of the client. byo-only (no platform key).
 
-⚠️ **Un item créé/modifié ici reste invisible sur le site public tant que
-`webflow_publish` n'a pas été appelé** — le seul tool de ce module qui touche
-le contenu LIVE, laissé SEUL (comme `cognism_redeem` face à `cognism_search` :
-la frontière entre « rien ne bouge » et « ça devient public » doit rester
-visible dans le nom du tool, pas noyée dans un `op` parmi d'autres). Tout le
-reste — site/collections/items — est UN SEUL tool consolidé, `webflow_cms`,
-verbe en `op` (convention Folk/Cognism ADR 0047 §Amendement) : côté agent
-comme côté catalogue dashboard (qui liste les outils PAR connecteur sous une
-même carte), le CMS se présente comme une chose, pas quatre. create/update
-valident `fieldData` contre le schéma réel de la collection
-(`webflow_cms(op="collection")`) avant tout appel réseau d'écriture : un slug
-inconnu ou un champ requis manquant est nommé dans l'erreur plutôt que de
-laisser filer un 400 Webflow opaque à l'agent.
+⚠️ **An item created/modified here stays invisible on the public site until
+`webflow_publish` has been called** — the only tool of this module that touches
+LIVE content, left ALONE (like `cognism_redeem` vs `cognism_search`:
+the boundary between "nothing moves" and "it goes public" must stay
+visible in the tool name, not buried in an `op` among others). Everything
+else — site/collections/items — is ONE SINGLE consolidated tool, `webflow_cms`,
+verb in `op` (Folk/Cognism convention ADR 0047 §Amendment): on the agent side
+as on the dashboard catalogue side (which lists tools PER connector under a
+single card), the CMS presents itself as one thing, not four. create/update
+validate `fieldData` against the collection's real schema
+(`webflow_cms(op="collection")`) before any write network call: an unknown slug
+or a missing required field is named in the error rather than letting an opaque
+Webflow 400 slip through to the agent.
 
-`webflow_webhooks` (list/get/create/delete) est la surface RÉELLE de l'API —
-**aucun endpoint update n'existe** (vérifié live 2026-08-20 : reconfigurer un
-webhook = delete + create). `secretKey` n'est renvoyé QU'À LA CRÉATION (jamais
-sur get/list, confirmé live) — le docstring de `op="create"` le signale, comme
-Folk pour `signingSecret`.
+`webflow_webhooks` (list/get/create/delete) is the REAL surface of the API —
+**no update endpoint exists** (verified live 2026-08-20: reconfiguring a
+webhook = delete + create). `secretKey` is returned ONLY AT CREATION (never
+on get/list, confirmed live) — the docstring of `op="create"` says so, like
+Folk for `signingSecret`.
 
-`webflow_forms` (list/get — schéma des formulaires, jamais de write : un
-formulaire se construit dans l'éditeur visuel Webflow, pas par API) et
-`webflow_submissions` (list/get/update/delete — les LEADS remplis par de
-vrais visiteurs) restent DEUX tools distincts : la forme des paramètres ne se
-recouvre pas (`form_id` seul vs `submission_id` + `form_id` optionnel selon
-l'op), et fusionner masquerait la frontière « catalogue de formulaires » vs
-« données de contact réelles ». ⚠️ **Aucune création par API** — une
-soumission n'existe que si un visiteur remplit le formulaire côté site
-public ; `op="update"` sur `webflow_submissions` ne touche QUE les hidden
-fields déclarés au schéma du formulaire, jamais les données soumises
-(non éditables après coup côté Webflow).
+`webflow_forms` (list/get — form schema, never write: a
+form is built in the Webflow visual editor, not via API) and
+`webflow_submissions` (list/get/update/delete — the LEADS filled in by
+real visitors) remain TWO distinct tools: the parameter shapes do not
+overlap (`form_id` alone vs `submission_id` + optional `form_id` depending on
+the op), and merging would blur the boundary "form catalogue" vs
+"real contact data". ⚠️ **No creation via API** — a
+submission only exists if a visitor fills in the form on the public
+site; `op="update"` on `webflow_submissions` only touches the hidden
+fields declared in the form's schema, never the submitted data
+(not editable after the fact on the Webflow side).
 
-`webflow_pages` (op=list|get|update|content) couvre les MÉTADONNÉES de page
-(title/slug/seo/openGraph — read+write, sans restriction) et la LECTURE du
-contenu statique (les text nodes — titres/paragraphes). ⚠️ **L'ÉCRITURE du
-contenu n'est PAS exposée ici** : l'API Webflow ne permet d'écrire le
-contenu statique d'une page QUE sur une locale SECONDAIRE du site (jamais la
-primaire — confirmé verbatim contre la doc source), donc un site
-mono-locale (le cas courant, dont celui utilisé pour tester ce connecteur)
-n'a structurellement aucun moyen d'éditer le corps d'une page via cette API
-— ajouter un `op="update_content"` qui échoue systématiquement sur la
-majorité des sites serait un piège, pas une fonctionnalité. `webflow_
-site_publish` (distinct de `webflow_publish`, qui ne publie QUE des items
-CMS) publie le SITE ENTIER — rate-limité par Webflow à 1/minute, laissé
-SEUL comme les autres tools qui rendent du contenu public.
+`webflow_pages` (op=list|get|update|content) covers page METADATA
+(title/slug/seo/openGraph — read+write, no restriction) and READING the
+static content (the text nodes — titles/paragraphs). ⚠️ **WRITING the
+content is NOT exposed here**: the Webflow API only allows writing a page's
+static content on a SECONDARY locale of the site (never the
+primary one — confirmed verbatim against the source docs), so a
+single-locale site (the common case, including the one used to test this connector)
+structurally has no way to edit a page body via this API
+— adding an `op="update_content"` that systematically fails on the
+majority of sites would be a trap, not a feature. `webflow_
+site_publish` (distinct from `webflow_publish`, which ONLY publishes CMS
+items) publishes the ENTIRE SITE — rate-limited by Webflow to 1/minute, left
+ALONE like the other tools that put out public content.
 
-Volontairement HORS PÉRIMÈTRE (v1) : assets, ecommerce, comments, custom
-code — ce dernier injecte du JS arbitraire exécuté par CHAQUE visiteur
-(site ou page entière), un risque catégoriquement différent d'un CRUD de
-données ; à construire seulement sur un besoin concret, avec des garde-fous
-dédiés (jamais un simple `op` de plus parmi d'autres).
+Deliberately OUT OF SCOPE (v1): assets, ecommerce, comments, custom
+code — the latter injects arbitrary JS executed by EVERY visitor
+(whole site or page), a categorically different risk from data
+CRUD; to be built only on a concrete need, with dedicated safeguards
+(never just one more `op` among others).
 """
 from __future__ import annotations
 
@@ -76,25 +76,25 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /v2/token/authorized_by`. Ce que la doc Webflow établit :
+    `GET /v2/token/authorized_by`. What the Webflow docs establish:
 
-    - **authentifié** — Bearer token, comme le reste de l'API ;
-    - **sans effet de bord** — une lecture d'identité (`id`, `email`,
-      `firstName`, `lastName`) ;
-    - **le coût** — aucune mention de coût ni de limite de débit particulière
-      pour cet appel. Absence de mention, indice, pas une preuve.
+    - **authenticated** — Bearer token, like the rest of the API;
+    - **no side effects** — an identity read (`id`, `email`,
+      `firstName`, `lastName`);
+    - **the cost** — no mention of cost or of a particular rate limit
+      for this call. Absence of mention is a hint, not proof.
 
-    ⚠️ **Quatrième règle d'oto#69 : une sonde ne transforme jamais sa propre
-    limite en verdict sur la clé.** Cet endpoint exige le scope
-    `authorized_user:read` — SÉPARÉ des scopes réels du connecteur
-    (`cms:read`/`sites:read`). Un jeton légitimement scopé pour le CMS peut
-    refuser CET appel sans être cassé. Webflow documente 401 pour un jeton
-    mort et 403 pour un scope manquant (`UpstreamHTTPError.status_code`,
-    jamais deviné sur le texte) : le 403 lève un `RuntimeError` NU (jamais
-    `NonAutorise`) pour tomber sur `unknown`, pas `unauthorized` — un faux
-    négatif ici pousserait à révoquer une clé qui marche sur son CMS.
+    ⚠️ **Fourth rule of oto#69: a probe never turns its own
+    limit into a verdict on the key.** This endpoint requires the scope
+    `authorized_user:read` — SEPARATE from the connector's real scopes
+    (`cms:read`/`sites:read`). A token legitimately scoped for the CMS can
+    refuse THIS call without being broken. Webflow documents 401 for a dead
+    token and 403 for a missing scope (`UpstreamHTTPError.status_code`,
+    never guessed from the text): the 403 raises a BARE `RuntimeError` (never
+    `NonAutorise`) to land on `unknown`, not `unauthorized` — a false
+    negative here would push people to revoke a key that works on its CMS.
     """
     from oto.tools.webflow.client import WebflowClient
 
@@ -104,18 +104,18 @@ def _verify(fields: dict, config: dict | None = None) -> None:
     except UpstreamHTTPError as e:
         if e.status_code == 403:
             raise RuntimeError(
-                "Webflow refuse CET appel de vérification (403, scope "
-                "authorized_user:read) — ça ne dit RIEN de la clé pour "
-                "l'usage réel du connecteur (CMS, un scope différent). Non "
-                "concluant, pas invalide.") from e
+                "Webflow refuses THIS verification call (403, scope "
+                "authorized_user:read) — it says NOTHING about the key for "
+                "the connector's real use (CMS, a different scope). Inconclusive, "
+                "not invalid.") from e
         if e.status_code == 401:
             raise connector_verify.NonAutorise(
-                f"Webflow refuse cette clé (401) : {str(e)[:200]}") from e
+                f"Webflow refuses this key (401): {str(e)[:200]}") from e
         raise
     if not infos.get("id"):
         raise RuntimeError(
-            "Webflow a répondu sans identifier d'utilisateur pour cette clé — "
-            f"réponse inattendue : {str(infos)[:200]}")
+            "Webflow answered without identifying a user for this key — "
+            f"unexpected response: {str(infos)[:200]}")
 
 _BULK_MAX_ITEMS = 50
 
@@ -135,17 +135,17 @@ def _bad(msg: str) -> McpError:
 
 def _need(value, name: str, op: str):
     if value is None:
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
 def _run(fn):
-    """Exécute un appel Webflow, traduit une erreur amont en McpError actionnable.
+    """Runs a Webflow call, translates an upstream error into an actionable McpError.
 
-    `ValueError` = le client a résolu `site_id` via `GET /sites` et vu 0 ou
-    >1 site (token de workspace passé par erreur, scope `sites:read` absent,
-    token révoqué) — pas un refus HTTP, mais tout aussi actionnable pour
-    l'appelant."""
+    `ValueError` = the client resolved `site_id` via `GET /sites` and saw 0 or
+    >1 site (workspace token passed by mistake, `sites:read` scope missing,
+    token revoked) — not an HTTP refusal, but just as actionable for
+    the caller."""
     try:
         return fn()
     except McpError:
@@ -154,15 +154,15 @@ def _run(fn):
         raise _bad(str(e))
     except UpstreamHTTPError as e:
         if e.status_code == 401:
-            msg = "Token Webflow invalide ou révoqué (401). Vérifie le token posé."
+            msg = "Webflow token invalid or revoked (401). Check the token that was set."
         elif e.status_code == 404:
-            msg = f"Webflow : ressource introuvable (404) — {e.body}"
+            msg = f"Webflow: resource not found (404) — {e.body}"
         elif e.status_code >= 500:
-            msg = (f"Webflow est momentanément indisponible (erreur serveur "
-                   f"{e.status_code}). Réessaie dans un moment — ce n'est pas "
-                   "ton entrée.")
+            msg = (f"Webflow is temporarily unavailable (server error "
+                   f"{e.status_code}). Try again in a moment — it is not "
+                   "your input.")
         else:
-            msg = f"Webflow a refusé la requête (HTTP {e.status_code}) : {e.body}"
+            msg = f"Webflow refused the request (HTTP {e.status_code}): {e.body}"
         raise _bad(msg)
 
 
@@ -181,23 +181,23 @@ def _required_field_slugs(collection: dict) -> set:
 
 def _validate_field_data(collection: dict, field_data: dict, *, op: str,
                           check_required: bool) -> None:
-    """Refuse un `fieldData` AVANT tout appel réseau d'écriture : un slug
-    inconnu ou (`check_required`) un champ requis absent nomme le(s) coupable(s)
-    dans l'erreur, plutôt que de laisser Webflow renvoyer un 400 générique que
-    l'agent ne peut pas exploiter."""
+    """Refuses a `fieldData` BEFORE any write network call: an unknown
+    slug or (`check_required`) a missing required field names the culprit(s)
+    in the error, rather than letting Webflow return a generic 400 that
+    the agent cannot use."""
     known = _known_field_slugs(collection)
     unknown = set(field_data) - known
     if unknown:
         raise _bad(
-            f"webflow_cms(op='{op}') : champ(s) inconnu(s) dans fieldData "
-            f"pour cette collection : {sorted(unknown)}. Champs disponibles : "
+            f"webflow_cms(op='{op}'): unknown field(s) in fieldData "
+            f"for this collection: {sorted(unknown)}. Available fields: "
             f"{sorted(known)}.")
     if check_required:
         missing = _required_field_slugs(collection) - set(field_data)
         if missing:
             raise _bad(
-                f"webflow_cms(op='{op}') : champ(s) requis manquant(s) dans "
-                f"fieldData : {sorted(missing)}.")
+                f"webflow_cms(op='{op}'): required field(s) missing from "
+                f"fieldData: {sorted(missing)}.")
 
 
 def register(mcp: FastMCP) -> None:
@@ -325,12 +325,12 @@ def register(mcp: FastMCP) -> None:
 
         if op == "create":
             if (item is None) == (items is None):
-                raise _bad("op='create' : fournir soit `item` soit `items` — "
-                           "pas les deux, pas ni l'un ni l'autre.")
+                raise _bad("op='create': provide either `item` or `items` — "
+                           "not both, not neither.")
             payload = [item] if item is not None else list(items)
             if len(payload) > _BULK_MAX_ITEMS:
-                raise _bad(f"trop d'éléments ({len(payload)}) — max "
-                           f"{_BULK_MAX_ITEMS} par appel.")
+                raise _bad(f"too many items ({len(payload)}) — max "
+                           f"{_BULK_MAX_ITEMS} per call.")
             collection = _run(lambda: c.get_collection(collection_id))
             for it in payload:
                 _validate_field_data(collection, it.get("fieldData") or {},
@@ -351,9 +351,9 @@ def register(mcp: FastMCP) -> None:
 
         if op == "update":
             if (id is None) == (items is None):
-                raise _bad("op='update' : fournir soit `id` (+ `item`) pour UN "
-                           "item, soit `items` pour plusieurs — pas les deux, "
-                           "pas ni l'un ni l'autre.")
+                raise _bad("op='update': provide either `id` (+ `item`) for ONE "
+                           "item, or `items` for several — not both, "
+                           "not neither.")
 
             def _diff(current: dict, changed: dict) -> dict:
                 changes = {}
@@ -385,11 +385,11 @@ def register(mcp: FastMCP) -> None:
                 return updated[0] if updated else {}
 
             if len(items) > _BULK_MAX_ITEMS:
-                raise _bad(f"trop d'éléments ({len(items)}) — max "
-                           f"{_BULK_MAX_ITEMS} par appel.")
+                raise _bad(f"too many items ({len(items)}) — max "
+                           f"{_BULK_MAX_ITEMS} per call.")
             for it in items:
                 if "id" not in it:
-                    raise _bad("chaque item doit contenir 'id'.")
+                    raise _bad("each item must contain 'id'.")
             needs_schema = any(it.get("fieldData") for it in items)
             if needs_schema:
                 collection = _run(lambda: c.get_collection(collection_id))
@@ -410,12 +410,12 @@ def register(mcp: FastMCP) -> None:
 
         if op == "delete":
             if (id is None) == (ids is None):
-                raise _bad("op='delete' : fournir soit `id` soit `ids` — pas "
-                           "les deux, pas ni l'un ni l'autre.")
+                raise _bad("op='delete': provide either `id` or `ids` — not "
+                           "both, not neither.")
             target_ids = [id] if id is not None else list(ids)
             if len(target_ids) > _BULK_MAX_ITEMS:
-                raise _bad(f"trop d'éléments ({len(target_ids)}) — max "
-                           f"{_BULK_MAX_ITEMS} par appel.")
+                raise _bad(f"too many items ({len(target_ids)}) — max "
+                           f"{_BULK_MAX_ITEMS} per call.")
             if dry_run:
                 would_delete = [_run(lambda tid=tid: c.get_item(collection_id, tid))
                                 for tid in target_ids]
@@ -430,8 +430,8 @@ def register(mcp: FastMCP) -> None:
             return {"total": len(target_ids), "succeeded": len(target_ids),
                     "failed": []}
 
-        raise _bad("op doit être 'site', 'collections', 'collection', "
-                   "'items', 'item', 'create', 'update' ou 'delete'.")
+        raise _bad("op must be 'site', 'collections', 'collection', "
+                   "'items', 'item', 'create', 'update' or 'delete'.")
 
     @mcp.tool()
     def webflow_publish(
@@ -452,12 +452,12 @@ def register(mcp: FastMCP) -> None:
                 echo of the ids you passed. No publish call is made.
         """
         if (id is None) == (ids is None):
-            raise _bad("fournir soit `id` soit `ids` — pas les deux, pas ni "
-                       "l'un ni l'autre.")
+            raise _bad("provide either `id` or `ids` — not both, not "
+                       "neither.")
         target_ids = [id] if id is not None else list(ids)
         if len(target_ids) > _BULK_MAX_ITEMS:
-            raise _bad(f"trop d'éléments ({len(target_ids)}) — max "
-                       f"{_BULK_MAX_ITEMS} par appel.")
+            raise _bad(f"too many items ({len(target_ids)}) — max "
+                       f"{_BULK_MAX_ITEMS} per call.")
         c = _client()
         if dry_run:
             would_publish = []
@@ -538,9 +538,9 @@ def register(mcp: FastMCP) -> None:
             _need(url, "url", op)
             if filter is not None and trigger_type != "form_submission":
                 raise _bad(
-                    "op='create' : `filter` n'est valide que pour "
-                    "trigger_type='form_submission' — Webflow refuse toute "
-                    f"autre combinaison (reçu trigger_type={trigger_type!r}).")
+                    "op='create': `filter` is only valid for "
+                    "trigger_type='form_submission' — Webflow refuses any "
+                    f"other combination (received trigger_type={trigger_type!r}).")
             if dry_run:
                 preview = {"triggerType": trigger_type, "url": url}
                 if filter is not None:
@@ -557,7 +557,7 @@ def register(mcp: FastMCP) -> None:
             _run(lambda: c.delete_webhook(webhook_id))
             return {}
 
-        raise _bad("op doit être 'list', 'get', 'create' ou 'delete'.")
+        raise _bad("op must be 'list', 'get', 'create' or 'delete'.")
 
     @mcp.tool()
     def webflow_forms(
@@ -592,7 +592,7 @@ def register(mcp: FastMCP) -> None:
         if op == "get":
             _need(form_id, "form_id", op)
             return _run(lambda: c.get_form(form_id))
-        raise _bad("op doit être 'list' ou 'get'.")
+        raise _bad("op must be 'list' or 'get'.")
 
     @mcp.tool()
     def webflow_submissions(
@@ -681,7 +681,7 @@ def register(mcp: FastMCP) -> None:
             _run(lambda: c.delete_form_submission(submission_id))
             return {}
 
-        raise _bad("op doit être 'list', 'get', 'update' ou 'delete'.")
+        raise _bad("op must be 'list', 'get', 'update' or 'delete'.")
 
     @mcp.tool()
     def webflow_pages(
@@ -757,14 +757,14 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: c.get_page(page_id))
 
         if op == "update":
-            # (clé webflow_pages, clé brute Webflow, valeur demandée)
+            # (webflow_pages key, raw Webflow key, requested value)
             requested = [
                 ("title", "title", title), ("slug", "slug", slug),
                 ("seo", "seo", seo), ("open_graph", "openGraph", open_graph),
             ]
             changed = [(k, raw_k, v) for k, raw_k, v in requested if v is not None]
             if not changed:
-                raise _bad("op='update' requiert au moins un de title/slug/"
+                raise _bad("op='update' requires at least one of title/slug/"
                            "seo/open_graph.")
             if dry_run:
                 current = _run(lambda: c.get_page(page_id))
@@ -780,7 +780,7 @@ def register(mcp: FastMCP) -> None:
                 page_id, offset=offset, limit=min(max_results, 100),
                 locale_id=locale_id))
 
-        raise _bad("op doit être 'list', 'get', 'update' ou 'content'.")
+        raise _bad("op must be 'list', 'get', 'update' or 'content'.")
 
     @mcp.tool()
     def webflow_site_publish(
@@ -803,9 +803,9 @@ def register(mcp: FastMCP) -> None:
         """
         if not custom_domains and not publish_to_webflow_subdomain:
             raise _bad(
-                "fournir custom_domains et/ou "
-                "publish_to_webflow_subdomain=True — au moins une cible de "
-                "publication doit être désignée.")
+                "provide custom_domains and/or "
+                "publish_to_webflow_subdomain=True — at least one publish "
+                "target must be designated.")
         if dry_run:
             return {"dry_run": True, "would_publish": {
                 "customDomains": custom_domains or [],

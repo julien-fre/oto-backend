@@ -88,7 +88,7 @@ def refus(monkeypatch):
 def test_refus_un_tenant_SANS_patron_ne_recoit_aucune_adresse(registre, refus, cas):
     msg = refus("part:u-1", cas)
     assert "http" not in msg, f"adresse servie à un produit qui n'en déclare pas : {msg}"
-    assert " sur " not in msg, f"la phrase promet une adresse qu'elle ne donne pas : {msg}"
+    assert " at http" not in msg, f"la phrase promet une adresse qu'elle ne donne pas : {msg}"
 
 
 @pytest.mark.parametrize("cas", REFUS)
@@ -133,7 +133,7 @@ def carte(monkeypatch):
 @pytest.mark.parametrize("cas", list(CARTE))
 def test_carte_un_tenant_SANS_patron_ne_recoit_aucune_adresse(registre, carte, cas):
     msg = carte("part:u-1", cas)
-    assert "http" not in msg and " sur " not in msg, msg
+    assert "http" not in msg and " at http" not in msg, msg
 
 
 @pytest.mark.parametrize("cas", list(CARTE))

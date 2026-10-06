@@ -1,31 +1,31 @@
-"""Déclaration de registre du connecteur `gr`.
+"""Registry declaration of the `gr` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# Grèce : lookup entité via registre GEMI (autocomplete) + VIES. Open data,
-# sans clé. Inerte tant que non activé en DB (deny-by-default), comme foncier/sante.
+# Greece: entity lookup via the GEMI registry (autocomplete) + VIES. Open data,
+# no key. Inert until activated in the DB (deny-by-default), like foncier/sante.
 CONNECTOR = _c(
     "gr", ["gr"], secret_kind="none",
-    label="Entreprises Grèce",
-    help="chercher une entreprise grecque au registre GEMI, vérifier un numéro "
-         "de TVA européen (VIES) — open data",
+    label="Greece companies",
+    help="search a Greek company in the GEMI registry, check a European VAT "
+         "number (VIES) — open data",
 )
 
-# « Data GR » était à la fois le libellé et une CATÉGORIE à un seul membre : ni
-# « Grèce » ni « entreprises » n'apparaissaient, et le filtre par type portait une
-# ligne pour lui seul. Rangé (2026-09-02) là où vivent déjà les registres
-# d'entreprises européens — hithorizons, topograph.
+# "Data GR" was both the label and a single-member CATEGORY: neither
+# "Greece" nor "companies" appeared, and the type filter carried a line for it
+# alone. Filed (2026-09-02) where the European company registers already live —
+# hithorizons, topograph.
 CATEGORY = "Prospection"
 PUBLISHER = "GEMI / VIES"
 SANS_LOGO_DE_MARQUE = True
 
 DESCRIPTION = (
-    "Vérifier une entreprise grecque au registre GEMI (autocomplétion) ou un "
-    "numéro de TVA intracommunautaire (VIES) — donnée ouverte, sans clé à "
-    "poser."
+    "Check a Greek company in the GEMI registry (autocomplete) or an "
+    "intra-community VAT number (VIES) — open data, no key to "
+    "set up."
 )

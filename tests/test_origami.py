@@ -562,7 +562,7 @@ def test_delete_re_read_other_error_propagates_as_tool_error():
         inst = cls.return_value
         inst.delete_campaign.return_value = {"id": "c-1", "deleted": True}
         inst.get_campaign.side_effect = _upstream(503, "down")
-        with pytest.raises(McpError, match="indisponible"):
+        with pytest.raises(McpError, match="unavailable"):
             _tool("origami_campaign_delete").fn(campaign_id="c-1", confirm=True)
 
 

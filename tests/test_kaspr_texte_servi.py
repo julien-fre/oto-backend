@@ -149,7 +149,7 @@ def test_le_schema_servi_annonce_le_defaut_reel_pas_tous_les_champs():
 
 def test_le_500_kaspr_naffirme_plus_que_lentree_est_hors_de_cause():
     msg = _message_du_500_kaspr()
-    assert "ce n'est pas ton entrée" not in msg.lower()
+    assert "not your input" not in msg.lower()
 
 
 def test_le_500_kaspr_nomme_les_deux_fautes_dentree_atteignables():
@@ -165,18 +165,18 @@ def test_le_500_kaspr_borne_la_reprise():
     """« Réessaie » sans borne a produit 20 tentatives puis un abandon : la reprise
     est explicitement d'UNE fois."""
     msg = _message_du_500_kaspr().lower()
-    assert "une seule" in msg, msg
+    assert "a single" in msg, msg
 
 
 def test_le_500_aiark_naffirme_plus_que_lentree_est_hors_de_cause():
     """La même phrase vivait à l'identique dans le connecteur AI Ark."""
     msg = _message_du_500_aiark()
-    assert "ce n'est pas ton entrée" not in msg.lower()
+    assert "not your input" not in msg.lower()
 
 
 def test_le_500_aiark_borne_la_reprise():
     msg = _message_du_500_aiark().lower()
-    assert "une seule" in msg, msg
+    assert "a single" in msg, msg
 
 
 def test_le_500_cognism_naffirme_plus_que_lentree_est_hors_de_cause():
@@ -184,11 +184,11 @@ def test_le_500_cognism_naffirme_plus_que_lentree_est_hors_de_cause():
     Rien ne l'avait recopiée sciemment : elle a été dupliquée d'un connecteur à
     l'autre, avec sa certitude. Elle est fausse partout où on ne peut pas savoir."""
     msg = _message_du_500_cognism()
-    assert "ce n'est pas ton entrée" not in msg.lower()
+    assert "not your input" not in msg.lower()
 
 
 def test_le_500_cognism_borne_la_reprise():
-    assert "une seule" in _message_du_500_cognism().lower()
+    assert "a single" in _message_du_500_cognism().lower()
 
 
 # --- 402 : le compte est à sec, le profil n'y est pour rien -------------------
@@ -232,10 +232,10 @@ def test_le_402_ne_renvoie_pas_verifier_le_profil():
     réessayer à l'identique.
     """
     msg = _message_du_402_kaspr()
-    assert "crédit" in msg.lower(), msg
-    assert "profil" not in msg.lower() or "n'y sont pour rien" in msg, msg
+    assert "credit" in msg.lower(), msg
+    assert "profile" not in msg.lower() or "nothing to do with it" in msg, msg
     # le refus doit couper la boucle de reprise, pas l'encourager
-    assert "réessayer" in msg or "rechargé" in msg, msg
+    assert "retrying" in msg or "topped up" in msg, msg
 
 
 # --- AI Ark 402 : même défaut, jamais posé (otomata-tech/oto#144) --------------
@@ -266,19 +266,19 @@ def test_le_402_aiark_nomme_le_compte_et_coupe_la_boucle_de_reprise():
     la requête » ; l'agent rejouait en `size=3` une requête déjà réussie en
     `size=40`, puis s'arrêtait à 120 lignes sur 438 sans savoir pourquoi."""
     msg = _message_du_402_aiark()
-    assert "n'a pas pu traiter" not in msg, msg
-    assert "402" in msg and "crédits" in msg, msg
-    assert "pas ton entrée" in msg, msg
-    assert "`size`" in msg and "réessayer" in msg, msg
-    assert "Recharge le compte chez AI Ark" in msg, msg
+    assert "could not process" not in msg, msg
+    assert "402" in msg and "credits" in msg, msg
+    assert "not your input" in msg, msg
+    assert "`size`" in msg and "retrying" in msg, msg
+    assert "Top up the account at AI Ark" in msg, msg
 
 
 def test_le_402_aiark_sur_la_cle_plateforme_ne_dit_pas_de_recharger():
     """Sur la clé plateforme, le compte n'est pas celui de l'appelant : le geste
     utile est de le signaler ou de poser sa clé, pas de recharger."""
     msg = _message_du_402_aiark(is_platform=True)
-    assert "fournis par oto" in msg and "feedback" in msg, msg
-    assert "Recharge le compte chez AI Ark" not in msg, msg
+    assert "provided by oto" in msg and "feedback" in msg, msg
+    assert "Top up the account at AI Ark" not in msg, msg
 
 
 # --- Kaspr 429 : attendre, pas relire le profil (otomata-tech/oto#144) ---------
@@ -318,8 +318,8 @@ def test_le_429_kaspr_ne_renvoie_pas_verifier_le_profil():
     from oto_mcp.error_taxonomy import classify
 
     info = classify(_erreur_du_429_kaspr())
-    assert "Vérifie le profil" not in info.message, info.message
-    assert "429" in info.message and "attends" in info.message, info.message
+    assert "Check the LinkedIn profile" not in info.message, info.message
+    assert "429" in info.message and "wait a few seconds" in info.message, info.message
 
 
 def test_le_429_kaspr_est_classe_rejouable():

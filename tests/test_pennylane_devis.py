@@ -49,7 +49,7 @@ def test_create_route_vers_create_quote_avec_texte_libre(client):
 
 
 def test_create_exige_ses_champs(client):
-    with pytest.raises(McpError, match="op='create' requiert deadline"):
+    with pytest.raises(McpError, match="op='create' requires deadline"):
         _tool()(op="create", customer_id=12, date="2026-09-24", lines=[LIGNE])
     client.create_quote.assert_not_called()
 
@@ -63,7 +63,7 @@ def test_list_passe_les_filtres(client):
 
 
 def test_un_statut_inconnu_est_refuse_sans_appel(client):
-    with pytest.raises(McpError, match="status inconnu"):
+    with pytest.raises(McpError, match="unknown status"):
         _tool()(op="set_status", quote_id=7, status="signed")
     client.update_quote_status.assert_not_called()
 
@@ -87,7 +87,7 @@ def test_pdf_rend_le_lien_du_devis(client):
 
 def test_pdf_sans_lien_leve_au_lieu_de_rendre_vide(client):
     client.get_quote.return_value = {"quote_number": "D-2026-001"}
-    with pytest.raises(McpError, match="aucun lien PDF"):
+    with pytest.raises(McpError, match="no PDF link"):
         _tool()(op="pdf", quote_id=7)
 
 
@@ -107,5 +107,5 @@ def test_un_refus_de_scope_remonte_actionnable(client):
 
     client.create_invoice_from_quote.side_effect = UpstreamHTTPError(
         403, {"error": "insufficient scope"}, service="pennylane")
-    with pytest.raises(McpError, match="DROIT qui manque"):
+    with pytest.raises(McpError, match="PERMISSION missing"):
         _tool()(op="to_invoice", quote_id=7)

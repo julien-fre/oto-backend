@@ -83,7 +83,7 @@ def test_linkedin_trouve_les_deux_connecteurs_linkedin(magasin):
     out = _me(name="linkedin")
     assert [c["name"] for c in out["connectors"]] == ["linkedin_unipile", "aiark"]
     assert out["name_match"]["candidates"] == ["linkedin_unipile", "aiark"]
-    assert "aucun n'est choisi" in out["name_match"]["note"]
+    assert "none is chosen for you" in out["name_match"]["note"]
     # Chaque candidat reçoit son verdict : la lecture reste ciblée.
     assert out["readiness"] == "computed"
     assert all(c["ready"] is True for c in out["connectors"])
@@ -109,7 +109,7 @@ def test_un_nom_qui_ne_designe_rien_est_refuse_en_proposant(magasin):
     assert e.value.code == "unknown_connector"
     assert "linkedin_unipile" in e.value.details["suggestions"]
     assert "`linkedin_unipile`" in e.value.message
-    assert "ne dit RIEN de tes connexions" in e.value.message
+    assert "says NOTHING about your connections" in e.value.message
 
 
 def test_un_geste_exige_le_nom_exact_mais_son_refus_propose(magasin, monkeypatch):
@@ -150,7 +150,7 @@ def test_rien_ne_resout_rien_n_est_dit_et_l_enveloppe_dit_le_calcul(magasin):
     assert "credential" not in {c["name"]: c for c in out["connectors"]}["aiark"]
     assert out["credentials"] == "computed"
     hint = out["readiness_hint"]
-    assert "`not_selected` ne veut PAS dire non connecté" in hint
+    assert "`not_selected` does NOT mean not connected" in hint
 
 
 def test_un_compte_a_lier_est_une_etape_pas_une_connexion(magasin):

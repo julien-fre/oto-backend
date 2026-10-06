@@ -164,7 +164,7 @@ def test_single_fiche_expands_nested_records(data_app):
     assert "F-42" in texts
     assert "3 ×" not in texts and "×" not in texts
     # statut + lifecycle (suites possibles)
-    assert "Statut : en_cours" in texts
+    assert "Status: en_cours" in texts
     assert "qualified" in texts and "ecarte" in texts
     # occupant{} déplié en clé/valeur
     assert "Acme SAS" in texts
@@ -197,7 +197,7 @@ def test_list_view_columns_follow_schema_order(data_app):
 
 def test_unknown_row_returns_message(data_app):
     card = data_app(datastore="leads", row="does-not-exist")
-    assert any("introuvable" in t.lower() for t in card.texts())
+    assert any("not found" in t.lower() for t in card.texts())
 
 
 def test_filtre_refuse_par_le_store_remonte_en_refus(data_app, monkeypatch):

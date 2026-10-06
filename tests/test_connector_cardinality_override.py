@@ -128,7 +128,7 @@ def test_une_valeur_inconnue_est_IGNORÉE_et_journalisée(monkeypatch, caplog):
              "connector": MONO_PAR_DEFAUT, "value": "beaucoup", "key": "cardinality"}])
     with caplog.at_level(logging.WARNING):
         assert cardinality.reload() == 0
-    assert any("valeur inconnue" in r.message for r in caplog.records)
+    assert any("unknown value" in r.message for r in caplog.records)
     assert cardinality.is_multi_account(MONO_PAR_DEFAUT) is False
 
 
@@ -144,7 +144,7 @@ def test_une_base_injoignable_retombe_sur_les_defauts_du_code(monkeypatch, caplo
     monkeypatch.setattr("oto_mcp.db.connector_settings.list_connector_settings", _boom)
     with caplog.at_level(logging.WARNING):
         assert cardinality.is_multi_account(MONO_PAR_DEFAUT) is False
-    assert any("surcharges illisibles" in r.message for r in caplog.records)
+    assert any("overrides unreadable" in r.message for r in caplog.records)
 
 
 def test_l_axe_d_appel_s_ouvre_des_qu_UNE_org_a_elargi(monkeypatch):

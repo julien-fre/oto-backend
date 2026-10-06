@@ -1,11 +1,11 @@
-## prerequisite — obtenir une clé Lusha
+## prerequisite — get a Lusha key
 
-crée une clé API dans le tableau de bord [Lusha](https://www.lusha.com), section paramètres API.
-- colle-la dans tes connecteurs oto sur `/account`
-- byo-only : pas de clé plateforme partagée, chaque org/personne pose la sienne
-- Lusha facture en crédits : une recherche seule (`api_search`) coûte un crédit, et chaque champ révélé (`reveal`) en coûte un de plus PAR contact — surveille `billing.creditsCharged` dans la réponse avant de révéler un gros lot.
+create an API key in the [Lusha](https://www.lusha.com) dashboard, API settings section.
+- paste it into your oto connectors on `/account`
+- byo-only: no shared platform key, each org/person sets their own
+- Lusha bills in credits: a search alone (`api_search`) costs one credit, and each revealed field (`reveal`) costs one more PER contact — watch `billing.creditsCharged` in the response before revealing a big batch.
 
-## usage — retrouver et révéler des contacts
+## usage — find and reveal contacts
 
-recherche des contacts et débloque leurs emails/téléphones en un seul appel.
-- `lusha_search_and_enrich` — jusqu'à 100 contacts par appel, identifiés par email, URL LinkedIn, ou nom + société. `reveal` contrôle ce qui se débloque (emails, téléphones, ou les deux) ; sans `reveal`, l'appel ne fait que rechercher/matcher, sans débloquer de donnée.
+search for contacts and unlock their emails/phones in a single call.
+- `lusha_search_and_enrich` — up to 100 contacts per call, identified by email, LinkedIn URL, or name + company. `reveal` controls what gets unlocked (emails, phones, or both); without `reveal`, the call only searches/matches, without unlocking any data.

@@ -1,33 +1,33 @@
-"""Navigateur connecté — lire N sites derrière login SANS écrire un connecteur par site.
+"""Connected browser — read N sites behind a login WITHOUT writing one connector per site.
 
-Connecteur **générique** sur le substrat Browserbase (ADR 0026) : là où `crunchbase`,
-`brevoauto` et `pennylaneged` sont trois connecteurs écrits en dur pour trois API privées
-qu'on exploite en profondeur, celui-ci sert le besoin inverse — **lire** une page
-authentifiée sur un site quelconque (média payant, intranet, back-office sans API), où
-écrire un connecteur dédié coûterait un cycle de dev complet pour un `GET`.
+**Generic** connector on the Browserbase substrate (ADR 0026): where `crunchbase`,
+`brevoauto` and `pennylaneged` are three hard-coded connectors for three private APIs
+that we exploit in depth, this one serves the opposite need — **reading** an
+authenticated page on any site (paid media, intranet, back-office without an API), where
+writing a dedicated connector would cost a full dev cycle for a `GET`.
 
-Modèle (oto-private#79) :
-- **un site = un compte du coffre** (`account` = le host, cf. multi-compte ADR 0011/0024) :
-  chaque site a SON Context Browserbase, donc sa session isolée — jamais un profil
-  fourre-tout qui mélangerait les credentials de N sites dans un seul secret. Les sites
-  connectés se listent (`browser_sites`) et apparaissent dans le picker d'identités du
-  dashboard (backend keyed générique de `connector_identities`).
-- **connexion** = Live View interactive sur l'URL demandée (`browser_connect_start`) :
-  l'utilisateur se logue à la main (SSO/2FA/captcha), la session persiste dans le Context.
-- **lecture** = `browser_fetch(url)` charge la page dans une session éphémère du Context du
-  site et renvoie son contenu **complet** (pas le repli tronqué à 400 caractères de
-  `run_fetch`, qui vise des API JSON).
+Model (oto-private#79):
+- **one site = one vault account** (`account` = the host, see multi-account ADR 0011/0024):
+  each site has ITS OWN Browserbase Context, hence its isolated session — never a
+  catch-all profile that would mix the credentials of N sites in a single secret. The
+  connected sites can be listed (`browser_sites`) and appear in the dashboard's identity
+  picker (generic keyed backend of `connector_identities`).
+- **connection** = interactive Live View on the requested URL (`browser_connect_start`):
+  the user logs in by hand (SSO/2FA/captcha), the session persists in the Context.
+- **reading** = `browser_fetch(url)` loads the page in an ephemeral session of the site's
+  Context and returns its **full** content (not the 400-character truncated fallback of
+  `run_fetch`, which targets JSON APIs).
 
-⚠️ **Vérification du login : générique, donc faillible.** Un connecteur dédié sonde une
-route authentifiée qu'il connaît (`/crm/flow_companies` chez Pennylane) ; ici on ne sait
-rien du site. Le seul signal lisible partout = « la session porte-t-elle des cookies sur ce
-host ? ». 0 cookie ⇒ presque sûrement pas logué ; >0 ne PROUVE rien (un cookie anonyme
-suffit). D'où `force=True` sur `browser_connect_status` pour les sites dont l'état de login
-vit ailleurs (localStorage) — assumé et documenté, pas un fallback silencieux.
+⚠️ **Login verification: generic, hence fallible.** A dedicated connector probes an
+authenticated route it knows (`/crm/flow_companies` on Pennylane); here we know nothing
+about the site. The only signal readable everywhere = "does the session carry cookies on
+this host?". 0 cookies ⇒ almost surely not logged in; >0 PROVES nothing (an anonymous
+cookie is enough). Hence `force=True` on `browser_connect_status` for sites whose login
+state lives elsewhere (localStorage) — deliberate and documented, not a silent fallback.
 
-Coût : **1 session navigateur par appel** (héritée du substrat). Adapté au delta de veille
-(quelques pages), pas à un backfill de centaines d'articles — la réutilisation d'une session
-pour N appels d'un même run reste à faire si le volume le justifie.
+Cost: **1 browser session per call** (inherited from the substrate). Suited to monitoring
+deltas (a few pages), not to a backfill of hundreds of articles — reusing one session
+for N calls of the same run is left to do if the volume justifies it.
 """
 from __future__ import annotations
 
@@ -44,8 +44,8 @@ from ..auth.hooks import current_user_sub_from_token
 
 _CONNECTOR = "browser"
 
-# Plafond de contenu rendu à l'agent. Une page entière peut peser des centaines de
-# milliers de caractères ; on tronque en le DISANT (`truncated`), jamais en silence.
+# Cap on rendered content returned to the agent. A whole page can weigh hundreds of
+# thousands of characters; we truncate while SAYING so (`truncated`), never silently.
 _MAX_CHARS = 100_000
 
 
@@ -54,75 +54,75 @@ def _err(msg: str, code: int = INVALID_PARAMS) -> McpError:
 
 
 def _sub() -> str:
-    # Un échec d'identité MONTE (le seam le journalise avec sa raison, #464) : seul
-    # un appel réellement sans jeton est « non authentifié ».
+    # An identity failure BUBBLES UP (the seam logs it with its reason, #464): only
+    # a call truly without a token is "unauthenticated".
     sub = current_user_sub_from_token()
     if not sub:
-        raise _err("Auth requise — ce tool ne marche que sur le transport HTTP authentifié.")
+        raise _err("Auth required — this tool only works over the authenticated HTTP transport.")
     return sub
 
 
 def _site_of(url: str) -> str:
-    """Host normalisé d'une URL = l'identité du site au coffre. `www.` retiré (mêmes
-    cookies, même login : `www.exemple.fr` et `exemple.fr` ne doivent pas produire deux
-    sessions à maintenir), port et casse normalisés."""
+    """Normalized host of a URL = the site's identity in the vault. `www.` removed (same
+    cookies, same login: `www.example.fr` and `example.fr` must not produce two
+    sessions to maintain), port and case normalized."""
     p = urlparse((url or "").strip())
     if p.scheme not in ("http", "https") or not p.hostname:
-        raise _err(f"URL invalide : {url!r} — attendu une URL absolue (https://…).")
+        raise _err(f"Invalid URL: {url!r} — expected an absolute URL (https://…).")
     host = p.hostname.lower()
     return host[4:] if host.startswith("www.") else host
 
 
 def _context_id(site: str) -> str:
-    """Context Browserbase de l'utilisateur POUR CE SITE, résolu du coffre. Lève une
-    McpError actionnable si le site n'est pas connecté. Un compte explicite introuvable
-    lève côté `access` (jamais de repli muet sur le Context d'un AUTRE site — lire la
-    mauvaise session serait une fuite entre sites)."""
+    """The user's Browserbase Context FOR THIS SITE, resolved from the vault. Raises an
+    actionable McpError if the site is not connected. An explicit account that is not
+    found raises on the `access` side (never a silent fallback to the Context of ANOTHER
+    site — reading the wrong session would leak between sites)."""
     try:
         return access.resolve_credential(_CONNECTOR, want="byo", account=site).key
     except McpError:
-        raise _err(f"`{site}` n'est pas connecté. Lance `browser_connect_start(\"https://{site}/\")` "
-                   "pour t'y loguer une fois (session mémorisée ensuite).")
+        raise _err(f"`{site}` is not connected. Run `browser_connect_start(\"https://{site}/\")` "
+                   "to log in once (session remembered afterwards).")
 
 
 async def _verify_site(session_id: str, account: str) -> browser_session.Verdict:
-    """Sonde de login GÉNÉRIQUE : la session vivante porte-t-elle des cookies sur le
-    host ? (cf. l'avertissement en tête de module — signal, pas preuve.) Le refus dit
-    son motif ET l'échappatoire, sans quoi l'agent ne peut que boucler."""
+    """GENERIC login probe: does the live session carry cookies on the host? (see the
+    warning at the top of the module — a signal, not proof.) The refusal states its
+    reason AND the escape hatch, otherwise the agent can only loop."""
     if not account:
         return browser_session.Verdict(
             False, browser_session.NO_SESSION,
-            "Aucun site visé : rappelle `browser_connect_start(url)` d'abord.",
+            "No site targeted: call `browser_connect_start(url)` again first.",
             retry=False)
     if await browserbase.host_cookies(session_id, f"https://{account}/") > 0:
         return browser_session.Verdict(True, browser_session.LOGGED_IN)
     return browser_session.Verdict(
         False, browser_session.NO_SESSION,
-        f"Aucun cookie sur `{account}` : soit le login n'est pas allé au bout (finis-le "
-        "dans la Live View), soit ce site garde sa session HORS cookies (localStorage) "
-        "— dans ce cas relance avec `force=true`.")
+        f"No cookies on `{account}`: either the login was not completed (finish it "
+        "in the Live View), or this site keeps its session OUTSIDE cookies (localStorage) "
+        "— in that case retry with `force=true`.")
 
 
-# Connecteur à session navigateur, variante GÉNÉRIQUE : `login_url` fournie à l'appel
-# (le site vient de l'utilisateur) et `verify` account-aware. À l'import, comme les autres.
+# Browser-session connector, GENERIC variant: `login_url` supplied at call time
+# (the site comes from the user) and an account-aware `verify`. At import, like the others.
 browser_session.register(_CONNECTOR, _verify_site, account_aware=True)
 
 
 def register(mcp: FastMCP) -> None:
 
-    # --- Connexion d'un site (Live View) ------------------------------------
+    # --- Connecting a site (Live View) --------------------------------------
     @mcp.tool()
     def browser_connect_start(ctx: Context, url: str) -> dict:
-        """Connecte un site derrière login (une fois par site). Ouvre un navigateur
-        distant sur `url` et renvoie une **`live_view_url`** : ouvre-la, connecte-toi au
-        site normalement (email/mot de passe, SSO, 2FA — tout se passe dans cette
-        fenêtre). Puis appelle `browser_connect_status(context_id, session_id, site)`
-        avec les valeurs renvoyées pour mémoriser la session.
+        """Connect a site behind a login (once per site). Opens a remote browser on
+        `url` and returns a **`live_view_url`**: open it and log in to the site
+        normally (email/password, SSO, 2FA — everything happens in that window). Then
+        call `browser_connect_status(context_id, session_id, site)` with the returned
+        values to remember the session.
 
-        Ensuite `browser_fetch(url)` lit n'importe quelle page de ce site en étant logué.
+        After that, `browser_fetch(url)` reads any page of that site while logged in.
 
         Args:
-            url: URL de la page de connexion du site (ou sa page d'accueil).
+            url: URL of the site's login page (or its home page).
         """
         sub = _sub()
         site = _site_of(url)
@@ -132,25 +132,25 @@ def register(mcp: FastMCP) -> None:
             raise _err(str(e), code=INTERNAL_ERROR)
         out["site"] = site
         out["instructions"] = (
-            f"Ouvre `live_view_url`, connecte-toi à {site}, puis appelle "
-            f"`browser_connect_status` avec context_id + session_id + site='{site}'.")
+            f"Open `live_view_url`, log in to {site}, then call "
+            f"`browser_connect_status` with context_id + session_id + site='{site}'.")
         return out
 
     @mcp.tool()
     async def browser_connect_status(ctx: Context, context_id: str, session_id: str,
                                      site: str, force: bool = False) -> dict:
-        """Finalise la connexion d'un site. Vérifie que tu t'es bien logué dans la Live
-        View ; si oui, **mémorise** la session pour ce site. Renvoie `{connected, site}`.
-        Rappelle-le si `connected=false` (pas encore logué).
+        """Finalize a site's connection. Checks that you actually logged in in the Live
+        View; if so, **remembers** the session for this site. Returns `{connected, site}`.
+        Call it again if `connected=false` (not logged in yet).
 
         Args:
-            context_id: valeur renvoyée par `browser_connect_start`.
-            session_id: valeur renvoyée par `browser_connect_start`.
-            site: host renvoyé par `browser_connect_start` (ex. `le-ticket.fr`).
-            force: mémoriser SANS vérification. La vérification est générique (présence
-                de cookies sur le host) : certains sites gardent leur session ailleurs
-                (localStorage) et répondent « pas logué » à tort. N'utilise `force` que
-                si tu t'es bien logué et que la vérification échoue quand même.
+            context_id: value returned by `browser_connect_start`.
+            session_id: value returned by `browser_connect_start`.
+            site: host returned by `browser_connect_start` (e.g. `le-ticket.fr`).
+            force: remember WITHOUT verification. The verification is generic (presence
+                of cookies on the host): some sites keep their session elsewhere
+                (localStorage) and wrongly answer "not logged in". Only use `force` if
+                you did log in and the verification still fails.
         """
         sub = _sub()
         try:
@@ -161,8 +161,8 @@ def register(mcp: FastMCP) -> None:
         if not res.connected:
             return {"connected": False, "site": site, "reason": res.reason,
                     "retry": res.retry,
-                    "hint": res.detail or ("Pas encore logué (aucun cookie sur ce site) — "
-                                           "connecte-toi dans la Live View puis relance.")}
+                    "hint": res.detail or ("Not logged in yet (no cookie on this site) — "
+                                           "log in in the Live View then retry.")}
         out = {"connected": True, "site": site, "reason": res.reason,
                "login_verified": not res.warning}
         if res.warning:
@@ -171,44 +171,44 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def browser_sites() -> dict:
-        """Liste les sites que tu as connectés dans ce navigateur (un par login mémorisé).
-        Renvoie `{sites: [{id, label, is_default}]}` — `id` = le host à passer aux autres
-        tools. Un site absent d'ici doit d'abord passer par `browser_connect_start`."""
+        """List the sites you have connected in this browser (one per remembered login).
+        Returns `{sites: [{id, label, is_default}]}` — `id` = the host to pass to the other
+        tools. A site missing from here must first go through `browser_connect_start`."""
         sub = _sub()
         return {"sites": connector_identities.list_identities(sub, _CONNECTOR)}
 
-    # --- Lecture -------------------------------------------------------------
+    # --- Reading -------------------------------------------------------------
     @mcp.tool()
     async def browser_fetch(url: str, as_html: bool = False,
                             max_chars: int = _MAX_CHARS) -> dict:
-        """Lit une page **en étant logué** sur le site (session mémorisée, cf.
-        `browser_connect_start`). Charge l'URL dans le navigateur distant et renvoie le
-        contenu rendu — texte lisible par défaut, DOM sérialisé si `as_html`.
+        """Read a page **while logged in** on the site (remembered session, see
+        `browser_connect_start`). Loads the URL in the remote browser and returns the
+        rendered content — readable text by default, serialized DOM if `as_html`.
 
-        Renvoie `{site, status, final_url, title, content, truncated}`. `status` = code
-        HTTP de la navigation (une page de login renvoyée à la place du contenu signale
-        une session expirée → reconnecte le site).
+        Returns `{site, status, final_url, title, content, truncated}`. `status` = HTTP
+        code of the navigation (a login page returned instead of the content signals
+        an expired session → reconnect the site).
 
         Args:
-            url: URL absolue de la page à lire — refusée sous les
-                `excluded_url_prefixes` du projet (demandée, ou atteinte par redirection).
-            as_html: True = HTML rendu (pour extraire des attributs/liens précis) ;
-                False (défaut) = texte lisible, bien plus compact.
-            max_chars: plafond de caractères renvoyés (troncature signalée par
+            url: absolute URL of the page to read — refused under the project's
+                `excluded_url_prefixes` (requested, or reached through a redirect).
+            as_html: True = rendered HTML (to extract specific attributes/links);
+                False (default) = readable text, much more compact.
+            max_chars: cap on returned characters (truncation flagged by
                 `truncated=true`).
         """
-        # Le refus du périmètre parle en PREMIER (#632), avant la validation d'hôte.
+        # The perimeter refusal speaks FIRST (#632), before host validation.
         per = await asyncio.to_thread(url_perimeter.perimeter_of_call)
         url_perimeter.refuse_if_excluded(url, per)
         site = _site_of(url)
         if not browserbase.is_configured():
-            raise _err("Browserbase non configuré côté plateforme "
+            raise _err("Browserbase not configured on the platform side "
                        "(BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID).", code=INTERNAL_ERROR)
         ctx_id = _context_id(site)
         try:
             res = await browserbase.fetch_page(ctx_id, url, as_html=as_html)
         except browserbase.BrowserbaseError as e:
-            raise _err(f"Exécution Browserbase échouée : {e}", code=INTERNAL_ERROR)
+            raise _err(f"Browserbase execution failed: {e}", code=INTERNAL_ERROR)
         url_perimeter.refuse_if_excluded(res.get("final_url"), per)
         content = res.get("content") or ""
         cap = max(1, int(max_chars))
@@ -218,32 +218,32 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def browser_eval(url: str, js: str) -> dict:
-        """Exécute du JavaScript **dans la page**, sur ta session loguée — échappatoire
-        pour ce que `browser_fetch` ne couvre pas (appeler une API interne du site avec
-        son CSRF tournant, cliquer/dérouler avant de lire, extraire une structure précise).
+        """Run JavaScript **in the page**, on your logged-in session — an escape hatch
+        for what `browser_fetch` does not cover (calling an internal API of the site with
+        its rotating CSRF, clicking/expanding before reading, extracting a precise structure).
 
-        `js` = source d'une fonction async **sans argument**, ex.
+        `js` = source of an async function **with no argument**, e.g.
         `async () => (await fetch("/api/items", {credentials:"include"})).json()`.
-        Sa valeur de retour est renvoyée telle quelle sous `result` (une liste est
-        enveloppée sous `items` — MCP exige un objet). Le `fetch` est same-origin avec
-        `url`, donc il porte les cookies de session.
+        Its return value is returned as-is under `result` (a list is wrapped under
+        `items` — MCP requires an object). The `fetch` is same-origin with
+        `url`, so it carries the session cookies.
 
         Args:
-            url: page à charger avant d'exécuter (donne l'origine et les cookies) —
-                refusée sous les `excluded_url_prefixes` du projet.
-            js: source de la fonction async à exécuter dans la page.
+            url: page to load before executing (provides the origin and the cookies) —
+                refused under the project's `excluded_url_prefixes`.
+            js: source of the async function to run in the page.
         """
         url_perimeter.refuse_if_excluded(
             url, await asyncio.to_thread(url_perimeter.perimeter_of_call))
         site = _site_of(url)
         if not browserbase.is_configured():
-            raise _err("Browserbase non configuré côté plateforme "
+            raise _err("Browserbase not configured on the platform side "
                        "(BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID).", code=INTERNAL_ERROR)
         ctx_id = _context_id(site)
         try:
             res = await browserbase.run_page_eval(ctx_id, url, js)
         except browserbase.BrowserbaseError as e:
-            raise _err(f"Exécution Browserbase échouée : {e}", code=INTERNAL_ERROR)
+            raise _err(f"Browserbase execution failed: {e}", code=INTERNAL_ERROR)
         if isinstance(res, list):
             return {"site": site, "items": res}
         return {"site": site, "result": res}

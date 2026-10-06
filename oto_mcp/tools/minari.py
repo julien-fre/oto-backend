@@ -1,48 +1,48 @@
-"""Minari — prospection téléphonique : appels transcrits, listes, analytics.
+"""Minari — phone prospecting: transcribed calls, lists, analytics.
 
-Wrappe `oto.tools.minari.client.MinariClient` (API publique v1, Bearer). La clé
-se crée dans **Settings → API & webhook** et porte les droits de TOUTE
-l'entreprise — pas d'une personne. C'est pourquoi le connecteur est **byo-only,
-sans clé plateforme** : le journal d'appels d'un client est le sien, et une clé
-Minari partagée entre orgs n'aurait aucun sens (même principe que `stripe`).
+Wraps `oto.tools.minari.client.MinariClient` (public v1 API, Bearer). The key
+is created in **Settings → API & webhook** and carries the rights of the WHOLE
+company — not of a single person. That is why the connector is **byo-only,
+with no platform key**: a customer's call log is theirs, and a Minari key
+shared across orgs would make no sense (same principle as `stripe`).
 
-**Écrit sur contrat, PAS vérifié en live** (2026-08-31) : tout vient de l'OpenAPI
-3.1 publié et du guide LLM de l'éditeur, aucune sonde contre un vrai compte. Les
-gardes ci-dessous sont donc des lectures du contrat, à confirmer au premier
-compte branché — d'où la sonde `_verify`, qui est le premier vrai test.
+**Written from the contract, NOT verified live** (2026-08-31): everything comes from the published OpenAPI
+3.1 and the vendor's LLM guide, with no probe against a real account. The
+guards below are therefore readings of the contract, to be confirmed with the first
+connected account — hence the `_verify` probe, which is the first real test.
 
-**Six tools, un par objet métier** (ADR 0047), verbe en `op=`. Aucun paramètre
-n'est retenu au silence : un `op` qui n'utilise pas un argument fourni REFUSE
-(patron `_refuse_ignored`, silae/granola/stripe).
+**Six tools, one per business object** (ADR 0047), verb in `op=`. No parameter
+is silently swallowed: an `op` that does not use a supplied argument REFUSES
+(`_refuse_ignored` pattern, silae/granola/stripe).
 
-**Trois budgets, parce que trois réponses peuvent exploser** — et c'est la seule
-raison pour laquelle ce module ne se contente pas de relayer :
+**Three budgets, because three responses can blow up** — and that is the only
+reason this module does more than relay:
 
-1. ⚠️ **La fiche d'appel embarque le transcript intégral.** `GET /calls/{id}`
-   rend `CallDetail` = tout `CallSummary` PLUS chaque réplique d'un appel qui
-   peut durer 45 minutes. `op="get"` le RETIRE donc et le remplace par
-   `transcript_utterances` (le compte) ; le texte s'obtient par `op="transcript"`,
-   qui est justement l'endpoint que Minari a séparé pour cette raison. Rien n'est
-   perdu en silence : la clé retirée est nommée dans la réponse.
-2. ⚠️ **Une liste rend ses 1500 contacts d'un bloc**, sans pagination. `op="get"`
-   sur `minari_list` s'arrête donc à `max_contacts` (100 par défaut) et DIT le
-   total ainsi que la troncature, au lieu de rendre un mur.
-3. `op="transcript"` plafonne à `max_utterances` (200 par défaut) et le dit.
+1. ⚠️ **The call record embeds the full transcript.** `GET /calls/{id}`
+   returns `CallDetail` = all of `CallSummary` PLUS every utterance of a call
+   that can last 45 minutes. `op="get"` therefore REMOVES it and replaces it with
+   `transcript_utterances` (the count); the text is obtained via `op="transcript"`,
+   which is precisely the endpoint Minari split off for this reason. Nothing is
+   lost silently: the removed key is named in the response.
+2. ⚠️ **A list returns its 1500 contacts in one block**, with no pagination. `op="get"`
+   on `minari_list` therefore stops at `max_contacts` (100 by default) and STATES the
+   total and the truncation, instead of returning a wall of data.
+3. `op="transcript"` caps at `max_utterances` (200 by default) and says so.
 
-⚠️ **Le piège n°1 du connecteur : `minari_list` ne voit que les listes CSV.**
-Les endpoints listes/contacts de Minari ne couvrent QUE la source import CSV ;
-un compte dont les contacts arrivent de HubSpot ou Salesforce a des listes bien
-réelles qu'ils ne rendent jamais. Un `op="list"` vide se lit donc « pas de liste
-CSV », JAMAIS « pas de liste » — et la vue toutes sources est
-`minari_analytics(op="lists")`. Le message de la réponse vide le dit, parce que
-c'est exactement le cas où un agent conclurait à tort que le compte est vide.
+⚠️ **The connector's trap no. 1: `minari_list` only sees CSV lists.**
+Minari's lists/contacts endpoints cover ONLY the CSV import source;
+an account whose contacts come from HubSpot or Salesforce has perfectly real lists that these
+endpoints never return. An empty `op="list"` therefore reads as "no CSV
+list", NEVER "no list" — and the all-sources view is
+`minari_analytics(op="lists")`. The empty response's message says so, because
+this is exactly the case where an agent would wrongly conclude the account is empty.
 
-Les appels et les analytics, eux, couvrent toutes les sources.
+Calls and analytics, on the other hand, cover all sources.
 
-**Ce module n'invente rien** : Minari n'expose ni déclenchement d'appel, ni
-modification de contact, ni gestion d'utilisateurs. Ce qui manque ici manque à
-l'API — et le client oto-core ne porte pas ces méthodes, donc les ajouter
-demanderait une PR oto-core, pas une ligne ici.
+**This module invents nothing**: Minari exposes no call triggering, no
+contact editing, no user management. What is missing here is missing from
+the API — and the oto-core client does not carry these methods, so adding them
+would take an oto-core PR, not a line here.
 """
 from __future__ import annotations
 
@@ -56,14 +56,14 @@ from .. import access
 from ..mcp_errors import McpError
 from ..connectors import verify as connector_verify
 
-# Bornes de rendu — Minari fixe ses pages côté serveur (50, et 10 pour
-# `analytics/lists`), mais rien ne borne une fiche de liste ni un transcript.
+# Rendering bounds — Minari fixes its pages server-side (50, and 10 for
+# `analytics/lists`), but nothing bounds a list record or a transcript.
 _DEFAULT_MAX_CONTACTS = 100
 _DEFAULT_MAX_UTTERANCES = 200
-# Plafonds DURS : un `max_contacts=1500` demandé de bonne foi rendrait jusqu'à
-# 1500 contacts portant chacun une note de 5 000 caractères — plusieurs méga-
-# octets dans le contexte. Le plafond est annoncé dans la réponse quand il mord,
-# jamais appliqué en silence.
+# HARD ceilings: a good-faith `max_contacts=1500` would return up to
+# 1500 contacts each carrying a 5,000-character note — several megabytes
+# in the context. The ceiling is announced in the response when it bites,
+# never applied silently.
 _CEILING_MAX_CONTACTS = 500
 _CEILING_MAX_UTTERANCES = 2000
 
@@ -73,56 +73,56 @@ def _bad(msg: str) -> McpError:
 
 
 def _refuse_ignored(op: str, hint: str, **provided) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention.
-    Sinon `minari_call(op="list", call_id=…)` rendrait TOUS les appels en
-    laissant croire qu'on en a ciblé un."""
+    """A supplied argument that THIS op does not use is an error of intent.
+    Otherwise `minari_call(op="list", call_id=…)` would return ALL calls while
+    letting the caller believe one was targeted."""
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op={op!r} n'utilise pas `{name}` — {hint}")
+            raise _bad(f"op={op!r} does not use `{name}` — {hint}")
 
 
 def _upstream_message(e) -> str:
-    """Traduit le refus de Minari en quelque chose d'actionnable.
+    """Translate Minari's refusal into something actionable.
 
-    Le contrat d'erreur est `{"error": {"code", "message", "details"}}` ; le code
-    amont est plus parlant que le statut, on le garde.
+    The error contract is `{"error": {"code", "message", "details"}}`; the upstream
+    code is more telling than the status, so we keep it.
     """
     status = getattr(e, "status_code", None)
     raw = getattr(e, "body", None)
-    # `raw` n'est pas toujours du JSON : un 502 de proxy rend du HTML, et le
-    # réduire à `{}` effacerait la seule information disponible.
+    # `raw` is not always JSON: a proxy 502 returns HTML, and reducing it
+    # to `{}` would erase the only information available.
     body = raw if isinstance(raw, dict) else {}
     err = body.get("error") if isinstance(body.get("error"), dict) else {}
     code = err.get("code")
     detail = err.get("message") or body.get("detail") or ""
     reste = detail or (raw if raw not in (None, "", {}) else "")
     if status == 401:
-        return ("Minari a rejeté la clé (401"
-                + (f" {code}" if code else "") + ") — elle est absente, invalide "
-                "ou révoquée. Elle se recrée dans Minari → Settings → API & webhook, "
-                "puis se repose sur la fiche du connecteur.")
+        return ("Minari rejected the key (401"
+                + (f" {code}" if code else "") + ") — it is missing, invalid "
+                "or revoked. Recreate it in Minari → Settings → API & webhook, "
+                "then set it again on the connector card.")
     if status == 404:
-        return (f"Minari ne trouve pas la cible (404{' ' + code if code else ''}) — "
-                f"vérifie l'identifiant. {reste}".strip())
+        return (f"Minari cannot find the target (404{' ' + code if code else ''}) — "
+                f"check the identifier. {reste}".strip())
     if status == 409:
-        return (f"Minari refuse : l'identifiant existe déjà (409"
+        return (f"Minari refuses: the identifier already exists (409"
                 f"{' ' + code if code else ''}). {reste}".strip())
     if status == 429:
-        return (f"Limite d'appels Minari atteinte (429) — 60 requêtes/minute pour "
-                f"TOUTE l'entreprise, donc partagées avec les autres automatisations "
-                f"sous la même clé. {reste}".strip())
+        return (f"Minari call limit reached (429) — 60 requests/minute for "
+                f"the WHOLE company, so shared with the other automations "
+                f"under the same key. {reste}".strip())
     if status == 400:
-        return (f"Minari refuse la requête (400{' ' + code if code else ''}) : "
+        return (f"Minari refuses the request (400{' ' + code if code else ''}): "
                 f"{reste}").strip()
     return f"Minari HTTP {status}{' ' + code if code else ''}: {reste}".strip()
 
 
 def _next_cursor(envelope: Any) -> Optional[str]:
-    """Le curseur de la page suivante, extrait de `next_url`.
+    """The next-page cursor, extracted from `next_url`.
 
-    Minari rend une URL absolue ; la repasser telle quelle obligerait l'agent à
-    la parser (ou à nous la renvoyer et nous à la valider comme une URL amont).
-    Le curseur est la seule partie qui l'intéresse.
+    Minari returns an absolute URL; passing it back as is would force the agent to
+    parse it (or to send it back to us and us to validate it as an upstream URL).
+    The cursor is the only part it cares about.
     """
     if not isinstance(envelope, dict):
         return None
@@ -131,14 +131,14 @@ def _next_cursor(envelope: Any) -> Optional[str]:
         return None
     try:
         values = parse_qs(urlparse(url).query).get("cursor") or []
-    except Exception:  # noqa: SILENT — un `next_url` amont illisible coûte la pagination, pas la réponse : on rend la page sans curseur plutôt que de faire échouer un appel qui a réussi
+    except Exception:  # noqa: SILENT — an unreadable upstream `next_url` costs pagination, not the response: we return the page without a cursor rather than fail a call that succeeded
         return None
     return values[0] if values else None
 
 
 def _with_note(payload: Any, texte: str) -> Any:
-    """Attache une remarque hors-bande sous `note` (la clé de la maison), en
-    CUMULANT si une autre y est déjà — deux remarques valent mieux qu'une écrasée."""
+    """Attach an out-of-band remark under `note` (the house key), ACCUMULATING
+    if another is already there — two remarks beat one overwritten."""
     if not isinstance(payload, dict):
         return payload
     ancienne = payload.get("note")
@@ -146,40 +146,40 @@ def _with_note(payload: Any, texte: str) -> Any:
 
 
 def _paged(envelope: Any) -> Any:
-    """Ajoute `next_cursor` à une enveloppe paginée, sans rien retirer.
+    """Add `next_cursor` to a paginated envelope, removing nothing.
 
-    ⚠️ Le curseur de Minari est une POSITION, pas une requête : l'exemple du
-    contrat se décode en `{"s": "<started_at>", "c": <call_id>}` — il ne porte
-    aucun filtre. Les filtres, eux, vivent dans la query string de `next_url`.
-    Un agent qui rejouerait `cursor` SEUL recevrait donc la page suivante du
-    journal ENTIER, non filtrée, et la fondrait dans une réponse qu'il croit
-    filtrée — faux sans la moindre erreur. D'où la remarque systématique : le
-    seul moment où elle est lue est celui où l'on s'apprête à tourner la page.
+    ⚠️ Minari's cursor is a POSITION, not a query: the contract's example
+    decodes to `{"s": "<started_at>", "c": <call_id>}` — it carries
+    no filter. The filters live in the query string of `next_url`.
+    An agent replaying `cursor` ALONE would therefore receive the next page of the
+    ENTIRE log, unfiltered, and merge it into a response it believes is
+    filtered — wrong without any error. Hence the systematic remark: the
+    only time it is read is when one is about to turn the page.
     """
     cursor = _next_cursor(envelope)
     if cursor and isinstance(envelope, dict):
         return _with_note(
             {**envelope, "next_cursor": cursor},
-            "page suivante : repasse `cursor` AVEC les mêmes filtres — le "
-            "curseur est une position, il ne les porte pas")
+            "next page: pass `cursor` WITH the same filters — the "
+            "cursor is a position, it does not carry them")
     return envelope
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion ».
+    """"Test the connection" probe.
 
-    `GET /users` plutôt qu'un journal d'appels : c'est la lecture la plus légère
-    (une poignée d'objets, aucun filtre), elle est servie par la même clé
-    d'entreprise que tout le reste, et une clé qui la passe peut lire le reste —
-    Minari n'a pas de scopes par endpoint.
+    `GET /users` rather than a call log: it is the lightest read
+    (a handful of objects, no filter), it is served by the same company-level key
+    as everything else, and a key that passes it can read the rest —
+    Minari has no per-endpoint scopes.
 
-    ⚠️ **Un 200 suffit, même si la liste est vide.** La sonde tourne
-    AVANT la persistance (#106) : tout ce qu'elle refuse n'est jamais
-    enregistré. Une version antérieure levait sur un annuaire vide, en croyant y
-    lire « clé prise dans le mauvais espace » — raisonnement faux (la clé d'un
-    autre espace rend les membres de CET espace, pas une liste vide) dont le
-    coût, lui, était réel : elle empêchait d'ENREGISTRER une clé qui marche.
-    Une sonde répond « cette clé authentifie-t-elle ? », rien de plus.
+    ⚠️ **A 200 is enough, even if the list is empty.** The probe runs
+    BEFORE persistence (#106): anything it refuses is never
+    saved. An earlier version raised on an empty directory, believing it read
+    "key taken from the wrong workspace" — faulty reasoning (a key from
+    another workspace returns THAT workspace's members, not an empty list) whose
+    cost was real: it prevented SAVING a working key.
+    A probe answers "does this key authenticate?", nothing more.
     """
     from oto.tools.minari.client import MinariClient
     MinariClient(api_key=fields["key"]).list_users()
@@ -204,7 +204,7 @@ def register(mcp: FastMCP) -> None:
             raise _bad(_upstream_message(e))
 
     # ================================================================
-    # Appels — le cœur du produit
+    # Calls — the heart of the product
     # ================================================================
 
     @mcp.tool()
@@ -282,7 +282,7 @@ def register(mcp: FastMCP) -> None:
         client = _client()
 
         if op == "list":
-            _refuse_ignored(op, 'ces arguments visent UN appel — utilise op="get"',
+            _refuse_ignored(op, 'these arguments target ONE call — use op="get"',
                             call_id=call_id, max_utterances=max_utterances)
             return _run(lambda: _paged(client.list_calls(
                 start_date=start_date, end_date=end_date, user_id=user_id,
@@ -291,17 +291,17 @@ def register(mcp: FastMCP) -> None:
                 language=language, contact_id=contact_id, list_id=list_id,
                 cursor=cursor)))
 
-        _refuse_ignored(op, 'ces filtres ne valent que pour op="list"',
+        _refuse_ignored(op, 'these filters only apply to op="list"',
                         start_date=start_date, end_date=end_date, user_id=user_id,
                         status=status, direction=direction, min_duration=min_duration,
                         search=search, transcript_search=transcript_search,
                         language=language, contact_id=contact_id, list_id=list_id,
                         cursor=cursor)
         if not call_id:
-            raise _bad(f'op={op!r} requiert `call_id`')
+            raise _bad(f'op={op!r} requires `call_id`')
 
         if op == "get":
-            _refuse_ignored(op, 'le plafond ne vaut que pour op="transcript"',
+            _refuse_ignored(op, 'the cap only applies to op="transcript"',
                             max_utterances=max_utterances)
 
             def _get():
@@ -313,17 +313,17 @@ def register(mcp: FastMCP) -> None:
                 trimmed = {k: v for k, v in data.items() if k != "transcript"}
                 if isinstance(lines, list) and lines:
                     trimmed["transcript_utterances"] = len(lines)
-                    note = ('transcript retiré de op="get" pour tenir le budget de '
-                            'réponse — appelle op="transcript" avec le même call_id')
+                    note = ('transcript removed from op="get" to stay within the response '
+                            'budget — call op="transcript" with the same call_id')
                 else:
-                    # `null` ≠ zéro réplique, et un appel muet n'a rien à aller
-                    # chercher : annoncer « transcript retiré » enverrait l'agent
-                    # dépenser un second appel — sur un budget de 60/minute
-                    # partagé par toute l'entreprise — pour recevoir du vide.
+                    # `null` ≠ zero utterances, and a silent call has nothing to
+                    # fetch: announcing "transcript removed" would send the agent
+                    # to spend a second call — on a 60/minute budget
+                    # shared by the whole company — to receive nothing.
                     trimmed["transcript_utterances"] = 0
-                    note = ("aucun transcript — appel non connecté ou "
-                            'transcription en cours ; op="transcript" ne rendra '
-                            "rien de plus")
+                    note = ("no transcript — call not connected or "
+                            'transcription in progress; op="transcript" will return '
+                            "nothing more")
                 return {**out, "data": trimmed, "note": note}
 
             return _run(_get)
@@ -332,7 +332,7 @@ def register(mcp: FastMCP) -> None:
             demande = (_DEFAULT_MAX_UTTERANCES if max_utterances is None
                        else int(max_utterances))
             if demande < 1:
-                raise _bad("`max_utterances` doit être au moins 1")
+                raise _bad("`max_utterances` must be at least 1")
             cap = min(demande, _CEILING_MAX_UTTERANCES)
 
             def _transcript():
@@ -342,27 +342,27 @@ def register(mcp: FastMCP) -> None:
                     return out
                 lines = data.get("transcript")
                 if not isinstance(lines, list):
-                    # `null` = appel non abouti ou transcription en cours. Ce
-                    # n'est pas une erreur, et le dire évite une relance inutile.
-                    return {**out, "note": "aucun transcript — appel non connecté "
-                                           "ou transcription en cours"}
+                    # `null` = call did not complete or transcription in progress. This
+                    # is not an error, and saying so avoids a pointless retry.
+                    return {**out, "note": "no transcript — call not connected "
+                                           "or transcription in progress"}
                 total = len(lines)
                 bloc = {**data, "transcript": lines[:cap],
                         "transcript_utterances": total, "truncated": total > cap}
                 res = {**out, "data": bloc}
                 if total > cap:
-                    res["note"] = (f"{cap} répliques sur {total} — relance avec un "
-                                   "`max_utterances` plus haut si le reste compte")
+                    res["note"] = (f"{cap} utterances out of {total} — retry with a higher "
+                                   "`max_utterances` if the rest matters")
                 return res
 
             return _run(_transcript)
 
-        _refuse_ignored(op, 'le plafond ne vaut que pour op="transcript"',
+        _refuse_ignored(op, 'the cap only applies to op="transcript"',
                         max_utterances=max_utterances)
         return _run(lambda: client.call_recording_status(call_id))
 
     # ================================================================
-    # Équipe — le résolveur d'identifiants de tout le reste
+    # Team — the id resolver for everything else
     # ================================================================
 
     @mcp.tool()
@@ -376,7 +376,7 @@ def register(mcp: FastMCP) -> None:
         return _run(lambda: _client().list_users())
 
     # ================================================================
-    # Listes de contacts — source CSV UNIQUEMENT
+    # Contact lists — CSV source ONLY
     # ================================================================
 
     @mcp.tool()
@@ -434,7 +434,7 @@ def register(mcp: FastMCP) -> None:
         client = _client()
 
         if op == "list":
-            _refuse_ignored(op, 'ces arguments visent UNE liste ou sa création',
+            _refuse_ignored(op, 'these arguments target ONE list or its creation',
                             list_id=list_id, name=name, assigned_to=assigned_to,
                             contacts=contacts,
                             update_existing_contacts=update_existing_contacts,
@@ -443,33 +443,33 @@ def register(mcp: FastMCP) -> None:
             def _browse():
                 out = _paged(client.list_lists(cursor=cursor))
                 rows = out.get("data") if isinstance(out, dict) else None
-                # Sur la PREMIÈRE page seulement (le curseur dit qu'on continue),
-                # et quel que soit le nombre de lignes : la note n'explique pas un
-                # vide, elle énonce une PORTÉE. Le cas partiel — quelques listes
-                # CSV à côté de beaucoup de listes CRM — sous-déclare tout autant,
-                # et lui ne se signale par rien.
+                # On the FIRST page only (the cursor says we are continuing),
+                # and whatever the number of rows: the note does not explain an
+                # empty result, it states a SCOPE. The partial case — a few CSV
+                # lists next to many CRM lists — under-reports just as much,
+                # and nothing signals it.
                 if isinstance(rows, list) and not cursor:
                     return _with_note(
                         out,
-                        "ces endpoints ne voient que les listes issues d'un "
-                        "import CSV ; les listes synchronisées depuis un CRM n'y "
-                        "apparaissent pas, même partiellement. Vue toutes "
-                        'sources : minari_analytics(op="lists").')
+                        "these endpoints only see lists from a CSV "
+                        "import; lists synced from a CRM do not appear "
+                        "here, not even partially. All-sources "
+                        'view: minari_analytics(op="lists").')
                 return out
 
             return _run(_browse)
 
-        _refuse_ignored(op, 'la pagination ne vaut que pour op="list"', cursor=cursor)
+        _refuse_ignored(op, 'pagination only applies to op="list"', cursor=cursor)
 
         if op == "get":
-            _refuse_ignored(op, 'ces arguments ne valent que pour op="create"',
+            _refuse_ignored(op, 'these arguments only apply to op="create"',
                             name=name, assigned_to=assigned_to, contacts=contacts,
                             update_existing_contacts=update_existing_contacts)
             if not list_id:
-                raise _bad('op="get" requiert `list_id`')
+                raise _bad('op="get" requires `list_id`')
             demande = _DEFAULT_MAX_CONTACTS if max_contacts is None else int(max_contacts)
             if demande < 1:
-                raise _bad("`max_contacts` doit être au moins 1")
+                raise _bad("`max_contacts` must be at least 1")
             cap = min(demande, _CEILING_MAX_CONTACTS)
 
             def _one():
@@ -486,38 +486,38 @@ def register(mcp: FastMCP) -> None:
                 res = {**out, "data": bloc}
                 if demande > cap:
                     res["note"] = (
-                        f"`max_contacts={demande}` ramené à {cap} — une note de "
-                        "contact pèse jusqu'à 5 000 caractères")
+                        f"`max_contacts={demande}` reduced to {cap} — a contact "
+                        "note weighs up to 5,000 characters")
                 elif total > cap:
-                    res["note"] = f"{cap} contacts sur {total}"
+                    res["note"] = f"{cap} contacts out of {total}"
                 return res
 
             return _run(_one)
 
         if op == "create":
-            _refuse_ignored(op, 'op="create" crée la liste, il ne cible pas une liste existante',
+            _refuse_ignored(op, 'op="create" creates the list, it does not target an existing list',
                             list_id=list_id, max_contacts=max_contacts)
             if not name:
-                raise _bad('op="create" requiert `name`')
+                raise _bad('op="create" requires `name`')
             if assigned_to is None:
-                raise _bad('op="create" requiert `assigned_to` — un id de membre, '
-                           "rendu par minari_user")
+                raise _bad('op="create" requires `assigned_to` — a member id, '
+                           "returned by minari_user")
             if not contacts:
-                raise _bad('op="create" requiert `contacts` (au moins un)')
+                raise _bad('op="create" requires `contacts` (at least one)')
             return _run(lambda: client.create_list(
                 name=name, assigned_to=assigned_to, contacts=contacts,
                 update_existing_contacts=bool(update_existing_contacts)))
 
-        _refuse_ignored(op, 'op="delete" ne prend que `list_id`',
+        _refuse_ignored(op, 'op="delete" only takes `list_id`',
                         name=name, assigned_to=assigned_to, contacts=contacts,
                         update_existing_contacts=update_existing_contacts,
                         max_contacts=max_contacts)
         if not list_id:
-            raise _bad('op="delete" requiert `list_id`')
+            raise _bad('op="delete" requires `list_id`')
         return _run(lambda: client.delete_list(list_id))
 
     # ================================================================
-    # Contacts d'une liste
+    # Contacts of a list
     # ================================================================
 
     @mcp.tool()
@@ -552,23 +552,23 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "add":
-            _refuse_ignored(op, 'op="add" prend des contacts, pas des ids',
+            _refuse_ignored(op, 'op="add" takes contacts, not ids',
                             contact_ids=contact_ids)
             if not contacts:
-                raise _bad('op="add" requiert `contacts` (au moins un)')
+                raise _bad('op="add" requires `contacts` (at least one)')
             return _run(lambda: client.add_contacts(
                 list_id, contacts,
                 update_existing_contacts=bool(update_existing_contacts)))
 
-        _refuse_ignored(op, 'op="remove" prend des ids, pas des contacts',
+        _refuse_ignored(op, 'op="remove" takes ids, not contacts',
                         contacts=contacts,
                         update_existing_contacts=update_existing_contacts)
         if not contact_ids:
-            raise _bad('op="remove" requiert `contact_ids`')
+            raise _bad('op="remove" requires `contact_ids`')
         return _run(lambda: client.remove_contacts(list_id, contact_ids))
 
     # ================================================================
-    # Champs personnalisés
+    # Custom fields
     # ================================================================
 
     @mcp.tool()
@@ -595,22 +595,22 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, 'op="list" ne prend aucun argument',
+            _refuse_ignored(op, 'op="list" takes no arguments',
                             field_id=field_id, label=label)
             return _run(client.list_custom_fields)
         if op == "create":
             if not field_id:
-                raise _bad('op="create" requiert `field_id`')
+                raise _bad('op="create" requires `field_id`')
             if not label:
-                raise _bad('op="create" requiert `label`')
+                raise _bad('op="create" requires `label`')
             return _run(lambda: client.create_custom_field(field_id=field_id, label=label))
-        _refuse_ignored(op, 'op="delete" ne prend que `field_id`', label=label)
+        _refuse_ignored(op, 'op="delete" only takes `field_id`', label=label)
         if not field_id:
-            raise _bad('op="delete" requiert `field_id`')
+            raise _bad('op="delete" requires `field_id`')
         return _run(lambda: client.delete_custom_field(field_id))
 
     # ================================================================
-    # Analytics — répondre sans télécharger les appels
+    # Analytics — answering without downloading the calls
     # ================================================================
 
     @mcp.tool()
@@ -667,35 +667,35 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if (start_date is None) != (end_date is None):
-            raise _bad("`start_date` et `end_date` vont ensemble — Minari refuse "
-                       "l'une sans l'autre.")
+            raise _bad("`start_date` and `end_date` go together — Minari refuses "
+                       "one without the other.")
 
         if op == "lists":
-            _refuse_ignored(op, 'le seuil de conversation ne vaut que pour '
+            _refuse_ignored(op, 'the conversation threshold only applies to '
                                 'op="overview"/"users"',
                             conversation_threshold=conversation_threshold)
-            # `analytics/lists` n'a PAS de fenêtre en dates : la sienne est
-            # `period`. Les accepter en silence rendrait un « depuis janvier »
-            # calculé sur la semaine, sans que rien ne le signale.
-            _refuse_ignored(op, 'op="lists" n\'a pas de fenêtre en dates — la '
-                                "sienne est `period` (day/week/month/all)",
+            # `analytics/lists` has NO date window: its own is
+            # `period`. Silently accepting them would return a "since January"
+            # computed over the week, with nothing to signal it.
+            _refuse_ignored(op, 'op="lists" has no date window — its '
+                                "own is `period` (day/week/month/all)",
                             start_date=start_date, end_date=end_date)
             if not period:
-                raise _bad('op="lists" requiert `period` — il définit la fenêtre '
-                           "de comptage des appels (day/week/month/all)")
+                raise _bad('op="lists" requires `period` — it defines the window '
+                           "for counting calls (day/week/month/all)")
             if call_limit is None:
-                raise _bad('op="lists" requiert `call_limit` (1-10) — il définit '
-                           "après combien de tentatives un contact jamais joint "
-                           "compte comme épuisé")
+                raise _bad('op="lists" requires `call_limit` (1-10) — it defines '
+                           "after how many attempts a never-reached contact "
+                           "counts as exhausted")
             return _run(lambda: _paged(client.analytics_lists(
                 period=period, call_limit=call_limit, user_id=user_id,
                 list_id=list_id, cursor=cursor)))
 
-        _refuse_ignored(op, 'ces arguments ne valent que pour op="lists"',
+        _refuse_ignored(op, 'these arguments only apply to op="lists"',
                         period=period, call_limit=call_limit, cursor=cursor)
 
         if op == "objections":
-            _refuse_ignored(op, 'le seuil de conversation ne vaut que pour '
+            _refuse_ignored(op, 'the conversation threshold only applies to '
                                 'op="overview"/"users"',
                             conversation_threshold=conversation_threshold)
             return _run(lambda: client.analytics_objections(

@@ -1,41 +1,41 @@
-"""Spott — ATS/CRM des cabinets de recrutement (candidats, jobs, candidatures).
+"""Spott — ATS/CRM for recruitment firms (candidates, jobs, applications).
 
-Wrappe `oto.tools.spott.client.SpottClient`. keyed `api_key` (header x-api-key),
-byo-only (pas de clé plateforme) : chaque user/org connecte SON compte Spott.
+Wraps `oto.tools.spott.client.SpottClient`. keyed `api_key` (x-api-key header),
+byo-only (no platform key): each user/org connects THEIR own Spott account.
 
-Vocabulaire tenu de bout en bout : un **job** (l'API dit `vacancy` dans ses
-chemins), un **candidate**, une **application** (le candidat sur un job, ou
-spontanée vers un client), un **client** = l'entreprise cliente du cabinet avec
-ses **client contacts**. Deux paginations cohabitent — la recherche (`op="search"`)
-pagine par `page`, les listes par `cursor`.
+Vocabulary held end to end: a **job** (the API says `vacancy` in its
+paths), a **candidate**, an **application** (the candidate on a job, or
+speculative toward a client), a **client** = the firm's client company with
+its **client contacts**. Two paginations coexist — search (`op="search"`)
+paginates by `page`, lists by `cursor`.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur spott)** : un
-tool par OBJET métier, le verbe en paramètre `op` — `spott_candidate` (list/get/
+**Consolidated surface (ADR 0047 §Amendment, applied to the spott connector)**: one
+tool per business OBJECT, the verb as an `op` parameter — `spott_candidate` (list/get/
 search/create/update), `spott_job` (list/get/search), `spott_application`
 (list/create/move), `spott_note` (list/create), `spott_client` (list/get/search/
-contacts). Ces cinq objets partagent le même socle de paramètres (limit/cursor/
-modified_since/modified_until + filters/page/page_size pour la recherche), d'où la
-fusion.
+contacts). These five objects share the same parameter base (limit/cursor/
+modified_since/modified_until + filters/page/page_size for search), hence the
+merge.
 
-Quatre tools restent SEULS — leurs paramètres ne recouvrent pas ceux de leurs
-voisins, et un `oneOf` de variantes disjointes pèserait ce que pèsent les tools
-séparés (critère = homogénéité des paramètres, pas le comptage) :
-- `spott_stages` : le pipeline n'est pas une facette d'un objet, c'est le
-  référentiel qui les traverse (`entity` = applications | vacancies | clients |
-  opportunities) ; ses deux paramètres (`entity`, `template_id`) n'existent nulle
-  part ailleurs, et ses ids alimentent les écritures de `spott_application` ;
-- `spott_people` : recherche floue TRANSVERSE (candidats ∪ contacts clients) sur
-  un `query` en texte libre — ni pagination, ni filtres structurés, aucune cible ;
-- `spott_placements` : pagination par **page** sans curseur (l'endpoint n'en a
-  pas), filtre `company_id` au singulier — le socle des listes ne s'y applique pas ;
-- `spott_users` : découverte sans cible (un seul booléen), qui produit les ids que
-  `mainContact`/`owner` consomment — même cas que `zoho_modules`.
+Four tools stay ALONE — their parameters do not overlap those of their
+neighbors, and a `oneOf` of disjoint variants would weigh what separate tools
+weigh (criterion = parameter homogeneity, not the count):
+- `spott_stages`: the pipeline is not a facet of an object, it is the
+  reference table that cuts across them (`entity` = applications | vacancies | clients |
+  opportunities); its two parameters (`entity`, `template_id`) exist nowhere
+  else, and its ids feed the writes of `spott_application`;
+- `spott_people`: CROSS-cutting fuzzy search (candidates ∪ client contacts) on
+  a free-text `query` — no pagination, no structured filters, no target;
+- `spott_placements`: pagination by **page** with no cursor (the endpoint has
+  none), singular `company_id` filter — the list parameter base does not apply;
+- `spott_users`: discovery with no target (a single boolean), which produces the ids that
+  `mainContact`/`owner` consume — same case as `zoho_modules`.
 
-⚠️ Ce module ÉCRIT dans l'ATS du cabinet : `spott_candidate` op="create"/"update",
-`spott_application` op="create"/"move", `spott_note` op="create". Deux invariants
-tenus ici : le défaut d'`op` est TOUJOURS une lecture (`list`) — un appel sans `op`
-ne peut ni créer ni modifier ; et un argument obligatoire manquant lève une erreur
-qui NOMME l'op et l'argument, jamais un fallback qui inventerait une donnée.
+⚠️ This module WRITES into the firm's ATS: `spott_candidate` op="create"/"update",
+`spott_application` op="create"/"move", `spott_note` op="create". Two invariants
+held here: the default `op` is ALWAYS a read (`list`) — a call without `op`
+can neither create nor modify; and a missing required argument raises an error
+that NAMES the op and the argument, never a fallback that would invent data.
 """
 from __future__ import annotations
 
@@ -48,9 +48,9 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..connectors import verify as connector_verify
 
-# Ops par objet, dans l'ordre lectures → écritures. Source unique : la validation
-# d'entrée ET le message de refus en dérivent, donc une op ajoutée ne peut pas être
-# acceptée sans être annoncée (ni l'inverse).
+# Ops per object, in reads → writes order. Single source: input validation
+# AND the refusal message derive from it, so an added op cannot be
+# accepted without being announced (nor the reverse).
 _CANDIDATE_OPS = ("list", "get", "search", "create", "update")
 _JOB_OPS = ("list", "get", "search")
 _APPLICATION_OPS = ("list", "create", "move")
@@ -63,48 +63,48 @@ def _bad(msg: str) -> McpError:
 
 
 def _ops_error(ops: tuple[str, ...]) -> str:
-    """Message de refus qui NOMME les ops valides (jamais un fallback muet)."""
+    """Refusal message that NAMES the valid ops (never a silent fallback)."""
     quoted = [f"'{o}'" for o in ops]
-    return "op doit être " + ", ".join(quoted[:-1]) + " ou " + quoted[-1]
+    return "op must be " + ", ".join(quoted[:-1]) + " or " + quoted[-1]
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
+    """Required argument for THIS op — actionable error, never a fallback.
 
-    Une valeur VIDE compte comme absente : `content=""` sur `op='create'` créerait
-    une note vide dans l'ATS du client, et `candidate={}` un candidat fantôme —
-    deux écritures réelles que personne n'a demandées.
+    An EMPTY value counts as absent: `content=""` on `op='create'` would create
+    an empty note in the client's ATS, and `candidate={}` a phantom candidate —
+    two real writes nobody asked for.
     """
     if value is None or (isinstance(value, (str, list, dict)) and not value):
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
 def _no_filters(op: str, filters) -> None:
-    """`filters` n'a de sens que sur `op='search'` — l'ignorer en silence rendrait
-    une liste complète que l'agent prendrait pour un résultat filtré."""
+    """`filters` only makes sense on `op='search'` — silently ignoring it would return
+    a full list that the agent would take for a filtered result."""
     if filters:
-        raise _bad(f"op='{op}' n'accepte pas `filters` — utilise op='search' pour "
-                   "chercher par filtres structurés.")
+        raise _bad(f"op='{op}' does not accept `filters` — use op='search' to "
+                   "search by structured filters.")
 
 
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return ("Spott a rejeté la clé API (HTTP %d) — vérifie la clé configurée "
-                "sur ce connecteur (Spott : Settings → API Keys)." % status)
+        return ("Spott rejected the API key (HTTP %d) — check the key configured "
+                "on this connector (Spott: Settings → API Keys)." % status)
     if status == 404:
-        return f"Spott : enregistrement introuvable (404) — vérifie l'id. {e.body}"
+        return f"Spott: record not found (404) — check the id. {e.body}"
     if status == 429:
-        return "Spott : trop de requêtes (429) — réessaie dans un instant."
+        return "Spott: too many requests (429) — try again in a moment."
     if status in (500, 502, 503, 504):
-        return f"Spott est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Spott a refusé la requête (HTTP {status}): {e.body}"
+        return f"Spott is temporarily unavailable (HTTP {status}) — try again later."
+    return f"Spott refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : `GET /users`, le plus petit appel
-    authentifié de l'API (pas de quota consommé)."""
+    """"Test the connection" probe: `GET /users`, the smallest authenticated
+    call of the API (no quota consumed)."""
     from oto.tools.spott.client import SpottClient
     SpottClient(api_key=fields["key"]).list_users()
 
@@ -120,7 +120,7 @@ def register(mcp: FastMCP) -> None:
         return SpottClient(api_key=key)
 
     def _call(method: str, *args, **kwargs) -> dict:
-        """Appelle le client et traduit les refus amont en erreur d'outil lisible."""
+        """Call the client and translate upstream refusals into a readable tool error."""
         try:
             return getattr(_client(), method)(*args, **kwargs)
         except ValueError as e:
@@ -128,7 +128,7 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
 
-    # --- Candidats ----------------------------------------------------------
+    # --- Candidates ----------------------------------------------------------
 
     @mcp.tool()
     def spott_candidate(
@@ -191,8 +191,8 @@ def register(mcp: FastMCP) -> None:
                 `mainContact` (`{userId}` — the owning recruiter).
             patch: op="update" — same field names as `candidate`, partial.
         """
-        # Refus AVANT toute résolution de credential : une op inconnue n'atteint
-        # jamais le client — donc jamais, par un chemin dérivé, une écriture.
+        # Refuse BEFORE any credential resolution: an unknown op never reaches
+        # the client — hence never, via a derived path, a write.
         if op not in _CANDIDATE_OPS:
             raise _bad(_ops_error(_CANDIDATE_OPS))
 
@@ -213,9 +213,9 @@ def register(mcp: FastMCP) -> None:
             return _call("update_candidate",
                          _need(candidate_id, "candidate_id", op),
                          _need(patch, "patch", op))
-        # Structurellement inatteignable (garde d'entrée ci-dessus) — filet contre
-        # un `return None` implicite si une op était ajoutée à `_CANDIDATE_OPS`
-        # sans sa branche : mieux vaut refuser que rendre « rien » pour un succès.
+        # Structurally unreachable (input guard above) — a safety net against
+        # an implicit `return None` if an op were added to `_CANDIDATE_OPS`
+        # without its branch: better to refuse than to return "nothing" as a success.
         raise _bad(_ops_error(_CANDIDATE_OPS))
 
     # --- Jobs ---------------------------------------------------------------
@@ -278,7 +278,7 @@ def register(mcp: FastMCP) -> None:
                          page_size=page_size)
         raise _bad(_ops_error(_JOB_OPS))
 
-    # --- Candidatures -------------------------------------------------------
+    # --- Applications -------------------------------------------------------
 
     @mcp.tool()
     def spott_application(
@@ -345,8 +345,8 @@ def register(mcp: FastMCP) -> None:
 
         if op == "list":
             if job_id and candidate_id:
-                raise _bad("spott_application op='list' : passe job_id OU "
-                           "candidate_id, pas les deux.")
+                raise _bad("spott_application op='list': pass job_id OR "
+                           "candidate_id, not both.")
             if candidate_id:
                 return _call("applications_by_candidate", candidate_id)
             if job_id:
@@ -444,7 +444,7 @@ def register(mcp: FastMCP) -> None:
                          label_ids=label_ids)
         raise _bad(_ops_error(_NOTE_OPS))
 
-    # --- Clients (côté CRM du cabinet) --------------------------------------
+    # --- Clients (the firm's CRM side) --------------------------------------
 
     @mcp.tool()
     def spott_client(

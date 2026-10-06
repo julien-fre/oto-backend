@@ -1,15 +1,15 @@
-"""Socle du connecteur `monid` : ce que ses quatre outils partagent.
+"""Foundation of the `monid` connector: what its four tools share.
 
-Les bornes et le budget de temps du lancement, la traduction d'un refus de Monid en
-consigne (choisie sur le CODE, l'issue inconnue à part), l'enveloppe d'un run et sa
-marche à suivre, les deux gardes de la clé de la plateforme (liste des runs, solde), la
-projection d'une page. Le POURQUOI de ces choix vit dans la docstring de `tools/monid.py`,
-qui garde la sonde, `register()` et les outils.
+The bounds and time budget of the launch, the translation of a Monid refusal into an
+instruction (chosen on the CODE, the unknown outcome apart), a run's envelope and its
+next step, the two guards of the platform key (list of runs, balance), the
+projection of a page. The WHY of these choices lives in the docstring of `tools/monid.py`,
+which keeps the probe, `register()` and the tools.
 
-Découpé du module des outils pour tenir sous le plafond de 500 lignes par fichier
-(`docs/conventions.md`). Il n'a pas de `register()` : ce n'est pas un connecteur, c'est
-un helper. Aucun appel au client n'y vit — ils restent écrits en clair dans les outils,
-là où la sonde version-skew les lit.
+Split out of the tools module to stay under the 500-line-per-file cap
+(`docs/conventions.md`). It has no `register()`: it is not a connector, it is
+a helper. No client call lives here — they stay written in plain sight in the tools,
+where the version-skew probe reads them.
 """
 from __future__ import annotations
 
@@ -23,17 +23,17 @@ from oto.tools.monid.client import (MonidHTTPError, MonidProtocolError, is_termi
 from .. import output_projection
 from ..mcp_errors import McpError
 
-_WAIT_MAX_S = 40      # borne de `wait_seconds` (lancement et relecture)
-_RUN_READ_S = 35      # lecture du POST /v1/run, au plus
-_RUN_READ_MIN_S = 10  # en deçà, un run synchrone finirait presque sûrement en issue inconnue
-_CONNECT_S = 10       # délai de connexion que le client pose en dur sur `run()`
-_RUN_BUDGET_S = 45    # échéance lancement + attente, depuis l'entrée de l'outil
+_WAIT_MAX_S = 40      # bound of `wait_seconds` (launch and re-read)
+_RUN_READ_S = 35      # read of POST /v1/run, at most
+_RUN_READ_MIN_S = 10  # below this, a synchronous run would almost surely end in an unknown outcome
+_CONNECT_S = 10       # connect timeout the client hard-codes on `run()`
+_RUN_BUDGET_S = 45    # launch + wait deadline, from the tool's entry
 _DISCOVER_LIMIT_MAX = 40
 _RUNS_LIMIT_MAX = 100
 
 _DROP_ENDPOINT = ("providerDisplayDescription", "supportedX402Networks")
 _DROP_RUN = ("caller",)
-_HINT_FULL = "full=True rend les enregistrements entiers"
+_HINT_FULL = "full=True returns the whole records"
 
 
 def _bad(msg: str) -> McpError:
@@ -41,17 +41,17 @@ def _bad(msg: str) -> McpError:
 
 
 def _hors_op(op: str, **donnes: Any) -> None:
-    """Refuse un argument qui ne s'applique pas à l'`op` choisie, plutôt que de l'ignorer :
-    un filtre passé à `op="get"` laisserait croire qu'il a filtré. Comparé par IDENTITÉ :
-    `0 == False`, et un `min_score=0` passé à inspect serait sinon avalé en silence."""
+    """Refuses an argument that does not apply to the chosen `op`, rather than ignoring it:
+    a filter passed to `op="get"` would suggest it filtered. Compared by IDENTITY:
+    `0 == False`, and a `min_score=0` passed to inspect would otherwise be swallowed silently."""
     en_trop = sorted(k for k, v in donnes.items() if v is not None and v is not False)
     if en_trop:
-        raise _bad(f"op='{op}' ne prend pas {en_trop}.")
+        raise _bad(f"op='{op}' does not take {en_trop}.")
 
 
 def _borne(nom: str, valeur: Any, bas: int, haut: int) -> None:
     if isinstance(valeur, bool) or not isinstance(valeur, int) or not bas <= valeur <= haut:
-        raise _bad(f"`{nom}` doit être un entier de {bas} à {haut} (reçu {valeur!r}).")
+        raise _bad(f"`{nom}` must be an integer from {bas} to {haut} (got {valeur!r}).")
 
 
 def _extrait(valeur: Any, n: int = 200) -> str:
@@ -67,76 +67,76 @@ def _rid(e: Any) -> str:
 
 
 def _cause(e: BaseException) -> str:
-    """Ce qui a manqué, en deux mots : le code HTTP, ou l'incident de transport d'origine."""
+    """What went wrong, in two words: the HTTP code, or the original transport incident."""
     if isinstance(e, MonidHTTPError):
         return f"HTTP {e.status_code}"
     if isinstance(e, MonidProtocolError):
-        return type(e.__cause__).__name__ if e.__cause__ else "réponse sans run lisible"
+        return type(e.__cause__).__name__ if e.__cause__ else "response without a readable run"
     return type(e).__name__
 
 
-# --- traduction des refus -----------------------------------------------------
+# --- translation of refusals --------------------------------------------------
 
 def _issue_inconnue(e: Any, *, is_platform: bool = False) -> McpError:
-    """`INTERNAL_ERROR` et non `INVALID_PARAMS` (écart voulu à `_bad`) : « argument
-    invalide » pousse l'agent à corriger puis rappeler — le double paiement. L'interdit
-    vient en tête. Sous la clé de la plateforme, la liste des runs est fermée : le refus
-    ne l'indique pas, il renvoie à un administrateur. Remonte à Sentry (non « attendue »)."""
-    ou_chercher = ("Il est passé par la clé de la plateforme : demande à un administrateur "
-                   "de vérifier le workspace Monid de la plateforme." if is_platform else
-                   "Cherche-le d'abord dans monid_runs(op=\"list\").")
+    """`INTERNAL_ERROR` and not `INVALID_PARAMS` (deliberate departure from `_bad`): "invalid
+    argument" pushes the agent to fix then call again — the double payment. The prohibition
+    comes first. Under the platform key, the list of runs is closed: the refusal
+    does not point to it, it refers to an administrator. Goes up to Sentry (not "expected")."""
+    ou_chercher = ("It went through the platform key: ask an administrator "
+                   "to check the platform's Monid workspace." if is_platform else
+                   "Look for it first in monid_runs(op=\"list\").")
     return McpError(ErrorData(code=INTERNAL_ERROR, message=(
-        "NE RELANCE PAS monid_run, ni à l'identique ni modifié : issue INCONNUE du "
-        f"lancement ({_cause(e)}), le run peut exister et être facturé. "
+        "DO NOT RETRY monid_run, neither identically nor modified: UNKNOWN outcome of the "
+        f"launch ({_cause(e)}), the run may exist and be billed. "
         f"{ou_chercher}{_rid(e)}")))
 
 
 def _traduire(e: Exception, *, is_platform: bool = False) -> Exception:
-    """L'exception à lever pour un refus de Monid — choisie sur le CODE, jamais sur le texte.
+    """The exception to raise for a Monid refusal — chosen on the CODE, never on the text.
 
-    4xx → refus nommé (l'appel ou la clé est à changer). 429 et 5xx restent ce qu'ils
-    sont : la taxonomie d'erreurs les classe réessayables — sauf un lancement dont l'issue
-    est inconnue, qu'on ne laisse jamais passer pour réessayable ni pour une erreur
-    d'argument (`_issue_inconnue` : `INTERNAL_ERROR`, non réessayable)."""
+    4xx → named refusal (the call or the key must change). 429 and 5xx stay what they
+    are: the error taxonomy classes them as retryable — except a launch whose outcome
+    is unknown, which is never let through as retryable nor as an argument error
+    (`_issue_inconnue`: `INTERNAL_ERROR`, not retryable)."""
     if getattr(e, "may_have_run", False):
         return _issue_inconnue(e, is_platform=is_platform)
     if isinstance(e, MonidProtocolError):
-        return _bad(f"Réponse inexploitable de Monid : {e}{_rid(e)}")
+        return _bad(f"Unusable response from Monid: {e}{_rid(e)}")
     status, rid = e.status_code, _rid(e)
     corps = e.body if isinstance(e.body, dict) else {}
     if status == 503 and "walletStatus" in corps and e.retry_after is None:
-        etat = corps.get("walletStatus") or "pas encore créé"
-        return _bad(f"Portefeuille Monid indisponible (503, statut {etat}) : Monid "
-                    f"n'annonce aucun délai de reprise — vois son tableau de bord.{rid}")
+        etat = corps.get("walletStatus") or "not yet created"
+        return _bad(f"Monid wallet unavailable (503, status {etat}): Monid "
+                    f"announces no recovery delay — see its dashboard.{rid}")
     if status == 429 or status >= 500:
         return e
     detail = e.upstream_message or _extrait(e.body)
     if status == 400:
-        msg = (f"Monid a refusé l'entrée (400) : {detail}. Vérifie-la contre le schéma "
-               "rendu par monid_endpoint(op=\"inspect\").")
+        msg = (f"Monid refused the input (400): {detail}. Check it against the schema "
+               "returned by monid_endpoint(op=\"inspect\").")
     elif status == 401:
-        msg = ("Monid refuse la clé (401) : absente, mal formée ou révoquée. "
-               + ("C'est la clé de la plateforme : préviens un administrateur."
+        msg = ("Monid rejects the key (401): missing, malformed or revoked. "
+               + ("This is the platform key: notify an administrator."
                   if is_platform else
-                  "Crée une nouvelle clé dans le tableau de bord Monid (API keys) et "
-                  "remplace-la sur la carte du connecteur."))
+                  "Create a new key in the Monid dashboard (API keys) and "
+                  "replace it on the connector card."))
     elif status == 402:
-        msg = ("Solde du portefeuille Monid insuffisant (402) : "
-               + ("il est servi par la clé de la plateforme, c'est à un administrateur "
-                  "de le recharger." if is_platform else "recharge-le sur monid.ai."))
+        msg = ("Monid wallet balance insufficient (402): "
+               + ("it is served by the platform key, an administrator has to "
+                  "top it up." if is_platform else "top it up on monid.ai."))
     elif status == 403:
-        msg = ("Monid refuse l'accès (403) : la clé n'est rattachée à aucun workspace, "
-               "ou ce run appartient à un autre workspace.")
+        msg = ("Monid denies access (403): the key is not tied to any workspace, "
+               "or this run belongs to another workspace.")
     elif status == 404:
-        msg = ("Inconnu de Monid (404) : endpoint ou run introuvable. Relance "
-               "monid_endpoint(q=…) et passe provider + endpoint EXACTEMENT comme rendus"
+        msg = ("Unknown to Monid (404): endpoint or run not found. Run "
+               "monid_endpoint(q=…) again and pass provider + endpoint EXACTLY as returned"
                + ("." if is_platform else
-                  " ; un run se retrouve dans monid_runs(op=\"list\")."))
+                  "; a run can be found in monid_runs(op=\"list\")."))
     elif status == 409:
-        msg = ("Run déjà terminé ou non arrêtable (409) : rien à arrêter — relis-le avec "
+        msg = ("Run already finished or not stoppable (409): nothing to stop — re-read it with "
                "monid_runs(op=\"get\").")
     else:
-        msg = f"Monid a refusé la requête (HTTP {status}) : {detail}."
+        msg = f"Monid refused the request (HTTP {status}): {detail}."
     return _bad(msg + rid)
 
 
@@ -149,7 +149,7 @@ def _appel(fn: Callable[[], Any], *, is_platform: bool = False) -> Any:
         raise _traduire(e, is_platform=is_platform) from None
 
 
-# --- l'enveloppe d'un run -----------------------------------------------------
+# --- a run's envelope ---------------------------------------------------------
 
 def _http_fournisseur(run: dict) -> Optional[int]:
     reponse = run.get("providerResponse")
@@ -158,8 +158,8 @@ def _http_fournisseur(run: dict) -> Optional[int]:
 
 
 def _est_un_run(corps: Any, run_id: Optional[str] = None) -> bool:
-    """Le test du client (`run()`) : un dict qui porte `runId` et `status`, chaînes non
-    vides — et, quand `run_id` est donné, CE run-là."""
+    """The client's test (`run()`): a dict carrying `runId` and `status`, non-empty
+    strings — and, when `run_id` is given, THAT run."""
     return (isinstance(corps, dict)
             and all(isinstance(corps.get(k), str) and corps[k] for k in ("runId", "status"))
             and (run_id is None or corps["runId"] == run_id))
@@ -167,46 +167,46 @@ def _est_un_run(corps: Any, run_id: Optional[str] = None) -> bool:
 
 def _relecture_ratee(run: dict, cause: str) -> str:
     rid = run.get("runId")
-    return (f"Run accepté ({run.get('status')}), mais sa relecture a échoué ({cause}) : il "
-            f"tourne peut-être encore. Relis-le avec monid_runs(op=\"get\", run_id=\"{rid}\") "
-            "— ne le relance pas.")
+    return (f"Run accepted ({run.get('status')}), but its re-read failed ({cause}): it "
+            f"may still be running. Re-read it with monid_runs(op=\"get\", run_id=\"{rid}\") "
+            "— do not relaunch it.")
 
 
 def _suite(run: dict, done: bool, run_id: Optional[str] = None) -> Optional[str]:
-    """La marche à suivre, par statut ; `None` quand le résultat est prêt à lire.
-    `run_id` = l'identifiant connu de l'appelant, si le corps n'en porte pas."""
+    """The next step, by status; `None` when the result is ready to read.
+    `run_id` = the identifier known to the caller, if the body carries none."""
     rid, status = run.get("runId") or run_id, run.get("status")
     if not done:
-        return (f"Run {status} : pas encore fini. Relis-le avec monid_runs(op=\"get\", "
-                f"run_id=\"{rid}\", wait_seconds=30), ou arrête-le (et sa dépense) avec "
+        return (f"Run {status}: not finished yet. Re-read it with monid_runs(op=\"get\", "
+                f"run_id=\"{rid}\", wait_seconds=30), or stop it (and its spending) with "
                 f"monid_runs(op=\"stop\", run_id=\"{rid}\").")
     if status == "BLOCKED":
-        motif = _extrait(run.get("reason") or "sans motif")
-        return ("Bloqué avant exécution par un plafond du workspace Monid (budget ou nombre "
-                f"de runs) : « {motif} ». Rien n'est facturé ; relancer bloquera de nouveau "
-                "tant que ce plafond n'est pas changé chez Monid.")
+        motif = _extrait(run.get("reason") or "no reason given")
+        return ("Blocked before execution by a Monid workspace cap (budget or number "
+                f"of runs): \"{motif}\". Nothing is billed; relaunching will block again "
+                "until that cap is changed at Monid.")
     if status == "FAILED":
-        return "Échec côté Monid, pas chez le fournisseur : non facturé."
+        return "Failure on Monid's side, not the provider's: not billed."
     if status == "TIMED_OUT":
-        return ("Délai du run dépassé : non facturé. Relance avec un volume plus petit, "
-                "ou plus tard.")
+        return ("Run timed out: not billed. Retry with a smaller volume, "
+                "or later.")
     if status == "STOPPED":
-        return "Run arrêté."
+        return "Run stopped."
     http = _http_fournisseur(run)
     if http is None:
-        return ("Le fournisseur n'a rendu aucun statut HTTP : lis `run.output` et "
-                "`run.providerResponse` avant de te fier au résultat.")
+        return ("The provider returned no HTTP status: read `run.output` and "
+                "`run.providerResponse` before relying on the result.")
     if 200 <= http < 300:
         return None
     erreur = (run.get("providerResponse") or {}).get("error")
-    return (f"Le fournisseur a répondu HTTP {http}"
-            + (f" : {_extrait(erreur)}" if erreur else "")
-            + " — Monid ne facture pas une réponse non 2xx (un 404 veut souvent dire "
-              "« rien trouvé »).")
+    return (f"The provider answered HTTP {http}"
+            + (f": {_extrait(erreur)}" if erreur else "")
+            + " — Monid does not bill a non-2xx response (a 404 often means "
+              "\"nothing found\").")
 
 
 def _provider_ok(run: dict) -> Optional[bool]:
-    """COMPLETED avec une réponse 2xx du fournisseur ; `None` si ce statut manque."""
+    """COMPLETED with a 2xx answer from the provider; `None` if that status is missing."""
     if run.get("status") != "COMPLETED":
         return False
     http = _http_fournisseur(run)
@@ -215,46 +215,46 @@ def _provider_ok(run: dict) -> Optional[bool]:
 
 def _enveloppe(run: Any, *, relecture: Optional[str] = None,
                run_id: Optional[str] = None) -> dict:
-    """`run_id` = l'identifiant que l'appelant connaît (accepté, ou demandé) : la marche à
-    suivre ne dit jamais « run None », et un corps qui n'est pas un run le dit."""
+    """`run_id` = the identifier the caller knows (accepted, or requested): the next
+    step never says "run None", and a body that is not a run says so."""
     r = run if isinstance(run, dict) else {}
     lisible = _est_un_run(run)
     done = lisible and is_terminal(r)
     if relecture is None and not lisible:
-        relecture = (f"Réponse illisible de Monid pour le run {run_id} (le corps n'est pas "
-                     f"un run) : relis-le avec monid_runs(op=\"get\", run_id=\"{run_id}\") "
-                     "— ne le relance pas.")
+        relecture = (f"Unreadable response from Monid for run {run_id} (the body is not "
+                     f"a run): re-read it with monid_runs(op=\"get\", run_id=\"{run_id}\") "
+                     "— do not relaunch it.")
     return {"run": run, "done": done, "provider_ok": _provider_ok(r) if done else None,
             "cost_usd": run_cost_usd(r), "next_step": relecture or _suite(r, done, run_id)}
 
 
-# --- les gardes de la clé de la plateforme ------------------------------------
+# --- the platform key's guards ------------------------------------------------
 
 def _garde_liste(is_platform: bool) -> None:
-    """La liste des runs est celle du WORKSPACE de la clé. Sous la clé de la plateforme,
-    ce workspace est partagé par toutes les orgs qui ont un grant : la lister exposerait
-    leurs runs (et des identifiants qui ouvrent `get` et `stop`). Refusé, et nommé."""
+    """The list of runs is that of the key's WORKSPACE. Under the platform key,
+    that workspace is shared by all the orgs that have a grant: listing it would expose
+    their runs (and identifiers that open `get` and `stop`). Refused, and named."""
     if is_platform:
-        raise _bad("La liste des runs n'est pas servie sous la clé de la plateforme : son "
-                   "workspace Monid est partagé, son historique contient les runs d'autres "
-                   "organisations. Relis un run par son identifiant (monid_runs(op=\"get\", "
-                   "run_id=…)) ; pour l'historique, pose ta propre clé Monid.")
+        raise _bad("The list of runs is not served under the platform key: its "
+                   "Monid workspace is shared, its history holds other organizations' runs. "
+                   "Re-read a run by its identifier (monid_runs(op=\"get\", "
+                   "run_id=…)); for the history, set your own Monid key.")
 
 
 def _garde_solde(is_platform: bool) -> None:
-    """Le solde est celui du portefeuille de la clé. Sous la clé de la plateforme, c'est
-    le portefeuille PARTAGÉ de la plateforme : son solde n'est pas celui de l'org qui a un
-    grant, et ne lui est pas servi. Un lancement à court de fonds le dit par son 402.
-    Refusé avant tout envoi, et nommé."""
+    """The balance is that of the key's wallet. Under the platform key, it is
+    the platform's SHARED wallet: its balance is not that of the org that has a
+    grant, and is not served to it. A launch short of funds says so through its 402.
+    Refused before anything is sent, and named."""
     if is_platform:
-        raise _bad("Le solde n'est pas servi sous la clé de la plateforme : son portefeuille "
-                   "Monid est partagé entre les organisations qui y ont accès, et son solde "
-                   "ne leur est pas communiqué. Un lancement qui manque de fonds le dit "
-                   "(402) ; pour voir un solde, pose ta propre clé Monid.")
+        raise _bad("The balance is not served under the platform key: its Monid wallet "
+                   "is shared among the organizations that have access to it, and its balance "
+                   "is not disclosed to them. A launch short of funds says so "
+                   "(402); to see a balance, set your own Monid key.")
 
 
 def _projeter(page: Any, drop: tuple, full: bool) -> Any:
-    """Retire des COLONNES entières des éléments, et le dit dans `projection`."""
+    """Removes whole COLUMNS from the items, and says so in `projection`."""
     if full or not isinstance(page, dict):
         return page
     out = output_projection.project(page, items_path="items", item_drop=drop)

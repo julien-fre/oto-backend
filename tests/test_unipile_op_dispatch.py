@@ -100,7 +100,7 @@ def test_chat_send_refuses_without_a_destination(client):
 def test_chat_list_refuses_a_page_linkedin_refuses_naming_the_bound(client, limit):
     """#873 — au-delà de 25, Unipile répond « 400 Invalid querystring » sans nommer la
     borne : le refus la nomme, et renvoie à `cursor`, avant tout appel amont."""
-    with pytest.raises(McpError, match="1 à 25") as e:
+    with pytest.raises(McpError, match="1 to 25") as e:
         _tool("linkedin_unipile_chat")(op="list", limit=limit)
     assert "cursor" in str(e.value.error.message)
     client.list_chats.assert_not_called()
@@ -223,7 +223,7 @@ def test_job_ops_route_to_the_right_client_method(client, op, kwargs, method):
 def test_unknown_op_is_refused_with_the_allowed_list(client, tool):
     """Une op inconnue doit lever en nommant les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool(tool)(op="nope")
 
 
@@ -272,7 +272,7 @@ def test_channel_chat_refuses_unknown_op_and_missing_args(client):
     m = FastMCP("t")
     U.register_messaging_tools(m, "WHATSAPP")
     fn = asyncio.run(m.get_tool("whatsapp_chat")).fn
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         fn(op="nope")
     with pytest.raises(McpError, match="chat_id"):
         fn(op="read")

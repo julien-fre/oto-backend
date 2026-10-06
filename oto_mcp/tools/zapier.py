@@ -1,14 +1,14 @@
-"""Zapier — automatisation via l'AI Actions API (actions exposées + exécution).
+"""Zapier — automation via the AI Actions API (exposed actions + execution).
 
-Wrappe `oto.tools.zapier.ZapierClient`. Credential = clé API simple (en-tête
-`x-api-key`), keyed → résolu par appel via `access.resolve_api_key("zapier")`.
-byo (user/org), pas de clé plateforme : chacun pose sa clé (le jeu d'actions
-exposées est attaché à la clé, créée sur actions.zapier.com).
+Wraps `oto.tools.zapier.ZapierClient`. Credential = plain API key (`x-api-key`
+header), keyed → resolved per call via `access.resolve_api_key("zapier")`.
+byo (user/org), no platform key: everyone sets their own key (the set of
+exposed actions is attached to the key, created on actions.zapier.com).
 
-Modèle : Zapier expose pour les agents un catalogue d'**actions** que l'user a
-explicitement autorisées, exécutables en langage naturel — pas une API de gestion
-des Zaps. `zapier_list_actions` découvre les actions, `zapier_execute_action` en
-lance une.
+Model: Zapier exposes a catalogue of **actions** to agents that the user has
+explicitly authorized, executable in natural language — not a Zap-management
+API. `zapier_list_actions` discovers the actions, `zapier_execute_action`
+runs one.
 """
 from __future__ import annotations
 
@@ -21,16 +21,16 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /exposed/` (déjà dans le client — `list_actions`), le seul appel du
-    connecteur : Zapier n'expose ni `/me` ni solde. Une liste VIDE (aucune
-    action exposée) est un état normal, jamais un refus. `raise_for_upstream`
-    (typé).
+    `GET /exposed/` (already in the client — `list_actions`), the connector's
+    only call: Zapier exposes neither `/me` nor a balance. An EMPTY list (no
+    action exposed) is a normal state, never a refusal. `raise_for_upstream`
+    (typed).
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    une clé Zapier AI Actions porte exactement le jeu d'actions que l'utilisateur
-    lui a attaché, il n'y a rien de plus fin à distinguer.
+    **Authenticated ≠ usable** (oto#69 class): does not distinguish scope —
+    a Zapier AI Actions key carries exactly the set of actions the user
+    attached to it, there is nothing finer to distinguish.
     """
     from oto.tools.zapier import ZapierClient
 

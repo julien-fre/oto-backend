@@ -1,33 +1,33 @@
-"""Déclaration de registre du connecteur `forager`.
+"""Registry declaration for the `forager` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# forager : job posts + firmographics + people/contact enrichment, payant
-# au crédit par lookup. Auth = header `X-API-KEY` plat (un seul secret),
-# mais PAS `secret_kind="api_key"` : chaque appel datastorage a besoin en
-# plus d'un `account_id` entier en path, résolu au runtime via `GET
-# /api/users/current/` → `accounts[]` — donc modèle multi-champs (ADR
-# 0011, `secret_kind="fields"`) même si le secret lui-même est un simple
-# bearer, pour porter ce second champ (non-secret). `account_id` est
-# FACULTATIF : `ForagerClient` le résout tout seul si la clé n'a accès
-# qu'à un compte, et REFUSE (au lieu de deviner) si elle en a plusieurs —
-# deviner facturerait potentiellement le mauvais compte. byo-only (compte
-# payant du client, pas de pool de crédits partagé). Pas de tool de
-# gestion de clé API (create/delete) — dashboard-only, cf. tools/forager.py.
+# forager : job posts + firmographics + people/contact enrichment, billed
+# per credit per lookup. Auth = flat `X-API-KEY` header (a single secret),
+# but NOT `secret_kind="api_key"`: every datastorage call also needs an
+# integer `account_id` in the path, resolved at runtime via `GET
+# /api/users/current/` → `accounts[]` — hence the multi-field model (ADR
+# 0011, `secret_kind="fields"`) even though the secret itself is a plain
+# bearer, to carry that second (non-secret) field. `account_id` is
+# OPTIONAL: `ForagerClient` resolves it on its own if the key only has access
+# to one account, and REFUSES (instead of guessing) if it has several —
+# guessing could bill the wrong account. byo-only (the customer's paid
+# account, no shared credit pool). No API key management tool
+# (create/delete) — dashboard-only, see tools/forager.py.
 CONNECTOR = _c(
     "forager", ["forager"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
-    label="Forager", help="job posts, firmographics et enrichissement contacts (payant au crédit)",
+    label="Forager", help="job posts, firmographics and contact enrichment (pay-per-credit)",
     publisher="Forager.ai", href="https://forager.ai", credential_fields=(
-        CredentialField("api_key", "Clé API (X-API-KEY)", secret=True),
+        CredentialField("api_key", "API key (X-API-KEY)", secret=True),
         CredentialField(
             "account_id", "Account ID", secret=False, required=False,
-            help="laisse vide sauf si ta clé a accès à plusieurs comptes Forager — "
-                 "sinon résolu automatiquement"),
+            help="leave empty unless your key has access to several Forager accounts — "
+                 "otherwise resolved automatically"),
     ),
 )
 
@@ -36,8 +36,8 @@ PUBLISHER = "Forager.ai"
 LOGO_DOMAIN = "forager.ai"
 
 DESCRIPTION = (
-    "Offres d'emploi, données d'entreprise (firmographics) et enrichissement de "
-    "contact chez Forager, payant au crédit par recherche. Une clé donne accès "
-    "à un ou plusieurs comptes Forager ; le bon compte se résout tout seul "
-    "quand elle n'en a qu'un."
+    "Job postings, company data (firmographics) and contact enrichment from "
+    "Forager, billed per credit per search. A key gives access to one or "
+    "several Forager accounts; the right account resolves itself "
+    "when it only has one."
 )

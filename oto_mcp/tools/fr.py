@@ -1,7 +1,7 @@
-"""Données entreprise France — identité, finances, événements légaux, appels d'offres.
+"""French company data — identity, finances, legal events, tenders.
 
-Sources open data (pas de clé) : API Recherche Entreprises, INPI/BCE, BODACC, BOAMP.
-Source payante (clé SIRENE) : INSEE SIRENE (SIRET, siège).
+Open-data sources (no key): Recherche Entreprises API, INPI/BCE, BODACC, BOAMP.
+Paid source (SIRENE key): INSEE SIRENE (SIRET, headquarters).
 """
 from __future__ import annotations
 
@@ -16,45 +16,45 @@ from mcp.types import INVALID_PARAMS, ErrorData
 
 from .. import access, output_projection
 from .lecture import LECTURE
-# Hors de `tools/` : ce module ne sert AUCUN outil, il porte la lecture du
-# registre des personnes. `tools/<m>.py` est réservé aux modules montés depuis
-# le registre de connecteurs (garde-fou `test_capabilities_drift`).
+# Outside `tools/`: this module serves NO tool, it carries the reading of the
+# people register. `tools/<m>.py` is reserved for modules mounted from
+# the connector registry (guardrail `test_capabilities_drift`).
 from .. import fr_registre
 
-# Les annotations du bloc `finances` (0 = non déclaré, valeur illisible, montant
-# invraisemblable) sont posées par **FOD**, pas ici : elles sont vraies quel que soit
-# le consommateur, donc elles vivent au seul point que tous traversent (ADR 0028
-# amendée le 12/08 — « FOD dit ce qu'il SAIT, jamais ce qu'il CROIT »). Le backend
-# les fait passer, sans les recalculer : deux détections divergeraient.
+# The annotations on the `finances` block (0 = not declared, unreadable value,
+# implausible amount) are set by **FOD**, not here: they are true whichever the
+# consumer, so they live at the single point everyone goes through (ADR 0028
+# amended on 12/08 — "FOD says what it KNOWS, never what it BELIEVES"). The backend
+# passes them through, without recomputing them: two detections would diverge.
 #
-# CE qui reste ici est propre à la SURFACE AGENT — l'avertissement sur les paramètres
-# de filtre, qui n'existent que dans ce tool.
+# WHAT remains here is specific to the AGENT SURFACE — the warning on the filter
+# parameters, which exist only in this tool.
 _FILTRE_CA_AVERTISSEMENT = (
-    "⚠️ `ca_min`/`ca_max` filtrent en amont sur un montant dont l'unité est INCONNUE "
-    "(euros pour les uns, milliers pour les autres, parfois d'une année à l'autre chez "
-    "la même entreprise) et dont le 0 signifie « non déclaré ». Conséquences mesurées : "
-    "la plage laisse passer les entreprises SANS CA connu (elles valent 0, donc ≤ toute "
-    "borne haute) et rate celles qui ont déposé en milliers. Sur "
-    "`tranche_effectif_salarie=51,52,53 & ca_max=400000`, les 12 résultats sont des "
-    "grandes entreprises — 11 n'y sont que par leur 0, et la 12ᵉ est une banque à "
-    "392 M€ lue comme 392 k€. Pour qualifier par taille, préférer "
-    "`tranche_effectif_salarie` ou `categorie_entreprise`, et ne conclure sur un CA "
-    "qu'après lecture du dépôt (`fr_bilans`)."
+    "⚠️ `ca_min`/`ca_max` filter upstream on an amount whose unit is UNKNOWN "
+    "(euros for some, thousands for others, sometimes from one year to the next for "
+    "the same company) and whose 0 means \"not declared\". Measured consequences: "
+    "the range lets through companies with NO known revenue (they equal 0, hence ≤ any "
+    "upper bound) and misses those that filed in thousands. On "
+    "`tranche_effectif_salarie=51,52,53 & ca_max=400000`, the 12 results are "
+    "large companies — 11 are there only because of their 0, and the 12th is a bank at "
+    "€392M read as €392k. To qualify by size, prefer "
+    "`tranche_effectif_salarie` or `categorie_entreprise`, and only conclude on revenue "
+    "after reading the filing (`fr_bilans`)."
 )
 
-# Formes juridiques couramment ÉNONCÉES devant le nom (« la SCI Untel »), et les
-# catégories juridiques INSEE correspondantes. Le répertoire, lui, n'inscrit
-# presque jamais la forme dans la dénomination : « SCI ASC » ne ramène que des
-# sociétés littéralement nommées ainsi, et jamais la SCI immatriculée « ASC ».
-# La forme appartient donc à un FILTRE, pas au texte cherché (feedback #325).
-# Codes validés contre la liste que l'API renvoie sur valeur invalide (30/07/2026).
+# Legal forms commonly SPOKEN before the name ("the SCI Untel"), and the matching
+# INSEE legal categories. The register almost never writes the form into the
+# name: "SCI ASC" only brings back companies literally named that, and never the SCI
+# registered as "ASC".
+# The form therefore belongs to a FILTER, not to the searched text (feedback #325).
+# Codes validated against the list the API returns on an invalid value (30/07/2026).
 _LEGAL_FORM_CODES: dict[str, tuple[str, ...]] = {
-    "SCI": ("6540", "6541", "6542", "6543", "6544"),   # famille 654x = sociétés civiles immobilières
+    "SCI": ("6540", "6541", "6542", "6543", "6544"),   # 654x family = real-estate civil companies (SCI)
     "SCCV": ("6540", "6541"),
     "SCM": ("6533",),
     "SCP": ("6532",),
     "SARL": ("5499", "5485", "5410"),
-    "EURL": ("5499",),                                  # SARL à associé unique — même catégorie
+    "EURL": ("5499",),                                  # single-member SARL — same category
     "SAS": ("5710", "5785"),
     "SASU": ("5710",),
     "SA": ("5599", "5699"),
@@ -63,10 +63,10 @@ _LEGAL_FORM_CODES: dict[str, tuple[str, ...]] = {
 
 
 def _split_legal_form(query: Optional[str]) -> Optional[tuple[str, str]]:
-    """(forme, reste) si `query` commence par une forme juridique suivie d'un nom.
+    """(form, rest) if `query` starts with a legal form followed by a name.
 
-    « SCI ASC » → ("SCI", "ASC"). « SCI » seul → None (pas de nom à chercher),
-    « ASCENSEURS » → None (préfixe non isolé)."""
+    "SCI ASC" → ("SCI", "ASC"). "SCI" alone → None (no name to search for),
+    "ASCENSEURS" → None (prefix not isolated)."""
     if not query:
         return None
     parts = query.strip().split(maxsplit=1)
@@ -76,12 +76,12 @@ def _split_legal_form(query: Optional[str]) -> Optional[tuple[str, str]]:
     return (form, parts[1].strip()) if form in _LEGAL_FORM_CODES and parts[1].strip() else None
 
 
-# Les valeurs RÉELLES du champ BODACC `familleavis` (relevé de la lib france-opendata,
-# `bodacc.py`). Une famille inconnue y rendait ZÉRO annonce — lu par l'agent comme
-# « aucune de ces sociétés n'a eu de modification » (oto#206, mesuré sur « Modifications
-# diverses », le LIBELLÉ que la sortie sert dans `famille`, recopié en entrée). La lib la
-# refuse depuis 0.47.0 ; ici, déclarées au schéma pour que l'agent les lise AVANT
-# d'appeler, et revérifiées au corps : un appel interne ne passe pas par le schéma.
+# The REAL values of the BODACC `familleavis` field (taken from the france-opendata lib,
+# `bodacc.py`). An unknown family used to return ZERO notices — read by the agent as
+# "none of these companies had a modification" (oto#206, measured on "Modifications
+# diverses", the LABEL the output serves in `famille`, copied back as input). The lib
+# has refused it since 0.47.0; here, declared in the schema so the agent reads them BEFORE
+# calling, and re-checked in the body: an internal call does not go through the schema.
 FamilleBodacc = Literal["collective", "conciliation", "creation", "divers", "dpc",
                         "immatriculation", "modification", "radiation",
                         "retablissement_professionnel", "vente"]
@@ -89,30 +89,30 @@ _FAMILLES_BODACC = get_args(FamilleBodacc)
 
 
 def _famille_bodacc(famille: Optional[str]) -> Optional[str]:
-    """La famille BODACC si elle est admise, `None` pour toutes ; sinon un refus qui
-    NOMME les valeurs admises — jamais un zéro silencieux."""
+    """The BODACC family if it is allowed, `None` for all; otherwise a refusal that
+    NAMES the allowed values — never a silent zero."""
     if famille is None or famille in _FAMILLES_BODACC:
         return famille
     raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-        f"famille BODACC inconnue : {famille!r}. Valeurs admises : "
-        f"{', '.join(_FAMILLES_BODACC)} (ou omise pour toutes). La sortie donne un "
-        "libellé (ex. « Modifications diverses ») : l'entrée prend le code "
+        f"Unknown BODACC family: {famille!r}. Allowed values: "
+        f"{', '.join(_FAMILLES_BODACC)} (or omitted for all). The output gives a "
+        "label (e.g. \"Modifications diverses\"): the input takes the code "
         "(`modification`).")))
 
 
 def register(mcp: FastMCP) -> None:
-    from ..fod import fr as fod_fr  # données entreprise + INSEE keyé (passthrough) + index BOAMP/ACCO → service FOD
+    from ..fod import fr as fod_fr  # company data + keyed INSEE (passthrough) + BOAMP/ACCO index → FOD service
 
-    # Données entreprise open-data servies par le service FOD dédié (ADR 0028) — le
-    # backend n'exécute plus ces appels (dont l'INPI DuckDB, workload lourd) in-process.
-    # Objets proxy à surface identique aux clients france_opendata → seuls ces
-    # bindings changent, les corps des tools restent inchangés.
+    # Open-data company data served by the dedicated FOD service (ADR 0028) — the
+    # backend no longer runs these calls (including INPI DuckDB, a heavy workload) in-process.
+    # Proxy objects with the same surface as the france_opendata clients → only these
+    # bindings change, the tool bodies stay unchanged.
     entreprises = fod_fr.entreprises
     inpi = fod_fr.inpi
     bodacc = fod_fr.bodacc
     egapro = fod_fr.egapro
 
-    # --- Identité (API Recherche Entreprises, open data) ---
+    # --- Identity (Recherche Entreprises API, open data) ---
 
     @mcp.tool(meta={"exhaustive_via": "fr_stock_search"}, annotations=LECTURE)
     def fr_search(
@@ -133,28 +133,28 @@ def register(mcp: FastMCP) -> None:
         """Search French companies — returns identity, HQ, NAF, employees,
         directors, finances, matched establishments. At least one filter required.
 
-        ⚠️ **Énumération plafonnée ~10 000** (`page × per_page`, per_page ≤ 25) :
-        l'API tronque **sans erreur** au-delà. Pour ÉNUMÉRER exhaustivement un grand
-        ensemble (« toutes les boîtes du secteur X en région Y » quand il y en a
-        des dizaines de milliers), bascule sur **`fr_stock_search`** (parquet SIRENE,
-        pas de plafond). Ce tool reste le bon choix pour chercher/qualifier (indexé,
-        rapide, filtres riches) tant que le résultat tient sous ~10k.
+        ⚠️ **Enumeration capped at ~10,000** (`page × per_page`, per_page ≤ 25):
+        the API truncates **without error** beyond that. To enumerate a large
+        set exhaustively ("all companies in sector X in region Y" when there are
+        tens of thousands), switch to **`fr_stock_search`** (SIRENE parquet,
+        no cap). This tool remains the right choice for searching/qualifying (indexed,
+        fast, rich filters) as long as the result stays under ~10k.
 
         ⚠️ Geographic filters (departement, code_postal, commune) match ANY
         establishment, NOT only the head office (siège). To target companies whose
         SIÈGE is in a département, use `fr_stock_search(departement=…,
         sieges_only=True)`.
 
-        ⚠️ **`ca_min`/`ca_max` ne qualifient PAS une taille d'entreprise.** Le
-        filtre porte sur un montant dont l'unité varie selon le dépôt (euros ou
-        milliers, parfois d'une année à l'autre chez la même entreprise) et dont le
-        0 signifie « non déclaré » — donc toute borne haute ramène en masse des
-        entreprises dont le CA est inconnu, ce qui biaise vers les PLUS GROSSES.
-        Mesuré : `tranche_effectif_salarie=51,52,53 & ca_max=400000` rend 12
-        résultats, tous grandes entreprises, aucun vrai positif. Pour cibler par
-        taille, utiliser `tranche_effectif_salarie` ou `categorie_entreprise`.
-        Le bloc `finances` des résultats porte les mêmes réserves, marquées
-        ligne à ligne (`alerte`) — cf. `finances_avertissement`.
+        ⚠️ **`ca_min`/`ca_max` do NOT qualify a company's size.** The
+        filter applies to an amount whose unit varies by filing (euros or
+        thousands, sometimes from one year to the next for the same company) and whose
+        0 means "not declared" — so any upper bound brings back en masse
+        companies whose revenue is unknown, which biases toward the LARGEST.
+        Measured: `tranche_effectif_salarie=51,52,53 & ca_max=400000` returns 12
+        results, all large companies, no true positive. To target by
+        size, use `tranche_effectif_salarie` or `categorie_entreprise`.
+        The `finances` block of the results carries the same caveats, flagged
+        line by line (`alerte`) — see `finances_avertissement`.
 
         Spoken legal forms: people say "the SCI Untel", but the register rarely writes
         the form into the name — so a query like "SCI ASC" only matches companies
@@ -168,7 +168,7 @@ def register(mcp: FastMCP) -> None:
             departement: Department code (e.g. "75").
             code_postal: Postal code (e.g. "75001").
             commune: INSEE commune code (COG, 5 digits — e.g. "67482" for
-                Strasbourg). NOT a city name (a name raises "valeur non valide").
+                Strasbourg). NOT a city name (a name raises "valeur non valide" — the API's French error message).
                 For a place, pass `code_postal`, or use `fr_stock_search` (which
                 resolves enseigne/commune by code too).
             employees: Employee-range codes (INSEE TEFEN) of the unité légale, comma-separated.
@@ -199,16 +199,16 @@ def register(mcp: FastMCP) -> None:
 
         explicit_nj = [s.strip() for s in nature_juridique.split(",")] if nature_juridique else None
         res = _search(query, explicit_nj, page)
-        # Repêchage par forme juridique — seulement page 1 (c'est là qu'on conclut
-        # « pas trouvée ») et seulement si l'appelant n'a pas déjà tranché la forme.
-        # La recherche littérale reste en tête : les sociétés vraiment nommées
-        # « SCI ASC » existent et sont des réponses légitimes.
+        # Legal-form retry — page 1 only (that is where we conclude
+        # "not found") and only if the caller has not already settled the form.
+        # The literal search stays first: companies truly named
+        # "SCI ASC" exist and are legitimate answers.
         form = _split_legal_form(query) if page == 1 and not explicit_nj else None
-        # Même compactage que fr_get : le payload brut (sièges 30+ champs,
-        # matching_etablissements géo intégrale) explose vite (vu 48k chars).
-        # Les établissements compactés restent là — test de co-localisation.
-        # Compacter AVANT de marquer : la projection ne garde que des clés connues,
-        # un flag posé plus tôt serait silencieusement perdu.
+        # Same compaction as fr_get: the raw payload (headquarters 30+ fields,
+        # full-geo matching_etablissements) blows up fast (seen 48k chars).
+        # The compacted establishments stay — co-location test.
+        # Compact BEFORE flagging: the projection keeps only known keys,
+        # a flag set earlier would be silently lost.
         res["results"] = [_compact_identity(r) for r in res.get("results", [])]
         if form:
             label, name = form
@@ -224,34 +224,34 @@ def register(mcp: FastMCP) -> None:
                 "form": label, "query": name, "nature_juridique": codes,
                 "total_results": extra.get("total_results"), "added": len(added),
             }
-        # Qui filtre sur le CA a besoin de savoir sur QUOI il vient de filtrer :
-        # l'amont compare une borne en euros à un nombre sans unité dont le 0 vaut
-        # « non déclaré ». Dit ici, au moment où la question se pose (#399).
+        # Whoever filters on revenue needs to know WHAT they just filtered on:
+        # the upstream compares a bound in euros to a unitless number whose 0 means
+        # "not declared". Said here, at the moment the question arises (#399).
         if ca_min is not None or ca_max is not None:
             res["filtre_ca_avertissement"] = _FILTRE_CA_AVERTISSEMENT
         return res
 
-    # 7 ratios top B2B + métadonnées d'exercice. Le reste (marge_brute, ebit,
+    # 7 top B2B ratios + fiscal-year metadata. The rest (marge_brute, ebit,
     # capacite_de_remboursement, couverture_des_interets, caf_sur_ca,
-    # ratio_de_vetuste) reste accessible via fr_bilan(siren, date).
+    # ratio_de_vetuste) remains accessible via fr_bilan(siren, date).
     _LATEST_BILAN_KEYS = (
         "date_cloture_exercice", "type_bilan",
         "chiffre_d_affaires", "resultat_net", "ebe",
         "marge_ebe", "autonomie_financiere", "taux_d_endettement",
         "ratio_de_liquidite",
-        # Les AVERTISSEMENTS de l'amont, jamais projetés hors de la réponse : un
-        # `chiffre_d_affaires: None` accompagné de `valeur_indisponible` dit « le
-        # dépôt porte un montant qu'on ne sait pas lire » ; le même None seul dit
-        # « pas de dépôt ». Les jeter rendrait au consommateur exactement
-        # l'ambiguïté que FOD vient de lever (ADR 0028 amendée).
+        # The upstream WARNINGS, never projected out of the response: a
+        # `chiffre_d_affaires: None` accompanied by `valeur_indisponible` says "the
+        # filing carries an amount we cannot read"; the same None alone says
+        # "no filing". Dropping them would hand the consumer back exactly the
+        # ambiguity FOD has just removed (ADR 0028 amended).
         "alerte", "postes_indisponibles",
     )
 
-    # fr_get compact : le payload brut recherche-entreprises pèse jusqu'à 40k chars
-    # (matching_etablissements intégraux avec géo, compléments, sièges 30+ champs).
-    # On garde tout ce qu'un agent de prospection consomme — identité, NAF,
-    # effectifs, dirigeants, finances, et la LISTE des établissements (compactée :
-    # nécessaire au test de co-localisation commune INSEE / établissement actif).
+    # compact fr_get: the raw recherche-entreprises payload weighs up to 40k chars
+    # (full matching_etablissements with geo, complements, headquarters 30+ fields).
+    # We keep everything a prospecting agent consumes — identity, NAF,
+    # headcount, directors, finances, and the LIST of establishments (compacted:
+    # needed for the INSEE commune / active establishment co-location test).
     _ETAB_KEEP = (
         "siret", "adresse", "code_postal", "commune", "libelle_commune",
         "etat_administratif", "est_siege", "activite_principale",
@@ -268,30 +268,30 @@ def register(mcp: FastMCP) -> None:
         "annee_tranche_effectif_salarie", "categorie_entreprise",
         "date_creation", "date_fermeture", "site_internet",
         "nombre_etablissements", "nombre_etablissements_ouverts", "finances",
-        # Frère de `finances`, posé par FOD : sans lui dans cette liste, la
-        # projection le mangerait en silence (elle ne garde que des clés connues).
+        # Sibling of `finances`, set by FOD: without it in this list, the
+        # projection would silently eat it (it keeps only known keys).
         "finances_avertissement",
     )
-    # Convention(s) collective(s) — l'amont la porte sous `complements.liste_idcc`.
-    # Elle était perdue au mapping alors que `fr_search` ACCEPTE l'IDCC en FILTRE :
-    # on pouvait chercher par convention sans jamais lire celle d'une entreprise
-    # qu'on tenait déjà. L'asymétrie est le piège — pouvoir filtrer laisse croire que
-    # la donnée est accessible (signal : champ « IDCC vérifié » resté à 0 % sur 500
-    # lignes, alors que le client l'avait demandé explicitement).
-    # Remontée À PLAT plutôt que sous `complements` : c'est la seule clé de ce bloc
-    # qui porte une donnée métier ; exposer le bloc entier ramènerait ~30 booléens
-    # d'annuaire (est_bio, est_qualiopi…) que personne n'a demandés.
+    # Collective agreement(s) — the upstream carries it under `complements.liste_idcc`.
+    # It was lost in the mapping even though `fr_search` ACCEPTS the IDCC as a FILTER:
+    # you could search by agreement without ever reading that of a company
+    # you already held. The asymmetry is the trap — being able to filter suggests
+    # the data is accessible (signal: "IDCC verified" field stuck at 0% over 500
+    # rows, although the client had explicitly asked for it).
+    # Surfaced FLAT rather than under `complements`: it is the only key of that block
+    # that carries business data; exposing the whole block would bring back ~30 directory
+    # booleans (est_bio, est_qualiopi…) that nobody asked for.
     _COMPLEMENT_KEEP = ("liste_idcc",)
     _EVENT_KEEP = (
         "id", "dateparution", "familleavis", "familleavis_lib", "typeavis",
         "typeavis_lib", "tribunal", "commercant", "jugement", "registre",
-        # Le permalien officiel DILA (#341, dossier liens #335 : pleine confiance,
-        # à recopier jamais reconstruire) — il traversait fr_events mais était
-        # mangé ici : la classe « projection qui ment par omission » (ADR 0028).
+        # The official DILA permalink (#341, links file #335: full trust,
+        # to be copied never rebuilt) — it went through fr_events but was
+        # eaten here: the "projection that lies by omission" class (ADR 0028).
         "url_complete",
-        # Le CONTENU de l'avis pour deux familles (#341) : le descriptif d'une
-        # modification et celui d'un dépôt de comptes — même nature que
-        # `jugement` (gardé depuis toujours pour les procédures collectives).
+        # The notice CONTENT for two families (#341): the description of a
+        # modification and that of an accounts filing — same nature as
+        # `jugement` (always kept for collective proceedings).
         "modificationsgenerales", "depot",
     )
 
@@ -312,12 +312,12 @@ def register(mcp: FastMCP) -> None:
             out["_etablissements_truncated"] = len(etabs)
         return out
 
-    # Nombre max de SIREN par appel batch : borne le fan-out sur les API amont
-    # (recherche-entreprises/INPI/BODACC, rate-limitées) ET la taille de réponse.
+    # Max number of SIRENs per batch call: bounds the fan-out on upstream APIs
+    # (recherche-entreprises/INPI/BODACC, rate-limited) AND the response size.
     _FR_GET_BATCH_MAX = 20
 
     def _fr_profile(siren: str) -> dict:
-        """Corps de `fr_get` pour UN siren — factorisé pour le mode batch."""
+        """Body of `fr_get` for ONE siren — factored out for batch mode."""
         from concurrent.futures import ThreadPoolExecutor
 
         partial_errors: dict[str, str] = {}
@@ -325,8 +325,8 @@ def register(mcp: FastMCP) -> None:
         def _safe(label, fn, *fn_args):
             try:
                 return fn(*fn_args)
-            # noqa: SILENT — l'échec par source est rendu dans partial_errors
-            except Exception as exc:  # dégradation gracieuse par sous-source
+            # noqa: SILENT — the per-source failure is rendered in partial_errors
+            except Exception as exc:  # graceful degradation per sub-source
                 partial_errors[label] = f"{type(exc).__name__}: {exc}"
                 return None
 
@@ -337,7 +337,7 @@ def register(mcp: FastMCP) -> None:
 
         identity = f_identity.result()
         if not identity:
-            # L'identité est la pièce maîtresse : sans elle, pas de fiche.
+            # Identity is the keystone: without it, no profile.
             if "identity" in partial_errors:
                 return {"error": "identity_unavailable", "siren": siren,
                         "partial_errors": partial_errors}
@@ -347,7 +347,7 @@ def register(mcp: FastMCP) -> None:
         latest_bilan = None
         finances_note = None
         latest_confidentiality = None
-        if exercises:  # liste non vide = au moins un dépôt exploitable (BdF)
+        if exercises:  # non-empty list = at least one usable filing (BdF)
             latest_ex = exercises[0]
             latest_confidentiality = latest_ex.get("confidentiality")
             full = _safe("latest_bilan", inpi.get_bilan, siren,
@@ -356,15 +356,15 @@ def register(mcp: FastMCP) -> None:
                 latest_bilan = {k: full.get(k) for k in _LATEST_BILAN_KEYS}
             if latest_confidentiality and latest_confidentiality != "Public":
                 finances_note = (
-                    f"comptes « {latest_confidentiality.lower()} » (art. L.232-25) — "
-                    "certains ratios sont absents par déclaration de confidentialité"
+                    f"accounts \"{latest_confidentiality.lower()}\" (art. L.232-25) — "
+                    "some ratios are absent due to a confidentiality declaration"
                 )
-        elif exercises == []:  # succès mais 0 dépôt exploitable au dataset BdF
+        elif exercises == []:  # success but 0 usable filing in the BdF dataset
             finances_note = (
-                "aucun compte exploitable au dataset Banque de France : jamais déposé "
-                "OU déposé en confidentialité totale (les micro/petites entreprises "
-                "peuvent rendre leurs comptes confidentiels). Vérifier l'existence d'un "
-                "dépôt confidentiel via les actes RNE sur data.inpi.fr."
+                "no usable accounts in the Banque de France dataset: never filed "
+                "OR filed under full confidentiality (micro/small companies "
+                "may keep their accounts confidential). Check for a "
+                "confidential filing via the RNE records on data.inpi.fr."
             )
 
         events_data = f_events.result() or {}
@@ -392,13 +392,13 @@ def register(mcp: FastMCP) -> None:
         + recent BODACC legal events. Aggregates 3 open data sources in parallel.
         Use this as first call when investigating a company.
 
-        ⚠️ **`latest_bilan` = LITTÉRALEMENT le dernier exercice déposé, qui ne porte
-        pas nécessairement de chiffre d'affaires** — un bilan simplifié n'a pas de
-        case « CA total ». Pour un CA, remonter les exercices : `fr_bilans(siren)`
-        les rend du plus récent au plus ancien avec leur `chiffre_d_affaires`, il
-        faut prendre le premier qui en porte un. Ne pas conclure « pas de chiffre
-        d'affaires » sur le seul `latest_bilan`. Vu sur Norauto : dernier exercice
-        (simplifié) muet, 974 718 176 € à l'exercice précédent.
+        ⚠️ **`latest_bilan` = LITERALLY the last filed fiscal year, which does not
+        necessarily carry revenue** — a simplified balance sheet has no
+        "total revenue" box. For revenue, go back through the years: `fr_bilans(siren)`
+        returns them from most recent to oldest with their `chiffre_d_affaires`, and you
+        must take the first one that carries one. Do not conclude "no revenue"
+        from `latest_bilan` alone. Seen on Norauto: last year
+        (simplified) silent, €974,718,176 the year before.
 
         BATCH: pass `sirens=[…]` (max 20 per call, chunk beyond) to qualify a
         LIST in one call — returns `{profiles: […], count}`, one profile per
@@ -423,37 +423,37 @@ def register(mcp: FastMCP) -> None:
         from concurrent.futures import ThreadPoolExecutor
 
         if (siren is None) == (sirens is None):
-            raise McpError(ErrorData(code=INVALID_PARAMS, message="donner `siren` (unitaire) OU `sirens` (batch), pas les deux"))
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="give `siren` (single) OR `sirens` (batch), not both"))
         if sirens is None:
             return _fr_profile(str(siren).strip())
         cleaned = [str(s).strip() for s in sirens if str(s).strip()]
         if not cleaned:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message="`sirens` est vide"))
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="`sirens` is empty"))
         if len(cleaned) > _FR_GET_BATCH_MAX:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"`sirens` est limité à {_FR_GET_BATCH_MAX} par appel "
-                        f"(reçu {len(cleaned)}) — découpe en lots"))
+                message=f"`sirens` is limited to {_FR_GET_BATCH_MAX} per call "
+                        f"(received {len(cleaned)}) — split into batches"))
         def _one(s: str) -> dict:
             try:
                 return _fr_profile(s)
-            # noqa: SILENT — l'échec par siren est rendu dans la ligne de résultat
-            except Exception as exc:  # un SIREN en échec ne fait pas tomber le lot
+            # noqa: SILENT — the per-siren failure is rendered in the result row
+            except Exception as exc:  # one failing SIREN does not bring down the batch
                 return {"error": f"{type(exc).__name__}: {exc}", "siren": s}
 
-        # 4 profils en vol max (chacun ouvre 3-4 appels amont) : reste sous les
-        # rate limits des API publiques tout en parallélisant le lot.
+        # 4 profiles in flight max (each opens 3-4 upstream calls): stays under the
+        # public APIs' rate limits while still parallelizing the batch.
         with ThreadPoolExecutor(max_workers=4) as pool:
             profiles = list(pool.map(_one, cleaned))
         return {"profiles": profiles, "count": len(profiles)}
 
-    # Borne du lot `fr_directors` : 5× celle de `fr_get`, parce qu'une fiche y
-    # coûte UN appel amont (l'identité, dont on tire dirigeants ET forme
-    # juridique) là où un profil `fr_get` en ouvre trois à quatre. Le terrain
-    # qualifie par tranches de cent (#612).
+    # Bound of the `fr_directors` batch: 5x that of `fr_get`, because a record there
+    # costs ONE upstream call (the identity, from which we take directors AND legal
+    # form) where an `fr_get` profile opens three to four. The field
+    # qualifies in batches of a hundred (#612).
     _FR_DIRECTORS_BATCH_MAX = 100
-    # Espacement minimal entre deux départs vers l'amont (5 par seconde). Voir le
-    # commentaire du lot : choix prudent, le quota amont n'étant pas publié.
+    # Minimum spacing between two starts toward the upstream (5 per second). See the
+    # batch comment: a prudent choice, the upstream quota not being published.
     _FR_DIRECTORS_CADENCE_S = float(os.environ.get("FR_DIRECTORS_CADENCE_S", "0.2"))
 
     @mcp.tool(annotations=LECTURE)
@@ -496,29 +496,29 @@ def register(mcp: FastMCP) -> None:
         from concurrent.futures import ThreadPoolExecutor
 
         if (siren is None) == (sirens is None):
-            raise McpError(ErrorData(code=INVALID_PARAMS, message="donner `siren` (unitaire) OU `sirens` (batch), pas les deux"))
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="give `siren` (single) OR `sirens` (batch), not both"))
         if sirens is None:
             un = str(siren).strip()
             return fr_registre.fiche(un, entreprises.get_by_siren(un))
         cleaned = [str(s).strip() for s in sirens if str(s).strip()]
         if not cleaned:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message="`sirens` est vide"))
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="`sirens` is empty"))
         if len(cleaned) > _FR_DIRECTORS_BATCH_MAX:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"`sirens` est limité à {_FR_DIRECTORS_BATCH_MAX} par appel "
-                        f"(reçu {len(cleaned)}) — découpe en lots"))
+                message=f"`sirens` is limited to {_FR_DIRECTORS_BATCH_MAX} per call "
+                        f"(received {len(cleaned)}) — split into batches"))
 
-        # Un PLAFOND en vol ne borne pas le DÉBIT : quatre requêtes qui se relaient
-        # dès qu'un slot se libère envoient aussi vite que l'amont répond. Le quota
-        # de Recherche Entreprises est par IP — celle de FOD, partagée par toute la
-        # plateforme — donc un lot de 50 déclenchait son propre 429, quand les mêmes
-        # SIREN redemandés en deux fois passaient sans erreur (otomata-tech/oto#44).
+        # A CAP on in-flight calls does not bound the RATE: four requests that take over
+        # from each other as soon as a slot frees up send as fast as the upstream answers. The
+        # Recherche Entreprises quota is per IP — FOD's, shared by the whole
+        # platform — so a batch of 50 triggered its own 429, while the same
+        # SIRENs requested again in two goes passed without error (otomata-tech/oto#44).
         #
-        # ⚠️ La valeur ci-dessous est un choix PRUDENT, pas une mesure : le quota
-        # n'est pas publié. Repère observé — un lot de 50 échouait, des lots de 10
-        # et 11 passaient ; 5 départs par seconde restent nettement en deçà. À
-        # ajuster si quelqu'un mesure le vrai seuil, pas au ressenti.
+        # ⚠️ The value below is a PRUDENT choice, not a measurement: the quota
+        # is not published. Observed landmark — a batch of 50 failed, batches of 10
+        # and 11 passed; 5 starts per second stay well below. To be
+        # adjusted if someone measures the real threshold, not by feel.
         cadence = _FR_DIRECTORS_CADENCE_S
         verrou, dernier_depart = threading.Lock(), [0.0]
 
@@ -533,21 +533,21 @@ def register(mcp: FastMCP) -> None:
             _attendre_son_tour()
             try:
                 return fr_registre.fiche(s, entreprises.get_by_siren(s))
-            # noqa: SILENT — l'échec par siren est rendu dans la ligne de résultat
-            except Exception as exc:  # un SIREN en échec ne fait pas tomber le lot
+            # noqa: SILENT — the per-siren failure is rendered in the result row
+            except Exception as exc:  # one failing SIREN does not bring down the batch
                 return {"error": f"{type(exc).__name__}: {exc}", "siren": s}
 
-        # 4 en vol, comme le lot de `fr_get` — mais étalés (cf. ci-dessus).
+        # 4 in flight, like the `fr_get` batch — but spread out (see above).
         with ThreadPoolExecutor(max_workers=4) as pool:
             fiches = list(pool.map(_one, cleaned))
-        # Un échec amont n'est PAS une fiche. `count` valait le nombre de lignes
-        # rendues, échecs compris : une réponse à 50 dont 21 avaient échoué se
-        # lisait « 50 fiches, aucune introuvable », et les 21 entreprises
-        # disparaissaient du livrable ou passaient pour « sans dirigeant »
-        # (otomata-tech/oto#44). Le partage est maintenant explicite, et les SIREN
-        # en échec sont nommés DEUX fois — dans leur ligne et ici — au même titre
-        # que les introuvables : une liste de cent fiches ne se relit pas pour les
-        # retrouver.
+        # An upstream failure is NOT a record. `count` used to be the number of rows
+        # returned, failures included: a response of 50 where 21 had failed was
+        # read as "50 records, none not found", and the 21 companies
+        # disappeared from the deliverable or passed for "no director"
+        # (otomata-tech/oto#44). The split is now explicit, and the failed SIRENs
+        # are named TWICE — in their row and here — on a par
+        # with the not-found ones: a list of a hundred records is not re-read to
+        # find them.
         en_echec = [f["siren"] for f in fiches
                     if f.get("error") and f.get("error") != "not_found"]
         obtenues = [f for f in fiches if not f.get("error")]
@@ -561,13 +561,13 @@ def register(mcp: FastMCP) -> None:
             "synthese": fr_registre.synthese(fiches),
         }
 
-    # --- INSEE SIRENE (clé payante — passthrough via FOD) ---
-    # Le backend résout la clé (vault : BYO membre/org → clé plateforme) + track le
-    # quota, et la PASSE à FOD par-appel (ADR 0028/0037). L'appel INSEE tourne sur FOD ;
-    # le credential reste maître dans le coffre backend, jamais stocké côté FOD.
+    # --- INSEE SIRENE (paid key — passthrough via FOD) ---
+    # The backend resolves the key (vault: member/org BYO → platform key) + tracks the
+    # quota, and PASSES it to FOD per call (ADR 0028/0037). The INSEE call runs on FOD;
+    # the credential stays mastered in the backend vault, never stored on the FOD side.
 
     def _sirene_key() -> tuple[str, bool]:
-        return access.resolve_api_key("sirene")  # (clé, is_platform)
+        return access.resolve_api_key("sirene")  # (key, is_platform)
 
     @mcp.tool(annotations=LECTURE)
     def fr_siret(siret: str) -> dict:
@@ -598,20 +598,20 @@ def register(mcp: FastMCP) -> None:
         digits = "".join(c for c in str(siret) if c.isdigit())
         if len(digits) != 14:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                f"SIRET invalide : {siret!r} — 14 chiffres attendus.")))
+                f"Invalid SIRET: {siret!r} — 14 digits expected.")))
         url = f"https://api-avis-situation-sirene.insee.fr/identification/pdf/{digits}"
         try:
             resp = requests.head(url, timeout=20)
         except requests.RequestException as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                f"endpoint INSEE avis-situation injoignable : {e}")))
+                f"INSEE avis-situation endpoint unreachable: {e}")))
         if resp.status_code == 404:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                f"aucun avis SIRENE pour le SIRET {digits} — établissement inconnu "
-                "au répertoire (SIRET erroné ?).")))
+                f"no SIRENE avis for SIRET {digits} — establishment unknown "
+                "to the directory (wrong SIRET?).")))
         if resp.status_code != 200 or "pdf" not in resp.headers.get("Content-Type", "").lower():
             raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                f"INSEE avis-situation a répondu HTTP {resp.status_code} "
+                f"INSEE avis-situation answered HTTP {resp.status_code} "
                 f"({resp.headers.get('Content-Type', '?')}).")))
         return {"siret": digits, "url": url, "format": "pdf"}
 
@@ -661,7 +661,7 @@ def register(mcp: FastMCP) -> None:
             return {"error": "exercise_not_found", "siren": siren, "date_cloture": date_cloture}
         return result
 
-    # --- Événements légaux (BODACC, open data) ---
+    # --- Legal events (BODACC, open data) ---
 
     @mcp.tool(annotations=LECTURE)
     def fr_events(
@@ -723,7 +723,7 @@ def register(mcp: FastMCP) -> None:
         return bodacc.search_batch(sirens, famille=_famille_bodacc(famille),
                                    date_from=date_from, date_to=date_to)
 
-    # --- Appels d'offres (BOAMP, open data) ---
+    # --- Tenders (BOAMP, open data) ---
 
     @mcp.tool(annotations=LECTURE)
     def fr_tenders_search(
@@ -785,13 +785,13 @@ def register(mcp: FastMCP) -> None:
         refuses = [nom for nom, v in propres[autre].items() if v]
         if refuses:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                f"op='{op}' n'accepte pas {', '.join(refuses)} (réservé à op='{autre}')")))
+                f"op='{op}' does not accept {', '.join(refuses)} (reserved for op='{autre}')")))
         if op == "awarded":
             if not any([query, departement, titulaire_siret, acheteur_siret]):
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                    "op='awarded' requiert au moins un critère : query, departement, "
-                    "titulaire_siret ou acheteur_siret — 700 000 marchés sans filtre "
-                    "ne sont pas une réponse")))
+                    "op='awarded' requires at least one criterion: query, departement, "
+                    "titulaire_siret or acheteur_siret — 700,000 contracts without a filter "
+                    "are not an answer")))
             res = fod_fr.search_decp(
                 mot_cle=query, titulaire_siret=titulaire_siret, acheteur_siret=acheteur_siret,
                 lieu=departement, depuis=date_from, limit=limit,
@@ -815,7 +815,7 @@ def register(mcp: FastMCP) -> None:
             return {"error": "not_found", "idweb": idweb}
         return result
 
-    # --- Aides publiques aux entreprises (data.aides-entreprises.fr, open data) ---
+    # --- Public aid for companies (data.aides-entreprises.fr, open data) ---
 
     @mcp.tool(annotations=LECTURE)
     def fr_aides_search(
@@ -828,29 +828,30 @@ def register(mcp: FastMCP) -> None:
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
-        """Shortlist d'aides publiques FR (subventions, prêts, garanties, AAP) pour
-        une entreprise/un projet — base data.aides-entreprises.fr (réf. État, ~2 400
-        aides actives, màj quotidienne, la base élague les périmées).
+        """Shortlist of French public aid (grants, loans, guarantees, calls for projects) for
+        a company/project — data.aides-entreprises.fr database (State reference, ~2,400
+        active aids, updated daily, the database prunes expired ones).
 
-        Renvoie le filtre DÉTERMINISTE (géo par hiérarchie commune→dept→région→
-        France/UE + tranche d'effectif + nature + échéance) avec l'entonnoir mesuré
-        (`funnel`). ⚠️ La pertinence SECTORIELLE ne peut PAS venir de la base (son
-        tagging profils est sur-inclusif à 99 %) ni d'un scoring lexical : c'est À
-        TOI de re-ranker la shortlist en lisant nom/objet. Règle anti-hallucination :
-        ne retiens que des `id`, puis re-rends chaque fiche via `fr_aides_get(id)` —
-        ne JAMAIS reformuler nom/objet de mémoire, citer littéralement.
+        Returns the DETERMINISTIC filter (geo by hierarchy commune→dept→region→
+        France/EU + headcount band + nature + deadline) with the measured funnel
+        (`funnel`). ⚠️ SECTOR relevance can NOT come from the database (its profile
+        tagging is 99% over-inclusive) nor from lexical scoring: it is UP TO
+        YOU to re-rank the shortlist by reading name/purpose. Anti-hallucination rule:
+        keep only `id`s, then re-render each record via `fr_aides_get(id)` —
+        NEVER rephrase name/purpose from memory, quote literally.
 
         Args:
-            insee: code INSEE de la commune (préféré — ex. "31555" Toulouse).
-            code_postal: à défaut d'INSEE (résolution best-effort).
-            effectif: nombre de salariés (filtre les tranches ; les aides sans
-                restriction restent).
-            nature: sous-chaîne du type d'aide ("subvention", "prêt", "garantie",
-                "avance", "exonération", "prestation"...).
-            echeance_avant: YYYY-MM-DD — aides À échéance clôturant avant la date
-                (veille AAP ; exclut les aides permanentes).
-            q: filtre lexical AND (pré-filtre grossier, PAS un tri de pertinence).
-            limit: fiches renvoyées (défaut 50 ; `count` = total filtré).
+            insee: INSEE commune code (preferred — e.g. "31555" Toulouse).
+            code_postal: fallback when no INSEE code (best-effort resolution).
+            effectif: number of employees (filters the bands; aids with no
+                restriction stay).
+            nature: substring of the aid type, matched against the French source values
+                ("subvention", "prêt", "garantie", "avance", "exonération",
+                "prestation"...).
+            echeance_avant: YYYY-MM-DD — aids with a deadline closing before the date
+                (call-for-projects watch; excludes permanent aids).
+            q: lexical AND filter (coarse pre-filter, NOT a relevance sort).
+            limit: records returned (default 50; `count` = filtered total).
             offset: pagination.
         """
         try:
@@ -858,33 +859,33 @@ def register(mcp: FastMCP) -> None:
                 insee=insee, code_postal=code_postal, effectif=effectif, nature=nature,
                 echeance_avant=echeance_avant, q=q, limit=limit, offset=offset,
             )
-        except ValueError as e:  # commune/CP inconnu du référentiel territoires
+        except ValueError as e:  # commune/postcode unknown to the territories reference
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
     @mcp.tool(annotations=LECTURE)
     def fr_aides_get(id_aid: str, raw: bool = False) -> dict:
-        """Fiche COMPLÈTE d'une aide (source de vérité après re-rank de
-        `fr_aides_search` — objet/conditions/montant intégraux, financeurs,
-        contacts, sources officielles). Texte décodé (entités HTML nettoyées) et
-        `cache_indexation` réduit à ses extraits utiles (natures, financeurs,
-        territoires, contacts, sources).
+        """COMPLETE record of an aid (source of truth after re-ranking
+        `fr_aides_search` — full purpose/conditions/amount, funders,
+        contacts, official sources). Decoded text (HTML entities cleaned) and
+        `cache_indexation` reduced to its useful extracts (natures, funders,
+        territories, contacts, sources).
 
         Args:
-            id_aid: identifiant de l'aide (champ `id` de fr_aides_search).
-            raw: True = enregistrement brut de la base (non décodé, volumineux ;
-                pour un consommateur qui en dépend).
+            id_aid: aid identifier (`id` field of fr_aides_search).
+            raw: True = raw database record (not decoded, bulky;
+                for a consumer that depends on it).
         """
         result = fod_fr.get_aide(id_aid, raw=raw)
         if result is None:
             return {"error": "not_found", "id_aid": id_aid}
         return result
 
-    # --- Accords d'entreprise (ACCO, open data) ---
-    # Base nationale des accords collectifs (DILA), accords conclus depuis le
-    # 01/09/2017. Métadonnées : qui (SIRET, raison sociale, IDCC = convention
-    # collective), quoi (thèmes codés), quand (date_texte), nature (ACCORD initial
-    # vs AVENANT = renégociation). Le texte intégral n'est pas toujours publié
-    # (conforme_version_integrale), mais le « qui a négocié quoi et quand » l'est.
+    # --- Company agreements (ACCO, open data) ---
+    # National database of collective agreements (DILA), agreements concluded since
+    # 01/09/2017. Metadata: who (SIRET, company name, IDCC = collective
+    # agreement), what (coded themes), when (date_texte), nature (initial ACCORD
+    # vs AVENANT = renegotiation). The full text is not always published
+    # (conforme_version_integrale), but the "who negotiated what and when" is.
 
     @mcp.tool(annotations=LECTURE)
     def fr_accords_search(
@@ -1022,16 +1023,16 @@ def register(mcp: FastMCP) -> None:
         if not include_text:
             return result
         from ..fod import ccn as fod_ccn
-        # Le texte se demande par ID DILA : l'appelant a pu nommer l'acte par son
-        # numéro de dépôt (T…), que Légifrance ne connaît pas.
+        # The text is requested by DILA ID: the caller may have named the act by its
+        # deposit number (T…), which Légifrance does not know.
         text = fod_ccn.accords_text(result.get("id") or id_or_numero)
         return {**result, "texte": text.get("texte"),
                 "texte_chars": text.get("texte_chars"),
                 "texte_tronque": text.get("tronque"),
                 "next_offset": text.get("next_offset"),
-                # Breaking FOD #335 (relayé #343) : `permalien` (vérifiable, 404
-                # franc) + `lien_construit` (Légifrance, best-effort) remplacent
-                # `source_url`, disparu de ce fond.
+                # Breaking FOD #335 (relayed #343): `permalien` (verifiable, honest
+                # 404) + `lien_construit` (Légifrance, best-effort) replace
+                # `source_url`, which has disappeared from this dataset.
                 "permalien": text.get("permalien"),
                 "lien_construit": text.get("lien_construit")}
 
@@ -1067,12 +1068,12 @@ def register(mcp: FastMCP) -> None:
         from ..fod import ccn as fod_ccn
         return fod_ccn.accords_text(acco_id, offset=offset)
 
-    # Jurisprudence / codes / conventions collectives (juris_*/loi_*/ccn_*) ont
-    # été extraits vers le connecteur `droit` (tools/droit.py) — carte « Info
-    # légale FR », ils n'étaient pas de l'INSEE. `fr_accords_*` reste ici (scopé
-    # entreprise par SIREN).
+    # Case law / codes / collective agreements (juris_*/loi_*/ccn_*) have
+    # been extracted to the `droit` connector (tools/droit.py) — "FR legal
+    # info" card, they were not INSEE. `fr_accords_*` stays here (company-scoped
+    # by SIREN).
 
-    # --- Index égalité F-H (Egapro, open data) -------------------------------
+    # --- Gender-equality index (Egapro, open data) ---------------------------
 
     @mcp.tool(annotations=LECTURE)
     def fr_egapro_declaration(siren: str, year: Optional[int] = None) -> dict:
@@ -1091,6 +1092,6 @@ def register(mcp: FastMCP) -> None:
         decl = egapro.declaration(siren, year) if year else egapro.latest_declaration(siren)
         if decl is None:
             return {"found": False, "siren": siren,
-                    "message": "Aucune déclaration Egapro (entreprise <50 salariés ou non déposée)."}
+                    "message": "No Egapro declaration (company with <50 employees, or not filed)."}
         return decl
 

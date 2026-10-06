@@ -1,8 +1,8 @@
-"""Telegram — messagerie hébergée via Unipile (compte Telegram connecté par l'user).
+"""Telegram — messaging hosted via Unipile (Telegram account connected by the user).
 
-Le compte Telegram vit chez Unipile, connecté par l'user via le hosted-auth
-(dashboard, `?channel=telegram`). Outil `telegram_chat(op=…)` dérivé de la factory
-messagerie commune (cf. `tools/unipile.register_messaging_tools`).
+The Telegram account lives at Unipile, connected by the user via hosted-auth
+(dashboard, `?channel=telegram`). Tool `telegram_chat(op=…)` derived from the shared
+messaging factory (see `tools/unipile.register_messaging_tools`).
 """
 from __future__ import annotations
 

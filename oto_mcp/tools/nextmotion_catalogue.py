@@ -1,30 +1,30 @@
-"""Nextmotion — le catalogue d'une clinique : ce qui se réserve, se vend, et à quel prix.
+"""Nextmotion — a clinic's catalogue: what is booked, sold, and at what price.
 
-Module frère de `nextmotion.py` (cf. `Connector.modules`) : même clé, même client. Un
-seul outil, `nextmotion_catalog`, parce que tous ses objets partagent list/get sous une
-clinique (ADR 0047) ; chaque `kind` porte au plus un filtre à lui, refusé aux autres.
+Sibling module of `nextmotion.py` (see `Connector.modules`): same key, same client. A
+single tool, `nextmotion_catalog`, because all its objects share list/get under a
+clinic (ADR 0047); each `kind` carries at most one filter of its own, refused to the others.
 
-Les ops de lecture au-delà de list/get, sur l'objet qu'elles détaillent :
-- `items` — les soins d'un forfait (`treatment_package`), paginés ;
-- `distributions` — la répartition comptable par utilisateur d'un tarif
-  (`treatment_pricing`) ou d'un forfait, non paginée ;
-- `post_treatment` — la configuration post-soin d'un type de soin (emails de suivi et de
-  relance, leur modèle de questionnaire, délais) : de la configuration, pas une donnée
-  patient.
+The read ops beyond list/get, on the object they detail:
+- `items` — a package's treatments (`treatment_package`), paginated;
+- `distributions` — the per-user accounting split of a pricing
+  (`treatment_pricing`) or of a package, not paginated;
+- `post_treatment` — a treatment type's post-treatment configuration (follow-up and
+  reminder emails, their questionnaire model, delays): configuration, not patient
+  data.
 
-Les écritures, toutes à `dry_run=True` par défaut, `data` passé à la liste blanche
-d'entrée (`nextmotion_entrees`) : `create` | `update` | `delete` sur les types de
-visite, leurs catégories, les types de soin (tarifs compris, en liste COMPLÈTE), les
-forfaits et les répartitions comptables ; `reorder` des types de visite et des
-catégories ; `add_item` | `set_items` sur un forfait et `update` | `delete` d'une ligne
-de forfait (`treatment_package_item`) ; `set_distributions` d'un tarif ou d'un forfait ;
-`update_post_treatment` d'un type de soin. Les variantes (`sub_visit_type`) s'écrivent
-par leur type de visite, les tarifs par leur type de soin ; extraire un forfait vers une
-consultation n'est pas servi (médical).
+The writes, all `dry_run=True` by default, `data` passed through the input
+allowlist (`nextmotion_entrees`): `create` | `update` | `delete` on visit
+types, their categories, treatment types (pricings included, as a COMPLETE list), packages
+and accounting distributions; `reorder` of visit types and
+categories; `add_item` | `set_items` on a package and `update` | `delete` of a package
+line (`treatment_package_item`); `set_distributions` of a pricing or a package;
+`update_post_treatment` of a treatment type. Variants (`sub_visit_type`) are written
+through their visit type, pricings through their treatment type; extracting a package to a
+consultation is not served (medical).
 
-Rien ici ne porte de patient. La liste blanche (`nextmotion_socle`) retire quand même
-les fichiers joints et les questionnaires (`bolt_note`, `survey_form`) qu'un type de
-visite ou un tarif référence.
+Nothing here carries a patient. The allowlist (`nextmotion_socle`) still removes
+the attached files and the questionnaires (`bolt_note`, `survey_form`) that a visit
+type or a pricing references.
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ _DISTRIBUTIONS = {
 
 
 def _distributions_now(kind: str):
-    """L'aperçu d'un `set_distributions` : la répartition en place."""
+    """The preview of a `set_distributions`: the split currently in place."""
     def current(c, i, _):
         return {"distributions": _page(_run(lambda: _DISTRIBUTIONS[kind](c, i)),
                                        "distributions", _user_distribution,
@@ -63,12 +63,12 @@ def _distributions_now(kind: str):
     return current
 
 
-_MAX_PAGES_ITEMS = 20  # 2 000 lignes : au-delà, l'aperçu le dit
+_MAX_PAGES_ITEMS = 20  # 2,000 lines: beyond that, the preview says so
 
 
 def _items_now(c, i, _):
-    """L'aperçu d'un `set_items`, qui REMPLACE toute la liste : toutes les lignes en
-    place, page après page ; `items_complet: false` si le plafond a coupé la lecture."""
+    """The preview of a `set_items`, which REPLACES the whole list: all the lines in
+    place, page after page; `items_complet: false` if the cap cut the read."""
     items: list = []
     for page in range(_MAX_PAGES_ITEMS):
         env = _run(lambda: c.list_treatment_package_items(i, limit=100, offset=100 * page))
@@ -242,7 +242,7 @@ def register(mcp: FastMCP) -> None:
                    "treatment_type_id": treatment_type_id, "search": search}
         if op not in _READS:
             if kind == "treatment_package_item" and op in ("list", "get"):
-                raise _bad("kind='treatment_package_item' se lit par op='items' sur "
+                raise _bad("kind='treatment_package_item' is read through op='items' on "
                            "kind='treatment_package'.")
             return _serve(_KINDS, kind, op, client=_client, clinic_id=clinic_id,
                           item_id=item_id, filters=filters, limit=limit, offset=offset,
@@ -251,7 +251,7 @@ def register(mcp: FastMCP) -> None:
         _need(op, item_id=item_id)
         if op == "items":
             if kind != "treatment_package":
-                raise _bad("op='items' ne vaut que pour kind='treatment_package'.")
+                raise _bad("op='items' only applies to kind='treatment_package'.")
             c = _client()
             return _page(_run(lambda: c.list_treatment_package_items(
                 item_id, **_paging(limit, offset))), "items", _package_item,
@@ -259,11 +259,11 @@ def register(mcp: FastMCP) -> None:
         _refuse_ignored(op, limit=limit, offset=offset)
         if op == "post_treatment":
             if kind != "treatment_type":
-                raise _bad("op='post_treatment' ne vaut que pour kind='treatment_type'.")
+                raise _bad("op='post_treatment' only applies to kind='treatment_type'.")
             _refuse_ignored(op, fields=fields)
             return _post_treatment_now(_client(), item_id)
         if kind not in _DISTRIBUTIONS:
-            raise _bad("op='distributions' ne vaut que pour kind='treatment_pricing' ou "
+            raise _bad("op='distributions' only applies to kind='treatment_pricing' or "
                        "'treatment_package'.")
         c = _client()
         return _page(_run(lambda: _DISTRIBUTIONS[kind](c, item_id)), "distributions",

@@ -54,19 +54,19 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /api/users/current/` (déjà dans le client — `get_current_user`),
-    documenté « Free » dans le client ET dans `forager_account` (op="me") —
-    le seul appel confirmé sans coût de ce connecteur payant au crédit.
+    `GET /api/users/current/` (already in the client — `get_current_user`),
+    documented "Free" in the client AND in `forager_account` (op="me") —
+    the only call confirmed free of cost on this pay-per-credit connector.
 
-    Pas `auth+quota` : `credits_balance` vit PAR COMPTE dans `accounts[]`, et
-    une clé avec accès à plusieurs comptes n'en désigne aucun par défaut
-    (`resolve_account_id` REFUSE plutôt que deviner, cf. docstring du module)
-    — lire un solde ici demanderait de choisir un compte au hasard.
+    Not `auth+quota`: `credits_balance` lives PER ACCOUNT in `accounts[]`, and
+    a key with access to several accounts designates none by default
+    (`resolve_account_id` REFUSES rather than guessing, see the module docstring)
+    — reading a balance here would mean picking an account at random.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    rien de plus fin que l'identité à distinguer sur cet appel.
+    **Authenticated ≠ usable** (class oto#69): does not distinguish scope —
+    nothing finer than identity to distinguish on this call.
     """
     from oto.tools.forager import ForagerClient
 
@@ -93,7 +93,7 @@ def register(mcp: FastMCP) -> None:
 
     def _need(value, name: str, op: str):
         if not _present(value):
-            raise _bad(f"op='{op}' requiert {name}")
+            raise _bad(f"op='{op}' requires {name}")
         return value
 
     def _refuse_ignored(op: str, hint: str, **provided) -> None:
@@ -102,11 +102,11 @@ def register(mcp: FastMCP) -> None:
         guards against (a filter that looked honored but was quietly ignored)."""
         for name, value in provided.items():
             if _present(value):
-                raise _bad(f"op='{op}' n'utilise pas {name} — {hint}")
+                raise _bad(f"op='{op}' does not use {name} — {hint}")
 
     def _refuse_filters(op: str, filters: Optional[dict]) -> None:
         if filters:
-            raise _bad(f"op='{op}' n'utilise pas filters — réservé aux ops de recherche")
+            raise _bad(f"op='{op}' does not use filters — reserved for search ops")
 
     # --- Job posts ---
 
@@ -139,7 +139,7 @@ def register(mcp: FastMCP) -> None:
                 return client.search_job_posts_totals(**f)
         except ValueError as e:
             raise _bad(str(e))
-        raise _bad("op doit être 'search' ou 'totals'")
+        raise _bad("op must be 'search' or 'totals'")
 
     # --- Organizations (+ website lookup, folded in) ---
 
@@ -174,7 +174,7 @@ def register(mcp: FastMCP) -> None:
         try:
             if op in ("search", "totals"):
                 _refuse_ignored(
-                    op, "utilise op='website' pour un lookup de site",
+                    op, "use op='website' for a site lookup",
                     domain=domain, organization_id=organization_id,
                     organization_linkedin_public_identifier=organization_linkedin_public_identifier,
                 )
@@ -185,7 +185,7 @@ def register(mcp: FastMCP) -> None:
                 given = [x for x in (domain, organization_id, organization_linkedin_public_identifier) if _present(x)]
                 if len(given) != 1:
                     raise _bad(
-                        "op='website' requiert exactement un de domain / organization_id / "
+                        "op='website' requires exactly one of domain / organization_id / "
                         "organization_linkedin_public_identifier"
                     )
                 return client.lookup_website(
@@ -194,7 +194,7 @@ def register(mcp: FastMCP) -> None:
                 )
         except ValueError as e:
             raise _bad(str(e))
-        raise _bad("op doit être 'search', 'totals' ou 'website'")
+        raise _bad("op must be 'search', 'totals' or 'website'")
 
     # --- People ---
 
@@ -253,17 +253,17 @@ def register(mcp: FastMCP) -> None:
             if op in ("detail", "work_emails", "personal_emails", "phone_numbers"):
                 _refuse_filters(op, filters)
                 _refuse_ignored(
-                    op, "utilise op='reverse_by_email'/'reverse_by_phone' pour ça",
+                    op, "use op='reverse_by_email'/'reverse_by_phone' for that",
                     email=email, phone_number=phone_number,
                 )
                 if op != "work_emails":
                     _refuse_ignored(
-                        op, "do_contacts_enrichment ne s'applique qu'à op='work_emails'",
+                        op, "do_contacts_enrichment only applies to op='work_emails'",
                         do_contacts_enrichment=do_contacts_enrichment,
                     )
                 given = [x for x in (person_id, linkedin_public_identifier) if _present(x)]
                 if len(given) != 1:
-                    raise _bad(f"op='{op}' requiert exactement un de person_id / linkedin_public_identifier")
+                    raise _bad(f"op='{op}' requires exactly one of person_id / linkedin_public_identifier")
                 if op == "detail":
                     return client.lookup_person_detail(person_id=person_id, linkedin_public_identifier=linkedin_public_identifier)
                 if op == "work_emails":
@@ -278,7 +278,7 @@ def register(mcp: FastMCP) -> None:
             if op == "reverse_by_email":
                 _refuse_filters(op, filters)
                 _refuse_ignored(
-                    op, "utilise op='detail' pour un lookup direct",
+                    op, "use op='detail' for a direct lookup",
                     person_id=person_id, linkedin_public_identifier=linkedin_public_identifier,
                     phone_number=phone_number, do_contacts_enrichment=do_contacts_enrichment,
                 )
@@ -287,7 +287,7 @@ def register(mcp: FastMCP) -> None:
             if op == "reverse_by_phone":
                 _refuse_filters(op, filters)
                 _refuse_ignored(
-                    op, "utilise op='detail' pour un lookup direct",
+                    op, "use op='detail' for a direct lookup",
                     person_id=person_id, linkedin_public_identifier=linkedin_public_identifier,
                     email=email, do_contacts_enrichment=do_contacts_enrichment,
                 )
@@ -295,7 +295,7 @@ def register(mcp: FastMCP) -> None:
 
             if op in ("role_search", "role_search_totals"):
                 _refuse_ignored(
-                    op, "sélectionne par filtres — utilise op='detail' pour un person_id/linkedin_public_identifier précis",
+                    op, "selects by filters — use op='detail' for a specific person_id/linkedin_public_identifier",
                     person_id=person_id, linkedin_public_identifier=linkedin_public_identifier,
                     email=email, phone_number=phone_number, do_contacts_enrichment=do_contacts_enrichment,
                 )
@@ -305,8 +305,8 @@ def register(mcp: FastMCP) -> None:
             raise _bad(str(e))
 
         raise _bad(
-            "op doit être 'detail', 'reverse_by_email', 'reverse_by_phone', 'work_emails', "
-            "'personal_emails', 'phone_numbers', 'role_search' ou 'role_search_totals'"
+            "op must be 'detail', 'reverse_by_email', 'reverse_by_phone', 'work_emails', "
+            "'personal_emails', 'phone_numbers', 'role_search' or 'role_search_totals'"
         )
 
     # --- Feedback (report a lookup's contact as correct/incorrect) ---
@@ -335,20 +335,20 @@ def register(mcp: FastMCP) -> None:
         client = _client()
         try:
             if op in ("personal_email", "work_email"):
-                _refuse_ignored(op, "utilise op='phone_number' pour un numéro de téléphone", phone_number=phone_number)
+                _refuse_ignored(op, "use op='phone_number' for a phone number", phone_number=phone_number)
                 email = _need(email, "email", op)
                 if op == "personal_email":
                     return client.submit_personal_email_feedback(email, contact_status, is_correct_person, name=name, person_id=person_id)
                 return client.submit_work_email_feedback(email, contact_status, is_correct_person, name=name, person_id=person_id)
             if op == "phone_number":
-                _refuse_ignored(op, "utilise op='personal_email'/'work_email' pour un email", email=email)
+                _refuse_ignored(op, "use op='personal_email'/'work_email' for an email", email=email)
                 return client.submit_phone_number_feedback(
                     _need(phone_number, "phone_number", op), contact_status, is_correct_person,
                     name=name, person_id=person_id,
                 )
         except ValueError as e:
             raise _bad(str(e))
-        raise _bad("op doit être 'personal_email', 'phone_number' ou 'work_email'")
+        raise _bad("op must be 'personal_email', 'phone_number' or 'work_email'")
 
     # --- Autocomplete (free-text → integer ID resolution) ---
 
@@ -400,7 +400,7 @@ def register(mcp: FastMCP) -> None:
         try:
             if op == "me":
                 _refuse_ignored(
-                    op, "op='me' n'a pas de plage de dates",
+                    op, "op='me' has no date range",
                     date_created_start=date_created_start, date_created_end=date_created_end, page=page,
                 )
                 return client.get_current_user()
@@ -409,8 +409,8 @@ def register(mcp: FastMCP) -> None:
                     date_created_start=date_created_start, date_created_end=date_created_end, page=page,
                 )
             if op == "balance_totals":
-                _refuse_ignored(op, "page ne s'applique pas à balance_totals", page=page)
+                _refuse_ignored(op, "page does not apply to balance_totals", page=page)
                 return client.get_balance_change_totals(date_created_start=date_created_start, date_created_end=date_created_end)
         except ValueError as e:
             raise _bad(str(e))
-        raise _bad("op doit être 'me', 'balance_log' ou 'balance_totals'")
+        raise _bad("op must be 'me', 'balance_log' or 'balance_totals'")

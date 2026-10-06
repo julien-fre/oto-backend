@@ -75,7 +75,7 @@ def test_no_group_context_no_department_credential(dept, monkeypatch):
     # départemental ne résout PAS — pas de fuite « au niveau org ».
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     from oto_mcp.mcp_errors import McpError
-    with pytest.raises(McpError, match="Aucun credential"):
+    with pytest.raises(McpError, match="credential configured"):
         access._resolve_credential_impl("http", "byo", "u")
 
 
@@ -86,7 +86,7 @@ def test_instance_ref_group_guard_refuses_non_reader(monkeypatch):
     from oto_mcp import roles
     monkeypatch.setattr(roles, "can_read_group", lambda sub, gid: False)
     ref = instance_refs.parse_ref(instance_refs.make_group_ref(FINANCE, "http"))
-    with pytest.raises(McpError, match="groupe"):
+    with pytest.raises(McpError, match="group"):
         access.guard_instance_access("intrus", ref)
 
 

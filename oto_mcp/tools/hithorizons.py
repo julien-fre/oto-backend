@@ -1,8 +1,8 @@
 """HitHorizons — European company data (search + details).
 
-Wrappe `oto.tools.hithorizons.HitHorizonsClient`. Clé résolue par appel via
-`access.resolve_api_key("hithorizons")` — byo. En-tête `Ocp-Apim-Subscription-Key`
-géré côté client. Pays par défaut FR (override par tool).
+Wraps `oto.tools.hithorizons.HitHorizonsClient`. Key resolved per call via
+`access.resolve_api_key("hithorizons")` — byo. `Ocp-Apim-Subscription-Key` header
+handled client-side. Default country FR (override per tool).
 """
 from __future__ import annotations
 

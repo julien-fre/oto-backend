@@ -1,71 +1,71 @@
-"""Tally — formulaires en ligne : formulaires, questions, blocs, réponses,
-analytics, espaces de travail, organisation, webhooks.
+"""Tally — online forms: forms, questions, blocks, responses,
+analytics, workspaces, organization, webhooks.
 
-Wrappe `oto.tools.tally.client.TallyClient` (Bearer, `https://api.tally.so`).
-keyed `api_key`, **byo-only** : une clé Tally est liée à UN utilisateur, hérite
-de ses droits (aucun scope fin n'existe) et cesse de fonctionner s'il quitte
-l'organisation — il ne peut donc pas y avoir de clé plateforme partagée.
+Wraps `oto.tools.tally.client.TallyClient` (Bearer, `https://api.tally.so`).
+keyed `api_key`, **byo-only**: a Tally key is tied to ONE user, inherits
+their rights (no fine-grained scope exists) and stops working if they leave
+the organization — so there cannot be a shared platform key.
 
-38 opérations, groupées en **SIX tools**, verbe en `op` :
-- `tally_form` — formulaires, questions, blocs (lecture + rédaction)
-- `tally_submission` — les réponses
-- `tally_analytics` — les cinq vues de statistiques
-- `tally_workspace` — espaces de travail et dossiers
-- `tally_account` — l'utilisateur courant, les membres, les invitations
-- `tally_webhook` — abonnements aux événements et journal de livraison
+38 operations, grouped into **SIX tools**, verb in `op`:
+- `tally_form` — forms, questions, blocks (read + authoring)
+- `tally_submission` — the responses
+- `tally_analytics` — the five statistics views
+- `tally_workspace` — workspaces and folders
+- `tally_account` — the current user, members, invitations
+- `tally_webhook` — event subscriptions and delivery log
 
-**Aucun param n'est retenu au silence** : un argument qu'un `op` n'utilise pas
-est REFUSÉ plutôt qu'ignoré (convention silae `_refuse_ignored`) —
-`tally_submission(op="get", filter="completed")` rendrait UNE réponse en
-laissant croire que le filtre a filtré.
+**No param is silently dropped**: an argument an `op` does not use
+is REJECTED rather than ignored (silae convention `_refuse_ignored`) —
+`tally_submission(op="get", filter="completed")` would return ONE response while
+suggesting that the filter filtered.
 
-## Ce que la couche tool ajoute au transport
+## What the tool layer adds on top of the transport
 
-**1. La jointure questions × réponses.** L'API rend les réponses sous forme
-RELATIONNELLE : `questions[]` une fois par page, et chaque
-`submissions[].responses[]` pointe dedans par `questionId`. Brut, un agent doit
-faire la jointure lui-même avant de lire un seul champ. `tally_submission`
-la fait : chaque réponse porte `answers: [{question_id, title, type, answer,
-formatted}]`, et un `answers_by_title` **seulement si les titres sont uniques
-sur ce formulaire** (sinon la clé est absente et `title_collisions` dit
-pourquoi — on ne rend jamais une map qui écrase silencieusement une réponse).
+**1. The questions x responses join.** The API returns responses in
+RELATIONAL form: `questions[]` once per page, and each
+`submissions[].responses[]` points into it by `questionId`. Raw, an agent has to
+do the join itself before reading a single field. `tally_submission`
+does it: each response carries `answers: [{question_id, title, type, answer,
+formatted}]`, and an `answers_by_title` **only if the titles are unique
+on that form** (otherwise the key is absent and `title_collisions` says
+why — we never return a map that silently overwrites an answer).
 
-**2. `dry_run` sur TOUTE mutation** (convention oto : `email_send`, LinkedIn,
-les dispatchers Folk). La validation est identique avec ou sans ; seul l'appel
-mutant final est sauté. Là où l'API offre une lecture de l'objet visé, le
-preview est un VRAI diff (`changes: {champ: {from, to}}`), pas un écho de ce
-qu'on enverrait — un écho ne protège pas du risque réel, qui est d'écraser une
-valeur existante. Là où aucune lecture n'existe, on le DIT
-(`current_available: false`) au lieu de fabriquer un diff.
+**2. `dry_run` on EVERY mutation** (oto convention: `email_send`, LinkedIn,
+the Folk dispatchers). Validation is identical with or without it; only the final
+mutating call is skipped. Where the API offers a read of the targeted object, the
+preview is a REAL diff (`changes: {field: {from, to}}`), not an echo of what
+would be sent — an echo does not protect against the real risk, which is overwriting an
+existing value. Where no read exists, we SAY so
+(`current_available: false`) instead of fabricating a diff.
 
-**3. Le merge de `PATCH /webhooks/{id}`.** Malgré le verbe, c'est un REMPLACEMENT
-complet : `formId`, `url`, `eventTypes` et `isEnabled` sont tous requis. Le
-tool relit le webhook (`GET /webhooks`, il n'y a pas de `GET /webhooks/{id}`)
-et fusionne, pour qu'un `op="update"` qui ne passe que `is_enabled=False`
-n'efface pas l'URL.
+**3. The merge of `PATCH /webhooks/{id}`.** Despite the verb, it is a full
+REPLACEMENT: `formId`, `url`, `eventTypes` and `isEnabled` are all required. The
+tool re-reads the webhook (`GET /webhooks`, there is no `GET /webhooks/{id}`)
+and merges, so that an `op="update"` that only passes `is_enabled=False`
+does not erase the URL.
 
-## Opérations destructrices — exposées, et marquées
+## Destructive operations — exposed, and marked
 
-À la demande explicite : la couverture est complète, y compris les quatre
-appels qui détruisent quelque chose. Ils ne sont pas cachés, ils sont annotés
-et tous acceptent `dry_run` :
-- `tally_submission(op="delete")` — **aucune corbeille documentée côté Tally
-  pour les réponses** : c'est la réponse d'un répondant, perdue.
-- `tally_account(op="remove_user")` — sort quelqu'un de l'organisation ET tue
-  toutes les clés API qu'il avait créées, potentiellement celle de l'appel.
-- `tally_workspace(op="delete")` / `op="delete_folder"` — emportent les
-  formulaires contenus (en corbeille, restaurables).
-- `tally_form(op="delete")` — corbeille, restaurable.
+At explicit request: coverage is complete, including the four
+calls that destroy something. They are not hidden, they are annotated
+and all accept `dry_run`:
+- `tally_submission(op="delete")` — **no trash documented on Tally's side
+  for responses**: it is a respondent's answer, lost.
+- `tally_account(op="remove_user")` — removes someone from the organization AND kills
+  every API key they had created, potentially the one making the call.
+- `tally_workspace(op="delete")` / `op="delete_folder"` — take the contained
+  forms with them (in the trash, restorable).
+- `tally_form(op="delete")` — trash, restorable.
 
-## Vérifié contre le spec, PAS testé en live
+## Checked against the spec, NOT live-tested
 
-Tout ce fichier est dérivé du spec OpenAPI 3.0.1 réel
-(`developers.tally.so/api-reference/openapi.json`, lu le 2026-08-31) : formes
-de corps, `required`, enums, bornes de `limit`. **Aucun appel réel n'a encore
-été fait** — il n'y avait pas de clé `tly-` disponible. Rien ici ne prétend
-avoir tourné. En particulier, la valeur par défaut de l'en-tête
-`tally-version` (`2026-08-04`, la dernière entrée du changelog public) reste à
-confirmer contre une vraie clé.
+This whole file is derived from the real OpenAPI 3.0.1 spec
+(`developers.tally.so/api-reference/openapi.json`, read on 2026-08-31): body
+shapes, `required`, enums, `limit` bounds. **No real call has been
+made yet** — no `tly-` key was available. Nothing here claims
+to have run. In particular, the default value of the `tally-version`
+header (`2026-08-04`, the last entry of the public changelog) remains to be
+confirmed against a real key.
 """
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..connectors import verify as connector_verify
 
-#: Périodes acceptées par les cinq endpoints d'analytics (`period` est REQUIS).
+#: Periods accepted by the five analytics endpoints (`period` is REQUIRED).
 _PERIODS = ("today", "yesterday", "24h", "7d", "30d", "3m", "6m", "12m", "all")
 
 
@@ -87,63 +87,63 @@ def _bad(msg: str) -> McpError:
 
 
 def _refuse_ignored(op: str, hint: str, **provided: Any) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention,
-    pas un détail — sinon `tally_form(op="get", limit=5)` rendrait UN
-    formulaire en laissant croire que `limit` a borné quelque chose."""
+    """An argument provided that THIS op does not use is an error of intent,
+    not a detail — otherwise `tally_form(op="get", limit=5)` would return ONE
+    form while suggesting that `limit` bounded something."""
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op={op!r} n'utilise pas `{name}` — {hint}")
+            raise _bad(f"op={op!r} does not use `{name}` — {hint}")
 
 
 def _need(op: str, **required: Any) -> None:
-    """Un argument obligatoire manquant se dit avant l'appel réseau."""
+    """A missing required argument is reported before the network call."""
     missing = [name for name, value in required.items() if value is None]
     if missing:
-        raise _bad(f"op={op!r} exige {', '.join('`' + m + '`' for m in missing)}.")
+        raise _bad(f"op={op!r} requires {', '.join('`' + m + '`' for m in missing)}.")
 
 
-#: Précisions ajoutées au message d'un 401 selon l'appel — le message de base,
-#: lui, ne suppose JAMAIS que la clé est en cause (voir `_upstream_message`).
+#: Details added to a 401's message depending on the call — the base message
+#: NEVER assumes the key is at fault (see `_upstream_message`).
 _401_HINTS = {
-    "webhook_list": "aucun webhook n'a encore jamais été créé sur ce compte "
-                    "(l'intégration webhooks naît au premier `op=\"create\"`)",
-    "blocks": "la lecture ou l'écriture des blocs n'est pas ouverte à ton plan",
-    "workspace_write": "la gestion des espaces de travail exige un plan Pro",
-    "question_write": "le renommage d'une question n'est pas ouvert à ton plan",
+    "webhook_list": "no webhook has ever been created on this account "
+                    "(the webhooks integration is born at the first `op=\"create\"`)",
+    "blocks": "reading or writing blocks is not open on your plan",
+    "workspace_write": "managing workspaces requires a Pro plan",
+    "question_write": "renaming a question is not open on your plan",
 }
 
 
 def _upstream_message(e: Any, context: Optional[str] = None) -> str:
     status = e.status_code
     if status == 401:
-        # ⚠️ Tally rend 401 pour un GATE DE PLAN ou de fonctionnalité autant que
-        # pour une clé invalide — vérifié en live le 2026-08-31 sur un compte
-        # FREE : `GET /webhooks` (tant qu'aucun webhook n'existe), les blocs,
-        # `POST /workspaces` et `PATCH .../questions/{id}` rendent tous 401 avec
-        # une clé parfaitement valide. Affirmer « clé rejetée » envoie donc
-        # l'utilisateur régénérer une clé saine, et le laisse chercher là où il
-        # n'y a rien. On nomme les deux causes, et on donne la sonde qui tranche.
+        # ⚠️ Tally returns 401 for a PLAN or feature GATE as much as
+        # for an invalid key — verified live on 2026-08-31 on a FREE
+        # account: `GET /webhooks` (as long as no webhook exists), blocks,
+        # `POST /workspaces` and `PATCH .../questions/{id}` all return 401 with
+        # a perfectly valid key. Asserting "key rejected" therefore sends
+        # the user to regenerate a healthy key, and leaves them searching where there
+        # is nothing. We name both causes, and give the probe that settles it.
         hint = _401_HINTS.get(context)
-        return ("Tally a répondu 401. Chez Tally, un 401 ne veut PAS dire « clé "
-                "invalide » : c'est aussi sa façon de refuser une fonctionnalité que "
-                "ton plan n'ouvre pas"
-                + (f" — ici, {hint}" if hint else "")
-                + ". Tranche avec `tally_account(op=\"me\")` : s'il répond, la clé est "
-                  "bonne et c'est le plan (ou l'état du compte) qui bloque ; s'il échoue "
-                  "aussi, repose la clé (Tally : Settings → API keys).")
+        return ("Tally answered 401. At Tally, a 401 does NOT mean \"invalid "
+                "key\": it is also its way of refusing a feature that "
+                "your plan does not open"
+                + (f" — here, {hint}" if hint else "")
+                + ". Settle it with `tally_account(op=\"me\")`: if it answers, the key is "
+                  "good and it is the plan (or the account state) that blocks; if it fails "
+                  "too, set the key again (Tally: Settings → API keys).")
     if status == 403:
-        return (f"Tally a rejeté l'appel (HTTP {status}) — vérifie la clé posée sur ce "
-                "connecteur (Tally : Settings → API keys). Rappel : une clé Tally est liée "
-                "à UN utilisateur et cesse de fonctionner s'il quitte l'organisation.")
+        return (f"Tally rejected the call (HTTP {status}) — check the key set on this "
+                "connector (Tally: Settings → API keys). Reminder: a Tally key is tied "
+                "to ONE user and stops working if they leave the organization.")
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : l'utilisateur courant. Sans paramètre,
-    gratuite, et elle échoue exactement là où la clé est en cause."""
+    """"Test the connection" probe: the current user. No parameter,
+    free, and it fails exactly where the key is at fault."""
     from oto.tools.tally.client import TallyClient
     TallyClient(api_key=fields["key"]).get_me()
 
 
 # ---------------------------------------------------------------------------
-# Mise en forme des réponses (la jointure questions × responses)
+# Shaping of responses (the questions x responses join)
 # ---------------------------------------------------------------------------
 
 def _index_questions(questions: Optional[List[Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
@@ -152,11 +152,11 @@ def _index_questions(questions: Optional[List[Dict[str, Any]]]) -> Dict[str, Dic
 
 def _shape_submission(sub: Dict[str, Any], by_id: Dict[str, Dict[str, Any]],
                       unique_titles: bool) -> Dict[str, Any]:
-    """Rend une réponse LISIBLE : chaque `responses[]` rejoint sa question.
+    """Makes a response READABLE: each `responses[]` joins its question.
 
-    Ce que l'API donne (`{questionId, answer, formattedAnswer}`) n'est
-    interprétable qu'avec la table `questions` livrée à côté. On la résout ici
-    une fois pour toutes plutôt que de laisser chaque agent la refaire.
+    What the API gives (`{questionId, answer, formattedAnswer}`) is only
+    interpretable with the `questions` table delivered alongside. We resolve it here
+    once and for all rather than letting each agent redo it.
     """
     answers = []
     for r in sub.get("responses") or []:
@@ -168,9 +168,9 @@ def _shape_submission(sub: Dict[str, Any], by_id: Dict[str, Dict[str, Any]],
             "title": q.get("title"),
             "type": q.get("type"),
             "answer": r.get("answer"),
-            # `formattedAnswer` n'existe que sur les versions récentes de l'API
-            # (cf. l'en-tête `tally-version` épinglé côté client) : absent, on
-            # ne le fabrique pas.
+            # `formattedAnswer` only exists on recent API versions
+            # (cf. the `tally-version` header pinned client-side): if absent, we
+            # do not fabricate it.
             "formatted": r.get("formattedAnswer"),
         })
     shaped = {
@@ -179,8 +179,8 @@ def _shape_submission(sub: Dict[str, Any], by_id: Dict[str, Dict[str, Any]],
         "respondent_id": sub.get("respondentId"),
         "is_completed": sub.get("isCompleted"),
         "submitted_at": sub.get("submittedAt"),
-        # Tally rend chaque réponse en PDF et en aperçu web — utile pour
-        # archiver la pièce sans la reconstituer soi-même.
+        # Tally renders each response as a PDF and a web preview — useful to
+        # archive the document without rebuilding it yourself.
         "preview_url": sub.get("previewUrl"),
         "pdf_url": sub.get("pdfUrl"),
         "answers": answers,
@@ -194,17 +194,17 @@ def _shape_submission(sub: Dict[str, Any], by_id: Dict[str, Dict[str, Any]],
 
 
 def _shape_submissions_page(payload: Any) -> Any:
-    """Ajoute la vue jointe SANS retirer la charge d'origine.
+    """Adds the joined view WITHOUT removing the original payload.
 
-    On ne remplace jamais ce que l'API a rendu : `questions` et les réponses
-    restent tels quels sous `raw_*`, pour qu'un cas non prévu ici reste
-    traitable par l'appelant.
+    We never replace what the API returned: `questions` and the responses
+    stay as they are under `raw_*`, so that a case not anticipated here remains
+    workable by the caller.
 
-    ⚠️ DEUX enveloppes, pas une. `GET /forms/{f}/submissions` rend
-    `{questions, submissions: [...]}` ; `GET /forms/{f}/submissions/{s}` rend
-    `{questions, submission: {...}}` — au SINGULIER. Ne lire que le pluriel
-    rendait la lecture d'UNE réponse silencieusement vide : la charge arrivait
-    bien, et le tool annonçait zéro réponse.
+    ⚠️ TWO envelopes, not one. `GET /forms/{f}/submissions` returns
+    `{questions, submissions: [...]}`; `GET /forms/{f}/submissions/{s}` returns
+    `{questions, submission: {...}}` — SINGULAR. Reading only the plural
+    made reading ONE response silently empty: the payload did arrive,
+    and the tool announced zero responses.
     """
     if not isinstance(payload, dict):
         return payload
@@ -228,11 +228,11 @@ def _shape_submissions_page(payload: Any) -> Any:
         "submissions": subs,
     }
     if collisions:
-        # Deux questions portant le même intitulé : une map par titre en
-        # écraserait une. On l'omet et on dit lesquelles.
+        # Two questions with the same title: a map by title would overwrite
+        # one. We omit it and say which ones.
         out["title_collisions"] = collisions
-        out["note"] = ("`answers_by_title` est omis : plusieurs questions partagent le même "
-                       "intitulé sur ce formulaire. Utilise `answers[].question_id`.")
+        out["note"] = ("`answers_by_title` is omitted: several questions share the same "
+                       "title on this form. Use `answers[].question_id`.")
     if payload.get("submissions") and not subs:
         out["submissions"] = payload.get("submissions")
     out["raw_questions"] = questions
@@ -243,8 +243,8 @@ def _shape_submissions_page(payload: Any) -> Any:
 
 def _diff(current: Optional[Dict[str, Any]], patch: Dict[str, Any],
           field_map: Dict[str, str]) -> Dict[str, Any]:
-    """Preview d'une modification : un VRAI diff quand l'objet actuel est
-    lisible, un aveu explicite quand il ne l'est pas."""
+    """Preview of a modification: a REAL diff when the current object is
+    readable, an explicit admission when it is not."""
     if current is None:
         return {"dry_run": True, "current_available": False, "would_send": patch}
     changes = {}
@@ -277,7 +277,7 @@ def register(mcp: FastMCP) -> None:
             raise _bad(_upstream_message(e, context))
 
     # ================================================================
-    # Formulaires, questions, blocs
+    # Forms, questions, blocks
     # ================================================================
 
     @mcp.tool()
@@ -344,7 +344,7 @@ def register(mcp: FastMCP) -> None:
         c = _client()
 
         if op == "list":
-            _refuse_ignored(op, "il liste les formulaires",
+            _refuse_ignored(op, "it lists the forms",
                             form_id=form_id, question_id=question_id, name=name,
                             title=title, status=status, blocks=blocks, settings=settings,
                             workspace_id=workspace_id, folder_id=folder_id,
@@ -354,25 +354,25 @@ def register(mcp: FastMCP) -> None:
 
         if op == "get":
             _need(op, form_id=form_id)
-            _refuse_ignored(op, "il lit UN formulaire", page=page, limit=limit,
+            _refuse_ignored(op, "it reads ONE form", page=page, limit=limit,
                             workspace_ids=workspace_ids, blocks=blocks, settings=settings)
             return _run(lambda: c.get_form(form_id))
 
         if op == "questions":
             _need(op, form_id=form_id)
-            _refuse_ignored(op, "il liste les questions du formulaire",
+            _refuse_ignored(op, "it lists the form's questions",
                             page=page, limit=limit, blocks=blocks, settings=settings)
             return _run(lambda: c.list_questions(form_id))
 
         if op == "blocks":
             _need(op, form_id=form_id)
-            _refuse_ignored(op, "il lit les blocs du formulaire",
+            _refuse_ignored(op, "it reads the form's blocks",
                             page=page, limit=limit, blocks=blocks, settings=settings)
             return _run(lambda: c.get_blocks(form_id), "blocks")
 
         if op == "create":
             _need(op, blocks=blocks, status=status)
-            _refuse_ignored(op, "il crée un formulaire",
+            _refuse_ignored(op, "it creates a form",
                             form_id=form_id, question_id=question_id, title=title,
                             page=page, limit=limit, workspace_ids=workspace_ids)
             body = {"workspaceId": workspace_id, "folderId": folder_id,
@@ -387,12 +387,12 @@ def register(mcp: FastMCP) -> None:
 
         if op == "update":
             _need(op, form_id=form_id)
-            _refuse_ignored(op, "il modifie UN formulaire",
+            _refuse_ignored(op, "it edits ONE form",
                             question_id=question_id, title=title, page=page, limit=limit,
                             workspace_ids=workspace_ids, template_id=template_id)
             patch = {"name": name, "status": status, "blocks": blocks, "settings": settings}
             if all(v is None for v in patch.values()):
-                raise _bad("op='update' exige au moins un de `name`, `status`, "
+                raise _bad("op='update' requires at least one of `name`, `status`, "
                            "`blocks`, `settings`.")
             if dry_run:
                 current = _run(lambda: c.get_form(form_id))
@@ -403,18 +403,18 @@ def register(mcp: FastMCP) -> None:
 
         if op == "delete":
             _need(op, form_id=form_id)
-            _refuse_ignored(op, "il supprime UN formulaire", blocks=blocks,
+            _refuse_ignored(op, "it deletes ONE form", blocks=blocks,
                             settings=settings, page=page, limit=limit)
             if dry_run:
                 current = _run(lambda: c.get_form(form_id))
                 return {"dry_run": True, "would_delete": "form", "form_id": form_id,
                         "current": current,
-                        "recoverable": "oui — Tally met le formulaire à la corbeille"}
+                        "recoverable": "yes — Tally moves the form to the trash"}
             return _run(lambda: c.delete_form(form_id))
 
         if op == "update_question":
             _need(op, form_id=form_id, question_id=question_id, title=title)
-            _refuse_ignored(op, "il renomme UNE question", blocks=blocks, settings=settings,
+            _refuse_ignored(op, "it renames ONE question", blocks=blocks, settings=settings,
                             name=name, status=status, page=page, limit=limit)
             if dry_run:
                 qs = _run(lambda: c.list_questions(form_id))
@@ -427,22 +427,22 @@ def register(mcp: FastMCP) -> None:
 
         if op == "update_blocks":
             _need(op, form_id=form_id, blocks=blocks)
-            _refuse_ignored(op, "il remplace les blocs", question_id=question_id,
+            _refuse_ignored(op, "it replaces the blocks", question_id=question_id,
                             title=title, name=name, status=status, page=page, limit=limit)
             if dry_run:
                 current = _run(lambda: c.get_blocks(form_id), "blocks")
                 n_before = len(current) if isinstance(current, list) else None
                 return {"dry_run": True, "current_available": n_before is not None,
                         "blocks_before": n_before, "blocks_after": len(blocks),
-                        "warning": "PATCH blocks REMPLACE la liste entière — "
-                                   "tout bloc absent de `blocks` est supprimé."}
+                        "warning": "PATCH blocks REPLACES the entire list — "
+                                   "any block absent from `blocks` is deleted."}
             return _run(lambda: c.update_blocks(
                 form_id, blocks, **({"settings": settings} if settings else {})), "blocks")
 
-        raise _bad(f"op inconnu : {op!r}")
+        raise _bad(f"unknown op: {op!r}")
 
     # ================================================================
-    # Réponses
+    # Responses
     # ================================================================
 
     @mcp.tool()
@@ -498,7 +498,7 @@ def register(mcp: FastMCP) -> None:
 
         if op == "list":
             _need(op, form_id=form_id)
-            _refuse_ignored(op, "il liste les réponses", submission_id=submission_id)
+            _refuse_ignored(op, "it lists the responses", submission_id=submission_id)
             payload = _run(lambda: c.list_submissions(
                 form_id, page=page, limit=limit, filter=filter,
                 startDate=start_date, endDate=end_date, afterId=after_id))
@@ -506,14 +506,14 @@ def register(mcp: FastMCP) -> None:
 
         if op == "get":
             _need(op, form_id=form_id, submission_id=submission_id)
-            _refuse_ignored(op, "il lit UNE réponse", filter=filter, start_date=start_date,
+            _refuse_ignored(op, "it reads ONE response", filter=filter, start_date=start_date,
                             end_date=end_date, after_id=after_id, page=page, limit=limit)
             payload = _run(lambda: c.get_submission(form_id, submission_id))
             return payload if raw else _shape_submissions_page(payload)
 
         if op == "delete":
             _need(op, form_id=form_id, submission_id=submission_id)
-            _refuse_ignored(op, "il supprime UNE réponse", filter=filter,
+            _refuse_ignored(op, "it deletes ONE response", filter=filter,
                             start_date=start_date, end_date=end_date, after_id=after_id,
                             page=page, limit=limit)
             if dry_run:
@@ -521,10 +521,10 @@ def register(mcp: FastMCP) -> None:
                 return {"dry_run": True, "would_delete": "submission",
                         "submission_id": submission_id,
                         "current": current if raw else _shape_submissions_page(current),
-                        "recoverable": "non — aucune corbeille documentée pour les réponses"}
+                        "recoverable": "no — no trash documented for responses"}
             return _run(lambda: c.delete_submission(form_id, submission_id))
 
-        raise _bad(f"op inconnu : {op!r}")
+        raise _bad(f"unknown op: {op!r}")
 
     # ================================================================
     # Analytics
@@ -553,13 +553,13 @@ def register(mcp: FastMCP) -> None:
         """
         _need(op, form_id=form_id, period=period)
         if period not in _PERIODS:
-            raise _bad(f"`period` doit être l'un de {', '.join(_PERIODS)} — reçu {period!r}.")
+            raise _bad(f"`period` must be one of {', '.join(_PERIODS)} — got {period!r}.")
         c = _client()
-        # Appels EXPLICITES et non un dispatch par dict : le garde-fou
-        # version-skew (`tests/test_tools_client_methods_exist.py`) lit les
-        # appels `c.methode()` statiquement — un dict de méthodes liées sort de
-        # sa portée EN SILENCE, et ces cinq-là cesseraient d'être vérifiées
-        # contre le tag oto-core épinglé (le trou vécu sur `tools/apollo.py`).
+        # EXPLICIT calls and not a dict dispatch: the version-skew
+        # guard (`tests/test_tools_client_methods_exist.py`) reads the
+        # `c.method()` calls statically — a dict of bound methods falls out of
+        # its scope SILENTLY, and these five would stop being verified
+        # against the pinned oto-core tag (the hole experienced in `tools/apollo.py`).
         if op == "metrics":
             return _run(lambda: c.analytics_metrics(form_id, period))
         if op == "visits":
@@ -570,10 +570,10 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: c.analytics_dimensions(form_id, period))
         if op == "drop_off":
             return _run(lambda: c.analytics_drop_off(form_id, period))
-        raise _bad(f"op inconnu : {op!r}")
+        raise _bad(f"unknown op: {op!r}")
 
     # ================================================================
-    # Espaces de travail et dossiers
+    # Workspaces and folders
     # ================================================================
 
     @mcp.tool()
@@ -615,26 +615,26 @@ def register(mcp: FastMCP) -> None:
             return got if isinstance(got, list) else (got or {}).get("folders") or []
 
         if op == "list":
-            _refuse_ignored(op, "il liste les espaces de travail",
+            _refuse_ignored(op, "it lists the workspaces",
                             workspace_id=workspace_id, folder_id=folder_id,
                             name=name, parent_id=parent_id)
             return _run(lambda: c.list_workspaces(page=page))
 
         if op == "get":
             _need(op, workspace_id=workspace_id)
-            _refuse_ignored(op, "il lit UN espace", folder_id=folder_id, name=name,
+            _refuse_ignored(op, "it reads ONE workspace", folder_id=folder_id, name=name,
                             parent_id=parent_id, page=page)
             return _run(lambda: c.get_workspace(workspace_id))
 
         if op == "folders":
             _need(op, workspace_id=workspace_id)
-            _refuse_ignored(op, "il liste les dossiers", folder_id=folder_id, name=name,
+            _refuse_ignored(op, "it lists the folders", folder_id=folder_id, name=name,
                             parent_id=parent_id, page=page)
             return _run(lambda: c.list_folders(workspace_id))
 
         if op == "create":
             _need(op, name=name)
-            _refuse_ignored(op, "il crée un espace", workspace_id=workspace_id,
+            _refuse_ignored(op, "it creates a workspace", workspace_id=workspace_id,
                             folder_id=folder_id, parent_id=parent_id, page=page)
             if dry_run:
                 return {"dry_run": True, "would_create": "workspace", "name": name}
@@ -642,7 +642,7 @@ def register(mcp: FastMCP) -> None:
 
         if op == "update":
             _need(op, workspace_id=workspace_id, name=name)
-            _refuse_ignored(op, "il renomme UN espace", folder_id=folder_id,
+            _refuse_ignored(op, "it renames ONE workspace", folder_id=folder_id,
                             parent_id=parent_id, page=page)
             if dry_run:
                 current = _run(lambda: c.get_workspace(workspace_id))
@@ -652,19 +652,19 @@ def register(mcp: FastMCP) -> None:
 
         if op == "delete":
             _need(op, workspace_id=workspace_id)
-            _refuse_ignored(op, "il supprime UN espace", folder_id=folder_id, name=name,
+            _refuse_ignored(op, "it deletes ONE workspace", folder_id=folder_id, name=name,
                             parent_id=parent_id, page=page)
             if dry_run:
                 current = _run(lambda: c.get_workspace(workspace_id))
                 return {"dry_run": True, "would_delete": "workspace",
                         "workspace_id": workspace_id, "current": current,
-                        "warning": "emporte TOUS les formulaires de l'espace",
-                        "recoverable": "oui — espace et formulaires vont à la corbeille"}
+                        "warning": "takes ALL the workspace's forms with it",
+                        "recoverable": "yes — workspace and forms go to the trash"}
             return _run(lambda: c.delete_workspace(workspace_id))
 
         if op == "create_folder":
             _need(op, workspace_id=workspace_id, name=name)
-            _refuse_ignored(op, "il crée un dossier", folder_id=folder_id, page=page)
+            _refuse_ignored(op, "it creates a folder", folder_id=folder_id, page=page)
             if dry_run:
                 return {"dry_run": True, "would_create": "folder", "name": name,
                         "workspace_id": workspace_id, "parent_id": parent_id}
@@ -673,7 +673,7 @@ def register(mcp: FastMCP) -> None:
 
         if op == "update_folder":
             _need(op, workspace_id=workspace_id, folder_id=folder_id, name=name)
-            _refuse_ignored(op, "il renomme UN dossier", parent_id=parent_id, page=page)
+            _refuse_ignored(op, "it renames ONE folder", parent_id=parent_id, page=page)
             if dry_run:
                 cur = next((f for f in _folders(workspace_id)
                             if isinstance(f, dict) and f.get("id") == folder_id), None)
@@ -682,7 +682,7 @@ def register(mcp: FastMCP) -> None:
 
         if op == "delete_folder":
             _need(op, workspace_id=workspace_id, folder_id=folder_id)
-            _refuse_ignored(op, "il supprime UN dossier", name=name, parent_id=parent_id,
+            _refuse_ignored(op, "it deletes ONE folder", name=name, parent_id=parent_id,
                             page=page)
             if dry_run:
                 folders = _folders(workspace_id)
@@ -693,14 +693,14 @@ def register(mcp: FastMCP) -> None:
                 return {"dry_run": True, "would_delete": "folder", "folder_id": folder_id,
                         "current_available": cur is not None, "current": cur,
                         "direct_children": children,
-                        "warning": "supprime le dossier ET tout son sous-arbre ; "
-                                   "les formulaires contenus vont à la corbeille"}
+                        "warning": "deletes the folder AND its whole subtree; "
+                                   "the contained forms go to the trash"}
             return _run(lambda: c.delete_folder(workspace_id, folder_id))
 
-        raise _bad(f"op inconnu : {op!r}")
+        raise _bad(f"unknown op: {op!r}")
 
     # ================================================================
-    # Compte, membres, invitations
+    # Account, members, invitations
     # ================================================================
 
     @mcp.tool()
@@ -744,27 +744,27 @@ def register(mcp: FastMCP) -> None:
             return got if isinstance(got, list) else (got or {}).get("users") or []
 
         if op == "me":
-            _refuse_ignored(op, "il lit l'utilisateur courant",
+            _refuse_ignored(op, "it reads the current user",
                             organization_id=organization_id, user_id=user_id,
                             invite_id=invite_id, emails=emails, workspace_ids=workspace_ids)
             return _run(lambda: c.get_me(**({"timezone": timezone} if timezone else {})))
 
         if op == "users":
             _need(op, organization_id=organization_id)
-            _refuse_ignored(op, "il liste les membres", user_id=user_id, invite_id=invite_id,
+            _refuse_ignored(op, "it lists the members", user_id=user_id, invite_id=invite_id,
                             emails=emails, workspace_ids=workspace_ids, timezone=timezone)
             return _run(lambda: c.list_organization_users(organization_id))
 
         if op == "invites":
             _need(op, organization_id=organization_id)
-            _refuse_ignored(op, "il liste les invitations", user_id=user_id,
+            _refuse_ignored(op, "it lists the invitations", user_id=user_id,
                             invite_id=invite_id, emails=emails,
                             workspace_ids=workspace_ids, timezone=timezone)
             return _run(lambda: c.list_invites(organization_id))
 
         if op == "remove_user":
             _need(op, organization_id=organization_id, user_id=user_id)
-            _refuse_ignored(op, "il retire UN membre", invite_id=invite_id, emails=emails,
+            _refuse_ignored(op, "it removes ONE member", invite_id=invite_id, emails=emails,
                             workspace_ids=workspace_ids, timezone=timezone)
             if dry_run:
                 cur = next((u for u in _members(organization_id)
@@ -772,14 +772,14 @@ def register(mcp: FastMCP) -> None:
                 return {"dry_run": True, "would_remove": "organization member",
                         "user_id": user_id, "current_available": cur is not None,
                         "current": cur,
-                        "warning": "révoque aussi TOUTES les clés API créées par cet "
-                                   "utilisateur, y compris peut-être celle de cet appel"}
+                        "warning": "also revokes ALL the API keys created by this "
+                                   "user, possibly including this call's own"}
             return _run(lambda: c.remove_organization_user(organization_id, user_id))
 
         if op == "invite":
             _need(op, organization_id=organization_id, emails=emails,
                   workspace_ids=workspace_ids)
-            _refuse_ignored(op, "il crée des invitations", user_id=user_id,
+            _refuse_ignored(op, "it creates invitations", user_id=user_id,
                             invite_id=invite_id, timezone=timezone)
             if dry_run:
                 return {"dry_run": True, "would_invite": emails,
@@ -788,7 +788,7 @@ def register(mcp: FastMCP) -> None:
 
         if op == "cancel_invite":
             _need(op, organization_id=organization_id, invite_id=invite_id)
-            _refuse_ignored(op, "il annule UNE invitation", user_id=user_id, emails=emails,
+            _refuse_ignored(op, "it cancels ONE invitation", user_id=user_id, emails=emails,
                             workspace_ids=workspace_ids, timezone=timezone)
             if dry_run:
                 invites = _run(lambda: c.list_invites(organization_id))
@@ -799,7 +799,7 @@ def register(mcp: FastMCP) -> None:
                         "current_available": cur is not None, "current": cur}
             return _run(lambda: c.cancel_invite(organization_id, invite_id))
 
-        raise _bad(f"op inconnu : {op!r}")
+        raise _bad(f"unknown op: {op!r}")
 
     # ================================================================
     # Webhooks
@@ -862,9 +862,9 @@ def register(mcp: FastMCP) -> None:
         c = _client()
 
         def _find(wid: str) -> Optional[Dict[str, Any]]:
-            """Il n'existe pas de GET /webhooks/{id} : on pagine la liste."""
+            """There is no GET /webhooks/{id}: we paginate the list."""
             seen_page = 1
-            while seen_page <= 20:  # borne dure : 20 × 100 = 2000 webhooks
+            while seen_page <= 20:  # hard bound: 20 x 100 = 2000 webhooks
                 got = _run(lambda p=seen_page: c.list_webhooks(page=p, limit=100),
                            "webhook_list")
                 items = got if isinstance(got, list) else (got or {}).get("webhooks") or []
@@ -877,7 +877,7 @@ def register(mcp: FastMCP) -> None:
             return None
 
         if op == "list":
-            _refuse_ignored(op, "il liste les webhooks", webhook_id=webhook_id,
+            _refuse_ignored(op, "it lists the webhooks", webhook_id=webhook_id,
                             event_id=event_id, url=url, event_types=event_types,
                             signing_secret=signing_secret, http_headers=http_headers,
                             external_subscriber=external_subscriber, is_enabled=is_enabled)
@@ -885,7 +885,7 @@ def register(mcp: FastMCP) -> None:
 
         if op == "events":
             _need(op, webhook_id=webhook_id)
-            _refuse_ignored(op, "il lit le journal de livraison", event_id=event_id,
+            _refuse_ignored(op, "it reads the delivery log", event_id=event_id,
                             url=url, event_types=event_types, signing_secret=signing_secret,
                             http_headers=http_headers, is_enabled=is_enabled, limit=limit)
             return _run(lambda: c.list_webhook_events(webhook_id, page=page),
@@ -893,7 +893,7 @@ def register(mcp: FastMCP) -> None:
 
         if op == "create":
             _need(op, form_id=form_id, url=url, event_types=event_types)
-            _refuse_ignored(op, "il crée un webhook", webhook_id=webhook_id,
+            _refuse_ignored(op, "it creates a webhook", webhook_id=webhook_id,
                             event_id=event_id, is_enabled=is_enabled, page=page, limit=limit)
             extra = {"signingSecret": signing_secret, "httpHeaders": http_headers,
                      "externalSubscriber": external_subscriber}
@@ -908,15 +908,15 @@ def register(mcp: FastMCP) -> None:
 
         if op == "update":
             _need(op, webhook_id=webhook_id)
-            _refuse_ignored(op, "il modifie UN webhook", event_id=event_id,
+            _refuse_ignored(op, "it edits ONE webhook", event_id=event_id,
                             external_subscriber=external_subscriber, page=page, limit=limit)
             current = _find(webhook_id)
             if current is None:
                 raise _bad(
-                    f"webhook {webhook_id!r} introuvable dans la liste. `PATCH /webhooks/"
-                    "{id}` est un REMPLACEMENT complet (formId, url, eventTypes, isEnabled "
-                    "tous requis) : sans l'état actuel, une modification partielle "
-                    "effacerait les champs non fournis. Vérifie l'id avec op='list'.")
+                    f"webhook {webhook_id!r} not found in the list. `PATCH /webhooks/"
+                    "{id}` is a full REPLACEMENT (formId, url, eventTypes, isEnabled "
+                    "all required): without the current state, a partial edit "
+                    "would erase the fields not provided. Check the id with op='list'.")
             merged = {
                 "form_id": form_id if form_id is not None else current.get("formId"),
                 "url": url if url is not None else current.get("url"),
@@ -927,15 +927,15 @@ def register(mcp: FastMCP) -> None:
             }
             missing = [k for k, v in merged.items() if v is None]
             if missing:
-                raise _bad(f"impossible de reconstruire le webhook : {', '.join(missing)} "
-                           "absent(s) de l'état actuel — passe-les explicitement.")
+                raise _bad(f"cannot rebuild the webhook: {', '.join(missing)} "
+                           "missing from the current state — pass them explicitly.")
             if dry_run:
                 asked = {"formId": form_id, "url": url, "eventTypes": event_types,
                          "isEnabled": is_enabled}
                 out = _diff(current, {k: v for k, v in asked.items() if v is not None}, {})
                 out["merged_payload_fields"] = sorted(merged)
-                out["note"] = ("PATCH est un remplacement complet ; les champs non fournis "
-                               "sont repris de l'état actuel, pas laissés vides.")
+                out["note"] = ("PATCH is a full replacement; fields not provided "
+                               "are taken from the current state, not left empty.")
                 return out
             extra = {"signingSecret": signing_secret, "httpHeaders": http_headers}
             return _run(lambda: c.update_webhook(
@@ -945,7 +945,7 @@ def register(mcp: FastMCP) -> None:
 
         if op == "delete":
             _need(op, webhook_id=webhook_id)
-            _refuse_ignored(op, "il supprime UN webhook", event_id=event_id, url=url,
+            _refuse_ignored(op, "it deletes ONE webhook", event_id=event_id, url=url,
                             event_types=event_types, signing_secret=signing_secret,
                             http_headers=http_headers, is_enabled=is_enabled,
                             page=page, limit=limit)
@@ -954,20 +954,20 @@ def register(mcp: FastMCP) -> None:
                 return {"dry_run": True, "would_delete": "webhook",
                         "webhook_id": webhook_id, "current_available": current is not None,
                         "current": current,
-                        "note": "si c'est le dernier webhook du formulaire, Tally marque "
-                                "aussi l'intégration webhooks comme supprimée"}
+                        "note": "if this is the form's last webhook, Tally also marks "
+                                "the webhooks integration as deleted"}
             return _run(lambda: c.delete_webhook(webhook_id))
 
         if op == "retry":
             _need(op, webhook_id=webhook_id, event_id=event_id)
-            _refuse_ignored(op, "il rejoue UN événement", url=url, event_types=event_types,
+            _refuse_ignored(op, "it replays ONE event", url=url, event_types=event_types,
                             signing_secret=signing_secret, http_headers=http_headers,
                             is_enabled=is_enabled, page=page, limit=limit)
             if dry_run:
                 return {"dry_run": True, "would_retry": event_id, "webhook_id": webhook_id,
-                        "warning": "un retry est une VRAIE livraison HTTP ; si le récepteur "
-                                   "n'est pas idempotent, c'est un second envoi, pas une "
+                        "warning": "a retry is a REAL HTTP delivery; if the receiver "
+                                   "is not idempotent, it is a second send, not a "
                                    "correction"}
             return _run(lambda: c.retry_webhook_event(webhook_id, event_id))
 
-        raise _bad(f"op inconnu : {op!r}")
+        raise _bad(f"unknown op: {op!r}")

@@ -1,78 +1,75 @@
-"""Rôles + résolution de clé API + quotas par tool.
+"""Roles + API key resolution + per-tool quotas.
 
-Le rôle `users.role` décide de l'accès à l'admin UI, sur **3 paliers** (du plus
-faible au plus fort) :
+The `users.role` role decides access to the admin UI, on **3 tiers** (from
+weakest to strongest):
 
-- **member** : rôle par défaut (non-admin), sans effet sur l'accès aux
-  tools. L'accès se décide via les `user_grants` (cf. ci-dessous).
-- **admin** (palier OPÉRATIONNEL intermédiaire) : supervision plateforme —
-  liste des users, fiche user, monitoring des appels, activation des
-  connecteurs, lecture/admin opérationnelle
-  des orgs. **PAS** d'escalade en masse vers les orgs tierces.
-- **super_admin** (le tout-puissant) : tout l'opérationnel + escalade
-  `org_admin` de TOUTES les orgs et `group_admin` de TOUS les groupes,
-  gestion des rôles plateforme, platform keys, émission de tokens, écriture
-  sur les orgs tierces (entitlements, guide d'une autre org), création d'org.
-  Bootstrap : env `OTO_MCP_ADMIN_SUB` force ce sub en **super_admin** quoi
-  qu'il y ait en DB.
+- **member**: default role (non-admin), no effect on access to
+  tools. Access is decided via `user_grants` (see below).
+- **admin** (intermediate OPERATIONAL tier): platform supervision —
+  user list, user page, call monitoring, connector activation,
+  operational read/admin of orgs. **NO** bulk escalation to third-party orgs.
+- **super_admin** (the all-powerful): everything operational + `org_admin`
+  escalation on ALL orgs and `group_admin` on ALL groups, platform role
+  management, platform keys, token issuance, writes on third-party orgs
+  (entitlements, another org's guide), org creation.
+  Bootstrap: env `OTO_MCP_ADMIN_SUB` forces this sub to **super_admin**
+  whatever is in the DB.
 
-Résolution d'une clé API par appel (`resolve_api_key`) :
+API key resolution per call (`resolve_api_key`):
 
-1. Si user key posée par le user lui-même sur `/account` → on la prend,
-   sans quota.
-2. Sinon, on cherche un grant explicite dans `user_grants` (admin a posé
-   une autorisation) → on prend la `platform_keys.api_key` la plus
-   récemment grantée.
-3. Sinon (et y compris pour un admin sans grant) → McpError actionnable.
+1. If a user key was set by the user themselves on `/account` → take it,
+   no quota.
+2. Otherwise, look for an explicit grant in `user_grants` (an admin set an
+   authorization) → take the most recently granted `platform_keys.api_key`.
+3. Otherwise (including for an admin without a grant) → actionable McpError.
 
-Quota daily : chaque grant porte un `daily_quota` optionnel (per-user,
-posé par l'admin au moment du grant). Si null, fallback sur
-`OTO_MCP_QUOTA_<PROVIDER>_DAILY` env ou `_QUOTA_DEFAULTS`.
+Daily quota: each grant carries an optional `daily_quota` (per-user, set by
+the admin at grant time). If null, fall back to the
+`OTO_MCP_QUOTA_<PROVIDER>_DAILY` env or `_QUOTA_DEFAULTS`.
 
-Les clés plateforme vivent en DB (coffre `platform_keys`) — posées/rotées via la
-surface admin (REST `/api/admin/platform-keys`, meta-tools `oto_admin_*`), plus
-aucun import SOPS/env au boot (oto-mcp#12). Importer ≠ auto-granter : une clé
-n'est accessible qu'avec un grant admin explicite.
+Platform keys live in the DB (`platform_keys` vault) — set/rotated via the admin
+surface (REST `/api/admin/platform-keys`, `oto_admin_*` meta-tools), no more
+SOPS/env import at boot (oto-mcp#12). Importing ≠ auto-granting: a key is only
+accessible with an explicit admin grant.
 
-## Le package (découpe du 2026-08-27) — où vit quoi
+## The package (split of 2026-08-27) — what lives where
 
-`access.py` faisait 2 000 lignes et concentrait quatre sujets qui ne se lisent
-pas ensemble. Le fichier étant l'unité d'occupation d'une session sur un tree
-partagé, il était aussi le goulot de tous les chantiers de connecteurs. La
-découpe est un **DÉPLACEMENT PUR** : aucun appelant ne change (cf.
-`tests/test_access_surface_frozen.py`).
+`access.py` was 2,000 lines and concentrated four subjects that do not read
+together. As the file was the unit of session occupancy on a shared tree, it was
+also the bottleneck of all connector work. The split is a **PURE MOVE**: no
+caller changes (see `tests/test_access_surface_frozen.py`).
 
-- `scope`   — qui agit : rôle plateforme, org/équipe/projet de l'appel, ce que le
-              projet ÉPINGLE, `_UNSET`. Ne dépend de rien.
-- `heritage` — les clés d'un projet PARTAGÉ (#480) : ce que son bénéficiaire atteint
-              de celles du propriétaire (rien, sauf héritage déclaré au partage).
-              Verdict posé par `_project=`, lu par le walker ; ne dépend que de
-              `session_org` (et, paresseusement, de `roles`/`ownership`).
-- `quotas`  — ce qui est métré (quota jour, usage) et ce qui est payé (option
-              payante = droit déclaré de l'org ou de la personne, via `entitlements`).
-- `cascade` — le walker UNIQUE `perso > cross-org > équipe > org > plateforme`,
-              ses trois sondes, le palier plateforme.
-- `rbac`    — qui a le droit : tools masqués, garde
-              d'instance et prêts, instances à portée, filtre de redaction.
-- `indices` — le TEXTE des refus « rien ne résout » : clé retirée, instances à
-              portée, projet qui épingle déjà (#499). Lecture seule, fail-soft.
-- `resolved_credential` — le TYPE rendu par toute résolution (extrait le 29/08, #584).
-- `tenant_budget` — le budget par org de l'arête tenant→org (L-clés PR 2), appliqué
-              à la résolution d'un gagnant tenant.
-- `resolve_anon` — la résolution de l'endpoint MCP anonyme (ADR 0032), extraite de
-              `resolve` le 29/08 (#584). L'étage tenant n'y vient que d'une arête.
-- `resolve` — la résolution réelle d'un credential (chemin chaud) ; ses refus
-              portent les `indices`.
-- `views`   — les vues minces : clé, champs, mode, option levée,
-              résolvabilité d'une org.
-- `status`  — le snapshot par connecteur de `/api/me`.
-- `entitlements` — les droits DÉCLARÉS d'une org ou d'une personne (ADR 0070 §7),
-              relus à chaque usage ; ne dépend que de `db`, jamais de `billing`.
+- `scope`   — who acts: platform role, org/team/project of the call, what the
+              project PINS, `_UNSET`. Depends on nothing.
+- `heritage` — the keys of a SHARED project (#480): what its beneficiary reaches
+              of the owner's keys (nothing, except inheritance declared at share
+              time). Verdict set by `_project=`, read by the walker; depends only
+              on `session_org` (and, lazily, on `roles`/`ownership`).
+- `quotas`  — what is metered (daily quota, usage) and what is paid (paid
+              option = declared entitlement of the org or the person, via `entitlements`).
+- `cascade` — the SINGLE walker `personal > cross-org > team > org > platform`,
+              its three probes, the platform tier.
+- `rbac`    — who is allowed: hidden tools, instance and loan
+              guard, in-scope instances, redaction filter.
+- `indices` — the TEXT of the "nothing resolves" refusals: key removed, in-scope
+              instances, project that already pins (#499). Read-only, fail-soft.
+- `resolved_credential` — the TYPE returned by every resolution (extracted 08/29, #584).
+- `tenant_budget` — the per-org budget of the tenant→org edge (L-keys PR 2), applied
+              when a tenant winner is resolved.
+- `resolve_anon` — resolution for the anonymous MCP endpoint (ADR 0032), extracted
+              from `resolve` on 08/29 (#584). The tenant tier only comes in via an edge.
+- `resolve` — the actual resolution of a credential (hot path); its refusals
+              carry the `indices`.
+- `views`   — the thin views: key, fields, mode, option raised,
+              resolvability of an org.
+- `status`  — the per-connector snapshot of `/api/me`.
+- `entitlements` — the DECLARED entitlements of an org or a person (ADR 0070 §7),
+              re-read on every use; depends only on `db`, never on `billing`.
 
-Le graphe est un DAG strict — aucun cycle, chaque flèche va vers le bas :
+The graph is a strict DAG — no cycle, every arrow goes downward:
 
 ```
-                    scope                    (ne dépend de rien)
+                    scope                    (depends on nothing)
                    ↗  ↑  ↖
             quotas   cascade                 (quotas → entitlements ; cascade → scope)
                 ↑     ↑  ↖
@@ -85,28 +82,29 @@ Le graphe est un DAG strict — aucun cycle, chaque flèche va vers le bas :
               views   status                 (status → scope, quotas, rbac, cascade)
 ```
 
-## La surface reste PLATE, et le point de patch reste `access.<nom>`
+## The surface stays FLAT, and the patch point stays `access.<name>`
 
-Deux mécanismes, tous les deux ici et nulle part ailleurs :
+Two mechanisms, both here and nowhere else:
 
-1. **Ré-export plat** — `access.<nom>` rend ce qu'il rendait avant la découpe,
-   privés compris (`_UNSET`, `_resolve_credential_impl`, `_platform_grant_meta`…
-   sont consommés à l'extérieur). Même idiome que le package `db`.
-2. **Propagation des écritures** — un sous-module appelle son voisin par le
-   MODULE (`scope.current_org(...)`), jamais par un nom importé : c'est ce qui
-   dit au lecteur d'où vient la fonction. Mais alors une écriture sur la façade
-   (`monkeypatch.setattr(access, "current_org", …)`, l'idiome de ~200 endroits
-   de la suite) n'atteindrait plus l'intérieur du package : le voisin lirait
-   toujours l'original. La façade propage donc toute écriture aux sous-modules
-   qui DÉFINISSENT ce nom. Sans ça, le déplacement changerait le comportement de
-   tests qu'il n'était pas censé toucher — et il le changerait en SILENCE, en
-   les laissant verts sur un chemin qui n'est plus celui qu'ils croient exercer.
+1. **Flat re-export** — `access.<name>` returns what it returned before the split,
+   privates included (`_UNSET`, `_resolve_credential_impl`, `_platform_grant_meta`…
+   are consumed from outside). Same idiom as the `db` package.
+2. **Write propagation** — a submodule calls its neighbour through the
+   MODULE (`scope.current_org(...)`), never through an imported name: that is what
+   tells the reader where the function comes from. But then a write on the facade
+   (`monkeypatch.setattr(access, "current_org", …)`, the idiom in ~200 places
+   of the suite) would no longer reach the inside of the package: the neighbour
+   would still read the original. The facade therefore propagates every write to
+   the submodules that DEFINE that name. Without it, the move would change the
+   behaviour of tests it was not supposed to touch — and it would change it
+   SILENTLY, leaving them green on a path that is no longer the one they think
+   they exercise.
 
-La propagation DESCEND, elle ne remonte pas : une écriture sur un sous-module
-(`access.scope.current_org`) n'atteint pas qui lit la façade. D'où la cible de #896,
-gardée à zéro par `tests/test_facades_lecteurs_cible.py` — dehors, on lit et on
-patche la façade, jamais un sous-module qu'elle ré-exporte ; dedans, on lit son
-voisin par le module (`docs/roles-and-resolution.md`).
+Propagation goes DOWN, it does not come back up: a write on a submodule
+(`access.scope.current_org`) does not reach whoever reads the facade. Hence the
+target of #896, kept at zero by `tests/test_facades_lecteurs_cible.py` — outside,
+we read and patch the facade, never a submodule it re-exports; inside, we read
+the neighbour through the module (`docs/roles-and-resolution.md`).
 """
 from __future__ import annotations
 
@@ -120,12 +118,11 @@ from . import (scope, quotas, cascade, platform_grant, rbac, indices, resolved_c
 _MODULES = (scope, quotas, cascade, platform_grant, rbac, indices, resolved_credential,
             tenant_budget, resolve_anon, resolve, views, status, entitlements)
 
-# Ré-export plat (publics + privés à un underscore ; les dunder restent au
-# package) + carte `nom -> modules qui le définissent`, qui sert la propagation
-# ci-dessous. Les noms sont disjoints entre modules, à l'exception des modules
-# importés en commun (`db`, `connectors`…) : là, tous les porteurs sont notés,
-# et une écriture sur la façade les atteint tous — comme quand ils n'étaient
-# qu'un seul module.
+# Flat re-export (public + single-underscore privates; dunders stay with the
+# package) + `name -> modules that define it` map, which serves the propagation
+# below. Names are disjoint across modules, except for commonly imported
+# modules (`db`, `connectors`…): there, all holders are recorded, and a write
+# on the facade reaches all of them — as when they were a single module.
 _OWNERS: dict = {}
 _g = globals()
 for _mod in _MODULES:
@@ -136,15 +133,15 @@ for _mod in _MODULES:
         _OWNERS[_name] = _OWNERS.get(_name, ()) + (_mod,)
 del _g, _mod, _name
 
-# `access.logger` reste le logger du NOM `oto_mcp.access` (la boucle ci-dessus
-# aurait laissé celui du dernier sous-module).
+# `access.logger` stays the logger of the NAME `oto_mcp.access` (the loop above
+# would have left the last submodule's one).
 logger = logging.getLogger(__name__)
 
 
 class _Facade(types.ModuleType):
-    """Le module `access` lui-même, avec la propagation d'écriture (cf. §2 du
-    docstring). `__delattr__` n'est PAS surchargé : retirer un nom de la façade
-    ne doit pas décapiter le sous-module qui le sert."""
+    """The `access` module itself, with write propagation (see §2 of the
+    docstring). `__delattr__` is NOT overridden: removing a name from the facade
+    must not behead the submodule that serves it."""
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)

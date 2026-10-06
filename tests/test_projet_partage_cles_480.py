@@ -130,7 +130,7 @@ def test_le_beneficiaire_hors_org_n_atteint_pas_la_cle_d_org_du_proprietaire(
                     f"entité={rc.entity_type}:{rc.entity_id}")
     # Le refus dit quoi faire : poser SA clé, ou demander l'héritage au partageur.
     msg = e.value.error.message
-    assert "credentials='inherit'" in msg and "propre clé" in msg
+    assert "credentials='inherit'" in msg and "your own" in msg
 
 
 @pytest.mark.parametrize("type_", TYPES)

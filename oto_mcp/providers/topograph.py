@@ -1,35 +1,35 @@
-"""Déclaration de registre du connecteur `topograph`.
+"""Registry declaration of the `topograph` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# topograph : KYB — données + documents normalisés de 100+ registres publics
-# européens via une seule API REST. byo par défaut (pay-per-request ; clé d'org
-# partageable), keyed api_key (en-tête x-api-key résolu côté client) ; clé
-# plateforme GRANT-ONLY depuis le 26/08 (#405). Hors socle : opt-in.
+# topograph: KYB — normalized data + documents from 100+ European public
+# registries through a single REST API. byo by default (pay-per-request; shareable
+# org key), keyed api_key (x-api-key header resolved client-side); platform
+# key GRANT-ONLY since 26/08 (#405). Outside the base kit: opt-in.
 CONNECTOR = _c(
     "topograph", ["topograph"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
-    default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
+    default_quota=0, platform_key_open=False,  # platform key on explicit grant (data bought on credit)
     secret_kind="api_key",
     label="Topograph",
-    # Le sigle « KYB » ouvrait l'aide sans être explicité (2026-09-02).
-    help="fiches et documents officiels d'entreprises européennes, issus des "
-         "registres publics — vérifier un client, un fournisseur (KYB)",
+    # The acronym "KYB" opened the help text without being spelled out (2026-09-02).
+    help="official company records and documents for European companies, from "
+         "public registries — vet a customer or a supplier (KYB)",
     href="https://www.topograph.co",
 )
 
 CATEGORY = "Prospection"
-# L'éditeur affiché retombait sur le défaut « Otomata » alors que la carte
-# porte le logo de topograph.co — deux affirmations contraires au même endroit.
+# The displayed publisher fell back to the default "Otomata" while the card
+# carries the topograph.co logo — two contradicting claims in the same place.
 PUBLISHER = "Topograph"
 LOGO_DOMAIN = "topograph.co"
 
 DESCRIPTION = (
-    "Vérification d'identité d'entreprise (KYB) : fiches et documents officiels "
-    "d'entreprises européennes, agrégés depuis plus de 100 registres publics, "
-    "via une seule API."
+    "Company identity verification (KYB): official company records and documents "
+    "for European companies, aggregated from over 100 public registries, "
+    "through a single API."
 )

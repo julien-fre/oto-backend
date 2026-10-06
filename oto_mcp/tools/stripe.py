@@ -1,47 +1,47 @@
-"""Stripe — clients, abonnements, factures, encaissements, solde, catalogue.
+"""Stripe — customers, subscriptions, invoices, payments, balance, catalog.
 
-Wrappe `oto.tools.stripe.client.StripeClient` (API v1, Bearer, corps
-form-encodés). Credential à TROIS champs (`secret_kind="fields"`, résolu par
-`access.resolve_credential_fields`) : la clé, plus deux satellites NON secrets
-qui décident **ce que la clé lit**.
+Wraps `oto.tools.stripe.client.StripeClient` (API v1, Bearer, form-encoded
+bodies). THREE-field credential (`secret_kind="fields"`, resolved by
+`access.resolve_credential_fields`): the key, plus two NON-secret satellites
+that decide **what the key reads**.
 
-- `api_version` — vide = la version par défaut du compte, celle que le client
-  voit dans son propre dashboard. Épingler une version qui diverge du compte
-  change des formes de réponse en silence.
-- `stripe_account` — `acct_…` (Connect). Ce n'est pas de la décoration : avec
-  Connect, LA MÊME question rend le chiffre d'affaires d'une AUTRE société
-  selon cet en-tête. En faire un champ de credential plutôt qu'un paramètre
-  d'outil est la forme la plus forte de « jamais déduit par appel » : un
-  credential = un jeu de livres, posé une fois, visible sur la carte, et
-  impossible à basculer en cours de conversation.
+- `api_version` — empty = the account's default version, the one the customer
+  sees in their own dashboard. Pinning a version that diverges from the account
+  silently changes response shapes.
+- `stripe_account` — `acct_…` (Connect). This is not decoration: with
+  Connect, THE SAME question returns the revenue of a DIFFERENT company
+  depending on this header. Making it a credential field rather than a tool
+  parameter is the strongest form of "never inferred per call": one
+  credential = one set of books, set once, visible on the card, and
+  impossible to switch mid-conversation.
 
-**byo-only, jamais de clé plateforme** : ce sont les livres de comptes du
-client. Une clé Stripe partagée par plusieurs orgs n'a aucun sens.
+**byo-only, never a platform key**: these are the customer's account books.
+A Stripe key shared by several orgs makes no sense.
 
-**Rien ne déplace d'argent, et c'est structurel.** Ce module ne peut PAS
-rembourser, résilier, finaliser, encaisser, envoyer ni supprimer : les méthodes
-correspondantes n'existent pas sur `StripeClient` (choix documenté dans son
-docstring). Ce n'est donc pas une politique de ce fichier, qu'une PR d'une ligne
-lèverait — c'est une frontière qui demande une PR oto-core pour bouger.
+**Nothing moves money, and that is structural.** This module can NOT
+refund, cancel, finalize, collect, send or delete: the corresponding methods
+do not exist on `StripeClient` (a choice documented in its docstring). So this
+is not a policy of this file, which a one-line PR would lift — it is a boundary
+that takes an oto-core PR to move.
 
-**Neuf tools, un par objet métier** (ADR 0047), verbe en `op=`. Aucun paramètre
-n'est retenu au silence : un `op` qui n'utilise pas un argument fourni REFUSE
-(patron `_refuse_ignored`, silae/granola).
+**Nine tools, one per business object** (ADR 0047), verb in `op=`. No parameter
+is silently swallowed: an `op` that does not use a supplied argument REFUSES
+(`_refuse_ignored` pattern, silae/granola).
 
-**Testé en live le 2026-08-22** contre un vrai compte Stripe en mode test (clé
-restreinte `rk_test_`) : les 20 lectures et les écritures sûres répondent comme
-codé. Deux comportements que la doc ne dit pas, tous deux trouvés par sonde :
+**Live-tested on 2026-08-22** against a real Stripe account in test mode
+(restricted key `rk_test_`): the 20 reads and the safe writes respond as coded.
+Two behaviors the docs do not mention, both found by probing:
 
-1. ⚠️ **`create_draft` n'attrape PAS les lignes en attente par défaut.** Créer
-   une ligne (`op="add_item"`) puis une facture rendait `total=0` et zéro ligne,
-   la ligne restant `invoice=None`. Un agent aurait annoncé « facture créée »
-   en produisant une facture VIDE et en laissant le montant en suspens. D'où le
-   défaut `pending_items="include"` ici (mesuré : `total=4200`, 1 ligne).
-2. ⚠️ **Un lien de paiement peut exiger un `tax_code` sur le produit** quand le
-   compte est éligible aux paiements gérés : `create_link` rendait
-   `400 « the product tax code is missing »`. Poser `tax_code` sur le produit
-   (ex. `txcd_10000000`, services génériques) débloque — le message d'erreur le
-   dit désormais explicitement.
+1. ⚠️ **`create_draft` does NOT pick up pending lines by default.** Creating
+   a line (`op="add_item"`) then an invoice returned `total=0` and zero lines,
+   the line staying `invoice=None`. An agent would have announced "invoice created"
+   while producing an EMPTY invoice and leaving the amount dangling. Hence the
+   default `pending_items="include"` here (measured: `total=4200`, 1 line).
+2. ⚠️ **A payment link may require a `tax_code` on the product** when the
+   account is eligible for managed payments: `create_link` returned
+   `400 "the product tax code is missing"`. Setting `tax_code` on the product
+   (e.g. `txcd_10000000`, generic services) unblocks it — the error message now
+   says so explicitly.
 """
 from __future__ import annotations
 
@@ -54,14 +54,14 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..connectors import verify as connector_verify
 
-# Stripe borne ses listes à 100 et retombe SILENCIEUSEMENT à 10 quand `limit`
-# est omis. On pose donc toujours une valeur explicite.
+# Stripe caps its lists at 100 and falls back SILENTLY to 10 when `limit` is
+# omitted. So we always set an explicit value.
 _DEFAULT_LIMIT = 100
 _MAX_LIMIT = 100
 
-# Plafond de balayage d'`op="totals"` : 20 pages × 100 = 2 000 objets. Au-delà,
-# la réponse le DIT (`complete: false`) au lieu de rendre une somme partielle
-# qui passerait pour le chiffre d'affaires réel.
+# Sweep cap for `op="totals"`: 20 pages × 100 = 2,000 objects. Beyond that,
+# the response SAYS so (`complete: false`) instead of returning a partial sum
+# that would pass for the real revenue.
 _AGGREGATE_MAX_PAGES = 20
 
 
@@ -70,25 +70,25 @@ def _bad(msg: str) -> McpError:
 
 
 def _refuse_ignored(op: str, hint: str, **provided) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention.
-    Sinon `stripe_invoice(op="list", invoice_id=…)` rendrait TOUTES les factures
-    en laissant croire qu'on en a ciblé une."""
+    """An argument that was supplied but that THIS op does not use is an error of intent.
+    Otherwise `stripe_invoice(op="list", invoice_id=…)` would return ALL invoices
+    while letting the caller believe one was targeted."""
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op={op!r} n'utilise pas `{name}` — {hint}")
+            raise _bad(f"op={op!r} does not use `{name}` — {hint}")
 
 
 def _limit(value: Optional[int]) -> int:
     if value is None:
         return _DEFAULT_LIMIT
     if not 1 <= value <= _MAX_LIMIT:
-        raise _bad(f"`limit` doit être entre 1 et {_MAX_LIMIT} (reçu {value}) — "
-                   "Stripe n'en rend pas davantage par page.")
+        raise _bad(f"`limit` must be between 1 and {_MAX_LIMIT} (got {value}) — "
+                   "Stripe does not return more per page.")
     return value
 
 
 def _window(created_after: Optional[int], created_before: Optional[int]) -> Optional[dict]:
-    """La fenêtre temporelle de Stripe est un dict d'opérateurs, pas deux champs."""
+    """Stripe's time window is a dict of operators, not two fields."""
     w = {}
     if created_after is not None:
         w["gte"] = created_after
@@ -107,35 +107,35 @@ def _upstream_message(e) -> str:
     req = body.get("request_id")
     tail = f" (request_id {req})" if req else ""
     if status in (401, 403):
-        return (f"Stripe a rejeté la clé (HTTP {status}) — soit elle est invalide, soit "
-                f"c'est une clé RESTREINTE à laquelle il manque la permission de lecture OU "
-                f"D'ÉCRITURE pour cette ressource (une écriture, ex. create_coupon, demande "
-                f"le scope Write, pas seulement Read). Stripe Dashboard → Developers → "
+        return (f"Stripe rejected the key (HTTP {status}) — either it is invalid, or "
+                f"it is a RESTRICTED key missing the read OR "
+                f"WRITE permission for this resource (a write, e.g. create_coupon, needs "
+                f"the Write scope, not just Read). Stripe Dashboard → Developers → "
                 f"API keys.{tail} {detail}")
     if status == 404:
-        return (f"Stripe : objet introuvable. Vérifie l'identifiant, et surtout le MODE : "
-                f"un objet de test n'existe pas en mode réel, et inversement.{tail} {detail}")
+        return (f"Stripe: object not found. Check the id, and above all the MODE: "
+                f"a test object does not exist in live mode, and vice versa.{tail} {detail}")
     if status == 429:
-        return f"Stripe : trop de requêtes (429) — réessaie dans un instant.{tail}"
+        return f"Stripe: too many requests (429) — try again in a moment.{tail}"
     if status >= 500:
-        return f"Stripe est momentanément indisponible (HTTP {status}) — réessaie plus tard.{tail}"
+        return f"Stripe is temporarily unavailable (HTTP {status}) — try again later.{tail}"
     extra = ""
     if "tax code is missing" in detail:
-        extra = (" — pose un code de taxe sur le produit avant de créer le lien : "
+        extra = (" — set a tax code on the product before creating the link: "
                  "`stripe_catalog(op=\"update_product\", product_id=…, "
-                 "tax_code=\"txcd_10000000\")` (services génériques).")
-    where = f" (champ `{param}`)" if param else ""
-    return f"Stripe a refusé la requête (HTTP {status}, code {code}){where} : {detail}{extra}{tail}"
+                 "tax_code=\"txcd_10000000\")` (generic services).")
+    where = f" (field `{param}`)" if param else ""
+    return f"Stripe refused the request (HTTP {status}, code {code}){where}: {detail}{extra}{tail}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » : deux GET, aucun effet de bord.
+    """"Test the connection" probe: two GETs, no side effects.
 
-    `GET /v1/balance` prouve que la clé vit — mais une clé restreinte au seul
-    Balance:read le passerait tout en échouant sur chaque question réelle. La
-    seconde lecture (une facture, `limit=1`) prouve donc la CAPACITÉ, pas
-    seulement l'authentification : c'est la leçon de la sonde Zoho (auth OK,
-    zéro scope CRM).
+    `GET /v1/balance` proves the key is alive — but a key restricted to
+    Balance:read alone would pass it while failing on every real question. The
+    second read (one invoice, `limit=1`) therefore proves the CAPABILITY, not
+    just authentication: this is the lesson of the Zoho probe (auth OK,
+    zero CRM scopes).
     """
     from oto.tools.stripe.client import StripeClient
     cfg = config or {}
@@ -143,14 +143,14 @@ def _verify(fields: dict, config: dict | None = None) -> None:
                           api_version=cfg.get("api_version") or None,
                           stripe_account=cfg.get("stripe_account") or None)
     balance = client.balance()
-    mode = "réel" if balance.get("livemode") else "test"
+    mode = "live" if balance.get("livemode") else "test"
     try:
         client.list_invoices(limit=1)
-    except Exception as e:  # noqa: BLE001 — le message d'exception EST le retour d'erreur
+    except Exception as e:  # noqa: BLE001 — the exception message IS the error return
         raise RuntimeError(
-            f"La clé authentifie bien (solde lu, mode {mode}) mais ne peut pas lire les "
-            f"factures — c'est une clé restreinte sans la permission Invoices:read. "
-            f"Détail : {e}") from e
+            f"The key authenticates fine (balance read, {mode} mode) but cannot read "
+            f"invoices — it is a restricted key without the Invoices:read permission. "
+            f"Detail: {e}") from e
 
 
 def register(mcp: FastMCP) -> None:
@@ -174,7 +174,7 @@ def register(mcp: FastMCP) -> None:
             raise _bad(_upstream_message(e))
 
     # ================================================================
-    # Recherche — la surface de lecture la plus rentable
+    # Search — the most valuable read surface
     # ================================================================
 
     @mcp.tool()
@@ -214,7 +214,7 @@ def register(mcp: FastMCP) -> None:
         return _run(lambda: client.search(resource, query, limit=_limit(limit), page=page))
 
     # ================================================================
-    # Clients
+    # Customers
     # ================================================================
 
     @mcp.tool()
@@ -252,7 +252,7 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='create' pour en créer un, op='get' pour en cibler un",
+            _refuse_ignored(op, "use op='create' to create one, op='get' to target one",
                             customer_id=customer_id, name=name, description=description,
                             metadata=metadata)
             return _run(lambda: client.list_customers(
@@ -260,8 +260,8 @@ def register(mcp: FastMCP) -> None:
                 limit=_limit(limit), starting_after=starting_after))
         if op in ("get", "payment_methods"):
             if not customer_id:
-                raise _bad(f"op={op!r} requiert `customer_id`")
-            _refuse_ignored(op, "ces champs ne s'appliquent qu'à list/create/update",
+                raise _bad(f"op={op!r} requires `customer_id`")
+            _refuse_ignored(op, "these fields only apply to list/create/update",
                             email=email, name=name, description=description,
                             metadata=metadata, created_after=created_after,
                             created_before=created_before, starting_after=starting_after)
@@ -270,31 +270,31 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.list_customer_payment_methods(
                 customer_id, limit=_limit(limit)))
         if op == "create":
-            _refuse_ignored(op, "un nouveau client n'a pas encore d'id",
+            _refuse_ignored(op, "a new customer does not have an id yet",
                             customer_id=customer_id, created_after=created_after,
                             created_before=created_before, starting_after=starting_after,
                             limit=limit)
             if not email and not name:
-                raise _bad("op='create' requiert au moins `email` ou `name` — un client "
-                           "sans aucun des deux est introuvable ensuite.")
+                raise _bad("op='create' requires at least `email` or `name` — a customer "
+                           "with neither cannot be found afterwards.")
             return _run(lambda: client.create_customer(
                 email=email, name=name, description=description, metadata=metadata))
         if op == "update":
             if not customer_id:
-                raise _bad("op='update' requiert `customer_id`")
-            _refuse_ignored(op, "ces filtres ne s'appliquent qu'à op='list'",
+                raise _bad("op='update' requires `customer_id`")
+            _refuse_ignored(op, "these filters only apply to op='list'",
                             created_after=created_after, created_before=created_before,
                             starting_after=starting_after, limit=limit)
             body = {k: v for k, v in dict(email=email, name=name,
                                           description=description,
                                           metadata=metadata).items() if v is not None}
             if not body:
-                raise _bad("op='update' requiert au moins un champ à modifier")
+                raise _bad("op='update' requires at least one field to modify")
             return _run(lambda: client.update_customer(customer_id, **body))
-        raise _bad("op doit être 'list', 'get', 'payment_methods', 'create' ou 'update'")
+        raise _bad("op must be 'list', 'get', 'payment_methods', 'create' or 'update'")
 
     # ================================================================
-    # Abonnements
+    # Subscriptions
     # ================================================================
 
     @mcp.tool()
@@ -332,14 +332,14 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='get' pour un abonnement précis",
+            _refuse_ignored(op, "use op='get' for a specific subscription",
                             subscription_id=subscription_id)
             return _run(lambda: client.list_subscriptions(
                 customer=customer_id, status=status, price=price_id,
                 limit=_limit(limit), starting_after=starting_after))
         if not subscription_id:
-            raise _bad(f"op={op!r} requiert `subscription_id`")
-        _refuse_ignored(op, "ces filtres ne s'appliquent qu'à op='list'",
+            raise _bad(f"op={op!r} requires `subscription_id`")
+        _refuse_ignored(op, "these filters only apply to op='list'",
                         customer_id=customer_id, status=status, price_id=price_id,
                         starting_after=starting_after)
         if op == "get":
@@ -347,10 +347,10 @@ def register(mcp: FastMCP) -> None:
         if op == "items":
             return _run(lambda: client.list_subscription_items(
                 subscription_id, limit=_limit(limit)))
-        raise _bad("op doit être 'list', 'get' ou 'items'")
+        raise _bad("op must be 'list', 'get' or 'items'")
 
     # ================================================================
-    # Factures — dont l'agrégat borné, la vraie réponse à « combien »
+    # Invoices — including the bounded aggregate, the real answer to "how much"
     # ================================================================
 
     @mcp.tool()
@@ -410,7 +410,7 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='get' pour une facture précise",
+            _refuse_ignored(op, "use op='get' for a specific invoice",
                             invoice_id=invoice_id, amount=amount, currency=currency,
                             description=description, metadata=metadata,
                             pending_items=pending_items)
@@ -419,7 +419,7 @@ def register(mcp: FastMCP) -> None:
                 created=_window(created_after, created_before),
                 limit=_limit(limit), starting_after=starting_after))
         if op == "totals":
-            _refuse_ignored(op, "un agrégat ne cible pas une facture ni n'écrit",
+            _refuse_ignored(op, "an aggregate neither targets an invoice nor writes",
                             invoice_id=invoice_id, amount=amount, currency=currency,
                             description=description, metadata=metadata,
                             pending_items=pending_items, starting_after=starting_after,
@@ -428,7 +428,7 @@ def register(mcp: FastMCP) -> None:
                 client, customer=customer_id, subscription=subscription_id,
                 status=status, created=_window(created_after, created_before)))
         if op == "list_items":
-            _refuse_ignored(op, "ces champs ne s'appliquent pas à op='list_items'",
+            _refuse_ignored(op, "these fields do not apply to op='list_items'",
                             subscription_id=subscription_id, status=status,
                             amount=amount, currency=currency, description=description,
                             metadata=metadata, pending_items=pending_items)
@@ -437,8 +437,8 @@ def register(mcp: FastMCP) -> None:
                 starting_after=starting_after))
         if op in ("get", "lines"):
             if not invoice_id:
-                raise _bad(f"op={op!r} requiert `invoice_id`")
-            _refuse_ignored(op, "ces filtres ne s'appliquent qu'à op='list'/'totals'",
+                raise _bad(f"op={op!r} requires `invoice_id`")
+            _refuse_ignored(op, "these filters only apply to op='list'/'totals'",
                             customer_id=customer_id, subscription_id=subscription_id,
                             status=status, created_after=created_after,
                             created_before=created_before, amount=amount,
@@ -449,10 +449,10 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.get_invoice_lines(invoice_id, limit=_limit(limit)))
         if op == "add_item":
             if not customer_id:
-                raise _bad("op='add_item' requiert `customer_id`")
+                raise _bad("op='add_item' requires `customer_id`")
             if amount is None or not currency:
-                raise _bad("op='add_item' requiert `amount` (en centimes) et `currency`")
-            _refuse_ignored(op, "ces filtres ne s'appliquent pas à une création de ligne",
+                raise _bad("op='add_item' requires `amount` (in cents) and `currency`")
+            _refuse_ignored(op, "these filters do not apply to creating a line",
                             subscription_id=subscription_id, status=status,
                             created_after=created_after, created_before=created_before,
                             pending_items=pending_items, starting_after=starting_after,
@@ -462,8 +462,8 @@ def register(mcp: FastMCP) -> None:
                 invoice=invoice_id, description=description, metadata=metadata))
         if op == "create_draft":
             if not customer_id:
-                raise _bad("op='create_draft' requiert `customer_id`")
-            _refuse_ignored(op, "une facture neuve n'a pas encore d'id",
+                raise _bad("op='create_draft' requires `customer_id`")
+            _refuse_ignored(op, "a new invoice does not have an id yet",
                             invoice_id=invoice_id, status=status,
                             created_after=created_after, created_before=created_before,
                             amount=amount, currency=currency,
@@ -475,20 +475,20 @@ def register(mcp: FastMCP) -> None:
                 description=description, metadata=metadata))
         if op == "update":
             if not invoice_id:
-                raise _bad("op='update' requiert `invoice_id`")
+                raise _bad("op='update' requires `invoice_id`")
             body = {k: v for k, v in dict(description=description,
                                           metadata=metadata).items() if v is not None}
             if not body:
-                raise _bad("op='update' requiert au moins `description` ou `metadata` — "
-                           "une facture FINALISÉE n'accepte plus que ces champs.")
+                raise _bad("op='update' requires at least `description` or `metadata` — "
+                           "a FINALIZED invoice only accepts these fields.")
             return _run(lambda: client.update_invoice(invoice_id, **body))
-        raise _bad("op inconnu pour stripe_invoice")
+        raise _bad("unknown op for stripe_invoice")
 
     def _totals(client, **filters) -> dict:
-        """Balaie les factures d'une fenêtre et somme PAR DEVISE, jusqu'au
-        plafond. Le drapeau `complete` dit si le balayage a tout vu — une somme
-        partielle présentée comme le chiffre d'affaires serait le pire des
-        résultats possibles."""
+        """Sweeps a window's invoices and sums BY CURRENCY, up to the
+        cap. The `complete` flag says whether the sweep saw everything — a partial
+        sum presented as the revenue would be the worst possible
+        outcome."""
         by_currency: Dict[str, Dict[str, int]] = {}
         counts_by_status: Dict[str, int] = {}
         count = 0
@@ -519,17 +519,17 @@ def register(mcp: FastMCP) -> None:
             "complete": complete,
             "by_currency": by_currency,
             "count_by_status": counts_by_status,
-            "note": ("Montants dans la plus petite unité de chaque devise (centimes). "
-                     "Jamais additionnés entre devises." if by_currency else
-                     "Aucune facture dans cette fenêtre.")
+            "note": ("Amounts in the smallest unit of each currency (cents). "
+                     "Never added across currencies." if by_currency else
+                     "No invoices in this window.")
             + ("" if complete else
-               f" ⚠️ INCOMPLET : plus de {_AGGREGATE_MAX_PAGES * _MAX_LIMIT} factures "
-               "dans la fenêtre, la somme ne porte que sur les premières. Restreins "
-               "la période."),
+               f" ⚠️ INCOMPLETE: more than {_AGGREGATE_MAX_PAGES * _MAX_LIMIT} invoices "
+               "in the window, the sum only covers the first ones. Narrow "
+               "the period."),
         }
 
     # ================================================================
-    # Paiements — intentions, encaissements, remboursements, litiges
+    # Payments — intents, charges, refunds, disputes
     # ================================================================
 
     @mcp.tool()
@@ -593,16 +593,16 @@ def register(mcp: FastMCP) -> None:
         if op in targets:
             value, name, fn = targets[op]
             if not value:
-                raise _bad(f"op={op!r} requiert `{name}`")
-            _refuse_ignored(op, "ces filtres ne s'appliquent qu'aux op de liste",
+                raise _bad(f"op={op!r} requires `{name}`")
+            _refuse_ignored(op, "these filters only apply to the list ops",
                             customer_id=customer_id, created_after=created_after,
                             created_before=created_before, starting_after=starting_after,
                             limit=limit)
             return _run(lambda: fn(value))
-        raise _bad("op inconnu pour stripe_payment")
+        raise _bad("unknown op for stripe_payment")
 
     # ================================================================
-    # Solde, écritures de solde, virements
+    # Balance, balance transactions, payouts
     # ================================================================
 
     @mcp.tool()
@@ -635,7 +635,7 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "get":
-            _refuse_ignored(op, "le solde courant ne prend aucun filtre",
+            _refuse_ignored(op, "the current balance takes no filter",
                             transaction_id=transaction_id, payout_id=payout_id,
                             currency=currency, created_after=created_after,
                             created_before=created_before, starting_after=starting_after,
@@ -651,16 +651,16 @@ def register(mcp: FastMCP) -> None:
                 created=window, limit=_limit(limit), starting_after=starting_after))
         if op == "transaction":
             if not transaction_id:
-                raise _bad("op='transaction' requiert `transaction_id`")
+                raise _bad("op='transaction' requires `transaction_id`")
             return _run(lambda: client.get_balance_transaction(transaction_id))
         if op == "payout":
             if not payout_id:
-                raise _bad("op='payout' requiert `payout_id`")
+                raise _bad("op='payout' requires `payout_id`")
             return _run(lambda: client.get_payout(payout_id))
-        raise _bad("op inconnu pour stripe_balance")
+        raise _bad("unknown op for stripe_balance")
 
     # ================================================================
-    # Catalogue — produits, prix, réductions
+    # Catalog — products, prices, discounts
     # ================================================================
 
     @mcp.tool()
@@ -774,23 +774,23 @@ def register(mcp: FastMCP) -> None:
                 starting_after=starting_after))
         if op == "get_coupon":
             if not coupon_id:
-                raise _bad("op='get_coupon' requiert `coupon_id`")
+                raise _bad("op='get_coupon' requires `coupon_id`")
             return _run(lambda: client.get_coupon(coupon_id))
         if op == "create_coupon":
             if not duration:
-                raise _bad("op='create_coupon' requiert `duration` "
-                           "('once', 'repeating' ou 'forever')")
+                raise _bad("op='create_coupon' requires `duration` "
+                           "('once', 'repeating' or 'forever')")
             if duration == "repeating" and duration_in_months is None:
-                raise _bad("op='create_coupon' avec duration='repeating' requiert "
-                           "aussi `duration_in_months`")
+                raise _bad("op='create_coupon' with duration='repeating' also requires "
+                           "`duration_in_months`")
             if (percent_off is None) == (amount_off is None):
-                raise _bad("op='create_coupon' requiert `percent_off` OU `amount_off` "
-                           "— l'un des deux, jamais les deux, jamais aucun")
+                raise _bad("op='create_coupon' requires `percent_off` OR `amount_off` "
+                           "— one of the two, never both, never neither")
             if amount_off is not None and not currency:
-                raise _bad("op='create_coupon' avec `amount_off` requiert aussi `currency`")
-            _refuse_ignored(op, "`code` est le texte d'une promotion_code, pas d'un coupon "
-                            "— crée le coupon puis op='create_promotion_code' pour poser le "
-                            "texte tapé par le client", code=code)
+                raise _bad("op='create_coupon' with `amount_off` also requires `currency`")
+            _refuse_ignored(op, "`code` is the text of a promotion_code, not of a coupon "
+                            "— create the coupon then use op='create_promotion_code' to set "
+                            "the text the customer types", code=code)
             body = {k: v for k, v in dict(
                 percent_off=percent_off,
                 amount_off=amount_off, currency=currency if amount_off is not None else None,
@@ -800,25 +800,25 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.create_coupon(**body))
         if op == "update_coupon":
             if not coupon_id:
-                raise _bad("op='update_coupon' requiert `coupon_id`")
+                raise _bad("op='update_coupon' requires `coupon_id`")
             body = {k: v for k, v in dict(name=name, metadata=metadata).items()
                     if v is not None}
             if not body:
-                raise _bad("op='update_coupon' requiert `name` ou `metadata` — un coupon "
-                           "Stripe n'a rien d'autre de modifiable (montant/durée figés, "
-                           "comme le montant d'un prix)")
+                raise _bad("op='update_coupon' requires `name` or `metadata` — a Stripe "
+                           "coupon has nothing else that can be modified (amount/duration frozen, "
+                           "like the amount of a price)")
             return _run(lambda: client.update_coupon(coupon_id, **body))
         if op == "get_promotion_code":
             if not promotion_code_id:
-                raise _bad("op='get_promotion_code' requiert `promotion_code_id`")
+                raise _bad("op='get_promotion_code' requires `promotion_code_id`")
             return _run(lambda: client.get_promotion_code(promotion_code_id))
         if op == "create_promotion_code":
             if not coupon_id:
-                raise _bad("op='create_promotion_code' requiert `coupon_id` — le coupon "
-                           "(règle de remise) que ce code applique. Cherche-le avec "
-                           "op='list_coupons', ou crée-le d'abord avec op='create_coupon'.")
-            _refuse_ignored(op, "un code neuf est actif par défaut — utilise "
-                            "op='update_promotion_code' pour le désactiver après coup",
+                raise _bad("op='create_promotion_code' requires `coupon_id` — the coupon "
+                           "(discount rule) that this code applies. Find it with "
+                           "op='list_coupons', or create it first with op='create_coupon'.")
+            _refuse_ignored(op, "a new code is active by default — use "
+                            "op='update_promotion_code' to deactivate it afterwards",
                             active=active)
             body = {k: v for k, v in dict(
                 coupon=coupon_id, code=code, customer=customer_id,
@@ -827,61 +827,61 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.create_promotion_code(**body))
         if op == "update_promotion_code":
             if not promotion_code_id:
-                raise _bad("op='update_promotion_code' requiert `promotion_code_id`")
+                raise _bad("op='update_promotion_code' requires `promotion_code_id`")
             body = {k: v for k, v in dict(active=active, metadata=metadata).items()
                     if v is not None}
             if not body:
-                raise _bad("op='update_promotion_code' requiert `active` ou `metadata` — "
-                           "rien d'autre n'est modifiable après création (le code, le "
-                           "coupon lié et les restrictions sont figés)")
+                raise _bad("op='update_promotion_code' requires `active` or `metadata` — "
+                           "nothing else can be modified after creation (the code, the "
+                           "linked coupon and the restrictions are frozen)")
             return _run(lambda: client.update_promotion_code(promotion_code_id, **body))
         if op == "get_product":
             if not product_id:
-                raise _bad("op='get_product' requiert `product_id`")
+                raise _bad("op='get_product' requires `product_id`")
             return _run(lambda: client.get_product(product_id))
         if op == "get_price":
             if not price_id:
-                raise _bad("op='get_price' requiert `price_id`")
+                raise _bad("op='get_price' requires `price_id`")
             return _run(lambda: client.get_price(price_id))
         if op == "create_product":
             if not name:
-                raise _bad("op='create_product' requiert `name`")
+                raise _bad("op='create_product' requires `name`")
             return _run(lambda: client.create_product(
                 name=name, description=description, tax_code=tax_code,
                 active=active, metadata=metadata))
         if op == "update_product":
             if not product_id:
-                raise _bad("op='update_product' requiert `product_id`")
+                raise _bad("op='update_product' requires `product_id`")
             body = {k: v for k, v in dict(name=name, description=description,
                                           tax_code=tax_code, active=active,
                                           metadata=metadata).items() if v is not None}
             if not body:
-                raise _bad("op='update_product' requiert au moins un champ à modifier")
+                raise _bad("op='update_product' requires at least one field to modify")
             return _run(lambda: client.update_product(product_id, **body))
         if op == "create_price":
             if not product_id or unit_amount is None or not currency:
-                raise _bad("op='create_price' requiert `product_id`, `unit_amount` "
-                           "(en centimes) et `currency`")
+                raise _bad("op='create_price' requires `product_id`, `unit_amount` "
+                           "(in cents) and `currency`")
             recurring = {"interval": recurring_interval} if recurring_interval else None
             return _run(lambda: client.create_price(
                 product=product_id, unit_amount=unit_amount, currency=currency,
                 recurring=recurring, metadata=metadata))
         if op == "update_price":
             if not price_id:
-                raise _bad("op='update_price' requiert `price_id`")
+                raise _bad("op='update_price' requires `price_id`")
             if unit_amount is not None:
-                raise _bad("Le MONTANT d'un prix Stripe est immuable : crée un nouveau "
-                           "prix (op='create_price') puis désactive l'ancien "
+                raise _bad("The AMOUNT of a Stripe price is immutable: create a new "
+                           "price (op='create_price') then deactivate the old one "
                            "(op='update_price', active=false).")
             body = {k: v for k, v in dict(active=active,
                                           metadata=metadata).items() if v is not None}
             if not body:
-                raise _bad("op='update_price' requiert `active` ou `metadata`")
+                raise _bad("op='update_price' requires `active` or `metadata`")
             return _run(lambda: client.update_price(price_id, **body))
-        raise _bad("op inconnu pour stripe_catalog")
+        raise _bad("unknown op for stripe_catalog")
 
     # ================================================================
-    # Encaissement hébergé — liens de paiement & sessions Checkout
+    # Hosted collection — payment links & Checkout sessions
     # ================================================================
 
     @mcp.tool()
@@ -950,25 +950,25 @@ def register(mcp: FastMCP) -> None:
                 starting_after=starting_after))
         if op == "get_link":
             if not payment_link_id:
-                raise _bad("op='get_link' requiert `payment_link_id`")
+                raise _bad("op='get_link' requires `payment_link_id`")
             return _run(lambda: client.get_payment_link(payment_link_id))
         if op == "link_line_items":
             if not payment_link_id:
-                raise _bad("op='link_line_items' requiert `payment_link_id`")
+                raise _bad("op='link_line_items' requires `payment_link_id`")
             return _run(lambda: client.get_payment_link_line_items(
                 payment_link_id, limit=_limit(limit)))
         if op == "get_session":
             if not session_id:
-                raise _bad("op='get_session' requiert `session_id`")
+                raise _bad("op='get_session' requires `session_id`")
             return _run(lambda: client.get_checkout_session(session_id))
         if op == "session_line_items":
             if not session_id:
-                raise _bad("op='session_line_items' requiert `session_id`")
+                raise _bad("op='session_line_items' requires `session_id`")
             return _run(lambda: client.get_checkout_session_line_items(
                 session_id, limit=_limit(limit)))
         if op == "create_link":
             if not price_id:
-                raise _bad("op='create_link' requiert `price_id` — liste-les avec "
+                raise _bad("op='create_link' requires `price_id` — list them with "
                            "stripe_catalog(op='list_prices').")
             items: List[Dict[str, Any]] = [{"price": price_id, "quantity": quantity or 1}]
             if max_uses is not None and (isinstance(max_uses, bool) or max_uses < 1):
@@ -989,16 +989,16 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.create_payment_link(items, **body))
         if op == "update_link":
             if not payment_link_id:
-                raise _bad("op='update_link' requiert `payment_link_id`")
+                raise _bad("op='update_link' requires `payment_link_id`")
             body = {k: v for k, v in dict(active=active,
                                           metadata=metadata).items() if v is not None}
             if not body:
-                raise _bad("op='update_link' requiert `active` ou `metadata`")
+                raise _bad("op='update_link' requires `active` or `metadata`")
             return _run(lambda: client.update_payment_link(payment_link_id, **body))
-        raise _bad("op inconnu pour stripe_checkout")
+        raise _bad("unknown op for stripe_checkout")
 
     # ================================================================
-    # Activité du compte
+    # Account activity
     # ================================================================
 
     @mcp.tool()
@@ -1033,20 +1033,20 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='get' pour un événement précis", event_id=event_id)
+            _refuse_ignored(op, "use op='get' for a specific event", event_id=event_id)
             return _run(lambda: client.list_events(
                 type=type, created=_window(created_after, created_before),
                 limit=_limit(limit), starting_after=starting_after))
         if op == "get":
             if not event_id:
-                raise _bad("op='get' requiert `event_id`")
-            _refuse_ignored(op, "ces filtres ne s'appliquent qu'à op='list'",
+                raise _bad("op='get' requires `event_id`")
+            _refuse_ignored(op, "these filters only apply to op='list'",
                             type=type, created_after=created_after,
                             created_before=created_before, starting_after=starting_after)
             return _run(lambda: client.get_event(event_id))
         if op == "webhook_endpoints":
-            _refuse_ignored(op, "la liste des endpoints ne prend pas ces filtres",
+            _refuse_ignored(op, "the endpoint list does not take these filters",
                             event_id=event_id, type=type, created_after=created_after,
                             created_before=created_before)
             return _run(lambda: client.list_webhook_endpoints(limit=_limit(limit)))
-        raise _bad("op doit être 'list', 'get' ou 'webhook_endpoints'")
+        raise _bad("op must be 'list', 'get' or 'webhook_endpoints'")

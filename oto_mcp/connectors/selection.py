@@ -1,86 +1,86 @@
-"""Sélection de connecteurs par un membre — modèle « marketplace » (ADR 0019).
+"""Connector selection by a member — “marketplace” model (ADR 0019).
 
-**Trois faits distincts, ne pas confondre** (cf. ADR 0019) :
-- *Exposition* = `connector_activation` (qui PEUT voir, gouvernance plateforme,
-  deny-by-default, admin-only) — le **plafond**.
-- *Proposition* = `orgs.default_connectors` (ce que l'org RECOMMANDE, consultatif).
-- *Sélection* = **cette table** (ce que le MEMBRE installe dans son espace), per
-  `(sub, org_id)`. C'est l'état neuf que le marketplace introduit.
+**Three distinct facts, not to be confused** (cf. ADR 0019):
+- *Exposure* = `connector_activation` (who CAN see, platform governance,
+  deny-by-default, admin-only) — the **ceiling**.
+- *Proposal* = `orgs.default_connectors` (what the org RECOMMENDS, advisory).
+- *Selection* = **this table** (what the MEMBER installs in their space), per
+  `(sub, org_id)`. This is the new state the marketplace introduces.
 
-Trois états membre, par connecteur :
-- **non-sélectionné** : aucune ligne → reste dans la library/catalogue.
-- **sélectionné-actif** (`state='active'`) : outils visibles (visibilité normale).
-- **sélectionné-pause** (`state='paused'`) : installé mais outils masqués.
+Three member states, per connector:
+- **not selected**: no row → stays in the library/catalog.
+- **selected-active** (`state='active'`): tools visible (normal visibility).
+- **selected-paused** (`state='paused'`): installed but tools hidden.
 
-La table est la **source de vérité de la sélection** ; la *visibilité* reste
-calculée (`tool_visibility.is_tool_visible` inchangé) — le middleware en dérive un
-masquage supplémentaire (pause/non-sélection), jamais sur PROTECTED_TOOLS ni
-grant-only. `org_id=0` = espace perso (sentinelle ADR 0015), comme `user_disabled_tools`.
+The table is the **source of truth for selection**; *visibility* stays
+computed (`tool_visibility.is_tool_visible` unchanged) — the middleware derives an
+additional masking from it (pause/non-selection), never on PROTECTED_TOOLS nor
+grant-only. `org_id=0` = personal space (ADR 0015 sentinel), like `user_disabled_tools`.
 
-NB barreau **B1** : table + helpers seuls, AUCUN appelant ne lit encore — canari de
-déploiement (no-behavior-change). Le câblage (lecture `/api/me/connectors`, mutation,
-masquage pause au middleware) suit en B3/B4/B5.
+NB rung **B1**: table + helpers only, NO caller reads it yet — deployment canary
+(no-behavior-change). The wiring (reading `/api/me/connectors`, mutation,
+pause masking in the middleware) follows in B3/B4/B5.
 
-Convention : self-managing (ouvrent leur propre connexion, comme `connector_activation`).
-Seul `init_schema` reçoit le `conn` de la transaction `db.init_db`. Aucun import
-oto_mcp au niveau module (leaf) — `db` importé paresseusement.
+Convention: self-managing (they open their own connection, like `connector_activation`).
+Only `init_schema` receives the `conn` of the `db.init_db` transaction. No oto_mcp
+import at module level (leaf) — `db` imported lazily.
 """
 from __future__ import annotations
 
-# Valeurs fermées de l'état de sélection.
+# Closed values of the selection state.
 ACTIVE = "active"
 PAUSED = "paused"
 STATES = (ACTIVE, PAUSED)
 
-# PROVENANCE d'une installation (ADR 0050 §E7, oto#166) — qui a posé la ligne.
-# Sans elle, une ligne semée, posée par le kit ou choisie par le membre étaient
-# indiscernables, et aucune règle de retrait n'était tenable : retirer du kit ce
-# que le kit a posé exige de savoir QUI l'a posé. `inconnue` = toute ligne écrite
-# avant la trace, ou par un code qui ne la connaît pas (la production pendant la
-# fenêtre préprod→tag : base partagée) — aucun geste d'org ne la retire jamais.
-SOCLE = "socle"        # le socle plateforme `default_active`, au semis
-KIT = "kit"            # le kit de l'org, au semis ou au geste de l'admin
-ADMIN = "admin"        # poussée nominative d'un admin à UN membre
-MEMBRE = "membre"      # le membre lui-même (installation, ou reprise après une pause)
-INCONNUE = "inconnue"  # antérieure à la trace — jamais retirée par un geste d'org
+# PROVENANCE of an installation (ADR 0050 §E7, oto#166) — who placed the row.
+# Without it, a seeded row, one placed by the kit and one chosen by the member were
+# indistinguishable, and no removal rule was tenable: removing from the kit what the kit
+# placed requires knowing WHO placed it. `inconnue` = any row written before the trace,
+# or by code that doesn't know about it (production during the preprod→tag window:
+# shared database) — no org gesture ever removes it.
+SOCLE = "socle"        # the platform `default_active` base, at seeding
+KIT = "kit"            # the org's kit, at seeding or on the admin's gesture
+ADMIN = "admin"        # named push from an admin to ONE member
+MEMBRE = "membre"      # the member themselves (installation, or resuming after a pause)
+INCONNUE = "inconnue"  # predates the trace — never removed by an org gesture
 ORIGINS = (SOCLE, KIT, ADMIN, MEMBRE, INCONNUE)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS user_selected_connectors (
     sub         TEXT   NOT NULL,
-    -- L'org où la sélection vaut. Jamais `0` : l'ancienne sentinelle « perso sans
-    -- org » (ADR 0015) n'est lue par aucune surface depuis l'ADR 0030 §8 — une ligne
-    -- posée là était invisible (#959). La base le refuse, et sans défaut : une
-    -- écriture qui oublie l'org échoue au lieu de se ranger sous `0`.
+    -- The org where the selection applies. Never `0`: the old “personal, no org”
+    -- sentinel (ADR 0015) hasn't been read by any surface since ADR 0030 §8 — a row
+    -- placed there was invisible (#959). The database refuses it, and with no default: a
+    -- write that forgets the org fails instead of filing itself under `0`.
     org_id      BIGINT NOT NULL CONSTRAINT user_selected_connectors_org_reelle
                                 CHECK (org_id > 0),
-    connector   TEXT   NOT NULL,             -- nom de connecteur (registre providers/)
+    connector   TEXT   NOT NULL,             -- connector name (providers/ registry)
     state       TEXT   NOT NULL DEFAULT 'active',  -- 'active' | 'paused'
     selected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- Provenance (ADR 0050 §E7) : socle | kit | admin | membre | inconnue. Posée
-    -- aussi par `ALTER … ADD COLUMN` dans `db/_init.py` pour la base PARTAGÉE
-    -- prod/préprod, où ce `CREATE TABLE` est sauté — les deux définitions sont
-    -- identiques (le cliquet `test_boot_order_replay` compare défaut et nullabilité).
+    -- Provenance (ADR 0050 §E7): socle | kit | admin | membre | inconnue. Also set
+    -- by `ALTER … ADD COLUMN` in `db/_init.py` for the SHARED prod/preprod database,
+    -- where this `CREATE TABLE` is skipped — both definitions are identical (the
+    -- `test_boot_order_replay` ratchet compares default and nullability).
     origin      TEXT   NOT NULL DEFAULT 'inconnue',
     PRIMARY KEY (sub, org_id, connector)
 );
--- Le RETRAIT par le membre, retenu avec sa date (ADR 0050 §E6/§E7). Une table à part
--- et non un état de plus dans `user_selected_connectors` : le code servi AVANT ce lot
--- (base partagée) lit chaque ligne de cette table-là comme « installé ou en pause »,
--- et servirait un état qu'il ne connaît pas. Ici, il ne voit rien. Un retrait reste
--- un DELETE de la sélection, doublé de cette trace ; un `select`/`pause` du membre
--- l'efface (son dernier geste n'est plus un retrait).
+-- The member's REMOVAL, kept with its date (ADR 0050 §E6/§E7). A separate table
+-- and not one more state in `user_selected_connectors`: the code served BEFORE this
+-- batch (shared database) reads each row of that table as “installed or paused”,
+-- and would serve a state it doesn't know. Here, it sees nothing. A removal remains
+-- a DELETE from the selection, paired with this trace; a member's `select`/`pause`
+-- erases it (their last gesture is no longer a removal).
 CREATE TABLE IF NOT EXISTS connector_selection_removed (
     sub        TEXT   NOT NULL,
     org_id     BIGINT NOT NULL CONSTRAINT connector_selection_removed_org_reelle
-                               CHECK (org_id > 0),   -- jamais `0` (#959), cf. plus haut
+                               CHECK (org_id > 0),   -- never `0` (#959), cf. above
     connector  TEXT   NOT NULL,
     removed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (sub, org_id, connector)
 );
--- Marque de transition (B6) : un (sub, org) « seedé » a reçu sa sélection initiale
--- (= l'exposé courant en active) au passage au régime strict « non-sélectionné =
--- masqué ». Évite de re-seeder un membre qui a légitimement tout désélectionné.
+-- Transition marker (B6): a “seeded” (sub, org) received its initial selection
+-- (= the current exposure as active) on the switch to the strict regime “not selected =
+-- hidden”. Avoids re-seeding a member who legitimately deselected everything.
 CREATE TABLE IF NOT EXISTS connector_selection_seeded (
     sub       TEXT   NOT NULL,
     org_id    BIGINT NOT NULL DEFAULT 0,
@@ -90,18 +90,18 @@ CREATE TABLE IF NOT EXISTS connector_selection_seeded (
 """
 
 
-# --- schéma (reçoit le conn de la transaction init_db) ----------------------
+# --- schema (receives the conn of the init_db transaction) ------------------
 
 def init_schema(conn) -> None:
-    """Crée la table. Idempotent. Appelé par `db.init_db` dans la même transaction."""
+    """Creates the table. Idempotent. Called by `db.init_db` in the same transaction."""
     conn.execute(_SCHEMA)
 
 
-# --- lectures (self-managing) -----------------------------------------------
+# --- reads (self-managing) --------------------------------------------------
 
 def list_selection(sub: str, org_id: int = 0) -> dict[str, str]:
-    """Sélections du membre dans une org : `{connector: state}`. Les connecteurs
-    absents de la map sont *non-sélectionnés*."""
+    """The member's selections in an org: `{connector: state}`. Connectors
+    absent from the map are *not selected*."""
     from .. import db
 
     with db._connect() as conn:
@@ -113,7 +113,7 @@ def list_selection(sub: str, org_id: int = 0) -> dict[str, str]:
 
 
 def list_selection_detail(sub: str, org_id: int = 0) -> dict[str, dict]:
-    """Même lecture que `list_selection`, avec la PROVENANCE de chaque ligne :
+    """Same read as `list_selection`, with the PROVENANCE of each row:
     `{connector: {"state": …, "origin": …}}` (ADR 0050 §E7)."""
     from .. import db
 
@@ -127,9 +127,9 @@ def list_selection_detail(sub: str, org_id: int = 0) -> dict[str, dict]:
 
 
 def list_removed(sub: str, org_id: int = 0) -> dict:
-    """Retraits du membre dans une org : `{connector: removed_at}` (ADR 0050 §E6).
-    Un connecteur de cette map n'est plus installé ET le membre l'a retiré lui-même :
-    aucun geste d'org ne le lui remet."""
+    """The member's removals in an org: `{connector: removed_at}` (ADR 0050 §E6).
+    A connector in this map is no longer installed AND the member removed it themselves:
+    no org gesture puts it back for them."""
     from .. import db
 
     with db._connect() as conn:
@@ -142,7 +142,7 @@ def list_removed(sub: str, org_id: int = 0) -> dict:
 
 
 def state_of(sub: str, connector: str, org_id: int = 0) -> str | None:
-    """État d'un connecteur pour le membre : 'active' | 'paused' | None (non-sélectionné)."""
+    """State of a connector for the member: 'active' | 'paused' | None (not selected)."""
     from .. import db
 
     with db._connect() as conn:
@@ -154,20 +154,21 @@ def state_of(sub: str, connector: str, org_id: int = 0) -> str | None:
     return row["state"] if row is not None else None
 
 
-# --- écritures du MEMBRE (self-managing) --------------------------------------
+# --- MEMBER writes (self-managing) --------------------------------------------
 
 def set_state(sub: str, connector: str, state: str, org_id: int = 0) -> None:
-    """Geste du MEMBRE : installe (ou bascule actif↔pause) un connecteur. Upsert.
+    """MEMBER gesture: installs (or toggles active↔pause) a connector. Upsert.
 
-    Provenance (ADR 0050 §E7) : une installation par le membre, ou sa reprise après
-    une pause, passe la ligne à `membre` — c'est ce qui la soustrait à un retrait du
-    kit (décision Q1 : « un membre qui l'avait installé lui-même le garde »). Une
-    PAUSE ne change pas la provenance d'une ligne existante : mettre en pause ce que
-    le kit a posé ne l'approprie pas. Le geste efface un retrait antérieur du membre
-    — son dernier geste n'est plus un retrait. ⚠️ Réservé aux gestes du membre : un
-    geste d'org écrit par `install_for_member`, jamais par ici (la provenance mentirait)."""
+    Provenance (ADR 0050 §E7): an installation by the member, or their resuming after
+    a pause, sets the row to `membre` — this is what shields it from a kit removal
+    (decision Q1: “a member who had installed it themselves keeps it”). A
+    PAUSE does not change the provenance of an existing row: pausing what the
+    kit placed does not appropriate it. The gesture erases a prior removal by the member
+    — their last gesture is no longer a removal. ⚠️ Reserved for member gestures: an
+    org gesture writes through `install_for_member`, never through here (the provenance
+    would lie)."""
     if state not in STATES:
-        raise ValueError(f"état de sélection invalide: {state!r} (∈ {STATES})")
+        raise ValueError(f"invalid selection state: {state!r} (∈ {STATES})")
     from .. import db
 
     on_conflict = ("DO UPDATE SET state = EXCLUDED.state, selected_at = NOW(), "
@@ -188,13 +189,13 @@ def set_state(sub: str, connector: str, state: str, org_id: int = 0) -> None:
 
 
 def unselect(sub: str, connector: str, org_id: int = 0) -> bool:
-    """Geste du MEMBRE : retire un connecteur de sa sélection (→ retour library).
-    Renvoie True si une ligne existait.
+    """MEMBER gesture: removes a connector from their selection (→ back to the library).
+    Returns True if a row existed.
 
-    Le retrait est RETENU avec sa date (ADR 0050 §E6) : sans lui, un ajout au kit
-    réinstallait ce que le membre venait de retirer — la ligne effacée ne laissait
-    aucune trace de son « non ». Un retrait qui ne trouve rien n'écrit rien : il n'y
-    avait rien à retirer, et l'appelant le refuse."""
+    The removal is KEPT with its date (ADR 0050 §E6): without it, an addition to the kit
+    reinstalled what the member had just removed — the erased row left no trace of
+    their “no”. A removal that finds nothing writes nothing: there was nothing to
+    remove, and the caller refuses it."""
     from .. import db
 
     with db._connect() as conn:
@@ -213,24 +214,24 @@ def unselect(sub: str, connector: str, org_id: int = 0) -> bool:
         return True
 
 
-# --- écriture d'un geste d'ORG (reçoit le conn de l'appelant) --------------------
+# --- write for an ORG gesture (receives the caller's conn) --------------------
 
 def install_for_member(conn, sub: str, connector: str, org_id: int, origin: str) -> str:
-    """Installe `connector` chez UN membre pour le compte d'un geste d'org (kit,
-    poussée) — jamais par-dessus le membre (ADR 0050 §E4/§E6). Reçoit le `conn` de
-    l'appelant : un geste d'org est UNE transaction. Rend ce qui s'est passé :
+    """Installs `connector` for ONE member on behalf of an org gesture (kit,
+    push) — never over the member (ADR 0050 §E4/§E6). Receives the caller's `conn`:
+    an org gesture is ONE transaction. Returns what happened:
 
-    - `installed`       — aucune ligne, aucun retrait : ligne posée, `active`, `origin` ;
-    - `already_active`  — une ligne active existe (quelle qu'en soit la provenance) :
-                          intacte ;
-    - `paused`          — le membre l'a en pause : intacte (une pause tient) ;
-    - `removed_by_member` — le membre l'a retiré lui-même : rien n'est posé.
+    - `installed`       — no row, no removal: row placed, `active`, `origin`;
+    - `already_active`  — an active row exists (whatever its provenance):
+                          untouched;
+    - `paused`          — the member has it paused: untouched (a pause holds);
+    - `removed_by_member` — the member removed it themselves: nothing is placed.
 
-    La lecture et l'écriture sont une seule instruction gardée par la PK et par le
-    retrait, pas un `SELECT` puis un `INSERT` : un membre qui retire le connecteur
-    pendant le geste ne le voit pas revenir."""
+    The read and the write are a single statement guarded by the PK and by the
+    removal, not a `SELECT` then an `INSERT`: a member who removes the connector
+    during the gesture doesn't see it come back."""
     if origin not in (SOCLE, KIT, ADMIN):
-        raise ValueError(f"provenance d'un geste d'org invalide: {origin!r}")
+        raise ValueError(f"invalid org-gesture provenance: {origin!r}")
     cur = conn.execute(
         "INSERT INTO user_selected_connectors (sub, org_id, connector, state, origin) "
         "SELECT %s, %s, %s, 'active', %s "
@@ -251,10 +252,10 @@ def install_for_member(conn, sub: str, connector: str, org_id: int, origin: str)
     return "already_active" if row["state"] == ACTIVE else "paused"
 
 
-# --- seed initial d'un (sub, org) — socle curé (ADR 0050) ---------------------
+# --- initial seed of a (sub, org) — curated base (ADR 0050) -------------------
 
 def is_seeded(sub: str, org_id: int = 0) -> bool:
-    """True si ce (sub, org) a déjà reçu sa sélection initiale (cf. `seed_active`)."""
+    """True if this (sub, org) has already received its initial selection (cf. `seed_active`)."""
     from .. import db
 
     with db._connect() as conn:
@@ -266,15 +267,15 @@ def is_seeded(sub: str, org_id: int = 0) -> bool:
 
 
 def seed_active(sub: str, origins: dict[str, str], org_id: int = 0) -> None:
-    """Sélection initiale d'un (sub, org) (one-shot, marque `seeded`) : installe
-    chaque connecteur de `origins` en `active`, sous sa provenance (`socle` ou
-    `kit`, ADR 0050 §E7). L'appelant décide le contenu (`session_visibility`).
-    Le reste de l'exposé démarre non-sélectionné (→ library). Idempotent, ne
-    réécrit jamais une sélection existante — et ne remet jamais ce que le membre a
-    retiré (un geste du kit a pu poser la ligne AVANT son premier passage, et il a
-    pu la retirer depuis l'écran, qui ne sème pas)."""
+    """Initial selection of a (sub, org) (one-shot, sets the `seeded` marker): installs
+    each connector of `origins` as `active`, under its provenance (`socle` or
+    `kit`, ADR 0050 §E7). The caller decides the content (`session_visibility`).
+    The rest of the exposure starts not selected (→ library). Idempotent, never
+    rewrites an existing selection — and never puts back what the member removed
+    (a kit gesture may have placed the row BEFORE their first pass, and they may have
+    removed it since from the screen, which doesn't seed)."""
     if not isinstance(origins, dict):
-        raise TypeError("seed_active: `origins` = {connecteur: provenance}")
+        raise TypeError("seed_active: `origins` = {connector: provenance}")
     from .. import db
 
     with db._connect() as conn:
@@ -287,31 +288,30 @@ def seed_active(sub: str, origins: dict[str, str], org_id: int = 0) -> None:
         )
 
 
-# --- renommage d'un connecteur déposé (report des sélections) ------------------
+# --- renaming of a retired connector (carrying selections over) ---------------
 
 def rename_selection(conn, old: str, new: str) -> int:
-    """Reporte sur `new` les sélections restées sur un connecteur DÉPOSÉ `old`
-    (reçoit le `conn` de la transaction `db.init_db`). Renvoie le nombre de lignes
-    renommées (hors doublons résorbés). Idempotent : au rejeu, plus aucune ligne ne
-    porte `old` — tout devient no-op.
+    """Carries over to `new` the selections left on a RETIRED connector `old`
+    (receives the `conn` of the `db.init_db` transaction). Returns the number of rows
+    renamed (excluding duplicates absorbed). Idempotent: on replay, no row
+    carries `old` any more — everything becomes a no-op.
 
-    **Pourquoi une migration de boot et pas un one-shot manuel** : déposer un
-    connecteur (#279 : `linkedin` → `aiark`) renomme le registre, mais la toolbox
-    d'un membre est la liste de ses connecteurs INSTALLÉS (ADR 0019/0050) — un nom
-    qui ne résout plus rien ne monte aucun outil, et sous le régime strict
-    « non-sélectionné = masqué » le membre perd la surface entière, sans que rien ne
-    le lui dise. Le geste était noté en prose (« reste à faire au tag prod ») : une
-    note ne bloque rien et ne rappelle rien, sept tags sont passés au-dessus (#295).
-    Une migration de données qui doit suivre un tag est une migration de BOOT.
+    **Why a boot migration and not a manual one-shot**: retiring a connector
+    (#279: `linkedin` → `aiark`) renames the registry, but a member's toolbox is the list
+    of their INSTALLED connectors (ADR 0019/0050) — a name that no longer resolves to
+    anything mounts no tool, and under the strict regime “not selected = hidden” the
+    member loses the entire surface, with nothing telling them. The gesture was noted in
+    prose (“to be done at the prod tag”): a note blocks nothing and reminds of nothing,
+    seven tags went by (#295). A data migration that must follow a tag is a BOOT migration.
 
-    L'ORDRE des trois gestes est le correctif, pas un détail : la PK est
-    `(sub, org_id, connector)`, donc un `UPDATE … SET connector = new` brut échoue
-    sur toute paire qui portait DÉJÀ les deux (elles coexistaient — l'un en mode
-    plateforme, l'autre en BYO). D'où : promouvoir, dédoublonner, renommer."""
+    The ORDER of the three gestures is the fix, not a detail: the PK is
+    `(sub, org_id, connector)`, so a raw `UPDATE … SET connector = new` fails
+    on any pair that ALREADY carried both (they coexisted — one in platform mode, the
+    other in BYO). Hence: promote, deduplicate, rename."""
     if old == new:
-        raise ValueError("rename_selection: old et new identiques")
-    # 1. Paires portant déjà `new` : le plus PERMISSIF gagne — si `old` était active,
-    #    la ligne survivante doit l'être (le membre avait bien l'outil).
+        raise ValueError("rename_selection: old and new are identical")
+    # 1. Pairs already carrying `new`: the most PERMISSIVE wins — if `old` was active,
+    #    the surviving row must be too (the member did have the tool).
     conn.execute(
         "UPDATE user_selected_connectors a SET state = %s "
         " WHERE a.connector = %s AND a.state <> %s "
@@ -320,7 +320,7 @@ def rename_selection(conn, old: str, new: str) -> int:
         "                  AND b.connector = %s AND b.state = %s)",
         (ACTIVE, new, ACTIVE, old, ACTIVE),
     )
-    # 2. … et l'ancienne ligne y est alors en trop (sinon le renommage viole la PK).
+    # 2. … and the old row is then redundant there (otherwise the rename violates the PK).
     conn.execute(
         "DELETE FROM user_selected_connectors a "
         " WHERE a.connector = %s "
@@ -329,16 +329,16 @@ def rename_selection(conn, old: str, new: str) -> int:
         "                  AND b.connector = %s)",
         (old, new),
     )
-    # 3. Le reste se renomme sans conflit — et garde son `state` (une sélection en
-    #    pause reste en pause : le renommage n'est pas une occasion d'installer).
+    # 3. The rest is renamed without conflict — and keeps its `state` (a paused
+    #    selection stays paused: the rename is not an opportunity to install).
     cur = conn.execute(
         "UPDATE user_selected_connectors SET connector = %s WHERE connector = %s",
         (new, old),
     )
-    # 4. Les RETRAITS du membre suivent aussi (ADR 0050 §E6) : un retrait resté sur
-    #    l'ancien nom ne protégerait plus rien, et le kit réinstallerait sous le
-    #    nouveau ce que le membre avait retiré. Même ordre : un retrait déjà posé
-    #    sous `new` gagne (c'est le plus récent des deux faits), l'ancien part.
+    # 4. The member's REMOVALS follow too (ADR 0050 §E6): a removal left on the
+    #    old name would protect nothing any more, and the kit would reinstall under the
+    #    new name what the member had removed. Same order: a removal already placed
+    #    under `new` wins (it is the more recent of the two facts), the old one goes.
     conn.execute(
         "DELETE FROM connector_selection_removed a WHERE a.connector = %s "
         "   AND EXISTS (SELECT 1 FROM connector_selection_removed b "
@@ -352,43 +352,43 @@ def rename_selection(conn, old: str, new: str) -> int:
     return cur.rowcount or 0
 
 
-# --- one-shot du SPLIT unipile (2026-08-28) ----------------------------------
+# --- one-shot of the unipile SPLIT (2026-08-28) ------------------------------
 
-# Sentinelle du fan-out de split, même ledger et même forme que `_BACKFILL_MARK`
-# (jamais un sub réel — les subs Logto sont alphanumériques).
+# Sentinel of the split fan-out, same ledger and same shape as `_BACKFILL_MARK`
+# (never a real sub — Logto subs are alphanumeric).
 _SPLIT_MARK = "#unipile-split-fanout"
-# Le split google (2026-09-26) : le compte + ses six services. Même ledger, sa propre
-# sentinelle — deux déménagements, deux marqueurs.
+# The google split (2026-09-26): the account + its six services. Same ledger, its own
+# sentinel — two moves, two markers.
 GOOGLE_SPLIT_MARK = "#google-split-fanout"
 GOOGLE_SERVICES = ("gmail", "drive", "sheets", "calendar", "tasks", "chat")
 
 
 def split_fanout_pending(conn, targets: tuple[str, ...],
                          mark: str = _SPLIT_MARK) -> bool:
-    """Le fan-out du split doit-il encore tourner sur CETTE base ? (one-shot)
+    """Must the split fan-out still run on THIS database? (one-shot)
 
-    **Pourquoi ce garde-fou existe.** Le fan-out a été écrit « idempotent, donc
-    rejouable à chaque boot » sur la foi d'un `ON CONFLICT DO NOTHING` — qui ne
-    protège que les lignes PRÉSENTES. Or désélectionner un connecteur SUPPRIME sa
-    ligne (`unselect`, un DELETE) : la protection ne couvrait donc pas le seul cas
-    où elle comptait. Résultat vécu : qui retirait WhatsApp le retrouvait installé
-    au redémarrage suivant, avec les cinq autres canaux — « ce n'est pas parce
-    qu'un connecteur est actif que les autres doivent l'être ». Même mécanique sur
-    les deux autres barreaux : une disponibilité plateforme éteinte à la main
-    revenait allumée, une ACL d'org effacée revenait posée.
+    **Why this safeguard exists.** The fan-out was written “idempotent, therefore
+    replayable at every boot” on the strength of an `ON CONFLICT DO NOTHING` — which only
+    protects rows that are PRESENT. Yet deselecting a connector DELETES its row
+    (`unselect`, a DELETE): the protection therefore didn't cover the one case where it
+    mattered. Lived result: whoever removed WhatsApp found it installed again at the next
+    restart, along with the five other channels — “just because one connector is active
+    doesn't mean the others should be”. Same mechanics on the two other rungs: a
+    platform availability switched off by hand came back on, an org ACL that had been
+    erased came back set.
 
-    Un fan-out de split n'est pas une convergence à maintenir — c'est un
-    DÉMÉNAGEMENT, vrai une fois. Ce qui doit être rejouable, c'est le BOOT, pas
-    l'écriture : d'où une sentinelle, exactement comme le backfill ADR 0050.
+    A split fan-out is not a convergence to maintain — it is a MOVE, true once. What must
+    be replayable is the BOOT, not the write: hence a sentinel, exactly like the ADR 0050
+    backfill.
 
-    **La base de prod l'a déjà reçu** (elle boote avec ce code depuis le
-    2026-08-28), et poser la sentinelle sans plus rien regarder la ferait donc
-    tourner une dernière fois — en réinstallant une dernière fois ce que les gens
-    ont retiré. D'où la sonde : une base qui porte DÉJÀ une sélection sur l'un des
-    canaux a reçu le déménagement, on marque sans réécrire. Une base neuve, ou
-    restaurée d'avant le split, n'en porte aucune et le reçoit normalement."""
-    # `mark` : UNE sentinelle par split (unipile 2026-08-28, google 2026-09-26) —
-    # la seconde ne doit ni lire ni poser la première.
+    **The prod database has already received it** (it has booted with this code since
+    2026-08-28), and setting the sentinel without looking at anything else would make it
+    run one last time — reinstalling one last time what people removed. Hence the probe:
+    a database that ALREADY carries a selection on one of the channels has received the
+    move, we mark without rewriting. A new database, or one restored from before the
+    split, carries none and receives it normally."""
+    # `mark`: ONE sentinel per split (unipile 2026-08-28, google 2026-09-26) —
+    # the second must neither read nor set the first.
     done = conn.execute(
         "SELECT 1 FROM connector_selection_seeded WHERE sub = %s AND org_id = 0",
         (mark,),
@@ -406,7 +406,7 @@ def split_fanout_pending(conn, targets: tuple[str, ...],
 
 
 def mark_split_fanout(conn, mark: str = _SPLIT_MARK) -> None:
-    """Pose la sentinelle du fan-out de split — à appeler APRÈS la passe."""
+    """Sets the split fan-out sentinel — to be called AFTER the pass."""
     conn.execute(
         "INSERT INTO connector_selection_seeded (sub, org_id) VALUES (%s, 0) "
         "ON CONFLICT DO NOTHING",
@@ -415,26 +415,26 @@ def mark_split_fanout(conn, mark: str = _SPLIT_MARK) -> None:
 
 
 def fanout_selection(conn, source: str, targets: tuple[str, ...]) -> int:
-    """Étend à `targets` la sélection de `source` — un connecteur qui se SCINDE.
+    """Extends `source`'s selection to `targets` — a connector that SPLITS.
 
-    Pendant de `rename_selection` pour le cas 1→N. Le split unipile du 2026-08-28 en
-    est le premier porteur : la carte « messagerie hébergée » est devenue sept cartes
-    (le compte + ses six canaux), et un membre qui avait installé `unipile` doit
-    retrouver ses outils WhatsApp et LinkedIn là où ils sont MAINTENANT. Sans ce
-    geste, sous le régime strict « non-sélectionné = masqué » (ADR 0050), la surface
-    de messagerie disparaît de la toolbox de tous ceux qui l'avaient — silencieusement,
-    exactement le mode de panne de #295.
+    Counterpart of `rename_selection` for the 1→N case. The unipile split of 2026-08-28
+    is its first carrier: the “hosted messaging” card became seven cards
+    (the account + its six channels), and a member who had installed `unipile` must
+    find their WhatsApp and LinkedIn tools where they are NOW. Without this
+    gesture, under the strict regime “not selected = hidden” (ADR 0050), the messaging
+    surface disappears from the toolbox of everyone who had it — silently,
+    exactly the failure mode of #295.
 
-    `source` est CONSERVÉ : il ne disparaît pas du registre (il devient le compte
-    fournisseur, qui porte la clé). C'est ce qui distingue un split d'un renommage.
+    `source` is KEPT: it doesn't disappear from the registry (it becomes the provider
+    account, which carries the key). This is what distinguishes a split from a rename.
 
-    `ON CONFLICT DO NOTHING` sur la PK `(sub, org_id, connector)` : une paire qui
-    porte déjà l'un des `targets` garde SON état — un membre qui avait déjà pausé un
-    canal ne se le voit pas réinstaller par la migration. Idempotent, donc rejouable
-    à chaque boot (base partagée preprod/prod, docs/live-migrations.md).
+    `ON CONFLICT DO NOTHING` on the PK `(sub, org_id, connector)`: a pair that
+    already carries one of the `targets` keeps ITS state — a member who had already
+    paused a channel doesn't see it reinstalled by the migration. Idempotent, therefore
+    replayable at every boot (shared preprod/prod database, docs/live-migrations.md).
 
-    Le `state` est HÉRITÉ de la source : une sélection en pause reste en pause. Un
-    split n'est pas une occasion d'installer quelque chose."""
+    The `state` is INHERITED from the source: a paused selection stays paused. A
+    split is not an opportunity to install anything."""
     n = 0
     for cible in targets:
         cur = conn.execute(
@@ -448,26 +448,26 @@ def fanout_selection(conn, source: str, targets: tuple[str, ...]) -> int:
     return n
 
 
-# --- migration ADR 0050 : backfill one-shot des pairs pré-existants -----------
+# --- ADR 0050 migration: one-shot backfill of pre-existing pairs --------------
 
-# Connecteurs `default_hidden` AU MOMENT du retrait du flag (ADR 0050 B3) — fait
-# historique figé dans la migration : le backfill reconstitue ce que chaque membre
-# VOYAIT (l'exposé de son org moins ces masqués), pas l'exposé brut.
+# `default_hidden` connectors AT THE TIME the flag was removed (ADR 0050 B3) — a
+# historical fact frozen in the migration: the backfill reconstitutes what each member
+# SAW (their org's exposure minus these hidden ones), not the raw exposure.
 _BACKFILL_HIDDEN = frozenset(
     {"attio", "brevoauto", "pennylaneged", "resend", "scaleway", "http", "bridge"})
-# Sentinelle du one-shot (jamais un sub réel — les subs Logto sont alphanumériques).
-# Posée dans `connector_selection_seeded` après la passe : le backfill ne rejoue
-# JAMAIS, car un pair créé APRÈS lui doit recevoir le SOCLE au seed lazy, pas
-# l'exposé historique.
+# Sentinel of the one-shot (never a real sub — Logto subs are alphanumeric).
+# Set in `connector_selection_seeded` after the pass: the backfill NEVER replays,
+# because a pair created AFTER it must receive the BASE at lazy seed, not the
+# historical exposure.
 _BACKFILL_MARK = "#adr0050-backfill"
 
 
 def backfill_preexisting(conn) -> None:
-    """One-shot ADR 0050 (reçoit le `conn` de la transaction `db.init_db`) : au
-    passage au régime nominal « non-sélectionné = masqué », chaque (sub, org) DÉJÀ
-    existant et jamais seedé reçoit en sélection `active` ce qu'il VOYAIT (exposé
-    de l'org − ex-`default_hidden`) — zéro changement de toolbox pour l'existant.
-    Les pairs déjà seedés (régime strict testé en canari) gardent leurs choix."""
+    """ADR 0050 one-shot (receives the `conn` of the `db.init_db` transaction): on the
+    switch to the nominal regime “not selected = hidden”, each ALREADY existing and
+    never-seeded (sub, org) receives as `active` selection what it SAW (org
+    exposure − ex-`default_hidden`) — zero toolbox change for the existing ones.
+    Pairs already seeded (strict regime tested as a canary) keep their choices."""
     done = conn.execute(
         "SELECT 1 FROM connector_selection_seeded WHERE sub = %s AND org_id = 0",
         (_BACKFILL_MARK,),
@@ -476,9 +476,9 @@ def backfill_preexisting(conn) -> None:
         return
     from .activation import _resolve
 
-    # Table UNIFIÉE `connector_availability` (chantier ACL, cadrage 10/07) — peuplée
-    # AVANT ce backfill par `connector_activation.init_schema` (copie legacy) : cf.
-    # l'ordre des appels dans db._init. Ne pas relire la table legacy (tombe en B2).
+    # UNIFIED table `connector_availability` (ACL workstream, framing 10/07) — populated
+    # BEFORE this backfill by `connector_activation.init_schema` (legacy copy): cf.
+    # the call order in db._init. Don't re-read the legacy table (dropped in B2).
     rows = conn.execute(
         "SELECT scope_type, scope_id, connector, enabled FROM connector_availability "
         "WHERE scope_type IN ('platform', 'org')").fetchall()
@@ -489,10 +489,10 @@ def backfill_preexisting(conn) -> None:
             global_map[r["connector"]] = bool(r["enabled"])
         else:
             overrides.setdefault(int(r["scope_id"]), {})[r["connector"]] = bool(r["enabled"])
-    # Tous les couples (sub, org) susceptibles d'un profil de visibilité : les
-    # memberships — moins les pairs déjà seedés. Plus la sentinelle `0` : elle a
-    # semé, le 10/07, 2 090 lignes qu'aucune surface ne lisait (#959), et la base
-    # la refuse désormais (`…_org_reelle`).
+    # All (sub, org) couples liable to have a visibility profile: the
+    # memberships — minus the already-seeded pairs. Plus the `0` sentinel: it seeded,
+    # on 10/07, 2,090 rows that no surface read (#959), and the database now refuses it
+    # (`…_org_reelle`).
     pairs = conn.execute(
         "SELECT sub, org_id FROM org_members "
         "EXCEPT SELECT sub, org_id FROM connector_selection_seeded").fetchall()

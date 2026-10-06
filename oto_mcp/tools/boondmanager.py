@@ -1,23 +1,23 @@
-"""BoondManager — le CRM des ESN : recherche, lecture, création. Rien d'autre.
+"""BoondManager — the CRM of IT-services firms: search, read, create. Nothing else.
 
-Wrappe `oto.tools.boondmanager.BoondManagerClient` (API REST Boond, en-tête
-`X-Jwt-Client-BoondManager` signé par appel), credential à trois champs résolu
-par appel via `access.resolve_credential_fields("boondmanager")` (ADR 0011).
+Wraps `oto.tools.boondmanager.BoondManagerClient` (Boond REST API, header
+`X-Jwt-Client-BoondManager` signed per call), three-field credential resolved
+per call via `access.resolve_credential_fields("boondmanager")` (ADR 0011).
 
-**Surface** (4 tools, volontairement étroite) :
-- `boondmanager_search` — contacts, sociétés, opportunités, actions ;
-- `boondmanager_get` — l'onglet « information » d'un enregistrement ;
-- `boondmanager_dictionary` — les ids des états, types, origines, types
-  d'action du compte (sans eux, ni filtre ni action créable) ;
-- `boondmanager_create` — **dry-run par défaut** : le corps est validé et rendu
-  sans appel ; `dry_run=false` crée pour de vrai.
+**Surface** (4 tools, deliberately narrow):
+- `boondmanager_search` — contacts, companies, opportunities, actions;
+- `boondmanager_get` — the "information" tab of a record;
+- `boondmanager_dictionary` — the ids of the account's states, types, origins,
+  action types (without them, no filter and no action can be created);
+- `boondmanager_create` — **dry-run by default**: the body is validated and returned
+  without a call; `dry_run=false` really creates.
 
-Pas de mise à jour, de suppression ni de fusion : elles écrasent ou détruisent,
-et n'entreront qu'une fois éprouvées sur une instance réelle. Boond compte les
-appels d'API par MOIS : aucun tool ne pagine ni n'enchaîne d'appels de lui-même.
+No update, deletion or merge: they overwrite or destroy,
+and will only come in once proven on a real instance. Boond counts
+API calls per MONTH: no tool paginates or chains calls on its own.
 
-Les appels au client sont écrits en clair (`_client().search(…)`) : c'est ce qui
-les rend vérifiables par la sonde version-skew (`test_tools_client_methods_exist`).
+Client calls are written out in plain form (`_client().search(…)`): that is what
+makes them verifiable by the version-skew probe (`test_tools_client_methods_exist`).
 """
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ _NAME = "boondmanager"
 
 Entity = Literal["contacts", "companies", "opportunities", "actions"]
 
-# Profondeur rendue par `boondmanager_dictionary` sans `path` : les CLÉS, pas le
-# contenu — le dictionnaire complet d'un compte est volumineux.
+# Depth rendered by `boondmanager_dictionary` without `path`: the KEYS, not the
+# content — an account's full dictionary is voluminous.
 _DICT_PREVIEW_DEPTH = 2
 
 
@@ -44,8 +44,8 @@ def _bad(msg: str) -> McpError:
 
 
 def _credential_refused(e) -> bool:
-    """Boond refuse un jeton invalide en 422 (« unable to load agency key »), pas
-    en 401 : l'erreur porte alors `source.parameter` = `xJwtClient`."""
+    """Boond refuses an invalid token with a 422 ("unable to load agency key"), not
+    a 401: the error then carries `source.parameter` = `xJwtClient`."""
     if e.status_code in (401, 403):
         return True
     if e.status_code != 422 or not isinstance(e.body, dict):
@@ -81,8 +81,8 @@ _HINT = "full=true returns the raw JSON:API payload."
 
 
 def _slim_record(rec: Any) -> Any:
-    """Un enregistrement JSON:API resserré : `id`, `type`, `attributes`, et ses
-    relations réduites à leurs ids (`{"company": "12", "influencers": ["3"]}`)."""
+    """A slimmed JSON:API record: `id`, `type`, `attributes`, and its
+    relationships reduced to their ids (`{"company": "12", "influencers": ["3"]}`)."""
     if not isinstance(rec, dict):
         return rec
     out = {k: rec[k] for k in ("id", "type", "attributes") if k in rec}
@@ -99,8 +99,8 @@ def _slim_record(rec: Any) -> Any:
 
 
 def _slim(payload: Any, full: bool) -> Any:
-    """Vue resserrée d'une recherche (sauf `full`) : les enregistrements resserrés,
-    `meta` intact, `included` retiré — et la réponse NOMME ce qu'elle a retiré."""
+    """Slimmed view of a search (unless `full`): the slimmed records,
+    `meta` intact, `included` removed — and the response NAMES what it removed."""
     if full or not isinstance(payload, dict):
         return payload
     data = payload.get("data")
@@ -115,7 +115,7 @@ def _slim(payload: Any, full: bool) -> Any:
 
 
 def _keys_preview(value: Any, depth: int) -> Any:
-    """La forme d'un dictionnaire : ses clés sur `depth` niveaux, sans valeurs."""
+    """The shape of a dictionary: its keys over `depth` levels, without values."""
     if not isinstance(value, dict):
         return f"<{type(value).__name__}>"
     if depth <= 1:
@@ -124,8 +124,8 @@ def _keys_preview(value: Any, depth: int) -> Any:
 
 
 def _at_path(payload: Any, path: str) -> Any:
-    """Descend `a.b.c` dans le dictionnaire (sous `data` s'il y en a un) ; une clé
-    absente lève en NOMMANT celles qui existent à cet endroit."""
+    """Walk down `a.b.c` in the dictionary (under `data` if there is one); a missing
+    key raises, NAMING those that exist at that spot."""
     node = payload.get("data", payload) if isinstance(payload, dict) else payload
     walked = []
     for key in path.split("."):
@@ -140,8 +140,8 @@ def _at_path(payload: Any, path: str) -> Any:
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : `GET /application/current-user`, un appel
-    authentifié qui dit aussi pour QUI les appels agiront."""
+    """"Test the connection" probe: `GET /application/current-user`, an
+    authenticated call that also says for WHOM the calls will act."""
     from oto.tools.boondmanager import BoondManagerClient
     from oto.tools.common.errors import UpstreamHTTPError
 

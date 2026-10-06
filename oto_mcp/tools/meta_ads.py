@@ -1,14 +1,14 @@
-"""Meta Ads — trois outils de LECTURE, en enveloppes minces.
+"""Meta Ads — three READ tools, as thin envelopes.
 
-Le client vit dans oto-core (`oto.tools.meta_ads`) ; le jeton et la traduction des
-refus dans `meta_ads_session.py`. Ici : un schéma, un appel, le JSON de Meta rendu
-tel quel (noms de métriques ceux de l'API).
+The client lives in oto-core (`oto.tools.meta_ads`); the token and the translation
+of refusals in `meta_ads_session.py`. Here: a schema, a call, Meta's JSON returned
+as is (metric names are the API's).
 
-Le seul comportement propre est l'insight ASYNCHRONE : un gros rapport ne tient
-pas dans le délai d'un appel d'outil (45 s côté REST). On attend un temps borné,
-puis on rend le `report_run_id` pour reprendre — jamais un appel qui pend.
+The only behaviour of its own is the ASYNCHRONOUS insight: a large report does not fit
+within the delay of a tool call (45 s on the REST side). We wait a bounded time,
+then return the `report_run_id` so the caller can resume — never a call that hangs.
 
-⚠️ Lecture seule, sans exception : ni création, ni pause, ni budget.
+⚠️ Read-only, without exception: no creation, no pause, no budget.
 """
 from __future__ import annotations
 
@@ -23,20 +23,20 @@ from pydantic import Field
 from . import meta_ads_session as session
 from .meta_ads_session import _bad, _client, appeler
 
-#: Attente maximale d'un rapport asynchrone dans UN appel — sous le délai REST de
-#: 45 s (`api_routes`), avec la marge des appels qui l'entourent.
+#: Maximum wait for an asynchronous report within ONE call — under the REST delay of
+#: 45 s (`api_routes`), with the margin of the surrounding calls.
 _ATTENTE_RAPPORT_S = 25.0
 _PAS_SONDAGE_S = 2.0
-#: Budget TOTAL d'un appel d'insights (démarrage + sondage + lecture), sous les 45 s
-#: du REST : au-delà, on rend de quoi reprendre plutôt qu'un appel coupé.
+#: TOTAL budget of an insights call (start + polling + reading), under the REST
+#: 45 s: beyond that, we return what is needed to resume rather than a cut-off call.
 _BUDGET_APPEL_S = 40.0
-#: Marge gardée pour lire les lignes d'un rapport terminé.
+#: Margin kept to read the rows of a finished report.
 _MARGE_LECTURE_S = 8.0
 
-#: Ce qu'un identifiant peut être avant d'aller dans un chemin Graph (même règle que
-#: le cœur, tenue ici aussi : `act_` + chiffres pour un compte ou un objet-compte,
-#: des chiffres pour un objet ou un rapport). Un `/`, un `?` ou un `..` viserait un
-#: autre nœud — avec `business_management`, une écriture sur le portefeuille.
+#: What an identifier may be before going into a Graph path (same rule as
+#: the core, kept here too: `act_` + digits for an account or an account object,
+#: digits for an object or a report). A `/`, a `?` or a `..` would target
+#: another node — with `business_management`, a write on the portfolio.
 _ID_COMPTE = re.compile(r"^(act_)?\d+$")
 _ID_NUMERIQUE = re.compile(r"^\d+$")
 
@@ -54,7 +54,7 @@ def _id(valeur: Optional[str], nom: str, motif: re.Pattern, forme: str) -> Optio
 
 
 async def _dans_le_budget(fin: float, geste: str, coro):
-    """Un appel du cœur borné par le temps restant de l'appel d'outil."""
+    """A core call bounded by the time remaining in the tool call."""
     reste = fin - time.monotonic()
     try:
         return await asyncio.wait_for(coro, timeout=max(reste, 0.1))
@@ -65,10 +65,10 @@ async def _dans_le_budget(fin: float, geste: str, coro):
 
 async def _suivre_rapport(ads, run_id: str, limit: int,
                           cursor: Optional[str], fin: float) -> dict:
-    """Sonde jusqu'à la fin ou jusqu'au budget ; rend les lignes ou l'état.
+    """Polls until completion or until the budget runs out; returns the rows or the status.
 
-    `fin` borne TOUT l'appel d'outil : l'attente s'arrête assez tôt pour lire les
-    lignes, sinon on rend `report_run_id` à reprendre — jamais un appel coupé."""
+    `fin` bounds the WHOLE tool call: the wait stops early enough to read the
+    rows, otherwise we return a `report_run_id` to resume — never a cut-off call."""
     fin_sondage = min(time.monotonic() + _ATTENTE_RAPPORT_S, fin - _MARGE_LECTURE_S)
     while True:
         etat = await _dans_le_budget(
@@ -97,8 +97,8 @@ async def _suivre_rapport(ads, run_id: str, limit: int,
 
 
 def register(mcp: FastMCP) -> None:
-    # AUCUN import du cœur ici : le connecteur reste monté (et refuse en le
-    # disant) quand oto-core est trop ancien ou l'application non configurée.
+    # NO import from the core here: the connector stays mounted (and refuses,
+    # saying so) when oto-core is too old or the application is not configured.
     session.avertir_au_demarrage()
 
     @mcp.tool()

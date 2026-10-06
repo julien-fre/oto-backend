@@ -1,42 +1,43 @@
-"""Planity — référentiel, clientes et agenda d'un salon (LECTURE SEULE).
+"""Planity — a salon's reference data, customers and calendar (READ-ONLY).
 
-Le connecteur s'authentifie avec l'email et le mot de passe du compte Planity de
-la personne, posés au coffre (`byo_user`, `secret_kind="basic_auth"`). Le client
-vit dans oto-core (`oto.tools.planity`) ; ici il n'y a que des enveloppes minces :
-résoudre le credential, appeler le client, rendre du JSON propre.
+The connector authenticates with the email and password of the person's Planity
+account, stored in the vault (`byo_user`, `secret_kind="basic_auth"`). The client
+lives in oto-core (`oto.tools.planity`); here there are only thin wrappers:
+resolve the credential, call the client, return clean JSON.
 
-Les statistiques (chiffre d'affaires, collaboratrices, occupation, avis) sont dans
-le module frère `planity_stats.py` — même connecteur, même namespace, même clé.
+The statistics (revenue, staff, occupancy, reviews) are in the sibling module
+`planity_stats.py` — same connector, same namespace, same key.
 
-⚠️ **Ce connecteur s'authentifie avec l'email et le mot de passe du compte
-Planity, et rien d'autre** — il n'emprunte aucun autre chemin d'authentification de
-l'application Planity. Ce qu'il peut lire est donc exactement ce que ce compte peut
-lire : le périmètre se règle en choisissant le compte, pas en configurant oto. La
-fiche du connecteur (`connectors/docs/planity.md`) le dit à qui pose le credential.
+⚠️ **This connector authenticates with the Planity account's email and password,
+and nothing else** — it takes no other authentication path of the Planity
+application. What it can read is therefore exactly what that account can read: the
+scope is set by choosing the account, not by configuring oto. The connector sheet
+(`connectors/docs/planity.md`) tells whoever sets the credential.
 
-Conventions de bord, héritées du serveur d'origine et inchangées (des agents et la
-fiche connaissent ces noms et ces schémas) :
-- les prix sont en centimes chez Planity, rendus en euros ;
-- les horodatages sont en millisecondes, rendus en ISO (Europe/Paris) ;
-- les outils temporels acceptent `date_from`/`date_to` (ISO ou preset), défaut 7 j.
+Edge conventions, inherited from the original server and unchanged (agents and the
+sheet know these names and schemas):
+- prices are in cents at Planity, returned in euros;
+- timestamps are in milliseconds, returned as ISO (Europe/Paris);
+- time-based tools accept `date_from`/`date_to` (ISO or preset), default 7 days.
 
-⚠️ **LISTE BLANCHE sur les données des clientes — exception assumée à « expose le
-brut, l'agent décide ».** Le parti pris du connecteur est de rendre ce que l'amont
-donne et de laisser l'agent composer. Elle s'arrête aux données personnelles d'un
-TIERS : la cliente d'un salon n'est ni l'utilisatrice de l'outil ni sa cliente à
-elle, elle n'a rien demandé, et son nom, son téléphone, son email, son adresse ou
-le commentaire qu'on a écrit sur elle n'ont pas à traverser un transcript pour
-répondre « combien de rendez-vous jeudi ».
+⚠️ **WHITELIST on customer data — a deliberate exception to "expose the raw data,
+the agent decides".** The connector's stance is to return what upstream gives and
+let the agent compose. That stops at a THIRD PARTY's personal data: a salon's
+customer is neither the tool's user nor the user's own customer, she asked for
+nothing, and her name, phone, email, address or the comment written about her
+have no business crossing a transcript to answer "how many appointments on
+Thursday".
 
-Donc : tout outil qui touche un rendez-vous, un ticket, un avis ou une fiche rend
-une liste blanche de champs NOMMÉS, jamais l'objet complet — et pour la cliente,
-un **identifiant seulement**. Les outils qui servent une cliente nommément
-(`planity_get_customer`, `planity_search_customers`) sont l'exception : c'est leur
-objet, l'appelant les a demandés, et l'agent compose à partir de l'identifiant.
+So: every tool that touches an appointment, a ticket, a review or a record returns
+a whitelist of NAMED fields, never the full object — and for the customer, an
+**identifier only**. The tools that serve a customer by name
+(`planity_get_customer`, `planity_search_customers`) are the exception: that is
+their purpose, the caller asked for them, and the agent composes from the
+identifier.
 
-Ce n'est pas un oubli à corriger au nom du parti pris : c'est le parti pris, borné
-là où elle coûterait à quelqu'un qui n'est pas dans la conversation. Le cœur
-oto-core, lui, rend le brut — c'est une bibliothèque ; la frontière est ICI.
+This is not an oversight to fix in the name of the stance: it is the stance,
+bounded where it would cost someone who is not in the conversation. The oto-core
+core, for its part, returns the raw data — it is a library; the boundary is HERE.
 """
 from __future__ import annotations
 
@@ -51,23 +52,23 @@ from .planity_session import _client, _eur, _eur_ou_rien, fenetre, iso
 
 
 def _employe(e) -> dict:
-    """Un enfant d'agenda tel qu'il sort — suppression et nature comprises."""
+    """A calendar child as it goes out — deletion and kind included."""
     return {"id": e.id, "name": e.name, "type": e.type, "title": e.title,
             "color": e.color, "calendar_id": e.calendar_id,
             "deleted": e.deleted, "deleted_at": iso(e.deleted_at)}
 
 
 def _rdv_public(v: dict) -> dict:
-    """Un rendez-vous réduit aux champs qui sortent — la LISTE BLANCHE.
+    """An appointment reduced to the fields that go out — the WHITELIST.
 
-    Elle est écrite ici et une seule fois, plutôt que dans chaque outil : ce qui
-    protège une cliente ne doit pas dépendre de qui recopie quoi. Ce qui n'y est
-    pas ne s'oublie pas, il est REFUSÉ — le nom, le téléphone, l'email de la
-    cliente, le commentaire libre (il porte des noms), et l'objet brut.
+    It is written here, once, rather than in each tool: what protects a customer
+    must not depend on who copies what. What isn't in it isn't forgotten, it is
+    REFUSED — the customer's name, phone, email, the free-text comment (it carries
+    names), and the raw object.
 
-    Le commentaire et le titre sont ajoutés PAR `planity_get_appointment`, qui est
-    appelé pour un rendez-vous précis : c'est alors la note qu'on est venu
-    chercher, pas un champ qui passe par là dans une liste de cent."""
+    The comment and the title are added BY `planity_get_appointment`, which is
+    called for one specific appointment: then it is the note we came to fetch, not
+    a field slipping through in a list of a hundred."""
     return {
         "id": v["id"],
         "employee_id": v["child_id"],
@@ -89,22 +90,22 @@ def _rdv_public(v: dict) -> dict:
 
 
 async def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion ». Couvre `auth` SEUL.
+    """"Test the connection" probe. Covers `auth` ALONE.
 
-    Joue la chaîne d'auth complète PUIS `list_salons` — et les deux comptent. La
-    chaîne d'auth prouve que l'email et le mot de passe passent ; `list_salons`
-    prouve que le jeton enrichi porte bien des salons ET que le WebSocket du
-    Realtime Database répond. Un compte Planity dont le jeton n'ouvre aucun salon
-    authentifie parfaitement et ne peut rien lire : rendre « connecté » là-dessus
-    serait le vert creux que cette sonde existe pour empêcher.
+    Plays the full auth chain THEN `list_salons` — and both count. The auth chain
+    proves that the email and password pass; `list_salons` proves that the
+    enriched token does carry salons AND that the Realtime Database WebSocket
+    responds. A Planity account whose token opens no salon authenticates perfectly
+    and can read nothing: returning "connected" on that would be the hollow green
+    this probe exists to prevent.
 
-    Sans effet de bord : trois POST d'authentification et des lectures. Planity
-    n'expose ni compteur de crédits ni quota documenté — donc `auth`, jamais
-    `auth+quota` : on n'a mesuré aucun solde.
+    No side effects: three authentication POSTs and some reads. Planity exposes no
+    credit counter and no documented quota — hence `auth`, never `auth+quota`: we
+    measured no balance.
     """
-    # Les coordonnées de l'instance AVANT tout : sonder sans elles produirait un
-    # 400 de Firebase, qu'on lirait comme « mauvais mot de passe » — et on ferait
-    # reposer un credential parfaitement bon.
+    # The instance's coordinates BEFORE anything: probing without them would
+    # produce a Firebase 400, which we would read as "wrong password" — and we
+    # would have a perfectly good credential re-entered.
     coordonnees = await asyncio.to_thread(planity_session.endpoints)
     client = planity_session._coeur().PlanityClient(
         fields["email"], fields["password"], coordonnees)
@@ -115,28 +116,28 @@ async def _verify(fields: dict, config: dict | None = None) -> None:
             statut = getattr(getattr(e, "response", None), "status_code", None)
             if statut in (400, 401, 403):
                 raise connector_verify.NonAutorise(
-                    "Planity a refusé cet email ou ce mot de passe.") from e
+                    "Planity refused this email or password.") from e
             raise
         salons = await client.list_salons()
         if not salons:
             raise connector_verify.NonAutorise(
-                "Le compte s'authentifie mais n'ouvre aucun salon : son jeton ne "
-                "porte aucun établissement. Vérifie qu'il s'agit bien d'un compte "
-                "`pro.planity.com` rattaché à un salon.")
+                "The account authenticates but opens no salon: its token "
+                "carries no establishment. Check that it is a "
+                "`pro.planity.com` account attached to a salon.")
     finally:
         await client.close()
 
 
 def register(mcp: FastMCP) -> None:
-    # ⚠️ AUCUN import du cœur ici. Le connecteur reste MONTÉ même quand l'extra
-    # `planity` d'oto-core manque ou que les coordonnées ne sont pas posées : il
-    # est alors visible, sélectionnable, et chaque appel refuse en nommant ce qui
-    # manque. Un connecteur qui disparaît du catalogue ne se remarque pas et ne
-    # s'explique pas — c'est l'utilisatrice qui paie la différence.
+    # ⚠️ NO import of the core here. The connector stays MOUNTED even when
+    # oto-core's `planity` extra is missing or the coordinates are not set: it is
+    # then visible, selectable, and every call refuses by naming what is missing.
+    # A connector that vanishes from the catalog goes unnoticed and can't be
+    # explained — the user pays the difference.
     planity_session.avertir_au_demarrage()
     connector_verify.register("planity", _verify)
 
-    # ═══════════════════════ Référentiel ═══════════════════════
+    # ═══════════════════════ Reference data ═══════════════════════
 
     @mcp.tool()
     async def planity_list_salons() -> list[dict]:

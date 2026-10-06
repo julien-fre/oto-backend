@@ -1,22 +1,22 @@
-"""O*NET — le référentiel des métiers des États-Unis (O*NET Web Services v2).
+"""O*NET — the United States occupation reference (O*NET Web Services v2).
 
-Wrappe `oto.tools.onet.client.ONetClient`. keyed `api_key` (en-tête `X-API-Key`),
-byo-only : la clé est gratuite mais nominative (inscription développeur sur
-services.onetcenter.org), aucune clé plateforme.
+Wraps `oto.tools.onet.client.ONetClient`. keyed `api_key` (`X-API-Key` header),
+byo-only: the key is free but personal (developer sign-up on
+services.onetcenter.org), no platform key.
 
-Un seul outil, `onet_occupation` — un objet métier, deux gestes (ADR 0047) :
-- `op="search"` : trouver un métier et son code O*NET-SOC par mot-clé ou par code ;
-- `op="get"` : la fiche d'un métier — titre, description, intitulés de poste, tâches.
+A single tool, `onet_occupation` — one business object, two gestures (ADR 0047):
+- `op="search"`: find an occupation and its O*NET-SOC code by keyword or by code;
+- `op="get"`: an occupation's record — title, description, job titles, tasks.
 
-**Aucun paramètre n'est ignoré en silence** : une op qui n'utilise pas un argument
-fourni REFUSE (patron `_refuse_ignored`).
+**No parameter is silently ignored**: an op that does not use a provided argument
+REFUSES (`_refuse_ignored` pattern).
 
-⚠️ **Écrit d'après le manuel de référence v2.0, jamais exercé en live** : aucune clé
-n'était disponible à l'écriture. Chemins, en-tête d'auth et formes de réponse sont
-ceux du manuel ; le premier appel réel reste à faire.
+⚠️ **Written from the v2.0 reference manual, never exercised live**: no key
+was available at the time of writing. Paths, auth header and response shapes are
+those of the manual; the first real call remains to be made.
 
-Les appels au client sont écrits en clair (`_client().get_occupation(…)`) : c'est ce
-qui les rend vérifiables par la sonde version-skew.
+Client calls are written out in plain (`_client().get_occupation(…)`): that is what
+makes them checkable by the version-skew probe.
 """
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ from .. import access, output_projection
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 
-# Liens de navigation de l'API (une URL par rapport et par résultat) : ils ne servent
-# qu'à un client HTTP authentifié, pas à un agent. Rendus sur `full=True`.
+# The API's navigation links (one URL per report and per result): they only serve
+# an authenticated HTTP client, not an agent. Returned on `full=True`.
 _SEARCH_ITEM_DROP = ("href",)
 _GET_DROP = ("summary_contents", "details_contents", "custom_contents", "updated")
 _MAX_LIMIT = 100
@@ -43,28 +43,28 @@ def _bad(msg: str) -> McpError:
 def _refuse_ignored(op: str, hint: str, **provided) -> None:
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op={op!r} n'utilise pas `{name}` — {hint}")
+            raise _bad(f"op={op!r} does not use `{name}` — {hint}")
 
 
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"O*NET a rejeté la clé API (HTTP {status}) — vérifie la clé posée sur "
-                "ce connecteur (services.onetcenter.org → My Account).")
+        return (f"O*NET rejected the API key (HTTP {status}) — check the key set on "
+                "this connector (services.onetcenter.org → My Account).")
     if status == 404:
-        return f"O*NET : ressource introuvable (HTTP 404) — {e.body}"
+        return f"O*NET: resource not found (HTTP 404) — {e.body}"
     if status == 422:
-        return ("O*NET : requête refusée (HTTP 422) — paramètre invalide, code "
-                f"O*NET-SOC inexistant ou obsolète, ou donnée absente pour ce métier : {e.body}")
+        return ("O*NET: request refused (HTTP 422) — invalid parameter, nonexistent or "
+                f"obsolete O*NET-SOC code, or data missing for this occupation: {e.body}")
     if status == 429:
-        return "O*NET : service saturé (429) — réessaie dans un instant."
+        return "O*NET: service saturated (429) — retry in a moment."
     if status in (500, 502, 503, 504):
-        return f"O*NET est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"O*NET a refusé la requête (HTTP {status}) : {e.body}"
+        return f"O*NET is temporarily unavailable (HTTP {status}) — retry later."
+    return f"O*NET refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """« Tester la connexion » : une recherche à 1 résultat, l'appel le plus léger."""
+    """"Test the connection": a 1-result search, the lightest call."""
     from oto.tools.onet.client import ONetClient
     ONetClient(api_key=fields["key"]).search_occupations("engineer", end=1)
 
@@ -117,26 +117,26 @@ def register(mcp: FastMCP) -> None:
                 report link lists, data-update history), dropped by default.
         """
         if not 1 <= limit <= _MAX_LIMIT:
-            raise _bad(f"`limit` doit être entre 1 et {_MAX_LIMIT}.")
+            raise _bad(f"`limit` must be between 1 and {_MAX_LIMIT}.")
         if op == "search":
-            _refuse_ignored(op, "passe `keyword` (un code s'y cherche aussi).", code=code)
+            _refuse_ignored(op, "pass `keyword` (a code can be searched there too).", code=code)
             if not (keyword or "").strip():
-                raise _bad("op='search' exige `keyword`.")
+                raise _bad("op='search' requires `keyword`.")
             found = _run(lambda: _client().search_occupations(keyword.strip(), end=limit))
             if full:
                 return found
             return output_projection.project(found, items_path="occupation",
                                              item_drop=_SEARCH_ITEM_DROP)
         if op == "get":
-            _refuse_ignored(op, "passe `code` (le code O*NET-SOC du métier).",
+            _refuse_ignored(op, "pass `code` (the occupation's O*NET-SOC code).",
                             keyword=keyword)
             if not (code or "").strip():
-                raise _bad("op='get' exige `code` (ex. '15-1299.08').")
+                raise _bad("op='get' requires `code` (e.g. '15-1299.08').")
             occupation = _run(lambda: _client().get_occupation(code))
             try:
                 tasks = _client().get_occupation_tasks(code, end=limit)
             except UpstreamHTTPError as e:
-                if e.status_code != 422:       # 422 = ce métier n'a pas de tâches
+                if e.status_code != 422:       # 422 = this occupation has no tasks
                     raise _bad(_upstream_message(e))
                 tasks = {"task": [], "total": 0}
             occupation["tasks"] = [t.get("title") for t in tasks.get("task") or []]
@@ -145,4 +145,4 @@ def register(mcp: FastMCP) -> None:
                 return occupation
             return output_projection.project(occupation, drop=_GET_DROP, items_path="also_see",
                                              item_drop=_SEARCH_ITEM_DROP)
-        raise _bad("op doit être 'search' ou 'get'.")
+        raise _bad("op must be 'search' or 'get'.")

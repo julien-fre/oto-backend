@@ -229,7 +229,7 @@ def test_default_op_dispatches_to_search(client):
 def test_unknown_op_is_refused_with_the_allowed_list(client):
     """Une op inconnue doit lever en NOMMANT les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _call("gmail_message", op="nope")
     with pytest.raises(McpError, match=r"'search'.*'archive'.*'trash'"):
         _call("gmail_message", op="delete")
@@ -238,7 +238,7 @@ def test_unknown_op_is_refused_with_the_allowed_list(client):
 def test_unknown_op_never_reaches_the_client_nor_the_credential(client):
     """La garde est AVANT `_client_for_user` : une op inconnue ne déchiffre même
     pas le credential Google, donc aucun chemin dérivé ne peut agir."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _call("gmail_message", op="metadata", message_ids=["m1"])
     client._factory.assert_not_called()
     assert not client.method_calls
@@ -309,7 +309,7 @@ def test_compose_stays_alone_with_its_disjoint_parameters(client):
     msg_params = set(asyncio.run(m.get_tool("gmail_message")).parameters["properties"])
     assert params & msg_params == {"account"}
 
-    with pytest.raises(McpError, match="mode doit être"):
+    with pytest.raises(McpError, match="mode must be"):
         asyncio.run(_tool("gmail_compose")(body="hi", mode="nope", to="a@b.c"))
     client.send.assert_not_called()
     client.create_draft.assert_not_called()
@@ -348,7 +348,7 @@ def test_le_defaut_d_une_reponse_est_lui_aussi_un_brouillon(client):
 
 
 def test_compose_refuses_a_new_message_without_a_recipient(client):
-    with pytest.raises(McpError, match="`to` requis"):
+    with pytest.raises(McpError, match="`to` is required"):
         _call("gmail_compose", body="hi")
     client.send.assert_not_called()
 

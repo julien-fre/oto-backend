@@ -280,7 +280,7 @@ def _champs(envoi) -> dict:
 def test_create_rend_une_reference_sans_appeler_mistral(all_tools, monde):
     out = _appeler(all_tools, source=_pf())
     assert out == {"job_id": 1, "status": "pending",
-                   "note": "Relire avec transcription_status(job_id)."}
+                   "note": "Re-read with transcription_status(job_id)."}
     assert monde["envois"] == [] and monde["pages"] == []
     assert monde["jobs"][1]["status"] == "pending"
     assert ("project", "42", "write") in monde["droits"]

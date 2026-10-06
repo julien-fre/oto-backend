@@ -1,17 +1,18 @@
-"""Capacités « activation de connecteur au niveau org » — plafond DUR d'org (ADR 0022).
+"""Capabilities "connector activation at org level" — HARD org ceiling (ADR 0022).
 
-ADR 0019 distingue exposition (plafond plateforme), proposition (recommandation) et
-sélection (membre). Ce module ouvre le **troisième cran de gouvernance à l'org_admin** :
-l'**override d'activation per-org** (`connector_activation`, déjà en DB). L'org_admin peut,
-pour SA propre org, forcer un connecteur OFF (le retirer à tous ses membres) ou ON.
+ADR 0019 distinguishes exposure (platform ceiling), proposal (recommendation) and
+selection (member). This module opens the **third governance notch for the org_admin**:
+the **per-org activation override** (`connector_activation`, already in the DB). The
+org_admin can, for THEIR own org, force a connector OFF (remove it for all their
+members) or ON.
 
-**Garde-fou (ADR 0022 §4)** : un override d'org ne peut pas *exposer* ce que la plateforme
-a coupé — `enabled=True` n'est accepté que si le master global expose le connecteur. Le
-deny-by-default plateforme n'est jamais relâché par une org ; l'org peut toujours restreindre.
+**Guardrail (ADR 0022 §4)**: an org override cannot *expose* what the platform has
+cut — `enabled=True` is only accepted if the global master exposes the connector. The
+platform deny-by-default is never loosened by an org; the org can always restrict.
 
-Lecture = `ORG_MEMBER_OF` (les membres voient la gouvernance), écriture = `ORG_ADMIN_OF`.
-`refresh_visibility=True` : la bascule re-pousse la visibilité sur la session MCP du caller.
-Effet pour les autres membres : à leur session suivante (gate à la visibilité, pas au boot).
+Read = `ORG_MEMBER_OF` (members see the governance), write = `ORG_ADMIN_OF`.
+`refresh_visibility=True`: the toggle re-pushes visibility onto the caller's MCP session.
+Effect for the other members: at their next session (gate at visibility, not at boot).
 """
 from __future__ import annotations
 
@@ -25,27 +26,27 @@ from .._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF, ORG_ADMIN_OF, ORG_MEMBER_O
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
-_ID = {"id": "org_id"}      # placeholder {id} → champ Input org_id
-_GID = {"id": "group_id"}   # placeholder {id} → champ Input group_id
+_ID = {"id": "org_id"}      # placeholder {id} → Input field org_id
+_GID = {"id": "group_id"}   # placeholder {id} → Input field group_id
 
-# Couche 3 (option de connecteur, ADR 0024) : connecteur → option débloquable.
-# Aujourd'hui seul unipile (option « messagerie hébergée »). Map curée — pas de
-# champ générique au registre tant qu'il n'y a qu'une option.
-# Option payante par connecteur → home canonique dans access.paid_option_for (derive don't duplicate).
+# Layer 3 (connector option, ADR 0024): connector → unlockable option.
+# Today only unipile (the "hosted messaging" option). Curated map — no generic
+# field in the registry as long as there is only one option.
+# Paid option per connector → canonical home in access.paid_option_for (derive don't duplicate).
 
 
 def _org_subscribed(org_id: int, option: str) -> bool:
-    """L'org a-t-elle l'option `option` débloquée ? Best-effort (ne fait jamais
-    échouer la lecture de la liste).
+    """Does the org have the `option` option unlocked? Best-effort (never makes
+    the list read fail).
 
-    ⚠️ **Corrigé le 2026-09-02** : lisait `db.has_option_comp('org', …)` en direct,
-    donc ne voyait QUE le don admin — une org qui PAYAIT s'affichait « non
-    souscrite ». Lit désormais le droit déclaré de l'org (`access.org_has`, ADR 0070
-    §7), la même règle que tous les autres chemins. Grain org VOULU : le cockpit
-    décrit l'espace, pas le don personnel de qui l'ouvre."""
+    ⚠️ **Fixed on 2026-09-02**: it read `db.has_option_comp('org', …)` directly,
+    so it ONLY saw the admin grant — an org that PAID showed as "not
+    subscribed". It now reads the org's declared entitlement (`access.org_has`, ADR 0070
+    §7), the same rule as every other path. Org grain INTENDED: the cockpit
+    describes the space, not the personal grant of whoever opens it."""
     try:
         return access.org_has(org_id, option)
-    # noqa: SILENT — option payante illisible ⇒ non souscrite (fail-closed du payant)
+    # noqa: SILENT — unreadable paid option ⇒ not subscribed (fail-closed for paid)
     except Exception:
         return False
 
@@ -56,7 +57,7 @@ class OrgActivationListInput(BaseModel):
 
 class OrgActivationSetInput(BaseModel):
     org_id: int
-    name: str                  # connecteur (placeholder {name}, auto-mappé)
+    name: str                  # connector (placeholder {name}, auto-mapped)
     enabled: bool
 
 
@@ -66,75 +67,75 @@ class OrgActivationClearInput(BaseModel):
 
 
 class ActivationOverrideSet(BaseModel):
-    """Écho d'une POSE d'override d'activation. Exactement UN des deux ids de
-    scope est présent, selon la route empruntée (org ou équipe) — c'est le même
-    geste à deux grains, pas deux objets.
+    """Echo of a SET of an activation override. Exactly ONE of the two scope ids is
+    present, depending on the route taken (org or team) — it is the same
+    gesture at two grains, not two objects.
 
-    ⚠️ Au grain ÉQUIPE, `enabled` vaut TOUJOURS `false` : l'invariant est monotone
-    (une équipe ne peut que couper), `enabled=true` est refusé en 409. Pour
-    ré-ouvrir, on RETIRE la coupure (`clear`), on ne la pose pas à `true`."""
-    org_id: Optional[int] = None            # présent au grain ORG
-    group_id: Optional[int] = None          # présent au grain ÉQUIPE
+    ⚠️ At TEAM grain, `enabled` is ALWAYS `false`: the invariant is monotonic
+    (a team can only cut), `enabled=true` is refused with a 409. To
+    reopen, REMOVE the cut (`clear`), don't set it to `true`."""
+    org_id: Optional[int] = None            # present at ORG grain
+    group_id: Optional[int] = None          # present at TEAM grain
     connector: str
     enabled: bool
-    # Grain ORG seulement, et présent seulement si le connecteur est dans le KIT de
-    # l'org (ADR 0050 §E2) : couper ne le retire pas du kit — il y reste, installé
-    # et masqué chez tous, et revient seul à la réouverture. `kit_note` le dit.
+    # ORG grain only, and present only if the connector is in the org's KIT
+    # (ADR 0050 §E2): cutting does not remove it from the kit — it stays there, installed
+    # and hidden for everyone, and comes back on its own when reopened. `kit_note` says so.
     in_kit: Optional[bool] = None
     kit_note: Optional[str] = None
 
 
 class ActivationOverrideCleared(BaseModel):
-    """Écho d'un RETRAIT d'override — le connecteur retombe sur le cran du dessus
-    (master plateforme pour une org, exposition de l'org pour une équipe).
+    """Echo of a REMOVAL of an override — the connector falls back to the notch above
+    (platform master for an org, org exposure for a team).
 
-    ⚠️ `cleared` vaut TOUJOURS `true` : l'opération est idempotente et ne compte
-    pas les lignes supprimées. Il ne prouve donc PAS qu'un override existait."""
-    org_id: Optional[int] = None            # présent au grain ORG
-    group_id: Optional[int] = None          # présent au grain ÉQUIPE
+    ⚠️ `cleared` is ALWAYS `true`: the operation is idempotent and does not count
+    the rows deleted. It therefore does NOT prove an override existed."""
+    org_id: Optional[int] = None            # present at ORG grain
+    group_id: Optional[int] = None          # present at TEAM grain
     connector: str
     cleared: bool
-    in_kit: Optional[bool] = None           # cf. `ActivationOverrideSet`
+    in_kit: Optional[bool] = None           # see `ActivationOverrideSet`
     kit_note: Optional[str] = None
 
 
 class OrgActivationRow(BaseModel):
-    """Un connecteur dans le cockpit de gouvernance de l'org : les DEUX crans
-    (plafond plateforme, override d'org) et leur résultante."""
+    """A connector in the org's governance cockpit: BOTH notches
+    (platform ceiling, org override) and their result."""
     connector: str
     label: str
     help: Optional[str] = None
     namespaces: list[str]
-    # `None` = aucune ligne d'activation plateforme n'a JAMAIS été posée, ce qui
-    # vaut OFF. Distinct de `false` (coupé explicitement) — les deux se lisent
-    # « pas exposé », seul le second est une décision.
+    # `None` = no platform activation row has EVER been set, which
+    # means OFF. Distinct from `false` (explicitly cut) — both read
+    # "not exposed", only the second is a decision.
     master_enabled: Optional[bool] = None
-    org_enabled: Optional[bool] = None      # None = pas d'override, l'org suit le master
-    # Le PLAFOND du tenant qui héberge l'org (2026-09-26) : `false` = coupé par
-    # l'hébergeur pour toutes ses orgs, et l'org ne peut pas le rouvrir ; `None` =
-    # pas de ligne (ou org du tenant primaire).
+    org_enabled: Optional[bool] = None      # None = no override, the org follows the master
+    # The CEILING of the tenant that hosts the org (2026-09-26): `false` = cut by the
+    # host for all its orgs, and the org cannot reopen it; `None` =
+    # no row (or primary tenant's org).
     tenant_enabled: Optional[bool] = None
-    effective: bool                         # (override > master > OFF) sous le plafond tenant
-    recommended: bool                       # baseline d'org (ADR 0019), pas l'activation
-    paid_option: Optional[str] = None       # add-on payant requis (couche 3), None = aucun
-    # `false` par défaut ET quand aucune option n'est requise — ne se lit donc
-    # PAS comme « l'org n'a pas payé » hors du cas `paid_option != null`.
+    effective: bool                         # (override > master > OFF) under the tenant ceiling
+    recommended: bool                       # org baseline (ADR 0019), not the activation
+    paid_option: Optional[str] = None       # paid add-on required (layer 3), None = none
+    # `false` by default AND when no option is required — so it does NOT
+    # read as "the org hasn't paid" outside the `paid_option != null` case.
     subscribed: bool
 
 
 class OrgActivation(BaseModel):
-    """Cockpit d'activation de l'org. La liste est FILTRÉE au plafond plateforme :
-    un connecteur que la plateforme n'a jamais exposé et que l'org n'a pas
-    override n'y figure pas (pas de levier inerte) — l'absence d'une ligne n'est
-    donc pas la preuve que le connecteur n'existe pas."""
+    """The org's activation cockpit. The list is FILTERED at the platform ceiling:
+    a connector that the platform never exposed and that the org did not
+    override does not appear (no inert lever) — the absence of a row is
+    therefore not proof that the connector doesn't exist."""
     org_id: int
     connectors: list[OrgActivationRow]
 
 
 class GroupActivationRow(BaseModel):
-    """Un connecteur dans le cockpit d'équipe. L'équipe n'a qu'un levier —
-    couper — d'où deux booléens seulement : ce que l'org rend disponible, et ce
-    que l'équipe a coupé."""
+    """A connector in the team cockpit. The team has only one lever —
+    cutting — hence only two booleans: what the org makes available, and what
+    the team cut."""
     connector: str
     label: str
     help: Optional[str] = None
@@ -145,18 +146,18 @@ class GroupActivationRow(BaseModel):
 
 
 class GroupActivation(BaseModel):
-    """Cockpit d'activation de l'équipe. Liste = ce que l'org expose, PLUS les
-    coupures résiduelles d'une équipe sur un connecteur que l'org n'expose plus
-    (sinon la coupure deviendrait invisible et irrémédiable)."""
+    """The team's activation cockpit. List = what the org exposes, PLUS the
+    residual cuts of a team on a connector the org no longer exposes
+    (otherwise the cut would become invisible and irremediable)."""
     group_id: int
     connectors: list[GroupActivationRow]
 
 
 def _org_list(ctx: ResolvedCtx, inp: OrgActivationListInput) -> dict:
-    """Pour chaque connecteur du registre : master global, override de CETTE org,
-    et l'état effectif (override > master > OFF). Plus `recommended` (baseline org)."""
+    """For each connector in the registry: global master, THIS org's override,
+    and the effective state (override > master > OFF). Plus `recommended` (org baseline)."""
     if not org_store.get_org(inp.org_id):
-        raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
+        raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} unknown.")
     glob: dict[str, bool] = {}
     override: dict[str, bool] = {}
     for r in connector_activation.list_activations():
@@ -169,20 +170,20 @@ def _org_list(ctx: ResolvedCtx, inp: OrgActivationListInput) -> dict:
     tenant_map = connector_activation.list_tenant_activations(slug) if slug else {}
     out = []
     for name, c in providers.REGISTRY.items():
-        master = glob.get(name)          # None = jamais posé = OFF
-        org_ov = override.get(name)      # None = pas d'override
-        tenant_ov = tenant_map.get(name)  # None = pas de ligne tenant
-        # Invariant : ne lister que ce que la plateforme rend DISPONIBLE à cette org —
-        # cohérent avec la surface USER (_visible_catalog). On filtre sur le CAP
-        # plateforme (master), pas sur `effective` (sinon un connecteur que l'org a
-        # override OFF disparaîtrait → impossible à réactiver). master OFF + pas
-        # d'override = jamais activé → invisible (plus de levier inerte).
+        master = glob.get(name)          # None = never set = OFF
+        org_ov = override.get(name)      # None = no override
+        tenant_ov = tenant_map.get(name)  # None = no tenant row
+        # Invariant: only list what the platform makes AVAILABLE to this org —
+        # consistent with the USER surface (_visible_catalog). We filter on the platform
+        # CAP (master), not on `effective` (otherwise a connector the org
+        # overrode OFF would disappear → impossible to re-enable). master OFF + no
+        # override = never activated → invisible (no more inert lever).
         if not master and org_ov is None:
             continue
         effective = org_ov if org_ov is not None else bool(master)
         if tenant_ov is False:
-            effective = False           # plafond de l'hébergeur : rien en dessous ne rouvre
-        option = access.paid_option_for(name)          # add-on payant (couche 3) ou None
+            effective = False           # host ceiling: nothing below reopens it
+        option = access.paid_option_for(name)          # paid add-on (layer 3) or None
         out.append({
             "connector": name, "label": c.label, "help": c.help,
             "namespaces": list(c.namespaces),
@@ -196,50 +197,50 @@ def _org_list(ctx: ResolvedCtx, inp: OrgActivationListInput) -> dict:
 
 
 def _require_master_exposed(name: str) -> None:
-    """Le master global doit exposer le connecteur pour qu'une org puisse l'activer."""
+    """The global master must expose the connector for an org to be able to enable it."""
     if not connector_activation.is_exposed(name, org_id=None):
         raise AuthzDenied(409, "platform_disabled",
-                          f"Connecteur `{name}` désactivé par la plateforme — ton org ne "
-                          f"peut pas l'activer (le plafond plateforme n'est jamais relâché).")
+                          f"Connector `{name}` is disabled by the platform — your org cannot "
+                          f"enable it (the platform ceiling is never loosened).")
 
 
-_KIT_COUPE = ("Il est dans le kit de ton organisation : couper ne l'en retire pas. Il reste "
-              "installé chez tes membres, masqué chez tous tant qu'il est coupé, et revient "
-              "seul à la réouverture. Pour qu'il ne s'installe plus, retire-le du kit.")
-_KIT_OUVERT = ("Il est dans le kit de ton organisation : ses outils reviennent chez les "
-               "membres qui l'ont installé, à leur prochaine conversation.")
+_KIT_COUPE = ("It is in your organization's kit: cutting does not remove it from there. It stays "
+              "installed for your members, hidden for everyone while it is cut, and comes back "
+              "on its own when reopened. To stop it from being installed, remove it from the kit.")
+_KIT_OUVERT = ("It is in your organization's kit: its tools come back for the "
+               "members who installed it, at their next conversation.")
 
 
 def _signal_kit(org_id: int, name: str) -> dict:
-    """ADR 0050 §E2 — la réponse de la coupure (ou de la réouverture) dit que le
-    connecteur est au kit. Lu APRÈS le geste : c'est l'état résultant qu'on décrit.
-    Le geste a déjà réussi quand on lit : un échec de lecture le DIT au lieu de
-    changer un succès en erreur."""
+    """ADR 0050 §E2 — the response to the cut (or the reopening) says that the
+    connector is in the kit. Read AFTER the gesture: it is the resulting state that is described.
+    The gesture has already succeeded when we read: a read failure SAYS so instead of
+    turning a success into an error."""
     try:
         if name not in (org_store.get_org_default_connectors(org_id) or []):
             return {}
         ouvert = name in connector_activation.exposed_connectors(org_id)
-    # noqa: SILENT — l'état du kit non lu se DIT dans la réponse, jamais un 500 sur un succès
+    # noqa: SILENT — the unread kit state is SAID in the response, never a 500 on a success
     except Exception:
-        return {"kit_note": "L'appartenance au kit n'a pas pu être lue : rien n'est dit ici "
-                            "du kit, dans un sens ni dans l'autre."}
+        return {"kit_note": "Kit membership could not be read: nothing is said here "
+                            "about the kit, one way or the other."}
     return {"in_kit": True, "kit_note": _KIT_OUVERT if ouvert else _KIT_COUPE}
 
 
 def _require_tenant_exposed(org_id: int, name: str) -> None:
-    """Le tenant qui héberge l'org ne doit pas l'avoir coupé : son plafond ne se
-    relâche pas plus qu'un plafond plateforme (2026-09-26)."""
+    """The tenant that hosts the org must not have cut it: its ceiling is no more
+    loosened than a platform ceiling (2026-09-26)."""
     slug = connector_activation.tenant_of_org(org_id)
     if slug and connector_activation.list_tenant_activations(slug).get(name) is False:
         raise AuthzDenied(409, "tenant_disabled",
-                          f"Connecteur `{name}` coupé par l'hébergeur de ton organisation — "
-                          "une org ne le rouvre pas ; un admin du tenant le fait depuis son "
-                          "tableau de bord.")
+                          f"Connector `{name}` cut by your organization's host — "
+                          "an org does not reopen it; a tenant admin does so from their "
+                          "dashboard.")
 
 
 def _org_set(ctx: ResolvedCtx, inp: OrgActivationSetInput) -> dict:
     if inp.name not in providers.REGISTRY:
-        raise AuthzDenied(404, "unknown_connector", f"Connecteur `{inp.name}` inconnu.")
+        raise AuthzDenied(404, "unknown_connector", f"Connector `{inp.name}` unknown.")
     if inp.enabled:
         _require_master_exposed(inp.name)
         _require_tenant_exposed(inp.org_id, inp.name)
@@ -249,18 +250,18 @@ def _org_set(ctx: ResolvedCtx, inp: OrgActivationSetInput) -> dict:
 
 
 def _org_clear(ctx: ResolvedCtx, inp: OrgActivationClearInput) -> dict:
-    """Supprime l'override d'org → le connecteur retombe sur le master global."""
+    """Deletes the org override → the connector falls back to the global master."""
     if inp.name not in providers.REGISTRY:
-        raise AuthzDenied(404, "unknown_connector", f"Connecteur `{inp.name}` inconnu.")
+        raise AuthzDenied(404, "unknown_connector", f"Connector `{inp.name}` unknown.")
     connector_activation.clear_activation(inp.name, inp.org_id)
     return {"org_id": inp.org_id, "connector": inp.name, "cleared": True,
             **_signal_kit(inp.org_id, inp.name)}
 
 
-# ── tier ÉQUIPE (ADR 0012, restrict-only) ────────────────────────────────────
-# Un chef d'équipe (`GROUP_ADMIN_OF`) peut COUPER un connecteur pour SON équipe —
-# jamais l'exposer au-delà de ce que l'org autorise (invariant MONOTONE). L'équipe
-# n'a donc qu'un levier « couper / ré-ouvrir » ; le plancher reste org > plateforme.
+# ── TEAM tier (ADR 0012, restrict-only) ──────────────────────────────────────
+# A team lead (`GROUP_ADMIN_OF`) can CUT a connector for THEIR team —
+# never expose it beyond what the org allows (MONOTONIC invariant). The team
+# therefore has only one "cut / reopen" lever; the floor stays org > platform.
 
 class GroupActivationListInput(BaseModel):
     group_id: int
@@ -280,15 +281,15 @@ class GroupActivationClearInput(BaseModel):
 def _group_org_id(group_id: int) -> int:
     g = group_store.get_group(group_id)
     if not g:
-        raise AuthzDenied(404, "unknown_group", f"Équipe #{group_id} inconnue.")
+        raise AuthzDenied(404, "unknown_group", f"Team #{group_id} unknown.")
     return g["org_id"]
 
 
 def _group_list(ctx: ResolvedCtx, inp: GroupActivationListInput) -> dict:
-    """Pour chaque connecteur exposé à l'org de l'équipe : l'état effectif pour
-    l'équipe (org expose ET pas coupé) + si l'équipe l'a coupé. On ne liste que ce
-    que l'org rend disponible (plus une coupure éventuelle résiduelle) — pas de
-    levier inerte, cohérent avec la surface org."""
+    """For each connector exposed to the team's org: the effective state for
+    the team (org exposes AND not cut) + whether the team cut it. We only list what
+    the org makes available (plus a possible residual cut) — no inert
+    lever, consistent with the org surface."""
     org_id = _group_org_id(inp.group_id)
     exposed = connector_activation.exposed_connectors(org_id)
     cut = connector_activation.group_cut_connectors(inp.group_id)
@@ -309,32 +310,32 @@ def _group_list(ctx: ResolvedCtx, inp: GroupActivationListInput) -> dict:
 
 
 def _require_org_available(group_id: int, name: str) -> None:
-    """L'org doit exposer le connecteur pour qu'une équipe puisse le couper (sinon
-    il est déjà off — rien à restreindre). Miroir de `_require_master_exposed`."""
+    """The org must expose the connector for a team to be able to cut it (otherwise
+    it is already off — nothing to restrict). Mirror of `_require_master_exposed`."""
     org_id = _group_org_id(group_id)
     if name not in connector_activation.exposed_connectors(org_id):
         raise AuthzDenied(409, "org_disabled",
-                          f"Connecteur `{name}` non disponible dans l'org — rien à couper pour l'équipe.")
+                          f"Connector `{name}` not available in the org — nothing to cut for the team.")
 
 
 def _group_set(ctx: ResolvedCtx, inp: GroupActivationSetInput) -> dict:
     if inp.name not in providers.REGISTRY:
-        raise AuthzDenied(404, "unknown_connector", f"Connecteur `{inp.name}` inconnu.")
-    # Invariant MONOTONE : une équipe ne peut que RESTREINDRE. `enabled=True` (exposer
-    # au-delà de l'org) est refusé — pour ré-ouvrir, on RETIRE la coupure (clear).
+        raise AuthzDenied(404, "unknown_connector", f"Connector `{inp.name}` unknown.")
+    # MONOTONIC invariant: a team can only RESTRICT. `enabled=True` (exposing
+    # beyond the org) is refused — to reopen, REMOVE the cut (clear).
     if inp.enabled:
         raise AuthzDenied(409, "group_cannot_expose",
-                          "Une équipe ne peut que restreindre (couper) un connecteur, jamais "
-                          "l'exposer au-delà de l'org. Pour le ré-ouvrir, retire la coupure.")
+                          "A team can only restrict (cut) a connector, never "
+                          "expose it beyond the org. To reopen it, remove the cut.")
     _require_org_available(inp.group_id, inp.name)
     connector_activation.set_group_activation(inp.group_id, inp.name, False, set_by=ctx.sub)
     return {"group_id": inp.group_id, "connector": inp.name, "enabled": False}
 
 
 def _group_clear(ctx: ResolvedCtx, inp: GroupActivationClearInput) -> dict:
-    """Retire la coupure d'équipe → le connecteur retombe sur l'exposition de l'org."""
+    """Removes the team cut → the connector falls back to the org's exposure."""
     if inp.name not in providers.REGISTRY:
-        raise AuthzDenied(404, "unknown_connector", f"Connecteur `{inp.name}` inconnu.")
+        raise AuthzDenied(404, "unknown_connector", f"Connector `{inp.name}` unknown.")
     connector_activation.clear_group_activation(inp.group_id, inp.name)
     return {"group_id": inp.group_id, "connector": inp.name, "cleared": True}
 

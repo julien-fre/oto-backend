@@ -1,71 +1,71 @@
-"""Pennylane GED (DMS) — bac documentaire via l'API PRIVÉE de la SPA.
+"""Pennylane GED (DMS) — document tray via the SPA's PRIVATE API.
 
-⚠️ La GED de Pennylane **n'est pas exposée par l'API publique** (le connecteur
-keyé `pennylane` ne peut donc pas y écrire — son token ne porte aucun scope DMS).
-Elle l'est par l'**API interne** de `app.pennylane.com` (cookie de session + CSRF
-tournant), sous le scope société `/companies/{cid}/dms/…`. C'est un connecteur
-**distinct** de `pennylane` : credential de nature différente (session navigateur,
-pas une clé API).
+⚠️ Pennylane's GED is **not exposed by the public API** (the keyed `pennylane`
+connector therefore cannot write to it — its token carries no DMS scope).
+It is exposed by the **internal API** of `app.pennylane.com` (session cookie + rotating
+CSRF), under the company scope `/companies/{cid}/dms/…`. It is a connector
+**distinct** from `pennylane`: a credential of a different nature (browser session,
+not an API key).
 
-Exécution — **Browserbase** (`oto_mcp/browserbase.py`), même substrat que
-`crunchbase`/`brevo` : l'API interne n'accepte les appels que depuis une **session
-navigateur vivante** (un `httpx` brut risque le blocage Cloudflare, et une session
-ne se transplante pas par export de cookie). L'utilisateur se logue UNE fois via la
-**Live View** (`pennylaneged_connect_start`), sa session persiste dans un **Context**
-Browserbase (= le credential per-user, coffre `pennylaneged`), et chaque appel DMS
-s'exécute en `fetch()` DANS une session éphémère du Context, same-origin
-`app.pennylane.com`. Creds plateforme = env `BROWSERBASE_API_KEY` / `BROWSERBASE_PROJECT_ID`.
+Execution — **Browserbase** (`oto_mcp/browserbase.py`), same substrate as
+`crunchbase`/`brevo`: the internal API only accepts calls from a **live browser
+session** (a bare `httpx` risks being blocked by Cloudflare, and a session
+cannot be transplanted by cookie export). The user logs in ONCE via the
+**Live View** (`pennylaneged_connect_start`), their session persists in a Browserbase
+**Context** (= the per-user credential, vault `pennylaneged`), and each DMS call
+runs as a `fetch()` INSIDE an ephemeral session of the Context, same-origin
+`app.pennylane.com`. Platform creds = env `BROWSERBASE_API_KEY` / `BROWSERBASE_PROJECT_ID`.
 
-**Exigences de l'API interne** (gérées par le JS in-page `_FETCH_JS`) : header
-`accept: application/json` (sinon 404 HTML — contrainte Rails), `x-requested-with:
-XMLHttpRequest`, et sur les écritures `x-csrf-token` = valeur **tournante** du cookie
-`my_csrf_token` (relue à CHAQUE appel — le `<meta csrf-token>` est périmé dès le 1er XHR).
+**Requirements of the internal API** (handled by the in-page JS `_FETCH_JS`): header
+`accept: application/json` (otherwise HTML 404 — Rails constraint), `x-requested-with:
+XMLHttpRequest`, and on writes `x-csrf-token` = the **rotating** value of the cookie
+`my_csrf_token` (re-read on EVERY call — the `<meta csrf-token>` is stale after the 1st XHR).
 
-**Split data-plane (RGPD)** — l'upload d'un fichier NE fait PAS transiter les octets
-par Oto (cf. ADR / issue #31). `pennylaneged_request_upload` (control plane) demande
-une **URL S3 présignée** ; l'agent LOCAL fait le `PUT` des octets **directement** sur
-S3 (jamais par Oto, jamais via MCP) ; puis `pennylaneged_finalize` (control plane)
-crée l'entrée DMS depuis le `signed_id`. Les octets vont `local → S3 Pennylane`, leur
-destination de toute façon.
+**Data-plane split (GDPR)** — a file upload does NOT route the bytes
+through Oto (see ADR / issue #31). `pennylaneged_request_upload` (control plane) requests
+a **presigned S3 URL**; the LOCAL agent does the `PUT` of the bytes **directly** to
+S3 (never through Oto, never via MCP); then `pennylaneged_finalize` (control plane)
+creates the DMS entry from the `signed_id`. The bytes go `local → Pennylane S3`, their
+destination anyway.
 
-⚠️ **DEUX espaces d'`company_id` homonymes, non interchangeables.** Le connecteur
-keyé `pennylane` (API publique) rend des id qui n'ont RIEN à voir avec ceux d'ici. Les
-confondre produit un **401/403**, que ce module traduisait en « session expirée » — deux
-agents s'y sont fait prendre le 2026-09-03 et ont reconnecté en boucle une session
-vivante. Un refus portant un `/companies/<id>` accuse donc l'ID D'ABORD. L'id GED se lit
-dans l'URL de la SPA (`app.pennylane.com/companies/<id>/…`). ⚠️ Et l'avertissement se
-pose là où l'on TOMBE — dans chaque outil qui CONSOMME un `company_id` — pas seulement
-dans celui qui le rend : il y était déjà depuis le 28/08, et le piège s'est reproduit
-à l'identique, parce qu'on ne lit pas la description d'un outil qu'on n'appelle pas.
+⚠️ **TWO homonymous `company_id` spaces, not interchangeable.** The keyed `pennylane`
+connector (public API) returns ids that have NOTHING to do with the ones here.
+Mixing them up produces a **401/403**, which this module used to translate as "session expired" — two
+agents fell for it on 2026-09-03 and kept reconnecting a
+live session. A refusal carrying a `/companies/<id>` therefore blames the ID FIRST. The GED id is read
+in the SPA URL (`app.pennylane.com/companies/<id>/…`). ⚠️ And the warning is
+placed where one FALLS — in every tool that CONSUMES a `company_id` — not only
+in the one that returns it: it was already there since 28/08, and the trap recurred
+identically, because nobody reads the description of a tool they are not calling.
 
-**GED cible (une par client)** — le cabinet gère N sociétés clientes, chacune
-avec SA GED. Chaque tool prend un `company_id` **obligatoire** : aucun défaut
-mémorisé, pour ne jamais risquer d'écrire dans la GED du mauvais client.
-`pennylaneged_companies` liste les sociétés pour résoudre le `company_id` cible —
-mais ce n'est PAS un passage obligé, et il ne faut pas le croire : le `company_id` est
-lisible **dans l'URL de la SPA** (`app.pennylane.com/companies/<company_id>/…`, visible
-dès qu'on ouvre un dossier), et `pennylaneged_companies(minimal=True)` le rend par une
-route indépendante. Quand la liste tombe, les trois autres outils (arborescence, fiche,
-dépôt) marchent toujours — le 2026-09-03, une cliente a passé sa matinée à croire le
-connecteur mort parce que SEULE cette liste l'était.
+**Target GED (one per client)** — the firm manages N client companies, each
+with ITS OWN GED. Every tool takes a **mandatory** `company_id`: no stored
+default, so as never to risk writing into the wrong client's GED.
+`pennylaneged_companies` lists the companies to resolve the target `company_id` —
+but it is NOT a required step, and one must not believe it is: the `company_id` is
+readable **in the SPA URL** (`app.pennylane.com/companies/<company_id>/…`, visible
+as soon as a file is opened), and `pennylaneged_companies(minimal=True)` returns it via an
+independent route. When the list is down, the three other tools (tree, record,
+upload) still work — on 2026-09-03, a client spent her morning believing the
+connector dead because ONLY this list was.
 
-⚠️ **Un 404 ici dit « pas d'endpoint pour CET appel »**, jamais « session expirée »
-(ça, c'est 401/403 — vérifié le 03/09 : une route vivante répond 401 à une session
-anonyme). Deux causes le donnent : le COMPTE n'a pas ce périmètre (les routes de
-cabinet n'existent que pour un compte rattaché à un cabinet — mesuré le 10/09 : 200
-pour l'un, 404 pour l'autre, à la même heure), ou la ROUTE a bougé (Pennylane renomme
-sans préavis ; la nouvelle se relève dans le bundle de la SPA — le portefeuille a
-migré de `/crm/flow_companies` vers `/portfolio/crm/flow_companies` le 03/09).
-Trancher sans rien reconnecter : rappeler avec `minimal=true`, qui emprunte une autre
-route — si elle répond, c'est le périmètre. ⚠️ Ce texte a affirmé la seconde cause
-SEULE jusqu'au 10/09 : fermer un cas en gravant SA cause fait accuser la mauvaise
-pièce dès que l'autre se présente.
+⚠️ **A 404 here says "no endpoint for THIS call"**, never "session expired"
+(that is 401/403 — verified on 03/09: a live route answers 401 to an
+anonymous session). Two causes give it: the ACCOUNT lacks this scope (firm routes
+only exist for an account attached to a firm — measured on 10/09: 200
+for one, 404 for the other, at the same hour), or the ROUTE moved (Pennylane renames
+without notice; the new one is found in the SPA bundle — the portfolio
+migrated from `/crm/flow_companies` to `/portfolio/crm/flow_companies` on 03/09).
+Decide without reconnecting anything: call again with `minimal=true`, which takes another
+route — if it answers, it is the scope. ⚠️ This text asserted the second cause
+ALONE until 10/09: closing a case by engraving ITS cause makes people blame the wrong
+part as soon as the other shows up.
 
-Le LOGIN (Live View, sonde de vérification, persistance de la session au coffre) vit
-dans le module frère `pennylaneged_session.py` — ici, on suppose la session acquise.
+The LOGIN (Live View, verification probe, persisting the session to the vault) lives
+in the sibling module `pennylaneged_session.py` — here, the session is assumed acquired.
 
-Statut : flux RE **validé manuellement** (18/06, compte test client) ; **reste à
-smoker en live** sur le substrat Browserbase (CSRF in-page + longévité de session).
+Status: RE flow **manually validated** (18/06, client test account); **still to
+smoke-test live** on the Browserbase substrate (in-page CSRF + session longevity).
 """
 from __future__ import annotations
 
@@ -80,14 +80,14 @@ from mcp.types import ErrorData, INVALID_PARAMS, INTERNAL_ERROR
 from .. import access, browserbase
 from ..auth.hooks import current_user_sub_from_token
 
-# Origine de la SPA — toutes les routes internes (DMS, direct_uploads, crm) en
-# dérivent. La page chargée pour porter la session est same-origin (un chemin de
-# cette origine), donc `fetch("/companies/…")` porte les cookies.
+# Origin of the SPA — all internal routes (DMS, direct_uploads, crm) derive
+# from it. The page loaded to carry the session is same-origin (a path of
+# this origin), so `fetch("/companies/…")` carries the cookies.
 _ORIGIN = "https://app.pennylane.com"
 
-# JS in-page propre à Pennylane : lit le CSRF tournant du cookie `my_csrf_token` à
-# l'instant de l'appel et pose les headers Rails attendus. `path` est un chemin
-# absolu de l'origine `app.pennylane.com` (le `fetch` est donc same-origin).
+# Pennylane-specific in-page JS: reads the rotating CSRF from the `my_csrf_token` cookie at
+# call time and sets the expected Rails headers. `path` is an absolute path of the
+# `app.pennylane.com` origin (so the `fetch` is same-origin).
 _FETCH_JS = """async ({path, method, body}) => {
     const m = document.cookie.match(/(?:^|;\\s*)my_csrf_token=([^;]+)/);
     const headers = {"accept": "application/json", "x-requested-with": "XMLHttpRequest"};
@@ -97,12 +97,12 @@ _FETCH_JS = """async ({path, method, body}) => {
         method, credentials: "include", headers,
         body: body ? JSON.stringify(body) : undefined,
     });
-    // Le corps d'une Response ne se lit qu'UNE fois : `r.json()` VERROUILLE le
-    // flux avant même d'échouer, donc un `catch` qui rappelle `r.text()` lève
-    // « body stream already read » et masque la réponse RÉELLE. Vécu en prod le
-    // 27/08 sur un DELETE de dossier GED : la suppression était partie, le tool
-    // a répondu « Erreur interne du serveur. » (signal #600, tool_calls#1039702).
-    // On lit le texte une seule fois, puis on le parse.
+    // A Response body can only be read ONCE: `r.json()` LOCKS the
+    // stream even before failing, so a `catch` that calls `r.text()` again throws
+    // "body stream already read" and masks the REAL response. Experienced in prod on
+    // 27/08 on a GED folder DELETE: the deletion had gone through, the tool
+    // answered "Internal server error." (signal #600, tool_calls#1039702).
+    // We read the text once, then parse it.
     const txt = await r.text();
     let data;
     try { data = txt ? JSON.parse(txt) : null; }
@@ -116,47 +116,47 @@ def _err(msg: str, code: int = INVALID_PARAMS) -> McpError:
 
 
 def _sub() -> str:
-    # Un échec d'identité MONTE (le seam le journalise avec sa raison, #464) : seul
-    # un appel réellement sans jeton est « non authentifié ».
+    # An identity failure RISES (the seam logs it with its reason, #464): only
+    # a call truly without a token is "unauthenticated".
     sub = current_user_sub_from_token()
     if not sub:
-        raise _err("Auth requise — ce tool ne marche que sur le transport HTTP authentifié.")
+        raise _err("Auth required — this tool only works on the authenticated HTTP transport.")
     return sub
 
 
 def _context_id() -> str:
-    """Context Browserbase de l'utilisateur (= sa session Pennylane loguée), résolu du
-    coffre. Lève une McpError actionnable si la GED n'est pas connectée."""
+    """The user's Browserbase Context (= their logged-in Pennylane session), resolved from the
+    vault. Raises an actionable McpError if the GED is not connected."""
     try:
         return access.resolve_credential("pennylaneged", want="byo").key
     except McpError:
-        raise _err("Pennylane GED non connecté. Lance `pennylaneged_connect_start` pour "
-                   "te loguer (une fois) à Pennylane via la Live View.")
+        raise _err("Pennylane GED not connected. Run `pennylaneged_connect_start` to "
+                   "log in (once) to Pennylane via the Live View.")
 
 
 def _company_app(company_id: int) -> str:
-    """Page à charger pour amorcer le contexte société (la SPA exige une navigation
-    sur la vue DMS de la société avant que `/companies/{cid}/context` réponde 200)."""
+    """Page to load to prime the company context (the SPA requires a navigation
+    to the company's DMS view before `/companies/{cid}/context` answers 200)."""
     return f"{_ORIGIN}/companies/{int(company_id)}/dms/items"
 
 
 
 async def _call_raw(app: str, path: str, method: str = "GET",
                     body: Optional[dict] = None) -> dict:
-    """L'appel d'API interne, rendu BRUT : `{status, data}`.
+    """The internal API call, returned RAW: `{status, data}`.
 
-    Séparé de `_call` parce qu'une ÉCRITURE a besoin du `status` pour se
-    prononcer : un `DELETE` réussi répond `204` **sans corps**, et `_call` en
-    faisait un `{}` indistinguable d'une réponse vide (signal #600).
+    Separate from `_call` because a WRITE needs the `status` to
+    pronounce itself: a successful `DELETE` answers `204` **without a body**, and `_call`
+    turned it into a `{}` indistinguishable from an empty response (signal #600).
 
-    ⚠️ Le `except` ne peut pas se limiter à `BrowserbaseError` : la panne de
-    #600 était une erreur **playwright** (`Page.evaluate: TypeError…`) levée
-    depuis la page, d'une classe que le substrat ne convertit pas. Elle
-    remontait donc nue jusqu'à la taxonomie d'erreurs, qui l'a servie à l'agent
-    en « Erreur interne du serveur. » — un message qui ne dit ni ce qu'on a
-    tenté, ni que l'écriture était peut-être passée. On nomme les deux."""
+    ⚠️ The `except` cannot be limited to `BrowserbaseError`: the #600 failure
+    was a **playwright** error (`Page.evaluate: TypeError…`) raised
+    from the page, of a class the substrate does not convert. It
+    therefore bubbled up bare to the error taxonomy, which served it to the agent
+    as "Internal server error." — a message that says neither what was
+    attempted, nor that the write may have gone through. We name both."""
     if not browserbase.is_configured():
-        raise _err("Browserbase non configuré côté plateforme "
+        raise _err("Browserbase not configured on the platform side "
                    "(BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID).", code=INTERNAL_ERROR)
     ctx_id = _context_id()
     try:
@@ -164,86 +164,86 @@ async def _call_raw(app: str, path: str, method: str = "GET",
             ctx_id, app, _FETCH_JS, {"path": path, "method": method, "body": body})
     except McpError:
         raise
-    except Exception as e:  # noqa: BLE001 — re-levée nommée juste en dessous
-        # La requête peut être PARTIE avant la panne : sur une écriture, dire
-        # « échec » serait affirmer plus qu'on ne sait (#600).
+    except Exception as e:  # noqa: BLE001 — re-raised, named, just below
+        # The request may have GONE OUT before the failure: on a write, saying
+        # "failed" would assert more than we know (#600).
         incertitude = ("" if method.upper() == "GET" else
-                       " L'appel était peut-être déjà parti : l'écriture PEUT AVOIR "
-                       "eu lieu — relis l'arborescence (`pennylaneged_tree`) avant "
-                       "de retenter.")
-        raise _err(f"Appel Pennylane GED échoué — {method.upper()} {path} : "
+                       " The call may already have gone out: the write MAY HAVE "
+                       "happened — re-read the tree (`pennylaneged_tree`) before "
+                       "retrying.")
+        raise _err(f"Pennylane GED call failed — {method.upper()} {path}: "
                    f"{type(e).__name__}: {e}.{incertitude}",
                    code=INTERNAL_ERROR) from e
     st = res.get("status")
     if st in (401, 403):
-        # ⚠️ TROIS causes, TROIS conduites — et la moins probable était la seule
-        # nommée. Un refus PORTANT UN `company_id` accuse d'abord cet id, pas la
-        # session : le 2026-09-03, deux agents indépendants ont conclu « session
-        # expirée » et reconnecté en boucle, alors que l'un tenait un id venu du
-        # connecteur `pennylane` (API publique) et que l'autre avait une session
-        # parfaitement vivante.
+        # ⚠️ THREE causes, THREE courses of action — and the least likely was the only
+        # one named. A refusal CARRYING A `company_id` blames that id first, not the
+        # session: on 2026-09-03, two independent agents concluded "session
+        # expired" and reconnected in a loop, while one held an id from the
+        # `pennylane` connector (public API) and the other had a
+        # perfectly live session.
         vise = re.search(r"/companies/(\d+)", path)
         if vise:
             raise _err(
-                f"Pennylane a refusé {method.upper()} {path} ({st}). NE CONCLUS PAS à une "
-                f"session expirée : cet appel vise la société {vise.group(1)}, et trois "
-                "causes rendent le même code. (1) MAUVAIS ESPACE D'ID — le plus fréquent : "
-                "cet id vient-il du connecteur `pennylane` (API publique) ? Ce n'est PAS "
-                "le même espace que la GED. L'id GED se lit dans l'URL de la SPA, "
-                "`app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`. "
-                "(2) HORS PÉRIMÈTRE — l'id est bon mais ce compte n'a pas accès à cette "
-                "société. (3) SESSION MORTE, le seul cas qui justifie "
-                "`pennylaneged_connect_start`. Pour trancher entre les trois SANS "
-                "reconnecter : rappelle le même outil sur une AUTRE société. S'il répond, "
-                "ta session va bien et le problème est l'id.")
+                f"Pennylane refused {method.upper()} {path} ({st}). DO NOT CONCLUDE the "
+                f"session expired: this call targets company {vise.group(1)}, and three "
+                "causes give the same code. (1) WRONG ID SPACE — the most frequent: "
+                "does this id come from the `pennylane` connector (public API)? That is NOT "
+                "the same space as the GED. The GED id is read in the SPA URL, "
+                "`app.pennylane.com/companies/<id>/…`, or via `pennylaneged_companies`. "
+                "(2) OUT OF SCOPE — the id is right but this account has no access to this "
+                "company. (3) DEAD SESSION, the only case that justifies "
+                "`pennylaneged_connect_start`. To decide between the three WITHOUT "
+                "reconnecting: call the same tool on ANOTHER company. If it answers, "
+                "your session is fine and the problem is the id.")
         raise _err(
-            f"Pennylane a refusé {method.upper()} {path} ({st}) — cet appel ne vise aucune "
-            "société en particulier, la session est donc bien en cause : relance "
+            f"Pennylane refused {method.upper()} {path} ({st}) — this call targets no "
+            "company in particular, so the session is indeed at fault: rerun "
             "`pennylaneged_connect_start`.")
     if st == 404:
-        # ⚠️ Ce bloc a affirmé une cause UNIQUE — « la route n'existe plus » — jusqu'au
-        # 2026-09-10, où un 404 sur `/portfolio/crm/flow_companies` a été mesuré alors
-        # que la MÊME route répondait 200 pour un autre compte, à la même heure. Le 404
-        # ne dit pas « l'endpoint a disparu », il dit « pas d'endpoint POUR CET APPEL » :
-        # une route de cabinet n'existe pas pour un compte qui n'est rattaché à aucun
-        # cabinet. Fermer le cas du 03/09 en gravant sa cause a fait accuser la mauvaise
-        # pièce, et envoyé chercher un correctif chez nous là où il n'y avait rien à
-        # corriger. Le message discrimine donc, et donne de quoi trancher.
+        # ⚠️ This block asserted a SINGLE cause — "the route no longer exists" — until
+        # 2026-09-10, when a 404 on `/portfolio/crm/flow_companies` was measured while
+        # the SAME route answered 200 for another account, at the same hour. The 404
+        # does not say "the endpoint disappeared", it says "no endpoint FOR THIS CALL":
+        # a firm route does not exist for an account that is attached to no
+        # firm. Closing the 03/09 case by engraving its cause made people blame the wrong
+        # part, and sent them looking for a fix on our side where there was nothing to
+        # fix. The message therefore discriminates, and gives the means to decide.
         raise _err(
-            f"Pennylane a répondu 404 sur {method.upper()} {path}. Ce n'est PAS une "
-            "session expirée (ça, c'est 401/403) : NE RELANCE PAS "
-            "`pennylaneged_connect_start`, ta session est bonne. Sur cette API interne, "
-            "un 404 dit « pas d'endpoint pour CET appel », et deux causes le donnent. "
-            "(1) TON COMPTE N'A PAS CE PÉRIMÈTRE — le plus fréquent sur les routes de "
-            "cabinet (le portefeuille) : elles n'existent que pour un compte rattaché à "
-            "un cabinet. Un compte d'entreprise ordinaire reçoit 404, et c'est normal : "
-            "rien à corriger, ni chez toi ni chez nous. (2) LA ROUTE A BOUGÉ — Pennylane "
-            "renomme ses routes internes sans préavis (vécu le 03/09) ; là, le correctif "
-            "est chez nous, relever la nouvelle route dans le bundle de la SPA. "
-            "POUR TRANCHER, sans rien reconnecter : rappelle `pennylaneged_companies` "
-            "avec `minimal=true` — c'est une AUTRE route (le sélecteur de société), qui "
-            "ne partage rien avec le portefeuille. Si elle répond, ta session ET la SPA "
-            "vont bien : tu es dans le cas (1), et `minimal` est justement la voie qui "
-            "te convient. Si elle rend 404 elle aussi, c'est le cas (2) : signale-le.",
+            f"Pennylane answered 404 on {method.upper()} {path}. This is NOT an "
+            "expired session (that is 401/403): DO NOT RERUN "
+            "`pennylaneged_connect_start`, your session is good. On this internal API, "
+            "a 404 says \"no endpoint for THIS call\", and two causes give it. "
+            "(1) YOUR ACCOUNT DOES NOT HAVE THIS SCOPE — the most frequent on firm "
+            "routes (the portfolio): they only exist for an account attached to "
+            "a firm. An ordinary company account gets 404, and that is normal: "
+            "nothing to fix, neither on your side nor ours. (2) THE ROUTE MOVED — Pennylane "
+            "renames its internal routes without notice (experienced on 03/09); in that case the fix "
+            "is on our side, find the new route in the SPA bundle. "
+            "TO DECIDE, without reconnecting anything: call `pennylaneged_companies` again "
+            "with `minimal=true` — it is ANOTHER route (the company selector), which "
+            "shares nothing with the portfolio. If it answers, your session AND the SPA "
+            "are fine: you are in case (1), and `minimal` is precisely the route that "
+            "suits you. If it returns 404 too, it is case (2): report it.",
             code=INTERNAL_ERROR)
     if not (200 <= (st or 0) < 300):
-        raise _err(f"Pennylane GED a renvoyé {st} : {str(res.get('data'))[:200]}",
+        raise _err(f"Pennylane GED returned {st}: {str(res.get('data'))[:200]}",
                    code=INTERNAL_ERROR)
     return {"status": st, "data": res.get("data")}
 
 
 async def _call(app: str, path: str, method: str = "GET",
                 body: Optional[dict] = None) -> dict:
-    """`_call_raw` réduit au CORPS décodé — la forme qu'attendent les lectures.
+    """`_call_raw` reduced to the decoded BODY — the shape reads expect.
 
-    C'est ici que vit la mise en forme pour l'agent, pas dans `_call_raw` : une
-    écriture a besoin du `status` brut pour se prononcer sur son propre acte."""
+    The formatting for the agent lives here, not in `_call_raw`: a
+    write needs the raw `status` to pronounce itself on its own act."""
     data = (await _call_raw(app, path, method, body)).get("data")
-    # L'API interne renvoie parfois un TABLEAU nu (ex. `/dms/items/tree`). MCP exige
-    # que le structured_content d'un tool soit un objet (dict) ou None — JAMAIS une
-    # liste (sinon `ValueError: structured_content must be a dict` → tool cassé, vu
-    # en prod sur `pennylaneged_tree`). On enveloppe toute liste sous `items` : forme
-    # uniforme et sérialisable pour l'agent.
+    # The internal API sometimes returns a bare ARRAY (e.g. `/dms/items/tree`). MCP requires
+    # a tool's structured_content to be an object (dict) or None — NEVER a
+    # list (otherwise `ValueError: structured_content must be a dict` → broken tool, seen
+    # in prod on `pennylaneged_tree`). Any list is wrapped under `items`: a
+    # uniform, serializable shape for the agent.
     if isinstance(data, list):
         return {"items": data}
     return data or {}
@@ -253,82 +253,82 @@ async def _call(app: str, path: str, method: str = "GET",
 
 def register(mcp: FastMCP) -> None:
 
-    # --- Résolution « où » (control plane) ----------------------------------
+    # --- "Where" resolution (control plane) ---------------------------------
     @mcp.tool()
     async def pennylaneged_companies(page: int = 1, minimal: bool = False) -> dict:
-        """Liste les sociétés du portefeuille (côté cabinet) — résout le `company_id`
-        cible d'une opération GED, et porte la fiche de gestion de chaque dossier.
+        """Lists the portfolio companies (firm side) — resolves the target `company_id`
+        of a GED operation, and carries the management record of each file.
 
-        ⚠️ **Le portefeuille d'un cabinet vit ICI**, pas dans le connecteur keyé
-        `pennylane` : son API publique est MONO-SOCIÉTÉ et ses « customers » sont les
-        clients FACTURÉS par une société, pas les dossiers gérés. Cherché là, le
-        portefeuille est introuvable — vécu par une cliente le 2026-08-28.
+        ⚠️ **A firm's portfolio lives HERE**, not in the keyed `pennylane`
+        connector: its public API is SINGLE-COMPANY and its "customers" are the
+        clients INVOICED by a company, not the managed files. Searched there, the
+        portfolio cannot be found — experienced by a client on 2026-08-28.
 
-        ⚠️ **La route a déménagé** (bundle de la SPA, chunk `list-*.js`,
-        `getCRMFlowCompanies`, relevé le 2026-09-03) : `/crm/flow_companies` →
-        `/portfolio/crm/flow_companies`. Un 404 ici n'est PAS « déloguée » — mais pas
-        non plus « elle a encore bougé » à coup sûr : sur une route de CABINET, la
-        cause la plus fréquente est que **ton compte n'est rattaché à aucun cabinet**
-        (mesuré le 10/09 : 200 pour un compte de cabinet, 404 pour un compte
-        d'entreprise, à la même heure). Pour trancher : rappelle avec `minimal=true`,
-        qui emprunte une autre route — si elle répond, c'est ton périmètre, pas la
-        route, et `minimal` est la voie qui te convient. Renvoie la réponse BRUTE :
+        ⚠️ **The route moved** (SPA bundle, chunk `list-*.js`,
+        `getCRMFlowCompanies`, noted on 2026-09-03): `/crm/flow_companies` →
+        `/portfolio/crm/flow_companies`. A 404 here is NOT "logged out" — but not
+        "it moved again" for sure either: on a FIRM route, the most frequent
+        cause is that **your account is attached to no firm**
+        (measured on 10/09: 200 for a firm account, 404 for a company
+        account, at the same hour). To decide: call again with `minimal=true`,
+        which takes another route — if it answers, it is your scope, not the
+        route, and `minimal` is the route that suits you. Returns the RAW response:
         `{companies: [...], pagination: {page, pageSize, pages, totalEntries,
-        hasNextPage}}`. **20 sociétés par page** — un portefeuille de cabinet se
-        parcourt donc en plusieurs appels, pilotés par `hasNextPage`/`pages`.
+        hasNextPage}}`. **20 companies per page** — a firm's portfolio is therefore
+        walked over several calls, driven by `hasNextPage`/`pages`.
 
-        Chaque société porte BIEN PLUS que son `id` (= `company_id`) et son `name` —
-        c'est la fiche de gestion complète du dossier (relevé 2026-08-28) :
+        Each company carries FAR MORE than its `id` (= `company_id`) and its `name` —
+        it is the complete management record of the file (noted 2026-08-28):
 
-        - **identité** : `legal_form` (forme juridique, ex. `fr_sas`), `trade_name`,
-          `client_code`, `file_type`, `is_demo`/`is_training`/`is_fake` ;
-        - **fiscal** : `vat_regime` + `vat_frequency` (régime de TVA et périodicité —
-          réglages SÉPARÉS), `current_fiscal_year` (`{start, finish}`),
-          `cash_based_accounting`, `number_of_employees` ;
-        - **équipe du dossier** : `accountant` (collaborateur en charge, avec email),
+        - **identity**: `legal_form` (legal form, e.g. `fr_sas`), `trade_name`,
+          `client_code`, `file_type`, `is_demo`/`is_training`/`is_fake`;
+        - **tax**: `vat_regime` + `vat_frequency` (VAT regime and periodicity —
+          SEPARATE settings), `current_fiscal_year` (`{start, finish}`),
+          `cash_based_accounting`, `number_of_employees`;
+        - **file team**: `accountant` (accountant in charge, with email),
           `accounting_supervisor`, `accounting_manager`, `substitute_accountant`,
           `manager`, `legal_manager`, `social_manager`, `legal_collaborator`,
-          `social_collaborator`, `external_auditor` ;
-        - **état d'avancement** : `transactions` (`pending`, `accounting_needed`,
+          `social_collaborator`, `external_auditor`;
+        - **progress status**: `transactions` (`pending`, `accounting_needed`,
           `validation_needed`…), `supplier_invoices`, `customer_invoices`,
-          `document_requests` (pièces réclamées au client), `bank_accounts`
-          (connectées / déconnectées / importées à la main) ;
-        - **abonnement** : `subscription_plan`, `saas_plan`, `churns_on`, `confidential`.
+          `document_requests` (documents requested from the client), `bank_accounts`
+          (connected / disconnected / imported by hand);
+        - **subscription**: `subscription_plan`, `saas_plan`, `churns_on`, `confidential`.
 
-        De quoi bâtir un tableau de bord de portefeuille, pas seulement résoudre un id.
+        Enough to build a portfolio dashboard, not just resolve an id.
 
-        ⚠️ Deux valeurs à NE PAS interpréter à l'aveugle, faute de doc Pennylane : les
-        valeurs de `vat_regime` (`standard` observé ; les trois régimes FR sont franchise
-        en base / réel simplifié / réel normal) et la forme du `client_code` (UUID sur un
-        dossier de TEST, alors que Pennylane documente un « code client » saisissable au
-        paramétrage). Relever les valeurs distinctes sur un VRAI portefeuille avant d'en
-        faire une colonne lisible ou une clé de rapprochement.
+        ⚠️ Two values NOT to interpret blindly, for lack of Pennylane docs: the
+        values of `vat_regime` (`standard` observed; the three FR regimes are franchise
+        en base / réel simplifié / réel normal) and the shape of `client_code` (UUID on a
+        TEST file, whereas Pennylane documents a "client code" that can be entered in the
+        settings). Note the distinct values on a REAL portfolio before making
+        them a readable column or a reconciliation key.
 
-        ABSENTS d'ici : le SIREN, et la **catégorie fiscale** (IS/IR) — Pennylane la
-        distingue du « régime fiscal » et la range dans les paramètres du dossier. Les
-        deux se cherchent ailleurs : `/companies/{id}/context` (`reg_no`) ou la page de
-        paramétrage du dossier.
+        ABSENT from here: the SIREN, and the **tax category** (IS/IR) — Pennylane
+        distinguishes it from the "tax regime" and files it under the file's settings. Both
+        are to be found elsewhere: `/companies/{id}/context` (`reg_no`) or the file's
+        settings page.
 
-        ⚠️ Coût : UNE session navigateur par appel — 350 dossiers = 18 pages = 18
-        sessions ouvertes puis refermées.
+        ⚠️ Cost: ONE browser session per call — 350 files = 18 pages = 18
+        sessions opened then closed.
 
-        **Si cet outil tombe, le connecteur n'est PAS mort.** Il n'est le passage obligé
-        que pour la fiche de gestion : le `company_id` seul se lit dans l'URL de la SPA
-        (`app.pennylane.com/companies/<company_id>/…`), et `minimal=True` le rend par une
-        route INDÉPENDANTE de celle du portefeuille. Arborescence, fiche société et dépôt
-        marchent sans passer par ici.
+        **If this tool is down, the connector is NOT dead.** It is only the required step
+        for the management record: the `company_id` alone is read in the SPA URL
+        (`app.pennylane.com/companies/<company_id>/…`), and `minimal=True` returns it via a
+        route INDEPENDENT of the portfolio's. Tree, company record and upload
+        work without going through here.
 
         Args:
-            page: page de pagination (1-based).
-            minimal: prendre la voie LÉGÈRE — `/navbar/companies`, la route du sélecteur
-                de société de la SPA, qui rend `{companies: [...]}` sans la fiche de
-                gestion. Deux usages : résoudre un `company_id` à moindre coût, et
-                surtout garder une voie ouverte quand la route du portefeuille est en
-                panne (elles ne partagent rien). Champs OBSERVÉS sous session loguée
-                le 2026-09-03 : `id` (= le `company_id`), `display_name`, `source_id`,
+            page: pagination page (1-based).
+            minimal: take the LIGHT route — `/navbar/companies`, the SPA's company
+                selector route, which returns `{companies: [...]}` without the management
+                record. Two uses: resolve a `company_id` at lower cost, and
+                above all keep a route open when the portfolio route is
+                down (they share nothing). Fields OBSERVED under a logged-in session
+                on 2026-09-03: `id` (= the `company_id`), `display_name`, `source_id`,
                 `saas_plan`, `uc_exists`, `is_demo`/`is_training`/`is_fake`, `firm`,
-                `company_group` — de quoi identifier un dossier, RIEN de la fiche de
-                gestion (ni forme juridique, ni TVA, ni équipe, ni reste-à-faire).
+                `company_group` — enough to identify a file, NOTHING of the management
+                record (no legal form, no VAT, no team, no to-do status).
         """
         if minimal:
             qs = urlencode({"page": max(1, int(page)), "per_page": 20})
@@ -338,67 +338,67 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def pennylaneged_company(company_id: int) -> dict:
-        """Fiche d'UNE société : identité légale + paramétrage FISCAL et TVA.
+        """Record of ONE company: legal identity + TAX and VAT settings.
 
-        Complète `pennylaneged_companies` (le portefeuille) là où elle s'arrête. C'est
-        ICI, et nulle part ailleurs, que vivent les trois réglages que Pennylane
-        distingue et qu'AUCUNE API publique ne rend (relevé 2026-08-28) :
+        Complements `pennylaneged_companies` (the portfolio) where it stops. It is
+        HERE, and nowhere else, that the three settings live that Pennylane
+        distinguishes and that NO public API returns (noted 2026-08-28):
 
-        - `fiscal_category` — catégorie fiscale, ex. `bic_is` (BIC à l'IS) : c'est le
-          « IS / IR » du dossier permanent ;
-        - `fiscal_regime` — régime fiscal, ex. `fr_rn` (réel normal) ;
+        - `fiscal_category` — tax category, e.g. `bic_is` (BIC subject to corporate tax): it is the
+          "IS / IR" of the permanent file;
+        - `fiscal_regime` — tax regime, e.g. `fr_rn` (réel normal);
         - `vat_frequency`, `vat_day_of_month`, `submitted_to_vat_from`, `vat_number`,
-          `default_input_vat_rate` / `default_output_vat_rate` (ex. `FR_200`) — la TVA.
+          `default_input_vat_rate` / `default_output_vat_rate` (e.g. `FR_200`) — the VAT.
 
-        ⚠️ **Trois champs, trois notions — ne pas les fondre en une colonne.** Le
-        `vat_regime` que rend `pennylaneged_companies` (ex. `standard`) est le régime de
-        TVA ; il est DISTINCT de `fiscal_regime` (`fr_rn`) et de `fiscal_category`
-        (`bic_is`). Les confondre produit un export faux.
+        ⚠️ **Three fields, three notions — do not merge them into one column.** The
+        `vat_regime` returned by `pennylaneged_companies` (e.g. `standard`) is the VAT
+        regime; it is DISTINCT from `fiscal_regime` (`fr_rn`) and from `fiscal_category`
+        (`bic_is`). Mixing them up produces a wrong export.
 
-        Porte aussi ce que la liste n'a pas : `reg_no` (**le SIREN**), `legal_form_code`
-        (code INSEE de forme juridique, ex. `5710` = SAS), `share_capital`,
+        Also carries what the list lacks: `reg_no` (**the SIREN**), `legal_form_code`
+        (INSEE legal form code, e.g. `5710` = SAS), `share_capital`,
         `creation_date` / `cessation_date`, `address` / `postal_code` / `city`,
         `business_description`, `invoicing_software`, `cash_based_accounting`,
         `resumption_status`, `dms_activated`.
 
-        Tape `/companies/{cid}/context`. Les blocs de drapeaux de fonctionnalité de la
-        réponse (`experiments`, `companyFeaturesAbility`, `userFeaturesAbility`) sont
-        ÉCARTÉS : volumineux et sans valeur métier, ils noieraient la fiche.
+        Hits `/companies/{cid}/context`. The feature-flag blocks of the
+        response (`experiments`, `companyFeaturesAbility`, `userFeaturesAbility`) are
+        DISCARDED: voluminous and of no business value, they would drown the record.
 
-        ⚠️ UN appel = UNE société = UNE session navigateur. Enrichir un portefeuille
-        entier coûte donc un appel PAR dossier — à mettre en regard du volume.
+        ⚠️ ONE call = ONE company = ONE browser session. Enriching an entire
+        portfolio therefore costs one call PER file — weigh it against the volume.
 
         Args:
-            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
-                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
-                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
-                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
+            company_id: GED id of the file — ⚠️ **NOT** that of the `pennylane` connector (public
+                API): two homonymous spaces, and getting it wrong returns a 401/403
+                that IMITATES an expired session. It is read in the SPA URL,
+                `app.pennylane.com/companies/<id>/…`, or via `pennylaneged_companies`.
         """
         cid = int(company_id)
         res = await _call(_company_app(cid), f"/companies/{cid}/context")
         company = res.get("company")
         if not company:
-            raise _err(f"Réponse `context` inattendue pour la société {cid} : "
+            raise _err(f"Unexpected `context` response for company {cid}: "
                        f"{str(res)[:200]}", code=INTERNAL_ERROR)
         return {"company": company, "firm": res.get("firm"),
                 "user_role": res.get("userRole")}
 
-    # --- Arborescence / dossiers --------------------------------------------
+    # --- Tree / folders ------------------------------------------------------
     @mcp.tool()
     async def pennylaneged_tree(company_id: int,
                                 item_type: str = "DmsFolder") -> dict:
-        """Lit l'arborescence GED d'une société.
+        """Reads a company's GED tree.
 
-        Renvoie `{items: [{id, name, itemable_type, parent_id, folders_count, …}]}`
-        (l'API renvoie un tableau, enveloppé sous `items`) — utilise les `id`/`parent_id`
-        pour cibler un `parent_id` de création ou un item à supprimer.
+        Returns `{items: [{id, name, itemable_type, parent_id, folders_count, …}]}`
+        (the API returns an array, wrapped under `items`) — use the `id`/`parent_id`
+        to target a creation `parent_id` or an item to delete.
 
         Args:
-            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
-                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
-                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
-                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
-            item_type: type d'items listés — `DmsFolder` (dossiers, défaut) ou `DmsFile`.
+            company_id: GED id of the file — ⚠️ **NOT** that of the `pennylane` connector (public
+                API): two homonymous spaces, and getting it wrong returns a 401/403
+                that IMITATES an expired session. It is read in the SPA URL,
+                `app.pennylane.com/companies/<id>/…`, or via `pennylaneged_companies`.
+            item_type: type of items listed — `DmsFolder` (folders, default) or `DmsFile`.
         """
         cid = int(company_id)
         qs = urlencode({"item_type": item_type})
@@ -407,17 +407,17 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def pennylaneged_create_folder(company_id: int, name: str,
                                          parent_id: Optional[int] = None) -> dict:
-        """Crée un dossier dans la GED d'une société.
+        """Creates a folder in a company's GED.
 
-        Renvoie le `DmsFolder` créé (dont son `id`, à réutiliser comme `parent_id`).
+        Returns the created `DmsFolder` (including its `id`, to reuse as `parent_id`).
 
         Args:
-            name: nom du dossier (sous sa forme finale — pas de rename séparé ensuite).
-            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
-                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
-                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
-                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
-            parent_id: id du dossier parent (None = racine de la GED).
+            name: folder name (in its final form — no separate rename afterwards).
+            company_id: GED id of the file — ⚠️ **NOT** that of the `pennylane` connector (public
+                API): two homonymous spaces, and getting it wrong returns a 401/403
+                that IMITATES an expired session. It is read in the SPA URL,
+                `app.pennylane.com/companies/<id>/…`, or via `pennylaneged_companies`.
+            parent_id: id of the parent folder (None = GED root).
         """
         cid = int(company_id)
         item: dict = {"name": name}
@@ -426,32 +426,32 @@ def register(mcp: FastMCP) -> None:
         return await _call(_company_app(cid), f"/companies/{cid}/dms/items", "POST",
                            {"dms_items": [item]})
 
-    # --- Upload (control plane ; octets PUT en LOCAL, jamais par Oto) --------
+    # --- Upload (control plane; bytes PUT LOCALLY, never through Oto) --------
     @mcp.tool()
     async def pennylaneged_request_upload(
         company_id: int, filename: str, content_type: str,
         byte_size: int, checksum: str,
     ) -> dict:
-        """Étape 1/2 d'un upload GED — demande une **URL S3 présignée** (control plane).
+        """Step 1/2 of a GED upload — requests a **presigned S3 URL** (control plane).
 
-        ⚠️ Ne lit PAS le fichier (RGPD : les octets ne transitent JAMAIS par Oto).
-        Calcule EN LOCAL, AVANT cet appel : `byte_size` (taille) et `checksum` (MD5 du
-        fichier, encodé **base64**). Tape `direct_uploads` (ActiveStorage) et renvoie
+        ⚠️ Does NOT read the file (GDPR: the bytes NEVER transit through Oto).
+        Compute LOCALLY, BEFORE this call: `byte_size` (size) and `checksum` (MD5 of the
+        file, **base64**-encoded). Hits `direct_uploads` (ActiveStorage) and returns
         `{signed_id, put_url, put_headers}`.
 
-        Puis, EN LOCAL (pas via MCP, pas par Oto) : **PUT** les octets du fichier
-        directement sur `put_url` en passant `put_headers` (Content-Type, Content-MD5).
-        Enfin appelle `pennylaneged_finalize(name, signed_id, parent_id)`.
+        Then, LOCALLY (not via MCP, not through Oto): **PUT** the file's bytes
+        directly to `put_url` passing `put_headers` (Content-Type, Content-MD5).
+        Finally call `pennylaneged_finalize(name, signed_id, parent_id)`.
 
         Args:
-            filename: nom du fichier source.
-            content_type: type MIME (ex. `application/pdf`).
-            byte_size: taille du fichier en octets (calculée en local).
-            checksum: MD5 du fichier encodé en base64 (calculé en local).
-            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
-                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
-                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
-                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
+            filename: name of the source file.
+            content_type: MIME type (e.g. `application/pdf`).
+            byte_size: file size in bytes (computed locally).
+            checksum: MD5 of the file base64-encoded (computed locally).
+            company_id: GED id of the file — ⚠️ **NOT** that of the `pennylane` connector (public
+                API): two homonymous spaces, and getting it wrong returns a 401/403
+                that IMITATES an expired session. It is read in the SPA URL,
+                `app.pennylane.com/companies/<id>/…`, or via `pennylaneged_companies`.
         """
         cid = int(company_id)
         res = await _call(
@@ -463,7 +463,7 @@ def register(mcp: FastMCP) -> None:
         signed_id = res.get("signed_id")
         put_url = direct.get("url")
         if not signed_id or not put_url:
-            raise _err(f"Réponse direct_uploads inattendue : {str(res)[:200]}",
+            raise _err(f"Unexpected direct_uploads response: {str(res)[:200]}",
                        code=INTERNAL_ERROR)
         return {"signed_id": signed_id, "put_url": put_url,
                 "put_headers": direct.get("headers") or {}}
@@ -471,23 +471,23 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def pennylaneged_finalize(company_id: int, name: str, signed_id: str,
                                     parent_id: Optional[int] = None) -> dict:
-        """Étape 2/2 d'un upload GED — crée l'entrée DMS depuis un `signed_id` (control plane).
+        """Step 2/2 of a GED upload — creates the DMS entry from a `signed_id` (control plane).
 
-        À appeler APRÈS avoir PUT les octets en local sur l'`put_url` (cf.
-        `pennylaneged_request_upload`). Le `name` est le nom **final** dans la GED
-        (renommage standardisé = ce champ, pas d'appel rename séparé).
+        To call AFTER having PUT the bytes locally to the `put_url` (see
+        `pennylaneged_request_upload`). The `name` is the **final** name in the GED
+        (standardized renaming = this field, no separate rename call).
 
-        Renvoie le `DmsFile` créé.
+        Returns the created `DmsFile`.
 
         Args:
-            name: nom final du fichier dans la GED.
-            signed_id: `signed_id` renvoyé par `pennylaneged_request_upload`.
-            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
-                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
-                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
-                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
-                ⚠️ DOIT être la même société qu'au `pennylaneged_request_upload`.
-            parent_id: id du dossier cible (None = racine).
+            name: final name of the file in the GED.
+            signed_id: `signed_id` returned by `pennylaneged_request_upload`.
+            company_id: GED id of the file — ⚠️ **NOT** that of the `pennylane` connector (public
+                API): two homonymous spaces, and getting it wrong returns a 401/403
+                that IMITATES an expired session. It is read in the SPA URL,
+                `app.pennylane.com/companies/<id>/…`, or via `pennylaneged_companies`.
+                ⚠️ MUST be the same company as at `pennylaneged_request_upload`.
+            parent_id: id of the target folder (None = root).
         """
         cid = int(company_id)
         item: dict = {"name": name, "file": signed_id}
@@ -498,23 +498,23 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def pennylaneged_delete(company_id: int, item_id: int) -> dict:
-        """Supprime un item (dossier ou fichier) de la GED d'une société.
+        """Deletes an item (folder or file) from a company's GED.
 
-        ⚠️ Suppression — n'appeler qu'après confirmation. Un dossier supprimé emporte
-        son contenu.
+        ⚠️ Deletion — only call after confirmation. A deleted folder takes its
+        contents with it.
 
         Args:
-            item_id: id de l'item DMS à supprimer (cf. `pennylaneged_tree`).
-            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
-                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
-                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
-                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
+            item_id: id of the DMS item to delete (see `pennylaneged_tree`).
+            company_id: GED id of the file — ⚠️ **NOT** that of the `pennylane` connector (public
+                API): two homonymous spaces, and getting it wrong returns a 401/403
+                that IMITATES an expired session. It is read in the SPA URL,
+                `app.pennylane.com/companies/<id>/…`, or via `pennylaneged_companies`.
         """
         cid, iid = int(company_id), int(item_id)
-        # Une DELETE réussie répond 204 SANS corps : rendre le corps (`{}`) ne
-        # dit rien à l'agent de l'acte qu'il vient de commettre, et c'est
-        # précisément ce qui lui manquait dans #600. On confirme ce qu'on a
-        # supprimé, avec le code qui l'atteste.
+        # A successful DELETE answers 204 WITHOUT a body: returning the body (`{}`) tells
+        # the agent nothing about the act it just committed, and that is
+        # precisely what it was missing in #600. We confirm what we
+        # deleted, with the code that attests to it.
         res = await _call_raw(_company_app(cid),
                               f"/companies/{cid}/dms/items/{iid}", "DELETE")
         return {"deleted": True, "item_id": iid, "company_id": cid,

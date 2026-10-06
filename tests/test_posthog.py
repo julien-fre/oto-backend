@@ -203,7 +203,7 @@ def test_truncation_is_announced_not_hidden():
     raw = _raw_query_response()
     raw["hasMore"] = True
     kept = posthog._projeter(raw)
-    assert "TRONQU" in kept["note"].upper()
+    assert "TRUNCATED" in kept["note"].upper()
 
 
 # --- posthog_query : les deux voies, exclusives --------------------------------
@@ -212,9 +212,9 @@ def test_query_requires_exactly_one_of_hogql_or_typed_query():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "posthog_query")
-        with pytest.raises(McpError, match="EXACTEMENT un"):
+        with pytest.raises(McpError, match="EXACTLY one"):
             fn()
-        with pytest.raises(McpError, match="EXACTEMENT un"):
+        with pytest.raises(McpError, match="EXACTLY one"):
             fn(hogql="SELECT 1", query={"kind": "TrendsQuery"})
     finally:
         patcher.stop()
@@ -263,7 +263,7 @@ def test_run_replays_the_saved_insight_with_an_overridden_window():
 def test_get_refuses_a_date_override_because_it_does_not_execute():
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="op='get' n'utilise pas"):
+        with pytest.raises(McpError, match="op='get' does not use"):
             _tool(m, "posthog_insight")(op="get", insight_id="7", date_from="-7d")
     finally:
         patcher.stop()
@@ -272,7 +272,7 @@ def test_get_refuses_a_date_override_because_it_does_not_execute():
 def test_insight_run_requires_an_id():
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="requiert `insight_id`"):
+        with pytest.raises(McpError, match="requires `insight_id`"):
             _tool(m, "posthog_insight")(op="run")
     finally:
         patcher.stop()
@@ -301,10 +301,10 @@ def test_columns_requires_a_table_and_names_an_unknown_one():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "posthog_schema")
-        with pytest.raises(McpError, match="requiert `table`"):
+        with pytest.raises(McpError, match="requires `table`"):
             fn(op="columns")
         cls.return_value.database_schema.return_value = {"tables": {"events": {"fields": {}}}}
-        with pytest.raises(McpError, match="inconnue de ce projet"):
+        with pytest.raises(McpError, match="is unknown to this project"):
             fn(op="columns", table="nope")
     finally:
         patcher.stop()
@@ -326,7 +326,7 @@ def test_columns_returns_one_table_with_its_types():
 def test_values_requires_a_property_key():
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="requiert `property_key`"):
+        with pytest.raises(McpError, match="requires `property_key`"):
             _tool(m, "posthog_schema")(op="values")
     finally:
         patcher.stop()
@@ -342,7 +342,7 @@ def test_empty_group_types_says_the_project_has_no_account_level():
         cls.return_value.list_group_types.return_value = []
         out = _tool(m, "posthog_group")(op="types")
         assert out["group_types"] == []
-        assert "pas d'analytics de groupe" in out["note"]
+        assert "does not do group analytics" in out["note"]
     finally:
         patcher.stop()
 
@@ -350,7 +350,7 @@ def test_empty_group_types_says_the_project_has_no_account_level():
 def test_group_list_requires_the_type_index():
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="requiert `group_type_index`"):
+        with pytest.raises(McpError, match="requires `group_type_index`"):
             _tool(m, "posthog_group")(op="list")
         _tool(m, "posthog_group")(op="list", group_type_index=0, search="acme")
         cls.return_value.list_groups.assert_called_once_with(
@@ -365,9 +365,9 @@ def test_person_get_requires_id_and_refuses_list_filters():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "posthog_person")
-        with pytest.raises(McpError, match="requiert `person_id`"):
+        with pytest.raises(McpError, match="requires `person_id`"):
             fn(op="get")
-        with pytest.raises(McpError, match="op='get' n'utilise pas"):
+        with pytest.raises(McpError, match="op='get' does not use"):
             fn(op="get", person_id="p1", search="alice")
     finally:
         patcher.stop()
@@ -376,7 +376,7 @@ def test_person_get_requires_id_and_refuses_list_filters():
 def test_cohort_persons_requires_a_cohort():
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="requiert `cohort_id`"):
+        with pytest.raises(McpError, match="requires `cohort_id`"):
             _tool(m, "posthog_person")(op="cohort_persons")
     finally:
         patcher.stop()
@@ -388,7 +388,7 @@ def test_annotate_is_the_only_write_and_requires_content():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "posthog_project")
-        with pytest.raises(McpError, match="requiert `content`"):
+        with pytest.raises(McpError, match="requires `content`"):
             fn(op="annotate")
         fn(op="annotate", content="v2.3 en production", date_marker="2026-08-22T12:00:00Z")
         cls.return_value.create_annotation.assert_called_once_with(
@@ -431,5 +431,5 @@ def test_auth_error_names_the_three_real_causes():
         "detail": "Personal API key found in request Authorization header is invalid."},
         service="posthog"))
     assert "phx_" in msg and "phc_" in msg
-    assert "RÉGION" in msg
+    assert "REGION" in msg
     assert "scopes" in msg

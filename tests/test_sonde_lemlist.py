@@ -55,7 +55,7 @@ def test_une_cle_refusee_leve(monkeypatch):
 
 def test_une_reponse_200_SANS_identite_est_un_echec(monkeypatch):
     _brancher(monkeypatch, _FauxClient({}))
-    with pytest.raises(RuntimeError, match="sans identifier"):
+    with pytest.raises(RuntimeError, match="without identifying a team"):
         L._verify(_fields("k"))
 
 
@@ -66,7 +66,7 @@ def test_une_facturation_suspendue_est_un_echec_nomme(monkeypatch):
         {"_id": "tea_1", "name": "PiedPiper", "billing": {"ok": False, "plan": "pro"}}))
     with pytest.raises(RuntimeError) as e:
         L._verify(_fields("k"))
-    assert "PiedPiper" in str(e.value) and "facturation" in str(e.value)
+    assert "PiedPiper" in str(e.value) and "billing" in str(e.value)
 
 
 def test_des_credits_d_enrichissement_a_sec_ne_font_PAS_echouer(monkeypatch):

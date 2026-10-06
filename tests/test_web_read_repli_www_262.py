@@ -50,7 +50,7 @@ def test_un_domaine_nu_qui_ne_resout_pas_est_relu_sous_WWW(monkeypatch):
     out = lire(url="https://acme.test/equipe")
     assert vues == ["https://www.acme.test/equipe"], "le chemin et le schéma sont gardés"
     assert out["chemin"] == "http"
-    assert any(t["cran"] == "dns" and "repli" in t["verdict"] for t in out["tentatives"]), (
+    assert any(t["cran"] == "dns" and "fallback" in t["verdict"] for t in out["tentatives"]), (
         "le repli doit être DIT, pas silencieux")
 
 

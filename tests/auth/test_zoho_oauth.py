@@ -242,7 +242,7 @@ def test_pending_action_when_app_posted_but_no_consent(monkeypatch):
                                                    "client_secret": "s",
                                                    "data_center": "eu"}))
     action = status_hints.pending_action("zohodesk", "u1", 35, None, {"mode": "user"})
-    assert action == "Autorise oto chez Zoho"
+    assert action == "Authorize oto with Zoho"
 
 
 def test_no_pending_action_once_consent_given(monkeypatch):
@@ -273,7 +273,7 @@ def test_verify_names_the_pending_consent(module_name):
     l'utilisateur régénérer ce qui n'existe pas encore (vécu au 1er test réel)."""
     import importlib
     mod = importlib.import_module(f"oto_mcp.tools.{module_name}")
-    with pytest.raises(ValueError, match="autorisation n'a pas encore été donnée"):
+    with pytest.raises(ValueError, match="authorization has not been granted yet"):
         mod._verify({"client_id": "1000.X", "client_secret": "s", "data_center": "eu"})
 
 
@@ -300,7 +300,7 @@ def test_state_is_declared_once_for_the_three_connectors():
         st = status_hints.credential_state(con, app_only)
         assert st is not None and not st.complete
         assert st.missing == ("refresh_token",)
-        assert "Autoriser oto chez Zoho" in st.next_action
+        assert "Authorize oto with Zoho" in st.next_action
 
 
 def test_complete_credential_is_complete():
@@ -372,7 +372,7 @@ def test_verify_capability_returns_pending_not_failure(monkeypatch):
         provider, level = "zohodesk", "auto"
     out = asyncio.run(cv._verify(object(), _Inp()))
     assert out["ok"] is False and out["pending"] is True
-    assert "Autoriser oto chez Zoho" in out["error"]
+    assert "Authorize oto with Zoho" in out["error"]
 
 
 # --- verify-avant-persist : le blocage circulaire ----------------------------

@@ -1,24 +1,24 @@
-"""Déclaration de registre du connecteur `infosec`.
+"""Registry declaration of the `infosec` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it doesn't
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# infosec : recon PASSIF d'un domaine (RDAP/DNS/CT/TLS/headers, OSINT, sans clé).
-# Complète fr_* (identité légale) par l'empreinte numérique. Pas de scan intrusif.
+# infosec: PASSIVE recon of a domain (RDAP/DNS/CT/TLS/headers, OSINT, no key).
+# Complements fr_* (legal identity) with the digital footprint. No intrusive scan.
 CONNECTOR = _c(
     "infosec", ["infosec"], secret_kind="none",
-    label="Infosec", help="vérification d'un domaine : délivrabilité e-mail (SPF/DMARC/DKIM, listes noires, note + recommandations), whois/RDAP, DNS, sous-domaines (CT), TLS, headers de sécurité (recon passif)",
+    label="Infosec", help="domain check: email deliverability (SPF/DMARC/DKIM, blocklists, score + recommendations), whois/RDAP, DNS, subdomains (CT), TLS, security headers (passive recon)",
 )
 
 CATEGORY = "Infosec"
 PUBLISHER = "Otomata (OSINT)"
 DESCRIPTION = (
-    "Vérification d'un domaine, en lecture passive : délivrabilité e-mail "
-    "(SPF/DMARC/DKIM, listes noires, note et recommandations), WHOIS/RDAP, DNS, "
-    "sous-domaines via Certificate Transparency, TLS et headers de sécurité."
+    "Domain check, passive read-only: email deliverability "
+    "(SPF/DMARC/DKIM, blocklists, score and recommendations), WHOIS/RDAP, DNS, "
+    "subdomains via Certificate Transparency, TLS and security headers."
 )
 SANS_LOGO_DE_MARQUE = True

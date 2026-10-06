@@ -1,14 +1,14 @@
-## prerequisite — ta clé api n8n + url d'instance
+## prerequisite — your n8n api key + instance url
 
-n8n s'auto-héberge ou tourne en cloud, donc deux champs sont attendus.
-- `api_key` — depuis ton instance, ouvre settings puis n8n API et crée une clé api
-- `base_url` — l'url de ton instance (ex. `https://ton-instance.app.n8n.cloud` ou ton url self-hosted)
-renseigne les deux dans tes clés de connecteur oto sous `n8n`. plus d'infos sur [n8n.io](https://n8n.io)
+n8n is self-hosted or runs in the cloud, so two fields are expected.
+- `api_key` — from your instance, open settings then n8n API and create an api key
+- `base_url` — your instance's url (e.g. `https://your-instance.app.n8n.cloud` or your self-hosted url)
+fill in both in your oto connector keys under `n8n`. more info at [n8n.io](https://n8n.io)
 
-## usage — piloter workflows et exécutions
+## usage — manage workflows and executions
 
-liste, active et inspecte tes workflows et leurs runs.
-- `n8n_list_workflows` liste les workflows (filtre `active`, `tags`), `n8n_get_workflow` détaille un workflow
-- `n8n_activate_workflow` / `n8n_deactivate_workflow` démarrent ou stoppent ses triggers/cron
-- `n8n_list_executions` les exécutions (filtre par workflow ou `status` success/error/waiting)
-- `n8n_get_execution` le détail d'une exécution (avec `include_data` pour les données par nœud)
+list, activate and inspect your workflows and their runs.
+- `n8n_list_workflows` lists workflows (filter `active`, `tags`), `n8n_get_workflow` details one workflow
+- `n8n_activate_workflow` / `n8n_deactivate_workflow` start or stop its triggers/cron
+- `n8n_list_executions` the executions (filter by workflow or `status` success/error/waiting)
+- `n8n_get_execution` the detail of one execution (with `include_data` for per-node data)

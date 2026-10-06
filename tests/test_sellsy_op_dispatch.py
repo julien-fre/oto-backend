@@ -340,7 +340,7 @@ def test_unknown_op_is_refused_and_names_the_accepted_ones(
         client, tool, fixed, expected_ops):
     """Une op inconnue doit lever en nommant les ops valides — jamais retomber
     silencieusement sur `list` (l'agent croirait son écriture honorée)."""
-    with pytest.raises(McpError, match="op inconnu") as e:
+    with pytest.raises(McpError, match="Unknown op") as e:
         _tool(tool)(op="archive", **fixed)
 
     msg = str(e.value)

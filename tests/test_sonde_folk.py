@@ -59,7 +59,7 @@ def test_une_reponse_200_SANS_identite_est_un_echec(monkeypatch):
     mais la clé ne désigne personne. Conclure « connecté » sur un compte qu'on ne
     peut pas nommer, c'est exactement le verdict creux qu'une sonde doit empêcher."""
     _brancher(monkeypatch, _FauxClient({}))
-    with pytest.raises(RuntimeError, match="sans identifier"):
+    with pytest.raises(RuntimeError, match="without identifying"):
         F._verify(_fields("k"))
 
 
@@ -79,5 +79,5 @@ def test_la_sonde_ne_pretend_pas_lire_un_quota():
     qu'elle vérifie le solde ferait conclure « il reste du crédit » à qui n'a vérifié
     qu'une authentification."""
     doc = F._verify.__doc__ or ""
-    assert "auth` SEUL" in doc or "auth SEUL" in doc, doc[:200]
-    assert "Ne lit PAS le quota" in doc
+    assert "auth` ONLY" in doc or "auth ONLY" in doc, doc[:200]
+    assert "Does NOT read the quota" in doc

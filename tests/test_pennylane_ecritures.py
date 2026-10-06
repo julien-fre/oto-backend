@@ -186,4 +186,4 @@ def test_un_droit_manquant_dit_ou_lire_les_droits_de_la_cle(client):
         _tool("pennylane_match")(invoice_id=1, transaction_id=2)
     msg = str(e.value)
     assert "scopes" in msg and 'pennylane_ref(kind="company")' in msg, msg
-    assert "DROIT" in msg, "le message doit dire que ce n'est pas un argument à corriger"
+    assert "PERMISSION" in msg, "le message doit dire que ce n'est pas un argument à corriger"

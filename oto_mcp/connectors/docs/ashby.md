@@ -1,14 +1,14 @@
-## prerequisite — ta clé api ashby
+## prerequisite — your ashby api key
 
-il te faut une clé **api ashby**.
-- dans ashby, va dans **admin → integrations → API** et crée une clé
-- colle-la dans tes [clés de connecteurs](https://manage.oto.cx/) (ou laisse ton org partager la sienne)
-- doc éditeur : [ashbyhq.com](https://www.ashbyhq.com)
+you need an **ashby api** key.
+- in ashby, go to **admin → integrations → API** and create a key
+- paste it into your [connector keys](https://manage.oto.cx/) (or let your org share its own)
+- vendor docs: [ashbyhq.com](https://www.ashbyhq.com)
 
-## usage — ce que tu peux faire
+## usage — what you can do
 
-pilote ton ats ashby : candidats, jobs, candidatures, notes.
-- « trouve le candidat dont l'email est x@y.com » → `ashby_search_candidates` (par `email` et/ou `name`)
-- « liste les candidats » → `ashby_candidates`, puis le détail → `ashby_candidate`
-- « ajoute une note sur ce candidat » → `ashby_add_note`
-- « quels jobs sont ouverts ? » → `ashby_jobs` (`status` Open/Closed/Draft/Archived) ; les candidatures → `ashby_applications` (filtre `job_id`)
+drive your ashby ats: candidates, jobs, applications, notes.
+- "find the candidate whose email is x@y.com" → `ashby_search_candidates` (by `email` and/or `name`)
+- "list the candidates" → `ashby_candidates`, then the detail → `ashby_candidate`
+- "add a note on this candidate" → `ashby_add_note`
+- "which jobs are open?" → `ashby_jobs` (`status` Open/Closed/Draft/Archived); applications → `ashby_applications` (`job_id` filter)

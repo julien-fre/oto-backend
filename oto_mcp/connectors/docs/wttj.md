@@ -1,17 +1,17 @@
-## prerequisite — ton jeton api welcome to the jungle
+## prerequisite — your welcome to the jungle api token
 
-il te faut un **jeton api** de l'ats welcome to the jungle (ex-welcome kit).
-- il ne se génère pas dans l'interface : demande-le à wttj via [help.welcometothejungle.com](https://help.welcometothejungle.com/) en décrivant ton usage
-- demande les scopes `me_r`, `organizations_r`, `jobs_r`, `candidates_rw` (ou `candidates_r` en lecture seule), `comments_w`, `moves_r`
-- colle-le dans tes [clés de connecteurs](https://manage.oto.cx/) (ou laisse ton org partager le sien)
-- doc éditeur : [developers.welcomekit.co](https://developers.welcomekit.co)
+you need an **api token** for the welcome to the jungle ats (ex-welcome kit).
+- it cannot be generated in the interface: request it from wttj via [help.welcometothejungle.com](https://help.welcometothejungle.com/) describing your use
+- ask for the scopes `me_r`, `organizations_r`, `jobs_r`, `candidates_rw` (or `candidates_r` for read-only), `comments_w`, `moves_r`
+- paste it into your [connector keys](https://manage.oto.cx/) (or let your org share its own)
+- vendor docs: [developers.welcomekit.co](https://developers.welcomekit.co)
 
-## usage — ce que tu peux faire
+## usage — what you can do
 
-pilote ton ats wttj : tout part d'une **organisation**, une offre est un **job**, ses **étapes** se lisent sur le job, un **candidat** appartient à un job.
-- « quelles organisations je vois ? » → `wttj_organization` (donne les `organization_reference`)
-- « quelles offres sont publiées ? » → `wttj_job(op="list", status="published")` ; les étapes d'une offre → `wttj_job(op="get")`
-- « qui est en entretien sur ce poste ? » → `wttj_candidate(op="list")` avec `job_reference` et `job_stage_id` ; détail → `wttj_candidate(op="get")`
-- « ajoute ce candidat » → `wttj_candidate(op="create")` ; « passe-le à l'étape suivante » → `wttj_candidate(op="update", job_stage_id=…)` ; archiver → `archived=true`
-- « note l'échange d'hier » → `wttj_comment` (écriture seule : l'api ne relit pas les commentaires)
-- « qu'est-ce qui a bougé cette semaine ? » → `wttj_moves`
+drive your wttj ats: everything starts from an **organization**, a job offer is a **job**, its **stages** are read on the job, a **candidate** belongs to a job.
+- "which organizations do I see?" → `wttj_organization` (gives the `organization_reference`s)
+- "which jobs are published?" → `wttj_job(op="list", status="published")`; a job's stages → `wttj_job(op="get")`
+- "who is at the interview stage for this role?" → `wttj_candidate(op="list")` with `job_reference` and `job_stage_id`; detail → `wttj_candidate(op="get")`
+- "add this candidate" → `wttj_candidate(op="create")`; "move them to the next stage" → `wttj_candidate(op="update", job_stage_id=…)`; archive → `archived=true`
+- "log yesterday's conversation" → `wttj_comment` (write-only: the api does not read comments back)
+- "what moved this week?" → `wttj_moves`

@@ -1,10 +1,10 @@
-"""Zoho Analytics — lecture des données (workspaces, vues, export, requêtes SQL).
+"""Zoho Analytics — data reading (workspaces, views, export, SQL queries).
 
-Credential = OAuth2 (self-client) à 5 champs : client_id + client_secret +
-refresh_token + org_id (en-tête `ZANALYTICS-ORGID`) + data_center → modèle
-générique multi-champs (ADR 0011), résolu par appel via
-`access.resolve_credential_fields("zohoanalytics")`. byo_user OU byo_org (clé
-partageable équipe data). Token d'accès dérivé/caché en mémoire côté client.
+Credential = OAuth2 (self-client) with 5 fields: client_id + client_secret +
+refresh_token + org_id (`ZANALYTICS-ORGID` header) + data_center → generic
+multi-field model (ADR 0011), resolved per call via
+`access.resolve_credential_fields("zohoanalytics")`. byo_user OR byo_org (key
+shareable by the data team). Access token derived/cached in memory client-side.
 """
 from __future__ import annotations
 
@@ -18,10 +18,10 @@ from .. import access, status_hints
 from ..connectors import verify as connector_verify
 
 
-# Zoho héberge par data center régional ; le self-client ET le refresh token sont
-# liés à leur région d'émission (un self-client `.eu` tapant `accounts.zoho.com`
-# est rejeté par un `invalid_client` opaque). Le champ `data_center` sélectionne
-# les domaines API Analytics + OAuth. Régions reconnues :
+# Zoho hosts per regional data center; the self-client AND the refresh token are
+# tied to their region of issue (a `.eu` self-client hitting `accounts.zoho.com`
+# is rejected with an opaque `invalid_client`). The `data_center` field selects
+# the Analytics API + OAuth domains. Recognized regions:
 _DC_DOMAINS = {
     "com": ("https://analyticsapi.zoho.com", "https://accounts.zoho.com"),
     "eu": ("https://analyticsapi.zoho.eu", "https://accounts.zoho.eu"),
@@ -34,34 +34,34 @@ _DC_DOMAINS = {
 
 
 def _resolve_dc_domains(data_center: Optional[str]) -> tuple[str, str]:
-    """`(api_domain, accounts_url)` pour la région Zoho déclarée. Région manquante
-    ou non reconnue → `McpError` actionnable, **jamais** de repli silencieux sur
-    `com` (qui masquerait la vraie cause d'un `invalid_client`)."""
+    """`(api_domain, accounts_url)` for the declared Zoho region. Missing
+    or unrecognized region → actionable `McpError`, **never** a silent fallback to
+    `com` (which would mask the real cause of an `invalid_client`)."""
     dc = (data_center or "").strip().lower()
     if dc not in _DC_DOMAINS:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-            (f"Data center Zoho non reconnu : {data_center!r}." if dc
-             else "Data center Zoho manquant.")
-            + " Renseigne ta région dans le champ « Data center » du connecteur Zoho"
-            " Analytics — l'une de : com, eu, in, au, jp, ca, sa. Elle est visible dans"
-            " l'URL quand tu es connecté·e à Zoho Analytics (ex. analytics.zoho.eu → « eu »)."
+            (f"Zoho data center not recognized: {data_center!r}." if dc
+             else "Zoho data center missing.")
+            + " Fill in your region in the \"Data center\" field of the Zoho"
+            " Analytics connector — one of: com, eu, in, au, jp, ca, sa. It is visible in"
+            " the URL when you are logged in to Zoho Analytics (e.g. analytics.zoho.eu → \"eu\")."
         )))
     return _DC_DOMAINS[dc]
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /restapi/v2/orgs` (déjà dans le client — `list_orgs`), le plus petit
-    appel disponible : pas de `/me` séparé chez Zoho Analytics, `list_orgs`
-    liste les organisations Zoho joignables par ce self-client. Le refresh
-    OAuth (`ZohoAnalyticsClient._get_access_token`) valide déjà client_id +
-    client_secret + refresh_token + data_center d'un coup ; l'appel de données
-    lève via `raise_for_upstream` (typé, `UpstreamHTTPError`).
+    `GET /restapi/v2/orgs` (already in the client — `list_orgs`), the smallest
+    call available: there is no separate `/me` at Zoho Analytics, `list_orgs`
+    lists the Zoho organizations reachable by this self-client. The OAuth refresh
+    (`ZohoAnalyticsClient._get_access_token`) already validates client_id +
+    client_secret + refresh_token + data_center in one go; the data call
+    raises via `raise_for_upstream` (typed, `UpstreamHTTPError`).
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    un self-client Zoho Analytics n'a qu'un scope (Analytics), pas de
-    permission granulaire par workspace au niveau de la sonde.
+    **Authenticated ≠ usable** (class oto#69): does not distinguish scope —
+    a Zoho Analytics self-client has a single scope (Analytics), no granular
+    per-workspace permission at the probe level.
     """
     from oto.tools.zohoanalytics.client import ZohoAnalyticsClient
 

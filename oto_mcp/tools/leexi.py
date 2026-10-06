@@ -1,28 +1,28 @@
-"""Outils Leexi — appels et réunions enregistrés, transcripts, notes.
+"""Leexi tools — recorded calls and meetings, transcripts, notes.
 
-Wrappe `oto.tools.leexi.client.LeexiClient` (API v1, Basic `KEY_ID:KEY_SECRET`).
-Cinq outils, un par famille de l'API amont : appels, notes, réunions,
-utilisateurs, équipes.
+Wraps `oto.tools.leexi.client.LeexiClient` (API v1, Basic `KEY_ID:KEY_SECRET`).
+Five tools, one per family of the upstream API: calls, notes, meetings,
+users, teams.
 
-Deux portées gouvernent ce que l'organisation voit, et il faut les distinguer
-pour lire un résultat vide sans se tromper de diagnostic :
+Two scopes govern what the organization sees, and they must be told apart
+to read an empty result without picking the wrong diagnosis:
 
-- la **portée d'accès aux appels** est attachée à la clé côté Leexi (toute
-  l'entreprise / l'accès d'un utilisateur / des règles d'accès). Hors périmètre,
-  un appel n'est pas listé, et demandé en direct il répond 404. Une liste vide
-  peut donc être un réglage parfaitement valide ;
-- les **scopes de permission** (`read_calls`, `write_users`…) décident des
-  endpoints atteignables. Sans le scope, c'est un 403, et le message le dit.
+- the **call access scope** is attached to the key on the Leexi side (the whole
+  company / a user's access / access rules). Out of scope,
+  a call is not listed, and when requested directly it answers 404. An empty list
+  can therefore be a perfectly valid setting;
+- the **permission scopes** (`read_calls`, `write_users`…) decide which
+  endpoints are reachable. Without the scope, it is a 403, and the message says so.
 
-⚠️ **Une clé neuve ne porte que `read_calls`** : les écritures d'utilisateur et
-d'équipe — qui engagent les LICENCES FACTURÉES du client — demandent des scopes
-qu'un admin Leexi doit accorder explicitement. Ce connecteur ne contourne pas ce
-cran, il le NOMME quand l'amont refuse. C'est aussi pourquoi la sonde de
-connexion interroge `/calls` et pas `/users` : sonder ailleurs ferait passer une
-clé saine mais restreinte pour une clé morte.
+⚠️ **A new key only carries `read_calls`**: user and
+team writes — which commit the customer's BILLED LICENSES — require scopes
+that a Leexi admin must grant explicitly. This connector does not get around that
+notch, it NAMES it when upstream refuses. That is also why the connection probe
+queries `/calls` and not `/users`: probing elsewhere would make a healthy but restricted
+key pass for a dead one.
 
-Les appels au client sont écrits en clair (`_client().list_calls(…)`) : c'est ce
-qui les rend vérifiables par la sonde version-skew
+Client calls are written out in plain form (`_client().list_calls(…)`): that is what
+makes them verifiable by the version-skew probe
 (`test_tools_client_methods_exist`).
 """
 from __future__ import annotations
@@ -42,60 +42,60 @@ def _bad(msg: str) -> McpError:
 
 
 def _upstream_message(e) -> str:
-    """Traduit un refus de Leexi en message actionnable.
+    """Translates a Leexi refusal into an actionable message.
 
-    Les codes de cette API sont inhabituellement parlants (402 = abonnement,
-    409 = doublon, 422 = état incompatible) : les rendre tels quels priverait
-    l'agent de la seule information qui distingue « réessaie » de « change
-    quelque chose ».
+    This API's codes are unusually expressive (402 = subscription,
+    409 = duplicate, 422 = incompatible state): returning them as-is would deprive
+    the agent of the only information that distinguishes « retry » from « change
+    something ».
     """
     status = e.status_code
     if status == 401:
-        return ("Leexi a rejeté la clé (401) — vérifie l'API Key ID et le Key "
-                "Secret configurés sur ce connecteur (Leexi : Settings → "
+        return ("Leexi rejected the key (401) — check the API Key ID and Key "
+                "Secret configured on this connector (Leexi: Settings → "
                 "Company Settings → API Keys).")
     if status == 402:
-        return ("Leexi : abonnement inactif (402) — la clé est bonne, mais le "
-                "compte Leexi n'est pas en règle. Rien à corriger côté oto.")
+        return ("Leexi: inactive subscription (402) — the key is good, but the "
+                "Leexi account is not in good standing. Nothing to fix on the oto side.")
     if status == 403:
-        return ("Leexi a refusé l'accès (403) — la clé existe mais il lui "
-                "manque le scope de cette opération. Une clé neuve ne porte "
-                "que `read_calls` : les autres scopes, et surtout "
-                "`write_users`/`write_teams` (qui engagent les licences "
-                "facturées), s'accordent par un admin Leexi.")
+        return ("Leexi denied access (403) — the key exists but it lacks "
+                "the scope for this operation. A new key only carries "
+                "`read_calls`: the other scopes, and above all "
+                "`write_users`/`write_teams` (which commit billed "
+                "licenses), are granted by a Leexi admin.")
     if status == 404:
-        return ("Leexi : introuvable (404). ⚠️ Sur un appel, cela peut aussi "
-                "vouloir dire « hors de la portée de cette clé » — la portée "
-                "d'accès aux appels se règle côté Leexi, pas ici.")
+        return ("Leexi: not found (404). ⚠️ On a call, it can also "
+                "mean « outside this key's scope » — the call access "
+                "scope is set on the Leexi side, not here.")
     if status == 405:
-        return ("Leexi : action impossible pour cet événement (405) — réunion "
-                "passée, ou sans URL exploitable.")
+        return ("Leexi: action impossible for this event (405) — past "
+                "meeting, or no usable URL.")
     if status == 409:
-        return ("Leexi : conflit (409) — déjà existant. Un email d'utilisateur "
-                "ou un nom d'équipe déjà pris, une réunion déjà déclarée, ou "
-                "un assistant déjà lancé.")
+        return ("Leexi: conflict (409) — already exists. A user email "
+                "or team name already taken, a meeting already declared, or "
+                "an assistant already launched.")
     if status == 422:
-        return (f"Leexi : la demande est valide mais la ressource ne peut pas "
-                f"changer ainsi (422) — par exemple supprimer une équipe qui "
-                f"porte encore des utilisateurs ou des appels : {e.body}")
+        return (f"Leexi: the request is valid but the resource cannot "
+                f"change that way (422) — for example deleting a team that "
+                f"still carries users or calls: {e.body}")
     if status == 429:
-        return ("Leexi : trop de requêtes (429) — 50/minute, et seulement "
-                "10/minute pour la création d'appel. Réessaie dans un instant.")
+        return ("Leexi: too many requests (429) — 50/minute, and only "
+                "10/minute for call creation. Retry in a moment.")
     if status in (500, 502, 503, 504):
-        return f"Leexi est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Leexi a refusé la requête (HTTP {status}): {e.body}"
+        return f"Leexi is temporarily unavailable (HTTP {status}) — retry later."
+    return f"Leexi refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : une lecture réelle sur `/calls`.
+    """« Test the connection » probe: a real read on `/calls`.
 
-    ⚠️ Sonder `/users` serait le réflexe naturel et il serait FAUX : une clé
-    neuve ne porte que `read_calls`, donc une clé parfaitement valide y
-    répondrait 403, et le bouton afficherait rouge sur une configuration saine.
-    `/calls` est le seul endpoint qu'une clé par défaut peut honorer.
+    ⚠️ Probing `/users` would be the natural reflex and it would be WRONG: a new
+    key only carries `read_calls`, so a perfectly valid key would answer
+    403 there, and the button would show red on a healthy configuration.
+    `/calls` is the only endpoint a default key can honor.
 
-    Une liste vide n'est PAS un échec : c'est une clé dont la portée d'accès ne
-    couvre aucun appel, ce qui est un réglage valide côté Leexi.
+    An empty list is NOT a failure: it is a key whose access scope does not
+    cover any call, which is a valid setting on the Leexi side.
     """
     from oto.tools.leexi.client import LeexiClient
     client = LeexiClient(key_id=fields["key_id"], key_secret=fields["key_secret"])
@@ -114,7 +114,7 @@ def register(mcp: FastMCP) -> None:
                            key_secret=creds["key_secret"])
 
     def _run(fn):
-        """Traduit un refus de Leexi en erreur d'outil actionnable."""
+        """Translates a Leexi refusal into an actionable tool error."""
         try:
             return fn()
         except ValueError as e:
@@ -124,10 +124,10 @@ def register(mcp: FastMCP) -> None:
 
     def _need(value, nom: str, op: str):
         if not value:
-            raise _bad(f"op='{op}' : `{nom}` requis.")
+            raise _bad(f"op='{op}': `{nom}` required.")
         return value
 
-    # --- appels --------------------------------------------------------------
+    # --- calls ---------------------------------------------------------------
 
     @mcp.tool()
     def leexi_calls(
@@ -147,44 +147,44 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         items: int = 10,
     ) -> Any:
-        """Leexi — les appels et réunions enregistrés, et leurs transcripts.
+        """Leexi — recorded calls and meetings, and their transcripts.
 
-        C'est ici qu'on retrouve ce qui s'est DIT : `op='get'` rend l'appel avec
-        ses topics et son transcript (au paragraphe et au mot), là où
-        `op='search'` ne rend que les métadonnées.
+        This is where you find what was SAID: `op='get'` returns the call with
+        its topics and transcript (paragraph- and word-level), whereas
+        `op='search'` only returns the metadata.
 
         `op`:
-        - `search` — liste les appels de la portée de la clé. Filtres par
-          propriétaire, participant, email ou téléphone du client, et fenêtre de
-          dates. ⚠️ Une liste vide peut simplement vouloir dire que la clé n'a
-          accès à aucun appel : la portée se règle côté Leexi.
-        - `get` — un appel AVEC son transcript (`call_uuid`).
-        - `create` — enregistre un appel importé (`fields`). Requiert que le
-          fichier soit déjà téléversé via `op='presign'` ; la création est
-          asynchrone et le résumé n'arrive que plusieurs minutes après.
-        - `presign` — demande l'URL de téléversement d'un enregistrement
-          (`extension`), premier temps d'un import.
+        - `search` — lists the calls within the key's scope. Filters by
+          owner, participant, customer email or phone, and date window.
+          ⚠️ An empty list may simply mean the key has no access
+          to any call: the scope is set on the Leexi side.
+        - `get` — one call WITH its transcript (`call_uuid`).
+        - `create` — registers an imported call (`fields`). Requires that the
+          file has already been uploaded via `op='presign'`; creation is
+          asynchronous and the summary only arrives several minutes later.
+        - `presign` — requests the upload URL for a recording
+          (`extension`), first step of an import.
 
-        ⚠️ Un 404 sur `op='get'` ne veut pas dire « n'existe pas » : un appel
-        hors de la portée de la clé répond 404, exprès.
+        ⚠️ A 404 on `op='get'` does not mean « does not exist »: a call
+        outside the key's scope answers 404, on purpose.
 
         Args:
             op: search | get | create | presign.
-            call_uuid: op='get' — l'appel à lire.
-            owner_uuid: op='search' — filtre par propriétaire(s).
-            participating_user_uuid: op='search' — filtre par participant(s).
-            customer_email_address: op='search' — filtre par email(s) client.
-            customer_phone_number: op='search' — filtre par téléphone(s) client.
-            date_from: op='search' — début de la fenêtre (ISO 8601).
-            date_to: op='search' — fin de la fenêtre (ISO 8601).
-            date_filter: op='search' — champ borné : created_at | performed_at | updated_at.
-            order: op='search' — tri, ex. 'performed_at desc'.
-            with_transcript: op='search' — joint le transcript paragraphe (réponse lourde).
-            fields: op='create' — corps de l'appel (direction, external_id,
-                performed_at, recording_s3_key, user_uuid requis).
-            extension: op='presign' — extension du fichier, ex. 'mp3'.
-            page: numéro de page.
-            items: lignes par page (1-100, défaut 10).
+            call_uuid: op='get' — the call to read.
+            owner_uuid: op='search' — filter by owner(s).
+            participating_user_uuid: op='search' — filter by participant(s).
+            customer_email_address: op='search' — filter by customer email(s).
+            customer_phone_number: op='search' — filter by customer phone(s).
+            date_from: op='search' — start of the window (ISO 8601).
+            date_to: op='search' — end of the window (ISO 8601).
+            date_filter: op='search' — bounded field: created_at | performed_at | updated_at.
+            order: op='search' — sort, e.g. 'performed_at desc'.
+            with_transcript: op='search' — attaches the paragraph transcript (heavy response).
+            fields: op='create' — call body (direction, external_id,
+                performed_at, recording_s3_key, user_uuid required).
+            extension: op='presign' — file extension, e.g. 'mp3'.
+            page: page number.
+            items: rows per page (1-100, default 10).
         """
         if op == "search":
             return _run(lambda: _client().list_calls(
@@ -204,7 +204,7 @@ def register(mcp: FastMCP) -> None:
         if op == "presign":
             _need(extension, "extension", op)
             return _run(lambda: _client().presign_recording_url(extension))
-        raise _bad(f"`op` invalide : {op!r} (attendu : search | get | create | presign).")
+        raise _bad(f"`op` invalid: {op!r} (expected: search | get | create | presign).")
 
     # --- notes ---------------------------------------------------------------
 
@@ -219,29 +219,29 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         items: int = 10,
     ) -> Any:
-        """Leexi — les notes produites sur un appel (résumés, comptes rendus).
+        """Leexi — the notes produced on a call (summaries, meeting minutes).
 
-        Ce sont les sorties des prompts Leexi : c'est là que vit le compte rendu
-        d'un rendez-vous, plutôt que dans le transcript brut.
+        These are the outputs of Leexi prompts: this is where the minutes of a
+        meeting live, rather than in the raw transcript.
 
         `op`:
-        - `list` — notes d'un appel (`call_uuid` requis : l'API n'expose pas de
-          liste globale). ⚠️ Seules les notes de catégorie `summary` ou `text`
-          existent pour cette API — l'absence des autres n'est pas un défaut.
-        - `get` — une note (`note_uuid`).
-        - `update` — REMPLACE le texte d'une langue (`locale` + `text`) ; ce
-          n'est pas une fusion, le contenu précédent de cette langue est perdu.
-        - `delete` — supprime une note, sans corbeille.
+        - `list` — notes of a call (`call_uuid` required: the API exposes no
+          global list). ⚠️ Only notes of category `summary` or `text`
+          exist for this API — the absence of the others is not a defect.
+        - `get` — one note (`note_uuid`).
+        - `update` — REPLACES the text of a language (`locale` + `text`); it is
+          not a merge, the previous content of that language is lost.
+        - `delete` — deletes a note, no trash.
 
         Args:
             op: list | get | update | delete.
-            call_uuid: op='list' — l'appel dont on lit les notes (requis).
-            note_uuid: op='get'/'update'/'delete' — la note visée.
-            prompt_uuid: op='list' — ne garder que les notes de ce prompt.
-            locale: op='update' — langue de la note réécrite.
-            text: op='update' — le nouveau texte (remplace).
-            page: numéro de page.
-            items: lignes par page (1-100, défaut 10).
+            call_uuid: op='list' — the call whose notes are read (required).
+            note_uuid: op='get'/'update'/'delete' — the targeted note.
+            prompt_uuid: op='list' — keep only the notes of this prompt.
+            locale: op='update' — language of the rewritten note.
+            text: op='update' — the new text (replaces).
+            page: page number.
+            items: rows per page (1-100, default 10).
         """
         if op == "list":
             _need(call_uuid, "call_uuid", op)
@@ -258,9 +258,9 @@ def register(mcp: FastMCP) -> None:
         if op == "delete":
             _need(note_uuid, "note_uuid", op)
             return _run(lambda: _client().delete_call_note(note_uuid))
-        raise _bad(f"`op` invalide : {op!r} (attendu : list | get | update | delete).")
+        raise _bad(f"`op` invalid: {op!r} (expected: list | get | update | delete).")
 
-    # --- réunions ------------------------------------------------------------
+    # --- meetings ------------------------------------------------------------
 
     @mcp.tool()
     def leexi_meetings(
@@ -276,37 +276,37 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         items: int = 10,
     ) -> Any:
-        """Leexi — les réunions connues, et l'assistant qu'on y envoie.
+        """Leexi — known meetings, and the assistant sent to them.
 
-        Une réunion (« meeting event ») est un rendez-vous que Leexi connaît,
-        venu du calendrier, d'une saisie manuelle ou de l'API — distinct d'un
-        appel, qui est un enregistrement déjà traité. L'assistant se lance sur la
-        première et produit le second.
+        A meeting (« meeting event ») is an appointment that Leexi knows about,
+        coming from the calendar, a manual entry or the API — distinct from a
+        call, which is an already-processed recording. The assistant is launched on the
+        former and produces the latter.
 
         `op`:
-        - `list` — réunions connues, filtrables par origine et fenêtre de dates.
-        - `get` — une réunion (`meeting_uuid`).
-        - `create` — déclare une réunion (`fields`). `to_record=True` demande
-          l'enregistrement.
-        - `delete` — retire une réunion.
-        - `launch_bot` — ⚠️ **envoie l'assistant DANS la réunion**, où les
-          participants le verront rejoindre. `stop_task=True` fait l'inverse et
-          retire un assistant déjà en cours : c'est le même endpoint amont pour
-          les deux sens.
+        - `list` — known meetings, filterable by origin and date window.
+        - `get` — one meeting (`meeting_uuid`).
+        - `create` — declares a meeting (`fields`). `to_record=True` requests
+          recording.
+        - `delete` — removes a meeting.
+        - `launch_bot` — ⚠️ **sends the assistant INTO the meeting**, where the
+          participants will see it join. `stop_task=True` does the opposite and
+          removes an assistant already running: it is the same upstream endpoint
+          for both directions.
 
         Args:
             op: list | get | create | delete | launch_bot.
-            meeting_uuid: la réunion visée (get, delete, launch_bot).
+            meeting_uuid: the targeted meeting (get, delete, launch_bot).
             origin: op='list' — calendar | manual | api.
-            date_from: op='list' — début de la fenêtre (ISO 8601).
-            date_to: op='list' — fin de la fenêtre (ISO 8601).
-            date_filter: op='list' — champ borné : start_time | end_time.
-            order: op='list' — tri, ex. 'start_time desc'.
-            fields: op='create' — corps (end_time, internal, meeting_url,
-                organizer, owned, start_time, to_record, user_uuid requis).
-            stop_task: op='launch_bot' — True retire l'assistant au lieu de l'envoyer.
-            page: numéro de page.
-            items: lignes par page (1-100, défaut 10).
+            date_from: op='list' — start of the window (ISO 8601).
+            date_to: op='list' — end of the window (ISO 8601).
+            date_filter: op='list' — bounded field: start_time | end_time.
+            order: op='list' — sort, e.g. 'start_time desc'.
+            fields: op='create' — body (end_time, internal, meeting_url,
+                organizer, owned, start_time, to_record, user_uuid required).
+            stop_task: op='launch_bot' — True removes the assistant instead of sending it.
+            page: page number.
+            items: rows per page (1-100, default 10).
         """
         if op == "list":
             return _run(lambda: _client().list_meeting_events(
@@ -325,10 +325,10 @@ def register(mcp: FastMCP) -> None:
             _need(meeting_uuid, "meeting_uuid", op)
             return _run(lambda: _client().launch_meeting_assistant(
                 meeting_uuid, stop_task=stop_task))
-        raise _bad(f"`op` invalide : {op!r} "
-                   "(attendu : list | get | create | delete | launch_bot).")
+        raise _bad(f"`op` invalid: {op!r} "
+                   "(expected: list | get | create | delete | launch_bot).")
 
-    # --- utilisateurs --------------------------------------------------------
+    # --- users ---------------------------------------------------------------
 
     @mcp.tool()
     def leexi_users(
@@ -338,31 +338,31 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         items: int = 10,
     ) -> Any:
-        """Leexi — les utilisateurs de l'espace de travail, et leurs licences.
+        """Leexi — the workspace users, and their licenses.
 
-        Sert surtout à résoudre un `user_uuid` (celui qu'exige la création d'un
-        appel) et à voir qui consomme une licence.
+        Mostly used to resolve a `user_uuid` (the one required to create a
+        call) and to see who consumes a license.
 
-        ⚠️ **Les écritures d'ici engagent la facturation du client** : créer un
-        utilisateur consomme une licence, le réactiver aussi. Elles exigent le
-        scope `write_users`, qu'une clé neuve n'a PAS — un admin Leexi doit
-        l'accorder, et c'est le garde-fou réel. Un refus 403 dit exactement cela.
+        ⚠️ **The writes here commit the customer's billing**: creating a
+        user consumes a license, and so does reactivating one. They require the
+        `write_users` scope, which a new key does NOT have — a Leexi admin must
+        grant it, and that is the real safeguard. A 403 refusal says exactly that.
 
-        ⚠️ `deactivate` ne supprime rien : les appels et l'historique restent,
-        les sessions tombent, la licence se libère. Le verbe HTTP amont dit
-        « delete », l'effet est une désactivation. Réactiver = `update` avec
+        ⚠️ `deactivate` deletes nothing: calls and history stay,
+        sessions drop, the license is freed. The upstream HTTP verb says
+        « delete », the effect is a deactivation. Reactivate = `update` with
         `{"active": true}`.
 
         `op`: `list` | `get` | `create` (fields) | `update` (fields) | `deactivate`.
 
         Args:
             op: list | get | create | update | deactivate.
-            user_uuid: l'utilisateur visé (get, update, deactivate).
-            fields: op='create' — email, name, team_uuid requis ; roles,
-                license, send_welcome_email optionnels. op='update' — champs à
-                changer, dont active.
-            page: numéro de page.
-            items: lignes par page (1-100, défaut 10).
+            user_uuid: the targeted user (get, update, deactivate).
+            fields: op='create' — email, name, team_uuid required; roles,
+                license, send_welcome_email optional. op='update' — fields to
+                change, including active.
+            page: page number.
+            items: rows per page (1-100, default 10).
         """
         if op == "list":
             return _run(lambda: _client().list_users(page=page, items=items))
@@ -379,10 +379,10 @@ def register(mcp: FastMCP) -> None:
         if op == "deactivate":
             _need(user_uuid, "user_uuid", op)
             return _run(lambda: _client().deactivate_user(user_uuid))
-        raise _bad(f"`op` invalide : {op!r} "
-                   "(attendu : list | get | create | update | deactivate).")
+        raise _bad(f"`op` invalid: {op!r} "
+                   "(expected: list | get | create | update | deactivate).")
 
-    # --- équipes -------------------------------------------------------------
+    # --- teams ---------------------------------------------------------------
 
     @mcp.tool()
     def leexi_teams(
@@ -392,25 +392,25 @@ def register(mcp: FastMCP) -> None:
         page: Optional[int] = None,
         items: int = 10,
     ) -> Any:
-        """Leexi — les équipes de l'espace de travail.
+        """Leexi — the workspace teams.
 
-        Une équipe porte les utilisateurs et leurs appels ; son `uuid` est requis
-        pour créer un utilisateur.
+        A team carries users and their calls; its `uuid` is required
+        to create a user.
 
-        ⚠️ Écritures sous scope `write_teams`, qu'une clé neuve n'a pas.
-        ⚠️ `delete` ne passe QUE sur une équipe sans utilisateur ni appel (sinon
-        422) : pour toutes les autres, la désactiver avec
-        `op='update' fields={"active": false}`, ce que l'éditeur recommande.
+        ⚠️ Writes under the `write_teams` scope, which a new key does not have.
+        ⚠️ `delete` ONLY works on a team with no users or calls (otherwise
+        422): for all the others, deactivate it with
+        `op='update' fields={"active": false}`, which the vendor recommends.
 
         `op`: `list` | `get` | `create` (fields) | `update` (fields) | `delete`.
 
         Args:
             op: list | get | create | update | delete.
-            team_uuid: l'équipe visée (get, update, delete).
-            fields: op='create' — name requis, active optionnel.
-                op='update' — name et/ou active.
-            page: numéro de page.
-            items: lignes par page (1-100, défaut 10).
+            team_uuid: the targeted team (get, update, delete).
+            fields: op='create' — name required, active optional.
+                op='update' — name and/or active.
+            page: page number.
+            items: rows per page (1-100, default 10).
         """
         if op == "list":
             return _run(lambda: _client().list_teams(page=page, items=items))
@@ -427,5 +427,5 @@ def register(mcp: FastMCP) -> None:
         if op == "delete":
             _need(team_uuid, "team_uuid", op)
             return _run(lambda: _client().delete_team(team_uuid))
-        raise _bad(f"`op` invalide : {op!r} "
-                   "(attendu : list | get | create | update | delete).")
+        raise _bad(f"`op` invalid: {op!r} "
+                   "(expected: list | get | create | update | delete).")

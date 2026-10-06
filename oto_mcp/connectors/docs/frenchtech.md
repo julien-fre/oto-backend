@@ -1,8 +1,8 @@
-## usage — écosystème French Tech (annuaire, events, financements)
+## usage — French Tech ecosystem (directory, events, funding)
 
-l'écosystème d'une capitale french tech (défaut aix-marseille) — open data live, sans clé.
-- `frenchtech_search_annuaire(query=…, secteur=…, ville=…)` — entreprises de l'annuaire (startups/structures/prestataires) avec dirigeant, email, téléphone, site, secteurs, besoins : dataset de prospection b2b
-- `frenchtech_get_annuaire(slug)` — fiche entreprise complète
-- `frenchtech_evenements()` / `frenchtech_appels()` — événements (meetups, confs) et appels à projet / concours / ami
-- `frenchtech_financements()` — dispositifs de financement (type, montant, stade, critères)
-- `frenchtech_ftc_scenarios()` — rdv french tech central bookables (correspondants de l'état : inpi, urssaf, douanes, bpifrance…)
+the ecosystem of a french tech capital (default aix-marseille) — live open data, no key.
+- `frenchtech_search_annuaire(query=…, secteur=…, ville=…)` — companies in the directory (startups/structures/service providers) with founder, email, phone, website, sectors, needs: a b2b prospecting dataset
+- `frenchtech_get_annuaire(slug)` — full company profile
+- `frenchtech_evenements()` / `frenchtech_appels()` — events (meetups, conferences) and calls for projects / competitions / expressions of interest
+- `frenchtech_financements()` — funding schemes (type, amount, stage, criteria)
+- `frenchtech_ftc_scenarios()` — bookable french tech central appointments (state contacts: inpi, urssaf, customs, bpifrance…)

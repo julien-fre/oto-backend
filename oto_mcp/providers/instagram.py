@@ -1,34 +1,34 @@
-"""Déclaration de registre du connecteur `instagram` — la messagerie Instagram opérée.
+"""Registry declaration for the `instagram` connector — operated Instagram messaging.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE. La forme
-commune aux six connexions hébergées vit chez le porteur de la clé
-(`providers/unipile.channel`) — ici, ce qui distingue CELLE-CI.
+Single home of its entry: `providers/__init__.py` AGGREGATES it. The form
+shared by the six hosted connections lives with the key holder
+(`providers/unipile.channel`) — here, what distinguishes THIS one.
 """
 from __future__ import annotations
 
 from .unipile import channel
 
-# Instagram : la personne connecte SON compte par un flux hébergé, et l'outil
-# `instagram_chat(op=list|read|send)` agit sous cette identité. Dérivé de la factory de
-# messagerie commune (`tools/unipile.register_messaging_tools`) — l'API `/chats` du
-# fournisseur est channel-agnostic, c'est le canal du compte opéré qui décide de la
-# route.
+# Instagram: the person connects THEIR account through a hosted flow, and the tool
+# `instagram_chat(op=list|read|send)` acts under that identity. Derived from the
+# shared messaging factory (`tools/unipile.register_messaging_tools`) — the provider's
+# `/chats` API is channel-agnostic, it is the operated account's channel that decides
+# the route.
 #
-# La carte ne nomme pas notre fournisseur : ce qu'on connecte, c'est un compte
-# Instagram. Le compte fournisseur (la clé) est un connecteur à part, `unipile`.
+# The card does not name our provider: what is being connected is an Instagram
+# account. The provider account (the key) is a separate connector, `unipile`.
 CONNECTOR = channel(
     "instagram",
     hosted_channel="INSTAGRAM",
     label="Instagram",
-    help="Tes DM Instagram — lire et envoyer des messages. "
-         "Ton compte se connecte chez Unipile, notre prestataire, qui détient la session.",
+    help="Your Instagram DMs — read and send messages. "
+         "Your account connects through Unipile, our provider, which holds the session.",
     href="https://www.instagram.com",
 )
 
 CATEGORY = "Messagerie"
 LOGO_DOMAIN = "instagram.com"
 DESCRIPTION = (
-    "Les messages privés de ton compte Instagram : lister tes conversations, "
-    "lire un fil et envoyer un message. Les DM seulement — ni feed, ni "
-    "stories, ni publication."
+    "The private messages of your Instagram account: list your conversations, "
+    "read a thread and send a message. DMs only — no feed, no "
+    "stories, no posts."
 )

@@ -48,11 +48,11 @@ def test_une_session_expiree_marque_la_ligne_servie_et_le_dit(banc, statut):
     with pytest.raises(McpError) as e:
         asyncio.run(cb._api("GET", "/autocompletes?query=x"))
     assert marques == [("member", "7:sub-x", "crunchbase", "",
-                        f"session expirée (HTTP {statut})")]
+                        f"session expired (HTTP {statut})")]
     msg = str(e.value)
     assert "crunchbase_connect_start" in msg
-    assert "aucune reconnexion automatique" in msg
-    assert "continue sans cette source" in msg
+    assert "no automatic reconnection" in msg
+    assert "continue without this source" in msg
 
 
 def test_une_reponse_normale_ne_marque_rien(banc):

@@ -1,51 +1,51 @@
-"""La DOUBLE LECTURE de L7 : la chaîne calcule, l'ancien chemin décide.
+"""The DOUBLE READ of L7: the chain computes, the old path decides.
 
-**Ce que ce module n'est pas.** Il ne décide rien, ne refuse rien, ne change pas d'un
-octet ce qui est servi. Il observe. Le seul effet visible de son existence est une
-ligne de plus dans `access_shadow_l7` — et le jour où la fenêtre est concluante, le
-droit de retourner l'autorité (PR 2), puis de retirer `walk_cascade` (PR 3).
+**What this module is not.** It decides nothing, refuses nothing, does not change by a
+single byte what is served. It observes. The only visible effect of its existence is one
+more row in `access_shadow_l7` — and, the day the window is conclusive, the
+right to flip the authority (PR 2), then to remove `walk_cascade` (PR 3).
 
-**Ce qu'il calcule.** La résolution telle que [0053-D2](blueprint) la pose :
+**What it computes.** The resolution as [0053-D2](blueprint) lays it out:
 
-1. l'**ensemble atteignable** — les instances des scopes dont le sujet est MEMBRE,
-   plus celles qui lui descendent par une arête de `grants` vivante ;
-2. la **désignation** — l'appel qui nomme une instance et le binding de procédure
-   priment, mais ils court-circuitent déjà la marche en amont (`resolve`), donc ce
-   qui reste ici est la **proximité** : `user > group > org > platform`.
+1. the **reachable set** — the instances of the scopes the subject is a MEMBER of,
+   plus those that flow down to them through a live `grants` edge;
+2. the **designation** — the call that names an instance and the procedure binding
+   take precedence, but they already short-circuit the walk upstream (`resolve`), so what
+   remains here is **proximity**: `user > group > org > platform`.
 
-Aucune des deux voies ne connaît de restriction d'accès par-dessus : 0053-D1 —
-restreindre, c'est PLACER l'ownership au bon niveau, jamais poser une interdiction
-par-dessus. La table `connector_acl` n'est plus lue depuis le 24/09/2026 (la classe
-`restriction_acl`, qui comptait ses refus, est partie avec elle).
+Neither path knows an access restriction on top: 0053-D1 —
+restricting means PLACING ownership at the right level, never laying a prohibition
+on top. The `connector_acl` table has not been read since 24/09/2026 (the `restriction_acl`
+class, which counted its refusals, left with it).
 
-## Les écarts qu'on sait nommer d'avance
+## The discrepancies we can name in advance
 
-Relevé prod du 2026-08-29 — ils ne sont pas des anomalies, ce sont les décisions de
-0053 qui deviennent visibles. Une divergence qui n'entre dans aucun est `inconnu`,
-et c'est la seule que la fenêtre doit voir à zéro.
+Prod survey of 2026-08-29 — they are not anomalies, they are the decisions of
+0053 becoming visible. A divergence that fits none of them is `inconnu`,
+and it is the only one the window must see at zero.
 
-| classe | ce qui la produit |
+| class | what produces it |
 |---|---|
-| `elargissement_equipe` | la cascade ne lit que l'équipe **ACTIVE** ; l'ensemble atteignable lit **toutes** les équipes du sujet dans l'org. Un membre de « finance » actif dans « sales » ne résout rien aujourd'hui et résoudrait la clé de finance demain. **Comptée par org**, parce que c'est un comportement servi qui change chez un client nommé |
-| `free_tier_hors_modele` | l'ancien chemin gagne le palier plateforme par le free-tier OUVERT (`share_mode='open'`, `share_down` vide) — et 0053 n'a **pas** de bénéficiaire « tout le monde ». C'était le seul vrai trou du modèle ; **tranché le 29/08 : une arête « tout le monde » explicite d'abord, l'extinction mesurée connecteur par connecteur ensuite.** Cette classe doit donc tomber à **zéro** avant le retrait (PR 3), et c'est l'arête posée en PR 2 qui l'y amène |
-| `partage_hors_modele` | la clé plateforme est FERMÉE sur une allowlist (`share_down`) **et aucune arête ne l'exprime**. Sœur de la précédente, autre remède : ce sont les arêtes NOMINATIVES qui manquent. Le semis de L5 ne couvrait que les connecteurs basculés, donc toute clé fermée hors de cette liste est dans ce cas. Vécu le 29/08 : 17 observations sur `aiark` et `apify` tombaient en `inconnu` faute de ce nom — une divergence parfaitement explicable qui fermait la porte pour une raison fausse |
-| `perso_cross_org` | l'instance personnelle cross-org (#172) : la cascade suit la clé du sujet dans une AUTRE org, l'ensemble atteignable de 0053 est scopé à l'org de contexte |
+| `elargissement_equipe` | the cascade only reads the **ACTIVE** team; the reachable set reads **all** the subject's teams in the org. A member of "finance" active in "sales" resolves nothing today and would resolve finance's key tomorrow. **Counted per org**, because it is a served behavior that changes for a named customer |
+| `free_tier_hors_modele` | the old path wins the platform rung through the OPEN free tier (`share_mode='open'`, empty `share_down`) — and 0053 has **no** "everyone" beneficiary. It was the only real hole in the model; **decided on 29/08: an explicit "everyone" edge first, the measured phase-out connector by connector afterwards.** This class must therefore fall to **zero** before the removal (PR 3), and it is the edge laid in PR 2 that brings it there |
+| `partage_hors_modele` | the platform key is CLOSED on an allowlist (`share_down`) **and no edge expresses it**. Sister of the previous one, different remedy: it is the NAMED edges that are missing. L5's seeding only covered the switched connectors, so any closed key outside that list falls in this case. Experienced on 29/08: 17 observations on `aiark` and `apify` fell into `inconnu` for lack of this name — a perfectly explainable divergence that closed the door for a wrong reason |
+| `perso_cross_org` | the personal cross-org instance (#172): the cascade follows the subject's key in ANOTHER org, 0053's reachable set is scoped to the context org |
 
-## Deux règles de méthode, tenues mécaniquement
+## Two method rules, held mechanically
 
-1. **Aucune règle n'est recopiée.** Les crans du connecteur sont lus à leur SOURCE —
-   le registre (`is_byo_user`, `org_shareable`, `auth_modes`), la suspension d'une
-   instance, les arêtes de `grants`. Ce module écrit une TRAVERSÉE différente, pas
-   une seconde copie des gates. C'est la même discipline que
-   `connectors/instance_visibility.py`, qui inverse déjà le walker sans le cloner.
-2. **La comparaison porte sur le PALIER, pas sur le compte.** Le choix de compte
-   multi-identités est un cran de l'instance (0053-D9), pas une autorisation : le
-   rejouer ici serait dupliquer `_shared_auto_account` pour produire du faux écart.
-   Brancher la résolution sur les identifiants stables d'instance est la PR 2.
+1. **No rule is copied.** The connector's levels are read at their SOURCE —
+   the registry (`is_byo_user`, `org_shareable`, `auth_modes`), an instance's
+   suspension, the `grants` edges. This module writes a different TRAVERSAL, not
+   a second copy of the gates. It is the same discipline as
+   `connectors/instance_visibility.py`, which already inverts the walker without cloning it.
+2. **The comparison is on the RUNG, not on the account.** The choice of a
+   multi-identity account is a level of the instance (0053-D9), not an authorization: replaying
+   it here would duplicate `_shared_auto_account` to produce a false discrepancy.
+   Wiring the resolution to stable instance identifiers is PR 2.
 
-⚠️ **Interrupteur** : `OTO_L7_SHADOW=0` éteint tout (aucune lecture, aucune écriture).
-C'est le levier de réversibilité qui ne demande pas un déploiement, seulement un
-redémarrage — comme les autres crans d'environnement de la box.
+⚠️ **Switch**: `OTO_L7_SHADOW=0` turns everything off (no read, no write).
+It is the reversibility lever that does not require a deployment, only a
+restart — like the box's other environment levels.
 """
 from __future__ import annotations
 
@@ -64,12 +64,12 @@ from . import chain_resolution, scope
 
 logger = logging.getLogger(__name__)
 
-# Vocabulaire FERMÉ des classes. Une divergence qui n'y entre pas est `INCONNU` —
-# jamais une sixième valeur inventée à l'exécution, sinon la porte vers la PR 2
-# (« zéro inconnu ») se déplacerait toute seule.
+# CLOSED vocabulary of classes. A divergence that fits none is `INCONNU` —
+# never a sixth value invented at runtime, otherwise the gate to PR 2
+# ("zero unknown") would move by itself.
 ACCORD = "accord"
 ELARGISSEMENT_EQUIPE = "elargissement_equipe"
-# Reprises de `chain_resolution`, qui les constate — jamais redéclarées.
+# Taken from `chain_resolution`, which records them — never redeclared.
 FREE_TIER_HORS_MODELE = chain_resolution.FREE_TIER_HORS_MODELE
 PARTAGE_HORS_MODELE = chain_resolution.PARTAGE_HORS_MODELE
 PERSO_CROSS_ORG = "perso_cross_org"
@@ -77,11 +77,11 @@ INCONNU = "inconnu"
 CLASSES = (ACCORD, ELARGISSEMENT_EQUIPE, FREE_TIER_HORS_MODELE,
            PARTAGE_HORS_MODELE, PERSO_CROSS_ORG, INCONNU)
 
-# Période de versement de l'ACCORD, en secondes. L'accord est le cas nominal : le
-# compter en base à chaque appel mettrait une écriture sur le chemin chaud d'un
-# serveur mono-loop, et ferait viser la MÊME ligne à toutes les sessions (la
-# contention mesurée pour R8). On accumule, on verse au plus une fois par minute et
-# par (connecteur, org) : le dénominateur reste exact, le prix est borné.
+# Flush period of the AGREEMENT, in seconds. Agreement is the nominal case: counting
+# it in the database on every call would put a write on the hot path of a single-loop
+# server, and make all sessions target the SAME row (the contention measured for R8).
+# We accumulate, and flush at most once a minute per (connector, org): the
+# denominator stays exact, the price is bounded.
 FLUSH_SECONDS = 60
 
 
@@ -89,11 +89,11 @@ def _enabled() -> bool:
     return (os.environ.get("OTO_L7_SHADOW", "1") or "").lower() not in ("0", "false", "no")
 
 
-# ── La comparaison, et sa classe ──────────────────────────────────────────────
+# ── The comparison, and its class ─────────────────────────────────────────────
 
 def _key(x) -> Optional[tuple]:
-    """L'identité comparable d'un verdict : le PALIER et l'entité, jamais le compte
-    (cf. le §2 du docstring de module)."""
+    """The comparable identity of a verdict: the RUNG and the entity, never the account
+    (cf. §2 of the module docstring)."""
     if x is None:
         return None
     return (getattr(x, "mode", None), getattr(x, "entity_type", None),
@@ -102,8 +102,8 @@ def _key(x) -> Optional[tuple]:
 
 def classify(legacy, chain: Optional[chain_resolution.ChainPick], *,
              hors_modele: Optional[str] = None) -> str:
-    """La classe d'un couple de verdicts. Fonction PURE — c'est elle que le test
-    exerce sur les formes relevées en prod, sans base."""
+    """The class of a pair of verdicts. PURE function — it is what the test
+    exercises on the shapes observed in prod, without a database."""
     if _key(legacy) == _key(chain):
         return ACCORD
     if legacy is not None and getattr(legacy, "via", "local") == "cross_org":
@@ -112,16 +112,16 @@ def classify(legacy, chain: Optional[chain_resolution.ChainPick], *,
         return ELARGISSEMENT_EQUIPE
     if (chain is None and legacy is not None
             and getattr(legacy, "mode", None) == "platform" and hors_modele):
-        # La NUANCE vient de la forme de l'instance, pas d'un `if` de plus ici.
+        # The NUANCE comes from the instance's shape, not from one more `if` here.
         return hors_modele
     return INCONNU
 
 
 def _sample(sub: str, legacy, chain: Optional[chain_resolution.ChainPick]) -> dict:
-    """L'échantillon d'une divergence, SANS donnée nominative : le sub est haché
-    (assez pour recroiser deux occurrences, pas pour désigner quelqu'un), et seuls
-    les paliers et l'équipe en cause restent en clair — une équipe est ce sur quoi
-    on agit, un sub ne l'est pas."""
+    """The sample of a divergence, WITHOUT personal data: the sub is hashed
+    (enough to cross-reference two occurrences, not to identify anyone), and only
+    the rungs and the team involved stay in clear — a team is what we act on,
+    a sub is not."""
     def _palier(x) -> str:
         if x is None:
             return "aucun"
@@ -135,17 +135,17 @@ def _sample(sub: str, legacy, chain: Optional[chain_resolution.ChainPick]) -> di
     return out
 
 
-# ── Le versement : divergence à l'occurrence, accord par battement ────────────
+# ── The flush: divergence per occurrence, agreement per beat ──────────────────
 
 _lock = threading.Lock()
-_accords: dict = {}          # (connector, org_id) -> occurrences en attente
-_dernier_versement: dict = {}  # (connector, org_id) -> monotonic du dernier flush
+_accords: dict = {}          # (connector, org_id) -> pending occurrences
+_dernier_versement: dict = {}  # (connector, org_id) -> monotonic of the last flush
 
 
 def _compte_accord(connector: str, org_id: int) -> None:
-    """Accumule un accord et ne verse qu'au battement. Le compteur en attente est
-    remis à zéro AVANT l'écriture : si elle échoue, on perd un battement, jamais on
-    ne compte deux fois."""
+    """Accumulate an agreement and only flush on the beat. The pending counter is
+    reset BEFORE the write: if it fails, we lose a beat, we never
+    count twice."""
     cle = (connector, org_id)
     maintenant = time.monotonic()
     with _lock:
@@ -160,9 +160,9 @@ def _compte_accord(connector: str, org_id: int) -> None:
 
 def observe(provider: str, sub: Optional[str], org: Optional[int], legacy, *,
             want: str = "auto") -> None:
-    """Compare les deux voies et range le résultat. **Best-effort absolu** : aucune
-    exception ne sort d'ici, aucune valeur n'en revient. Appelée depuis `resolve`,
-    après la marche."""
+    """Compare the two paths and file the result. **Absolute best-effort**: no
+    exception leaves here, no value comes back. Called from `resolve`,
+    after the walk."""
     if not sub or not _enabled():
         return
     try:
@@ -175,36 +175,36 @@ def observe(provider: str, sub: Optional[str], org: Optional[int], legacy, *,
         db_shadow.bump_shadow(porteur, int(org or 0), classe, 1,
                               _sample(sub, legacy, chain))
         if classe == INCONNU:
-            # La seule classe qui doit rester à zéro : elle mérite une ligne de
-            # journal en plus du compteur, parce qu'elle appelle une lecture de code.
+            # The only class that must stay at zero: it deserves a log line in
+            # addition to the counter, because it calls for a code reading.
             logger.warning(
-                "shadow L7 : divergence INCONNUE sur %s (org=%s) — ancien=%s chaîne=%s "
-                "(ADR 0053 L7, fenêtre de double lecture)",
+                "shadow L7: UNKNOWN divergence on %s (org=%s) — old=%s chain=%s "
+                "(ADR 0053 L7, double-read window)",
                 porteur, org, _key(legacy), _key(chain))
     except Exception:  # noqa: BLE001
-        # Un shadow qui casserait une résolution serait pire que pas de shadow.
-        logger.warning("shadow L7 : observation échouée (%s) — la résolution servie "
-                       "n'est PAS affectée", provider, exc_info=True)
+        # A shadow that broke a resolution would be worse than no shadow.
+        logger.warning("shadow L7: observation failed (%s) — the served resolution "
+                       "is NOT affected", provider, exc_info=True)
 
 
-# ── L'INVERSION : qui décide, et comment on revient en arrière ────────────────
-# `OTO_L7_DECIDE=chain` retourne l'autorité — la chaîne décide, l'ancien chemin
-# calcule et se compare. Le retour arrière est le drapeau, pas un revert : `legacy`
-# (le défaut) rend le comportement d'aujourd'hui à l'octet près, et un redémarrage
-# suffit. Par-process, comme le registre des tenants : basculer la préprod ne bascule
-# pas la prod.
+# ── The INVERSION: who decides, and how we roll back ──────────────────────────
+# `OTO_L7_DECIDE=chain` flips the authority — the chain decides, the old path
+# computes and compares itself. Rollback is the flag, not a revert: `legacy`
+# (the default) restores today's behavior to the byte, and a restart
+# is enough. Per process, like the tenant registry: flipping preprod does not flip
+# prod.
 #
-# ⚠️ Ce drapeau ne se met à `chain` **qu'après** deux conditions MESURÉES, pas
-# décidées : une fenêtre de shadow sans divergence `inconnu` en PROD (le trafic de
-# préprod ne compte pas), et la classe `free_tier_hors_modele` retombée à zéro — ce
-# qui n'arrive qu'une fois la commande `scripts/seed_everyone_edges.py` passée.
+# ⚠️ This flag is only set to `chain` **after** two MEASURED conditions, not
+# decided ones: a shadow window with no `inconnu` divergence in PROD (preprod
+# traffic does not count), and the `free_tier_hors_modele` class back down to zero — which
+# only happens once the `scripts/seed_everyone_edges.py` command has been run.
 DECIDE_LEGACY, DECIDE_CHAIN = "legacy", "chain"
 
 
 def decide_mode() -> str:
-    """Qui décide dans CE process. Toute valeur autre que `chain` vaut `legacy` : un
-    drapeau mal orthographié doit laisser le comportement d'aujourd'hui, jamais
-    basculer une autorité par accident."""
+    """Who decides in THIS process. Any value other than `chain` means `legacy`: a
+    misspelled flag must leave today's behavior, never flip an authority
+    by accident."""
     return (DECIDE_CHAIN
             if (os.environ.get("OTO_L7_DECIDE", "") or "").strip().lower() == DECIDE_CHAIN
             else DECIDE_LEGACY)
@@ -215,11 +215,11 @@ def chain_decides() -> bool:
 
 
 def resolution_rungs(sub, provider: str, *, org, group, probe, want="auto"):
-    """Traversée servie, commune aux appels et aux diagnostics sans déchiffrement.
+    """Served traversal, common to calls and to diagnostics without decryption.
 
-    Aucune observation, consommation ou tolérance aux erreurs ici. L'anonyme garde
-    sa politique org-only existante ; L7 ne change que la résolution identifiée.
-    Un contexte explicite (fiche d'un tiers) ne relit jamais celui du requérant.
+    No observation, consumption or error tolerance here. The anonymous caller keeps
+    its existing org-only policy; L7 only changes the identified resolution.
+    An explicit context (a third party's sheet) never rereads the requester's.
     """
     from . import cascade
     if sub is not None and chain_decides():
@@ -234,24 +234,24 @@ def resolution_rungs(sub, provider: str, *, org, group, probe, want="auto"):
 
 def decide(provider: str, sub: str, org: Optional[int], *, probe, want: str = "auto",
            group=scope._UNSET):
-    """La chaîne DÉCIDE, l'ancien chemin calcule et se compare — le miroir exact de la
-    PR 1, l'autorité retournée.
+    """The chain DECIDES, the old path computes and compares itself — the exact mirror of
+    PR 1, the authority flipped.
 
-    Rend le barreau servi, de la même forme que `cascade.cascade_winner`, pour que la
-    suite de `resolve` (garde du compte nommé, quota, `ResolvedCredential`) ne change
-    pas d'une ligne. Ne lève jamais **pour observer** ; les McpError de la SONDE (un
-    compte nommé introuvable, une ambiguïté multi-comptes), elles, remontent comme
-    avant — ce sont des erreurs servies, pas de l'observation."""
+    Returns the served rung, in the same shape as `cascade.cascade_winner`, so that the
+    rest of `resolve` (named-account guard, quota, `ResolvedCredential`) does not change
+    by a line. Never raises **to observe**; the PROBE's McpErrors (a named
+    account not found, a multi-account ambiguity), on the other hand, bubble up as
+    before — they are served errors, not observation."""
     porteur = providers.credential_provider(provider)
-    # Le FETCH garde le nom que le walker lui passait — la traversée change, la
-    # lecture non.
+    # The FETCH keeps the name the walker used to pass it — the traversal changes, the
+    # read does not.
     #
-    # ⚠️ La lecture PARCOURT les paliers, elle ne lit pas celui que `pick` désigne
-    # (#673) : la désignation se fait sur la PRÉSENCE d'un credential, la lecture au
-    # FETCH, et les deux divergent sur un compte nommé. S'arrêter au premier désigné
-    # rendait un refus sec là où le chemin historique passait au palier suivant.
-    # `pick` reste la DÉSIGNATION servie au relevé de fenêtre — lui donner autre chose
-    # ferait bouger ce qu'il mesure au moment où on corrige la lecture.
+    # ⚠️ The read WALKS the rungs, it does not read the one `pick` designates
+    # (#673): designation is made on the PRESENCE of a credential, the read at
+    # FETCH, and the two diverge on a named account. Stopping at the first one designated
+    # produced a flat refusal where the historical path moved on to the next rung.
+    # `pick` stays the served DESIGNATION for the window survey — giving it anything else
+    # would shift what it measures at the moment we fix the read.
     rung = next(resolution_rungs(sub, provider, org=org, group=group,
                                  probe=probe, want=want), None)
     _observe_inverse(porteur, sub, org, want=want)
@@ -259,13 +259,13 @@ def decide(provider: str, sub: str, org: Optional[int], *, probe, want: str = "a
 
 
 def _observe_inverse(porteur: str, sub: str, org: Optional[int], *, want: str) -> None:
-    """Sous l'autorité de la chaîne, c'est l'ANCIEN chemin qu'on relève — et à la
-    sonde de PRÉSENCE, pas de fetch : la question posée est « quel barreau
-    gagnerait », et y répondre ne doit pas déchiffrer une seconde clé par appel.
+    """Under the chain's authority, it is the OLD path we survey — and with the
+    PRESENCE probe, not fetch: the question asked is "which rung would
+    win", and answering it must not decrypt a second key per call.
 
-    Les classes sont les MÊMES qu'à l'aller : c'est ce qui permet de lire une seule
-    série avant et après la bascule, au lieu de deux mesures qu'on ne pourrait pas
-    comparer."""
+    The classes are the SAME as on the way out: that is what lets us read a single
+    series before and after the switch, instead of two measurements we could not
+    compare."""
     if not _enabled():
         return
     try:
@@ -282,32 +282,32 @@ def _observe_inverse(porteur: str, sub: str, org: Optional[int], *, want: str) -
                               _sample(sub, legacy, chain))
         if classe == INCONNU:
             logger.warning(
-                "L7 (chaîne aux commandes) : divergence INCONNUE sur %s (org=%s) — "
-                "ancien=%s chaîne=%s", porteur, org, _key(legacy), _key(chain))
+                "L7 (chain in command): UNKNOWN divergence on %s (org=%s) — "
+                "old=%s chain=%s", porteur, org, _key(legacy), _key(chain))
     except Exception:  # noqa: BLE001
-        logger.warning("L7 : relevé inverse échoué (%s) — la résolution SERVIE par la "
-                       "chaîne n'est PAS affectée", porteur, exc_info=True)
+        logger.warning("L7: inverse survey failed (%s) — the resolution SERVED by the "
+                       "chain is NOT affected", porteur, exc_info=True)
 
 
-# ── Le seam que `resolve` appelle, et qui porte tout le lot ──────────────────
-# Il vit ICI et pas dans `resolve` pour une raison de sujet : le chemin de
-# résolution n'a pas à savoir qu'un drapeau existe, ni comment il s'écrit. Il demande
-# « quel barreau gagne ? » ; ce module répond, et c'est lui qu'on lit le jour où l'on
-# retire l'ancien chemin.
+# ── The seam that `resolve` calls, and that carries the whole lot ────────────
+# It lives HERE and not in `resolve` for a reason of subject: the resolution path
+# does not need to know that a flag exists, nor how it is written. It asks
+# "which rung wins?"; this module answers, and it is the one we read the day we
+# remove the old path.
 
 def barreau_gagnant(provider: str, sub: str, org: Optional[int], *, probe,
                     group, want: str = "auto"):
-    """Le barreau qui gagne — **et c'est un drapeau qui dit laquelle des deux voies
-    l'a désigné.**
+    """The rung that wins — **and a flag says which of the two paths
+    designated it.**
 
-    `legacy` (le défaut) : le walker décide, la chaîne calcule à côté et se compare.
-    `chain` : l'inverse, à l'identique — même sonde, mêmes gardes en aval, seule la
-    TRAVERSÉE change. Dans les deux sens la voie non retenue est relevée, avec les
-    mêmes classes, pour qu'une seule série de mesures se lise avant ET après la
-    bascule. Le retour arrière est le drapeau et un redémarrage, jamais un revert.
+    `legacy` (the default): the walker decides, the chain computes alongside and compares itself.
+    `chain`: the inverse, identically — same probe, same downstream guards, only the
+    TRAVERSAL changes. In both directions the path not taken is surveyed, with the
+    same classes, so that a single series of measurements reads before AND after the
+    switch. Rollback is the flag and a restart, never a revert.
 
-    L'observation ne lève jamais et ne rend rien : quoi qu'il arrive, ce qui est
-    servi est le barreau, pas la mesure."""
+    Observation never raises and returns nothing: whatever happens, what is
+    served is the rung, not the measurement."""
     from . import cascade
     if chain_decides():
         return decide(provider, sub, org, probe=probe, want=want, group=group)

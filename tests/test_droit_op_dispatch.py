@@ -136,16 +136,16 @@ def test_no_op_writes_deletes_or_costs(fod):
 @pytest.mark.parametrize("tool,kwargs,attendu", [
     # Arguments COMPLETS : le refus doit tomber sur l'op inconnue, pas sur un
     # argument manquant qui masquerait le vrai motif.
-    ("ccn_article", {"query": "x", "kali_id": "k"}, "'search' ou 'get'"),
+    ("ccn_article", {"query": "x", "kali_id": "k"}, "'search' or 'get'"),
     ("loi_article", {"query": "x", "code": "CT", "num": "1"},
-     "'get', 'versions' ou 'search'"),
-    ("juris_decision", {"query": "x", "decision_id": "d"}, "'search' ou 'get'"),
+     "'get', 'versions' or 'search'"),
+    ("juris_decision", {"query": "x", "decision_id": "d"}, "'search' or 'get'"),
 ])
 def test_unknown_op_is_refused_with_the_allowed_list(fod, tool, kwargs, attendu):
     """Une op inconnue doit lever en NOMMANT les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent citerait un texte qu'il n'a pas
     demandé, et le croirait demandé)."""
-    with pytest.raises(McpError, match="op doit être") as e:
+    with pytest.raises(McpError, match="op must be") as e:
         _tool(tool)(op="nope", **kwargs)
     assert attendu in str(e.value)
     for m in fod.values():

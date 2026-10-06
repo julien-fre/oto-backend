@@ -1,16 +1,16 @@
-## prerequisite — connecte ton compte WhatsApp
+## prerequisite — connect your WhatsApp account
 
-ton WhatsApp est connecté en **appareil lié** (linked device) — comme WhatsApp Web, mais la session tourne sur un navigateur hébergé.
-- la clé d'abonnement vit sur le connecteur **Compte Unipile** (ta clé BYO, ou celle de la plateforme avec l'option **messagerie hébergée** accordée par un admin) ;
-- puis « Connecter mon compte WhatsApp » ici. pas de cookie à coller ni d'extension.
+your WhatsApp is connected as a **linked device** — like WhatsApp Web, but the session runs on a hosted browser.
+- the subscription key lives on the **Unipile account** connector (your BYO key, or the platform's with the **hosted messaging** option granted by an admin);
+- then "Connect my WhatsApp account" here. no cookie to paste, no extension.
 
-## usage — lire et répondre depuis ton compte
+## usage — read and reply from your account
 
-`whatsapp_chat(op=list|read|send)` — tu agis comme toi-même, sous ton propre compte.
-- « lis mes dernières conversations WhatsApp »
-- « réponds à [contact] : on se cale jeudi 14h »
-- « résume le fil avec [contact] depuis lundi »
+`whatsapp_chat(op=list|read|send)` — you act as yourself, under your own account.
+- "read my latest WhatsApp conversations"
+- "reply to [contact]: let's meet Thursday at 2pm"
+- "summarize the thread with [contact] since Monday"
 
-## note — le téléphone reste le maître du compte
+## note — the phone stays the master of the account
 
-ton téléphone reste le maître du compte : s'il se délie de l'appareil, la session meurt et la carte repasse à connecter.
+your phone stays the master of the account: if it unlinks the device, the session dies and the card goes back to needing a connection.

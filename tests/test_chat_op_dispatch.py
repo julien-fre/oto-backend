@@ -129,7 +129,7 @@ def test_message_send_to_a_user_resolves_the_dm_and_nothing_else(client):
 def test_message_send_refuses_an_ambiguous_destination(client, kwargs):
     """Ni deviné, ni « les deux » : un envoi dont la destination est ambiguë est
     refusé AVANT d'atteindre Google — sinon le message part au mauvais endroit."""
-    with pytest.raises(McpError, match="soit"):
+    with pytest.raises(McpError, match="either"):
         _tool("chat_message")(op="send", text="bonjour", **kwargs)
     client.send.assert_not_called()
     client.send_dm.assert_not_called()
@@ -152,7 +152,7 @@ def test_unknown_op_is_refused_with_the_allowed_list(client):
     """Une op inconnue doit lever en nommant les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée), et surtout
     jamais sur l'envoi."""
-    with pytest.raises(McpError, match="op doit être") as e:
+    with pytest.raises(McpError, match="op must be") as e:
         _tool("chat_message")(op="metadata", space="spaces/A", text="bonjour")
     assert "'list'" in str(e.value) and "'send'" in str(e.value)
     assert client.mock_calls == []

@@ -1,35 +1,35 @@
-"""Déclaration de registre du connecteur `nextmotion`.
+"""Registry declaration of the `nextmotion` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# nextmotion : gestion de cliniques de médecine esthétique, côté ADMINISTRATIF en
-# lecture et en écriture (cliniques, praticiens, agenda, catalogue, ventes, leads,
-# appels et messages, statistiques, stock, réglages), plus l'IDENTITÉ du patient.
-# keyed api_key (Bearer), BYO seulement : une clé agit au nom de
-# l'utilisateur de l'application qui l'a générée, sur les cliniques dont il est
-# employé — une clé plateforme n'aurait aucun sens.
+# nextmotion: aesthetic-medicine clinic management, ADMINISTRATIVE side, read and
+# write (clinics, practitioners, calendar, catalogue, sales, leads,
+# calls and messages, statistics, stock, settings), plus the patient's IDENTITY.
+# keyed api_key (Bearer), BYO only: a key acts on behalf of the
+# user of the application that generated it, on the clinics where they are
+# employed — a platform key would make no sense.
 #
-# ⚠️ Éditeur d'un logiciel qui HÉBERGE DES DONNÉES DE SANTÉ. Le contenu médical
-# (antécédents, photos, ordonnances, consentements signés, soins, consultations,
-# visites, réponses aux questionnaires) n'est PAS servi ; tout ce qui sort passe par
-# une liste blanche, tout ce qui entre aussi, et toute écriture est un aperçu
-# (`dry_run`) tant qu'on ne dit pas le contraire. L'identité du patient n'est servie
-# que par `nextmotion_patient` ; ailleurs le patient n'est qu'un id — cf.
+# ⚠️ Vendor of software that HOSTS HEALTH DATA. Medical content
+# (history, photos, prescriptions, signed consents, treatments, consultations,
+# visits, questionnaire answers) is NOT served; everything that goes out passes
+# through an allowlist, so does everything that comes in, and every write is a preview
+# (`dry_run`) unless told otherwise. The patient's identity is served
+# only by `nextmotion_patient`; elsewhere the patient is just an id — see
 # `tools/nextmotion.py`.
 #
-# Sept modules, une seule clé : les outils de `nextmotion.py` et ses frères, montés
-# ensemble par `modules`.
+# Seven modules, one key: the tools of `nextmotion.py` and its siblings, mounted
+# together by `modules`.
 CONNECTOR = _c(
     "nextmotion", ["nextmotion"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Nextmotion",
-    help="clinique esthétique : agenda, catalogue, devis, factures, paiements, leads, "
-         "statistiques, stock, réglages, identité des patients — lecture et écriture "
-         "(sans le dossier médical)",
+    help="aesthetic clinic: calendar, catalogue, quotes, invoices, payments, leads, "
+         "statistics, stock, settings, patient identity — read and write "
+         "(without the medical record)",
     href="https://www.nextmotion.net",
     modules=("nextmotion", "nextmotion_catalogue", "nextmotion_agenda",
              "nextmotion_ventes", "nextmotion_crm", "nextmotion_patient",
@@ -41,13 +41,13 @@ PUBLISHER = "Nextmotion"
 LOGO_DOMAIN = "nextmotion.net"
 
 DESCRIPTION = (
-    "Le côté administratif d'une clinique de médecine esthétique gérée avec "
-    "Nextmotion, en lecture et en écriture : cliniques, praticiens, agenda (salles, "
-    "appareils, plages, absences, rendez-vous, demandes en ligne, créneaux libres), "
-    "catalogue et forfaits, devis, factures, avoirs et paiements, leads, appels et "
-    "messages, statistiques de chiffre d'affaires, stock, gabarits et réglages ; "
-    "l'identité des patients (fiche, recherche, création, modification) ; patientèle "
-    "et occupation des appareils en agrégats. Toute écriture est d'abord un aperçu. "
-    "Le dossier médical n'est pas servi : ni antécédents, ni photos, ni ordonnances, "
-    "ni soins, ni consultations."
+    "The administrative side of an aesthetic-medicine clinic managed with "
+    "Nextmotion, read and write: clinics, practitioners, calendar (rooms, "
+    "devices, slots, absences, appointments, online requests, free slots), "
+    "catalogue and packages, quotes, invoices, credit notes and payments, leads, calls and "
+    "messages, revenue statistics, stock, templates and settings; "
+    "patient identity (record, search, creation, modification); patient base "
+    "and device utilization as aggregates. Every write is a preview first. "
+    "The medical record is not served: no history, no photos, no prescriptions, "
+    "no treatments, no consultations."
 )

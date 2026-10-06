@@ -1,47 +1,47 @@
-"""Un porteur de secret ne se raconte pas — le `repr` expurgé des objets de la cascade.
+"""A secret carrier does not tell its own story — the redacted `repr` of cascade objects.
 
-⚠️ **Le `repr` par défaut d'un dataclass imprime TOUS ses champs**, secret compris.
-Ce n'est pas une coquetterie de log : c'est le canal par lequel une clé déchiffrée
-sort du serveur sans que personne ne l'ait écrit. Trois chemins, tous réels :
+⚠️ **A dataclass's default `repr` prints ALL its fields**, secret included.
+This is not a logging nicety: it is the channel through which a decrypted key
+leaves the server without anyone having written it. Three paths, all real:
 
-- un `logger.debug("%r", rc)` posé de bonne foi par un lot ultérieur ;
-- un **traceback** — une frame qui lève garde ses locales, et le collecteur
-  d'erreurs les sérialise (oto-backend#564 : `include_local_variables` valait `True`
-  par défaut, chaque exception repartait avec la pile entière) ;
-- toute sérialisation générique d'un état (dump de diagnostic, message d'assertion).
+- a `logger.debug("%r", rc)` added in good faith by a later batch;
+- a **traceback** — a raising frame keeps its locals, and the error collector
+  serializes them (oto-backend#564: `include_local_variables` defaulted to `True`,
+  every exception left with the whole stack);
+- any generic serialization of a state (diagnostic dump, assertion message).
 
-D'où la règle, et l'endroit où elle se pose : **sur l'OBJET, pas sur la variable**.
-C'est l'objet qui voyage — une frame le tient sous un nom, une autre sous un autre,
-et fermer les deux ou trois fonctions qui le construisent ne ferme rien du tout.
-Deux dataclasses portent aujourd'hui un secret déchiffré : `ResolvedCredential`
-(le credential gagnant) et `CascadeRung` (le barreau gagnant de la marche, dont le
-`payload` EST le secret en mode fetch).
+Hence the rule, and where it is placed: **on the OBJECT, not on the variable**.
+It is the object that travels — one frame holds it under one name, another under
+another, and closing the two or three functions that build it closes nothing at all.
+Two dataclasses currently carry a decrypted secret: `ResolvedCredential`
+(the winning credential) and `CascadeRung` (the winning rung of the walk, whose
+`payload` IS the secret in fetch mode).
 
-Voisin de `oto_mcp/journal_secrets.py`, la même règle sous un autre angle : là-bas
-ce qu'on ÉCRIT dans le journal, ici ce qu'un objet DIT de lui-même. Fond et
-historique : `docs/monitoring.md` §Error tracking.
+Neighbor of `oto_mcp/journal_secrets.py`, the same rule from another angle: there
+it is what we WRITE to the journal, here it is what an object SAYS about itself.
+Background and history: `docs/monitoring.md` §Error tracking.
 """
 from __future__ import annotations
 
 from dataclasses import fields
 
-_EXPURGE = "<expurgé>"
+_EXPURGE = "<redacted>"
 
 
 def expurge(obj, *caches: str) -> str:
-    """`repr` du dataclass `obj`, les champs nommés remplacés par `<expurgé>`.
+    """`repr` of the dataclass `obj`, with the named fields replaced by `<redacted>`.
 
-    ⚠️ **Un nom de champ inconnu LÈVE.** C'est le mode d'échec qui compte ici :
-    une faute de frappe (`"secrret"`) rendrait la protection muette — le `repr`
-    continuerait d'imprimer la clé, et rien ne le dirait. Le seul moment où on
-    peut s'en apercevoir est celui-ci.
+    ⚠️ **An unknown field name RAISES.** That is the failure mode that matters here:
+    a typo (`"secrret"`) would silence the protection — the `repr`
+    would keep printing the key, and nothing would say so. The only moment it can
+    be noticed is this one.
     """
     connus = {f.name for f in fields(obj)}
     inconnus = [c for c in caches if c not in connus]
     if inconnus:
         raise ValueError(
-            f"{type(obj).__name__} n'a pas de champ {inconnus} — expurger un champ "
-            "qui n'existe pas ne protège rien et ne se voit nulle part.")
+            f"{type(obj).__name__} has no field {inconnus} — redacting a field "
+            "that does not exist protects nothing and shows up nowhere.")
     dedans = ", ".join(
         f"{f.name}=" + (_EXPURGE if f.name in caches else repr(getattr(obj, f.name)))
         for f in fields(obj))

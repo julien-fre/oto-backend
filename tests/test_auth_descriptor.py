@@ -87,7 +87,7 @@ def test_account_noun_says_the_provider_word():
     assert REGISTRY["zoho"].auth["account_noun"] == "organisation"
     assert REGISTRY["browser"].auth["account_noun"] == "site"
     # Défaut : « compte » — jamais vide, l'écran n'a pas de repli à écrire.
-    assert REGISTRY["serper"].auth["account_noun"] == "compte"
+    assert REGISTRY["serper"].auth["account_noun"] == "account"
     assert all(c.auth["account_noun"] for c in _REGISTRY_LIST)
 
 
@@ -101,7 +101,7 @@ def test_catalog_exposes_auth():
     assert cat["serper"]["auth"] == {
         "method": "secret",
         "cardinality": "multi_account",
-        "account_noun": "compte",
+        "account_noun": "account",
         # Pas de champ qui en sélectionne d'autres : le cas des ~90 connecteurs à
         # schéma plat. `when`/`choices` vides = « ce champ vaut toujours, en saisie
         # libre » — ils sont TOUJOURS publiés pour que le front n'ait pas de repli

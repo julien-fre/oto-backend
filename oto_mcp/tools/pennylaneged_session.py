@@ -1,17 +1,17 @@
-"""Pennylane GED — la SESSION : login dans la Live View, et sonde de vérification.
+"""Pennylane GED — the SESSION: login in the Live View, and verification probe.
 
-Sœur de `pennylaneged.py`, qui porte les outils GED eux-mêmes. Ce module-ci ne
-s'occupe que d'UNE chose : établir et vérifier le login de l'utilisateur sur
-`app.pennylane.com`, puis persister sa session au coffre via `browser_session`. Les
-deux modules sont montés ensemble (`providers/pennylaneged.py`, `modules=`) ; celui-ci
-importe l'origine et les seams d'erreur de son aîné, jamais l'inverse.
+Sister of `pennylaneged.py`, which carries the GED tools themselves. This module
+deals with ONE thing only: establishing and verifying the user's login on
+`app.pennylane.com`, then persisting their session to the vault via `browser_session`. The
+two modules are mounted together (`providers/pennylaneged.py`, `modules=`); this one
+imports the origin and the error seams from its elder, never the reverse.
 
-⚠️ **La sonde de login ne tape JAMAIS une route métier.** Le 2026-09-03 elle sondait
-la vue portefeuille (`/crm/flow_companies`) ; Pennylane l'a déplacée sous
-`/portfolio/`, elle a répondu 404, la vérification a conclu « pas logué » et
-`browser_session.finalize` est sorti avant de persister : plus aucune cliente ne
-pouvait connecter sa GED, alors que trois des quatre outils marchaient. Une route de
-session (`/users/me`) ne bouge pas avec le produit — c'est elle qu'on sonde.
+⚠️ **The login probe NEVER hits a business route.** On 2026-09-03 it probed
+the portfolio view (`/crm/flow_companies`); Pennylane moved it under
+`/portfolio/`, it answered 404, the verification concluded "not logged in" and
+`browser_session.finalize` returned before persisting: no client could
+connect her GED any more, while three of the four tools worked. A session
+route (`/users/me`) does not move with the product — that is the one we probe.
 """
 from __future__ import annotations
 
@@ -22,13 +22,13 @@ from .. import browser_session, browserbase
 from .pennylaneged import _ORIGIN, _err, _sub
 
 
-# Route SONDÉE pour le login — de SESSION, jamais métier. `/users/me` est ce que la SPA
-# appelle au chargement pour savoir QUI est logué (chunk `CurrentUserContext-*.js`) :
-# elle répond **200 dans les deux cas** et porte le verdict dans son CORPS (`user: null`
-# = anonyme, objet = logué). Elle ne suit donc ni le découpage des vues ni les
-# renommages de namespace — au contraire de la route PORTEFEUILLE que sondait le code
-# jusqu'au 2026-09-03 : déplacée sous `/portfolio/`, elle a répondu 404 et plus personne
-# n'a pu connecter sa GED.
+# Route PROBED for login — a SESSION route, never a business one. `/users/me` is what the SPA
+# calls on load to know WHO is logged in (chunk `CurrentUserContext-*.js`):
+# it answers **200 in both cases** and carries the verdict in its BODY (`user: null`
+# = anonymous, object = logged in). It therefore follows neither the splitting of views nor
+# namespace renames — unlike the PORTFOLIO route the code probed
+# until 2026-09-03: moved under `/portfolio/`, it answered 404 and nobody
+# could connect their GED any more.
 _PROBE_PATH = "/users/me"
 
 _PROBE_JS = r"""async (path) => {
@@ -48,50 +48,50 @@ _PROBE_JS = r"""async (path) => {
 
 
 def _read_probe(res: dict) -> browser_session.Verdict:
-    """Verdict de la sonde, depuis sa réponse brute. Fonction PURE (testable sans
-    navigateur) : c'est elle qui porte la règle. Quatre issues, et pas deux —
+    """Verdict of the probe, from its raw response. PURE function (testable without a
+    browser): it carries the rule. Four outcomes, not two —
 
-    - **logué** : 200 + `user` non nul ;
-    - **pas encore logué** : 200 + `user: null` → l'humain n'a pas fini dans la fenêtre ;
-    - **rejeté** : 401, 403, atterrissage sur la page de login → refaire le login ;
-    - **sans verdict** : 404 (l'endpoint sondé a bougé) ou autre → `ProbeUnavailable`,
-      qui n'est PAS un signal d'authentification (cf. `browser_session`).
+    - **logged in**: 200 + non-null `user`;
+    - **not logged in yet**: 200 + `user: null` → the human has not finished in the window;
+    - **rejected**: 401, 403, landing on the login page → redo the login;
+    - **no verdict**: 404 (the probed endpoint moved) or other → `ProbeUnavailable`,
+      which is NOT an authentication signal (see `browser_session`).
 
-    Le `fetch` en échec (status 0) est un « pas logué » retryable : il ne dit rien de
-    l'authentification, mais relancer coûte un clic et peut suffire."""
+    A failed `fetch` (status 0) is a retryable "not logged in": it says nothing about
+    authentication, but retrying costs one click and may be enough."""
     V, st = browser_session.Verdict, res.get("status")
     if st in (401, 403):
         return V(False, browser_session.AUTH_REJECTED,
-                 f"Pennylane a refusé la session ({st}) : reconnecte-toi dans la Live "
-                 "View, puis relance `pennylaneged_connect_status`.")
+                 f"Pennylane refused the session ({st}): log in again in the Live "
+                 "View, then rerun `pennylaneged_connect_status`.")
     if res.get("login_page"):
         return V(False, browser_session.AUTH_REJECTED,
-                 "La session a atterri sur la page de login Pennylane : le login n'a "
-                 "pas abouti (ou il a expiré). Refais-le dans la Live View.")
+                 "The session landed on the Pennylane login page: the login did not "
+                 "complete (or it expired). Redo it in the Live View.")
     if st == 0:
         return V(False, browser_session.NO_SESSION,
-                 "La sonde n'a pas pu joindre Pennylane depuis le navigateur distant "
-                 f"(GET {_PROBE_PATH} en échec réseau). Relance `pennylaneged_connect_status`.")
+                 "The probe could not reach Pennylane from the remote browser "
+                 f"(GET {_PROBE_PATH} failed on the network). Rerun `pennylaneged_connect_status`.")
     if st == 200 and res.get("json"):
         if res.get("logged_in"):
             return V(True, browser_session.LOGGED_IN)
         return V(False, browser_session.NO_SESSION,
-                 "Pennylane te voit encore anonyme : finis de te loguer dans la fenêtre "
-                 "de la Live View (email, mot de passe, 2FA), PUIS relance "
-                 "`pennylaneged_connect_status` avec les mêmes identifiants de session.")
-    bouge = (" : cet endpoint n'existe plus (route déplacée par Pennylane)"
+                 "Pennylane still sees you as anonymous: finish logging in in the Live "
+                 "View window (email, password, 2FA), THEN rerun "
+                 "`pennylaneged_connect_status` with the same session identifiers.")
+    bouge = (": this endpoint no longer exists (route moved by Pennylane)"
              if st == 404 else "")
     raise browser_session.ProbeUnavailable(
-        f"la sonde de login Pennylane n'a pas pu se prononcer — GET {_PROBE_PATH} a "
-        f"répondu {st}{bouge}. Ta session a été mémorisée quand même, SANS confirmation "
-        "du login. Ne recommence pas la connexion : le problème est chez nous, pas chez "
-        "toi. Essaie directement un appel GED — s'il répond, tout va bien.")
+        f"the Pennylane login probe could not reach a verdict — GET {_PROBE_PATH} "
+        f"answered {st}{bouge}. Your session was saved anyway, WITHOUT login "
+        "confirmation. Do not retry the connection: the problem is on our side, not on "
+        "yours. Try a GED call directly — if it answers, all is well.")
 
 
 async def _verify_session(session_id: str) -> browser_session.Verdict:
-    """Login Pennylane confirmé ? Sonde `/users/me` DEPUIS la session vivante
-    (same-origin) et tranche sur le CORPS de la réponse, pas sur son code HTTP — cf.
-    `_read_probe`. Partagé par les deux surfaces de connexion (dashboard REST + MCP)
+    """Pennylane login confirmed? Probes `/users/me` FROM the live session
+    (same-origin) and decides on the response BODY, not its HTTP code — see
+    `_read_probe`. Shared by the two connection surfaces (REST dashboard + MCP)
     via `browser_session`."""
     from patchright.async_api import async_playwright
     async with async_playwright() as p:
@@ -106,8 +106,8 @@ async def _verify_session(session_id: str) -> browser_session.Verdict:
     return _read_probe(res)
 
 
-# Déclare Pennylane GED comme connecteur à session navigateur (start générique + ce
-# verify) — alimente le flux de connexion REST (dashboard) ET MCP. À l'import.
+# Declares Pennylane GED as a browser-session connector (generic start + this
+# verify) — feeds the REST (dashboard) AND MCP connection flow. At import.
 browser_session.register("pennylaneged", _verify_session, login_url=f"{_ORIGIN}/")
 
 
@@ -116,50 +116,50 @@ def register(mcp: FastMCP) -> None:
     # --- Onboarding (Live View) --------------------------------------------
     @mcp.tool()
     def pennylaneged_connect_start(ctx: Context) -> dict:
-        """Démarre la connexion à la GED Pennylane. Ouvre un navigateur distant et
-        renvoie une **`live_view_url`** : ouvre-la, connecte-toi à Pennylane normalement
-        (email/mot de passe, SSO, 2FA — tu gères tout dans cette fenêtre). Puis appelle
-        `pennylaneged_connect_status(context_id, session_id)` avec les valeurs renvoyées
-        pour finaliser (ta session est mémorisée ; à refaire seulement quand elle expire).
+        """Starts the connection to the Pennylane GED. Opens a remote browser and
+        returns a **`live_view_url`**: open it, log in to Pennylane normally
+        (email/password, SSO, 2FA — you handle everything in that window). Then call
+        `pennylaneged_connect_status(context_id, session_id)` with the returned values
+        to finalize (your session is saved; redo only when it expires).
         """
         sub = _sub()
         try:
             out = browser_session.start(sub, "pennylaneged")
         except browser_session.SessionError as e:
             raise _err(str(e), code=INTERNAL_ERROR)
-        out["instructions"] = ("Ouvre `live_view_url`, connecte-toi à Pennylane, puis "
-                               "appelle `pennylaneged_connect_status` avec context_id + session_id.")
+        out["instructions"] = ("Open `live_view_url`, log in to Pennylane, then "
+                               "call `pennylaneged_connect_status` with context_id + session_id.")
         return out
 
     @mcp.tool()
     async def pennylaneged_connect_status(ctx: Context, context_id: str,
                                           session_id: str,
                                           force: bool = False) -> dict:
-        """Finalise la connexion à la GED Pennylane. Vérifie que tu t'es bien logué dans
-        la Live View (sonde `/users/me` depuis ta session) ; si oui, **mémorise** ta
-        session (le Context) pour les prochains appels.
+        """Finalizes the connection to the Pennylane GED. Checks that you actually logged in in
+        the Live View (`/users/me` probe from your session); if so, **saves** your
+        session (the Context) for subsequent calls.
 
-        Renvoie `{connected, reason, retry, hint}` — **lis `reason` avant de recommencer** :
+        Returns `{connected, reason, retry, hint}` — **read `reason` before retrying**:
 
-        - `logged_in` → c'est fait, rien à refaire ;
-        - `no_session` → tu n'as pas (encore) fini de te loguer dans la fenêtre : va au
-          bout, PUIS rappelle ce tool avec les mêmes `context_id`/`session_id` ;
-        - `auth_rejected` → Pennylane a refusé la session : refais le login ;
-        - `probe_unavailable` → ta session EST mémorisée (`connected: true`) mais la
-          sonde n'a pas pu le confirmer, parce qu'elle est cassée de NOTRE côté.
-          `retry: false` : **ne recommence pas**, tente directement un appel GED.
+        - `logged_in` → done, nothing to redo;
+        - `no_session` → you have not (yet) finished logging in in the window: go
+          through to the end, THEN call this tool again with the same `context_id`/`session_id`;
+        - `auth_rejected` → Pennylane refused the session: redo the login;
+        - `probe_unavailable` → your session IS saved (`connected: true`) but the
+          probe could not confirm it, because it is broken on OUR side.
+          `retry: false`: **do not retry**, try a GED call directly.
 
-        ⚠️ `retry: false` veut dire « recommencer ne peut pas aboutir » — le problème
-        n'est pas chez l'utilisateur. Ne reboucle pas : dis-le et passe à la suite.
+        ⚠️ `retry: false` means "retrying cannot succeed" — the problem
+        is not on the user's side. Do not loop: say so and move on.
 
         Args:
-            context_id: `context_id` rendu par `pennylaneged_connect_start`.
-            session_id: `session_id` rendu par `pennylaneged_connect_start`.
-            force: mémorise la session SANS vérifier le login. Échappatoire pour ne pas
-                rester bloqué quand la sonde se trompe ou tombe. N'utilise-la que si tu
-                t'es bien logué et que la vérification refuse quand même : elle peut
-                poser au coffre une session morte, que tu ne découvriras qu'au premier
-                appel GED (401 → « session expirée »).
+            context_id: `context_id` returned by `pennylaneged_connect_start`.
+            session_id: `session_id` returned by `pennylaneged_connect_start`.
+            force: saves the session WITHOUT verifying the login. Escape hatch to avoid
+                getting stuck when the probe is wrong or down. Use it only if you
+                did log in and the verification still refuses: it may
+                put a dead session in the vault, which you will only discover at the first
+                GED call (401 → "session expired").
         """
         sub = _sub()
         try:
@@ -169,8 +169,8 @@ def register(mcp: FastMCP) -> None:
             raise _err(str(e), code=INTERNAL_ERROR)
         if not res.connected:
             return {"connected": False, "reason": res.reason, "retry": res.retry,
-                    "hint": res.detail or "Pas encore logué — connecte-toi dans la Live "
-                                          "View puis relance."}
+                    "hint": res.detail or "Not logged in yet — log in in the Live "
+                                          "View then rerun."}
         out = {"connected": True, "context_id": context_id, "reason": res.reason,
                "login_verified": not res.warning}
         if res.warning:

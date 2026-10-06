@@ -60,7 +60,7 @@ def test_un_compte_a_SEC_est_un_refus_de_QUOTA_pas_d_AUTH(monkeypatch):
     with pytest.raises(cv.QuotaEpuise) as e:
         H._verify(_fields("k"))
     assert cv.classer(e.value) == cv.NO_QUOTA
-    assert "recharge" in str(e.value).lower()
+    assert "top up" in str(e.value).lower()
 
 
 def test_une_cle_refusee_reste_un_refus_d_AUTH(monkeypatch):
@@ -82,7 +82,7 @@ def test_un_solde_ILLISIBLE_ne_fabrique_pas_de_quota(monkeypatch):
 
 def test_une_reponse_vide_est_un_echec(monkeypatch):
     _brancher(monkeypatch, {})
-    with pytest.raises(RuntimeError, match="sans information de compte"):
+    with pytest.raises(RuntimeError, match="without account information"):
         H._verify(_fields("k"))
 
 

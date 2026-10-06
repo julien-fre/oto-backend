@@ -133,7 +133,7 @@ def test_upsert_expands_a_plain_date_to_rfc_3339(client):
 
 
 def test_upsert_refuses_an_update_with_nothing_to_change(client):
-    with pytest.raises(McpError, match="title, notes ou due"):
+    with pytest.raises(McpError, match="title, notes or due"):
         _call("tasks_task", op="upsert", task_id="t1")
     client.update_task.assert_not_called()
 
@@ -195,7 +195,7 @@ def test_get_requires_a_task_id(client):
 def test_unknown_op_is_refused_with_the_allowed_list(client):
     """Jamais de repli silencieux sur le défaut : l'agent croirait sa demande honorée.
     Et le refus tombe AVANT d'appeler quoi que ce soit."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _call("tasks_task", op="delete", task_id="t1")
     for m in _DANGEROUS:
         getattr(client, m).assert_not_called()

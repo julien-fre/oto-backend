@@ -1,19 +1,19 @@
-"""Ce qui est MÉTRÉ et ce qui est PAYÉ (ADR 0043, ADR 0070 §7).
+"""What is METERED and what is PAID (ADR 0043, ADR 0070 §7).
 
-Deux crans distincts, souvent confondus :
+Two distinct levels, often confused:
 
-- le **quota** journalier d'une clé PLATEFORME (`quota_for`, `usage_today`,
-  `record_platform_usage`) — un garde-fou d'essai, levé par le droit déclaré
-  `platform_unmetered` de la personne dans son org (`plafond_du_jour`, `quotas_leves`) ;
-- l'**option payante** d'un connecteur (`paid_option_for`, `has_option`) — un droit
-  déclaré (`entitlements.has_right`), une seule règle : celui de l'org, ou une ligne
-  de droit posée sur la personne (dans l'org ou partout). La marque de compte
-  (`option_comps`) n'ouvre pas d'option payante.
+- the daily **quota** of a PLATFORM key (`quota_for`, `usage_today`,
+  `record_platform_usage`) — a trial safeguard, lifted by the person's declared
+  `platform_unmetered` right in their org (`plafond_du_jour`, `quotas_leves`);
+- a connector's **paid option** (`paid_option_for`, `has_option`) — a declared
+  right (`entitlements.has_right`), a single rule: the org's, or a right row
+  set on the person (in the org or everywhere). The account mark
+  (`option_comps`) does not open a paid option.
 
-Ne dépend que de `scope` (le contexte de l'acteur) et d'`entitlements` (les droits
-déclarés) — jamais de `billing` : le commerce écrit les droits, le cœur les relit.
-Le verdict « l'option est-elle LEVÉE pour ce connecteur » (qui tient compte du BYO)
-vit dans `views.option_open`, au-dessus de la cascade.
+Depends only on `scope` (the actor's context) and `entitlements` (the declared
+rights) — never on `billing`: commerce writes the rights, the core rereads them.
+The verdict "is the option OPEN for this connector" (which accounts for BYO)
+lives in `views.option_open`, above the cascade.
 """
 from __future__ import annotations
 
@@ -27,29 +27,29 @@ from ..auth.hooks import current_user_sub_from_token
 from ..mcp_errors import McpError
 from . import entitlements, heritage, scope
 
-# DÉRIVÉ du registre source unique (package `providers/`) : quota daily par
-# provider (fallback si pas d'env ni de grant).
+# DERIVED from the single-source registry (`providers/` package): daily quota per
+# provider (fallback if there is no env var nor grant).
 _QUOTA_DEFAULTS = providers.QUOTA_DEFAULTS
 
 
-# Add-on payant requis par un connecteur (couche 3, ADR 0043). None = aucun. HOME
-# canonique de ce mapping (les surfaces org ET user en dérivent — derive don't duplicate).
+# Paid add-on required by a connector (layer 3, ADR 0043). None = none. Canonical HOME
+# of this mapping (the org AND user surfaces derive from it — derive don't duplicate).
 _PAID_OPTION_BY_CONNECTOR = {"unipile": "unipile"}
 
 
-# Les options PAYANTES : un droit déclaré (de l'org, ou d'une personne), jamais une
-# marque de compte. Dérivé du mapping ci-dessus.
+# The PAID options: a declared right (of the org, or of a person), never an
+# account mark. Derived from the mapping above.
 _PAID_OPTIONS = frozenset(_PAID_OPTION_BY_CONNECTOR.values())
 
 
 def paid_option_for(connector: str) -> Optional[str]:
-    """Option payante requise par un connecteur (ou None).
+    """Paid option required by a connector (or None).
 
-    Suit la **délégation de credential** : les six canaux unipile n'ont pas d'option
-    à eux, ils partagent celle du compte. Une option par canal serait un contresens
-    métier (l'option paie des SIÈGES sur la clé plateforme, et un siège est un compte
-    chez le fournisseur, pas un canal) et une régression : le comp `unipile` d'un
-    client abonné cesserait d'ouvrir WhatsApp le jour du split."""
+    Follows **credential delegation**: the six unipile channels have no option
+    of their own, they share the account's. One option per channel would be a business
+    misreading (the option pays for SEATS on the platform key, and a seat is an account
+    at the provider, not a channel) and a regression: a subscribed customer's `unipile`
+    comp would stop opening WhatsApp the day of the split."""
     return _PAID_OPTION_BY_CONNECTOR.get(
         connector) or _PAID_OPTION_BY_CONNECTOR.get(
         providers.credential_provider(connector))
@@ -57,15 +57,15 @@ def paid_option_for(connector: str) -> Optional[str]:
 
 def paid_option_refusal(connector: str, sub: "str | None",
                         org: "int | None") -> Optional[str]:
-    """Le refus à servir quand `connector` s'apprête à consommer la clé PLATEFORME pour
-    la personne `sub` agissant dans `org`, qui n'a pas (ou plus) le droit de son option
-    payante — `None` si rien ne s'y oppose. Le droit est celui de l'org OU une ligne
-    posée sur la personne, dans l'org ou partout (`entitlements.has_right`) ; `org`
-    None : les lignes de la personne partout (et le défaut d'instance) seules. **Relu à
-    chaque usage** (ADR 0070 §7) : un droit qui a pris fin cesse de servir dès l'appel
-    suivant, pas au prochain branchement d'un compte.
+    """The refusal to serve when `connector` is about to consume the PLATFORM key for
+    the person `sub` acting in `org`, who does not have (or no longer has) the right to its paid
+    option — `None` if nothing opposes it. The right is the org's OR a row
+    set on the person, in the org or everywhere (`entitlements.has_right`); `org`
+    None: only the person's rows everywhere (and the instance default). **Reread on
+    each use** (ADR 0070 §7): a right that has ended stops serving from the next call,
+    not at the next account connection.
 
-    Le message NOMME la cause et ce qui la lève ; aucun repli silencieux."""
+    The message NAMES the cause and what lifts it; no silent fallback."""
     option = paid_option_for(connector)
     if option is None:
         return None
@@ -73,61 +73,61 @@ def paid_option_refusal(connector: str, sub: "str | None",
         return None
     porteur = providers.REGISTRY.get(providers.credential_provider(connector))
     nom = (porteur.label if porteur and porteur.label else option)
-    cle_propre = (f"une clé `{providers.credential_provider(connector)}` propre reste "
-                  "servie.")
+    cle_propre = (f"your own `{providers.credential_provider(connector)}` key is "
+                  "still served.")
     if org is None:
-        return (f"L'option « {nom} » ne t'est pas ouverte à titre personnel, et aucune "
-                "org qui la porte ne couvre cet appel : travaille dans une org qui a "
-                f"l'option, ou obtiens-la pour toi ; {cle_propre}")
+        return (f"The \"{nom}\" option is not open to you personally, and no "
+                "org that holds it covers this call: work in an org that has "
+                f"the option, or get it for yourself; {cle_propre}")
     if sub is None:
-        return (f"L'option « {nom} » n'est pas active pour cette org : essai terminé "
-                f"ou abonnement requis ; {cle_propre}")
-    return (f"L'option « {nom} » n'est active ni pour cette org ni pour toi : essai "
-            f"terminé ou abonnement requis ; {cle_propre}")
+        return (f"The \"{nom}\" option is not active for this org: trial ended "
+                f"or subscription required; {cle_propre}")
+    return (f"The \"{nom}\" option is active neither for this org nor for you: trial "
+            f"ended or subscription required; {cle_propre}")
 
 
 def exiger_option_payante(connector: str, sub: "str | None", org: "int | None") -> None:
-    """Lève le refus de `paid_option_refusal` au palier PLATEFORME d'une résolution. Les
-    droits lus sont ceux de la personne `sub` et de l'org que l'appelant peut
-    consommer : pour le bénéficiaire d'un projet partagé à qui rien n'est prêté, aucune
-    org (#480, `heritage.org_partagee`) — restent ses lignes de personne partout.
-    `sub` None (endpoint anonyme) : l'org seule."""
+    """Raise the refusal of `paid_option_refusal` at the PLATFORM rung of a resolution. The
+    rights read are those of the person `sub` and of the org the caller can
+    consume: for the beneficiary of a shared project to whom nothing is lent, no
+    org (#480, `heritage.org_partagee`) — only their person rows everywhere remain.
+    `sub` None (anonymous endpoint): the org alone."""
     org_servie = heritage.org_partagee(org, heritage.du_contexte(sub, org))
     refus = paid_option_refusal(connector, sub, org_servie)
     if refus:
         if org_servie is not None:
-            # QUI lève l'obstacle et OÙ (oto#108) — nommé à un membre de l'org seul.
+            # WHO lifts the obstacle and WHERE (oto#108) — named to an org member only.
             from .. import detenteurs
             refus += detenteurs.qui_leve_une_option(sub, org_servie)
         raise McpError(ErrorData(code=INVALID_PARAMS, message=refus))
 
 
 def has_option(sub: str, option: str, *, org: "int | None | object" = scope._UNSET) -> bool:
-    """Couche 3 du modèle de connecteur (cf. docs/connector-model.md) : l'option de
-    connecteur `option` est-elle débloquée pour `sub` dans son org ? **Seam unique.**
+    """Layer 3 of the connector model (cf. docs/connector-model.md): is the connector
+    option `option` unlocked for `sub` in their org? **Single seam.**
 
-    - Option PAYANTE (`unipile`) : un droit déclaré VIVANT (`entitlements.has_right`),
-      quelle que soit sa source — abonnement, don, partenaire, essai —, posé sur l'org
-      OU sur la personne (dans l'org ou partout, ADR 0070 §7). Sans org, les lignes de
-      la personne partout. La marque de compte (`option_comps`, `user_has_option`)
-      n'ouvre PAS d'option payante : seule une ligne de droit le fait.
-    - Option non payante (`beta`, un drapeau de population) : la marque du compte
-      (`user_has_option`) ou celle de l'org.
-    - Toute AUTRE clé du catalogue des droits (`platform_unmetered`, `unipile_seats`…)
-      **lève** `catalogue_key_via_option_comps` : c'est un droit déclaré, qu'oto-commerce
-      pose seul et que `entitlements.value_for` lit (#1097) — la lire dans
-      `option_comps` rouvrirait un don hérité que plus personne ne pose.
+    - PAID option (`unipile`): a LIVE declared right (`entitlements.has_right`),
+      whatever its source — subscription, gift, partner, trial —, set on the org
+      OR on the person (in the org or everywhere, ADR 0070 §7). Without an org, the person's
+      rows everywhere. The account mark (`option_comps`, `user_has_option`)
+      does NOT open a paid option: only a right row does.
+    - Non-paid option (`beta`, a population flag): the account's mark
+      (`user_has_option`) or the org's.
+    - Any OTHER key of the rights catalog (`platform_unmetered`, `unipile_seats`…)
+      **raises** `catalogue_key_via_option_comps`: it is a declared right, which oto-commerce
+      sets alone and which `entitlements.value_for` reads (#1097) — reading it in
+      `option_comps` would reopen an inherited gift that nobody sets anymore.
 
-    Ne JAMAIS lire les sources en direct ailleurs (un nouveau chemin passe par ici).
-    `org` explicite (≠ _UNSET) = calcul pour un tiers contre une org donnée (fiche admin),
-    sans current_org (anti-fuite de contexte)."""
+    NEVER read the sources directly elsewhere (a new path goes through here).
+    Explicit `org` (≠ _UNSET) = computation for a third party against a given org (admin sheet),
+    without current_org (context-leak prevention)."""
     if option in _PAID_OPTIONS:
         org = scope.current_org(sub) if org is scope._UNSET else org
         return entitlements.has_right(sub, org, option)
     if catalogue.est_du_catalogue(option):
         raise ValueError(
-            f"catalogue_key_via_option_comps: {option!r} est un droit du catalogue — il se "
-            "lit par `entitlements.value_for`/`has_right`, jamais dans `option_comps`")
+            f"catalogue_key_via_option_comps: {option!r} is a catalog right — it is "
+            "read via `entitlements.value_for`/`has_right`, never in `option_comps`")
     if user_has_option(sub, option):
         return True
     org = scope.current_org(sub) if org is scope._UNSET else org
@@ -135,33 +135,33 @@ def has_option(sub: str, option: str, *, org: "int | None | object" = scope._UNS
 
 
 def user_has_option(sub: str, option: str) -> bool:
-    """La moitié COMPTE du seam — « CET ACTEUR porte-t-il la marque », sans espace.
+    """The ACCOUNT half of the seam — "does THIS ACTOR carry the mark", with no space.
 
-    Pour les options NON payantes seulement : une option payante est un droit déclaré
-    (`entitlements.has_right`), et une marque de compte ne l'ouvre pas. Certaines
-    questions portent sur l'identité de l'appelant et sur elle seule. `has_option`
-    ne convient pas — il répond vrai dès que l'ORG ACTIVE porte la marque, donc il
-    transforme une marque de compte en propriété d'espace, partagée par tous les
-    membres.
+    For NON-paid options only: a paid option is a declared right
+    (`entitlements.has_right`), and an account mark does not open it. Some
+    questions concern the caller's identity and that alone. `has_option`
+    does not fit — it answers true as soon as the ACTIVE ORG carries the mark, so it
+    turns an account mark into a space property, shared by all
+    members.
 
-    ⚠️ L'exemple qui l'a fait naître — la marque `runner_worker` sur un compte —
-    n'existe plus (09/09/2026) : un worker n'est plus un compte marqué, c'est un
-    secret de machine déclaré en base (`db.runner_workers`). La distinction
-    reste vraie pour toute autre marque d'ACTEUR : passer par `has_option`
-    la servirait à **tous les membres** de l'org dès qu'un don serait posé sur
-    l'org ou qu'un plan l'inclurait.
+    ⚠️ The example that gave birth to it — the `runner_worker` mark on an account —
+    no longer exists (09/09/2026): a worker is no longer a marked account, it is a
+    machine secret declared in the database (`db.runner_workers`). The distinction
+    remains true for any other ACTOR mark: going through `has_option`
+    would serve it to **all members** of the org as soon as a gift was set on
+    the org or a plan included it.
 
-    L'échéance mord dans `has_option_comp`, comme pour toutes les autres surfaces.
+    The expiry bites in `has_option_comp`, like for all the other surfaces.
     """
     return db.has_option_comp("user", sub, option)
 
 
 def quota_for(provider: str) -> int:
-    """Quota journalier de la clé PLATEFORME d'un connecteur.
+    """Daily quota of a connector's PLATFORM key.
 
-    Normalisé vers le PORTEUR du credential : un quota est une propriété de la clé,
-    et six canaux qui empruntent la même clé partagent forcément son compteur. Six
-    compteurs indépendants laisseraient consommer 6× le quota sur une seule clé."""
+    Normalized to the credential CARRIER: a quota is a property of the key,
+    and six channels that borrow the same key necessarily share its counter. Six
+    independent counters would let 6× the quota be consumed on a single key."""
     provider = providers.credential_provider(provider)
     raw = os.environ.get(f"OTO_MCP_QUOTA_{provider.upper()}_DAILY")
     if raw is not None:
@@ -173,59 +173,59 @@ def quota_for(provider: str) -> int:
 
 
 def usage_today(sub: str, provider: str) -> int:
-    """Consommation du jour SUR LA CLÉ de `provider` — normalisée vers son porteur.
+    """Today's consumption ON `provider`'s KEY — normalized to its carrier.
 
-    Pendant de `quota_for` : compteur et plafond doivent nommer la même clé, sinon
-    un canal lirait 0 face au plafond d'une clé déjà épuisée (« quota intact » chez
-    quelqu'un qui n'a plus rien). Tout lecteur de quota passe par ici."""
+    Counterpart of `quota_for`: counter and ceiling must name the same key, otherwise
+    a channel would read 0 against the ceiling of an already exhausted key ("quota intact"
+    for someone who has nothing left). Every quota reader goes through here."""
     return db.get_usage_today(sub, providers.credential_provider(provider))
 
 
 def quotas_leves(sub: str, org: Optional[int]) -> bool:
-    """Le droit `platform_unmetered` lève-t-il les quotas de plateforme pour la personne
-    `sub` agissant dans `org` (ADR 0070 §7) ? Le droit de l'org consommable par
-    l'appelant — aucune pour le bénéficiaire d'un projet partagé sans prêt (#480) —,
-    ou une ligne posée sur la personne, dans l'org ou partout."""
+    """Does the `platform_unmetered` right lift the platform quotas for the person
+    `sub` acting in `org` (ADR 0070 §7)? The right of the org the caller can
+    consume — none for the beneficiary of a shared project without a loan (#480) —,
+    or a row set on the person, in the org or everywhere."""
     plan_org = heritage.org_partagee(org, heritage.du_contexte(sub, org))
     return entitlements.has_right(sub, plan_org, entitlements.PLATFORM_UNMETERED)
 
 
 def plafond_du_jour(grant: dict, provider: str, leves: Callable[[], bool]) -> int:
-    """Le plafond du jour d'une arête PLATEFORME `grant` pour `provider` — `0` =
-    illimité (registre sans plafond par défaut, OU quotas levés par le droit
-    `platform_unmetered`), jamais un plafond réel de 0 (`quota_for` ne le rend pas).
+    """The day's ceiling of a PLATFORM edge `grant` for `provider` — `0` =
+    unlimited (registry without a default ceiling, OR quotas lifted by the
+    `platform_unmetered` right), never a real ceiling of 0 (`quota_for` does not return it).
 
-    **Fonction UNIQUE** : le refus et la sonde (`resolve._win_quota`), le mode affiché
-    (`views.credential_mode_for`) et le snapshot de `/api/me` (`status.status_for`) y
-    passent tous. `leves` rend `quotas_leves(sub, org)` ; il n'est appelé que s'il y a
-    un plafond à lever — un appelant qui boucle sur les connecteurs le mémorise, une
-    lecture des droits par snapshot et non par connecteur."""
+    **SINGLE function**: the refusal and the probe (`resolve._win_quota`), the displayed mode
+    (`views.credential_mode_for`) and the `/api/me` snapshot (`status.status_for`) all
+    go through it. `leves` returns `quotas_leves(sub, org)`; it is only called if there is
+    a ceiling to lift — a caller that loops over connectors memoizes it, one
+    rights read per snapshot and not per connector."""
     limit = grant.get("daily_quota") or quota_for(provider)
     return 0 if limit and leves() else limit
 
 
 def record_platform_usage(provider: str, calls: int = 1) -> None:
-    """À appeler APRÈS un appel réussi avec la platform key. No-op si pas authentifié.
+    """To be called AFTER a successful call with the platform key. No-op if not authenticated.
 
-    Deux compteurs pendant la fenêtre de double lecture (blueprint ADR 0053, L5) :
-    l'historique `usage(sub, tool, day)` — qui garde l'AUTORITÉ du refus, cf.
-    `grants_chain` §Le comptage — et le compteur d'ARÊTE de 0053-D7, tenu en parallèle
-    pour que la bascule d'autorité soit vérifiée avant d'être faite. No-op (et aucune
-    requête) hors connecteurs basculés.
+    Two counters during the double-read window (blueprint ADR 0053, L5):
+    the `usage(sub, tool, day)` history — which keeps the refusal's AUTHORITY, cf.
+    `grants_chain` §Counting — and the EDGE counter of 0053-D7, kept in parallel
+    so the authority switch is verified before it is made. No-op (and no
+    query) outside switched connectors.
 
-    `calls` = consommation d'UN appel qui compte pour plusieurs (un bulk facturé au
-    contact, un appel Serper facturé au crédit déduit). Les DEUX compteurs débitent en
-    UNE fois. L'historique bouclait, faute d'un pas dans sa signature ; il en a un
-    depuis que le métrage se compte en crédits et plus en appels — un recensement Maps
-    par défaut aurait sinon pris 81 connexions du pool et 81 transactions pour un seul
-    appel d'outil, jusqu'à 2 000 sur une grille dense, sur le chemin chaud d'un serveur
-    mono-loop. Le compteur vaut la même chose qu'après N incréments."""
+    `calls` = consumption of ONE call that counts as several (a bulk billed per
+    contact, a Serper call billed at the deducted credit). BOTH counters debit in
+    ONE go. The history used to loop, for lack of a step in its signature; it has one
+    since metering is counted in credits and no longer in calls — a default Maps census
+    would otherwise have taken 81 pool connections and 81 transactions for a single
+    tool call, up to 2,000 on a dense grid, on the hot path of a single-loop server.
+    The counter is worth the same as after N increments."""
     sub = current_user_sub_from_token()
     if not sub:
         return
-    # Métré sur la clé RÉELLEMENT consommée (délégation) : un appel WhatsApp brûle
-    # le quota du compte unipile, pas celui d'un compteur « whatsapp » que personne
-    # ne lit. Écriture et lecture (`usage_today`) normalisent pareil.
+    # Metered on the key ACTUALLY consumed (delegation): a WhatsApp call burns
+    # the unipile account's quota, not that of a "whatsapp" counter that nobody
+    # reads. Write and read (`usage_today`) normalize the same way.
     provider = providers.credential_provider(provider)
     unites = max(1, calls)
     db.increment_usage(sub, provider, unites)
@@ -235,20 +235,20 @@ def record_platform_usage(provider: str, calls: int = 1) -> None:
 
 def refus_lot(provider: str, label: str, used: int, limit: int, units: int,
               ou_poser: str) -> McpError:
-    """Le refus d'un LOT que le quota du jour de la clé commune ne couvre pas
-    (oto#168), NOMMÉ selon sa cause. Plus grand que le quota ENTIER, le lot ne
-    passera jamais, même à zéro utilisé : le dire, et la taille qui passe, plutôt
-    que « réduis le lot » sans chiffre. Sinon, il dépasse le reste du jour."""
+    """The refusal of a BATCH that the day's quota of the shared key does not cover
+    (oto#168), NAMED according to its cause. Larger than the WHOLE quota, the batch will never
+    pass, even at zero used: say so, and the size that passes, rather than
+    "reduce the batch" without a number. Otherwise, it exceeds the rest of the day."""
     entier = units > limit
-    debut = (f"ce lot ({units}) dépasse le quota TOTAL de la clé `{label}` ({limit}/jour) "
-             f"et serait refusé même à zéro utilisé — découpe-le en lots de ≤ {limit}"
+    debut = (f"this batch ({units}) exceeds the TOTAL quota of key `{label}` ({limit}/day) "
+             f"and would be refused even at zero used — split it into batches of ≤ {limit}"
              if entier else
-             f"il reste {limit - used} unité(s) aujourd'hui ({used}/{limit}) sur la clé "
-             f"`{label}`, ce lot en demande {units} — réduis le lot")
+             f"{limit - used} unit(s) left today ({used}/{limit}) on key "
+             f"`{label}`, this batch needs {units} — reduce the batch")
     return McpError(ErrorData(
         code=INVALID_PARAMS,
-        message=(f"Quota plateforme {provider} : {debut}, ou pose ta propre "
-                 f"clé{ou_poser} pour lever la limite."),
+        message=(f"Platform quota {provider}: {debut}, or set your own "
+                 f"key{ou_poser} to lift the limit."),
         data={"code": "platform_quota_lot_trop_grand" if entier
               else "platform_quota_lot_depasse_le_reste",
               "units": units, "limit": limit, "used": used}))

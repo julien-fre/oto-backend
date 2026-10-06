@@ -170,7 +170,7 @@ def test_mur_des_50000(env):
                                             "submissions_url": C._url_mark(HOOK)})
     with pytest.raises(McpError) as e:
         env["fn"]("clay_push_rows")(table="Leads", row={"a": 1})
-    assert "nouveau webhook" in str(e.value)
+    assert "new webhook" in str(e.value)
 
 
 def test_nouveau_webhook_remet_le_compteur_a_zero(env):

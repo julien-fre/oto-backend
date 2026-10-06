@@ -1,15 +1,15 @@
-"""Planity — les CHIFFRES d'un salon : caisse, collaboratrices, occupation, avis.
+"""Planity — a salon's FIGURES: till, staff, occupancy, reviews.
 
-Module frère de `planity.py` (référentiel, clientes, agenda) : même connecteur,
-même namespace `planity_*`, même credential, même session (`planity_session`).
-Séparés parce que les vingt outils du connecteur ne tiennent pas dans un fichier,
-et que la ligne de partage qui a du sens suit les deux familles de sources — les
-chiffres d'un côté, le référentiel et l'agenda de l'autre.
+Sibling module of `planity.py` (reference data, customers, calendar): same
+connector, same `planity_*` namespace, same credential, same session
+(`planity_session`). Split because the connector's twenty tools don't fit in one
+file, and the dividing line that makes sense follows the two families of sources —
+the figures on one side, the reference data and the calendar on the other.
 
-⚠️ **`planity_get_revenue_breakdown` peut rendre un `by_seller` VIDE**, et ce
-n'est PAS un salon sans ventes : Planity ne renseigne pas cette ventilation-là.
-La répartition par collaboratrice qui fait foi est `planity_get_seller_stats` —
-c'est elle qu'il faut lire, et c'est ce qu'il faut répondre à qui s'étonne.
+⚠️ **`planity_get_revenue_breakdown` can return an EMPTY `by_seller`**, and that
+is NOT a salon without sales: Planity doesn't fill in that breakdown. The
+per-staff breakdown that is authoritative is `planity_get_seller_stats` —
+that's the one to read, and that's what to answer to anyone who is surprised.
 """
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ def register(mcp: FastMCP) -> None:
         """Multi-dimensional revenue breakdown: total CA + splits by service, product,
         seller (employee), other line types, and gift vouchers, in a single call.
 
-        All amounts in euros. Use this to answer "comment se décompose mon CA ?".
+        All amounts in euros. Use this to answer "how is my revenue broken down?".
         """
         c = await _client()
         gte, lte = fenetre(date_from, date_to, preset)
@@ -263,7 +263,7 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Reviews ratings aggregated by calendar and by service (Planity reviews).
 
-        Useful for "quelles prestations sont le mieux notées".
+        Useful for "which services are rated best".
         """
         c = await _client()
         gte, lte = fenetre(date_from, date_to, preset)
@@ -280,7 +280,7 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Revenue split by payment method (card, cash, voucher…), total and per day.
 
-        Answers "combien en carte, combien en espèces". Method names are Planity's
+        Answers "how much by card, how much in cash". Method names are Planity's
         own; `planity_list_payment_methods` gives the salon's table of them.
 
         `revenue_eur` is money. `amount` is passed through UNCONVERTED and

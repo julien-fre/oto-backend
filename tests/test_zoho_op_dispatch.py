@@ -133,13 +133,13 @@ def test_note_create_passes_title_then_content(client):
 def test_unknown_record_op_is_refused_with_the_allowed_list(client):
     """Une op inconnue doit lever en nommant les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool("zoho_record")(module="Contacts", op="nope")
     client.list_records.assert_not_called()
 
 
 def test_unknown_note_op_is_refused_with_the_allowed_list(client):
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool("zoho_note")(module="Contacts", record_id="42", op="nope")
     client.list_notes.assert_not_called()
 

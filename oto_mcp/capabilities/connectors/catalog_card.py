@@ -1,31 +1,31 @@
-"""La CARTE d'un connecteur, déclarée — la forme servie en `verbose=true` (#667).
+"""A connector's CARD, declared — the shape served with `verbose=true` (#667).
 
-`GET /api/me/connectors?verbose=true` sert la ligne entière du catalogue
-(`providers.public_catalog()`), soit treize clés de premier niveau de plus que le
-mode compact. Aucune n'était déclarée : `MyConnectorRow` est en `extra="allow"`, donc
-elles traversaient le modèle sans laisser de trace dans le schéma, qui n'annonçait
-qu'`additionalProperties: true`. Un front tiers qui dérive son formulaire de
-credential du contrat ne pouvait donc rien en tirer, alors que la donnée arrivait —
-c'est le bloquant qu'a remonté le consommateur REST.
+`GET /api/me/connectors?verbose=true` serves the entire catalog row
+(`providers.public_catalog()`), i.e. thirteen more top-level keys than the
+compact mode. None of them was declared: `MyConnectorRow` is `extra="allow"`, so
+they passed through the model without leaving a trace in the schema, which only
+announced `additionalProperties: true`. A third-party front that derives its
+credential form from the contract could therefore get nothing out of it, even though the data arrived —
+that is the blocker reported by the REST consumer.
 
-**Ces modèles DÉCRIVENT, ils ne valident pas** (même régime que `Capability.Output`,
-cf. `capabilities/_types.py`) : le handler continue de rendre des `dict` construits
-par `providers.public_catalog()`. Déclarer ne peut donc pas déplacer un octet du
-payload — et c'est la seule raison pour laquelle ce lot est sûr à poser sur une
-surface déjà consommée.
+**These models DESCRIBE, they do not validate** (same regime as `Capability.Output`,
+see `capabilities/_types.py`): the handler keeps returning `dict`s built by
+`providers.public_catalog()`. Declaring therefore cannot move a byte of the
+payload — and that is the only reason this batch is safe to put on a
+surface that is already consumed.
 
-**Domicile.** Ici et pas dans `selection.py` : la forme décrite est celle que produit
-`providers/__init__.py::public_catalog`, pas celle que compose la capacité. Les deux
-faces l'utilisent — la projection authentifiée (`connectors.me`) l'enrichit de
-`connect.callback_url` / `connect.app_ready`, absents du catalogue public servi sans
+**Home.** Here and not in `selection.py`: the described shape is the one produced by
+`providers/__init__.py::public_catalog`, not the one the capability composes. Both
+faces use it — the authenticated projection (`connectors.me`) enriches it with
+`connect.callback_url` / `connect.app_ready`, absent from the public catalog served without
 auth (`connectors/flow.py`).
 
-⚠️ Ce qui est déclaré ici doit rester le REFLET de ce que le producteur rend. Le
-producteur reste `providers/__init__.py::public_catalog` et `_model.Connector.auth` :
-un champ ajouté là-bas et oublié ici redevient un champ servi et non déclaré, ce qui
-est exactement le défaut qu'on répare. `tests/test_carte_connecteur_declaree.py` tient
-le cliquet : il compare les clés SERVIES aux clés DÉCLARÉES, connecteur par
-connecteur.
+⚠️ What is declared here must remain the REFLECTION of what the producer returns. The
+producer remains `providers/__init__.py::public_catalog` and `_model.Connector.auth`:
+a field added there and forgotten here becomes a served-but-undeclared field again, which
+is exactly the defect being fixed. `tests/test_carte_connecteur_declaree.py` holds
+the ratchet: it compares the SERVED keys to the DECLARED keys, connector by
+connector.
 """
 from __future__ import annotations
 
@@ -35,136 +35,136 @@ from pydantic import BaseModel, Field
 
 
 class DocSection(BaseModel):
-    """Une section de la doc « how-to » d'un connecteur, en markdown.
+    """A section of a connector's "how-to" doc, in markdown.
 
-    Curée par connecteur (`connectors/docs/<nom>.md`), lue par
-    `connectors/docs_reader.py`. `kind` observé : `prerequisite` | `setup` | `usage` |
-    `note` — jeu ouvert par construction (il vient des titres du markdown), donc
-    déclaré `str` et non un énuméré : figer un jeu que la prose peut élargir ferait
-    mentir le contrat au premier fichier de doc ajouté."""
+    Curated per connector (`connectors/docs/<name>.md`), read by
+    `connectors/docs_reader.py`. Observed `kind`: `prerequisite` | `setup` | `usage` |
+    `note` — an open set by construction (it comes from the markdown headings), hence
+    declared `str` and not an enum: freezing a set that the prose can widen would make
+    the contract lie at the first doc file added."""
     kind: str
     title: str
     body_md: str
 
 
 class CredentialField(BaseModel):
-    """Un champ de saisie du credential — la FORME, jamais une valeur.
+    """A credential input field — the SHAPE, never a value.
 
-    C'est ce sur quoi le dashboard boucle pour rendre son formulaire. Homonyme
-    volontaire de `providers._model.CredentialField`, qui est la dataclass qui le
-    PRODUIT : celui-ci est sa projection servie, et il ne porte donc pas les champs
-    internes (`whitespace_significant` n'est pas sur le fil).
+    This is what the dashboard loops over to render its form. A deliberate namesake
+    of `providers._model.CredentialField`, which is the dataclass that
+    PRODUCES it: this one is its served projection, and so it does not carry the
+    internal fields (`whitespace_significant` is not on the wire).
 
-    `secret=True` ⟹ la valeur n'est **jamais** rendue en lecture (ni tronquée, ni
-    vidée) : sa clé est absente du corps. Ce modèle ne décrit que la saisie."""
+    `secret=True` ⟹ the value is **never** returned on read (neither truncated nor
+    emptied): its key is absent from the body. This model only describes the input."""
     name: str
     label: str
     secret: bool
     required: bool
     help: str
     when: list[str] = Field(default=[], description=(
-        "Valeurs du champ discriminant (`AuthDescriptor.field_discriminator`) pour "
-        "lesquelles ce champ-ci est pertinent. ⚠️ Liste VIDE = pertinent QUEL QUE "
-        "SOIT le discriminant — « vide » veut dire « toujours », jamais « jamais » "
-        "(c'est le cas des ~90 connecteurs qui n'en déclarent pas). Renseignée, elle "
-        "dit deux choses d'un coup : le champ ne s'affiche que pour ces valeurs, et "
-        "son `required` ne s'applique que là."))
+        "Values of the discriminant field (`AuthDescriptor.field_discriminator`) for "
+        "which this field is relevant. ⚠️ EMPTY list = relevant WHATEVER the "
+        "discriminant — \"empty\" means \"always\", never \"never\" "
+        "(this is the case for the ~90 connectors that declare none). When filled, it "
+        "says two things at once: the field is only shown for these values, and "
+        "its `required` only applies there."))
     choices: list[str] = Field(default=[], description=(
-        "Jeu FERMÉ de valeurs acceptées — un select, pas un champ libre. Vide = "
-        "libre. Une valeur hors liste est refusée à l'ÉCRITURE, avec le jeu attendu "
-        "dans le message."))
+        "CLOSED set of accepted values — a select, not a free field. Empty = "
+        "free. A value outside the list is refused on WRITE, with the expected set "
+        "in the message."))
 
 
 class AuthDescriptor(BaseModel):
-    """Descripteur d'auth unifié (ADR 0024) — la source unique du rendu de la face
-    credential, quel que soit le mécanisme.
+    """Unified auth descriptor (ADR 0024) — the single source for rendering the
+    credential face, whatever the mechanism.
 
-    ⚠️ `method` est un jeu FERMÉ, et il est consommé par un `switch` dans un autre
-    dépôt (oto-dashboard) : y ajouter une valeur casse en silence (branche `default` →
-    panneau de connexion vide). Il est néanmoins déclaré `str` et non `Literal` ici, et
-    c'est délibéré : ce modèle DÉCRIT une réponse servie, et un énuméré au contrat
-    ferait échouer la génération de client d'un tiers le jour où le serveur en rend une
-    sixième valeur — le contrat doit vieillir moins mal que la liste. Les valeurs
-    servies au 2026-09-01 : `hosted` | `remote` | `oauth` | `cookie` | `none` |
-    `secret` (cf. `providers/_model.py::auth_method`, qui en est le domicile)."""
+    ⚠️ `method` is a CLOSED set, and it is consumed by a `switch` in another
+    repo (oto-dashboard): adding a value there breaks silently (`default` branch →
+    empty connection panel). It is nevertheless declared `str` and not `Literal` here, and
+    that is deliberate: this model DESCRIBES a served response, and an enum in the contract
+    would make a third party's client generation fail the day the server returns a
+    sixth value — the contract must age better than the list. Values
+    served as of 2026-09-01: `hosted` | `remote` | `oauth` | `cookie` | `none` |
+    `secret` (see `providers/_model.py::auth_method`, which is its home)."""
     method: str
     cardinality: str = Field(description=(
-        "`multi_account` | `single` — ce connecteur accepte-t-il PLUSIEURS comptes "
-        "pour une même entité ? C'est cette clé qui décide si l'on propose « ajouter "
-        "un compte ». Dérivée du connecteur, pas déclarée par lui. ⚠️ **Servie ici "
-        "avec le réglage de l'org appliqué** : une org peut ouvrir le multi-compte "
-        "sur un connecteur qui ne l'a pas par défaut. Le catalogue PUBLIC, lui, rend "
-        "le défaut du registre — les deux surfaces peuvent donc différer pour le même "
-        "connecteur, et c'est celle-ci qui vaut pour l'acteur qui la lit."))
-    # Le MOT que l'utilisateur emploie pour un compte de CE connecteur, quand
-    # « compte » est faux chez lui (un compte Slack du coffre EST un workspace). Le
-    # front l'affiche tel quel. Toujours renseigné — défaut « compte ».
+        "`multi_account` | `single` — does this connector accept SEVERAL accounts "
+        "for the same entity? This key decides whether to offer \"add "
+        "an account\". Derived from the connector, not declared by it. ⚠️ **Served here "
+        "with the org's setting applied**: an org may open multi-account "
+        "on a connector that does not have it by default. The PUBLIC catalog, for its part, returns "
+        "the registry default — so the two surfaces may differ for the same "
+        "connector, and this one is the one that holds for the actor reading it."))
+    # The WORD the user uses for an account of THIS connector, when
+    # "account" is wrong for them (a vault Slack account IS a workspace). The
+    # front displays it as is. Always filled — the default is the generic word for "account".
     account_noun: str
     field_discriminator: str = Field(default="", description=(
-        "Le champ dont la valeur sélectionne les autres, quand il y en a un "
-        "(`auth_mode` chez `http`). **Chaîne VIDE**, jamais `null`, quand il n'y en "
-        "a pas. ⚠️ Tant qu'aucune valeur n'est choisie, TOUS les champs sont "
-        "pertinents : le serveur ne masque rien avant que la saisie ait tranché, "
-        "parce que masquer serait deviner. Un formulaire qui filtrerait dès "
-        "l'ouverture cacherait des champs que la pose exige."))
+        "The field whose value selects the others, when there is one "
+        "(`auth_mode` on `http`). **EMPTY string**, never `null`, when there is none. "
+        "⚠️ As long as no value is chosen, ALL fields are "
+        "relevant: the server hides nothing before the input has decided, "
+        "because hiding would be guessing. A form that filtered as soon as it "
+        "opened would hide fields that setting up requires."))
     hosted_channel: Optional[str] = Field(default=None, description=(
-        "Le canal hébergé que cette carte représente (`LINKEDIN`, `WHATSAPP`…), "
-        "quand elle en est un. `null` = ce n'est pas une carte de canal. ⚠️ Le canal "
-        "est ainsi DÉRIVABLE de la carte : le flux de connexion se déclare sans "
-        "paramètre et l'écran n'a aucun sélecteur de canal à rendre — **la carte EST "
-        "le canal**."))
+        "The hosted channel this card represents (`LINKEDIN`, `WHATSAPP`…), "
+        "when it is one. `null` = this is not a channel card. ⚠️ The channel "
+        "is thus DERIVABLE from the card: the connection flow is declared with no "
+        "parameter and the screen has no channel selector to render — **the card IS "
+        "the channel**."))
     credential_of: Optional[str] = Field(default=None, description=(
-        "Le connecteur qui DÉTIENT le credential, quand ce n'est pas celui-ci. "
-        "`null` = il détient le sien. ⚠️ Un connecteur qui délègue n'a **aucun champ "
-        "à saisir**, et poser une clé sous son nom est REFUSÉ — sans quoi deux clés "
-        "diraient le contraire l'une de l'autre. C'est le porteur nommé ici qu'il "
-        "faut envoyer connecter."))
-    # Schéma de saisie. Vide hors `method=secret` (les autres mécanismes ont leur flux
-    # dédié, cf. `connect`).
+        "The connector that HOLDS the credential, when it is not this one. "
+        "`null` = it holds its own. ⚠️ A connector that delegates has **no field "
+        "to fill in**, and setting a key under its name is REFUSED — otherwise two keys "
+        "would contradict each other. The carrier named here is the one "
+        "to send to connect."))
+    # Input schema. Empty outside `method=secret` (the other mechanisms have their
+    # dedicated flow, see `connect`).
     fields: list[CredentialField] = []
 
 
 class ConnectParamOption(BaseModel):
-    """Une valeur d'un choix fermé d'un paramètre de flux (le front rend un select)."""
+    """A value of a closed choice of a flow parameter (the front renders a select)."""
     value: str
     label: str
 
 
 class ConnectParam(BaseModel):
-    """Une valeur que l'utilisateur doit fournir pour démarrer le flux de connexion."""
+    """A value the user must provide to start the connection flow."""
     name: str
     label: str
     required: bool
     default: str = ""
     help: str = ""
-    # Non vide ⟹ liste FERMÉE. Vide ⟹ saisie libre. C'est le domicile unique de ces
-    # valeurs (`connectors/flow.py::FlowParam`), jamais recopié dans un front.
+    # Non-empty ⟹ CLOSED list. Empty ⟹ free input. This is the single home of these
+    # values (`connectors/flow.py::FlowParam`), never copied into a front.
     options: list[ConnectParamOption] = []
 
 
 class ConnectFlow(BaseModel):
-    """La FORME du geste « connecter » — jamais une URL d'autorisation ni un nom de
-    capacité (`/api/connectors` est servie SANS auth, et le chemin d'appel est fixe
-    côté client). `null` sur les ~85 connecteurs qui n'ont pas de flux : le front rend
-    alors son formulaire de champs habituel.
+    """The SHAPE of the "connect" gesture — never an authorization URL nor a
+    capability name (`/api/connectors` is served WITHOUT auth, and the call path is fixed
+    on the client side). `null` on the ~85 connectors that have no flow: the front
+    then renders its usual fields form.
 
-    Les deux derniers champs n'existent QUE sur la projection authentifiée
-    (`GET /api/me/connectors?verbose=true`) et jamais dans le catalogue public : ils
-    répondent à qui demande, ce qu'un catalogue anonyme ne peut pas faire."""
+    The last two fields exist ONLY on the authenticated projection
+    (`GET /api/me/connectors?verbose=true`) and never in the public catalog: they
+    answer to whoever asks, which an anonymous catalog cannot do."""
     label: str
     params: list[ConnectParam] = []
-    # L'URL de retour de consentement à enregistrer chez le fournisseur, DÉRIVÉE de
-    # l'environnement (jamais écrite en dur : une URL de prose ment dès qu'on la lit
-    # depuis la preprod, et le consentement échoue sur un `redirect_uri_mismatch`
-    # incompréhensible). `null` = flux sans retour déclaré.
+    # The consent return URL to register with the provider, DERIVED from the
+    # environment (never hard-coded: a URL in prose lies as soon as it is read
+    # from preprod, and consent fails on an incomprehensible `redirect_uri_mismatch`).
+    # `null` = flow with no declared return.
     callback_url: Optional[str] = None
-    # Cet utilisateur a-t-il déjà une app OAuth à disposition (la sienne, celle de son
-    # org, ou celle de l'éditeur) ? `null` = question non déclarée par le connecteur —
-    # le front doit alors rester MUET plutôt qu'affirmer qu'il reste une app à poser.
+    # Does this user already have an OAuth app available (their own, their
+    # org's, or the vendor's)? `null` = question not declared by the connector —
+    # the front must then stay SILENT rather than claim an app remains to be set up.
     app_ready: Optional[bool] = None
 
 
 class FreeTier(BaseModel):
-    """Free-tier (ADR 0031) : la clé plateforme est ouverte sans grant, avec un quota
-    gratuit par utilisateur et par jour. `null` sur la carte = pas de free-tier."""
+    """Free-tier (ADR 0031): the platform key is open without a grant, with a free
+    quota per user and per day. `null` on the card = no free-tier."""
     daily_quota: int

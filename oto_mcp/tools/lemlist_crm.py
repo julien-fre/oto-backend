@@ -1,30 +1,30 @@
-"""Lemlist — la moitié NON-campagne de l'API : CRM, inbox, signaux, réglages.
+"""Lemlist — the NON-campaign half of the API: CRM, inbox, signals, settings.
 
-Deuxième module du même connecteur (`providers/lemlist.py` déclare
-`modules=("lemlist", "lemlist_crm")`), pour une raison de lisibilité et non de
-périmètre : `tools/lemlist.py` tient la campagne et ses leads, ce fichier tient
-tout le reste — contacts et sociétés (le CRM lemlist), inbox, désinscriptions,
-watch lists, tâches, base partagée, équipe, boîtes mail, lemwarm, alertes de
-délivrabilité, webhooks.
+Second module of the same connector (`providers/lemlist.py` declares
+`modules=("lemlist", "lemlist_crm")`), for readability rather than
+scope: `tools/lemlist.py` holds the campaign and its leads, this file holds
+everything else — contacts and companies (the lemlist CRM), inbox, unsubscribes,
+watch lists, tasks, shared base, team, mailboxes, lemwarm, deliverability
+alerts, webhooks.
 
-**Un CONTACT n'est pas un LEAD.** Le lead est l'exemplaire d'une personne DANS
-une campagne — son état d'envoi, ses variables ; il vit dans `lemlist_lead`. Le
-contact est la personne dans le CRM lemlist, indépendante des campagnes. C'est
-la confusion la plus coûteuse de cette API, et elle sépare les deux modules.
+**A CONTACT is not a LEAD.** The lead is a person's copy INSIDE a
+campaign — its sending state, its variables; it lives in `lemlist_lead`. The
+contact is the person in the lemlist CRM, independent of campaigns. This is
+the most costly confusion of this API, and it separates the two modules.
 
-Ce qui ENVOIE ici tient dans un seul tool, masqué par défaut :
-`lemlist_inbox_send`. Ses trois routes (`/inbox/email`, `/inbox/linkedin`,
-`/inbox/whatsapp`) sont les envois les plus immédiats de tout le connecteur —
-ni campagne, ni séquence, ni revue devant elles : le message part. D'où le tool
-NU, seul grain que `DEFAULT_HIDDEN_TOOLS` sache masquer.
+What SENDS here fits in a single tool, hidden by default:
+`lemlist_inbox_send`. Its three routes (`/inbox/email`, `/inbox/linkedin`,
+`/inbox/whatsapp`) are the most immediate sends of the whole connector —
+no campaign, no sequence, no review in front of them: the message goes out. Hence
+the BARE tool, the only grain that `DEFAULT_HIDDEN_TOOLS` knows how to hide.
 
-Deux surfaces peuvent envoyer INDIRECTEMENT et restent visibles, en le disant :
-une watch list réglée sur `push_to_campaign` alimente une campagne toute seule,
-et `lemlist_mailbox(op="lemwarm_start")` envoie — mais dans le réseau de chauffe
-(d'autres boîtes lemlist), jamais vers un prospect.
+Two surfaces can send INDIRECTLY and stay visible, by saying so:
+a watch list set to `push_to_campaign` feeds a campaign on its own,
+and `lemlist_mailbox(op="lemwarm_start")` sends — but within the warm-up network
+(other lemlist mailboxes), never to a prospect.
 
-Clé résolue par appel via `access.resolve_api_key("lemlist")` : chaque user voit
-SES données, donc user key obligatoire, pas de quota plateforme.
+Key resolved per call via `access.resolve_api_key("lemlist")`: each user sees
+THEIR data, so a user key is required, no platform quota.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def _need(**kwargs) -> None:
     """Refuse au bord ce que lemlist refuserait par un 400 muet."""
     missing = [k for k, v in kwargs.items() if not v]
     if missing:
-        raise _bad(f"{', '.join('`%s`' % m for m in missing)} requis")
+        raise _bad(f"{', '.join('`%s`' % m for m in missing)} required")
 
 
 def register(mcp: FastMCP) -> None:
@@ -59,7 +59,7 @@ def register(mcp: FastMCP) -> None:
         if is_platform:
             access.record_platform_usage("lemlist")
 
-    # --- CRM : contacts & sociétés ---------------------------------------------
+    # --- CRM: contacts & companies ---------------------------------------------
 
     @mcp.tool()
     def lemlist_contact(
@@ -136,7 +136,7 @@ def register(mcp: FastMCP) -> None:
             _need(list_id=list_id)
             result = {"csv": client.export_contact_list(list_id, entity=entity)}
         else:
-            raise _bad(f'op inconnu "{op}" — attendu: list, get, upsert, delete, '
+            raise _bad(f'unknown op "{op}" — expected: list, get, upsert, delete, '
                        "lists, list_create, list_manage, list_export")
         _record_if_platform(is_platform)
         return result
@@ -195,7 +195,7 @@ def register(mcp: FastMCP) -> None:
             _need(company_id=company_id, note=note)
             result = client.create_company_note(company_id, note)
         else:
-            raise _bad(f'op inconnu "{op}" — attendu: list, upsert, delete, '
+            raise _bad(f'unknown op "{op}" — expected: list, upsert, delete, '
                        "notes, note_create")
         _record_if_platform(is_platform)
         return result
@@ -297,7 +297,7 @@ def register(mcp: FastMCP) -> None:
                     result = client.delete_draft(contact_id, draft_id, draft_owner)
         else:
             raise _bad(
-                f'op inconnu "{op}" — attendu: list, messages, labels, label_get, '
+                f'unknown op "{op}" — expected: list, messages, labels, label_get, '
                 "label_create, labels_attach, labels_remove, drafts, draft_get, "
                 "draft_create, draft_update, draft_delete")
         _record_if_platform(is_platform)
@@ -318,7 +318,7 @@ def register(mcp: FastMCP) -> None:
         reply_to_activity_id: Optional[str] = None,
     ) -> dict:
         """Send a message from the inbox — DIRECTLY, to a real person.
-        `oto_guide op=read slug="lemlist-playbook"` : ordre de construction, d'où vient chaque id, et les écarts doc↔API.
+        `oto_guide op=read slug="lemlist-playbook"`: build order, where each id comes from, and the doc↔API gaps.
 
         The most immediate send of the whole connector: no campaign, no
         sequence, no review in front of it. Hidden by default for that reason.
@@ -355,11 +355,11 @@ def register(mcp: FastMCP) -> None:
                 send_user_whatsapp_account_id=send_user_whatsapp_account_id,
                 lead_id=lead_id, contact_id=contact_id, message=message)
         else:
-            raise _bad(f'op inconnu "{op}" — attendu: email, linkedin, whatsapp')
+            raise _bad(f'unknown op "{op}" — expected: email, linkedin, whatsapp')
         _record_if_platform(is_platform)
         return result
 
-    # --- Désinscriptions ---------------------------------------------------------
+    # --- Unsubscribes ------------------------------------------------------------
 
     @mcp.tool()
     def lemlist_unsubscribe(
@@ -420,13 +420,13 @@ def register(mcp: FastMCP) -> None:
             result = {"csv": client.export_unsubscribed_contacts()}
         else:
             raise _bad(
-                f'op inconnu "{op}" — attendu: list, get, add, delete, export, '
+                f'unknown op "{op}" — expected: list, get, add, delete, export, '
                 "var_list, var_get, var_add, var_bulk, var_remove, var_export, "
                 "contact_status, contact_add, contact_remove, contact_export")
         _record_if_platform(is_platform)
         return result
 
-    # --- Tâches, signaux, base partagée -------------------------------------------
+    # --- Tasks, signals, shared base ----------------------------------------------
 
     @mcp.tool()
     def lemlist_task(
@@ -480,13 +480,13 @@ def register(mcp: FastMCP) -> None:
                 "images": images, "videos": videos,
             }.items() if v is not None}
             if not data:
-                raise _bad("rien à mettre à jour — passe au moins un champ")
+                raise _bad("nothing to update — pass at least one field")
             result = client.update_task(task_id, data)
         elif op == "ignore":
             _need(ids=ids)
             result = client.ignore_tasks(ids)
         else:
-            raise _bad(f'op inconnu "{op}" — attendu: list, create, update, ignore')
+            raise _bad(f'unknown op "{op}" — expected: list, create, update, ignore')
         _record_if_platform(is_platform)
         return result
 
@@ -520,7 +520,7 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Watch lists: standing alerts on buying signals (hiring, funding, job
         change, tech move, website visit…), and the signals they catch.
-        `oto_guide op=read slug="lemlist-playbook"` : ordre de construction, d'où vient chaque id, et les écarts doc↔API.
+        `oto_guide op=read slug="lemlist-playbook"`: build order, where each id comes from, and the doc↔API gaps.
 
         ⚠️ A list created with `signal_processing_type="push_to_campaign"` and
         `activate=True` feeds a campaign ON ITS OWN — the one configuration
@@ -558,10 +558,10 @@ def register(mcp: FastMCP) -> None:
                 page=page, limit=limit, type=watch_type, status=status)}
         elif op == "create":
             _need(name=name, watch_type=watch_type)
-            # Mêmes précautions : `segment_type`, `signal_processing_type` et
-            # `activate` ont des défauts côté client parce que l'API les EXIGE
-            # (cf. les écarts relevés en live). Les passer à None ferait
-            # exactement l'erreur qu'ils servent à éviter — on les omet.
+            # Same precautions: `segment_type`, `signal_processing_type` and
+            # `activate` have defaults on the client side because the API REQUIRES them
+            # (see the gaps found live). Passing them as None would cause
+            # exactly the error they serve to avoid — we omit them.
             result = client.create_watch_list(name, type=watch_type, **{
                 k: v for k, v in (
                     ("filters", filters), ("emoji", emoji),
@@ -600,7 +600,7 @@ def register(mcp: FastMCP) -> None:
                 custom_fields=custom_fields)
         else:
             raise _bad(
-                f'op inconnu "{op}" — attendu: list, create, update, delete, '
+                f'unknown op "{op}" — expected: list, create, update, delete, '
                 "filters, filter_values, library, history, signals, push_signals")
         _record_if_platform(is_platform)
         return result
@@ -650,12 +650,12 @@ def register(mcp: FastMCP) -> None:
             _need(persona_id=persona_id)
             result = client.delete_persona(persona_id)
         else:
-            raise _bad(f'op inconnu "{op}" — attendu: people, companies, filters, '
+            raise _bad(f'unknown op "{op}" — expected: people, companies, filters, '
                        "personas, persona_create, persona_delete")
         _record_if_platform(is_platform)
         return result
 
-    # --- Équipe, boîtes mail, délivrabilité, webhooks --------------------------------
+    # --- Team, mailboxes, deliverability, webhooks -----------------------------------
 
     @mcp.tool()
     def lemlist_team(
@@ -707,7 +707,7 @@ def register(mcp: FastMCP) -> None:
         elif op == "fields":
             result = {"fields": client.list_fields(entity=entity, source=source)}
         else:
-            raise _bad(f'op inconnu "{op}" — attendu: team, credits, senders, user, '
+            raise _bad(f'unknown op "{op}" — expected: team, credits, senders, user, '
                        "user_channels, crm_users, crm_filters, fields")
         _record_if_platform(is_platform)
         return result
@@ -761,7 +761,7 @@ def register(mcp: FastMCP) -> None:
             else:
                 result = client.pause_lemwarm(mailbox_id)
         else:
-            raise _bad(f'op inconnu "{op}" — attendu: connect, disconnect, test, '
+            raise _bad(f'unknown op "{op}" — expected: connect, disconnect, test, '
                        "lemwarm, lemwarm_update, lemwarm_start, lemwarm_pause")
         _record_if_platform(is_platform)
         return result
@@ -809,7 +809,7 @@ def register(mcp: FastMCP) -> None:
                   comparison_operator=comparison_operator,
                   period_days=period_days, period_mode=period_mode)
             if threshold is None:
-                raise _bad("`threshold` requis")
+                raise _bad("`threshold` required")
             result = client.create_deliverability_alert(
                 widget=widget, metric=metric, severity=severity, scope=scope,
                 threshold=threshold, comparison_operator=comparison_operator,
@@ -823,7 +823,7 @@ def register(mcp: FastMCP) -> None:
             _need(alert_id=alert_id)
             result = client.delete_deliverability_alert(alert_id)
         else:
-            raise _bad(f'op inconnu "{op}" — attendu: list, get, create, update, delete')
+            raise _bad(f'unknown op "{op}" — expected: list, get, create, update, delete')
         _record_if_platform(is_platform)
         return result
 
@@ -862,7 +862,7 @@ def register(mcp: FastMCP) -> None:
             _need(hook_id=hook_id)
             result = client.delete_webhook(hook_id)
         else:
-            raise _bad(f'op inconnu "{op}" — attendu: list, add, delete')
+            raise _bad(f'unknown op "{op}" — expected: list, add, delete')
         _record_if_platform(is_platform)
         return result
 

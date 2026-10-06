@@ -1,47 +1,47 @@
-"""Le kit d'organisation — UNE fonction d'application (ADR 0050 §E8, oto#166).
+"""The organization kit — ONE application function (ADR 0050 §E8, oto#166).
 
-Le kit (`orgs.default_connectors`) est la liste de connecteurs qu'une org installe
-dans la boîte à outils de ses membres — ceux qui arrivent (au semis,
-`session_visibility`) ET ceux qui sont déjà là (ici, au geste de l'admin). Tout
-geste d'org sur ces boîtes passe par `appliquer` :
+The kit (`orgs.default_connectors`) is the list of connectors an org installs
+in its members' toolbox — those who arrive (at seeding,
+`session_visibility`) AND those who are already there (here, at the admin's action).
+Every org action on those toolboxes goes through `appliquer`:
 
-| geste (capacité)                                   | appel                              |
+| action (capability)                                | call                               |
 |----------------------------------------------------|------------------------------------|
-| poser le kit en entier (`connectors.recommend`)    | `appliquer(org, kit=[…])`          |
-| ajouter au kit (`connectors.bulk_select`)          | `appliquer(org, ajouter=[nom])`    |
-| retirer du kit (`connectors.unset_default`)        | `appliquer(org, retirer=[nom])`    |
-| pousser à UN membre (`connectors.force.member`)    | `appliquer(org, ajouter=[nom],`    |
+| set the whole kit (`connectors.recommend`)         | `appliquer(org, kit=[…])`          |
+| add to the kit (`connectors.bulk_select`)          | `appliquer(org, ajouter=[name])`   |
+| remove from the kit (`connectors.unset_default`)   | `appliquer(org, retirer=[name])`   |
+| push to ONE member (`connectors.force.member`)     | `appliquer(org, ajouter=[name],`   |
 |                                                    | `          pousser_a=sub)`         |
 
-**Garde d'écriture (§E2)** : un AJOUT au kit nomme un connecteur connu du registre et
-exposé pour l'org, sinon tout le geste est refusé, raison nommée, rien n'est écrit
-(`AjoutRefuse`). Un connecteur coupé APRÈS sa mise au kit y reste : installé, masqué
-chez tous, il revient seul à la réouverture — la réponse le liste (`cut`).
+**Write guard (§E2)**: an ADD to the kit names a connector known to the registry and
+exposed for the org, otherwise the whole action is refused, reason named, nothing is written
+(`AjoutRefuse`). A connector cut AFTER being put in the kit stays there: installed, hidden
+for everyone, it comes back on its own on reopening — the response lists it (`cut`).
 
-Seule la DIFFÉRENCE entre l'ancien et le nouveau kit s'applique aux membres
-(décision Q4 du 11/09 : « une modification future s'applique à tous les membres,
-anciens compris ; ce qui a été posé avant n'est pas rejoué »). Un connecteur nommé
-par le geste mais déjà au kit n'est rejoué chez personne, et la réponse le dit
+Only the DIFFERENCE between the old and the new kit applies to members
+(decision Q4 of 11/09: "a future change applies to all members,
+former ones included; what was set before is not replayed"). A connector named
+by the action but already in the kit is replayed for nobody, and the response says so
 (`unchanged`).
 
-Un ajout installe chez chaque membre de l'org, provenance `kit` (§E4), par
-`selection.install_for_member` — jamais par-dessus le membre : une ligne existante
-(active ou en pause) reste, un retrait du membre n'est pas défait. Le kit et les
-boîtes s'écrivent dans UNE transaction, la ligne de l'org verrouillée (`FOR
-UPDATE`) : deux admins qui modifient le kit en même temps ne calculent pas leur
-différence sur le même « avant ».
+An add installs for each member of the org, provenance `kit` (§E4), through
+`selection.install_for_member` — never over the member: an existing row
+(active or paused) stays, a member's removal is not undone. The kit and the
+toolboxes are written in ONE transaction, the org row locked (`FOR
+UPDATE`): two admins changing the kit at the same time don't compute their
+difference on the same "before".
 
-Un RETRAIT du kit (décision Q1 du 11/09) désinstalle le connecteur chez chaque membre
-dont la ligne porte la provenance `kit`, active ou en pause — et nulle part ailleurs :
-installé ou repris par le membre (`membre`), poussé par un admin (`admin`), venu du
-socle (`socle`) ou antérieur à la trace (`inconnue`), il reste.
+A REMOVAL from the kit (decision Q1 of 11/09) uninstalls the connector for each member
+whose row carries the provenance `kit`, active or paused — and nowhere else:
+installed or taken back by the member (`membre`), pushed by an admin (`admin`), coming from
+the base (`socle`) or predating the trace (`inconnue`), it stays.
 
-La POUSSÉE à un membre (décision Q2) installe chez lui seul, provenance `admin`, avec
-les mêmes exceptions — elle ne touche pas au kit, et ne défait jamais son retrait.
+The PUSH to a member (decision Q2) installs for them alone, provenance `admin`, with
+the same exceptions — it doesn't touch the kit, and never undoes their removal.
 
-La réponse est chiffrée par connecteur : installé chez N, déjà actif chez M, laissé
-chez P qui l'ont en pause, laissé chez R qui l'ont retiré eux-mêmes. Visible à l'écran tout de suite ; pour l'agent d'un
-membre, à sa PROCHAINE conversation — le registre d'outils est figé à l'ouverture.
+The response is counted per connector: installed for N, already active for M, left
+for P who have it paused, left for R who removed it themselves. Visible on screen right away; for a
+member's agent, at their NEXT conversation — the tool registry is frozen at opening.
 """
 from __future__ import annotations
 
@@ -52,46 +52,46 @@ from . import selection as sel
 ADDED = "added"
 REMOVED = "removed"
 
-AGENT_NOTE = ("Effet visible à l'écran tout de suite ; pour l'agent d'un membre, à sa "
-              "PROCHAINE conversation — le registre d'outils d'une conversation ouverte "
-              "est figé et aucune écriture n'y change rien.")
-# Servi à l'ADMIN quand son geste nomme un connecteur déjà au kit (lecture de Q4
-# retenue le 11/09/2026, ADR 0050 §E) : son clic a bien été reçu, il n'y avait rien à
-# modifier. Le texte dit POURQUOI et COMMENT faire s'il le veut vraiment chez les
-# membres actuels — une décision de l'admin, pas un rattrapage de la plateforme. Il
-# est vrai avant comme après l'application de Q1 : un retrait du kit ne désinstalle
-# jamais que ce que le kit a lui-même posé.
+AGENT_NOTE = ("Effect visible on screen right away; for a member's agent, at their "
+              "NEXT conversation — the tool registry of an open conversation "
+              "is frozen and no write changes anything there.")
+# Served to the ADMIN when their action names a connector already in the kit (reading of
+# Q4 retained on 11/09/2026, ADR 0050 §E): their click was received, there was nothing
+# to change. The text says WHY and HOW to proceed if they really want it for the
+# current members — an admin decision, not a platform catch-up. It
+# is true before as after the application of Q1: a removal from the kit
+# never uninstalls anything but what the kit itself set.
 UNCHANGED_NOTE = (
-    "Déjà dans le kit : ton geste a bien été reçu, mais il ne modifie pas le kit, donc "
-    "il n'installe rien chez les membres actuels. Le kit n'applique aux membres déjà "
-    "entrés que ses MODIFICATIONS faites depuis le 11/09/2026 ; ce qu'il contenait avant "
-    "ne se rejoue pas. Pour l'installer malgré tout chez les membres actuels : retire-le "
-    "du kit, puis remets-le. Ce retrait ne désinstalle rien que le kit n'ait posé "
-    "lui-même ; la remise l'installe chez chaque membre qui ne l'a pas — sauf chez qui "
-    "l'a retiré lui-même depuis le 11/09/2026, qui le garde retiré.")
+    "Already in the kit: your action was received, but it doesn't change the kit, so "
+    "it installs nothing for the current members. The kit only applies to members who "
+    "already joined its CHANGES made since 11/09/2026; what it contained before "
+    "is not replayed. To install it for the current members anyway: remove it "
+    "from the kit, then add it back. That removal uninstalls nothing the kit didn't set "
+    "itself; the re-add installs it for each member who doesn't have it — except for whoever "
+    "removed it themselves since 11/09/2026, who keeps it removed.")
 
 
-CUT_NOTE = ("Coupé pour ton organisation : il reste dans le kit et installé chez tes "
-            "membres, mais masqué chez tous tant qu'il est coupé ; il revient seul quand tu "
-            "le rends de nouveau disponible.")
+CUT_NOTE = ("Cut for your organization: it stays in the kit and installed for your "
+            "members, but hidden for everyone while it is cut; it comes back on its own when you "
+            "make it available again.")
 
-# Raison d'un refus d'ajout, telle que servie (E2 : « le refus dit pourquoi »).
+# Reason for an add refusal, as served (E2: "the refusal says why").
 RAISONS = {
-    "unknown": "est inconnu du registre des connecteurs",
-    "platform_disabled": "est coupé par la plateforme : ton organisation ne peut pas l'installer",
-    "org_disabled": ("n'est pas disponible pour tes membres (ton organisation l'a coupé) : "
-                     "rends-le disponible d'abord"),
+    "unknown": "is unknown to the connector registry",
+    "platform_disabled": "is cut by the platform: your organization can't install it",
+    "org_disabled": ("is not available to your members (your organization cut it): "
+                     "make it available first"),
 }
 
 
 class OrgInconnue(LookupError):
-    """L'org visée n'existe pas."""
+    """The targeted org doesn't exist."""
 
 
 class AjoutRefuse(ValueError):
-    """Un ajout nomme un connecteur que l'org ne peut pas installer (ADR 0050 §E2).
-    `refus` = `[{"connector", "reason"}]`, raison ∈ `RAISONS`. Levé AVANT toute
-    écriture, dans la transaction : rien n'est écrit, ni au kit ni chez les membres."""
+    """An add names a connector the org can't install (ADR 0050 §E2).
+    `refus` = `[{"connector", "reason"}]`, reason ∈ `RAISONS`. Raised BEFORE any
+    write, within the transaction: nothing is written, neither to the kit nor for the members."""
 
     def __init__(self, refus: list[dict]):
         self.refus = refus
@@ -99,11 +99,11 @@ class AjoutRefuse(ValueError):
 
 
 def refus_d_ajout(org_id: int, noms: Iterable[str]) -> list[dict]:
-    """E2 — on n'AJOUTE au kit qu'un connecteur connu du registre et exposé pour
-    l'org. La garde vaut pour le geste qui ajoute ; un connecteur coupé APRÈS sa mise
-    au kit y reste (cf. `coupes`). Rend les refus, raison nommée ; vide = tout passe.
-    Coupé par l'org (le master l'expose, l'override d'org le retire) se distingue de
-    coupé par la plateforme : ce ne sont pas les mêmes gestes pour le rouvrir."""
+    """E2 — only a connector known to the registry and exposed for the org may be ADDED
+    to the kit. The guard applies to the action that adds; a connector cut AFTER being put
+    in the kit stays there (see `coupes`). Returns the refusals, reason named; empty = all pass.
+    Cut by the org (the master exposes it, the org override removes it) is distinguished from
+    cut by the platform: those are not the same actions to reopen it."""
     from .. import providers
     from . import activation
     noms = list(noms)
@@ -121,8 +121,8 @@ def refus_d_ajout(org_id: int, noms: Iterable[str]) -> list[dict]:
 
 
 def coupes(org_id: int, kit: Iterable[str]) -> list[str]:
-    """Les connecteurs du kit que l'org n'expose plus : ils y restent (l'intention de
-    l'admin), installés et masqués chez tous, et reviennent seuls à la réouverture."""
+    """The kit connectors the org no longer exposes: they stay there (the admin's
+    intent), installed and hidden for everyone, and come back on their own on reopening."""
     from .. import providers
     from . import activation
     kit = list(kit)
@@ -145,16 +145,16 @@ def _dedupe(noms: Iterable[str]) -> list[str]:
 def appliquer(org_id: int, *, kit: Optional[Iterable[str]] = None,
               ajouter: Iterable[str] = (), retirer: Iterable[str] = (),
               pousser_a: Optional[str] = None) -> dict:
-    """Applique un geste d'org sur le kit et les boîtes de ses membres. Voir le module.
-    `pousser_a=sub` = la poussée nominative : UN connecteur (`ajouter`), UN membre,
-    provenance `admin`, kit intact."""
+    """Applies an org action to the kit and its members' toolboxes. See the module.
+    `pousser_a=sub` = the named push: ONE connector (`ajouter`), ONE member,
+    provenance `admin`, kit untouched."""
     from .. import db
 
     ajouter, retirer = _dedupe(ajouter), _dedupe(retirer)
     if kit is not None and (ajouter or retirer):
-        raise ValueError("appliquer : `kit` (le kit entier) OU `ajouter`/`retirer`, pas les deux")
+        raise ValueError("appliquer: `kit` (the whole kit) OR `ajouter`/`retirer`, not both")
     if pousser_a is not None and (kit is not None or retirer or len(ajouter) != 1):
-        raise ValueError("appliquer : une poussée ajoute UN connecteur à UN membre, sans toucher au kit")
+        raise ValueError("appliquer: a push adds ONE connector to ONE member, without touching the kit")
     with db._connect() as conn:
         row = conn.execute("SELECT default_connectors FROM orgs WHERE id = %s FOR UPDATE",
                            (org_id,)).fetchone()
@@ -174,7 +174,7 @@ def appliquer(org_id: int, *, kit: Optional[Iterable[str]] = None,
         retraits = [n for n in avant if n not in apres]
         refus = refus_d_ajout(org_id, ajouts)
         if refus:
-            raise AjoutRefuse(refus)       # avant toute écriture : la transaction s'annule
+            raise AjoutRefuse(refus)       # before any write: the transaction is cancelled
         if pousser_a is None and (ajouts or retraits
                                   or (kit is not None and row["default_connectors"] is None)):
             conn.execute("UPDATE orgs SET default_connectors = %s WHERE id = %s",
@@ -201,8 +201,8 @@ def appliquer(org_id: int, *, kit: Optional[Iterable[str]] = None,
                 effet["removed_at"] = str(retire_le)
             effets.append(effet)
         for c in retraits:
-            # E5, décision Q1 : désinstallé là où le KIT l'a posé (actif ou en pause),
-            # et nulle part ailleurs. On compte ce qui reste, par provenance.
+            # E5, decision Q1: uninstalled where the KIT set it (active or paused),
+            # and nowhere else. We count what remains, by provenance.
             cur = conn.execute(
                 "DELETE FROM user_selected_connectors WHERE org_id = %s AND connector = %s "
                 "AND origin = %s AND sub = ANY(%s)", (org_id, c, sel.KIT, membres))

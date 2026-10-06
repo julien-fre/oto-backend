@@ -1,30 +1,30 @@
-## prerequisite — clé api insee sirene
+## prerequisite — insee sirene api key
 
-les outils d'identité, recherche, bilans et événements (`fr_search`, `fr_get`, `fr_bilans`, `fr_events`…) tournent en open data, **sans clé**.
-une clé n'est requise que pour les appels **insee sirene** (`fr_siret`, `fr_headquarters` — siret/siège à la source officielle).
-- crée un compte sur le [portail api insee](https://api.insee.fr) et souscris à l'api sirene
-- récupère ta clé, puis pose-la sur ton dashboard oto (connecteur `sirene`)
-- les requêtes **sirene stock** (`fr_stock_*`, parquet local) n'ont **pas** besoin de clé
+the identity, search, financial statement and event tools (`fr_search`, `fr_get`, `fr_bilans`, `fr_events`…) run on open data, **without a key**.
+a key is only required for **insee sirene** calls (`fr_siret`, `fr_headquarters` — siret/head office from the official source).
+- create an account on the [insee api portal](https://api.insee.fr) and subscribe to the sirene api
+- get your key, then set it on your oto dashboard (`sirene` connector)
+- **sirene stock** queries (`fr_stock_*`, local parquet) do **not** need a key
 
-## usage — données entreprise france
+## usage — french company data
 
-interroge identité, finances, dirigeants, événements légaux et appels d'offres d'une entreprise française.
-- `fr_search(query=…, naf=…, departement=…)` — recherche multicritère (secteur, zone, effectifs, CA)
-- `fr_get(siren)` — fiche complète agrégée : identité + 7 ratios du dernier bilan inpi + événements bodacc
-- `fr_bilans(siren)` puis `fr_bilan(siren, date_cloture)` — historique des dépôts et bilan détaillé (CA, EBE, endettement…)
-- `fr_directors(siren)`, `fr_events(siren)`, `fr_tenders_search(query=…)` — dirigeants, événements bodacc, appels d'offres boamp
-- `fr_tenders_search(op="awarded", query= | titulaire_siret= | departement=)` — les marchés **attribués** (decp) : qui a gagné, pour combien, notifié quand. l'issue, là où `op="notices"` (le défaut, boamp) ne donne que l'avis — donc la concurrence réelle d'un territoire. un paramètre propre à l'autre op est refusé, pas ignoré. deux régimes lus, découpés à la notification : l'arrêté 2022 depuis 2024, l'arrêté 2019 avant — chaque marché porte son `arrete`. ⚠️ depuis 2024 la source ne publie aucun nom (acheteur, lieu, titulaire), et avant 2024 jamais celui du titulaire principal : les résoudre par leur siret avec `fr_siret`.
-- `fr_accords_search(siren=…)`, `fr_egapro_declaration(siren)`, `fr_avis_sirene(siret)` — accords d'entreprise, index égalité f-h, avis de situation insee (pdf)
+query the identity, finances, officers, legal events and tenders of a french company.
+- `fr_search(query=…, naf=…, departement=…)` — multi-criteria search (sector, area, headcount, revenue)
+- `fr_get(siren)` — full aggregated profile: identity + 7 ratios from the latest inpi financial statement + bodacc events
+- `fr_bilans(siren)` then `fr_bilan(siren, date_cloture)` — filing history and detailed financial statement (revenue, EBITDA, debt…)
+- `fr_directors(siren)`, `fr_events(siren)`, `fr_tenders_search(query=…)` — officers, bodacc events, boamp tenders
+- `fr_tenders_search(op="awarded", query= | titulaire_siret= | departement=)` — the **awarded** contracts (decp): who won, for how much, notified when. the outcome, where `op="notices"` (the default, boamp) only gives the notice — hence the real competition in a territory. a parameter specific to the other op is refused, not ignored. two regimes read, split at notification: the 2022 order since 2024, the 2019 order before — each contract carries its `arrete`. ⚠️ since 2024 the source publishes no name (buyer, place, holder), and before 2024 never the main holder's: resolve them by their siret with `fr_siret`.
+- `fr_accords_search(siren=…)`, `fr_egapro_declaration(siren)`, `fr_avis_sirene(siret)` — company agreements, gender equality index, insee situation notice (pdf)
 
-## usage — aides publiques (subventions, prêts, aap)
+## usage — public aids (subsidies, loans, calls for projects)
 
-la base de référence de l'état (data.aides-entreprises.fr, ~2 400 aides actives, màj quotidienne) filtrée pour une entreprise ou un projet.
-- `fr_aides_search(insee=…, effectif=…, nature=…, echeance_avant=…)` — shortlist déterministe : territoire (commune → région → national/ue), tranche d'effectif, type d'aide (subvention, prêt, garantie…), échéance des aap
-- `fr_aides_get(id)` — fiche complète : objet, conditions, montants, financeurs, contacts, source officielle
+the state's reference database (data.aides-entreprises.fr, ~2,400 active aids, updated daily) filtered for a company or a project.
+- `fr_aides_search(insee=…, effectif=…, nature=…, echeance_avant=…)` — deterministic shortlist: territory (municipality → region → national/eu), headcount bracket, type of aid (subsidy, loan, guarantee…), deadline of the calls for projects
+- `fr_aides_get(id)` — full record: purpose, conditions, amounts, funders, contacts, official source
 
-## usage — sirene stock (enrichissement en masse)
+## usage — sirene stock (bulk enrichment)
 
-le parquet sirene complet (insee, millésime mensuel) pour les lookups ponctuels et l'enrichissement **batch** de milliers de sirens.
-- `fr_stock_enrich(sirens=[…])` — sièges d'une **liste** de sirens en un seul scan (bulk)
-- `fr_stock_siege(siren)` / `fr_stock_etablissements(siren)` — siège ou tous les établissements d'une boîte
-- `fr_stock_search(naf=…, enseigne=…, departement=…)` — énumère tous les sites (ex. tous les « intermarché » d'un département)
+the full sirene parquet (insee, monthly vintage) for one-off lookups and **batch** enrichment of thousands of sirens.
+- `fr_stock_enrich(sirens=[…])` — head offices of a **list** of sirens in a single scan (bulk)
+- `fr_stock_siege(siren)` / `fr_stock_etablissements(siren)` — head office or all the establishments of a company
+- `fr_stock_search(naf=…, enseigne=…, departement=…)` — enumerates all sites (e.g. all the "intermarché" stores of a département)

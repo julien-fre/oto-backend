@@ -1,28 +1,28 @@
-"""Welcome to the Jungle — l'ATS des recruteurs (ex-Welcome Kit) : offres et leurs
-étapes, candidats, commentaires, historique des déplacements.
+"""Welcome to the Jungle — the recruiters' ATS (ex-Welcome Kit): jobs and their
+stages, candidates, comments, history of moves.
 
-Wrappe `oto.tools.wttj_ats.WttjAtsClient` (jeton en Bearer). Clé résolue par appel
-via `access.resolve_api_key("wttj")` — byo (clé user ou credential partagé de
-l'org), pas de clé plateforme. Le jeton ne se génère pas en libre-service : le
-titulaire du compte le demande à WTTJ, avec des scopes OAuth choisis à ce moment ;
-un appel hors de ses scopes revient en 403 `invalid_scope`, et le refus le dit.
+Wraps `oto.tools.wttj_ats.WttjAtsClient` (Bearer token). Key resolved per call
+via `access.resolve_api_key("wttj")` — byo (user key or the org's shared
+credential), no platform key. The token cannot be generated self-service: the
+account holder requests it from WTTJ, with OAuth scopes chosen at that time;
+a call outside its scopes comes back as 403 `invalid_scope`, and the refusal says so.
 
-Vocabulaire : tout part d'une **organisation** (`organization_reference`) ; une
-offre est un **job** (`job_reference`), ses étapes de pipeline se lisent SUR le
-job et s'adressent par leur `id` entier ; un **candidat** appartient à un job.
-Pas de liste globale de candidats : l'API exige le job.
+Vocabulary: everything starts from an **organization** (`organization_reference`); a
+job offer is a **job** (`job_reference`), its pipeline stages are read ON the
+job and addressed by their integer `id`; a **candidate** belongs to a job.
+No global list of candidates: the API requires the job.
 
-**Surface consolidée (ADR 0047 §Amendement)** : un tool par OBJET métier, le verbe
-en `op` — `wttj_organization` (list/get), `wttj_job` (list/get), `wttj_candidate`
-(list/get/create/update). Deux tools restent seuls, leurs paramètres ne recouvrent
-pas ceux d'un voisin : `wttj_comment` (une écriture, aucune lecture n'existe en
-amont) et `wttj_moves` (l'historique du pipeline, adressé par l'organisation).
+**Consolidated surface (ADR 0047 §Amendment)**: one tool per business OBJECT, the verb
+in `op` — `wttj_organization` (list/get), `wttj_job` (list/get), `wttj_candidate`
+(list/get/create/update). Two tools stand alone, their parameters do not overlap
+those of a neighbor: `wttj_comment` (a write, no read exists
+upstream) and `wttj_moves` (the pipeline history, addressed by organization).
 
-⚠️ Ce module ÉCRIT dans l'ATS du client : `wttj_candidate` op="create"/"update"
-(l'update DÉPLACE un candidat par `job_stage_id` ou l'archive) et `wttj_comment`.
-Le défaut d'`op` est toujours une lecture, et un argument obligatoire manquant
-lève une erreur qui nomme l'op et l'argument. Les emails (qui partent à des
-personnes réelles) et la publication d'offres ne sont pas servis.
+⚠️ This module WRITES into the client's ATS: `wttj_candidate` op="create"/"update"
+(update MOVES a candidate by `job_stage_id` or archives them) and `wttj_comment`.
+The default `op` is always a read, and a missing required argument
+raises an error naming the op and the argument. Emails (which go out to real
+people) and job publication are not served.
 """
 from __future__ import annotations
 
@@ -35,15 +35,15 @@ from .. import access, output_projection
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 
-#: Où le titulaire du compte obtient son jeton.
-OU_OBTENIR_LA_CLE = ("demande à WTTJ via help.welcometothejungle.com "
-                     "(le jeton n'est pas généré en libre-service)")
+#: Where the account holder gets their token.
+OU_OBTENIR_LA_CLE = ("ask WTTJ via help.welcometothejungle.com "
+                     "(the token is not generated self-service)")
 
 _ORGANIZATION_OPS = ("list", "get")
 _JOB_OPS = ("list", "get")
 _CANDIDATE_OPS = ("list", "get", "create", "update")
 
-#: Colonnes-corps rendues en `<champ>_length` dans une liste (vue de tri).
+#: Body columns rendered as `<field>_length` in a list (sorting view).
 _JOB_BODIES = ("description", "profile", "company_description", "recruitment_process")
 _CANDIDATE_BODIES = ("cover_letter",)
 
@@ -54,49 +54,49 @@ def _bad(msg: str) -> McpError:
 
 def _ops_error(ops: tuple[str, ...]) -> str:
     quoted = [f"'{o}'" for o in ops]
-    return "op doit être " + ", ".join(quoted[:-1]) + " ou " + quoted[-1]
+    return "op must be " + ", ".join(quoted[:-1]) + " or " + quoted[-1]
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — une valeur vide compte comme absente."""
+    """Required argument for THIS op — an empty value counts as missing."""
     if value is None or (isinstance(value, (str, list, dict)) and not value):
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
 def _refuse_ignored(op: str, hint: str, **provided) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention : le
-    taire rendrait un résultat plausible mais à côté de la demande."""
+    """A provided argument that THIS op does not use is an error of intent: silencing
+    it would return a plausible result that misses the request."""
     for name, value in provided.items():
         if value is not None and value != "":
-            raise _bad(f"op='{op}' n'utilise pas {name} — {hint}")
+            raise _bad(f"op='{op}' does not use {name} — {hint}")
 
 
 def _upstream_message(e) -> str:
     status, body = e.status_code, e.body
     code = body.get("error") if isinstance(body, dict) else None
     if status == 401:
-        return ("WTTJ a rejeté le jeton (HTTP 401) — vérifie la clé configurée sur "
-                f"ce connecteur ({OU_OBTENIR_LA_CLE}).")
+        return ("WTTJ rejected the token (HTTP 401) — check the key configured on "
+                f"this connector ({OU_OBTENIR_LA_CLE}).")
     if status == 403:
         if code == "invalid_scope":
-            return ("WTTJ : le jeton n'a pas le scope requis pour cet appel (HTTP 403 "
-                    f"invalid_scope) — les scopes se demandent à WTTJ. {body}")
-        return f"WTTJ : accès refusé à cette ressource (HTTP 403). {body}"
+            return ("WTTJ: the token lacks the scope required for this call (HTTP 403 "
+                    f"invalid_scope) — scopes are requested from WTTJ. {body}")
+        return f"WTTJ: access to this resource denied (HTTP 403). {body}"
     if status == 404:
-        return f"WTTJ : référence introuvable (404) — vérifie la référence. {body}"
+        return f"WTTJ: reference not found (404) — check the reference. {body}"
     if status == 429:
-        return "WTTJ : trop de requêtes (429) — réessaie dans un instant."
+        return "WTTJ: too many requests (429) — try again in a moment."
     if status in (500, 502, 503, 504):
-        return f"WTTJ est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"WTTJ a refusé la requête (HTTP {status}) : {body}"
+        return f"WTTJ is temporarily unavailable (HTTP {status}) — try again later."
+    return f"WTTJ refused the request (HTTP {status}): {body}"
 
 
 def _listed(key: str, rows, *, bodies: tuple[str, ...], always: tuple[str, ...],
             fields: Optional[list[str]], page: Optional[int],
             per_page: Optional[int]) -> dict:
-    """Une page de liste, projetée : l'API rend un tableau nu, sans total ni curseur —
-    la page demandée est rendue avec, pour que l'appelant sache où il en est."""
+    """A page of a list, projected: the API returns a bare array, with no total or cursor —
+    the requested page is returned with it, so the caller knows where they stand."""
     rows, notice = output_projection.summarize(
         rows if isinstance(rows, list) else [], body_fields=bodies, fields=fields,
         always=always)
@@ -107,11 +107,11 @@ def _listed(key: str, rows, *, bodies: tuple[str, ...], always: tuple[str, ...],
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » (otomata-tech/oto#69). Couvre `auth` SEUL.
+    """"Test the connection" probe (otomata-tech/oto#69). Covers `auth` ALONE.
 
-    `GET /users/current` (scope `me_r`), lecture sans effet de bord. **Authentifié ≠
-    utilisable** : un jeton valide peut manquer des scopes `jobs_r`/`candidates_*`
-    qu'aucune sonde à un appel ne couvre."""
+    `GET /users/current` (scope `me_r`), a read with no side effect. **Authenticated ≠
+    usable**: a valid token may lack the `jobs_r`/`candidates_*` scopes
+    that no single-call probe covers."""
     from oto.tools.wttj_ats import WttjAtsClient
 
     WttjAtsClient(api_key=fields["key"]).get_current_user()
@@ -135,7 +135,7 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
 
-    # --- Organisations ------------------------------------------------------
+    # --- Organizations ------------------------------------------------------
 
     @mcp.tool()
     def wttj_organization(
@@ -156,7 +156,7 @@ def register(mcp: FastMCP) -> None:
         if op not in _ORGANIZATION_OPS:
             raise _bad(_ops_error(_ORGANIZATION_OPS))
         if op == "list":
-            _refuse_ignored(op, "n'existe que sur op='get'",
+            _refuse_ignored(op, "exists only on op='get'",
                             organization_reference=organization_reference,
                             offices=offices, websites=websites)
             return {"user": _run(lambda: _client().get_current_user(organizations=True))}
@@ -166,7 +166,7 @@ def register(mcp: FastMCP) -> None:
                 ref, offices=offices, websites=websites))}
         raise _bad(_ops_error(_ORGANIZATION_OPS))
 
-    # --- Offres -------------------------------------------------------------
+    # --- Jobs ---------------------------------------------------------------
 
     @mcp.tool()
     def wttj_job(
@@ -205,7 +205,7 @@ def register(mcp: FastMCP) -> None:
         if op not in _JOB_OPS:
             raise _bad(_ops_error(_JOB_OPS))
         if op == "list":
-            _refuse_ignored(op, "n'existe que sur op='get'", job_reference=job_reference,
+            _refuse_ignored(op, "exists only on op='get'", job_reference=job_reference,
                             candidates_count=candidates_count)
             org = _need(organization_reference, "organization_reference", op)
             rows = _run(lambda: _client().list_jobs(
@@ -216,7 +216,7 @@ def register(mcp: FastMCP) -> None:
                            always=("reference", "name", "status"), fields=fields,
                            page=page, per_page=per_page)
         if op == "get":
-            _refuse_ignored(op, "n'existe que sur op='list'",
+            _refuse_ignored(op, "exists only on op='list'",
                             organization_reference=organization_reference,
                             status=status, created_after=created_after,
                             updated_after=updated_after,
@@ -227,7 +227,7 @@ def register(mcp: FastMCP) -> None:
                 ref, stages=True, candidates_count=candidates_count))}
         raise _bad(_ops_error(_JOB_OPS))
 
-    # --- Candidats ----------------------------------------------------------
+    # --- Candidates ---------------------------------------------------------
 
     @mcp.tool()
     def wttj_candidate(
@@ -277,7 +277,7 @@ def register(mcp: FastMCP) -> None:
             raise _bad(_ops_error(_CANDIDATE_OPS))
 
         if op == "list":
-            _refuse_ignored(op, "sert à create/update ou get",
+            _refuse_ignored(op, "is used by create/update or get",
                             candidate_reference=candidate_reference,
                             organization_reference=organization_reference,
                             firstname=firstname, lastname=lastname,
@@ -295,7 +295,7 @@ def register(mcp: FastMCP) -> None:
             return {"candidate": _run(lambda: _client().get_candidate(
                 ref, stage=True, tags=True))}
         if op == "create":
-            _refuse_ignored(op, "utilise op='update' pour modifier un candidat existant",
+            _refuse_ignored(op, "use op='update' to modify an existing candidate",
                             candidate_reference=candidate_reference, patch=patch)
             args = (_need(organization_reference, "organization_reference", op),
                     _need(job_reference, "job_reference", op),
@@ -308,7 +308,7 @@ def register(mcp: FastMCP) -> None:
                 extra["archived"] = archived
             return {"candidate": _run(lambda: _client().create_candidate(*args, **extra))}
         if op == "update":
-            _refuse_ignored(op, "ne sert qu'à op='create'",
+            _refuse_ignored(op, "is used only by op='create'",
                             organization_reference=organization_reference,
                             candidate=candidate)
             ref = _need(candidate_reference, "candidate_reference", op)
@@ -319,12 +319,12 @@ def register(mcp: FastMCP) -> None:
                 if value is not None:
                     changes[name] = value
             if not changes:
-                raise _bad("op='update' requiert au moins un changement : "
-                           "job_stage_id, archived, ou des champs dans patch")
+                raise _bad("op='update' requires at least one change: "
+                           "job_stage_id, archived, or fields in patch")
             return {"candidate": _run(lambda: _client().update_candidate(ref, **changes))}
         raise _bad(_ops_error(_CANDIDATE_OPS))
 
-    # --- Commentaires -------------------------------------------------------
+    # --- Comments -----------------------------------------------------------
 
     @mcp.tool()
     def wttj_comment(candidate_reference: str, content: str) -> dict:
@@ -333,7 +333,7 @@ def register(mcp: FastMCP) -> None:
         return {"comment": _run(lambda: _client().create_comment(
             candidate_reference, content))}
 
-    # --- Historique du pipeline ---------------------------------------------
+    # --- Pipeline history ---------------------------------------------------
 
     @mcp.tool()
     def wttj_moves(
@@ -345,7 +345,7 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """History of stage changes in an organization (optionally one job): each
         `{candidate: {reference}, from: {stage, job}, to: {stage, job}, created_at}`.
-        Answers « who moved where, when » — a pipeline activity feed."""
+        Answers "who moved where, when" — a pipeline activity feed."""
         rows = _run(lambda: _client().list_moves(
             organization_reference, job_reference=job_reference, page=page,
             per_page=per_page))

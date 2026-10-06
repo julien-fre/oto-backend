@@ -1,22 +1,22 @@
-## usage — conventions collectives (kali)
+## usage — collective agreements (kali)
 
-le droit de la branche en texte intégral (stock kali/dila complet, ~290k articles) : minima, congés, primes, classifications. filtre idcc natif.
-- `ccn_conventions(idcc=… | query=…)` — résoudre une convention (« quelle est la 3090 ? », « conventions du spectacle »)
-- `ccn_article(op="search")(query=…, idcc=…)` — recherche plein-texte dans les articles d'une branche (ou toutes)
-- `ccn_article(op="get")(kali_id)` — texte intégral consolidé d'un article + lien légifrance vérifiable
-- complément côté entreprise (connecteur sirene) : `fr_accords_search(idcc=…)` — les accords d'**entreprise** de la branche (qui a négocié quoi, quand), puis `fr_accords_text(acco_id)` pour lire l'accord
+sector-level law in full text (complete kali/dila stock, ~290k articles): minima, leave, bonuses, classifications. native idcc filter.
+- `ccn_conventions(idcc=… | query=…)` — resolve an agreement ("which one is 3090?", "conventions du spectacle")
+- `ccn_article(op="search")(query=…, idcc=…)` — full-text search across the articles of a sector (or all)
+- `ccn_article(op="get")(kali_id)` — full consolidated text of an article + verifiable légifrance link
+- company-side complement (sirene connector): `fr_accords_search(idcc=…)` — the sector's **company** agreements (who negotiated what, when), then `fr_accords_text(acco_id)` to read the agreement
 
-## usage — codes consolidés (legi)
+## usage — consolidated codes (legi)
 
-les 22 codes français avec versions historiques : citer la loi exacte, à la bonne date, avec lien légifrance.
-- `loi_article(code="CT", num="L1242-2", date=…)` — le texte en vigueur à la date demandée (défaut aujourd'hui)
-- `loi_article(op="versions")(code, num)` — la timeline des rédactions d'un article
-- `loi_article(op="search")(query=…, code=…)` — retrouver l'article quand on connaît le concept, pas le numéro
-- `loi_codes()` — les alias couverts (CT, CC, CP, CSS, CGI…)
+the 22 french codes with historical versions: cite the exact law, at the right date, with a légifrance link.
+- `loi_article(code="CT", num="L1242-2", date=…)` — the text in force at the requested date (default today)
+- `loi_article(op="versions")(code, num)` — the timeline of an article's wordings
+- `loi_article(op="search")(query=…, code=…)` — find the article when you know the concept, not the number
+- `loi_codes()` — the aliases covered (CT, CC, CP, CSS, CGI…)
 
-## usage — jurisprudence (6 fonds dila + cedh/cjue)
+## usage — case law (6 dila collections + cedh/cjue)
 
-comment les juges tranchent : cassation (publiés + inédits), cours d'appel, CE/CAA/TA, conseil constitutionnel, cnil, cedh, cjue. tri pertinence × autorité.
-- `juris_decision(op="search")(query=…, fond=…, juridiction=…, date_min=…)` — recherche unifiée plein-texte
-- `juris_decision(op="get")(decision_id)` — texte intégral d'une décision + lien légifrance
-- workflow type : `juris_decision(op="search")` → repérer l'arrêt de principe → `juris_decision(op="get")` → citer avec `loi_article` (les textes visés, à la date de la décision)
+how judges rule: cassation (published + unpublished), courts of appeal, CE/CAA/TA, conseil constitutionnel, cnil, cedh, cjue. ranked by relevance × authority.
+- `juris_decision(op="search")(query=…, fond=…, juridiction=…, date_min=…)` — unified full-text search
+- `juris_decision(op="get")(decision_id)` — full text of a decision + légifrance link
+- typical workflow: `juris_decision(op="search")` → spot the leading ruling → `juris_decision(op="get")` → cite with `loi_article` (the texts it refers to, at the decision's date)

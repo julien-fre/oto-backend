@@ -1,41 +1,41 @@
-"""Qui VOIT une instance de connecteur — R9, tranché par Alexis le 2026-08-27.
+"""Who SEES a connector instance — R9, decided by Alexis on 2026-08-27.
 
-**Le verdict.** « La visibilité est une propriété de l'INSTANCE », dérivée de la chaîne
-d'accès : *découvrable par les scopes sous son propriétaire, dans la même org, jamais
-cross-org*, avec **surcharge explicite** par le propriétaire. Ce module est cette
-dérivation, et rien d'autre.
+**The verdict.** « Visibility is a property of the INSTANCE », derived from the access
+chain: *discoverable by the scopes under its owner, in the same org, never
+cross-org*, with an **explicit override** by the owner. This module is that
+derivation, and nothing else.
 
-**Ce qu'il ne fait PAS, et c'est la moitié du lot.** Il ne filtre rien, il ne gate
-aucun appel, il n'élargit aucune liste. Un non-membre continue de voir *aucune clé
-configurée* — la question de la divulgation (« il existe un accès à demander, et chez
-qui ») reste **produit**, et R9 la range dans un réglage d'org opt-in, plus tard. Ce
-qui est livré ici est **descriptif** : la même liste qu'avant, où chaque instance dit
-désormais qui la voit.
+**What it does NOT do, and that is half the batch.** It filters nothing, it gates
+no call, it widens no list. A non-member keeps seeing *no configured key* — the
+disclosure question (« there is an access to request, and from whom ») remains a
+**product** matter, and R9 files it under an opt-in org setting, later. What is
+delivered here is **descriptive**: the same list as before, where each instance now
+says who sees it.
 
-**Pourquoi la question a une réponse dérivable.** D2 a retiré l'enjeu de protection :
-masquer ne protège de rien, tout se refuse à l'appel. Ce qui reste est donc une
-question d'ergonomie, et elle a une réponse honnête — *qui peut la résoudre la voit*.
-La résolution, elle, est déjà écrite une fois pour toutes dans le walker
-(`access.cascade.walk_cascade`) ; ce module l'INVERSE.
+**Why the question has a derivable answer.** D2 removed the protection stake:
+hiding protects nothing, everything is refused at call time. What remains is therefore a
+matter of ergonomics, and it has an honest answer — *whoever can resolve it sees it*.
+Resolution is already written once and for all in the walker
+(`access.cascade.walk_cascade`); this module INVERTS it.
 
-⚠️ **Inverser un walker, c'est risquer d'en écrire une deuxième copie** — le défaut
-exact que `keyStack.ts` porte déjà côté dashboard, et dont on sait qu'il ne casse pas :
-il MENT. Deux garde-fous, tous deux mécaniques :
+⚠️ **Inverting a walker risks writing a second copy of it** — the exact defect
+that `keyStack.ts` already carries on the dashboard side, and which is known not to break:
+it LIES. Two safeguards, both mechanical:
 
-1. **Aucune règle n'est recopiée.** Les gates sont lus à leur SOURCE — le registre
-   (`providers.is_org_shareable`, `auth_modes`), le partage du coffre
-   (`share_mode`/`share_down`/`share_side`, mêmes colonnes que
-   `access.cascade._platform_instance_usable`), et la chaîne (`grants_chain`). Un
-   registre consulté deux fois n'est pas une duplication ; une liste recopiée en
-   serait une.
-2. **Un test les confronte** (`tests/test_instance_visibility.py`) : pour chaque
-   palier, l'audience dérivée ici et le verdict réel de `walk_cascade` doivent
-   s'accorder sur un vrai PostgreSQL. C'est ce test, pas ce commentaire, qui empêche
-   la divergence.
+1. **No rule is copied.** The gates are read at their SOURCE — the registry
+   (`providers.is_org_shareable`, `auth_modes`), the vault sharing
+   (`share_mode`/`share_down`/`share_side`, same columns as
+   `access.cascade._platform_instance_usable`), and the chain (`grants_chain`). A
+   registry consulted twice is not duplication; a copied list
+   would be.
+2. **A test pits them against each other** (`tests/test_instance_visibility.py`): for each
+   tier, the audience derived here and the real verdict of `walk_cascade` must
+   agree on a real PostgreSQL. It is that test, not this comment, that prevents
+   divergence.
 
-**Le vocabulaire des scopes** est celui des arêtes de `grants` et de `share_down` :
-`user:<sub>` · `group:<id>` · `org:<id>` · `platform` (tout le monde — le free-tier).
-Il n'y a pas de scope « personne » : l'absence d'audience est la liste vide.
+**The scope vocabulary** is that of the edges of `grants` and of `share_down`:
+`user:<sub>` · `group:<id>` · `org:<id>` · `platform` (everyone — the free tier).
+There is no « nobody » scope: the absence of an audience is the empty list.
 """
 from __future__ import annotations
 
@@ -46,45 +46,45 @@ from .. import credentials_store, grants_chain, providers
 
 logger = logging.getLogger(__name__)
 
-# L'audience « tout le monde » : une clé plateforme en free-tier, qu'aucune allowlist
-# ne referme. Ce n'est pas un scope de `grants` (elle n'y désigne personne) — c'est le
-# mot que rend une audience NON BORNÉE, et il fallait qu'elle en ait un : rendre la
-# liste de tous les subs serait faux (elle change à chaque inscription) et rendre la
-# liste vide serait un contresens (vide = personne).
+# The « everyone » audience: a platform key on the free tier, which no allowlist
+# closes. It is not a `grants` scope (it designates nobody there) — it is the
+# word returned for an UNBOUNDED audience, and it needed one: returning the
+# list of all subs would be wrong (it changes with every sign-up) and returning the empty
+# list would be a misreading (empty = nobody).
 EVERYONE = "platform"
 
-# Les trois surcharges du propriétaire (colonne `connector_instances.visibility`).
-# ⚠️ **Rien ne les POSE encore** : aucune surface n'écrit cette colonne, elle vaut
-# `inherited` partout. Les deux autres branches sont écrites et testées, pas servies —
-# le geste qui les pose est un lot produit (R9 : « un réglage d'org, opt-in »).
+# The three owner overrides (column `connector_instances.visibility`).
+# ⚠️ **Nothing SETS them yet**: no surface writes this column, it is `inherited`
+# everywhere. The other two branches are written and tested, not served —
+# the action that sets them is a product batch (R9: « an org setting, opt-in »).
 INHERITED, HIDDEN, ORG_WIDE = "inherited", "hidden", "org"
 
 
 def _owner_scope(owner_type: str, owner_id: str) -> Optional[str]:
-    """Le scope du PROPRIÉTAIRE — celui qui voit son instance quoi qu'il arrive.
+    """The OWNER's scope — the one who sees their instance no matter what.
 
-    `member` porte `{org}:{sub}` : le propriétaire est la PERSONNE, pas le couple. Un
-    `user` (résidu des mounts OAuth, ADR 0033) est déjà un sub nu. `platform` n'a pas
-    d'id (convention maison) et n'a donc pas de propriétaire nommable."""
+    `member` carries `{org}:{sub}`: the owner is the PERSON, not the pair. A
+    `user` (residue of the OAuth mounts, ADR 0033) is already a bare sub. `platform` has
+    no id (house convention) and therefore has no nameable owner."""
     if owner_type == credentials_store.MEMBER:
         _, _, sub = (owner_id or "").partition(":")
         return f"user:{sub}" if sub else None
     if owner_type == "user":
         return f"user:{owner_id}" if owner_id else None
     if owner_type in ("org", "group", credentials_store.TENANT):
-        # Le scope du tenant est celui des arêtes de `grants` (`tenant:<slug>`, L-clés).
+        # The tenant scope is that of the edges of `grants` (`tenant:<slug>`, L-keys).
         return f"{owner_type}:{owner_id}" if owner_id else None
     return None
 
 
 def _owner_org(owner_type: str, owner_id: str) -> Optional[str]:
-    """L'org du propriétaire, quand elle se lit SANS requête.
+    """The owner's org, when it can be read WITHOUT a query.
 
-    Sert la seule surcharge `org` (« que toute l'org la découvre »). Un `group` ne
-    porte pas son org dans son id : il faudrait un lookup, et il n'y a aujourd'hui
-    aucune ligne à surcharger — on rend None plutôt que d'ouvrir un N+1 pour un cas
-    que rien ne produit. Le lot qui POSE la surcharge fera ce lookup à l'écriture, où
-    il coûte une fois."""
+    Serves only the `org` override (« let the whole org discover it »). A `group` does not
+    carry its org in its id: a lookup would be needed, and today there is
+    no row to override — we return None rather than open an N+1 for a case
+    that nothing produces. The batch that SETS the override will do this lookup at write time, where
+    it costs once."""
     if owner_type == credentials_store.MEMBER:
         org, _, _ = (owner_id or "").partition(":")
         return f"org:{org}" if org.isdigit() else None
@@ -95,25 +95,25 @@ def _owner_org(owner_type: str, owner_id: str) -> Optional[str]:
 
 def _platform_audience(connector: str, share_mode: str, share_down: Sequence,
                        label: str) -> list[str]:
-    """Qui résout une clé PLATEFORME — miroir de `access.cascade._platform_instance_usable`
-    et de `_platform_grant_meta`, lu sur les MÊMES colonnes, jamais sur une copie.
+    """Who resolves a PLATFORM key — mirror of `access.cascade._platform_instance_usable`
+    and of `_platform_grant_meta`, read from the SAME columns, never from a copy.
 
-    Trois issues, dans l'ordre où la résolution les prend :
+    Three outcomes, in the order resolution takes them:
 
-    - **la chaîne ACCORDE** (0053, L5) — l'audience EST l'ensemble des bénéficiaires
-      des arêtes vivantes ;
-    - **la chaîne REFUSE** — des arêtes existent, toutes révoquées : plus personne, et
-      **sans repli** (c'est ce qui rend une révocation vraie) ;
-    - **la chaîne est MUETTE** (connecteur non basculé, ou aucune arête n'a jamais visé
-      cette clé) — l'ancien chemin, à l'identique : `closed` ⟹ l'allowlist et rien
-      d'autre ; `open` ⟹ l'allowlist si elle existe, sinon **tout le monde** (le
-      free-tier).
+    - **the chain GRANTS** (0053, L5) — the audience IS the set of beneficiaries
+      of the live edges;
+    - **the chain REFUSES** — edges exist, all revoked: nobody anymore, and
+      **no fallback** (this is what makes a revocation real);
+    - **the chain is SILENT** (connector not switched over, or no edge ever targeted
+      this key) — the old path, unchanged: `closed` ⟹ the allowlist and nothing
+      else; `open` ⟹ the allowlist if it exists, otherwise **everyone** (the
+      free tier).
     """
     con = providers.REGISTRY.get(connector)
     if not (con and "platform" in con.auth_modes):
-        # Le palier plateforme de la cascade est gaté sur `auth_modes` : un connecteur
-        # byo-only ne résout JAMAIS une clé plateforme. En annoncer une audience serait
-        # le mensonge que la revue B4 avait déjà relevé sur la projection.
+        # The cascade's platform tier is gated on `auth_modes`: a byo-only connector
+        # NEVER resolves a platform key. Announcing an audience for one would be
+        # the lie that the B4 review had already flagged on the projection.
         return []
     down = [str(s) for s in (share_down or [])]
     if grants_chain.is_chained(connector):
@@ -121,30 +121,30 @@ def _platform_audience(connector: str, share_mode: str, share_down: Sequence,
         vivantes, existent = _chain_grantees(ref)
         if existent:
             return vivantes
-        # MUETTE → l'ancien chemin, sans une branche de plus.
+        # SILENT → the old path, without one more branch.
     if share_mode == "closed":
         return down
     return down or [EVERYONE]
 
 
 def _chain_grantees(resource_id: str) -> tuple[list[str], bool]:
-    """(scopes des arêtes VIVANTES, « des arêtes existent-elles, révoquées comprises »).
+    """(scopes of the LIVE edges, « do edges exist, revoked ones included »).
 
-    Le second terme est ce qui distingue REFUSE de MUETTE, et il ne se déduit pas du
-    premier : « aucun bénéficiaire vivant » veut dire *plus personne* si des arêtes ont
-    existé, et *l'ancien chemin* si aucune n'a jamais existé.
+    The second term is what distinguishes REFUSES from SILENT, and it cannot be deduced from the
+    first: « no live beneficiary » means *nobody anymore* if edges once
+    existed, and *the old path* if none ever existed.
 
-    Fail-open loggé, comme le reste de cette surface : `visible_to` est descriptif et
-    n'est consommé par rien: faire tomber le listing des clés de quelqu'un parce que la
-    table des arêtes n'a pas répondu serait hors de proportion. On rend alors « aucune
-    arête », ce qui renvoie au chemin legacy — l'audience la plus large, donc jamais un
-    faux « personne ne la voit »."""
+    Fail-open, logged, like the rest of this surface: `visible_to` is descriptive and
+    consumed by nothing: taking down someone's key listing because the
+    edges table did not answer would be out of proportion. We then return « no
+    edge », which falls back to the legacy path — the widest audience, so never
+    a false « nobody sees it »."""
     from ..db import grants as db_grants
     try:
         return (db_grants.live_grantees_for_resource(resource_id),
                 bool(db_grants.resource_ids_with_edges([resource_id])))
     except Exception:
-        logger.warning("visibilité d'instance : arêtes indisponibles (fail-open)",
+        logger.warning("instance visibility: edges unavailable (fail-open)",
                        exc_info=True)
         return ([], False)
 
@@ -152,19 +152,19 @@ def _chain_grantees(resource_id: str) -> tuple[list[str], bool]:
 def derive(owner_type: str, owner_id: str, connector: str, *, account: str = "",
            visibility: str = INHERITED, share_mode: str = "open",
            share_down: Sequence = (), share_side: Sequence = ()) -> list[str]:
-    """Les scopes qui DÉCOUVRENT cette instance. Trié, dédoublonné, jamais None.
+    """The scopes that DISCOVER this instance. Sorted, deduplicated, never None.
 
-    Pure au sens qui compte : tout ce qui varie est un ARGUMENT, sauf le registre (une
-    constante du process) et — pour une clé plateforme d'un connecteur basculé — les
-    arêtes. Le reste (le partage, la surcharge) est lu par l'appelant, en lot.
+    Pure in the sense that matters: everything that varies is an ARGUMENT, except the registry (a
+    process constant) and — for a platform key of a switched-over connector — the
+    edges. The rest (sharing, the override) is read by the caller, in bulk.
 
-    ⚠️ `visible_to` répond « qui la DÉCOUVRE », pas « qui l'utilise ». Les deux
-    coïncident par défaut (`inherited`) — c'est tout l'intérêt d'une visibilité
-    dérivée. Une surcharge `hidden` les sépare volontairement : celui qui résout
-    continue de résoudre, il cesse seulement de la voir listée comme un objet
-    partageable. Masquer ne protège de rien (D2), donc ce n'est pas un cran de
-    sécurité : c'est un cran d'ERGONOMIE, et il est dit ici pour qu'on ne le prenne
-    jamais pour l'autre."""
+    ⚠️ `visible_to` answers « who DISCOVERS it », not « who uses it ». The two
+    coincide by default (`inherited`) — that is the whole point of a derived
+    visibility. A `hidden` override separates them on purpose: whoever resolves
+    keeps resolving, they only stop seeing it listed as a shareable
+    object. Hiding protects nothing (D2), so it is not a security
+    notch: it is an ERGONOMICS notch, and it is stated here so that nobody ever mistakes it
+    for the other."""
     proprietaire = _owner_scope(owner_type, owner_id)
     if visibility == HIDDEN:
         return [proprietaire] if proprietaire else []
@@ -173,21 +173,21 @@ def derive(owner_type: str, owner_id: str, connector: str, *, account: str = "",
         audience = _platform_audience(connector, share_mode, share_down,
                                       label=str(owner_id))
     elif owner_type in ("org", "group", credentials_store.TENANT):
-        # Les paliers PARTAGÉS (équipe, org, tenant — L-clés PR 1) ne sont traversés
-        # par le walker que pour un connecteur org-partageable : une clé d'équipe sur
-        # un connecteur par-personne existe au coffre et n'est lue par personne.
-        # L'annoncer visible serait faux.
+        # SHARED tiers (team, org, tenant — L-keys PR 1) are only traversed
+        # by the walker for an org-shareable connector: a team key on
+        # a per-person connector exists in the vault and is read by nobody.
+        # Announcing it as visible would be wrong.
         audience = [proprietaire] if (proprietaire and
                                       providers.is_org_shareable(connector)) else []
     else:
-        # Membre (et le résidu `user`) : la clé de quelqu'un n'est vue que de lui.
-        # Jamais cross-org — l'instance cross-org de #172 est la MIENNE vue d'ailleurs,
-        # donc le même scope `user:`, pas un scope de plus.
+        # Member (and the `user` residue): someone's key is seen only by them.
+        # Never cross-org — the cross-org instance of #172 is MINE seen from elsewhere,
+        # so the same `user:` scope, not one more scope.
         audience = [proprietaire] if proprietaire else []
 
-    # Les prêts nominatifs (ADR 0044 `share_side`) sont une EXTENSION : ils s'ajoutent
-    # toujours, à tous les paliers, et peuvent viser hors de l'org du propriétaire —
-    # c'est un acte explicite de celui-ci, pas une découverte.
+    # Named loans (ADR 0044 `share_side`) are an EXTENSION: they are always
+    # added, at every tier, and may target outside the owner's org —
+    # that is an explicit act by the owner, not a discovery.
     audience += [str(s) for s in (share_side or [])]
 
     if visibility == ORG_WIDE:

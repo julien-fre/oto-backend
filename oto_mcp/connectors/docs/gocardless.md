@@ -1,16 +1,16 @@
-## prerequisite — ta clé api gocardless
+## prerequisite — your gocardless api key
 
-lecture seule — chaque utilisateur pose sa propre clé, tes prélèvements ne sont visibles que par toi.
-- depuis le [dashboard gocardless](https://gocardless.com), ouvre developers puis create access token
-- choisis un token en **lecture** (read-only) — oto n'annule ni ne crée de prélèvement
-- colle-le dans tes clés de connecteur oto sous `gocardless`
+read-only — each user sets their own key, your direct debits are visible only to you.
+- from the [gocardless dashboard](https://gocardless.com), open developers then create access token
+- choose a **read** (read-only) token — oto neither cancels nor creates direct debits
+- paste it into your oto connector keys under `gocardless`
 
-## usage — suivre prélèvements, échecs et versements sepa
+## usage — follow sepa direct debits, failures and payouts
 
-consulte tes prélèvements, leur timeline, les motifs d'échec et les versements groupés pour la réconciliation.
-- `gocardless_payments` liste les prélèvements (filtre par `status`, mandat, customer, date)
-- `gocardless_failed` te sort en un appel les prélèvements refusés enrichis (client, montant, cause, `will_attempt_retry`)
-- `gocardless_failure_reason` donne le motif du dernier échec d'un paiement précis (`PM…`)
-- `gocardless_payment_party` résout paiement → mandat → client (email, société)
-- `gocardless_payouts` liste les versements reçus en banque (statut, devise, référence, dates), montants en centimes
-- `gocardless_payout` détaille un versement (`PO…`) ligne par ligne — paiement reversé, échec, frais — pour le lettrer contre tes factures
+browse your direct debits, their timeline, failure reasons and grouped payouts for reconciliation.
+- `gocardless_payments` lists direct debits (filter by `status`, mandate, customer, date)
+- `gocardless_failed` gives you the enriched rejected direct debits in one call (customer, amount, cause, `will_attempt_retry`)
+- `gocardless_failure_reason` gives the reason for the latest failure of a specific payment (`PM…`)
+- `gocardless_payment_party` resolves payment → mandate → customer (email, company)
+- `gocardless_payouts` lists payouts received in the bank (status, currency, reference, dates), amounts in cents
+- `gocardless_payout` details a payout (`PO…`) line by line — paid-out payment, failure, fee — to match it against your invoices

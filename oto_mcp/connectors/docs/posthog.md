@@ -1,52 +1,52 @@
-## prerequisite — clé api posthog
+## prerequisite — posthog api key
 
-crée une **clé personnelle** dans PostHog (Settings → Personal API keys — voir la [doc API](https://posthog.com/docs/api)), puis colle-la dans oto.
+create a **personal key** in PostHog (Settings → Personal API keys — see the [API docs](https://posthog.com/docs/api)), then paste it into oto.
 
-- ⚠️ **ce n'est PAS la clé du snippet JS.** PostHog met en avant la clé de **projet** `phc_…` (celle de l'installation, de l'ingestion) : l'API de lecture la refuse, avec un `401` impossible à distinguer d'une clé morte. il faut la clé **personnelle**, qui commence par `phx_`. oto refuse une `phc_` à la pose plutôt que de vous laisser chercher
-- **scopes** : la clé porte les permissions choisies à sa création. le minimum utile ici est `query:read` + `project:read` ; ajoutez `insight:read`, `person:read`, `event_definition:read`, `property_definition:read`, `cohort:read`, `feature_flag:read`, `session_recording:read`, `annotation:write` selon ce que vous voulez faire. une clé à qui il manque un scope s'authentifie très bien et échoue **au premier appel réel** — le bouton « tester la connexion » exerce donc une vraie requête, pas seulement l'identité
-- **région** : `https://us.posthog.com` ou `https://eu.posthog.com` sont deux déploiements **distincts**. une clé de l'un est inconnue de l'autre, et là encore le symptôme est un `401`. choisissez celle de votre projet (ou l'URL de votre instance auto-hébergée)
-- **projet** : facultatif. laissé vide, oto le découvre depuis la clé. renseignez-le pour épingler la clé sur un projet précis quand elle en voit plusieurs
-- byo-only : pas de clé oto partagée. ce sont vos données produit
+- ⚠️ **it is NOT the JS snippet key.** PostHog puts forward the **project** key `phc_…` (the installation and ingestion one): the read API refuses it, with a `401` impossible to tell apart from a dead key. you need the **personal** key, which starts with `phx_`. oto refuses a `phc_` on entry rather than leaving you to hunt for the cause
+- **scopes**: the key carries the permissions chosen at its creation. the useful minimum here is `query:read` + `project:read`; add `insight:read`, `person:read`, `event_definition:read`, `property_definition:read`, `cohort:read`, `feature_flag:read`, `session_recording:read`, `annotation:write` depending on what you want to do. a key missing a scope authenticates just fine and fails **on the first real call** — so the "test the connection" button exercises a real query, not just the identity
+- **region**: `https://us.posthog.com` and `https://eu.posthog.com` are two **distinct** deployments. a key from one is unknown to the other, and here again the symptom is a `401`. pick your project's (or your self-hosted instance's URL)
+- **project**: optional. left empty, oto discovers it from the key. fill it in to pin the key to a specific project when it sees several
+- byo-only: no shared oto key. this is your product data
 
-## usage — requêtes, personnes, comptes, insights, flags, enregistrements
+## usage — queries, persons, accounts, insights, flags, recordings
 
-- « combien d'inscriptions la semaine dernière ? » → `posthog_query(hogql="SELECT count() FROM events WHERE event = 'signup' AND timestamp > now() - INTERVAL 7 DAY")`
-- « quels events existent chez nous ? » → `posthog_schema(op="events")` — à faire **avant** d'écrire une requête ; `op="tables"` puis `op="columns", table="events"` pour le schéma
-- « notre entonnoir d'activation, mais sur la semaine dernière » → `posthog_insight(op="list")` pour le trouver, puis `posthog_insight(op="run", insight_id=…, date_from="-7d")` — le chiffre rendu est **celui du tableau de bord**, calculé par PostHog
-- « un entonnoir qu'on n'a pas encore construit » → `posthog_query(query={"kind": "FunnelsQuery", …})` — surtout **pas** du HogQL écrit à la main pour un entonnoir (voir la note ci-dessous)
-- « qui est cet utilisateur ? » → `posthog_person(op="list", search="alice@acme.com")` puis `op="get"`
-- « quels clients décrochent ? » → `posthog_group(op="types")` puis `op="list"` — les questions par **compte** ne se répondent pas avec des personnes
-- « quels feature flags sont actifs ? » → `posthog_flag(op="list")`
-- « montre-moi des sessions où ça coince » → `posthog_recording(op="list", date_from="-7d")`
-- « note que la v2.3 est sortie aujourd'hui » → `posthog_project(op="annotate", content="v2.3 en production")`
-- « ce chiffre me surprend » → `posthog_project(op="current")` : quel projet, quel compte, quelle région ont répondu — c'est l'explication la plus fréquente
+- "how many signups last week?" → `posthog_query(hogql="SELECT count() FROM events WHERE event = 'signup' AND timestamp > now() - INTERVAL 7 DAY")`
+- "which events exist on our side?" → `posthog_schema(op="events")` — do this **before** writing a query; `op="tables"` then `op="columns", table="events"` for the schema
+- "our activation funnel, but over last week" → `posthog_insight(op="list")` to find it, then `posthog_insight(op="run", insight_id=…, date_from="-7d")` — the figure returned is **the dashboard's**, computed by PostHog
+- "a funnel we haven't built yet" → `posthog_query(query={"kind": "FunnelsQuery", …})` — above all **not** hand-written HogQL for a funnel (see the note below)
+- "who is this user?" → `posthog_person(op="list", search="alice@acme.com")` then `op="get"`
+- "which customers are dropping off?" → `posthog_group(op="types")` then `op="list"` — **account**-level questions cannot be answered with persons
+- "which feature flags are active?" → `posthog_flag(op="list")`
+- "show me sessions where people get stuck" → `posthog_recording(op="list", date_from="-7d")`
+- "note that v2.3 shipped today" → `posthog_project(op="annotate", content="v2.3 in production")`
+- "this number surprises me" → `posthog_project(op="current")`: which project, which account, which region answered — it is the most frequent explanation
 
-## note — entonnoirs et rétention : ne pas les réécrire en SQL
+## note — funnels and retention: do not rewrite them in SQL
 
-la sémantique d'entonnoir de PostHog (étapes ordonnées ou non, fenêtre de conversion, étapes d'exclusion, attribution) ne se reconstitue pas fidèlement en HogQL. une requête écrite à la main rendra un nombre **plausible**, et il sera en désaccord avec celui que votre équipe lit dans PostHog — le pire des résultats, parce que rien ne signale l'erreur.
+PostHog's funnel semantics (ordered or unordered steps, conversion window, exclusion steps, attribution) cannot be faithfully rebuilt in HogQL. a hand-written query will return a **plausible** number, and it will disagree with the one your team reads in PostHog — the worst outcome, because nothing signals the error.
 
-deux voies correctes, dans cet ordre :
-1. l'insight existe déjà → `posthog_insight(op="run", insight_id=…)`, éventuellement avec `date_from`/`date_to` pour changer la fenêtre. la définition vient de votre équipe, le calcul de PostHog
-2. sinon → `posthog_query(query={"kind": "FunnelsQuery" | "RetentionQuery" | "TrendsQuery", …})`, qui fait calculer PostHog
+two correct routes, in this order:
+1. the insight already exists → `posthog_insight(op="run", insight_id=…)`, optionally with `date_from`/`date_to` to change the window. the definition comes from your team, the computation from PostHog
+2. otherwise → `posthog_query(query={"kind": "FunnelsQuery" | "RetentionQuery" | "TrendsQuery", …})`, which makes PostHog compute
 
-le HogQL libre reste la bonne voie pour tout le reste : comptages, répartitions, jointures, questions ad hoc.
+free HogQL remains the right route for everything else: counts, breakdowns, joins, ad hoc questions.
 
-## note — dialecte hogql
+## note — hogql dialect
 
-c'est du SQL ClickHouse avec les accesseurs PostHog :
-- propriétés : `properties.$browser`, `person.properties.email` — pas de `JSONExtract`. les valeurs sont des **chaînes** : comparer un nombre demande `toFloat(properties.amount) > 10`
-- la colonne du nom d'event est `event` (pas `event_name`) ; le temps est `timestamp`, filtré par `timestamp >= now() - INTERVAL 7 DAY`
-- utilisateurs uniques = `uniq(person_id)` — **jamais** `count(distinct distinct_id)`, qui compte des appareils
-- tables jointes usuelles : `events`, `persons`, `sessions`, `groups`. `posthog_schema` les liste toutes
+it is ClickHouse SQL with PostHog accessors:
+- properties: `properties.$browser`, `person.properties.email` — no `JSONExtract`. values are **strings**: comparing a number requires `toFloat(properties.amount) > 10`
+- the event-name column is `event` (not `event_name`); time is `timestamp`, filtered by `timestamp >= now() - INTERVAL 7 DAY`
+- unique users = `uniq(person_id)` — **never** `count(distinct distinct_id)`, which counts devices
+- usual joined tables: `events`, `persons`, `sessions`, `groups`. `posthog_schema` lists them all
 
-une requête sans `LIMIT` est bornée à 101 lignes par PostHog, avec `hasMore` à vrai : agrégez dans la requête plutôt que de paginer.
+a query without `LIMIT` is bounded to 101 rows by PostHog, with `hasMore` true: aggregate in the query rather than paginating.
 
-## note — ce que ce connecteur ne fera jamais
+## note — what this connector will never do
 
-créer, modifier ou **basculer** un feature flag, écrire un insight ou une cohorte, supprimer une personne ou un enregistrement, envoyer des events : aucune de ces opérations n'existe dans la librairie sous-jacente. basculer un flag change le produit pour de vrais utilisateurs, et supprimer une personne est irréversible et réglementaire — ce n'est pas une décision d'assistant. faites-les dans PostHog.
+create, edit or **toggle** a feature flag, write an insight or a cohort, delete a person or a recording, send events: none of these operations exists in the underlying library. toggling a flag changes the product for real users, and deleting a person is irreversible and regulated — it is not an assistant's decision. do them in PostHog.
 
-la **seule** écriture est l'annotation : un repère daté posé sur vos graphes, purement additif, qui ne modifie aucune mesure.
+the **only** write is the annotation: a dated marker placed on your graphs, purely additive, which modifies no measurement.
 
-## note — vérifié en live le 2026-08-22
+## note — verified live on 2026-08-22
 
-testé contre un vrai projet PostHog Cloud US : identité, découverte du projet, HogQL, requêtes typées, ré-exécution d'un insight sauvegardé, schéma (156 tables, `events` à 52 colonnes), les 14 familles de ressources et l'écriture d'annotation répondent comme codé. trois formes qui ne se déduisent pas de la doc et qui sont gérées ici : `groups_types` rend une liste **nue** (pas d'enveloppe `results`), `/events/` et `/persons/` ne portent **pas** de `count` (ne jamais annoncer un total depuis une page — passer par une requête), et la réponse brute de `/query/` est à **93 % du diagnostic interne** (SQL généré, modificateurs, clés de cache), réduite ici aux colonnes, types, résultats et à la requête effectivement exécutée.
+tested against a real PostHog Cloud US project: identity, project discovery, HogQL, typed queries, re-running a saved insight, schema (156 tables, `events` at 52 columns), the 14 resource families and annotation writing respond as coded. three shapes that cannot be deduced from the docs and that are handled here: `groups_types` returns a **bare** list (no `results` envelope), `/events/` and `/persons/` carry **no** `count` (never announce a total from a page — go through a query), and the raw `/query/` response is **93% internal diagnostics** (generated SQL, modifiers, cache keys), reduced here to the columns, types, results and the query actually executed.

@@ -1,41 +1,41 @@
-"""Les images incluses en base64 (`data:image/…;base64,…`), retirées d'un contenu servi.
+"""Images embedded as base64 (`data:image/…;base64,…`), removed from served content.
 
-Mesuré le 14/09/2026 sur deux pages d'accueil lues par des agents hébergés : 227 106
-caractères dont 91 % d'images en base64 (4 images), et 66 644 dont 35 % (19 images). Un
-agent ne lit pas une image encodée : il la paie à chaque tour qui relit la page. Trois
-travaux ont franchi leur borne de 150 000 jetons sur la même ligne pour cette raison
+Measured on 14/09/2026 on two home pages read by hosted agents: 227,106
+characters of which 91% base64 images (4 images), and 66,644 of which 35% (19 images). An
+agent does not read an encoded image: it pays for it on every turn that re-reads the page. Three
+jobs crossed their 150,000-token limit on the same line for this reason
 (oto#246).
 
-Ce qui est retiré : l'ENCODAGE, et lui seul. Une trace le remplace, qui dit le type et la
-taille retirée, pour que l'agent sache qu'il y avait une image. Le texte de la page, ses
-liens et ses URL d'images ordinaires ne bougent pas. Seules les `data:image/` sont visées :
-une autre charge en base64 peut porter une adresse obfusquée (`mail_obfuscation`).
+What is removed: the ENCODING, and only it. A trace replaces it, stating the type and the
+size removed, so the agent knows there was an image. The page's text,
+links and ordinary image URLs do not change. Only `data:image/` is targeted:
+another base64 payload may carry an obfuscated address (`mail_obfuscation`).
 """
 from __future__ import annotations
 
 import re
 
-#: Une URI de donnée d'IMAGE en base64, d'au moins 64 caractères d'encodage : en dessous,
-#: la trace serait plus longue que ce qu'elle remplace.
+#: A base64 IMAGE data URI, with at least 64 characters of encoding: below that,
+#: the trace would be longer than what it replaces.
 _IMAGE_BASE64 = re.compile(
     r"data:(image/[A-Za-z0-9.+-]+)((?:;[A-Za-z0-9=.+-]+)*);base64,([A-Za-z0-9+/=]{64,})")
 
 
 def retirer(texte: str) -> tuple[str, int, int]:
-    """`(texte sans ses images base64, nombre retiré, caractères retirés)`."""
+    """`(text without its base64 images, number removed, characters removed)`."""
     compte = [0, 0]
 
     def _trace(m: re.Match) -> str:
         compte[0] += 1
         compte[1] += len(m.group(0))
-        return f"data:{m.group(1)} — {len(m.group(3))} caractères de base64 retirés"
+        return f"data:{m.group(1)} — {len(m.group(3))} characters of base64 removed"
 
     return _IMAGE_BASE64.sub(_trace, texte), compte[0], compte[1]
 
 
 def alleger(res: dict) -> dict:
-    """Retire les images base64 des représentations d'un scrape (`markdown`, `text`) et
-    le DIT dans `images_base64_retirees` quand il y en avait. Modifie et rend `res`."""
+    """Removes base64 images from a scrape's representations (`markdown`, `text`) and
+    SAYS SO in `images_base64_retirees` when there were any. Mutates and returns `res`."""
     nombre = caracteres = 0
     for cle in ("markdown", "text"):
         if isinstance(res.get(cle), str):

@@ -181,7 +181,7 @@ def test_job_details_passes_the_job_id(client):
 def test_job_search_refuses_without_query_nor_company(client):
     """Sans l'un des deux le client lève un ValueError opaque : on refuse ici,
     en nommant les deux voies."""
-    with pytest.raises(McpError, match="query ou company"):
+    with pytest.raises(McpError, match="query or company"):
         _tool("serpapi_jobs")(op="search")
     client.search_jobs.assert_not_called()
 
@@ -195,7 +195,7 @@ def test_job_details_refuses_without_job_id(client):
 def test_unknown_op_is_refused_with_the_allowed_list(client):
     """Une op inconnue doit lever en nommant les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool("serpapi_jobs")(op="nope")
     client.search_jobs.assert_not_called()
     client.get_job_details.assert_not_called()

@@ -130,7 +130,7 @@ def test_un_filtre_contradictoire_n_elargit_pas_et_le_perimetre_est_nomme(live):
     # La suite MCP ne change pas : l'agent ne tient rien, il n'écrit rien — et on ne
     # lui souffle aucun geste d'écriture, pas même le nom d'un raccourci (#517, 29/08 :
     # « ou écris avec un identifiant explicite » l'avait fait en inventer un).
-    assert "run_finish" in mcp and "n'invente aucun identifiant" in mcp
+    assert "run_finish" in mcp and "invent no identifier" in mcp
     # Sans périmètre, les deux faces gardent leur phrase historique.
     assert T._hint_file_vide({}, None) == T._HINT_FILE_VIDE
     assert "périmètre" not in C._hint_vide({}, None)

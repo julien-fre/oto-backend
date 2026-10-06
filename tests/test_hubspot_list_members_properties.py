@@ -482,7 +482,7 @@ def test_an_empty_properties_list_is_refused_by_name(client):
     PAR DÉFAUT : trois appels pour ce que personne n'a demandé. Omettre
     l'argument et le remplir ont déjà chacun leur sens ; la troisième forme se
     refuse plutôt que de se deviner."""
-    with pytest.raises(McpError, match="NON VIDE"):
+    with pytest.raises(McpError, match="NON-EMPTY"):
         _tool("hubspot_list")(op="members", list_id="9", properties=[])
 
     client.get_list_memberships.assert_not_called()

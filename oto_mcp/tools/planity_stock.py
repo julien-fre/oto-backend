@@ -1,15 +1,15 @@
-"""Planity — le STOCK d'un salon : mouvements, fournisseurs, commandes, sorties.
+"""Planity — a salon's STOCK: movements, suppliers, orders, removals.
 
-Module frère de `planity.py` (le catalogue produits et ses lots vivent là-bas, sur
-`planity_list_products`) : même connecteur, même namespace, même session. Ici, ce
-qui BOUGE — chaque entrée et chaque sortie, avec sa date, son type et son prix
-d'achat.
+Sibling module of `planity.py` (the product catalogue and its lots live there, on
+`planity_list_products`): same connector, same namespace, same session. Here, what
+MOVES — every entry and every exit, with its date, type and purchase
+price.
 
-Il n'y a **pas d'outil de prévision de commande**, et c'est délibéré : la règle
-(combien de jours de couverture, quel délai fournisseur, quelles familles on
-réassort) appartient au salon, pas au connecteur. Une prévision codée ici serait la
-nôtre, figée, et fausse chez le suivant. Les outils rendent les faits ; l'agent
-compose — la recette tient en trois appels, elle est dans la fiche du connecteur.
+There is **no order forecast tool**, and that is deliberate: the rule
+(how many days of coverage, what supplier lead time, which families to
+restock) belongs to the salon, not to the connector. A forecast coded here would be
+ours, frozen, and wrong at the next one. The tools return the facts; the agent
+composes — the recipe takes three calls, it is in the connector's listing.
 """
 from __future__ import annotations
 
@@ -19,22 +19,22 @@ from fastmcp import FastMCP
 
 from .planity_session import _bad, _client, _eur_ou_rien, fenetre, iso, periode
 
-#: Le refus qu'on oppose à un balayage implicite du catalogue, et les deux chemins
-#: qui coûtent un appel au lieu de six cents.
+#: The refusal opposed to an implicit sweep of the catalogue, and the two paths
+#: that cost one call instead of six hundred.
 #:
-#: ⚠️ **Il tombe AVANT toute lecture, et c'est le point.** Il a d'abord été écrit
-#: après un `list_products` qui servait à compter les produits — donc un appel
-#: condamné payait quand même une lecture, sur une session que l'appelant croyait
-#: intacte. Compter pour refuser, c'est déjà avoir fait ce qu'on refuse.
+#: ⚠️ **It falls BEFORE any read, and that is the point.** It was first written
+#: after a `list_products` that served to count the products — so a condemned
+#: call still paid for a read, on a session the caller believed untouched.
+#: Counting in order to refuse is already having done what we refuse.
 _REFUS_BALAYAGE = (
-    "Les mouvements de stock se lisent UN PRODUIT À LA FOIS — il n'existe pas "
-    "d'index de temps au niveau du salon. Balayer un catalogue entier tiendrait la "
-    "conversation des dizaines de secondes, donc cet outil ne le fait pas tout "
-    "seul : passe `product_ids`. Les identifiants viennent de "
-    "`planity_list_products` (un appel). Et pour une vue salon, "
-    "`planity_get_revenue_breakdown` donne les quantités vendues par produit en UN "
-    "appel — c'est de là qu'on part, puis on vient ici pour le détail des quelques "
-    "produits qui sortent du lot.")
+    "Stock movements are read ONE PRODUCT AT A TIME — there is no "
+    "time index at salon level. Sweeping a whole catalogue would hold up the "
+    "conversation for tens of seconds, so this tool does not do it on its "
+    "own: pass `product_ids`. The identifiers come from "
+    "`planity_list_products` (one call). And for a salon-wide view, "
+    "`planity_get_revenue_breakdown` gives the quantities sold per product in ONE "
+    "call — that is where to start, then come here for the detail of the few "
+    "products that stand out.")
 
 
 def register(mcp: FastMCP) -> None:
@@ -69,7 +69,7 @@ def register(mcp: FastMCP) -> None:
         """
         ids = [i for i in (product_ids or []) if i]
         if not ids:
-            # AVANT `_client()` : un appel condamné n'ouvre même pas de session.
+            # BEFORE `_client()`: a condemned call does not even open a session.
             raise _bad(_REFUS_BALAYAGE)
         c = await _client()
         gte, lte = fenetre(date_from, date_to, preset)

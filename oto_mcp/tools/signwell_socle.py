@@ -1,21 +1,20 @@
-"""Socle partagé des modules du connecteur `signwell` (documents et modèles ;
-envois groupés, webhooks et compte).
+"""Shared base of the `signwell` connector modules (documents and templates;
+bulk sends, webhooks and account).
 
-Le connecteur tient sur deux modules (`Connector.modules` au registre) :
-`tools/signwell.py` (documents, modèles) et `tools/signwell_envois.py` (envois
-groupés, webhooks, compte). Ce fichier porte ce qu'ils ont en commun — la
-résolution de la clé, la traduction d'un refus de SignWell, la vue resserrée
-d'un document, la validation des arguments — pour qu'un correctif ne couvre
-jamais la moitié du connecteur. Il n'a pas de `register()` : c'est un helper.
+The connector spans two modules (`Connector.modules` in the registry):
+`tools/signwell.py` (documents, templates) and `tools/signwell_envois.py` (bulk
+sends, webhooks, account). This file holds what they have in common — key
+resolution, translation of a SignWell refusal, the tightened view of a
+document, argument validation — so that a fix never covers
+only half the connector. It has no `register()`: it is a helper.
 
-**Ce que la vue d'un document corrige.** SignWell rend le lien de signature de
-chaque destinataire sous DEUX clés selon le mode : `signing_url` quand il envoie
-lui-même l'invitation, `embedded_signing_url` en signature embarquée (l'autre
-vaut alors null). Et rien, dans la charge, ne dit si un destinataire recevra
-vraiment un courriel : un document en `test_mode` détourne TOUTES les
-invitations vers le titulaire du compte (vérifié en live), un document embarqué
-n'écrit qu'aux destinataires marqués `send_email`. La vue rend donc un lien
-unique (`signing_link`) et un `emailed` explicite par destinataire.
+**What the document view fixes.** SignWell returns each recipient's signing link
+under TWO keys depending on the mode: `signing_url` when it sends the invitation
+itself, `embedded_signing_url` in embedded signing (the other is then null). And nothing in the payload says whether a recipient will
+really receive an email: a document in `test_mode` diverts ALL
+invitations to the account holder (verified live), an embedded document
+only writes to recipients marked `send_email`. The view therefore returns a single link
+(`signing_link`) and an explicit `emailed` per recipient.
 """
 from __future__ import annotations
 
@@ -26,20 +25,20 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from ..mcp_errors import McpError
 from .. import access
 
-if TYPE_CHECKING:  # l'annotation de `_client()` seulement — jamais évaluée
+if TYPE_CHECKING:  # only for the `_client()` annotation — never evaluated
     from oto.tools.signwell import SignWellClient
 
-#: Où l'utilisateur crée sa clé, dans SON compte SignWell.
-OU_CREER_LA_CLE = "SignWell → Settings → API → « Create API key »"
+#: Where the user creates their key, in THEIR SignWell account.
+OU_CREER_LA_CLE = "SignWell → Settings → API → \"Create API key\""
 
 
 def _client() -> SignWellClient:
-    """Le client SignWell pour la clé de CET appelant (byo : la clé agit au nom du
-    compte qui l'a créée — c'est ce nom qui figure sur les invitations).
+    """The SignWell client for THIS caller's key (byo: the key acts on behalf of the
+    account that created it — that name is what appears on the invitations).
 
-    L'import réel est fait dans le corps : les tests remplacent le client, et la
-    sonde de version-skew lit l'annotation de retour pour vérifier que les
-    méthodes appelées existent dans l'oto-core épinglé.
+    The real import is done in the body: tests replace the client, and the
+    version-skew probe reads the return annotation to check that the
+    methods called exist in the pinned oto-core.
     """
     from oto.tools.signwell import SignWellClient
 
@@ -52,9 +51,9 @@ def _bad(msg: str) -> McpError:
 
 
 def _detail(body: Any) -> str:
-    """Le motif lisible d'un refus SignWell. Forme relevée en live :
-    `{message, meta: {error, message, messages[]}}` — `meta.messages` porte le
-    détail (champ en faute), `message` le résumé."""
+    """The readable reason for a SignWell refusal. Shape observed live:
+    `{message, meta: {error, message, messages[]}}` — `meta.messages` carries the
+    detail (field at fault), `message` the summary."""
     if not isinstance(body, dict):
         return str(body or "")
     meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
@@ -65,24 +64,24 @@ def _detail(body: Any) -> str:
 
 
 def refus(e: Any) -> str:
-    """La consigne qui correspond à un refus de SignWell (`UpstreamHTTPError`)."""
+    """The instruction matching a SignWell refusal (`UpstreamHTTPError`)."""
     status, detail = e.status_code, _detail(e.body)
     if status == 401:
-        return ("SignWell refuse cette clé (401) : elle est inconnue ou a été supprimée. "
-                f"Crée une clé sur {OU_CREER_LA_CLE}, puis remplace celle de la carte "
-                "SignWell de ton compte.")
+        return ("SignWell rejects this key (401): it is unknown or has been deleted. "
+                f"Create a key at {OU_CREER_LA_CLE}, then replace the one on your account's "
+                "SignWell card.")
     if status == 404:
-        return (f"SignWell : introuvable (404){' — ' + detail if detail else ''}. "
-                "L'API n'a PAS de liste des documents : un identifiant de document ne "
-                "se retrouve pas, il se garde depuis la réponse qui l'a créé.")
+        return (f"SignWell: not found (404){' — ' + detail if detail else ''}. "
+                "The API has NO document list: a document identifier cannot "
+                "be found again, it must be kept from the response that created it.")
     if status == 409:
-        return f"SignWell refuse l'opération dans l'état actuel du document (409) : {detail}"
-    return f"SignWell a refusé la requête (HTTP {status}) : {detail}"
+        return f"SignWell refuses the operation in the document's current state (409): {detail}"
+    return f"SignWell refused the request (HTTP {status}): {detail}"
 
 
 def traduire(e: Any) -> Exception:
-    """4xx → refus nommé (l'appel est à changer, ou la clé). 429 et 5xx restent ce
-    qu'ils sont : la taxonomie d'erreurs les classe réessayables, à raison."""
+    """4xx → named refusal (the call is to be changed, or the key). 429 and 5xx remain
+    what they are: the error taxonomy classes them as retryable, rightly."""
     if 400 <= e.status_code < 500 and e.status_code != 429:
         return _bad(refus(e))
     return e
@@ -100,82 +99,82 @@ def _run(fn: Callable[[], Any]) -> Any:
 
 
 def _hors_op(op: str, **donnes: Any) -> None:
-    """Refuse un argument qui ne s'applique pas à l'`op` choisie, plutôt que de
-    l'ignorer : `signwell_document(op="get", subject=…)` laisserait croire que le
-    sujet a été posé.
+    """Refuse an argument that does not apply to the chosen `op`, rather than
+    ignoring it: `signwell_document(op="get", subject=…)` would suggest the
+    subject was set.
 
-    `None` = non passé, et c'est le SEUL « absent » : un `False` explicite est un
-    argument donné, donc refusé comme les autres (`full=False` sur un `op` sans vue
-    resserrée n'est pas « rien »). D'où les booléens des tools en `Optional[bool] =
-    None` — un `bool = False` nu rendrait l'omission et le `False` indiscernables."""
+    `None` = not passed, and it is the ONLY "absent": an explicit `False` is a given
+    argument, hence refused like the others (`full=False` on an `op` without a
+    tightened view is not "nothing"). Hence the tools' booleans as `Optional[bool] =
+    None` — a bare `bool = False` would make omission and `False` indistinguishable."""
     en_trop = sorted(k for k, v in donnes.items() if v is not None)
     if en_trop:
-        raise _bad(f"op='{op}' ne prend pas {en_trop}.")
+        raise _bad(f"op='{op}' does not take {en_trop}.")
 
 
 def _need(op: str, **requis: Any) -> None:
     manquants = [k for k, v in requis.items() if v is None]
     if manquants:
-        raise _bad(f"op='{op}' exige {', '.join('`' + m + '`' for m in manquants)}.")
+        raise _bad(f"op='{op}' requires {', '.join('`' + m + '`' for m in manquants)}.")
 
 
 def options_valides(op: str, options: Optional[Dict[str, Any]],
                     permises: Iterable[str]) -> Dict[str, Any]:
-    """`options` porte les réglages rares du spec. Une clé inconnue est REFUSÉE en
-    nommant les clés permises : SignWell ignorerait une faute de frappe sans rien
-    dire, et le réglage voulu ne serait jamais posé."""
+    """`options` carries the spec's rare settings. An unknown key is REFUSED
+    by naming the allowed keys: SignWell would ignore a typo without saying
+    anything, and the intended setting would never be applied."""
     options = dict(options or {})
     permises = tuple(permises)
     inconnues = sorted(set(options) - set(permises))
     if inconnues:
-        raise _bad(f"op='{op}' : options inconnues {inconnues}. Permises : {sorted(permises)}.")
+        raise _bad(f"op='{op}': unknown options {inconnues}. Allowed: {sorted(permises)}.")
     return {k: v for k, v in options.items() if v is not None}
 
 
 def fichiers_valides(files: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-    """Chaque fichier : `name` + exactement UNE source (`file_url` ou `file_base64`)."""
+    """Each file: `name` + exactly ONE source (`file_url` or `file_base64`)."""
     if not files:
-        raise _bad("`files` est requis : [{name, file_url | file_base64}].")
+        raise _bad("`files` is required: [{name, file_url | file_base64}].")
     for i, f in enumerate(files):
         if not isinstance(f, dict) or not f.get("name"):
-            raise _bad(f"files[{i}] : `name` requis (avec son extension, ex. « nda.pdf »).")
+            raise _bad(f"files[{i}]: `name` required (with its extension, e.g. « nda.pdf »).")
         if bool(f.get("file_url")) == bool(f.get("file_base64")):
-            raise _bad(f"files[{i}] : exactement UNE source, `file_url` OU `file_base64`.")
+            raise _bad(f"files[{i}]: exactly ONE source, `file_url` OR `file_base64`.")
     return files
 
 
 def destinataires_valides(recipients: Optional[List[Dict[str, Any]]], *,
                           email_requis: bool = True) -> List[Dict[str, Any]]:
-    """`id` unique par destinataire (c'est lui que visent `fields` et les text tags),
-    et une adresse — sauf un destinataire joint par SMS seul."""
+    """A unique `id` per recipient (it is what `fields` and the text tags target),
+    and an address — except for a recipient reached by SMS alone."""
     if not recipients:
-        raise _bad("`recipients` est requis : [{id, name, email}].")
+        raise _bad("`recipients` is required: [{id, name, email}].")
     vus = set()
     for i, r in enumerate(recipients):
         if not isinstance(r, dict) or r.get("id") in (None, ""):
-            raise _bad(f"recipients[{i}] : `id` requis (« 1 », « 2 »… — c'est le numéro "
-                       "de signataire des text tags).")
+            raise _bad(f"recipients[{i}]: `id` required (« 1 », « 2 »… — it is the signer "
+                       "number of the text tags).")
         rid = str(r["id"])
         if rid in vus:
-            raise _bad(f"recipients : l'id « {rid} » est répété.")
+            raise _bad(f"recipients: the id « {rid} » is repeated.")
         vus.add(rid)
         if email_requis and not r.get("email") and r.get("delivery_method") != "sms":
-            raise _bad(f"recipients[{i}] : `email` requis (ou `delivery_method=\"sms\"`).")
+            raise _bad(f"recipients[{i}]: `email` required (or `delivery_method=\"sms\"`).")
     return recipients
 
 
 def sans_base64(files: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-    """Ce qu'on peut échoer d'un fichier : jamais son contenu base64."""
+    """What can be echoed of a file: never its base64 content."""
     return [{"name": f.get("name"),
              "source": "file_url" if f.get("file_url") else "file_base64"}
             for f in (files or []) if isinstance(f, dict)]
 
 
 def _emailed(doc: Dict[str, Any], r: Dict[str, Any]) -> Optional[bool]:
-    """Ce destinataire reçoit-il l'invitation par courriel ? `None` = pas encore
-    décidable (brouillon non envoyé)."""
+    """Does this recipient receive the invitation by email? `None` = not yet
+    decidable (unsent draft)."""
     if doc.get("test_mode"):
-        return False  # détournée vers le titulaire du compte
+        return False  # diverted to the account holder
     if doc.get("embedded_signing"):
         return bool(r.get("send_email"))
     if r.get("delivery_method") == "sms":
@@ -186,9 +185,9 @@ def _emailed(doc: Dict[str, Any], r: Dict[str, Any]) -> Optional[bool]:
 
 
 def vue_document(doc: Any) -> Any:
-    """La vue resserrée d'un document : état, mode, et pour chaque destinataire UN
-    lien et un `emailed` explicite. Les champs, fichiers et règles restent dans la
-    charge brute (`full=True`)."""
+    """The tightened view of a document: state, mode, and for each recipient ONE
+    link and an explicit `emailed`. The fields, files and rules stay in the raw
+    payload (`full=True`)."""
     if not isinstance(doc, dict):
         return doc
     recipients = []
@@ -215,18 +214,18 @@ def vue_document(doc: Any) -> Any:
     }
     notes = []
     if doc.get("test_mode"):
-        notes.append("test_mode : aucune invitation ne part aux destinataires — SignWell "
-                     "les envoie au TITULAIRE du compte, sujet préfixé [TEST]. Document "
-                     "sans valeur juridique.")
+        notes.append("test_mode: no invitation goes out to the recipients — SignWell "
+                     "sends them to the account HOLDER, subject prefixed [TEST]. Document "
+                     "with no legal value.")
     if str(doc.get("status") or "") in ("Created", "Sending"):
-        notes.append(f"statut « {doc.get('status')} » : SignWell traite encore le document "
-                     "— les champs issus des text tags arrivent en différé, et rien n'est "
-                     "envoyé tant que le statut n'est pas « Sent » (ou « Draft » pour un "
-                     "brouillon). Relis-le dans quelques secondes.")
+        notes.append(f"status « {doc.get('status')} »: SignWell is still processing the document "
+                     "— fields coming from text tags arrive deferred, and nothing is "
+                     "sent until the status is « Sent » (or « Draft » for a "
+                     "draft). Re-read it in a few seconds.")
     if doc.get("embedded_signing"):
-        notes.append("signature embarquée : SignWell ne vérifie pas l'adresse du "
-                     "signataire — quiconque détient `signing_link` peut signer. Ne le "
-                     "transmettre qu'à la personne visée.")
+        notes.append("embedded signing: SignWell does not check the signer's "
+                     "address — whoever holds `signing_link` can sign. Only "
+                     "pass it to the intended person.")
     if notes:
         vue["notes"] = notes
     return vue

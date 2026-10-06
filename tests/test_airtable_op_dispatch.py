@@ -122,7 +122,7 @@ def test_unknown_op_refused_before_key_resolution(monkeypatch):
     for name, required in _TOOLS.items():
         with pytest.raises(McpError) as e:
             _tool(name)(op="destroy", **required)
-        assert "op doit être" in str(e.value)
+        assert "op must be" in str(e.value)
 
 
 def test_opless_tools_have_no_op_parameter():
@@ -183,7 +183,7 @@ def test_record_list_never_discards_a_page_it_already_read(client):
 def test_record_get_requires_record_id(client):
     with pytest.raises(McpError) as e:
         _tool("airtable_record")(base_id="app1", table="tbl1", op="get")
-    assert "op='get' requiert record_id" in str(e.value)
+    assert "op='get' requires record_id" in str(e.value)
     _assert_no_stray_write(client)
 
 
@@ -213,7 +213,7 @@ def test_record_create_rejects_both_or_neither(client):
     for kwargs in ({}, {"fields": {"a": 1}, "records": [{"a": 1}]}):
         with pytest.raises(McpError) as e:
             _tool("airtable_record")(base_id="app1", table="tbl1", op="create", **kwargs)
-        assert "EXACTEMENT un" in str(e.value)
+        assert "EXACTLY one" in str(e.value)
     _assert_no_stray_write(client)
 
 
@@ -222,7 +222,7 @@ def test_record_create_caps_items_per_call(client):
         _tool("airtable_record")(
             base_id="app1", table="tbl1", op="create",
             records=[{"Nom": "x"} for _ in range(201)])
-    assert "maximum de 200" in str(e.value)
+    assert "maximum of 200" in str(e.value)
     _assert_no_stray_write(client)
 
 
@@ -260,7 +260,7 @@ def test_record_upsert_refuses_more_than_three_merge_fields(client):
         _tool("airtable_record")(
             base_id="app1", table="tbl1", op="upsert", records=[{"a": 1}],
             merge_on=["a", "b", "c", "d"])
-    assert "1 à 3" in str(e.value)
+    assert "1 to 3" in str(e.value)
     _assert_no_stray_write(client)
 
 
@@ -404,7 +404,7 @@ def test_table_schema_filters_to_one_table(client):
 def test_table_schema_names_what_exists_when_the_table_is_unknown(client):
     with pytest.raises(McpError) as e:
         _tool("airtable_table")(base_id="app1", table_id="tblNOPE")
-    assert "aucune table" in str(e.value)
+    assert "no table" in str(e.value)
     _assert_no_stray_write(client)
 
 

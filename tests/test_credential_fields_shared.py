@@ -87,7 +87,7 @@ def test_nothing_set_raises(monkeypatch):
     _wire(monkeypatch, user=None, group=None, org=None)
     # Le refus de la cascade épuisée, nommé : `McpError` nu avalerait aussi un refus
     # d'identité levé avant elle (#896), et le test ne prouverait plus rien.
-    with pytest.raises(McpError, match="Aucun credential `zoho` configuré"):
+    with pytest.raises(McpError, match="No `zoho` credential configured"):
         access.resolve_credential_fields("zoho")
 
 
@@ -107,7 +107,7 @@ def test_non_shareable_ignores_group_org(monkeypatch):
                         lambda *a: called.__setitem__("group", True) or "x")
     monkeypatch.setattr(access.org_store, "get_org_secret",
                         lambda *a: called.__setitem__("org", True) or "x")
-    with pytest.raises(McpError, match="Aucun credential `silae` configuré"):
+    with pytest.raises(McpError, match="No `silae` credential configured"):
         access.resolve_credential_fields("silae")
     assert called == {"group": False, "org": False}
 

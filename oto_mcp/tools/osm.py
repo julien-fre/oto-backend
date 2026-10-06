@@ -1,9 +1,9 @@
-"""OpenStreetMap — points d'intérêt via Overpass (open data, sans clé).
+"""OpenStreetMap — points of interest via Overpass (open data, no key).
 
-Recense **tous** les objets OSM d'un tag sur une zone en un seul appel (pas de
-plafond ni de pagination des API Maps). Servi par le service FOD (ADR 0028).
+Lists **all** OSM objects with a tag over an area in a single call (no
+cap or pagination like the Maps APIs). Served by the FOD service (ADR 0028).
 
-Connecteur open-data : pas de credential. Exposé si activé en DB (ADR 0010).
+Open-data connector: no credential. Exposed if enabled in DB (ADR 0010).
 """
 from __future__ import annotations
 

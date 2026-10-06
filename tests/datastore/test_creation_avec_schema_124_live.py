@@ -184,7 +184,7 @@ def test_un_schema_refuse_ne_cree_pas_le_tableau(face, outils, client):
     if face == "rest":
         assert corps["error"] == "invalid_schema", corps
     else:
-        assert "n'a PAS été créé" in texte
+        assert "was NOT created" in texte
     assert _en_base(nom) is None
     # Rien de laissé derrière : la reprise, corrigée, sous le MÊME nom, passe.
     code, corps = _creer(face, outils, client, nom, SCHEMA)

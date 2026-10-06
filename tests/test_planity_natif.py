@@ -171,7 +171,7 @@ def test_sans_coordonnees_l_appel_refuse_en_nommant_les_trois_variables(monkeypa
     msg = str(e.value)
     for nom in _COORDONNEES:
         assert nom in msg, f"{nom} doit être nommée dans le refus"
-    assert "mot de passe" not in msg and "credential" in msg
+    assert "password" not in msg and "credential" in msg
     assert "oto_admin_connector_setting" in msg, (
         "un diagnostic qui ne dit pas le GESTE renvoie chercher — c'est ainsi "
         "qu'on relance six fois une configuration valide")

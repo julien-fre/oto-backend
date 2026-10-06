@@ -1,27 +1,27 @@
-"""Déclaration de registre du connecteur `cognism`.
+"""Registry declaration of the `cognism` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# cognism : connecteur classique (kind="tools") sur l'API Search de Cognism
-# (developers.cognism.com). Client REST synchrone dans oto-core
-# (`oto.tools.cognism`), tools curés dans `tools/cognism.py`. Cascade de clé
-# standard (`resolve_api_key`) — BYO org couvre le besoin "une clé pour tout
-# l'org" ; mode "platform" GRANT-ONLY depuis le 26/08 (#405, GTM crédits —
-# ce doc disait l'inverse jusque-là, faute d'accord commercial Otomata↔Cognism).
-# search_contacts/search_accounts = preview only (flags `has*`, pas
-# d'email/téléphone réel) ; redeem_contacts/redeem_accounts = reveal complet
-# (consomme des crédits) ; enrich_contact/enrich_account = lookup par
-# identité (email/LinkedIn/nom+société). DSL de filtre (~150 champs)
-# documentée dans le guide `cognism-filters`, pas dans les docstrings tool.
+# cognism: classic connector (kind="tools") on Cognism's Search API
+# (developers.cognism.com). Synchronous REST client in oto-core
+# (`oto.tools.cognism`), curated tools in `tools/cognism.py`. Standard key
+# cascade (`resolve_api_key`) — BYO org covers the "one key for the whole
+# org" need; "platform" mode GRANT-ONLY since 26/08 (#405, credits GTM —
+# this doc said the opposite until then, for lack of an Otomata↔Cognism commercial agreement).
+# search_contacts/search_accounts = preview only (`has*` flags, no real
+# email/phone); redeem_contacts/redeem_accounts = full reveal
+# (consumes credits); enrich_contact/enrich_account = lookup by
+# identity (email/LinkedIn/name+company). Filter DSL (~150 fields)
+# documented in the `cognism-filters` guide, not in the tool docstrings.
 CONNECTOR = _c(
     "cognism", ["cognism"],
     auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
-    default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
+    default_quota=0, platform_key_open=False,  # platform key on explicit grant (data bought by credit)
     secret_kind="api_key",
     label="Cognism",
     help="B2B contact & company search, reveal, and identity enrichment",
@@ -33,8 +33,8 @@ PUBLISHER = "Cognism"
 LOGO_DOMAIN = "cognism.com"
 
 DESCRIPTION = (
-    "Recherche de contacts et d'entreprises B2B chez Cognism, avec reveal "
-    "(email, téléphone) au crédit et enrichissement par identité (email, "
-    "LinkedIn, nom + société). Les recherches restent en aperçu tant que le "
-    "reveal n'est pas demandé explicitement."
+    "B2B contact and company search at Cognism, with credit-based reveal "
+    "(email, phone) and identity enrichment (email, "
+    "LinkedIn, name + company). Searches stay in preview until "
+    "reveal is explicitly requested."
 )

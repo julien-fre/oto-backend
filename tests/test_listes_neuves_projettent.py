@@ -140,7 +140,7 @@ def test_fields_resserre_les_enregistrements_et_garde_l_enveloppe(monkeypatch, i
 @pytest.mark.parametrize("module_nom,kw,mot", [
     ("fr", {"op": "awarded", "query": "x", "type_marche": "TRAVAUX"}, "type_marche"),
     ("fr", {"op": "notices", "titulaire_siret": "12345678901234"}, "titulaire_siret"),
-    ("fr", {"op": "awarded"}, "au moins un critère"),
+    ("fr", {"op": "awarded"}, "at least one criterion"),
     ("foncier", {"op": "emissions", "departement": "59", "page": 2}, "page"),
     ("foncier", {"op": "installations", "departement": "59"}, "departement"),
     ("foncier", {"op": "emissions"}, "requiert"),

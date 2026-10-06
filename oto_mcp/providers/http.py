@@ -1,103 +1,103 @@
-"""Déclaration de registre du connecteur `http`.
+"""Registry declaration of the `http` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# Client HTTP multi-auth : contrairement au bridge, oto DÉTIENT le secret de
-# l'API cible (coffre AES, byo_org) et tape l'API directement (pas de service
-# distant). `auth_mode` discrimine le mode (bearer/header/query/basic/oauth2/
-# none) ; les champs secrets requis dépendent du mode (validés au call-time par
+# Multi-auth HTTP client: unlike the bridge, oto HOLDS the target API's
+# secret (AES vault, byo_org) and calls the API directly (no remote
+# service). `auth_mode` discriminates the mode (bearer/header/query/basic/oauth2/
+# none); the required secret fields depend on the mode (validated at call-time by
 # oto_http.build_auth).
-# À DISTINGUER du bridge (credential hors plateforme) : ici la clé est confiée
-# à oto — pas de custody côté client.
+# TO BE DISTINGUISHED from the bridge (credential outside the platform): here the key
+# is entrusted to oto — no custody on the client side.
 #
-# ⚠️ Ce commentaire a annoncé « lecture seule (GET), garde-fou anti-SSRF sur
-# l'hôte » jusqu'au 2026-08-27 — DEUX affirmations fausses (oto-backend#449) : le
-# connecteur porte aussi `http_post`, et aucune garde SSRF n'existait. La seconde
-# a ensuite été présentée comme voulue, au motif que le filtrage d'egress de la
-# plateforme compensait ; il ne bloque qu'une plage (le lien-local), la boucle
-# locale et les plages privées restaient joignables. La garde existe désormais
-# dans le code — `oto_mcp/egress.py`, appelée par `tools/http.py:_client()` —
-# et une destination interne légitime se déclare comme exception NOMMÉE.
-# Jeu FERMÉ des modes d'auth. RECOPIÉ de `oto.tools.http.AUTH_MODES` — pas importé :
-# le registre reste pur (aucune dépendance runtime au niveau module, sinon une dép
-# absente retirerait le connecteur du catalogue au lieu de le dégrader). La copie est
-# tenue par le tripwire `test_http_auth_modes.py`, qui la compare à oto-core ET vérifie
-# que les champs déclarés requis par mode sont EXACTEMENT ceux que `build_auth` exige.
+# ⚠️ This comment announced "read-only (GET), anti-SSRF guard on
+# the host" until 2026-08-27 — TWO false claims (oto-backend#449): the
+# connector also carries `http_post`, and no SSRF guard existed. The second
+# was then presented as intentional, on the grounds that the platform's egress
+# filtering compensated; it only blocks one range (link-local), loopback
+# and private ranges remained reachable. The guard now exists
+# in the code — `oto_mcp/egress.py`, called by `tools/http.py:_client()` —
+# and a legitimate internal destination is declared as a NAMED exception.
+# CLOSED set of auth modes. COPIED from `oto.tools.http.AUTH_MODES` — not imported:
+# the registry stays pure (no module-level runtime dependency, otherwise a missing
+# dep would remove the connector from the catalog instead of degrading it). The copy is
+# held by the `test_http_auth_modes.py` tripwire, which compares it to oto-core AND checks
+# that the fields declared required per mode are EXACTLY the ones `build_auth` requires.
 AUTH_MODES = ("bearer", "header", "query", "basic", "oauth2", "none")
 
 CONNECTOR = _c(
     "http", ["http"], auth_modes={"byo_org"}, secret_kind="fields",
     label="HTTP",
-    # `auth_mode` SÉLECTIONNE les autres champs (oto-backend#449) : un formulaire
-    # `bearer` n'a pas à montrer les six champs d'oauth2 et de basic, et l'écriture
-    # refuse un mode incohérent au lieu de l'accepter puis d'échouer au 1er appel.
+    # `auth_mode` SELECTS the other fields (oto-backend#449): a `bearer` form
+    # need not show the six oauth2 and basic fields, and the write
+    # refuses an inconsistent mode instead of accepting it then failing on the 1st call.
     field_discriminator="auth_mode",
-    help="connecte n'importe quelle API HTTP à oto : renseigne l'URL de base, "
-         "le mode d'auth (bearer / clé en header ou query / basic / oauth2) et "
-         "le secret correspondant. oto stocke le secret (coffre chiffré) et tape "
-         "l'API directement, en lecture (GET) comme en écriture (POST).",
-    # `when=` = les modes qui rendent le champ PERTINENT ; `required` s'applique alors
-    # DANS ces modes-là. Les trois champs sans `when` valent quel que soit le mode.
+    help="connect any HTTP API to oto: fill in the base URL, "
+         "the auth mode (bearer / key in header or query / basic / oauth2) and "
+         "the matching secret. oto stores the secret (encrypted vault) and calls "
+         "the API directly, for reads (GET) as well as writes (POST).",
+    # `when=` = the modes that make the field RELEVANT; `required` then applies
+    # WITHIN those modes. The three fields without `when` apply whatever the mode.
     credential_fields=(
-        CredentialField("base_url", "URL de base", secret=False,
-                        help="racine de l'API (ex. https://api.acme.com). `http://` "
-                             "est accepté. Une adresse INTERNE (boucle locale, "
-                             "réseau privé) est refusée tant qu'elle n'a pas été "
-                             "déclarée comme exception nommée par l'opérateur de "
-                             "la plateforme — le refus dit comment"),
-        CredentialField("auth_mode", "Mode d'auth", secret=False,
+        CredentialField("base_url", "Base URL", secret=False,
+                        help="root of the API (e.g. https://api.acme.com). `http://` "
+                             "is accepted. An INTERNAL address (loopback, "
+                             "private network) is refused until it has been "
+                             "declared as a named exception by the platform "
+                             "operator — the refusal says how"),
+        CredentialField("auth_mode", "Auth mode", secret=False,
                         choices=AUTH_MODES,
-                        help="ce que l'API attend pour t'authentifier — il décide des "
-                             "champs à remplir ensuite"),
-        CredentialField("label", "Nom affiché", secret=False,
-                        required=False, help="ex. « API Acme » — visible de ta seule org"),
-        CredentialField("doc_path", "Route de doc", secret=False,
+                        help="what the API expects to authenticate you — it decides the "
+                             "fields to fill in next"),
+        CredentialField("label", "Display name", secret=False,
+                        required=False, help="e.g. \"Acme API\" — visible to your org only"),
+        CredentialField("doc_path", "Doc route", secret=False,
                         required=False,
-                        help="chemin relatif à base_url qui rend la documentation "
-                             "de l'API (ex. /openapi.json) — sert le tool `http_doc`, "
-                             "quand renseigné. Même auth que le reste, pas de route "
-                             "publique à part"),
-        CredentialField("token", "Token / clé API", secret=True,
+                        help="path relative to base_url that returns the API's "
+                             "documentation (e.g. /openapi.json) — serves the `http_doc` tool, "
+                             "when set. Same auth as the rest, no separate "
+                             "public route"),
+        CredentialField("token", "Token / API key", secret=True,
                         when=("bearer", "header", "query"),
-                        help="valeur du bearer, ou de la clé (modes header/query)"),
-        CredentialField("header_name", "Nom du header", secret=False,
-                        when=("header",), help="ex. x-api-key"),
-        CredentialField("query_param", "Nom du param", secret=False,
-                        when=("query",), help="ex. api_key"),
-        CredentialField("username", "Utilisateur", secret=False,
-                        when=("basic",), help="identifiant du couple basic"),
-        CredentialField("password", "Mot de passe", secret=True, when=("basic",),
-                        whitespace_significant=True, help="mot de passe du couple basic"),
-        CredentialField("token_url", "URL du token", secret=False,
-                        when=("oauth2",), help="endpoint client-credentials"),
+                        help="value of the bearer, or of the key (header/query modes)"),
+        CredentialField("header_name", "Header name", secret=False,
+                        when=("header",), help="e.g. x-api-key"),
+        CredentialField("query_param", "Param name", secret=False,
+                        when=("query",), help="e.g. api_key"),
+        CredentialField("username", "Username", secret=False,
+                        when=("basic",), help="identifier of the basic pair"),
+        CredentialField("password", "Password", secret=True, when=("basic",),
+                        whitespace_significant=True, help="password of the basic pair"),
+        CredentialField("token_url", "Token URL", secret=False,
+                        when=("oauth2",), help="client-credentials endpoint"),
         CredentialField("client_id", "Client ID", secret=False,
-                        when=("oauth2",), help="identifiant de l'application cliente"),
+                        when=("oauth2",), help="identifier of the client application"),
         CredentialField("client_secret", "Client secret", secret=True,
-                        when=("oauth2",), help="secret de l'application cliente"),
+                        when=("oauth2",), help="secret of the client application"),
         CredentialField("scope", "Scope", secret=False,
                         when=("oauth2",), required=False,
-                        help="scopes demandés au serveur de token"),
+                        help="scopes requested from the token server"),
     ),
 )
 
-# Éditeur : le connecteur est le NÔTRE, et il n'y a pas d'intermédiaire à nommer — oto
-# détient le secret et tape DIRECTEMENT l'API que l'org a configurée (pas de service
-# distant). Le host appelé est celui du `base_url` de chaque credential : il n'existe
-# pas au niveau du registre, et rien ne se fait passer pour rien. DÉCLARÉ, et pas dérivé
-# d'un défaut : depuis le 2026-09-02 il n'y en a plus (`Connector.publisher_name`).
+# Publisher: the connector is OURS, and there is no intermediary to name — oto
+# holds the secret and calls DIRECTLY the API the org configured (no remote
+# service). The host called is the `base_url` of each credential: it does not exist
+# at the registry level, and nothing passes itself off as something else. DECLARED, not derived
+# from a default: since 2026-09-02 there is none (`Connector.publisher_name`).
 PUBLISHER = "Otomata"
 SANS_LOGO_DE_MARQUE = True
 
 DESCRIPTION = (
-    "Connecter n'importe quelle API HTTP à oto en confiant son secret au coffre "
-    ": renseigne l'URL de base, choisis le mode d'authentification (bearer, "
-    "header, query, basic, OAuth2 ou aucun), et l'agent l'appelle en GET ou en "
-    "POST. Utile pour une API interne ou un service tiers sans connecteur dédié "
-    "— la clé reste chez oto, contrairement à un bridge où le tiers garde la "
-    "sienne."
+    "Connect any HTTP API to oto by entrusting its secret to the vault "
+    ": fill in the base URL, choose the authentication mode (bearer, "
+    "header, query, basic, OAuth2 or none), and the agent calls it via GET or "
+    "POST. Useful for an internal API or a third-party service without a dedicated connector "
+    "— the key stays with oto, unlike a bridge where the third party keeps "
+    "its own."
 )

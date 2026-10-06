@@ -75,7 +75,7 @@ def test_a_disconnected_account_stops_the_endpoint(links):
     Un message parti sous la mauvaise identité est irréversible."""
     links["declared"] = [ACC_LI]
     links["org_accounts"] = {"LINKEDIN": set()}
-    with pytest.raises(McpError, match="pas de repli|Pas de repli"):
+    with pytest.raises(McpError, match="No fallback"):
         U._project_operated_account(_ctx(), "LINKEDIN")
 
 
@@ -93,7 +93,7 @@ def test_two_accounts_on_the_same_channel_refuse_rather_than_guess(links):
     """Là c'est vraiment ambigu, et un endpoint publié n'a personne à qui demander."""
     links["declared"] = [ACC_LI, "acc_second_linkedin"]
     links["org_accounts"] = {"LINKEDIN": {ACC_LI, "acc_second_linkedin"}}
-    with pytest.raises(McpError, match="2 comptes"):
+    with pytest.raises(McpError, match="2 Linkedin accounts"):
         U._project_operated_account(_ctx(), "LINKEDIN")
 
 
@@ -111,7 +111,7 @@ def test_the_caller_cannot_choose_the_identity(links):
     links["declared"] = [ACC_LI]
     links["org_accounts"] = {"LINKEDIN": {ACC_LI}}
     links["pin"] = ACC_TIERS
-    with pytest.raises(McpError, match="pas recevable"):
+    with pytest.raises(McpError, match="not admissible"):
         U._project_operated_account(_ctx(), "LINKEDIN")
 
 

@@ -1,16 +1,16 @@
-## prerequisite — ta clé api brevo (v3)
+## prerequisite — your brevo api key (v3)
 
-brevo s'authentifie via une **clé api v3**. dans [ton compte brevo](https://app.brevo.com), va dans **paramètres → smtp & api → clés api**, génère une clé (elle porte tout le compte, pas de scope).
-- copie la clé (elle commence par `xkeysib-`)
-- colle-la dans oto sur ton compte (`/account`), connecteur **brevo**
-- byo uniquement : ta clé ou celle partagée de ton org, pas de clé plateforme
-- à ne pas confondre avec **brevo (automation)**, un connecteur distinct pour les scénarios d'automation (connexion par session navigateur)
+brevo authenticates with a **v3 api key**. in [your brevo account](https://app.brevo.com), go to **settings → smtp & api → api keys**, generate a key (it covers the whole account, no scope).
+- copy the key (it starts with `xkeysib-`)
+- paste it into oto on your account (`/account`), **brevo** connector
+- byo only: your key or your org's shared one, no platform key
+- not to be confused with **brevo (automation)**, a separate connector for automation scenarios (browser-session connection)
 
-## usage — emailing & crm depuis claude
+## usage — emailing & crm from claude
 
-gère ta base contacts, tes envois et ton crm brevo.
-- « ajoute jean à la liste newsletter » → `brevo_contact(op="upsert")` / `brevo_list(op="contacts")`
-- « envoie cet email à marie » → `brevo_send_email` (transactionnel unitaire)
-- « prépare une campagne pour la liste clients » → `brevo_campaign(op="create")` (brouillon ; l'envoi de masse se déclenche dans l'ui)
-- « combien d'ouvertures sur ma dernière campagne » → `brevo_campaign(op="list")` (statistics)
-- « crée un deal à 10k€ » → `brevo_crm_create` (entity `deals`)
+manage your brevo contact base, sends and crm.
+- "add jean to the newsletter list" → `brevo_contact(op="upsert")` / `brevo_list(op="contacts")`
+- "send this email to marie" → `brevo_send_email` (single transactional)
+- "prepare a campaign for the clients list" → `brevo_campaign(op="create")` (draft; the mass send is triggered in the ui)
+- "how many opens on my last campaign" → `brevo_campaign(op="list")` (statistics)
+- "create a 10k€ deal" → `brevo_crm_create` (entity `deals`)

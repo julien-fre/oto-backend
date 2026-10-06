@@ -1,15 +1,15 @@
-"""Nextmotion — le client, les gardes d'arguments, la traduction des erreurs amont et
-la sonde, partagés par tous les modules d'outils du connecteur.
+"""Nextmotion — the client, the argument guards, the translation of upstream errors and
+the probe, shared by all the connector's tool modules.
 
-Séparés des modules d'outils pour tenir sous 500 lignes. Trois règles vivent ici :
-- **aucun argument n'est retenu au silence** : « fourni » se lit `is not None`, jamais
-  la vérité — `dry_run=False` et `offset=0` sont des valeurs fournies ;
-- **une erreur amont se classe sur `status_code`**, jamais sur le texte du message ;
-- **une écriture est un aperçu tant qu'on ne dit pas le contraire** : `dry_run` vaut
-  True par défaut (`_serve_write`), l'aperçu valide `data` contre la liste blanche
-  d'entrée (`nextmotion_entrees`), relit l'objet visé et dit ce qui partirait, sans
-  appeler aucune méthode d'écriture. `Kind`, `Write` et ce qui les sert
-  (`_serve_kind`, `_serve`, `_serve_write`, `_check_body`) sont en fin de module.
+Split from the tool modules to stay under 500 lines. Three rules live here:
+- **no argument is silently dropped**: "provided" reads as `is not None`, never
+  truthiness — `dry_run=False` and `offset=0` are provided values;
+- **an upstream error is classified on `status_code`**, never on the message text;
+- **a write is a preview unless told otherwise**: `dry_run` is True
+  by default (`_serve_write`), the preview validates `data` against the input
+  allowlist (`nextmotion_entrees`), re-reads the targeted object and says what would go out, without
+  calling any write method. `Kind`, `Write` and what serves them
+  (`_serve_kind`, `_serve`, `_serve_write`, `_check_body`) are at the end of the module.
 """
 from __future__ import annotations
 
@@ -34,20 +34,20 @@ def _bad(msg: str) -> McpError:
 
 
 def _client() -> NextmotionClient:
-    """Le client pour la clé de CET appelant. L'import réel est dans le corps : les
-    tests remplacent la classe du package."""
+    """The client for THIS caller's key. The real import is inside the body: tests
+    replace the package's class."""
     from oto.tools.nextmotion import NextmotionClient
 
     key, _ = access.resolve_api_key(_NAME)
     if not isinstance(key, str) or not key.strip():
-        # Vide, le client irait chercher une clé dans l'environnement du serveur.
-        raise _bad("Nextmotion : aucune clé API posée pour ce connecteur.")
+        # If empty, the client would look for a key in the server's environment.
+        raise _bad("Nextmotion: no API key set for this connector.")
     return NextmotionClient(api_key=key.strip())
 
 
 def _run(fn: Callable[[], Any]) -> Any:
-    """Exécute un appel au client ; une erreur de validation ou amont devient une
-    consigne `INVALID_PARAMS`."""
+    """Runs a client call; a validation or upstream error becomes an
+    `INVALID_PARAMS` instruction."""
     from oto.tools.common.errors import UpstreamHTTPError
 
     try:
@@ -61,15 +61,15 @@ def _run(fn: Callable[[], Any]) -> Any:
 def _need(op: str, **required: Any) -> None:
     missing = [n for n, v in required.items() if v is None or v == ""]
     if missing:
-        raise _bad(f"op={op!r} exige {', '.join('`' + m + '`' for m in missing)}.")
+        raise _bad(f"op={op!r} requires {', '.join('`' + m + '`' for m in missing)}.")
 
 
 def _refuse_ignored(op: str, **provided: Any) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention.
-    `is not None`, jamais la vérité : `False` et `0` sont des valeurs fournies."""
+    """An argument provided that THIS op does not use is an error of intent.
+    `is not None`, never truthiness: `False` and `0` are provided values."""
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op={op!r} n'utilise pas `{name}`.")
+            raise _bad(f"op={op!r} does not use `{name}`.")
 
 
 def _paging(limit: Optional[int], offset: Optional[int]) -> dict:
@@ -85,33 +85,33 @@ def _error_codes(body: Any) -> set:
 def _upstream_message(e: Any) -> str:
     status = e.status_code
     if status == 401:
-        return "Nextmotion : clé API refusée (HTTP 401) — invalide, régénérée ou supprimée."
+        return "Nextmotion: API key rejected (HTTP 401) — invalid, regenerated or deleted."
     if status == 403:
         if "non_employee_access_denied" in _error_codes(e.body):
-            return ("Nextmotion : accès refusé (HTTP 403) — l'utilisateur de la clé "
-                    "n'est pas employé de cette clinique.")
-        return "Nextmotion : accès refusé (HTTP 403)."
+            return ("Nextmotion: access denied (HTTP 403) — the key's user "
+                    "is not an employee of this clinic.")
+        return "Nextmotion: access denied (HTTP 403)."
     if status == 404:
-        return "Nextmotion : ressource introuvable (HTTP 404)."
+        return "Nextmotion: resource not found (HTTP 404)."
     if status == 429:
-        return "Nextmotion : trop de requêtes (HTTP 429) — réessaie dans un instant."
+        return "Nextmotion: too many requests (HTTP 429) — retry in a moment."
     if status >= 500:
-        return f"Nextmotion est momentanément indisponible (HTTP {status})."
-    return f"Nextmotion a refusé la requête (HTTP {status}) : {e.body}"
+        return f"Nextmotion is temporarily unavailable (HTTP {status})."
+    return f"Nextmotion rejected the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : `GET /v4/users/me`, sans paramètre ni effet.
+    """"Test the connection" probe: `GET /v4/users/me`, no parameter and no effect.
 
-    Une clé vide est refusée AVANT le client : passée vide, `NextmotionClient`
-    résoudrait `NEXTMOTION_API_KEY` dans l'environnement du serveur et testerait
-    une autre clé que celle posée."""
+    An empty key is rejected BEFORE the client: passed empty, `NextmotionClient`
+    would resolve `NEXTMOTION_API_KEY` in the server's environment and test
+    a different key than the one set."""
     from oto.tools.common.errors import UpstreamHTTPError
     from oto.tools.nextmotion import NextmotionClient
 
     key = (fields or {}).get("key")
     if not isinstance(key, str) or not key.strip():
-        raise connector_verify.NonAutorise("Nextmotion : clé API vide.")
+        raise connector_verify.NonAutorise("Nextmotion: empty API key.")
     try:
         NextmotionClient(api_key=key.strip()).get_me()
     except UpstreamHTTPError as e:
@@ -120,36 +120,36 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
         raise
 
 
-_SAME = "__kind__"  # `Write.withheld` par défaut : celui du kind
+_SAME = "__kind__"  # `Write.withheld` default: the kind's
 _UUID = re.compile(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}")
 
 
 def _uuid(op: str, name: str, value: str) -> None:
-    """Un id de chemin est un UUID — vérifié AVANT l'aperçu, comme le client le ferait
-    à l'écriture : un aperçu ne promet jamais ce que l'écriture refuserait."""
+    """A path id is a UUID — checked BEFORE the preview, as the client would do
+    at write time: a preview never promises what the write would refuse."""
     if not _UUID.fullmatch(str(value)):
-        raise _bad(f"op={op!r} : `{name}` doit être un UUID — reçu {value!r}.")
+        raise _bad(f"op={op!r}: `{name}` must be a UUID — got {value!r}.")
 
 
 @dataclass(frozen=True)
 class Write:
-    """Une écriture servie sous un `op` : sa cible, son corps, son appel.
+    """A write served under an `op`: its target, its body, its call.
 
-    - `call(c, cible, corps)` — l'appel au client ; `cible` vaut le `clinic_id`, l'id de
-      l'objet ou `None` selon `target`, `corps` vaut `None` quand l'op n'envoie rien ;
-    - `target` — "clinic" (création sous une clinique), "item" (l'objet visé) ou "none" ;
-    - `accepted` — la liste blanche d'ENTRÉE (`nextmotion_entrees`) ; `None` = aucun
-      corps, et un `data` fourni est refusé ;
-    - `required` — les champs de premier niveau que la spec exige ;
-    - `many` — le corps est une LISTE d'objets, et la réponse une page ;
-    - `optional_body` — `data` omis envoie un corps vide ;
-    - `current(c, cible, corps)` — l'état montré par l'aperçu, déjà projeté (`None` = la
-      lecture unitaire du kind quand la cible est l'objet) ;
-    - `defaults` — des valeurs posées quand l'appelant ne les donne pas : les drapeaux de
-      notification que la spec met à `true` partent à `false`, jamais de notification
-      implicite ; `notify` nomme ces drapeaux, et l'aperçu dit lesquels préviendront ;
-    - `key` / `shape` / `withheld` — la projection de la réponse quand ce n'est pas celle
-      du kind (une conversion rend un patient, une répartition une page…)."""
+    - `call(c, cible, corps)` — the client call; `cible` is the `clinic_id`, the object's id
+      or `None` depending on `target`, `corps` is `None` when the op sends nothing;
+    - `target` — "clinic" (creation under a clinic), "item" (the targeted object) or "none";
+    - `accepted` — the INPUT allowlist (`nextmotion_entrees`); `None` = no
+      body, and a provided `data` is rejected;
+    - `required` — the top-level fields the spec requires;
+    - `many` — the body is a LIST of objects, and the response a page;
+    - `optional_body` — an omitted `data` sends an empty body;
+    - `current(c, cible, corps)` — the state shown by the preview, already projected (`None` = the
+      kind's single read when the target is the object);
+    - `defaults` — values set when the caller does not give them: the notification
+      flags the spec sets to `true` go out as `false`, never an implicit
+      notification; `notify` names these flags, and the preview says which would notify;
+    - `key` / `shape` / `withheld` — the response projection when it is not the kind's
+      (a conversion returns a patient, a distribution a page…)."""
     call: Callable[..., Any]
     target: str = "item"
     accepted: Optional[tuple] = None
@@ -166,10 +166,10 @@ class Write:
 
 @dataclass(frozen=True)
 class Kind:
-    """Une ressource servie sous un `kind` d'outil : sa liste blanche, ses appels, ses
-    filtres propres, ses écritures. `lister(c, clinic_id, **filtres, limit, offset)` et
-    `lire(c, id)` sont `None` quand l'API n'a pas l'endpoint (l'op est alors refusée,
-    nommément) ; `writes` associe un op d'écriture à son `Write`."""
+    """A resource served under a tool `kind`: its allowlist, its calls, its own
+    filters, its writes. `lister(c, clinic_id, **filtres, limit, offset)` and
+    `lire(c, id)` are `None` when the API has no such endpoint (the op is then rejected,
+    by name); `writes` maps a write op to its `Write`."""
     plural: str
     shape: Callable[[Any], Any]
     lister: Optional[Callable[..., Any]] = None
@@ -184,23 +184,23 @@ def _serve_kind(kinds: dict, kind: str, op: str, *, client: Callable[[], Any],
                 item_id: Optional[str], filters: dict, limit: Optional[int],
                 offset: Optional[int], fields: Optional[list],
                 item_name: str = "item_id") -> dict:
-    """`op` list | get d'un outil à `kind` : un filtre d'un autre kind est refusé, un
-    argument que l'op n'utilise pas aussi (`is not None`), l'appel part ensuite.
+    """`op` list | get of a `kind` tool: a filter of another kind is rejected, and so is an
+    argument the op does not use (`is not None`); the call goes out afterwards.
 
-    `client` est la fabrique (`_client`), passée par le module d'outils : c'est chez lui
-    que la sonde de version-skew lit les méthodes appelées."""
+    `client` is the factory (`_client`), passed by the tool module: that is where
+    the version-skew probe reads the methods called."""
     from .nextmotion_socle import _one, _page
 
     if kind not in kinds:
-        raise _bad(f"kind inconnu : {kind!r}.")
+        raise _bad(f"unknown kind: {kind!r}.")
     k = kinds[kind]
     for name, value in filters.items():
         if name not in k.filters and value is not None:
-            raise _bad(f"kind={kind!r} n'utilise pas `{name}`.")
+            raise _bad(f"kind={kind!r} does not use `{name}`.")
     own = {name: filters[name] for name in k.filters}
     if op == "list":
         if k.lister is None:
-            raise _bad(f"kind={kind!r} : l'API Nextmotion n'a pas de liste — op='get'.")
+            raise _bad(f"kind={kind!r}: the Nextmotion API has no list — op='get'.")
         _need(op, clinic_id=clinic_id)
         _refuse_ignored(op, **{item_name: item_id})
         c = client()
@@ -208,22 +208,22 @@ def _serve_kind(kinds: dict, kind: str, op: str, *, client: Callable[[], Any],
                      k.plural, k.shape, fields=fields, withheld=k.withheld)
     if op == "get":
         if k.lire is None:
-            raise _bad(f"kind={kind!r} : l'API Nextmotion n'a pas de lecture unitaire — "
+            raise _bad(f"kind={kind!r}: the Nextmotion API has no single read — "
                        "op='list'.")
         _need(op, **{item_name: item_id})
         _refuse_ignored(op, clinic_id=clinic_id, limit=limit, offset=offset, fields=fields,
                         **own)
         c = client()
         return _one(_run(lambda: k.lire(c, item_id)), kind, k.shape, withheld=k.withheld)
-    raise _bad("op doit être 'list' ou 'get'.")
+    raise _bad("op must be 'list' or 'get'.")
 
 
 def _crud(create: Optional[Callable[..., Any]], update: Optional[Callable[..., Any]],
           delete: Optional[Callable[..., Any]], accepted: tuple, required: tuple = (), *,
           accepted_update: Optional[tuple] = None,
           required_update: Optional[tuple] = None) -> dict:
-    """Les écritures usuelles d'une ressource de clinique : `create` sous la clinique,
-    `update` et `delete` sur l'objet. Un appel `None` = l'API n'a pas l'endpoint."""
+    """The usual writes of a clinic resource: `create` under the clinic,
+    `update` and `delete` on the object. A `None` call = the API has no such endpoint."""
     writes = {}
     if create is not None:
         writes["create"] = Write(create, "clinic", accepted, required)
@@ -240,10 +240,10 @@ def _serve(kinds: dict, kind: str, op: str, *, client: Callable[[], Any],
            clinic_id: Optional[str], item_id: Optional[str], filters: dict,
            limit: Optional[int], offset: Optional[int], fields: Optional[list],
            data: Any, dry_run: Optional[bool], item_name: str = "item_id") -> dict:
-    """Un outil à `kind` qui lit ET écrit : list | get par `_serve_kind`, tout autre op
-    par `_serve_write`. Un argument de l'autre famille est refusé (`is not None`)."""
+    """A `kind` tool that reads AND writes: list | get through `_serve_kind`, any other op
+    through `_serve_write`. An argument of the other family is rejected (`is not None`)."""
     if kind not in kinds:
-        raise _bad(f"kind inconnu : {kind!r}.")
+        raise _bad(f"unknown kind: {kind!r}.")
     if op in ("list", "get"):
         _refuse_ignored(op, data=data, dry_run=dry_run)
         return _serve_kind(kinds, kind, op, client=client, clinic_id=clinic_id,
@@ -259,17 +259,17 @@ def _serve_write(kinds: dict, kind: str, op: str, *, client: Callable[[], Any],
                  clinic_id: Optional[str], item_id: Optional[str], data: Any,
                  dry_run: Optional[bool], unused: dict,
                  item_name: str = "item_id") -> dict:
-    """Une écriture : cible et corps validés AVANT tout appel ; `dry_run` (True par
-    défaut) rend l'aperçu sans appeler aucune méthode d'écriture ; la réponse repasse
-    par la liste blanche de la ressource. `item_name` = le nom de l'argument d'id dans
-    l'outil (`quote_id`…), pour que les refus le nomment."""
+    """A write: target and body validated BEFORE any call; `dry_run` (True by
+    default) returns the preview without calling any write method; the response goes back
+    through the resource's allowlist. `item_name` = the name of the id argument in
+    the tool (`quote_id`…), so that rejections name it."""
     from .nextmotion_socle import _one, _page
 
     k = kinds[kind]
     w = (k.writes or {}).get(op)
     if w is None:
         ops = ", ".join(["list", "get", *(k.writes or {})])
-        raise _bad(f"kind={kind!r} : op={op!r} inconnue — ops : {ops}.")
+        raise _bad(f"kind={kind!r}: unknown op={op!r} — ops: {ops}.")
     _refuse_ignored(op, **unused)
     if w.target == "clinic":
         _need(op, clinic_id=clinic_id)
@@ -302,7 +302,7 @@ def _serve_write(kinds: dict, kind: str, op: str, *, client: Callable[[], Any],
             preview["data"] = _mask(body)
         if w.notify:
             preview["notifie_le_patient"] = [f for f in w.notify if (body or {}).get(f)]
-        preview["note"] = f"Rien n'est écrit. Repasse avec dry_run=False pour {op}."
+        preview["note"] = f"Nothing is written. Call again with dry_run=False to {op}."
         return preview
     env = _run(lambda: w.call(c, target, body))
     key = w.key or (k.plural if w.many else kind)
@@ -318,24 +318,24 @@ def _serve_write(kinds: dict, kind: str, op: str, *, client: Callable[[], Any],
 
 
 def _check_body(kind: str, op: str, w: Write, data: Any) -> Any:
-    """`data` contre la liste blanche d'entrée de l'op : un champ que la liste ne nomme
-    pas est REFUSÉ, nommément, à toute profondeur — jamais ignoré."""
+    """`data` against the op's input allowlist: a field the list does not name
+    is REJECTED, by name, at any depth — never ignored."""
     if w.accepted is None:
         _refuse_ignored(op, data=data)
         return None
     if data is None:
         if w.optional_body:
             return None
-        raise _bad(f"op={op!r} exige `data` (kind={kind!r}).")
+        raise _bad(f"op={op!r} requires `data` (kind={kind!r}).")
     if w.many:
         if not isinstance(data, list) or not all(isinstance(r, dict) for r in data):
-            raise _bad(f"op={op!r} : `data` doit être une liste d'objets.")
+            raise _bad(f"op={op!r}: `data` must be a list of objects.")
         for i, row in enumerate(data):
             _check_fields(kind, op, row, w.accepted, f"data[{i}]")
             _check_required(op, row, w.required, f"data[{i}]")
         return data
     if not isinstance(data, dict):
-        raise _bad(f"op={op!r} : `data` doit être un objet.")
+        raise _bad(f"op={op!r}: `data` must be an object.")
     _check_fields(kind, op, data, w.accepted, "data")
     _check_required(op, data, w.required, "data")
     return data
@@ -346,8 +346,8 @@ def _check_fields(kind: str, op: str, obj: dict, accepted: tuple, path: str) -> 
     subs = {f[0]: f[1] for f in accepted if not isinstance(f, str)}
     unknown = sorted(set(obj) - names)
     if unknown:
-        raise _bad(f"`{path}` : champ(s) non accepté(s) par kind={kind!r} op={op!r} : "
-                   f"{', '.join('`' + u + '`' for u in unknown)}. Acceptés : "
+        raise _bad(f"`{path}`: field(s) not accepted by kind={kind!r} op={op!r}: "
+                   f"{', '.join('`' + u + '`' for u in unknown)}. Accepted: "
                    f"{', '.join(sorted(names))}.")
     for name, sub in subs.items():
         value = obj.get(name)
@@ -361,15 +361,15 @@ def _check_fields(kind: str, op: str, obj: dict, accepted: tuple, path: str) -> 
 def _check_required(op: str, obj: dict, required: tuple, path: str) -> None:
     missing = [r for r in required if obj.get(r) is None or obj.get(r) == ""]
     if missing:
-        raise _bad(f"op={op!r} : `{path}` exige {', '.join('`' + m + '`' for m in missing)}.")
+        raise _bad(f"op={op!r}: `{path}` requires {', '.join('`' + m + '`' for m in missing)}.")
 
 
 def _mask(body: Any) -> Any:
-    """L'aperçu redit le corps, sauf les champs qui portent un secret (`headers`)."""
+    """The preview restates the body, except fields that carry a secret (`headers`)."""
     from .nextmotion_entrees import _SECRETS
 
     if isinstance(body, list):
         return [_mask(r) for r in body]
     if not isinstance(body, dict):
         return body
-    return {k: ("<masqué>" if k in _SECRETS else v) for k, v in body.items()}
+    return {k: ("<masked>" if k in _SECRETS else v) for k, v in body.items()}

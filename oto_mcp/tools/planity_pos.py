@@ -1,25 +1,25 @@
-"""Planity — la CAISSE d'un salon : sessions, tickets, moyens de paiement.
+"""Planity — a salon's TILL: sessions, receipts, payment methods.
 
-Module frère de `planity.py` (référentiel, clientes, agenda) et de
-`planity_stats.py` (les agrégats) : même connecteur, même namespace `planity_*`,
-même credential, même session (`planity_session`). Ici, le détail ligne à ligne —
-ce qui a été vendu, à quel prix, payé comment, par qui.
+Sibling module of `planity.py` (reference data, customers, calendar) and of
+`planity_stats.py` (the aggregates): same connector, same `planity_*` namespace,
+same credential, same session (`planity_session`). Here, the line-by-line detail —
+what was sold, at what price, paid how, by whom.
 
-Une **période** est une session de caisse (ouverture → clôture). Elle porte ses
-tickets ; un salon en accumule des centaines, et toute lecture passe par une
-fenêtre de dates.
+A **period** is a till session (opening → closing). It carries its
+receipts; a salon accumulates hundreds of them, and every read goes through a
+date window.
 
-⚠️ **LISTE BLANCHE sur la cliente — exception assumée à « expose le brut ».** Un
-ticket Planity porte un instantané COMPLET de la cliente, figé à l'encaissement :
-nom, téléphone, email, adresse, commentaire. Rien de tout cela ne sort d'ici. Ce
-qui sort, c'est ce qu'on vient chercher dans un ticket — les lignes, les montants,
-la TVA, le moyen de paiement, la vendeuse, le statut, le lien vers le rendez-vous —
-et pour la cliente un **identifiant**, avec lequel `planity_get_customer` fait le
-reste si on le lui demande.
+⚠️ **ALLOW-LIST on the customer — a deliberate exception to "expose the raw data".** A
+Planity receipt carries a COMPLETE snapshot of the customer, frozen at payment:
+name, phone, email, address, comment. None of this comes out of here. What
+comes out is what one comes to a receipt for — the lines, the amounts,
+the VAT, the payment method, the seller, the status, the link to the appointment —
+and for the customer an **identifier**, with which `planity_get_customer` does the
+rest if asked.
 
-Ce n'est pas un oubli de projection à corriger au nom du parti pris : la cliente
-n'est pas dans la conversation, elle n'a rien demandé, et son adresse n'a aucune
-raison de traverser un transcript pour répondre « combien j'ai fait hier ».
+This is not a projection oversight to be fixed in the name of the bias: the customer
+is not in the conversation, she asked for nothing, and her address has no reason
+to cross a transcript to answer "how much did I make yesterday".
 """
 from __future__ import annotations
 
@@ -31,11 +31,11 @@ from .planity_session import _client, _eur_ou_rien, fenetre, iso, periode
 
 
 def _ticket_public(t: dict) -> dict:
-    """Un ticket réduit aux champs qui sortent — la LISTE BLANCHE.
+    """A receipt reduced to the fields that come out — the ALLOW-LIST.
 
-    Écrite une seule fois, au lieu d'une par outil : ce qui protège une cliente ne
-    doit pas dépendre de qui recopie quoi. Ce qui n'y figure pas est REFUSÉ, pas
-    oublié — `customer` (l'instantané complet) et `raw` en tête."""
+    Written once, instead of once per tool: what protects a customer must not
+    depend on who copies what. What is not listed is REFUSED, not
+    forgotten — `customer` (the complete snapshot) and `raw` first."""
     return {
         "id": t["id"],
         "number": t.get("number"),

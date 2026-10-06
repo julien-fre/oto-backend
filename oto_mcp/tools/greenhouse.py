@@ -1,37 +1,37 @@
-"""Greenhouse Harvest API — ATS (candidats, jobs, candidatures, notes).
+"""Greenhouse Harvest API — ATS (candidates, jobs, applications, notes).
 
-Wrappe `oto.tools.greenhouse.GreenhouseClient` (Harvest API key, Basic auth). Clé
-résolue par appel via `access.resolve_api_key("greenhouse")` — byo (clé user sur
-/account ou credential partagé de l'org). Pas de clé plateforme.
+Wraps `oto.tools.greenhouse.GreenhouseClient` (Harvest API key, Basic auth). Key
+resolved per call via `access.resolve_api_key("greenhouse")` — byo (user key on
+/account or the org's shared credential). No platform key.
 
-⚠️ Greenhouse exige un **`on_behalf_of`** (id d'un utilisateur Greenhouse) sur les
-écritures (création de candidat, note) — récupérer un id via `greenhouse_users`.
+⚠️ Greenhouse requires an **`on_behalf_of`** (id of a Greenhouse user) on
+writes (candidate creation, note) — get an id via `greenhouse_users`.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur greenhouse)** :
-un tool par OBJET métier, le verbe en paramètre `op` — `greenhouse_candidate`
+**Consolidated surface (ADR 0047 §Amendment, applied to the greenhouse connector)**:
+one tool per business OBJECT, the verb as an `op` parameter — `greenhouse_candidate`
 (list/get/create/add_note), `greenhouse_job` (list/get), `greenhouse_application`
-(list/get). Ce qui NE fusionne pas, et pourquoi :
+(list/get). What does NOT merge, and why:
 
-- **`greenhouse_users` reste SEUL** : c'est le seul objet « utilisateur » du
-  connecteur, il n'a qu'un verbe (lister) et il sert d'ANNUAIRE aux écritures des
-  autres (`on_behalf_of` / `user_id`). Un `op=` à valeur unique n'homogénéiserait
-  rien — même cas que `zoho_modules` / `gmail_list_accounts`.
-- **job et application ne fusionnent pas entre eux** malgré des paramètres presque
-  identiques (`per_page`/`page`/`job_id`/`status`) : ce sont deux objets métier
-  distincts (`/jobs` vs `/applications`, et le `status` n'y a même pas le même
-  domaine de valeurs — open/closed/draft vs active/rejected/hired). Les confondre
-  derrière un `kind=` rendrait le schéma moins lisible, pas plus.
+- **`greenhouse_users` stays ALONE**: it is the connector's only "user" object,
+  it has a single verb (list) and serves as the DIRECTORY for the other tools'
+  writes (`on_behalf_of` / `user_id`). A single-valued `op=` would homogenize
+  nothing — same case as `zoho_modules` / `gmail_list_accounts`.
+- **job and application do not merge with each other** despite almost identical
+  parameters (`per_page`/`page`/`job_id`/`status`): they are two distinct business
+  objects (`/jobs` vs `/applications`, and `status` doesn't even have the same
+  value domain there — open/closed/draft vs active/rejected/hired). Conflating them
+  behind a `kind=` would make the schema less readable, not more.
 
-⚠️ Ce module ÉCRIT dans l'ATS : `greenhouse_candidate(op="create")` crée une fiche
-candidat, `op="add_note"` publie une note dans son fil d'activité (lue par l'équipe
-de recrutement). Le défaut de CHAQUE tool est `op="list"` — une LECTURE : un appel
-sans `op` ne peut rien créer ni annoter.
+⚠️ This module WRITES to the ATS: `greenhouse_candidate(op="create")` creates a
+candidate record, `op="add_note"` posts a note in its activity feed (read by the
+recruiting team). The default of EVERY tool is `op="list"` — a READ: a call
+without `op` can neither create nor annotate anything.
 
-⚠️ Un id que seule `op="get"` consomme (`candidate_id`, `job_id` de
-`greenhouse_job`, `application_id`) est REFUSÉ sous `op="list"` plutôt qu'ignoré :
-avant la consolidation, `greenhouse_candidate(candidate_id=456)` lisait UNE fiche ;
-l'accepter en silence sous le nouveau défaut rendrait la liste entière en faisant
-croire à l'agent que sa demande a été honorée.
+⚠️ An id that only `op="get"` consumes (`candidate_id`, `job_id` of
+`greenhouse_job`, `application_id`) is REFUSED under `op="list"` rather than ignored:
+before the consolidation, `greenhouse_candidate(candidate_id=456)` read ONE record;
+silently accepting it under the new default would return the whole list while
+making the agent believe its request was honored.
 """
 from __future__ import annotations
 
@@ -46,16 +46,16 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /v1/users` (`list_users`, déjà dans le client), `per_page=1` — le plus
-    petit format disponible, Greenhouse n'exposant ni `/me` ni solde. Basic
-    auth (clé en username, mot de passe vide), lecture sans effet de bord.
-    Aucune mention de coût ni de limite de débit particulière pour cet appel.
+    `GET /v1/users` (`list_users`, already in the client), `per_page=1` — the
+    smallest format available, since Greenhouse exposes neither `/me` nor a
+    balance. Basic auth (key as username, empty password), read with no side
+    effect. No mention of any particular cost or rate limit for this call.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    Greenhouse n'a pas de permission par clé au-delà du périmètre Harvest
-    global de la clé elle-même.
+    **Authenticated ≠ usable** (oto#69 class): doesn't distinguish scope —
+    Greenhouse has no per-key permission beyond the key's own global Harvest
+    scope.
     """
     from oto.tools.greenhouse.client import GreenhouseClient
 
@@ -67,26 +67,26 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
+    """Mandatory argument for THIS op — actionable error, never a fallback.
 
-    Une valeur VIDE compte comme absente : `candidate={}` créerait une fiche vide
-    dans l'ATS et `body=""` publierait une note blanche dans le fil d'activité d'un
-    candidat — deux écritures réelles qui passeraient pour un succès.
+    An EMPTY value counts as absent: `candidate={}` would create an empty record
+    in the ATS and `body=""` would post a blank note in a candidate's activity
+    feed — two real writes that would pass for a success.
     """
     if value is None or (isinstance(value, (str, list, dict)) and not value):
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
 def _not_for(value, name: str, op: str, right_op: str) -> None:
-    """Un id que SEULE `op=<right_op>` consomme, passé sous une autre op → refus.
+    """An id that ONLY `op=<right_op>` consumes, passed under another op → refused.
 
-    Greenhouse ne sait pas filtrer une liste par l'id de l'objet : le laisser
-    passer rendrait la page entière sous couvert d'avoir répondu à la question.
+    Greenhouse can't filter a list by the object's id: letting it through
+    would return the whole page under the pretense of having answered the question.
     """
     if value is not None:
-        raise _bad(f"op='{op}' ne filtre pas par {name} — utilise op='{right_op}' "
-                   f"pour lire un objet par son id")
+        raise _bad(f"op='{op}' does not filter by {name} — use op='{right_op}' "
+                   f"to read an object by its id")
 
 
 def register(mcp: FastMCP) -> None:
@@ -170,7 +170,7 @@ def register(mcp: FastMCP) -> None:
                 _need(user_id, "user_id", op),
                 visibility=visibility)
 
-        raise _bad("op doit être 'list', 'get', 'create' ou 'add_note'")
+        raise _bad("op must be 'list', 'get', 'create' or 'add_note'")
 
     @mcp.tool()
     def greenhouse_job(
@@ -203,7 +203,7 @@ def register(mcp: FastMCP) -> None:
         if op == "get":
             return client.get_job(_need(job_id, "job_id", op))
 
-        raise _bad("op doit être 'list' ou 'get'")
+        raise _bad("op must be 'list' or 'get'")
 
     @mcp.tool()
     def greenhouse_application(
@@ -240,7 +240,7 @@ def register(mcp: FastMCP) -> None:
             return client.get_application(
                 _need(application_id, "application_id", op))
 
-        raise _bad("op doit être 'list' ou 'get'")
+        raise _bad("op must be 'list' or 'get'")
 
     @mcp.tool()
     def greenhouse_users(per_page: int = 50, page: int = 1) -> list:

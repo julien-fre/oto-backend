@@ -1,15 +1,15 @@
-"""Le WALKER unique de la cascade de credentials (ADR 0024/0044).
+"""The single WALKER of the credentials cascade (ADR 0024/0044).
 
-La cascade `perso > cross-org > équipe active > org > tenant > plateforme` était écrite à
-la main à six endroits ; elle vit ici, et nulle part ailleurs. Le walker est
-paramétré par une SONDE (`CascadeProbe`) : présence (aucun déchiffrement),
-fetch (ne déchiffre que le gagnant), ou préchargée (les mêmes réponses en
-quelques lectures). Ajouter un barreau, c'est éditer `walk_cascade` — jamais un
-appelant.
+The cascade `personal > cross-org > active team > org > tenant > platform` was written by
+hand in six places; it lives here, and nowhere else. The walker is
+parameterized by a PROBE (`CascadeProbe`): presence (no decryption),
+fetch (decrypts only the winner), or preloaded (the same answers in a
+few reads). Adding a rung means editing `walk_cascade` — never a
+caller.
 
-Le palier plateforme (appartenance à un scope de partage, quota, chaîne de
-grants) vit dans `platform_grant.py`, réexporté ici. Ce module-ci ne connaît ni
-les quotas, ni le RBAC, ni la résolution réelle : ce sont eux qui l'appellent.
+The platform tier (membership of a sharing scope, quota, grants chain) lives in
+`platform_grant.py`, re-exported here. This module knows neither quotas, nor
+RBAC, nor the actual resolution: they are the ones that call it.
 """
 from __future__ import annotations
 
@@ -24,59 +24,59 @@ from .. import (providers, credentials_store, db, grants_chain, group_store, org
 from ..connectors import cardinality
 from . import heritage, platform_grant, secret_repr
 
-# DÉRIVÉ du registre source unique (package `providers/`) : providers dont le
-# secret peut être POSSÉDÉ par une org et partagé (auth_mode byo_org) — exclut
-# slack (xoxp = identité perso) et les sessions per-user (linkedin/google/
-# whatsapp/crunchbase). Gate les barreaux groupe/org du walker.
+# DERIVED from the single-source registry (`providers/` package): providers whose
+# secret can be OWNED by an org and shared (auth_mode byo_org) — excludes
+# slack (xoxp = personal identity) and per-user sessions (linkedin/google/
+# whatsapp/crunchbase). Gates the walker's group/org rungs.
 ORG_SHAREABLE_PROVIDERS = providers.ORG_SHAREABLE_PROVIDERS
 
-# ⚠️ VIDE depuis le 09/09/2026 (ADR 0069) ; barreau gardé, des lignes dorment au scope.
+# ⚠️ EMPTY since 2026-09-09 (ADR 0069); rung kept, rows are still dormant at scope.
 LEGACY_USER_SCOPE_PROVIDERS: tuple[str, ...] = ()
 
 
 def _is_multi_account(provider: str, org: "int | None" = None) -> bool:
-    """Le connecteur porte-t-il plusieurs comptes dans le coffre (segment `account`) ?
-    Gate le chemin de sélection de compte ; un connecteur mono-compte garde la
-    résolution historique (account='').
+    """Does the connector carry several accounts in the vault (`account` segment)?
+    Gates the account-selection path; a single-account connector keeps the
+    historical resolution (account='').
 
-    ⚠️ **Passe par `connectors.cardinality`, jamais par la propriété du registre**, et
-    ce n'est pas une indirection de style : une org peut avoir SURCHARGÉ la cardinalité
-    en base (L6 pièce 2 c2), et la surcharge doit être lue ici comme elle l'est par la
-    garde d'écriture. Lue d'un seul côté, elle accepterait un deuxième compte que
-    personne n'irait jamais lire — le défaut exact d'oto-backend#409. Zéro requête :
-    les surcharges vivent en mémoire, chargées au boot et rechargées à la main.
+    ⚠️ **Goes through `connectors.cardinality`, never through the registry property**, and
+    this is not a style indirection: an org may have OVERRIDDEN the cardinality
+    in the DB (L6 piece 2 c2), and the override must be read here as it is by the
+    write guard. Read on one side only, it would accept a second account that
+    nobody would ever read — the exact defect of oto-backend#409. Zero queries:
+    overrides live in memory, loaded at boot and reloaded by hand.
 
-    `org` = l'org de CONTEXTE du requérant. None ⟹ seule la surcharge plateforme joue."""
+    `org` = the requester's CONTEXT org. None ⟹ only the platform override applies."""
     return cardinality.is_multi_account(provider, org)
 
 
 def account_noun(provider: str) -> str:
-    """Le MOT du fournisseur pour un compte de ce connecteur — « workspace » chez Slack,
-    « organisation » chez Zoho, « site » pour le navigateur connecté, « compte » par
-    défaut (`Connector.account_noun`). Sert les messages que l'AGENT lit au moment où il
-    est bloqué : « plusieurs comptes slack » l'oblige à traduire, « plusieurs
-    workspaces » lui dit ce qu'il cherche. Jamais vide."""
+    """The provider's WORD for an account of this connector — "workspace" for Slack,
+    "organisation" for Zoho, "site" for the signed-in browser, "account" by
+    default (`Connector.account_noun`). Used in the messages the AGENT reads when it
+    is blocked: "multiple slack accounts" forces it to translate, "multiple
+    workspaces" tells it what to look for. Never empty."""
     con = providers.connector_for_provider(provider)
-    return (getattr(con, "account_noun", "") or "compte") if con else "compte"
+    return (getattr(con, "account_noun", "") or "account") if con else "account"
 
 
 class CompteAmbigu(McpError):
-    """Plusieurs comptes au même palier, sans défaut unique : l'appelant doit en nommer
-    un. Typée pour qu'une face REST la rende en refus nommé (`account_required`) au lieu
-    d'un 500 nu — reconnue par sa classe, jamais par son texte."""
+    """Several accounts at the same tier, without a single default: the caller must name
+    one. Typed so that a REST face renders it as a named refusal (`account_required`) instead
+    of a bare 500 — recognized by its class, never by its text."""
 
 
 def _shared_auto_account(entity_type: str, entity_id: str, provider: str,
                          where: str, scope: Optional[str] = None) -> str:
-    """Compte AUTOMATIQUE d'un palier multi-compte, quand l'appelant n'en a nommé
-    aucun : compte unique auto > défaut posé (`oto_identity(op='set')`,
-    meta.is_default) > '' si aucun compte > McpError d'ambiguïté. Module-level parce
-    que partagé entre la résolution réelle (`_pick_account`) et la résolution ANONYME
-    (`_resolve_credential_anon`) — l'endpoint `<slug>.mcp.oto.cx` doit sélectionner
-    le compte d'org comme le barreau org du chemin réel, jamais lire `''` en dur
-    (`ensure_named_coexistence` migre la ligne `''` vers « principal » au premier
-    compte nommé — review #399 F3). `scope` non-None ⇒ les refs `oto_identity` du
-    message d'ambiguïté portent le scope du palier (org/group)."""
+    """AUTOMATIC account of a multi-account tier, when the caller named none:
+    single account auto > set default (`oto_identity(op='set')`,
+    meta.is_default) > '' if no account > ambiguity McpError. Module-level because
+    shared between the actual resolution (`_pick_account`) and the ANONYMOUS resolution
+    (`_resolve_credential_anon`) — the `<slug>.mcp.oto.cx` endpoint must select
+    the org account like the org rung of the real path, never read `''` hard-coded
+    (`ensure_named_coexistence` migrates the `''` row to "principal" at the first
+    named account — review #399 F3). `scope` non-None ⇒ the `oto_identity` refs in the
+    ambiguity message carry the tier's scope (org/group)."""
     accts = credentials_store.list_accounts(entity_type, entity_id, provider)
     if len(accts) == 1:
         return accts[0]["account"]
@@ -87,55 +87,55 @@ def _shared_auto_account(entity_type: str, entity_id: str, provider: str,
         return defaults[0]["account"]
     sc = f", scope='{scope}'" if scope else ""
     noun = account_noun(provider)
-    # Tournure sans accord : le nom du compte vient du registre et peut être féminin
-    # (« société », « organisation ») — « configurés… marqué » faisait une faute sur deux.
+    # Agreement-free phrasing: the account noun comes from the registry and may be
+    # grammatically feminine in French — a fixed past-participle agreement was wrong every other time.
     noms = ", ".join(f"`{a['account']}`" for a in accts)
     raise CompteAmbigu(ErrorData(
         code=INVALID_PARAMS,
         message=(
-            f"Plusieurs {noun}s `{provider}` {where} ({noms}), sans défaut unique — "
-            f"passe `_account=\"<nom>\"` sur cet appel, ou fixe un défaut avec "
-            f"oto_identity(op='set'{sc}, connector='{provider}', identity_id='<nom>')."
+            f"Multiple {noun}s `{provider}` {where} ({noms}), with no single default — "
+            f"pass `_account=\"<name>\"` on this call, or set a default with "
+            f"oto_identity(op='set'{sc}, connector='{provider}', identity_id='<name>')."
         )))
 
 
 def personal_instance_org(sub: str, provider: str,
                           exclude_org: Optional[int] = None) -> Optional[int]:
-    """Org portant l'instance PERSONNELLE cross-org de `sub` pour un connecteur
-    par-personne (issue #172, piste A ; `Connector.personal_cross_org`), ou None.
+    """Org carrying the cross-org PERSONAL instance of `sub` for a per-person
+    connector (issue #172, track A; `Connector.personal_cross_org`), or None.
 
-    Déterministe (jamais de choix muet entre deux identités du MÊME humain) : la clé
-    la plus RÉCEMMENT posée. L'org perso n'a plus de préférence (29/09/2026 : une org
-    perso est une org comme une autre). `exclude_org` écarte l'org de contexte (déjà testée en
-    amont par le palier membre local). Sûr par construction : même `sub` ⟹ zéro
-    usurpation — on ne fait que retrouver SA propre clé posée ailleurs.
+    Deterministic (never a silent choice between two identities of the SAME human): the
+    MOST RECENTLY set key. The personal org no longer has a preference (2026-09-29: a
+    personal org is an org like any other). `exclude_org` rules out the context org (already tested
+    upstream by the local member tier). Safe by construction: same `sub` ⟹ zero
+    impersonation — we only find THEIR own key set elsewhere.
 
-    `provider` est normalisé vers le porteur du credential (délégation) : la clé
-    perso d'un canal unipile est celle du COMPTE, et l'org à retenir est celle où
-    cette clé vit. Le compte hébergé sera cherché dans la MÊME org
-    (`connectors/identities._own_unipile_account_id`) — clé et compte appariés,
-    jamais la clé d'ici avec le compte de là-bas."""
+    `provider` is normalized to the credential carrier (delegation): the personal
+    key of a unipile channel is the ACCOUNT's, and the org to retain is the one where
+    that key lives. The hosted account will be looked up in the SAME org
+    (`connectors/identities._own_unipile_account_id`) — key and account paired,
+    never the key from here with the account from there."""
     provider = providers.credential_provider(provider)
     orgs = [o for o in credentials_store.list_member_orgs_for(sub, provider)
             if o != exclude_org]
-    return orgs[0] if orgs else None  # set_at DESC → la plus récente
+    return orgs[0] if orgs else None  # set_at DESC → the most recent
 
 
-# ── Walker de cascade unique ───────────────────────────────────────────────────
-# La cascade `perso > cross-org > équipe active > org > tenant > plateforme` était écrite à
-# la main à 6 endroits (résolution, mode, status ×2, anonyme, sonde de publication)
-# — chaque barreau nouveau devait être reporté N fois, et chaque oubli faisait
-# MENTIR une surface (vécu 2026-07-16 : boucle fields de status_for restée
-# user-only ; 2026-07-07 : règle option recopiée 3×, divergée). Ici : UNE marche,
-# paramétrée par la SONDE — `presence` (pas de déchiffrement, batchable /api/me)
-# ou `fetch` (ne déchiffre que le gagnant). Toute évolution de cascade se fait ici
-# et nulle part ailleurs.
+# ── Single cascade walker ──────────────────────────────────────────────────────
+# The cascade `personal > cross-org > active team > org > tenant > platform` was written by
+# hand in 6 places (resolution, mode, status ×2, anonymous, publication probe)
+# — every new rung had to be carried over N times, and every omission made a
+# surface LIE (seen 2026-07-16: status_for's fields loop stayed
+# user-only; 2026-07-07: option rule copied 3×, diverged). Here: ONE walk,
+# parameterized by the PROBE — `presence` (no decryption, batchable /api/me)
+# or `fetch` (decrypts only the winner). Every cascade change is made here
+# and nowhere else.
 
 @dataclass(frozen=True)
 class CascadeRung:
-    """Un barreau GAGNANT de la marche : niveau + entité + charge de la sonde
-    (`payload` = secret/grant en fetch, True/meta en présence). `via` distingue la
-    clé membre LOCALE (éditable ici) de l'instance personnelle cross-org (#172)."""
+    """A WINNING rung of the walk: level + entity + probe payload
+    (`payload` = secret/grant in fetch, True/meta in presence). `via` distinguishes the
+    LOCAL member key (editable here) from the cross-org personal instance (#172)."""
     mode: str                       # user | group | org | tenant | platform
     entity_type: Optional[str]      # credentials_store.MEMBER | 'group' | 'org' | TENANT | PLATFORM
     entity_id: Optional[str]
@@ -144,20 +144,20 @@ class CascadeRung:
     via: str = "local"              # local | cross_org | grant | heritage
 
     def __repr__(self) -> str:
-        """Expurgé SANS CONDITION (#564) : `payload` porte le secret déchiffré en
-        mode fetch, et rien à l'exécution ne distingue ce mode de la sonde de
-        PRÉSENCE, dont le payload est anodin. Cf. `secret_repr`."""
+        """Redacted UNCONDITIONALLY (#564): `payload` carries the decrypted secret in
+        fetch mode, and nothing at runtime tells this mode apart from the
+        PRESENCE probe, whose payload is harmless. See `secret_repr`."""
         return secret_repr.expurge(self, "payload")
 
 
 @dataclass(frozen=True)
 class CascadeProbe:
-    """Sonde d'un barreau — même interface pour présence et fetch. `member` renvoie
-    `(payload, account)` ou None (le fetch de résolution y encapsule sa sélection
-    multi-compte, McpErrors comprises) ; `member_cross` est toujours mono-compte ;
-    `tenant` reçoit le SLUG (L-clés PR 1) et répond comme `org` ; `platform` renvoie
-    le grant (meta ou résolu) ou None. Champ REQUIS pour chacun : une sonde qui
-    oublierait un barreau le sauterait en silence — le défaut de #409."""
+    """Probe of a rung — same interface for presence and fetch. `member` returns
+    `(payload, account)` or None (the resolution fetch encapsulates its multi-account
+    selection there, McpErrors included); `member_cross` is always single-account;
+    `tenant` receives the SLUG (L-keys PR 1) and answers like `org`; `platform` returns
+    the grant (meta or resolved) or None. REQUIRED field for each: a probe that
+    forgot a rung would skip it silently — the defect of #409."""
     member: Callable[[str, int, str], Optional[tuple]]
     member_cross: Callable[[str, int, str], Optional[object]]
     legacy_user: Callable[[str, str], Optional[object]]
@@ -167,14 +167,14 @@ class CascadeProbe:
     platform: Callable[[Optional[str], str, Optional[int]], Optional[dict]]
 
 
-# Une instance membre SUSPENDUE (lot 2 / ADR 0044 §KeyStack) est repliée dans les
-# sondes réelles : la clé existe au coffre mais la cascade la traite comme absente
-# → la résolution ET le statut sautent le barreau membre (le niveau du dessous prend
-# le relais). Elle reste listée par `oto_instance op=list` (KeyStack), réactivable.
-# ⚠️ La sonde membre du chemin de RÉSOLUTION n'est PAS celle-ci : c'est `_member_fetch`
-# (dans `_resolve_credential_impl`), qui porte la sélection multi-compte — elle doit
-# rendre le MÊME verdict de suspension (vécu #401 : elle ne le lisait pas, une clé
-# suspendue gagnait quand même pendant que le KeyStack annonçait le relais).
+# A SUSPENDED member instance (batch 2 / ADR 0044 §KeyStack) is folded into the
+# real probes: the key exists in the vault but the cascade treats it as absent
+# → resolution AND status skip the member rung (the level below takes
+# over). It stays listed by `oto_instance op=list` (KeyStack), reactivatable.
+# ⚠️ The member probe of the RESOLUTION path is NOT this one: it is `_member_fetch`
+# (in `_resolve_credential_impl`), which carries the multi-account selection — it must
+# return the SAME suspension verdict (seen #401: it did not read it, a suspended
+# key still won while KeyStack announced the takeover).
 PRESENCE_PROBE = CascadeProbe(
     member=lambda s, o, p: ((True, "") if db.has_member_api_key(s, o, p)
                             and not db.member_instance_suspended(s, o, p) else None),
@@ -187,11 +187,11 @@ PRESENCE_PROBE = CascadeProbe(
     platform=lambda s, p, o: platform_grant._platform_grant_meta(s, p, o),
 )
 
-# ⚠️ Les sondes org/group de FETCH_PROBE lisent le compte MONO (`account=''`) : les
-# chemins qui doivent voir les comptes NOMMÉS d'un palier partagé (résolution réelle
-# `_org_fetch`/`_group_fetch`, résolution anonyme `_anon_org_fetch`) composent leur
-# propre CascadeProbe par-dessus — ne pas brancher FETCH_PROBE tel quel sur un
-# nouveau chemin de résolution d'un connecteur multi-compte (review #399 F3).
+# ⚠️ The org/group probes of FETCH_PROBE read the MONO account (`account=''`): the
+# paths that must see the NAMED accounts of a shared tier (actual resolution
+# `_org_fetch`/`_group_fetch`, anonymous resolution `_anon_org_fetch`) compose their
+# own CascadeProbe on top — do not plug FETCH_PROBE as-is into a
+# new resolution path of a multi-account connector (review #399 F3).
 FETCH_PROBE = CascadeProbe(
     member=lambda s, o, p: ((lambda k: (k, "") if k
                              and not db.member_instance_suspended(s, o, p) else None)(
@@ -207,27 +207,27 @@ FETCH_PROBE = CascadeProbe(
 
 
 def group_secret_map(groups: Optional[list] = None) -> dict:
-    """`{group_id: {connecteurs dont l'équipe détient un secret}}` — UNE lecture par
-    équipe, jamais une par (équipe × connecteur).
+    """`{group_id: {connectors for which the team holds a secret}}` — ONE read per
+    team, never one per (team × connector).
 
-    Deux appelants posent CETTE question sur le chemin `/api/me` : le barreau `group`
-    de la sonde préchargée, et le hint `team_key_group` de `status_for`. Le second
-    interrogeait la base par connecteur (`has_group_secret`), et comme il ne se
-    déclenche que sur les connecteurs `forbidden` — la majorité d'un compte réel — il
-    coûtait à lui seul 67 allers-retours là où l'inventaire était DÉJÀ chargé à côté
-    de lui. D'où l'extraction en fonction nommée : les deux la construisent chacun,
-    par la même lecture.
+    Two callers ask THIS question on the `/api/me` path: the `group` rung
+    of the preloaded probe, and the `team_key_group` hint of `status_for`. The second
+    queried the DB per connector (`has_group_secret`), and since it only
+    fires on `forbidden` connectors — the majority of a real account — it
+    cost 67 round-trips on its own where the inventory was ALREADY loaded next
+    to it. Hence the extraction into a named function: both build it each,
+    through the same read.
 
-    Chacun la sienne, et NON une carte passée de l'un à l'autre : `preloaded_presence_probe`
-    est un seam de test (stubbé par lambda dans trois fichiers), et lui ajouter un
-    paramètre casse ces stubs pour économiser une lecture PAR ÉQUIPE — une à trois,
-    contre les soixante-sept que ce lot retire. Le partage coûterait plus qu'il ne rend.
+    Each its own, and NOT a map passed from one to the other: `preloaded_presence_probe`
+    is a test seam (stubbed by lambda in three files), and adding a
+    parameter to it breaks those stubs to save one read PER TEAM — one to three,
+    against the sixty-seven this batch removes. Sharing would cost more than it returns.
 
-    ⚠️ Même définition de « détient » que la sonde préchargée, à dessein : la présence
-    d'une ligne dans `list_credentials` — celle de `has_credential` aussi depuis que la
-    base interdit une ligne sans chiffré (`secret_enc NOT NULL`, #521). Sur ce
-    point la carte n'invente rien — elle ALIGNE le hint sur le verdict que la cascade
-    rend déjà, au lieu de le laisser répondre par un chemin qui pourrait diverger.
+    ⚠️ Same definition of "holds" as the preloaded probe, on purpose: the presence
+    of a row in `list_credentials` — that of `has_credential` too since the
+    DB forbids a row without ciphertext (`secret_enc NOT NULL`, #521). On this
+    point the map invents nothing — it ALIGNS the hint with the verdict the cascade
+    already returns, instead of letting it answer through a path that could diverge.
     """
     from .. import credentials_store as cs
 
@@ -241,32 +241,32 @@ def group_secret_map(groups: Optional[list] = None) -> dict:
 
 def preloaded_presence_probe(sub: str, *, org: Optional[int],
                              groups: Optional[list] = None) -> CascadeProbe:
-    """`PRESENCE_PROBE`, mais préchargée : les mêmes réponses, en quelques lectures.
+    """`PRESENCE_PROBE`, but preloaded: the same answers, in a few reads.
 
-    **C'est une TROISIÈME SONDE, pas un second chemin.** Le walker n'est pas touché
-    d'une ligne : toute la cascade — gates byo_user, instance personnelle cross-org,
-    ORG_SHAREABLE, éligibilité plateforme — reste où elle est. On ne change que la
-    façon dont les cinq questions trouvent leur réponse : en mémoire, depuis un
-    inventaire lu une fois, au lieu d'un aller-retour par connecteur.
+    **This is a THIRD PROBE, not a second path.** The walker is not touched
+    by a single line: the whole cascade — byo_user gates, cross-org personal instance,
+    ORG_SHAREABLE, platform eligibility — stays where it is. Only the
+    way the five questions find their answer changes: in memory, from an
+    inventory read once, instead of one round-trip per connector.
 
-    ⚠️ **Le prix d'une sonde préchargée est de rester ÉQUIVALENTE.** Elle ne peut pas
-    dériver silencieusement : `tests/test_presence_batch.py` la confronte à
-    `PRESENCE_PROBE` sur l'ensemble des connecteurs du registre, même contexte, et
-    exige le MÊME verdict. Un barreau ajouté demain à la cascade casse ce différentiel
-    au lieu de produire deux vérités.
+    ⚠️ **The price of a preloaded probe is staying EQUIVALENT.** It cannot
+    drift silently: `tests/test_presence_batch.py` compares it with
+    `PRESENCE_PROBE` over all the registry's connectors, same context, and
+    demands the SAME verdict. A rung added to the cascade tomorrow breaks this differential
+    instead of producing two truths.
 
-    Mesuré (33 connecteurs installés, compte réel) : les cinq sondes coûtaient 425 ms
-    en marchant une fois par connecteur. Ce qu'elle ne couvre PAS, et volontairement :
-    - `personal_instance_org` est appelé par le WALKER, pas par la sonde (un appel,
-      12 ms) — le précharger supposerait de toucher au walker, ce qu'on refuse.
+    Measured (33 installed connectors, real account): the five probes cost 425 ms
+    walking once per connector. What it does NOT cover, and on purpose:
+    - `personal_instance_org` is called by the WALKER, not by the probe (one call,
+      12 ms) — preloading it would mean touching the walker, which we refuse.
 
-    ⚠️ **17/09 : le barreau plateforme n'est plus dans cette liste** — la note du
-    21/08 ci-dessus mesurait UN appel, pas le COMPTE sur un vrai compte : mesuré
-    depuis (oto cd, prod), `list_platform_instances` était lue 31 FOIS par
-    `status_for` (une par connecteur qui atteint ce barreau, doublée sur la chaîne
-    de grants — `grants_chain.platform_rung` relit la même table, 0053-L5). Le
-    calcul ne bouge pas (chaîne et legacy restent deux verdicts séparés) ; seule la
-    LECTURE est mutualisée, une fois pour tout `status_for` via
+    ⚠️ **09/17: the platform rung is no longer in this list** — the 08/21 note
+    above measured ONE call, not the COUNT on a real account: measured
+    since (oto cd, prod), `list_platform_instances` was read 31 TIMES per
+    `status_for` (once per connector reaching this rung, doubled on the grants
+    chain — `grants_chain.platform_rung` re-reads the same table, 0053-L5). The
+    computation does not move (chain and legacy remain two separate verdicts); only the
+    READ is shared, once for the whole `status_for` via
     `list_all_platform_instances()`."""
     from .. import credentials_store as cs
 
@@ -276,8 +276,8 @@ def preloaded_presence_probe(sub: str, *, org: Optional[int],
         for r in cs.list_credentials(cs.MEMBER, cs.member_id(org, sub)):
             membre.add(r["connector"])
             if (r.get("meta") or {}).get("suspended") in (True, "true"):
-                # La suspension ne vaut que pour le compte MONO (account '') — c'est
-                # ce que la sonde d'origine interroge (`account=""`).
+                # Suspension only applies to the MONO account (account '') — that is
+                # what the original probe queries (`account=""`).
                 if not r.get("account"):
                     suspendues.add(r["connector"])
 
@@ -287,28 +287,28 @@ def preloaded_presence_probe(sub: str, *, org: Optional[int],
     if org is not None:
         org_secrets = {r["connector"] for r in cs.list_credentials("org", str(org))}
 
-    # Barreau TENANT (L-clés PR 1) : une lecture, seulement pour un sub d'un tenant
-    # tiers — `rung_tenant` rend None pour un sub nu, et l'inventaire n'est pas lu.
+    # TENANT rung (L-keys PR 1): one read, only for a sub of a third-party
+    # tenant — `rung_tenant` returns None for a bare sub, and the inventory is not read.
     tenant_secrets: set = set()
     slug = tenant_vault.rung_tenant(sub)
     if slug is not None:
         tenant_secrets = {r["connector"] for r in cs.list_credentials(cs.TENANT, slug)}
 
-    # Barreau PLATEFORME (17/09, cf. note ci-dessus) : une lecture pour tous les
-    # providers, le calcul de `_platform_grant_meta` ne bouge pas.
+    # PLATFORM rung (09/17, see note above): one read for all
+    # providers, the `_platform_grant_meta` computation does not move.
     instances_par_provider = cs.list_all_platform_instances()
 
     return CascadeProbe(
-        # L'inventaire ne porte que l'org de CONTEXTE : une autre org (la clé d'un
-        # bénéficiaire de projet partagé, posée chez lui — #480) relit à la source.
+        # The inventory only covers the CONTEXT org: another org (the key of a
+        # shared-project beneficiary, set on their side — #480) re-reads at the source.
         member=lambda s, o, p: (PRESENCE_PROBE.member(s, o, p) if o != org
                                 else (True, "") if p in membre and p not in suspendues
                                 else None),
-        # Cross-org : l'inventaire ne porte QUE l'org active, donc on retombe sur la
-        # lecture d'origine. C'est un appel, pas trente-trois : le walker n'y arrive
-        # que pour les connecteurs `personal_cross_org` mono-compte.
+        # Cross-org: the inventory covers ONLY the active org, so we fall back to the
+        # original read. It is one call, not thirty-three: the walker only gets there
+        # for single-account `personal_cross_org` connectors.
         member_cross=PRESENCE_PROBE.member_cross,
-        legacy_user=PRESENCE_PROBE.legacy_user,  # (#876) même exception que member_cross
+        legacy_user=PRESENCE_PROBE.legacy_user,  # (#876) same exception as member_cross
         group=lambda g, p: (True if p in par_groupe.get(int(g), ()) else None),
         org=lambda o, p: (True if p in org_secrets else None),
         tenant=lambda t, p: (True if p in tenant_secrets else None),
@@ -320,30 +320,30 @@ def preloaded_presence_probe(sub: str, *, org: Optional[int],
 def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
                  group: "Optional[int] | Callable[[], Optional[int]]",
                  probe: CascadeProbe, want: str = "auto"):
-    """Générateur des barreaux gagnants, DANS L'ORDRE de la cascade. Consommer le
-    premier = résolution (`cascade_winner`) ; tout consommer = statut (les niveaux
-    configurés au-delà du gagnant restent affichables). Chaque gate (byo_user,
-    ORG_SHAREABLE, personal_cross_org, éligibilité plateforme, `want='byo'`)
-    vit ICI — plus jamais dans un call-site.
+    """Generator of the winning rungs, IN the cascade's ORDER. Consuming the
+    first = resolution (`cascade_winner`); consuming all = status (the levels
+    configured beyond the winner remain displayable). Each gate (byo_user,
+    ORG_SHAREABLE, personal_cross_org, platform eligibility, `want='byo'`)
+    lives HERE — never again in a call-site.
 
-    **Délégation de credential** (`Connector.credential_of`) : `provider` est d'abord
-    normalisé vers le connecteur qui PORTE la clé (les six canaux unipile → `unipile`).
-    Le faire ICI et nulle part ailleurs est la raison d'être de ce walker : la
-    résolution (`_resolve_credential_impl`), le miroir de mode (`credential_mode_for`)
-    et le statut (`status_for`) le traversent tous les trois — ils ne peuvent donc pas
-    répondre trois choses différentes à « quelle clé ? ». Normaliser dans chacun d'eux
-    rouvrirait exactement la divergence du 2026-07-07 (carte « clé d'org » verte à côté
-    d'un « Bloqué » rouge). Ce que le walker ne décide PAS, en revanche, c'est le DROIT
-    d'appeler : activation, ACL et sélection restent gatées sur le nom NU, chez
-    l'appelant."""
+    **Credential delegation** (`Connector.credential_of`): `provider` is first
+    normalized to the connector that CARRIES the key (the six unipile channels → `unipile`).
+    Doing it HERE and nowhere else is this walker's reason for being: the
+    resolution (`_resolve_credential_impl`), the mode mirror (`credential_mode_for`)
+    and the status (`status_for`) all three traverse it — so they cannot
+    answer three different things to "which key?". Normalizing in each of them
+    would reopen exactly the 2026-07-07 divergence (green "org key" card next to
+    a red "Blocked"). What the walker does NOT decide, however, is the RIGHT
+    to call: activation, ACL and selection stay gated on the BARE name, in the
+    caller."""
     provider = providers.credential_provider(provider)
-    # Projet PARTAGÉ (#480) : le verdict posé par `_project=` quand l'appelant n'atteint
-    # pas de lui-même toutes les clés du propriétaire. None hors de ce cas — et alors
-    # rien ci-dessous ne change. Lu dans un contextvar : aucune requête ici.
+    # SHARED project (#480): the verdict set by `_project=` when the caller does not reach
+    # all of the owner's keys on their own. None outside this case — and then
+    # nothing below changes. Read from a contextvar: no query here.
     cles = heritage.du_contexte(sub, org)
-    # L'org dont l'appelant consomme les droits PARTAGÉS (clé d'org, accès plateforme
-    # de l'org) : celle du contexte, sauf pour un bénéficiaire hors de l'org à qui
-    # rien n'a été prêté.
+    # The org whose SHARED rights the caller consumes (org key, org platform
+    # access): the context one, except for a beneficiary outside the org to whom
+    # nothing was lent.
     org_cles = heritage.org_partagee(org, cles)
     if sub is not None and org is not None and providers.is_byo_user(provider):
         hit = probe.member(sub, org, provider)
@@ -351,13 +351,13 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
             payload, account = hit
             yield CascadeRung("user", credentials_store.MEMBER,
                               credentials_store.member_id(org, sub), payload, account)
-    # Instance personnelle cross-org (#172, amende ADR 0033) : connecteur par-personne
-    # (unipile) → ma clé posée dans une AUTRE org me suit (même sub, zéro usurpation).
-    # Mono-compte seulement. Prime sur les paliers partagés, comme la clé locale.
-    # Ouverte aussi au BÉNÉFICIAIRE d'un projet d'une org dont il n'est pas membre
-    # (#480) : il y travaille avec SES clés, et c'est ici qu'elles le suivent — y
-    # compris multi-compte, lues par la sonde MEMBRE (sélection de compte, suspension)
-    # sur l'org où il les a posées.
+    # Cross-org personal instance (#172, amends ADR 0033): per-person connector
+    # (unipile) → my key set in ANOTHER org follows me (same sub, zero impersonation).
+    # Single-account only. Takes precedence over the shared tiers, like the local key.
+    # Also open to the BENEFICIARY of a project of an org they are not a member of
+    # (#480): they work there with THEIR keys, and this is where those follow them — including
+    # multi-account, read by the MEMBER probe (account selection, suspension)
+    # on the org where they set them.
     beneficiaire = heritage.hors_org(cles) and providers.is_byo_user(provider)
     if sub is not None and (beneficiaire or (providers.is_personal_cross_org(provider)
                                              and not _is_multi_account(provider, org))):
@@ -371,25 +371,25 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
                 yield CascadeRung("user", credentials_store.MEMBER,
                                   credentials_store.member_id(pio, sub), payload,
                                   account, via="cross_org")
-    # Scope LEGACY (#876) : LA ligne du sub DEMANDEUR seul, liste fermée.
+    # LEGACY scope (#876): ONLY the REQUESTING sub's row, closed list.
     if sub is not None and provider in LEGACY_USER_SCOPE_PROVIDERS:
         payload = probe.legacy_user(sub, provider)
         if payload is not None:
             yield CascadeRung("user", credentials_store.USER, sub, payload)
     if provider in ORG_SHAREABLE_PROVIDERS:
-        # `group` accepte un callable zéro-arg (résolution PARESSEUSE de l'équipe
-        # active) : le générateur s'arrête au premier barreau gagnant, donc une
-        # clé membre trouvée ne coûte jamais le lookup DB de `current_group`
-        # (iso-comportement avec l'ancien chemin ; vécu test_call_axes_account).
+        # `group` accepts a zero-arg callable (LAZY resolution of the active
+        # team): the generator stops at the first winning rung, so a found
+        # member key never costs the DB lookup of `current_group`
+        # (iso-behaviour with the old path; seen test_call_axes_account).
         g = group() if callable(group) else group
         if g is not None:
             hit = probe.group(g, provider)
             if hit is not None:
-                # Sonde de fetch multi-compte : (payload, account) — la sonde de
-                # présence répond un booléen, le barreau reste mono ('').
+                # Multi-account fetch probe: (payload, account) — the presence
+                # probe answers a boolean, the rung stays mono ('').
                 payload, account = hit if isinstance(hit, tuple) else (hit, "")
                 yield CascadeRung("group", "group", str(g), payload, account)
-        # L'équipe PROPRIÉTAIRE d'un projet partagé, prêtée par héritage (#480).
+        # The OWNING team of a shared project, lent through inheritance (#480).
         herite = cles.groupe_herite if cles is not None else None
         if herite is not None and herite != g:
             hit = probe.group(herite, provider)
@@ -397,34 +397,34 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
                 payload, account = hit if isinstance(hit, tuple) else (hit, "")
                 yield CascadeRung("group", "group", str(herite), payload, account,
                                   via="heritage")
-        # Le barreau ORG exige l'appartenance, ou l'héritage (#480) : jusque-là il
-        # n'était gardé par rien, et `_project=` y faisait entrer un non-membre.
+        # The ORG rung requires membership, or inheritance (#480): until then it
+        # was guarded by nothing, and `_project=` let a non-member in.
         if org_cles is not None:
             hit = probe.org(org_cles, provider)
             if hit is not None:
                 payload, account = hit if isinstance(hit, tuple) else (hit, "")
                 yield CascadeRung("org", "org", str(org_cles), payload, account,
                                   via="heritage" if heritage.hors_org(cles) else "local")
-        # Étage TENANT (L-clés PR 1, ADR 0052) : la clé partagée du tenant de
-        # l'APPELANT — lu sur son sub qualifié, jamais sur le rattachement de l'org
-        # (lot L1). `rung_tenant` rend None pour un sub nu (tenant primaire : ses clés
-        # partagées sont les instances plateforme) et pour l'anonyme — le barreau
-        # n'est alors pas sondé du tout, donc il ne coûte rien là où il ne peut rien
-        # trouver. Sous le gate ORG_SHAREABLE comme l'équipe et l'org : c'est une clé
-        # partagée. Servi AVANT la plateforme : plus proche de l'appelant.
+        # TENANT tier (L-keys PR 1, ADR 0052): the shared key of the
+        # CALLER's tenant — read from their qualified sub, never from the org's
+        # attachment (batch L1). `rung_tenant` returns None for a bare sub (primary tenant: its shared
+        # keys are the platform instances) and for the anonymous — the rung
+        # is then not probed at all, so it costs nothing where it can find
+        # nothing. Under the ORG_SHAREABLE gate like the team and the org: it is a shared
+        # key. Served BEFORE the platform: closer to the caller.
         slug = tenant_vault.rung_tenant(sub)
         if slug is None and sub is None and org is not None:
-            # ANONYME (ADR 0032, L-clés PR 2) : pas d'identité ⟹ le tenant ne se lit
-            # que sur une arête VIVANTE tenant→org — jamais sur le rattachement de
-            # l'org (lot L1). Sans arête, l'anonyme garde sa cascade `org > plateforme`.
+            # ANONYMOUS (ADR 0032, L-keys PR 2): no identity ⟹ the tenant is only read
+            # through a LIVE tenant→org edge — never from the org's
+            # attachment (batch L1). Without an edge, the anonymous keeps its `org > platform` cascade.
             slug = grants_chain.tenant_for_org(org, provider)
         if slug is not None:
             hit = probe.tenant(slug, provider)
             if hit is not None:
-                # L'arête tenant→org (0053, PR 2) — lue APRÈS la sonde, donc jamais
-                # sans clé : MUETTE ⟹ la clé sert (PR 1) ; ACCORDE ⟹ elle sert, le
-                # budget se règle à la résolution (`tenant_budget`) ; REFUSE ⟹ le
-                # barreau se SAUTE et l'org retombe sur la plateforme.
+                # The tenant→org edge (0053, PR 2) — read AFTER the probe, so never
+                # without a key: SILENT ⟹ the key serves (PR 1); GRANTS ⟹ it serves, the
+                # budget is settled at resolution (`tenant_budget`); REFUSES ⟹ the
+                # rung is SKIPPED and the org falls back to the platform.
                 verdict = grants_chain.tenant_rung(slug, provider, org)
                 if verdict is None or verdict.granted:
                     payload, account = hit if isinstance(hit, tuple) else (hit, "")
@@ -443,6 +443,6 @@ def cascade_winner(sub: Optional[str], provider: str, *, org: Optional[int],
                    group: "Optional[int] | Callable[[], Optional[int]]",
                    probe: CascadeProbe,
                    want: str = "auto") -> Optional[CascadeRung]:
-    """Premier barreau gagnant, ou None si rien ne résout."""
+    """First winning rung, or None if nothing resolves."""
     return next(walk_cascade(sub, provider, org=org, group=group,
                              probe=probe, want=want), None)

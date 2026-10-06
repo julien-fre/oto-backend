@@ -1,68 +1,67 @@
-"""PayFit — logiciel de paie et RH. **Tout ce que l'API Partner documente en
-lecture**. Aucune écriture n'est câblée (décision du 24/09/2026).
+"""PayFit — payroll and HR software. **Everything the Partner API documents for
+reading**. No write is wired (decision of 24/09/2026).
 
-Wrappe `oto.tools.payfit.PayfitClient` (Bearer, « Partner API » v1). keyed
-`api_key`, BYO (membre ou org) : une clé API PayFit est créée par un admin de
-l'entreprise et ne donne accès qu'à cette entreprise — il n'y a pas de clé
-plateforme. L'id d'entreprise n'est jamais demandé : le client le lit par
-introspection de la clé. Hôtes fixes (`partner-api.payfit.com`,
-`oauth.payfit.com`) : aucun champ ne désigne une destination, donc pas de garde
-d'egress (`oto_mcp/egress.py`) à poser ici.
+Wraps `oto.tools.payfit.PayfitClient` (Bearer, "Partner API" v1). keyed
+`api_key`, BYO (member or org): a PayFit API key is created by a company admin
+and only gives access to that company — there is no platform key. The company id
+is never asked for: the client reads it by introspecting the key. Fixed hosts
+(`partner-api.payfit.com`, `oauth.payfit.com`): no field designates a destination,
+so no egress guard (`oto_mcp/egress.py`) needs to be set here.
 
-## Ce que ce connecteur sert, depuis le 17/09/2026
+## What this connector serves, since 17/09/2026
 
-Tout : l'entreprise, l'annuaire, les contrats (dont la variante FR : nature DSN,
-convention collective, forfait jours, motif de rupture, statut cadre dirigeant), les
-absences, les bulletins (métadonnées et PDF), les écritures comptables de paie et
-leur export, le fichier de virement, l'état du cycle de paie, le temps de travail
-réalisé, les titres-restaurant, la mutuelle et la prévoyance, les documents. Et
-**Aucune écriture** : créer un collaborateur, un contrat, une absence, l'annuler,
-affilier un contrat à une mutuelle ou demander une régularisation rendent le refus
-nommé `payfit_write_not_wired`, qui dit ce que l'appel aurait fait — rien n'est
-envoyé à PayFit, quel que soit l'argument. Ces ops restent dans leur enum pour que
-l'agent reçoive ce refus nommé et non « op inconnu ».
+Everything: the company, the directory, the contracts (including the FR variant: DSN
+nature, collective agreement, day-based package, termination reason, executive
+officer status), absences, payslips (metadata and PDF), payroll accounting entries and
+their export, the payment file, the payroll cycle status, actual worked time,
+meal vouchers, health insurance and provident fund, documents. And
+**no write**: creating a collaborator, a contract, an absence, cancelling it,
+affiliating a contract to a health insurance or requesting a regularization return
+the named refusal `payfit_write_not_wired`, which says what the call would have done —
+nothing is sent to PayFit, whatever the argument. These ops stay in their enum so
+that the agent receives this named refusal and not "unknown op".
 
-Il n'y avait pas de choix à faire entre « servir la paie » et « protéger les
-personnes » : ce sont deux mécanismes différents.
+There was no choice to make between "serving payroll" and "protecting
+people": they are two different mechanisms.
 
-⚠️ **La protection ne passe plus par un retrait en dur.** Elle passe par les
-**filtres de champs par org** (ADR 0009/0015) et un **défaut serveur protecteur**
-pour ce connecteur (`field_filter_defaults.SERVER_DEFAULTS["payfit"]`) : NIR (et
-NTT), IBAN/BIC et `absence_type` sont masqués tant qu'un org_admin ne lève pas la
-règle. Tout le reste sort : rémunérations portées par les écritures comptables,
-bulletins, coût employeur, contrats complets, temps de travail, mutuelle,
-titres-restaurant, coordonnées, naissance, nationalité, ancienneté, manager.
+⚠️ **Protection no longer goes through a hard-coded removal.** It goes through the
+**per-org field filters** (ADR 0009/0015) and a **protective server default** for
+this connector (`field_filter_defaults.SERVER_DEFAULTS["payfit"]`): NIR (and
+NTT), IBAN/BIC and `absence_type` are masked until an org_admin lifts the
+rule. Everything else comes out: pay carried by the accounting entries,
+payslips, employer cost, full contracts, worked time, health insurance,
+meal vouchers, contact details, birth, nationality, seniority, manager.
 
-⚠️ **Les DOCUMENTS (bulletin PDF, export comptable, fichier de virement, document
-fiscal) sont verrouillés** : un filtre ne lit pas l'intérieur d'un fichier, donc ils
-ne sortent que si la politique effective de l'org pour `payfit` ne masque rien —
-sinon refus nommé, et fail-closed si elle est illisible (`payfit_garde.serve_document`).
+⚠️ **DOCUMENTS (payslip PDF, accounting export, payment file, tax
+document) are locked**: a filter does not read inside a file, so they
+only come out if the org's effective policy for `payfit` masks nothing —
+otherwise a named refusal, and fail-closed if it is unreadable (`payfit_garde.serve_document`).
 
-⚠️ **Une seule clé est renommée, et c'est mécanique** : le type d'une absence sort
-sous `absence_type`, parce que `FieldFilter` matche par nom de feuille et qu'une
-règle sur `type` toucherait aussi `emails[].type` et quatre autres champs anodins.
-`absence_category` (`ordinary_leave` | `restricted`) l'accompagne et reste lisible
-quand le type est masqué. Le pourquoi complet : `payfit_socle`.
+⚠️ **Only one key is renamed, and it is mechanical**: an absence's type comes out
+as `absence_type`, because `FieldFilter` matches by leaf name and a rule on `type`
+would also hit `emails[].type` and four other harmless fields.
+`absence_category` (`ordinary_leave` | `restricted`) goes with it and stays readable
+when the type is masked. The full why: `payfit_socle`.
 
-## Surface (ADR 0047), verbe en `op`, défaut toujours en lecture
+## Surface (ADR 0047), verb in `op`, default always read
 
-Ce module :
-- `payfit_company` — l'entreprise de la clé ; `fr=True` ajoute SIREN/SIRET.
-- `payfit_collaborator` — list | get ; create non câblé.
-- `payfit_contract` — list | get ; `fr=True` → variante FR ; create non câblé.
-- `payfit_absence` — list ; create et cancel non câblés.
+This module:
+- `payfit_company` — the key's company; `fr=True` adds SIREN/SIRET.
+- `payfit_collaborator` — list | get; create not wired.
+- `payfit_contract` — list | get; `fr=True` → FR variant; create not wired.
+- `payfit_absence` — list; create and cancel not wired.
 
-Modules frères (même clé, même client, montés par `Connector.modules`) :
-`payfit_paie` (bulletins, comptabilité et virements, état du cycle, temps de
-travail, titres-restaurant), `payfit_social` (mutuelle, prévoyance, documents).
+Sibling modules (same key, same client, mounted by `Connector.modules`):
+`payfit_paie` (payslips, accounting and payments, cycle status, worked
+time, meal vouchers), `payfit_social` (health insurance, provident fund, documents).
 
-**Aucun argument n'est retenu au silence** (`is not None`) → `payfit_garde`.
-**Aucune écriture n'est câblée** : `payfit_garde.not_wired`, sans clé ni client.
+**No argument is silently dropped** (`is not None`) → `payfit_garde`.
+**No write is wired**: `payfit_garde.not_wired`, with neither key nor client.
 
-Dérivé de la documentation et de la spec OpenAPI publiques (lues le 2026-09-17).
-**Aucun appel réel** : pas de clé disponible — ni la forme exacte des réponses, ni
-les effets de bord d'une écriture (PayFit notifie-t-il le salarié ? une absence
-créée est-elle immédiatement en paie ?) ne sont vérifiés.
+Derived from the public documentation and OpenAPI spec (read on 2026-09-17).
+**No real call**: no key available — neither the exact shape of the responses nor
+the side effects of a write (does PayFit notify the employee? is a created
+absence immediately in payroll?) have been verified.
 """
 from __future__ import annotations
 
@@ -166,10 +165,10 @@ def register(mcp: FastMCP) -> None:
             return S.one(run(lambda: c.get_collaborator(collaborator_id)),
                          "collaborator", redaction=redaction_notice())
         if op == "create":
-            # Ni le NIR ni l'adresse ne sont repris : ils finiraient au journal.
+            # Neither the NIR nor the address is included: they would end up in the log.
             autres = sorted(k for k, v in creation.items()
                             if v is not None and k not in ("first_name", "last_name"))
-            raise not_wired(op, "créé le collaborateur", first_name=first_name,
+            raise not_wired(op, "created the collaborator", first_name=first_name,
                             last_name=last_name, champs_fournis=autres)
         raise refuse_unknown_op(op, "list", "get", "create")
 
@@ -238,7 +237,7 @@ def register(mcp: FastMCP) -> None:
             return S.one(run(lambda: c.get_contract(contract_id, fr=bool(fr))),
                          "contract", redaction=redaction_notice())
         if op == "create":
-            raise not_wired(op, "créé un contrat de travail (mise en paie)",
+            raise not_wired(op, "created an employment contract (put on payroll)",
                             collaborator_id=collaborator_id, job_title=job_title,
                             start_date=start_date)
         raise refuse_unknown_op(op, "list", "get", "create")
@@ -307,12 +306,12 @@ def register(mcp: FastMCP) -> None:
                 "absences", "id", fields=fields, shape=S.absence,
                 redaction=redaction_notice())
         if op == "create":
-            # Le motif (`absence_type`) n'est pas repris : donnée de santé, masquée
-            # par défaut, qui finirait au journal.
-            raise not_wired(op, "enregistré une absence validée (partie en paie)",
+            # The reason (`absence_type`) is not included: health data, masked
+            # by default, which would end up in the log.
+            raise not_wired(op, "recorded an approved absence (goes into payroll)",
                             contract_id=contract_id, begin_date=begin_date,
                             end_date=end_date, start_moment=start_moment,
                             end_moment=end_moment)
         if op == "cancel":
-            raise not_wired(op, "annulé l'absence", absence_id=absence_id)
+            raise not_wired(op, "cancelled the absence", absence_id=absence_id)
         raise refuse_unknown_op(op, "list", "create", "cancel")

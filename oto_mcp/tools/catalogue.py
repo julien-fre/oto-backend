@@ -1,9 +1,9 @@
-"""Le catalogue des outils avec leur état — ce que rend `oto_list_my_tools` (oto#170).
+"""The tool catalogue with each tool's state — what `oto_list_my_tools` returns (oto#170).
 
-Le catalogue est le registre BRUT du `Provider` (le même que `_resolve_tool` dans
-`meta.py`) ; l'état de chaque outil pour la personne qui lit est DÉRIVÉ des couches
-de masquage de la session (`session_visibility.compute_hidden_layers`), jamais
-recopié d'une règle. Trois états, et une légende qui dit le geste de chacun.
+The catalogue is the RAW registry of the `Provider` (the same one as `_resolve_tool` in
+`meta.py`); the state of each tool for the person reading is DERIVED from the session's
+hiding layers (`session_visibility.compute_hidden_layers`), never copied from a rule.
+Three states, and a legend that says what to do for each.
 """
 from __future__ import annotations
 
@@ -14,87 +14,87 @@ from fastmcp import Context
 from .. import providers, session_visibility, tool_alias, tool_registry
 from ..tool_visibility import namespace_of
 
-# Budget d'une ligne de catalogue. ~725 entrées rendues d'un coup : chaque caractère
-# est multiplié par le nombre d'outils. 100 c. suffisent à dire ce que fait un outil ;
-# le détail est dans `oto_tool_schema`, qu'on lit AVANT d'appeler de toute façon.
+# Budget for one catalogue line. ~725 entries rendered at once: every character
+# is multiplied by the number of tools. 100 chars are enough to say what a tool does;
+# the detail is in `oto_tool_schema`, which gets read BEFORE calling anyway.
 CATALOG_BLURB = 100
 
 
 def namespace_help(ns: str) -> str:
-    """Ligne de catalogue du connecteur d'un namespace (curée, en français) — le pont
-    entre une requête en langue naturelle et des docstrings anglaises. Fail-soft."""
+    """Catalogue line for a namespace's connector (curated, in French) — the bridge
+    between a natural-language query and English docstrings. Fail-soft."""
     try:
         con = providers.connector_for_namespace(ns)
         return f"{con.label} {con.help}" if con else ""
-    # noqa: SILENT — aide de namespace absente plutôt que fausse
+    # noqa: SILENT — namespace help missing rather than wrong
     except Exception:
         return ""
-# Les trois états d'un outil du catalogue, pour la personne qui le lit (oto#170).
-# Dérivés des COUCHES de `session_visibility` — jamais recopiés : `installed` = dans
-# aucune couche, `installable` = masqué par une couche d'AFFICHAGE seulement (l'outil
-# reste appelable par `oto_call`), `not_exposed` = derrière une garde d'appel
-# (activation, RBAC, bêta, plancher de rôle) ou éteint au démarrage.
+# The three states of a catalogue tool, for the person reading it (oto#170).
+# Derived from the LAYERS of `session_visibility` — never copied: `installed` = in
+# no layer, `installable` = hidden by a DISPLAY layer only (the tool
+# stays callable through `oto_call`), `not_exposed` = behind a call guard
+# (activation, RBAC, beta, role floor) or turned off at startup.
 ETATS = ("installed", "installable", "not_exposed")
 LEGENDE = {
-    "installed": "dans ta boîte à outils : appelle-le directement.",
-    # #1112 : l'état d'un outil dit sa VISIBILITÉ, jamais la connexion — un agent a
-    # dit « LinkedIn non connecté » en lisant un état de sélection.
-    "credential": "sur un groupe : une clé ou un compte EXISTE pour toi (palier, nature), "
-                  "quel que soit l'état des outils ; jamais vérifié vivant ici — son "
-                  "`next_step` nomme l'outil qui le vérifie. Un état `installable` ne veut "
-                  "PAS dire non connecté.",
-    "installable": "appelable tout de suite par oto_call(name, arguments) ; pour l'installer "
-                   "durablement : oto_connector(op='select', name=<connecteur>) — ou "
-                   "oto_enable_tool(name) si c'est toi qui l'avais masqué.",
-    "not_exposed": "PAS appelable : le connecteur n'est pas ouvert à ton organisation, ou "
-                   "réservé à d'autres membres, ou l'outil dépasse ton rôle — un admin de "
-                   "l'org l'ouvre (oto_connector_activation) ; ce n'est pas une capacité "
-                   "absente.",
+    "installed": "in your toolbox: call it directly.",
+    # #1112: a tool's state says its VISIBILITY, never the connection — an agent
+    # said "LinkedIn not connected" after reading a selection state.
+    "credential": "on a group: a key or an account EXISTS for you (tier, kind), "
+                  "whatever the state of the tools; never verified live here — its "
+                  "`next_step` names the tool that verifies it. An `installable` state does "
+                  "NOT mean not connected.",
+    "installable": "callable right away with oto_call(name, arguments); to install it "
+                   "durably: oto_connector(op='select', name=<connector>) — or "
+                   "oto_enable_tool(name) if you were the one who hid it.",
+    "not_exposed": "NOT callable: the connector is not open to your organization, or "
+                   "reserved for other members, or the tool exceeds your role — an org "
+                   "admin opens it (oto_connector_activation); it is not a missing "
+                   "capability.",
 }
 
 
 async def catalogue_avec_etat(ctx: Context, sub: str, prefix: str,
                               *, org=session_visibility._DERIVE_ORG) -> list[dict]:
-    """Le catalogue ENTIER — le registre brut du `Provider`, le même que `_resolve_tool`
-    (« including disabled ones ») — chaque outil avec son état pour (sub, org active).
+    """The ENTIRE catalogue — the raw `Provider` registry, the same as `_resolve_tool`
+    ("including disabled ones") — each tool with its state for (sub, active org).
 
-    `org` : dérivée de la session par défaut (`_DERIVE_ORG`), mais peut être posée
-    explicitement — un appelant qui vérifie un déclencheur d'une AUTRE org que la
-    sienne (`oto_trigger`, avertissements des outils déclarés) n'a pas de session
-    active dans cette org pour la dériver : la donner ici évite exactement le piège
-    qui a coûté un run muet (payload webhook lu contre l'org du délégué, pas celle
-    du travail — 16/09/2026).
+    `org`: derived from the default session (`_DERIVE_ORG`), but can be set
+    explicitly — a caller checking a trigger of ANOTHER org than its
+    own (`oto_trigger`, warnings for declared tools) has no active session
+    in that org to derive it from: passing it here avoids exactly the trap
+    that cost a silent run (webhook payload read against the delegate's org, not the
+    work's org — 2026-09-16).
 
-    ⚠️ Jusqu'au 12/09/2026 le catalogue partait de la liste DÉJÀ FILTRÉE par la
-    session (`list_tools(run_middleware=False)` après `apply_session_transforms`) :
-    un outil dont le connecteur n'était pas installé, pas exposé ou réservé n'y
-    figurait pas du tout, et la réponse portait `catalog_disabled_count: 0` par
-    construction. Deux agents en ont conclu qu'aucun outil WhatsApp, puis Google
-    Chat, n'existait (oto#170) — alors que la description promettait « every tool ».
-    L'état vient des couches de masquage de la session, pas d'une règle recopiée ici."""
+    ⚠️ Until 2026-09-12 the catalogue started from the list ALREADY FILTERED by the
+    session (`list_tools(run_middleware=False)` after `apply_session_transforms`):
+    a tool whose connector was not installed, not exposed or reserved did not
+    appear at all, and the response carried `catalog_disabled_count: 0` by
+    construction. Two agents concluded that no WhatsApp tool, then no Google
+    Chat tool, existed (oto#170) — while the description promised "every tool".
+    The state comes from the session's hiding layers, not from a rule copied here."""
     from fastmcp.server.providers.base import Provider
     from fastmcp.server.server import _is_backend_tool
     from fastmcp.server.transforms.visibility import is_enabled
-    # Le registre brut, moins ce qu'aucun modèle ne verra jamais : un composant
-    # éteint au démarrage, ou un outil réservé à une interface (`meta.ui.visibility
-    # = ["app"]`). C'est le filtre de `FastMCP.list_tools` SANS sa part de session
-    # (`apply_session_transforms`) — celle-là est exactement ce que le catalogue
-    # doit traverser au lieu de subir. `_is_backend_tool` est privé chez fastmcp :
-    # le pin est exact, et un déplacement casse ici au premier import, pas en silence.
+    # The raw registry, minus what no model will ever see: a component
+    # turned off at startup, or a tool reserved for an interface (`meta.ui.visibility
+    # = ["app"]`). This is the filter of `FastMCP.list_tools` WITHOUT its session
+    # part (`apply_session_transforms`) — that part is exactly what the catalogue
+    # must traverse instead of being subject to. `_is_backend_tool` is private in fastmcp:
+    # the pin is exact, and a move breaks here at first import, not silently.
     bruts = [t for t in await Provider.list_tools(ctx.fastmcp)
              if is_enabled(t) and not _is_backend_tool(t)]
-    # Les couches se calculent sur CE registre brut, pas sur la liste de la session :
-    # en cours de session, un outil déjà masqué n'y est plus, n'entre dans aucune
-    # couche, et sortait `installed` — les 818 outils l'étaient (oto-backend#1112).
+    # Layers are computed on THIS raw registry, not on the session's list:
+    # mid-session, an already-hidden tool is no longer in it, falls in no
+    # layer, and came out `installed` — all 818 tools were (oto-backend#1112).
     couches = await session_visibility.compute_hidden_layers(
         ctx, sub, org=org, noms={t.name for t in bruts})
     masques = set().union(*couches.values())
     non_appelables = set().union(*(noms for nom, noms in couches.items()
                                    if nom not in session_visibility.COUCHES_INSTALLABLES))
-    # Le catalogue annonce les noms tels que l'utilisateur les VOIT (cf.
-    # `tool_alias`) ; tout ce qui se calcule — namespace, état — repart du nom
-    # canonique. Le retour `canonical(public(x)) == x` est total, donc aucun nom ne
-    # se perd en route.
+    # The catalogue announces names as the user SEES them (cf.
+    # `tool_alias`); everything computed — namespace, state — starts again from the
+    # canonical name. The round trip `canonical(public(x)) == x` is total, so no name
+    # gets lost along the way.
     entries = []
     for t in bruts:
         if t.name in non_appelables:
@@ -109,8 +109,8 @@ async def catalogue_avec_etat(ctx: Context, sub: str, prefix: str,
             "state": etat,
             "description": tool_registry.blurb(t.description, CATALOG_BLURB),
             "description_full": " ".join((t.description or "").split()),
-            # Ligne de catalogue du connecteur : le seul texte FRANÇAIS de l'entrée
-            # (les docstrings sont en anglais). Sert la recherche, pas la sortie.
+            # The connector's catalogue line: the only FRENCH text of the entry
+            # (docstrings are in English). Serves search, not output.
             "namespace_help": namespace_help(namespace_of(t.name)),
         })
     return sorted(entries, key=lambda e: e["name"])
@@ -118,15 +118,15 @@ async def catalogue_avec_etat(ctx: Context, sub: str, prefix: str,
 
 def grouper_par_connecteur(entries: list[dict],
                            credentials: Optional[dict[str, dict]] = None) -> list[dict]:
-    """La projection par défaut d'`op=list` : un groupe par namespace, l'état du groupe
-    et ses outils par nom — les exceptions (un outil dans un autre état que son
-    connecteur : masqué par la personne, masqué par défaut, hors de portée) nommées
-    à part sous `states`. Mesuré le 12/09/2026 sur 724 outils : 25 k caractères,
-    contre 53 k pour une ligne par outil sans description et 115 k avec.
+    """The default projection of `op=list`: one group per namespace, the group's state
+    and its tools by name — the exceptions (a tool in a different state than its
+    connector: hidden by the person, hidden by default, out of reach) named
+    separately under `states`. Measured on 2026-09-12 on 724 tools: 25k characters,
+    against 53k for one line per tool without description and 115k with.
 
-    `credentials` = `connectors.credential_presence.par_connecteur` — la MÊME fonction
-    que la ligne d'`oto_connector` (#1112) : le groupe d'un connecteur dont une clé ou
-    un compte existe porte `credential`, sinon rien."""
+    `credentials` = `connectors.credential_presence.par_connecteur` — the SAME function
+    as the `oto_connector` line (#1112): the group of a connector with an existing key or
+    account carries `credential`, otherwise nothing."""
     groupes: dict[str, list[dict]] = {}
     for e in entries:
         groupes.setdefault(e["namespace"], []).append(e)
@@ -139,7 +139,7 @@ def grouper_par_connecteur(entries: list[dict],
         etat = max(compte, key=lambda k: (compte[k], k))
         groupe = {"namespace": ns,
                   "connector": con.name if con else None,
-                  "label": con.label if con else "plateforme",
+                  "label": con.label if con else "platform",
                   "state": etat,
                   "tools": [e["name"] for e in outils]}
         ecarts = {e["name"]: e["state"] for e in outils if e["state"] != etat}
@@ -152,25 +152,25 @@ def grouper_par_connecteur(entries: list[dict],
 
 
 def hint_zero_resultat(tb: Optional[dict]) -> str:
-    """Le hint d'une recherche d'outils qui ne trouve rien.
+    """The hint for a tool search that finds nothing.
 
-    Deux causes possibles, et **la mauvaise réponse coûte un rapport faux**. Sans
-    écart de boîte, zéro veut bien dire « reformule » — la recherche est lexicale sur
-    des docstrings anglaises. Avec écart (#577), zéro ne dit RIEN de l'existence de
-    l'outil : la session a été montée pour l'org maison au handshake, les outils des
-    connecteurs de l'org épinglée n'y sont pas listés, et ils restent appelables.
+    Two possible causes, and **the wrong answer costs a false report**. Without a
+    toolbox gap, zero does mean "rephrase" — the search is lexical over
+    English docstrings. With a gap (#577), zero says NOTHING about whether the
+    tool exists: the session was built for the home org at handshake, the tools of
+    the pinned org's connectors are not listed in it, and they remain callable.
 
-    Servir le premier texte dans le second cas est ce qui a produit le rapport
-    « source injoignable » du signal #616, sur un connecteur actif et joignable."""
+    Serving the first text in the second case is what produced the
+    "source unreachable" report of signal #616, on an active and reachable connector."""
     if tb:
-        return ("Zéro résultat ICI ne veut PAS dire que l'outil n'existe pas : la boîte "
-                "de cette session est montée pour une autre org (voir `toolbox_scope`), "
-                "donc les outils des connecteurs de l'org épinglée n'y sont pas listés. "
-                "Appelle-le par `oto_call(name=..., arguments={...})` avant de conclure "
-                "qu'une source est injoignable.")
-    return ("Aucun outil ne porte ces mots. La recherche est LEXICALE et les docstrings "
-            "sont en ANGLAIS : relance la même intention en anglais avant toute autre "
-            "conclusion — mesuré le 08/09/2026, « transférer propriétaire équipe "
-            "ressource » rend 0 outil et « transfer ownership resource team » rend "
-            "`oto_resource` en tête. Sinon, repère le domaine dans `namespaces`, ou "
-            "relance sans `query` pour le catalogue complet.")
+        return ("Zero results HERE does NOT mean the tool doesn't exist: this session's "
+                "toolbox is built for another org (see `toolbox_scope`), "
+                "so the tools of the pinned org's connectors are not listed in it. "
+                "Call it with `oto_call(name=..., arguments={...})` before concluding "
+                "that a source is unreachable.")
+    return ("No tool carries these words. The search is LEXICAL and the docstrings "
+            "are in ENGLISH: retry the same intent in English before any other "
+            "conclusion — measured on 2026-09-08, « transférer propriétaire équipe "
+            "ressource » returns 0 tools and « transfer ownership resource team » returns "
+            "`oto_resource` first. Otherwise, find the domain in `namespaces`, or "
+            "retry without `query` for the full catalogue.")

@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `kaspr`.
+"""Registry declaration of the `kaspr` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from ._model import _c
 CONNECTOR = _c(
     "kaspr", ["kaspr"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
     secret_kind="api_key", default_quota=5, platform_key_open=True,
-    label="Kaspr", help="enrichissement", href="https://app.kaspr.io",
-    # logo.dev sert une bannière marketing pour kaspr.io (pas la marque) →
-    # override sur le favicon officiel (K blanc sur dégradé, 160×160).
+    label="Kaspr", help="enrichment", href="https://app.kaspr.io",
+    # logo.dev serves a marketing banner for kaspr.io (not the brand) →
+    # override with the official favicon (white K on gradient, 160×160).
     logo_url="https://www.kaspr.io/hubfs/2023%20-%20Kaspr%20Brand%20Logos/favicon.png",
 )
 
@@ -21,7 +21,7 @@ PUBLISHER = "Kaspr"
 LOGO_DOMAIN = "kaspr.io"
 
 DESCRIPTION = (
-    "Enrichissement de contact chez Kaspr : retrouver l'email et le téléphone "
-    "direct d'une personne à partir de son profil. Une clé plateforme gratuite "
-    "est disponible, avec un quota limité par jour."
+    "Contact enrichment at Kaspr: find a person's email and direct phone "
+    "number from their profile. A free platform key is available, with a "
+    "limited daily quota."
 )

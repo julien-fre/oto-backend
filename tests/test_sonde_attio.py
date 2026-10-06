@@ -54,7 +54,7 @@ def test_un_token_INACTIF_est_un_echec_meme_avec_un_200(monkeypatch):
     """Le cas qui rendrait la sonde décorative : Attio répond 200, pas 401, pour
     un token révoqué — `{"active": false}` (contrat d'introspection RFC 7662)."""
     _brancher(monkeypatch, corps={"active": False})
-    with pytest.raises(RuntimeError, match="INACTIF"):
+    with pytest.raises(RuntimeError, match="INACTIVE"):
         A._verify(_fields("k"))
 
 
@@ -64,7 +64,7 @@ def test_un_token_SANS_AUCUN_SCOPE_est_un_echec_nomme(monkeypatch):
                                   "workspace_id": "w1", "workspace_name": "Acme"})
     with pytest.raises(RuntimeError) as e:
         A._verify(_fields("k"))
-    assert "AUCUN" in str(e.value) and "Acme" in str(e.value)
+    assert "NO scope" in str(e.value) and "Acme" in str(e.value)
 
 
 def test_une_cle_refusee_leve(monkeypatch):

@@ -135,7 +135,7 @@ def test_get_routes_to_the_right_client_method(client, entity, kwargs, method):
 def test_get_refuses_note_because_folk_has_no_get_by_id(client):
     """Gap PERMANENT de l'API Folk, pas un raccourci d'implémentation : le refus doit
     orienter vers `op="search"` plutôt que laisser croire à une panne."""
-    with pytest.raises(McpError, match="get-par-id"):
+    with pytest.raises(McpError, match="get-by-id"):
         _tool("folk_record")(entity="note", op="get", id="nte_1")
     client.list_notes.assert_not_called()
 
@@ -153,7 +153,7 @@ def test_search_nested_relation_filter_refused_before_any_call(client):
     """oto#146 : `{"groups": {"in": {"id": [...]}}}` partait en `…[in][id]=id`. Le
     refus du client doit atteindre l'agent en INVALID_PARAMS qui écrit la forme
     attendue — pas en « erreur interne » — et sans aucun appel Folk."""
-    with pytest.raises(McpError, match="pas un objet") as exc:
+    with pytest.raises(McpError, match="not an object") as exc:
         _tool("folk_record")(entity="person", op="search",
                              filters={"groups": {"in": {"id": ["grp_1"]}}})
     assert '{"groups": {"in": ["<id>"' in str(exc.value)
@@ -225,7 +225,7 @@ def test_deal_object_type_no_custom_object_raises_actionable_error(client):
     client.get_group_custom_fields.side_effect = _entity_types_404(
         'Object field "deals" not found in group "grp_1". Available entity types '
         'are: "person", "company".')
-    with pytest.raises(McpError, match="n'a pas d'objet deal"):
+    with pytest.raises(McpError, match="has no deal object"):
         _tool("folk_record")(entity="deal", op="search", group_id="grp_1")
     client.list_deals.assert_not_called()
 
@@ -455,12 +455,12 @@ def test_webhook_dry_run_never_writes(client):
 @pytest.mark.parametrize("tool,kwargs,expected", [
     ("folk_record", {"entity": "person"},
      "'search', 'get', 'create', 'update', 'delete', 'add_to_group', "
-     "'mark_done' ou 'mark_todo'"),
+     "'mark_done' or 'mark_todo'"),
     ("folk_group", {}, "'list', 'create', 'update', 'custom_fields', "
      "'get_custom_field', 'create_custom_field', 'update_custom_field', "
      "'members', 'add_member', 'remove_member', 'update_member'"),
-    ("folk_user", {}, "'list' ou 'get'"),
-    ("folk_webhook", {}, "'list', 'create' ou 'update'"),
+    ("folk_user", {}, "'list' or 'get'"),
+    ("folk_webhook", {}, "'list', 'create' or 'update'"),
 ])
 def test_unknown_op_is_refused_with_the_allowed_list(client, tool, kwargs, expected):
     """Une op inconnue doit lever en nommant les ops valides — jamais retomber
@@ -547,7 +547,7 @@ def test_entity_id_is_refused_where_it_would_be_ignored(client):
 
 
 def test_search_interaction_refuses_filters(client):
-    with pytest.raises(McpError, match="aucun filtre"):
+    with pytest.raises(McpError, match="exposes no filter"):
         _tool("folk_record")(entity="interaction", op="search",
                              entity_id="per_A", filters={"title": "café"})
 
@@ -624,7 +624,7 @@ def test_search_task_maps_entity_id_onto_the_entity_filter(client):
 
 
 def test_search_task_refuses_both_spellings_of_the_parent(client):
-    with pytest.raises(McpError, match="pas les deux"):
+    with pytest.raises(McpError, match="not both"):
         _tool("folk_record")(entity="task", op="search", entity_id="per_A",
                              filters={"entity": "per_B"})
 
@@ -651,7 +651,7 @@ def test_create_task_rejects_the_reminder_vocabulary(client):
     """Porter un rappel vers une tâche renomme les champs (name→title,
     recurrence_rule→due_at + recurrence_frequency) : le refus doit LISTER les
     champs acceptés, pas laisser passer un payload muet."""
-    with pytest.raises(McpError, match="champ\\(s\\) inconnu\\(s\\)"):
+    with pytest.raises(McpError, match="unknown field\\(s\\)"):
         _tool("folk_record")(entity="task", op="create",
                              item={"entity_id": "per_A", "name": "Relancer",
                                    "recurrence_rule": "RRULE:FREQ=WEEKLY"})
@@ -662,7 +662,7 @@ def test_create_refuses_entity_id_at_the_call_level(client):
     """À la création, l'entité porteuse est un CHAMP du record (elle peut
     différer d'un item à l'autre dans un lot) : l'accepter en paramètre la
     ferait taire silencieusement."""
-    with pytest.raises(McpError, match="CHAMP du record"):
+    with pytest.raises(McpError, match="FIELD of the record"):
         _tool("folk_record")(entity="task", op="create", entity_id="per_A",
                              item={"title": "T", "due_at": "2026-09-01"})
     client.create_task.assert_not_called()
@@ -698,7 +698,7 @@ def test_mark_done_refuses_stray_fields(client):
 
 
 def test_mark_todo_takes_no_fields(client):
-    with pytest.raises(McpError, match="aucun champ"):
+    with pytest.raises(McpError, match="takes no fields"):
         _tool("folk_record")(entity="task", op="mark_todo", id="tsk_1",
                              fields={"completedAt": "2026-08-26T10:00:00.000Z"})
     _tool("folk_record")(entity="task", op="mark_todo", id="tsk_1")
@@ -741,7 +741,7 @@ def test_mark_dry_run_reads_but_writes_nothing(client):
 def test_mark_is_task_only(client):
     """Un rappel se marque « déclenché » tout seul, il ne se termine pas : lui
     proposer mark_done mentirait sur ce que fait l'appel."""
-    with pytest.raises(McpError, match="entity doit être"):
+    with pytest.raises(McpError, match="entity must be"):
         _tool("folk_record")(entity="reminder", op="mark_done", id="rmd_1")
     _assert_silent(client)
 

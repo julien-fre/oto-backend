@@ -1,9 +1,9 @@
 """Notion — pages, databases, blocks (read + write).
 
-Wrappe `oto.tools.notion.lib.notion_client.NotionClient`. Token d'intégration
-résolu par appel via `access.resolve_api_key("notion")` — byo. **Cache disque
-désactivé** (`cache_enabled=False`) : le cache fichier n'est pas clefé par token
-→ fuite cross-user sur un host multi-utilisateur.
+Wraps `oto.tools.notion.lib.notion_client.NotionClient`. Integration token
+resolved per call via `access.resolve_api_key("notion")` — byo. **Disk cache
+disabled** (`cache_enabled=False`): the file cache is not keyed by token
+→ cross-user leak on a multi-user host.
 """
 from __future__ import annotations
 
@@ -18,22 +18,22 @@ from ..mcp_errors import McpError
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /v1/users/me` (« Retrieve your token's bot user »). Ce que la doc
-    Notion établit :
+    `GET /v1/users/me` ("Retrieve your token's bot user"). What the Notion
+    docs establish:
 
-    - **authentifié** — Bearer token (jeton d'intégration), comme le reste de
-      l'API ;
-    - **sans effet de bord** — une lecture du bot user associé au jeton ;
-    - **le coût** — aucune mention de coût ni de limite de débit particulière
-      pour cet appel. Absence de mention, indice, pas une preuve.
+    - **authenticated** — Bearer token (integration token), like the rest of
+      the API;
+    - **no side effects** — a read of the bot user tied to the token;
+    - **the cost** — no mention of any particular cost or rate limit
+      for this call. Absence of mention is a hint, not proof.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope
-    granulaire ici — Notion n'accorde pas de permissions PAR CAPACITÉ sur un
-    jeton d'intégration, seulement un PARTAGE par page/base (côté workspace,
-    invisible depuis l'API). `cache_enabled=False`, comme `_client()` : le
-    cache disque n'est pas clefé par jeton (cf. docstring du module).
+    **Authenticated ≠ usable** (oto#69 class): does not distinguish any granular
+    scope here — Notion grants no PER-CAPABILITY permissions on an integration
+    token, only SHARING per page/database (workspace side, invisible from the
+    API). `cache_enabled=False`, like `_client()`: the disk cache is not keyed
+    by token (see the module docstring).
     """
     from oto.tools.notion.lib.notion_client import NotionClient
 
@@ -41,45 +41,45 @@ def _verify(fields: dict, config: dict | None = None) -> None:
         "GET", "users/me", use_cache=False) or {}
     if not infos.get("id"):
         raise RuntimeError(
-            "Notion a répondu sans identifier de bot user pour ce jeton — "
-            f"réponse inattendue : {str(infos)[:200]}")
+            "Notion answered without identifying a bot user for this token — "
+            f"unexpected response: {str(infos)[:200]}")
 
 
 def _zero_warning(query: str, filter_type: Optional[str],
                   edited_on: Optional[str] = None) -> str:
-    """L'avertissement qu'un `notion_search` VIDE porte (otomata-tech/oto#184).
+    """The warning that an EMPTY `notion_search` carries (otomata-tech/oto#184).
 
-    Un jeton valide auquel rien n'est partagé répond EXACTEMENT comme un espace qui
-    ne contient pas ce qu'on cherche (`results: []`), et la sonde `_verify` reste
-    verte (elle ne voit que l'authentification). Le savoir existait deux fois —
-    doc d'installation, commentaire de sonde — jamais là où l'agent lit : on le
-    porte donc dans la réponse, au moment du zéro.
+    A valid token to which nothing is shared answers EXACTLY like a workspace that
+    does not contain what is searched (`results: []`), and the `_verify` probe stays
+    green (it only sees authentication). The knowledge existed twice —
+    install doc, probe comment — never where the agent reads: so we
+    carry it in the response, at the moment of the zero.
 
-    ⚠️ Formulé comme une POSSIBILITÉ À VÉRIFIER, pas comme un diagnostic : la
-    lecture « requête vide + zéro objet ⟹ rien de partagé » n'a pas été éprouvée
-    contre l'API Notion, et un diagnostic faux enverrait réparer un partage sain."""
-    geste = ("partager la page ou la base voulue avec l'intégration, côté "
-             "workspace Notion (menu `...` → Connexions)")
+    ⚠️ Worded as a POSSIBILITY TO CHECK, not as a diagnosis: the
+    reading "empty query + zero objects ⟹ nothing shared" has not been tested
+    against the Notion API, and a wrong diagnosis would send people to fix a healthy share."""
+    geste = ("share the desired page or database with the integration, in the "
+             "Notion workspace (`...` menu → Connections)")
     if edited_on:
         return (
-            f"Zéro objet édité le {edited_on} (jour UTC). Sur Notion, ce zéro ne "
-            "distingue PAS « rien n'a bougé ce jour-là » de « rien n'est partagé avec "
-            "l'intégration ». Pour trancher : relance `notion_search` avec `query=\"\"`, "
-            "sans `filter_type` ni `edited_on` — si elle rend aussi zéro, l'intégration "
-            f"ne voit vraisemblablement rien : {geste}.")
+            f"Zero objects edited on {edited_on} (UTC day). On Notion, this zero does "
+            "NOT distinguish \"nothing changed that day\" from \"nothing is shared with "
+            "the integration\". To tell: rerun `notion_search` with `query=\"\"`, "
+            "without `filter_type` or `edited_on` — if it also returns zero, the integration "
+            f"probably sees nothing: {geste}.")
     if query or filter_type:
         return (
-            "Zéro résultat. Sur Notion, un zéro ne distingue PAS « rien ne "
-            "correspond » de « rien n'est partagé avec l'intégration » (le jeton "
-            "s'authentifie dans les deux cas, la sonde reste verte). Pour trancher : "
-            "relance `notion_search` avec `query=\"\"` et sans `filter_type` — si "
-            f"elle rend aussi zéro, l'intégration ne voit vraisemblablement rien : "
+            "Zero results. On Notion, a zero does NOT distinguish \"nothing "
+            "matches\" from \"nothing is shared with the integration\" (the token "
+            "authenticates in both cases, the probe stays green). To tell: "
+            "rerun `notion_search` with `query=\"\"` and without `filter_type` — if "
+            f"it also returns zero, the integration probably sees nothing: "
             f"{geste}.")
     return (
-        "Zéro objet sur une recherche SANS filtre : l'intégration ne voit "
-        "vraisemblablement rien — aucune page ni base ne lui est partagée (le jeton "
-        "s'authentifie, la sonde reste verte, et Notion ne le dit pas). À vérifier "
-        f"avant d'agir, puis {geste}. Ce n'est PAS un credential à reposer.")
+        "Zero objects on a search WITHOUT a filter: the integration "
+        "probably sees nothing — no page or database is shared with it (the token "
+        "authenticates, the probe stays green, and Notion does not say so). To check "
+        f"before acting, then {geste}. It is NOT a credential to reset.")
 
 
 # `notion_get_markdown` answers at most this many characters of Markdown.
@@ -132,8 +132,8 @@ def register(mcp: FastMCP) -> None:
     connector_verify.register("notion", _verify)
 
     def _client() -> NotionClient:
-        # Annoncé `NotionClient` (mêmes méthodes, ce que lit la sonde version-skew),
-        # rendu enveloppé : chaque appel passe par `_invalid_params`.
+        # Declared as `NotionClient` (same methods, what the version-skew probe reads),
+        # returned wrapped: every call goes through `_invalid_params`.
         key, _ = access.resolve_api_key("notion")
         return _Client(NotionClient(token=key, cache_enabled=False))
 
@@ -175,13 +175,13 @@ def register(mcp: FastMCP) -> None:
         client = _client()
         if edited_on and cursor:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                "`edited_on` rend déjà tout le jour en une réponse : il ne se "
-                "pagine pas, retire `cursor`.")))
+                "`edited_on` already returns the whole day in one answer: it is not "
+                "paginated, remove `cursor`.")))
         if edited_on:
             try:
                 objets = client.search_edited_on(
                     edited_on, filter_type=filter_type, query=query)
-            except ValueError as e:  # date mal formée — le seul ValueError de la méthode
+            except ValueError as e:  # malformed date — the method's only ValueError
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e))) from e
             result = {"results": objets, "edited_on": edited_on}
         else:

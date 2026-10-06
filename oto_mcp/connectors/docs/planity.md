@@ -1,71 +1,71 @@
-## prerequisite — l'email et le mot de passe de ton compte planity pro
+## prerequisite — the email and password of your planity pro account
 
-oto se connecte à [pro.planity.com](https://pro.planity.com) avec tes identifiants, comme tu le ferais toi-même. renseigne l'**email** et le **mot de passe** de ton compte planity pro — ils sont chiffrés au coffre, jamais rendus en clair, et servent uniquement à ouvrir la session.
-- il faut un compte planity **pro** actif, rattaché à au moins un salon (agenda + caisse)
-- le compte est personnel : chacun pose le sien, et ne voit que les salons que planity lui ouvre
-- **un compte de gestion ouvre PLUSIEURS salons, un compte de salon un seul** : c'est le compte que tu poses qui décide, et `planity_list_salons` te dit lesquels — si tu en attendais quatre et n'en vois qu'un, c'est le compte, pas l'outil
-- « tester la connexion » ouvre la session et liste tes salons — si aucun salon ne remonte, le compte s'authentifie mais n'est rattaché à rien
+oto logs in to [pro.planity.com](https://pro.planity.com) with your credentials, just as you would yourself. enter the **email** and **password** of your planity pro account — they are encrypted in the vault, never returned in clear, and used only to open the session.
+- you need an active planity **pro** account, attached to at least one salon (calendar + till)
+- the account is personal: everyone sets their own, and sees only the salons planity opens to them
+- **a management account opens SEVERAL salons, a salon account just one**: the account you set decides, and `planity_list_salons` tells you which — if you expected four and see only one, it is the account, not the tool
+- "test the connection" opens the session and lists your salons — if no salon comes back, the account authenticates but is attached to nothing
 
-## usage — lire ton agenda, tes clientes et tes chiffres
+## usage — read your calendar, your customers and your figures
 
-lecture seule. aucun rendez-vous n'est créé, modifié ni annulé.
-- `planity_list_salons` pour commencer : l'`id` rendu est le `salon_id` de tous les autres outils
-- agenda — « quels rendez-vous j'ai cette semaine ? » (`planity_list_appointments`, presets `today` / `this_week` / `30d`…), le détail d'un rendez-vous (`planity_get_appointment`), les rendez-vous récurrents (`planity_list_recurring_appointments`, qui n'apparaissent dans AUCUNE liste par date)
-- clientes — recherche par nom, téléphone ou email (`planity_search_customers`), fiche (`planity_get_customer`), statistiques et tickets d'une cliente (`planity_get_customer_stats`, `planity_get_customer_receipts`)
-- référentiel — l'équipe (`planity_list_employees`), le catalogue de prestations et de produits (`planity_list_services`, `planity_list_products`)
-- chiffres — « quel est mon CA du mois ? » (`planity_get_revenue_summary`), le jour par jour (`planity_get_daily_revenue`), la décomposition prestations/produits (`planity_get_revenue_breakdown`), par collaboratrice (`planity_get_seller_stats`), par moyen de paiement (`planity_get_revenue_by_payment_method`), par taux de TVA (`planity_get_revenue_by_vat`), par prestation (`planity_get_service_stats`), le taux d'occupation (`planity_get_occupancy_rate`) et les avis (`planity_get_reviews_stats`)
-- caisse, au ticket près — les sessions de caisse (`planity_list_pos_periods`), une session et ses tickets (`planity_get_pos_period`), un ticket en détail (`planity_get_receipt`), la table des moyens de paiement (`planity_list_payment_methods`)
-- stock — ce qui bouge (`planity_list_stock_movements`), les fournisseurs (`planity_list_suppliers`), les commandes de réassort (`planity_list_product_orders`), les sorties groupées (`planity_list_mass_stock_removals`)
-- clientèle — meilleures clientes, nouvelles clientes, fréquence de visite (`planity_get_best_customers`, `planity_get_new_customers`, `planity_get_customer_frequencies`)
+read-only. no appointment is created, modified or cancelled.
+- `planity_list_salons` to start: the returned `id` is the `salon_id` of all the other tools
+- calendar — "which appointments do I have this week?" (`planity_list_appointments`, presets `today` / `this_week` / `30d`…), the detail of one appointment (`planity_get_appointment`), recurring appointments (`planity_list_recurring_appointments`, which appear in NO by-date list)
+- customers — search by name, phone or email (`planity_search_customers`), record (`planity_get_customer`), a customer's statistics and receipts (`planity_get_customer_stats`, `planity_get_customer_receipts`)
+- reference data — the team (`planity_list_employees`), the catalogue of services and products (`planity_list_services`, `planity_list_products`)
+- figures — "what is my revenue this month?" (`planity_get_revenue_summary`), day by day (`planity_get_daily_revenue`), the services/products breakdown (`planity_get_revenue_breakdown`), by staff member (`planity_get_seller_stats`), by payment method (`planity_get_revenue_by_payment_method`), by VAT rate (`planity_get_revenue_by_vat`), by service (`planity_get_service_stats`), the occupancy rate (`planity_get_occupancy_rate`) and reviews (`planity_get_reviews_stats`)
+- till, down to the receipt — till sessions (`planity_list_pos_periods`), a session and its receipts (`planity_get_pos_period`), a receipt in detail (`planity_get_receipt`), the table of payment methods (`planity_list_payment_methods`)
+- stock — what moves (`planity_list_stock_movements`), suppliers (`planity_list_suppliers`), restocking orders (`planity_list_product_orders`), grouped removals (`planity_list_mass_stock_removals`)
+- clientele — best customers, new customers, visit frequency (`planity_get_best_customers`, `planity_get_new_customers`, `planity_get_customer_frequencies`)
 
-## note — ce avec quoi le connecteur s'authentifie
+## note — what the connector authenticates with
 
-le connecteur s'authentifie avec l'**email et le mot de passe** de ton compte planity pro, et rien d'autre : il n'utilise pas le code administrateur de l'application planity.
-- ce que le connecteur peut lire est donc ce que ce compte peut lire — c'est le compte, et lui seul, qui définit le périmètre
-- pour restreindre ce qu'oto voit, utilise un compte planity au périmètre plus étroit
-- tout est en lecture : aucun rendez-vous n'est créé, modifié ni annulé
+the connector authenticates with the **email and password** of your planity pro account, and nothing else: it does not use the planity application's administrator code.
+- what the connector can read is therefore what this account can read — the account, and it alone, defines the perimeter
+- to restrict what oto sees, use a planity account with a narrower perimeter
+- everything is read-only: no appointment is created, modified or cancelled
 
-## note — ce connecteur demande une configuration de l'instance
+## note — this connector requires instance configuration
 
-le connecteur a besoin, en plus de tes identifiants, de trois **coordonnées de l'application planity** posées une fois par l'exploitant de l'instance oto : `firebase_api_key`, `firebase_app_id`, `rest_api` (réglages de connecteur, scope plateforme).
-- si elles manquent, les outils `planity_*` restent visibles mais refusent en le disant, en nommant la clé absente et la commande qui la pose — ce n'est alors pas ton credential qui est en cause, et il n'y a rien à reposer de ton côté
-- **ce ne sont pas des secrets** : elles sont publiques par conception (tout navigateur qui ouvre `pro.planity.com` les reçoit), elles appartiennent à planity, et elles n'autorisent rien à elles seules — ce qui autorise, c'est ton mot de passe, qui vit au coffre chiffré. elles peuvent apparaître dans un message d'erreur ou un journal de débogage sans que ce soit une fuite
-- si elles ne sont pas dans le code, c'est parce que le client est publié en open source : un connecteur y décrit un protocole, il n'embarque pas les coordonnées d'une entreprise tierce comme s'il était son intégration officielle
+in addition to your credentials, the connector needs three **planity application endpoints** set once by the operator of the oto instance: `firebase_api_key`, `firebase_app_id`, `rest_api` (connector settings, platform scope).
+- if they are missing, the `planity_*` tools stay visible but refuse and say so, naming the missing key and the command that sets it — your credential is then not at fault, and there is nothing to set again on your side
+- **they are not secrets**: they are public by design (any browser that opens `pro.planity.com` receives them), they belong to planity, and they authorize nothing on their own — what authorizes is your password, which lives in the encrypted vault. they can appear in an error message or a debug log without being a leak
+- if they are not in the code, it is because the client is published as open source: a connector there describes a protocol, it does not embed a third-party company's endpoints as if it were its official integration
 
-## note — ce que planity ne rend pas
+## note — what planity does not return
 
-- la ventilation par collaboratrice de `planity_get_revenue_breakdown` (`by_seller`) revient vide côté planity, même en lui passant l'équipe. la bonne réponse est `planity_get_seller_stats`, qui passe par un autre endpoint — un `by_seller` vide n'est donc pas un salon sans ventes
-- les statistiques de rendez-vous agrégées de planity ne sont pas exposées : leur appel attend un paramètre que nous n'avons pas résolu
+- the per-staff breakdown of `planity_get_revenue_breakdown` (`by_seller`) comes back empty on planity's side, even when passing it the team. the right answer is `planity_get_seller_stats`, which goes through another endpoint — an empty `by_seller` is therefore not a salon with no sales
+- planity's aggregated appointment statistics are not exposed: their call expects a parameter that we have not resolved
 
-## note — ce que les outils ne rendent PAS des clientes
+## note — what the tools do NOT return about customers
 
-le connecteur rend le brut et laisse l'agent composer, **sauf sur les données personnelles d'une tierce**. un rendez-vous et un ticket portent, chez planity, le nom, le téléphone, l'email et l'adresse de la cliente ; un ticket y ajoute le commentaire écrit sur elle.
-- les outils d'agenda et de caisse rendent une **liste de champs choisis**, et pour la cliente un **identifiant seulement** — pas de nom, pas de contact, pas d'adresse
-- `planity_list_appointments` ne rend pas non plus le commentaire libre du rendez-vous (il contient couramment des noms) ; `planity_get_appointment`, appelé pour UN rendez-vous, le rend
-- pour la personne derrière un identifiant : `planity_get_customer`. c'est son objet, tu l'as demandé, et rien ne sort tant que tu ne le demandes pas
-- ce n'est pas un oubli : la cliente n'est pas dans la conversation, elle n'a rien demandé, et son adresse n'a pas à traverser un échange pour répondre « combien j'ai fait hier »
+the connector returns the raw data and lets the agent compose, **except on a third party's personal data**. at planity, an appointment and a receipt carry the customer's name, phone, email and address; a receipt adds the comment written about her.
+- the calendar and till tools return a **list of chosen fields**, and for the customer an **identifier only** — no name, no contact, no address
+- `planity_list_appointments` does not return the appointment's free-text comment either (it commonly contains names); `planity_get_appointment`, called for ONE appointment, returns it
+- for the person behind an identifier: `planity_get_customer`. it is her record, you asked for it, and nothing comes out until you ask
+- this is not an oversight: the customer is not in the conversation, she asked for nothing, and her address has no business crossing an exchange to answer "how much did I make yesterday"
 
-## note — prévision de commande, en trois appels
+## note — order forecast, in three calls
 
-il n'y a **pas d'outil de prévision** : la règle (couverture visée, délai fournisseur, familles à réassortir) t'appartient. les outils rendent les faits.
-1. `planity_get_revenue_breakdown` sur 90 jours → les quantités vendues par produit, en un appel (`by_product`, `bucket_id` = l'id du produit au catalogue)
-2. `planity_list_products` → le stock de chaque produit et ses **lots d'achat** (avec leur prix d'achat, donc la marge)
-3. le calcul est à toi : `couverture = stock / (ventes ÷ 90)`, à comparer à ton délai de réassort. `planity_list_stock_movements(product_ids=[…])` donne le détail des mouvements sur les produits qui sortent du lot
-- ⚠️ `planity_list_stock_movements` **exige `product_ids`** : les mouvements se lisent un produit à la fois, et il ne balaie pas un catalogue entier tout seul. sans les ids, il refuse tout de suite, sans rien lire
-- ⚠️ `stock_threshold` et `stock_ceiling` valent `null` quand le salon ne s'en sert pas — **`null` n'est pas `0`** : une règle qui lirait zéro commanderait tout, tout le temps
-- ⚠️ une baisse de stock sans vente n'est pas une anomalie : regarde `planity_list_mass_stock_removals` (inventaire, casse, péremption)
+there is **no forecast tool**: the rule (target coverage, supplier lead time, families to restock) is yours. the tools return the facts.
+1. `planity_get_revenue_breakdown` over 90 days → the quantities sold per product, in one call (`by_product`, `bucket_id` = the product's catalogue id)
+2. `planity_list_products` → each product's stock and its **purchase lots** (with their purchase price, hence the margin)
+3. the calculation is yours: `coverage = stock / (sales ÷ 90)`, to compare with your restocking lead time. `planity_list_stock_movements(product_ids=[…])` gives the detail of the movements on the products that are running out
+- ⚠️ `planity_list_stock_movements` **requires `product_ids`**: movements are read one product at a time, and it does not sweep a whole catalogue by itself. without the ids, it refuses at once, reading nothing
+- ⚠️ `stock_threshold` and `stock_ceiling` are `null` when the salon does not use them — **`null` is not `0`**: a rule that read zero would order everything, all the time
+- ⚠️ a stock drop without a sale is not an anomaly: look at `planity_list_mass_stock_removals` (inventory, breakage, expiry)
 
-## note — supprimé n'est pas absent
+## note — deleted is not absent
 
-planity conserve ce qu'on supprime : une collaboratrice partie garde son agenda et ses rendez-vous passés, une prestation retirée reste sur les anciens tickets.
-- `planity_list_employees`, `planity_list_services` et `planity_list_products` **écartent les supprimés par défaut** — un salon de trois personnes n'en annonce pas sept
-- `include_deleted=true` pour l'historique : retrouver la prestation d'un ancien ticket, ou le chiffre d'une collaboratrice partie
-- tous les agendas sont lus pour un historique de rendez-vous, y compris ceux des collaboratrices supprimées : les écarter ferait disparaître leur chiffre sans rien qui le signale
-- un enfant d'agenda n'est pas toujours une personne (cabine, poste, ressource) : `type` et `title` sont rendus tels que planity les stocke
+planity keeps what is deleted: a departed staff member keeps her calendar and past appointments, a withdrawn service stays on old receipts.
+- `planity_list_employees`, `planity_list_services` and `planity_list_products` **discard deleted items by default** — a three-person salon does not announce seven
+- `include_deleted=true` for history: finding the service on an old receipt, or the revenue of a departed staff member
+- all calendars are read for an appointment history, including those of deleted staff members: discarding them would make their revenue vanish with nothing to flag it
+- a calendar child is not always a person (booth, workstation, resource): `type` and `title` are returned as planity stores them
 
-## note — lire une période avant d'en projeter quoi que ce soit
+## note — read a period before projecting anything from it
 
-`planity_get_revenue_summary` et `planity_get_daily_revenue` rendent un bloc `period` : bornes, nombre de jours, fuseau (europe/paris), et surtout `ends_today` / `complete`.
-- la plupart des presets s'arrêtent à **maintenant**, pas à la fin de la journée : le dernier jour est partiel
-- un rythme journalier calculé sur une telle fenêtre est donc trop bas, et une projection bâtie dessus (« au rythme actuel, il reste N jours ») sort fausse sans que rien ne le signale
-- les jours sans encaissement sont **absents** de la série, pas présents à zéro : `days_with_revenue` n'est pas `period.days`
+`planity_get_revenue_summary` and `planity_get_daily_revenue` return a `period` block: bounds, number of days, timezone (europe/paris), and above all `ends_today` / `complete`.
+- most presets stop at **now**, not at the end of the day: the last day is partial
+- a daily rate computed over such a window is therefore too low, and a projection built on it ("at the current rate, N days remain") comes out wrong with nothing to flag it
+- days with no takings are **absent** from the series, not present at zero: `days_with_revenue` is not `period.days`

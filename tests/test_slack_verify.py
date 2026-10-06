@@ -54,13 +54,13 @@ def _stub(monkeypatch):
 
 
 def test_no_token_raises():
-    with pytest.raises(ValueError, match="aucun token Slack"):
+    with pytest.raises(ValueError, match="no Slack token"):
         _verify({})
 
 
 def test_dead_token_flagged_as_invalid():
     _FakeClient.calls = {"auth": SlackError("invalid_auth")}
-    with pytest.raises(ValueError, match="token Slack invalide"):
+    with pytest.raises(ValueError, match="invalid Slack token"):
         _verify({"user_token": "xoxp-dead"})
 
 

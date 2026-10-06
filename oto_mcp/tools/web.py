@@ -1,35 +1,33 @@
-"""web_read — lire une page publique qui se défend, en ESCALADANT (#348).
+"""web_read — read a public page that defends itself, by ESCALATING (#348).
 
-Mesuré en campagne réelle : sur les sites de petites structures, deux sur
-trois ne se laissent pas lire par un fetch nu (timeouts, 403 anti-robot) — et
-les coordonnées qu'on y cherche sont la priorité du client final. Trois crans,
-un seul verbe, et la réponse DIT toujours son chemin :
+Measured in a real campaign: on small-business sites, two out of three
+can't be read by a bare fetch (timeouts, anti-bot 403) — and the contact
+details sought there are the end client's priority. Three tiers, one verb,
+and the answer ALWAYS SAYS which path it took:
 
-  ① fetch HTTP nu       — gratuit ; suffit pour la majorité des sites ;
-  ② scraper hébergé     — `serper` (~2 crédits) : anti-bot rudimentaire, mais
-                          PAS de rendu JS garanti — mesuré le 02/09/2026, un
-                          site rendu côté client revient 200 + corps quasi
-                          vide ; c'est le cran ③ qui exécute vraiment le JS ;
-  ③ navigateur hébergé  — session Chrome JETABLE (Browserbase, sans compte ni
-                          coffre), OPT-IN `browser=True` : jamais un défaut
-                          silencieux qui multiplie la facture.
+  ① bare HTTP fetch     — free; enough for most sites;
+  ② hosted scraper      — `serper` (~2 credits): basic anti-bot, but NO
+                          guaranteed JS rendering — measured on 02/09/2026, a
+                          client-rendered site comes back 200 + a near-empty
+                          body; it is tier ③ that really executes the JS;
+  ③ hosted browser      — DISPOSABLE Chrome session (Browserbase, no account
+                          or vault), OPT-IN `browser=True`: never a silent
+                          default that multiplies the bill.
 
-Un cran indisponible (pas de clé serper, Browserbase non configuré) est SAUTÉ
-ET DIT — le repli silencieux est exclu, dans les deux sens.
+An unavailable tier (no serper key, Browserbase not configured) is SKIPPED
+AND REPORTED — silent fallback is ruled out, in both directions.
 
-⚠️ SÉCURITÉ (cran ① seulement — ② et ③ s'exécutent hors de notre réseau) :
-le fetch tourne sur la box, qui vit dans un VPC avec des services PRIVÉS. La
-garde SSRF : schémas http(s) seuls, résolution DNS puis refus de toute IP non
-publique (loopback, RFC1918, link-local, metadata…), redirections marchées À
-LA MAIN et re-vérifiées à chaque saut (un 302 public→privé ne contourne rien).
-Limite assumée : un DNS à TTL nul qui répond différemment entre la
-vérification et la connexion (rebinding pur) n'est pas couvert — les cibles
-internes exigent de toute façon des chemins/headers qu'une lecture de page ne
-fournit pas.
+⚠️ SECURITY (tier ① only — ② and ③ run outside our network):
+the fetch runs on the box, which lives in a VPC with PRIVATE services. The
+SSRF guard: http(s) schemes only, DNS resolution then refusal of any non-public
+IP (loopback, RFC1918, link-local, metadata…), redirects walked BY HAND and
+re-checked at each hop (a public→private 302 bypasses nothing).
+Accepted limit: a zero-TTL DNS that answers differently between the check and
+the connection (pure rebinding) is not covered — internal targets require
+paths/headers that a page read doesn't supply anyway.
 
-Bornes de lecture : le cap se compte sur les bytes DÉCOMPRESSÉS, PENDANT la
-lecture (jamais accumuler-puis-tronquer — la leçon de la bombe de
-décompression).
+Read bounds: the cap is counted on DECOMPRESSED bytes, DURING the read (never
+accumulate-then-truncate — the lesson of the decompression bomb).
 """
 from __future__ import annotations
 
@@ -49,19 +47,19 @@ from . import cesures
 from .. import access, browserbase, egress, session_org, url_perimeter
 from ..connectors import health as connector_health
 
-#: Marqueur du cran ② sauté parce que le compte Serper servi est à sec.
+#: Marker for tier ② skipped because the Serper account being served is dry.
 A_SEC = "a_sec"
 
-_TIMEOUT = (10, 30)              # borne CHAQUE socket — pas la lecture entière
-_DEADLINE_S = 45                 # budget GLOBAL du cran ① (cf. `_fetch_http`)
-_MAX_FETCH_BYTES = 3_000_000     # bytes décompressés lus au maximum (cran ①)
-_EMPTY_TEXT_CHARS = 200          # texte extrait plus court = coquille vide
-# ⚠️ Ce seuil attrape la coquille VIDE, pas la page NON RENDUE : mesuré le
-# 02/09/2026, une page d'accueil rendue côté client rend 455 c. par le cran ②
-# — au-dessus du seuil, donc servie comme « lu », sans que rien n'escalade.
-# Le relever au jugé écarterait de vraies pages courtes : le cas se traite en
-# DISANT le fait (cf. la description de `serper_scrape`), pas en devinant un
-# nombre. oto-backend, signal #653.
+_TIMEOUT = (10, 30)              # bounds EACH socket — not the whole read
+_DEADLINE_S = 45                 # GLOBAL budget of tier ① (see `_fetch_http`)
+_MAX_FETCH_BYTES = 3_000_000     # max decompressed bytes read (tier ①)
+_EMPTY_TEXT_CHARS = 200          # extracted text shorter than this = empty shell
+# ⚠️ This threshold catches the EMPTY shell, not the UNRENDERED page: measured on
+# 02/09/2026, a client-rendered home page returns 455 chars via tier ②
+# — above the threshold, so served as "read", with nothing escalating.
+# Raising it by guesswork would discard real short pages: the case is handled by
+# STATING the fact (see the description of `serper_scrape`), not by guessing a
+# number. oto-backend, signal #653.
 _MAX_REDIRECTS = 5
 _DEFAULT_MAX_CHARS = 12_000
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -73,19 +71,19 @@ def _bad(msg: str) -> McpError:
 
 
 def _now() -> float:
-    """Indirection d'horloge — le budget global se teste sans dormir."""
+    """Clock indirection — the global budget can be tested without sleeping."""
     return time.monotonic()
 
 
 def _meme_site(demande: str, servi: str) -> bool:
-    """`demande` et `servi` désignent-ils le MÊME site ?
+    """Do `demande` and `servi` designate the SAME site?
 
-    Un `www.` en tête et un sous-domaine ne sont pas des écarts (`acme.fr` →
-    `www.acme.fr` → `shop.acme.fr` : même maison) ; deux domaines distincts en
-    sont un. Volontairement sans liste de suffixes publics : la règle « l'un est
-    suffixe de l'autre sur une frontière de label » n'a pas le trou du `.co.uk`
-    qu'aurait une comparaison des deux derniers labels — `acme.co.uk` et
-    `evil.co.uk` ne sont suffixes ni l'un ni l'autre, donc l'écart est ANNONCÉ."""
+    A leading `www.` and a subdomain are not discrepancies (`acme.fr` →
+    `www.acme.fr` → `shop.acme.fr`: same house); two distinct domains are one.
+    Deliberately without a public-suffix list: the rule "one is a suffix of
+    the other on a label boundary" doesn't have the `.co.uk` hole that a
+    comparison of the last two labels would — `acme.co.uk` and
+    `evil.co.uk` are suffixes of neither, so the discrepancy is REPORTED."""
     a = (demande or "").lower().removeprefix("www.")
     b = (servi or "").lower().removeprefix("www.")
     if not a or not b:
@@ -94,21 +92,21 @@ def _meme_site(demande: str, servi: str) -> bool:
 
 
 def _cible_avec_repli_www(url: str) -> tuple[str, bool]:
-    """`(url à lire, repli effectué)` — `www.` devant un domaine NU qui ne résout pas.
+    """`(url to read, fallback applied)` — `www.` in front of a BARE domain that doesn't resolve.
 
-    Beaucoup de sites n'ont d'enregistrement DNS que sur `www.` : lire `acme.fr`
-    échouait donc à la garde, en refus immédiat, sans que la forme usuelle soit
-    jamais essayée (oto#262, un des manques groupés dans #188).
+    Many sites only have a DNS record on `www.`: reading `acme.fr` therefore
+    failed at the guard, in an immediate refusal, without the usual form ever
+    being tried (oto#262, one of the gaps grouped in #188).
 
-    ⚠️ **Le repli ne vaut QUE pour un nom qui ne résout pas.** Un nom qui résout
-    vers une adresse interne est un refus de SÉCURITÉ : il reste franc, et on
-    n'envoie pas de requête vers sa variante. Le discriminant est la résolution
-    elle-même (`egress.resolved_addresses`), pas le texte du refus, qui n'est pas
-    un contrat.
+    ⚠️ **The fallback applies ONLY to a name that doesn't resolve.** A name that
+    resolves to an internal address is a SECURITY refusal: it stays blunt, and
+    no request is sent to its variant. The discriminator is the resolution
+    itself (`egress.resolved_addresses`), not the refusal text, which is not
+    a contract.
 
-    ⚠️ **Rien n'est contourné** : l'URL de repli repasse la garde complète au
-    moment d'être lue, comme toute autre cible. Résolution DNS bloquante, donc
-    appelée hors de la boucle."""
+    ⚠️ **Nothing is bypassed**: the fallback URL goes through the full guard
+    again when it is read, like any other target. Blocking DNS resolution, so
+    called outside the loop."""
     morceaux = urlsplit(url)
     hote = morceaux.hostname or ""
     if not hote or hote.lower().startswith("www.") or hote.replace(".", "").isdigit() \
@@ -117,30 +115,30 @@ def _cible_avec_repli_www(url: str) -> tuple[str, bool]:
     port = morceaux.port or (443 if morceaux.scheme == "https" else 80)
     try:
         egress.resolved_addresses(hote, port)
-        return url, False              # il résout : la garde décidera normalement
+        return url, False              # it resolves: the guard will decide normally
     except OSError:
         pass
     try:
         egress.resolved_addresses("www." + hote, port)
     except OSError:
-        return url, False              # aucune des deux : le refus d'origine sortira
+        return url, False              # neither one: the original refusal will come out
     netloc = morceaux.netloc.replace(hote, "www." + hote, 1)
     return morceaux._replace(netloc=netloc).geturl(), True
 
 
-# ── garde SSRF (cran ① seulement) ────────────────────────────────────────────
+# ── SSRF guard (tier ① only) ─────────────────────────────────────────────────
 def check_url_public(url: str) -> None:
-    """Lève (en nommant la raison) si `url` ne désigne pas une cible PUBLIQUE.
+    """Raises (naming the reason) if `url` doesn't designate a PUBLIC target.
 
-    C'est la garde d'egress de la plateforme (`oto_mcp/egress.py`), sous la
-    politique « URL choisie par l'agent » : même décision sur ce qui est interne
-    (fail-closed sur l'ENSEMBLE des adresses résolues — un hôte qui résout public
-    ET privé est refusé, c'est le montage type du contournement), et AUCUNE
-    exception déclarée ne s'applique. Jusqu'au 12/09/2026 (oto#180) ce lecteur
-    portait sa propre garde, écrite avant celle des connecteurs : une API ouverte
-    atteinte depuis un run (`web_read` est le seul chemin sans instance) sortait
-    par une règle à part — `not is_global` seul, sans le mot de la plage refusée,
-    et qui laissait passer une plage que l'autre refuse. Une seule couture."""
+    This is the platform's egress guard (`oto_mcp/egress.py`), under the
+    "URL chosen by the agent" policy: same decision on what is internal
+    (fail-closed on the WHOLE set of resolved addresses — a host that resolves
+    public AND private is refused, that being the typical bypass setup), and NO
+    declared exception applies. Until 12/09/2026 (oto#180) this reader
+    carried its own guard, written before the connectors' one: an open API
+    reached from a run (`web_read` is the only path without an instance) went out
+    through a separate rule — `not is_global` alone, without naming the refused range,
+    and which let through a range the other refuses. One single seam."""
     try:
         egress.check_url(url, connector="web_read", field="url",
                          exceptions_declarees=False)
@@ -148,7 +146,7 @@ def check_url_public(url: str) -> None:
         raise _bad(str(e)) from None
 
 
-# ── extraction texte (stdlib — pas de dépendance pour retirer des balises) ───
+# ── text extraction (stdlib — no dependency needed to strip tags) ────────────
 class _TextExtractor(HTMLParser):
     _SKIP = {"script", "style", "noscript", "template", "svg", "head"}
     _BLOCK = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -183,14 +181,14 @@ class _TextExtractor(HTMLParser):
 
 
 def extract_text(html_str: str) -> tuple:
-    """(texte lisible, titre) — les lignes vides répétées repliées."""
+    """(readable text, title) — repeated blank lines collapsed."""
     p = _TextExtractor()
     try:
         p.feed(html_str)
-    # noqa: SILENT — extraction de texte optionnelle : le HTML brut reste rendu
-    except Exception:  # noqa: BLE001 — un HTML monstrueux ne casse pas la lecture
+    # noqa: SILENT — optional text extraction: the raw HTML is still returned
+    except Exception:  # noqa: BLE001 — monstrous HTML doesn't break the read
         pass
-    # oto#208 : la césure conditionnelle, invisible, coupe les mots lus par l'agent.
+    # oto#208: the invisible soft hyphen cuts the words read by the agent.
     brut = cesures.retirer("".join(p.parts))
     lignes = [l.strip() for l in brut.splitlines()]
     texte = "\n".join(l for i, l in enumerate(lignes)
@@ -198,25 +196,25 @@ def extract_text(html_str: str) -> tuple:
     return texte.strip(), p.title.strip()
 
 
-# ── cran ① : fetch HTTP nu, streamé, gardé ───────────────────────────────────
+# ── tier ①: bare HTTP fetch, streamed, guarded ───────────────────────────────
 def _fetch_http(url: str, deadline_s: float = _DEADLINE_S) -> dict:
-    """{verdict, ok, status?, html?, final_url?} — les redirections sont
-    marchées À LA MAIN : chaque saut repasse la garde SSRF.
+    """{verdict, ok, status?, html?, final_url?} — redirects are walked
+    BY HAND: each hop goes through the SSRF guard again.
 
-    `deadline_s` = le budget GLOBAL, paramétrable parce que tous les appelants
-    n'ont pas la même patience : `web_read` escalade (45 s se justifient), la
-    sonde d'obfuscation de `serper_scrape` s'ajoute à un scrape DÉJÀ payé et
-    n'a droit qu'à quelques secondes (#681).
+    `deadline_s` = the GLOBAL budget, configurable because not all callers
+    have the same patience: `web_read` escalates (45 s is justified), the
+    obfuscation probe of `serper_scrape` comes on top of a scrape ALREADY paid for
+    and is only entitled to a few seconds (#681).
 
-    ⚠️ `_TIMEOUT` borne chaque SOCKET, jamais la lecture entière : six sauts de
-    redirection valent six fois ce budget, et la boucle de streaming n'est
-    bornée par rien du tout (un serveur qui distille un octet à la fois tient la
-    connexion indéfiniment). Mesuré au journal de prod du 17/08 : 11 lectures
-    au-delà de 30 s, une à **57,5 s**. D'où un budget GLOBAL (`_DEADLINE_S`),
-    vérifié avant chaque saut ET pendant la lecture, qui rabote au passage le
-    timeout de socket sur ce qu'il reste. Le verdict DIT ce qu'il a tenté
-    (combien de sauts, où il en était) — un « timeout » nu n'apprend rien à
-    l'agent qui doit décider s'il réessaie (#491)."""
+    ⚠️ `_TIMEOUT` bounds each SOCKET, never the whole read: six redirect hops
+    are worth six times that budget, and the streaming loop is bounded by
+    nothing at all (a server that drips one byte at a time holds the
+    connection indefinitely). Measured in the prod log of 17/08: 11 reads
+    beyond 30 s, one at **57.5 s**. Hence a GLOBAL budget (`_DEADLINE_S`),
+    checked before each hop AND during the read, which also trims the socket
+    timeout to what remains. The verdict SAYS what it tried
+    (how many hops, where it was) — a bare "timeout" tells the agent nothing
+    when it must decide whether to retry (#491)."""
     t0 = _now()
     courante = url
     sauts = 0
@@ -225,14 +223,14 @@ def _fetch_http(url: str, deadline_s: float = _DEADLINE_S) -> dict:
     def _delai(ou: str) -> dict:
         ecoule = _now() - t0
         return {"ok": False,
-                "verdict": ("délai global dépassé ({:.0f} s) {} — {} redirection(s) "
-                            "suivie(s), dernière cible : {}"
+                "verdict": ("global timeout exceeded ({:.0f} s) {} — {} redirect(s) "
+                            "followed, last target: {}"
                             .format(ecoule, ou, sauts, courante))}
 
     for _ in range(_MAX_REDIRECTS + 1):
         reste = budget - (_now() - t0)
         if reste <= 0:
-            return _delai("avant le saut suivant")
+            return _delai("before the next hop")
         check_url_public(courante)
         try:
             r = requests.get(courante, stream=True, allow_redirects=False,
@@ -240,24 +238,24 @@ def _fetch_http(url: str, deadline_s: float = _DEADLINE_S) -> dict:
                              headers={"User-Agent": _UA})
         except requests.Timeout:
             return {"ok": False,
-                    "verdict": "timeout après {} redirection(s), sur {}".format(
+                    "verdict": "timeout after {} redirect(s), on {}".format(
                         sauts, courante)}
         except requests.RequestException as e:
-            return {"ok": False, "verdict": f"réseau : {type(e).__name__}"}
+            return {"ok": False, "verdict": f"network: {type(e).__name__}"}
         try:
             if r.is_redirect or r.is_permanent_redirect:
                 cible = r.headers.get("Location")
                 if not cible:
-                    return {"ok": False, "verdict": "redirection sans cible"}
+                    return {"ok": False, "verdict": "redirect without a target"}
                 courante = urljoin(courante, cible)
                 sauts += 1
                 continue
             if r.status_code >= 400:
                 return {"ok": False, "verdict": f"HTTP {r.status_code}",
                         "status": r.status_code}
-            # Lecture STREAMÉE, cap sur les bytes DÉCOMPRESSÉS, arrêt PENDANT.
-            # Le budget se revérifie à chaque morceau : c'est ici qu'un serveur
-            # lent tenait la lecture 57 s (#491).
+            # STREAMED read, cap on DECOMPRESSED bytes, stop DURING.
+            # The budget is rechecked on every chunk: this is where a slow
+            # server held the read for 57 s (#491).
             morceaux, total = [], 0
             for chunk in r.iter_content(chunk_size=65536, decode_unicode=False):
                 morceaux.append(chunk)
@@ -265,49 +263,49 @@ def _fetch_http(url: str, deadline_s: float = _DEADLINE_S) -> dict:
                 if total >= _MAX_FETCH_BYTES:
                     break
                 if _now() - t0 >= budget:
-                    return _delai("pendant la lecture du corps")
+                    return _delai("while reading the body")
             brut = b"".join(morceaux)
             html_str = brut.decode(r.encoding or "utf-8", errors="replace")
             return {"ok": True, "status": r.status_code, "html": html_str,
-                    "final_url": courante, "verdict": "lu"}
+                    "final_url": courante, "verdict": "read"}
         finally:
             r.close()
-    return {"ok": False, "verdict": f"plus de {_MAX_REDIRECTS} redirections"}
+    return {"ok": False, "verdict": f"more than {_MAX_REDIRECTS} redirects"}
 
 
 def register(mcp: FastMCP) -> None:
 
     def _serper_scrape(url: str) -> "Optional[dict] | str":
-        """Cran ② — None si la clé serper n'est pas résolvable (cran sauté), `A_SEC`
-        si le compte de la clé servie est à sec (cran sauté, clé marquée)."""
+        """Tier ② — None if the serper key can't be resolved (tier skipped), `A_SEC`
+        if the account of the served key is dry (tier skipped, key marked)."""
         from .serper import a_sec, client_for, credits_consumed, MSG_A_SEC
 
         try:
             key, is_platform = access.resolve_api_key("serper")
-        # noqa: SILENT — dette déclarée : erreur de coffre lue comme « pas de clé serper » (#424, verdict C)
-        except Exception:  # noqa: BLE001 — pas de clé = cran indisponible, pas une panne
+        # noqa: SILENT — declared debt: vault error read as "no serper key" (#424, verdict C)
+        except Exception:  # noqa: BLE001 — no key = tier unavailable, not an outage
             return None
-        # Le client PARTAGÉ avec les outils `serper_*` : un seul limiteur par clé (oto#115).
+        # The client SHARED with the `serper_*` tools: a single limiter per key (oto#115).
         try:
             res = client_for(key).scrape_page(url, include_markdown=True)
         except RuntimeError as e:
             if a_sec(e) is None:
                 raise
-            # Le cran est SAUTÉ (les autres peuvent encore lire la page), donc
-            # `web_read` ne lève pas et l'enveloppe ne marque rien : on marque ici la
-            # clé servie, par la même aide. Et on la retire du relevé, sinon un
-            # `web_read` réussi par un autre cran effacerait aussitôt la marque.
+            # The tier is SKIPPED (the others can still read the page), so
+            # `web_read` doesn't raise and the envelope marks nothing: here we mark the
+            # served key, using the same helper. And we remove it from the trace, otherwise a
+            # `web_read` that succeeds through another tier would immediately erase the mark.
             trace = session_org.current_call_trace()
             ligne = (trace or {}).pop("credential_row", None)
             if ligne is not None:
                 connector_health.marquer_quota_epuise(ligne, MSG_A_SEC)
             return A_SEC
         if is_platform:
-            # `web_read` est la SECONDE bouche serper du backend, et elle débitait 1 là
-            # où un scrape en coûte 2 (la description ci-dessous l'annonce depuis
-            # toujours) : le quota interne sous-comptait donc de moitié tout ce qui
-            # passait par le cran ②. Même règle que les tools `serper_*`, importée et
-            # non recopiée — une règle de coût dupliquée est une règle qui diverge.
+            # `web_read` is the backend's SECOND serper mouth, and it debited 1 where
+            # a scrape costs 2 (the description below has always said so): the
+            # internal quota therefore under-counted by half everything that went
+            # through tier ②. Same rule as the `serper_*` tools, imported and
+            # not copied — a duplicated cost rule is a rule that diverges.
             access.record_platform_usage("serper", credits_consumed("scrape_page", res))
         return res
 
@@ -350,10 +348,10 @@ def register(mcp: FastMCP) -> None:
                 ② returns markdown).
             max_chars: cap on returned content (truncation is flagged).
         """
-        # Périmètre du projet (#605) : résolu UNE fois (lecture DB → hors boucle),
-        # appliqué à l'URL demandée ici et à l'URL OBSERVÉE après redirection plus
-        # bas — un `acme.fr/equipe/x` qui atterrit sur un profil est un profil.
-        # Et EN PREMIER (#632) : avant toute autre règle de ce tool.
+        # Project perimeter (#605): resolved ONCE (DB read → outside the loop),
+        # applied to the requested URL here and to the URL OBSERVED after redirect
+        # further down — an `acme.fr/equipe/x` that lands on a profile is a profile.
+        # And FIRST (#632): before any other rule of this tool.
         per = await asyncio.to_thread(url_perimeter.perimeter_of_call)
         url_perimeter.refuse_if_excluded(url, per)
 
@@ -365,19 +363,19 @@ def register(mcp: FastMCP) -> None:
 
         def _sortie(chemin: str, content: str, title: str = "",
                     final_url: Optional[str] = None) -> dict:
-            """Assemble la réponse — et n'AFFIRME jamais l'URL finale.
+            """Assembles the response — and never ASSERTS the final URL.
 
-            Signal #491 : ce champ recopiait l'URL DEMANDÉE quand le cran n'en
-            observait aucune (`final_url or url`). Or serper suit les
-            redirections en silence et ne rend AUCUNE URL finale : le tool
-            jurait donc que la page venait de l'hôte demandé, sans rien en
-            savoir — et la seule parade de l'appelant (comparer `final_url` à
-            l'hôte demandé) était structurellement aveugle sur ce cran.
+            Signal #491: this field copied the REQUESTED URL when the tier
+            observed none (`final_url or url`). But serper follows
+            redirects silently and returns NO final URL: the tool
+            therefore swore the page came from the requested host, without knowing
+            anything about it — and the caller's only defence (comparing `final_url` to
+            the requested host) was structurally blind on this tier.
 
-            Désormais : `final_url` est OBSERVÉE ou `None`, `hote` porte le
-            verdict (`conforme` vaut `None` quand on ne sait pas), et tout ce
-            qui n'est pas un `True` franc se dit dans `avertissement`. C'est le
-            tool qui annonce l'écart, pas l'appelant qui doit y penser."""
+            Now: `final_url` is OBSERVED or `None`, `hote` carries the
+            verdict (`conforme` is `None` when unknown), and anything
+            that is not a clear `True` is stated in `avertissement`. It is the
+            tool that announces the discrepancy, not the caller who has to think of it."""
             url_perimeter.refuse_if_excluded(final_url, per)
             servi = urlsplit(final_url).hostname if final_url else None
             conforme = _meme_site(demande, servi) if servi else None
@@ -389,94 +387,94 @@ def register(mcp: FastMCP) -> None:
                    "tentatives": tentatives, "cout": cout}
             if conforme is None:
                 out["avertissement"] = (
-                    "Impossible de confirmer quel site a répondu : le cran "
-                    "`{}` ne rend pas l'URL finale et suit les redirections "
-                    "sans le dire. Le contenu peut venir d'un autre domaine "
-                    "que `{}` — recoupe avant d'en tirer un fait.".format(
+                    "Cannot confirm which site answered: the tier "
+                    "`{}` doesn't return the final URL and follows redirects "
+                    "without saying so. The content may come from a domain other "
+                    "than `{}` — cross-check before drawing a fact from it.".format(
                         chemin, demande))
             elif conforme is False:
                 out["avertissement"] = (
-                    "Tu as demandé `{}` ; la page servie vient de `{}` "
-                    "(redirection suivie). Le contenu ci-dessus est celui de "
-                    "`{}` — vérifie que c'est bien le site voulu avant d'en "
-                    "tirer un fait.".format(demande, servi, servi))
+                    "You asked for `{}`; the page served comes from `{}` "
+                    "(redirect followed). The content above is that of "
+                    "`{}` — check that it is the intended site before "
+                    "drawing a fact from it.".format(demande, servi, servi))
             return out
 
-        # ── ① le fetch nu ────────────────────────────────────────────────────
-        # `requests` est SYNCHRONE et ce handler est `async def` (il `await` le
-        # cran ③) : exécuté tel quel, il gèle la boucle — donc TOUS les
-        # utilisateurs — le temps de la lecture. Mesuré au journal du 17/08 :
-        # 11 lectures > 30 s, une à 57,5 s (docs/event-loop-perf.md, mode n°1).
-        # Le garde-fou AST ne peut pas le voir : le handler `await` bien
-        # quelque chose, plus bas. D'où `to_thread` ici (#491).
+        # ── ① the bare fetch ─────────────────────────────────────────────────
+        # `requests` is SYNCHRONOUS and this handler is `async def` (it `await`s
+        # tier ③): run as-is, it freezes the loop — hence ALL
+        # users — for the duration of the read. Measured in the 17/08 log:
+        # 11 reads > 30 s, one at 57.5 s (docs/event-loop-perf.md, mode no. 1).
+        # The AST safeguard can't see it: the handler does `await`
+        # something, further down. Hence `to_thread` here (#491).
         url, repli_www = await asyncio.to_thread(_cible_avec_repli_www, url)
         if repli_www:
             url_perimeter.refuse_if_excluded(url, per)
             tentatives.append({"cran": "dns", "verdict": (
-                f"`{demande}` ne résout pas — repli sur `{urlsplit(url).hostname}`")})
+                f"`{demande}` doesn't resolve — fallback to `{urlsplit(url).hostname}`")})
         res = await asyncio.to_thread(_fetch_http, url)
         if res.get("ok"):
             texte, title = extract_text(res["html"])
             contenu = res["html"] if as_html else texte
             if len(texte) >= _EMPTY_TEXT_CHARS:
-                tentatives.append({"cran": "http", "verdict": "lu"})
+                tentatives.append({"cran": "http", "verdict": "read"})
                 return _sortie("http", contenu, title, res.get("final_url") or None)
             tentatives.append({"cran": "http",
-                               "verdict": f"coquille vide ({len(texte)} car. utiles)"})
+                               "verdict": f"empty shell ({len(texte)} useful chars)"})
         else:
             tentatives.append({"cran": "http", "verdict": res["verdict"]})
 
-        # ── ② le scraper hébergé ─────────────────────────────────────────────
-        # Même raison qu'au cran ① : `SerperClient` est synchrone (et s'auto-
-        # limite par un `time.sleep`, par clé : instance partagée, oto#115), il n'a
-        # rien à faire dans la boucle.
+        # ── ② the hosted scraper ─────────────────────────────────────────────
+        # Same reason as tier ①: `SerperClient` is synchronous (and rate-limits
+        # itself with a `time.sleep`, per key: shared instance, oto#115), it has
+        # no business in the loop.
         scrape = await asyncio.to_thread(_serper_scrape, url)
         if scrape is None:
             tentatives.append({"cran": "serper",
-                               "verdict": "sauté — aucune clé serper résolvable"})
+                               "verdict": "skipped — no serper key resolvable"})
         elif scrape == A_SEC:
             tentatives.append({"cran": "serper",
-                               "verdict": "sauté — compte serper à sec (crédits épuisés : "
-                                          "recharge-le ou pose une autre clé)"})
+                               "verdict": "skipped — serper account dry (credits exhausted: "
+                                          "top it up or set another key)"})
         else:
-            # Le compte vient de la RÉPONSE : Serper facture 2 crédits sur une
-            # page ordinaire et jusqu'à 10 sur une page difficile. Le 1 en dur
-            # sous-déclarait la dépense à l'appelant qui lit `cout` pour décider
-            # s'il escalade. Repli sur 1 si l'amont ne le dit pas. MÊME règle que
-            # celle qui débite le quota juste au-dessus (`_serper_scrape`) et que
-            # celle des tools `serper_*` : ce qu'on annonce et ce qu'on débite ne
-            # peuvent pas être deux lectures différentes de la même réponse.
+            # The count comes from the RESPONSE: Serper bills 2 credits on an
+            # ordinary page and up to 10 on a hard page. The hard-coded 1
+            # under-declared the spend to the caller who reads `cout` to decide
+            # whether to escalate. Falls back to 1 if upstream doesn't say. SAME rule as
+            # the one that debits the quota just above (`_serper_scrape`) and as
+            # that of the `serper_*` tools: what we announce and what we debit can't
+            # be two different readings of the same response.
             from .serper import credits_consumed
             cout["serper_credits"] = credits_consumed("scrape_page", scrape)
             md = scrape.get("markdown") or scrape.get("text") or ""
             meta = scrape.get("metadata") or {}
             if len(md.strip()) >= _EMPTY_TEXT_CHARS:
-                tentatives.append({"cran": "serper", "verdict": "lu"})
+                tentatives.append({"cran": "serper", "verdict": "read"})
                 return _sortie("serper", md, str(meta.get("title") or ""))
             tentatives.append({"cran": "serper",
-                               "verdict": f"coquille vide ({len(md.strip())} car.)"})
+                               "verdict": f"empty shell ({len(md.strip())} chars)"})
 
-        # ── ③ le navigateur jetable — OPT-IN strict ──────────────────────────
+        # ── ③ the disposable browser — strict OPT-IN ─────────────────────────
         if not browser:
             raise _bad(
-                "Page illisible par fetch et scraper "
+                "Page unreadable by fetch and scraper "
                 f"({'; '.join(t['cran'] + ': ' + t['verdict'] for t in tentatives)}). "
-                "Dernier recours : repasse avec browser=true — une session Chrome "
-                "hébergée (coût réel, quelques secondes de navigateur).")
+                "Last resort: retry with browser=true — a hosted Chrome "
+                "session (real cost, a few seconds of browser).")
         if not browserbase.is_configured():
-            raise _bad("browser=true demandé mais Browserbase n'est pas configuré "
-                       "côté plateforme — signale-le (feedback signal=gap).")
+            raise _bad("browser=true requested but Browserbase is not configured "
+                       "on the platform side — report it (feedback signal=gap).")
         try:
             page = await browserbase.fetch_page_ephemeral(url, as_html=as_html)
         except browserbase.BrowserbaseError as e:
             tentatives.append({"cran": "browser", "verdict": str(e)[:200]})
-            raise _bad("La session navigateur a échoué aussi — la page est "
-                       f"illisible par les trois crans. Tentatives : {tentatives}")
+            raise _bad("The browser session failed too — the page is "
+                       f"unreadable by all three tiers. Attempts: {tentatives}")
         cout["browser_session"] = True
         contenu = page.get("content") or ""
         if not as_html:
-            # innerText déjà « texte » — pas de seconde extraction.
+            # innerText is already "text" — no second extraction.
             pass
-        tentatives.append({"cran": "browser", "verdict": "lu"})
+        tentatives.append({"cran": "browser", "verdict": "read"})
         return _sortie("browser", contenu, page.get("title") or "",
                        page.get("final_url") or None)

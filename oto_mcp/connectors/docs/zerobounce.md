@@ -1,12 +1,12 @@
-## prerequisite — obtenir une clé zerobounce
+## prerequisite — get a ZeroBounce key
 
-crée une clé api dans les réglages api de ton compte [zerobounce](https://www.zerobounce.net).
-- colle-la dans tes connecteurs oto sur `/account` — zerobounce est **byo** (chacun sa clé)
-- la clé consomme les crédits de vérification de ton compte
+create an API key in the API settings of your [zerobounce](https://www.zerobounce.net) account.
+- paste it into your oto connectors on `/account` — zerobounce is **byo** (everyone brings their own key)
+- the key consumes your account's verification credits
 
-## usage — vérifier la délivrabilité d'emails
+## usage — check email deliverability
 
-valide une ou plusieurs adresses email avant un envoi (statut valid, invalid, catch-all, spamtrap…).
-- `zerobounce_verify_email` — vérifie une adresse
-- `zerobounce_verify_batch` — jusqu'à 200 adresses en un appel
-- `zerobounce_credits` — crédits de vérification restants
+validates one or more email addresses before sending (status valid, invalid, catch-all, spamtrap…).
+- `zerobounce_verify_email` — verifies one address
+- `zerobounce_verify_batch` — up to 200 addresses in one call
+- `zerobounce_credits` — remaining verification credits

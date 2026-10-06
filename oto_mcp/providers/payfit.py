@@ -1,42 +1,42 @@
-"""Déclaration de registre du connecteur `payfit`.
+"""Registry declaration of the `payfit` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# payfit : paie et RH, TOUT ce que l'API Partner documente en LECTURE. Aucune
-# écriture n'est câblée (24/09/2026) : les ops d'écriture rendent
-# `payfit_write_not_wired` (cf. `tools/payfit_garde.py`).
-# keyed api_key (Bearer), BYO seulement : une clé API PayFit est créée par un
-# admin de l'entreprise et n'ouvre que cette entreprise — une clé plateforme
-# n'aurait aucun sens, et c'est aussi pourquoi un GROUPE de sociétés pose une
-# instance de connecteur par société (cf. `connectors/docs/payfit.md`).
+# payfit: payroll and HR, EVERYTHING the Partner API documents for READING. No
+# write is wired (24/09/2026): write ops return
+# `payfit_write_not_wired` (see `tools/payfit_garde.py`).
+# keyed api_key (Bearer), BYO only: a PayFit API key is created by a
+# company admin and only opens that company — a platform key
+# would make no sense, and that is also why a GROUP of companies sets one connector
+# instance per company (see `connectors/docs/payfit.md`).
 #
-# ⚠️ Logiciel de PAIE : NIR, IBAN, rémunérations, motifs d'absence liés à la
-# santé. Depuis le 17/09/2026 (signal d'usage #1063) le connecteur ne RETIRE
-# plus rien en dur : tout est servi, et la protection passe par le **défaut
-# serveur de filtres de champs** (`field_filter_defaults.SERVER_DEFAULTS`), que
-# l'org_admin peut lever — cf. `tools/payfit.py`.
+# ⚠️ PAYROLL software: NIR, IBAN, pay, health-related absence reasons.
+# Since 17/09/2026 (usage signal #1063) the connector no longer REMOVES
+# anything hard-coded: everything is served, and protection goes through the **server
+# default for field filters** (`field_filter_defaults.SERVER_DEFAULTS`), which
+# the org_admin can lift — see `tools/payfit.py`.
 #
-# Trois modules, une seule clé : les outils de `payfit.py` et ses frères, montés
-# ensemble par `modules`.
+# Three modules, a single key: the tools of `payfit.py` and its siblings, mounted
+# together by `modules`.
 CONNECTOR = _c(
     "payfit", ["payfit"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="PayFit",
-    help="paie et RH, en lecture : entreprise, annuaire, contrats, absences, "
-         "bulletins, comptabilité de paie, temps de travail, mutuelle",
+    help="payroll and HR, read-only: company, directory, contracts, absences, "
+         "payslips, payroll accounting, worked time, health insurance",
     href="https://payfit.com",
     modules=("payfit", "payfit_paie", "payfit_social"),
-    # Le mot de PayFit pour un « compte » : une clé = une ENTREPRISE, et un groupe en
-    # pose autant qu'il a de sociétés. Sans ce mot, l'agent bloqué sur une ambiguïté
-    # lit « plusieurs comptes payfit » et doit traduire ; avec, il lit « plusieurs
-    # sociétés » et sait ce qu'il cherche. Le multi-compte lui-même n'est pas déclaré
-    # ici : il vaut déjà pour tout connecteur dont le credential se pose
+    # PayFit's word for an "account": one key = one COMPANY, and a group sets as many
+    # as it has companies. Without this word, an agent stuck on an ambiguity
+    # reads "several payfit accounts" and has to translate; with it, it reads "several
+    # companies" and knows what it is looking for. Multi-account itself is not declared
+    # here: it already applies to every connector whose credential can be set
     # (`Connector.auth_multi_account`).
-    account_noun="société",
+    account_noun="company",
 )
 
 CATEGORY = "RH"
@@ -44,13 +44,13 @@ PUBLISHER = "PayFit"
 LOGO_DOMAIN = "payfit.com"
 
 DESCRIPTION = (
-    "Le pilotage RH et financier d'une entreprise gérée avec PayFit : l'annuaire "
-    "des collaborateurs, leurs contrats (nature, convention collective, forfait "
-    "jours, essai, rupture), leurs absences, les bulletins (métadonnées et PDF), "
-    "les écritures comptables de paie et leur export, le fichier de virement, "
-    "l'état du cycle de paie, le temps de travail réalisé, les titres-restaurant, "
-    "la mutuelle et la prévoyance. En lecture seulement : le connecteur n'écrit "
-    "jamais dans PayFit — crée la clé avec des scopes de lecture. NIR, "
-    "coordonnées bancaires et motif d'absence sont "
-    "masqués par un défaut serveur qu'un administrateur d'org peut lever."
+    "HR and financial management of a company run on PayFit: the employee "
+    "directory, their contracts (nature, collective agreement, day-based "
+    "package, probation, termination), their absences, payslips (metadata and PDF), "
+    "payroll accounting entries and their export, the payment file, "
+    "the payroll cycle status, actual worked time, meal vouchers, "
+    "health insurance and provident fund. Read-only: the connector never writes "
+    "to PayFit — create the key with read scopes. NIR, "
+    "bank details and absence reason are "
+    "masked by a server default that an org administrator can lift."
 )

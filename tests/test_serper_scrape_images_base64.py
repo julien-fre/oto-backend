@@ -29,7 +29,7 @@ def test_une_image_base64_est_remplacee_par_une_trace_qui_dit_ce_qui_manque():
 
     assert (nombre, caracteres) == (1, len(PNG))
     assert B64 not in apres
-    assert f"![logo](data:image/png — {len(B64)} caractères de base64 retirés)" in apres
+    assert f"![logo](data:image/png — {len(B64)} characters of base64 removed)" in apres
     assert "[ici](https://acme.test/mentions)" in apres
 
 

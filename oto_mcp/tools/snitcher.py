@@ -54,28 +54,28 @@ def _bad(msg: str) -> McpError:
 def _refuse_ignored(op: str, hint: str, **provided) -> None:
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op={op!r} n'utilise pas `{name}` — {hint}")
+            raise _bad(f"op={op!r} does not use `{name}` — {hint}")
 
 
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"Snitcher a rejeté le jeton (HTTP {status}) — vérifie le Personal Access "
-                "Token posé sur ce connecteur (Snitcher : Settings → Account → API).")
+        return (f"Snitcher rejected the token (HTTP {status}) — check the Personal Access "
+                "Token set on this connector (Snitcher: Settings → Account → API).")
     if status == 404:
-        return f"Snitcher : ressource introuvable (HTTP 404) — {e.body}"
+        return f"Snitcher: resource not found (HTTP 404) — {e.body}"
     if status == 422:
-        return f"Snitcher : paramètres refusés (HTTP 422) — {e.body}"
+        return f"Snitcher: parameters rejected (HTTP 422) — {e.body}"
     if status == 429:
-        return ("Snitcher : trop de requêtes (429) — limite 60/minute par jeton. "
-                "Réessaie dans un instant.")
+        return ("Snitcher: too many requests (429) — limit 60/minute per token. "
+                "Try again in a moment.")
     if status in (500, 502, 503, 504):
-        return f"Snitcher est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Snitcher a refusé la requête (HTTP {status}) : {e.body}"
+        return f"Snitcher is temporarily unavailable (HTTP {status}) — try again later."
+    return f"Snitcher refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """« Tester la connexion » : GET /me, l'appel le plus léger et gratuit."""
+    """"Test the connection": GET /me, the lightest and free call."""
     from oto.tools.snitcher.client import SnitcherClient
     SnitcherClient(api_key=fields["key"]).get_me()
 
@@ -149,60 +149,60 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "op='list' ne prend que page/size",
+            _refuse_ignored(op, "op='list' only takes page/size",
                              workspace_uuid=workspace_uuid, url=url,
                              usage_limit=usage_limit, email=email, tag_name=tag_name)
             return _run(lambda: client.list_workspaces(page=page, size=size))
         if op == "me":
-            _refuse_ignored(op, "op='me' ne prend aucun argument",
+            _refuse_ignored(op, "op='me' takes no argument",
                              workspace_uuid=workspace_uuid, url=url, usage_limit=usage_limit,
                              email=email, tag_name=tag_name, page=page, size=size)
             return _run(client.get_me)
         if op == "create":
-            _refuse_ignored(op, "un nouveau workspace n'a pas encore d'uuid",
+            _refuse_ignored(op, "a new workspace has no uuid yet",
                              workspace_uuid=workspace_uuid, usage_limit=usage_limit,
                              email=email, tag_name=tag_name, page=page, size=size)
             if not url:
-                raise _bad("op='create' requiert `url`")
+                raise _bad("op='create' requires `url`")
             return _run(lambda: client.create_workspace(url))
         if workspace_uuid is None:
-            raise _bad(f"op={op!r} requiert `workspace_uuid`")
+            raise _bad(f"op={op!r} requires `workspace_uuid`")
         if op == "get":
-            _refuse_ignored(op, "op='get' ne prend que workspace_uuid",
+            _refuse_ignored(op, "op='get' only takes workspace_uuid",
                              url=url, usage_limit=usage_limit, email=email,
                              tag_name=tag_name, page=page, size=size)
             return _run(lambda: client.get_workspace(workspace_uuid))
         if op == "segments":
-            _refuse_ignored(op, "op='segments' ne prend que workspace_uuid",
+            _refuse_ignored(op, "op='segments' only takes workspace_uuid",
                              url=url, usage_limit=usage_limit, email=email,
                              tag_name=tag_name, page=page, size=size)
             return _run(lambda: client.list_segments(workspace_uuid))
         if op == "update":
-            _refuse_ignored(op, "op='update' ne change que usage_limit",
+            _refuse_ignored(op, "op='update' only changes usage_limit",
                              url=url, email=email, tag_name=tag_name, page=page, size=size)
             if usage_limit is None:
-                raise _bad("op='update' requiert `usage_limit` (le seul champ modifiable)")
+                raise _bad("op='update' requires `usage_limit` (the only modifiable field)")
             return _run(lambda: client.update_workspace(workspace_uuid, usage_limit=usage_limit))
         if op == "delete":
-            _refuse_ignored(op, "une suppression ne prend que workspace_uuid",
+            _refuse_ignored(op, "a deletion only takes workspace_uuid",
                              url=url, usage_limit=usage_limit, email=email,
                              tag_name=tag_name, page=page, size=size)
             return _run(lambda: client.delete_workspace(workspace_uuid))
         if op == "invite":
-            _refuse_ignored(op, "op='invite' ne prend que workspace_uuid + email",
+            _refuse_ignored(op, "op='invite' only takes workspace_uuid + email",
                              url=url, usage_limit=usage_limit, tag_name=tag_name,
                              page=page, size=size)
             if not email:
-                raise _bad("op='invite' requiert `email`")
+                raise _bad("op='invite' requires `email`")
             return _run(lambda: client.invite_user(workspace_uuid, email))
         if op == "create_tag":
-            _refuse_ignored(op, "op='create_tag' ne prend que workspace_uuid + tag_name",
+            _refuse_ignored(op, "op='create_tag' only takes workspace_uuid + tag_name",
                              url=url, usage_limit=usage_limit, email=email,
                              page=page, size=size)
             if not tag_name:
-                raise _bad("op='create_tag' requiert `tag_name`")
+                raise _bad("op='create_tag' requires `tag_name`")
             return _run(lambda: client.create_workspace_tag(workspace_uuid, tag_name))
-        raise _bad("op inconnu")
+        raise _bad("unknown op")
 
     # ================================================================
     # Organisation — the identified companies
@@ -280,40 +280,40 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='search' pour des filtres avancés, "
-                             "op='get' pour une organisation précise",
+            _refuse_ignored(op, "use op='search' for advanced filters, "
+                             "op='get' for a specific organisation",
                              organisation_uuid=organisation_uuid, filters=filters,
                              tag_name=tag_name)
             if date is not None and (date_from is not None or date_to is not None):
-                raise _bad("`date` (un jour) et `date_from`/`date_to` (une plage) "
-                           "sont mutuellement exclusifs")
+                raise _bad("`date` (one day) and `date_from`/`date_to` (a range) "
+                           "are mutually exclusive")
             return _run(lambda: client.list_organisations(
                 workspace_uuid, segment_uuid=segment_uuid, page=page, size=size,
                 date=date, date_from=date_from, date_to=date_to, name=name))
         if op == "search":
-            _refuse_ignored(op, "op='search' filtre via `filters`, pas par date/name",
+            _refuse_ignored(op, "op='search' filters via `filters`, not by date/name",
                              organisation_uuid=organisation_uuid, date=date,
                              date_from=date_from, date_to=date_to, name=name,
                              tag_name=tag_name)
             if not filters:
-                raise _bad("op='search' requiert `filters` (FilterGroup)")
+                raise _bad("op='search' requires `filters` (FilterGroup)")
             return _run(lambda: client.filter_organisations(
                 workspace_uuid, filters, segment_uuid=segment_uuid, page=page, size=size))
         if organisation_uuid is None:
-            raise _bad(f"op={op!r} requiert `organisation_uuid`")
+            raise _bad(f"op={op!r} requires `organisation_uuid`")
         if op == "get":
-            _refuse_ignored(op, "op='get' ne prend que workspace_uuid + organisation_uuid",
+            _refuse_ignored(op, "op='get' only takes workspace_uuid + organisation_uuid",
                              filters=filters, segment_uuid=segment_uuid, date=date,
                              date_from=date_from, date_to=date_to, name=name,
                              tag_name=tag_name, page=page, size=size)
             return _run(lambda: client.get_organisation(workspace_uuid, organisation_uuid))
         if op in ("tag", "untag"):
-            _refuse_ignored(op, f"op={op!r} ne prend que `tag_name`",
+            _refuse_ignored(op, f"op={op!r} only takes `tag_name`",
                              filters=filters, segment_uuid=segment_uuid, date=date,
                              date_from=date_from, date_to=date_to, name=name,
                              page=page, size=size)
             if not tag_name:
-                raise _bad(f"op={op!r} requiert `tag_name`")
+                raise _bad(f"op={op!r} requires `tag_name`")
             if op == "tag":
                 return _run(lambda: client.add_organisation_tag(
                     workspace_uuid, organisation_uuid, tag_name))
@@ -359,22 +359,22 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "op='list' identifie la société par "
-                             "organisation_uuid OU domain",
+            _refuse_ignored(op, "op='list' identifies the company by "
+                             "organisation_uuid OR domain",
                              contact_uuid=contact_uuid)
             if (organisation_uuid is None) == (domain is None):
-                raise _bad("op='list' requiert EXACTEMENT UN de `organisation_uuid` / `domain`")
+                raise _bad("op='list' requires EXACTLY ONE of `organisation_uuid` / `domain`")
             return _run(lambda: client.list_contacts(
                 workspace_uuid, organisation_uuid=organisation_uuid, domain=domain,
                 page=page, size=size))
         if op == "reveal_email":
-            _refuse_ignored(op, "op='reveal_email' cible un contact précis",
+            _refuse_ignored(op, "op='reveal_email' targets a specific contact",
                              organisation_uuid=organisation_uuid, domain=domain,
                              page=page, size=size)
             if not contact_uuid:
-                raise _bad("op='reveal_email' requiert `contact_uuid`")
+                raise _bad("op='reveal_email' requires `contact_uuid`")
             return _run(lambda: client.reveal_contact_email(workspace_uuid, contact_uuid))
-        raise _bad("op doit être 'list' ou 'reveal_email'")
+        raise _bad("op must be 'list' or 'reveal_email'")
 
     # ================================================================
     # Session — per-visit data with events
@@ -425,11 +425,11 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if date is not None and (date_from is not None or date_to is not None):
-            raise _bad("`date` (un jour) et `date_from`/`date_to` (une plage) "
-                       "sont mutuellement exclusifs")
+            raise _bad("`date` (one day) and `date_from`/`date_to` (a range) "
+                       "are mutually exclusive")
         if organisation_uuid is not None:
-            _refuse_ignored("sessions d'une organisation",
-                             "`segment_uuid` ne s'applique qu'aux sessions workspace-wide",
+            _refuse_ignored("sessions of an organisation",
+                             "`segment_uuid` only applies to workspace-wide sessions",
                              segment_uuid=segment_uuid)
             return _run(lambda: client.list_organisation_sessions(
                 workspace_uuid, organisation_uuid,
@@ -506,9 +506,9 @@ def register(mcp: FastMCP) -> None:
                 values are refused by the API — use op="clear" to remove one.
         """
         client = _client()
-        defs_hint = "les ops de DÉFINITION ne prennent pas d'organisation"
+        defs_hint = "DEFINITION ops do not take an organisation"
         if op == "list":
-            _refuse_ignored(op, "op='list' ne prend que workspace_uuid",
+            _refuse_ignored(op, "op='list' only takes workspace_uuid",
                              key=key, organisation_uuid=organisation_uuid, name=name,
                              type=type, description=description,
                              visible_in_spotter=visible_in_spotter,
@@ -519,14 +519,14 @@ def register(mcp: FastMCP) -> None:
             _refuse_ignored(op, defs_hint,
                              organisation_uuid=organisation_uuid, value=value, values=values)
             if not name or not type:
-                raise _bad("op='create' requiert `name` et `type`")
+                raise _bad("op='create' requires `name` and `type`")
             return _run(lambda: client.create_custom_field(
                 workspace_uuid, name, type, key=key, description=description,
                 visible_in_spotter=visible_in_spotter,
                 field_rules=field_rules, options=options))
         if op in ("get", "update", "delete"):
             if not key:
-                raise _bad(f"op={op!r} requiert `key`")
+                raise _bad(f"op={op!r} requires `key`")
             if op == "get":
                 _refuse_ignored(op, defs_hint,
                                  organisation_uuid=organisation_uuid, name=name, type=type,
@@ -535,7 +535,7 @@ def register(mcp: FastMCP) -> None:
                                  value=value, values=values)
                 return _run(lambda: client.get_custom_field(workspace_uuid, key))
             if op == "update":
-                _refuse_ignored(op, "le `type` d'un champ est immuable ; " + defs_hint,
+                _refuse_ignored(op, "a field's `type` is immutable; " + defs_hint,
                                  organisation_uuid=organisation_uuid, type=type,
                                  value=value, values=values)
                 return _run(lambda: client.update_custom_field(
@@ -550,8 +550,8 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.delete_custom_field(workspace_uuid, key))
         # ---- value ops: all need an organisation
         if organisation_uuid is None:
-            raise _bad(f"op={op!r} requiert `organisation_uuid`")
-        vals_hint = "les ops de VALEUR ne touchent pas la définition du champ"
+            raise _bad(f"op={op!r} requires `organisation_uuid`")
+        vals_hint = "VALUE ops do not touch the field definition"
         if op == "values":
             _refuse_ignored(op, vals_hint,
                              key=key, name=name, type=type, description=description,
@@ -560,21 +560,21 @@ def register(mcp: FastMCP) -> None:
                              value=value, values=values)
             return _run(lambda: client.list_custom_field_values(workspace_uuid, organisation_uuid))
         if op == "set":
-            _refuse_ignored(op, vals_hint + " ; pour plusieurs champs, op='set_many'",
+            _refuse_ignored(op, vals_hint + "; for several fields, op='set_many'",
                              name=name, type=type, description=description,
                              visible_in_spotter=visible_in_spotter,
                              field_rules=field_rules, options=options, values=values)
             if not key or value is None:
-                raise _bad("op='set' requiert `key` et `value`")
+                raise _bad("op='set' requires `key` and `value`")
             return _run(lambda: client.set_custom_field_value(
                 workspace_uuid, organisation_uuid, key, value))
         if op == "set_many":
-            _refuse_ignored(op, vals_hint + " ; pour un seul champ, op='set'",
+            _refuse_ignored(op, vals_hint + "; for a single field, op='set'",
                              key=key, name=name, type=type, description=description,
                              visible_in_spotter=visible_in_spotter,
                              field_rules=field_rules, options=options, value=value)
             if not values:
-                raise _bad("op='set_many' requiert `values` ({clé: valeur, …})")
+                raise _bad("op='set_many' requires `values` ({key: value, …})")
             return _run(lambda: client.set_custom_field_values(
                 workspace_uuid, organisation_uuid, values))
         if op == "clear":
@@ -584,7 +584,7 @@ def register(mcp: FastMCP) -> None:
                              field_rules=field_rules, options=options,
                              value=value, values=values)
             if not key:
-                raise _bad("op='clear' requiert `key`")
+                raise _bad("op='clear' requires `key`")
             return _run(lambda: client.clear_custom_field_value(
                 workspace_uuid, organisation_uuid, key))
-        raise _bad("op inconnu")
+        raise _bad("unknown op")

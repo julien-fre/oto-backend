@@ -1,18 +1,18 @@
-"""Socle partagé des modules du connecteur `hellostock` (lectures, écritures).
+"""Shared base of the `hellostock` connector modules (reads, writes).
 
-Le connecteur tient sur deux modules (`Connector.modules` au registre) : les
-lectures dans `tools/hellostock.py`, les trois gestes qui agissent sur la
-marketplace de production dans `tools/hellostock_ecritures.py`. Ce fichier porte
-ce qu'ils ont en commun — la résolution du jeton, la traduction d'un refus de
-HelloStock en consigne, la projection d'une page — pour qu'un correctif ne
-couvre jamais la moitié du connecteur. Il n'a pas de `register()` : ce n'est pas
-un connecteur, c'est un helper.
+The connector spans two modules (`Connector.modules` in the registry): the
+reads in `tools/hellostock.py`, the three actions that act on the
+production marketplace in `tools/hellostock_ecritures.py`. This file carries
+what they have in common — token resolution, the translation of a HelloStock
+refusal into guidance, the projection of a page — so that a fix never
+covers half the connector. It has no `register()`: it is not a
+connector, it is a helper.
 
-**Les deux refus d'authentification ne se ressemblent pas, et ne se soignent pas
-pareil.** 401 : le jeton est inconnu ou révoqué — on en recrée un. 403 : le jeton
-est bon mais son compte n'est pas administrateur (le rôle est relu à chaque appel,
-donc un compte rétrogradé passe de 200 à 403 sans que le jeton change) — recréer
-un jeton n'y fera rien. Les confondre renverrait l'utilisateur au mauvais geste.
+**The two authentication refusals do not look alike, and are not cured the
+same way.** 401: the token is unknown or revoked — a new one is created. 403: the token
+is good but its account is not an administrator (the role is re-read on every call,
+so a demoted account goes from 200 to 403 without the token changing) — recreating
+a token will not help. Confusing them would send the user to the wrong action.
 """
 from __future__ import annotations
 
@@ -23,20 +23,20 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from ..mcp_errors import McpError
 from .. import access, output_projection
 
-if TYPE_CHECKING:  # l'annotation de `_client()` seulement — jamais évaluée
+if TYPE_CHECKING:  # the annotation of `_client()` only — never evaluated
     from oto.tools.hellostock import HelloStockAdminClient
 
-# Où l'utilisateur crée son jeton, dans SON compte HelloStock.
+# Where the user creates their token, in THEIR HelloStock account (French UI labels).
 OU_CREER_LE_JETON = "hellostock.fr → Mon espace → Réglages → « Jetons d'API »"
 
 
 def _client() -> HelloStockAdminClient:
-    """Le client HelloStock pour le jeton de CET appelant (byo_user seul : le jeton
-    est personnel, il porte les droits de son titulaire).
+    """The HelloStock client for THIS caller's token (byo_user only: the token
+    is personal, it carries the rights of its holder).
 
-    L'import réel est fait dans le corps : les tests remplacent le client, et la
-    sonde de version-skew lit l'annotation de retour pour vérifier que les méthodes
-    appelées par les deux modules existent dans l'oto-core épinglé.
+    The real import is done in the body: tests replace the client, and the
+    version-skew probe reads the return annotation to check that the methods
+    called by the two modules exist in the pinned oto-core.
     """
     from oto.tools.hellostock import HelloStockAdminClient
 
@@ -49,49 +49,49 @@ def _bad(msg: str) -> McpError:
 
 
 def _carte() -> str:
-    """Où l'on REMPLACE le jeton côté oto, pour CE compte (l'adresse suit le tenant
-    de l'appelant, jamais une adresse en dur)."""
+    """Where the token is REPLACED on the oto side, for THIS account (the address follows
+    the caller's tenant, never a hard-coded address)."""
     from .. import config
     from ..auth.hooks import current_user_sub_from_token
     return f"{config.dashboard_url_for(current_user_sub_from_token())}/account"
 
 
 def refus(e: Any, *, carte: bool = True) -> str:
-    """La consigne qui correspond à un refus de HelloStock (`UpstreamHTTPError`)."""
+    """The guidance matching a HelloStock refusal (`UpstreamHTTPError`)."""
     status = e.status_code
     body = e.body if isinstance(e.body, dict) else {}
     detail = body.get("error") or (e.body if isinstance(e.body, str) else "")
-    ou = f" — carte HelloStock de ton compte oto : {_carte()}" if carte else ""
+    ou = f" — HelloStock card of your oto account: {_carte()}" if carte else ""
     if status == 401:
-        return ("HelloStock refuse ce jeton (401) : il est inconnu ou révoqué. Crée un "
-                f"nouveau jeton sur {OU_CREER_LE_JETON} (il n'est affiché qu'une fois), "
-                f"puis remplace l'ancien{ou}.")
+        return ("HelloStock refuses this token (401): it is unknown or revoked. Create a "
+                f"new token at {OU_CREER_LE_JETON} (it is only shown once), "
+                f"then replace the old one{ou}.")
     if status == 403:
-        return ("HelloStock reconnaît ce jeton, mais son compte n'est pas administrateur "
-                "de la marketplace (403) : cette API leur est réservée, et recréer un "
-                "jeton n'y changera rien. Il faut que ce compte reçoive le rôle "
-                "d'administrateur dans HelloStock, ou poser le jeton d'un compte qui "
-                f"l'a{ou}.")
+        return ("HelloStock recognizes this token, but its account is not an administrator "
+                "of the marketplace (403): this API is reserved for them, and recreating a "
+                "token will not change that. That account must be given the "
+                "administrator role in HelloStock, or the token of an account that "
+                f"has it must be set{ou}.")
     if status == 404:
-        return f"HelloStock : {detail or 'enregistrement introuvable'} (404) — vérifie l'identifiant."
-    return f"HelloStock a refusé la requête (HTTP {status}) : {detail or e.body}"
+        return f"HelloStock: {detail or 'record not found'} (404) — check the identifier."
+    return f"HelloStock refused the request (HTTP {status}): {detail or e.body}"
 
 
 def traduire(e: Any) -> Exception:
-    """L'exception à lever pour un refus de HelloStock (`UpstreamHTTPError`).
+    """The exception to raise for a HelloStock refusal (`UpstreamHTTPError`).
 
-    4xx → refus nommé (l'appel est à changer, ou le jeton). 429 et 5xx restent ce
-    qu'ils sont : la taxonomie d'erreurs les classe réessayables, à raison."""
+    4xx → named refusal (the call is to be changed, or the token). 429 and 5xx stay what
+    they are: the error taxonomy classes them as retryable, rightly."""
     if 400 <= e.status_code < 500 and e.status_code != 429:
         return _bad(refus(e))
     return e
 
 
 def _run(fn: Callable[[], Any]) -> Any:
-    """Exécute un appel au client et traduit ce qui revient en consigne.
+    """Runs a client call and translates what comes back into guidance.
 
-    Une `HelloStockProtocolError` (redirection, corps non JSON) n'est PAS traduite :
-    c'est un défaut de configuration de notre côté, qui doit se voir tel quel.
+    A `HelloStockProtocolError` (redirect, non-JSON body) is NOT translated:
+    it is a configuration defect on our side, which must be seen as it is.
     """
     from oto.tools.common.errors import UpstreamHTTPError
 
@@ -104,22 +104,22 @@ def _run(fn: Callable[[], Any]) -> Any:
 
 
 def _hors_op(op: str, **donnes: Any) -> None:
-    """Refuse un argument qui ne s'applique pas à l'`op` choisie, plutôt que de
-    l'ignorer : un filtre passé à `op="get"` laisserait croire qu'il a filtré."""
+    """Refuses an argument that does not apply to the chosen `op`, rather than
+    ignoring it: a filter passed to `op="get"` would suggest it filtered."""
     en_trop = sorted(k for k, v in donnes.items() if v not in (None, False))
     if en_trop:
-        raise _bad(f"op='{op}' ne prend pas {en_trop}.")
+        raise _bad(f"op='{op}' does not take {en_trop}.")
 
 
 def projeter(page: Any, drop: Iterable[str], full: bool) -> Any:
-    """Page `{items, nextCursor, total}` → mêmes clés, chaque élément sans les
-    colonnes `drop`, et un bloc `projection` qui NOMME ce qui a été retiré.
-    `full=True` rend la page telle que HelloStock l'a servie. Jamais de coupe dans
-    un texte : on retire des colonnes entières, et on le dit."""
+    """Page `{items, nextCursor, total}` → same keys, each item without the
+    `drop` columns, and a `projection` block that NAMES what was removed.
+    `full=True` returns the page as HelloStock served it. Never a cut in
+    a text: whole columns are removed, and it is said so."""
     drop = tuple(drop)
     if full or not drop or not isinstance(page, dict):
         return page
     out = output_projection.project(page, items_path="items", item_drop=drop)
     out["projection"] = {"omitted": list(drop),
-                         "hint": "full=True rend les enregistrements entiers"}
+                         "hint": "full=True returns the whole records"}
     return out

@@ -12,7 +12,7 @@ from oto_mcp.tools.salesforce import (
 
 
 def test_empty_items_is_rejected():
-    with pytest.raises(McpError, match="au moins un"):
+    with pytest.raises(McpError, match="at least one"):
         _validate_bulk_items([])
 
 

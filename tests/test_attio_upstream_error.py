@@ -127,7 +127,7 @@ def test_sans_retypage_chaque_refus_amont_se_rend_erreur_interne(corps):
     nue = Exception(f"Attio API 400 on POST /objects/companies/records: {corps}")
     avant = error_taxonomy.classify(nue)
     assert avant.code == "internal"
-    assert avant.message == "Erreur interne du serveur."
+    assert avant.message == "Internal server error."
 
 
 # --- Ce que l'agent lit maintenant ----------------------------------------------
@@ -224,7 +224,7 @@ def test_une_phrase_amont_trop_longue_est_tronquee_et_le_dit(amont):
     entier fait moins que la coupe d'oto-core) et c'est `_MAX_MESSAGE` qui la coupe."""
     info = _creation_refusee(
         amont, 400, json.dumps({"code": "x", "message": "A" * 1500}))
-    assert "(tronqué)" in info.message
+    assert "(truncated)" in info.message
     assert len(info.message) < 700           # borne tenue, pas 1 500 caractères
     assert "A" * (attio._MAX_MESSAGE + 1) not in info.message
 
@@ -235,14 +235,14 @@ def test_un_corps_coupe_par_oto_core_accuse_la_bonne_piece(amont):
     la réparer d'ici (le reste n'a jamais traversé) — mais on doit dire QUI a coupé,
     sinon l'agent va enquêter chez Attio sur une amputation qui est la nôtre."""
     info = _creation_refusee(amont, 400, json.dumps({"code": "x", "message": "A" * 5000}))
-    assert "tronqué à 2000 c. en amont" in info.message
+    assert "truncated at 2000 c. upstream" in info.message
     assert len(info.message) < attio._MAX_OPAQUE + 200
 
 
 def test_un_corps_non_json_n_est_relaye_qu_en_amorce(amont):
     page = "<!DOCTYPE html><html><head><title>error</title></head>" + "x" * 4000
     info = _creation_refusee(amont, 400, page)
-    assert "corps non JSON" in info.message
+    assert "non-JSON body" in info.message
     assert len(info.message) < attio._MAX_OPAQUE + 200
     assert "x" * 200 not in info.message
 

@@ -79,12 +79,12 @@ def test_un_delai_du_site_est_un_refus_qui_le_dit_sans_repli(scrape, delai):
     fn, etat = scrape
     refus = _refus(fn, etat, delai)
     assert refus.error.code == INVALID_REQUEST
-    assert "le site n'a pas répondu en 15 s" in refus.error.message
-    assert "ne réessaie pas cette adresse" in refus.error.message
+    assert "the site did not answer within 15 s" in refus.error.message
+    assert "do not retry this address" in refus.error.message
     assert etat["fetchs"] == [], "aucun repli sur une expiration : #662"
 
 
-@pytest.mark.parametrize("timeout_s, dit", [(5, "en 5 s"), (500, "en 60 s"), (0, "en 1 s")])
+@pytest.mark.parametrize("timeout_s, dit", [(5, "within 5 s"), (500, "within 60 s"), (0, "within 1 s")])
 def test_le_delai_dit_est_celui_que_le_scraper_a_attendu(scrape, timeout_s, dit):
     """`timeout_s` hors bornes est ramené dedans par le client : le refus dit la valeur
     réellement attendue, pas celle demandée."""
@@ -98,7 +98,7 @@ def test_le_refus_de_delai_est_attendu_hors_sentry_et_ne_pousse_pas_au_reessai(s
     assert error_taxonomy._is_expected_error(refus), "hors Sentry"
     info = error_taxonomy.classify(refus)
     assert info.retryable is False
-    assert "réessaie dans un instant" not in f"{info.message} {info.hint or ''}"
+    assert "retry in a moment" not in f"{info.message} {info.hint or ''}"
 
 
 def test_le_refus_de_delai_tient_sur_une_ligne_de_journal_avec_sa_cause(scrape):

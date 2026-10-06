@@ -1,18 +1,18 @@
-"""Les INDICES des refus « rien ne résout » — ce qu'un refus de credential ajoute
-pour que l'agent sache quoi faire, plutôt qu'un « pas de clé » sec.
+"""The HINTS for "nothing resolves" refusals — what a credential refusal adds
+so the agent knows what to do, rather than a bare "no key".
 
-Extrait de `rbac` le 24/09/2026 (oto-backend#499), quand le second indice de projet
-l'a fait passer la borne de taille du package : `rbac` dit qui a le DROIT et énumère
-ce qui est à portée ; ce module-ci en fait du TEXTE pour un refus déjà levé.
+Extracted from `rbac` on 2026-09-24 (oto-backend#499), when the second project hint
+pushed it past the package's size bound: `rbac` says who has the RIGHT and lists
+what is within reach; this module turns that into TEXT for an already-raised refusal.
 
-Deux propriétés communes, qui sont la raison de les tenir ensemble :
+Two shared properties, which are the reason for keeping them together:
 
-- **lecture seule, jamais une résolution** : on nomme un geste (`group=`, `_project=`),
-  l'agent le pose — rien ne bascule un appel en silence sur les frais d'autrui ;
-- **fail-soft** : un indice s'ajoute à un refus, un hoquet DB rend le refus sans lui,
-  jamais une 500 à sa place.
+- **read-only, never a resolution**: we name a gesture (`group=`, `_project=`),
+  the agent performs it — nothing silently switches a call onto someone else's bill;
+- **fail-soft**: a hint is added to a refusal, a DB hiccup returns the refusal
+  without it, never a 500 in its place.
 
-Dépend de `rbac` (instances à portée) ; `resolve` l'appelle au moment du refus.
+Depends on `rbac` (instances within reach); `resolve` calls it at refusal time.
 """
 from __future__ import annotations
 
@@ -26,73 +26,74 @@ logger = logging.getLogger(__name__)
 
 
 _REVOKED_REASON_LABELS = {
-    db.REVOKED_CREDENTIAL_REMOVED: "clé retirée",
-    db.REVOKED_RENAMED_ONTO_EXISTING: "compte renommé vers un autre déjà posé",
-    db.REVOKED_VAULT_ROW_MISSING: "ligne de coffre disparue (maintenance)",
+    db.REVOKED_CREDENTIAL_REMOVED: "key removed",
+    db.REVOKED_RENAMED_ONTO_EXISTING: "account renamed onto another one already set",
+    db.REVOKED_VAULT_ROW_MISSING: "vault row gone (maintenance)",
 }
 
 
 def _revoked_hint(sub: str, org: Optional[int], provider: str) -> str:
-    """Suffixe actionnable des erreurs « aucun credential configuré » : dit si CE
-    connecteur a existé ici puis a été RETIRÉ, plutôt que de laisser croire qu'il n'a
-    jamais été posé. Chaîne vide si rien n'a jamais existé, ou sans org (pas de scope
-    membre à interroger).
+    """Actionable suffix for "no credential configured" errors: says whether THIS
+    connector existed here and was then REMOVED, rather than letting people believe it
+    was never set. Empty string if nothing ever existed, or without an org (no member
+    scope to query).
 
-    oto#42, entrée 11 du lot 1 — quatre signalements le même jour (03/09) pour cette
-    seule cause : chacun a mené sa propre enquête pour retrouver une info déjà en
-    base. Lecture seule (`connector_instances.most_recent_revocation`), jamais un
-    critère d'aiguillage — voir son docstring.
+    oto#42, entry 11 of batch 1 — four reports the same day (03/09) for this
+    single cause: each ran its own investigation to find information already in the
+    database. Read-only (`connector_instances.most_recent_revocation`), never a
+    routing criterion — see its docstring.
 
-    Fail-soft PAR CONSTRUCTION (comme `chain_shadow.observe`) : c'est un hint EN
-    PLUS d'un refus déjà levé, jamais un chemin dont la résolution dépend — un
-    hoquet DB ici doit rendre le refus normal (sans second indice), pas remplacer
-    le refus par une 500."""
+    Fail-soft BY CONSTRUCTION (like `chain_shadow.observe`): it is a hint ON TOP
+    of an already-raised refusal, never a path resolution depends on — a DB
+    hiccup here must return the normal refusal (without the second hint), not replace
+    the refusal with a 500."""
     if org is None:
         return ""
     try:
         rev = db.most_recent_revocation("member", credentials_store.member_id(org, sub), provider)
-    # noqa: SILENT — hint best-effort : un hoquet DB laisse le refus SANS second indice
+    # noqa: SILENT — best-effort hint: a DB hiccup leaves the refusal WITHOUT the second hint
     except Exception:
-        logger.warning("hint de révocation indisponible pour %s (fail-soft)", provider,
+        logger.warning("revocation hint unavailable for %s (fail-soft)", provider,
                        exc_info=True)
         return ""
     if not rev:
         return ""
     motif = _REVOKED_REASON_LABELS.get(rev["revoked_reason"], rev["revoked_reason"])
     quand = str(rev["revoked_at"])[:10]
-    return f"\n(un `{provider}` a existé ici et a été retiré le {quand} — {motif})"
+    return f"\n(a `{provider}` existed here and was removed on {quand} — {motif})"
 
 
 def _projects_pinning(sub: str, org: Optional[int], provider: str) -> list[dict]:
-    """Projets LISIBLES par `sub` dans `org` qui épinglent déjà une instance
-    `provider` (oto-backend#499). Lisibles = le scoping ensembliste d'`op=list`
-    (`ownership.accessible_project_ids`) : le hint est un objet de visibilité, il ne
-    nomme jamais le projet d'une autre entité. Lecture seule — on NOMME le geste
-    (`_project=`), on ne résout rien. Fail-soft : hoquet ⇒ [] (hint sans cette ligne)."""
+    """Projects READABLE by `sub` in `org` that already pin an instance of
+    `provider` (oto-backend#499). Readable = the set-based scoping of `op=list`
+    (`ownership.accessible_project_ids`): the hint is a visibility object, it never
+    names another entity's project. Read-only — we NAME the gesture
+    (`_project=`), we resolve nothing. Fail-soft: hiccup ⇒ [] (hint without this line)."""
     from .. import ownership
     try:
         return db.projects_pinning_instance(
             ownership.accessible_project_ids(sub, org), provider)
-    # noqa: SILENT — hint best-effort : un hoquet DB laisse le refus avec le hint générique
+    # noqa: SILENT — best-effort hint: a DB hiccup leaves the refusal with the generic hint
     except Exception:
-        logger.warning("hint de projet épinglant %s indisponible (fail-soft)", provider,
+        logger.warning("project-pinning hint for %s unavailable (fail-soft)", provider,
                        exc_info=True)
         return []
 
 
 def _reachable_hint(sub: str, org: Optional[int], provider: str) -> str:
-    """Suffixe actionnable des erreurs « rien ne résout » : remonte les instances
-    à portée avec le GESTE de pin pour chacune — jeton d'appel d'abord (`_group=`/
-    `_org=`, per-call, sans état), `_instance=` pour le grain fin. Chaîne vide si
-    rien à portée.
+    """Actionable suffix for "nothing resolves" errors: surfaces the instances
+    within reach with the pin GESTURE for each — call token first (`_group=`/
+    `_org=`, per-call, stateless), `_instance=` for fine grain. Empty string if
+    nothing is within reach.
 
-    Le conseil durable dépend de ce qui EXISTE (#499) : si un projet lisible épingle
-    déjà une instance de ce provider, on nomme CE projet et le geste qui l'active
-    (`_project=<id>` sur l'appel) — « lie l'instance à ton projet » renvoyait refaire
-    un lien déjà posé, et l'agent tâtonnait. Le conseil de lier ne sort qu'à défaut."""
+    The durable advice depends on what EXISTS (#499): if a readable project already
+    pins an instance of this provider, we name THAT project and the gesture that
+    activates it (`_project=<id>` on the call) — "link the instance to your project"
+    sent people to redo a link already set, and the agent fumbled. The link advice
+    only shows up by default."""
     items = rbac.reachable_instances(sub, org, provider)
-    # Le binding de projet se lit sous le PORTEUR, comme la résolution le lit
-    # (`scope.project_pinned_instance(porteur)`) ; le texte garde le nom appelé.
+    # The project binding is read under the CARRIER, as resolution reads it
+    # (`scope.project_pinned_instance(porteur)`); the text keeps the called name.
     pins = _projects_pinning(sub, org, providers.credential_provider(provider))
     if not items and not pins:
         return ""
@@ -102,58 +103,58 @@ def _reachable_hint(sub: str, org: Optional[int], provider: str) -> str:
         for it in items[:4]:
             if it["kind"] == "group":
                 lines.append(
-                    f"· équipe « {it['name']} » → passe group={it['id']} sur l'appel "
-                    f"(ou instance=group:{it['id']}:{provider})")
+                    f"· team « {it['name']} » → pass group={it['id']} on the call "
+                    f"(or instance=group:{it['id']}:{provider})")
             else:
                 lines.append(
-                    f"· org « {it['name']} » → passe org={it['id']} sur l'appel")
+                    f"· org « {it['name']} » → pass org={it['id']} on the call")
         more = len(items) - 4
         if more > 0:
-            lines.append(f"· … +{more} (oto_instance op=list pour tout voir)")
-        # Le hint nomme des clés qui appartiennent à l'entité citée, et un prestataire
-        # est membre des orgs de SES clients : sans cette réserve, il se lit comme un
-        # libre-service et l'agent bascule l'appel sur les crédits d'un client pour un
-        # travail qui n'est pas le sien (signalé le 12/08 sur une prospection maison
-        # renvoyée vers la clé d'une org cliente).
-        out += (f"\nNB — des clés `{provider}` existent à portée, aux frais de l'entité "
-                f"citée — n'y bascule un appel QUE s'il est fait pour elle :\n"
+            lines.append(f"· … +{more} (oto_instance op=list to see all)")
+        # The hint names keys that belong to the cited entity, and a contractor
+        # is a member of ITS clients' orgs: without this caveat, it reads as
+        # self-service and the agent switches the call onto a client's credits for
+        # work that is not theirs (reported 12/08 on in-house prospecting
+        # redirected to a client org's key).
+        out += (f"\nNB — `{provider}` keys exist within reach, at the cited entity's "
+                f"expense — only switch a call to one if it is made for that entity:\n"
                 + "\n".join(lines))
     if pins:
-        # Même réserve : l'instance épinglée a un payeur ; on nomme le geste, l'agent
-        # le pose s'il travaille pour ce projet — rien ne se résout tout seul.
+        # Same caveat: the pinned instance has a payer; we name the gesture, the agent
+        # performs it if it works for this project — nothing resolves on its own.
         if not items:
-            out += (f"\nNB — un projet que tu peux lire épingle une instance `{provider}`, "
-                    f"aux frais de l'entité qui la possède — ne le passe QUE si l'appel "
-                    f"est fait pour ce projet :")
+            out += (f"\nNB — a project you can read pins a `{provider}` instance, "
+                    f"at the expense of the entity that owns it — only pass it if the call "
+                    f"is made for that project:")
         out += "\n" + "\n".join(
-            f"· le projet #{p['id']} « {p['name']} » épingle déjà une instance "
-            f"`{provider}` → passe _project={p['id']} sur l'appel"
+            f"· project #{p['id']} « {p['name']} » already pins a "
+            f"`{provider}` instance → pass _project={p['id']} on the call"
             for p in pins[:4])
         if len(pins) > 4:
-            out += f"\n· … +{len(pins) - 4} projet(s) (oto_project op=list)"
+            out += f"\n· … +{len(pins) - 4} project(s) (oto_project op=list)"
     else:
-        out += "\nDurable : lie l'instance à ton projet (oto_project op=link)."
+        out += "\nDurable: link the instance to your project (oto_project op=link)."
     return out
 
 
 def _poser_ou_accorder(sub: str, lien_org, porteur: str) -> str:
-    """Le geste proposé quand aucune clé `porteur` ne résout. Poser sa clé, toujours ;
-    le prêt d'une clé PLATEFORME seulement si oto en détient une pour ce connecteur.
-    Sans elle, « demande à un admin de te grant une clé plateforme » renvoyait vers
-    un geste impossible — signalé par un org_admin qui avait fait exactement ça
-    (#1156). Le prêt relève des admins d'oto, pas de ceux de l'org : on le dit.
+    """The gesture proposed when no `porteur` key resolves. Setting your own key, always;
+    lending a PLATFORM key only if oto holds one for this connector.
+    Without it, "ask an admin to grant you a platform key" pointed to an impossible
+    gesture — reported by an org_admin who had done exactly that
+    (#1156). Lending is up to oto's admins, not the org's: we say so.
 
-    Fail-soft comme les autres indices du refus (`_revoked_hint`) : un hoquet
-    DB ici rend le refus sans la seconde proposition, jamais une 500 à sa place."""
-    poser = f"Pose ta propre clé{links.ou_poser_la_cle(sub, org=lien_org, connecteur=porteur)}"
+    Fail-soft like the other refusal hints (`_revoked_hint`): a DB hiccup
+    here returns the refusal without the second proposal, never a 500 in its place."""
+    poser = f"Set your own key{links.ou_poser_la_cle(sub, org=lien_org, connecteur=porteur)}"
     try:
         pretable = bool(credentials_store.list_platform_instances(porteur))
-    # noqa: SILENT — indice best-effort : un hoquet DB laisse le refus sans proposer le prêt
+    # noqa: SILENT — best-effort hint: a DB hiccup leaves the refusal without offering the loan
     except Exception:
-        logger.warning("clés plateforme `%s` illisibles pour le refus (fail-soft)", porteur,
+        logger.warning("platform keys `%s` unreadable for the refusal (fail-soft)", porteur,
                        exc_info=True)
         return f"{poser}."
     if not pretable:
-        return f"{poser} — oto ne fournit pas de clé plateforme `{porteur}`."
-    return (f"{poser}, ou demande aux admins d'oto de prêter à ton org la clé "
-            f"plateforme `{porteur}`.")
+        return f"{poser} — oto does not provide a `{porteur}` platform key."
+    return (f"{poser}, or ask oto's admins to lend your org the "
+            f"`{porteur}` platform key.")

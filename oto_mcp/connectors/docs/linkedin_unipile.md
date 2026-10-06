@@ -1,25 +1,25 @@
-## prerequisite — connecte ton compte LinkedIn
+## prerequisite — connect your LinkedIn account
 
-connecte TON compte LinkedIn depuis le dashboard oto — pas de cookie à coller ni d'extension. la session tourne sur un vrai navigateur hébergé (proxy résidentiel), ce qui évite les blocages d'empreinte.
-- la clé d'abonnement vit sur le connecteur **Compte Unipile** (ta clé BYO, ou celle de la plateforme avec l'option **messagerie hébergée** accordée par un admin) ;
-- puis « Connecter mon compte LinkedIn » ici.
+connect YOUR LinkedIn account from the oto dashboard — no cookie to paste, no extension. the session runs on a real hosted browser (residential proxy), which avoids fingerprint blocks.
+- the subscription key lives on the **Unipile account** connector (your BYO key, or the platform's with the **hosted messaging** option granted by an admin);
+- then "Connect my LinkedIn account" here.
 
-## usage — prospection et messagerie LinkedIn
+## usage — LinkedIn prospecting and messaging
 
-recherche, profils, posts, réseau, offres d'emploi et messagerie — tu agis comme toi-même, sous ton propre compte.
-- « recherche LinkedIn des DAF en région lyonnaise dans mon réseau N1 »
-- « ouvre le profil LinkedIn de ce slug et résume sa carrière »
-- « envoie une invitation à ce prospect avec une note » puis « réponds dans le fil quand il accepte »
-- « montre ma home LinkedIn récente » ou « commente ce post »
+search, profiles, posts, network, job offers and messaging — you act as yourself, under your own account.
+- "search LinkedIn for CFOs in the Lyon area in my 1st-degree network"
+- "open this slug's LinkedIn profile and summarize their career"
+- "send an invitation to this prospect with a note" then "reply in the thread when they accept"
+- "show my recent LinkedIn home feed" or "comment on this post"
 
-## note — c'est TA session, pas une base de données
+## note — it's YOUR session, not a database
 
-les résultats viennent de ce que TON compte voit (réseau, abonnements, produits premium) et sont soumis aux limites de LinkedIn — pas d'un fichier acheté. pour un email ou un mobile qu'un profil ne publie pas, passe par un connecteur d'enrichissement (dropcontact, fullenrich, kaspr, lusha).
+results come from what YOUR account sees (network, subscriptions, premium products) and are subject to LinkedIn's limits — not from a purchased file. for an email or a mobile number a profile doesn't publish, use an enrichment connector (dropcontact, fullenrich, kaspr, lusha).
 
-## note — Recruiter et Sales Navigator s'activent à la connexion
+## note — Recruiter and Sales Navigator are activated at connection
 
-un produit premium (`recruiter` ou `sales_navigator`, **exclusifs** — un seul par compte) s'attache **au moment de connecter**. sans lui, les endpoints premium répondent 403 « out of your scope ». sur un compte déjà connecté, c'est une **reconnexion** qui l'attache, pas une seconde connexion.
+a premium product (`recruiter` or `sales_navigator`, **mutually exclusive** — only one per account) is attached **at connection time**. without it, premium endpoints answer 403 "out of your scope". on an already-connected account, it is a **reconnection** that attaches it, not a second connection.
 
-## note — le feed est servi en vue de tri
+## note — the feed is served in a triage view
 
-`linkedin_unipile_post(op="feed")` lit ta home en direct, une page par appel (la suivante par le `cursor` rendu), sans rien stocker. il rend un extrait par défaut (texte coupé à 600 caractères, colonnes de tri seulement) : une page entière dépassait le plafond d'un résultat MCP. `fields=["*"]` et `text_max_chars=None` rendent le brut ; la réponse dit toujours ce qu'elle a rogné.
+`linkedin_unipile_post(op="feed")` reads your home feed live, one page per call (the next one via the returned `cursor`), storing nothing. it returns an excerpt by default (text cut at 600 characters, triage columns only): a full page exceeded the cap on an MCP result. `fields=["*"]` and `text_max_chars=None` return the raw data; the response always says what it trimmed.

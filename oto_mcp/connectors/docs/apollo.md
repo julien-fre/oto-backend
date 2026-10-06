@@ -1,129 +1,129 @@
-## prerequisite — obtenir une clé apollo
+## prerequisite — get an apollo key
 
-crée une clé api dans les réglages développeur/api de ton compte [apollo](https://app.apollo.io).
-- colle-la dans tes connecteurs oto sur `/account`
-- la clé hérite des crédits de ton plan apollo
-- **seule la recherche/enrichissement d'entreprises et de personnes** (ci-dessous) admet
-  une clé plateforme free-tier (quota quotidien) si tu n'en poses pas la tienne — elle
-  interroge la base PARTAGÉE Apollo, la même pour tout le monde.
-- quota épuisé : `apollo_match_person` refuse en NOMMANT le compteur (`used/limit`) et
-  dit qu'il repart à minuit — la réponse d'un appel réussi porte aussi `platform_quota`
-  (`used`/`limit`/`remaining`) pour t'arrêter avant le refus au milieu d'un lot. Pose ta
-  propre clé pour lever la limite tout de suite, ou pour CE lead : `hunter_email_finder`
-  (email) et `kaspr_enrich_linkedin` / `fullenrich_enrich_linkedin` (téléphone,
-  historique LinkedIn) — source différente, pas de crédit brûlé sur un appel qui
-  échouerait de toute façon.
-- **les REVEALS sont BYO-only, et pour une autre raison que le reste : le COÛT.**
-  Apollo facture un reveal EN PLUS du match, alors que notre compteur plateforme ne sait
-  débiter qu'un match nu. C'est vrai du téléphone (~9 crédits là où un match nu en coûte
-  1) comme des emails personnels (pot distinct, barème selon le plan — écart non mesuré,
-  donc pas débitable non plus). `apollo_match_person` continue de marcher sans ta clé, il
-  ne rend simplement ni mobile, ni direct dial, ni email personnel.
-- **contacts, séquences, emails et conversations sont BYO-only** — pas de repli plateforme
-  sur ces outils-là, il te faut ta propre clé. Pas seulement pour écrire : même les lister
-  ou les lire rend TES données (ton carnet de contacts, tes boîtes connectées, le contenu
-  de tes emails envoyés, tes transcripts d'appels) — une clé plateforme mutualisée
-  exposerait ça à n'importe quel autre utilisateur d'oto.
-- **les outils de contact demandent en plus une clé « Master »** (Apollo → Settings →
-  Integrations → API) : une clé standard authentifie mais rend 403 sur ces trois-là.
+create an api key in the developer/api settings of your [apollo](https://app.apollo.io) account.
+- paste it into your oto connectors on `/account`
+- the key inherits the credits of your apollo plan
+- **only company and people search/enrichment** (below) allows
+  a free-tier platform key (daily quota) if you do not set your own — it
+  queries Apollo's SHARED database, the same for everyone.
+- quota exhausted: `apollo_match_person` refuses by NAMING the counter (`used/limit`) and
+  says it resets at midnight — the response of a successful call also carries `platform_quota`
+  (`used`/`limit`/`remaining`) so you can stop before the refusal in the middle of a batch. Set your
+  own key to lift the limit right away, or for THIS lead: `hunter_email_finder`
+  (email) and `kaspr_enrich_linkedin` / `fullenrich_enrich_linkedin` (phone,
+  LinkedIn history) — different source, no credit burned on a call that
+  would fail anyway.
+- **the REVEALS are BYO-only, and for a different reason than the rest: COST.**
+  Apollo bills a reveal ON TOP of the match, whereas our platform counter can only
+  debit a bare match. This is true of the phone (~9 credits where a bare match costs
+  1) as well as personal emails (separate pot, plan-dependent scale — gap not measured,
+  so not debitable either). `apollo_match_person` keeps working without your key, it
+  simply returns no mobile, no direct dial, and no personal email.
+- **contacts, sequences, emails and conversations are BYO-only** — no platform fallback
+  on these tools, you need your own key. Not only to write: even listing or
+  reading them returns YOUR data (your contact book, your connected mailboxes, the content
+  of your sent emails, your call transcripts) — a pooled platform key
+  would expose that to any other oto user.
+- **the contact tools additionally require a "Master" key** (Apollo → Settings →
+  Integrations → API): a standard key authenticates but returns 403 on these three.
 
-## usage — prospection b2b (entreprises + contacts)
+## usage — b2b prospecting (companies + contacts)
 
-recherche et enrichis entreprises et personnes, et repère les signaux de recrutement.
-- `apollo_search_organizations` — entreprises par nom, domaine, pays
-- `apollo_search_people` — personnes par domaines, départements, intitulés, séniorités
-- `apollo_match_person` — enrichit une personne (url linkedin ou email = meilleurs identifiants)
-- `apollo_bulk_match` — **jusqu'à 10 personnes en UN appel**, la forme qu'emploie une
-  construction de liste : un search rend des centaines de noms obfusqués, et c'est par
-  là qu'on les révèle (300 personnes = 30 appels, pas 300). ⚠️ **le lot n'économise
-  aucun crédit** — apollo facture à la PERSONNE, exactement comme 10 appels unitaires ;
-  ce qu'il économise, ce sont les appels et le rate limit. les reveals (emails
-  personnels, téléphones) y demandent ta propre clé, comme en unitaire.
-- `apollo_job_postings` — offres d'emploi actives d'une entreprise (signal d'embauche)
+search and enrich companies and people, and spot hiring signals.
+- `apollo_search_organizations` — companies by name, domain, country
+- `apollo_search_people` — people by domains, departments, titles, seniorities
+- `apollo_match_person` — enriches a person (linkedin url or email = best identifiers)
+- `apollo_bulk_match` — **up to 10 people in ONE call**, the form that list
+  building uses: a search returns hundreds of obfuscated names, and this is how
+  they are revealed (300 people = 30 calls, not 300). ⚠️ **the batch saves
+  no credits** — apollo bills per PERSON, exactly like 10 single calls;
+  what it saves are calls and the rate limit. reveals (personal
+  emails, phones) there require your own key, as in single mode.
+- `apollo_job_postings` — active job postings of a company (hiring signal)
 
-⚠️ **la fiche entreprise imbriquée est allégée par défaut** sur `apollo_match_person` et
-`apollo_bulk_match` : stack technique, levées de fonds, filiales et mots-clés pesaient
-91 % du payload — un seul match sortait à 60 000 caractères et dépassait la limite de
-sortie des clients MCP. le nom, le domaine, le téléphone, l'effectif et le secteur
-restent ; `full=True` rend le brut, au même prix. **en lot**, chaque fiche perd aussi
-`employment_history` et `account` (la fiche société de ton CRM apollo) : sans ça, un
-lot de 10 sortait à ~86 000 caractères.
+⚠️ **the nested company record is lightened by default** on `apollo_match_person` and
+`apollo_bulk_match`: tech stack, funding rounds, subsidiaries and keywords weighed
+91% of the payload — a single match came out at 60,000 characters and exceeded the output
+limit of MCP clients. the name, domain, phone, headcount and industry
+stay; `full=True` returns the raw, at the same price. **in a batch**, each record also loses
+`employment_history` and `account` (the company record of your apollo CRM): without that, a
+batch of 10 came out at ~86,000 characters.
 
-## usage — les reveals (téléphone direct, emails personnels)
+## usage — the reveals (direct phone, personal emails)
 
-⚠️ **le seul geste d'apollo qui ne rend pas son résultat.** apollo ne renvoie jamais un
-mobile dans la réponse : il le vérifie de son côté et le POSTe à une url, quelques
-minutes plus tard. la réponse immédiate ne porte qu'un `request_id`.
+⚠️ **the only apollo action that does not return its result.** apollo never returns a
+mobile in the response: it verifies it on its side and POSTs it to a url, a few
+minutes later. the immediate response only carries a `request_id`.
 
-- `apollo_reveal_phone(webhook_url=…, person_id=…)` — commande le reveal. ta propre clé
-  apollo, ~9 crédits. `webhook_url` est **obligatoire côté apollo** : c'est une url
-  HTTPS que TU contrôles (un endpoint n8n ou make, ton service) — **oto n'est pas un
-  receveur de webhook**, et ne voit pas ce qui y atterrit.
-- `apollo_reveal_phone_result(request_id)` — relit le MÊME contenu, **sans webhook, 0
-  crédit, pendant 30 jours**. c'est par là que le numéro revient à l'agent : tu n'as pas
-  à lire toi-même ce qu'apollo a posté. chaque fiche de `people[]` sort allégée comme le
-  reveal (pile technique de l'employeur, historique d'emploi, fiche société du CRM
-  apollo retirés — les numéros restent) ; `full=True` rend l'enveloppe entière.
-- ⚠️ **le sondage demande la permission `webhook_result` sur ta clé** (ou une clé
-  « Master »), d'après la doc apollo — même famille de prérequis que les outils de
-  contact. à vérifier sur une vraie clé : si elle ne l'a pas, le reveal part quand même
-  et les numéros arrivent sur ton webhook, mais `apollo_reveal_phone_result` refusera.
-- ⚠️ **garde le `request_id`** (une ligne de tableau, le journal du run) : perdu, les
-  crédits sont dépensés et il ne reste rien à relever. passé 30 jours, le résultat
-  disparaît pour de bon.
-- apollo ne signe pas ses callbacks et peut rejouer un envoi : ton endpoint est à
-  traiter comme non authentifié, et à rendre idempotent.
-- `apollo_match_person(reveal_personal_emails=True)` — les emails PERSONNELS, eux,
-  reviennent bien dans la réponse (synchrone), **sur ta propre clé apollo** (même règle
-  de coût que le téléphone). apollo les retient pour les personnes en zone RGPD : un
-  résultat vide est une réponse, pas une panne.
+- `apollo_reveal_phone(webhook_url=…, person_id=…)` — orders the reveal. your own apollo
+  key, ~9 credits. `webhook_url` is **mandatory on apollo's side**: it is an
+  HTTPS url that YOU control (an n8n or make endpoint, your service) — **oto is not a
+  webhook receiver**, and does not see what lands there.
+- `apollo_reveal_phone_result(request_id)` — reads back the SAME content, **without a webhook, 0
+  credit, for 30 days**. this is how the number comes back to the agent: you do not have
+  to read yourself what apollo posted. each record of `people[]` comes out lightened like the
+  reveal (employer tech stack, employment history, apollo CRM company
+  record removed — the numbers stay); `full=True` returns the whole envelope.
+- ⚠️ **polling requires the `webhook_result` permission on your key** (or a
+  "Master" key), according to the apollo doc — same family of prerequisites as the contact
+  tools. to be verified on a real key: if it does not have it, the reveal still goes out
+  and the numbers arrive on your webhook, but `apollo_reveal_phone_result` will refuse.
+- ⚠️ **keep the `request_id`** (a table row, the run journal): once lost, the
+  credits are spent and there is nothing left to collect. after 30 days, the result
+  disappears for good.
+- apollo does not sign its callbacks and may replay a send: your endpoint is to be
+  treated as unauthenticated, and made idempotent.
+- `apollo_match_person(reveal_personal_emails=True)` — the PERSONAL emails, for their part,
+  do come back in the response (synchronous), **on your own apollo key** (same cost
+  rule as the phone). apollo withholds them for people in GDPR regions: an empty
+  result is an answer, not an outage.
 
-## usage — contacts (les personnes DANS ton espace de travail)
+## usage — contacts (the people IN your workspace)
 
-- `apollo_contact` (`op=fields|search|get|update`) — lis et modifie un contact
-  ENREGISTRÉ chez toi : titre, email, téléphones, stage, listes, champs personnalisés
-- `op=search` retrouve un contact et son `contact_id` (tes contacts, pas la base
-  partagée). ⚠️ L'autre source, souvent déjà payée : `apollo_match_person` porte le
-  contact id IMBRIQUÉ à `person.contact.id`, dès que la personne est un contact chez
-  toi. Un id d'`apollo_search_people` est un id de PERSONNE et sera refusé ici.
-  Le même `contact_id` sert ensuite à `apollo_sequence_contacts(op=add)`
-- ⚠️ un **contact ≠ une personne** : `apollo_search_people` interroge la base
-  partagée Apollo, `apollo_contact` ne voit que ce que ton équipe a déjà
-  enregistré. Une personne trouvée mais jamais enregistrée n'a pas d'id de contact
-- `op=get` **ne coûte aucun crédit** — c'est la façon de relire un contact ;
-  `apollo_match_person` en coûte un et rend la fiche partagée, pas tes valeurs
-- `op=fields` d'abord pour une écriture de champ personnalisé : la charge utile
-  est keyée par **id** de champ, jamais par nom. Pour une liste de choix, la
-  valeur à écrire est l'`id` de l'option, pas son libellé
-- `op=create_field` déclare un champ personnalisé sans passer par l'interface
-  Apollo (utile quand le compte appartient au client). ⚠️ Pour un texte long —
-  une accroche, un paragraphe — c'est `field_type="textarea"` : `string` est
-  plafonné à 120 caractères et Apollo tronque sans rien dire. Un champ portant
-  déjà ce nom fait REFUSER la création plutôt que d'en créer un homonyme
-- ⚠️ ces trois appels demandent une clé Apollo **Master** (Settings →
-  Integrations → API) ; une clé standard authentifie mais rend 403
-- ⚠️ `label_names` REMPLACE l'appartenance aux listes au lieu de s'y ajouter
-- `dry_run` disponible sur `op=update`
+- `apollo_contact` (`op=fields|search|get|update`) — read and edit a contact
+  SAVED on your side: title, email, phones, stage, lists, custom fields
+- `op=search` finds a contact and its `contact_id` (your contacts, not the shared
+  database). ⚠️ The other source, often already paid for: `apollo_match_person` carries the
+  contact id NESTED at `person.contact.id`, as soon as the person is a contact on your
+  side. An id from `apollo_search_people` is a PERSON id and will be refused here.
+  The same `contact_id` is then used for `apollo_sequence_contacts(op=add)`
+- ⚠️ a **contact ≠ a person**: `apollo_search_people` queries the shared
+  Apollo database, `apollo_contact` only sees what your team has already
+  saved. A person found but never saved has no contact id
+- `op=get` **costs no credit** — it is the way to re-read a contact;
+  `apollo_match_person` costs one and returns the shared record, not your values
+- `op=fields` first for a custom field write: the payload
+  is keyed by field **id**, never by name. For a picklist, the
+  value to write is the option `id`, not its label
+- `op=create_field` declares a custom field without going through the Apollo
+  interface (useful when the account belongs to the client). ⚠️ For a long text —
+  a hook, a paragraph — use `field_type="textarea"`: `string` is
+  capped at 120 characters and Apollo truncates without saying anything. A field already
+  carrying this name makes the creation be REFUSED rather than creating a namesake
+- ⚠️ these three calls require an Apollo **Master** key (Settings →
+  Integrations → API); a standard key authenticates but returns 403
+- ⚠️ `label_names` REPLACES list membership instead of adding to it
+- `dry_run` available on `op=update`
 
-## usage — séquences (campagnes email automatisées)
+## usage — sequences (automated email campaigns)
 
-- `apollo_email_accounts` / `apollo_email_schedules` — prérequis en lecture (TES boîtes
-  connectées / plannings d'envoi), à appeler avant de créer une séquence ou d'y enrôler
-  des contacts
-- `apollo_sequence` (`op=search|create|update|activate|deactivate|archive`) — gérer une
-  séquence
-- `apollo_sequence_contacts` (`op=add|update_status|activity`) — enrôler/retirer des
-  contacts, consulter leur activité. `add` démarre une campagne automatisée vers des
-  personnes réelles — `dry_run` disponible
+- `apollo_email_accounts` / `apollo_email_schedules` — read prerequisites (YOUR connected
+  mailboxes / send schedules), to call before creating a sequence or enrolling
+  contacts in it
+- `apollo_sequence` (`op=search|create|update|activate|deactivate|archive`) — manage a
+  sequence
+- `apollo_sequence_contacts` (`op=add|update_status|activity`) — enroll/remove
+  contacts, consult their activity. `add` starts an automated campaign to real
+  people — `dry_run` available
 
-## usage — emails ponctuels (hors séquence)
+## usage — one-off emails (outside a sequence)
 
-- `apollo_email` (`op=draft|send|status|search|content|stats`) — `draft` prépare,
-  `send` envoie (toujours deux appels distincts). `search`/`content` rendent TES emails
-  envoyés (corps inclus), pas une base partagée
+- `apollo_email` (`op=draft|send|status|search|content|stats`) — `draft` prepares,
+  `send` sends (always two distinct calls). `search`/`content` return YOUR sent
+  emails (body included), not a shared database
 
-## usage — conversations (appels/visios enregistrés)
+## usage — conversations (recorded calls/video meetings)
 
-- `apollo_conversation` (`op=search|get|export|export_status`) — TES transcripts et
-  enregistrements. Le coût crédit d'un `get` dépend de la présence d'insights IA,
-  imprévisible avant l'appel
+- `apollo_conversation` (`op=search|get|export|export_status`) — YOUR transcripts and
+  recordings. The credit cost of a `get` depends on the presence of AI insights,
+  unpredictable before the call

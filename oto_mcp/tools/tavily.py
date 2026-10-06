@@ -1,23 +1,23 @@
-"""Tavily — recherche web et lecture de pages taillées pour un agent (tavily.com).
+"""Tavily — web search and page reading tailored for an agent (tavily.com).
 
-Wrappe `oto.tools.tavily.client.TavilyClient`. keyed `api_key` (Bearer `tvly-…`),
-byo user/org **et** clé plateforme ouverte (quota 100/mois — garde conservatrice,
-cf. providers/tavily.py) : la recherche web est un socle, on ne fait pas payer le ticket
-d'entrée.
+Wraps `oto.tools.tavily.client.TavilyClient`. keyed `api_key` (Bearer `tvly-…`),
+byo user/org **and** open platform key (quota 100/month — conservative guard,
+see providers/tavily.py): web search is a foundation, we do not make people pay the entry
+ticket.
 
-Quatre gestes, tous synchrones :
-- `tavily_search` : recherche web → extraits cités + réponse synthétique optionnelle.
-- `tavily_extract` : N URLs → markdown propre, reclassé par une intention.
-- `tavily_map` : les URLs d'un site, sans contenu (repérage, peu cher).
-- `tavily_crawl` : un site guidé en langage naturel → contenu des pages.
+Four actions, all synchronous:
+- `tavily_search`: web search → cited excerpts + optional synthesized answer.
+- `tavily_extract`: N URLs → clean markdown, reranked by an intent.
+- `tavily_map`: a site's URLs, without content (scouting, cheap).
+- `tavily_crawl`: a site guided in natural language → page content.
 
-Face aux voisins : `serper_search` rend le SERP Google brut (positions, PAA),
-`firecrawl_scrape` rend UNE page avec JS exécuté et `firecrawl_crawl` tient les
-gros crawls (asynchrone). Tavily est le chemin quand il faut *une réponse sourcée*
-en un appel, ou le contenu propre de quelques URLs sans rendu lourd.
+Versus its neighbors: `serper_search` returns the raw Google SERP (rankings, PAA),
+`firecrawl_scrape` returns ONE page with JS executed and `firecrawl_crawl` handles
+big crawls (asynchronous). Tavily is the way when you need *a sourced answer*
+in one call, or the clean content of a few URLs without heavy rendering.
 
-Les appels au client sont écrits en clair (`_client().search(…)`) et non dispatchés
-par nom : c'est ce qui les rend vérifiables par la sonde version-skew.
+Client calls are written in plain sight (`_client().search(…)`) and not dispatched
+by name: that is what makes them checkable by the version-skew probe.
 """
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access, url_perimeter
 from ..connectors import verify as connector_verify
 
-# Le chemin REST d'invocation d'outil coupe à 45 s (`api/routes.py`) : un crawl
-# synchrone doit rendre avant. Au-delà, c'est `firecrawl_crawl` (job asynchrone).
+# The REST tool-invocation path cuts off at 45 s (`api/routes.py`): a synchronous
+# crawl must return before that. Beyond it, use `firecrawl_crawl` (asynchronous job).
 _CRAWL_TIMEOUT_S = 40
 _CRAWL_MAX_PAGES = 100
 
@@ -45,27 +45,27 @@ def _bad(msg: str) -> McpError:
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"Tavily a rejeté la clé API (HTTP {status}) — vérifie la clé "
-                "configurée sur ce connecteur (Tavily : app.tavily.com → API Keys).")
+        return (f"Tavily rejected the API key (HTTP {status}) — check the key "
+                "configured on this connector (Tavily: app.tavily.com → API Keys).")
     if status == 429:
-        return "Tavily : trop de requêtes (429) — réessaie dans un instant."
+        return "Tavily: too many requests (429) — try again in a moment."
     if status == 432:
-        return ("Tavily : plafond du plan atteint (432) — les crédits du mois sont "
-                "épuisés, recharge le compte ou passe au plan supérieur.")
+        return ("Tavily: plan limit reached (432) — the month's credits are "
+                "used up, top up the account or move to the next plan.")
     if status == 433:
-        return ("Tavily : plafond pay-as-you-go atteint (433) — relève la limite de "
-                "dépense dans le compte Tavily.")
+        return ("Tavily: pay-as-you-go limit reached (433) — raise the spending "
+                "limit in the Tavily account.")
     if status == 400:
-        return f"Tavily : requête invalide (400) — {e.body}"
+        return f"Tavily: invalid request (400) — {e.body}"
     if status in (500, 502, 503, 504):
-        return f"Tavily est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Tavily a refusé la requête (HTTP {status}): {e.body}"
+        return f"Tavily is temporarily unavailable (HTTP {status}) — try again later."
+    return f"Tavily refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : une recherche `basic` à 1 résultat — l'appel
-    authentifié le moins coûteux (1 crédit ; `map` en coûte autant et prend plus
-    de temps)."""
+    """"Test the connection" probe: a `basic` search with 1 result — the cheapest
+    authenticated call (1 credit; `map` costs as much and takes more
+    time)."""
     from oto.tools.tavily.client import TavilyClient
     TavilyClient(api_key=fields["key"]).search("tavily", max_results=1,
                                                search_depth="basic", timeout=20)
@@ -83,7 +83,7 @@ def register(mcp: FastMCP) -> None:
 
     @contextmanager
     def _upstream():
-        """Traduit un refus de Tavily en erreur d'outil actionnable."""
+        """Translates a Tavily refusal into an actionable tool error."""
         try:
             yield
         except ValueError as e:
@@ -91,9 +91,9 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
         except (requests.ConnectionError, requests.Timeout) as e:
-            raise _bad(f"Tavily injoignable (réseau/timeout) — réessaie plus tard. {e}")
+            raise _bad(f"Tavily unreachable (network/timeout) — try again later. {e}")
 
-    # --- recherche ----------------------------------------------------------
+    # --- search -------------------------------------------------------------
 
     @mcp.tool()
     def tavily_search(
@@ -148,7 +148,7 @@ def register(mcp: FastMCP) -> None:
                 country=country, language=language)
         return url_perimeter.filter_results(result, url_perimeter.perimeter_of_call())
 
-    # --- lecture d'URLs -----------------------------------------------------
+    # --- reading URLs -------------------------------------------------------
 
     @mcp.tool()
     def tavily_extract(
@@ -177,20 +177,20 @@ def register(mcp: FastMCP) -> None:
             chunks_per_source: 1-5 excerpts per page (only with `query`).
             format: `markdown` (default) | `text`.
         """
-        # Le refus du périmètre parle en PREMIER (#632) : « 20 maximum » serait une
-        # porte (scinder le lot) là où le périmètre dit la vraie raison.
+        # The perimeter refusal speaks FIRST (#632): "20 maximum" would be a
+        # door (split the batch) where the perimeter gives the real reason.
         url_perimeter.refuse_if_any_excluded(urls, url_perimeter.perimeter_of_call())
         if not urls:
-            raise _bad("urls : au moins une URL")
+            raise _bad("urls: at least one URL")
         if len(urls) > 20:
-            raise _bad("urls : 20 URLs maximum par appel")
+            raise _bad("urls: 20 URLs maximum per call")
         with _upstream():
             return _client().extract(
                 urls, query=query, extract_depth=extract_depth,
                 chunks_per_source=chunks_per_source, format=format,
                 include_images=include_images, timeout_s=_CRAWL_TIMEOUT_S)
 
-    # --- repérage d'un site -------------------------------------------------
+    # --- scouting a site ----------------------------------------------------
 
     @mcp.tool()
     def tavily_map(
@@ -226,12 +226,12 @@ def register(mcp: FastMCP) -> None:
                 url, instructions=instructions, max_depth=max_depth,
                 max_breadth=max_breadth, limit=limit, select_paths=select_paths,
                 exclude_paths=exclude_paths, allow_external=allow_external,
-                # budget Tavily 40 s ⟹ le HTTP local n'attend jamais les 160 s
-                # du défaut client (contrainte mono-loop, cf. conventions)
+                # Tavily budget 40 s ⟹ the local HTTP never waits the 160 s
+                # of the client default (single-loop constraint, see conventions)
                 timeout_s=_CRAWL_TIMEOUT_S, timeout=45)
         return url_perimeter.filter_results(result, per)
 
-    # --- crawl (synchrone, borné) -------------------------------------------
+    # --- crawl (synchronous, bounded) ---------------------------------------
 
     @mcp.tool()
     def tavily_crawl(
@@ -283,9 +283,9 @@ def register(mcp: FastMCP) -> None:
 
 
 def _cap_limit(limit: Optional[int]) -> int:
-    """Borne le nombre de pages d'un map/crawl synchrone (défaut API : 50)."""
+    """Bounds the number of pages of a synchronous map/crawl (API default: 50)."""
     if limit is None:
         return 50
     if limit < 1:
-        raise _bad("limit : au moins 1 page")
+        raise _bad("limit: at least 1 page")
     return min(limit, _CRAWL_MAX_PAGES)

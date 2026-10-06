@@ -1,18 +1,18 @@
-## prerequisite — obtenir une clé serper
+## prerequisite — get a serper key
 
-crée une clé api sur [serper.dev](https://serper.dev) (inscription, puis la clé est dans ton dashboard).
-- colle-la dans tes connecteurs oto sur `/account`
-- les membres peuvent aussi taper la clé plateforme partagée (quota quotidien) ; sans compte, ta propre clé est obligatoire
+create an api key on [serper.dev](https://serper.dev) (sign up, then the key is in your dashboard).
+- paste it into your oto connectors at `/account`
+- members can also use the shared platform key (daily quota); without an account, your own key is required
 
-## usage — recherche google + scraping
+## usage — google search + scraping
 
-interroge tout l'univers google (web, news, images, vidéos, lieux, maps, avis, shopping, scholar, brevets, lens) et scrape une page.
-- `serper_search(kind=…)` — une verticale par `kind` : `web` (filtrable par site/pays/date, ex. profils sur `linkedin.com/in`), `news` (veille signaux : levée, recrutement, presse), `places` (prospection b2b locale — titre, adresse, téléphone, site, note), `images`, `videos`, `shopping`, `scholar`, `patents`, `autocomplete`
-- `serper_reviews` — les avis d'un lieu ; rend **tout** par défaut (`op="page"` pour un simple échantillon)
-- `serper_maps_sample` / `serper_maps_census` — un échantillon de lieux, ou le **recensement exhaustif** d'une zone (pave, pagine et déduplique côté serveur)
-- `serper_lens` — recherche inversée à partir d'une image
-- `serper_scrape` — récupère le contenu d'une page (markdown), gère le js et l'anti-bot léger
+query the whole google universe (web, news, images, videos, places, maps, reviews, shopping, scholar, patents, lens) and scrape a page.
+- `serper_search(kind=…)` — one vertical per `kind`: `web` (filterable by site/country/date, e.g. profiles on `linkedin.com/in`), `news` (signal monitoring: fundraise, hiring, press), `places` (local b2b prospecting — title, address, phone, website, rating), `images`, `videos`, `shopping`, `scholar`, `patents`, `autocomplete`
+- `serper_reviews` — the reviews of a place; returns **all** of them by default (`op="page"` for a simple sample)
+- `serper_maps_sample` / `serper_maps_census` — a sample of places, or the **exhaustive census** of an area (tiles, paginates and deduplicates server-side)
+- `serper_lens` — reverse search from an image
+- `serper_scrape` — fetches the content of a page (markdown), handles js and light anti-bot
 
-## note — périmètre de projet (#605, 2026-08-29)
+## note — project perimeter (#605, 2026-08-29)
 
-sous un projet dont l'option `excluded_url_prefixes` est posée (ex. `linkedin.com/in/`), `serper_search` et `serper_lens` **écartent** les résultats correspondants et le disent (`excluded_by_perimeter` : combien, par quel projet, par quel motif) ; `serper_scrape` et `serper_lens` **refusent** une URL correspondante en nommant le motif et le projet. sans projet ou sans option, rien ne change. la page entreprise (`linkedin.com/company/`) reste rendue : les motifs sont précis. détail : `docs/projects.md`.
+under a project whose `excluded_url_prefixes` option is set (e.g. `linkedin.com/in/`), `serper_search` and `serper_lens` **drop** the matching results and say so (`excluded_by_perimeter`: how many, by which project, for which pattern); `serper_scrape` and `serper_lens` **refuse** a matching URL, naming the pattern and the project. without a project or without the option, nothing changes. the company page (`linkedin.com/company/`) is still rendered: the patterns are precise. details: `docs/projects.md`.

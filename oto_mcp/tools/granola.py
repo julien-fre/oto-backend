@@ -1,38 +1,38 @@
 """Granola — meeting notes, transcripts, folders, webhook endpoints.
 
-Wrappe `oto.tools.granola.client.GranolaClient` (API v1, Bearer). keyed
-`api_key`, byo-only (pas de clé plateforme) : chaque user/org pose SA clé
-Granola — deux natures de clé côté Granola (personnelle, self-serve ; workspace,
-provisionnée par un admin), toutes deux un simple Bearer ici, Granola applique
-le scope lui-même.
+Wraps `oto.tools.granola.client.GranolaClient` (API v1, Bearer). keyed
+`api_key`, byo-only (no platform key): each user/org sets THEIR Granola
+key — two kinds of key on Granola's side (personal, self-serve; workspace,
+provisioned by an admin), both a simple Bearer here, Granola applies
+the scope itself.
 
-Petite API (8 opérations, 4 objets), groupée en **DEUX tools par catégorie** :
-- `granola_content` — tout ce qui LIT le contenu de réunion (notes, transcript,
-  dossiers), verbe en `op`.
-- `granola_webhook_endpoint` — la gestion d'intégration (webhook endpoints),
-  verbe en `op`, CRUD complet.
+Small API (8 operations, 4 objects), grouped into **TWO tools by category**:
+- `granola_content` — everything that READS meeting content (notes, transcript,
+  folders), verb in `op`.
+- `granola_webhook_endpoint` — integration management (webhook endpoints),
+  verb in `op`, full CRUD.
 
-**Aucun param n'est retenu au silence** : un `op` qui ne reconnaît pas un
-argument fourni REFUSE plutôt que de l'ignorer (silae `_refuse_ignored`) —
-`granola_content(op="list_notes", note_id=...)` rendrait TOUTES les notes en
-laissant croire que `note_id` a filtré sur une seule.
+**No param is silently dropped**: an `op` that does not recognize a
+supplied argument REFUSES rather than ignoring it (silae `_refuse_ignored`) —
+`granola_content(op="list_notes", note_id=...)` would return ALL notes while
+letting the caller believe `note_id` filtered down to one.
 
-**Webhook endpoints : CRUD complet exposé**, contrairement au guide
-Management d'Ahrefs (lecture+création seulement) — supprimer/désactiver un
-webhook endpoint n'est pas destructeur de DONNÉE utilisateur (notes,
-transcripts…), c'est de la plomberie d'intégration, faible rayon d'effet.
+**Webhook endpoints: full CRUD exposed**, unlike Ahrefs' Management
+guide (read+create only) — deleting/disabling a webhook endpoint is not
+destructive of USER DATA (notes, transcripts…), it is integration plumbing,
+small blast radius.
 
-**Vérifié contre le spec OpenAPI 3.1.0 réel** (`docs.granola.ai/api-reference/
-openapi.json`, 2026-08-20), pas contre un résumé de page doc — required,
-formes de corps, bornes `page_size`. **Testé en live le 2026-08-20** avec une
-clé workspace réelle : notes, transcript, dossiers, et le cycle
-complet création→modification→suppression d'un webhook endpoint répondent
-exactement comme codé, y compris les erreurs 400 de validation (`page_size`
-hors bornes, `note_id` invalide, `scopes` incompatible avec une clé workspace
-— confirmé : une clé workspace DOIT passer `scopes=["workspace"]`, exactement
-comme documenté). Le 9e endpoint du spec, `GET /v1/audit`, a rendu
-`404 NOT_FOUND` sur cette clé (probablement gaté par plan) — retiré plutôt que
-d'exposer un appel que personne ne peut actuellement utiliser (cf. oto-core
+**Verified against the real OpenAPI 3.1.0 spec** (`docs.granola.ai/api-reference/
+openapi.json`, 2026-08-20), not against a doc page summary — required,
+body shapes, `page_size` bounds. **Tested live on 2026-08-20** with a real
+workspace key: notes, transcript, folders, and the full
+create→update→delete cycle of a webhook endpoint respond
+exactly as coded, including the 400 validation errors (`page_size`
+out of bounds, invalid `note_id`, `scopes` incompatible with a workspace key
+— confirmed: a workspace key MUST pass `scopes=["workspace"]`, exactly
+as documented). The spec's 9th endpoint, `GET /v1/audit`, returned
+`404 NOT_FOUND` on this key (probably plan-gated) — removed rather than
+exposing a call that nobody can currently use (cf. oto-core
 `GranolaClient`).
 """
 from __future__ import annotations
@@ -52,32 +52,32 @@ def _bad(msg: str) -> McpError:
 
 
 def _refuse_ignored(op: str, hint: str, **provided) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention,
-    pas un détail — sinon `granola_content(op="get_note", folder_id=...)`
-    rendrait UNE note en laissant croire que `folder_id` a filtré quelque chose."""
+    """A supplied argument that THIS op does not use is an error of intent,
+    not a detail — otherwise `granola_content(op="get_note", folder_id=...)`
+    would return ONE note while letting the caller believe `folder_id` filtered something."""
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op={op!r} n'utilise pas `{name}` — {hint}")
+            raise _bad(f"op={op!r} does not use `{name}` — {hint}")
 
 
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"Granola a rejeté la clé API (HTTP {status}) — vérifie la clé posée sur ce "
-                "connecteur (Granola : Settings → Connectors → API keys).")
+        return (f"Granola rejected the API key (HTTP {status}) — check the key set on this "
+                "connector (Granola: Settings → Connectors → API keys).")
     if status == 404:
-        return f"Granola : ressource introuvable (HTTP 404) — {e.body}"
+        return f"Granola: resource not found (HTTP 404) — {e.body}"
     if status == 429:
-        return ("Granola : trop de requêtes (429) — limite 25 req/5s en rafale, "
-                "5 req/s (300/min) soutenu. Réessaie dans un instant.")
+        return ("Granola: too many requests (429) — limit 25 req/5s burst, "
+                "5 req/s (300/min) sustained. Try again in a moment.")
     if status in (500, 502, 503, 504):
-        return f"Granola est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Granola a refusé la requête (HTTP {status}) : {e.body}"
+        return f"Granola is temporarily unavailable (HTTP {status}) — try again later."
+    return f"Granola refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : liste des webhook endpoints, sans param,
-    gratuite (aucune limite d'unités documentée côté Granola)."""
+    """Probe for "test the connection": list of webhook endpoints, no param,
+    free (no unit limit documented on Granola's side)."""
     from oto.tools.granola.client import GranolaClient
     GranolaClient(api_key=fields["key"]).list_webhook_endpoints()
 
@@ -137,7 +137,7 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list_notes":
-            _refuse_ignored(op, "utilise op='get_note' pour une note précise",
+            _refuse_ignored(op, "use op='get_note' for a specific note",
                              note_id=note_id, include=include)
             params = {k: v for k, v in dict(
                 created_before=created_before, created_after=created_after,
@@ -146,8 +146,8 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.list_notes(**params))
         if op == "get_note":
             if not note_id:
-                raise _bad("op='get_note' requiert `note_id`")
-            _refuse_ignored(op, "ces filtres ne s'appliquent qu'à op='list_notes'/'list_folders'",
+                raise _bad("op='get_note' requires `note_id`")
+            _refuse_ignored(op, "these filters only apply to op='list_notes'/'list_folders'",
                              created_before=created_before, created_after=created_after,
                              updated_after=updated_after, folder_id=folder_id,
                              cursor=cursor, page_size=page_size)
@@ -155,8 +155,8 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.get_note(note_id, **kwargs))
         if op == "get_transcript":
             if not note_id:
-                raise _bad("op='get_transcript' requiert `note_id`")
-            _refuse_ignored(op, "ces filtres ne s'appliquent pas à op='get_transcript'",
+                raise _bad("op='get_transcript' requires `note_id`")
+            _refuse_ignored(op, "these filters do not apply to op='get_transcript'",
                              include=include, created_before=created_before,
                              created_after=created_after, updated_after=updated_after,
                              folder_id=folder_id)
@@ -164,14 +164,14 @@ def register(mcp: FastMCP) -> None:
                       if v is not None}
             return _run(lambda: client.get_transcript(note_id, **kwargs))
         if op == "list_folders":
-            _refuse_ignored(op, "utilise op='list_notes' pour filtrer des notes",
+            _refuse_ignored(op, "use op='list_notes' to filter notes",
                              note_id=note_id, include=include, created_before=created_before,
                              created_after=created_after, updated_after=updated_after,
                              folder_id=folder_id)
             kwargs = {k: v for k, v in dict(cursor=cursor, page_size=page_size).items()
                       if v is not None}
             return _run(lambda: client.list_folders(**kwargs))
-        raise _bad("op doit être 'list_notes', 'get_note', 'get_transcript' ou 'list_folders'")
+        raise _bad("op must be 'list_notes', 'get_note', 'get_transcript' or 'list_folders'")
 
     # ================================================================
     # Webhook endpoints — integration management (CRUD)
@@ -213,24 +213,24 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='create' pour en enregistrer un nouveau, "
-                             "op='update'/'delete' pour en cibler un existant",
+            _refuse_ignored(op, "use op='create' to register a new one, "
+                             "op='update'/'delete' to target an existing one",
                              webhook_endpoint_id=webhook_endpoint_id, url=url, scopes=scopes,
                              events=events, folder_ids=folder_ids, enabled=enabled)
             return _run(lambda: client.list_webhook_endpoints())
         if op == "create":
-            _refuse_ignored(op, "un nouvel endpoint n'a pas encore d'id, ni d'état enabled",
+            _refuse_ignored(op, "a new endpoint has no id yet, nor an enabled state",
                              webhook_endpoint_id=webhook_endpoint_id, enabled=enabled)
             if not url or not scopes:
-                raise _bad("op='create' requiert `url` et `scopes`")
+                raise _bad("op='create' requires `url` and `scopes`")
             body = {k: v for k, v in dict(events=events, folder_ids=folder_ids).items()
                     if v is not None}
             return _run(lambda: client.create_webhook_endpoint(url, scopes, **body))
         if op in ("update", "delete"):
             if not webhook_endpoint_id:
-                raise _bad(f"op={op!r} requiert `webhook_endpoint_id`")
+                raise _bad(f"op={op!r} requires `webhook_endpoint_id`")
             if op == "delete":
-                _refuse_ignored(op, "une suppression ne prend pas d'autre champ",
+                _refuse_ignored(op, "a deletion takes no other field",
                                  url=url, scopes=scopes, events=events,
                                  folder_ids=folder_ids, enabled=enabled)
                 return _run(lambda: client.delete_webhook_endpoint(webhook_endpoint_id))
@@ -238,6 +238,6 @@ def register(mcp: FastMCP) -> None:
                                            folder_ids=folder_ids, enabled=enabled).items()
                     if v is not None}
             if not body:
-                raise _bad("op='update' requiert au moins un champ à modifier")
+                raise _bad("op='update' requires at least one field to change")
             return _run(lambda: client.update_webhook_endpoint(webhook_endpoint_id, **body))
-        raise _bad("op doit être 'list', 'create', 'update' ou 'delete'")
+        raise _bad("op must be 'list', 'create', 'update' or 'delete'")

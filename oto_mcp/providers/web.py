@@ -1,34 +1,34 @@
-"""Déclaration de registre du connecteur `web`.
+"""Registry declaration of the `web` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# Le lecteur qui ESCALADE (#348) : fetch nu → scraper serper → navigateur
-# jetable opt-in. Capacité NUE (ADR 0010 : les fournisseurs des crans ne
-# sont pas substituables par l'appelant, c'est une cascade) ; pas de
-# credential propre — chaque cran résout le sien (serper par la cascade,
-# Browserbase par la config plateforme).
+# The reader that ESCALATES (#348): bare fetch → serper scraper → opt-in
+# disposable browser. BARE capability (ADR 0010: the providers of the tiers
+# are not substitutable by the caller, it is a cascade); no credential of
+# its own — each tier resolves its own (serper via the cascade,
+# Browserbase via the platform config).
 CONNECTOR = _c(
     "web", ["web"], secret_kind="none",
-    label="Lecteur de page web",
-    help="lire une page web publique, même quand elle résiste — fetch, puis "
-         "scraper, puis navigateur jetable (payant, sur demande)",
+    label="Web page reader",
+    help="read a public web page, even when it resists — fetch, then "
+         "scraper, then disposable browser (paid, on request)",
 )
 
 CATEGORY = "Web"
-# Éditeur : capacité NUE et maison — c'est notre cascade qui rend le service, et aucun
-# de ses crans n'est un service que l'appelant choisit. DÉCLARÉ, et pas dérivé d'un
-# défaut : depuis le 2026-09-02 il n'y en a plus (`Connector.publisher_name`).
+# Publisher: BARE in-house capability — our cascade provides the service, and none
+# of its tiers is a service the caller chooses. DECLARED, not derived from a
+# default: since 2026-09-02 there is none (`Connector.publisher_name`).
 PUBLISHER = "Otomata"
 SANS_LOGO_DE_MARQUE = True
 
 DESCRIPTION = (
-    "Lire une page web publique, même quand elle résiste à un simple fetch : le "
-    "lecteur escalade de lui-même — fetch nu, puis scraper, puis navigateur "
-    "jetable en dernier recours (payant, sur demande explicite). Pas un moteur "
-    "de recherche : donne une URL, pas une requête."
+    "Read a public web page, even when it resists a simple fetch: the "
+    "reader escalates on its own — bare fetch, then scraper, then disposable "
+    "browser as a last resort (paid, on explicit request). Not a search "
+    "engine: give it a URL, not a query."
 )

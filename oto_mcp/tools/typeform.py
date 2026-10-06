@@ -1,41 +1,41 @@
-"""Typeform — formulaires en ligne, en LECTURE SEULE : espaces de travail,
-formulaires (et leurs questions), réponses.
+"""Typeform — online forms, READ ONLY: workspaces,
+forms (and their questions), responses.
 
-Enveloppe `oto.tools.typeform.TypeformClient` (jeton personnel en Bearer).
-Credential résolu par appel via `access.resolve_credential_fields("typeform")`
-(byo user OU org, pas de clé plateforme) : `key` (secret) et `region` (us par
-défaut, eu, eu2), qui choisit l'hôte du data center.
+Wraps `oto.tools.typeform.TypeformClient` (personal token as Bearer).
+Credential resolved per call via `access.resolve_credential_fields("typeform")`
+(byo user OR org, no platform key): `key` (secret) and `region` (us by
+default, eu, eu2), which chooses the data center host.
 
-Trois outils, un par objet :
-- `typeform_workspaces` — les espaces de travail du jeton ;
-- `typeform_forms` (op list|get) — les formulaires, la définition d'un formulaire ;
-- `typeform_responses` — les réponses d'un formulaire, filtrées et paginées.
+Three tools, one per object:
+- `typeform_workspaces` — the token's workspaces;
+- `typeform_forms` (op list|get) — the forms, a form's definition;
+- `typeform_responses` — a form's responses, filtered and paginated.
 
-**Ce que la couche outil ajoute au transport** :
-1. Des vues resserrées par défaut (ADR 0047, `full=True` rend le brut) : une
-   liste rend de quoi choisir, une définition rend ses questions sans écrans,
-   thème ni logique — et la réponse NOMME ce qu'elle a retiré (`omitted`).
-2. **Les réponses lisibles.** L'API rend `answers[]` dans un ordre quelconque,
-   chacune repérée par l'id de sa question, la valeur rangée sous une clé qui
-   dépend de son type. `typeform_responses` lit la définition du formulaire
-   une fois par page et rend chaque réponse en `{intitulé de la question:
-   valeur}` ; deux questions au même intitulé sont départagées par leur id,
-   jamais écrasées.
-3. **Le piège du data center, fermé.** Lues hors de la région du compte, les
-   réponses reviennent VIDES sans erreur. La définition du formulaire porte
-   l'hôte de ses réponses (`_links.responses`) : s'il ne correspond pas à la
-   région posée, l'outil REFUSE en nommant la bonne région, au lieu de rendre
-   un zéro crédible.
+**What the tool layer adds to the transport**:
+1. Tightened views by default (ADR 0047, `full=True` returns the raw payload): a
+   list returns enough to choose, a definition returns its questions without screens,
+   theme or logic — and the response NAMES what it removed (`omitted`).
+2. **Readable responses.** The API returns `answers[]` in any order,
+   each identified by its question's id, the value filed under a key that
+   depends on its type. `typeform_responses` reads the form definition
+   once per page and returns each response as `{question title:
+   value}`; two questions with the same title are told apart by their id,
+   never overwritten.
+3. **The data center trap, closed.** Read outside the account's region, the
+   responses come back EMPTY without error. The form definition carries
+   the host of its responses (`_links.responses`): if it does not match the
+   configured region, the tool REFUSES, naming the right region, instead of returning
+   a credible zero.
 
-**Aucun argument n'est retenu en silence** : un argument qu'un `op` n'utilise
-pas est refusé (`_refuse_ignored`, patron tally/claap).
+**No argument is silently dropped**: an argument that an `op` does not use
+is refused (`_refuse_ignored`, tally/claap pattern).
 
-Les appels au client sont écrits en clair (`_client().list_forms(…)`) pour la
-sonde de version (`test_tools_client_methods_exist`).
+Client calls are written in plain sight (`_client().list_forms(…)`) for the
+version probe (`test_tools_client_methods_exist`).
 
-Vérifié contre la référence publique (Create API, Responses API, page « EU
-Responses Data Center ») ; **pas testé en live** — aucun jeton Typeform
-disponible à l'écriture.
+Checked against the public reference (Create API, Responses API, "EU
+Responses Data Center" page); **not tested live** — no Typeform token
+available at writing time.
 """
 from __future__ import annotations
 
@@ -49,22 +49,22 @@ from .. import access
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 
-if TYPE_CHECKING:  # l'annotation de `_client()` seulement — jamais évaluée
+if TYPE_CHECKING:  # for `_client()`'s annotation only — never evaluated
     from oto.tools.typeform import TypeformClient
 
-#: Où l'utilisateur crée son jeton, dans SON compte Typeform.
+#: Where the user creates their token, in THEIR Typeform account.
 WHERE_TO_CREATE = "Typeform → Account → Personal tokens"
 
-#: Borne d'une page de réponses servie à l'agent. L'amont en accepte 1000, mais
-#: les réponses ne se projettent pas (un texte long est la donnée) : la page
-#: est la seule borne de taille, et `total_items` dit combien il en reste.
+#: Bound on a page of responses served to the agent. Upstream accepts 1000, but
+#: responses are not projected (a long text is the data): the page
+#: is the only size bound, and `total_items` says how many remain.
 RESPONSES_MAX_PAGE = 200
 RESPONSES_DEFAULT_PAGE = 25
 
-#: Ce que la vue resserrée d'un formulaire retire (rendu avec `full=True`).
+#: What a form's tightened view removes (returned with `full=True`).
 FORM_OMITTED = ("welcome_screens", "thankyou_screens", "logic", "theme",
                 "settings", "attachments/layouts")
-#: Ce que la vue resserrée d'une réponse retire.
+#: What a response's tightened view removes.
 RESPONSE_OMITTED = ("metadata", "landing_id", "token", "answers[].field.type")
 
 
@@ -73,18 +73,18 @@ def _bad(msg: str) -> McpError:
 
 
 def _refuse_ignored(op: str, hint: str, **provided: Any) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention —
-    sinon `op="get"` avec `search=` rendrait un formulaire en laissant croire
-    que la recherche a filtré."""
+    """A provided argument that THIS op does not use is an error of intent —
+    otherwise `op="get"` with `search=` would return a form while letting
+    one believe the search filtered."""
     for name, value in provided.items():
         if value is not None:
             raise _bad(f"op={op!r} does not use `{name}` — {hint}")
 
 
 def _region(value: Any) -> str:
-    """`region` du credential → région du client. Vide = us. Une valeur hors du
-    jeu déclaré est refusée à la pose ; ici aussi, plutôt que de viser un hôte
-    au hasard."""
+    """The credential's `region` → the client's region. Empty = us. A value outside
+    the declared set is refused at setup; here too, rather than aiming at a
+    random host."""
     from oto.tools.typeform import REGIONS
 
     region = str(value or "us").strip().lower()
@@ -113,10 +113,10 @@ def upstream_message(e: Any, what: str = "") -> str:
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : `GET /forms?page_size=1`, sans effet de
-    bord, sur l'hôte de la région posée. Couvre `auth` et le scope `forms:read`,
-    celui sans lequel aucune réponse ne se lit lisiblement ; un 401/403 lève
-    `UpstreamHTTPError`, que le classement de la sonde lit par son code."""
+    """The "test connection" probe: `GET /forms?page_size=1`, with no side
+    effect, on the configured region's host. Covers `auth` and the `forms:read` scope,
+    the one without which no response is readable; a 401/403 raises
+    `UpstreamHTTPError`, which the probe's classification reads by its code."""
     from oto.tools.typeform import TypeformClient
 
     TypeformClient(access_token=fields["key"],
@@ -124,9 +124,9 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
 
 
 def _client() -> TypeformClient:
-    """Le client Typeform pour le credential de CET appelant, sur l'hôte de sa
-    région. Import réel dans le corps : les tests remplacent le client, et la
-    sonde de version lit l'annotation de retour."""
+    """The Typeform client for THIS caller's credential, on its region's
+    host. Real import in the body: tests replace the client, and the
+    version probe reads the return annotation."""
     from oto.tools.typeform import TypeformClient
 
     fields = access.resolve_credential_fields("typeform")
@@ -135,7 +135,7 @@ def _client() -> TypeformClient:
 
 
 def _run(fn, what: str = "") -> Any:
-    """4xx → refus nommé ; 429 et 5xx restent ce qu'ils sont (réessayables)."""
+    """4xx → named refusal; 429 and 5xx stay what they are (retryable)."""
     from oto.tools.common import UpstreamHTTPError
 
     try:
@@ -149,12 +149,12 @@ def _run(fn, what: str = "") -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Vues resserrées
+# Tightened views
 # ---------------------------------------------------------------------------
 
 def _slim_workspace(ws: dict) -> dict:
     forms = ws.get("forms")
-    if isinstance(forms, list):          # l'exemple de la référence en fait une liste
+    if isinstance(forms, list):          # the reference's example makes it a list
         forms = forms[0] if forms else {}
     out = {"id": ws.get("id"), "name": ws.get("name"), "shared": ws.get("shared"),
            "forms_count": (forms or {}).get("count") if isinstance(forms, dict) else None,
@@ -172,8 +172,8 @@ def _slim_form_row(f: dict) -> dict:
 
 
 def _slim_field(field: dict) -> dict:
-    """Une question : de quoi la reconnaître dans une réponse (id, ref) et
-    l'interpréter (type, intitulé, choix). Les groupes gardent leurs sous-questions."""
+    """A question: enough to recognize it in a response (id, ref) and
+    interpret it (type, title, choices). Groups keep their sub-questions."""
     props = field.get("properties") or {}
     out: Dict[str, Any] = {"id": field.get("id"), "ref": field.get("ref"),
                            "type": field.get("type"), "title": field.get("title")}
@@ -207,8 +207,8 @@ def _slim_form(form: dict) -> dict:
 
 
 def _flat_fields(fields: Any) -> List[dict]:
-    """Toutes les questions, sous-questions de groupe comprises (une réponse
-    pointe la sous-question, pas le groupe)."""
+    """All the questions, group sub-questions included (a response
+    points to the sub-question, not the group)."""
     out: List[dict] = []
     for f in fields or []:
         if not isinstance(f, dict):
@@ -221,8 +221,8 @@ def _flat_fields(fields: Any) -> List[dict]:
 
 
 def _labels(form: Optional[dict]) -> Dict[str, str]:
-    """id de question → clé lisible : l'intitulé ; deux intitulés égaux sont
-    départagés par l'id, jamais fusionnés (l'un écraserait l'autre)."""
+    """Question id → readable key: the title; two equal titles are
+    told apart by the id, never merged (one would overwrite the other)."""
     if not form:
         return {}
     flat = [f for f in _flat_fields(form.get("fields")) if f.get("id")]
@@ -239,10 +239,10 @@ def _labels(form: Optional[dict]) -> Dict[str, str]:
 
 
 def answer_value(answer: dict) -> Any:
-    """La valeur d'une réponse, quel que soit son type : rangée sous la clé qui
-    porte le nom de son `type` (`text`, `choice`, `choices`, `number`…). Un
-    choix rend son libellé, un choix multiple la liste des libellés ; un type
-    inconnu rend sa charge telle quelle plutôt que rien."""
+    """A response's value, whatever its type: filed under the key that
+    bears the name of its `type` (`text`, `choice`, `choices`, `number`…). A
+    choice returns its label, a multiple choice the list of labels; an
+    unknown type returns its payload as-is rather than nothing."""
     kind = answer.get("type")
     value = answer.get(kind) if kind else None
     if kind == "choice" and isinstance(value, dict):
@@ -287,8 +287,8 @@ def _host(url: Any) -> Optional[str]:
 
 
 def _check_region(form: dict, client: Any) -> None:
-    """La définition dit où vivent les réponses (`_links.responses`). Un autre
-    hôte que celui du client = des réponses qui reviendraient vides : refuser."""
+    """The definition says where the responses live (`_links.responses`). A different
+    host than the client's = responses that would come back empty: refuse."""
     from oto.tools.typeform import REGIONS
 
     expected = _host((form.get("_links") or {}).get("responses"))
@@ -475,9 +475,9 @@ def register(mcp: FastMCP) -> None:
             "omitted": list(RESPONSE_OMITTED)}
         if form:
             out["form_title"] = form.get("title")
-        # Le curseur de la page suivante : le jeton du dernier élément, tant que
-        # la page est pleine et que l'ordre est celui par défaut (le plus récent
-        # d'abord) — c'est le parcours que décrit la référence.
+        # The next page's cursor: the last item's token, as long as
+        # the page is full and the order is the default one (most recent
+        # first) — it is the traversal the reference describes.
         if items and len(items) == size and not after and not sort:
             out["next_before"] = items[-1].get("token")
         return out

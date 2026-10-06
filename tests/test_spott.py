@@ -161,7 +161,7 @@ def test_upstream_401_becomes_a_readable_tool_error():
         client_cls.return_value.list_users.side_effect = UpstreamHTTPError(
             401, {"message": "invalid api key"}, service="spott")
         tool = _tool("spott_users")
-        with pytest.raises(McpError, match="clé API"):
+        with pytest.raises(McpError, match="API key"):
             tool.fn()
 
 

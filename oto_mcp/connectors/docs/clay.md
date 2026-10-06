@@ -1,28 +1,28 @@
-## prerequisite — tes tables clay (et, en option, ta clé api)
+## prerequisite — your clay tables (and, optionally, your api key)
 
-une seule carte clay, plusieurs entrées nommées — chacune a un **type** :
-- `table` : une table clay où oto écrit des lignes. dans clay, ouvre la table → **+ add** → **monitor webhook**, copie la **commande cURL** affichée et colle-la telle quelle dans le champ webhook (l'url et le jeton d'auth sont repris). le **nom** de l'entrée est celui que l'agent utilisera pour viser la table
-- `api` : ta clé clay public api (clay → settings → account → api keys). nécessaire seulement pour lancer des routines, chercher dans la base clay ou lire des tables. la clé est **personnelle** : elle dépense tes crédits clay
-- clay n'a pas d'api pour créer un webhook de table : chaque table s'ajoute depuis l'ui clay, une fois
+a single clay card, several named entries — each has a **type**:
+- `table`: a clay table where oto writes rows. in clay, open the table → **+ add** → **monitor webhook**, copy the **cURL command** shown and paste it as is into the webhook field (the url and the auth token are picked up). the entry's **name** is the one the agent will use to target the table
+- `api`: your clay public api key (clay → settings → account → api keys). only needed to run routines, search the clay database or read tables. the key is **personal**: it spends your clay credits
+- clay has no api to create a table webhook: each table is added from the clay ui, once
 
-## usage — écrire des lignes dans une table clay
+## usage — writing rows into a clay table
 
-- `clay_list_tables` liste les tables enregistrées (nom, niveau, lignes déjà envoyées)
-- `clay_push_rows(table, row=…)` envoie une ligne ; `rows=[…]` jusqu'à 50 lignes par appel, avec un reçu `{total, succeeded, failed}`
-- une ligne = un objet json = un envoi (un tableau json ne fait qu'UNE ligne). l'objet entier arrive dans la colonne **webhook** de la table ; ses clés se relient aux colonnes une fois, dans clay. clay lance ensuite les enrichissements de la table sur chaque nouvelle ligne (crédits clay du propriétaire)
-- webhook protégé par un jeton : sans jeton ou avec un mauvais, clay répond 401 et le lot s'arrête au premier refus
-- `dry_run=True` valide et montre ce qui partirait, sans rien envoyer
-- si la table demandée n'existe pas, le refus liste les tables connues : demande à l'utilisateur d'ajouter la bonne sur la carte clay plutôt que d'en deviner une
+- `clay_list_tables` lists the registered tables (name, level, rows already sent)
+- `clay_push_rows(table, row=…)` sends one row; `rows=[…]` up to 50 rows per call, with a receipt `{total, succeeded, failed}`
+- one row = one json object = one send (a json array makes only ONE row). the whole object lands in the table's **webhook** column; its keys are mapped to columns once, in clay. clay then runs the table's enrichments on each new row (the owner's clay credits)
+- webhook protected by a token: with no token or a wrong one, clay answers 401 and the batch stops at the first refusal
+- `dry_run=True` validates and shows what would be sent, without sending anything
+- if the requested table does not exist, the refusal lists the known tables: ask the user to add the right one on the clay card rather than guessing one
 
-## usage — routines, recherche et tables via l'api
+## usage — routines, search and tables via the api
 
-- `clay_account` : à qui appartient la clé, et le solde de crédits du workspace
-- `clay_run_routine(routine_id, items)` lance une routine (fonction ou workflow clay) sur 1 à 100 items `{id, inputs}`. c'est **asynchrone** : l'appel rend un `routine_run_id`, puis `clay_get_run` jusqu'à `status = complete` (quelques secondes entre deux appels). aucun endpoint ne liste les routines : l'id (`function:t_…`) se demande à l'utilisateur
-- `clay_search` cherche people/companies dans la base clay : mode filtres (`source_type` + `filters`, champs via `clay_search_fields`) ou mode requête (`query`, grammaire via `clay_search_reference`). page suivante : `clay_search_next(search_id, mode)`
-- `clay_tables_query` lit des lignes de tables existantes — **plan enterprise** de clay uniquement
+- `clay_account`: who owns the key, and the workspace's credit balance
+- `clay_run_routine(routine_id, items)` runs a routine (clay function or workflow) on 1 to 100 `{id, inputs}` items. it is **asynchronous**: the call returns a `routine_run_id`, then `clay_get_run` until `status = complete` (a few seconds between calls). no endpoint lists routines: ask the user for the id (`function:t_…`)
+- `clay_search` searches people/companies in the clay database: filters mode (`source_type` + `filters`, fields via `clay_search_fields`) or query mode (`query`, grammar via `clay_search_reference`). next page: `clay_search_next(search_id, mode)`
+- `clay_tables_query` reads rows from existing tables — clay **enterprise plan** only
 
-## note — limites de clay
+## note — clay's limits
 
-- un webhook de table accepte **50 000 envois au total**, même si on supprime des lignes. oto compte ce qu'il envoie et prévient à l'approche ; au-delà, crée un nouveau webhook dans la table et recolle-le sur la même entrée (le compteur repart de zéro)
-- chaque appel consomme les crédits clay du compte concerné, comme le même travail fait dans l'ui clay
-- rate limit par workspace : un refus 429 indique le délai d'attente (`retry_after`) — attends-le avant de réessayer
+- a table webhook accepts **50,000 sends in total**, even if rows are deleted. oto counts what it sends and warns as the limit approaches; beyond it, create a new webhook in the table and paste it back on the same entry (the counter restarts from zero)
+- each call consumes the clay credits of the account concerned, like the same work done in the clay ui
+- rate limit per workspace: a 429 refusal indicates the wait time (`retry_after`) — wait it out before retrying

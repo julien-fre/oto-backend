@@ -1,25 +1,25 @@
-"""Le BUDGET PAR ORG d'une clé de tenant — l'arête tenant→org de 0053 (L-clés PR 2).
+"""The PER-ORG BUDGET of a tenant key — the tenant→org edge of 0053 (L-keys PR 2).
 
-R10, tranché le 12/08 : budget PARTAGÉ — la lettre de D7. Le compteur est celui de
-l'arête `tenant:{slug}:{connecteur} —grant→ org:{id}` (`grant_counters`), sommé sur la
-fenêtre du jour pour le couple (instance, bénéficiaire) : tous les membres de l'org
-puisent au même budget, et c'est voulu.
+R10, settled on 12/08: SHARED budget — the letter of D7. The counter is the one on the
+edge `tenant:{slug}:{connector} —grant→ org:{id}` (`grant_counters`), summed over the
+day window for the (instance, beneficiary) pair: all members of the org draw from the
+same budget, and that is intended.
 
-**Trois états, hérités du lot L5** (`grants_chain.tenant_rung`) :
-- MUETTE (aucune arête n'a jamais visé cette org) → rien à borner, rien à débiter :
-  la clé sert comme en PR 1 — c'est l'inertie promise ;
-- ACCORDE → la contrainte `quota` de l'arête borne le jour (0 ou absente = illimité,
-  convention de l'ancien chemin) et l'arête est débitée ;
-- REFUSE (toutes révoquées) → le walker a déjà SAUTÉ le barreau, on n'arrive pas ici.
+**Three states, inherited from batch L5** (`grants_chain.tenant_rung`):
+- MUTE (no edge ever targeted this org) → nothing to cap, nothing to debit:
+  the key serves as in PR 1 — that is the promised inertia;
+- GRANTED → the edge's `quota` constraint caps the day (0 or absent = unlimited,
+  convention of the old path) and the edge is debited;
+- REFUSED (all revoked) → the walker has already SKIPPED the rung, we never get here.
 
-⚠️ **Débité à la RÉSOLUTION, pas au succès de l'appel** — à la différence du compteur
-plateforme, que chaque outil débite lui-même après un appel réussi
-(`access.record_platform_usage`, ~10 sites). Une clé de tenant n'a pas ces sites, et
-en ajouter un par outil serait précisément la copie que le walker unique existe pour
-éviter. Le prix : un appel qui échoue chez le fournisseur compte. L'alternative —
-une borne posée que personne ne débite — est le défaut de #409 (une ligne acceptée
-que rien ne lit), et il est pire. Le déplacement vers « au succès » passera par le
-relevé d'appel du middleware, avec L8.
+⚠️ **Debited at RESOLUTION, not on call success** — unlike the platform counter,
+which each tool debits itself after a successful call
+(`access.record_platform_usage`, ~10 sites). A tenant key has no such sites, and
+adding one per tool would be precisely the copy the single walker exists to
+avoid. The price: a call that fails at the provider still counts. The alternative —
+a bound that is set but that nobody debits — is the defect of #409 (an accepted row
+that nothing reads), and it is worse. Moving to "on success" will go through the
+middleware's call record, with L8.
 """
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ from ..db import grants as db_grants
 
 
 def enforce(slug: str, provider: str, org: "int | None") -> None:
-    """Applique le budget de l'arête tenant→org pour CET appel : lève si le jour est
-    épuisé, débite sinon. No-op (aucune lecture) sans arête."""
+    """Apply the tenant→org edge budget for THIS call: raise if the day is
+    exhausted, debit otherwise. No-op (no read) without an edge."""
     verdict = grants_chain.tenant_rung(slug, provider, org)
     if verdict is None or not verdict.granted or verdict.grant_id is None:
         return
@@ -42,8 +42,8 @@ def enforce(slug: str, provider: str, org: "int | None") -> None:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
                 message=(
-                    f"Budget de la clé `{provider}` du tenant `{slug}` épuisé aujourd'hui "
-                    f"pour cette org ({used}/{verdict.quota}). Le budget est partagé par "
-                    f"toute l'org ; son admin de tenant peut le relever."
+                    f"Budget for the `{provider}` key of tenant `{slug}` is exhausted today "
+                    f"for this org ({used}/{verdict.quota}). The budget is shared by "
+                    f"the whole org; its tenant admin can raise it."
                 )))
     db_grants.bump_counter(verdict.grant_id, 1)

@@ -37,13 +37,13 @@ def _chained(top, cause):
 def test_scrub_net_err_replaced_whole():
     out = scrub("Error: net::ERR_NAME_NOT_RESOLVED at linkedin.com")
     assert "net::ERR" not in out
-    assert "réseau amont" in out
+    assert "Upstream network failure" in out
 
 
 def test_scrub_strips_internal_route():
     out = scrub("Cannot GET /api/v1/linkedin/inmail/balance")
     assert "/api/v1" not in out
-    assert "[route interne]" in out
+    assert "[internal route]" in out
 
 
 def test_scrub_strips_long_technical_id():

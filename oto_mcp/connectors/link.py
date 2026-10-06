@@ -1,33 +1,33 @@
-"""« Ce compte est-il lié ? » — déclaré par le module qui détient le credential.
+"""« Is this account linked? » — declared by the module that holds the credential.
 
-**Le trou que ça ferme.** `access.status_for` remplit `me.providers[…]` par TROIS boucles :
-les connecteurs keyés (`db.KEY_PROVIDERS`), ceux à champs (`secret_fields`), et ceux à
-session navigateur (`secret_kind == "cookie"`). Les connecteurs à credential OAuth —
-google, et jusqu'au 2026-09-09 atlassian et folkmcp — ne sont dans aucune :
-`keyed=False`, `secret_fields=0`, `secret_kind='oauth'`. Ils n'avaient donc **aucune
-entrée**, et les conséquences en cascade n'étaient connues de personne :
+**The gap this closes.** `access.status_for` fills `me.providers[…]` with THREE loops:
+keyed connectors (`db.KEY_PROVIDERS`), those with fields (`secret_fields`), and those
+with a browser session (`secret_kind == "cookie"`). Connectors with an OAuth credential —
+google, and until 2026-09-09 atlassian and folkmcp — are in none of them:
+`keyed=False`, `secret_fields=0`, `secret_kind='oauth'`. So they had **no entry at
+all**, and the cascading consequences were known to nobody:
 
-- la décoration `pending_action` itère les entrées existantes → un hook `status_hints`
-  sur ces connecteurs aurait été **physiquement inatteignable** ;
-- `health_ko` idem ;
-- le verdict de la fiche (`connectorVerdict`, dashboard) lit `me.providers[name]` → il
-  n'avait rien à lire ;
-- **et c'est POURQUOI le front avait des noms de connecteurs dans ses URLs** :
-  le widget du dashboard appelle `/api/<name>/oauth/status` parce qu'il n'a pas
-  d'état à lire dans `/api/me`. Le nom-dans-l'URL n'était pas une négligence de style,
-  c'était le contournement de ce trou.
+- the `pending_action` decoration iterates existing entries → a `status_hints` hook
+  on these connectors would have been **physically unreachable**;
+- `health_ko` likewise;
+- the card verdict (`connectorVerdict`, dashboard) reads `me.providers[name]` → it
+  had nothing to read;
+- **and that is WHY the front had connector names in its URLs**:
+  the dashboard widget calls `/api/<name>/oauth/status` because it has no
+  state to read in `/api/me`. The name-in-the-URL was not a style lapse,
+  it was a workaround for this gap.
 
-**Pourquoi un seam plutôt qu'une quatrième boucle qui lit le coffre.** Ils ne rangent
-pas leur credential au même endroit : google écrit une ligne PAR COMPTE
-(`account = email`) avec ses satellites dans `meta`, là où atlassian et folkmcp
-écrivaient au scope LEGACY `("user", sub)`. Une boucle générique qui irait lire le
-coffre elle-même se tromperait sur au moins l'un d'eux, silencieusement. Chaque module
-sait, et le dit.
+**Why a seam rather than a fourth loop that reads the vault.** They do not store
+their credential in the same place: google writes one row PER ACCOUNT
+(`account = email`) with its satellites in `meta`, whereas atlassian and folkmcp
+wrote at the LEGACY scope `("user", sub)`. A generic loop that read the
+vault itself would get at least one of them wrong, silently. Each module
+knows, and says so.
 
-⚠️ **Il ne reste qu'un seul déclarant depuis le retrait de la fédération MCP**
-(2026-09-09, ADR 0069) : google. Le seam ne se replie pas pour autant — c'est
-exactement le patron qu'un prochain connecteur OAuth réutilisera, et sa valeur
-n'a jamais tenu au nombre d'occupants.
+⚠️ **Only one declarer remains since the removal of MCP federation**
+(2026-09-09, ADR 0069): google. The seam does not fold back for that reason — it is
+exactly the pattern a future OAuth connector will reuse, and its value
+never depended on the number of occupants.
 """
 from __future__ import annotations
 
@@ -40,25 +40,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class LinkState:
-    """Ce que le connecteur sait dire de son lien, dans le vocabulaire du CONSOMMATEUR.
+    """What the connector can say about its link, in the CONSUMER's vocabulary.
 
-    Volontairement pauvre : `status_for` le traduit ensuite en `ProviderStatus` (la forme
-    que le dashboard lit). Un module ne doit pas avoir à connaître ce contrat-là.
+    Deliberately sparse: `status_for` then translates it into `ProviderStatus` (the shape
+    the dashboard reads). A module should not have to know that contract.
 
-    `health_ko`/`health_reason` (oto#25 lot a, 2026-09-04) ferment le second manque
-    nommé par le module docstring ci-dessus (« health_ko idem ») : le batch générique
-    de `access.status_for` ne lit la santé QUE sur les clés de palier MEMBRE
-    (`credentials_store.list_credentials(MEMBER, member_id(org, sub))`), donc jamais
-    sur le scope LEGACY `("user", sub)` où vivent ces credentials. Le module SAIT sous
-    quel scope il range sa ligne — il lit donc sa propre santé et la porte ici plutôt
-    que de laisser une quatrième boucle générique deviner (même raison d'être que ce
-    fichier : « une boucle générique se tromperait silencieusement »)."""
+    `health_ko`/`health_reason` (oto#25 lot a, 2026-09-04) close the second gap
+    named by the module docstring above (« health_ko likewise »): the generic batch
+    in `access.status_for` reads health ONLY on MEMBER-tier keys
+    (`credentials_store.list_credentials(MEMBER, member_id(org, sub))`), so never
+    on the LEGACY scope `("user", sub)` where these credentials live. The module KNOWS
+    which scope it stores its row under — so it reads its own health and carries it here rather than
+    letting a fourth generic loop guess (same reason for being as this
+    file: « a generic loop would get it silently wrong »)."""
     linked: bool
     set_at: Optional[str] = None
-    accounts: int = 0          # multi-compte (google) : combien de comptes liés
-    # `None` tant que rien n'a été constaté — jamais `False` (cf. `ProviderStatus`,
-    # `capabilities/connectors/provider_status.py`) : ce lecteur ne sait pas confirmer
-    # une santé bonne, seulement en rapporter le REJET, une fois écrit.
+    accounts: int = 0          # multi-account (google): how many accounts are linked
+    # `None` as long as nothing has been observed — never `False` (see `ProviderStatus`,
+    # `capabilities/connectors/provider_status.py`): this reader cannot confirm
+    # good health, only report its REJECTION, once written.
     health_ko: Optional[bool] = None
     health_reason: Optional[str] = None
 
@@ -67,8 +67,8 @@ _READERS: dict[str, Callable[[str], LinkState]] = {}
 
 
 def register(connector: str, read: Callable[[str], LinkState]) -> None:
-    """Déclare comment lire l'état de lien de ce connecteur. Appelé au niveau MODULE,
-    comme `status_hints.register_state` : c'est une déclaration pure."""
+    """Declares how to read this connector's link state. Called at MODULE level,
+    like `status_hints.register_state`: it is a pure declaration."""
     _READERS[connector] = read
 
 
@@ -81,17 +81,17 @@ def entries() -> tuple[str, ...]:
 
 
 def state(connector: str, sub: str) -> Optional[LinkState]:
-    """État de lien, ou `None` si le connecteur n'en déclare pas / si la lecture casse.
+    """Link state, or `None` if the connector declares none / if the read breaks.
 
-    Fail-open : `/api/me` ne doit JAMAIS tomber parce qu'un fournisseur tiers tousse.
-    Un `None` rend l'entrée absente — exactement l'état d'avant ce module, donc une
-    dégradation et pas une régression."""
+    Fail-open: `/api/me` must NEVER go down because a third-party provider coughs.
+    A `None` makes the entry absent — exactly the state before this module, so a
+    degradation and not a regression."""
     read = _READERS.get(connector)
     if read is None:
         return None
     try:
         return read(sub)
     except Exception:  # noqa: BLE001
-        logger.warning("connector_link: lecture %s en échec (fail-open)", connector,
+        logger.warning("connector_link: read of %s failed (fail-open)", connector,
                        exc_info=True)
         return None

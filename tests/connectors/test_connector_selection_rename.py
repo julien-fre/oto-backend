@@ -138,7 +138,7 @@ def test_the_three_statements_stay_in_this_order():
     renommage sur la PK ; passer 1 après 2 perd l'information « était active » (la
     ligne source est déjà supprimée) — et un membre garderait une sélection en pause
     alors qu'il avait l'outil."""
-    body = _SRC[_SRC.index("def rename_selection"):_SRC.index("# --- migration ADR 0050")]
+    body = _SRC[_SRC.index("def rename_selection"):_SRC.index("# --- one-shot of the unipile SPLIT")]
     promote = body.index("UPDATE user_selected_connectors a SET state")
     dedupe = body.index("DELETE FROM user_selected_connectors a")
     rename = body.index("UPDATE user_selected_connectors SET connector")

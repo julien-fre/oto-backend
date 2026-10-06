@@ -1,38 +1,38 @@
-"""Sellsy — CRM + gestion commerciale FR (api.sellsy.com/v2).
+"""Sellsy — CRM + FR sales management (api.sellsy.com/v2).
 
-Un même compte Sellsy tient la relation client (sociétés, particuliers, contacts,
-opportunités) ET la chaîne de vente (devis → commande → facture → avoir,
-encaissements, catalogue). Le connecteur expose les deux.
+A single Sellsy account holds the customer relationship (companies, individuals, contacts,
+opportunities) AND the sales chain (quote → order → invoice → credit note,
+collections, catalog). The connector exposes both.
 
-**Surface consolidée (ADR 0047)** : un tool par OBJET métier, le verbe en `op`.
-Deux objets sont portés par plusieurs ressources de l'API et tiennent donc dans un
-seul tool à `kind=`, parce que leurs PARAMÈTRES se recouvrent exactement (critère
-de fusion de l'ADR — pas le comptage) :
-- `sellsy_document(kind=…)` — devis/commande/facture/avoir ont les MÊMES paramètres
-  (mêmes filtres de recherche, même corps `related`/`rows`) ; les séparer aurait
-  quadruplé un bloc identique sans rien apprendre à l'agent.
-- `sellsy_third_party(kind=…)` — société et particulier sont les deux faces du même
-  rôle : le tiers qu'un document facture (`related` porte d'ailleurs le
-  discriminant, `{"id": 42, "type": "company"}`). Mêmes verbes, mêmes filtres, même
-  corps ; seul `link_contact`/`unlink_contact` est propre à la société.
+**Consolidated surface (ADR 0047)**: one tool per business OBJECT, the verb in `op`.
+Two objects are carried by several API resources and therefore fit in a
+single tool with `kind=`, because their PARAMETERS overlap exactly (the ADR's
+merge criterion — not the count):
+- `sellsy_document(kind=…)` — quote/order/invoice/credit note have the SAME parameters
+  (same search filters, same `related`/`rows` body); separating them would have
+  quadrupled an identical block while teaching the agent nothing.
+- `sellsy_third_party(kind=…)` — company and individual are the two faces of the same
+  role: the third party a document bills (`related` actually carries the
+  discriminator, `{"id": 42, "type": "company"}`). Same verbs, same filters, same
+  body; only `link_contact`/`unlink_contact` is specific to the company.
 
-Restent des tools nommés là où les verbes ne se factorisent pas : `sellsy_contact`
-(la personne, pas le tiers : pas de `convert`, pas d'encaissement), `sellsy_ref`
-(lecture seule, ni `op` ni pagination) et `sellsy_search` (plein texte, `q` seul).
+Named tools remain where the verbs do not factor out: `sellsy_contact`
+(the person, not the third party: no `convert`, no collection), `sellsy_ref`
+(read-only, neither `op` nor pagination) and `sellsy_search` (full text, `q` only).
 
-Credential = OAuth2 client_credentials multi-champs (client_id + client_secret,
-créés dans Réglages → Portail développeur → API V2), résolu par appel via
-`access.resolve_credential_fields("sellsy")`. byo-only : chaque org connecte SON
-compte Sellsy, il n'y a pas de clé plateforme à partager.
+Credential = multi-field OAuth2 client_credentials (client_id + client_secret,
+created in Settings → Developer portal → API V2), resolved per call via
+`access.resolve_credential_fields("sellsy")`. byo-only: each org connects ITS OWN
+Sellsy account, there is no platform key to share.
 
-Deux gardes valent d'être connues avant d'écrire :
-- **`op="create"` accepte `dry_run=True`** (paramètre `verify` de l'API) : Sellsy
-  valide le payload et ne persiste rien — le bon réflexe avant une création en
-  volume, les champs obligatoires variant d'un compte à l'autre (champs
-  personnalisés, numérotation).
-- **valider un document est irréversible** : `op="validate"` sort une facture ou
-  un avoir de l'état brouillon, lui donne son numéro définitif et le rend
-  comptable. À n'appeler qu'après validation humaine.
+Two guards are worth knowing before writing:
+- **`op="create"` accepts `dry_run=True`** (the API's `verify` parameter): Sellsy
+  validates the payload and persists nothing — the right reflex before a bulk
+  creation, since required fields vary from one account to another (custom
+  fields, numbering).
+- **validating a document is irreversible**: `op="validate"` takes an invoice or
+  a credit note out of draft state, gives it its final number and makes it
+  accounting-relevant. To be called only after human validation.
 """
 from __future__ import annotations
 
@@ -46,13 +46,13 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..connectors import verify as connector_verify
 
-# Les deux faces du tiers : nom d'agent → ressource de l'API.
+# The two faces of the third party: agent name → API resource.
 _THIRD_PARTIES = {
     "company": "companies",
     "individual": "individuals",
 }
 
-# Les quatre documents de vente : nom d'agent → ressource de l'API.
+# The four sales documents: agent name → API resource.
 _DOCUMENTS = {
     "estimate": "estimates",
     "invoice": "invoices",
@@ -60,7 +60,7 @@ _DOCUMENTS = {
     "credit_note": "credit-notes",
 }
 
-# Référentiels lisibles sans écriture — `sellsy_ref(kind=…)` → chemin API.
+# Reference data readable without writing — `sellsy_ref(kind=…)` → API path.
 _REFS = {
     "staffs": "staffs",
     "custom_fields": "custom-fields",
@@ -89,28 +89,28 @@ def _bad(msg: str) -> McpError:
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"Sellsy a rejeté l'accès (HTTP {status}) — vérifie le client_id / "
-                "client_secret du connecteur, et que l'accès API V2 porte bien les "
-                f"droits (scopes) de cette opération. {e.body}")
+        return (f"Sellsy rejected access (HTTP {status}) — check the connector's client_id / "
+                "client_secret, and that the API V2 access carries the rights "
+                f"(scopes) for this operation. {e.body}")
     if status == 402:
-        return ("Sellsy : quota du plan atteint sur cette ressource (402) — la "
-                f"création est bloquée côté abonnement. {e.body}")
+        return ("Sellsy: plan quota reached on this resource (402) — "
+                f"creation is blocked on the subscription side. {e.body}")
     if status == 404:
-        return f"Sellsy : objet introuvable (404) — vérifie l'id. {e.body}"
+        return f"Sellsy: object not found (404) — check the id. {e.body}"
     if status == 409:
-        return f"Sellsy : conflit avec l'état actuel de l'objet (409). {e.body}"
+        return f"Sellsy: conflict with the object's current state (409). {e.body}"
     if status == 429:
-        return ("Sellsy : quota de requêtes épuisé (429) — les quotas sont comptés "
-                "par seconde/minute/jour/mois, réessaie plus tard ou réduis la "
+        return ("Sellsy: request quota exhausted (429) — quotas are counted "
+                "per second/minute/day/month, retry later or reduce "
                 "pagination (limit, all_pages).")
     if status in (500, 502, 503, 504):
-        return f"Sellsy est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Sellsy a refusé la requête (HTTP {status}): {e.body}"
+        return f"Sellsy is temporarily unavailable (HTTP {status}) — retry later."
+    return f"Sellsy refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : frappe un jeton puis lit UN collaborateur —
-    l'appel authentifié le moins coûteux, sans effet de bord ni donnée requise."""
+    """"Test the connection" probe: mints a token then reads ONE staff member —
+    the cheapest authenticated call, with no side effect or required data."""
     from oto.tools.sellsy import SellsyClient
     SellsyClient(client_id=fields.get("client_id"),
                  client_secret=fields.get("client_secret")).list_records(
@@ -130,7 +130,7 @@ def register(mcp: FastMCP) -> None:
 
     @contextmanager
     def _upstream():
-        """Traduit un refus de Sellsy en erreur d'outil actionnable."""
+        """Translates a Sellsy refusal into an actionable tool error."""
         try:
             yield
         except ValueError as e:
@@ -139,19 +139,19 @@ def register(mcp: FastMCP) -> None:
             raise _bad(_upstream_message(e))
 
     def _need(value, name: str, op: str):
-        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
+        """Required argument for THIS op — actionable error, never a fallback."""
         if value is None:
-            raise _bad(f"op='{op}' requiert {name}")
+            raise _bad(f"op='{op}' requires {name}")
         return value
 
     def _crud(c, resource: str, op: str, *, record_id=None, data=None,
               filters=None, limit=None, offset=None, order=None, direction=None,
               fields=None, embed=None, all_pages=False, max_pages=10,
               dry_run=None, extra_ops=()) -> Any:
-        """Les verbes que TOUTE ressource Sellsy expose de la même façon.
+        """The verbs that EVERY Sellsy resource exposes the same way.
 
-        Renvoie None quand `op` appartient à `extra_ops` (verbe propre au tool
-        appelant, qui prend alors le relais) ; refuse tout autre `op`.
+        Returns None when `op` belongs to `extra_ops` (a verb specific to the
+        calling tool, which then takes over); refuses any other `op`.
         """
         if op == "list":
             if all_pages:
@@ -184,11 +184,11 @@ def register(mcp: FastMCP) -> None:
                                            data.get("custom_fields", []))
             return c.get_custom_fields(resource, record_id)
         if op not in extra_ops:
-            raise _bad(f"op inconnu: {op!r} — attendus: "
+            raise _bad(f"Unknown op: {op!r} — expected: "
                        + ", ".join(_COMMON_OPS + tuple(extra_ops)))
         return None
 
-    # --- CRM : tiers et contacts --------------------------------------------
+    # --- CRM: third parties and contacts ------------------------------------
 
     @mcp.tool()
     def sellsy_third_party(
@@ -205,48 +205,48 @@ def register(mcp: FastMCP) -> None:
         all_pages: bool = False, max_pages: int = 10,
         dry_run: Optional[bool] = None,
     ) -> Any:
-        """Tiers du CRM : sociétés et particuliers (clients, prospects, fournisseurs).
+        """CRM third parties: companies and individuals (clients, prospects, suppliers).
 
-        `kind` ∈ "company" (société) | "individual" (particulier) — les deux faces
-        du tiers, mêmes verbes et mêmes paramètres. Le particulier est le pendant
-        « personne physique » de la société : un devis ou une facture se rattache
-        SOIT à une société, SOIT à un particulier — c'est ici que vivent les clients
-        qui ne sont pas des entreprises (le `related` d'un document porte le même
-        discriminant : `[{"id": 42, "type": "company"}]`).
+        `kind` ∈ "company" | "individual" — the two faces
+        of the third party, same verbs and same parameters. The individual is the
+        "natural person" counterpart of the company: a quote or an invoice attaches
+        EITHER to a company, OR to an individual — this is where clients who are not
+        businesses live (a document's `related` carries the same
+        discriminator: `[{"id": 42, "type": "company"}]`).
 
-        `op` :
-        - "list" / "search" : liste et liste filtrée. Filtres utiles :
+        `op`:
+        - "list" / "search": list and filtered list. Useful filters:
           `{"name": "acme"}`, `{"type": ["client"]}`, `{"created": {"start":
-          "2026-01-01T00:00:00+01:00"}}`, `{"postal_code": ["13001"]}` ; côté
-          particulier aussi `{"email": …}`.
+          "2026-01-01T00:00:00+01:00"}}`, `{"postal_code": ["13001"]}`; for
+          individuals also `{"email": …}`.
         - "get" / "create" / "update" / "delete" (`record_id`, `data`).
-          Créer exige `type` ∈ prospect | client | supplier, plus `name` pour une
-          société et `last_name` pour un particulier.
-        - "contacts" : les contacts rattachés au tiers.
-        - "convert" : bascule un prospect en client (irréversible côté Sellsy).
-        - "link_contact" / "unlink_contact" (`contact_id`) : rattache ou détache
-          un contact existant. **kind="company" seulement** — un contact se
-          rattache à une société, pas à un particulier.
-        - "custom_fields" : lit les champs personnalisés ; avec
-          `data={"custom_fields": [{"id": 12, "value": "x"}]}`, les écrit.
-        - "record_payment" (`data`) : encaissement sur le compte du tiers
+          Creating requires `type` ∈ prospect | client | supplier, plus `name` for a
+          company and `last_name` for an individual.
+        - "contacts": the contacts attached to the third party.
+        - "convert": turns a prospect into a client (irreversible on the Sellsy side).
+        - "link_contact" / "unlink_contact" (`contact_id`): attaches or detaches
+          an existing contact. **kind="company" only** — a contact
+          attaches to a company, not to an individual.
+        - "custom_fields": reads the custom fields; with
+          `data={"custom_fields": [{"id": 12, "value": "x"}]}`, writes them.
+        - "record_payment" (`data`): collection on the third party's account
           (`{"amount": {"value": "120.00", "currency": "EUR"}, "paid_at": …,
           "payment_method_id": …, "type": "credit"}`).
 
         Args:
-            kind: le type de tiers (ci-dessus). op: le verbe.
-            record_id: id du tiers (société ou particulier).
-            data: corps de l'écriture. filters: filtres d'op="search".
+            kind: the third-party type (above). op: the verb.
+            record_id: third-party id (company or individual).
+            data: write body. filters: op="search" filters.
             contact_id: op link_contact / unlink_contact (kind="company").
-            limit: taille de page (max 100). offset: curseur `pagination.offset`
-                rendu par la page précédente. order / direction: tri (asc | desc).
-            fields: projection (`["id", "name"]`). embed: objets liés à inclure.
-            all_pages / max_pages: déroule la pagination (1 requête par page).
-            dry_run: op="create" — valide le payload SANS rien persister.
+            limit: page size (max 100). offset: `pagination.offset` cursor
+                returned by the previous page. order / direction: sort (asc | desc).
+            fields: projection (`["id", "name"]`). embed: related objects to include.
+            all_pages / max_pages: walks the pagination (1 request per page).
+            dry_run: op="create" — validates the payload WITHOUT persisting anything.
         """
         resource = _THIRD_PARTIES.get(kind)
         if resource is None:
-            raise _bad(f"kind doit être l'un de {', '.join(_THIRD_PARTIES)}")
+            raise _bad(f"kind must be one of {', '.join(_THIRD_PARTIES)}")
         extra = ("contacts", "convert", "link_contact", "unlink_contact",
                  "record_payment")
         c = _client()
@@ -266,9 +266,9 @@ def register(mcp: FastMCP) -> None:
                              "convert", payload=data or {"target": "client"})
             if op in ("link_contact", "unlink_contact"):
                 if kind != "company":
-                    raise _bad(f"op='{op}' ne s'applique qu'à kind='company' — un "
-                               "contact se rattache à une société, pas à un "
-                               "particulier")
+                    raise _bad(f"op='{op}' only applies to kind='company' — a "
+                               "contact attaches to a company, not to an "
+                               "individual")
                 company_id = _need(record_id, "record_id", op)
                 contact_id = _need(contact_id, "contact_id", op)
                 if op == "link_contact":
@@ -290,23 +290,23 @@ def register(mcp: FastMCP) -> None:
         all_pages: bool = False, max_pages: int = 10,
         dry_run: Optional[bool] = None,
     ) -> Any:
-        """Contacts — les personnes rattachées aux sociétés et particuliers.
+        """Contacts — the people attached to companies and individuals.
 
-        Un contact existe indépendamment du tiers : le rattachement se fait par
+        A contact exists independently of the third party: attachment is done by
         `sellsy_third_party(kind="company", op="link_contact")`.
 
-        `op` : "list" / "search" (filtres `last_name`, `email`, `phone_number`,
+        `op`: "list" / "search" (filters `last_name`, `email`, `phone_number`,
         `companies`, `is_linked`…), "get" / "create" / "update" / "delete",
-        "companies" (les sociétés du contact), "custom_fields".
+        "companies" (the contact's companies), "custom_fields".
 
         Args:
-            op: le verbe (ci-dessus). record_id: id du contact.
-            data: corps de l'écriture. filters: filtres d'op="search".
-            limit: taille de page (max 100). offset: curseur `pagination.offset`
-                rendu par la page précédente. order / direction: tri (asc | desc).
-            fields: projection. embed: objets liés à inclure.
-            all_pages / max_pages: déroule la pagination (1 requête par page).
-            dry_run: op="create" — valide le payload SANS rien persister.
+            op: the verb (above). record_id: contact id.
+            data: write body. filters: op="search" filters.
+            limit: page size (max 100). offset: `pagination.offset` cursor
+                returned by the previous page. order / direction: sort (asc | desc).
+            fields: projection. embed: related objects to include.
+            all_pages / max_pages: walks the pagination (1 request per page).
+            dry_run: op="create" — validates the payload WITHOUT persisting anything.
         """
         c = _client()
         with _upstream():
@@ -333,31 +333,31 @@ def register(mcp: FastMCP) -> None:
         all_pages: bool = False, max_pages: int = 10,
         dry_run: Optional[bool] = None,
     ) -> Any:
-        """Opportunités — le pipeline commercial.
+        """Opportunities — the sales pipeline.
 
-        `op` :
-        - "list" / "search" : filtres `{"pipeline": [id]}`, `{"step": [id]}`,
+        `op`:
+        - "list" / "search": filters `{"pipeline": [id]}`, `{"step": [id]}`,
           `{"statuses": ["open"]}`, `{"due_date": {"start": …, "end": …}}`,
           `{"assigned_staffs": [id]}`, `{"amount": {"min": …, "max": …}}`.
-        - "get" / "create" / "update" / "delete". Créer demande `name`,
-          `pipeline`, `step` et le tiers en `related`
-          (`[{"id": 42, "type": "company"}]`) — les ids de pipeline et d'étape se
-          lisent avec `sellsy_ref(kind="pipelines" | "steps")`.
-        - "move" (`step`, option `before_sibling`) : déplace l'opportunité dans le
-          pipeline — c'est l'endpoint dédié, `op="update"` ne change pas l'étape.
+        - "get" / "create" / "update" / "delete". Creating requires `name`,
+          `pipeline`, `step` and the third party in `related`
+          (`[{"id": 42, "type": "company"}]`) — pipeline and step ids are
+          read with `sellsy_ref(kind="pipelines" | "steps")`.
+        - "move" (`step`, option `before_sibling`): moves the opportunity within the
+          pipeline — this is the dedicated endpoint, `op="update"` does not change the step.
         - "custom_fields".
 
         Args:
-            op: le verbe (ci-dessus). record_id: id de l'opportunité.
-            data: corps de l'écriture. filters: filtres d'op="search".
-            step: op="move" — id de l'étape de destination.
-            before_sibling: op="move" — se place avant cette opportunité (sinon en
-                dernier rang de l'étape).
-            limit: taille de page (max 100). offset: curseur `pagination.offset`
-                rendu par la page précédente. order / direction: tri (asc | desc).
-            fields: projection. embed: objets liés à inclure.
-            all_pages / max_pages: déroule la pagination (1 requête par page).
-            dry_run: op="create" — valide le payload SANS rien persister.
+            op: the verb (above). record_id: opportunity id.
+            data: write body. filters: op="search" filters.
+            step: op="move" — id of the destination step.
+            before_sibling: op="move" — placed before this opportunity (otherwise at the
+                last rank of the step).
+            limit: page size (max 100). offset: `pagination.offset` cursor
+                returned by the previous page. order / direction: sort (asc | desc).
+            fields: projection. embed: related objects to include.
+            all_pages / max_pages: walks the pagination (1 request per page).
+            dry_run: op="create" — validates the payload WITHOUT persisting anything.
         """
         c = _client()
         with _upstream():
@@ -374,7 +374,7 @@ def register(mcp: FastMCP) -> None:
             return c.act("opportunities", _need(record_id, "record_id", op),
                          "step-rank", payload=payload, method="PATCH")
 
-    # --- chaîne de vente -----------------------------------------------------
+    # --- sales chain ---------------------------------------------------------
 
     @mcp.tool()
     def sellsy_document(
@@ -391,45 +391,45 @@ def register(mcp: FastMCP) -> None:
         all_pages: bool = False, max_pages: int = 10,
         dry_run: Optional[bool] = None,
     ) -> Any:
-        """Documents de vente : devis, commandes, factures, avoirs.
+        """Sales documents: quotes, orders, invoices, credit notes.
 
-        `kind` ∈ "estimate" | "order" | "invoice" | "credit_note" — mêmes verbes
-        et mêmes paramètres pour les quatre.
+        `kind` ∈ "estimate" | "order" | "invoice" | "credit_note" — same verbs
+        and same parameters for all four.
 
-        `op` :
-        - "list" / "search" : filtres `{"status": ["due"]}`, `{"number": "F-2026"}`,
+        `op`:
+        - "list" / "search": filters `{"status": ["due"]}`, `{"number": "F-2026"}`,
           `{"date": {"start": "2026-01-01", "end": "2026-01-31"}}`,
           `{"related_objects": [{"id": 42, "type": "company"}]}`,
           `{"owners": [id]}`, `{"currency": ["EUR"]}`.
-        - "get" / "create" / "update" / "delete" (`record_id`, `data`). Un
-          document créé est un BROUILLON. Corps minimal : `related` (le tiers,
-          `[{"id": 42, "type": "company"}]`, exactement une société OU un
-          particulier), `date`, `subject`, `currency`, et `rows` — chaque ligne
-          porte son `type` : `single` (libre : `quantity`, `unit_amount`,
-          `tax_id`), `catalog` (article du catalogue : `related` + `quantity`),
+        - "get" / "create" / "update" / "delete" (`record_id`, `data`). A created
+          document is a DRAFT. Minimal body: `related` (the third party,
+          `[{"id": 42, "type": "company"}]`, exactly one company OR one
+          individual), `date`, `subject`, `currency`, and `rows` — each row
+          carries its `type`: `single` (free-form: `quantity`, `unit_amount`,
+          `tax_id`), `catalog` (catalog item: `related` + `quantity`),
           `title`, `comment`, `sub-total`, `break-line`.
-        - "validate" (facture, avoir) : **irréversible** — sort le document du
-          brouillon, fige son numéro et le rend comptable. `data` peut porter la
-          `date` de validation.
-        - "status" (devis, `status`) : draft, sent, read, accepted, refused,
+        - "validate" (invoice, credit note): **irreversible** — takes the document out of
+          draft, freezes its number and makes it accounting-relevant. `data` can carry the
+          validation `date`.
+        - "status" (quote, `status`): draft, sent, read, accepted, refused,
           expired, cancelled.
-        - "payments" : les encaissements rattachés au document.
-        - "linked" : les avoirs d'une facture, ou les factures d'un avoir.
+        - "payments": the collections attached to the document.
+        - "linked": the credit notes of an invoice, or the invoices of a credit note.
         - "custom_fields".
 
         Args:
-            kind: le type de document (ci-dessus). op: le verbe.
-            record_id: id du document. data: corps de l'écriture.
-            filters: filtres d'op="search". status: op="status" — nouveau statut.
-            limit: taille de page (max 100). offset: curseur `pagination.offset`
-                rendu par la page précédente. order / direction: tri (asc | desc).
-            fields: projection. embed: objets liés à inclure.
-            all_pages / max_pages: déroule la pagination (1 requête par page).
-            dry_run: op="create" — valide le payload SANS rien persister.
+            kind: the document type (above). op: the verb.
+            record_id: document id. data: write body.
+            filters: op="search" filters. status: op="status" — new status.
+            limit: page size (max 100). offset: `pagination.offset` cursor
+                returned by the previous page. order / direction: sort (asc | desc).
+            fields: projection. embed: related objects to include.
+            all_pages / max_pages: walks the pagination (1 request per page).
+            dry_run: op="create" — validates the payload WITHOUT persisting anything.
         """
         resource = _DOCUMENTS.get(kind)
         if resource is None:
-            raise _bad(f"kind doit être l'un de {', '.join(_DOCUMENTS)}")
+            raise _bad(f"kind must be one of {', '.join(_DOCUMENTS)}")
         c = _client()
         with _upstream():
             out = _crud(c, resource, op, record_id=record_id, data=data,
@@ -442,13 +442,13 @@ def register(mcp: FastMCP) -> None:
             record_id = _need(record_id, "record_id", op)
             if op == "validate":
                 if kind not in ("invoice", "credit_note"):
-                    raise _bad("op='validate' ne s'applique qu'à kind='invoice' "
-                               "ou 'credit_note' (un devis change d'état par "
+                    raise _bad("op='validate' only applies to kind='invoice' "
+                               "or 'credit_note' (a quote changes state through "
                                "op='status')")
                 return c.act(resource, record_id, "validate", payload=data or {})
             if op == "status":
                 if kind != "estimate":
-                    raise _bad("op='status' ne s'applique qu'à kind='estimate'")
+                    raise _bad("op='status' only applies to kind='estimate'")
                 return c.act(resource, record_id, "status",
                              payload={"status": _need(status, "status", op)},
                              method="PUT")
@@ -457,8 +457,8 @@ def register(mcp: FastMCP) -> None:
                                   offset=offset)
             sub = {"invoice": "credit-notes", "credit_note": "invoices"}.get(kind)
             if sub is None:
-                raise _bad("op='linked' ne s'applique qu'à kind='invoice' "
-                           "(ses avoirs) ou 'credit_note' (ses factures)")
+                raise _bad("op='linked' only applies to kind='invoice' "
+                           "(its credit notes) or 'credit_note' (its invoices)")
             return c.list_sub(resource, record_id, sub, limit=limit, offset=offset)
 
     @mcp.tool()
@@ -472,22 +472,22 @@ def register(mcp: FastMCP) -> None:
         fields: Optional[list] = None, embed: Optional[list] = None,
         all_pages: bool = False, max_pages: int = 10,
     ) -> Any:
-        """Encaissements — ce qui a été payé, et sur quel document.
+        """Collections — what has been paid, and against which document.
 
-        `op` : "list" / "search" (filtres `{"status": [...]}`,
+        `op`: "list" / "search" (filters `{"status": [...]}`,
         `{"related_objects": [{"id": 9, "type": "invoice"}]}`), "get", "delete",
-        "custom_fields" (lecture seule ici : ce tool n'a pas de `data`).
+        "custom_fields" (read-only here: this tool has no `data`).
 
-        Enregistrer un paiement se fait sur le tiers :
-        `sellsy_third_party(op="record_payment")`, kind="company" ou "individual".
+        Recording a payment is done on the third party:
+        `sellsy_third_party(op="record_payment")`, kind="company" or "individual".
 
         Args:
-            op: le verbe (ci-dessus). record_id: id du paiement.
-            filters: filtres d'op="search".
-            limit: taille de page (max 100). offset: curseur `pagination.offset`
-                rendu par la page précédente. order / direction: tri (asc | desc).
-            fields: projection. embed: objets liés à inclure.
-            all_pages / max_pages: déroule la pagination (1 requête par page).
+            op: the verb (above). record_id: payment id.
+            filters: op="search" filters.
+            limit: page size (max 100). offset: `pagination.offset` cursor
+                returned by the previous page. order / direction: sort (asc | desc).
+            fields: projection. embed: related objects to include.
+            all_pages / max_pages: walks the pagination (1 request per page).
         """
         c = _client()
         with _upstream():
@@ -508,25 +508,25 @@ def register(mcp: FastMCP) -> None:
         all_pages: bool = False, max_pages: int = 10,
         dry_run: Optional[bool] = None,
     ) -> Any:
-        """Catalogue — produits, services, forfaits de livraison.
+        """Catalog — products, services, delivery fees.
 
-        C'est ici que se lisent les ids d'article à mettre dans une ligne
-        `type="catalog"` d'un document.
+        This is where to read the item ids to put in a document's
+        `type="catalog"` row.
 
-        `op` : "list" / "search" (filtres `{"name": …}`, `{"reference": …}`,
+        `op`: "list" / "search" (filters `{"name": …}`, `{"reference": …}`,
         `{"type": ["product", "service"]}`, `{"is_archived": false}`),
-        "get" / "create" / "update" / "delete" (créer exige `type` et
-        `reference`), "prices" (grille tarifaire de l'article),
+        "get" / "create" / "update" / "delete" (creating requires `type` and
+        `reference`), "prices" (the item's price grid),
         "custom_fields".
 
         Args:
-            op: le verbe (ci-dessus). record_id: id de l'article.
-            data: corps de l'écriture. filters: filtres d'op="search".
-            limit: taille de page (max 100). offset: curseur `pagination.offset`
-                rendu par la page précédente. order / direction: tri (asc | desc).
-            fields: projection. embed: objets liés à inclure.
-            all_pages / max_pages: déroule la pagination (1 requête par page).
-            dry_run: op="create" — valide le payload SANS rien persister.
+            op: the verb (above). record_id: item id.
+            data: write body. filters: op="search" filters.
+            limit: page size (max 100). offset: `pagination.offset` cursor
+                returned by the previous page. order / direction: sort (asc | desc).
+            fields: projection. embed: related objects to include.
+            all_pages / max_pages: walks the pagination (1 request per page).
+            dry_run: op="create" — validates the payload WITHOUT persisting anything.
         """
         c = _client()
         with _upstream():
@@ -540,7 +540,7 @@ def register(mcp: FastMCP) -> None:
             return c.list_sub("items", _need(record_id, "record_id", op), "prices",
                               limit=limit, offset=offset)
 
-    # --- suivi ---------------------------------------------------------------
+    # --- follow-up -----------------------------------------------------------
 
     @mcp.tool()
     def sellsy_task(
@@ -554,24 +554,24 @@ def register(mcp: FastMCP) -> None:
         all_pages: bool = False, max_pages: int = 10,
         dry_run: Optional[bool] = None,
     ) -> Any:
-        """Tâches — les relances et actions rattachées à un tiers ou un document.
+        """Tasks — the follow-ups and actions attached to a third party or a document.
 
-        `op` : "list" / "search" (filtres `{"assigned_staffs": [id]}`,
+        `op`: "list" / "search" (filters `{"assigned_staffs": [id]}`,
         `{"due_date": {"start": …, "end": …}}`, `{"statuses": ["todo"]}`,
         `{"companies": [id]}`), "get" / "create" / "update" / "delete",
         "custom_fields".
 
-        Créer exige `related` (`[{"id": 42, "type": "company"}]`) ; les champs
-        usuels sont `title`, `due_date`, `assigned_staff_ids`, `priority`.
+        Creating requires `related` (`[{"id": 42, "type": "company"}]`); the usual
+        fields are `title`, `due_date`, `assigned_staff_ids`, `priority`.
 
         Args:
-            op: le verbe (ci-dessus). record_id: id de la tâche.
-            data: corps de l'écriture. filters: filtres d'op="search".
-            limit: taille de page (max 100). offset: curseur `pagination.offset`
-                rendu par la page précédente. order / direction: tri (asc | desc).
-            fields: projection. embed: objets liés à inclure.
-            all_pages / max_pages: déroule la pagination (1 requête par page).
-            dry_run: op="create" — valide le payload SANS rien persister.
+            op: the verb (above). record_id: task id.
+            data: write body. filters: op="search" filters.
+            limit: page size (max 100). offset: `pagination.offset` cursor
+                returned by the previous page. order / direction: sort (asc | desc).
+            fields: projection. embed: related objects to include.
+            all_pages / max_pages: walks the pagination (1 request per page).
+            dry_run: op="create" — validates the payload WITHOUT persisting anything.
         """
         c = _client()
         with _upstream():
@@ -580,7 +580,7 @@ def register(mcp: FastMCP) -> None:
                          direction=direction, fields=fields, embed=embed,
                          all_pages=all_pages, max_pages=max_pages, dry_run=dry_run)
 
-    # --- référentiels & recherche transverse ---------------------------------
+    # --- reference data & cross-object search --------------------------------
 
     @mcp.tool()
     def sellsy_ref(kind: Literal["staffs", "pipelines", "steps", "sources",
@@ -592,25 +592,25 @@ def register(mcp: FastMCP) -> None:
                    pipeline_id: Optional[int] = None,
                    linked_type: Optional[str] = None,
                    limit: Optional[int] = None) -> Any:
-        """Référentiels du compte en LECTURE SEULE — les ids à résoudre AVANT
-        d'écrire (ne jamais deviner un id d'étape, de taxe ou de collaborateur).
+        """Account reference data, READ-ONLY — the ids to resolve BEFORE
+        writing (never guess a step, tax or staff id).
 
-        `kind` :
-        - "staffs" : collaborateurs (owner_id, assigned_staff_ids).
-        - "pipelines" : pipelines d'opportunités ; "steps" (`pipeline_id`) :
-          leurs étapes ; "sources" / "categories" : origine des opportunités.
-        - "custom_fields" : champs personnalisés du compte (id + type + code).
-        - "taxes" : taux de TVA (`tax_id` d'une ligne) ; "units" : unités ;
-          "currencies" ; "countries" ; "payment_methods" ; "rate_categories" ;
-          "accounting_codes" ; "task_labels" ; "document_layouts".
-        - "smart_tags" (`linked_type`) : étiquettes existantes pour un type
-          d'objet (company, individual, contact, opportunity, invoice…).
+        `kind`:
+        - "staffs": staff members (owner_id, assigned_staff_ids).
+        - "pipelines": opportunity pipelines; "steps" (`pipeline_id`):
+          their steps; "sources" / "categories": origin of opportunities.
+        - "custom_fields": the account's custom fields (id + type + code).
+        - "taxes": VAT rates (a row's `tax_id`); "units": units;
+          "currencies"; "countries"; "payment_methods"; "rate_categories";
+          "accounting_codes"; "task_labels"; "document_layouts".
+        - "smart_tags" (`linked_type`): existing tags for an object
+          type (company, individual, contact, opportunity, invoice…).
 
         Args:
-            kind: le référentiel voulu.
-            pipeline_id: kind="steps" — les étapes de CE pipeline.
-            linked_type: kind="smart_tags" — le type d'objet porteur.
-            limit: taille de page.
+            kind: the wanted reference data.
+            pipeline_id: kind="steps" — the steps of THIS pipeline.
+            linked_type: kind="smart_tags" — the carrying object type.
+            limit: page size.
         """
         c = _client()
         with _upstream():
@@ -623,7 +623,7 @@ def register(mcp: FastMCP) -> None:
                     f"opportunities/pipelines/{pipeline_id}/steps", limit=limit)
             path = _REFS.get(kind)
             if path is None:
-                raise _bad("kind doit être l'un de "
+                raise _bad("kind must be one of "
                            + ", ".join(list(_REFS) + ["steps", "smart_tags"]))
             return c.list_records(path, limit=limit)
 
@@ -631,19 +631,19 @@ def register(mcp: FastMCP) -> None:
     def sellsy_search(q: str, types: Optional[list] = None,
                       limit: Optional[int] = None,
                       archived: Optional[bool] = None) -> Any:
-        """Recherche plein-texte transverse — retrouver un objet quand on ne sait
-        pas dans quelle table il vit (« qui est Acme chez nous ? »).
+        """Cross-object full-text search — find an object when you do not know
+        which table it lives in ("who is Acme for us?").
 
-        Pour filtrer finement (dates, statuts, montants), passer par le
-        `op="search"` de l'objet concerné : celui-ci ne fait que du plein-texte.
+        To filter finely (dates, statuses, amounts), go through the
+        `op="search"` of the relevant object: this one only does full text.
 
         Args:
-            q: le texte cherché (nom, email, numéro de document…).
-            types: restreint aux types voulus — `company`, `company.client`,
+            q: the searched text (name, email, document number…).
+            types: restricts to the wanted types — `company`, `company.client`,
                 `company.prospect`, `individual`, `contact`, `opportunity`,
                 `item`, `purchase`…
-            limit: nombre de résultats (max 100).
-            archived: inclure les objets archivés.
+            limit: number of results (max 100).
+            archived: include archived objects.
         """
         with _upstream():
             return _client().global_search(q, types=types, limit=limit,

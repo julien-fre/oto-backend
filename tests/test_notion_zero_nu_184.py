@@ -56,8 +56,8 @@ def test_zero_sans_filtre_nomme_le_partage_et_le_geste(search):
     assert r["results"] == [] and r["has_more"] is False
     w = r.get("warning")
     assert w, "un zéro nu : l'agent ne peut distinguer « rien de partagé » d'un espace vide"
-    assert "partag" in w and "intégration" in w
-    assert "vraisemblablement" in w and "vérifier" in w.lower(), (
+    assert "shared" in w and "integration" in w
+    assert "probably" in w and "check" in w.lower(), (
         "l'indice doit rester une possibilité, pas un diagnostic affirmé")
 
 
@@ -65,7 +65,7 @@ def test_zero_sur_une_requete_dit_comment_trancher(search):
     r = search({"results": [], "has_more": False}, query="roadmap")
     w = r.get("warning")
     assert w and 'query=""' in w, "le geste discriminant (requête vide) doit être nommé"
-    assert "partag" in w
+    assert "shared" in w
 
 
 def test_zero_filtre_par_type_dit_aussi_comment_trancher(search):

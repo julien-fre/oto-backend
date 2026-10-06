@@ -1,35 +1,35 @@
-"""« Un credential est-il DISPONIBLE pour moi ? » — par connecteur, sur tout le catalogue.
+"""Is a credential AVAILABLE to me? — per connector, across the whole catalog.
 
-Né d'oto-backend#1112. L'agent d'un utilisateur lui a dit que son LinkedIn n'était
-pas connecté alors qu'il l'était (`linkedin_unipile_account op=status` :
-`connected:true, alive:true`). Il n'avait pas appelé l'outil de statut : il avait lu
-`state:not_selected` sur la ligne du catalogue, et l'avait compris « non connecté ».
-Rien sur la ligne ne disait qu'un compte existait. Deux fois, chez deux utilisateurs.
+Born from oto-backend#1112. A user's agent told them their LinkedIn was not
+connected while it was (`linkedin_unipile_account op=status`:
+`connected:true, alive:true`). It had not called the status tool: it had read
+`state:not_selected` on the catalog row, and understood it as "not connected".
+Nothing on the row said an account existed. Twice, for two users.
 
-**Trois axes, jamais confondus** — chacun a sa surface, et aucune ne parle pour l'autre :
+**Three axes, never confused** — each has its own surface, and none speaks for the other:
 
-- **sélectionné dans la toolbox** : `connectors.selection` (`state`). Gouverne la
-  VISIBILITÉ des outils, rien d'autre — un connecteur `not_selected` reste appelable
-  par `oto_call` (ADR 0036) ;
-- **credential disponible** : CE module. Une clé ou un compte existe pour la personne
-  à un palier de la cascade (perso, équipe, org, tenant, plateforme) ;
-- **vérifié vivant** : jamais calculé ici. Une session peut être morte chez le
-  fournisseur alors que le compte reste lié ; seule une sonde le dit, et elle coûte
-  un aller-retour réseau. `next_step` NOMME l'outil qui le vérifie.
+- **selected in the toolbox**: `connectors.selection` (`state`). Governs the
+  VISIBILITY of tools, nothing else — a `not_selected` connector is still callable
+  through `oto_call` (ADR 0036);
+- **credential available**: THIS module. A key or account exists for the person
+  at some level of the cascade (personal, team, org, tenant, platform);
+- **verified alive**: never computed here. A session can be dead at the provider
+  while the account stays linked; only a probe says so, and it costs a network
+  round trip. `next_step` NAMES the tool that verifies it.
 
-**Source unique : `access.status_for`**, le snapshot que `/api/me` sert déjà au
-dashboard (sonde de présence PRÉCHARGÉE, une marche en mémoire par connecteur, aucun
-déchiffrement). Aucune cascade n'est recalculée ici : le dashboard, `oto_connector` et
-`oto_list_my_tools` lisent donc le même fait. C'est ce module, et lui seul, que les
-deux surfaces agent appellent — une seconde dérivation rouvrirait la contradiction
-d'#1112 (le catalogue d'outils disait tout « installé » pendant que la carte disait
-« non sélectionné »).
+**Single source: `access.status_for`**, the snapshot `/api/me` already serves to the
+dashboard (PRELOADED presence probe, one in-memory walk per connector, no
+decryption). No cascade is recomputed here: the dashboard, `oto_connector` and
+`oto_list_my_tools` therefore read the same fact. This module, and only this one, is
+what the two agent surfaces call — a second derivation would reopen the contradiction
+of #1112 (the tool catalog said everything was "installed" while the card said
+"not selected").
 
-⚠️ Ce n'est PAS le verdict d'aptitude (`connectors/readiness.py`) : celui-là lit en
-plus l'option payante, le quota et le rejet enregistré, connecteur par connecteur
-(~244 ms l'unité). Ici on répond à une question plus étroite — « existe-t-il de quoi
-s'authentifier ? » — mais sur TOUT le catalogue, parce que c'est sur le catalogue que
-l'agent concluait.
+⚠️ This is NOT the fitness verdict (`connectors/readiness.py`): that one also reads
+the paid option, the quota and the recorded rejection, connector by connector
+(~244 ms each). Here we answer a narrower question — "is there anything to
+authenticate with?" — but across the WHOLE catalog, because the catalog is where the
+agent was drawing its conclusion.
 """
 from __future__ import annotations
 
@@ -43,58 +43,57 @@ from . import verify as connector_verify
 
 logger = logging.getLogger(__name__)
 
-# Le credential existe et rien n'est en attente : une clé résout, ou (canal hébergé)
-# un compte est lié.
+# The credential exists and nothing is pending: a key resolves, or (hosted channel)
+# an account is linked.
 CONNECTED = "connected"
-# Une clé résout, mais il reste un geste avant de pouvoir agir (lier son compte
-# LinkedIn sur une clé Unipile d'org, autoriser oto…) — `next_step` le dit.
+# A key resolves, but one step remains before acting (link one's LinkedIn account
+# on an org Unipile key, authorize oto…) — `next_step` says which.
 PENDING_STEP = "pending_step"
 
-# `over_quota` est un palier PLATEFORME dont la journée est finie : la clé existe
-# (c'est l'axe ici), l'épuisement relève de l'aptitude (`readiness`, lecture ciblée).
+# `over_quota` is a PLATFORM level whose day is over: the key exists (that's the axis
+# here), exhaustion belongs to readiness (`readiness`, targeted read).
 _PALIER = {"user": "user", "group": "group", "org": "org", "tenant": "tenant",
            "platform": "platform", "over_quota": "platform"}
 
-# Nature du credential d'un canal hébergé : un COMPTE de la personne (sa session
-# LinkedIn, WhatsApp…), pas la clé du fournisseur qui le porte.
+# Nature of a hosted channel's credential: an ACCOUNT of the person (their LinkedIn,
+# WhatsApp session…), not the key of the provider that carries it.
 HOSTED_ACCOUNT = "hosted_account"
 
 
 class CredentialPresence(BaseModel):
-    """La forme servie de `par_connecteur` — DÉCRIT le `dict` produit ci-dessous (même
-    régime que `Capability.Output`), sur la ligne d'`oto_connector op=list` comme sur
-    le groupe d'`oto_list_my_tools`. Présente SEULEMENT quand un credential existe :
-    son absence veut dire « aucune clé ni compte ne résout pour toi ici » (ou
-    `secret_kind=none`, rien à apporter), jamais « non calculé » — ça, l'enveloppe le
-    dit (`credentials`)."""
+    """The served shape of `par_connecteur` — DESCRIBES the `dict` produced below (same
+    regime as `Capability.Output`), on the row of `oto_connector op=list` as on the
+    group of `oto_list_my_tools`. Present ONLY when a credential exists: its absence
+    means "no key or account resolves for you here" (or `secret_kind=none`, nothing to
+    bring), never "not computed" — the envelope says that (`credentials`)."""
     status: Literal["connected", "pending_step"]
-    # Le palier de la cascade qui RÉPOND — la clé, pas le compte : un LinkedIn lié sur
-    # la clé Unipile de l'org est `level=org`, `nature=hosted_account`.
+    # The cascade level that ANSWERS — the key, not the account: a LinkedIn linked on
+    # the org's Unipile key is `level=org`, `nature=hosted_account`.
     level: Literal["user", "group", "org", "tenant", "platform"]
-    # api_key|basic_auth|fields|oauth|cookie|… (`secret_kind`), ou `hosted_account`
-    # pour un canal hébergé. Jamais une valeur : la NATURE, sans secret.
+    # api_key|basic_auth|fields|oauth|cookie|… (`secret_kind`), or `hosted_account`
+    # for a hosted channel. Never a value: the NATURE, without the secret.
     nature: Optional[str] = None
-    # `connected` : le geste qui VÉRIFIE qu'il vit (outil de statut, sonde) ;
-    # `pending_step` : le geste qui manque. Rendu tel quel, jamais reformulé.
+    # `connected`: the step that VERIFIES it is alive (status tool, probe);
+    # `pending_step`: the missing step. Rendered as is, never rephrased.
     next_step: str
 
 
 def etape_de_verification(connector: str) -> str:
-    """Le geste qui VÉRIFIE qu'un credential disponible est vivant — rendu tel quel.
+    """The step that VERIFIES an available credential is alive — rendered as is.
 
-    D'abord le geste que le connecteur DÉCLARE (`status_hints.register_verify_step` :
-    LinkedIn a son outil de statut), sinon la sonde générique sans effet de bord
-    (`oto_instance op=verify`), sinon l'aveu qu'aucune n'existe. Jamais un silence :
-    une ligne « connecté » sans geste se relit « vérifié »."""
+    First the step the connector DECLARES (`status_hints.register_verify_step`:
+    LinkedIn has its status tool), otherwise the generic side-effect-free probe
+    (`oto_instance op=verify`), otherwise the admission that none exists. Never
+    silence: a "connected" row without a step gets read as "verified"."""
     declare = status_hints.verify_step(connector)
     if declare:
         return declare
     if connector_verify.supports(connector):
-        return (f"Disponible, pas encore vérifié vivant : "
-                f"`oto_instance(op='verify', connector='{connector}')` le teste sans effet "
-                f"de bord — à faire avant de conclure qu'il ne marche pas.")
-    return ("Disponible, pas encore vérifié vivant : ce connecteur n'a pas de sonde "
-            "sans effet de bord, seul un premier appel réel le dit.")
+        return (f"Available, not yet verified alive: "
+                f"`oto_instance(op='verify', connector='{connector}')` tests it with no "
+                f"side effect — do this before concluding it doesn't work.")
+    return ("Available, not yet verified alive: this connector has no side-effect-free "
+            "probe, only a first real call can tell.")
 
 
 def _nature(name: str) -> Optional[str]:
@@ -105,21 +104,21 @@ def _nature(name: str) -> Optional[str]:
 
 
 def par_connecteur(sub: str, *, org: Optional[int], group: Optional[int]) -> dict[str, dict]:
-    """`{connecteur: {status, level, nature, next_step}}` pour chaque connecteur dont
-    un credential est disponible pour `sub` dans `(org, group)` — ABSENT sinon (aucune
-    clé ni compte ne résout, ou le connecteur n'en demande pas : `secret_kind=none`).
+    """`{connector: {status, level, nature, next_step}}` for each connector with a
+    credential available to `sub` in `(org, group)` — ABSENT otherwise (no key or
+    account resolves, or the connector asks for none: `secret_kind=none`).
 
-    `org`/`group` EXPLICITES, comme `readiness.diagnose` : le calcul suit le sujet,
-    jamais le contexte d'un requérant.
+    `org`/`group` are EXPLICIT, like `readiness.diagnose`: the computation follows the
+    subject, never a requester's context.
 
-    Lève si le snapshot ne se lit pas : c'est à l'appelant de le DIRE (fail-visible),
-    pas à ce module de rendre `{}` — un vide se relirait « rien n'est connecté », et
-    c'est exactement la conclusion fausse qu'on répare."""
+    Raises if the snapshot cannot be read: the caller must SAY so (fail-visible), not
+    this module returning `{}` — an empty result would be read as "nothing is
+    connected", which is exactly the false conclusion being fixed."""
     snapshot = access.status_for(sub, org=org, group=group)["providers"]
     out: dict[str, dict] = {}
     for name, entry in snapshot.items():
         palier = _PALIER.get(entry.get("mode") or "")
-        if palier is None:          # `forbidden` : rien ne résout
+        if palier is None:          # `forbidden`: nothing resolves
             continue
         attente = entry.get("pending_action")
         out[name] = {
@@ -131,25 +130,25 @@ def par_connecteur(sub: str, *, org: Optional[int], group: Optional[int]) -> dic
     return out
 
 
-# Ce que l'enveloppe d'une surface dit du calcul — toujours, jamais un silence.
+# What a surface's envelope says about the computation — always, never silence.
 COMPUTED = "computed"
 UNAVAILABLE = "unavailable"
 
 
 def lire(sub: str, *, org: Optional[int]) -> tuple[dict[str, dict], str]:
-    """`(par_connecteur(...), "computed")`, ou `({}, "unavailable")` si le snapshot ne
-    se lit pas — journalisé, et RENDU : chaque surface pose ce statut dans son
-    enveloppe, pour qu'une ligne sans `credential` ne se relise pas « rien n'est
-    connecté » le jour où c'est la lecture qui a échoué. Le point d'entrée des deux
-    surfaces agent (`oto_connector`, `oto_list_my_tools`) : un seul calcul, un seul
-    échec possible, dit de la même façon.
+    """`(par_connecteur(...), "computed")`, or `({}, "unavailable")` if the snapshot
+    cannot be read — logged, and RETURNED: each surface puts this status in its
+    envelope, so a row without `credential` is not read as "nothing is connected" on
+    the day the read itself failed. The entry point for both agent surfaces
+    (`oto_connector`, `oto_list_my_tools`): one computation, one possible failure,
+    reported the same way.
 
-    Pour l'APPELANT (les deux surfaces lisent sa propre toolbox) : l'équipe est son
-    équipe active, lue DANS le `try` — un hoquet de lecture d'équipe est un échec du
-    calcul comme un autre, dit de la même façon."""
+    For the CALLER (both surfaces read their own toolbox): the team is their active
+    team, read INSIDE the `try` — a team-read hiccup is a computation failure like any
+    other, reported the same way."""
     try:
         return par_connecteur(sub, org=org, group=access.current_group(sub)), COMPUTED
     except Exception:
-        logger.warning("credential disponible illisible pour le catalogue (fail-visible)",
+        logger.warning("available credential unreadable for the catalog (fail-visible)",
                        exc_info=True)
         return {}, UNAVAILABLE

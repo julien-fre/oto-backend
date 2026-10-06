@@ -1,9 +1,9 @@
-"""Topograph — KYB data & documents pour les registres publics européens.
+"""Topograph — KYB data & documents for European public registries.
 
-Wrappe `oto.tools.topograph.TopographClient` (API publique https://docs.topograph.co).
-Clé résolue par appel via `access.resolve_api_key("topograph")` — provider byo-only
-(user key posée sur le dashboard, ou credential partagé de l'org active). Pas de
-clé plateforme (Topograph = pay-per-request, chacun connecte son compte).
+Wraps `oto.tools.topograph.TopographClient` (public API https://docs.topograph.co).
+Key resolved per call via `access.resolve_api_key("topograph")` — byo-only provider
+(user key set on the dashboard, or the active org's shared credential). No
+platform key (Topograph = pay-per-request, everyone connects their own account).
 """
 from __future__ import annotations
 

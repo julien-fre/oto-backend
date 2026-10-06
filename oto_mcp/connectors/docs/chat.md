@@ -1,12 +1,12 @@
-## prerequisite — autorise Google Chat sur ton compte Google
+## prerequisite — authorize Google Chat on your Google account
 
-depuis cette carte, clique **connecter** : Google te demande d'autoriser **Google Chat seulement** (scopes `chat.spaces.readonly` et `chat.messages`) sur le compte que tu choisis. le compte Google lui-même (adresse, jeton) est porté par le connecteur **Compte Google** — un même compte peut autoriser plusieurs services, un service à la fois, sans réautoriser les autres.
-- plusieurs comptes Google : chaque outil agit sur le compte par défaut, ou sur celui que tu cibles par `account=<email>` ; `google_accounts` dit lesquels ont autorisé Google Chat
-- un compte qui n'a pas autorisé Google Chat est refusé par les outils en nommant cette carte — reviens ici pour l'autoriser
+From this card, click **connect**: Google asks you to authorize **Google Chat only** (scopes `chat.spaces.readonly` and `chat.messages`) on the account you choose. The Google account itself (address, token) is carried by the **Google Account** connector — one account can authorize several services, one service at a time, without re-authorizing the others.
+- multiple Google accounts: each tool acts on the default account, or on the one you target with `account=<email>`; `google_accounts` tells you which ones have authorized Google Chat
+- an account that has not authorized Google Chat is refused by the tools, naming this card — come back here to authorize it
 
-## usage — espaces et messages
+## usage — spaces and messages
 
-`chat_spaces` et `chat_message(op=list|read|post)` — sous le compte choisi.
-- « liste mes espaces Google Chat »
-- « résume le fil de l'espace `#ventes` depuis lundi »
-- « poste ce message dans `#ventes` »
+`chat_spaces` and `chat_message(op=list|read|post)` — under the chosen account.
+- "list my Google Chat spaces"
+- "summarize the thread in the `#ventes` space since Monday"
+- "post this message in `#ventes`"

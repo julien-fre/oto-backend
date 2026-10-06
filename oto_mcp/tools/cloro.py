@@ -1,26 +1,26 @@
-"""Cloro — veille AI-search & SERP Google en JSON (cloro.dev).
+"""Cloro — AI-search monitoring & Google SERP as JSON (cloro.dev).
 
-Wrappe `oto.tools.cloro.CloroClient`. Surfaces métier :
-- **moteurs IA** (ChatGPT, Gemini, Perplexity, Copilot, Grok, Google AI Mode) :
-  interroge le moteur et capture sa réponse + sources/citations → veille de marque
-  « AI SEO » (ce que l'IA dit d'une marque/produit), intelligence concurrentielle.
-- **Google SERP** en JSON (organique + AI Overview + People Also Ask) et **Google
+Wraps `oto.tools.cloro.CloroClient`. Business surfaces:
+- **AI engines** (ChatGPT, Gemini, Perplexity, Copilot, Grok, Google AI Mode):
+  queries the engine and captures its answer + sources/citations → "AI SEO"
+  brand monitoring (what the AI says about a brand/product), competitive intelligence.
+- **Google SERP** as JSON (organic + AI Overview + People Also Ask) and **Google
   News**.
 
-**Surface consolidée (ADR 0047 §Amendement)** : 8 tools → 2. Les six tools moteurs
+**Consolidated surface (ADR 0047 §Amendment)**: 8 tools → 2. The six engine tools
 (`cloro_chatgpt`/`cloro_perplexity`/`cloro_gemini`/`cloro_copilot`/`cloro_grok`/
-`cloro_ai_mode`) portaient **exactement les mêmes paramètres** — le moteur n'est pas
-un verbe mais une **variante** de la même opération → `cloro_ask(engine=…)`. Et
-`cloro_google_serp`/`cloro_google_news` interrogent le même objet (Google) avec les
-mêmes `query`/`country` → `cloro_google(op=…)`, les trois flags d'inclusion ne
-concernant que la SERP. Les deux tools restent séparés : un moteur IA prend un
-`prompt` conversationnel et des flags `markdown`/`searchQueries`, Google prend une
-`query` et des flags `aiOverview`/`organicResults`/`peopleAlsoAsk` — params
-disjoints, une fusion ne pèserait pas moins que deux tools.
+`cloro_ai_mode`) carried **exactly the same parameters** — the engine is not
+a verb but a **variant** of the same operation → `cloro_ask(engine=…)`. And
+`cloro_google_serp`/`cloro_google_news` query the same object (Google) with the
+same `query`/`country` → `cloro_google(op=…)`, the three include flags
+applying only to the SERP. The two tools stay separate: an AI engine takes a
+conversational `prompt` and `markdown`/`searchQueries` flags, Google takes a
+`query` and `aiOverview`/`organicResults`/`peopleAlsoAsk` flags — disjoint
+params, a merge would weigh no less than two tools.
 
-Clé résolue par appel via `access.resolve_api_key("cloro")` : user/org key sinon
-clé plateforme + quota daily pour les members. NB : les appels moteurs IA peuvent
-prendre ~30-45 s.
+Key resolved per call via `access.resolve_api_key("cloro")`: user/org key, otherwise
+platform key + daily quota for members. NB: AI engine calls can take
+~30-45 s.
 """
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, url_perimeter
 
-# Moteurs IA → (slug API Cloro, libellé humain). Le slug est la valeur du paramètre
-# `engine` de `cloro_ask` (⚠️ `aimode`, pas `ai_mode` : c'est le slug de l'API Cloro).
+# AI engines → (Cloro API slug, human label). The slug is the value of the `engine`
+# parameter of `cloro_ask` (⚠️ `aimode`, not `ai_mode`: it is the Cloro API's slug).
 _AI_ENGINES = {
     "chatgpt": "ChatGPT (OpenAI)",
     "perplexity": "Perplexity",
@@ -52,7 +52,7 @@ def register(mcp: FastMCP) -> None:
         return CloroClient(api_key=key), is_platform
 
     def _run(method: str, **kwargs) -> dict:
-        """Résout la clé, appelle la méthode du client, compte l'usage plateforme."""
+        """Resolves the key, calls the client's method, counts platform usage."""
         client, is_platform = _client()
         result = getattr(client, method)(**kwargs)
         if is_platform:
@@ -62,7 +62,7 @@ def register(mcp: FastMCP) -> None:
     def _bad(msg: str) -> McpError:
         return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
-    # --- moteurs IA : un tool, le moteur en paramètre -----------------------
+    # --- AI engines: one tool, the engine as a parameter --------------------
 
     @mcp.tool()
     def cloro_ask(
@@ -102,7 +102,7 @@ def register(mcp: FastMCP) -> None:
         """
         if engine not in _AI_ENGINES:
             valid = ", ".join(f"'{e}'" for e in _AI_ENGINES)
-            raise _bad(f"engine doit être l'un de {valid} (reçu {engine!r})")
+            raise _bad(f"engine must be one of {valid} (received {engine!r})")
         include: dict = {"markdown": markdown}
         if search_queries:
             include["searchQueries"] = True
@@ -111,7 +111,7 @@ def register(mcp: FastMCP) -> None:
                  include=include),
             url_perimeter.perimeter_of_call())
 
-    # --- Google SERP / News : un tool, le verbe en `op` ---------------------
+    # --- Google SERP / News: one tool, the verb in `op` ---------------------
 
     @mcp.tool()
     def cloro_google(
@@ -125,7 +125,7 @@ def register(mcp: FastMCP) -> None:
         """Google as clean JSON via Cloro (AI SEO / SERP monitoring).
 
         `op` :
-        - **"serp"** (défaut) : Google SERP as clean JSON via Cloro (AI SEO / SERP
+        - **"serp"** (default) : Google SERP as clean JSON via Cloro (AI SEO / SERP
           monitoring) — organic results, Google's AI Overview block and People Also
           Ask, selected by the three include flags below.
         - **"news"** : Google News as JSON via Cloro. Takes `query` + `country`
@@ -136,7 +136,7 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             query: search query.
-            op: serp (défaut) | news.
+            op: serp (default) | news.
             country: ISO country code (e.g. 'US', 'FR').
             ai_overview: op="serp" — include Google's AI Overview block.
             organic: op="serp" — include organic results.
@@ -152,5 +152,5 @@ def register(mcp: FastMCP) -> None:
         elif op == "news":
             result = _run("google_news", query=query, country=country)
         else:
-            raise _bad(f"op doit être 'serp' ou 'news' (reçu {op!r})")
+            raise _bad(f"op must be 'serp' or 'news' (received {op!r})")
         return url_perimeter.filter_results(result, url_perimeter.perimeter_of_call())

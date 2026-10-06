@@ -49,12 +49,12 @@ def test_un_nom_retire_dit_son_remplacant_la_valeur_et_l_outil():
     assert "`namespace` a été renommé `datastore`" in msg, msg
     assert "`data_write` avec `datastore='vivier'`" in msg, msg
     assert "Unexpected keyword argument" not in msg
-    assert "requis absent" not in msg, "le nom neuf n'est pas un paramètre manquant"
+    assert "missing" not in msg, "le nom neuf n'est pas un paramètre manquant"
 
 
 def test_une_cle_inconnue_sous_fastmcp_3_est_NOMMEE_comme_inconnue():
     msg = T._arg_error_message(_refus(datastore="v", op="draft"))
-    assert "non reconnu" in msg and "op" in msg, msg
+    assert "unrecognized" in msg and "op" in msg, msg
     assert "Unexpected keyword argument" not in msg
 
 

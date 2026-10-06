@@ -119,10 +119,10 @@ def test_get_occupation_without_tasks_is_not_an_error(client):
 
 
 @pytest.mark.parametrize("kwargs,fragment", [
-    ({"op": "search"}, "exige `keyword`"),
-    ({"op": "get"}, "exige `code`"),
-    ({"op": "search", "keyword": "x", "code": "15-1299.08"}, "n'utilise pas `code`"),
-    ({"op": "get", "code": "15-1299.08", "keyword": "x"}, "n'utilise pas `keyword`"),
+    ({"op": "search"}, "requires `keyword`"),
+    ({"op": "get"}, "requires `code`"),
+    ({"op": "search", "keyword": "x", "code": "15-1299.08"}, "does not use `code`"),
+    ({"op": "get", "code": "15-1299.08", "keyword": "x"}, "does not use `keyword`"),
     ({"op": "search", "keyword": "x", "limit": 0}, "`limit`"),
 ])
 def test_bad_input_refused_before_any_call(client, kwargs, fragment):
@@ -133,8 +133,8 @@ def test_bad_input_refused_before_any_call(client, kwargs, fragment):
 
 
 @pytest.mark.parametrize("status,fragment", [
-    (401, "rejeté la clé"), (422, "inexistant ou obsolète"), (429, "saturé"),
-    (503, "indisponible"),
+    (401, "rejected the API key"), (422, "nonexistent or obsolete"), (429, "saturated"),
+    (503, "unavailable"),
 ])
 def test_upstream_errors_are_translated(client, status, fragment):
     client.return_value.get_occupation.side_effect = UpstreamHTTPError(
@@ -145,7 +145,7 @@ def test_upstream_errors_are_translated(client, status, fragment):
 
 
 def test_invalid_code_from_client_is_a_clean_refusal(client):
-    client.return_value.get_occupation.side_effect = ValueError("code O*NET-SOC invalide")
+    client.return_value.get_occupation.side_effect = ValueError("invalid O*NET-SOC code")
     with pytest.raises(McpError) as e:
         _tool().fn(op="get", code="civil engineer")
-    assert "invalide" in str(e.value)
+    assert "invalid" in str(e.value)

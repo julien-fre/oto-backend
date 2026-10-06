@@ -1,34 +1,34 @@
-"""Cran d'activation des connecteurs — gouvernance DB (ADR 0010, décision 4).
+"""Connector activation tier — DB governance (ADR 0010, decision 4).
 
-**Déclaration (registre `providers/`) ≠ activation (cette table).** Un connecteur
-déclaré en code ne s'expose PAS du seul fait d'être déclaré : il faut une ligne
-d'activation. Résolution, l'échelle des scopes primant du plus proche au plus large :
+**Declaration (`providers/` registry) ≠ activation (this table).** A connector
+declared in code is NOT exposed merely by being declared: an activation row is
+needed. Resolution, the scope ladder taking precedence from nearest to widest:
 
-    exposé(connector, org)  = override_org si défini, sinon master plateforme, sinon OFF
-    effectif(membre équipe) = exposé(org) − coupures de l'équipe (restrict-only)
+    exposed(connector, org)  = org override if set, else platform master, else OFF
+    effective(team member)   = exposed(org) − team cuts (restrict-only)
 
-**Table UNIQUE `connector_availability`** (chantier ACL, cadrage 10/07 — fusion de
-l'ex-paire `connector_activation` + `group_connector_activation`) : le grain est une
-COLONNE de scope, pas une table par grain.
+**SINGLE table `connector_availability`** (ACL workstream, scoping 10/07 — merge of
+the former pair `connector_activation` + `group_connector_activation`): the grain is a
+scope COLUMN, not one table per grain.
 
-- **('platform', '')**      : master plateforme (interrupteur global).
-- **('org', <org_id>)**     : override d'org — force ON/OFF par-dessus le master.
-- **('group', <group_id>)** : coupure d'équipe — `enabled=FALSE` UNIQUEMENT
-  (invariant MONOTONE ADR 0012 : l'équipe retranche, n'expose jamais ; la garde
-  métier vit dans la capacité).
-- **aucune ligne**          : OFF au niveau org (deny-by-default), hérité au niveau équipe.
+- **('platform', '')**      : platform master (global switch).
+- **('org', <org_id>)**     : org override — forces ON/OFF over the master.
+- **('group', <group_id>)** : team cut — `enabled=FALSE` ONLY
+  (MONOTONE invariant ADR 0012: the team cuts, never exposes; the business
+  guard lives in the capability).
+- **no row**                : OFF at the org level (deny-by-default), inherited at the team level.
 
-**Seed unique** (lignes platform) : les connecteurs au registre AU MOMENT de
-l'introduction du cran sont activés ; les suivants restent OFF jusqu'à activation
-explicite. **Copie legacy au boot** (gardée `to_regclass`, newer-wins sur `set_at`) :
-les deux tables historiques sont recopiées tant qu'elles existent — elles tombent
-en B2 une fois ce code promu (DB partagée canari/prod).
+**One-time seed** (platform rows): the connectors in the registry AT THE TIME the
+tier was introduced are activated; later ones stay OFF until explicit
+activation. **Legacy copy at boot** (guarded by `to_regclass`, newer-wins on `set_at`):
+the two historical tables are copied over as long as they exist — they drop
+in B2 once this code is promoted (shared canary/prod DB).
 
-Convention : les lectures/écritures sont **self-managing** (ouvrent leur propre
-connexion, comme `db.*` et `org_store.*`). Seuls `init_schema`/`seed_initial`
-reçoivent le `conn` de la transaction de `db.init_db`. Le module ne fait AUCUN
-import oto_mcp au niveau module (leaf, comme `providers`) — `db`/`providers` sont
-importés paresseusement pour éviter tout cycle.
+Convention: reads/writes are **self-managing** (they open their own
+connection, like `db.*` and `org_store.*`). Only `init_schema`/`seed_initial`
+receive the `conn` of the `db.init_db` transaction. The module does NO
+oto_mcp import at module level (leaf, like `providers`) — `db`/`providers` are
+imported lazily to avoid any cycle.
 """
 from __future__ import annotations
 
@@ -37,8 +37,8 @@ from typing import Optional
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS connector_availability (
     scope_type TEXT NOT NULL CHECK (scope_type IN ('platform','org','tenant','group')),
-    scope_id   TEXT NOT NULL DEFAULT '',   -- '' pour platform ; org.id / group.id en texte ; slug pour tenant
-    connector  TEXT NOT NULL,              -- nom de connecteur (registre providers/)
+    scope_id   TEXT NOT NULL DEFAULT '',   -- '' for platform ; org.id / group.id as text ; slug for tenant
+    connector  TEXT NOT NULL,              -- connector name (providers/ registry)
     enabled    BOOLEAN NOT NULL,
     set_by     TEXT,
     set_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -47,20 +47,20 @@ CREATE TABLE IF NOT EXISTS connector_availability (
 """
 
 
-# --- schéma (reçoit le conn de la transaction init_db) ----------------------
+# --- schema (receives the init_db transaction's conn) -----------------------
 
 def init_schema(conn) -> None:
-    """Crée la table unifiée + recopie les tables legacy si elles existent encore.
-    Idempotent. Appelé par `db.init_db` dans la même transaction que le reste."""
+    """Create the unified table + copy the legacy tables if they still exist.
+    Idempotent. Called by `db.init_db` in the same transaction as the rest."""
     conn.execute(_SCHEMA)
     _copy_legacy(conn)
 
 
 def _copy_legacy(conn) -> None:
-    """Copie legacy → unifiée, à CHAQUE boot tant que les tables legacy existent
-    (fenêtre canari/prod : la prod écrit encore les legacy jusqu'à promotion —
-    newer-wins sur `set_at` rattrape ses écritures au boot suivant). Gardée
-    `to_regclass` : après le DROP (B2), no-op — un boot ne casse jamais."""
+    """Copy legacy → unified, at EVERY boot as long as the legacy tables exist
+    (canary/prod window: prod still writes the legacy ones until promotion —
+    newer-wins on `set_at` catches up its writes at the next boot). Guarded by
+    `to_regclass`: after the DROP (B2), no-op — a boot never breaks."""
     if conn.execute("SELECT to_regclass('connector_activation') AS t").fetchone()["t"]:
         conn.execute("""
             INSERT INTO connector_availability (scope_type, scope_id, connector, enabled, set_by, set_at)
@@ -83,16 +83,16 @@ def _copy_legacy(conn) -> None:
 
 
 def seed_initial(conn) -> None:
-    """Seed unique : si aucune ligne PLATFORM n'existe (ni copiée du legacy, ni déjà
-    seedée), active (master ON) tous les connecteurs du registre courant — snapshot
-    de l'état à l'introduction du cran. `ON CONFLICT DO NOTHING` couvre un boot
-    concurrent. ⚠️ Le guard porte sur les lignes platform SEULEMENT : vider la table
-    par erreur re-seederait tout à ON (documenté au cadrage — ne pas la vider)."""
+    """One-time seed: if no PLATFORM row exists (neither copied from legacy nor already
+    seeded), activate (master ON) all connectors of the current registry — snapshot
+    of the state at the tier's introduction. `ON CONFLICT DO NOTHING` covers a
+    concurrent boot. ⚠️ The guard looks at platform rows ONLY: emptying the table
+    by mistake would re-seed everything to ON (documented at scoping — do not empty it)."""
     n = conn.execute("SELECT COUNT(*) AS n FROM connector_availability "
                      "WHERE scope_type = 'platform'").fetchone()["n"]
     if n:
         return
-    from .. import providers  # registre source unique (pur, pas d'import oto_mcp)
+    from .. import providers  # single-source registry (pure, no oto_mcp import)
 
     for name in providers.REGISTRY:
         conn.execute(
@@ -103,25 +103,25 @@ def seed_initial(conn) -> None:
 
 
 def fanout_availability(conn, source: str, targets: tuple[str, ...]) -> int:
-    """Étend à `targets` l'exposition de `source` — aux TROIS scopes.
+    """Extend `source`'s exposure to `targets` — at ALL THREE scopes.
 
-    Le seed initial (`seed_initial`) ne joue qu'une fois, sur une table vide : un
-    connecteur ajouté après lui n'a AUCUNE ligne platform, donc reste OFF
-    (deny-by-default). C'est la bonne règle pour un connecteur neuf — et le pire cas
-    possible pour un connecteur SCINDÉ : le jour du split unipile (2026-08-28), les
-    six canaux naissent OFF et toute la messagerie hébergée s'éteint pour tout le
-    monde, alors que rien n'a été désactivé.
+    The initial seed (`seed_initial`) only runs once, on an empty table: a
+    connector added after it has NO platform row, so stays OFF
+    (deny-by-default). That is the right rule for a brand-new connector — and the
+    worst possible case for a SPLIT connector: on the day of the unipile split
+    (2026-08-28), the six channels are born OFF and all hosted messaging goes dark
+    for everyone, though nothing was disabled.
 
-    On recopie donc les trois scopes, pas seulement le master :
-    · `platform` — l'interrupteur global suit le connecteur d'origine ;
-    · `org`      — un override d'org (ON comme OFF) est une DÉCISION de cette org :
-                   une org qui avait coupé unipile ne doit pas voir six canaux
-                   s'allumer, et une org qui l'avait forcé ON les garde ;
-    · `group`    — une coupure d'équipe est monotone (elle ne fait que retrancher) :
-                   la perdre RELÂCHERAIT une restriction, jamais l'inverse.
+    So we copy all three scopes, not just the master:
+    · `platform` — the global switch follows the original connector;
+    · `org`      — an org override (ON or OFF) is a DECISION of that org:
+                   an org that had cut unipile must not see six channels
+                   light up, and an org that had forced it ON keeps them;
+    · `group`    — a team cut is monotone (it only removes):
+                   losing it would RELEASE a restriction, never the reverse.
 
-    `ON CONFLICT DO NOTHING` : un réglage déjà posé sur une cible gagne (rejeu de
-    boot, ou un admin qui a déjà tranché depuis). Idempotent."""
+    `ON CONFLICT DO NOTHING`: a setting already placed on a target wins (boot
+    replay, or an admin who has since ruled). Idempotent."""
     n = 0
     for cible in targets:
         cur = conn.execute(
@@ -136,20 +136,20 @@ def fanout_availability(conn, source: str, targets: tuple[str, ...]) -> int:
     return n
 
 
-# --- résolution (pure) ------------------------------------------------------
+# --- resolution (pure) ------------------------------------------------------
 
 def _resolve(global_map: dict[str, bool], override_map: dict[str, bool],
              tenant_map: "dict[str, bool] | None" = None) -> set[str]:
-    """Applique `override d'org > master plateforme > OFF`, sous le PLAFOND du tenant.
-    Renvoie les connecteurs exposés. Pur (pas de DB) → testable hors connexion.
+    """Apply `org override > platform master > OFF`, under the tenant CEILING.
+    Returns the exposed connectors. Pure (no DB) → testable offline.
 
-    Le cran TENANT (2026-09-26) : un partenaire qui sert oto sous sa marque coupe, pour
-    TOUTES ses orgs d'un coup, un connecteur que son offre ne comprend pas — sans
-    poser un override sur chacune, et sans qu'un admin d'org puisse le rouvrir. C'est
-    un plafond, comme la plateforme : il ne fait que RETRANCHER (`enabled=false`),
-    une ligne à `true` n'expose rien que la plateforme n'expose déjà. Motif concret :
-    un service Google que le projet Google Cloud du tenant ne déclare pas — le
-    consentement échouerait chez Google, la carte ne doit pas exister chez lui."""
+    The TENANT tier (2026-09-26): a partner serving oto under its brand cuts, for
+    ALL its orgs at once, a connector its offer does not include — without
+    setting an override on each, and without an org admin being able to reopen it.
+    It is a ceiling, like the platform: it only REMOVES (`enabled=false`),
+    a `true` row exposes nothing the platform does not already expose. Concrete
+    reason: a Google service that the tenant's Google Cloud project does not declare —
+    consent would fail at Google, the card must not exist for them."""
     names = set(global_map) | set(override_map)
     exposed = {n for n in names if override_map.get(n, global_map.get(n, False))}
     if not tenant_map:
@@ -158,21 +158,22 @@ def _resolve(global_map: dict[str, bool], override_map: dict[str, bool],
 
 
 def effective_for_group(exposed: set[str], group_cut: set[str]) -> set[str]:
-    """Exposition EFFECTIVE pour un membre d'une équipe = ce que l'org expose MOINS
-    les coupures de l'équipe active. Invariant MONOTONE (ADR 0012) : l'équipe ne peut
-    que RETRANCHER — jamais rendre visible un connecteur que l'org a coupé. Pur
-    (pas de DB) → testable hors connexion."""
+    """EFFECTIVE exposure for a team member = what the org exposes MINUS
+    the active team's cuts. MONOTONE invariant (ADR 0012): the team can only
+    REMOVE — never make visible a connector the org has cut. Pure
+    (no DB) → testable offline."""
     return exposed - group_cut
 
 
-# --- lectures (self-managing) -----------------------------------------------
+# --- reads (self-managing) --------------------------------------------------
 
 def tenant_of_org(org_id: Optional[int], conn=None) -> Optional[str]:
-    """Le slug du tenant qui HÉBERGE cette org, ou `None` (tenant primaire, ou pas
-    d'org) — le seul cas où le cran tenant n'existe pas. Lu par `db.org_tenant_slug`
-    (l'union des trois axes, `docs/tenants.md`), jamais deviné. `conn` : la connexion
-    déjà ouverte par l'appelant — la résolution d'activation lit le tenant dans la
-    SIENNE, pas dans une connexion de plus à chaque appel d'outil."""
+    """The slug of the tenant that HOSTS this org, or `None` (primary tenant, or no
+    org) — the only case where the tenant tier does not exist. Read through
+    `db.org_tenant_slug` (the union of the three axes, `docs/tenants.md`), never
+    guessed. `conn`: the connection already opened by the caller — activation
+    resolution reads the tenant in ITS OWN, not in one more connection on every
+    tool call."""
     if org_id is None:
         return None
     from .. import db, tenancy
@@ -182,26 +183,26 @@ def tenant_of_org(org_id: Optional[int], conn=None) -> Optional[str]:
 
 
 def is_exposed(connector: str, org_id: Optional[int] = None) -> bool:
-    """exposé = override d'org si défini, sinon master plateforme, sinon OFF."""
+    """exposed = org override if set, else platform master, else OFF."""
     return cran_qui_coupe(connector, org_id) is None
 
 
 def cran_qui_coupe(connector: str, org_id: Optional[int] = None,
                    group_id: Optional[int] = None) -> Optional[str]:
-    """Le cran qui COUPE `connector` pour (org, équipe), ou `None` s'il est exposé.
+    """The tier that CUTS `connector` for (org, team), or `None` if it is exposed.
 
-    Même résolution que `effective_for_group(exposed_connectors(org), group_cut…)`,
-    pour UN connecteur : `'org'` = override d'org à OFF ; `'platform'` = pas
-    d'override d'org et master OFF ou absent (deny-by-default) ; `'group'` = exposé
-    pour l'org mais coupé par l'équipe `group_id`. Nommer le cran, c'est nommer QUI
-    peut rouvrir — ce que le refus d'appel (`activation_gate`) dit à l'agent."""
+    Same resolution as `effective_for_group(exposed_connectors(org), group_cut…)`,
+    for ONE connector: `'org'` = org override at OFF; `'platform'` = no
+    org override and master OFF or absent (deny-by-default); `'group'` = exposed
+    for the org but cut by team `group_id`. Naming the tier means naming WHO
+    can reopen — what the call refusal (`activation_gate`) tells the agent."""
     from .. import db
 
     with db._connect() as conn:
         slug = tenant_of_org(org_id, conn=conn)
-        # Le plafond du TENANT d'abord : coupé là, personne dans l'org ne rouvre —
-        # ni un override d'org ON, ni une équipe. Nommer ce cran, c'est dire que le
-        # geste est chez l'hébergeur.
+        # The TENANT ceiling first: cut there, nobody in the org reopens —
+        # neither an ON org override, nor a team. Naming this tier means saying that
+        # the gesture is with the host.
         if slug is not None and conn.execute(
                 "SELECT 1 FROM connector_availability "
                 "WHERE scope_type = 'tenant' AND scope_id = %s AND connector = %s "
@@ -238,8 +239,8 @@ def cran_qui_coupe(connector: str, org_id: Optional[int] = None,
 
 
 def exposed_connectors(org_id: Optional[int] = None) -> set[str]:
-    """Ensemble des connecteurs exposés (résout override d'org vs master en un
-    scan). Pour filtrer le catalogue / le chargement en une requête."""
+    """Set of exposed connectors (resolves org override vs master in a single
+    scan). To filter the catalog / loading in one query."""
     from .. import db
 
     with db._connect() as conn:
@@ -260,9 +261,9 @@ def exposed_connectors(org_id: Optional[int] = None) -> set[str]:
 
 
 def list_activations() -> list[dict]:
-    """Toutes les lignes master plateforme + overrides d'org, pour la surface admin.
-    Projection HISTORIQUE conservée : `org_id` (None = master) — les appelants
-    (REST admin) n'ont pas bougé à l'unification."""
+    """All platform master rows + org overrides, for the admin surface.
+    HISTORICAL projection kept: `org_id` (None = master) — the callers
+    (REST admin) did not change at unification."""
     from .. import db
 
     with db._connect() as conn:
@@ -277,11 +278,11 @@ def list_activations() -> list[dict]:
             for r in rows]
 
 
-# --- écritures (surface admin, B4) ------------------------------------------
+# --- writes (admin surface, B4) ---------------------------------------------
 
 def set_activation(connector: str, enabled: bool, org_id: Optional[int] = None,
                    set_by: Optional[str] = None) -> None:
-    """Pose/maj l'activation : master plateforme si `org_id` None, sinon override d'org."""
+    """Set/update the activation: platform master if `org_id` is None, else org override."""
     from .. import db
 
     scope_type, scope_id = ("platform", "") if org_id is None else ("org", str(org_id))
@@ -296,7 +297,7 @@ def set_activation(connector: str, enabled: bool, org_id: Optional[int] = None,
 
 
 def clear_activation(connector: str, org_id: int) -> None:
-    """Supprime un override d'org → le connecteur retombe sur le master plateforme."""
+    """Delete an org override → the connector falls back to the platform master."""
     from .. import db
 
     with db._connect() as conn:
@@ -307,10 +308,10 @@ def clear_activation(connector: str, org_id: int) -> None:
         )
 
 
-# --- tier TENANT (plafond, 2026-09-26) ---------------------------------------
+# --- TENANT tier (ceiling, 2026-09-26) ---------------------------------------
 
 def list_tenant_activations(slug: str) -> dict[str, bool]:
-    """Les coupures (et lignes) posées par ce tenant : `{connector: enabled}`."""
+    """The cuts (and rows) set by this tenant: `{connector: enabled}`."""
     from .. import db
 
     with db._connect() as conn:
@@ -324,8 +325,8 @@ def list_tenant_activations(slug: str) -> dict[str, bool]:
 
 def set_tenant_activation(slug: str, connector: str, enabled: bool,
                           set_by: Optional[str] = None) -> None:
-    """Pose/maj la ligne tenant. `enabled=false` coupe pour toutes les orgs du tenant ;
-    `true` ne fait que retirer la coupure (le plafond plateforme reste le sien)."""
+    """Set/update the tenant row. `enabled=false` cuts for all the tenant's orgs;
+    `true` only removes the cut (the platform ceiling remains its own)."""
     from .. import db
 
     with db._connect() as conn:
@@ -339,7 +340,7 @@ def set_tenant_activation(slug: str, connector: str, enabled: bool,
 
 
 def clear_tenant_activation(slug: str, connector: str) -> None:
-    """Retire la ligne tenant → le connecteur suit à nouveau la plateforme."""
+    """Remove the tenant row → the connector follows the platform again."""
     from .. import db
 
     with db._connect() as conn:
@@ -350,12 +351,12 @@ def clear_tenant_activation(slug: str, connector: str) -> None:
         )
 
 
-# --- tier ÉQUIPE (restrict-only, ADR 0012) ----------------------------------
+# --- TEAM tier (restrict-only, ADR 0012) ------------------------------------
 
 def group_cut_connectors(group_id: int) -> set[str]:
-    """Connecteurs COUPÉS pour l'équipe (lignes `enabled=FALSE`). L'exposition
-    effective d'un membre = `exposed_connectors(org) - group_cut_connectors(équipe
-    active)` — invariant monotone : l'équipe ne peut que retrancher."""
+    """Connectors CUT for the team (`enabled=FALSE` rows). A member's effective
+    exposure = `exposed_connectors(org) - group_cut_connectors(active
+    team)` — monotone invariant: the team can only remove."""
     from .. import db
 
     with db._connect() as conn:
@@ -368,7 +369,7 @@ def group_cut_connectors(group_id: int) -> set[str]:
 
 
 def list_group_activations(group_id: int) -> list[dict]:
-    """Lignes de coupure de l'équipe (surface admin d'équipe)."""
+    """The team's cut rows (team admin surface)."""
     from .. import db
 
     with db._connect() as conn:
@@ -381,8 +382,8 @@ def list_group_activations(group_id: int) -> list[dict]:
 
 def set_group_activation(group_id: int, connector: str, enabled: bool,
                          set_by: Optional[str] = None) -> None:
-    """Pose une coupure d'équipe. `enabled` DOIT être False (restrict-only) — la
-    garde métier (invariant monotone) est dans la capacité ; ici on stocke."""
+    """Set a team cut. `enabled` MUST be False (restrict-only) — the business
+    guard (monotone invariant) is in the capability; here we just store."""
     from .. import db
 
     with db._connect() as conn:
@@ -396,7 +397,7 @@ def set_group_activation(group_id: int, connector: str, enabled: bool,
 
 
 def clear_group_activation(group_id: int, connector: str) -> None:
-    """Retire la coupure d'équipe → le connecteur retombe sur l'exposition de l'org."""
+    """Remove the team cut → the connector falls back to the org's exposure."""
     from .. import db
 
     with db._connect() as conn:

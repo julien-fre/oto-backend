@@ -1,45 +1,45 @@
-## prerequisite — créer l'application Salesforce
+## prerequisite — create the Salesforce application
 
-Salesforce n'a pas de client OAuth partagé entre clients (contrairement à Google) : chaque org doit créer la sienne. Compte une quinzaine de minutes, et un profil administrateur.
+Salesforce has no OAuth client shared between customers (unlike Google): each org must create its own. Allow about fifteen minutes, and an administrator profile.
 
-Deux modèles coexistent. **Les Connected Apps sont désactivées sur les orgs récentes** (Salesforce répond « contactez le Support ») — c'est alors une **External Client App**, et les chemins ci-dessous en tiennent compte.
+Two models coexist. **Connected Apps are disabled on recent orgs** (Salesforce answers "contact Support") — in that case it is an **External Client App**, and the paths below account for that.
 
-**1. Créer l'application.** Configuration → recherche rapide « **applications clientes externes** » → **Nouvelle application cliente externe**, puis active **OAuth**.
+**1. Create the application.** Setup → quick search "**External Client Apps**" → **New External Client App**, then enable **OAuth**.
 
-**2. URL de rappel.** Celle affichée sur cette fiche, sous « Autoriser oto chez Salesforce ». Copie-la telle quelle : un espace ou un slash final en trop suffit à faire échouer le consentement.
+**2. Callback URL.** The one shown on this card, under "Authorize oto at Salesforce". Copy it exactly as is: a stray space or trailing slash is enough to make the consent fail.
 
-**3. Portées OAuth.** Coche **`api`** (Gérer les données utilisateur via des API) **et `refresh_token`** (Effectuer des requêtes à tout moment).
+**3. OAuth scopes.** Tick **`api`** (Manage user data via APIs) **and `refresh_token`** (Perform requests at any time).
 
-⚠️ **`full` ne suffit pas.** L'accès complet n'inclut PAS `refresh_token` / `offline_access`, qui est une portée distincte. Sans elle, le consentement peut réussir mais Salesforce ne délivre aucun jeton durable — échec en `invalid_scope`. C'est le piège le plus fréquent.
+⚠️ **`full` is not enough.** Full access does NOT include `refresh_token` / `offline_access`, which is a separate scope. Without it, the consent may succeed but Salesforce issues no durable token — failure with `invalid_scope`. This is the most common trap.
 
-**4. Récupérer les identifiants.** Onglet **Paramètres** → **Paramètres OAuth** → **Détails du consommateur**. Salesforce envoie un code de vérification par email avant de les révéler. Note la **clé** et le **secret du consommateur**.
+**4. Retrieve the credentials.** **Settings** tab → **OAuth Settings** → **Consumer Details**. Salesforce sends a verification code by email before revealing them. Note the **consumer key** and the **consumer secret**.
 
-**5. Autoriser les appels serveur.** Onglet **Stratégies** → **Relaxe d'IP** → « **Relâcher les restrictions IP** ».
+**5. Allow server calls.** **Policies** tab → **IP Relaxation** → "**Relax IP restrictions**".
 
-⚠️ **Le piège le moins intuitif.** Tu donnes ton consentement depuis ton navigateur, mais c'est **notre serveur** qui rafraîchit ensuite le jeton, depuis une autre adresse. Restrictions appliquées, Salesforce refuse ces appels avec un `invalid_grant` au libellé trompeur (« expired token ») alors que le jeton est valide. Si ta politique interdit de relâcher, autorise plutôt l'adresse `151.115.148.128` dans tes plages IP approuvées.
+⚠️ **The least intuitive trap.** You give your consent from your browser, but it is **our server** that then refreshes the token, from a different address. With restrictions applied, Salesforce refuses these calls with an `invalid_grant` whose wording is misleading ("expired token") even though the token is valid. If your policy forbids relaxing, allow the address `151.115.148.128` in your approved IP ranges instead.
 
-## setup — connecter oto
+## setup — connect oto
 
-1. Colle la **clé du consommateur**, le **secret du consommateur** et la **Login URL** sur cette fiche. La Login URL est ton domaine : `https://<ton-domaine>.my.salesforce.com` — pas `login.salesforce.com` si tu as un My Domain, et **sans le `-setup`** du domaine de la console. Pour un sandbox : `https://<domaine>.sandbox.my.salesforce.com`.
+1. Paste the **consumer key**, the **consumer secret** and the **Login URL** on this card. The Login URL is your domain: `https://<your-domain>.my.salesforce.com` — not `login.salesforce.com` if you have a My Domain, and **without the `-setup`** of the console domain. For a sandbox: `https://<domain>.sandbox.my.salesforce.com`.
 
-2. L'enregistrement est accepté **même si la connexion n'est pas encore complète** : c'est normal, le jeton n'existe pas encore.
+2. Saving is accepted **even if the connection is not complete yet**: this is normal, the token doesn't exist yet.
 
-3. Clique sur **Autoriser oto chez Salesforce** et choisis pour qui ranger la connexion — toi, ton équipe ou toute l'org. Les deux derniers demandent d'en être administrateur, et lisent l'application enregistrée **à ce niveau-là** : pour connecter au nom de l'org, les identifiants doivent avoir été posés côté org.
+3. Click **Authorize oto at Salesforce** and choose who the connection is stored for — you, your team or the whole org. The last two require being an administrator, and read the saved application **at that level**: to connect on behalf of the org, the credentials must have been set at the org level.
 
-C'est ce consentement qui produit le jeton ; il n'y a aucun champ à remplir à la main.
+It is this consent that produces the token; there is no field to fill in by hand.
 
-## note — rotation des jetons
+## note — token rotation
 
-Salesforce impose la **permutation des jetons d'actualisation** sur les applications externes — contrôle verrouillé, modifiable seulement par leur support. Chaque appel consomme le jeton et en reçoit un neuf.
+Salesforce enforces **refresh token rotation** on external applications — a locked control, changeable only by their support. Each call consumes the token and receives a new one.
 
-Rien à faire de ton côté, oto le gère. C'est mentionné parce que ça explique un comportement qui pourrait sembler anormal : le jeton stocké change en permanence, et réutiliser un ancien jeton fait révoquer toute la connexion par Salesforce, imposant un nouveau consentement.
+Nothing to do on your side, oto handles it. It is mentioned because it explains behavior that might seem abnormal: the stored token changes constantly, and reusing an old token makes Salesforce revoke the whole connection, requiring a new consent.
 
-## usage — contacts, comptes, leads, opportunités
+## usage — contacts, accounts, leads, opportunities
 
-CRUD générique par sObject (Contact, Account = « companies », Lead, Opportunity, objets custom) + SOQL/SOSL brut.
-- « liste les contacts de l'account Acme »
-- « crée un contact Ada Lovelace chez Acme Corp »
-- « cherche les opportunités ouvertes de plus de 50k€ »
-- « ajoute une note à ce compte »
+Generic CRUD per sObject (Contact, Account = "companies", Lead, Opportunity, custom objects) + raw SOQL/SOSL.
+- "list the contacts of the Acme account"
+- "create a contact Ada Lovelace at Acme Corp"
+- "find open opportunities over €50k"
+- "add a note to this account"
 
-⚠️ **oto n'applique pas la déduplication de Salesforce, ni en lot ni à l'unité.** Que tes règles de doublon jouent ou non dépend du paramétrage de TON org Salesforce ; oto ne les active pas et ne vérifie pas qu'elles ont joué. Une création en lot a déjà rendu « succès » pour des fiches en doublon exact d'existantes (même nom, même compte). Une procédure qui prend ces règles pour filet de sécurité doit vérifier l'existence elle-même avant de créer. Et même règles actives, Salesforce compare les fiches d'un même lot à ce qui existe déjà, jamais entre elles : un lot qui contient deux fois la même personne passe entier.
+⚠️ **oto does not apply Salesforce's de-duplication, neither in bulk nor one at a time.** Whether your duplicate rules fire depends on YOUR Salesforce org's setup; oto doesn't enable them and doesn't verify that they fired. A bulk creation has already returned "success" for records that were exact duplicates of existing ones (same name, same account). A procedure that treats these rules as a safety net must check existence itself before creating. And even with active rules, Salesforce compares the records of a batch to what already exists, never with each other: a batch containing the same person twice goes through whole.

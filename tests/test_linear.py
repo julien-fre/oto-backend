@@ -118,7 +118,7 @@ def test_issue_list_refuses_non_list_params():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("linear_issue")).fn
-        with pytest.raises(McpError, match="op='list' n'utilise pas"):
+        with pytest.raises(McpError, match="op='list' does not use"):
             fn(op="list", title="oops")
 
         cls.return_value.list_issues.return_value = {"nodes": [], "pageInfo": {}}
@@ -143,7 +143,7 @@ def test_issue_list_refuses_first_on_a_non_paginating_op():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("linear_issue")).fn
-        with pytest.raises(McpError, match="op='get' n'utilise pas"):
+        with pytest.raises(McpError, match="op='get' does not use"):
             fn(op="get", issue_id="i1", first=10)
         cls.return_value.get_issue.assert_not_called()
     finally:
@@ -154,7 +154,7 @@ def test_issue_get_requires_id():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("linear_issue")).fn
-        with pytest.raises(McpError, match="op='get' requiert"):
+        with pytest.raises(McpError, match="op='get' requires"):
             fn(op="get")
 
         cls.return_value.get_issue.return_value = {"id": "i1"}
@@ -169,7 +169,7 @@ def test_issue_search_requires_query_and_paginates_with_default(monkeypatch):
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("linear_issue")).fn
-        with pytest.raises(McpError, match="op='search' requiert"):
+        with pytest.raises(McpError, match="op='search' requires"):
             fn(op="search")
 
         cls.return_value.search_issues.return_value = {"nodes": [], "pageInfo": {}}
@@ -184,7 +184,7 @@ def test_issue_create_requires_title_and_team_id():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("linear_issue")).fn
-        with pytest.raises(McpError, match="op='create' requiert"):
+        with pytest.raises(McpError, match="op='create' requires"):
             fn(op="create", title="Bug")
 
         cls.return_value.create_issue.return_value = {"success": True}
@@ -201,9 +201,9 @@ def test_issue_update_requires_id_and_refuses_create_only_params():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("linear_issue")).fn
-        with pytest.raises(McpError, match="op='update' requiert"):
+        with pytest.raises(McpError, match="op='update' requires"):
             fn(op="update")
-        with pytest.raises(McpError, match="op='update' n'utilise pas"):
+        with pytest.raises(McpError, match="op='update' does not use"):
             fn(op="update", issue_id="i1", parent_id="i0")
 
         cls.return_value.update_issue.return_value = {"success": True}
@@ -220,9 +220,9 @@ def test_issue_archive_and_delete_require_id():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("linear_issue")).fn
-        with pytest.raises(McpError, match="op='archive' requiert"):
+        with pytest.raises(McpError, match="op='archive' requires"):
             fn(op="archive")
-        with pytest.raises(McpError, match="op='delete' requiert"):
+        with pytest.raises(McpError, match="op='delete' requires"):
             fn(op="delete")
 
         cls.return_value.archive_issue.return_value = {"success": True}
@@ -242,7 +242,7 @@ def test_comment_create_requires_issue_id_and_body():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("linear_comment")).fn
-        with pytest.raises(McpError, match="op='create' requiert"):
+        with pytest.raises(McpError, match="op='create' requires"):
             fn(op="create", issue_id="i1")
 
         cls.return_value.create_comment.return_value = {"success": True}
@@ -256,7 +256,7 @@ def test_team_states_requires_team_id():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("linear_team")).fn
-        with pytest.raises(McpError, match="op='states' requiert"):
+        with pytest.raises(McpError, match="op='states' requires"):
             fn(op="states")
 
         cls.return_value.list_workflow_states.return_value = {"nodes": [], "pageInfo": {}}
@@ -270,7 +270,7 @@ def test_webhook_create_requires_url_and_defaults_enabled_true():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("linear_webhook")).fn
-        with pytest.raises(McpError, match="op='create' requiert"):
+        with pytest.raises(McpError, match="op='create' requires"):
             fn(op="create")
 
         cls.return_value.create_webhook.return_value = {"success": True}
@@ -287,9 +287,9 @@ def test_webhook_update_and_delete_require_webhook_id():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("linear_webhook")).fn
-        with pytest.raises(McpError, match="op='update' requiert"):
+        with pytest.raises(McpError, match="op='update' requires"):
             fn(op="update")
-        with pytest.raises(McpError, match="op='delete' requiert"):
+        with pytest.raises(McpError, match="op='delete' requires"):
             fn(op="delete")
 
         cls.return_value.delete_webhook.return_value = {"success": True}

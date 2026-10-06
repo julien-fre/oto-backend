@@ -1,25 +1,25 @@
-"""Déclaration de registre du connecteur `gmail` — Gmail, sur le compte Google.
+"""Registry declaration of the `gmail` connector — Gmail, on the Google account.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE. La forme commune
-aux six services Google vit chez le porteur du compte (`providers/google.service`) —
-ici, ce qui distingue CELUI-CI (split du 2026-09-26).
+Single home of its entry: `providers/__init__.py` AGGREGATES it. The shape common
+to the six Google services lives with the account carrier (`providers/google.service`) —
+here, what distinguishes THIS one (split of 2026-09-26).
 """
 from __future__ import annotations
 
 from .google import service
 
-# Gmail : la personne autorise CE service sur son compte Google, depuis cette
-# carte, avec ses seuls scopes — le compte (la ligne du coffre, le refresh token) est
-# celui du connecteur `google`, partagé avec les cinq autres services.
+# Gmail: the person authorizes THIS service on their Google account, from this
+# card, with only its own scopes — the account (the vault row, the refresh token) is
+# the one of the `google` connector, shared with the five other services.
 CONNECTOR = service(
     "gmail",
     label="Gmail",
-    help="ta boîte Gmail — chercher, lire, rédiger, envoyer, archiver ; scope `gmail.modify`, accordé sur ton compte Google",
+    help="your Gmail inbox — search, read, draft, send, archive; scope `gmail.modify`, granted on your Google account",
     href="https://mail.google.com",
 )
 
 CATEGORY = "Comms"
 LOGO_DOMAIN = "gmail.com"
 DESCRIPTION = (
-    "Ta boîte Gmail, sur ton compte Google : chercher et lire les messages, rédiger un brouillon ou envoyer, archiver, mettre à la corbeille, lire une pièce jointe. Un consentement qui ne demande que le scope Gmail."
+    "Your Gmail inbox, on your Google account: search and read messages, draft or send, archive, move to trash, read an attachment. A consent that only asks for the Gmail scope."
 )

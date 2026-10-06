@@ -1,14 +1,14 @@
-## prerequisite — autorise Google BigQuery sur ton compte Google
+## prerequisite — authorize Google BigQuery on your Google account
 
-depuis cette carte, clique **connecter** : Google te demande d'autoriser **Google BigQuery seulement** (scope `bigquery`) sur le compte que tu choisis. le compte Google lui-même (adresse, jeton) est porté par le connecteur **Compte Google** — un même compte peut autoriser plusieurs services, un service à la fois, sans réautoriser les autres.
-- les requêtes voient exactement ce que **tes droits BigQuery** voient : rôle « BigQuery Data Viewer » sur les datasets à lire, « BigQuery Job User » sur le projet qui exécute (et paie) les requêtes
-- **lecture seule** : chaque requête est validée à blanc d'abord, tout ce qui n'est pas un SELECT est refusé avant exécution
-- **coût borné** : 10 Go lus au plus par requête par défaut (relevable jusqu'à 1 To par requête), refus avec l'estimation au-delà
-- plusieurs comptes Google : chaque outil agit sur le compte par défaut, ou sur celui que tu cibles par `account=<email>` ; `google_accounts` dit lesquels ont autorisé Google BigQuery
+from this card, click **connect**: Google asks you to authorize **Google BigQuery only** (scope `bigquery`) on the account you choose. the Google account itself (address, token) is carried by the **Google account** connector — one account can authorize several services, one service at a time, without re-authorizing the others.
+- queries see exactly what **your BigQuery rights** see: "BigQuery Data Viewer" role on the datasets to read, "BigQuery Job User" on the project that runs (and pays for) the queries
+- **read-only**: every query is dry-run validated first, anything that is not a SELECT is refused before execution
+- **bounded cost**: at most 10 GB read per query by default (can be raised up to 1 TB per query), refused with the estimate beyond that
+- several Google accounts: each tool acts on the default account, or on the one you target with `account=<email>`; `google_accounts` tells which ones have authorized Google BigQuery
 
-## usage — explorer et interroger l'entrepôt
+## usage — explore and query the warehouse
 
-`bigquery_catalog` (projets → datasets → tables), `bigquery_table` (schéma + aperçu gratuit), `bigquery_query` (SQL, `dry_run` pour estimer), `bigquery_results` (reprendre une requête longue, page suivante).
-- « quelles tables a le dataset `analytics` ? »
-- « combien de commandes par mois en 2026, depuis `dwh.sales.orders` ? »
-- « estime le coût de cette requête avant de la lancer »
+`bigquery_catalog` (projects → datasets → tables), `bigquery_table` (schema + free preview), `bigquery_query` (SQL, `dry_run` to estimate), `bigquery_results` (resume a long query, next page).
+- "which tables does the `analytics` dataset have?"
+- "how many orders per month in 2026, from `dwh.sales.orders`?"
+- "estimate the cost of this query before running it"

@@ -1,25 +1,25 @@
-"""Déclaration de registre du connecteur `sheets` — Google Sheets, sur le compte Google.
+"""Registry declaration of the `sheets` connector — Google Sheets, on the Google account.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE. La forme commune
-aux six services Google vit chez le porteur du compte (`providers/google.service`) —
-ici, ce qui distingue CELUI-CI (split du 2026-09-26).
+Sole home of its entry: `providers/__init__.py` AGGREGATES it. The shape common
+to the six Google services lives with the account carrier (`providers/google.service`) —
+here, what distinguishes THIS ONE (split of 2026-09-26).
 """
 from __future__ import annotations
 
 from .google import service
 
-# Google Sheets : la personne autorise CE service sur son compte Google, depuis cette
-# carte, avec ses seuls scopes — le compte (la ligne du coffre, le refresh token) est
-# celui du connecteur `google`, partagé avec les cinq autres services.
+# Google Sheets: the person authorizes THIS service on their Google account, from this
+# card, with its own scopes only — the account (the vault row, the refresh token) is
+# that of the `google` connector, shared with the five other services.
 CONNECTOR = service(
     "sheets",
     label="Google Sheets",
-    help="tes feuilles de calcul — lire, écrire, créer ; scope `spreadsheets`, accordé sur ton compte Google",
+    help="your spreadsheets — read, write, create; `spreadsheets` scope, granted on your Google account",
     href="https://docs.google.com/spreadsheets",
 )
 
 CATEGORY = "Comms"
 LOGO_DOMAIN = "google.com"
 DESCRIPTION = (
-    "Google Sheets, sur ton compte Google : lire et écrire les cellules d'un tableur, en créer un vide. Un consentement qui ne demande que le scope Sheets."
+    "Google Sheets, on your Google account: read and write a spreadsheet's cells, create an empty one. A consent that only asks for the Sheets scope."
 )

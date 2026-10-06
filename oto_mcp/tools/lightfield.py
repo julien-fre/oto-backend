@@ -1,36 +1,35 @@
-"""Lightfield — CRM agent-native : comptes, contacts, opportunités, listes, notes,
-tâches, réunions, emails.
+"""Lightfield — agent-native CRM: accounts, contacts, opportunities, lists, notes,
+tasks, meetings, emails.
 
-Wrappe `oto.tools.lightfield.client.LightfieldClient` (API v1, Bearer `sk_lf_…`).
-keyed `api_key`, byo-only : chaque organisation pose SA clé, sur SON workspace — il
-n'y a pas de clé oto partagée, et il ne peut pas y en avoir (les données sont celles
-du client).
+Wraps `oto.tools.lightfield.client.LightfieldClient` (API v1, Bearer `sk_lf_…`).
+keyed `api_key`, byo-only: each organization sets ITS key, on ITS workspace — there
+is no shared oto key, and there cannot be one (the data is the customer's).
 
-**Neuf outils, un par objet métier**, verbe en `op=`. Le regroupement suit l'objet
-et non une catégorie vague : les 29 scopes de Lightfield sont eux-mêmes par objet ×
-verbe, donc une frontière d'outil = une frontière de permission, et un scope manquant
-fait échouer UN outil dont le message peut nommer le scope en cause.
+**Nine tools, one per business object**, verb in `op=`. The grouping follows the object
+and not a vague category: Lightfield's 29 scopes are themselves per object ×
+verb, so a tool boundary = a permission boundary, and a missing scope
+fails ONE tool whose message can name the scope at fault.
 
-⚠️ **Le modèle de champs est PROPRE À CHAQUE WORKSPACE.** Un enregistrement porte
-`fields: {clé: {value, valueType}}` où les clés sont définies par le client, pas par
-Lightfield. Aucune clé n'est écrite en dur ici : `op="definitions"` les découvre, et
-toute écriture VALIDE ses clés contre les définitions AVANT d'appeler l'API — une clé
-inconnue est refusée en nommant les clés valides, jamais avalée en 400.
+⚠️ **The field model is SPECIFIC TO EACH WORKSPACE.** A record carries
+`fields: {key: {value, valueType}}` where the keys are defined by the customer, not by
+Lightfield. No key is hard-coded here: `op="definitions"` discovers them, and
+every write VALIDATES its keys against the definitions BEFORE calling the API — an unknown
+key is refused by naming the valid keys, never swallowed as a 400.
 
-⚠️ **`op="search"` et `op="get"` ne sont pas interchangeables.** La recherche sert un
-index qui peut être en retard (doc éditeur) ; relire une écriture par la recherche
-peut rendre l'état d'AVANT. Après une écriture, relire par `op="get"`.
+⚠️ **`op="search"` and `op="get"` are not interchangeable.** Search serves an
+index that may lag (vendor docs); re-reading a write through search
+may return the state from BEFORE. After a write, re-read with `op="get"`.
 
-Sorties PROJETÉES par défaut (id, date, lien, champs aplatis `clé: valeur`) ; les
-relations sont écartées et la réponse le DIT (bloc `projection`). `full=True` rend
-l'enregistrement brut. Un CRM rend des enregistrements gras : sans projection, une
-recherche de 25 lignes noie le contexte de l'agent.
+Outputs are PROJECTED by default (id, date, link, flattened `key: value` fields); the
+relationships are dropped and the response SAYS so (`projection` block). `full=True` returns
+the raw record. A CRM returns fat records: without projection, a
+25-row search drowns the agent's context.
 
-Écritures : `dry_run` partout, défaut `False` — SAUF l'envoi d'email, seul geste qui
-sort de la plateforme et atteint une personne réelle, en dry-run par DÉFAUT.
+Writes: `dry_run` everywhere, default `False` — EXCEPT email sending, the only action that
+leaves the platform and reaches a real person, dry-run by DEFAULT.
 
-Les appels au client sont écrits en clair (`_client().list_accounts(…)`) : c'est ce
-qui les rend vérifiables par la sonde version-skew (`test_tools_client_methods_exist`).
+Calls to the client are written in plain form (`_client().list_accounts(…)`): that is what
+makes them verifiable by the version-skew probe (`test_tools_client_methods_exist`).
 """
 from __future__ import annotations
 
@@ -43,11 +42,11 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..connectors import verify as connector_verify
 
-# Scopes de lecture « cœur CRM » : une clé qui n'en a AUCUN authentifie mais ne peut
-# rien faire d'utile — la sonde doit le dire plutôt que de rendre un vert trompeur.
+# "CRM core" read scopes: a key that has NONE authenticates but cannot do
+# anything useful — the probe must say so rather than return a misleading green.
 _CORE_READ_SCOPES = ("accounts:read", "contacts:read", "opportunities:read")
 
-# Écarté de la projection par défaut : gras, et rarement ce qu'on lit pour CHOISIR.
+# Dropped from the default projection: fat, and rarely what one reads in order to CHOOSE.
 _DROPPED = ("relationships",)
 
 
@@ -60,58 +59,58 @@ def _upstream_message(e) -> str:
     body = e.body if isinstance(e.body, dict) else {}
     code, param = body.get("code"), body.get("param")
     if status == 401:
-        return ("Lightfield a rejeté la clé API (401) — vérifie la clé configurée sur "
-                "ce connecteur (Lightfield : Settings → API keys).")
+        return ("Lightfield rejected the API key (401) — check the key configured on "
+                "this connector (Lightfield: Settings → API keys).")
     if status == 403:
-        return (f"Lightfield a refusé l'accès (403{f', {code}' if code else ''}) — la clé "
-                "existe mais il lui manque le scope de cette opération. Les scopes se "
-                "choisissent à la CRÉATION de la clé : il faut en créer une nouvelle "
-                "avec le scope manquant, on ne peut pas l'ajouter après coup.")
+        return (f"Lightfield denied access (403{f', {code}' if code else ''}) — the key "
+                "exists but lacks the scope for this operation. Scopes are "
+                "chosen at key CREATION: you must create a new one "
+                "with the missing scope, it cannot be added afterwards.")
     if status == 404:
-        return "Lightfield : ressource introuvable (404) — vérifie l'identifiant."
+        return "Lightfield: resource not found (404) — check the identifier."
     if status == 409:
-        return ("Lightfield : conflit (409) — l'enregistrement a changé entre-temps. "
-                "Relis-le avec op='get' puis réessaie sur l'état frais.")
+        return ("Lightfield: conflict (409) — the record changed in the meantime. "
+                "Re-read it with op='get' then retry on the fresh state.")
     if status in (400, 422):
         if code in ("unknown_field", "unknown_relationship"):
-            return (f"Lightfield ne connaît pas ce champ dans CE workspace "
-                    f"({code}{f' : {param}' if param else ''}). Les champs sont propres "
-                    "à chaque workspace : appelle op='definitions' sur cet objet pour "
-                    "lire les clés valides.")
-        return (f"Lightfield a refusé la requête (HTTP {status}"
-                f"{f', {code}' if code else ''}) : {e.body}")
+            return (f"Lightfield does not know this field in THIS workspace "
+                    f"({code}{f': {param}' if param else ''}). Fields are specific "
+                    "to each workspace: call op='definitions' on this object to "
+                    "read the valid keys.")
+        return (f"Lightfield rejected the request (HTTP {status}"
+                f"{f', {code}' if code else ''}): {e.body}")
     if status == 429:
-        return "Lightfield : trop de requêtes (429) — réessaie dans un instant."
+        return "Lightfield: too many requests (429) — retry in a moment."
     if status in (500, 502, 503, 504):
-        return f"Lightfield est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Lightfield a refusé la requête (HTTP {status}): {e.body}"
+        return f"Lightfield is temporarily unavailable (HTTP {status}) — retry later."
+    return f"Lightfield rejected the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : `/auth/validate` (gratuit, AUCUN scope requis)
-    — puis on exige au moins un scope de lecture cœur.
+    """"Test the connection" probe: `/auth/validate` (free, NO scope required)
+    — then we require at least one core read scope.
 
-    Tester l'auth seule rendrait un vert trompeur : les scopes de Lightfield se
-    choisissent à la création de la clé, donc une clé parfaitement valide mais cochée
-    sans `accounts/contacts/opportunities:read` répond 200 ici et échouera sur CHAQUE
-    appel réel. C'est la leçon Zoho, à l'identique.
+    Testing auth alone would return a misleading green: Lightfield's scopes are
+    chosen at key creation, so a perfectly valid key ticked
+    without `accounts/contacts/opportunities:read` answers 200 here and will fail on EVERY
+    real call. It is the Zoho lesson, identically.
     """
     from oto.tools.lightfield.client import LightfieldClient, scope_granted
     info = LightfieldClient(api_key=fields["key"]).validate()
     if not info.get("active"):
-        raise ValueError("Lightfield indique que cette clé n'est pas active.")
+        raise ValueError("Lightfield reports that this key is not active.")
     if not any(scope_granted(info, s) for s in _CORE_READ_SCOPES):
         granted = info.get("scopes") or []
         raise ValueError(
-            "La clé est valide mais ne porte aucun scope de lecture CRM "
-            f"(accordés : {granted or 'aucun'}). Recrée une clé Lightfield en cochant "
-            "au moins accounts:read, contacts:read ou opportunities:read — les scopes "
-            "se choisissent à la création et ne s'ajoutent pas après coup.")
+            "The key is valid but carries no CRM read scope "
+            f"(granted: {granted or 'none'}). Recreate a Lightfield key ticking "
+            "at least accounts:read, contacts:read or opportunities:read — scopes "
+            "are chosen at creation and cannot be added afterwards.")
 
 
 def _flatten(record: Any) -> Any:
-    """`fields: {clé: {value, valueType}}` → `fields: {clé: valeur}`, relations
-    écartées. Le `valueType` est un détail de transport : l'agent veut la valeur."""
+    """`fields: {key: {value, valueType}}` → `fields: {key: value}`, relationships
+    dropped. `valueType` is a transport detail: the agent wants the value."""
     if not isinstance(record, dict):
         return record
     out = {k: v for k, v in record.items() if k not in _DROPPED and k != "fields"}
@@ -124,8 +123,8 @@ def _flatten(record: Any) -> Any:
 
 
 def _project(payload: Any, full: bool) -> Any:
-    """`full=True` → payload INCHANGÉ. Sinon on aplatit et on NOMME ce qui manque :
-    une sortie amputée en silence fait croire à l'agent qu'il a tout lu."""
+    """`full=True` → payload UNCHANGED. Otherwise we flatten and NAME what is missing:
+    an output silently truncated makes the agent believe it has read everything."""
     if full or not isinstance(payload, dict):
         return payload
     data = payload.get("data")
@@ -146,8 +145,8 @@ def _project(payload: Any, full: bool) -> Any:
 
 
 def _field_keys(definitions: Any) -> set:
-    """Les clés de champ déclarées par CE workspace (`fieldDefinitions` est une MAP
-    clé → définition)."""
+    """The field keys declared by THIS workspace (`fieldDefinitions` is a MAP
+    key → definition)."""
     if not isinstance(definitions, dict):
         return set()
     defs = definitions.get("fieldDefinitions")
@@ -155,35 +154,35 @@ def _field_keys(definitions: Any) -> set:
 
 
 def _check_fields(payload: dict, definitions: Any, obj: str) -> None:
-    """Refuse une clé de champ que CE workspace ne déclare pas, en nommant les clés
-    valides. Sans ça l'API rend un 400 `unknown_field` — exact, mais muet sur ce qui
-    AURAIT marché, et l'agent réessaie au hasard."""
+    """Refuses a field key that THIS workspace does not declare, naming the valid
+    keys. Without this the API returns a 400 `unknown_field` — accurate, but silent on what
+    WOULD have worked, and the agent retries at random."""
     fields = payload.get("fields")
     if not isinstance(fields, dict) or not fields:
         return
     known = _field_keys(definitions)
-    if not known:                      # définitions illisibles : ne pas bloquer
+    if not known:                      # unreadable definitions: do not block
         return
     unknown = sorted(set(fields) - known)
     if unknown:
         raise _bad(
-            f"Champs inconnus sur `{obj}` dans ce workspace : {unknown}. "
-            f"Clés valides : {sorted(known)}. "
-            "Les champs sont propres à chaque workspace Lightfield.")
+            f"Unknown fields on `{obj}` in this workspace: {unknown}. "
+            f"Valid keys: {sorted(known)}. "
+            "Fields are specific to each Lightfield workspace.")
 
 
-# `filters` est SPLATÉ à côté de `limit`/`offset` : une clé de filtre portant l'un de
-# ces deux noms lèverait un TypeError (« multiple values for keyword argument ») que
-# `_run` ne traduit pas — l'agent recevrait une erreur interne opaque au lieu d'un refus
-# qui nomme le paramètre dédié.
+# `filters` is SPLATTED next to `limit`/`offset`: a filter key bearing one of
+# these two names would raise a TypeError ("multiple values for keyword argument") that
+# `_run` does not translate — the agent would receive an opaque internal error instead of a refusal
+# that names the dedicated parameter.
 _RESERVED_FILTERS = ("limit", "offset")
 
 
 def _check_filters(filters: Any) -> None:
     clash = sorted(k for k in (filters or {}) if k in _RESERVED_FILTERS)
     if clash:
-        raise _bad(f"`filters` ne peut pas porter {clash} : la pagination passe par les "
-                   "paramètres dédiés `limit` et `offset` de l'outil.")
+        raise _bad(f"`filters` cannot carry {clash}: pagination goes through the "
+                   "tool's dedicated `limit` and `offset` parameters.")
 
 
 def register(mcp: FastMCP) -> None:
@@ -197,7 +196,7 @@ def register(mcp: FastMCP) -> None:
         return LightfieldClient(api_key=key)
 
     def _run(fn):
-        """Traduit un refus de Lightfield en erreur d'outil actionnable."""
+        """Translates a Lightfield refusal into an actionable tool error."""
         try:
             return fn()
         except ValueError as e:
@@ -205,9 +204,9 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
 
-    # --- fabrique des trois objets « cœur » ---------------------------------
-    # comptes / contacts / opportunités ont EXACTEMENT la même surface : une
-    # fabrique évite trois copies qui divergeraient au premier correctif.
+    # --- factory for the three "core" objects -------------------------------
+    # accounts / contacts / opportunities have EXACTLY the same surface: a
+    # factory avoids three copies that would diverge at the first fix.
 
     def _core_object(obj: str, list_fn, get_fn, create_fn, update_fn, defs_fn):
         def handler(op, record_id, fields, filters, limit, offset, dry_run, full):
@@ -220,12 +219,12 @@ def register(mcp: FastMCP) -> None:
                     full)
             if op == "get":
                 if not record_id:
-                    raise _bad(f"op='get' : `record_id` requis (id d'un {obj}).")
+                    raise _bad(f"op='get': `record_id` required (id of a {obj}).")
                 return _project(_run(lambda: get_fn(record_id)), full)
             if op == "upsert":
                 if not isinstance(fields, dict) or not fields:
-                    raise _bad("op='upsert' : `fields` requis "
-                               "(clé → valeur, clés lues par op='definitions').")
+                    raise _bad("op='upsert': `fields` required "
+                               "(key → value, keys read by op='definitions').")
                 payload = {"fields": fields}
                 _check_fields(payload, _run(defs_fn), obj)
                 if dry_run:
@@ -235,12 +234,12 @@ def register(mcp: FastMCP) -> None:
                 if record_id:
                     return _project(_run(lambda: update_fn(record_id, payload)), full)
                 return _project(_run(lambda: create_fn(payload)), full)
-            raise _bad(f"`op` invalide : {op!r} "
-                       "(attendu : search | get | upsert | definitions).")
+            raise _bad(f"Invalid `op`: {op!r} "
+                       "(expected: search | get | upsert | definitions).")
         return handler
 
     _accounts = _core_object(
-        "compte",
+        "account",
         lambda **kw: _client().list_accounts(**kw),
         lambda i: _client().get_account(i),
         lambda p: _client().create_account(p),
@@ -254,7 +253,7 @@ def register(mcp: FastMCP) -> None:
         lambda i, p: _client().update_contact(i, p),
         lambda: _client().contact_definitions())
     _opportunities = _core_object(
-        "opportunité",
+        "opportunity",
         lambda **kw: _client().list_opportunities(**kw),
         lambda i: _client().get_opportunity(i),
         lambda p: _client().create_opportunity(p),
@@ -375,7 +374,7 @@ def register(mcp: FastMCP) -> None:
         """
         return _opportunities(op, record_id, fields, filters, limit, offset, dry_run, full)
 
-    # --- listes -------------------------------------------------------------
+    # --- lists --------------------------------------------------------------
 
     @mcp.tool()
     def lightfield_lists(
@@ -413,15 +412,15 @@ def register(mcp: FastMCP) -> None:
                             full)
         if op == "get":
             if not list_id:
-                raise _bad("op='get' : `list_id` requis.")
+                raise _bad("op='get': `list_id` required.")
             return _project(_run(lambda: _client().get_list(list_id)), full)
         if op == "members":
             if not list_id:
-                raise _bad("op='members' : `list_id` requis.")
-            # Lambdas et non méthodes liées : la forme liée construisait les TROIS
-            # clients (donc trois `resolve_api_key` — lecture du coffre + déchiffrement)
-            # pour n'en garder qu'un. L'appel reste écrit EN CLAIR, seule forme que la
-            # sonde version-skew sait lire.
+                raise _bad("op='members': `list_id` required.")
+            # Lambdas and not bound methods: the bound form built all THREE
+            # clients (hence three `resolve_api_key` — vault read + decryption)
+            # to keep only one. The call stays written IN PLAIN FORM, the only form the
+            # version-skew probe can read.
             fn = {
                 "accounts": lambda: _client().list_accounts_of_list(
                     list_id, limit=limit, offset=offset),
@@ -433,7 +432,7 @@ def register(mcp: FastMCP) -> None:
             return _project(_run(fn), full)
         if op == "upsert":
             if not isinstance(fields, dict) or not fields:
-                raise _bad("op='upsert' : `fields` requis.")
+                raise _bad("op='upsert': `fields` required.")
             payload = {"fields": fields}
             if dry_run:
                 return {"dry_run": True, "would": "update" if list_id else "create",
@@ -441,9 +440,9 @@ def register(mcp: FastMCP) -> None:
             if list_id:
                 return _project(_run(lambda: _client().update_list(list_id, payload)), full)
             return _project(_run(lambda: _client().create_list(payload)), full)
-        raise _bad(f"`op` invalide : {op!r} (attendu : list | get | members | upsert).")
+        raise _bad(f"Invalid `op`: {op!r} (expected: list | get | members | upsert).")
 
-    # --- notes & tâches -----------------------------------------------------
+    # --- notes & tasks ------------------------------------------------------
 
     @mcp.tool()
     def lightfield_notes(
@@ -470,10 +469,10 @@ def register(mcp: FastMCP) -> None:
         if op == "definitions":
             return _run(lambda: _client().note_definitions())
         if op != "create":
-            raise _bad(f"`op` invalide : {op!r} (attendu : create | definitions).")
+            raise _bad(f"Invalid `op`: {op!r} (expected: create | definitions).")
         if not isinstance(fields, dict) or not fields:
-            raise _bad("op='create' : `fields` requis "
-                       "(clé → valeur, clés lues par op='definitions').")
+            raise _bad("op='create': `fields` required "
+                       "(key → value, keys read by op='definitions').")
         payload = {"fields": fields}
         _check_fields(payload, _run(lambda: _client().note_definitions()), "note")
         if dry_run:
@@ -505,11 +504,11 @@ def register(mcp: FastMCP) -> None:
         if op == "definitions":
             return _run(lambda: _client().task_definitions())
         if op != "upsert":
-            raise _bad(f"`op` invalide : {op!r} (attendu : upsert | definitions).")
+            raise _bad(f"Invalid `op`: {op!r} (expected: upsert | definitions).")
         if not isinstance(fields, dict) or not fields:
-            raise _bad("op='upsert' : `fields` requis.")
+            raise _bad("op='upsert': `fields` required.")
         payload = {"fields": fields}
-        _check_fields(payload, _run(lambda: _client().task_definitions()), "tâche")
+        _check_fields(payload, _run(lambda: _client().task_definitions()), "task")
         if dry_run:
             return {"dry_run": True, "would": "update" if record_id else "create",
                     "record_id": record_id, "payload": payload}
@@ -517,7 +516,7 @@ def register(mcp: FastMCP) -> None:
             return _project(_run(lambda: _client().update_task(record_id, payload)), full)
         return _project(_run(lambda: _client().create_task(payload)), full)
 
-    # --- réunions -----------------------------------------------------------
+    # --- meetings -----------------------------------------------------------
 
     @mcp.tool()
     def lightfield_meetings(
@@ -551,9 +550,9 @@ def register(mcp: FastMCP) -> None:
                 limit=limit, offset=offset, **(filters or {}))), full)
         if op == "get":
             if not record_id:
-                raise _bad("op='get' : `record_id` requis.")
+                raise _bad("op='get': `record_id` required.")
             return _project(_run(lambda: _client().get_meeting(record_id)), full)
-        raise _bad(f"`op` invalide : {op!r} (attendu : search | get | definitions).")
+        raise _bad(f"Invalid `op`: {op!r} (expected: search | get | definitions).")
 
     # --- emails -------------------------------------------------------------
 
@@ -613,14 +612,14 @@ def register(mcp: FastMCP) -> None:
                 limit=limit, offset=offset, **(filters or {}))), full)
         if op == "get":
             if not record_id:
-                raise _bad("op='get' : `record_id` requis.")
+                raise _bad("op='get': `record_id` required.")
             return _project(_run(lambda: _client().get_email(record_id)), full)
         if op not in ("send", "draft"):
-            raise _bad(f"`op` invalide : {op!r} (attendu : search | get | send | draft).")
+            raise _bad(f"Invalid `op`: {op!r} (expected: search | get | send | draft).")
         if not sender or not sender.strip():
-            raise _bad(f"op='{op}' : `sender` requis — l'adresse d'une boîte mail "
-                       "CONNECTÉE à Lightfield (Google ou Microsoft) appartenant au "
-                       "propriétaire de la clé API. Sans elle, rien ne peut partir.")
+            raise _bad(f"op='{op}': `sender` required — the address of a mailbox "
+                       "CONNECTED to Lightfield (Google or Microsoft) belonging to the "
+                       "API key owner. Without it, nothing can go out.")
         payload: dict = {"from": sender.strip()}
         for k, v in (("to", to), ("cc", cc), ("bcc", bcc)):
             if v:
@@ -630,16 +629,16 @@ def register(mcp: FastMCP) -> None:
         if body:
             payload["messageBody"] = {"content": body}
         if op == "send" and not payload.get("to"):
-            raise _bad("op='send' : `to` requis (au moins un destinataire).")
+            raise _bad("op='send': `to` required (at least one recipient).")
         if dry_run:
             return {"dry_run": True, "would": op, "payload": payload,
-                    "note": ("Rien n'est parti. Repasse avec dry_run=False pour "
-                             + ("envoyer." if op == "send" else "écrire le brouillon."))}
+                    "note": ("Nothing was sent. Call again with dry_run=False to "
+                             + ("send." if op == "send" else "write the draft."))}
         if op == "send":
             return _run(lambda: _client().send_email(payload))
         return _run(lambda: _client().draft_email(payload))
 
-    # --- types d'objets -----------------------------------------------------
+    # --- object types -------------------------------------------------------
 
     @mcp.tool()
     def lightfield_objects(
@@ -663,7 +662,7 @@ def register(mcp: FastMCP) -> None:
         if op == "list":
             return _run(lambda: _client().list_object_types())
         if op != "definitions":
-            raise _bad(f"`op` invalide : {op!r} (attendu : list | definitions).")
+            raise _bad(f"Invalid `op`: {op!r} (expected: list | definitions).")
         if not object_type:
-            raise _bad("op='definitions' : `object_type` requis (slug lu par op='list').")
+            raise _bad("op='definitions': `object_type` required (slug read by op='list').")
         return _run(lambda: _client().object_definitions(object_type))

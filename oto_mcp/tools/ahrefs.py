@@ -1,62 +1,62 @@
 """Ahrefs — SEO data: backlinks, keywords, rank tracking, site audits, brand
 visibility across AI chatbots, on-site analytics, GSC, social publishing.
 
-Wrappe `oto.tools.ahrefs.client.AhrefsClient` (API v3, Bearer). keyed
-`api_key`, byo-only (pas de clé plateforme) : chaque org pose SA clé Ahrefs —
-un seat Ahrefs est cher et par abonnement, même raisonnement que TheirStack.
+Wraps `oto.tools.ahrefs.client.AhrefsClient` (API v3, Bearer). keyed
+`api_key`, byo-only (no platform key): each org supplies ITS OWN Ahrefs key —
+an Ahrefs seat is expensive and per subscription, same reasoning as TheirStack.
 
-**Surface consolidée (ADR 0047 §Amendement)** : Ahrefs expose ~150 opérations
-REST distinctes. Elles se groupent par PRODUIT en un tool avec un axe
-`report=`/`op=` plutôt qu'un tool par endpoint (comme `serpapi_search(engine=)`
-pour ses 40+ moteurs) : `ahrefs_site_explorer`, `ahrefs_keywords_explorer`,
-`ahrefs_site_audit`, `ahrefs_rank_tracker` couvrent 44 endpoints à 4 tools.
-`ahrefs_web_analytics`/`ahrefs_gsc` restent larges (34/12 valeurs de `report`)
-car strictement homogènes — un seul paramètre change de nom d'un rapport à
-l'autre (le filtre de série du chart Web Analytics), porté par `extra`.
+**Consolidated surface (ADR 0047 §Amendment)**: Ahrefs exposes ~150 distinct
+REST operations. They are grouped by PRODUCT into one tool with a
+`report=`/`op=` axis rather than one tool per endpoint (like `serpapi_search(engine=)`
+for its 40+ engines): `ahrefs_site_explorer`, `ahrefs_keywords_explorer`,
+`ahrefs_site_audit`, `ahrefs_rank_tracker` cover 44 endpoints with 4 tools.
+`ahrefs_web_analytics`/`ahrefs_gsc` stay wide (34/12 `report` values)
+because they are strictly homogeneous — a single parameter changes name from one report to
+the next (the Web Analytics chart's series filter), carried by `extra`.
 
-**Aucun param n'est retenu au silence** : un `report`/`op` qui ne reconnaît pas
-un argument fourni REFUSE (jamais un drop silencieux qui rendrait un résultat
-plausible mais faux — leçon silae). Le `select`/`where`/`order_by` d'Ahrefs
-(sa propre « filter syntax », doc `/api/docs/filter-syntax`) n'est PAS retypé
-en dizaines de champs : passthrough sur les noms Ahrefs eux-mêmes, comme la
-DSL TheirStack. Colonnes `select` par défaut posées seulement pour les
-rapports où les identifiants valides ont été vérifiés en doc (voir
-`_DEFAULT_SELECT`) — ailleurs `select` reste requis tel quel, jamais deviné.
+**No param is silently dropped**: a `report`/`op` that does not recognise
+a supplied argument REFUSES (never a silent drop that would return a plausible
+but wrong result — silae lesson). Ahrefs' `select`/`where`/`order_by`
+(its own "filter syntax", doc `/api/docs/filter-syntax`) is NOT retyped
+into dozens of fields: passthrough on Ahrefs' own names, like the
+TheirStack DSL. Default `select` columns are set only for the
+reports whose valid identifiers were verified in the docs (see
+`_DEFAULT_SELECT`) — elsewhere `select` stays required as-is, never guessed.
 
-**Écritures : lecture + création exposées, suppression/patch NON exposées**
-(guide Silae — `tools/silae.py`) : `AhrefsClient` porte les 22 endpoints
-Management en entier (delete_projects, update_project,
+**Writes: read + create exposed, delete/patch NOT exposed**
+(Silae guide — `tools/silae.py`): `AhrefsClient` carries all 22 Management
+endpoints (delete_projects, update_project,
 delete_project_keywords, untag_project_keywords, delete_project_competitors,
 delete_keyword_list_keywords, delete_brand_radar_prompts,
-update_brand_radar_report), mais AUCUN tool d'ici ne les atteint — supprimer
-un projet Rank Tracker ou republier un Brand Radar report est un acte
-délibéré, pas un effet de bord de la couverture client. Idem Social Media :
-`ahrefs_social(op="publish")` publie, mais `delete_social_post`/
-`update_social_post` restent client-only.
+update_brand_radar_report), but NO tool here reaches them — deleting
+a Rank Tracker project or republishing a Brand Radar report is a deliberate
+act, not a side effect of client coverage. Same for Social Media:
+`ahrefs_social(op="publish")` publishes, but `delete_social_post`/
+`update_social_post` stay client-only.
 
-**Provenance de la vérité terrain (2026-08-20, aucune clé API en main) :**
-Ahrefs publie un spec OpenAPI 3.2.0 machine-readable à
-`https://docs.ahrefs.com/openapi.json` (pas de lien direct depuis les pages de
-doc — trouvé après un essai raté sur `/v3/openapi.json`). Tous les noms de
-paramètres, `required`, formes de corps POST/PUT/PATCH, et colonnes `select`
-valides (avec leur coût en unités, tiré des `description` du schéma de
-réponse) de ce module sont vérifiés MOT POUR MOT contre ce spec — pas contre
-un résumé de page doc par un petit modèle (la première passe de recherche
-utilisait WebFetch, dont le résumé s'est révélé fiable sur les noms de
-colonnes mais avait raté trois formes de corps réelles : `project-keywords`
-PUT veut deux tableaux PARALLÈLES `keywords`+`locations` — pas un seul tableau
-enrichi ; `project-keywords-tags` PUT veut `project_id` dans le corps, pas en
-query ; `brand-radar-reports` POST n'a PAS de champ `data_source`/`frequency`
-séparé, seul `prompts_frequency[]` en porte — les trois corrigés ici, chacun
-verrouillé par un test). Ce qui reste NON vérifié : aucun appel n'a été fait à
-la vraie API — le spec dit ce qu'Ahrefs DOCUMENTE accepter, pas ce qu'il
-accepte réellement en prod. Un premier appel réel doit être fait avant de
-faire confiance aveuglément à un comportement non couvert par un test.
+**Provenance of the ground truth (2026-08-20, no API key in hand):**
+Ahrefs publishes a machine-readable OpenAPI 3.2.0 spec at
+`https://docs.ahrefs.com/openapi.json` (no direct link from the doc
+pages — found after a failed attempt on `/v3/openapi.json`). All parameter
+names, `required`, POST/PUT/PATCH body shapes, and valid `select` columns
+(with their cost in units, taken from the response schema `description`s)
+of this module are verified WORD FOR WORD against this spec — not against
+a doc page summary by a small model (the first research pass
+used WebFetch, whose summary proved reliable on column
+names but had missed three real body shapes: `project-keywords`
+PUT wants two PARALLEL arrays `keywords`+`locations` — not a single enriched
+array; `project-keywords-tags` PUT wants `project_id` in the body, not in the
+query; `brand-radar-reports` POST has NO separate `data_source`/`frequency`
+field, only `prompts_frequency[]` carries one — all three fixed here, each
+locked by a test). What remains UNVERIFIED: no call was made to the
+real API — the spec says what Ahrefs DOCUMENTS as accepted, not what it
+actually accepts in prod. A first real call must be made before
+blindly trusting a behavior not covered by a test.
 
-Coût : la plupart des rapports défaultent à `limit=1000` lignes côté Ahrefs si
-omis ; `site-audit/issues` et `site-audit/page-content` coûtent 50 unités/
-requête quel que soit `limit`. `ahrefs_account()` (gratuit) donne la
-consommation réelle — c'est aussi la sonde de connexion.
+Cost: most reports default to `limit=1000` rows on the Ahrefs side if
+omitted; `site-audit/issues` and `site-audit/page-content` cost 50 units/
+request whatever `limit` is. `ahrefs_account()` (free) gives the
+real consumption — it is also the connection probe.
 """
 from __future__ import annotations
 
@@ -69,16 +69,16 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..connectors import verify as connector_verify
 
-# --- select par défaut, uniquement pour les rapports dont les colonnes ont
-# été vérifiées en doc (docs.ahrefs.com, 2026-08-20) — ailleurs `select` reste
-# un param requis tel quel, jamais deviné (cf. docstring module).
-# ⚠️ Certaines colonnes par défaut sont FACTURÉES au-delà du coût de base de la
-# requête (constaté en doc, précision variable selon l'endpoint) : `traffic`/
+# --- default select, only for the reports whose columns were
+# verified in the docs (docs.ahrefs.com, 2026-08-20) — elsewhere `select` stays
+# a required param as-is, never guessed (see module docstring).
+# ⚠️ Some default columns are BILLED beyond the request's base cost (seen in the
+# docs, precision varies by endpoint): `traffic`/
 # `traffic_domain`/`sum_traffic`-like (site_explorer refdomains/organic-competitors,
-# rank_tracker overview, serp_overview) et la plupart des colonnes de top-pages.
-# Un agent qui laisse `select` vide sur ces reports paie donc plus qu'un choix de
-# colonnes minimal — délibéré (ce sont les colonnes les plus utiles), mais à savoir
-# avant de scaler le volume de lignes (`limit`) sur ces reports précis.
+# rank_tracker overview, serp_overview) and most top-pages columns.
+# An agent that leaves `select` empty on these reports therefore pays more than a
+# minimal column choice — deliberate (they are the most useful columns), but worth knowing
+# before scaling the row volume (`limit`) on these specific reports.
 _DEFAULT_SELECT: Dict[tuple, str] = {
     ("site_explorer", "organic-keywords"):
         "keyword,volume,best_position,best_position_url,keyword_difficulty,cpc,sum_traffic",
@@ -97,9 +97,9 @@ _DEFAULT_SELECT: Dict[tuple, str] = {
     ("serp_overview", "serp-overview"): "position,url,title,domain_rating,traffic,type",
 }
 
-# report → (méthode AhrefsClient, params requis pour CE report). Les params
-# optionnels ne sont PAS listés : tout ce qui est fourni et non `None` passe,
-# Ahrefs validant lui-même un param hors-sujet pour un report donné.
+# report → (AhrefsClient method, params required for THIS report). Optional
+# params are NOT listed: anything supplied and non-`None` passes through,
+# Ahrefs itself validating an off-topic param for a given report.
 _SITE_EXPLORER_REPORTS: Dict[str, tuple] = {
     "domain-rating": ("domain_rating", ("target", "date")),
     "backlinks-stats": ("backlinks_stats", ("target", "date")),
@@ -174,8 +174,8 @@ _RANK_TRACKER_REPORTS: Dict[str, tuple] = {
     "competitors-stats": ("rank_competitors_stats", ("project_id", "date", "device", "select")),
 }
 
-# Brand Radar data : GET pour 9 rapports, POST (data_source/select en LISTE,
-# pas en chaîne) pour les 2 rapports POST-only.
+# Brand Radar data: GET for 9 reports, POST (data_source/select as a LIST,
+# not a string) for the 2 POST-only reports.
 _BRAND_RADAR_GET_REPORTS: Dict[str, tuple] = {
     "ai-responses": ("brand_ai_responses", ("data_source", "select")),
     "cited-pages": ("brand_cited_pages", ("data_source", "select")),
@@ -206,41 +206,41 @@ def _bad(msg: str) -> McpError:
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"Ahrefs a rejeté la clé API (HTTP {status}) — vérifie la clé posée sur ce "
-                "connecteur (Ahrefs : Account → API Access).")
+        return (f"Ahrefs rejected the API key (HTTP {status}) — check the key set on this "
+                "connector (Ahrefs: Account → API Access).")
     if status == 400:
-        return (f"Ahrefs a refusé la requête (HTTP 400) : {e.body} — vérifie les identifiants "
-                "de `select`/`where`/`order_by` (chaque endpoint a ses propres colonnes valides, "
-                "voir docs.ahrefs.com) et le format `date` (YYYY-MM-DD).")
+        return (f"Ahrefs refused the request (HTTP 400): {e.body} — check the identifiers "
+                "of `select`/`where`/`order_by` (each endpoint has its own valid columns, "
+                "see docs.ahrefs.com) and the `date` format (YYYY-MM-DD).")
     if status == 429:
-        return "Ahrefs : trop de requêtes (429) — réessaie dans un instant."
+        return "Ahrefs: too many requests (429) — retry in a moment."
     if status in (500, 502, 503, 504):
-        return f"Ahrefs est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Ahrefs a refusé la requête (HTTP {status}) : {e.body}"
+        return f"Ahrefs is temporarily unavailable (HTTP {status}) — retry later."
+    return f"Ahrefs refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : `limits-and-usage`, gratuit et authentifié."""
+    """"Test the connection" probe: `limits-and-usage`, free and authenticated."""
     from oto.tools.ahrefs.client import AhrefsClient
     AhrefsClient(api_key=fields["key"]).subscription_info_limits_and_usage()
 
 
 def _call_report(client, report: str, table: Dict[str, tuple], supplied: Dict[str, Any],
                   extra: Optional[dict]) -> Any:
-    """Dispatch générique report→méthode : REFUSE un report inconnu, un param
-    fourni non pertinent pour CE report, ou un required manquant — jamais un
-    silence qui rendrait un résultat plausible mais faux (leçon silae)."""
+    """Generic report→method dispatch: REFUSES an unknown report, a supplied
+    param irrelevant for THIS report, or a missing required one — never a
+    silence that would return a plausible but wrong result (silae lesson)."""
     entry = table.get(report)
     if entry is None:
-        raise _bad(f"report={report!r} inconnu — valides: {sorted(table)}")
+        raise _bad(f"report={report!r} unknown — valid: {sorted(table)}")
     method_name, required = entry
     kwargs = {k: v for k, v in supplied.items() if v is not None}
     missing = [r for r in required if r not in kwargs]
     if missing:
-        raise _bad(f"report={report!r} requiert {', '.join(missing)}")
+        raise _bad(f"report={report!r} requires {', '.join(missing)}")
     if extra:
         if not isinstance(extra, dict):
-            raise _bad("`extra` doit être un dict de params Ahrefs (passthrough).")
+            raise _bad("`extra` must be a dict of Ahrefs params (passthrough).")
         kwargs.update(extra)
     return getattr(client, method_name)(**kwargs)
 
@@ -336,8 +336,8 @@ def register(mcp: FastMCP) -> None:
                 merged last, overrides the typed args above.
         """
         if country is not None and report in _SITE_EXPLORER_NO_COUNTRY:
-            raise _bad(f"report={report!r} n'a pas de paramètre `country` — "
-                       "voir docs.ahrefs.com pour ce report.")
+            raise _bad(f"report={report!r} has no `country` parameter — "
+                       "see docs.ahrefs.com for this report.")
         if select is None:
             select = _DEFAULT_SELECT.get(("site_explorer", report))
         supplied = dict(target=target, select=select, date=date, date_from=date_from,
@@ -552,7 +552,7 @@ def register(mcp: FastMCP) -> None:
             order_by: sort spec, e.g. ["field_name:desc"].
         """
         if not targets or not all({"url", "mode", "protocol"} <= t.keys() for t in targets):
-            raise _bad("`targets` doit être une liste de {'url','mode','protocol'}.")
+            raise _bad("`targets` must be a list of {'url','mode','protocol'}.")
         body: dict = {}
         if country is not None:
             body["country"] = country
@@ -613,11 +613,11 @@ def register(mcp: FastMCP) -> None:
             for name, v in (("project_name", project_name), ("url", url), ("mode", mode),
                              ("protocol", protocol)):
                 if v is None:
-                    raise _bad(f"op='create' requiert {name}")
+                    raise _bad(f"op='create' requires {name}")
             body = {k: v for k, v in dict(access=access, owned_by=owned_by,
                                            folder_id=folder_id).items() if v is not None}
             return _run(lambda: client.create_project(project_name, url, mode, protocol, **body))
-        raise _bad("op doit être 'list' ou 'create'")
+        raise _bad("op must be 'list' or 'create'")
 
     @mcp.tool()
     def ahrefs_project_keywords(
@@ -649,15 +649,15 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.project_keywords(project_id=project_id))
         if op == "add":
             if not keywords or not locations:
-                raise _bad("op='add' requiert `keywords` et `locations` (même longueur, "
-                           "appariés par position)")
+                raise _bad("op='add' requires `keywords` and `locations` (same length, "
+                           "matched by position)")
             return _run(lambda: client.add_project_keywords(project_id, keywords, locations))
         if op == "tag":
             if not keywords or not tags:
-                raise _bad("op='tag' requiert `keywords` et `tags`")
+                raise _bad("op='tag' requires `keywords` and `tags`")
             kwargs = {"update_mode": update_mode} if update_mode is not None else {}
             return _run(lambda: client.tag_project_keywords(project_id, keywords, tags, **kwargs))
-        raise _bad("op doit être 'list', 'add' ou 'tag'")
+        raise _bad("op must be 'list', 'add' or 'tag'")
 
     @mcp.tool()
     def ahrefs_project_competitors(
@@ -677,9 +677,9 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.project_competitors(project_id=project_id))
         if op == "add":
             if not competitors:
-                raise _bad("op='add' requiert `competitors`")
+                raise _bad("op='add' requires `competitors`")
             return _run(lambda: client.add_project_competitors(project_id, competitors))
-        raise _bad("op doit être 'list' ou 'add'")
+        raise _bad("op must be 'list' or 'add'")
 
     @mcp.tool()
     def ahrefs_locations(country_code: str, us_state: Optional[str] = None) -> object:
@@ -712,9 +712,9 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.keyword_list_keywords(keyword_list_id=keyword_list_id))
         if op == "add":
             if not keywords:
-                raise _bad("op='add' requiert `keywords`")
+                raise _bad("op='add' requires `keywords`")
             return _run(lambda: client.add_keyword_list_keywords(keyword_list_id, keywords))
-        raise _bad("op doit être 'list' ou 'add'")
+        raise _bad("op must be 'list' or 'add'")
 
     @mcp.tool()
     def ahrefs_brand_radar_report(
@@ -747,11 +747,11 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.brand_radar_reports())
         if op == "create":
             if not prompts_frequency:
-                raise _bad("op='create' requiert `prompts_frequency`")
+                raise _bad("op='create' requires `prompts_frequency`")
             body = {k: v for k, v in dict(project_id=project_id, name=name, brand=brand,
                                            competitors=competitors).items() if v is not None}
             return _run(lambda: client.create_brand_radar_report(prompts_frequency, **body))
-        raise _bad("op doit être 'list' ou 'create'")
+        raise _bad("op must be 'list' or 'create'")
 
     @mcp.tool()
     def ahrefs_brand_radar_prompt(
@@ -773,9 +773,9 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.brand_radar_prompts(report_id=report_id))
         if op == "create":
             if not countries or not prompts:
-                raise _bad("op='create' requiert `countries` et `prompts`")
+                raise _bad("op='create' requires `countries` and `prompts`")
             return _run(lambda: client.create_brand_radar_prompts(report_id, countries, prompts))
-        raise _bad("op doit être 'list' ou 'create'")
+        raise _bad("op must be 'list' or 'create'")
 
     # ================================================================
     # Brand Radar (data) — AI-chatbot visibility of a brand/competitors.
@@ -845,23 +845,23 @@ def register(mcp: FastMCP) -> None:
         client = _client()
         if report in _BRAND_RADAR_POST_REPORTS:
             method_name, required = _BRAND_RADAR_POST_REPORTS[report]
-            # Vérifié contre le spec OpenAPI d'Ahrefs (docs.ahrefs.com/openapi.json,
-            # 2026-08-20) : le corps POST de citations-overview/citations-history
-            # attend `country` en LISTE (comme data_source/select — même conversion),
-            # mais `brand` (singulier) N'EXISTE PAS côté POST (seul `brands`, un
-            # tableau d'objets {names,url_groups}, existe) et `competitors`/`where`
-            # y sont aussi des LISTES/OBJETS, pas les chaînes CSV/texte du GET — les
-            # transmettre tels quels serait un champ ignoré ou une 400 confuse, donc
-            # REFUSÉS ici plutôt que silencieusement mal formés ; `extra` est la
-            # voie correcte pour ces formes (déjà documentée dans le docstring).
+            # Verified against Ahrefs' OpenAPI spec (docs.ahrefs.com/openapi.json,
+            # 2026-08-20): the POST body of citations-overview/citations-history
+            # expects `country` as a LIST (like data_source/select — same conversion),
+            # but `brand` (singular) DOES NOT EXIST on the POST side (only `brands`, an
+            # array of {names,url_groups} objects, exists) and `competitors`/`where`
+            # are also LISTS/OBJECTS there, not the CSV/text strings of the GET — passing
+            # them as-is would be an ignored field or a confusing 400, so they are
+            # REFUSED here rather than silently malformed; `extra` is the
+            # right way for these shapes (already documented in the docstring).
             for name in ("brand", "competitors", "where", "date"):
                 if supplied.get(name) is not None:
                     raise _bad(
-                        f"report={report!r} (POST) n'accepte pas `{name}` sous cette forme "
-                        f"(ou pas du tout — `date` n'existe pas côté POST, seul "
-                        "`date_from`/`date_to` sur citations-history) — passe la forme "
-                        "attendue via `extra` (ex. `extra={'brands': [{'names': [...]}]}`, "
-                        "voir docs.ahrefs.com).")
+                        f"report={report!r} (POST) does not accept `{name}` in this form "
+                        f"(or not at all — `date` does not exist on the POST side, only "
+                        "`date_from`/`date_to` on citations-history) — pass the expected "
+                        "form via `extra` (e.g. `extra={'brands': [{'names': [...]}]}`, "
+                        "see docs.ahrefs.com).")
             kwargs = {k: v for k, v in supplied.items()
                       if v is not None and k not in ("brand", "competitors", "where", "date")}
             # Le POST attend `data_source`/`select`/`country` en LISTE, le tool en CSV.
@@ -870,7 +870,7 @@ def register(mcp: FastMCP) -> None:
                     kwargs[csv_field] = kwargs[csv_field].split(",")
             missing = [r for r in required if r not in kwargs]
             if missing:
-                raise _bad(f"report={report!r} requiert {', '.join(missing)}")
+                raise _bad(f"report={report!r} requires {', '.join(missing)}")
             if extra:
                 kwargs.update(extra)
             return _run(lambda: getattr(client, method_name)(**kwargs))
@@ -988,10 +988,10 @@ def register(mcp: FastMCP) -> None:
         """
         if report == "anonymous-queries":
             if select is None or country is None:
-                raise _bad("report='anonymous-queries' requiert `select` et `country`")
+                raise _bad("report='anonymous-queries' requires `select` and `country`")
             if project_id is None:
-                raise _bad("report='anonymous-queries' requiert `project_id` "
-                            "(pas de `portfolio_id` sur ce rapport)")
+                raise _bad("report='anonymous-queries' requires `project_id` "
+                            "(no `portfolio_id` on this report)")
             kwargs = {k: v for k, v in dict(limit=limit, order_by=order_by, where=where).items()
                       if v is not None}
             if extra:
@@ -999,7 +999,7 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: _client().gsc_anonymous_queries(
                 select=select, project_id=project_id, date_from=date_from, country=country, **kwargs))
         if project_id is None and portfolio_id is None:
-            raise _bad(f"report={report!r} requiert `project_id` ou `portfolio_id`")
+            raise _bad(f"report={report!r} requires `project_id` or `portfolio_id`")
         kwargs = {k: v for k, v in dict(
             project_id=project_id, portfolio_id=portfolio_id, date_to=date_to, country=country,
             device=device, search_type=search_type, where=where).items() if v is not None}
@@ -1056,18 +1056,18 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.social_channels())
         if op == "channel_metrics":
             if not channel_id or not date_from:
-                raise _bad("op='channel_metrics' requiert `channel_id` et `date_from`")
+                raise _bad("op='channel_metrics' requires `channel_id` and `date_from`")
             kwargs = {"date_to": date_to} if date_to is not None else {}
             return _run(lambda: client.social_channel_metrics(channel_id, date_from, **kwargs))
         if op == "authors":
             return _run(lambda: client.social_authors())
         if op == "activity_history":
             if post_id is None:
-                raise _bad("op='activity_history' requiert `post_id`")
+                raise _bad("op='activity_history' requires `post_id`")
             return _run(lambda: client.social_activity_history(post_id))
         if op == "posts":
             if not status:
-                raise _bad("op='posts' requiert `status`")
+                raise _bad("op='posts' requires `status`")
             kwargs = {k: v for k, v in dict(date_from=date_from, date_to=date_to).items()
                       if v is not None}
             if extra:
@@ -1075,19 +1075,19 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.social_posts(status, **kwargs))
         if op == "post_metrics":
             if not external_post_id or not channel_id or not date_from:
-                raise _bad("op='post_metrics' requiert `external_post_id`, `channel_id`, `date_from`")
+                raise _bad("op='post_metrics' requires `external_post_id`, `channel_id`, `date_from`")
             kwargs = {"date_to": date_to} if date_to is not None else {}
             return _run(lambda: client.social_post_metrics(
                 external_post_id, channel_id, date_from, **kwargs))
         if op == "publish":
             if not channel_ids or not text_content or not timing:
-                raise _bad("op='publish' requiert `channel_ids`, `text_content`, `timing`")
+                raise _bad("op='publish' requires `channel_ids`, `text_content`, `timing`")
             if timing == "scheduled" and not scheduled_at:
-                raise _bad("timing='scheduled' requiert `scheduled_at`")
+                raise _bad("timing='scheduled' requires `scheduled_at`")
             body = {k: v for k, v in dict(scheduled_at=scheduled_at,
                                            auto_comment=auto_comment).items() if v is not None}
             return _run(lambda: client.create_social_post(channel_ids, text_content, timing, **body))
-        raise _bad("op inconnu")
+        raise _bad("unknown op")
 
     # ================================================================
     # Public — no-auth crawler IPs + free-tier Domain Rating.
@@ -1119,7 +1119,7 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.crawler_ip_ranges())
         if op == "domain_rating_free":
             if not target:
-                raise _bad("op='domain_rating_free' requiert `target`")
+                raise _bad("op='domain_rating_free' requires `target`")
             return _run(lambda: client.domain_rating_free(target))
         if op == "domain_rating_top_domains":
             kwargs = {}
@@ -1128,4 +1128,4 @@ def register(mcp: FastMCP) -> None:
             if rank_to is not None:
                 kwargs["to"] = rank_to
             return _run(lambda: client.domain_rating_top_domains(**kwargs))
-        raise _bad("op inconnu")
+        raise _bad("unknown op")

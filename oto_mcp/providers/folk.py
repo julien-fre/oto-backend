@@ -1,20 +1,20 @@
-"""Déclaration de registre du connecteur `folk`.
+"""Registry declaration of the `folk` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# folk : né APRÈS le coffre — pas de colonne legacy users.folk_api_key,
-# le coffre connector_credentials est canonique. byo-only (pas de clé
-# plateforme) ; compte partagé équipe = credential de l'org Otomata.
+# folk: born AFTER the vault — no legacy users.folk_api_key column,
+# the connector_credentials vault is canonical. byo-only (no platform
+# key); shared team account = credential of the Otomata org.
 CONNECTOR = _c(
     "folk", ["folk"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key",
-    # Pas de `cardinality` : `api_key` la dérive en multi. Seule l'annonce STATIQUE
-    # de l'axe reste curée (N clés nommées d'un même membre, usage historique).
+    # No `cardinality`: `api_key` derives it as multi. Only the STATIC
+    # announcement of the axis stays curated (N named keys of the same member, historical use).
     account_axis_static=True,
     label="Folk", help="CRM — contacts, companies, deals & custom objects",
     href="https://app.folk.app",
@@ -24,11 +24,11 @@ CATEGORY = "Prospection"
 PUBLISHER = "Folk"
 LOGO_DOMAIN = "folk.app"
 
-# ⚠️ La fiche a annoncé « coexiste avec le connecteur `folkmcp` (MCP officiel par
-# OAuth) » jusqu'au 2026-09-09 : `folkmcp` est parti avec la fédération MCP (ADR
-# 0069), et cette phrase promettait donc à l'utilisateur un connecteur qu'il ne
-# trouverait nulle part. Une fiche est du TEXTE SERVI — elle se corrige avec le code
-# qu'elle décrit, pas au prochain passage.
+# ⚠️ The listing used to announce "coexists with the `folkmcp` connector (official MCP by
+# OAuth)" until 2026-09-09: `folkmcp` left with the MCP federation (ADR
+# 0069), so that sentence promised the user a connector they would find
+# nowhere. A listing is SERVED TEXT — it gets fixed together with the code it
+# describes, not on the next pass.
 DESCRIPTION = (
-    "Le CRM Folk : contacts, entreprises, deals et objets personnalisés, par clé API."
+    "The Folk CRM: contacts, companies, deals and custom objects, via API key."
 )

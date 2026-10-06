@@ -47,8 +47,8 @@ def test_un_deroule_TERMINE_sans_action_est_REFUSE():
     with pytest.raises(McpError) as e:
         garde(_TERMINE_VIDE)
     msg = e.value.error.message
-    assert "SANS AUCUNE ACTION" in msg and "v2_run-x" in msg
-    assert "n'existent pas" in msg, "la cause : la campagne annoncée n'existe pas"
+    assert "NO ACTION" in msg and "v2_run-x" in msg
+    assert "do not exist" in msg,"la cause : la campagne annoncée n'existe pas"
     assert e.value.error.data["aucune_action"] is True
     assert e.value.error.data["steps_completed"] == 6
 
@@ -58,9 +58,9 @@ def test_le_refus_dit_le_GESTE_verifier_puis_relancer():
         garde(_TERMINE_VIDE)
     msg = e.value.error.message
     assert "origami_campaigns(op='list_for_table'" in msg
-    assert "relance origami_campaign_create" in msg
+    assert "retry origami_campaign_create" in msg
     # …et le symptôme de l'autre cas (enrôlement dans une campagne existante).
-    assert "trouvées" in msg and "contactées" in msg
+    assert "people found" in msg and "contacted count" in msg
 
 
 def test_le_refus_traverse_le_tool_MONTE(monkeypatch):
@@ -74,7 +74,7 @@ def test_le_refus_traverse_le_tool_MONTE(monkeypatch):
         cls.return_value.get_run.return_value = dict(_TERMINE_VIDE)
         with pytest.raises(McpError) as e:
             tool.fn(agent_id="ag-1", run_id="v2_run-x")
-    assert "SANS AUCUNE ACTION" in e.value.error.message
+    assert "NO ACTION" in e.value.error.message
 
 
 def test_un_deroule_EN_COURS_n_est_pas_refuse():

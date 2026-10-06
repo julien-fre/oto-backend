@@ -78,7 +78,7 @@ def test_byo_missing_credential_error_clarifies_the_platform_split(monkeypatch):
 
     def _raise(*a, **k):
         raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-            "Aucun credential `apollo` configuré pour toi. Renseigne-le "
+            "No `apollo` credential configured for you. Set it "
             "sur https://manage.oto.cx/account (section Apollo).")))
 
     monkeypatch.setattr(access, "resolve_credential", _raise)
@@ -88,8 +88,8 @@ def test_byo_missing_credential_error_clarifies_the_platform_split(monkeypatch):
 
     with pytest.raises(McpError) as e:
         fn()
-    assert "Aucun credential" in e.value.error.message
-    assert "recherche" in e.value.error.message  # la clarification a été ajoutée
+    assert "credential configured for" in e.value.error.message
+    assert "search" in e.value.error.message  # la clarification a été ajoutée
 
 
 def test_byo_other_resolution_errors_pass_through_unchanged(monkeypatch):

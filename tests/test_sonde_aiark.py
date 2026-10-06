@@ -47,7 +47,7 @@ def test_un_compte_a_SEC_est_un_refus_de_QUOTA_pas_d_AUTH(monkeypatch):
     with pytest.raises(cv.QuotaEpuise) as e:
         A._verify(_fields("k"))
     assert cv.classer(e.value) == cv.NO_QUOTA
-    assert "Recharge" in str(e.value)
+    assert "Top up" in str(e.value)
 
 
 def test_une_cle_refusee_leve(monkeypatch):
@@ -58,7 +58,7 @@ def test_une_cle_refusee_leve(monkeypatch):
 
 def test_un_solde_ILLISIBLE_echoue_plutot_que_d_inventer(monkeypatch):
     _brancher(monkeypatch, _FauxClient(credits=None))
-    with pytest.raises(RuntimeError, match="sans solde"):
+    with pytest.raises(RuntimeError, match="without a readable credit balance"):
         A._verify(_fields("k"))
 
 

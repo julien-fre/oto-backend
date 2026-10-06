@@ -108,7 +108,7 @@ def test_an_org_that_masks_ANYTHING_keeps_the_documents_locked(monkeypatch, clie
     ne sort pas — et un PDF ne se filtre pas. Le verrou ne s'ouvre que sur « rien »."""
     _politique(monkeypatch, {"payfit": {"rules": [
         {"fields": ["birthDate"], "action": "drop"}]}})
-    with pytest.raises(McpError, match="document non servi"):
+    with pytest.raises(McpError, match="document not served"):
         _tool(tool)(**kwargs)
     getattr(client, methode).assert_not_called()
 

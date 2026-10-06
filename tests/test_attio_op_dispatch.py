@@ -114,7 +114,7 @@ def test_record_search_by_filter_hands_the_attio_filter_to_the_client(client):
 def test_record_search_refuses_query_and_filter_together(client):
     """Le client laisse `filters` écraser `query` en silence : les deux ensemble ne
     feraient qu'une des deux recherches. Refusé avant toute résolution de clé."""
-    with pytest.raises(McpError, match="pas les deux"):
+    with pytest.raises(McpError, match="not both"):
         _tool("attio_record")(object="people", op="search", query="Ada",
                               filter={"email_addresses": "ada@acme.com"})
     assert not client.mock_calls
@@ -146,7 +146,7 @@ def test_record_merge_names_the_primary_then_the_secondary(client):
 def test_record_refuses_an_unknown_object(client):
     """Attio a des objets CUSTOM, mais le client n'expose que les trois standard :
     un objet inconnu doit être nommé, pas silencieusement traité."""
-    with pytest.raises(McpError, match="object doit être"):
+    with pytest.raises(McpError, match="object must be"):
         _tool("attio_record")(object="products", op="list")
     _assert_no_stray_write(client)
 
@@ -435,7 +435,7 @@ def test_default_op_never_writes(client, tool, minimal):
 def test_unknown_op_is_refused_with_the_allowed_list(client, tool, minimal):
     """Une op inconnue doit lever en nommant les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool(tool)(op="nope", **minimal)
     assert not client.mock_calls, "une op inconnue ne doit RIEN appeler"
 
@@ -504,7 +504,7 @@ def test_missing_required_arg_names_the_op_and_the_arg(
     """Argument obligatoire absent → erreur qui NOMME l'op et l'argument, jamais
     un fallback (sur une écriture, un fallback muet toucherait le mauvais
     record)."""
-    with pytest.raises(McpError, match=f"op='{op}' requiert {missing}"):
+    with pytest.raises(McpError, match=f"op='{op}' requires {missing}"):
         _tool(tool)(op=op, **kwargs)
     _assert_no_stray_write(client)
 
@@ -524,7 +524,7 @@ def test_missing_required_arg_names_the_op_and_the_arg(
 def test_empty_payload_counts_as_missing_on_writes(client, tool, op, kwargs):
     """Un dict VIDE sur une écriture = rien à écrire : créerait un record vide,
     ou passerait un PATCH sans effet pour un succès."""
-    with pytest.raises(McpError, match="requiert"):
+    with pytest.raises(McpError, match="requires"):
         _tool(tool)(op=op, **kwargs)
     _assert_no_stray_write(client)
 

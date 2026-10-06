@@ -1,36 +1,36 @@
-## prerequisite — ta clé api folk
+## prerequisite — your folk api key
 
-folk fournit une clé api personnelle. récupère-la dans les [réglages api/développeur de ton compte folk](https://app.folk.app) (doc : [developer.folk.app](https://developer.folk.app)).
-- colle-la dans oto sur ton compte (`/account`), connecteur **folk**
-- byo uniquement : ta clé, ou le credential partagé de ton org — pas de clé plateforme
-- les **groupes** (et leurs champs custom) se listent/créent/modifient via l'api (`folk_group`) — la suppression d'un groupe ou d'un champ custom reste réservée à l'app folk ; retirer un **membre** d'un groupe, en revanche, se fait via l'api (`folk_group(op="remove_member")`)
+folk provides a personal api key. get it from the [api/developer settings of your folk account](https://app.folk.app) (docs: [developer.folk.app](https://developer.folk.app)).
+- paste it into oto on your account (`/account`), **folk** connector
+- byo only: your key, or your org's shared credential — no platform key
+- **groups** (and their custom fields) can be listed/created/updated via the api (`folk_group`) — deleting a group or a custom field remains reserved to the folk app; removing a **member** from a group, however, is done via the api (`folk_group(op="remove_member")`)
 
-## usage — ce que tu peux faire
+## usage — what you can do
 
-gère ton crm folk (personnes/contacts, entreprises, deals ou tout autre objet custom) + notes, interactions et tâches depuis claude. Tout passe par `folk_record` (paramètre `entity`) — il n'y a pas de tool séparé `folk_company`/`folk_contact`/`folk_deal`.
-- « trouve le contact dupont » → `folk_record(op="search")` (entity `person`), puis `folk_record(op="get")` pour la fiche
-- « ajoute jean dupont, cto chez acme » → `folk_record(op="create")` (entity `person`)
-- « log un appel sur ce contact » → `folk_record(op="create")` (entity `interaction`, type/titre/contenu)
-  - ⚠️ `date_time` est **requis** par folk même s'il se lit comme optionnel ; omis, il vaut maintenant. Jusqu'au 27/08/2026 l'omettre rendait un 422 opaque
-- « qu'est-ce qu'on s'est dit avec dupont ? » → `folk_record(op="search", entity="interaction", entity_id="per_…")` : emails, événements d'agenda, messages whatsapp et interactions loggées que folk garde sur cette fiche, puis `op="get"` (avec le même `entity_id`) pour le corps complet d'une seule
-  - ⚠️ **correctif** : ce document a longtemps affirmé que folk ne disait QUE *quand* on avait parlé à quelqu'un, jamais *quoi*. C'était faux — c'était vrai du connecteur, qui n'exposait que la création d'interaction, pas de folk, dont les endpoints de lecture existaient déjà (en open beta)
-  - une interaction n'est pas adressable seule : `entity_id` (la personne/société porteuse) est **obligatoire** en recherche, lecture, modification et suppression
-  - la recherche rend `content: {subject, snippet}` — **pas le corps**. Le corps complet (`body`) ne vient que d'un `op="get"` sur UNE interaction : balayer dit de quoi on a parlé, lire ce qui a été dit coûte un `get` par interaction
-  - les interactions **importées** (email, agenda, whatsapp) sont en lecture seule : folk refuse `op="update"` et `op="delete"` dessus, elles appartiennent à leur source
-  - `when="past"` par défaut (ce qui a eu lieu) ; `"upcoming"` pour ce qui est prévu, `"all"` pour les deux — le défaut MASQUE donc l'à-venir
-  - `privacyLevel` cache le **corps**, pas le sujet : sur `subjectOnly`/`sensitive`/`internal`, le `get` rend toujours subject et snippet mais `body` est simplement absent. la clé est byo → tu vois ce que voit SON propriétaire. un `body` manquant est un résultat de permission, pas une interaction vide
-- « qu'est-ce qui reste ouvert sur ce contact ? » → `folk_record(op="search", entity="task", entity_id="per_…", filters={"completedAt": {"empty": True}})` ; pour clore : `folk_record(op="mark_done", entity="task", ids=[...])` (jusqu'à 50 d'un coup — `entity` est requis), `op="mark_todo"` pour rouvrir
-  - ⚠️ **rappels dépréciés — et ce sont les MÊMES enregistrements** : folk a déprécié `/reminders` le 13/08/2026 (retrait annoncé février 2027) au profit des **tâches**. Vérifié en live le 27/08/2026 : un seul stock, deux vues — `rmd_<uuid>` et `tsk_<uuid>` désignent le même enregistrement, et l'échange de préfixe résout dans les deux sens (30 rappels = 30 tâches, mêmes uuid). Rien n'est donc orphelin : un rappel posé avant la bascule se lit, se filtre et se ferme comme une tâche aujourd'hui. Écris tout ce qui est nouveau en `entity="task"`, qui fait strictement plus (description markdown, filtres par échéance/assigné/complétion, suivi de complétion)
-  - une tâche ne se termine JAMAIS toute seule chez folk (contrairement à un rappel qui se marque « déclenché ») : `completedAt` ne bouge que sur un `mark_done`/`mark_todo` explicite — et il est refusé dans un `op="update"`
-  - ⚠️ pas d'événement webhook `task.*` chez folk à ce jour — seuls les `reminder.*` existent
-- « crée un deal dans le groupe X » → `folk_record(op="create")` (entity `deal`), et `folk_record(op="search", entity="deal")` pour les lister — `object_type` est auto-découvert si omis (voir note ci-dessous) ; ne le passer explicitement que si le groupe a PLUSIEURS objets custom au-delà de person/company (l'auto-découverte lève alors une erreur qui les liste)
-- « ajoute ces 20 contacts » → `folk_record(op="create")` (entity `person`, `items=[...]`) en un seul appel
-- « crée un groupe Leads privé » → `folk_group(op="create", name="Leads", visibility="private")`
-- « ajoute un champ Statut (select) sur les personnes du groupe X » → `folk_group(op="create_custom_field")` (`entity_type="person"` par défaut, `custom_field={"type": "singleSelect", "name": "Statut", "options": [...]}`)
-- ⚠️ seuls `person`/`company` sont des entity_type FIXES. Tout objet au-delà (deal ou autre) est un **objet custom que chaque client folk nomme lui-même** ("Deals" n'est que le nom choisi par CE workspace — un autre pourrait l'appeler "Opportunités", au singulier, etc.). Pour `folk_group(op="custom_fields"/...)`, découvrir le nom : appeler avec n'importe quel entity_type — le 404 de Folk liste les VRAIS entity_type de ce groupe (`"Available entity types are: ..."`), puis rappeler avec le bon nom. `folk_record`'s `object_type` fait cette découverte tout seul (voir note ci-dessus) — seul `folk_group` demande encore de la faire à la main
-- « ajoute jean comme admin du groupe Leads » → `folk_group(op="add_member")` (`user_id` depuis `folk_user(op="list")`, `role="admin"`)
-- « qui a accès au groupe Leads ? » / « retire jean du groupe » → `folk_group(op="members")` / `folk_group(op="remove_member")`
-- ⚠️ un groupe **public** (`visibility="public"`) a une appartenance IMPLICITE : `folk_group(op="members")` y liste TOUT le workspace en rôle "admin", que quelqu'un ait été ajouté ou non (vérifié en live) — `add_member`/`remove_member`/`update_member` n'ont d'effet réel que sur un groupe **private** (appartenance explicite)
-- « préviens mon endpoint à chaque nouveau deal du groupe X » → `folk_webhook(op="create")` (avant ça : `folk_group(op="list")` pour l'id du groupe, `folk_group(op="custom_fields")` si le filtre porte sur un champ custom)
-- « liste mes webhooks » / « désactive ce webhook » → `folk_webhook(op="list")` / `folk_webhook(op="update")` (`fields={"status": "inactive"}`)
-- ⚠️ un filtre de webhook posé via l'api n'existe QUE là : le modifier depuis les réglages de l'app folk le fait disparaître silencieusement
+manage your folk crm (people/contacts, companies, deals or any other custom object) + notes, interactions and tasks from claude. Everything goes through `folk_record` (parameter `entity`) — there is no separate `folk_company`/`folk_contact`/`folk_deal` tool.
+- "find the contact dupont" → `folk_record(op="search")` (entity `person`), then `folk_record(op="get")` for the record
+- "add jean dupont, cto at acme" → `folk_record(op="create")` (entity `person`)
+- "log a call on this contact" → `folk_record(op="create")` (entity `interaction`, type/title/content)
+  - ⚠️ `date_time` is **required** by folk even though it reads as optional; if omitted, it defaults to now. Until 27/08/2026 omitting it returned an opaque 422
+- "what did we say to each other with dupont?" → `folk_record(op="search", entity="interaction", entity_id="per_…")`: emails, calendar events, whatsapp messages and logged interactions that folk keeps on this record, then `op="get"` (with the same `entity_id`) for the full body of a single one
+  - ⚠️ **correction**: this document long claimed that folk only told you *when* you had talked to someone, never *what* was said. That was false — it was true of the connector, which only exposed interaction creation, not of folk, whose read endpoints already existed (in open beta)
+  - an interaction is not addressable on its own: `entity_id` (the person/company that carries it) is **mandatory** for search, read, update and delete
+  - search returns `content: {subject, snippet}` — **not the body**. The full body (`body`) only comes from an `op="get"` on ONE interaction: scanning tells you what was discussed, reading what was said costs one `get` per interaction
+  - **imported** interactions (email, calendar, whatsapp) are read-only: folk refuses `op="update"` and `op="delete"` on them, they belong to their source
+  - `when="past"` by default (what has happened); `"upcoming"` for what is planned, `"all"` for both — so the default HIDES what is upcoming
+  - `privacyLevel` hides the **body**, not the subject: on `subjectOnly`/`sensitive`/`internal`, the `get` still returns subject and snippet but `body` is simply absent. the key is byo → you see what ITS owner sees. a missing `body` is a permission result, not an empty interaction
+- "what is still open on this contact?" → `folk_record(op="search", entity="task", entity_id="per_…", filters={"completedAt": {"empty": True}})`; to close: `folk_record(op="mark_done", entity="task", ids=[...])` (up to 50 at once — `entity` is required), `op="mark_todo"` to reopen
+  - ⚠️ **reminders are deprecated — and they are the SAME records**: folk deprecated `/reminders` on 13/08/2026 (removal announced for February 2027) in favor of **tasks**. Verified live on 27/08/2026: one store, two views — `rmd_<uuid>` and `tsk_<uuid>` designate the same record, and swapping the prefix resolves in both directions (30 reminders = 30 tasks, same uuids). Nothing is orphaned: a reminder set before the switch can be read, filtered and closed like a task today. Write everything new as `entity="task"`, which does strictly more (markdown description, filters by due date/assignee/completion, completion tracking)
+  - a task NEVER completes by itself in folk (unlike a reminder, which gets marked "triggered"): `completedAt` only changes on an explicit `mark_done`/`mark_todo` — and it is refused in an `op="update"`
+  - ⚠️ no `task.*` webhook event in folk to date — only `reminder.*` exist
+- "create a deal in group X" → `folk_record(op="create")` (entity `deal`), and `folk_record(op="search", entity="deal")` to list them — `object_type` is auto-discovered if omitted (see note below); only pass it explicitly if the group has SEVERAL custom objects beyond person/company (auto-discovery then raises an error that lists them)
+- "add these 20 contacts" → `folk_record(op="create")` (entity `person`, `items=[...]`) in a single call
+- "create a private Leads group" → `folk_group(op="create", name="Leads", visibility="private")`
+- "add a Status field (select) on the people of group X" → `folk_group(op="create_custom_field")` (`entity_type="person"` by default, `custom_field={"type": "singleSelect", "name": "Status", "options": [...]}`)
+- ⚠️ only `person`/`company` are FIXED entity_types. Any object beyond those (deal or other) is a **custom object that each folk customer names themselves** ("Deals" is just the name chosen by THIS workspace — another could call it "Opportunities", in the singular, etc.). For `folk_group(op="custom_fields"/...)`, discover the name: call with any entity_type — Folk's 404 lists the REAL entity_types of this group (`"Available entity types are: ..."`), then call again with the right name. `folk_record`'s `object_type` does this discovery on its own (see note above) — only `folk_group` still requires doing it by hand
+- "add jean as admin of the Leads group" → `folk_group(op="add_member")` (`user_id` from `folk_user(op="list")`, `role="admin"`)
+- "who has access to the Leads group?" / "remove jean from the group" → `folk_group(op="members")` / `folk_group(op="remove_member")`
+- ⚠️ a **public** group (`visibility="public"`) has IMPLICIT membership: `folk_group(op="members")` lists the WHOLE workspace there with the "admin" role, whether or not anyone was added (verified live) — `add_member`/`remove_member`/`update_member` only have a real effect on a **private** group (explicit membership)
+- "notify my endpoint on every new deal in group X" → `folk_webhook(op="create")` (before that: `folk_group(op="list")` for the group id, `folk_group(op="custom_fields")` if the filter is on a custom field)
+- "list my webhooks" / "disable this webhook" → `folk_webhook(op="list")` / `folk_webhook(op="update")` (`fields={"status": "inactive"}`)
+- ⚠️ a webhook filter set via the api exists ONLY there: editing it from the folk app settings makes it silently disappear

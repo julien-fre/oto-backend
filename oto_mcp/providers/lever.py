@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `lever`.
+"""Registry declaration for the `lever` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from ._model import _c
 CONNECTOR = _c(
     "lever", ["lever"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Lever",
-    help="ATS — opportunities (candidats), postings, stages, notes",
+    help="ATS — opportunities (candidates), postings, stages, notes",
     href="https://www.lever.co",
 )
 
@@ -19,6 +19,6 @@ PUBLISHER = "Lever"
 LOGO_DOMAIN = "lever.co"
 
 DESCRIPTION = (
-    "Le recrutement suivi dans Lever (ATS) : opportunities (candidats), "
-    "postings (offres), étapes du pipeline (stages) et notes."
+    "Recruiting tracked in Lever (ATS): opportunities (candidates), "
+    "postings (job openings), pipeline stages and notes."
 )

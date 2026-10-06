@@ -197,7 +197,7 @@ def test_unknown_op_is_refused_with_the_allowed_list(client, op):
     du client (elle est refusée avant même que le client soit construit) : jamais un
     repli silencieux sur le défaut, que l'agent croirait honoré."""
     msg = _raises("sheets_spreadsheet", spreadsheet_id="sid", op=op)
-    assert "op doit être" in msg
+    assert "op must be" in msg
     for expected in ("metadata", "read", "write", "clear"):
         assert expected in msg
     assert client.method_calls == []

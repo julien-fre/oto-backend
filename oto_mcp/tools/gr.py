@@ -1,18 +1,18 @@
-"""Données entreprise Grèce — identité via registres publics (open data, sans clé).
+"""Greece company data — identity via public registers (open data, no key).
 
-- **GEMI** (Γ.Ε.ΜΗ., registre général du commerce) : recherche universelle via
-  l'autocomplete du portail de publicité — gratuit, sans clé, sans reCAPTCHA →
-  liste d'entités (raison sociale, n° GEMI, n° TVA/ΑΦΜ, statut actif/inactif).
-- **VIES** (UE) : enrichissement pour un résultat unique → validité du n° de TVA
-  intracommunautaire + adresse.
+- **GEMI** (Γ.Ε.ΜΗ., general commercial register): universal search via
+  the publicity portal's autocomplete — free, no key, no reCAPTCHA →
+  list of entities (company name, GEMI no., VAT/ΑΦΜ no., active/inactive status).
+- **VIES** (EU): enrichment for a single result → validity of the intra-community
+  VAT number + address.
 
-Connecteur open-data : pas de credential. Exposé seulement si activé en DB
-(cran d'activation, ADR 0010) — register_all gate sur `connector_activation`.
-Profil approfondi (dirigeants, capital, codes ΚΑΔ) : nécessiterait l'API GEMI
-officielle (clé gratuite) — hors périmètre ici.
+Open-data connector: no credential. Exposed only if activated in the DB
+(activation gate, ADR 0010) — register_all gates on `connector_activation`.
+Deep profile (directors, capital, ΚΑΔ codes): would require the official GEMI API
+(free key) — out of scope here.
 
-Porté de 321agents (`gr_lookup`) : la journalisation d'usage est assurée par le
-CallMonitoringMiddleware d'oto, on ne la recâble pas ici.
+Ported from 321agents (`gr_lookup`): usage logging is handled by oto's
+CallMonitoringMiddleware, we do not rewire it here.
 """
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from fastmcp import FastMCP
 
 _AUTOCOMPLETE = "https://publicity.businessportal.gr/api/autocomplete/{term}"
 _VIES = "https://ec.europa.eu/taxation_customs/vies/rest-api/ms/EL/vat/{n}"
-# Le WAF du registre GEMI rejette les User-Agents non-navigateur (httpx → 429),
-# on présente donc un UA navigateur. Obligatoire, pas optionnel.
+# The GEMI registry's WAF rejects non-browser User-Agents (httpx → 429),
+# so we present a browser UA. Mandatory, not optional.
 _HEADERS = {
     "Accept": "application/json",
     "User-Agent": (
@@ -41,11 +41,11 @@ async def _autocomplete(term: str) -> list[dict]:
         for attempt in range(3):
             r = await c.get(url, headers=_HEADERS)
             if r.status_code == 429:
-                await asyncio.sleep(2 * (attempt + 1))  # throttling registre — backoff bref
+                await asyncio.sleep(2 * (attempt + 1))  # registry throttling — short backoff
                 continue
             break
     if r.status_code == 429:
-        raise RuntimeError("Registre GEMI temporairement indisponible — réessayer.")
+        raise RuntimeError("GEMI registry temporarily unavailable — retry.")
     r.raise_for_status()
     return ((r.json() or {}).get("payload") or {}).get("autocomplete") or []
 
@@ -56,7 +56,7 @@ async def _vies(vat9: str) -> dict | None:
             r = await c.get(_VIES.format(n=vat9), headers=_HEADERS)
         r.raise_for_status()
         d = r.json()
-    # noqa: SILENT — dette déclarée : VIES en panne indiscernable de « TVA introuvable » (#424 Q1)
+    # noqa: SILENT — declared debt: a VIES outage is indistinguishable from "VAT not found" (#424 Q1)
     except Exception:
         return None
     return {
@@ -92,7 +92,7 @@ def register(mcp: FastMCP) -> None:
         q = (query or "").strip()
         if not q:
             raise ValueError("empty `query`.")
-        # ΑΦΜ : retirer un préfixe EL optionnel pour la recherche.
+        # ΑΦΜ: strip an optional EL prefix for the search.
         term = q[2:].strip() if q[:2].upper() == "EL" and q[2:].strip().isdigit() else q
 
         matches = await _autocomplete(term)
@@ -100,7 +100,7 @@ def register(mcp: FastMCP) -> None:
             return {"query": q, "count": 0, "results": [], "note": "No company found."}
 
         results = [_norm(m) for m in matches[:10]]
-        # Enrichissement VIES si un seul résultat porteur d'un n° de TVA.
+        # VIES enrichment if a single result carries a VAT number.
         if len(results) == 1 and results[0]["afm"]:
             vies = await _vies(results[0]["afm"])
             if vies:

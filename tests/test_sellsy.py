@@ -225,7 +225,7 @@ def test_unknown_op_lists_the_accepted_ones():
     from oto_mcp.mcp_errors import McpError
     creds, cls = _with_fake_client()
     with creds, cls:
-        with pytest.raises(McpError, match="op inconnu"):
+        with pytest.raises(McpError, match="Unknown op"):
             _tool("sellsy_contact").fn(op="archive")
 
 
@@ -253,7 +253,7 @@ def test_upstream_403_becomes_an_actionable_tool_error():
     with creds, cls as client_cls:
         client_cls.return_value.list_records.side_effect = UpstreamHTTPError(
             403, {"error": {"message": "Insufficient privileges"}}, service="sellsy")
-        with pytest.raises(McpError, match="droits"):
+        with pytest.raises(McpError, match="rights"):
             _tool("sellsy_third_party").fn(kind="company", op="list")
 
 

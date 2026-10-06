@@ -1,29 +1,29 @@
-"""Nextmotion — les leads (prospects), le journal des appels et des messages, et les
-réglages d'une clinique.
+"""Nextmotion — leads (prospects), the call and message log, and a clinic's
+settings.
 
-Module frère de `nextmotion.py` (cf. `Connector.modules`). Trois outils :
+Sibling module of `nextmotion.py` (see `Connector.modules`). Three tools:
 
-- `nextmotion_lead` — list | get | create | update | delete | convert. Un lead EST une
-  personne : son identité de contact (nom, prénom, email, téléphone) est servie
-  (décision du 2026-10-01), ses notes et sa référence externe (un identifiant chez un
-  tiers) s'écrivent mais ne se relisent jamais. Le pipeline : source, statut, canal,
-  soin souhaité et zone (étiquettes de la clinique), relances, rendez-vous prévu,
-  praticien assigné. Le filtre `search` de l'API (nom, email, téléphone) n'est pas
-  exposé. `convert` rend le patient créé par son seul id.
-- `nextmotion_setting` — les réglages, `kind` × list | get | create | update | delete
-  (+ `duplicate` d'un gabarit de document, `placeholders` des champs de fusion) :
-  abonnement Nextmotion (`feature`), moyens de paiement personnalisés, étiquettes,
-  gabarits de communication et de documents, modèles de questionnaires (`survey_form` :
-  notes BoltNote et consentements de soin — le MODÈLE, jamais une réponse de patient),
-  webhooks. Les gabarits et modèles sortent en MÉTADONNÉES (leur corps est un objet
-  libre non décrit par la spec) mais s'écrivent entiers ; les `headers` d'un webhook
-  s'écrivent et ne sortent jamais (secret du destinataire).
-- `nextmotion_communication` — create seul : consigner un appel, ENVOYER un message
-  (email, SMS, WhatsApp) tiré d'un gabarit, sur un devis, une facture ou un document
-  administratif. Ni le numéro, ni les notes, ni la transcription d'un appel, ni le
-  destinataire d'un message ne ressortent.
+- `nextmotion_lead` — list | get | create | update | delete | convert. A lead IS a
+  person: their contact identity (last name, first name, email, phone) is served
+  (decision of 2026-10-01), their notes and external reference (an identifier at a
+  third party) can be written but are never read back. The pipeline: source, status, channel,
+  desired treatment and zone (clinic labels), follow-ups, scheduled appointment,
+  assigned practitioner. The API's `search` filter (name, email, phone) is not
+  exposed. `convert` returns the created patient by id alone.
+- `nextmotion_setting` — settings, `kind` × list | get | create | update | delete
+  (+ `duplicate` of a document template, `placeholders` of merge fields):
+  Nextmotion subscription (`feature`), custom payment means, labels,
+  communication and document templates, questionnaire models (`survey_form`:
+  BoltNote notes and treatment consents — the MODEL, never a patient's answer),
+  webhooks. Templates and models come out as METADATA (their body is a free
+  object not described by the spec) but are written whole; a webhook's `headers`
+  can be written and never come out (recipient's secret).
+- `nextmotion_communication` — create only: log a call, SEND a message
+  (email, SMS, WhatsApp) drawn from a template, on a quote, an invoice or an
+  administrative document. Neither the number, nor the notes, nor the transcript of a call, nor the
+  recipient of a message come back out.
 
-Toute écriture a `dry_run=True` par défaut et son `data` passe la liste blanche d'entrée
+Every write has `dry_run=True` by default and its `data` passes the input allowlist
 (`nextmotion_entrees`).
 """
 from __future__ import annotations
@@ -109,7 +109,7 @@ _SETTINGS = {
                      required_update=("url",))),
 }
 
-#: `op="placeholders"` : le paramètre de type de chaque kind, et sa lecture.
+#: `op="placeholders"`: each kind's type parameter, and its read.
 _PLACEHOLDER_READS = {
     "communication_template": (
         "communication_type",
@@ -123,13 +123,13 @@ _placeholders = _shape(_PLACEHOLDERS)
 _COMMUNICATIONS = {
     "call": Kind(
         "calls", _shape(_CALL),
-        withheld=("appel servi sans le numéro, les notes, la transcription, le résumé ni "
-                  "l'enregistrement ; patient servi par son seul id."),
+        withheld=("call served without the number, notes, transcript, summary or "
+                  "recording; patient served by id alone."),
         writes={"create": Write(lambda c, cid, b: c.create_call(cid, body=b), "clinic",
                                 _IN_CALL)}),
     "message": Kind(
         "messages", _shape(_COMMUNICATION_RECORD),
-        withheld="message servi sans son destinataire ni son objet.",
+        withheld="message served without its recipient or its object.",
         writes={"create": Write(
             lambda c, cid, b: c.create_communication_record(cid, body=b), "clinic",
             _IN_COMMUNICATION_RECORD,
@@ -252,8 +252,8 @@ def register(mcp: FastMCP) -> None:
                           item_id=item_id, filters=filters, limit=limit, offset=offset,
                           fields=fields, data=data, dry_run=dry_run)
         if kind not in _PLACEHOLDER_READS:
-            raise _bad("op='placeholders' ne vaut que pour kind='communication_template', "
-                       "'document_template' ou 'survey_form'.")
+            raise _bad("op='placeholders' only applies to kind='communication_template', "
+                       "'document_template' or 'survey_form'.")
         type_name, read = _PLACEHOLDER_READS[kind]
         _refuse_ignored(op, clinic_id=clinic_id, item_id=item_id, data=data,
                         dry_run=dry_run, limit=limit, offset=offset, fields=fields,
@@ -297,12 +297,12 @@ def register(mcp: FastMCP) -> None:
             op: create (the only op).
             dry_run: default True."""
         if kind not in _COMMUNICATIONS:
-            raise _bad(f"kind inconnu : {kind!r}.")
+            raise _bad(f"unknown kind: {kind!r}.")
         if kind == "message" and isinstance(data, dict):
             kind_type = data.get("communication_template_type")
             if kind_type is not None and kind_type not in _COMMUNICATION_TYPES:
-                raise _bad(f"communication_template_type={kind_type!r} n'est pas servi : "
-                           f"{', '.join(_COMMUNICATION_TYPES)} seulement (aucun document "
-                           "médical ni texte libre de patient).")
+                raise _bad(f"communication_template_type={kind_type!r} is not served: "
+                           f"{', '.join(_COMMUNICATION_TYPES)} only (no medical "
+                           "document or free patient text).")
         return _serve_write(_COMMUNICATIONS, kind, op, client=_client, clinic_id=clinic_id,
                             item_id=None, data=data, dry_run=dry_run, unused={})

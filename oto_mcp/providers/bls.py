@@ -1,33 +1,33 @@
-"""Déclaration de registre du connecteur `bls`.
+"""Registry declaration of the `bls` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# bls : salaires et emploi par métier aux États-Unis (enquête OEWS du Bureau of
-# Labor Statistics), par l'API publique v2 — open data, AUCUN credential.
-# ⚠️ Sans clé d'enregistrement l'API plafonne à 25 requêtes par JOUR, comptées sur
-# l'adresse appelante : le plafond est donc partagé par toute la plateforme. La clé
-# gratuite (500/jour) se pose côté exploitant, en variable d'env `BLS_API_KEY` que le
-# serveur lit et passe au client (`tools/bls.py`) — ce n'est pas un credential
-# d'utilisateur, d'où `secret_kind="none"` et pas de cascade.
+# bls: wages and employment by occupation in the United States (OEWS survey of the
+# Bureau of Labor Statistics), through the public API v2 — open data, NO credential.
+# ⚠️ Without a registration key the API caps at 25 requests per DAY, counted on
+# the calling address: the cap is therefore shared by the whole platform. The
+# free key (500/day) is set on the operator side, as the env variable `BLS_API_KEY` that the
+# server reads and passes to the client (`tools/bls.py`) — it is not a user
+# credential, hence `secret_kind="none"` and no cascade.
 CONNECTOR = _c(
     "bls", ["bls"], secret_kind="none",
-    label="Salaires US (BLS)",
-    help="salaires et emploi par métier aux États-Unis — distribution P10 à P90 par "
-         "code SOC, au national, par État ou par aire métropolitaine (open data BLS OEWS)",
+    label="US wages (BLS)",
+    help="wages and employment by occupation in the United States — P10 to P90 distribution by "
+         "SOC code, national, by State or by metropolitan area (BLS OEWS open data)",
     href="https://www.bls.gov/oes/",
 )
 
 CATEGORY = "RH"
 PUBLISHER = "U.S. Bureau of Labor Statistics"
 DESCRIPTION = (
-    "Les salaires et l'emploi par métier aux États-Unis, en open data du Bureau "
-    "of Labor Statistics (enquête OEWS) : moyenne, médiane et percentiles P10 à "
-    "P90 annuels pour un code SOC, au national, par État ou par aire "
-    "métropolitaine. Dernière année publiée seulement."
+    "Wages and employment by occupation in the United States, from the Bureau "
+    "of Labor Statistics open data (OEWS survey): annual mean, median and P10 to "
+    "P90 percentiles for a SOC code, national, by State or by metropolitan "
+    "area. Latest published year only."
 )
 LOGO_DOMAIN = "bls.gov"

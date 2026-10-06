@@ -1,25 +1,25 @@
-"""Le geste « connecter » d'un connecteur — déclaré par son module, dérivé partout.
+"""The "connect" gesture of a connector — declared by its module, derived everywhere.
 
-**Le problème que ça ferme.** Certains connecteurs ne s'obtiennent pas en collant des
-champs : il faut un geste hors formulaire (consentement OAuth, session navigateur…).
-Rien ne le DÉCLARAIT, alors chaque surface a compensé à sa façon — et toujours par le
-NOM du connecteur. Le dashboard montait le widget de consentement derrière un
-`['zoho','zohodesk','zohoanalytics'].includes(name)` ; Salesforce, qui a pourtant
-exactement la même forme côté backend (capacité de démarrage, callback, les deux hooks
-`status_hints`, la fabrique `oauth_flow`), n'y était simplement pas — donc pas de bouton,
-et un client ne pouvait pas finir sa connexion. Ajouter un nom de plus aurait marché
-cinq minutes et fait grossir la seule chose qu'il fallait supprimer.
+**The problem this closes.** Some connectors cannot be obtained by pasting fields:
+they need a gesture outside the form (OAuth consent, browser session…).
+Nothing DECLARED it, so each surface compensated in its own way — and always by the
+connector NAME. The dashboard mounted the consent widget behind a
+`['zoho','zohodesk','zohoanalytics'].includes(name)`; Salesforce, which has exactly
+the same shape on the backend side (start capability, callback, the two
+`status_hints` hooks, the `oauth_flow` factory), simply was not in it — so no button,
+and a customer could not finish their connection. Adding one more name would have
+worked for five minutes and grown the one thing that had to be removed.
 
-**Ce que le seam garantit.** Un connecteur déclare son flux ICI, dans son propre module
-(patron `connector_verify` / `status_hints`). Le catalogue en dérive un descripteur de
-FORME — quels paramètres l'utilisateur doit fournir, comment s'appelle le geste — et le
-front rend un formulaire générique + un bouton, sans jamais connaître un nom.
+**What the seam guarantees.** A connector declares its flow HERE, in its own module
+(pattern `connector_verify` / `status_hints`). The catalog derives a descriptor of
+SHAPE from it — which parameters the user must provide, what the gesture is called —
+and the front renders a generic form + a button, without ever knowing a name.
 
-**Ce que le descripteur ne porte PAS, délibérément** : aucune URL, aucune clé de
-capacité, aucun nom d'outil. `/api/connectors` est servi sans authentification ; un
-descripteur qui publierait ses chemins internes ferait de la surface d'attaque un effet
-de bord de la documentation. Le chemin est FIXE et connu du client
-(`POST /api/me/connectors/{name}/connect`), le nom voyage en paramètre de chemin.
+**What the descriptor deliberately does NOT carry**: no URL, no capability key, no
+tool name. `/api/connectors` is served without authentication; a descriptor that
+published its internal paths would make the attack surface a side effect of the
+documentation. The path is FIXED and known to the client
+(`POST /api/me/connectors/{name}/connect`), the name travels as a path parameter.
 """
 from __future__ import annotations
 
@@ -34,14 +34,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class FlowParam:
-    """Une valeur que l'utilisateur doit fournir pour démarrer le flux.
+    """A value the user must provide to start the flow.
 
-    `options` non vide ⟹ liste fermée (le front rend un select). C'est le DOMICILE
-    UNIQUE de ces valeurs : la région Zoho était jusqu'ici recopiée quatre fois, dont
-    une version fausse dans le libellé du registre (un `sa` que le code rejette)."""
+    `options` non-empty ⟹ closed list (the front renders a select). This is the SINGLE
+    HOME of these values: the Zoho region was previously copied four times, including
+    a wrong version in the registry label (an `sa` that the code rejects)."""
     name: str
     label: str
-    options: tuple[tuple[str, str], ...] = ()      # (valeur, libellé)
+    options: tuple[tuple[str, str], ...] = ()      # (value, label)
     default: str = ""
     required: bool = True
     help: str = ""
@@ -56,24 +56,25 @@ class FlowParam:
 
 @dataclass(frozen=True)
 class FlowStart:
-    """Ce que rend un flux — la MÊME forme pour tous, quel que soit le connecteur.
+    """What a flow returns — the SAME shape for all, whatever the connector.
 
-    `me.connector_connect` est le seam qui permet au front de brancher un connecteur
-    sans savoir lequel. Sa sortie ne l'a pas suivi : Zoho échotait `{auth_url,
-    connector}`, Salesforce `{auth_url, scope}`, et la garantie commune n'était qu'un
-    commentaire de type (`-> {"auth_url": …}`) que rien ne faisait respecter — un
-    troisième flux aurait inventé sa troisième clé. Le contrat publié a dû être
-    déclaré ouvert avec deux champs optionnels : il documentait l'incohérence.
+    `me.connector_connect` is the seam that lets the front plug in a connector
+    without knowing which one. Its output did not follow: Zoho echoed `{auth_url,
+    connector}`, Salesforce `{auth_url, scope}`, and the common guarantee was only a
+    type comment (`-> {"auth_url": …}`) that nothing enforced — a third flow
+    would have invented its third key. The published contract had to be declared open
+    with two optional fields: it documented the inconsistency.
 
-    **Le premier niveau est FERMÉ, et c'est le seul que l'appelant peut écrire** :
-    `auth_url` à ouvrir dans un navigateur, rien d'autre. Ce qu'un connecteur veut
-    échoter en plus descend dans `details`, un champ NOMMÉ dont le contenu est sa
-    propriété — même règle qu'en entrée (la spécificité d'un connecteur vit dans son
-    module) et même choix que `ResolvedCredential.config`. Figer l'union des clés
-    aurait fait grossir le contrat commun à chaque flux ajouté ; ici il ne bouge plus.
+    **The first level is CLOSED, and it is the only one the caller may write**:
+    `auth_url` to open in a browser, nothing else. Whatever a connector wants to
+    echo in addition goes down into `details`, a NAMED field whose content is its
+    own property — same rule as on input (a connector's specificity lives in its
+    module) and same choice as `ResolvedCredential.config`. Freezing the union of
+    keys would have made the common contract grow with every flow added; here it no
+    longer moves.
 
-    `details` n'est JAMAIS requis pour agir : un client qui le lit accepte de
-    connaître le connecteur qu'il branche, ce que le seam ne lui demande pas."""
+    `details` is NEVER required to act: a client that reads it accepts knowing the
+    connector it plugs in, which the seam does not ask of it."""
     auth_url: str
     details: dict = field(default_factory=dict)
 
@@ -86,16 +87,16 @@ class Flow:
     connector: str
     start: Callable[..., FlowStart]  # (ctx, values) -> FlowStart
     params: tuple[FlowParam, ...] = field(default_factory=tuple)
-    label: str = "Connecter"
-    # Chemin du retour de consentement. L'URL COMPLÈTE en est dérivée à la lecture
-    # (`callback_url`), jamais écrite en dur : elle dépend de l'environnement, et une
-    # URL de prose dans une doc ment dès qu'on la lit depuis la preprod.
+    label: str = "Connect"
+    # Path of the consent return. The FULL URL is derived from it on read
+    # (`callback_url`), never hard-coded: it depends on the environment, and a prose
+    # URL in a doc lies as soon as it is read from preprod.
     callback_path: str = ""
-    # « Une app OAuth est-elle déjà à disposition de cet utilisateur ? » — la sienne,
-    # celle de son org, ou celle de l'ÉDITEUR (oto). Sans cette réponse, le front ne
-    # peut que promettre le pire cas : il demandait « pose d'abord les identifiants de
-    # l'application », y compris à qui n'a plus rien à poser. `None` = le connecteur
-    # ne déclare pas la question, le front ne promet alors rien.
+    # "Is an OAuth app already available to this user?" — their own,
+    # their org's, or the PUBLISHER's (oto). Without this answer, the front can
+    # only promise the worst case: it asked "first set the application's
+    # credentials", even of someone with nothing left to set. `None` = the connector
+    # does not declare the question, the front then promises nothing.
     app_ready: Optional[Callable[[str], bool]] = None
 
 
@@ -103,18 +104,18 @@ _FLOWS: dict[str, Flow] = {}
 
 
 def declare(connector: str, *, start: Callable[..., FlowStart],
-            params: tuple[FlowParam, ...] = (), label: str = "Connecter",
+            params: tuple[FlowParam, ...] = (), label: str = "Connect",
             callback_path: str = "",
             app_ready: Optional[Callable[[str], bool]] = None) -> None:
-    """Déclare le flux de connexion de ce connecteur. Appelé au niveau MODULE (comme
-    `status_hints.register_state`) : c'est une déclaration pure, elle doit être lisible
-    dès l'import, sans attendre le montage FastMCP."""
+    """Declare this connector's connection flow. Called at MODULE level (like
+    `status_hints.register_state`): it is a pure declaration, it must be readable
+    at import, without waiting for the FastMCP mount."""
     for p in params:
         if not p.options and p.required and not p.default:
-            # Un choix fermé sans options est indémarrable côté front : il rendrait un
-            # select vide. Mieux vaut le refuser à la déclaration qu'au clic.
+            # A closed choice without options cannot be started on the front side: it
+            # would render an empty select. Better to refuse it at declaration than at click.
             raise ValueError(
-                f"{connector}.{p.name} : paramètre requis sans options ni défaut.")
+                f"{connector}.{p.name}: required parameter without options or default.")
     _FLOWS[connector] = Flow(connector=connector, start=start,
                              params=tuple(params), label=label,
                              callback_path=callback_path, app_ready=app_ready)
@@ -129,10 +130,10 @@ def entries() -> dict[str, Flow]:
 
 
 def describe(connector: str) -> Optional[dict]:
-    """Le champ `connect` du catalogue : la FORME du geste, rien d'autre.
+    """The `connect` field of the catalog: the SHAPE of the gesture, nothing else.
 
-    `None` pour les ~56 connecteurs qui n'ont pas de flux — le front lit alors son
-    formulaire de champs habituel, comme avant."""
+    `None` for the ~56 connectors that have no flow — the front then reads its usual
+    field form, as before."""
     f = _FLOWS.get(connector)
     if f is None:
         return None
@@ -140,53 +141,53 @@ def describe(connector: str) -> Optional[dict]:
 
 
 async def start(connector: str, ctx, values: dict) -> FlowStart:
-    """Démarre le flux déclaré et rend la forme commune.
+    """Start the declared flow and return the common shape.
 
-    Le type de retour est vérifié ICI, à l'unique point de passage : une annotation
-    Python ne s'applique pas toute seule, et c'est précisément parce que la garantie
-    ne vivait qu'en commentaire que deux flux ont pu diverger sans que rien ne
-    proteste. Un flux qui rend autre chose casse au premier appel, pas au premier
-    front qui s'y fie."""
+    The return type is checked HERE, at the single point of passage: a Python
+    annotation does not enforce itself, and it is precisely because the guarantee
+    lived only in a comment that two flows could diverge without anything
+    protesting. A flow that returns anything else breaks on the first call, not on
+    the first front that relies on it."""
     fabrique = _FLOWS[connector].start
     if inspect.iscoroutinefunction(fabrique):
-        # Un flux peut être ASYNCHRONE — celui d'une messagerie hébergée interroge le
-        # fournisseur avant de rendre son lien. Le serveur est mono-loop : ce chemin
-        # réseau doit être attendu, jamais exécuté en bloquant.
+        # A flow can be ASYNCHRONOUS — that of a hosted messaging service queries the
+        # provider before returning its link. The server is single-loop: this network
+        # path must be awaited, never run in a blocking way.
         out = await fabrique(ctx, values or {})
     else:
-        # Un flux SYNCHRONE n'est pas inoffensif pour autant : deux d'entre eux
-        # enregistrent dynamiquement un client OAuth chez le fournisseur, en HTTP
-        # bloquant (chemin froid, la première fois seulement). Appelés nûment depuis
-        # cet `async def`, ils figeaient tout le processus le temps de la réponse
-        # (oto-backend#867). Les traiter ICI vaut pour les cinq flux d'un coup —
-        # aucun n'a besoin de le savoir, et le prochain non plus.
+        # A SYNCHRONOUS flow is not harmless either: two of them
+        # dynamically register an OAuth client at the provider, over blocking HTTP
+        # (cold path, the first time only). Called bare from this `async def`, they
+        # froze the whole process for the duration of the response
+        # (oto-backend#867). Handling them HERE covers the five flows at once —
+        # none needs to know it, and neither will the next.
         out = await asyncio.to_thread(fabrique, ctx, values or {})
         if inspect.isawaitable(out):
             out = await out
     if not isinstance(out, FlowStart):
         raise TypeError(
-            f"le flux « {connector} » doit rendre un FlowStart (reçu {type(out).__name__}) : "
-            "la forme rendue à l'appelant est commune à tous les connecteurs, ce qui "
-            "t'est propre va dans `details`.")
+            f"flow \"{connector}\" must return a FlowStart (got {type(out).__name__}): "
+            "the shape returned to the caller is common to all connectors, what is "
+            "specific to you goes in `details`.")
     return out
 
 
 def callback_url(connector: str, *, host: Optional[str] = None) -> Optional[str]:
-    """URL de retour à enregistrer chez le fournisseur, DÉRIVÉE de l'environnement.
+    """Return URL to register at the provider, DERIVED from the environment.
 
-    `host` : celle posée sur le host d'un TENANT (cf. `oauth_flow.redirect_uri`) —
-    ce qu'un admin doit déclarer chez Google quand l'app d'éditeur qu'il pose est celle
-    du tenant, pas la nôtre (`platform.editor_app.set`).
+    `host`: the one set on a TENANT's host (see `oauth_flow.redirect_uri`) —
+    what an admin must declare at Google when the publisher app they set is the
+    tenant's, not ours (`platform.editor_app.set`).
 
-    Elle n'est PAS dans `describe()` : ce descripteur-là part dans `/api/connectors`,
-    servie sans authentification. Celle-ci n'est ajoutée que sur la projection
-    authentifiée — c'est une valeur que le client doit connaître pour configurer son
-    app, pas une donnée de catalogue public.
+    It is NOT in `describe()`: that descriptor goes out in `/api/connectors`,
+    served without authentication. This one is only added on the authenticated
+    projection — it is a value the client must know to configure its
+    app, not a piece of public catalog data.
 
-    Dérivée, et c'est le point : jusqu'ici elle vivait en PROSE dans la doc du
-    connecteur, avec le domaine de prod écrit à la main. Un utilisateur de preprod y
-    lisait donc une URL que son backend n'utilise pas — et le consentement échouait sur
-    un `redirect_uri_mismatch` incompréhensible."""
+    Derived, and that is the point: until now it lived in PROSE in the connector's
+    doc, with the prod domain written by hand. A preprod user therefore
+    read a URL their backend does not use — and consent failed with an
+    incomprehensible `redirect_uri_mismatch`."""
     f = _FLOWS.get(connector)
     if not f or not f.callback_path:
         return None
@@ -195,14 +196,14 @@ def callback_url(connector: str, *, host: Optional[str] = None) -> Optional[str]
 
 
 def app_ready(connector: str, sub: str) -> Optional[bool]:
-    """Cet utilisateur a-t-il déjà une app OAuth à disposition pour ce connecteur ?
+    """Does this user already have an OAuth app available for this connector?
 
-    `None` = question non déclarée (ou hors service) : le front doit alors rester
-    muet plutôt que d'affirmer. Comme `callback_url`, ça n'entre QUE dans la
-    projection authentifiée — la réponse dépend de qui demande.
+    `None` = question not declared (or out of service): the front must then stay
+    silent rather than assert. Like `callback_url`, this enters ONLY the authenticated
+    projection — the answer depends on who asks.
 
-    Fail-open volontaire : une panne de lecture ne doit pas transformer un écran de
-    connexion en écran d'erreur ; au pire l'utilisateur voit la consigne longue."""
+    Deliberately fail-open: a read failure must not turn a connection screen into an
+    error screen; at worst the user sees the long instruction."""
     f = _FLOWS.get(connector)
     if not f or f.app_ready is None or not sub:
         return None

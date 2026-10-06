@@ -1,17 +1,17 @@
-"""Console connecteurs MCP consolidée (ADR 0047, B1) — fusion `*_op`.
+"""Consolidated MCP connectors console (ADR 0047, B1) — `*_op` merge.
 
-Réunit les tools MCP de la famille connecteurs en 5, un par objet métier,
-verbe en param `op` (+ `scope` org|équipe quand le grain existe aux deux
-niveaux) — le pattern de la console admin (`admin_console.py`) appliqué à la
-surface non-admin. L'autz reste DÉCLARÉE (combinateur `BY_OP`, clé `(op, scope)`
-quand le palier dépend des deux) ; les handlers de domaine sont réutilisés tels
-quels (on construit leur Input spécifique) ; les faces REST des capacités
-d'origine ne bougent pas — seul leur binding `mcp=` est retiré.
+Gathers the MCP tools of the connectors family into 5, one per business object,
+verb in the `op` param (+ `scope` org|team when the grain exists at both
+levels) — the admin console pattern (`admin_console.py`) applied to the
+non-admin surface. Authz remains DECLARED (`BY_OP` combinator, key `(op, scope)`
+when the tier depends on both); the domain handlers are reused as
+is (we build their specific Input); the REST faces of the original
+capabilities do not move — only their `mcp=` binding is removed.
 
-Concepts : `oto_connector_activation` (exposition org/équipe), `oto_connector`
-(marketplace + actes d'org : force/recommend), `oto_instance` (instances
-ADR 0038/0044 : list/lend/verify), `oto_identity` (sélecteur d'identité
-ADR 0024), `oto_account_access` (comptes partagés #55).
+Concepts: `oto_connector_activation` (org/team exposure), `oto_connector`
+(marketplace + org acts: force/recommend), `oto_instance` (instances
+ADR 0038/0044: list/lend/verify), `oto_identity` (identity selector
+ADR 0024), `oto_account_access` (shared accounts #55).
 """
 from __future__ import annotations
 
@@ -53,29 +53,29 @@ class ActivationInput(BaseModel):
     scope: Literal["org", "group"] = "org"
     org_id: Optional[int] = None       # scope=org
     group_id: Optional[int] = None     # scope=group
-    name: Optional[str] = None         # set/clear : connecteur
+    name: Optional[str] = None         # set/clear: connector
     enabled: Optional[bool] = None     # set
 
 
 def _activation(ctx: ResolvedCtx, inp: ActivationInput) -> dict:
     a = connectors_activation
     if inp.scope == "org":
-        oid = _need(inp.org_id, "missing_org", "`org_id` requis pour scope=org.")
+        oid = _need(inp.org_id, "missing_org", "`org_id` is required for scope=org.")
         if inp.op == "list":
             return a._org_list(ctx, a.OrgActivationListInput(org_id=oid))
-        name = _need(inp.name, "missing_name", f"`name` (connecteur) requis pour {inp.op}.")
+        name = _need(inp.name, "missing_name", f"`name` (connector) is required for {inp.op}.")
         if inp.op == "set":
             if inp.enabled is None:
-                raise AuthzDenied(400, "missing_enabled", "`enabled` requis pour set.")
+                raise AuthzDenied(400, "missing_enabled", "`enabled` is required for set.")
             return a._org_set(ctx, a.OrgActivationSetInput(org_id=oid, name=name, enabled=inp.enabled))
         return a._org_clear(ctx, a.OrgActivationClearInput(org_id=oid, name=name))
-    gid = _need(inp.group_id, "missing_group", "`group_id` requis pour scope=group.")
+    gid = _need(inp.group_id, "missing_group", "`group_id` is required for scope=group.")
     if inp.op == "list":
         return a._group_list(ctx, a.GroupActivationListInput(group_id=gid))
-    name = _need(inp.name, "missing_name", f"`name` (connecteur) requis pour {inp.op}.")
+    name = _need(inp.name, "missing_name", f"`name` (connector) is required for {inp.op}.")
     if inp.op == "set":
         if inp.enabled is None:
-            raise AuthzDenied(400, "missing_enabled", "`enabled` requis pour set.")
+            raise AuthzDenied(400, "missing_enabled", "`enabled` is required for set.")
         return a._group_set(ctx, a.GroupActivationSetInput(group_id=gid, name=name, enabled=inp.enabled))
     return a._group_clear(ctx, a.GroupActivationClearInput(group_id=gid, name=name))
 
@@ -83,40 +83,40 @@ def _activation(ctx: ResolvedCtx, inp: ActivationInput) -> dict:
 # ── oto_connector : list / select / pause / unselect · force / recommend ─────
 class ConnectorInput(BaseModel):
     op: Literal["list", "select", "pause", "unselect", "force", "recommend"]
-    name: Optional[str] = None                 # list (filtre 1 connecteur) · select/pause/unselect/force
+    name: Optional[str] = None                 # list (filter 1 connector) · select/pause/unselect/force
     verbose: bool = False                      # list
-    state: Optional[str] = None                # list : not_selected|active|paused
+    state: Optional[str] = None                # list: not_selected|active|paused
     org_id: Optional[int] = None               # force/recommend
-    member: Optional[str] = None               # force : sub ou email
-    connectors: Optional[list[str]] = None     # recommend : baseline ([] efface)
+    member: Optional[str] = None               # force: sub or email
+    connectors: Optional[list[str]] = None     # recommend: baseline ([] clears)
 
 
 async def _connector(ctx: ResolvedCtx, inp: ConnectorInput) -> dict:
-    # `async` pour `force` seulement : les autres gestes lisent/écrivent la base en
-    # synchrone (`_me`, `_select`…, `_recommend` → `connectors.kit.appliquer`), donc jamais
-    # dans la boucle. Trouvé par la garde d'exécution, pas par le balayage : l'alias local
-    # `sel = connectors_selection` cachait les appels.
+    # `async` for `force` only: the other actions read/write the database
+    # synchronously (`_me`, `_select`…, `_recommend` → `connectors.kit.appliquer`), so never
+    # on the loop. Found by the execution guard, not by the sweep: the local alias
+    # `sel = connectors_selection` hid the calls.
     sel = connectors_selection
     if inp.op == "list":
-        # `name` est honoré ICI aussi (feedback #326) : il était déclaré sur l'outil
-        # mais seul select/pause/unselect/force le lisait → passé sur list il partait
-        # à la poubelle en silence et l'agent recevait tout le catalogue.
+        # `name` is honored HERE too (feedback #326): it was declared on the tool
+        # but only select/pause/unselect/force read it → passed on list it was silently
+        # dropped and the agent received the whole catalog.
         return await run_in_threadpool(sel._me, ctx, sel.MyConnectorsInput(
             verbose=inp.verbose, state=inp.state, name=inp.name))
     if inp.op in ("select", "pause", "unselect"):
         action = sel.ConnectorActionInput(
-            name=_need(inp.name, "missing_name", f"`name` (connecteur) requis pour {inp.op}."))
+            name=_need(inp.name, "missing_name", f"`name` (connector) is required for {inp.op}."))
         geste = {"select": sel._select, "pause": sel._pause, "unselect": sel._unselect}[inp.op]
         return await run_in_threadpool(geste, ctx, action)
-    oid = _need(inp.org_id, "missing_org", f"`org_id` requis pour {inp.op}.")
+    oid = _need(inp.org_id, "missing_org", f"`org_id` is required for {inp.op}.")
     if inp.op == "force":
         return await connectors_force._force_connector(ctx, connectors_force.ForceConnectorInput(
             org_id=oid,
-            connector=_need(inp.name, "missing_name", "`name` (connecteur) requis pour force."),
-            member=_need(inp.member, "missing_member", "`member` (sub ou email) requis pour force.")))
+            connector=_need(inp.name, "missing_name", "`name` (connector) is required for force."),
+            member=_need(inp.member, "missing_member", "`member` (sub or email) is required for force.")))
     if inp.connectors is None:
         raise AuthzDenied(400, "missing_connectors",
-                          "`connectors` (liste de noms, [] pour effacer) requis pour recommend.")
+                          "`connectors` (list of names, [] to clear) is required for recommend.")
     return await run_in_threadpool(
         sel._recommend, ctx, sel.RecommendInput(org_id=oid, connectors=inp.connectors))
 
@@ -125,42 +125,42 @@ async def _connector(ctx: ResolvedCtx, inp: ConnectorInput) -> dict:
 class InstanceInput(BaseModel):
     op: Literal["list", "lend", "verify"]
     connector: Optional[str] = None
-    # list : filtre member|group|org|platform · verify : auto (credential effectif) | org
+    # list: filter member|group|org|platform · verify: auto (effective credential) | org
     level: Optional[str] = None
-    to: Optional[str] = None                   # lend : sub du pair
+    to: Optional[str] = None                   # lend: peer's sub
     account: str = ""                          # lend
-    revoke: bool = False                       # lend : True = reprendre le prêt
+    revoke: bool = False                       # lend: True = take the loan back
 
 
 async def _instance(ctx: ResolvedCtx, inp: InstanceInput) -> dict:
     if inp.op == "list":
         if inp.level not in (None, "member", "group", "org", "tenant", "platform"):
             raise AuthzDenied(400, "invalid_level",
-                              "op=list : `level` ∈ member|group|org|tenant|platform.")
+                              "op=list: `level` ∈ member|group|org|tenant|platform.")
         return connectors_instances._list_instances(
             ctx, connectors_instances.ListInstancesInput(connector=inp.connector, level=inp.level))
-    connector = _need(inp.connector, "missing_connector", f"`connector` requis pour {inp.op}.")
+    connector = _need(inp.connector, "missing_connector", f"`connector` is required for {inp.op}.")
     if inp.op == "lend":
         return connectors_sharing._lend_instance(ctx, connectors_sharing.LendInstanceInput(
             connector=connector,
-            to=_need(inp.to, "missing_to", "`to` (sub du pair) requis pour lend."),
+            to=_need(inp.to, "missing_to", "`to` (peer's sub) is required for lend."),
             account=inp.account, revoke=inp.revoke))
     if inp.level not in (None, "auto", "org"):
-        raise AuthzDenied(400, "invalid_level", "op=verify : `level` ∈ auto|org.")
+        raise AuthzDenied(400, "invalid_level", "op=verify: `level` ∈ auto|org.")
     return await connectors_verify._verify(
         ctx, connectors_verify.VerifyInput(provider=connector, level=inp.level or "auto"))
 
 
-# ── oto_identity : list / set (sélecteur d'identité, ADR 0024) ───────────────
+# ── oto_identity : list / set (identity selector, ADR 0024) ──────────────────
 class IdentityInput(BaseModel):
     op: Literal["list", "set", "rename"]
     connector: str
-    identity_id: Optional[str] = None          # set, rename (le nom actuel)
+    identity_id: Optional[str] = None          # set, rename (the current name)
     new_name: Optional[str] = None             # rename
-    # Palier visé : les MIENS (défaut), ceux de mon équipe active, ceux de mon org.
-    # La face REST le portait déjà ; la face agent ne pouvait voir que les siens —
-    # donc un membre servi par la clé de son org ne pouvait pas savoir sous quels
-    # comptes elle peut agir, ni lequel est le défaut.
+    # Targeted tier: MINE (default), those of my active team, those of my org.
+    # The REST face already carried it; the agent face could only see its own —
+    # so a member served by their org's key could not know under which
+    # accounts it can act, nor which one is the default.
     scope: Literal["member", "org", "group"] = "member"
 
 
@@ -173,18 +173,18 @@ async def _identity(ctx: ResolvedCtx, inp: IdentityInput) -> dict:
         return await ids._rename(ctx, ids.RenameIdentityInput(
             connector=inp.connector, scope=inp.scope,
             identity_id=_need(inp.identity_id, "missing_identity",
-                              "`identity_id` (le nom actuel) requis pour rename."),
-            name=_need(inp.new_name, "missing_new_name", "`new_name` requis pour rename.")))
+                              "`identity_id` (the current name) is required for rename."),
+            name=_need(inp.new_name, "missing_new_name", "`new_name` is required for rename.")))
     return await ids._set_default(ctx, ids.SetIdentityInput(
         connector=inp.connector, scope=inp.scope,
-        identity_id=_need(inp.identity_id, "missing_identity", "`identity_id` requis pour set.")))
+        identity_id=_need(inp.identity_id, "missing_identity", "`identity_id` is required for set.")))
 
 
-# ── oto_account_access : list / grant / revoke (comptes partagés, #55) ───────
+# ── oto_account_access : list / grant / revoke (shared accounts, #55) ────────
 class AccountAccessInput(BaseModel):
     op: Literal["list", "grant", "revoke"]
     channel: Optional[connectors_account_grants.Channel] = None
-    grantee: Optional[str] = None              # sub ou email
+    grantee: Optional[str] = None              # sub or email
 
 
 def _account_access(ctx: ResolvedCtx, inp: AccountAccessInput) -> dict:
@@ -192,8 +192,8 @@ def _account_access(ctx: ResolvedCtx, inp: AccountAccessInput) -> dict:
     if inp.op == "list":
         return ag._list(ctx, ag.AccountGrantsListInput())
     grant_inp = ag.AccountGrantInput(
-        channel=_need(inp.channel, "missing_channel", "`channel` requis."),
-        grantee=_need(inp.grantee, "missing_grantee", "`grantee` (sub ou email) requis."))
+        channel=_need(inp.channel, "missing_channel", "`channel` is required."),
+        grantee=_need(inp.grantee, "missing_grantee", "`grantee` (sub or email) is required."))
     return ag._grant(ctx, grant_inp) if inp.op == "grant" else ag._revoke(ctx, grant_inp)
 
 

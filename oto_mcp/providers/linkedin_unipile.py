@@ -1,40 +1,40 @@
-"""Déclaration de registre du connecteur `linkedin_unipile` — la session LinkedIn opérée.
+"""Registry declaration of the `linkedin_unipile` connector — the operated LinkedIn session.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE. La forme
-commune aux six connexions hébergées vit chez le porteur de la clé
-(`providers/unipile.channel`) — ici, ce qui distingue CELLE-CI.
+Single home of its entry: `providers/__init__.py` AGGREGATES it. The shape
+common to the six hosted connections lives with the key holder
+(`providers/unipile.channel`) — here, what sets THIS ONE apart.
 """
 from __future__ import annotations
 
 from .unipile import channel
 
-# linkedin_unipile : TA session LinkedIn — recherche, profils, posts, réseau, offres
-# d'emploi, messagerie. 8 tools à `op=` sous le namespace `linkedin_unipile`.
+# linkedin_unipile: YOUR LinkedIn session — search, profiles, posts, network, job
+# offers, messaging. 8 `op=` tools under the `linkedin_unipile` namespace.
 #
-# ⚠️ Le nom du connecteur EST son namespace, et il GARDE le suffixe du fournisseur
-# (ADR 0010 §Amendement 2026-08-10) : le namespace porte la CAPACITÉ (LinkedIn)
-# suffixée du FOURNISSEUR quand plusieurs fournisseurs non substituables la rendent —
-# ici Unipile (la session OPÉRÉE) et AI Ark (`linkedin_aiark_*`, de la donnée
-# ACHETÉE au crédit : email, mobile, reverse-lookup, rien de tout ça n'existe sur
-# LinkedIn). `namespace_of` résout au plus long préfixe DÉCLARÉ : les deux gardent
-# un gate distinct. Verrouillé par tests/test_linkedin.py.
+# ⚠️ The connector name IS its namespace, and it KEEPS the provider suffix
+# (ADR 0010 §Amendment 2026-08-10): the namespace carries the CAPABILITY (LinkedIn)
+# suffixed by the PROVIDER when several non-substitutable providers deliver it —
+# here Unipile (the OPERATED session) and AI Ark (`linkedin_aiark_*`, data BOUGHT
+# by the credit: email, mobile, reverse-lookup, none of which exists on
+# LinkedIn). `namespace_of` resolves to the longest DECLARED prefix: the two keep
+# a distinct gate. Locked by tests/test_linkedin.py.
 #
-# Les noms de tools sont un CONTRAT consommé hors dépôt (procédures en base de
-# plusieurs orgs, guides plateforme, un métrage d'usage) : le split du
-# 2026-08-28 ne les touche pas. Ce qui change, c'est la CARTE — elle s'appelle
-# « LinkedIn », renvoie à linkedin.com et ne nomme pas le fournisseur : ce que la
-# personne connecte, c'est son compte LinkedIn. Unipile reste nommé sur la carte
-# `unipile`, qui EST le compte fournisseur et porte la clé.
+# Tool names are a CONTRACT consumed outside the repo (procedures stored in the
+# DB of several orgs, platform guides, a usage meter): the 2026-08-28 split
+# does not touch them. What changes is the CARD — it is called "LinkedIn",
+# links to linkedin.com and does not name the provider: what the person
+# connects is their LinkedIn account. Unipile stays named on the `unipile`
+# card, which IS the provider account and holds the key.
 #
-# Ses tools vivent dans `tools/unipile.py` (avec la factory de messagerie partagée
-# et `unipile_connect_start`) — d'où le `modules=("unipile",)` explicite : le module
-# ne porte pas le nom du connecteur, et `register_all` dédoublonne les modules.
+# Its tools live in `tools/unipile.py` (with the shared messaging factory
+# and `unipile_connect_start`) — hence the explicit `modules=("unipile",)`: the
+# module does not carry the connector's name, and `register_all` dedupes modules.
 CONNECTOR = channel(
     "linkedin_unipile",
     hosted_channel="LINKEDIN",
     label="LinkedIn",
-    help="Ta session LinkedIn — recherche, profils, posts, réseau, jobs, messagerie. "
-         "Ton compte se connecte chez Unipile, notre prestataire, qui détient la session.",
+    help="Your LinkedIn session — search, profiles, posts, network, jobs, messaging. "
+         "Your account connects through Unipile, our provider, which holds the session.",
     href="https://www.linkedin.com",
     modules=("unipile",),
 )
@@ -42,9 +42,9 @@ CONNECTOR = channel(
 CATEGORY = "Prospection"
 LOGO_DOMAIN = "linkedin.com"
 DESCRIPTION = (
-    "Ta session LinkedIn, opérée pour toi : recherche de personnes et "
-    "d'entreprises, profils, posts et commentaires, réseau (invitations, "
-    "relations), offres d'emploi et messagerie. Tu connectes TON compte et tu agis "
-    "comme toi-même. Pour un email ou un mobile qu'un profil ne publie pas, c'est "
-    "un connecteur d'enrichissement qu'il faut (AI Ark, Dropcontact, FullEnrich…)."
+    "Your LinkedIn session, operated for you: search for people and "
+    "companies, profiles, posts and comments, network (invitations, "
+    "connections), job offers and messaging. You connect YOUR account and act "
+    "as yourself. For an email or a mobile number a profile doesn't publish, "
+    "you need an enrichment connector (AI Ark, Dropcontact, FullEnrich…)."
 )

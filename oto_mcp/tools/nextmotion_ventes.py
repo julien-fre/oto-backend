@@ -1,30 +1,29 @@
-"""Nextmotion — les ventes : devis, factures (et avoirs), paiements, statistiques de
-chiffre d'affaires, et totaux financiers d'un patient.
+"""Nextmotion — sales: quotes, invoices (and credit notes), payments, revenue
+statistics, and a patient's financial totals.
 
-Module frère de `nextmotion.py` (cf. `Connector.modules`). Cinq outils, parce que leurs
-paramètres ne se recouvrent pas (ADR 0047) :
+Sibling module of `nextmotion.py` (cf. `Connector.modules`). Five tools, because their
+parameters do not overlap (ADR 0047):
 
-- `nextmotion_quote` — list | get | update | delete | validate. Un devis ne se CRÉE
-  que sous une consultation (médical) : pas de création ici.
-- `nextmotion_invoice` — list | get | update | validate | pay | credit_note ; filtre de
-  période des factures appliqué CÔTÉ OUTIL → `nextmotion_periode` (pas sur les devis :
-  `OApiQuote` n'a pas d'`invoiced_time`, son `issued_time` est nullable). Ni création
-  (sous une consultation seulement) ni suppression (une pièce comptable se corrige par
-  un avoir) ;
+- `nextmotion_quote` — list | get | update | delete | validate. A quote is only CREATED
+  under a consultation (medical): no creation here.
+- `nextmotion_invoice` — list | get | update | validate | pay | credit_note ; invoice
+  period filter applied TOOL-SIDE → `nextmotion_periode` (not on quotes:
+  `OApiQuote` has no `invoiced_time`, its `issued_time` is nullable). Neither creation
+  (under a consultation only) nor deletion (an accounting document is corrected by
+  a credit note);
+- `nextmotion_payment` — list | get | update. A payment EMBEDS its whole invoice,
+  hence its patient: the invoice goes through the same allowlist as
+  `nextmotion_invoice`. A payment cannot be deleted (accounting document).
+- `nextmotion_statistics` — `kind` x a period: clinic aggregates, no
+  patient. `meta` (free-form object, not described by the spec) and `label_field` (undocumented
+  parameter, which could change what the labels name) are not served.
+- `nextmotion_patient_stats` — the totals of ONE patient designated by their id: quotes,
+  invoiced, paid, credit notes, refunds, first and last visit dates. Nothing that
+  identifies them; neither the opening date of their file nor their photo activity (the life of the
+  medical file).
 
-- `nextmotion_payment` — list | get | update. Un paiement EMBARQUE sa facture entière,
-  donc son patient : la facture passe par la même liste blanche que
-  `nextmotion_invoice`. Un paiement ne se supprime pas (pièce comptable).
-- `nextmotion_statistics` — `kind` × une période : agrégats de la clinique, aucun
-  patient. `meta` (objet libre, non décrit par la spec) et `label_field` (paramètre non
-  documenté, qui pourrait changer ce que nomment les libellés) ne sont pas servis.
-- `nextmotion_patient_stats` — les totaux d'UN patient désigné par son id : devis,
-  facturé, payé, avoirs, remboursements, dates de première et dernière visite. Rien qui
-  l'identifie ; ni la date d'ouverture de son dossier ni son activité photo (la vie du
-  dossier médical).
-
-Toute écriture a `dry_run=True` par défaut et son `data` passe la liste blanche d'entrée
-(`nextmotion_entrees`) ; sa réponse repasse par la liste blanche de la ressource.
+Every write has `dry_run=True` by default and its `data` goes through the input allowlist
+(`nextmotion_entrees`); its response goes back through the resource allowlist.
 """
 from __future__ import annotations
 
@@ -45,7 +44,7 @@ _chart = _shape(_CHART)
 _patient_stats = _shape(_PATIENT_STATS)
 
 def _invoice_of_credit_note(c, _, body):
-    """L'aperçu d'un avoir : la facture qu'il désigne, s'il en désigne une."""
+    """The preview of a credit note: the invoice it points to, if it points to one."""
     invoice_id = (body or {}).get("invoice")
     if invoice_id is None:
         return {}
@@ -142,7 +141,7 @@ def register(mcp: FastMCP) -> None:
             _refuse_ignored(op, clinic_id=clinic_id, patient_id=patient_id,
                             limit=limit, offset=offset, fields=fields)
             return _one(_run(lambda: c.get_quote(quote_id)), "quote", _quote)
-        raise _bad("op doit être 'list', 'get', 'update', 'delete' ou 'validate'.")
+        raise _bad("op must be 'list', 'get', 'update', 'delete' or 'validate'.")
 
     @mcp.tool()
     def nextmotion_invoice(
@@ -210,15 +209,15 @@ def register(mcp: FastMCP) -> None:
             _refuse_ignored(op, invoice_id=invoice_id)
             if invoiced_from is None and invoiced_to is None:
                 if max_pages is not None:
-                    raise _bad(f"op={op!r} n'utilise pas `max_pages` sans "
+                    raise _bad(f"op={op!r} does not use `max_pages` without "
                                "`invoiced_from`/`invoiced_to`.")
                 return _page(_run(lambda: c.list_invoices(
                     clinic_id, **_paging(limit, offset))), "invoices", _invoice,
                     fields=fields)
             if limit is not None:
-                raise _bad(f"op={op!r} n'utilise pas `limit` avec une période : toutes les "
-                           "factures de la période lues sont rendues ; `offset` y est le "
-                           "point de départ du parcours.")
+                raise _bad(f"op={op!r} does not use `limit` with a period: all the "
+                           "invoices of the period are read and returned; `offset` is "
+                           "the starting point of the scan there.")
             return _run(lambda: periode.lister(
                 lambda o: c.list_invoices(clinic_id, limit=periode.PAGE, offset=o),
                 invoiced_from, invoiced_to, offset=0 if offset is None else offset,
@@ -229,7 +228,7 @@ def register(mcp: FastMCP) -> None:
                             fields=fields, invoiced_from=invoiced_from,
                             invoiced_to=invoiced_to, max_pages=max_pages)
             return _one(_run(lambda: c.get_invoice(invoice_id)), "invoice", _invoice)
-        raise _bad("op doit être 'list', 'get', 'update', 'validate', 'pay' ou "
+        raise _bad("op must be 'list', 'get', 'update', 'validate', 'pay' or "
                    "'credit_note'.")
 
 
@@ -285,7 +284,7 @@ def register(mcp: FastMCP) -> None:
                             offset=offset, fields=fields)
             c = _client()
             return _one(_run(lambda: c.get_payment(payment_id)), "payment", _payment)
-        raise _bad("op doit être 'list', 'get' ou 'update'.")
+        raise _bad("op must be 'list', 'get' or 'update'.")
 
     @mcp.tool()
     def nextmotion_statistics(

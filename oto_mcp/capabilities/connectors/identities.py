@@ -1,7 +1,7 @@
-"""Capacités « sélecteur d'identité connectée » (ADR 0024) — surface unifiée,
-co-déclarée MCP + REST, per-membre (`SUB_ONLY`). Backend par-connecteur dans
-`connector_identities` (Google = comptes du coffre ; Unipile = identités distantes
-d'une clé BYO). Le dashboard pose dessus le picker (liste + défaut)."""
+"""« Connected identity selector » capabilities (ADR 0024) — unified surface,
+co-declared MCP + REST, per-member (`SUB_ONLY`). Per-connector backend in
+`connector_identities` (Google = vault accounts; Unipile = remote identities
+of a BYO key). The dashboard builds the picker (list + default) on top of it."""
 from __future__ import annotations
 
 import inspect
@@ -20,161 +20,161 @@ logger = logging.getLogger(__name__)
 
 
 class IdentitiesInput(BaseModel):
-    connector: str                       # nom de connecteur (path {connector})
-    # Phase 2 (2026-08-25) : `org` / `group` = les comptes nommés du palier partagé
-    # (backend keyed générique seulement). Défaut : les tiens.
+    connector: str                       # connector name (path {connector})
+    # Phase 2 (2026-08-25): `org` / `group` = the named accounts of the shared tier
+    # (generic keyed backend only). Default: your own.
     scope: str = "member"
 
 
 class SetIdentityInput(BaseModel):
     connector: str                       # path {connector}
-    identity_id: str                     # body — id renvoyé par connectors.identities
-    scope: str = "member"                # `org`/`group` : admin du palier requis
+    identity_id: str                     # body — id returned by connectors.identities
+    scope: str = "member"                # `org`/`group`: tier admin required
 
 
 class RenameIdentityInput(BaseModel):
     connector: str                       # path {connector}
-    identity_id: str                     # path {identity_id} — le nom actuel
-    name: str                            # body — le nouveau nom (= la valeur de `_account=`)
-    scope: str = "member"                # `org`/`group` : admin du palier requis
+    identity_id: str                     # path {identity_id} — the current name
+    name: str                            # body — the new name (= the value of `_account=`)
+    scope: str = "member"                # `org`/`group`: tier admin required
 
 
 class RenamedIdentity(BaseModel):
     connector: str
-    id: str                              # le nouveau nom
+    id: str                              # the new name
     previous_id: str
     is_default: bool
 
 
 class IdentityOwner(BaseModel):
-    """Propriétaire d'un compte ACCORDÉ (#55) — présent seulement sur une identité
-    qu'on opère sans la posséder."""
+    """Owner of a GRANTED account (#55) — present only on an identity
+    that is operated without being owned."""
     sub: str
     email: Optional[str] = None
     name: Optional[str] = None
-    org: Optional[int] = None               # org sous laquelle le owner a connecté le compte
+    org: Optional[int] = None               # org under which the owner connected the account
     org_name: Optional[str] = None
 
 
 class Identity(BaseModel):
-    """Contrat commun `Identity` des trois backends (Google = comptes du coffre,
-    Unipile = identités distantes d'une clé, keyed générique = lignes du coffre).
-    L'unification est au niveau SURFACE, pas stockage."""
-    # Opaque, et de nature différente selon le backend : email Google, handle
-    # distant Unipile, nom de compte du coffre. Ne jamais le parser.
+    """Common `Identity` contract of the three backends (Google = vault accounts,
+    Unipile = remote identities of a key, generic keyed = vault rows).
+    The unification is at SURFACE level, not storage."""
+    # Opaque, and of a different nature depending on the backend: Google email, Unipile
+    # remote handle, vault account name. Never parse it.
     id: str
     label: Optional[str] = None
-    # `ok` par défaut. Sur un compte Unipile hébergé, le statut est confirmé par
-    # une sonde de liveness (users/me) et rétrogradé en `disconnected` — le statut
-    # de compte remonté par le fournisseur peut rester « OK » alors que la session
-    # est morte (#236). Fail-soft : un incident de sonde laisse `ok`.
+    # `ok` by default. On a hosted Unipile account, the status is confirmed by
+    # a liveness probe (users/me) and downgraded to `disconnected` — the account
+    # status reported by the provider can stay « OK » while the session
+    # is dead (#236). Fail-soft: a probe incident leaves `ok`.
     status: Optional[str] = None
-    # Identité effectivement opérée sur SON canal. Plusieurs entrées peuvent donc
-    # être `is_default` en même temps sur un connecteur multi-canal (une par canal).
+    # Identity actually operated on ITS channel. Several entries can therefore
+    # be `is_default` at the same time on a multi-channel connector (one per channel).
     is_default: bool
-    # `null` hors multi-canal (Google) — fuite assumée du modèle Unipile, qui est
-    # par-canal là où Google est par-service.
+    # `null` outside multi-channel (Google) — an accepted leak of the Unipile model, which is
+    # per-channel where Google is per-service.
     channel: Optional[str] = None
-    granted: Optional[bool] = None          # présent (true) si le compte est ACCORDÉ (#55)
-    owner: Optional[IdentityOwner] = None   # le prêteur, présent avec `granted`
+    granted: Optional[bool] = None          # present (true) if the account is GRANTED (#55)
+    owner: Optional[IdentityOwner] = None   # the lender, present with `granted`
 
 
 class ConnectorIdentities(BaseModel):
-    """Identités joignables par le credential résolu du caller pour un connecteur."""
+    """Identities reachable by the caller's resolved credential for a connector."""
     connector: str
-    # `false` = ce connecteur n'a AUCUN sélecteur d'identité. Mais l'inverse ne
-    # tient pas : `supported:true` avec `identities: []` est normal (clé plateforme
-    # Unipile → passer par la connexion hébergée, ou aucun compte connecté). Un slug
-    # INCONNU, lui, ne rend jamais ce payload — il lève un 404 (feedback #162 :
-    # `{supported:false, identities:[]}` rendait un nom bidon indiscernable d'un vrai
-    # connecteur sans identités).
+    # `false` = this connector has NO identity selector. But the converse does not
+    # hold: `supported:true` with `identities: []` is normal (Unipile platform key
+    # → go through the hosted connection, or no account connected). An
+    # UNKNOWN slug never returns this payload — it raises a 404 (feedback #162:
+    # `{supported:false, identities:[]}` made a bogus name indistinguishable from a real
+    # connector without identities).
     supported: bool
     identities: list[Identity]
-    # Le MOT du fournisseur pour un compte de ce connecteur — « workspace » chez
-    # Slack, « organisation » chez Zoho, « site » pour le navigateur connecté,
-    # « compte » par défaut. Servi ici parce que c'est la réponse que lit celui qui
-    # CHOISIT : parler de « compte » pour un espace Slack l'oblige à traduire, et ni
-    # l'agent ni l'écran n'ont de moyen de deviner le vocabulaire du fournisseur.
-    noun: str = "compte"
-    # ── Pourquoi la liste est VIDE (signal #504) ── présents SEULEMENT sur `[]`.
+    # The provider's WORD for an account of this connector — « workspace » at
+    # Slack, « organisation » at Zoho, « site » for the connected browser,
+    # « compte » by default. Served here because it is the answer read by whoever
+    # CHOOSES: saying « account » for a Slack workspace forces them to translate, and neither
+    # the agent nor the screen has any way to guess the provider's vocabulary.
+    noun: str = "account"
+    # ── Why the list is EMPTY (signal #504) ── present ONLY on `[]`.
     # `no_credential` | `paid_option_off` | `over_quota` | `credential_rejected`
-    # (une couche manque, cf. `connectors/readiness.py`) | `no_identity_connected`
-    # (tout est en place, il
-    # reste à en connecter un). Le défaut de #504 n'était pas le CONTENU de la
-    # liste — vérifié sur la prod le 28/08, elle était vide parce qu'il n'y avait
-    # rien à lister — c'était son SILENCE : `[]` ne disait pas s'il n'y avait aucun
-    # compte, aucune clé, ou une clé qui ne voit rien, et l'appelant a inventé la
-    # mauvaise cause pendant quatre jours.
+    # (a layer is missing, see `connectors/readiness.py`) | `no_identity_connected`
+    # (everything is in place, one
+    # remains to be connected). The defect of #504 was not the CONTENT of the
+    # list — verified on prod on 28/08, it was empty because there was
+    # nothing to list — it was its SILENCE: `[]` did not say whether there was no
+    # account, no key, or a key that sees nothing, and the caller invented the
+    # wrong cause for four days.
     reason: Optional[str] = None
-    next_step: Optional[str] = None         # le geste, rendu tel quel
+    next_step: Optional[str] = None         # the action, returned as is
 
 
 class SelectedIdentity(BaseModel):
-    """L'identité choisie, telle que la rend le backend du connecteur. Les clés
-    varient selon la branche empruntée : un compte ACCORDÉ porte `granted`, le
-    backend keyed générique renvoie un `label`, les autres ni l'un ni l'autre —
-    d'où l'ouverture aux champs additionnels."""
+    """The chosen identity, as returned by the connector's backend. The keys
+    vary with the branch taken: a GRANTED account carries `granted`, the generic
+    keyed backend returns a `label`, the others neither —
+    hence the openness to additional fields."""
     model_config = ConfigDict(extra="allow")
 
     connector: str
     id: str
-    is_default: bool                        # toujours true — c'est l'effet du verbe
-    # `null` pour un connecteur hors multi-canal. Sur Unipile, sélectionner
-    # SON PROPRE compte efface le pointeur « identité opérée » du canal (retour à
-    # soi) ; le retour est le même dans les deux cas.
+    is_default: bool                        # always true — it is the effect of the verb
+    # `null` for a non-multi-channel connector. On Unipile, selecting
+    # ONE'S OWN account clears the channel's « operated identity » pointer (back to
+    # self); the return is the same in both cases.
     channel: Optional[str] = None
     label: Optional[str] = None
     granted: Optional[bool] = None
 
 
-# Handlers async : un backend d'identités enregistré (`connector_identities.register`)
-# peut être async (Browserbase — pennylaneged) ; les deux adaptateurs (MCP/REST)
-# awaitent les handlers awaitable, on relaie ici.
+# Async handlers: a registered identities backend (`connector_identities.register`)
+# can be async (Browserbase — pennylaneged); the two adapters (MCP/REST)
+# await awaitable handlers, we relay here.
 def _require_known_connector(name: str) -> None:
-    """Slug hors catalogue → erreur explicite, jamais le même payload qu'un
-    connecteur connu sans identités (feedback #162 : `linkedin` rendait
-    `{supported:false, identities:[]}` comme un nom bidon — faux négatif
-    silencieux pour l'agent qui s'est trompé de slug).
+    """Slug outside the catalog → explicit error, never the same payload as a
+    known connector without identities (feedback #162: `linkedin` returned
+    `{supported:false, identities:[]}` like a bogus name — a silent false negative
+    for the agent that got the slug wrong).
 
-    ⚠️ `linkedin` reste un alias piégeux même depuis que ce slug DÉSIGNE un vrai
-    connecteur (#231 : recherche B2B via AI Ark, clé app credits SEULE, aucune
-    notion de compte connecté — distinct d'`aiark`, qui garde son BYO) : un agent
-    qui tape `linkedin` pense quasi toujours à SON compte LinkedIn personnel, qui
-    vit sous `unipile`. On garde donc le hint AVANT le check registre — sinon la
-    même confusion renaît sous une forme différente (`{supported:false}` au lieu
-    de 404)."""
+    ⚠️ `linkedin` remains a tricky alias even since this slug DESIGNATES a real
+    connector (#231: B2B search via AI Ark, app-credits key ONLY, no
+    notion of a connected account — distinct from `aiark`, which keeps its BYO): an agent
+    that types `linkedin` almost always means THEIR personal LinkedIn account, which
+    lives under `unipile`. We therefore keep the hint BEFORE the registry check — otherwise the
+    same confusion is reborn in a different form (`{supported:false}` instead
+    of 404)."""
     from ... import providers
     if name == "linkedin":
         raise AuthzDenied(
             404, "unknown_connector",
-            "Connecteur inconnu pour les identités : `linkedin` (recherche B2B, "
-            "clé app credits partagée, aucun compte perso) n'a pas d'identités. "
-            "Ton compte LinkedIn personnel passe par le connecteur `unipile`. "
-            "Slugs valides : `oto_connector(op='list')`.")
+            "Unknown connector for identities: `linkedin` (B2B search, "
+            "shared app-credits key, no personal account) has no identities. "
+            "Your personal LinkedIn account goes through the `unipile` connector. "
+            "Valid slugs: `oto_connector(op='list')`.")
     if name in providers.REGISTRY:
         return
     raise AuthzDenied(
         404, "unknown_connector",
-        f"Connecteur inconnu : `{name}`. Slugs valides : `oto_connector(op='list')`.")
+        f"Unknown connector: `{name}`. Valid slugs: `oto_connector(op='list')`.")
 
 
 def _require_scope(ctx: ResolvedCtx, scope: str, *, write: bool) -> None:
-    """`member` : toujours. `org` / `group` : membre de l'org (lecture) ; admin du
-    palier pour choisir le défaut (écriture) — la clé partagée est celle de tous."""
+    """`member`: always. `org` / `group`: org member (read); tier admin
+    to choose the default (write) — the shared key is everyone's."""
     if scope not in connector_identities.SCOPES:
-        raise AuthzDenied(400, "bad_scope", f"scope inconnu : `{scope}`.")
+        raise AuthzDenied(400, "bad_scope", f"unknown scope: `{scope}`.")
     if scope == "member" or not write:
         return
     from ... import access, roles
     org = access.current_org(ctx.sub)
     if org is None:
-        raise AuthzDenied(400, "no_org_context", "Aucune org de contexte.")
+        raise AuthzDenied(400, "no_org_context", "No context org.")
     if scope == "org" and not roles.is_org_admin(ctx.sub, org):
         raise _refus_org_admin(org, sub=ctx.sub)
     if scope == "group":
         gid = access.current_group(ctx.sub)
         if gid is None:
-            raise AuthzDenied(400, "no_group_context", "Aucune équipe de contexte.")
+            raise AuthzDenied(400, "no_group_context", "No context team.")
         if not roles.can_admin_group(ctx.sub, gid):
             raise _refus_chef_d_equipe(gid, sub=ctx.sub)
 
@@ -189,13 +189,13 @@ async def _list(ctx: ResolvedCtx, inp: IdentitiesInput) -> dict:
     except AuthzDenied:
         raise
     except Exception as e:
-        # oto-backend#867 — un Unipile lent/en panne doit rendre une erreur nommée,
-        # jamais un gel ni une liste vide muette. `_unipile_list` ne le fait plus
-        # taire pour la BYO (liste principale) : ça remonte ici.
+        # oto-backend#867 — a slow/down Unipile must return a named error,
+        # never a freeze nor a silently empty list. `_unipile_list` no longer
+        # swallows it for BYO (main list): it surfaces here.
         if inp.connector != "unipile":
             raise
         raise AuthzDenied(502, "unipile_list_failed",
-                          f"Unipile n'a pas répondu (délai dépassé ou panne) : {e}")
+                          f"Unipile did not respond (timeout or outage): {e}")
     from ... import access
     noun = access.account_noun(inp.connector)
     out = {
@@ -210,50 +210,50 @@ async def _list(ctx: ResolvedCtx, inp: IdentitiesInput) -> dict:
 
 
 def _why_empty(ctx: ResolvedCtx, connector: str, noun: str) -> dict:
-    """Le POURQUOI d'une liste vide (#504) — jamais un `[]` muet.
+    """The WHY of an empty list (#504) — never a silent `[]`.
 
-    Ce que le signal affirmait : « `oto_identity(op=list, connector=unipile)` renvoie
-    `identities:[]` alors que le compte LinkedIn est connecté et opérationnel ».
-    Ce que la prod montre (vérifié le 28/08/2026) : les trois lectures de ce compte
-    datent du 14/08 à 14:00:44, 14:00:55 et 14:02:09 — le compte, lui, a été lié à
-    **14:03:30**. Rejouée aujourd'hui sur le même sub, la liste rend bien le compte.
-    Elle était vide parce qu'il n'y avait rien à lister ; le défaut RÉEL est le
-    silence, qui a laissé conclure au bug pendant quatre jours.
+    What the signal claimed: « `oto_identity(op=list, connector=unipile)` returns
+    `identities:[]` while the LinkedIn account is connected and operational ».
+    What prod shows (verified on 28/08/2026): the three reads of this account
+    date from 14/08 at 14:00:44, 14:00:55 and 14:02:09 — the account itself was linked at
+    **14:03:30**. Replayed today on the same sub, the list does return the account.
+    It was empty because there was nothing to list; the REAL defect is the
+    silence, which let people conclude it was a bug for four days.
 
-    Même famille que #476 (cf. `connectors/readiness.py`), et même seam : une couche
-    manquante se nomme ici comme là-bas. `[]` sans aucune couche manquante veut dire
-    exactement une chose — rien n'est encore connecté — et ça se dit aussi.
+    Same family as #476 (see `connectors/readiness.py`), and same seam: a missing
+    layer is named here as there. `[]` with no missing layer means
+    exactly one thing — nothing is connected yet — and that is said too.
 
-    Fail-VISIBLE : si le diagnostic ne se lit pas, on le DIT (`reason:"unknown"`)
-    plutôt que de rendre à nouveau une liste vide sans explication."""
+    Fail-VISIBLE: if the diagnosis cannot be read, we SAY so (`reason:"unknown"`)
+    rather than returning an empty list again without explanation."""
     from ... import access
     from ...connectors import readiness as connector_readiness
     try:
         diag = connector_readiness.diagnose(
             ctx.sub, connector, org=ctx.org_id, group=access.current_group(ctx.sub))
     except Exception:
-        logger.warning("diagnostic d'identités vide indisponible pour %s (fail-visible)",
+        logger.warning("empty-identities diagnosis unavailable for %s (fail-visible)",
                        connector, exc_info=True)
         return {"reason": "unknown",
-                "next_step": (f"Liste vide, et l'état des couches (clé, option) n'a "
-                              f"pas pu être lu — vérifie `{connector}` avec "
+                "next_step": (f"Empty list, and the state of the layers (key, option) "
+                              f"could not be read — check `{connector}` with "
                               f"oto_connector(op='list', name='{connector}').")}
-    # `pending_step` ⟹ c'est bien « aucun compte lié » : on le nomme dans le
-    # vocabulaire de CETTE surface, en relayant le geste du connecteur tel quel.
+    # `pending_step` ⟹ it really is « no linked account »: we name it in the
+    # vocabulary of THIS surface, relaying the connector's action as is.
     if diag is None or diag.reason == connector_readiness.PENDING_STEP:
-        # ⚠️ **`pending_step` veut dire « les COUCHES sont bonnes »** — la clé
-        # résout, le connecteur peut parfaitement travailler. Cette liste vide ne
-        # décrit donc que le registre d'identités, jamais la santé du connecteur,
-        # et rendre « rien n'est connecté » tout court la faisait lire comme un
-        # diagnostic de panne (#850, 10/09/2026).
+        # ⚠️ **`pending_step` means « the LAYERS are good »** — the key
+        # resolves, the connector can work perfectly well. This empty list
+        # therefore describes only the identity registry, never the connector's health,
+        # and returning a plain « nothing is connected » made it read like an
+        # outage diagnosis (#850, 10/09/2026).
         #
-        # Le cas mesuré : dans la MÊME minute où cette liste rendait `[]`, le même
-        # appelant rejoignait un canal et lisait 37 messages sur l'espace de travail
-        # visé. La veille, tous les appels échouaient vraiment et cette liste
-        # répondait `[]` **aussi** — si bien qu'elle a servi de corroboration à une
-        # conclusion fausse. *Une lecture qui rend la même réponse quand tout va
-        # bien et quand tout est cassé ne corrobore rien : elle confirme ce que son
-        # lecteur croit déjà.* C'est pire qu'une absence de lecture.
+        # The measured case: in the SAME minute this list returned `[]`, the same
+        # caller joined a channel and read 37 messages on the targeted
+        # workspace. The day before, all calls really were failing and this list
+        # answered `[]` **too** — so it served as corroboration for a
+        # wrong conclusion. *A read that returns the same answer when everything is fine
+        # and when everything is broken corroborates nothing: it confirms what its
+        # reader already believes.* That is worse than no read at all.
         couches_ok = (diag is not None
                       and diag.reason == connector_readiness.PENDING_STEP)
         out = {"reason": "no_identity_connected",
@@ -261,18 +261,18 @@ def _why_empty(ctx: ResolvedCtx, connector: str, noun: str) -> dict:
                              else connector_readiness.no_identity_step(
                                  ctx.sub, connector, noun))}
         if couches_ok:
-            # ⚠️ **Dans un champ SÉPARÉ, pas dans `next_step`.** Ce dernier est le
-            # geste déclaré par le connecteur, relayé tel quel : deux surfaces qui
-            # le reformulent racontent deux histoires, et son banc garde cette
-            # égalité exacte. La mise en garde porte sur la PORTÉE de la lecture,
-            # ce qui est un autre fait — elle a donc sa propre clé.
+            # ⚠️ **In a SEPARATE field, not in `next_step`.** The latter is the
+            # action declared by the connector, relayed as is: two surfaces that
+            # reword it tell two stories, and its bench keeps that exact
+            # equality. The caveat concerns the SCOPE of the read,
+            # which is a different fact — so it gets its own key.
             out["layers_ok"] = True
             out["scope_note"] = (
-                f"Ceci ne dit RIEN sur la santé de `{connector}` : ses couches "
-                "résolvent (clé, option), donc ses appels peuvent réussir dès "
-                "maintenant. Cette liste ne décrit que le registre d'identités — "
-                "n'en conclus pas qu'un appel qui échoue échoue pour cette raison, "
-                f"vérifie-le avec oto_instance(op='verify', connector='{connector}')."
+                f"This says NOTHING about the health of `{connector}`: its layers "
+                "resolve (key, option), so its calls may succeed right "
+                "now. This list only describes the identity registry — "
+                "do not conclude that a failing call fails for this reason, "
+                f"check with oto_instance(op='verify', connector='{connector}')."
             )
         return out
     return {"reason": diag.reason, "next_step": diag.next_step}
@@ -286,17 +286,17 @@ async def _set_default(ctx: ResolvedCtx, inp: SetIdentityInput) -> dict:
         if inspect.isawaitable(res):
             res = await res
     except account_suspension.PreteurEnPause as e:
-        # #898 : le compte existe et t'est prêté — c'est son prêteur qui est en pause.
-        # Un 404 « inconnu » enverrait chercher une identité qui n'a pas disparu.
+        # #898: the account exists and is lent to you — it is its lender who is paused.
+        # An « unknown » 404 would send people looking for an identity that has not vanished.
         raise AuthzDenied(403, account_suspension.CODE_PRETEUR, str(e))
     except ValueError as e:
         raise AuthzDenied(404, "unknown_identity", str(e))
     except AuthzDenied:
         raise
     except Exception as e:
-        # oto-backend#867 — même règle que `_list` : `_unipile_select` lève un
-        # `RuntimeError` (pas un `ValueError`) précisément pour ne pas se confondre
-        # avec un id inconnu — une panne/lenteur Unipile n'est pas un 404.
+        # oto-backend#867 — same rule as `_list`: `_unipile_select` raises a
+        # `RuntimeError` (not a `ValueError`) precisely so as not to be confused
+        # with an unknown id — a Unipile outage/slowness is not a 404.
         if inp.connector != "unipile":
             raise
         raise AuthzDenied(502, "unipile_list_failed", str(e))
@@ -315,7 +315,7 @@ def _rename_sync(ctx: ResolvedCtx, inp: RenameIdentityInput) -> dict:
 
 
 async def _rename(ctx: ResolvedCtx, inp: RenameIdentityInput) -> dict:
-    # Rôles + coffre = du SQL : hors de la boucle (mono-loop, `docs/event-loop-perf.md`).
+    # Roles + vault = SQL: off the loop (mono-loop, `docs/event-loop-perf.md`).
     return await run_in_threadpool(_rename_sync, ctx, inp)
 
 

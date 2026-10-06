@@ -1,13 +1,13 @@
-## prerequisite — clé api hithorizons
+## prerequisite — hithorizons api key
 
-connecteur **byo** : chacun connecte son propre compte hithorizons.
-- crée un compte sur [hithorizons](https://www.hithorizons.com) et abonne-toi à l'api (azure api management)
-- récupère ta clé d'abonnement (`Ocp-Apim-Subscription-Key`)
-- pose-la sur ton dashboard oto (connecteur `hithorizons`)
+**byo** connector: everyone connects their own hithorizons account.
+- create an account on [hithorizons](https://www.hithorizons.com) and subscribe to the api (azure api management)
+- get your subscription key (`Ocp-Apim-Subscription-Key`)
+- set it on your oto dashboard (`hithorizons` connector)
 
-## usage — données entreprise européennes
+## usage — european company data
 
-recherche et fiches d'entreprises à l'échelle européenne (pays par défaut FR, surchargeable).
-- `hithorizons_search_company(name=…, city=…, country=…)` — recherche par nom + ville/code postal
-- `hithorizons_suggestions(query=…)` — autocomplétion sur le nom
-- `hithorizons_company(company_id)` — fiche complète à partir d'un id hithorizons
+europe-wide company search and profiles (default country FR, overridable).
+- `hithorizons_search_company(name=…, city=…, country=…)` — search by name + city/postal code
+- `hithorizons_suggestions(query=…)` — name autocomplete
+- `hithorizons_company(company_id)` — full profile from a hithorizons id

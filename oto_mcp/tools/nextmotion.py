@@ -1,78 +1,78 @@
-"""Nextmotion — logiciel de gestion de cliniques de médecine esthétique : tout le côté
-ADMINISTRATIF, en lecture ET en écriture (cliniques, praticiens, agenda, catalogue,
-ventes, leads, appels et messages, statistiques, stock, réglages), plus l'IDENTITÉ du
-patient (`nextmotion_patient`).
+"""Nextmotion — management software for aesthetic-medicine clinics: the whole
+ADMINISTRATIVE side, read AND write (clinics, practitioners, calendar, catalogue,
+sales, leads, calls and messages, statistics, stock, settings), plus the patient's
+IDENTITY (`nextmotion_patient`).
 
-Wrappe `oto.tools.nextmotion.NextmotionClient` (Bearer, API « External » v4). keyed
-`api_key`, BYO (membre ou org) : une clé agit au nom de l'utilisateur qui l'a générée,
-sur les cliniques dont il est employé — il n'y a pas de clé plateforme.
+Wraps `oto.tools.nextmotion.NextmotionClient` (Bearer, "External" API v4). keyed
+`api_key`, BYO (member or org): a key acts on behalf of the user who generated it,
+on the clinics where they are employed — there is no platform key.
 
-## Données de santé : ce que ce connecteur ne sert PAS
+## Health data: what this connector does NOT serve
 
-Nextmotion porte des dossiers patients. Tout ce qui est contenu médical — antécédents,
-photos et médias, ordonnances et leur signature, consentements signés, soins réalisés,
-consultations, visites (notes cliniques), devis et factures créés sous une
-consultation — est **hors périmètre**, comme le chat : le client oto-core n'a aucune
-méthode vers ces endpoints, et ces modules n'en ajoutent pas. Les ouvrir est une
-décision de gouvernance (RGPD art. 9, hébergement HDS), pas une extension de surface.
-Ne se suppriment pas non plus : un patient, une facture, un paiement.
+Nextmotion holds patient files. Everything that is medical content — history,
+photos and media, prescriptions and their signature, signed consents, treatments performed,
+consultations, visits (clinical notes), quotes and invoices created under a
+consultation — is **out of scope**, like the chat: the oto-core client has no
+method toward those endpoints, and these modules add none. Opening them is a
+governance decision (GDPR art. 9, HDS hosting), not an extension of the surface.
+Also not deletable: a patient, an invoice, a payment.
 
-**L'identité du patient est servie, par un seul outil** (décision du propriétaire,
-2026-10-01) : `nextmotion_patient` lit (liste avec recherche, fiche), crée et modifie
-nom, prénom, email, téléphone, date de naissance, âge, genre, adresse, consentements de
-contact, numéro de patient, archivé — jamais les commentaires du praticien, la photo ni
-les coordonnées GPS. `nextmotion_analyse` lit la même liste pour des agrégats à seuil.
+**The patient's identity is served, by a single tool** (owner's decision,
+2026-10-01): `nextmotion_patient` reads (list with search, record), creates and edits
+last name, first name, email, phone, date of birth, age, gender, address, contact
+consents, patient number, archived — never the practitioner's comments, the photo or
+the GPS coordinates. `nextmotion_analyse` reads the same list for threshold aggregates.
 
-⚠️ **Des ressources du périmètre EMBARQUENT de la donnée personnelle** : rendez-vous,
-parcours, devis, factures et paiements portent un objet `patient` complet ; une demande
-de rendez-vous en ligne et un lead portent le nom, l'email et le téléphone de la
-personne ; beaucoup portent du texte libre. **Tout ce qui sort passe donc par une LISTE
-BLANCHE** (`nextmotion_socle`) : seuls les champs nommés passent, un champ que l'API
-ajouterait demain reste dehors. **Hors de `nextmotion_patient`, le patient n'est servi
-que par son `id`** (qui s'y résout) ; un lead sert son identité de contact (nom, email,
-téléphone), jamais ses notes ; la personne d'une demande en ligne pas du tout. **Il
-n'existe aucune échappatoire vers le brut** (`fields=["*"]` rend la vue par défaut), et
-aucun filtre qui cherche sur le nom d'une personne n'est exposé hors de la liste des
-patients.
+⚠️ **Some in-scope resources EMBED personal data**: appointments,
+journeys, quotes, invoices and payments carry a full `patient` object; an online
+appointment request and a lead carry the person's name, email and phone;
+many carry free text. **Everything that comes out therefore goes through an ALLOWLIST**
+(`nextmotion_socle`): only the named fields pass, a field the API
+added tomorrow stays out. **Outside `nextmotion_patient`, the patient is served
+only by their `id`** (which resolves there); a lead serves its contact identity (name, email,
+phone), never its notes; the person of an online request not at all. **There
+is no escape hatch to the raw data** (`fields=["*"]` returns the default view), and
+no filter that searches on a person's name is exposed outside the patient
+list.
 
-## Écritures : un aperçu tant qu'on ne dit pas le contraire
+## Writes: a preview unless told otherwise
 
-Toute écriture (create, update, delete, et les verbes propres : reschedule, validate,
-pay, convert…) a **`dry_run=True` par défaut** : l'outil valide les arguments, relit
-l'objet visé (projeté) et rend ce qui partirait, sans appeler aucune méthode d'écriture.
-**Jamais de notification implicite** : les drapeaux d'envoi que la spec met à `true` par
-défaut (modification d'un rendez-vous) partent à `false` sauf demande explicite, et
-l'aperçu dit qui serait prévenu. Le corps passe en `data`, validé contre la liste
-blanche d'ENTRÉE de l'op (`nextmotion_entrees`, tirée du `requestBody` de la spec) :
-**un champ inconnu est refusé nommément**, jamais ignoré. La réponse d'une écriture
-repasse par la liste blanche de la ressource. Mécanique commune → `nextmotion_garde`
+Every write (create, update, delete, and the specific verbs: reschedule, validate,
+pay, convert…) has **`dry_run=True` by default**: the tool validates the arguments, re-reads
+the targeted object (projected) and returns what would go out, without calling any write method.
+**Never an implicit notification**: the send flags the spec sets to `true` by
+default (editing an appointment) go out as `false` unless explicitly requested, and
+the preview says who would be notified. The body goes in `data`, validated against the op's
+INPUT allowlist (`nextmotion_entrees`, drawn from the spec's `requestBody`):
+**an unknown field is rejected by name**, never ignored. A write's response
+goes back through the resource's allowlist. Shared mechanics → `nextmotion_garde`
 (`Write`, `_serve_write`).
 
-## Surface (ADR 0047), verbe en `op`, défaut toujours en lecture
+## Surface (ADR 0047), verb in `op`, default always read
 
-Ce module :
-- `nextmotion_clinic` — découverte : les cliniques de la clé (seul, sans op).
+This module:
+- `nextmotion_clinic` — discovery: the key's clinics (alone, no op).
 - `nextmotion_practitioner` — list | get | create | update | delete.
 - `nextmotion_appointment` — list | get | update | reschedule | delete.
-- `nextmotion_availability` — créneaux libres (params disjoints de l'agenda, d'où
-  un tool à part) ; fournit l'`id` et le `time_slot` qu'exigent `reschedule` et une
-  demande de rendez-vous en ligne.
-- `nextmotion_product` — stock (lots), list | get | create | update | delete, NON
-  rattaché aux factures.
+- `nextmotion_availability` — free slots (params disjoint from the calendar, hence
+  a separate tool); provides the `id` and `time_slot` that `reschedule` and an
+  online appointment request require.
+- `nextmotion_product` — stock (batches), list | get | create | update | delete, NOT
+  attached to invoices.
 
-Modules frères (même clé, même client, montés par `Connector.modules`) :
-`nextmotion_catalogue` (catalogue, forfaits, répartitions comptables, configuration
-post-soin), `nextmotion_agenda` (salles, appareils, plages, absences, demandes en
-ligne, parcours), `nextmotion_ventes` (devis, factures et avoirs, paiements,
-statistiques, totaux d'un patient), `nextmotion_crm` (leads, appels et messages,
-réglages, modèles de questionnaires, webhooks), `nextmotion_patient` (l'identité),
-`nextmotion_analyse` (patientèle et occupation des appareils, en agrégats).
+Sibling modules (same key, same client, mounted by `Connector.modules`):
+`nextmotion_catalogue` (catalogue, packages, accounting distributions, post-treatment
+configuration), `nextmotion_agenda` (rooms, devices, slots, absences, online
+requests, journeys), `nextmotion_ventes` (quotes, invoices and credit notes, payments,
+statistics, a patient's totals), `nextmotion_crm` (leads, calls and messages,
+settings, questionnaire models, webhooks), `nextmotion_patient` (the identity),
+`nextmotion_analyse` (clientele and device occupancy, as aggregates).
 
-**Aucun argument n'est retenu au silence** (`is not None`) → `nextmotion_garde`.
+**No argument is silently dropped** (`is not None`) → `nextmotion_garde`.
 
-Dérivé de la spec OpenAPI publique (lue le 2026-09-17, écritures le 2026-10-01).
-**Aucun appel réel** : pas de clé disponible — la forme exacte des réponses, les effets
-de bord d'une écriture (notification au patient ?) ne sont pas vérifiés.
+Derived from the public OpenAPI spec (read on 2026-09-17, writes on 2026-10-01).
+**No real call**: no key available — the exact shape of responses and the side
+effects of a write (notification to the patient?) are not verified.
 """
 from __future__ import annotations
 
@@ -180,7 +180,7 @@ def register(mcp: FastMCP) -> None:
                             fields=fields)
             return _one(_run(lambda: c.get_doctor(doctor_id)), "practitioner", _collab,
                         withheld=None)
-        raise _bad("op doit être 'list', 'get', 'create', 'update' ou 'delete'.")
+        raise _bad("op must be 'list', 'get', 'create', 'update' or 'delete'.")
 
     @mcp.tool()
     def nextmotion_appointment(
@@ -253,7 +253,7 @@ def register(mcp: FastMCP) -> None:
                 clinic_id, date=date, patient_id=patient_id, **_paging(limit, offset))),
                 "appointments", _appointment, fields=fields)
         if op not in ("get", "reschedule", "delete"):
-            raise _bad("op doit être 'list', 'get', 'update', 'reschedule' ou 'delete'.")
+            raise _bad("op must be 'list', 'get', 'update', 'reschedule' or 'delete'.")
         _refuse_ignored(op, clinic_id=clinic_id, date=date, patient_id=patient_id,
                         limit=limit, offset=offset, fields=fields)
         _need(op, appointment_id=appointment_id)
@@ -272,7 +272,7 @@ def register(mcp: FastMCP) -> None:
             current = _one(_run(lambda: c.get_appointment(appointment_id)),
                            "appointment", _appointment)
             preview = {"dry_run": True, "would": op, **current,
-                       "note": f"Rien n'est écrit. Repasse avec dry_run=False pour {op}."}
+                       "note": f"Nothing is written. Call again with dry_run=False to {op}."}
             if op == "reschedule":
                 preview["to"] = {"visit_type_opening_hour_id": visit_type_opening_hour_id,
                                  "time_slot": time_slot}
@@ -366,7 +366,7 @@ def register(mcp: FastMCP) -> None:
             _need(op, clinic_id=clinic_id)
             _refuse_ignored(op, product_id=product_id)
             if expiring_within_days is not None and expiring_within_days < 1:
-                raise _bad(f"expiring_within_days doit être >= 1 — reçu {expiring_within_days}.")
+                raise _bad(f"expiring_within_days must be >= 1 — got {expiring_within_days}.")
             return _page(_run(lambda: c.list_products(
                 clinic_id, search=search, stock_state=stock_state,
                 expiring_within_days=expiring_within_days, order=order,
@@ -379,4 +379,4 @@ def register(mcp: FastMCP) -> None:
                             limit=limit, offset=offset, fields=fields)
             return _one(_run(lambda: c.get_product(product_id)), "product", _product,
                         withheld=None)
-        raise _bad("op doit être 'list', 'get', 'create', 'update' ou 'delete'.")
+        raise _bad("op must be 'list', 'get', 'create', 'update' or 'delete'.")

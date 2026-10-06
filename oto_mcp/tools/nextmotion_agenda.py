@@ -1,26 +1,26 @@
-"""Nextmotion — l'organisation de l'agenda : salles, appareils, plages d'ouverture,
-absences, demandes de rendez-vous en ligne, et parcours patient du jour.
+"""Nextmotion — calendar organisation: rooms, devices, opening hours,
+absences, online appointment requests, and the day's patient journey.
 
-Module frère de `nextmotion.py` (cf. `Connector.modules`). Les rendez-vous eux-mêmes
-et les créneaux libres restent dans `nextmotion.py` (`nextmotion_appointment` porte
-leurs écritures). Deux outils :
+Sibling module of `nextmotion.py` (see `Connector.modules`). The appointments themselves
+and the free slots stay in `nextmotion.py` (`nextmotion_appointment` carries
+their writes). Two tools:
 
-- `nextmotion_calendar` — les ressources et réglages de l'agenda, `kind` × list | get |
-  create | update | delete : tous partagent clinique + identifiant, chaque kind a au
-  plus ses filtres (ADR 0047). Les écritures ont `dry_run=True` par défaut et leur
-  `data` passe la liste blanche d'entrée (`nextmotion_entrees`) ; une demande en ligne
-  se crée (pour une personne, nommée dans `data`) mais ne se modifie ni ne s'efface.
-- `nextmotion_journey` — le parcours d'un patient sur un rendez-vous (étapes
-  requises / faites) : une liste seule, à douze filtres qui ne recouvrent rien des
-  autres, d'où un outil à part.
+- `nextmotion_calendar` — the calendar's resources and settings, `kind` × list | get |
+  create | update | delete: all share clinic + identifier, each kind has at
+  most its own filters (ADR 0047). Writes have `dry_run=True` by default and their
+  `data` passes the input allowlist (`nextmotion_entrees`); an online request
+  can be created (for a person, named in `data`) but is neither edited nor deleted.
+- `nextmotion_journey` — a patient's journey over an appointment (steps
+  required / done): a list only, with twelve filters that overlap none of the
+  others, hence a separate tool.
 
-⚠️ Ce qui est retiré, en plus de la règle commune (`nextmotion_socle`) :
-- d'une **demande en ligne** : la personne qui la fait (nom, prénom, email,
-  téléphone, date de naissance, âge, sexe), son lien et son message de prépaiement ;
-- d'un **évènement** (plage, absence, parcours) : titre, sous-titre, notes, statut
-  de séance, textes des SMS / WhatsApp de rappel ;
-- d'un **parcours** : sa consultation (un objet médical), et le filtre `search` de
-  l'API, qui cherche sur le NOM du patient — comme le tri par nom.
+⚠️ What is removed, in addition to the common rule (`nextmotion_socle`):
+- from an **online request**: the person making it (last name, first name, email,
+  phone, date of birth, age, sex), its link and its pre-payment message;
+- from an **event** (slot, absence, journey): title, subtitle, notes, session
+  status, texts of the SMS / WhatsApp reminders;
+- from a **journey**: its consultation (a medical object), and the API's `search`
+  filter, which searches on the patient's NAME — like sorting by name.
 """
 from __future__ import annotations
 

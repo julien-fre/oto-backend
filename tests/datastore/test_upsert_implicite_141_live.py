@@ -597,5 +597,5 @@ def test_upsert_avec_id_est_refuse(data_write):
     ns, ns_id, ids = _table(lignes=EN_PLACE)
     msg = _refus_mcp(data_write, datastore=ns, id=ids["222"], row={"nom": "X"},
                      upsert=True)
-    assert "ne vaut que SANS `id=`" in msg
+    assert "only applies WITHOUT `id=`" in msg
     assert _base(ns_id)["222"]["nom"] == "B"

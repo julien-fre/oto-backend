@@ -191,10 +191,10 @@ def test_site_explorer_dispatches_and_validates_required():
         assert result == {"domain_rating": 42}
         inst.domain_rating.assert_called_once_with(target="example.com", date="2026-01-01")
 
-        with pytest.raises(McpError, match="requiert date"):
+        with pytest.raises(McpError, match="requires date"):
             fn(report="domain-rating", target="example.com")
 
-        with pytest.raises(McpError, match="inconnu"):
+        with pytest.raises(McpError, match="unknown"):
             fn(report="not-a-real-report", target="example.com")
     finally:
         patcher.stop()
@@ -230,7 +230,7 @@ def test_project_create_validates_required_and_list_takes_filters():
         fn(op="list", project_id=7)
         inst.list_projects.assert_called_once_with(project_id=7)
 
-        with pytest.raises(McpError, match="requiert project_name"):
+        with pytest.raises(McpError, match="requires project_name"):
             fn(op="create")
 
         inst.create_project.return_value = {"project_id": 1}
@@ -262,10 +262,10 @@ def test_gsc_anonymous_queries_has_different_required_shape():
     try:
         fn = asyncio.run(m.get_tool("ahrefs_gsc")).fn
 
-        with pytest.raises(McpError, match="requiert `select` et `country`"):
+        with pytest.raises(McpError, match="requires `select` and `country`"):
             fn(report="anonymous-queries", date_from="2026-01-01", project_id=1)
 
-        with pytest.raises(McpError, match="requiert `project_id`"):
+        with pytest.raises(McpError, match="requires `project_id`"):
             fn(report="keywords", date_from="2026-01-01")
     finally:
         patcher.stop()
@@ -292,7 +292,7 @@ def test_site_explorer_rejects_country_on_reports_that_dont_take_it():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("ahrefs_site_explorer")).fn
-        with pytest.raises(McpError, match="n'a pas de paramètre `country`"):
+        with pytest.raises(McpError, match="has no `country` parameter"):
             fn(report="domain-rating", target="example.com", date="2026-01-01", country="fr")
         cls.return_value.domain_rating.assert_not_called()
 
@@ -321,7 +321,7 @@ def test_brand_radar_post_report_refuses_shape_incompatible_params():
             dict(report="citations-overview", data_source="chatgpt", select="brand", where="foo>1"),
             dict(report="citations-history", data_source="chatgpt", date_from="2026-01-01", date="2026-01-01"),
         ):
-            with pytest.raises(McpError, match="POST.*n'accepte pas"):
+            with pytest.raises(McpError, match="POST.*does not accept"):
                 fn(**kwargs)
         cls.return_value.brand_citations_overview.assert_not_called()
         cls.return_value.brand_citations_history.assert_not_called()
@@ -341,7 +341,7 @@ def test_project_keywords_add_requires_locations_now():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("ahrefs_project_keywords")).fn
-        with pytest.raises(McpError, match="requiert .keywords. et .locations."):
+        with pytest.raises(McpError, match="requires .keywords. and .locations."):
             fn(project_id=1, op="add", keywords=[{"keyword": "seo tools"}])
 
         cls.return_value.add_project_keywords.return_value = {}
@@ -360,7 +360,7 @@ def test_brand_radar_report_create_has_no_top_level_data_source():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("ahrefs_brand_radar_report")).fn
-        with pytest.raises(McpError, match="requiert .prompts_frequency."):
+        with pytest.raises(McpError, match="requires .prompts_frequency."):
             fn(op="create")
 
         cls.return_value.create_brand_radar_report.return_value = {}

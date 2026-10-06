@@ -1,21 +1,21 @@
-"""Déclaration de registre du connecteur `greenhouse`.
+"""Registry declaration of the `greenhouse` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# Connecteurs de recrutement (Applicant Tracking Systems). byo keyed api_key
-# (chacun pose sa clé Harvest/API key, cascade user > org), hors bundle (opt-in,
-# activables par org/admin). Inertes tant que non activés en DB (deny-by-default,
-# comme hubspot/apollo). Recruitee = credential à 2 champs (token + company id)
-# → resolve_credential_fields, pas keyed.
+# Recruiting connectors (Applicant Tracking Systems). byo keyed api_key
+# (everyone sets their own Harvest/API key, user > org cascade), outside the bundle (opt-in,
+# activatable per org/admin). Inert until activated in DB (deny-by-default,
+# like hubspot/apollo). Recruitee = 2-field credential (token + company id)
+# → resolve_credential_fields, not keyed.
 CONNECTOR = _c(
     "greenhouse", ["greenhouse"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Greenhouse",
-    help="ATS — candidats, jobs, candidatures, notes (Harvest API)",
+    help="ATS — candidates, jobs, applications, notes (Harvest API)",
     href="https://www.greenhouse.io",
 )
 
@@ -24,6 +24,6 @@ PUBLISHER = "Greenhouse"
 LOGO_DOMAIN = "greenhouse.io"
 
 DESCRIPTION = (
-    "Le recrutement suivi dans Greenhouse (ATS) : candidats, offres d'emploi, "
-    "candidatures et notes, via l'API Harvest. Hors socle, à activer par org."
+    "Recruiting tracked in Greenhouse (ATS): candidates, job postings, "
+    "applications and notes, via the Harvest API. Outside the base, to be activated per org."
 )

@@ -200,7 +200,7 @@ def test_dead_filter_department_is_refused():
             contact={"department": {"any": {"include": ["human_resources"]}}})
     # Le refus NOMME le remplaçant, comme ses trois jumeaux — sinon il déplace le
     # problème au lieu de le résoudre.
-    assert "CÔTÉ CLIENT" in str(e.value) or "côté client" in str(e.value).lower()
+    assert "CLIENT-SIDE" in str(e.value) or "client-side" in str(e.value).lower()
 
 
 def test_la_description_n_annonce_plus_department_comme_supporte():
@@ -345,7 +345,7 @@ def test_une_reponse_d_erreur_reste_emballee_et_actionnable():
     assert req.call_count == 1, "substitution non exercée, ou 5xx rejoué"
     assert pause.call_count == 0
     assert isinstance(exc, McpError)
-    assert "erreur serveur (500)" in str(exc.error.message)
+    assert "server error (500)" in str(exc.error.message)
 
 
 def test_la_description_servie_dit_qu_un_echec_n_est_pas_une_absence():

@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `zapier`.
+"""Registry declaration for the `zapier` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from ._model import _c
 CONNECTOR = _c(
     "zapier", ["zapier"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Zapier",
-    help="automatisation — actions exposées (AI Actions) + exécution",
+    help="automation — exposed actions (AI Actions) + execution",
     href="https://actions.zapier.com",
 )
 
@@ -19,6 +19,6 @@ PUBLISHER = "Zapier"
 LOGO_DOMAIN = "zapier.com"
 
 DESCRIPTION = (
-    "Les AI Actions exposées par un compte Zapier : lister les actions "
-    "disponibles et les exécuter."
+    "The AI Actions exposed by a Zapier account: list the available "
+    "actions and run them."
 )

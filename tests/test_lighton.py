@@ -221,7 +221,7 @@ def test_401_maps_to_actionable_message():
         req.return_value = _Resp({"error": "unauthorized", "code": 401}, 401)
         with pytest.raises(McpError) as exc:
             _call("lighton_workspaces")
-    assert "invalide" in str(exc.value)
+    assert "invalid" in str(exc.value)
 
 
 def test_5xx_maps_to_retry_message():
@@ -229,7 +229,7 @@ def test_5xx_maps_to_retry_message():
         req.return_value = _Resp({"error": "oops"}, 503)
         with pytest.raises(McpError) as exc:
             _call("lighton_workspaces")
-    assert "indisponible" in str(exc.value)
+    assert "unavailable" in str(exc.value)
 
 
 def test_parse_bad_source_never_hits_network():

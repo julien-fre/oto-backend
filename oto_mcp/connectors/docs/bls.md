@@ -1,13 +1,13 @@
-## usage — salaires par métier aux états-unis (open data bls oews)
+## usage — wages by occupation in the united states (bls oews open data)
 
-source publique du Bureau of Labor Statistics, sans clé. un seul tool :
-- « combien gagne un data scientist aux US, et à Chicago ? » → `bls_oews_wages(soc="15-2051", areas=["US", "IL", "16980"])` — par zone : P10, P25, médiane (`p50`), P75, P90 et moyenne en dollars **annuels**, plus l'emploi
-- zones acceptées : `"US"`, un État (nom ou abréviation postale : `"Illinois"`, `"IL"`), ou le **code CBSA à 5 chiffres** d'une aire métropolitaine (`"16980"` = Chicago-Naperville-Elgin, `"35620"` = New York-Newark-Jersey City) — ⚠️ un NOM d'aire métropolitaine n'est pas résolu
-- le métier se passe par son **code SOC à 6 chiffres** (`"15-1299"` ou `"151299"`)
+public source of the Bureau of Labor Statistics, no key. a single tool:
+- "how much does a data scientist earn in the US, and in Chicago?" → `bls_oews_wages(soc="15-2051", areas=["US", "IL", "16980"])` — per area: P10, P25, median (`p50`), P75, P90 and mean in **annual** dollars, plus employment
+- accepted areas: `"US"`, a State (name or postal abbreviation: `"Illinois"`, `"IL"`), or the **5-digit CBSA code** of a metropolitan area (`"16980"` = Chicago-Naperville-Elgin, `"35620"` = New York-Newark-Jersey City) — ⚠️ a metropolitan area NAME is not resolved
+- the occupation is passed by its **6-digit SOC code** (`"15-1299"` or `"151299"`)
 
-## note — ⚠️ ce que le chiffre couvre, et ce qu'il ne dit pas
+## note — ⚠️ what the figure covers, and what it does not say
 
-- **dernière année publiée seulement** : l'API ne sert aucun historique OEWS ; l'année est dans le résultat (`year`), à citer avec le chiffre
-- **granularité SOC, pas O\*NET** : un code O\*NET-SOC à 8 chiffres (`"15-1299.08"`) est accepté, mais son suffixe est RETIRÉ — les salaires rendus couvrent alors tout le SOC `15-1299` (une catégorie « autres » parfois très large), et le résultat le dit dans `note`. à répéter à l'utilisateur plutôt que de présenter le chiffre comme celui du métier détaillé
-- **une valeur absente n'est jamais devinée** : un salaire plafonné ou non publié par le BLS revient `null`, avec sa forme brute dans `raw` (`"-"`) et le motif dans `footnotes` ; `missing` liste les mesures sans série pour ce métier × cette zone (petites aires, métiers rares)
-- **quota journalier PARTAGÉ** : sans clé d'enregistrement, le BLS sert 25 requêtes par jour à toute la plateforme ; une requête couvre 3 zones → grouper les zones dans UN appel (12 au plus), jamais un appel par zone. quota épuisé = refus explicite, retour le lendemain
+- **latest published year only**: the API serves no OEWS history; the year is in the result (`year`), to be cited with the figure
+- **SOC granularity, not O\*NET**: an 8-digit O\*NET-SOC code (`"15-1299.08"`) is accepted, but its suffix is STRIPPED — the returned wages then cover the whole `15-1299` SOC (an "all other" category that is sometimes very broad), and the result says so in `note`. to be repeated to the user rather than presenting the figure as that of the detailed occupation
+- **a missing value is never guessed**: a wage capped or unpublished by the BLS comes back `null`, with its raw form in `raw` (`"-"`) and the reason in `footnotes`; `missing` lists the measures without a series for this occupation × this area (small areas, rare occupations)
+- **SHARED daily quota**: without a registration key, the BLS serves 25 requests per day to the whole platform; one request covers 3 areas → group the areas in ONE call (12 at most), never one call per area. exhausted quota = explicit refusal, come back the next day

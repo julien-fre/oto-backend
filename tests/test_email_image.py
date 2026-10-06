@@ -180,4 +180,4 @@ def test_la_description_dit_comment_obtenir_l_url(outil):
     assert "image_alt" in (outil.description or "")
     props = outil.parameters["properties"]
     assert 'oto_upload_url(target="image")' in props["image_url"]["description"]
-    assert "REQUIS" in props["image_alt"]["description"]
+    assert "REQUIRED" in props["image_alt"]["description"]

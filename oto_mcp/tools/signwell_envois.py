@@ -1,17 +1,17 @@
-"""SignWell — envois groupés, webhooks et compte.
+"""SignWell — bulk sends, webhooks and account.
 
-Second module du connecteur `signwell` (cf. `tools/signwell.py` pour les
-documents et modèles, `signwell_socle.py` pour le socle commun).
+Second module of the `signwell` connector (see `tools/signwell.py` for
+documents and templates, `signwell_socle.py` for the common base).
 
-- **`signwell_bulk_send(op="create")` est un APERÇU par défaut.** Un envoi groupé
-  écrit à une personne par ligne du CSV : sans `dry_run=False` explicite, l'outil
-  fait valider le CSV par SignWell (`validate_csv`, sans effet de bord) et rend ce
-  qui partirait. Même logique que les autres envois de masse du catalogue.
-- **Le CSV se passe en clair** (`csv`) ou encodé (`csv_base64`) ; l'outil encode.
-- **Les listes sont projetées** : les documents d'un envoi groupé sont rendus en
-  vue resserrée (`signwell_socle.vue_document`) ; `full=True` rend la page brute.
-- **oto n'est pas un récepteur de webhooks** : `signwell_webhook` enregistre une URL
-  que l'utilisateur contrôle. SignWell y poste TOUS les événements du compte.
+- **`signwell_bulk_send(op="create")` is a PREVIEW by default.** A bulk send
+  writes to one person per CSV row: without an explicit `dry_run=False`, the tool
+  has SignWell validate the CSV (`validate_csv`, no side effect) and returns what
+  would go out. Same logic as the other mass sends in the catalog.
+- **The CSV is passed in plain text** (`csv`) or encoded (`csv_base64`); the tool encodes.
+- **Lists are projected**: the documents of a bulk send are returned as a
+  tightened view (`signwell_socle.vue_document`); `full=True` returns the raw page.
+- **oto is not a webhook receiver**: `signwell_webhook` registers a URL
+  that the user controls. SignWell posts ALL the account's events there.
 """
 from __future__ import annotations
 
@@ -25,21 +25,21 @@ from .signwell_socle import _bad, _client, _hors_op, _need, _run, vue_document
 
 def _csv_b64(csv: Optional[str], csv_base64: Optional[str]) -> str:
     if (csv is None) == (csv_base64 is None):
-        raise _bad("Passe le CSV en clair (`csv`) OU encodé (`csv_base64`), l'un des deux.")
+        raise _bad("Pass the CSV in plain text (`csv`) OR encoded (`csv_base64`), one of the two.")
     if csv is not None:
         return base64.b64encode(csv.encode("utf-8")).decode("ascii")
     return csv_base64
 
 
 def _shape_documents_page(page: object, full: Optional[bool]) -> object:
-    """Page de documents d'un envoi groupé : chaque document en vue resserrée, les
-    clés de pagination intactes. `full=True` rend la page telle que servie."""
+    """A page of documents from a bulk send: each document as a tightened view, the
+    pagination keys intact. `full=True` returns the page as served."""
     if full or not isinstance(page, dict):
         return page
     out = {k: v for k, v in page.items() if k != "documents"}
     out["documents"] = [vue_document(d) for d in page.get("documents") or []]
-    out["projection"] = {"documents": "vue resserrée (état, destinataires, lien)",
-                         "hint": "full=True rend les documents entiers"}
+    out["projection"] = {"documents": "tightened view (state, recipients, link)",
+                         "hint": "full=True returns the whole documents"}
     return out
 
 
@@ -91,7 +91,7 @@ def register(mcp: FastMCP) -> None:
                         custom_requester_name=custom_requester_name,
                         custom_requester_email=custom_requester_email)
         if op != "create" and dry_run is not None:
-            raise _bad(f"op='{op}' ne prend pas `dry_run` : seul op='create' envoie.")
+            raise _bad(f"op='{op}' does not take `dry_run`: only op='create' sends.")
 
         if op == "list":
             _hors_op(op, bulk_send_id=bulk_send_id, template_ids=template_ids, csv=csv,
@@ -123,7 +123,7 @@ def register(mcp: FastMCP) -> None:
             data = res.get("data") if isinstance(res, dict) else None
             texte = base64.b64decode(data).decode("utf-8", errors="replace") if data else None
             return {"template_ids": template_ids, "csv": texte,
-                    "hint": "remplis une ligne par envoi, puis op='validate_csv'."}
+                    "hint": "fill in one row per send, then op='validate_csv'."}
 
         if op in ("validate_csv", "create"):
             _need(op, template_ids=template_ids)
@@ -140,15 +140,15 @@ def register(mcp: FastMCP) -> None:
                     "utf-8", errors="replace")).splitlines() if l.strip()]) - 1, 0)
                 return {"dry_run": True, "rows": lignes, "validation": validation,
                         "settings": {k: v for k, v in reglages.items() if v is not None},
-                        "next_step": "rien n'est parti. Relance avec dry_run=False pour "
-                                     f"envoyer {lignes} document(s)."}
+                        "next_step": "nothing has gone out. Re-run with dry_run=False to "
+                                     f"send {lignes} document(s)."}
             body = {k: v for k, v in {**reglages,
                                       "api_application_id": api_application_id}.items()
                     if v is not None}
             return {"bulk_send": _run(lambda: _client().create_bulk_send(
                 template_ids, b64, **body))}
 
-        raise _bad(f"op inconnu : {op!r}")
+        raise _bad(f"unknown op: {op!r}")
 
     @mcp.tool()
     def signwell_webhook(
@@ -180,7 +180,7 @@ def register(mcp: FastMCP) -> None:
             _need(op, callback_url=callback_url)
             _hors_op(op, webhook_id=webhook_id)
             if not callback_url.startswith("https://"):
-                raise _bad("`callback_url` doit être une URL https:// que tu contrôles.")
+                raise _bad("`callback_url` must be an https:// URL that you control.")
             if dry_run:
                 return {"dry_run": True, "would_create": {
                     "callback_url": callback_url, "api_application_id": api_application_id}}
@@ -198,7 +198,7 @@ def register(mcp: FastMCP) -> None:
             _run(lambda: _client().delete_webhook(webhook_id))
             return {"deleted": True, "webhook_id": webhook_id}
 
-        raise _bad(f"op inconnu : {op!r}")
+        raise _bad(f"unknown op: {op!r}")
 
     @mcp.tool()
     def signwell_account(
@@ -231,4 +231,4 @@ def register(mcp: FastMCP) -> None:
             _run(lambda: _client().delete_api_application(application_id))
             return {"deleted": True, "application_id": application_id}
 
-        raise _bad(f"op inconnu : {op!r}")
+        raise _bad(f"unknown op: {op!r}")

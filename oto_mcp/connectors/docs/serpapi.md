@@ -1,17 +1,17 @@
-## prerequisite — obtenir une clé serpapi
+## prerequisite — get a serpapi key
 
-crée une clé api (`private api key`) dans ton dashboard [serpapi](https://serpapi.com).
-- colle-la dans tes connecteurs oto sur `/account`
-- les membres peuvent aussi utiliser la clé plateforme (quota quotidien)
+create an api key (`private api key`) in your [serpapi](https://serpapi.com) dashboard.
+- paste it into your oto connectors on `/account`
+- members can also use the platform key (daily quota)
 
-## usage — recherche multi-moteurs
+## usage — multi-engine search
 
-atteint des moteurs que serper n'a pas : verticaux google (trends, finance, vols, hôtels, events, jobs), bing, youtube et marketplaces.
-- `serpapi_search(engine=…)` — n'importe quel moteur serpapi : `bing`, `youtube`, `amazon`, `walmart`, `ebay`, `google_events`, et le générique (google_play, duckduckgo, yelp…)
-- `serpapi_jobs(op="search"|"details")` — sourcing d'offres via google jobs (le `job_id` du détail sort de la recherche)
-- `serpapi_google_trends` — intérêt dans le temps / par région pour un terme
-- `serpapi_google_finance` / `serpapi_google_flights` / `serpapi_google_hotels` — cotations, vols, hôtels
+reaches engines that serper does not have: google verticals (trends, finance, flights, hotels, events, jobs), bing, youtube and marketplaces.
+- `serpapi_search(engine=…)` — any serpapi engine: `bing`, `youtube`, `amazon`, `walmart`, `ebay`, `google_events`, and the generic one (google_play, duckduckgo, yelp…)
+- `serpapi_jobs(op="search"|"details")` — job posting sourcing via google jobs (the `job_id` for the details comes out of the search)
+- `serpapi_google_trends` — interest over time / by region for a term
+- `serpapi_google_finance` / `serpapi_google_flights` / `serpapi_google_hotels` — quotes, flights, hotels
 
-## note — périmètre de projet (#605, 2026-08-29)
+## note — project scope (#605, 2026-08-29)
 
-sous un projet à `excluded_url_prefixes`, `serpapi_search` écarte les résultats correspondants — quel que soit le moteur — et le dit (`excluded_by_perimeter`). les verticaux à contrat propre (jobs, trends, finance, flights, hotels) ne rendent pas de pages web et ne sont pas filtrés. détail : `docs/projects.md`.
+under a project with `excluded_url_prefixes`, `serpapi_search` drops the matching results — whatever the engine — and says so (`excluded_by_perimeter`). verticals with their own contract (jobs, trends, finance, flights, hotels) do not return web pages and are not filtered. details: `docs/projects.md`.

@@ -35,14 +35,14 @@ def test_une_cle_inconnue_est_NOMMEE_et_le_schema_est_indique():
     # C'est l'appel exact de l'incident : `op` n'existe pas sur ce tool.
     msg = T._arg_error_message(_validation_error(body="x", op="draft"))
     assert "op" in msg
-    assert "non reconnu" in msg
+    assert "unrecognized" in msg
     assert "oto_tool_schema" in msg
 
 
 def test_un_champ_requis_absent_se_distingue_d_une_cle_inconnue():
     msg = T._arg_error_message(_validation_error(mode="draft"))
-    assert "body" in msg and "requis" in msg
-    assert "non reconnu" not in msg
+    assert "body" in msg and "required" in msg
+    assert "unrecognized" not in msg
 
 
 def test_les_deux_natures_de_refus_coexistent_dans_le_message():
@@ -52,7 +52,7 @@ def test_les_deux_natures_de_refus_coexistent_dans_le_message():
 
 def test_une_forme_inattendue_retombe_sur_le_message_generique():
     # Pas de ValidationError dans la chaîne : on ne prétend nommer personne.
-    assert "vérifie les paramètres" in T._arg_error_message(ValueError("autre chose"))
+    assert "check the tool's parameters" in T._arg_error_message(ValueError("autre chose"))
 
 
 # ── ⑤ un nom RETIRÉ ne se fait plus passer pour un connecteur absent ────────────
@@ -62,11 +62,11 @@ def test_un_nom_retire_rend_les_verbes_survivants_du_domaine(monkeypatch):
                         lambda n: ["gmail_compose", "gmail_list_accounts", "gmail_message"])
     info = T.classify(T.NotFoundError("Unknown tool: 'gmail_search'"))
     assert info.code == "unknown_tool"
-    assert "n'existe plus" in info.message
+    assert "no longer exists" in info.message
     assert "gmail_message" in info.message
     # Et surtout : plus un mot sur une installation de connecteur — c'est le mensonge
     # qui a envoyé la session chercher un demi-montage inexistant.
-    assert "installé" not in info.message and "installe" not in (info.hint or "")
+    assert "installed" not in info.message and "install" not in (info.hint or "")
 
 
 def test_un_outil_qui_EXISTE_mais_n_est_pas_monte_garde_son_message(monkeypatch):
@@ -74,13 +74,13 @@ def test_un_outil_qui_EXISTE_mais_n_est_pas_monte_garde_son_message(monkeypatch)
     monkeypatch.setattr(T, "_connector_of_tool", lambda n: "google")
     info = T.classify(T.NotFoundError("Unknown tool: 'gmail_message'"))
     assert info.code == "tool_not_mounted"
-    assert "n'est pas monté dans ta session" in info.message
+    assert "is not mounted in your session" in info.message
     # oto#91 (retour 382) : il affirmait « le connecteur n'est pas installé » — faux
     # quand il l'est et que la liste de la session est simplement figée ou filtrée,
     # et lu « connecteur en panne ». Il dit les causes possibles, et que ce n'en est
     # pas une.
-    assert "ce n'est pas une panne" in info.message
-    assert "le connecteur `google` n'est pas installé" not in info.message
+    assert "this is not an outage" in info.message
+    assert "the `google` connector is not installed" not in info.message
     assert "oto_call" in (info.hint or "")
 
 

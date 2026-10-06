@@ -66,13 +66,13 @@ def test_employee_defaults_to_the_reachable_list(client):
 
 
 def test_employee_get_requires_user_id(client):
-    with pytest.raises(McpError, match="op='get' requiert user_id"):
+    with pytest.raises(McpError, match="op='get' requires user_id"):
         _tool("lucca_employee")(op="get")
     client.get_user.assert_not_called()
 
 
 def test_employee_get_refuses_list_only_arguments(client):
-    with pytest.raises(McpError, match="op='get' n'utilise pas mail"):
+    with pytest.raises(McpError, match="op='get' does not use mail"):
         _tool("lucca_employee")(op="get", user_id="42", mail="jean@exemple.fr")
     client.get_user.assert_not_called()
 
@@ -81,7 +81,7 @@ def test_employee_get_refuses_list_only_arguments(client):
 
 def test_absence_list_requires_date(client):
     """Lucca lui-même exige `date` — pas de « toutes les absences » non filtrées."""
-    with pytest.raises(McpError, match="op='list' requiert date"):
+    with pytest.raises(McpError, match="op='list' requires date"):
         _tool("lucca_absence")()
     client.list_leaves.assert_not_called()
 
@@ -113,7 +113,7 @@ def test_absence_list_fields_star_restores_the_raw_record(client):
 
 
 def test_absence_get_routes_and_refuses_list_only_arguments(client):
-    with pytest.raises(McpError, match="op='get' n'utilise pas date"):
+    with pytest.raises(McpError, match="op='get' does not use date"):
         _tool("lucca_absence")(op="get", leave_id="1", date="2026-09-01")
     client.get_leave.assert_not_called()
 
@@ -126,7 +126,7 @@ def test_absence_get_routes_and_refuses_list_only_arguments(client):
 def test_leave_request_list_takes_no_argument(client):
     """Lucca ne documente AUCUN paramètre sur cet endpoint — refuser un id fourni
     par erreur sur `op='list'` plutôt que de le laisser tomber en silence."""
-    with pytest.raises(McpError, match="op='list' n'utilise pas leave_request_id"):
+    with pytest.raises(McpError, match="op='list' does not use leave_request_id"):
         _tool("lucca_leave_request")(leave_request_id="1")
     client.list_leave_requests.assert_not_called()
 
@@ -135,7 +135,7 @@ def test_leave_request_list_takes_no_argument(client):
 
 
 def test_leave_request_get_requires_id(client):
-    with pytest.raises(McpError, match="op='get' requiert leave_request_id"):
+    with pytest.raises(McpError, match="op='get' requires leave_request_id"):
         _tool("lucca_leave_request")(op="get")
     client.get_leave_request.assert_not_called()
 
@@ -175,13 +175,13 @@ def test_department_ops_route_to_the_right_client_method(client, op, kwargs, met
 
 
 def test_department_get_requires_id(client):
-    with pytest.raises(McpError, match="op='get' requiert department_id"):
+    with pytest.raises(McpError, match="op='get' requires department_id"):
         _tool("lucca_department")(op="get")
     client.get_department.assert_not_called()
 
 
 def test_department_list_refuses_get_only_arguments(client):
-    with pytest.raises(McpError, match="op='list' n'utilise pas department_id"):
+    with pytest.raises(McpError, match="op='list' does not use department_id"):
         _tool("lucca_department")(department_id="5")
     client.list_departments.assert_not_called()
 
@@ -228,5 +228,5 @@ def test_establishment_paginates_by_page_not_offset(client):
     ("lucca_department", {}),
 ])
 def test_unknown_op_is_refused_with_the_allowed_list(client, tool, kwargs):
-    with pytest.raises(McpError, match="op doit être 'list' ou 'get'"):
+    with pytest.raises(McpError, match="op must be 'list' or 'get'"):
         _tool(tool)(op="nope", **kwargs)

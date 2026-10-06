@@ -115,7 +115,7 @@ def test_operated_account_revoked_raises_no_silent_fallback(monkeypatch):
     monkeypatch.setattr(unipile_tool.db, "get_operated_account",
                         lambda sub, prov: {"account_id": "OWNER_ACC", "owner_sub": "owner"})
     monkeypatch.setattr(unipile_tool.db, "granted_accounts_for", lambda sub, prov: {})
-    with pytest.raises(McpError, match="plus opérable"):
+    with pytest.raises(McpError, match="no longer operable"):
         unipile_tool.unipile_client("LINKEDIN")
 
 

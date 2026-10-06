@@ -1,23 +1,23 @@
-## prerequisite — le compte Google que les services empruntent
+## prerequisite — the Google account the services borrow
 
-ce connecteur est le **compte** : l'adresse Google, son jeton, son compte par défaut. depuis le split du 2026-09-26, chaque service — Gmail, Drive, Sheets, Calendar, Tasks, Chat, BigQuery — est un connecteur à part entière, avec **son** consentement (ses scopes seulement) : autorise-les depuis leur carte, un à un, sur le même compte.
-- tu peux connecter **plusieurs comptes** Google ; chaque outil de service agit sur le compte par défaut ou sur celui que tu cibles par `account=<email>`
-- « lier un compte » ici demande les six services sous l'app de la plateforme, et seulement l'identité sous l'app d'un partenaire — ses services les ajoutent ensuite
+this connector is the **account**: the Google address, its token, its default account. since the 2026-09-26 split, each service — Gmail, Drive, Sheets, Calendar, Tasks, Chat, BigQuery — is a connector in its own right, with **its own** consent (its scopes only): authorise them from their card, one by one, on the same account.
+- you can connect **several** Google accounts; each service tool acts on the default account or on the one you target with `account=<email>`
+- "linking an account" here requests the six services under the platform's app, and only the identity under a partner's app — its services then add theirs
 
-## note — un compte partagé par l'organisation ou l'équipe
+## note — an account shared by the organization or team
 
-un admin de l'organisation (onglet **Org**) ou un chef d'équipe (onglet **Team**) peut connecter UN compte Google au nom de tous — une boîte partagée, un agenda d'équipe. les outils prennent d'abord ton propre compte, puis celui de ton équipe active, puis celui de l'organisation ; `account=<email>` cible un compte précis où qu'il vive. personne n'atteint le compte personnel d'un autre : n'est partagé que ce qu'un admin a posé comme tel.
+an organization admin (**Org** tab) or a team lead (**Team** tab) can connect ONE Google account on behalf of everyone — a shared mailbox, a team calendar. tools take your own account first, then your active team's, then the organization's; `account=<email>` targets a specific account wherever it lives. nobody reaches another person's personal account: only what an admin has set up as shared is shared.
 
-## usage — quels comptes, avec quels droits
+## usage — which accounts, with which rights
 
-`google_accounts` — les comptes connectés et, pour chacun, les services qu'il a autorisés. c'est la question à poser quand un outil de service refuse : le compte existe mais n'a pas encore autorisé CE service.
-- « quels comptes Google ai-je connectés, et lesquels ont Drive ? »
+`google_accounts` — the connected accounts and, for each, the services it has authorised. this is the question to ask when a service tool refuses: the account exists but has not yet authorised THIS service.
+- "which Google accounts have I connected, and which have Drive?"
 
-## note — l'app oto n'est pas publiée chez Google (décision du 2026-09-05)
+## note — the oto app is not published at Google (decision of 2026-09-05)
 
-l'écran de consentement OAuth de la plateforme reste en mode **Testing**, et c'est un choix : passer en *published* avec les scopes Gmail, Drive et Chat (RESTRICTED chez Google) impose un audit **CASA Tier 2**, payant et annuel. deux conséquences, à connaître avant de compter dessus :
+the platform's OAuth consent screen stays in **Testing** mode, and that is a choice: moving to *published* with the Gmail, Drive and Chat scopes (RESTRICTED at Google) requires a paid, annual **CASA Tier 2** audit. two consequences, to know before relying on it:
 
-- **cent comptes Google au maximum** peuvent autoriser oto. au-delà, la connexion est refusée par Google, pas par nous.
-- **le jeton de rafraîchissement expire au bout de sept jours.** un compte connecté qui ne revient pas dans la semaine devra se reconnecter — ce n'est pas une panne du connecteur.
+- **at most one hundred Google accounts** can authorise oto. beyond that, the connection is refused by Google, not by us.
+- **the refresh token expires after seven days.** a connected account that does not come back within the week will have to reconnect — this is not a connector outage.
 
-un partenaire qui pose **sa propre app** Google (tenant, `/admin` › OAuth apps) n'est pas concerné : ses utilisateurs consentent sous SON projet, dont il choisit les services à faire vérifier — le split existe pour ça.
+a partner who sets up **their own** Google app (tenant, `/admin` › OAuth apps) is not affected: their users consent under THEIR project, whose services they choose to have verified — that is what the split is for.

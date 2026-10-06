@@ -1,16 +1,16 @@
-## prerequisite — tes accès api lucca
+## prerequisite — your lucca api access
 
-lucca utilise une clé d'api statique et le sous-domaine de ton instance ; chaque cabinet/employeur saisit les siens, ses données ne sont visibles que par lui. génère la clé depuis ton compte lucca ou via ton contact [lucca](https://www.lucca.fr).
-- `api_key` — clé d'api générée dans réglages → api
-- `domain` — le sous-domaine seul de ton instance (ex. `acme` pour acme.ilucca.net), pas l'url complète
-renseigne ces deux champs dans tes clés de connecteur oto sous `lucca`
+lucca uses a static api key and your instance's subdomain; each firm/employer enters their own, their data is only visible to them. generate the key from your lucca account or via your [lucca](https://www.lucca.fr) contact.
+- `api_key` — api key generated in settings → api
+- `domain` — only the subdomain of your instance (e.g. `acme` for acme.ilucca.net), not the full url
+enter these two fields in your oto connector keys under `lucca`
 
-## usage — consulter annuaire, absences, frais et organisation
+## usage — browse the directory, absences, expenses and organization
 
-lecture seule.
-- `lucca_employee(op="list")` liste les salariés joignables, `lucca_employee(op="get")` le détail d'un salarié par id
-- `lucca_absence(op="list")` les absences posées sur une période (`date` obligatoire ; le commentaire libre est coupé par défaut, `fields=["*"]` le rend), `lucca_absence(op="get")` le détail d'une absence
-- `lucca_leave_request(op="list")` les demandes de congé (le workflow d'approbation), `lucca_leave_request(op="get")` le détail d'une demande
-- `lucca_expense_claim()` les notes de frais — pas de détail par id, lucca n'expose que la liste
-- `lucca_department(op="list")` les départements (les listes de salariés sont coupées par défaut, `fields=["*"]` les rend), `lucca_department(op="get")` le détail d'un département
-- `lucca_establishment()` les établissements — pas de détail par id, base et pagination différentes du reste ; l'entité juridique imbriquée est coupée par défaut
+read-only.
+- `lucca_employee(op="list")` lists the reachable employees, `lucca_employee(op="get")` the detail of an employee by id
+- `lucca_absence(op="list")` the absences posted over a period (`date` required; the free-text comment is cut by default, `fields=["*"]` returns it), `lucca_absence(op="get")` the detail of an absence
+- `lucca_leave_request(op="list")` the leave requests (the approval workflow), `lucca_leave_request(op="get")` the detail of a request
+- `lucca_expense_claim()` the expense claims — no detail by id, lucca only exposes the list
+- `lucca_department(op="list")` the departments (employee lists are cut by default, `fields=["*"]` returns them), `lucca_department(op="get")` the detail of a department
+- `lucca_establishment()` the establishments — no detail by id, base and pagination different from the rest; the nested legal entity is cut by default

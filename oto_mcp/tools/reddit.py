@@ -18,19 +18,19 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /api/reddit/search/communities` (déjà dans le client —
-    `search_subreddits`), une recherche générique (`q="a"`, `limit=1`) qui ne
-    dépend d'aucune cible existante : la passerelle redditapis.com n'expose ni
-    `/me` ni solde. Comme `hunter`/`folk`, cette sonde ne compte PAS dans le
-    quota plateforme (`record_platform_usage` n'est appelé que par les tools
-    réels, jamais par `_verify` — même précédent).
+    `GET /api/reddit/search/communities` (already in the client —
+    `search_subreddits`), a generic search (`q="a"`, `limit=1`) that does not
+    depend on any existing target: the redditapis.com gateway exposes neither
+    `/me` nor a balance. Like `hunter`/`folk`, this probe does NOT count against the
+    platform quota (`record_platform_usage` is only called by the real
+    tools, never by `_verify` — same precedent).
 
-    **Authentifié ≠ utilisable** (classe oto#69) : `RedditClient._get` lève déjà
-    sur un refus (`RuntimeError` si le corps porte `error` en 200, sinon
-    `raise_for_status`) — rien de plus fin à distinguer, une clé redditapis
-    porte le périmètre entier de son quota.
+    **Authenticated ≠ usable** (class oto#69): `RedditClient._get` already raises
+    on a refusal (`RuntimeError` if the body carries `error` on a 200, otherwise
+    `raise_for_status`) — nothing finer to distinguish, a redditapis key
+    carries the whole scope of its quota.
     """
     from oto.tools.reddit import RedditClient
 

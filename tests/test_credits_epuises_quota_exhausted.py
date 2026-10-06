@@ -86,7 +86,7 @@ def test_un_402_sous_une_mcperror_curee_est_quota_exhausted():
     assert info.code == "quota_exhausted"
     assert info.retryable is False
     assert info.message == "Crédits épuisés — recharge le compte."
-    assert "recharge" in info.hint
+    assert "top up" in info.hint
 
 
 def test_un_403_ordinaire_reste_not_authorized():
@@ -180,14 +180,14 @@ def test_la_carte_dit_recharge_sur_une_cle_a_sec(carte):
     carte["health"] = f"{credentials_store.NO_QUOTA_REASON_PREFIX} : HTTP 402"
     diag = readiness.diagnose("u1", "theirstack", org=7, group=None)
     assert diag is not None and diag.reason == readiness.CREDENTIAL_REJECTED
-    assert "Recharge" in diag.next_step
-    assert "Repose-la" not in diag.next_step
+    assert "Top up" in diag.next_step
+    assert "Set it again" not in diag.next_step
 
 
 def test_la_carte_dit_repose_sur_une_cle_rejetee(carte):
     carte["health"] = "invalid_grant"
     diag = readiness.diagnose("u1", "theirstack", org=7, group=None)
-    assert "Repose-la" in diag.next_step
+    assert "Set it again" in diag.next_step
 
 
 # --- la sonde theirstack ---------------------------------------------------------

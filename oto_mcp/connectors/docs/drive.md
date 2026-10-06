@@ -1,12 +1,12 @@
-## prerequisite — autorise Google Drive sur ton compte Google
+## prerequisite — authorize Google Drive on your Google account
 
-depuis cette carte, clique **connecter** : Google te demande d'autoriser **Google Drive seulement** (scope `drive`) sur le compte que tu choisis. le compte Google lui-même (adresse, jeton) est porté par le connecteur **Compte Google** — un même compte peut autoriser plusieurs services, un service à la fois, sans réautoriser les autres.
-- plusieurs comptes Google : chaque outil agit sur le compte par défaut, ou sur celui que tu cibles par `account=<email>` ; `google_accounts` dit lesquels ont autorisé Google Drive
-- un compte qui n'a pas autorisé Google Drive est refusé par les outils en nommant cette carte — reviens ici pour l'autoriser
+from this card, click **connect**: Google asks you to authorize **Google Drive only** (scope `drive`) on the account you choose. the Google account itself (address, token) is carried by the **Google Account** connector — one account can authorize several services, one service at a time, without reauthorizing the others.
+- several Google accounts: each tool acts on the default account, or on the one you target with `account=<email>`; `google_accounts` tells which ones have authorized Google Drive
+- an account that has not authorized Google Drive is refused by the tools, naming this card — come back here to authorize it
 
-## usage — lister, lire, ranger, partager
+## usage — list, read, organize, share
 
-`drive_file(op=list|get|download|move|delete…)` et `drive_access` — sous le compte choisi.
-- « liste les fichiers modifiés cette semaine dans le dossier `clients` »
-- « lis ce `.xlsx` de mon Drive, onglet `devis` » — un tableur revient en CSV par feuille, borné ; `sheet` choisit l'onglet, `max_rows` la borne
-- « partage ce dossier en lecture à jane@… »
+`drive_file(op=list|get|download|move|delete…)` and `drive_access` — under the chosen account.
+- "list the files modified this week in the `clients` folder"
+- "read this `.xlsx` from my Drive, `quotes` tab" — a spreadsheet comes back as CSV per sheet, bounded; `sheet` picks the tab, `max_rows` the bound
+- "share this folder read-only with jane@…"

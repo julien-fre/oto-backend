@@ -115,7 +115,7 @@ def test_poser_le_kit_installe_chez_les_membres_deja_entres(live, monkeypatch):
         assert _ligne(m, org, "hunter") == {"state": "active", "origin": "kit"}
         # Ce que reçoit son agent à la PROCHAINE conversation.
         assert _vus_par_l_agent(m, org) == {"hunter"}
-    assert "PROCHAINE conversation" in corps["note"]
+    assert "NEXT conversation" in corps["note"]
 
 
 def test_le_geste_du_membre_prime(live, monkeypatch):
@@ -164,9 +164,9 @@ def test_ajouter_ce_qui_est_deja_au_kit_dit_pourquoi_et_comment(live, monkeypatc
     assert (corps["activated"], corps["added_to_org_defaults"]) == (0, False)
     assert corps["changes"] == [] and corps["unchanged"] == ["folk"]
     note = corps["unchanged_note"]
-    assert "Déjà dans le kit" in note and "bien été reçu" in note
-    assert "retire-le du kit, puis remets-le" in note
-    assert "ne désinstalle rien que le kit n'ait posé" in note
+    assert "Already in the kit" in note and "was received" in note
+    assert "remove it from the kit, then add it back" in note
+    assert "uninstalls nothing the kit didn't set" in note
     assert _ligne(m, org, "folk") is None
     # Le « comment » : retirer puis remettre l'installe chez le membre actuel.
     _geste(monkeypatch, "connectors.unset_default", admin, org, name="folk")

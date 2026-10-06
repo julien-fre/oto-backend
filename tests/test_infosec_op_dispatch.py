@@ -110,7 +110,7 @@ def test_optional_args_keep_their_historical_defaults(facets):
 def test_unknown_op_is_refused_with_the_allowed_list(facets):
     """Une op inconnue doit lever en NOMMANT les ops valides — jamais retomber
     silencieusement sur une facette (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être") as e:
+    with pytest.raises(McpError, match="op must be") as e:
         _call(op="portscan", domain="example.com")
     for op in I._OPS:
         assert op in str(e.value)
@@ -127,7 +127,7 @@ def test_op_is_mandatory():
 @pytest.mark.parametrize("op", I._OPS)
 @pytest.mark.parametrize("bad", ["", "   ", "@", "://"])
 def test_invalid_domain_is_refused_before_any_network_call(facets, op, bad):
-    assert _call(op=op, domain=bad) == {"error": "domaine invalide"}
+    assert _call(op=op, domain=bad) == {"error": "invalid domain"}
     assert facets == {}, "aucune facette ne doit être appelée sur un domaine invalide"
 
 
@@ -194,7 +194,7 @@ def test_email_security_grades_the_posture(monkeypatch):
     assert out["mta_sts"] is True
     assert out["dkim_selectors_found"] == ["google"]
     assert out["posture"] == "forte"
-    assert "sélecteurs courants" in out["note"], "l'avertissement DKIM reste dans la réponse"
+    assert "common selectors" in out["note"], "l'avertissement DKIM reste dans la réponse"
 
 
 def test_email_security_weak_when_dmarc_is_none(monkeypatch):
@@ -219,7 +219,7 @@ def test_subdomains_reports_crtsh_outage_instead_of_raising(monkeypatch):
     monkeypatch.setattr(I.asyncio, "sleep", lambda *_: _REAL_SLEEP(0))  # 3 backoffs, sans attendre
     _fake_httpx(monkeypatch, _Resp(None, status=502))
     out = _call(op="subdomains", domain="example.com")
-    assert out["subdomains"] == [] and "crt.sh indisponible" in out["error"]
+    assert out["subdomains"] == [] and "crt.sh unavailable" in out["error"]
 
 
 def test_headers_scores_the_security_headers(monkeypatch):
@@ -333,7 +333,7 @@ def test_blocklist_takes_sending_ips_from_spf_and_says_when_there_are_none(monke
         ("example.com", "TXT"): (0, ["v=spf1 include:_spf.google.com ~all"]),
     })
     out = _call(op="blocklist", domain="example.com")
-    assert out["ips"] == [] and any("infrastructure partagée" in n for n in out["notes"])
+    assert out["ips"] == [] and any("shared infrastructure" in n for n in out["notes"])
 
 
 def test_blocklist_checks_the_domain_on_domain_lists(monkeypatch):
@@ -346,9 +346,9 @@ def test_blocklist_checks_the_domain_on_domain_lists(monkeypatch):
 def test_blocklist_accepts_an_ip_without_domain_but_refuses_ipv6_and_garbage():
     with pytest.raises(McpError, match="IPv4"):
         _call(op="blocklist", ip="2001:db8::1")
-    with pytest.raises(McpError, match="ip invalide"):
+    with pytest.raises(McpError, match="invalid ip"):
         _call(op="blocklist", ip="not-an-ip")
-    assert _call(op="dns", ip="1.2.3.4") == {"error": "domaine invalide"}
+    assert _call(op="dns", ip="1.2.3.4") == {"error": "invalid domain"}
 
 
 def test_spf_lookup_count_follows_includes(monkeypatch):
@@ -414,7 +414,7 @@ def test_blocklist_does_not_check_ips_of_included_providers(monkeypatch):
     })
     out = _call(op="blocklist", domain="example.com")
     assert [x["ip"] for x in out["ips"]] == ["1.2.3.4"]
-    assert any("fournisseurs inclus" in n for n in out["notes"])
+    assert any("providers included" in n for n in out["notes"])
 
 
 def test_spf_redirect_keeps_the_ips_as_the_domain_s_own(monkeypatch):
@@ -452,7 +452,7 @@ def test_a_real_include_loop_is_still_reported(monkeypatch):
         ("a.example.net", "TXT"): (0, ["v=spf1 include:example.com -all"]),
     })
     out = _call(op="email_security", domain="example.com")
-    assert any("boucle" in e for e in out["spf_errors"])
+    assert any("loop" in e for e in out["spf_errors"])
 
 
 # --- bornes et lectures manquées (revue du 04/10) ------------------------------------

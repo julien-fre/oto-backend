@@ -1,38 +1,38 @@
-"""Infosec — empreinte numérique d'un domaine (recon **passif** / OSINT).
+"""Infosec — digital footprint of a domain (**passive** recon / OSINT).
 
-Complète le volet « identité légale/financière » (`fr_*`) par l'empreinte
-technique d'une entreprise quand on part d'un site/domaine : whois (RDAP), DNS,
-posture e-mail (SPF/DMARC), sous-domaines (Certificate Transparency), TLS et
-en-têtes HTTP de sécurité.
+Complements the "legal/financial identity" side (`fr_*`) with a company's
+technical footprint when starting from a site/domain: whois (RDAP), DNS,
+email posture (SPF/DMARC), subdomains (Certificate Transparency), TLS and
+HTTP security headers.
 
-**Passif uniquement** : RDAP, DNS-over-HTTPS, logs CT publics (crt.sh), handshake
-TLS, un GET HTTP. PAS de scan de ports ni de probing de vulnérabilités — recon
-OSINT d'un prospect, rien d'intrusif. Aucune autorisation de la cible requise car
-on ne consulte que des sources publiques / le service exposé lui-même.
+**Passive only**: RDAP, DNS-over-HTTPS, public CT logs (crt.sh), TLS handshake,
+one HTTP GET. NO port scanning or vulnerability probing — OSINT recon
+of a prospect, nothing intrusive. No authorization from the target required since
+we only consult public sources / the exposed service itself.
 
-Connecteur open-data : pas de credential, pas de clé. Exposé seulement si activé
-en DB (cran d'activation, ADR 0010) — `register_all` gate sur `connector_activation`.
+Open-data connector: no credential, no key. Exposed only if enabled
+in the DB (activation gate, ADR 0010) — `register_all` gates on `connector_activation`.
 
-**Surface consolidée (ADR 0047 §Amendement)** : les 6 tools `infosec_*` d'origine
-(whois / dns / email_security / subdomains / tls / headers) prenaient TOUS le même
-et unique paramètre `domain` — un seul objet métier (le domaine), 6 facettes. Ils
-sont fusionnés en `infosec_domain(op=…)` ; les deux paramètres non partagés
-(`limit` pour les sous-domaines, `port` pour TLS) sont optionnels et à défaut.
-Chaque facette garde son implémentation dédiée (`_whois`, `_dns`, …) : le dispatch
-route, il ne mélange rien.
+**Consolidated surface (ADR 0047 §Amendment)**: the 6 original `infosec_*` tools
+(whois / dns / email_security / subdomains / tls / headers) ALL took the same
+single `domain` parameter — a single business object (the domain), 6 facets. They
+are merged into `infosec_domain(op=…)`; the two non-shared parameters
+(`limit` for subdomains, `port` for TLS) are optional and defaulted.
+Each facet keeps its dedicated implementation (`_whois`, `_dns`, …): the dispatch
+routes, it mixes nothing.
 
-**Délivrabilité** : `blocklist` (listes noires DNSBL gratuites, interrogées en DoH)
-et `deliverability` (bilan noté + recommandations) servent l'autre lecture d'un
-domaine — le SIEN, pour savoir si ses e-mails arrivent. Les listes qui refusent les
-résolveurs publics (Spamhaus, SURBL, URIBL) sont rendues `not_checked` avec leur
-raison, jamais `clean` : une réponse de refus (`127.255.255.x`…) n'est pas un verdict.
+**Deliverability**: `blocklist` (free DNSBL blocklists, queried over DoH)
+and `deliverability` (scored report + recommendations) serve the other reading of a
+domain — YOUR OWN, to know whether its emails arrive. Lists that refuse
+public resolvers (Spamhaus, SURBL, URIBL) are returned as `not_checked` with their
+reason, never `clean`: a refusal answer (`127.255.255.x`…) is not a verdict.
 
-**Bornes** : les lectures DNS d'une op passent par UNE sonde (`_sonde`) — un client
-httpx réutilisé, un sémaphore sur les requêtes parallèles et une échéance globale
-(`_BUDGET_S`). Une requête qui dépasse l'échéance est une ERREUR rendue dans la
-couverture, jamais une absence : la note ne compte que ce qui a été lu. Le parcours SPF
-s'arrête au-delà de la limite RFC 7208 (10 requêtes) — au-delà, le SPF est déjà en
-`permerror`, et un SPF piégé (include en éventail) ne peut plus faire marteler le DoH.
+**Bounds**: an op's DNS reads go through ONE probe (`_sonde`) — a reused
+httpx client, a semaphore on parallel requests and a global deadline
+(`_BUDGET_S`). A request that exceeds the deadline is an ERROR rendered in the
+coverage, never an absence: the score only counts what was read. The SPF walk
+stops beyond the RFC 7208 limit (10 lookups) — beyond that, the SPF is already in
+`permerror`, and a booby-trapped SPF (fan-out includes) can no longer make DoH get hammered.
 """
 from __future__ import annotations
 
@@ -56,23 +56,23 @@ from .. import config
 
 
 def _ua() -> str:
-    """User-Agent des sondes : l'adresse de contact est celle de CETTE instance, jamais
-    la nôtre écrite en dur (#968) — résolue à l'appel, `public_base_url` lève sans elle."""
+    """User-Agent of the probes: the contact address is that of THIS instance, never
+    ours hard-coded (#968) — resolved at call time, `public_base_url` raises without it."""
     return f"oto-infosec/1.0 (+{config.public_base_url()})"
 
 
 _DOH = "https://cloudflare-dns.com/dns-query"
 
-# Bornes d'une op DNS (`_sonde`) : échéance globale sous les 45 s d'un appel REST,
-# délai d'une requête, et requêtes en vol en même temps (DKIM teste ~25 sélecteurs,
-# une liste d'IP ~9 requêtes par IP — sans sémaphore, une centaine partent d'un coup).
+# Bounds of a DNS op (`_sonde`): global deadline under the 45 s of a REST call,
+# per-request timeout, and requests in flight at the same time (DKIM tests ~25 selectors,
+# an IP list ~9 requests per IP — without a semaphore, a hundred go out at once).
 _BUDGET_S = 25.0
 _REQUETE_S = 8.0
 _EN_VOL = 10
 
 
 class BudgetEpuise(Exception):
-    """L'échéance d'une op DNS est atteinte : la lecture n'a PAS eu lieu (≠ absence)."""
+    """The deadline of a DNS op is reached: the read did NOT happen (≠ absence)."""
 
 
 class _Sonde:
@@ -91,8 +91,8 @@ _SONDE: ContextVar[Optional[_Sonde]] = ContextVar("infosec_sonde", default=None)
 
 @asynccontextmanager
 async def _sonde(budget_s: Optional[float] = None):
-    """Une sonde pour une op : client réutilisé, sémaphore, échéance. Les `_doh_raw`
-    de l'op la trouvent dans le contexte."""
+    """One probe per op: reused client, semaphore, deadline. The op's `_doh_raw`
+    calls find it in the context."""
     async with httpx.AsyncClient(timeout=_REQUETE_S,
                                  headers={"accept": "application/dns-json"}) as c:
         sonde = _Sonde(c, _BUDGET_S if budget_s is None else budget_s)
@@ -102,12 +102,12 @@ async def _sonde(budget_s: Optional[float] = None):
         finally:
             _SONDE.reset(jeton)
 
-# Source unique des facettes — le dispatch ET le message d'erreur en dérivent, pour
-# qu'une op déclarée ici sans branche ne puisse pas retomber en silence sur autre chose.
+# Single source of the facets — the dispatch AND the error message derive from it, so
+# that an op declared here without a branch cannot silently fall back onto something else.
 _OPS = ("whois", "dns", "email_security", "subdomains", "tls", "headers",
         "blocklist", "deliverability")
-_OPS_ERR = ("op doit être 'whois', 'dns', 'email_security', 'subdomains', "
-            "'tls', 'headers', 'blocklist' ou 'deliverability'")
+_OPS_ERR = ("op must be 'whois', 'dns', 'email_security', 'subdomains', "
+            "'tls', 'headers', 'blocklist' or 'deliverability'")
 
 
 def _bad(msg: str) -> McpError:
@@ -115,7 +115,7 @@ def _bad(msg: str) -> McpError:
 
 
 def _norm_domain(value: str) -> str:
-    """Réduit une URL/e-mail/hostname à un domaine nu (sans schéma, port, chemin)."""
+    """Reduces a URL/email/hostname to a bare domain (no scheme, port, path)."""
     v = (value or "").strip().lower()
     if "@" in v:
         v = v.split("@", 1)[1]
@@ -126,10 +126,10 @@ def _norm_domain(value: str) -> str:
 
 
 async def _doh_raw(name: str, rtype: str) -> tuple[int, list[str]]:
-    """(statut DNS, réponses) via DNS-over-HTTPS Cloudflare (JSON). Statut 0 =
-    NOERROR, 3 = NXDOMAIN, 2 = SERVFAIL — `blocklist` a besoin de les distinguer
-    (absent d'une liste ≠ liste injoignable). Seules les réponses du type demandé
-    sont rendues (une chaîne CNAME n'est pas une réponse)."""
+    """(DNS status, answers) via Cloudflare DNS-over-HTTPS (JSON). Status 0 =
+    NOERROR, 3 = NXDOMAIN, 2 = SERVFAIL — `blocklist` needs to tell them apart
+    (absent from a list ≠ list unreachable). Only answers of the requested type
+    are returned (a CNAME chain is not an answer)."""
     want = {"A": 1, "NS": 2, "CNAME": 5, "PTR": 12, "MX": 15, "TXT": 16, "AAAA": 28}.get(rtype)
     params = {"name": name, "type": rtype}
     sonde = _SONDE.get()
@@ -158,19 +158,19 @@ async def _doh_raw(name: str, rtype: str) -> tuple[int, list[str]]:
             continue
         d = (ans.get("data") or "").strip()
         if rtype == "TXT":
-            # concatène les chunks et retire les guillemets d'échappement
+            # concatenate the chunks and strip the escaping quotes
             d = d.replace('" "', "").strip('"')
         out.append(d)
     return int(data.get("Status", 2)), out
 
 
 async def _doh(name: str, rtype: str) -> list[str]:
-    """Résout un type d'enregistrement via DNS-over-HTTPS Cloudflare (JSON)."""
+    """Resolves a record type via Cloudflare DNS-over-HTTPS (JSON)."""
     return (await _doh_raw(name, rtype))[1]
 
 
 def _vcard_field(vcard: list, field: str) -> Optional[str]:
-    """Extrait un champ d'un jCard RDAP (vcardArray[1] = liste de [name,_,_,value])."""
+    """Extracts a field from an RDAP jCard (vcardArray[1] = list of [name,_,_,value])."""
     try:
         for entry in vcard[1]:
             if entry[0] == field:
@@ -181,15 +181,15 @@ def _vcard_field(vcard: list, field: str) -> Optional[str]:
     return None
 
 
-# --- facettes (une implémentation par `op`, domaine déjà normalisé) ---------------
+# --- facets (one implementation per `op`, domain already normalized) ---------------
 
 async def _whois(d: str) -> dict:
-    """op="whois" — immatriculation du domaine via RDAP."""
+    """op="whois" — domain registration via RDAP."""
     async with httpx.AsyncClient(timeout=20, follow_redirects=True,
                                  headers={"user-agent": _ua()}) as c:
         r = await c.get(f"https://rdap.org/domain/{d}")
         if r.status_code == 404:
-            return {"domain": d, "found": False, "note": "non enregistré ou TLD non couvert par RDAP"}
+            return {"domain": d, "found": False, "note": "not registered or TLD not covered by RDAP"}
         r.raise_for_status()
         j = r.json()
     events = {e.get("eventAction"): e.get("eventDate") for e in j.get("events", []) or []}
@@ -215,14 +215,14 @@ async def _whois(d: str) -> dict:
 
 
 async def _dns(d: str) -> dict:
-    """op="dns" — enregistrements A/AAAA/MX/NS/TXT + indices de stack."""
+    """op="dns" — A/AAAA/MX/NS/TXT records + stack hints."""
     a, aaaa, mx, ns, txt = await asyncio.gather(
         _doh(d, "A"), _doh(d, "AAAA"), _doh(d, "MX"), _doh(d, "NS"), _doh(d, "TXT"),
         return_exceptions=True,
     )
     def ok(x): return x if isinstance(x, list) else []
     mx_list, txt_list = ok(mx), ok(txt)
-    # Une requête en échec n'est pas une absence : elle est nommée dans `errors`.
+    # A failed request is not an absence: it is named in `errors`.
     errors = {k: type(v).__name__ for k, v in
               (("A", a), ("AAAA", aaaa), ("MX", mx), ("NS", ns), ("TXT", txt))
               if isinstance(v, BaseException)}
@@ -243,14 +243,14 @@ async def _dns(d: str) -> dict:
     }
 
 
-# Sélecteurs DKIM courants (fournisseurs de messagerie et d'envoi) : DKIM n'est pas
-# énumérable, on teste ceux-là — plus celui que l'appelant donne.
+# Common DKIM selectors (mail and sending providers): DKIM is not
+# enumerable, we test these — plus the one the caller gives.
 _DKIM_SELECTORS = ("default", "google", "selector1", "selector2", "k1", "k2", "k3",
                    "dkim", "mail", "s1", "s2", "smtp", "mandrill", "mxvault",
                    "zoho", "protonmail", "protonmail2", "protonmail3", "sib",
                    "brevo", "mailjet", "resend", "pm", "everlytickey1", "turbo-smtp")
 
-# Mécanismes SPF qui coûtent une requête DNS — la RFC 7208 §4.6.4 en borne le total à 10.
+# SPF mechanisms that cost a DNS lookup — RFC 7208 §4.6.4 caps the total at 10.
 _SPF_MAX_LOOKUPS = 10
 
 
@@ -266,12 +266,12 @@ def _costs_lookup(term: str) -> bool:
 
 
 class _Parcours:
-    """État partagé d'UN parcours SPF : domaines lus, requêtes comptées, arrêt.
+    """Shared state of ONE SPF walk: domains read, lookups counted, stop.
 
-    La largeur n'était pas bornée (seulement la profondeur) : 10 include par niveau
-    sur 4 niveaux donnaient 11 111 requêtes. Le compteur est global au parcours, et
-    le parcours s'ARRÊTE dès qu'il dépasse la limite RFC 7208 — le SPF est alors en
-    `permerror`, le détail au-delà n'apprend rien."""
+    Breadth was not bounded (only depth): 10 includes per level
+    over 4 levels gave 11,111 lookups. The counter is global to the walk, and
+    the walk STOPS as soon as it exceeds the RFC 7208 limit — the SPF is then in
+    `permerror`, the detail beyond that teaches nothing."""
 
     def __init__(self):
         self.seen: set = set()
@@ -288,8 +288,8 @@ def _spf_vide(errors: Optional[list] = None) -> dict:
 
 
 async def _spf(domain: str) -> dict:
-    """Parcours SPF complet d'un domaine, borné ; `unread` = l'enregistrement racine
-    n'a PAS pu être lu (≠ « pas de SPF »)."""
+    """Full, bounded SPF walk of a domain; `unread` = the root record
+    could NOT be read (≠ "no SPF")."""
     parcours = _Parcours()
     walk = await _spf_walk(domain, parcours)
     walk["lookups"] = parcours.lookups
@@ -299,28 +299,28 @@ async def _spf(domain: str) -> dict:
 
 async def _spf_walk(domain: str, parcours: "_Parcours", depth: int = 0,
                     path: tuple = ()) -> dict:
-    """Compte les requêtes DNS d'un SPF en suivant include/redirect (borné), et
-    relève les IPv4 littérales qu'il autorise (pour `blocklist`) : `ipv4` = celles
-    du SEUL enregistrement du domaine, `provider_ipv4` = celles de ses include
-    (l'infrastructure d'un fournisseur, qui ne dit rien du domaine)."""
-    # `path` = la chaîne d'include qui mène ici (une VRAIE boucle) ; `seen` = tout ce
-    # qui a déjà été parcouru (un doublon : compté une fois, signalé par l'appelant).
+    """Counts an SPF's DNS lookups by following include/redirect (bounded), and
+    collects the literal IPv4s it authorizes (for `blocklist`): `ipv4` = those
+    of the domain's OWN record only, `provider_ipv4` = those of its includes
+    (a provider's infrastructure, which says nothing about the domain)."""
+    # `path` = the include chain leading here (a REAL loop); `seen` = everything
+    # already walked (a duplicate: counted once, flagged by the caller).
     if depth > 10 or domain in path:
-        return _spf_vide([f"boucle ou profondeur excessive sur {domain}"])
+        return _spf_vide([f"loop or excessive depth on {domain}"])
     parcours.seen.add(domain)
     try:
         txt = await _doh(domain, "TXT")
-    # noqa: SILENT — l'échec est rendu dans le résultat (errors, unread), pas avalé
+    # noqa: SILENT — the failure is rendered in the result (errors, unread), not swallowed
     except Exception as e:
         out = _spf_vide([f"{domain}: {type(e).__name__}"])
         out["unread"] = depth == 0
         return out
     recs = [t for t in txt if t.lower().startswith("v=spf1")]
     if not recs:
-        return _spf_vide([f"{domain}: aucun SPF"] if depth else [])
+        return _spf_vide([f"{domain}: no SPF"] if depth else [])
     ipv4, provider, duplicates, errors = [], [], [], []
     if len(recs) > 1:
-        errors.append(f"{domain}: {len(recs)} enregistrements SPF (permerror)")
+        errors.append(f"{domain}: {len(recs)} SPF records (permerror)")
     for term in _spf_terms(recs[0]):
         low = term.lstrip("+-~?").lower()
         if low.startswith("ip4:"):
@@ -328,7 +328,7 @@ async def _spf_walk(domain: str, parcours: "_Parcours", depth: int = 0,
         if _costs_lookup(term):
             parcours.lookups += 1
             if parcours.depasse():
-                # Au-delà de 10, le SPF est en permerror : on arrête de le suivre.
+                # Beyond 10, the SPF is in permerror: we stop following it.
                 parcours.interrompu = True
                 continue
             target = None
@@ -337,14 +337,14 @@ async def _spf_walk(domain: str, parcours: "_Parcours", depth: int = 0,
             elif low.startswith("redirect="):
                 target = low[9:]
             if target and target in path + (domain,):
-                errors.append(f"boucle d'include : {' → '.join(path + (domain, target))}")
+                errors.append(f"include loop: {' → '.join(path + (domain, target))}")
                 continue
             if target and target in parcours.seen:
-                duplicates.append(target)   # la requête est due, le contenu déjà lu
+                duplicates.append(target)   # the lookup is due, the content already read
                 continue
             if target:
                 sub = await _spf_walk(target, parcours, depth + 1, path + (domain,))
-                # un `redirect=` remplace l'enregistrement : ses IP restent celles du domaine
+                # a `redirect=` replaces the record: its IPs remain the domain's
                 if low.startswith("redirect="):
                     ipv4 += sub["ipv4"]
                 else:
@@ -367,11 +367,11 @@ def _tags(record: Optional[str]) -> dict:
 
 async def _email_security(d: str, dkim_selector: Optional[str] = None,
                           walk: Optional[dict] = None) -> dict:
-    """op="email_security" — posture SPF/DMARC/DKIM/MTA-STS/TLS-RPT/BIMI + MX.
+    """op="email_security" — SPF/DMARC/DKIM/MTA-STS/TLS-RPT/BIMI posture + MX.
 
-    `walk` : le parcours SPF déjà fait par l'appelant (`deliverability` le partage
-    avec `blocklist`) ; sinon il est fait ici. `unread` nomme ce qui n'a PAS pu être lu
-    (erreur DNS, échéance) : la note ne le compte jamais comme absent."""
+    `walk`: the SPF walk already done by the caller (`deliverability` shares it
+    with `blocklist`); otherwise it is done here. `unread` names what could NOT be read
+    (DNS error, deadline): the score never counts it as absent."""
     root_txt, dmarc_txt, mta, tlsrpt, bimi, mx = await asyncio.gather(
         _doh(d, "TXT"), _doh(f"_dmarc.{d}", "TXT"), _doh(f"_mta-sts.{d}", "TXT"),
         _doh(f"_smtp._tls.{d}", "TXT"), _doh(f"default._bimi.{d}", "TXT"), _doh(d, "MX"),
@@ -396,7 +396,7 @@ async def _email_security(d: str, dkim_selector: Optional[str] = None,
     dmarc = next((t for t in ok(dmarc_txt) if t.lower().startswith("v=dmarc1")), None)
     dt = _tags(dmarc)
     dmarc_policy = (dt.get("p", "").lower() or None) if dmarc else None
-    # DKIM : on ne peut pas énumérer les sélecteurs, on teste les courants
+    # DKIM: selectors can't be enumerated, we test the common ones
     selectors = list(_DKIM_SELECTORS)
     if dkim_selector and dkim_selector.strip().lower() not in selectors:
         selectors.insert(0, dkim_selector.strip().lower())
@@ -409,8 +409,8 @@ async def _email_security(d: str, dkim_selector: Optional[str] = None,
             dkim_found.append(sel)
     dkim_unread = [sel for sel, res in zip(selectors, results) if isinstance(res, BaseException)]
     if dkim_unread and not dkim_found:
-        # Aucun sélecteur trouvé MAIS certains n'ont pas pu être lus : rien à conclure.
-        dns_errors["dkim"] = f"{len(dkim_unread)} sélecteur(s) non lu(s)"
+        # No selector found BUT some could not be read: nothing to conclude.
+        dns_errors["dkim"] = f"{len(dkim_unread)} selector(s) not read"
     mx_list = ok(mx)
     null_mx = any(m.strip().rstrip(".") in ("0", "0 .") or m.strip().endswith(" .") for m in mx_list)
     score = sum([bool(spf), dmarc_policy in ("quarantine", "reject"),
@@ -442,17 +442,17 @@ async def _email_security(d: str, dkim_selector: Optional[str] = None,
         "unread": sorted(dns_errors),
         "dns_errors": dns_errors,
         "spf_walk_truncated": bool(walk.get("truncated")),
-        "note": ("DKIM testé sur sélecteurs courants seulement (énumération impossible) — "
-                 "passer `dkim_selector` pour tester celui du domaine"),
+        "note": ("DKIM tested on common selectors only (enumeration impossible) — "
+                 "pass `dkim_selector` to test the domain's own"),
     }
 
 
 async def _subdomains(d: str, limit: int) -> dict:
-    """op="subdomains" — noms connus lus dans les logs Certificate Transparency."""
+    """op="subdomains" — known names read from the Certificate Transparency logs."""
     rows = None
-    last_err = "inconnu"
+    last_err = "unknown"
     async with httpx.AsyncClient(timeout=40, headers={"user-agent": _ua()}) as c:
-        for attempt in range(3):  # crt.sh renvoie souvent des 5xx transitoires
+        for attempt in range(3):  # crt.sh often returns transient 5xx
             try:
                 r = await c.get("https://crt.sh/", params={"q": f"%.{d}", "output": "json"})
                 if r.status_code >= 500:
@@ -462,12 +462,12 @@ async def _subdomains(d: str, limit: int) -> dict:
                 r.raise_for_status()
                 rows = r.json()
                 break
-            # noqa: SILENT — retry borné ; le dernier échec est rendu par l'appelant
+            # noqa: SILENT — bounded retry; the last failure is rendered by the caller
             except Exception as e:
                 last_err = type(e).__name__
                 await asyncio.sleep(1.5 * (attempt + 1))
     if rows is None:
-        return {"domain": d, "error": f"crt.sh indisponible ({last_err})", "subdomains": []}
+        return {"domain": d, "error": f"crt.sh unavailable ({last_err})", "subdomains": []}
     names: set[str] = set()
     for row in rows:
         for n in (row.get("name_value") or "").splitlines():
@@ -479,7 +479,7 @@ async def _subdomains(d: str, limit: int) -> dict:
 
 
 async def _tls(host: str, port: int) -> dict:
-    """op="tls" — certificat présenté par l'hôte (émetteur, validité, SANs, protocole)."""
+    """op="tls" — certificate presented by the host (issuer, validity, SANs, protocol)."""
     def probe() -> dict:
         ctx = ssl.create_default_context()
         try:
@@ -489,10 +489,10 @@ async def _tls(host: str, port: int) -> dict:
                     version, cipher = ss.version(), ss.cipher()
             validated, err = True, None
         except ssl.SSLCertVerificationError as e:
-            # Outil d'INSPECTION : on reconnecte sans vérification UNIQUEMENT
-            # pour lire le protocole/cipher d'un hôte au certif invalide
-            # (expiré/auto-signé/mismatch) — diagnostic, aucune donnée échangée,
-            # `validated=False` est remonté tel quel. Pas un canal de confiance.
+            # INSPECTION tool: we reconnect without verification ONLY
+            # to read the protocol/cipher of a host with an invalid cert
+            # (expired/self-signed/mismatch) — diagnostic, no data exchanged,
+            # `validated=False` is surfaced as-is. Not a trust channel.
             cert, validated, err = {}, False, str(e)
             uctx = ssl._create_unverified_context()
             with socket.create_connection((host, port), timeout=15) as sock:
@@ -514,18 +514,18 @@ async def _tls(host: str, port: int) -> dict:
 
     try:
         return await asyncio.to_thread(probe)
-    # noqa: SILENT — l'échec est rendu dans le résultat (error), pas avalé
+    # noqa: SILENT — the failure is rendered in the result (error), not swallowed
     except Exception as e:
         return {"host": host, "port": port, "error": f"{type(e).__name__}: {e}"}
 
 
 async def _headers(d: str) -> dict:
-    """op="headers" — en-têtes de sécurité HTTP + empreinte serveur (un seul GET)."""
+    """op="headers" — HTTP security headers + server fingerprint (a single GET)."""
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True,
                                      headers={"user-agent": _ua()}) as c:
             r = await c.get(f"https://{d}")
-    # noqa: SILENT — l'échec est rendu dans le résultat (error), pas avalé
+    # noqa: SILENT — the failure is rendered in the result (error), not swallowed
     except Exception as e:
         return {"domain": d, "error": f"{type(e).__name__}: {e}"}
     h = {k.lower(): v for k, v in r.headers.items()}
@@ -549,14 +549,14 @@ async def _headers(d: str) -> dict:
     }
 
 
-# --- délivrabilité ------------------------------------------------------------
+# --- deliverability ------------------------------------------------------------
 
-# Listes noires interrogeables GRATUITEMENT via un résolveur public, ET dont les
-# conditions permettent un usage commercial automatisé (lues le 04/10/2026) :
-# SpamCop (gratuit, sans restriction d'usage), PSBL (« anybody is free to use »),
-# NordSpam (gratuit, commercial ou non — nordspam.com/usage), s5h (gratuit, sans
-# limite — usenix.org.uk/content/rbl.html). `listed` = les codes qui valent
-# inscription ; tout autre code 127.x est rendu `unexpected_answer`, jamais interprété.
+# Blocklists queryable FOR FREE via a public resolver, AND whose
+# terms allow automated commercial use (read on 04/10/2026):
+# SpamCop (free, no usage restriction), PSBL ("anybody is free to use"),
+# NordSpam (free, commercial or not — nordspam.com/usage), s5h (free, no
+# limit — usenix.org.uk/content/rbl.html). `listed` = the codes that count as
+# a listing; any other 127.x code is returned as `unexpected_answer`, never interpreted.
 _IP_LISTS = (
     {"zone": "bl.spamcop.net", "name": "SpamCop", "listed": ("127.0.0.2",),
      "info": "https://www.spamcop.net/bl.shtml"},
@@ -571,30 +571,30 @@ _DOMAIN_LISTS = (
     {"zone": "dbl.nordspam.com", "name": "NordSpam DBL", "listed": ("127.0.0.2",),
      "info": "https://www.nordspam.com/"},
 )
-# Listes majeures qui REFUSENT les résolveurs publics (et dont l'usage commercial est
-# payant) : nommées pour que l'absence de verdict soit visible, pas interrogées.
+# Major lists that REFUSE public resolvers (and whose commercial use is
+# paid): named so that the absence of a verdict is visible, not queried.
 _NOT_CHECKED = (
-    {"name": "Spamhaus (ZEN / DBL)", "reason": "refuse les résolveurs publics ; accès "
-     "commercial par clé (Data Query Service) non configuré"},
-    {"name": "SURBL", "reason": "refuse les résolveurs publics ; flux commercial requis"},
-    {"name": "URIBL", "reason": "refuse les résolveurs publics ; flux commercial requis"},
-    {"name": "Barracuda (BRBL)", "reason": "gratuit mais l'IP du résolveur doit être "
-     "inscrite chez Barracuda ; un résolveur public partagé ne l'est pas"},
-    {"name": "Mailspike", "reason": "l'accès par résolveur public est réservé aux sites "
-     "non commerciaux à faible volume"},
-    {"name": "UCEPROTECT", "reason": "n'autorise que des consultations manuelles ; une "
-     "interrogation automatisée fait bloquer la source"},
+    {"name": "Spamhaus (ZEN / DBL)", "reason": "refuses public resolvers; commercial "
+     "access by key (Data Query Service) not configured"},
+    {"name": "SURBL", "reason": "refuses public resolvers; commercial feed required"},
+    {"name": "URIBL", "reason": "refuses public resolvers; commercial feed required"},
+    {"name": "Barracuda (BRBL)", "reason": "free but the resolver's IP must be "
+     "registered with Barracuda; a shared public resolver is not"},
+    {"name": "Mailspike", "reason": "public-resolver access is reserved for "
+     "low-volume non-commercial sites"},
+    {"name": "UCEPROTECT", "reason": "only allows manual lookups; an "
+     "automated query gets the source blocked"},
 )
 _MAX_IPS = 10
 
 
 async def _dnsbl(query: str, lst: dict) -> dict:
-    """Une interrogation DNSBL : `listed` / `clean` / `error` — jamais `clean` sur
-    autre chose qu'un NXDOMAIN franc."""
+    """One DNSBL query: `listed` / `clean` / `error` — never `clean` on
+    anything other than a clear NXDOMAIN."""
     row = {"list": lst["name"], "zone": lst["zone"]}
     try:
         status, answers = await _doh_raw(f"{query}.{lst['zone']}", "A")
-    # noqa: SILENT — l'échec est rendu dans le résultat (status=error), pas avalé
+    # noqa: SILENT — the failure is rendered in the result (status=error), not swallowed
     except Exception as e:
         return {**row, "status": "error", "detail": type(e).__name__}
     if status == 3:
@@ -602,21 +602,21 @@ async def _dnsbl(query: str, lst: dict) -> dict:
     if status != 0:
         return {**row, "status": "error", "detail": f"DNS status {status}"}
     if not answers:
-        # NOERROR sans enregistrement : ce n'est pas le NXDOMAIN d'une IP absente.
-        return {**row, "status": "error", "detail": "réponse vide (NOERROR sans A)"}
+        # NOERROR with no record: this is not the NXDOMAIN of an unlisted IP.
+        return {**row, "status": "error", "detail": "empty response (NOERROR without A)"}
     if any(a in lst["listed"] for a in answers):
         return {**row, "status": "listed", "codes": answers, "delist_info": lst["info"]}
     return {**row, "status": "error", "detail": f"unexpected_answer {answers}"}
 
 
 async def _ptr(ip: str) -> dict:
-    """Reverse DNS d'une IPv4 + confirmation directe (FCrDNS) : un expéditeur sans
-    PTR cohérent est pénalisé par la plupart des filtres."""
+    """Reverse DNS of an IPv4 + forward confirmation (FCrDNS): a sender without a
+    consistent PTR is penalized by most filters."""
     rev = ".".join(reversed(ip.split("."))) + ".in-addr.arpa"
     try:
         names = [n.rstrip(".") for n in await _doh(rev, "PTR")]
         fwd = await _doh(names[0], "A") if names else []
-    # noqa: SILENT — l'échec est rendu dans le résultat (error), pas avalé
+    # noqa: SILENT — the failure is rendered in the result (error), not swallowed
     except Exception as e:
         return {"ptr": None, "fcrdns": False, "error": type(e).__name__}
     return {"ptr": names[0] if names else None, "fcrdns": bool(names) and ip in fwd}
@@ -624,9 +624,9 @@ async def _ptr(ip: str) -> dict:
 
 async def _blocklist(d: Optional[str], ip: Optional[str],
                      walk: Optional[dict] = None) -> dict:
-    """op="blocklist" — le domaine sur les listes de domaines, et les IPv4 d'envoi
-    (`ip` donnée, sinon les `ip4:` littérales du SPF) sur les listes d'IP. `walk` :
-    le parcours SPF déjà fait par l'appelant, sinon fait ici."""
+    """op="blocklist" — the domain on the domain lists, and the sending IPv4s
+    (`ip` if given, else the literal `ip4:` entries of the SPF) on the IP lists. `walk`:
+    the SPF walk already done by the caller, otherwise done here."""
     ips: list[tuple[str, str]] = []
     notes, ranges = [], []
     if ip:
@@ -635,8 +635,8 @@ async def _blocklist(d: Optional[str], ip: Optional[str],
         if walk is None:
             walk = await _spf(d)
         if walk.get("unread"):
-            notes.append("le SPF n'a pas pu être lu (erreur DNS) : ses IP d'envoi ne sont "
-                         "pas vérifiées — ce n'est pas l'absence de SPF")
+            notes.append("the SPF could not be read (DNS error): its sending IPs are "
+                         "not checked — this is not the absence of SPF")
         for raw in walk["ipv4"]:
             try:
                 net = ipaddress.ip_network(raw, strict=False)
@@ -647,25 +647,25 @@ async def _blocklist(d: Optional[str], ip: Optional[str],
             else:
                 ranges.append(raw)
         if ranges:
-            notes.append(f"{len(ranges)} plage(s) d'IP du SPF non vérifiée(s) — seules les "
-                         f"IP seules le sont : {', '.join(ranges[:5])}"
+            notes.append(f"{len(ranges)} IP range(s) of the SPF not checked — only "
+                         f"single IPs are: {', '.join(ranges[:5])}"
                          + (" …" if len(ranges) > 5 else ""))
         if walk["provider_ipv4"]:
-            notes.append(f"{len(walk['provider_ipv4'])} IP/plage(s) des fournisseurs inclus "
-                         "dans le SPF non vérifiées : elles appartiennent à leur "
-                         "infrastructure, pas au domaine")
+            notes.append(f"{len(walk['provider_ipv4'])} IP(s)/range(s) of the providers included "
+                         "in the SPF not checked: they belong to their "
+                         "infrastructure, not to the domain")
         if not ips and not walk.get("unread"):
-            notes.append("aucune IP d'envoi propre trouvée dans le SPF : l'envoi passe "
-                         "probablement par une infrastructure partagée (Google, Microsoft, "
-                         "outil d'emailing) dont les IP ne disent rien du domaine — "
-                         "passer `ip` pour vérifier une IP dédiée")
+            notes.append("no dedicated sending IP found in the SPF: sending probably goes "
+                         "through shared infrastructure (Google, Microsoft, "
+                         "an emailing tool) whose IPs say nothing about the domain — "
+                         "pass `ip` to check a dedicated IP")
     seen, uniq = set(), []
     for addr, src in ips:
         if addr not in seen:
             seen.add(addr)
             uniq.append((addr, src))
     if len(uniq) > _MAX_IPS:
-        notes.append(f"{len(uniq)} IP trouvées, seules les {_MAX_IPS} premières sont vérifiées")
+        notes.append(f"{len(uniq)} IPs found, only the first {_MAX_IPS} are checked")
         uniq = uniq[:_MAX_IPS]
 
     async def check_ip(addr: str, src: str) -> dict:
@@ -695,10 +695,10 @@ async def _blocklist(d: Optional[str], ip: Optional[str],
 
 
 def _recommend(sec: dict, bl: dict) -> tuple[int, list[dict]]:
-    """Note sur 100 et recommandations classées (high > medium > low).
+    """Score out of 100 and ranked recommendations (high > medium > low).
 
-    Ce qui n'a pas pu être lu (`sec["unread"]`) n'est NI pénalisé NI déclaré présent :
-    une erreur DNS sur `_dmarc` n'est pas « No DMARC »."""
+    What could not be read (`sec["unread"]`) is NEITHER penalized NOR declared present:
+    a DNS error on `_dmarc` is not "No DMARC"."""
     recs: list[dict] = []
     score = 100
     non_lu = set(sec.get("unread") or ())
@@ -750,8 +750,8 @@ def _recommend(sec: dict, bl: dict) -> tuple[int, list[dict]]:
             add("low", 3, "DMARC has no `rua` report address", "Add `rua=mailto:…` to receive aggregate reports.")
         pct = sec.get("dmarc_pct")
         if pct is not None and pct < 100:
-            # `pct=0` : la politique ne s'applique à AUCUN message — c'est l'écart le
-            # plus fort, pas une absence de valeur.
+            # `pct=0`: the policy applies to NO message — this is the biggest
+            # gap, not an absence of value.
             add("medium" if pct == 0 else "low", 8 if pct == 0 else 2,
                 f"DMARC applies to {pct}% of mail only", "Raise `pct` to 100.")
     if "dkim" in non_lu:
@@ -783,23 +783,23 @@ def _recommend(sec: dict, bl: dict) -> tuple[int, list[dict]]:
 
 
 async def _deliverability(d: str, ip: Optional[str], dkim_selector: Optional[str]) -> dict:
-    """op="deliverability" — bilan complet : authentification + listes noires,
-    noté sur 100, avec recommandations classées."""
-    # UN parcours SPF, partagé : il était refait par `email_security` et `blocklist`.
+    """op="deliverability" — full report: authentication + blocklists,
+    scored out of 100, with ranked recommendations."""
+    # ONE SPF walk, shared: it used to be redone by `email_security` and `blocklist`.
     walk = await _spf(d)
     sec, bl = await asyncio.gather(_email_security(d, dkim_selector, walk=walk),
                                    _blocklist(d, ip, walk=walk))
     score, recs = _recommend(sec, bl)
     sonde = _SONDE.get()
     grade = "good" if score >= 85 else "fair" if score >= 65 else "poor"
-    # La couverture voyage AVEC la note : un « good » sur une seule liste interrogée
-    # ne doit pas se lire comme un domaine vérifié partout.
+    # Coverage travels WITH the score: a "good" on a single list queried
+    # must not read as a domain verified everywhere.
     coverage = {
         "blocklists_checked": bl["checked"],
         "blocklist_errors": bl["errors"],
         "own_ips_checked": len(bl["ips"]),
         "not_checked": [x["name"] for x in bl["not_checked"]],
-        # Ce qui n'a pas été LU n'est pas noté : la note est partielle, et le dit.
+        # What was not READ is not scored: the score is partial, and says so.
         "unread_records": sec.get("unread", []),
         "spf_walk_truncated": sec.get("spf_walk_truncated", False),
         "budget_exhausted": bool(sonde and sonde.epuise),
@@ -820,21 +820,21 @@ async def _deliverability(d: str, ip: Optional[str], dkim_selector: Optional[str
 
 
 async def _borne(coro):
-    """Exécute une op DNS sous UNE sonde (client, sémaphore, échéance). Les requêtes
-    au-delà de l'échéance deviennent des erreurs nommées dans le résultat (résultat
-    partiel) ; `wait_for` n'est que le filet d'une op qui ne rendrait pas la main."""
+    """Runs a DNS op under ONE probe (client, semaphore, deadline). Requests
+    beyond the deadline become named errors in the result (partial result);
+    `wait_for` is only the safety net for an op that would not return control."""
     async with _sonde():
         try:
             return await asyncio.wait_for(coro, timeout=_BUDGET_S + 5)
         except asyncio.TimeoutError:
             raise McpError(ErrorData(code=INTERNAL_ERROR, message=(
-                f"vérification interrompue après {_BUDGET_S + 5:.0f} s — relancer, ou "
-                "passer par une op plus étroite (email_security, blocklist)")))
+                f"check interrupted after {_BUDGET_S + 5:.0f} s — retry, or "
+                "use a narrower op (email_security, blocklist)")))
 
 
 def register(mcp: FastMCP) -> None:
-    # `op` est SANS défaut : aucune facette n'est « la » lecture naturelle d'un
-    # domaine, et un défaut ferait répondre autre chose que ce qui est demandé.
+    # `op` has NO default: no facet is "the" natural reading of a
+    # domain, and a default would answer something other than what was asked.
     @mcp.tool()
     async def infosec_domain(
         op: Literal["whois", "dns", "email_security", "subdomains", "tls", "headers",
@@ -900,12 +900,12 @@ def register(mcp: FastMCP) -> None:
             try:
                 parsed = ipaddress.ip_address(ip.strip())
             except ValueError:
-                raise _bad(f"ip invalide : {ip!r} (IPv4 attendue)")
+                raise _bad(f"invalid ip: {ip!r} (IPv4 expected)")
             if parsed.version != 4:
-                raise _bad("seules les IPv4 sont vérifiables sur les listes noires DNS")
+                raise _bad("only IPv4s can be checked on DNS blocklists")
             addr = str(parsed)
         if not d and not (op == "blocklist" and addr):
-            return {"error": "domaine invalide"}
+            return {"error": "invalid domain"}
         if op == "whois":
             return await _whois(d)
         if op == "dns":
@@ -922,4 +922,4 @@ def register(mcp: FastMCP) -> None:
             return await _borne(_blocklist(d or None, addr))
         if op == "deliverability":
             return await _borne(_deliverability(d, addr, dkim_selector))
-        raise _bad(_OPS_ERR)  # défense en profondeur : _OPS ne peut pas dériver du dispatch
+        raise _bad(_OPS_ERR)  # defense in depth: _OPS cannot drift from the dispatch

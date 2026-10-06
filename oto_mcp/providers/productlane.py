@@ -1,33 +1,33 @@
-"""Déclaration de registre du connecteur `productlane`.
+"""Registry declaration of the `productlane` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# productlane : retours clients (fils, contacts, entreprises), roadmap publique
-# et centre d'aide. Voisin de `linear` — même catégorie Métier — et ce n'est pas
-# qu'une parenté thématique : **la roadmap de Productlane EST adossée à Linear**.
-# Projets et issues y sont créés dans Linear d'abord, puis reflétés ici. Une org
-# qui a les deux connecteurs voit donc les mêmes objets par deux portes, et c'est
-# normal.
+# productlane: customer feedback (threads, contacts, companies), public roadmap
+# and help center. Neighbor of `linear` — same Métier category — and it is not
+# just a thematic kinship: **Productlane's roadmap IS backed by Linear**.
+# Projects and issues are created in Linear first, then mirrored here. An org
+# that has both connectors therefore sees the same objects through two doors, and that
+# is normal.
 #
-# ⚠️ API **v2** (`/api/v2`, Bearer). Une clé v1 ne marche pas : v1 est une API
-# distincte, qui s'arrête le 2026-11-20.
+# ⚠️ **v2** API (`/api/v2`, Bearer). A v1 key does not work: v1 is a separate
+# API, which shuts down on 2026-11-20.
 #
-# BYO org d'abord (les retours clients sont ceux de l'organisation, pas d'une
-# personne), mais `byo_user` reste ouvert : la clé se crée par membre côté
-# Productlane, et une org qui débute pose souvent celle de son PM avant d'en
-# faire une clé d'équipe. Aucun mode plateforme — ce sont les conversations
-# clients de l'org.
+# BYO org first (customer feedback belongs to the organization, not to one
+# person), but `byo_user` stays open: the key is created per member on the
+# Productlane side, and an org that is starting out often sets up its PM's before
+# turning it into a team key. No platform mode — these are the org's
+# customer conversations.
 CONNECTOR = _c(
     "productlane", ["productlane"], auth_modes={"byo_user", "byo_org"},
     keyed=True, secret_kind="api_key",
     label="Productlane",
-    help="retours clients (fils, contacts, entreprises), roadmap adossée à "
-         "Linear, changelogs et centre d'aide",
+    help="customer feedback (threads, contacts, companies), Linear-backed "
+         "roadmap, changelogs and help center",
     href="https://productlane.com",
 )
 
@@ -36,8 +36,8 @@ PUBLISHER = "Productlane"
 LOGO_DOMAIN = "productlane.com"
 
 DESCRIPTION = (
-    "Les retours clients remontés dans Productlane : fils de discussion, "
-    "contacts, entreprises, plus la roadmap publique et le centre d'aide. La "
-    "roadmap est adossée à Linear — les mêmes projets et issues s'y retrouvent "
-    "des deux côtés."
+    "Customer feedback raised in Productlane: discussion threads, "
+    "contacts, companies, plus the public roadmap and the help center. The "
+    "roadmap is backed by Linear — the same projects and issues are found "
+    "on both sides."
 )

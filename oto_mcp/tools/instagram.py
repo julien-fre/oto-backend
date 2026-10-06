@@ -1,8 +1,8 @@
-"""Instagram — messagerie (DM) hébergée via Unipile (compte connecté par l'user).
+"""Instagram — messaging (DMs) hosted via Unipile (account connected by the user).
 
-Le compte Instagram vit chez Unipile, connecté par l'user via le hosted-auth
-(dashboard, `?channel=instagram`). Outil `instagram_chat(op=…)` dérivé de la factory
-messagerie commune (cf. `tools/unipile.register_messaging_tools`).
+The Instagram account lives at Unipile, connected by the user via hosted-auth
+(dashboard, `?channel=instagram`). The `instagram_chat(op=…)` tool is derived from the
+shared messaging factory (see `tools/unipile.register_messaging_tools`).
 """
 from __future__ import annotations
 

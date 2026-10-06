@@ -1,15 +1,15 @@
-"""Sonde de credential par connecteur — « tester la connexion » (framework générique).
+"""Per-connector credential probe — "test the connection" (generic framework).
 
-Un credential keyé/multi-champs (Zoho, Silae…) peut être POSÉ mais ne pas authentifier
-(mauvais data center, refresh token périmé…). `credentials_store.credential_status` ne
-dit que « posée / pas posée » (la ligne du coffre existe), jamais « ça authentifie ».
-Chaque connecteur peut enregistrer une **sonde** : un appel SANS effet de bord qui, à
-partir des champs déchiffrés, vérifie que le credential authentifie réellement et LÈVE
-sur échec (le message d'exception = le retour d'erreur remonté à l'UI).
+A keyed/multi-field credential (Zoho, Silae…) can be SET without authenticating
+(wrong data center, stale refresh token…). `credentials_store.credential_status`
+only says "set / not set" (the vault row exists), never "it authenticates".
+Each connector can register a **probe**: a call with NO side effect that, from
+the decrypted fields, checks that the credential really authenticates and RAISES
+on failure (the exception message = the error returned to the UI).
 
-Patron identique à `browser_session.register` / `connector_identities.register` : la
-logique vit dans le module `tools/<name>.py` du connecteur (qui appelle `register()` à
-son chargement) ; la SURFACE (capacité MCP+REST) est déclarée une seule fois dans
+Same pattern as `browser_session.register` / `connector_identities.register`: the
+logic lives in the connector's `tools/<name>.py` module (which calls `register()`
+at load) ; the SURFACE (MCP+REST capability) is declared once in
 `capabilities/connectors/verify.py`.
 """
 from __future__ import annotations
@@ -20,64 +20,64 @@ from typing import Awaitable, Callable, Optional, Union
 
 from .. import providers
 
-# probe(fields, config) -> None : lève une exception sur échec d'authentification (son
-# message est rendu au client). Sync OU async (la capacité awaite si besoin). `fields` =
-# champs DÉCHIFFRÉS du credential (client_id/secret/refresh_token/data_center pour zoho) ;
-# `config` = satellites NON-secrets appariés à la clé gagnante (meta public : dsn
-# unipile…). Une sonde qui parle à un endpoint dont l'hôte dépend de la clé (unipile,
-# tenant BYO) DOIT lire `config`, sinon elle teste la clé contre le mauvais tenant.
+# probe(fields, config) -> None : raises an exception on authentication failure (its
+# message is rendered to the client). Sync OR async (the capability awaits if needed).
+# `fields` = DECRYPTED credential fields (client_id/secret/refresh_token/data_center
+# for zoho); `config` = NON-secret satellites paired with the winning key (public
+# meta: unipile dsn…). A probe that talks to an endpoint whose host depends on the
+# key (unipile, BYO tenant) MUST read `config`, otherwise it tests the key against
+# the wrong tenant.
 Probe = Callable[[dict, dict], Union[None, dict, Awaitable[Union[None, dict]]]]
 
-#: Ce qu'une sonde peut RENDRE, en plus de lever sur échec : un dict de mesures.
-#: Le solde, pour les sondes `auth+quota` — `{"quota": {...}}` ; et `identity`, QUI
-#: la clé authentifie chez le fournisseur (aujourd'hui Slack).
+#: What a probe may RETURN, besides raising on failure: a dict of measurements.
+#: The balance, for `auth+quota` probes — `{"quota": {...}}` ; and `identity`, WHO
+#: the key authenticates as at the provider (today Slack).
 #:
-#: ⚠️ `identity` répond à une question qu'aucune autre surface ne pose : « est-ce
-#: toujours la même application qu'hier ? ». Une clé remplacée par celle d'une AUTRE
-#: application du même fournisseur authentifie parfaitement, et perd pourtant tout ce
-#: que la précédente avait acquis — les appartenances de canaux, pour Slack. Le coffre
-#: ne voit qu'une clé saine ; la sonde, elle, tient le seul corps de réponse où le
-#: fournisseur NOMME l'application. Le jeter, c'était rendre le changement
-#: indétectable : six jours d'illisibilité sur quatre canaux clients (signaux 802/814,
-#: 08/09/2026), et personne pour dire pourquoi.
+#: ⚠️ `identity` answers a question no other surface asks: "is it still the same
+#: application as yesterday?". A key replaced by one from ANOTHER application of the
+#: same provider authenticates perfectly, yet loses everything the previous one had
+#: acquired — channel memberships, for Slack. The vault only sees a healthy key; the
+#: probe holds the only response body where the provider NAMES the application.
+#: Throwing it away made the change undetectable: six days of unreadability on four
+#: client channels (signals 802/814, 08/09/2026), and nobody to say why.
 #:
-#: ⚠️ Rendre est FACULTATIF et le restera : les sondes qui ne mesurent qu'une
-#: authentification rendent `None`, comme avant. Exiger un retour de toutes aurait
-#: obligé à inventer une forme vide pour la quinzaine qui n'a rien à dire — et une
-#: forme vide finit par se lire comme une mesure à zéro.
+#: ⚠️ Returning is OPTIONAL and will stay so: probes that only measure an
+#: authentication return `None`, as before. Requiring a return from all of them would
+#: have forced inventing an empty shape for the dozen-odd that have nothing to say —
+#: and an empty shape ends up being read as a measurement of zero.
 _CLES_DE_MESURE = ("quota", "identity")
 
 
 def _mesures(rendu) -> dict:
-    """Ce que la sonde a mesuré, réduit aux clés connues. Un rendu qui n'est pas un
-    dict — le cas de toutes les sondes `auth` — vaut « rien mesuré », jamais une
-    erreur : c'est le contrat d'avant, et il doit continuer de passer."""
+    """What the probe measured, reduced to the known keys. A return that is not a
+    dict — the case of all `auth` probes — means "nothing measured", never an
+    error: that is the old contract, and it must keep passing."""
     if not isinstance(rendu, dict):
         return {}
     return {k: rendu[k] for k in _CLES_DE_MESURE if k in rendu}
 
-#: Ce qu'une sonde COUVRE. Déclaré, jamais deviné (oto#57).
+#: What a probe COVERS. Declared, never guessed (oto#57).
 #:
-#: Deux sondes voisines faisaient des choses différentes et rien ne les distinguait vu
-#: de l'extérieur : celle de `theirstack` lit le SOLDE (l'appel authentifié gratuit),
-#: celle d'`origami` liste des objets — ce qui répond parfaitement sur un compte à sec.
-#: Mesuré le 04/09/2026 : un préflight tout vert, puis 402 après quatre espaces, quatre
-#: tables et 28 lignes créés.
+#: Two neighbouring probes did different things and nothing distinguished them from
+#: the outside: the `theirstack` one reads the BALANCE (the free authenticated call),
+#: the `origami` one lists objects — which answers perfectly on a dry account.
+#: Measured on 04/09/2026: an all-green preflight, then 402 after four spaces, four
+#: tables and 28 rows were created.
 #:
-#: ⚠️ **Le préflight n'avait pas menti** : il avait rapporté un vert qui ne voulait pas
-#: dire ce qu'on croyait. C'est la nuance qui décide du remède — il ne faut pas plus de
-#: sondes, il faut qu'une sonde DISE CE QU'ELLE COUVRE, pour qu'un vert dise ce qu'il
-#: vaut et qu'un appelant sache ce qu'il ne sait pas.
-#: Les VERDICTS d'une sonde. Trois états qui appellent des conduites OPPOSÉES, là où
-#: un booléen n'en distinguait aucune (oto#57) :
-#:   `ok`           — ça marche.
-#:   `unauthorized` — la clé n'autorise pas : la remplacer ou élargir son périmètre.
-#:                    En poser une de plus ne changera rien.
-#:   `no_quota`     — la clé est bonne, le solde est vide : recharger.
-#:   `unknown`      — la sonde a échoué sans qu'on puisse classer. ⚠️ Se lit « je ne
-#:                    sais pas », JAMAIS « rien de grave » : c'est la valeur la plus
-#:                    fréquente aujourd'hui, et la confondre avec un diagnostic ferait
-#:                    exactement le mal que ce lot répare.
+#: ⚠️ **The preflight had not lied**: it had reported a green that did not mean what
+#: we thought. That nuance decides the remedy — we do not need more probes, we need a
+#: probe to SAY WHAT IT COVERS, so that a green says what it is worth and a caller
+#: knows what it does not know.
+#: The VERDICTS of a probe. Three states that call for OPPOSITE courses of action,
+#: where a boolean distinguished none (oto#57):
+#:   `ok`           — it works.
+#:   `unauthorized` — the key does not authorize: replace it or widen its scope.
+#:                    Setting one more will change nothing.
+#:   `no_quota`     — the key is good, the balance is empty: top up.
+#:   `unknown`      — the probe failed without our being able to classify it. ⚠️ Read
+#:                    as "I don't know", NEVER "nothing serious": it is the most
+#:                    frequent value today, and confusing it with a diagnosis would
+#:                    do exactly the harm this batch repairs.
 OK = "ok"
 UNAUTHORIZED = "unauthorized"
 NO_QUOTA = "no_quota"
@@ -86,29 +86,29 @@ VERDICTS = (OK, UNAUTHORIZED, NO_QUOTA, UNKNOWN)
 
 
 class SondeRefusee(Exception):
-    """Une sonde qui SAIT pourquoi elle échoue le dit en levant l'un des deux
-    ci-dessous. C'est la voie explicite, préférée au classement par code HTTP : elle
-    survit à un amont qui répondrait 200 avec un corps d'erreur."""
+    """A probe that KNOWS why it fails says so by raising one of the two below.
+    This is the explicit path, preferred over classifying by HTTP code: it
+    survives an upstream that would answer 200 with an error body."""
 
 
 class NonAutorise(SondeRefusee):
-    """La clé n'autorise pas — invalide, révoquée, ou périmètre insuffisant."""
+    """The key does not authorize — invalid, revoked, or insufficient scope."""
 
 
 class QuotaEpuise(SondeRefusee):
-    """La clé authentifie, il n'y a plus rien à dépenser."""
+    """The key authenticates, there is nothing left to spend."""
 
 
-#: Les codes amont qui classent un échec quand la sonde n'a rien dit d'elle-même.
-#: ⚠️ Lus sur `status_code` (`UpstreamHTTPError`), **jamais devinés sur le texte** d'un
-#: message : un classement bâti sur des mots change de sens au premier reformatage
-#: amont, et personne ne s'en aperçoit.
+#: The upstream codes that classify a failure when the probe said nothing itself.
+#: ⚠️ Read from `status_code` (`UpstreamHTTPError`), **never guessed from the text**
+#: of a message: a classification built on words changes meaning at the first
+#: upstream reformatting, and nobody notices.
 _PAR_CODE = {401: UNAUTHORIZED, 403: UNAUTHORIZED, 402: NO_QUOTA, 429: NO_QUOTA}
 
 
 def classer(erreur: BaseException) -> str:
-    """Le verdict d'un échec de sonde. `unknown` quand rien ne permet de trancher —
-    et c'est un verdict à part entière, pas un défaut."""
+    """The verdict of a probe failure. `unknown` when nothing allows a ruling —
+    and that is a verdict in its own right, not a default."""
     if isinstance(erreur, QuotaEpuise):
         return NO_QUOTA
     if isinstance(erreur, NonAutorise):
@@ -119,20 +119,20 @@ def classer(erreur: BaseException) -> str:
     return UNKNOWN
 
 
-#: La conduite à tenir, par verdict. Un diagnostic qui ne dit pas quoi faire renvoie
-#: chercher — et c'est ainsi qu'une personne a relancé six fois une connexion valide.
+#: What to do, per verdict. A diagnosis that does not say what to do sends people
+#: searching — and that is how one person retried a valid connection six times.
 CONDUITE = {
-    UNAUTHORIZED: ("la clé n'autorise pas cet appel — remplace-la, ou élargis son "
-                   "périmètre chez le fournisseur. En poser une de PLUS ne changera "
-                   "rien."),
-    NO_QUOTA: ("la clé est bonne : c'est le solde qui est vide. Recharge le compte "
-               "chez le fournisseur — inutile de reconnecter quoi que ce soit."),
-    UNKNOWN: ("le test a échoué sans dire pourquoi. Lis `error` tel quel : il vient "
-              "du fournisseur, et c'est la seule chose qu'on sache."),
+    UNAUTHORIZED: ("the key does not authorize this call — replace it, or widen its "
+                   "scope at the provider. Setting one MORE will change "
+                   "nothing."),
+    NO_QUOTA: ("the key is good: it is the balance that is empty. Top up the account "
+               "at the provider — no need to reconnect anything."),
+    UNKNOWN: ("the test failed without saying why. Read `error` as is: it comes "
+              "from the provider, and it is the only thing we know."),
 }
 
-AUTH = "auth"                 # la clé authentifie. Ne dit RIEN du solde.
-AUTH_QUOTA = "auth+quota"     # la clé authentifie ET il reste de quoi travailler.
+AUTH = "auth"                 # the key authenticates. Says NOTHING about the balance.
+AUTH_QUOTA = "auth+quota"     # the key authenticates AND there is enough left to work with.
 COUVERTURES = (AUTH, AUTH_QUOTA)
 
 _REGISTRY: dict[str, Probe] = {}
@@ -140,36 +140,36 @@ _COUVERTURE: dict[str, str] = {}
 
 
 def register(connector: str, probe: Probe, couvre: str = AUTH) -> None:
-    """Déclare la sonde de vérification d'un connecteur (appelé au chargement du module).
+    """Declare a connector's verification probe (called at module load).
 
-    `couvre` par DÉFAUT `auth` — le défaut prudent : une sonde ne prouve que ce qu'elle
-    a mesuré, et déclarer `auth+quota` sans lire un solde ferait exactement le vert
-    trompeur qu'on cherche à supprimer. Ne le monter que si la sonde lit vraiment un
-    solde ou un quota."""
+    `couvre` DEFAULTS to `auth` — the prudent default: a probe only proves what it
+    measured, and declaring `auth+quota` without reading a balance would produce
+    exactly the misleading green we are trying to eliminate. Only raise it if the
+    probe really reads a balance or a quota."""
     if couvre not in COUVERTURES:
-        raise ValueError(f"couverture inconnue {couvre!r} — attendu {COUVERTURES}")
+        raise ValueError(f"unknown coverage {couvre!r} — expected {COUVERTURES}")
     _REGISTRY[connector] = probe
     _COUVERTURE[connector] = couvre
 
 
 def couverture(connector: str) -> Optional[str]:
-    """Ce que la sonde de ce connecteur couvre, ou `None` s'il n'en a pas.
+    """What this connector's probe covers, or `None` if it has none.
 
-    ⚠️ `None` se lit « aucune sonde », jamais « ne couvre rien » — les deux appellent
-    des conduites différentes : dans un cas on ne peut pas mesurer, dans l'autre on a
-    mesuré l'authentification seule."""
+    ⚠️ `None` reads as "no probe", never "covers nothing" — the two call for
+    different courses of action: in one case we cannot measure, in the other we
+    measured authentication alone."""
     return _COUVERTURE.get(_porteur(connector))
 
 
 def _porteur(connector: str) -> str:
-    """Le connecteur qui PORTE la clé (délégation `Connector.credential_of`), même
-    normalisation que le walker de cascade (`access/cascade.py::walk_cascade`).
+    """The connector that CARRIES the key (`Connector.credential_of` delegation), same
+    normalization as the cascade walker (`access/cascade.py::walk_cascade`).
 
-    Six canaux Unipile (`linkedin_unipile`, `whatsapp`…) n'ont pas de sonde À EUX —
-    ils empruntent celle de `unipile`, enregistrée sous CE nom. Sans cette lecture
-    normalisée, chacun répondait `verify_unavailable` malgré une sonde qui teste
-    exactement leur clé (oto#69) : six trous qui n'en étaient pas un, tenus par le
-    même bug que celui que corrige la cascade pour la résolution de credential."""
+    Six Unipile channels (`linkedin_unipile`, `whatsapp`…) have no probe OF THEIR
+    OWN — they borrow the `unipile` one, registered under THAT name. Without this
+    normalized read, each answered `verify_unavailable` despite a probe that tests
+    exactly their key (oto#69): six holes that were not one, held by the same bug
+    the cascade fixes for credential resolution."""
     return providers.credential_provider(connector)
 
 
@@ -181,55 +181,54 @@ def probe_for(connector: str) -> Optional[Probe]:
     return _REGISTRY.get(_porteur(connector))
 
 
-# Borne de temps d'UNE sonde, alignée sur celle du bouton « tester » de
-# `capabilities/tools_me.py`. Les sondes ont des délais d'attente très inégaux —
-# 20 s ici, 120 s de lecture chez Unipile — et aucune n'a de raison de faire
-# patienter un humain plus longtemps que ça.
+# Time limit for ONE probe, aligned with that of the "test" button in
+# `capabilities/tools_me.py`. Probes have very uneven timeouts —
+# 20 s here, 120 s read at Unipile — and none has any reason to make a human
+# wait longer than that.
 _BORNE_S = 45.0
 
 
 async def executer(probe: Probe, fields: dict, config: Optional[dict] = None,
                    instance: Optional[tuple] = None) -> None:
-    """Exécute UNE sonde HORS de la boucle d'événements, sous une borne de temps.
+    """Run ONE probe OUTSIDE the event loop, under a time limit.
 
-    Point unique d'exécution des 34 sondes (oto-backend#867, lot 2). Elles sont
-    presque toutes synchrones et font du HTTP : appelées nûment depuis un handler
-    `async def`, elles bloquent tout le processus — MCP, REST et sondes de veille —
-    le temps que l'amont réponde. Le seam des capacités ne protège que les
-    handlers `def` ; par la porte `async` il ne protège rien, et c'est par là que
-    ces trois entrées passent.
+    Single execution point for the 34 probes (oto-backend#867, batch 2). Almost all
+    are synchronous and do HTTP: called bare from an `async def` handler, they block
+    the whole process — MCP, REST and watch probes — for as long as the upstream
+    takes to answer. The capabilities seam only protects `def` handlers; through
+    the `async` door it protects nothing, and that is where these three entries
+    pass.
 
-    La règle était écrite en double, ici et dans la capacité, avec la même
-    résolution de signature : les deux appelaient la sonde à leur façon. Elle
-    vit maintenant à un seul endroit, sinon corriger l'une laisse l'autre.
+    The rule was written twice, here and in the capability, with the same signature
+    resolution: both called the probe their own way. It now lives in a single
+    place, otherwise fixing one leaves the other.
 
-    Rend les MESURES de la sonde (aujourd'hui `{"quota": …}`), ou `{}` si elle
-    n'en a pas — ce qui est le cas de toutes les sondes `auth`.
+    Returns the probe's MEASUREMENTS (today `{"quota": …}`), or `{}` if it has
+    none — which is the case of all `auth` probes.
 
-    ⚠️ La borne libère la BOUCLE, elle n'interrompt pas le thread : un client
-    HTTP synchrone n'est pas annulable, et le thread vit jusqu'à ce que son
-    propre délai d'attente expire. Ce qui compte est tenu — le processus répond,
-    et l'appelant reçoit une erreur nommée au lieu d'attendre.
+    ⚠️ The limit frees the LOOP, it does not interrupt the thread: a synchronous
+    HTTP client is not cancellable, and the thread lives until its own timeout
+    expires. What matters is held — the process responds, and the caller gets a
+    named error instead of waiting.
     """
     kwargs = {}
-    # `instance` = (entity_type, entity_id, account) de la clé RÉELLEMENT sondée.
-    # Indispensable dès qu'une sonde a un effet de bord sur le credential : sous
-    # rotation (Salesforce RTR), sonder CONSOMME le jeton, et le remplaçant doit
-    # être réécrit sur la bonne ligne. Sans cette information, la sonde ne peut
-    # que deviner via la cascade — qui désigne la clé la plus proche, pas celle
-    # qu'on teste. Un `verify level=org` tuait ainsi le jeton d'org en le
-    # rafraîchissant : `ok:true`, puis mort. Vécu 03/08. Passé UNIQUEMENT aux
-    # sondes qui le déclarent : les ~15 autres gardent leur signature à deux
-    # arguments.
+    # `instance` = (entity_type, entity_id, account) of the key ACTUALLY probed.
+    # Essential as soon as a probe has a side effect on the credential: under
+    # rotation (Salesforce RTR), probing CONSUMES the token, and the replacement must
+    # be rewritten to the right row. Without this information, the probe can only
+    # guess via the cascade — which designates the nearest key, not the one being
+    # tested. A `verify level=org` thus killed the org token by refreshing it:
+    # `ok:true`, then dead. Seen 03/08. Passed ONLY to probes that declare it: the
+    # ~15 others keep their two-argument signature.
     if instance is not None and "instance" in inspect.signature(probe).parameters:
         kwargs["instance"] = instance
 
     async def _joue():
         if inspect.iscoroutinefunction(probe):
             return await probe(fields, config or {}, **kwargs)
-        # Une sonde sync part au thread. Une sonde qui n'est pas déclarée `async
-        # def` mais rend un awaitable (callable, partial) traverse aussi : la
-        # créer dans un thread ne l'exécute pas, on l'attend ensuite ici.
+        # A sync probe goes to the thread. A probe not declared `async
+        # def` but returning an awaitable (callable, partial) also goes through:
+        # creating it in a thread does not run it, we await it here afterwards.
         res = await asyncio.to_thread(probe, fields, config or {}, **kwargs)
         if inspect.isawaitable(res):
             return await res
@@ -239,18 +238,19 @@ async def executer(probe: Probe, fields: dict, config: Optional[dict] = None,
         return _mesures(await asyncio.wait_for(_joue(), timeout=_BORNE_S))
     except asyncio.TimeoutError as e:
         raise TimeoutError(
-            f"le test de connexion n'a pas répondu en {int(_BORNE_S)} s — "
-            "le service distant est lent ou injoignable. Le credential n'est pas "
-            "invalide pour autant : réessayer plus tard.") from e
+            f"the connection test did not respond within {int(_BORNE_S)} s — "
+            "the remote service is slow or unreachable. The credential is not "
+            "necessarily invalid: try again later.") from e
 
 
 async def run(connector: str, fields: dict, config: Optional[dict] = None,
               instance: Optional[tuple] = None) -> None:
-    """Exécute la sonde du connecteur si elle existe (await si async) ; LÈVE
-    l'exception de la sonde sur échec d'authentification, no-op si aucune sonde n'est
-    enregistrée. Helper partagé entre la capacité `connectors.verify` (qui traduit
-    l'exception en `{ok:false}`) et le verify-avant-persist de `api_key_save` (#106,
-    qui la traduit en 400 et n'écrit pas le credential)."""
+    """Run the connector's probe if it exists (await if async); RAISES
+    the probe's exception on authentication failure, no-op if no probe is
+    registered. Helper shared between the `connectors.verify` capability (which
+    translates the exception into `{ok:false}`) and the verify-before-persist of
+    `api_key_save` (#106, which translates it into 400 and does not write the
+    credential)."""
     probe = probe_for(connector)
     if probe is None:
         return

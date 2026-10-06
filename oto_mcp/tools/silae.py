@@ -10,45 +10,45 @@ Read-only surface (dossiers, employees, payslips, variables awaiting entry).
 The write operations (adding a bonus/hours, confirming staged entries) stay out
 of the agent for now — entering payroll is a sensitive act. ⚠️ `SilaeClient` DOES
 carry them (`ajouter_element_variable`, `ajouter_prime`, `ajouter_heures`,
-`confirmer_saisies`) : aucun tool d'ici ne les atteint, et
-`tests/test_silae_op_dispatch.py` le VÉRIFIE (toutes les ops jouées, les quatre
-méthodes d'écriture `assert_not_called`, plus un contrôle statique du module).
-Exposer une écriture = un acte explicite, pas un effet de bord de refactor.
+`confirmer_saisies`): no tool here reaches them, and
+`tests/test_silae_op_dispatch.py` VERIFIES it (every op played, the four
+write methods `assert_not_called`, plus a static check of the module).
+Exposing a write = an explicit act, not a side effect of a refactor.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur silae le
-2026-08-11)** : un tool par OBJET métier, le verbe en paramètre `op` —
+**Consolidated surface (ADR 0047 §Amendment, applied to the silae connector on
+2026-08-11)**: one tool per business OBJECT, the verb in the `op` parameter —
 `silae_dossier` (list/numbers/info/current_period), `silae_employee`
-(list/get/jobs, tous scopés par `numero_dossier`) et `silae_payslip`
-(list/header/lines/totals, tous scopés par `numero_dossier` + `periode`).
-`silae_variables_to_enter` reste SEUL et **inchangé** : une seule capacité (un
-`op` à valeur unique n'est pas un verbe), et c'est la ressource Silae
-(`v1/Variables/*`) où vivent TOUTES les écritures non exposées — la garder à
-part maintient la frontière lecture/écriture visible.
+(list/get/jobs, all scoped by `numero_dossier`) and `silae_payslip`
+(list/header/lines/totals, all scoped by `numero_dossier` + `periode`).
+`silae_variables_to_enter` stays ALONE and **unchanged**: a single capability (a
+single-valued `op` is not a verb), and it is the Silae resource
+(`v1/Variables/*`) where ALL the unexposed writes live — keeping it
+apart keeps the read/write boundary visible.
 
-⚠️ **La rédaction des coordonnées bancaires n'est PAS active par défaut.** Le
-masquage IBAN/BIC/RIB est disponible à la frontière des tools
-(`FieldRedactionMiddleware`, politique résolue par NAMESPACE `silae` — donc
-insensible au nom des tools : ce renommage ne la casse pas), mais
-`field_filter_defaults.SERVER_DEFAULTS` ne porte **rien pour `silae`** : rien
-n'est redacté tant que l'org n'a pas posé de politique (template `bank_details`,
-applicable en 1 clic ; `connector_field_schema` déclare le plancher PII silae —
-iban/bic/rib/salaire/numeroSecu/dateNaissance/nom/prenom). Les bulletins
-arrivent donc **en clair** à l'agent par défaut. *(Ce docstring affirmait
-l'inverse jusqu'au 2026-08-11 — « the redaction is applied … server default in
-`field_filter_defaults.SERVER_DEFAULTS` » — c'était faux : SERVER_DEFAULTS = {}.)*
+⚠️ **Redaction of bank details is NOT active by default.** The
+IBAN/BIC/RIB masking is available at the tools' boundary
+(`FieldRedactionMiddleware`, policy resolved by NAMESPACE `silae` — hence
+insensitive to tool names: this renaming does not break it), but
+`field_filter_defaults.SERVER_DEFAULTS` carries **nothing for `silae`**: nothing
+is redacted until the org has set a policy (`bank_details` template,
+applicable in 1 click; `connector_field_schema` declares silae's PII floor —
+iban/bic/rib/salaire/numeroSecu/dateNaissance/nom/prenom). Payslips
+therefore reach the agent **in clear** by default. *(This docstring claimed
+the opposite until 2026-08-11 — "the redaction is applied … server default in
+`field_filter_defaults.SERVER_DEFAULTS`" — that was false: SERVER_DEFAULTS = {}.)*
 
-⚠️ **L'API Silae ne lève pas : elle renvoie l'erreur dans le corps.**
-`SilaeClient.call` rend `{"error": "<status>", "details": …, "status_code": …}`
-sur échec HTTP, `{"error": "<exception>"}` sur erreur réseau, et
-`{"error": "Max retries exceeded"}` à bout de tentatives — un tool d'ici peut
-donc renvoyer un dict d'erreur en HTTP 200. Vérifier la clé `error` avant de
-conclure « dossier vide ». (401 = invalidation du token puis retry ; 429 =
-backoff exponentiel — gérés dans le client, pas ici.)
+⚠️ **The Silae API does not raise: it returns the error in the body.**
+`SilaeClient.call` returns `{"error": "<status>", "details": …, "status_code": …}`
+on HTTP failure, `{"error": "<exception>"}` on network error, and
+`{"error": "Max retries exceeded"}` when attempts run out — a tool here can
+therefore return an error dict with HTTP 200. Check the `error` key before
+concluding "empty dossier". (401 = token invalidation then retry; 429 =
+exponential backoff — handled in the client, not here.)
 
-⚠️ **La subscription key BORNE le périmètre** : envoyée en
-`Ocp-Apim-Subscription-Key`, elle scope les dossiers ET les fonctions
-atteignables. Un dossier absent de `silae_dossier(op="list")` n'est pas
-forcément inexistant — il peut être hors périmètre de la clé.
+⚠️ **The subscription key BOUNDS the perimeter**: sent as
+`Ocp-Apim-Subscription-Key`, it scopes the dossiers AND the functions
+that can be reached. A dossier missing from `silae_dossier(op="list")` does not
+necessarily not exist — it may be outside the key's perimeter.
 """
 from __future__ import annotations
 
@@ -63,20 +63,20 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `POST v1/Dossiers/ListeDossiers` (déjà dans le client — `list_dossiers`),
-    le plus petit appel disponible : Silae n'expose ni `/me` ni solde. Le mint
-    de token (client_id/client_secret) lève NATURELLEMENT
-    (`resp.raise_for_status()`) sur ces deux champs — mais `call()` lui-même NE
-    LÈVE JAMAIS sur un refus HTTP (dict `{"error", "status_code"}`, déjà noté
-    dans le docstring de ce module) : une `subscription_key` fausse ou trop
-    étroite échouerait `list_dossiers()` SANS que le mint de token ne le
-    signale, d'où la lecture explicite ci-dessous.
+    `POST v1/Dossiers/ListeDossiers` (already in the client — `list_dossiers`),
+    the smallest call available: Silae exposes neither `/me` nor a balance. The token
+    mint (client_id/client_secret) raises NATURALLY
+    (`resp.raise_for_status()`) on those two fields — but `call()` itself NEVER
+    RAISES on an HTTP refusal (`{"error", "status_code"}` dict, already noted
+    in this module's docstring): a wrong or too narrow `subscription_key` would
+    fail `list_dossiers()` WITHOUT the token mint
+    signalling it, hence the explicit read below.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : la `subscription_key` scope
-    quels dossiers/fonctions sont joignables — une liste VIDE (`[]`) est un
-    état normal (compte tout juste créé), jamais un refus.
+    **Authenticated ≠ usable** (class oto#69): the `subscription_key` scopes
+    which dossiers/functions are reachable — an EMPTY list (`[]`) is a
+    normal state (freshly created account), never a refusal.
     """
     from oto.tools.silae import SilaeClient
 
@@ -100,9 +100,9 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> SilaeClient:
         creds = access.resolve_credential_fields("silae")
-        # Rédaction (masque IBAN/BIC/RIB) appliquée à la frontière des tools par
-        # `FieldRedactionMiddleware` — et SEULEMENT si l'org a posé une politique
-        # (cf. l'avertissement du docstring de module) ; plus au niveau client.
+        # Redaction (IBAN/BIC/RIB mask) applied at the tools' boundary by
+        # `FieldRedactionMiddleware` — and ONLY if the org has set a policy
+        # (see the warning in the module docstring); no longer at client level.
         return SilaeClient(
             client_id=creds.get("client_id"),
             client_secret=creds.get("client_secret"),
@@ -113,23 +113,23 @@ def register(mcp: FastMCP) -> None:
         return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
     def _need(value, name: str, op: str):
-        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
-        Une chaîne vide compte comme absente : Silae traite `""` comme « tous les
-        salariés », donc la laisser passer sur un op mono-salarié rendrait un
-        résultat plausible et faux."""
+        """Mandatory argument for THIS op — actionable error, never a fallback.
+        An empty string counts as absent: Silae treats `""` as "all
+        employees", so letting it through on a single-employee op would return a
+        plausible and wrong result."""
         if value is None or value == "":
-            raise _bad(f"op='{op}' requiert {name}")
+            raise _bad(f"op='{op}' requires {name}")
         return value
 
     def _refuse_ignored(op: str, hint: str, **provided) -> None:
-        """Un argument fourni que CET op n'utilise pas est une erreur d'intention,
-        pas un détail. Le silence est le vrai risque de la consolidation par `op` :
-        `silae_dossier(numero_dossier="001")` sans op rendrait la liste COMPLÈTE des
-        dossiers — un résultat crédible, à côté de la demande. On nomme donc l'op qui
-        honore l'argument."""
+        """A provided argument that THIS op does not use is an error of intent,
+        not a detail. Silence is the real risk of consolidating by `op`:
+        `silae_dossier(numero_dossier="001")` without op would return the COMPLETE list of
+        dossiers — a credible result, beside the request. So we name the op that
+        honours the argument."""
         for name, value in provided.items():
             if value is not None and value != "":
-                raise _bad(f"op='{op}' n'utilise pas {name} — {hint}")
+                raise _bad(f"op='{op}' does not use {name} — {hint}")
 
     # --- Dossiers (payroll files) ---
 
@@ -159,11 +159,11 @@ def register(mcp: FastMCP) -> None:
         client = _client()
 
         if op == "list":
-            _refuse_ignored(op, "utilise op='info' pour un dossier précis",
+            _refuse_ignored(op, "use op='info' for a specific dossier",
                             numero_dossier=numero_dossier)
             return client.list_dossiers()
         if op == "numbers":
-            _refuse_ignored(op, "utilise op='info' pour un dossier précis",
+            _refuse_ignored(op, "use op='info' for a specific dossier",
                             numero_dossier=numero_dossier)
             return client.list_numeros_dossiers()
         if op == "info":
@@ -171,9 +171,9 @@ def register(mcp: FastMCP) -> None:
         if op == "current_period":
             return client.dossier_periode_en_cours(
                 _need(numero_dossier, "numero_dossier", op))
-        raise _bad("op doit être 'list', 'numbers', 'info' ou 'current_period'")
+        raise _bad("op must be 'list', 'numbers', 'info' or 'current_period'")
 
-    # --- Salariés (employees) ---
+    # --- Employees ---
 
     @mcp.tool()
     def silae_employee(
@@ -202,21 +202,21 @@ def register(mcp: FastMCP) -> None:
         client = _client()
 
         if op == "list":
-            _refuse_ignored(op, "utilise op='get' pour un salarié précis",
+            _refuse_ignored(op, "use op='get' for a specific employee",
                             matricule_salarie=matricule_salarie,
                             type_emplois=type_emplois)
             return client.list_salaries(numero_dossier)
         if op == "get":
-            _refuse_ignored(op, "type_emplois ne vaut que pour op='jobs'",
+            _refuse_ignored(op, "type_emplois only applies to op='jobs'",
                             type_emplois=type_emplois)
             return client.salarie_matricule(
                 numero_dossier, _need(matricule_salarie, "matricule_salarie", op))
         if op == "jobs":
             return client.list_salarie_emplois(
                 numero_dossier, matricule_salarie or "", type_emplois or 0)
-        raise _bad("op doit être 'list', 'get' ou 'jobs'")
+        raise _bad("op must be 'list', 'get' or 'jobs'")
 
-    # --- Bulletins (payslips) ---
+    # --- Payslips ---
 
     @mcp.tool()
     def silae_payslip(
@@ -230,7 +230,7 @@ def register(mcp: FastMCP) -> None:
         `op`:
         - **"list"** (default): retrieve payslips for a period — the whole dossier,
           or one employee when `matricule_salarie` is given.
-        - **"header"**: payslip header (entête) for one employee/period.
+        - **"header"**: payslip header for one employee/period.
         - **"lines"**: payslip lines (lignes) for one employee/period.
         - **"totals"**: payslip cumulative totals (cumuls) for one employee/period.
 
@@ -259,9 +259,9 @@ def register(mcp: FastMCP) -> None:
             return client.bulletin_cumuls(
                 numero_dossier, _need(matricule_salarie, "matricule_salarie", op),
                 periode)
-        raise _bad("op doit être 'list', 'header', 'lines' ou 'totals'")
+        raise _bad("op must be 'list', 'header', 'lines' or 'totals'")
 
-    # --- Variables de paie (EVP) ---
+    # --- Payroll variables (EVP) ---
 
     @mcp.tool()
     def silae_variables_to_enter(numero_dossier: str) -> object:

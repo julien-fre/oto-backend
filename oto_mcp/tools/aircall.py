@@ -1,25 +1,25 @@
-"""Aircall — téléphonie cloud, en LECTURE SEULE.
+"""Aircall — cloud telephony, READ-ONLY.
 
-Wrappe `oto.tools.aircall.AircallClient` (Public API, Basic `api_id:api_token`),
-credential résolu par appel via `access.resolve_credential_fields("aircall")`
-(ADR 0011). Aucune écriture, aucun webhook.
+Wraps `oto.tools.aircall.AircallClient` (Public API, Basic `api_id:api_token`),
+credential resolved per call via `access.resolve_credential_fields("aircall")`
+(ADR 0011). No writes, no webhooks.
 
-**Surface** :
-- `aircall_calls` (list/search/get) — le journal d'appels, et un appel avec ses
-  URLs d'enregistrement et de messagerie vocale ;
-- `aircall_call_ai` — l'IA conversationnelle d'un appel (transcription, résumé,
-  sujets, sentiment, actions à mener), servie par l'amont aux seules sociétés
-  abonnées à son offre IA ;
+**Surface**:
+- `aircall_calls` (list/search/get) — the call log, and a call with its
+  recording and voicemail URLs;
+- `aircall_call_ai` — a call's conversational AI (transcription, summary,
+  topics, sentiment, action items), served by upstream only to companies
+  subscribed to its AI offer;
 - `aircall_users`, `aircall_teams`, `aircall_numbers`, `aircall_contacts`,
-  `aircall_company` — l'annuaire de la société.
+  `aircall_company` — the company directory.
 
-Les listes rendent une vue resserrée par défaut (denylist de clés nommées, à
-toute profondeur : liens d'API redondants avec l'id, fichiers audio du numéro,
-champs dépréciés) ; `full=True` rend le brut, et la réponse NOMME ce qu'elle a
-retiré.
+Lists return a tightened view by default (denylist of named keys, at any
+depth: API links redundant with the id, the number's audio files,
+deprecated fields); `full=True` returns the raw data, and the response NAMES what it
+removed.
 
-Les appels au client sont écrits en clair (`_client().list_calls(…)`) : c'est ce
-qui les rend vérifiables par la sonde version-skew
+Calls to the client are written out in full (`_client().list_calls(…)`): this is what
+makes them verifiable by the version-skew probe
 (`test_tools_client_methods_exist`).
 """
 from __future__ import annotations
@@ -35,9 +35,9 @@ from ..mcp_errors import McpError
 
 _NAME = "aircall"
 
-# Clés retirées des listes par défaut, à toute profondeur. `direct_link` redit
-# l'id ; `messages` = les URLs des fichiers audio d'un numéro (accueil, attente…) ;
-# le reste est déprécié par l'amont ou ne sert pas à choisir quoi ouvrir.
+# Keys removed from lists by default, at any depth. `direct_link` repeats
+# the id; `messages` = the URLs of a number's audio files (greeting, hold…);
+# the rest is deprecated upstream or does not help choose what to open.
 _DROP_CALLS = frozenset({
     "direct_link", "messages", "cost", "ivr_options_selected", "ai_voice_agents",
     "is_ivr", "open", "availability_status", "available", "substatus",
@@ -56,7 +56,7 @@ def _bad(msg: str) -> McpError:
 
 
 def _slim(value: Any, drop: frozenset, dropped: set) -> Any:
-    """Copie de `value` sans les clés de `drop`, à toute profondeur."""
+    """Copy of `value` without the keys in `drop`, at any depth."""
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
@@ -71,7 +71,7 @@ def _slim(value: Any, drop: frozenset, dropped: set) -> Any:
 
 
 def _view(payload: Any, full: bool, drop: frozenset) -> Any:
-    """Vue resserrée d'une liste (sauf `full`) ; `meta` (pagination) intact."""
+    """Tightened view of a list (unless `full`); `meta` (pagination) untouched."""
     if full or not isinstance(payload, dict):
         return payload
     dropped: set = set()
@@ -83,7 +83,7 @@ def _view(payload: Any, full: bool, drop: frozenset) -> Any:
 
 
 def _refuse_ignored(op: str, **provided) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention."""
+    """An argument supplied that THIS op does not use is an intent error."""
     for name, value in provided.items():
         if value is not None and value is not False:
             raise _bad(f"op='{op}' does not use `{name}`.")
@@ -123,9 +123,9 @@ def _upstream_message(e, *, ai_kind: Optional[str] = None) -> str:
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : `GET /v1/ping`, l'appel authentifié le
-    moins coûteux. Une clé Aircall donne accès à toute la société, il n'y a pas
-    de portée plus fine à éprouver."""
+    """Probe for "test the connection": `GET /v1/ping`, the cheapest authenticated
+    call. An Aircall key gives access to the whole company, there is no
+    finer scope to test."""
     from oto.tools.aircall import AircallClient
     from oto.tools.common.errors import UpstreamHTTPError
 

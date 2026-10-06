@@ -50,7 +50,7 @@ def test_guard_org_pin_open_to_any_member(monkeypatch):
 def test_guard_org_pin_rejects_non_member(monkeypatch):
     monkeypatch.setattr(roles, "is_org_member", lambda sub, org: False)
     ref = instance_refs.parse_ref(instance_refs.make_org_ref(35, "zoho"))
-    with pytest.raises(McpError, match="pas membre de l'org"):
+    with pytest.raises(McpError, match="not a member of org"):
         access.guard_instance_access("intrus", ref)
 
 
@@ -64,7 +64,7 @@ def test_guard_group_pin_reader_and_org_admin(monkeypatch):
     ref = instance_refs.parse_ref(instance_refs.make_group_ref(2, "pennylane"))
     assert access.guard_instance_access("finance_guy", ref) == 35
     assert access.guard_instance_access("clemence_admin", ref) == 35
-    with pytest.raises(McpError, match="pas membre du groupe"):
+    with pytest.raises(McpError, match="not a member of group"):
         access.guard_instance_access("other_dept", ref)
 
 
@@ -83,7 +83,7 @@ def test_guard_member_share_side_allows_beneficiary(monkeypatch):
 def test_guard_member_share_side_rejects_non_beneficiary(monkeypatch):
     _mock_sharing(monkeypatch, [], ["user:bob"])
     ref = instance_refs.parse_ref(instance_refs.make_member_ref(8, "owner", "zoho"))
-    with pytest.raises(McpError, match="autre membre"):
+    with pytest.raises(McpError, match="another member"):
         access.guard_instance_access("carol", ref)
 
 def test_guard_member_owner_still_works(monkeypatch):
@@ -129,18 +129,18 @@ def test_lend_revoke_removes(monkeypatch):
 def test_lend_no_instance_raises(monkeypatch):
     _lend_wiring(monkeypatch, write_ok=False)  # aucune ligne à mettre à jour
     inp = connectors_sharing.LendInstanceInput(connector="zoho", to="bob")
-    with pytest.raises(AuthzDenied, match="rien à prêter|Aucune instance"):
+    with pytest.raises(AuthzDenied, match="nothing to lend|No `"):
         connectors_sharing._lend_instance(_ctx("alice"), inp)
 
 def test_lend_self_rejected(monkeypatch):
     _lend_wiring(monkeypatch)
     inp = connectors_sharing.LendInstanceInput(connector="zoho", to="alice")
-    with pytest.raises(AuthzDenied, match="soi-même"):
+    with pytest.raises(AuthzDenied, match="yourself"):
         connectors_sharing._lend_instance(_ctx("alice"), inp)
 
 def test_lend_unknown_user_rejected(monkeypatch):
     _lend_wiring(monkeypatch)
     monkeypatch.setattr(db, "get_user", lambda sub: None)
     inp = connectors_sharing.LendInstanceInput(connector="zoho", to="ghost")
-    with pytest.raises(AuthzDenied, match="inconnu"):
+    with pytest.raises(AuthzDenied, match="Unknown user"):
         connectors_sharing._lend_instance(_ctx("alice"), inp)

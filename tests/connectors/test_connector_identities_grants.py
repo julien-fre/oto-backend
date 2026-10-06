@@ -52,10 +52,10 @@ def test_list_group_grant_shows_team_label_and_via_group(monkeypatch):
     ids = asyncio.run(connector_identities.list_identities("grantee", "unipile"))
     g = {i["id"]: i for i in ids}["OWNER_ACC"]
     assert g["via_group"] == {"id": 42, "name": "Croissance"}
-    # "Anna K" (le nom du COMPTE) reste affiché — c'est "compte de {owner}" qui
+    # "Anna K" (le nom du COMPTE) reste affiché — c'est "account of {owner}" qui
     # cède la place à l'équipe, pas le nom du profil lui-même.
-    assert g["label"] == "Anna K — compte d'équipe (Croissance)"
-    assert "compte de" not in g["label"]
+    assert g["label"] == "Anna K — team account (Croissance)"
+    assert "account of" not in g["label"]
 
 
 def test_list_nominative_grant_has_no_via_group(monkeypatch):
@@ -142,7 +142,7 @@ def test_resolver_pointer_revoked_raises(monkeypatch):
     monkeypatch.setattr("oto_mcp.db.suspended_lenders_for", lambda sub, prov: {})
     monkeypatch.setattr("oto_mcp.db.get_unipile_account_id",
                         lambda sub, org, prov: pytest.fail("pas de repli silencieux"))
-    with pytest.raises(ValueError, match="plus opérable"):
+    with pytest.raises(ValueError, match="no longer operable"):
         connector_identities.resolve_operated_account_id("grantee", "LINKEDIN")
 
 

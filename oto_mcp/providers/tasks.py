@@ -1,25 +1,25 @@
-"""Déclaration de registre du connecteur `tasks` — Google Tasks, sur le compte Google.
+"""Registry declaration of the `tasks` connector — Google Tasks, on the Google account.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE. La forme commune
-aux six services Google vit chez le porteur du compte (`providers/google.service`) —
-ici, ce qui distingue CELUI-CI (split du 2026-09-26).
+Sole home of its entry: `providers/__init__.py` AGGREGATES it. The form common
+to the six Google services lives with the account carrier (`providers/google.service`) —
+here, what distinguishes THIS one (split of 2026-09-26).
 """
 from __future__ import annotations
 
 from .google import service
 
-# Google Tasks : la personne autorise CE service sur son compte Google, depuis cette
-# carte, avec ses seuls scopes — le compte (la ligne du coffre, le refresh token) est
-# celui du connecteur `google`, partagé avec les cinq autres services.
+# Google Tasks: the person authorizes THIS service on their Google account, from this
+# card, with its own scopes only — the account (the vault row, the refresh token) is
+# the `google` connector's, shared with the five other services.
 CONNECTOR = service(
     "tasks",
     label="Google Tasks",
-    help="tes tâches — listes, création, mise à jour, achèvement ; scope `tasks`, accordé sur ton compte Google",
+    help="your tasks — lists, creation, update, completion; scope `tasks`, granted on your Google account",
     href="https://tasks.google.com",
 )
 
 CATEGORY = "Comms"
 LOGO_DOMAIN = "google.com"
 DESCRIPTION = (
-    "Google Tasks, sur ton compte Google : lister tes listes de tâches, créer, mettre à jour et achever une tâche. Un consentement qui ne demande que le scope Tasks."
+    "Google Tasks, on your Google account: list your task lists, create, update and complete a task. A consent that asks only for the Tasks scope."
 )

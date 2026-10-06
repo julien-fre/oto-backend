@@ -1,51 +1,51 @@
-"""Déclaration de registre du connecteur `transcription`.
+"""Registry declaration of the `transcription` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# transcription : un audio du projet devient une page du projet (ADR 0074). Le
-# fournisseur est Mistral (Voxtral) ; le connecteur porte le VERBE, pas la marque —
-# `mistral` existe déjà comme porteur de clé SANS outil (`kind="credential"`, agents
-# programmés), et un connecteur à outil ne s'y greffe pas.
+# transcription: a project audio file becomes a project page (ADR 0074). The
+# provider is Mistral (Voxtral); the connector carries the VERB, not the brand —
+# `mistral` already exists as a key carrier WITHOUT a tool (`kind="credential"`, scheduled
+# agents), and a tool connector does not graft onto it.
 #
-# `byo_org` + `platform` : la clé est celle de l'organisation (c'est elle qui paie la
-# minute d'audio) OU une instance plateforme accordée à une org (l'org qui n'a pas de
-# clé propre, ex. un pilote : la clé, la langue et le vocabulaire sont alors ceux de
-# l'instance plateforme). L'org qui a sa propre instance passe avant la plateforme
-# (cascade). MONO-compte, déclaré : un appel
-# transcrit avec UNE clé et UN vocabulaire, et deux instances posées sur la même org
-# n'auraient aucun critère pour se départager — le rattachement à un projet passe par
-# un slot (ADR 0035), comme toute instance.
+# `byo_org` + `platform`: the key is the organization's (it is the one paying for the
+# audio minute) OR a platform instance granted to an org (the org without
+# its own key, e.g. a pilot: the key, language and vocabulary are then those of the
+# platform instance). The org that has its own instance takes precedence over the platform
+# (cascade). MONO-account, declared: a call
+# transcribes with ONE key and ONE vocabulary, and two instances set on the same org
+# would have no criterion to tell them apart — attaching to a project goes through
+# a slot (ADR 0035), like any instance.
 #
-# Deux champs NON secrets font de l'instance « une clé × une langue × un
-# vocabulaire » (ADR 0074 D1) :
-# - `language` : code de langue, `fr` quand il est vide ; `auto` = détection par
-#   l'amont ;
-# - `vocabulary` : termes métier saisis à la main, séparés par des virgules ou des
-#   retours à la ligne — l'espace y est SIGNIFICATIF (« pompe à chaleur »), d'où
-#   `whitespace_significant` : le nettoyage par défaut retirerait tous les blancs.
+# Two NON-secret fields make the instance "one key × one language × one
+# vocabulary" (ADR 0074 D1):
+# - `language`: language code, `fr` when it is empty; `auto` = detection by
+#   the upstream;
+# - `vocabulary`: business terms entered by hand, separated by commas or
+#   line breaks — the space is SIGNIFICANT there (« pompe à chaleur »), hence
+#   `whitespace_significant`: the default cleanup would strip all blanks.
 CONNECTOR = _c(
     "transcription", ["transcription"], auth_modes={"byo_org", "platform"},
     secret_kind="fields", cardinality="mono",
     label="Transcription (Mistral)",
-    help="transcrit un audio du projet en page du projet — locuteurs distingués, "
-         "vocabulaire de l'organisation",
+    help="transcribes a project audio file into a project page — speakers "
+         "distinguished, organization vocabulary",
     href="https://console.mistral.ai/api-keys",
     credential_fields=(
-        CredentialField("api_key", "Clé API Mistral", secret=True,
-                        help="créée sur console.mistral.ai"),
-        CredentialField("language", "Langue", secret=False, required=False,
-                        help="code de langue de l'audio (défaut : fr) ; « auto » = "
-                             "détection automatique"),
-        CredentialField("vocabulary", "Vocabulaire", secret=False, required=False,
+        CredentialField("api_key", "Mistral API key", secret=True,
+                        help="created at console.mistral.ai"),
+        CredentialField("language", "Language", secret=False, required=False,
+                        help="language code of the audio (default: fr); \"auto\" = "
+                             "automatic detection"),
+        CredentialField("vocabulary", "Vocabulary", secret=False, required=False,
                         whitespace_significant=True,
-                        help="termes métier à bien orthographier (ouvrages, "
-                             "matériaux, noms propres), séparés par des virgules ou "
-                             "des retours à la ligne — 100 mots au plus"),
+                        help="business terms to spell correctly (structures, "
+                             "materials, proper names), separated by commas or "
+                             "line breaks — 100 words at most"),
     ),
 )
 
@@ -54,8 +54,8 @@ PUBLISHER = "Mistral AI"
 LOGO_DOMAIN = "mistral.ai"
 
 DESCRIPTION = (
-    "Transcription d'enregistrements audio (visites, réunions, notes vocales) avec "
-    "Mistral Voxtral, hébergé dans l'UE : le fichier déposé sur un projet devient une "
-    "page du projet, un paragraphe par tour de parole, avec le vocabulaire métier de "
-    "l'organisation."
+    "Transcription of audio recordings (visits, meetings, voice notes) with "
+    "Mistral Voxtral, hosted in the EU: the file dropped on a project becomes a "
+    "project page, one paragraph per speaker turn, with the organization's "
+    "business vocabulary."
 )

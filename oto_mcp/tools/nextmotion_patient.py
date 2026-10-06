@@ -1,19 +1,19 @@
-"""Nextmotion — l'IDENTITÉ du patient : liste (avec recherche), fiche, création,
+"""Nextmotion — the patient's IDENTITY: list (with search), record, creation,
 modification.
 
-Module frère de `nextmotion.py` (cf. `Connector.modules`). Un outil,
-`nextmotion_patient`, et c'est le SEUL du connecteur qui sert une personne : partout
-ailleurs, un rendez-vous, un devis, une facture, un paiement ou un parcours ne porte le
-patient que par son id — c'est ici que cet id se résout.
+Sibling module of `nextmotion.py` (see `Connector.modules`). One tool,
+`nextmotion_patient`, and it is the ONLY one of the connector that serves a person:
+everywhere else, an appointment, a quote, an invoice, a payment or a journey carries the
+patient only by id — this is where that id is resolved.
 
-Ce qui sort (`_PATIENT_IDENTITY`) : nom, prénom, email, téléphone, date de naissance,
-âge, genre, adresse, code postal, ville, pays, consentements de contact, numéro de
-patient, archivé. Ce qui ne sort pas, même ici : les commentaires du praticien
-(`doctor_comments`, du texte clinique), la photographie, les coordonnées GPS. Ce qui
-n'entre pas : `doctor_comments` (refusé nommément, `nextmotion_entrees._IN_PATIENT`).
+What comes out (`_PATIENT_IDENTITY`): last name, first name, email, phone, date of birth,
+age, gender, address, postal code, city, country, contact consents, patient
+number, archived. What does not come out, even here: the practitioner's comments
+(`doctor_comments`, clinical text), the photograph, the GPS coordinates. What does not
+go in: `doctor_comments` (refused by name, `nextmotion_entrees._IN_PATIENT`).
 
-Le dossier médical autour du patient (antécédents, médias, ordonnances, soins,
-consultations, visites) reste hors du connecteur, comme la suppression d'un patient.
+The medical record around the patient (history, media, prescriptions, treatments,
+consultations, visits) stays outside the connector, as does deleting a patient.
 """
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `notion`.
+"""Registry declaration of the `notion` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from ._model import _c
 CONNECTOR = _c(
     "notion", ["notion"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Notion",
-    help="pages, bases de données, blocs (lecture + écriture)",
+    help="pages, databases, blocks (read + write)",
     href="https://www.notion.so",
 )
 
@@ -19,6 +19,6 @@ PUBLISHER = "Notion"
 LOGO_DOMAIN = "notion.so"
 
 DESCRIPTION = (
-    "L'espace Notion d'une équipe : pages, bases de données et blocs, en "
-    "lecture et en écriture."
+    "A team's Notion workspace: pages, databases and blocks, with "
+    "read and write access."
 )

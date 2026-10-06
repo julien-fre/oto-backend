@@ -66,19 +66,19 @@ def _require(op: str, **fields) -> None:
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET projects` (déjà dans le client — `list_projects`), le premier appel
-    de découverte du connecteur (`promptwatch_project`) : PromptWatch n'expose
-    ni `/me` ni solde à cet endpoint. `raise_for_upstream` (typé,
-    `UpstreamHTTPError` avec `status_code`) — le tool `_run` de ce module sait
-    déjà distinguer 401 (clé) de 402 (quota) sur CET appel, signe qu'un compte
-    suspendu peut y répondre 402 ; non lu ici (`auth` seul), le classement
-    générique par code (401/402) s'applique tel quel si ça se produit.
+    `GET projects` (already in the client — `list_projects`), the connector's first
+    discovery call (`promptwatch_project`): PromptWatch exposes
+    neither `/me` nor a balance at this endpoint. `raise_for_upstream` (typed,
+    `UpstreamHTTPError` with `status_code`) — this module's `_run` tool already
+    knows how to tell 401 (key) from 402 (quota) on THIS call, a sign that a
+    suspended account may answer 402 there; not read here (`auth` only), the
+    generic classification by code (401/402) applies as-is if that happens.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas de scope —
-    une clé project-level est déjà scopée à un seul projet, `list_projects`
-    la sert quand même (voir `promptwatch_project`).
+    **Authenticated ≠ usable** (class oto#69): doesn't distinguish scope —
+    a project-level key is already scoped to a single project, `list_projects`
+    serves it anyway (see `promptwatch_project`).
     """
     from oto.tools.promptwatch.client import PromptWatchClient
 

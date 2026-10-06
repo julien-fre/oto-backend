@@ -232,7 +232,7 @@ def test_zoho_verify_scope_mismatch_reports_granted_scope(monkeypatch):
     with pytest.raises(ValueError) as ei:
         zoho._verify(_zoho_fields())
     msg = str(ei.value)
-    assert "aucun scope de lecture CRM" in msg
+    assert "no CRM read scope" in msg
     assert "ZohoAnalytics.fullaccess.all" in msg  # scope réel remonté = diagnostic direct
 
 

@@ -56,7 +56,7 @@ def _mount(monkeypatch, *, byo: bool = True, match_return=_DEFAUT, bulk_return=_
     def _resolve(provider, want="auto", *a, **k):
         if not byo:
             raise McpError(ErrorData(code=INVALID_PARAMS,
-                                     message="Aucun credential configuré pour toi"))
+                                     message="No `apollo` credential configured for you"))
         return MagicMock(key="k-byo")
 
     monkeypatch.setattr(access, "resolve_credential", _resolve)

@@ -1,39 +1,39 @@
-"""Déclaration de registre du connecteur `promptwatch`.
+"""Registry declaration of the `promptwatch` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it doesn't
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# promptwatch : monitoring de visibilité IA (comment une marque apparaît dans
-# les réponses ChatGPT/Claude/Gemini…) — prompts organisés en monitors,
-# analytics visibilité/sentiment/citations, contenu généré par IA pour
-# combler les gaps de couverture. Client REST synchrone dans oto-core
-# (`oto.tools.promptwatch`), tools curés dans `tools/promptwatch.py` (10
-# tools `op=`, ADR 0047 — la portée v1 couvre projects/monitors/prompts
-# (+ bulk natif)/responses/visibility/citations/content+content-gap/
-# tags+topics/personas/brands ; Publishing, Content Agent, Ads Radar,
+# promptwatch: AI visibility monitoring (how a brand appears in
+# ChatGPT/Claude/Gemini… answers) — prompts organized into monitors,
+# visibility/sentiment/citations analytics, AI-generated content to
+# close coverage gaps. Synchronous REST client in oto-core
+# (`oto.tools.promptwatch`), curated tools in `tools/promptwatch.py` (10
+# `op=` tools, ADR 0047 — the v1 scope covers projects/monitors/prompts
+# (+ native bulk)/responses/visibility/citations/content+content-gap/
+# tags+topics/personas/brands; Publishing, Content Agent, Ads Radar,
 # Shopping, Site Health, Sitemap, Page Tracker, Models, Actions, Query
-# Fanouts et Social Citations sont DÉFÉRÉS, pas construits). Credential à
-# 2 champs (clé API + project_id optionnel — ne sert qu'à une clé
-# ORG-level ciblant un projet précis, une clé project-level l'ignore) →
-# secret_kind="fields", résolu via resolve_credential_fields, même patron
-# que lighton. BYO only : pas d'accord commercial Otomata↔PromptWatch.
+# Fanouts and Social Citations are DEFERRED, not built). 2-field credential
+# (API key + optional project_id — only used by an
+# ORG-level key targeting a specific project, a project-level key ignores it) →
+# secret_kind="fields", resolved via resolve_credential_fields, same pattern
+# as lighton. BYO only: no Otomata↔PromptWatch commercial agreement.
 CONNECTOR = _c(
     "promptwatch", ["promptwatch"], auth_modes={"byo_user", "byo_org"},
     secret_kind="fields",
     label="PromptWatch",
-    help="monitoring de visibilité IA — prompts, monitors, réponses, "
-         "citations, contenu généré pour combler les gaps",
+    help="AI visibility monitoring — prompts, monitors, responses, "
+         "citations, generated content to close the gaps",
     href="https://promptwatch.com", credential_fields=(
         CredentialField("api_key", "API key", secret=True,
-                        help="Settings > API Keys sur le dashboard PromptWatch"),
-        CredentialField("project_id", "Project ID par défaut", secret=False,
+                        help="Settings > API Keys on the PromptWatch dashboard"),
+        CredentialField("project_id", "Default Project ID", secret=False,
                         required=False,
-                        help="clé ORG-level ciblant un projet précis "
-                             "uniquement (optionnel) — voir promptwatch_project"),
+                        help="ORG-level key targeting a specific project "
+                             "only (optional) — see promptwatch_project"),
     ),
 )
 
@@ -42,8 +42,8 @@ PUBLISHER = "PromptWatch"
 LOGO_DOMAIN = "promptwatch.com"
 
 DESCRIPTION = (
-    "Comment une marque apparaît dans les réponses de ChatGPT, Claude, Gemini "
-    "et consorts — visibilité, sentiment et citations, organisés en prompts et "
-    "en monitors, avec du contenu généré par IA pour combler les trous de "
-    "couverture repérés."
+    "How a brand appears in the answers of ChatGPT, Claude, Gemini "
+    "and the like — visibility, sentiment and citations, organized into prompts and "
+    "monitors, with AI-generated content to fill the coverage "
+    "gaps spotted."
 )

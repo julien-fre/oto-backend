@@ -1,9 +1,9 @@
-"""Serper — recherche Google (web, images, vidéos, news, places, maps, reviews,
-shopping, scholar, patents, lens, autocomplete) + scraping de page.
+"""Serper — Google search (web, images, videos, news, places, maps, reviews,
+shopping, scholar, patents, lens, autocomplete) + page scraping.
 
-Clé résolue par appel via `access.resolve_api_key("serper")` : user key
-(`/account`) si posée, sinon platform key + quota daily pour les members.
-Guests doivent obligatoirement poser leur propre clé.
+Key resolved per call via `access.resolve_api_key("serper")`: user key
+(`/account`) if set, otherwise platform key + daily quota for members.
+Guests must set their own key.
 """
 from __future__ import annotations
 
@@ -22,33 +22,33 @@ from .lecture import LECTURE
 from ..connectors import verify as connector_verify
 from . import cesures, images_base64, mail_obfuscation
 
-# Ce que le défaut retire d'une page de résultats Google (rendu par `full=True`). Aucune
-# de ces clés n'est du bruit dans l'absolu — knowledge graph et sitelinks servent parfois
-# — mais aucune ne sert la boucle courante d'un agent (titre + lien + extrait), et
-# ensemble elles pèsent ~34 % d'une réponse (mesuré : 3 105 c. pour 5 résultats, dont 542
-# de knowledgeGraph, 328 de relatedSearches, 635 de sitelinks).
+# What the default removes from a Google results page (rendered by `full=True`). None
+# of these keys is noise in the absolute — knowledge graph and sitelinks sometimes serve
+# — but none serves an agent's current loop (title + link + snippet), and
+# together they weigh ~34% of a response (measured: 3,105 chars for 5 results, of which 542
+# knowledgeGraph, 328 relatedSearches, 635 sitelinks).
 #
-# C'ÉTAIT un opt-in `compact=True`, par prudence héritée de `fr_get` projeté par allowlist
-# qui avait perdu `liste_idcc` en silence (oto-core#37). Mesuré depuis : un agent branché
-# en direct sur le MCP ne le passe JAMAIS — six `serper_search` avec `query` seul sur une
-# fiche, six réponses entières —, et il n'a aucune raison de le faire : il ne sait pas que
-# le paramètre existe avant d'avoir lu le schéma, et rien ne lui dit que c'est important.
-# Un guide ne peut pas le lui apprendre non plus, celle qui pilote ces agents ne nomme
-# aucun outil (par choix : c'est ce qui la protège des renommages). **Un paramètre
-# d'économie qu'il faut connaître pour en bénéficier ne bénéficie à personne** — sur une
-# conversation d'enrichissement réelle, 6 800 tokens de sorties d'outils pour 784 de
-# prompt. Le défaut servait le cas rare et faisait payer le cas général : inversé.
-# La prudence de #37 ne s'applique pas ici — ces listes sont une DENYLIST de clés nommées,
-# pas une allowlist : elles ne peuvent pas faire disparaître un champ imprévu.
+# It WAS an opt-in `compact=True`, out of caution inherited from `fr_get` projected by allowlist
+# which had silently lost `liste_idcc` (oto-core#37). Measured since: an agent plugged
+# directly into the MCP NEVER passes it — six `serper_search` with `query` alone on a
+# sheet, six full responses —, and it has no reason to: it does not know the
+# parameter exists before reading the schema, and nothing tells it that it matters.
+# A guide cannot teach it either, the one that drives these agents names
+# no tool (by choice: that is what protects it from renames). **A saving
+# parameter you must know about to benefit from benefits no one** — on a
+# real enrichment conversation, 6,800 tokens of tool outputs for 784 of
+# prompt. The default served the rare case and made the general case pay: reversed.
+# The caution of #37 does not apply here — these lists are a DENYLIST of named keys,
+# not an allowlist: they cannot make an unforeseen field disappear.
 _SEARCH_DROP = ("knowledgeGraph", "peopleAlsoAsk", "relatedSearches", "searchParameters")
 
 _RESULT_DROP = ("sitelinks", "attributes", "imageUrl", "thumbnailUrl")
 
-# Les méthodes du client qui PAGINENT côté serveur : plusieurs requêtes Serper derrière
-# un seul appel d'outil. Elles rendent la somme dans `credits_used` (oto-core ≥ 1.121.0,
-# = le pin) ; un oto-core antérieur ne rend que `pages_fetched`, repli honnête à 1 crédit
-# la page — qui sous-compte un recensement Maps d'environ deux tiers, une page Maps étant
-# facturée 3.
+# The client methods that PAGINATE server-side: several Serper requests behind
+# a single tool call. They return the sum in `credits_used` (oto-core >= 1.121.0,
+# = the pin); an earlier oto-core only returns `pages_fetched`, an honest fallback at 1 credit
+# per page — which undercounts a Maps census by about two thirds, a Maps page being
+# billed 3.
 _MULTI_REQUEST = ("census_maps", "reviews_all")
 
 
@@ -59,18 +59,18 @@ def _as_count(value, default: int) -> int:
 
 
 def credits_consumed(method: str, result) -> int:
-    """Les crédits que SERPER a déduits pour cet appel d'outil. PUBLIQUE parce que
-    `web_read` est la seconde bouche serper du backend (cran ② de son escalade) et doit
-    débiter la même chose : une règle de coût recopiée est une règle qui diverge.
+    """The credits SERPER deducted for this tool call. PUBLIC because
+    `web_read` is the backend's second serper mouth (step ② of its escalation) and must
+    debit the same thing: a copied cost rule is a rule that diverges.
 
-    L'unité est le crédit SERPER, tel que l'amont le déclare — aucune conversion vers
-    une unité de facturation n'est faite ici, et aucune ne doit l'être : un taux est une
-    décision commerciale, il ne s'écrit pas dans un connecteur.
+    The unit is the SERPER credit, as upstream declares it — no conversion to
+    a billing unit is done here, and none should be: a rate is a
+    commercial decision, it is not written into a connector.
 
-    Lu dans la RÉPONSE, jamais déduit d'une règle codée ici : Serper facture une page
-    Maps à 100 résultats ou un scrape difficile plus d'un crédit, et le dit dans son
-    champ `credits`. Repli sur 1 quand l'amont ne le dit pas : une réponse réussie
-    coûte au moins un crédit."""
+    Read from the RESPONSE, never deduced from a rule coded here: Serper bills a Maps
+    page of 100 results or a hard scrape more than one credit, and says so in its
+    `credits` field. Falls back to 1 when upstream does not say: a successful response
+    costs at least one credit."""
     if not isinstance(result, dict):
         return 1
     if method in _MULTI_REQUEST:
@@ -80,23 +80,23 @@ def credits_consumed(method: str, result) -> int:
         return _as_count(raw, default=1)
     return _as_count(result.get("credits"), default=1)
 
-# UNE instance du client par clé, pour tout le processus (oto#115). Le client d'oto-core
-# porte son limiteur de débit (un intervalle minimal entre deux requêtes) dans l'INSTANCE :
-# reconstruit à chaque appel d'outil, son compteur repartait de zéro et la limite déclarée
-# n'avait jamais d'effet — le refus venait du fournisseur, au milieu d'un traitement.
-# Clé de cache = (fabrique, clé d'API) : la limite est celle d'une clé, que la servent un
-# outil `serper_*` ou le cran ② de `web_read` ; la fabrique en fait partie pour qu'une
-# classe remplacée (banc, rechargement) ne serve jamais une instance de l'ancienne.
-# Le nombre d'entrées est borné par celui des clés serper distinctes (plateforme + clés
-# posées par les comptes) : pas d'éviction.
+# ONE client instance per key, for the whole process (oto#115). The oto-core client
+# carries its rate limiter (a minimum interval between two requests) in the INSTANCE:
+# rebuilt on every tool call, its counter restarted from zero and the declared limit
+# never had any effect — the refusal came from the provider, in the middle of a job.
+# Cache key = (factory, API key): the limit is that of a key, whether served by a
+# `serper_*` tool or step ② of `web_read`; the factory is part of it so that a
+# replaced class (test bench, reload) never serves an instance of the old one.
+# The number of entries is bounded by that of distinct serper keys (platform + keys
+# set by accounts): no eviction.
 _CLIENTS: dict[tuple, object] = {}
 _CLIENTS_VERROU = threading.Lock()
 
 
 def client_for(key: str):
-    """Le client Serper de cette clé, le MÊME d'un appel à l'autre. PUBLIQUE parce que
-    `web_read` est la seconde bouche serper du backend et doit partager le limiteur :
-    deux instances pour une clé, ce sont deux compteurs qui s'ignorent."""
+    """The Serper client for this key, the SAME from one call to the next. PUBLIC because
+    `web_read` is the backend's second serper mouth and must share the limiter:
+    two instances for one key are two counters that ignore each other."""
     from oto.tools.serper import SerperClient
     cle = (SerperClient, key)
     with _CLIENTS_VERROU:
@@ -106,73 +106,73 @@ def client_for(key: str):
         return client
 
 
-# Serper renvoie `Serper <method> <status>: <msg>` (RuntimeError nu). Deux classes
-# d'échec sont des ENTRÉES invalides, pas des bugs backend — on les convertit en
-# McpError GÉRÉE (message actionnable pour l'agent + non reporté à Sentry, la
-# taxonomie droppe les McpError d'entrée) :
-#  - **400** (générique, dans `_run`) : requête/URL invalide — param de lieu manquant
-#    (`Missing fid/cid/placeId`), URL non scrapable (`Content-Type application/json`)… ;
-#  - **404 et 5xx** du scrape (dans `serper_scrape`) : l'URL ne mène à rien (page
-#    morte) ou la page a bloqué le robot. Le 404 était le 1ᵉʳ contributeur de bruit
-#    Sentry du backend — 37 événements en 5 semaines pour « l'URL que l'agent a
-#    trouvée est morte », ce qui est une entrée invalide, pas une panne.
-# Les 401/403/429 (clé/rate) restent propagés : vrais problèmes de config. Le compte À
-# SEC (400 « Not enough credits », ou 402) est traduit à part, voir `a_sec`.
+# Serper returns `Serper <method> <status>: <msg>` (bare RuntimeError). Two classes
+# of failure are invalid INPUTS, not backend bugs — we convert them into a
+# HANDLED McpError (actionable message for the agent + not reported to Sentry, the
+# taxonomy drops input McpErrors):
+#  - **400** (generic, in `_run`): invalid request/URL — missing place param
+#    (`Missing fid/cid/placeId`), non-scrapable URL (`Content-Type application/json`)…;
+#  - **404 and 5xx** from scrape (in `serper_scrape`): the URL leads nowhere (dead
+#    page) or the page blocked the bot. The 404 was the backend's #1 source of Sentry
+#    noise — 37 events in 5 weeks for "the URL the agent found is dead",
+#    which is an invalid input, not an outage.
+# 401/403/429 (key/rate) stay propagated: real config problems. The EMPTY
+# account (400 "Not enough credits", or 402) is translated separately, see `a_sec`.
 _SERPER_STATUS = re.compile(r"Serper \w+ (\d{3}):")
 
-# ⚠️ Serper dit « compte à sec » par un **400** « Not enough credits », pas par un 402
-# (mesuré sur les signaux #1045, #1046, #1066) : lu comme les autres 400, il rendait
-# `invalid_input` — « corrige ton appel », sur un appel juste et un compte vide — et la
-# carte du connecteur restait verte. CETTE signature seule est un solde vide ; tout
-# autre 400 reste une entrée invalide. Un 402 éventuel de Serper est lu pareil : son
-# client lève un `RuntimeError` NU, sans `.status_code`, que la taxonomie ne voyait pas.
+# ⚠️ Serper says "empty account" with a **400** "Not enough credits", not a 402
+# (measured on signals #1045, #1046, #1066): read like the other 400s, it returned
+# `invalid_input` — "fix your call", on a correct call and an empty account — and the
+# connector card stayed green. THIS signature alone is an empty balance; any
+# other 400 stays an invalid input. A possible Serper 402 is read the same way: its
+# client raises a BARE `RuntimeError`, without `.status_code`, which the taxonomy did not see.
 _A_SEC = re.compile(r"Serper \w+ (?:400:.*not enough credits|402:)", re.I | re.S)
 
-#: Le refus servi à l'agent quand le compte Serper est à sec.
-MSG_A_SEC = ("Serper : le compte de la clé servie est à sec (« Not enough credits »). "
-             "L'appel était correct : ne le corrige pas et ne le réessaie pas.")
+#: The refusal served to the agent when the Serper account is empty.
+MSG_A_SEC = ("Serper: the account behind the served key is out of credits (\"Not enough credits\"). "
+             "The call was correct: do not fix it and do not retry it.")
 
 
 class SerperASec(RuntimeError):
-    """Compte Serper à sec. Porte `status_code = 402` EXPRÈS : la taxonomie
-    (`error_taxonomy`, cran 0 → `quota_exhausted` + marquage de la clé servie) et la
-    sonde (`connectors.verify.classer` → `no_quota`) le lisent alors comme tout 402 —
-    même refus, même marquage, aucun chemin parallèle à entretenir."""
+    """Serper account out of credits. Carries `status_code = 402` ON PURPOSE: the taxonomy
+    (`error_taxonomy`, step 0 → `quota_exhausted` + marking of the served key) and the
+    probe (`connectors.verify.classer` → `no_quota`) then read it like any 402 —
+    same refusal, same marking, no parallel path to maintain."""
     status_code = 402
 
 
 def a_sec(erreur: BaseException) -> "SerperASec | None":
-    """`SerperASec` si `erreur` est le refus « Not enough credits » de Serper, sinon
-    None. PUBLIQUE : `web_read` (cran ②) est la seconde bouche serper du backend."""
+    """`SerperASec` if `erreur` is Serper's "Not enough credits" refusal, otherwise
+    None. PUBLIC: `web_read` (step ②) is the backend's second serper mouth."""
     return SerperASec(str(erreur)) if _A_SEC.search(str(erreur)) else None
 
 
-def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
-    """Sonde « tester la connexion » : une recherche web à UN résultat.
+def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: probe contract, unused here)
+    """"Test the connection" probe: a web search with ONE result.
 
-    Serper n'expose ni `/me` ni endpoint de crédits : le seul moyen de savoir
-    qu'une clé authentifie est de faire l'appel que les tools font. On prend donc
-    le MÊME endpoint que `serper_search` (`/search`), au plus petit format —
-    même patron que `tavily`/`firecrawl`, et coût d'au plus un crédit.
+    Serper exposes neither `/me` nor a credits endpoint: the only way to know
+    that a key authenticates is to make the call the tools make. So we take
+    the SAME endpoint as `serper_search` (`/search`), at the smallest size —
+    same pattern as `tavily`/`firecrawl`, and a cost of at most one credit.
 
-    Sans cette sonde, `connectors.verify` refusait « pas de test de connexion pour
-    serper » et une clé révoquée ne se découvrait qu'en brûlant un vrai appel dans
-    un run (signal #654 : `Serper search 403: Unauthorized` sur tous les appels
-    d'une org, trois jours durant, sans préflight possible).
+    Without this probe, `connectors.verify` refused "no connection test for
+    serper" and a revoked key was only discovered by burning a real call in
+    a run (signal #654: `Serper search 403: Unauthorized` on all of an org's
+    calls, for three days, with no possible preflight).
     """
     from oto.tools.serper import SerperClient
-    # Hors du cache `client_for` exprès : la clé sondée n'est qu'une CANDIDATE.
+    # Outside the `client_for` cache on purpose: the probed key is only a CANDIDATE.
     try:
         SerperClient(api_key=fields["key"]).search("oto", num=1)
     except RuntimeError as e:
         sec = a_sec(e)
-        if sec is not None:     # verdict `no_quota`, pas `unknown`
+        if sec is not None:     # `no_quota` verdict, not `unknown`
             raise sec from e
         raise
 
 
 def register(mcp: FastMCP) -> None:
-    # Import au register pour fail-fast si le package n'est pas installé.
+    # Import at register time to fail fast if the package is not installed.
     from oto.tools.serper import SerperClient
 
     connector_verify.register("serper", _verify)
@@ -182,60 +182,60 @@ def register(mcp: FastMCP) -> None:
         return client_for(key), is_platform
 
     def _refus_local(url: str) -> "str | None":
-        """La raison pour laquelle ce domaine n'est JAMAIS scrapable, ou `None`.
+        """The reason this domain is NEVER scrapable, or `None`.
 
-        ⚠️ Interrogée AVANT l'appel, exprès. Le client d'oto-core connaît la table et
-        lève sur elle — mais il lève un `RuntimeError` NU, que la taxonomie du backend
-        ne sait pas distinguer d'un bug : elle le classe `internal` et sert « Erreur
-        interne du serveur. » **sans écho du message** (anti-fuite). Le modèle reçoit
-        donc « erreur interne » là où il devait lire « cherche une autre source » — et
-        il réessaie, ou s'arrête, au lieu de contourner (oto-backend#473).
+        ⚠️ Queried BEFORE the call, on purpose. The oto-core client knows the table and
+        raises on it — but it raises a BARE `RuntimeError`, which the backend taxonomy
+        cannot tell apart from a bug: it classifies it `internal` and serves "Erreur
+        interne du serveur." **without echoing the message** (anti-leak). The model thus receives
+        "internal error" where it should read "look for another source" — and
+        it retries, or stops, instead of working around it (oto-backend#473).
 
-        ⚠️ Mesuré le 05/09/2026 : `classify(RuntimeError("… Facebook exige une session
-        …"))` rend bien `Erreur interne du serveur.`. **Le journal des appels, lui,
-        montre le vrai message** — il enregistre `str(exc)`, pas ce qui est servi. S'y
-        fier ferait conclure que le défaut est réparé alors qu'il ne l'est pas ; c'est
-        le piège de ce lot.
+        ⚠️ Measured on 2026-09-05: `classify(RuntimeError("… Facebook exige une session
+        …"))` does return `Erreur interne du serveur.`. **The call log, though,
+        shows the real message** — it records `str(exc)`, not what is served. Trusting it
+        would lead to concluding the defect is fixed when it is not; that is
+        the trap of this batch.
 
-        Pourquoi devant plutôt que derrière : classer APRÈS coup demanderait de lire le
-        TEXTE de l'exception, et un classement bâti sur des mots change de sens au
-        premier reformatage amont. Ici on pose la même question que le client, à la
-        même table, avant qu'il ne lève.
+        Why in front rather than behind: classifying AFTER the fact would require reading the
+        TEXT of the exception, and a classification built on words changes meaning at the
+        first upstream reformatting. Here we ask the same question as the client, of the
+        same table, before it raises.
 
-        Best-effort sur un attribut privé d'oto-core : s'il disparaît, on retombe
-        exactement sur le comportement d'avant ce lot — jamais pire. Un banc de
-        version-skew rougit dans ce cas, pour que la dégradation se voie."""
+        Best-effort on a private attribute of oto-core: if it disappears, we fall back
+        exactly to the behaviour from before this batch — never worse. A
+        version-skew test bench goes red in that case, so the degradation shows."""
         try:
             from oto.tools.serper import SerperClient
             return SerperClient._refuses_scraping(url)
-        # Sonde d'AMÉLIORATION : son absence rend le refus opaque comme avant ce lot,
-        # elle n'aggrave rien. Journaliser à chaque URL scrapée noierait le journal pour
-        # une dégradation qui a déjà son signal — le banc de version-skew
+        # IMPROVEMENT probe: its absence leaves the refusal opaque as before this batch,
+        # it makes nothing worse. Logging on every scraped URL would drown the log for
+        # a degradation that already has its signal — the version-skew bench
         # (`test_serper_refus_local_473`).
-        except Exception:  # noqa: SILENT — sonde best-effort, dégradation couverte par un banc
+        except Exception:  # noqa: SILENT — best-effort probe, degradation covered by a test bench
             return None
 
     def _run(method: str, **kwargs) -> dict:
-        """Résout la clé, appelle la méthode du client, compte l'usage plateforme.
-        Un 400 Serper (entrée invalide) → McpError gérée (actionnable, hors Sentry)."""
+        """Resolves the key, calls the client method, counts platform usage.
+        A Serper 400 (invalid input) → handled McpError (actionable, outside Sentry)."""
         client, is_platform = _client()
         try:
             result = getattr(client, method)(**kwargs)
         except RuntimeError as e:
             sec = a_sec(e)
             if sec is not None:
-                # Le 402 porté par la CAUSE fait le travail : `quota_exhausted` et
-                # marquage de la clé servie (`error_taxonomy`, cran 0).
+                # The 402 carried by the CAUSE does the job: `quota_exhausted` and
+                # marking of the served key (`error_taxonomy`, step 0).
                 raise McpError(ErrorData(code=INVALID_REQUEST, message=MSG_A_SEC)) from sec
             m = _SERPER_STATUS.search(str(e))
             if m and int(m.group(1)) == 400:
                 raise McpError(ErrorData(code=INVALID_REQUEST, message=str(e))) from None
             raise
-        # Même séparation que theirstack/aiark : le MÉTRAGE est inconditionnel
-        # (`tool_calls.key_mode` dit à part sous quelle clé l'appel est passé, et la
-        # facturation ne lit que la clé du partenaire) ; le QUOTA interne d'oto ne compte que
-        # notre clé. Les deux au nombre de crédits Serper déduits, pas à 1 par appel :
-        # un recensement Maps coûtait jusqu'à 54 crédits pour un seul « appel ».
+        # Same separation as theirstack/aiark: METERING is unconditional
+        # (`tool_calls.key_mode` says separately under which key the call was made, and
+        # billing only reads the partner's key); oto's internal QUOTA only counts
+        # our key. Both in the number of Serper credits deducted, not 1 per call:
+        # a Maps census cost up to 54 credits for a single "call".
         credits = credits_consumed(method, result)
         session_org.note_call_trace(quantity=credits)
         if is_platform:
@@ -243,9 +243,9 @@ def register(mcp: FastMCP) -> None:
         return result
 
     def _project(result: dict, items: str, full: bool, fields) -> dict:
-        """Applique la projection à une page de résultats. `full=True` rend le payload
-        INCHANGÉ (l'échappatoire pour qui veut le knowledge graph) ; sinon on retire ce
-        qu'un balayage ne lit pas, `fields` restant un resserrement supplémentaire."""
+        """Applies the projection to a results page. `full=True` returns the payload
+        UNCHANGED (the escape hatch for whoever wants the knowledge graph); otherwise we remove
+        what a sweep does not read, `fields` remaining an additional narrowing."""
         if full and not fields:
             return result
         return output_projection.project(
@@ -259,25 +259,25 @@ def register(mcp: FastMCP) -> None:
         return McpError(ErrorData(code=INVALID_REQUEST, message=msg))
 
     def _delai_lecture(timeout_s: Optional[int]) -> float:
-        """Budget de NOTRE lecture directe : celui que l'appelant s'est donné
-        s'il l'a serré, sinon le nôtre. Un agent qui a demandé 3 s ne veut pas
-        en attendre 20 de plus parce que le fournisseur a refusé."""
+        """Budget for OUR direct read: the one the caller gave itself
+        if it tightened it, otherwise ours. An agent that asked for 3 s does not want
+        to wait 20 more because the provider refused."""
         if timeout_s is None:
             return mail_obfuscation.LECTURE_DELAI_S
         return max(1, min(int(timeout_s), mail_obfuscation.LECTURE_DELAI_S))
 
     def _delai_scrape(timeout_s: Optional[int]) -> int:
-        """Le délai de lecture que le scraper a réellement attendu : le défaut du client
-        (oto-core `_SCRAPE_TIMEOUT`), ou `timeout_s` ramené dans ses bornes (1 à 60)."""
+        """The read timeout the scraper actually waited: the client's default
+        (oto-core `_SCRAPE_TIMEOUT`), or `timeout_s` clamped to its bounds (1 to 60)."""
         from oto.tools.serper.client import _SCRAPE_TIMEOUT
         if timeout_s is None:
             return _SCRAPE_TIMEOUT[1]
         return max(1, min(int(timeout_s), 60))
 
-    # Verticale → (méthode du client, chemin des items, params acceptés en plus du socle).
-    # Le socle commun est `query` + `num` + `page` + `country` + `language` : c'est ce
-    # recouvrement qui justifie la fusion (ADR 0047 §Amendement — le critère est
-    # l'homogénéité des params, pas le comptage).
+    # Vertical → (client method, items path, params accepted on top of the base).
+    # The common base is `query` + `num` + `page` + `country` + `language`: it is this
+    # overlap that justifies the merge (ADR 0047 §Amendment — the criterion is
+    # param homogeneity, not the count).
     _KINDS = {
         "web":      ("search",          "organic"),
         "news":     ("search_news",     "news"),
@@ -306,57 +306,57 @@ def register(mcp: FastMCP) -> None:
         full: bool = False,
         fields: Optional[list[str]] = None,
     ) -> dict:
-        """Google search via Serper — une verticale par `kind`.
+        """Google search via Serper — one vertical per `kind`.
 
-        `kind` :
-        - **"web"** (défaut) : résultats organiques. Accepte `site_filter`
-          (ex. "linkedin.com/in"), `autocorrect`, `location`, `tbs`.
-        - **"news"** : Google News — utile pour surveiller les signaux d'une cible
-          (communiqués, recrutements, levées). Accepte `tbs`.
-        - **"images"** / **"videos"** : renvoient un tableau `images` / `videos`
-          (titre, lien, source, dimensions ou durée). Acceptent `tbs`.
-        - **"places"** : Google Local — les établissements d'une requête. Excellent
-          pour de la prospection B2B locale : titre, adresse, téléphone, site, note,
-          nombre d'avis et **`cid`** (à passer à `serper_reviews`). Accepte `location`.
-        - **"shopping"** : titre, prix, marchand, note, livraison. Accepte `location`.
-        - **"scholar"** : publications académiques (titre, revue, année, citations, pdf).
-        - **"patents"** : brevets (titre, inventeur, déposant, numéro, dates).
-        - **"autocomplete"** : les suggestions Google pour `query` — pour élargir un
-          champ lexical ou trouver des idées de mots-clés. Ignore la pagination.
+        `kind`:
+        - **"web"** (default): organic results. Accepts `site_filter`
+          (e.g. "linkedin.com/in"), `autocorrect`, `location`, `tbs`.
+        - **"news"**: Google News — useful to monitor a target's signals
+          (press releases, hires, fundraises). Accepts `tbs`.
+        - **"images"** / **"videos"**: return an `images` / `videos` array
+          (title, link, source, dimensions or duration). Accept `tbs`.
+        - **"places"**: Google Local — the businesses for a query. Excellent
+          for local B2B prospecting: title, address, phone, website, rating,
+          review count and **`cid`** (to pass to `serper_reviews`). Accepts `location`.
+        - **"shopping"**: title, price, merchant, rating, delivery. Accepts `location`.
+        - **"scholar"**: academic publications (title, journal, year, citations, pdf).
+        - **"patents"**: patents (title, inventor, applicant, number, dates).
+        - **"autocomplete"**: Google suggestions for `query` — to widen a
+          lexical field or find keyword ideas. Ignores pagination.
 
-        Sous un projet à `excluded_url_prefixes`, les résultats correspondants sont
-        écartés et comptés.
+        Under a project with `excluded_url_prefixes`, the matching results are
+        dropped and counted.
 
         Args:
-            query: la requête.
-            kind: la verticale (défaut "web") : web | news | images | videos |
+            query: the query.
+            kind: the vertical (default "web"): web | news | images | videos |
                 places | shopping | scholar | patents | autocomplete.
-            num: nombre de résultats (max 100). Ignoré par "autocomplete".
-            page: page de résultats (1-based). Ignoré par "autocomplete".
-            country: code pays (défaut "fr").
-            language: code langue (défaut "fr").
-            tbs: filtre temporel Google — "qdr:d" (24 h), "qdr:w" (7 j), "qdr:m"…
-                Accepté par web / news / images / videos.
-            location: biais géographique (ex. "Paris, France"). Accepté par
+            num: number of results (max 100). Ignored by "autocomplete".
+            page: results page (1-based). Ignored by "autocomplete".
+            country: country code (default "fr").
+            language: language code (default "fr").
+            tbs: Google time filter — "qdr:d" (24 h), "qdr:w" (7 d), "qdr:m"…
+                Accepted by web / news / images / videos.
+            location: geographic bias (e.g. "Paris, France"). Accepted by
                 web / places / shopping.
-            site_filter: kind="web" — restreint à un domaine (ex. "linkedin.com/in").
-            autocorrect: kind="web" — bascule la correction orthographique Google.
-            full: rend la réponse Google ENTIÈRE. Par défaut (recommandé) le retour
-                est resserré sur ce qu'un balayage lit — titre, lien, extrait — et
-                laisse tomber knowledge graph, people-also-ask, recherches associées
-                et sitelinks par résultat (~un tiers du payload, jamais lu). Ne passe
-                `full=True` que si tu veux précisément l'une de ces sections.
-                Accepté par web / news.
-            fields: ne garde QUE ces clés sur chaque résultat (ex. ["title","link",
-                "snippet"]). L'enveloppe (crédits, pagination) est conservée dans tous
-                les cas. Accepté par web / news.
+            site_filter: kind="web" — restrict to a domain (e.g. "linkedin.com/in").
+            autocorrect: kind="web" — toggles Google spelling correction.
+            full: returns the ENTIRE Google response. By default (recommended) the
+                return is narrowed to what a sweep reads — title, link, snippet — and
+                drops knowledge graph, people-also-ask, related searches
+                and per-result sitelinks (~a third of the payload, never read). Only pass
+                `full=True` if you specifically want one of these sections.
+                Accepted by web / news.
+            fields: keep ONLY these keys on each result (e.g. ["title","link",
+                "snippet"]). The envelope (credits, pagination) is kept in all
+                cases. Accepted by web / news.
         """
         if kind == "autocomplete":
             return _run("autocomplete", query=query, country=country, language=language)
 
         entry = _KINDS.get(kind)
         if entry is None:
-            raise _bad(f"`kind` invalide : {kind!r} (attendu : {_KIND_LIST}).")
+            raise _bad(f"Invalid `kind`: {kind!r} (expected: {_KIND_LIST}).")
         method, items = entry
 
         args = {"query": query, "num": num, "page": page,
@@ -369,8 +369,8 @@ def register(mcp: FastMCP) -> None:
             args["site_filter"] = site_filter
             args["autocorrect"] = autocorrect
 
-        # Périmètre du projet (#605) AVANT la projection : `fields=` peut retirer `link`,
-        # et un profil sans son lien passerait à travers.
+        # Project perimeter (#605) BEFORE the projection: `fields=` can remove `link`,
+        # and a profile without its link would slip through.
         result = url_perimeter.filter_results(_run(method, **args),
                                               url_perimeter.perimeter_of_call())
         return _project(result, items, full, fields) if kind in ("web", "news") else result
@@ -387,25 +387,25 @@ def register(mcp: FastMCP) -> None:
         country: Optional[str] = "fr",
         language: Optional[str] = "fr",
     ) -> dict:
-        """Google Maps — un ÉCHANTILLON de lieux, ancré géographiquement.
+        """Google Maps — a SAMPLE of places, geographically anchored.
 
-        ⚠️ Le nom dit ce que fait ce tool : un échantillon, pas un inventaire. Il
-        plafonne à ~20 résultats par appel et biaise vers `ll` → il **sous-compte
-        silencieusement** (20 trouvés là où 60 existent, sans lever d'erreur ni
-        annoncer de total). Pour un comptage ou une liste EXHAUSTIVE d'un type de
-        commerce sur une zone (« combien de X à Y »), utilise **`serper_maps_census`**,
-        qui pave la zone, pagine chaque ancre et déduplique côté serveur.
-        Règle : total exact → census ; quelques hits en tête → ce tool.
+        ⚠️ The name says what this tool does: a sample, not an inventory. It
+        caps at ~20 results per call and biases toward `ll` → it **silently
+        undercounts** (20 found where 60 exist, without raising an error or
+        announcing a total). For a count or an EXHAUSTIVE list of a type of
+        business over an area ("how many X in Y"), use **`serper_maps_census`**,
+        which tiles the area, paginates each anchor and deduplicates server-side.
+        Rule: exact total → census; a few top hits → this tool.
 
         Args:
-            query: la requête (ex. "coffee shops").
-            ll: ancre lat/long + zoom "@lat,lng,zoom" (ex. "@45.76,4.83,12z").
-            place_id: id Google d'un lieu, à consulter directement.
-            cid: customer id Google d'un lieu.
-            num: nombre de résultats (max 100).
-            page: page de résultats (1-based).
-            country: code pays (défaut "fr").
-            language: code langue (défaut "fr").
+            query: the query (e.g. "coffee shops").
+            ll: lat/long anchor + zoom "@lat,lng,zoom" (e.g. "@45.76,4.83,12z").
+            place_id: Google id of a place, to look up directly.
+            cid: Google customer id of a place.
+            num: number of results (max 100).
+            page: results page (1-based).
+            country: country code (default "fr").
+            language: language code (default "fr").
         """
         return _run(
             "search_maps", query=query, ll=ll, place_id=place_id, cid=cid,
@@ -424,35 +424,35 @@ def register(mcp: FastMCP) -> None:
         country: Optional[str] = "fr",
         language: Optional[str] = "fr",
     ) -> dict:
-        """Recensement EXHAUSTIF d'un type de commerce sur une zone (Google Maps).
+        """EXHAUSTIVE census of a type of business over an area (Google Maps).
 
-        À utiliser — PAS `serper_maps_sample` — dès qu'il faut un **comptage ou une
-        liste exhaustive** d'un type de commerce sur une zone. Un échantillon Maps
-        plafonne à ~20 résultats et biaise vers son point d'ancrage : il **sous-compte
-        silencieusement**. Ce tool corrige les deux côté serveur — il **pave** la zone
-        en une grille d'ancres géo, **pagine** chacune et **déduplique** par id de lieu
-        → résultat complet.
+        Use this — NOT `serper_maps_sample` — whenever you need a **count or an
+        exhaustive list** of a type of business over an area. A Maps sample
+        caps at ~20 results and biases toward its anchor point: it **silently
+        undercounts**. This tool fixes both server-side — it **tiles** the area
+        into a grid of geo anchors, **paginates** each one and **deduplicates** by place id
+        → complete result.
 
-        Fournir soit `center` "lat,lng" (+ radius_km, grid), soit `ll_anchors`.
-        Coût : ~grid² × max_pages requêtes Serper (throttlées), et une page Maps est
-        facturée **3 crédits**, pas 1 — un recensement par défaut (grid=3, max_pages=3)
-        coûte donc environ 81 crédits. C'est le prix de l'exhaustivité ; commencer
-        modeste et resserrer la grille si besoin.
+        Provide either `center` "lat,lng" (+ radius_km, grid), or `ll_anchors`.
+        Cost: ~grid² × max_pages Serper requests (throttled), and a Maps page is
+        billed **3 credits**, not 1 — a default census (grid=3, max_pages=3)
+        therefore costs about 81 credits. That is the price of exhaustiveness; start
+        modest and tighten the grid if needed.
 
         Returns {query, count, places[], anchors_used, pages_fetched, credits_used}.
-        `count` = total dédupliqué — à préférer à tout comptage d'un échantillon seul.
-        `credits_used` = ce que Serper a RÉELLEMENT déduit sur l'ensemble des pages,
-        le chiffre exact du coût de cet appel (`pages_fetched` compte les requêtes,
-        pas la dépense).
+        `count` = deduplicated total — to be preferred over any count from a sample alone.
+        `credits_used` = what Serper ACTUALLY deducted across all the pages,
+        the exact cost figure of this call (`pages_fetched` counts requests,
+        not spend).
 
         Args:
-            query: Ce qu'on énumère (e.g. "laverie automatique").
-            center: Centre de zone "lat,lng" (e.g. "48.8566,2.3522"). Requis sauf ll_anchors.
-            radius_km: Demi-largeur de la zone carrée autour du centre (défaut 5).
-            grid: Densité du pavage grid×grid ; + fin = + de couverture et d'appels (défaut 3 → 9 ancres).
-            zoom: Niveau de zoom Maps par ancre (défaut 14).
-            ll_anchors: Ancres "@lat,lng,zoomz" explicites, priment sur center/radius/grid.
-            max_pages: Pages maxi paginées par ancre (défaut 3).
+            query: What is being enumerated (e.g. "self-service laundry").
+            center: Area center "lat,lng" (e.g. "48.8566,2.3522"). Required unless ll_anchors.
+            radius_km: Half-width of the square area around the center (default 5).
+            grid: Tiling density grid×grid; finer = more coverage and more calls (default 3 → 9 anchors).
+            zoom: Maps zoom level per anchor (default 14).
+            ll_anchors: Explicit "@lat,lng,zoomz" anchors, take precedence over center/radius/grid.
+            max_pages: Max pages paginated per anchor (default 3).
             country: Country code (default "fr").
             language: Language code (default "fr").
         """
@@ -476,40 +476,40 @@ def register(mcp: FastMCP) -> None:
         country: Optional[str] = "fr",
         language: Optional[str] = "fr",
     ) -> dict:
-        """Avis Google d'un lieu.
+        """Google reviews of a place.
 
-        ⚠️ **Le défaut rend TOUS les avis, et c'est voulu.** Une page seule
-        (~10 avis, triés `mostRelevant`) **sous-représente silencieusement** un lieu
-        qui peut en avoir des milliers : une analyse de sentiment faite dessus est
-        biaisée sans que rien ne le signale. Le chemin par défaut est donc le chemin
-        complet ; l'échantillon se demande explicitement.
+        ⚠️ **The default returns ALL the reviews, and that is intended.** A single page
+        (~10 reviews, sorted `mostRelevant`) **silently under-represents** a place
+        that can have thousands: a sentiment analysis done on it is
+        biased without anything signalling it. The default path is therefore the
+        complete path; the sample must be requested explicitly.
 
-        `op` :
-        - **"all"** (défaut) : suit le curseur `nextPageToken` côté serveur jusqu'à
-          épuisement, ou jusqu'au plafond `max_reviews` (borne le coût ;
-          `truncated=True` signale la coupe). Renvoie {count, reviews[],
-          pages_fetched, credits_used, truncated} — `credits_used` = ce que Serper a
-          réellement déduit sur l'ensemble des pages, le coût exact de l'appel.
-          C'est ce qu'il faut pour un sentiment global, des thèmes récurrents, une
-          réputation.
-        - **"page"** : UNE page (~10 avis) — échantillon rapide, ou pagination à la
-          main via `next_page_token`. Ne conclus rien de global dessus.
+        `op`:
+        - **"all"** (default): follows the `nextPageToken` cursor server-side until
+          exhausted, or until the `max_reviews` cap (bounds the cost;
+          `truncated=True` signals the cut). Returns {count, reviews[],
+          pages_fetched, credits_used, truncated} — `credits_used` = what Serper
+          actually deducted across all the pages, the exact cost of the call.
+          This is what you need for global sentiment, recurring themes, a
+          reputation.
+        - **"page"**: ONE page (~10 reviews) — quick sample, or manual pagination
+          via `next_page_token`. Conclude nothing global from it.
 
-        Identifier le lieu par `cid` / `fid` / `place_id` (issus d'un
-        `serper_search(kind="places")` ou d'un `serper_maps_sample`) ou par `query` libre.
+        Identify the place by `cid` / `fid` / `place_id` (from a
+        `serper_search(kind="places")` or a `serper_maps_sample`) or by free `query`.
 
         Args:
-            op: "all" (défaut) | "page".
-            cid: customer id Google du lieu.
-            fid: feature id Google du lieu.
-            place_id: place id Google.
-            query: recherche libre du lieu (alternative aux ids).
+            op: "all" (default) | "page".
+            cid: Google customer id of the place.
+            fid: Google feature id of the place.
+            place_id: Google place id.
+            query: free-text place lookup (alternative to ids).
             sort_by: 'mostRelevant' | 'newest' | 'highestRating' | 'lowestRating'.
-            topic_id: filtre les avis par thème.
-            max_reviews: op="all" — plafond d'avis récupérés (défaut 200).
-            next_page_token: op="page" — curseur d'une réponse précédente.
-            country: code pays (défaut "fr").
-            language: code langue (défaut "fr").
+            topic_id: filters the reviews by topic.
+            max_reviews: op="all" — cap on reviews fetched (default 200).
+            next_page_token: op="page" — cursor from a previous response.
+            country: country code (default "fr").
+            language: language code (default "fr").
         """
         if op == "all":
             return _run(
@@ -523,7 +523,7 @@ def register(mcp: FastMCP) -> None:
                 sort_by=sort_by, topic_id=topic_id, next_page_token=next_page_token,
                 country=country, language=language,
             )
-        raise _bad(f"`op` invalide : {op!r} (attendu : all | page).")
+        raise _bad(f"Invalid `op`: {op!r} (expected: all | page).")
 
     @mcp.tool(annotations=LECTURE)
     def serper_lens(
@@ -531,13 +531,13 @@ def register(mcp: FastMCP) -> None:
         country: Optional[str] = "fr",
         language: Optional[str] = "fr",
     ) -> dict:
-        """Google Lens via Serper — recherche inversée à partir d'une image.
+        """Google Lens via Serper — reverse search from an image.
 
         Args:
-            url: URL publique de l'image à analyser — refusée sous les
-                `excluded_url_prefixes` du projet, qui écartent aussi les résultats.
-            country: code pays (défaut "fr").
-            language: code langue (défaut "fr").
+            url: public URL of the image to analyse — refused under the project's
+                `excluded_url_prefixes`, which also drop the results.
+            country: country code (default "fr").
+            language: language code (default "fr").
         """
         per = url_perimeter.perimeter_of_call()
         url_perimeter.refuse_if_excluded(url, per)
@@ -550,131 +550,131 @@ def register(mcp: FastMCP) -> None:
         format: Literal["markdown", "text", "both", "html"] = "markdown",
         timeout_s: Optional[int] = None,
     ) -> dict:
-        """Récupère une page web via le scraper de Serper.
+        """Fetches a web page via Serper's scraper.
 
-        ⚠️ **Le rendu JS n'est pas garanti.** Un site rendu côté client rend
-        HTTP 200 et un corps quasi vide, sans la moindre erreur : un corps très
-        court ne prouve donc PAS que la page est vide. Regarde sa longueur avant
-        d'en tirer un fait sur l'entreprise.
+        ⚠️ **JS rendering is not guaranteed.** A client-side rendered site returns
+        HTTP 200 and an almost empty body, without any error: a very
+        short body therefore does NOT prove the page is empty. Check its length before
+        drawing a fact about the company from it.
 
-        ⚠️ **Un appel attend au plus 15 secondes**, puis rend un refus qui le dit —
-        y compris sur un domaine qui n'existe pas. Une expiration est un échec
-        NORMAL, pas une panne. **Pars d'une URL constatée**, et ne réessaie pas
-        la même.
+        ⚠️ **A call waits at most 15 seconds**, then returns a refusal that says so —
+        even on a domain that does not exist. A timeout is a NORMAL failure,
+        not an outage. **Start from a URL you have observed**, and do not retry
+        the same one.
 
-        ⚠️ **Les adresses obfusquées ne survivent pas au rendu** (`mailto:` en
-        entités HTML, base64, protection Cloudflare) : une adresse LISIBLE dans
-        le HTML est INVISIBLE dans le markdown. Un `motifs_obfuscation` sans
-        adresses veut dire « il y a un contact ici, non décodé » : reprends en
+        ⚠️ **Obfuscated addresses do not survive rendering** (`mailto:` in
+        HTML entities, base64, Cloudflare protection): an address READABLE in
+        the HTML is INVISIBLE in the markdown. A `motifs_obfuscation` without
+        addresses means "there is a contact here, not decoded": retry with
         format="html".
 
-        Renvoie le contenu en UNE représentation (markdown par défaut) + JSON-LD +
-        métadonnées. Plus robuste qu'un fetch brut face aux anti-bot rudimentaires.
-        Les images incluses en base64 sont retirées du contenu (une trace dit leur type
-        et leur taille, `images_base64_retirees` les compte) ; `format="html"` les garde.
+        Returns the content in ONE representation (markdown by default) + JSON-LD +
+        metadata. More robust than a raw fetch against rudimentary anti-bot measures.
+        Images included as base64 are removed from the content (a trace gives their type
+        and size, `images_base64_retirees` counts them); `format="html"` keeps them.
 
-        Sur les appels mesurés, la moitié des expirations portait sur des adresses
-        fabriquées à partir d'un nom de société : ce n'est pas la lenteur qui
-        coûte, c'est ce qu'elle emporte — pendant que tu attends, ton propre
-        contexte se refacture. Quand la page servie ne montre aucune adresse,
-        l'outil relit le HTML de lui-même et rend `adresses_obfusquees` — il colle
-        la même chose en bas du contenu ; `sonde_obfuscation` dit pourquoi la
-        relecture n'a rien conclu.
+        On the measured calls, half of the timeouts were on addresses
+        made up from a company name: it is not the slowness that
+        costs, it is what it carries away — while you wait, your own
+        context gets re-billed. When the served page shows no address,
+        the tool re-reads the HTML itself and returns `adresses_obfusquees` — it appends
+        the same thing at the bottom of the content; `sonde_obfuscation` says why the
+        re-read concluded nothing.
 
         Args:
-            url: URL de la page à récupérer — refusée si elle relève des
-                `excluded_url_prefixes` du projet.
-            format: "markdown" (défaut, la représentation lisible par un LLM) |
-                "text" (brut) | "both" (seulement si tu as vraiment besoin de
-                comparer) | "html" (le HTML BRUT de la page, par notre propre
-                requête, sans le scraper et sans crédit — pour vérifier
-                toi-même ce qu'un rendu a pu perdre ; plafonné, le total est
-                dit dans `html_caracteres`).
-            timeout_s: secondes d'attente, 1 à 60 (défaut 15). Serre-le quand tu
-                enchaînes beaucoup de pages douteuses ; une valeur hors bornes est
-                ramenée dedans, jamais refusée.
+            url: URL of the page to fetch — refused if it falls under the project's
+                `excluded_url_prefixes`.
+            format: "markdown" (default, the LLM-readable representation) |
+                "text" (raw) | "both" (only if you really need to
+                compare) | "html" (the page's RAW HTML, through our own
+                request, without the scraper and without credit — to check
+                yourself what a rendering may have lost; capped, the total is
+                given in `html_caracteres`).
+            timeout_s: seconds to wait, 1 to 60 (default 15). Tighten it when you
+                chain many dubious pages; an out-of-bounds value is
+                clamped inside, never refused.
         """
-        # Le refus du périmètre parle en PREMIER (#632) : avant la validation de
-        # `format`, avant la règle du client amont sur les hôtes clos.
+        # The perimeter refusal speaks FIRST (#632): before the validation of
+        # `format`, before the upstream client's rule on closed hosts.
         per = url_perimeter.perimeter_of_call()
         url_perimeter.refuse_if_excluded(url, per)
-        # oto-backend#473 : le domaine est-il de ceux qu'on ne scrape JAMAIS ? On le
-        # dit ICI, en clair et en actionnable, plutôt que de laisser le client lever un
-        # `RuntimeError` nu que la taxonomie rendra « Erreur interne du serveur. ».
-        # Régime permanent, pas incident : mesuré encore le 04/09/2026 sur des URL
-        # facebook.com, dans des runs qui n'avaient plus qu'à abandonner.
+        # oto-backend#473: is the domain one we NEVER scrape? We say so HERE, in plain
+        # and actionable terms, rather than letting the client raise a bare
+        # `RuntimeError` that the taxonomy will render as "Erreur interne du serveur.".
+        # Permanent regime, not an incident: measured again on 2026-09-04 on
+        # facebook.com URLs, in runs that could only give up.
         if (pourquoi := _refus_local(url)):
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=(f"{url} ne peut pas être lu par ce scraper : {pourquoi} "
-                         "Ce refus est DÉFINITIF pour ce domaine — ne réessaie pas la "
-                         "même adresse, prends une autre source.")))
+                message=(f"{url} cannot be read by this scraper: {pourquoi} "
+                         "This refusal is FINAL for this domain — do not retry the "
+                         "same address, use another source.")))
         if format not in ("markdown", "text", "both", "html"):
             raise _bad(
-                f"`format` invalide : {format!r} (markdown | text | both | html).")
+                f"Invalid `format`: {format!r} (markdown | text | both | html).")
         if format == "html":
-            # Le scraper hébergé ne rend AUCUN champ HTML : le demander à
-            # travers lui n'aurait rien donné. On lit donc la page nous-mêmes —
-            # mais sans rouvrir la porte que le client ferme d'emblée sur les
-            # sources closes à l'extraction (mur de connexion).
+            # The hosted scraper returns NO HTML field: asking for it
+            # through it would have yielded nothing. So we read the page ourselves —
+            # but without reopening the door the client shuts outright on
+            # sources closed to extraction (login wall).
             ferme = SerperClient._refuses_scraping(url)
             if ferme:
-                raise _bad(f"Pas de HTML brut pour {url} : {ferme}")
+                raise _bad(f"No raw HTML for {url}: {ferme}")
             return mail_obfuscation.html_brut(url, per, _delai_lecture(timeout_s))
         try:
             res = _run("scrape_page", url=url, include_markdown=format != "text",
                        timeout_s=timeout_s)
-            # Serper renvoyait `text` ET `markdown` : deux représentations du MÊME
-            # contenu (mesuré, 97 % de mots communs), pour 37 % du payload en pure
-            # duplication. On n'en sert qu'une — retirer un doublon ne perd rien. Le
-            # JSON-LD et les métadonnées RESTENT : ce ne sont pas des représentations
-            # du contenu mais des données structurées (date, auteur) qu'on ne saurait
-            # pas reconstituer, donc les retirer perdrait quelque chose.
+            # Serper used to return `text` AND `markdown`: two representations of the SAME
+            # content (measured, 97% shared words), for 37% of the payload in pure
+            # duplication. We only serve one — removing a duplicate loses nothing. The
+            # JSON-LD and the metadata STAY: they are not representations
+            # of the content but structured data (date, author) that could not
+            # be reconstructed, so removing them would lose something.
             if format == "markdown" and res.get("markdown"):
                 res.pop("text", None)
-            # oto#246 : une image incluse en base64 ne se lit pas, elle se paie à chaque
-            # tour qui relit la page — jusqu'à 91 % d'une page d'accueil mesurée.
+            # oto#246: an image included as base64 cannot be read, it is paid for on every
+            # turn that re-reads the page — up to 91% of a measured home page.
             images_base64.alleger(res)
-            # oto#208 : la césure conditionnelle arrive au milieu des mots, noms propres
-            # compris. Retirée AVANT la complétion des adresses, qui relit le texte.
+            # oto#208: the soft hyphen shows up in the middle of words, proper nouns
+            # included. Removed BEFORE the address completion, which re-reads the text.
             cesures.retirer_des_representations(res)
             mail_obfuscation.completer(res, url, per)
             return res
         except requests.Timeout:
-            # Le site n'a pas répondu dans le délai (14/09/2026). Un échec NORMAL, pas une
-            # panne : oto-core le documente ainsi (`SerperClient.scrape_page`), et #662 a
-            # mesuré que ce qu'une attente emporte coûte plus cher que la page — d'où aucun
-            # repli ici. Il sortait en erreur avec trace, remontait à Sentry, et l'agent
-            # lisait « réessaie dans un instant » : 32 délais en 40 minutes mesurés ce
-            # jour-là. En refus, il tient sur une ligne et dit de ne pas réessayer.
+            # The site did not answer within the delay (2026-09-14). A NORMAL failure, not an
+            # outage: oto-core documents it that way (`SerperClient.scrape_page`), and #662
+            # measured that what a wait carries away costs more than the page — hence no
+            # fallback here. It used to exit as an error with a trace, go up to Sentry, and the agent
+            # read "retry in a moment": 32 timeouts in 40 minutes measured that
+            # day. As a refusal, it fits on one line and says not to retry.
             raise McpError(ErrorData(
                 code=INVALID_REQUEST,
-                message=(f"Scrape impossible pour cette URL ({url}) : le site n'a pas "
-                         f"répondu en {_delai_scrape(timeout_s)} s. Une expiration est un "
-                         "échec normal, pas une panne : ne réessaie pas cette adresse."),
+                message=(f"Cannot scrape this URL ({url}): the site did not "
+                         f"answer within {_delai_scrape(timeout_s)} s. A timeout is a "
+                         "normal failure, not an outage: do not retry this address."),
             )) from None
         except RuntimeError as e:
             m = _SERPER_STATUS.search(str(e))
             code = int(m.group(1)) if m else None
             if code == 404 or (code is not None and 500 <= code < 600):
-                # Le fournisseur a refusé — avant de rendre la main, on relit la
-                # page NOUS-MÊMES avec un UA de navigateur. Sur le palier du
-                # 03/09, trois sites refusés sur quatre (deux Wix, un
-                # WordPress.com) répondaient normalement à cette requête-là
-                # (#681). Le repli DIT son chemin, il ne se déguise pas en
-                # scrape. Volontairement pas sur une EXPIRATION : celle-là a
-                # déjà consommé le budget de l'appelant, et #662 a mesuré que
-                # ce qu'une attente emporte coûte plus cher que la page.
+                # The provider refused — before handing back, we re-read the
+                # page OURSELVES with a browser UA. On the 09-03 tier,
+                # three refused sites out of four (two Wix, one
+                # WordPress.com) answered normally to that request
+                # (#681). The fallback SAYS its path, it does not disguise itself as a
+                # scrape. Deliberately not on a TIMEOUT: that one has
+                # already consumed the caller's budget, and #662 measured that
+                # what a wait carries away costs more than the page.
                 recuperee, pourquoi = mail_obfuscation.repli(
                     url, per, _delai_lecture(timeout_s))
                 if recuperee:
                     return recuperee
-                detail = ("cette page n'existe pas (ou plus)" if code == 404 else
-                          "la page a bloqué le robot ou n'a pas pu être récupérée")
+                detail = ("this page does not exist (or no longer)" if code == 404 else
+                          "the page blocked the bot or could not be fetched")
                 raise McpError(ErrorData(
                     code=INVALID_REQUEST,
-                    message=(f"Scrape impossible pour cette URL ({url}) : {detail}. "
-                             f"Notre propre lecture directe a échoué aussi : "
-                             f"{pourquoi}. Essaie une autre source ou serper_search."),
+                    message=(f"Cannot scrape this URL ({url}): {detail}. "
+                             f"Our own direct read failed too: "
+                             f"{pourquoi}. Try another source or serper_search."),
                 )) from None
             raise

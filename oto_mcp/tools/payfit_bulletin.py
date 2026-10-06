@@ -1,31 +1,31 @@
-"""PayFit — les lignes HEURES SUP d'un bulletin, lues dans son texte.
+"""PayFit — the OVERTIME lines of a payslip, read from its text.
 
-L'API PayFit ne sert aucune ligne de bulletin : les heures supplémentaires sont
-versées au même compte que le salaire de base dans les écritures comptables (641x),
-et le temps de travail n'est qu'un total mensuel. Le seul endroit où elles se lisent
-est le PDF du bulletin. Ce module en extrait les lignes qui les nomment — et RIEN
-d'autre : l'appelant ne reçoit jamais le texte du bulletin (NIR, IBAN, adresse).
+The PayFit API serves no payslip line: overtime is booked to the same account as
+base salary in the accounting entries (641x), and worked time is only a monthly
+total. The only place where it can be read is the payslip PDF. This module extracts the
+lines that name it — and NOTHING else: the caller never receives the payslip text
+(NIR, IBAN, address).
 
-⚠️ **Le format du bulletin n'est pas un contrat.** pypdf rend chaque ligne du tableau
-à plat, colonnes collées dans l'ordre de la page ; les libellés varient selon la
-convention (heures complémentaires d'un temps partiel, majorations 10/25/50 %,
-récupérations). On rend donc la ligne telle qu'elle est lue avec ses nombres dans
-l'ordre, sans prétendre savoir lequel est la base, le taux ou le montant : c'est à
-l'appelant de le confronter à un bulletin qu'il a sous les yeux.
+⚠️ **The payslip format is not a contract.** pypdf returns each row of the table
+flat, columns glued together in page order; labels vary by agreement
+(additional hours of a part-time contract, 10/25/50 % premiums, compensatory
+rest). So the line is returned as it is read with its numbers in
+order, without claiming to know which is the base, the rate or the amount: it is up to
+the caller to check it against a payslip they have in front of them.
 """
 from __future__ import annotations
 
 import re
 import unicodedata
 
-# Libellés d'heures payées en plus du contrat. Comparés sans accents ni casse.
+# Labels of hours paid on top of the contract. Compared without accents or case.
 _HEURES = re.compile(
     r"\bheures?\s+(?:supp?(?:lementaires?)?|compl(?:ementaires?)?|majorees?)\b"
     r"|\bh\.?\s?sup\b|\bhs\s?\d{2}\b|\bmajoration\s+\d{2}\s?%")
-# Lignes qui NOMMENT les heures sup sans en être le paiement : réduction de
-# cotisations, exonération, défiscalisation. Rendues à part, jamais mêlées.
+# Lines that NAME overtime without being its payment: contribution
+# reduction, exemption, tax relief. Returned separately, never mixed.
 _ALLEGEMENT = re.compile(r"\b(reduction|exoneration|deduction|defiscalis)")
-# Nombre français : milliers séparés par espace (y compris insécables), virgule décimale.
+# French number: thousands separated by a space (including non-breaking), decimal comma.
 _NOMBRE = re.compile(r"-?\d{1,3}(?:[   ]\d{3})+(?:,\d+)?|-?\d+(?:[,.]\d+)?")
 
 PAIEMENT = "paiement"
@@ -42,10 +42,10 @@ def _nombre(tok: str) -> float:
 
 
 def overtime_lines(text: str) -> list[dict]:
-    """Les lignes du texte d'un bulletin qui nomment des heures sup / complémentaires
-    / majorées : `{kind, label, numbers, rates, line}`. `kind` = `paiement` ou
-    `allegement` (réduction ou exonération de cotisations sur ces heures). `rates` =
-    les pourcentages de la ligne, retirés de `numbers`."""
+    """The lines of a payslip's text that name overtime / additional
+    / premium-rate hours: `{kind, label, numbers, rates, line}`. `kind` = `paiement` or
+    `allegement` (contribution reduction or exemption on those hours). `rates` =
+    the line's percentages, removed from `numbers`."""
     out = []
     for brute in (text or "").splitlines():
         ligne = " ".join(brute.split())

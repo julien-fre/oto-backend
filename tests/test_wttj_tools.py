@@ -130,13 +130,13 @@ def test_candidate_update_deplace_par_l_etape(client):
 
 
 def test_candidate_update_sans_changement_refuse(client):
-    with pytest.raises(McpError, match="au moins un changement"):
+    with pytest.raises(McpError, match="requires at least one change"):
         _tool("wttj_candidate")(op="update", candidate_reference="C1")
     _no_write(client)
 
 
 def test_candidate_op_inconnue_nomme_les_ops(client):
-    with pytest.raises(McpError, match="'list', 'get', 'create' ou 'update'"):
+    with pytest.raises(McpError, match="'list', 'get', 'create' or 'update'"):
         _tool("wttj_candidate")(op="delete")
     _no_write(client)
 

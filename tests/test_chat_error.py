@@ -27,8 +27,8 @@ def test_chat_app_not_found_404_names_the_oauth_client_project():
                             "turn on the Chat API and configure the app in the Google "
                             "Cloud console.")
     m = _msg(e)
-    assert "projet Google Cloud du client OAuth" in m and "Configuration" in m
-    assert "reconnecter le compte ou réessayer n'y change rien" in m
+    assert "Google Cloud project of the OAuth client" in m and "Configuration" in m
+    assert "reconnecting the account or retrying changes nothing" in m
     assert "404" not in m                                       # message métier, pas le code brut
     assert "HttpError" not in m and "<" not in m                # pas de repr d'exception
 

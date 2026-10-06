@@ -279,7 +279,7 @@ def test_resolve_slot_ambigu_est_refuse_en_le_nommant(monkeypatch):
                                        "slot": "sortie", "datastore_ambigu": True}])
     with pytest.raises(McpError) as e:
         access.resolve_slot_tableau("sortie")
-    assert "« vivier »" in str(e.value) and "target_ref=<id>" in str(e.value)
+    assert "NAME “vivier”" in str(e.value) and "target_ref=<id>" in str(e.value)
 
 
 def test_resolve_slot_no_project_actionable(monkeypatch):
@@ -302,7 +302,7 @@ def test_resolve_slot_dangling(monkeypatch):
                                        "slot": "sortie"}])   # pas de datastore résolu
     with pytest.raises(McpError) as e:
         access.resolve_slot_tableau("sortie")
-    assert "ne résout plus" in str(e.value)
+    assert "no longer resolves" in str(e.value)
 
 
 def test_resolve_slot_invalid_name(monkeypatch):

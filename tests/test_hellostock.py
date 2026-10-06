@@ -107,7 +107,7 @@ def test_a_revoked_token_says_recreate_it_and_where(fake, jeton):
     with pytest.raises(McpError) as e:
         _outil("hellostock_demande")()
     msg = e.value.error.message
-    assert "401" in msg and "révoqué" in msg and "Jetons d'API" in msg
+    assert "401" in msg and "revoked" in msg and "Jetons d'API" in msg
     assert "/account" in msg
 
 
@@ -116,8 +116,8 @@ def test_a_non_admin_token_says_the_role_is_missing_not_the_token(fake, jeton):
     with pytest.raises(McpError) as e:
         _outil("hellostock_membre")(op="get", membre_id=2)
     msg = e.value.error.message
-    assert "403" in msg and "administrateur" in msg
-    assert "recréer un jeton n'y changera rien" in msg
+    assert "403" in msg and "administrator" in msg
+    assert "recreating a token will not change that" in msg
 
 
 def test_a_refused_filter_relays_the_servers_reason(fake, jeton):
@@ -210,7 +210,7 @@ def test_a_member_who_already_received_it_is_refused_unless_allow_resend(fake, j
     send(demande_id=1, user_ids=[3], dry_run=False)
     with pytest.raises(McpError) as e:
         send(demande_id=1, user_ids=[3, 4], dry_run=False)
-    assert "Déjà reçue par 3" in e.value.error.message
+    assert "Already received by 3" in e.value.error.message
     assert fake.ecritures().count(("POST", "/api/admin/demandes/1/envoyer")) == 1
     apercu = send(demande_id=1, user_ids=[3, 4])
     assert [a["user_id"] for a in apercu["already_sent"]] == [3]
@@ -234,14 +234,14 @@ def test_no_email_could_leave_is_said_and_not_retried(fake, jeton):
     with pytest.raises(McpError) as e:
         _outil("hellostock_demande_send")(demande_id=1, user_ids=[3], dry_run=False)
     assert e.value.error.code == INTERNAL_ERROR
-    assert "aucun envoi n'a été enregistré" in e.value.error.message
+    assert "no send was recorded" in e.value.error.message
     assert fake.ecritures() == [("POST", "/api/admin/demandes/1/envoyer")]
 
 
 def test_a_mailer_that_is_not_configured_is_said(fake, jeton):
     fake.noop = True
     out = _outil("hellostock_demande_send")(demande_id=1, user_ids=[3], dry_run=False)
-    assert "AUCUN courriel n'est parti" in out["note"]
+    assert "NO email went out" in out["note"]
 
 
 # --- statut et mots-clés ------------------------------------------------------
@@ -255,7 +255,7 @@ def test_set_status_reads_first_and_never_patches_an_unknown_demande(fake, jeton
 def test_set_status_reports_the_transition_and_its_public_effect(fake, jeton):
     out = _outil("hellostock_demande_set_status")(demande_id=2, status="published")
     assert (out["from"], out["to"], out["success"]) == ("qualified", "published", True)
-    assert "marketplace publique" in out["effect"]
+    assert "public marketplace" in out["effect"]
     assert fake.ecritures() == [("PATCH", "/api/admin/demandes/2")]
 
 
@@ -300,8 +300,8 @@ def test_the_probe_refuses_a_secret_that_is_not_a_hellostock_token(fake):
     assert fake.log == []
 
 
-@pytest.mark.parametrize("token, attendu", [("hs_revoque", "révoqué"),
-                                            (MEMBRE, "administrateur")])
+@pytest.mark.parametrize("token, attendu", [("hs_revoque", "revoked"),
+                                            (MEMBRE, "administrator")])
 def test_the_probe_names_the_right_remedy(fake, token, attendu):
     from oto_mcp.tools import hellostock
     with pytest.raises(ValueError, match=attendu):

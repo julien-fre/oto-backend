@@ -1,38 +1,38 @@
-"""Déclaration de registre du connecteur `airtable`.
+"""Registry declaration of the `airtable` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# airtable : bases / tables / champs / lignes / commentaires / pièces jointes /
-# sync CSV — toute la section « Base data » de la Web API, PLUS le schéma, sans
-# lequel un agent ne peut pas écrire une ligne (il lui faut les noms et types de
-# colonnes). keyed api_key (Bearer Personal Access Token), **byo-only** : un PAT
-# Airtable porte à la fois des scopes ET une liste de bases nommément accordées —
-# une clé plateforme exposerait les bases d'Otomata à toutes les orgs.
+# airtable: bases / tables / fields / rows / comments / attachments /
+# CSV sync — the whole "Base data" section of the Web API, PLUS the schema, without
+# which an agent cannot write a row (it needs the column names and types).
+# keyed api_key (Bearer Personal Access Token), **byo-only**: an Airtable PAT
+# carries both scopes AND a list of explicitly granted bases —
+# a platform key would expose Otomata's bases to every org.
 CONNECTOR = _c(
     "airtable", ["airtable"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Airtable",
-    help="bases, tables, champs, lignes, commentaires, pièces jointes, sync CSV",
+    help="bases, tables, fields, rows, comments, attachments, CSV sync",
     href="https://airtable.com", credential_fields=(
         CredentialField("key", "Personal Access Token", secret=True,
-                        help="airtable.com/create/tokens → créer un token, cocher "
-                             "les scopes data.records:*, data.recordComments:* et "
-                             "schema.bases:* PUIS ajouter les bases dans « Access » "
-                             "(les scopes seuls ne donnent accès à aucune base)"),
+                        help="airtable.com/create/tokens → create a token, tick "
+                             "the scopes data.records:*, data.recordComments:* and "
+                             "schema.bases:* THEN add the bases under \"Access\" "
+                             "(scopes alone give access to no base)"),
     ),
 )
 
 CATEGORY = "Knowledge"
 PUBLISHER = "Airtable"
 DESCRIPTION = (
-    "Les bases Airtable en lecture ET en écriture : lister et filtrer "
-    "des lignes (formules, vues, tris), en créer, mettre à jour ou "
-    "rapprocher par upsert, commenter, joindre des fichiers. Le "
-    "schéma est exposé aussi (tables, champs, types et options), donc "
-    "l'agent découvre les colonnes avant d'écrire dedans."
+    "Airtable bases, read AND write: list and filter "
+    "rows (formulas, views, sorts), create them, update them or "
+    "match them by upsert, comment, attach files. The "
+    "schema is exposed too (tables, fields, types and options), so "
+    "the agent discovers the columns before writing into them."
 )
 LOGO_DOMAIN = "airtable.com"

@@ -1,25 +1,25 @@
-"""Déclaration de registre du connecteur `drive` — Google Drive, sur le compte Google.
+"""Registry declaration for the `drive` connector — Google Drive, on the Google account.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE. La forme commune
-aux six services Google vit chez le porteur du compte (`providers/google.service`) —
-ici, ce qui distingue CELUI-CI (split du 2026-09-26).
+Sole home of its entry: `providers/__init__.py` AGGREGATES it. The shape common
+to the six Google services lives with the account carrier (`providers/google.service`) —
+here, what distinguishes THIS one (split of 2026-09-26).
 """
 from __future__ import annotations
 
 from .google import service
 
-# Google Drive : la personne autorise CE service sur son compte Google, depuis cette
-# carte, avec ses seuls scopes — le compte (la ligne du coffre, le refresh token) est
-# celui du connecteur `google`, partagé avec les cinq autres services.
+# Google Drive: the person authorizes THIS service on their Google account, from this
+# card, with only its scopes — the account (the vault row, the refresh token) is
+# that of the `google` connector, shared with the five other services.
 CONNECTOR = service(
     "drive",
     label="Google Drive",
-    help="tes fichiers Drive — lister, lire, ranger, partager, supprimer ; scope `drive`, accordé sur ton compte Google",
+    help="your Drive files — list, read, organize, share, delete; scope `drive`, granted on your Google account",
     href="https://drive.google.com",
 )
 
 CATEGORY = "Comms"
 LOGO_DOMAIN = "google.com"
 DESCRIPTION = (
-    "Ton Google Drive, sur ton compte Google : lister et lire les fichiers et dossiers, les déplacer ou les supprimer, régler qui y accède. Un consentement qui ne demande que le scope Drive."
+    "Your Google Drive, on your Google account: list and read files and folders, move or delete them, control who has access. A consent that only asks for the Drive scope."
 )

@@ -1,59 +1,59 @@
-"""Lemlist — campagnes, séquences, plannings, leads, stats et enrichissement.
+"""Lemlist — campaigns, sequences, schedules, leads, stats and enrichment.
 
-Premier des DEUX modules du connecteur : celui-ci tient la CAMPAGNE et ses
-leads, `lemlist_crm.py` tient tout le reste (CRM, inbox, désinscriptions, watch
-lists, tâches, base partagée, équipe, boîtes mail, lemwarm, délivrabilité,
-webhooks). Ensemble ils couvrent les 141 routes documentées de lemlist, sans
-exception — et deux inventaires le prouvent plutôt que de l'affirmer :
-`test_lemlist_coverage.py` côté oto-core (chaque route a un chemin dans le
-client), `test_lemlist_surface_coverage.py` ici (chaque capacité du client est
-appelée par un tool, les rares exceptions étant nommées avec leur raison).
+First of the TWO modules of the connector: this one holds the CAMPAIGN and its
+leads, `lemlist_crm.py` holds everything else (CRM, inbox, unsubscribes, watch
+lists, tasks, shared base, team, mailboxes, lemwarm, deliverability,
+webhooks). Together they cover lemlist's 141 documented routes, without
+exception — and two inventories prove it rather than assert it:
+`test_lemlist_coverage.py` on the oto-core side (every route has a path in the
+client), `test_lemlist_surface_coverage.py` here (every client capability is
+called by a tool, the few exceptions being named with their reason).
 
-Le connecteur savait LIRE une campagne et y poser des leads ; il ne savait pas
-en conduire une. `lemlist_campaign`, `lemlist_campaign_start`,
-`lemlist_sequence`, `lemlist_schedule` et `lemlist_lead` ferment ce trou : créer
-et régler une campagne, écrire sa séquence pas à pas, tenir ses fenêtres
-d'envoi, la valider, la démarrer, la mettre en pause, la dupliquer, la mesurer,
-l'exporter, et mener ses leads de bout en bout.
+The connector knew how to READ a campaign and drop leads into it; it did not know
+how to run one. `lemlist_campaign`, `lemlist_campaign_start`,
+`lemlist_sequence`, `lemlist_schedule` and `lemlist_lead` close that gap: create
+and configure a campaign, write its sequence step by step, hold its sending
+windows, validate it, start it, pause it, duplicate it, measure it,
+export it, and carry its leads end to end.
 
-La borne n'a pas disparu, elle s'est DÉPLACÉE là où elle mord vraiment : sur ce
-qui met des messages sur le fil, pas sur l'écriture en général. QUATRE tools le
-font ou l'arment, et tous les quatre sont masqués par défaut
-(`DEFAULT_HIDDEN_TOOLS`, self-activables) : `lemlist_campaign_start` (lemlist
-déroule la séquence pour tous les leads lancés), `lemlist_launch_lead` (un lead
-sort de la revue), `lemlist_inbox_send` (les trois envois directs, sans campagne
-ni revue devant eux) et `lemlist_campaign_auto_review`. Tout le reste — créer,
-régler, dupliquer, pauser, planifier, ranger le CRM — travaille sur un BROUILLON
-ou sur de la donnée, et n'envoie rien.
+The bound has not disappeared, it has MOVED to where it really bites: on what
+puts messages on the wire, not on writing in general. FOUR tools do so
+or arm it, and all four are hidden by default
+(`DEFAULT_HIDDEN_TOOLS`, self-activatable): `lemlist_campaign_start` (lemlist
+runs the sequence for all launched leads), `lemlist_launch_lead` (a lead
+leaves review), `lemlist_inbox_send` (the three direct sends, with no campaign
+or review in front of them) and `lemlist_campaign_auto_review`. Everything else — create,
+configure, duplicate, pause, schedule, tidy the CRM — works on a DRAFT
+or on data, and sends nothing.
 
-C'est ce grain-là qui a dicté le découpage : `DEFAULT_HIDDEN_TOOLS` a le grain du
-TOOL, pas de l'`op`. `start` en `lemlist_campaign(op="start")` serait rentré dans
-un tool visible et aurait dégondé la borne en silence — d'où un tool nu pour lui
-seul, et de même pour les envois d'inbox.
+That grain is what dictated the split: `DEFAULT_HIDDEN_TOOLS` has the grain of the
+TOOL, not of the `op`. `start` as `lemlist_campaign(op="start")` would have gone into
+a visible tool and silently unhinged the bound — hence a bare tool for it
+alone, and likewise for the inbox sends.
 
-Corollaire, et c'est le point le moins évident du module : `autoReview` /
-`autoReviewConditions` ne passent PAS par le dict de réglages de
-`lemlist_campaign`. Le champ n'est pas retiré du connecteur pour autant — il a
-son propre tool masqué, `lemlist_campaign_auto_review`. La raison : ce réglage
-lance tout lead dès son ajout, donc il ferait de `lemlist_create_lead` — visible,
-et visible PARCE QU'il n'envoie rien — un chemin d'envoi, sans qu'aucun tool
-masqué soit appelé. Le champ reste atteignable ; c'est le GESTE qui devient
-explicite.
+Corollary, and it is the least obvious point of the module: `autoReview` /
+`autoReviewConditions` do NOT go through `lemlist_campaign`'s settings dict.
+The field is not removed from the connector for all that — it has its
+own hidden tool, `lemlist_campaign_auto_review`. The reason: this setting
+launches any lead as soon as it is added, so it would turn `lemlist_create_lead` — visible,
+and visible BECAUSE it sends nothing — into a send path, without any hidden
+tool being called. The field remains reachable; it is the ACTION that becomes
+explicit.
 
-L'enrichissement (`lemlist_enrich`, `lemlist_enrich_lead`) n'envoie rien — mais
-il DÉPENSE des crédits lemlist à chaque action. D'où la même borne, prise
-autrement : aucune action par défaut, un appel sans action demandée échoue ici
-(INVALID_PARAMS) plutôt que d'aller chercher le 400 documenté de lemlist.
+Enrichment (`lemlist_enrich`, `lemlist_enrich_lead`) sends nothing — but
+it SPENDS lemlist credits on every action. Hence the same bound, taken
+differently: no action by default, a call with no action requested fails here
+(INVALID_PARAMS) rather than going to fetch lemlist's documented 400.
 
-Surface async, comme FullEnrich (signal #252) : le POST rend un `enrichment_id`
-en ~1s et le travail continue côté lemlist. Le polling appartient à l'agent —
-`lemlist_enrich_result` relève un statut et rend la main. Jamais de boucle
-d'attente in-process : tout client MCP raccroche vers 60s, et le résultat
-serait perdu ALORS QUE les crédits, eux, sont consommés.
+Async surface, like FullEnrich (signal #252): the POST returns an `enrichment_id`
+in ~1s and the work continues on the lemlist side. Polling belongs to the agent —
+`lemlist_enrich_result` reads a status and hands control back. Never an in-process
+wait loop: every MCP client hangs up around 60s, and the result
+would be lost WHILE the credits are consumed.
 
-Clé résolue par appel via `access.resolve_api_key("lemlist")`. Pas de
-quota plateforme par défaut — chaque user voit SES propres campagnes,
-donc user key obligatoire.
+Key resolved per call via `access.resolve_api_key("lemlist")`. No default
+platform quota — each user sees THEIR OWN campaigns,
+so a user key is required.
 """
 from __future__ import annotations
 
@@ -69,10 +69,10 @@ from .. import access
 from ..connectors import verify as connector_verify
 from ..output_projection import project
 
-#: Vocabulaire d'actions du bulk v2 de lemlist. Volontairement écrit à la main :
-#: ce n'est PAS un snake_case des flags v1 — la vérification d'email s'appelle
-#: `verify` et non `verify_email`. Miroir de `LemlistClient.ENRICH_BULK_ACTIONS`,
-#: gardé aligné par un test de version-skew.
+#: Action vocabulary of lemlist's v2 bulk. Deliberately written by hand:
+#: it is NOT a snake_case of the v1 flags — email verification is called
+#: `verify` and not `verify_email`. Mirror of `LemlistClient.ENRICH_BULK_ACTIONS`,
+#: kept aligned by a version-skew test.
 BULK_ACTIONS = {
     "find_email": "find_email",
     "verify_email": "verify",
@@ -81,33 +81,33 @@ BULK_ACTIONS = {
 }
 
 
-#: Les DEUX réglages de campagne qui dissolvent la revue manuelle : avec eux, un
-#: lead créé part TOUT DE SUITE. Le modèle de sûreté du connecteur repose sur
-#: l'inverse — `lemlist_create_lead` est visible parce qu'il n'envoie rien, et
-#: seul `lemlist_launch_lead` (masqué par défaut) déclenche l'envoi. Les laisser
-#: passer dans un dict de réglages transformerait un tool visible en chemin
-#: d'envoi, sans que rien ne le signale. Ils ne sont pas retirés du connecteur
-#: pour autant — ils ont leur propre tool masqué, `lemlist_campaign_auto_review` :
-#: le champ reste atteignable, c'est le GESTE qui devient explicite.
+#: The TWO campaign settings that dissolve manual review: with them, a created
+#: lead goes out RIGHT AWAY. The connector's safety model rests on the
+#: opposite — `lemlist_create_lead` is visible because it sends nothing, and
+#: only `lemlist_launch_lead` (hidden by default) triggers sending. Letting them
+#: pass through a settings dict would turn a visible tool into a send path,
+#: with nothing to signal it. They are not removed from the connector
+#: for all that — they have their own hidden tool, `lemlist_campaign_auto_review`:
+#: the field remains reachable, it is the ACTION that becomes explicit.
 AUTO_REVIEW_KEYS = ("autoReview", "autoReviewConditions")
 
-#: Plancher de la fenêtre de stats. Les deux dates sont OBLIGATOIRES côté lemlist
-#: et un agent qui veut « les stats de la campagne » n'en a aucune en tête : ce
-#: plancher précède lemlist lui-même, donc il vaut « depuis toujours ».
+#: Floor of the stats window. Both dates are REQUIRED on lemlist's side
+#: and an agent who wants "the campaign's stats" has none in mind: this
+#: floor predates lemlist itself, so it means "since forever".
 STATS_EPOCH = "2015-01-01T00:00:00.000Z"
 
-#: Détail rendu sur `full=True` seulement — un `steps` par étape de séquence et
-#: un `perChannel` par canal, là où la question courante tient dans les compteurs
-#: de tête.
+#: Detail returned on `full=True` only — a `steps` per sequence step and
+#: a `perChannel` per channel, where the usual question fits in the headline
+#: counters.
 STATS_DETAIL = ("steps", "perChannel")
 
 
-#: Les deux refus de DOUBLON de `POST /campaigns/{id}/leads/`, reconnus à leur
-#: MESSAGE (corps en texte brut), jamais à leur statut : lemlist l'a changé sous nos
-#: pieds — « Lead already in other campaign » en 500 le 31/08/2026 (23 appels), le
-#: même en 409 le 09/09 (71 appels), « Lead already in the campaign » en 400
-#: (otomata-tech/oto#263). Ce n'est pas une panne : le contact est déjà pris, et
-#: l'agent doit le compter comme tel. Tout autre refus garde son chemin d'erreur.
+#: The two DUPLICATE refusals of `POST /campaigns/{id}/leads/`, recognised by their
+#: MESSAGE (plain-text body), never by their status: lemlist changed it under our
+#: feet — "Lead already in other campaign" as a 500 on 31/08/2026 (23 calls), the
+#: same as a 409 on 09/09 (71 calls), "Lead already in the campaign" as a 400
+#: (otomata-tech/oto#263). It is not an outage: the contact is already taken, and
+#: the agent must count it as such. Any other refusal keeps its error path.
 LEAD_DEJA_PRIS = {
     "Lead already in other campaign": "already_in_other_campaign",
     "Lead already in the campaign": "already_in_campaign",
@@ -126,17 +126,17 @@ def _campagne_introuvable(exc) -> bool:
             and body.strip() == "Campaign not found")
 
 
-#: Ce que `lemlist_create_lead` dit de la revue d'un lead créé (otomata-tech/oto#264) :
-#: « inconnu », parce que lemlist ne le dit NULLE PART dans cette réponse. Mesuré le
-#: 04/09/2026 : `isPaused` reste `false` qu'un lead soit retenu en revue ou parti ; seuls
-#: les compteurs de la campagne (`reviewedCount`, `inSequenceLeadCount`) les distinguent.
-#: `isPaused` est donc ÉCARTÉ de la réponse — laissé, il se lisait « l'envoi part ».
+#: What `lemlist_create_lead` says about the review of a created lead (otomata-tech/oto#264):
+#: "unknown", because lemlist says it NOWHERE in this response. Measured on
+#: 04/09/2026: `isPaused` stays `false` whether a lead is held in review or gone; only
+#: the campaign's counters (`reviewedCount`, `inSequenceLeadCount`) tell them apart.
+#: `isPaused` is therefore DROPPED from the response — left in, it read as "sending goes out".
 REVIEW_STATE_UNKNOWN = "unknown"
 REVIEW_HINT = (
-    "lemlist ne dit pas, à la création, si ce lead attend une revue ou part en "
-    "séquence ; `isPaused` a été écarté car il ne le distingue pas. Pour le savoir : "
-    "lemlist_campaign(op=\"reports\") — si `reviewedCount` ou `inSequenceLeadCount` "
-    "ont monté avec l'ajout, le lead part ; seul `totalCount` qui monte = retenu en revue."
+    "lemlist does not say, at creation, whether this lead awaits review or goes into the "
+    "sequence; `isPaused` was dropped because it does not tell them apart. To find out: "
+    "lemlist_campaign(op=\"reports\") — if `reviewedCount` or `inSequenceLeadCount` "
+    "went up with the addition, the lead goes out; only `totalCount` going up = held in review."
 )
 
 
@@ -151,16 +151,16 @@ def _bad(msg: str) -> McpError:
 
 
 def _default_window(start_date: Optional[str], end_date: Optional[str]) -> tuple[str, str]:
-    """Complète la fenêtre de stats — bornes ISO 8601, les deux exigées upstream."""
-    # Aliasé `_dt` : `timezone` est un ARGUMENT de `lemlist_campaign`/
-    # `lemlist_schedule` (la zone IANA de lemlist), l'importer nu le masquerait.
+    """Fill in the stats window — ISO 8601 bounds, both required upstream."""
+    # Aliased `_dt`: `timezone` is an ARGUMENT of `lemlist_campaign`/
+    # `lemlist_schedule` (lemlist's IANA zone), importing it bare would shadow it.
     now = _dt.datetime.now(_dt.timezone.utc)
     return start_date or STATS_EPOCH, end_date or (
         now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z")
 
 
 def _project_stats(result: dict, *, full: bool) -> dict:
-    """Coupe le détail par étape/par canal, et NOMME ce qui a été écarté."""
+    """Cut the per-step/per-channel detail, and NAME what was dropped."""
     if full or not isinstance(result, dict):
         return result
     dropped = {k: len(result[k]) for k in STATS_DETAIL
@@ -169,33 +169,33 @@ def _project_stats(result: dict, *, full: bool) -> dict:
     if dropped:
         out["projection"] = {
             "dropped": dropped,
-            "hint": "Détail par étape / par canal écarté — `full=True` le rend.",
+            "hint": "Per-step / per-channel detail dropped — `full=True` returns it.",
         }
     return out
 
 
-#: Plafond de l'audio d'une note vocale — 20 Mo, la limite que lemlist annonce
-#: sur ses médias. La borne est ici parce que c'est NOUS qui téléchargeons : un
-#: agent MCP n'a pas de disque partagé avec le serveur.
+#: Cap on a voice note's audio — 20 MB, the limit lemlist announces
+#: on its media. The bound is here because WE do the downloading: an
+#: MCP agent has no disk shared with the server.
 AUDIO_MAX_BYTES = 20 * 1024 * 1024
 
 
 def _fetch_audio(source) -> tuple[bytes, str]:
-    """Ramène l'audio d'une note vocale, par le seam PARTAGÉ `file_source`.
+    """Fetch a voice note's audio, through the SHARED `file_source` seam.
 
-    Écrit à la main au premier jet, cette fonction refaisait une garde de taille
-    et un contrôle de schéma — mais PAS l'anti-SSRF : une URL fournie par un
-    agent aurait pu faire lire au serveur `localhost` ou l'IMDS cloud. Le seam
-    (`file_source.resolve`, déjà utilisé par lighton et pennylane) porte cette
-    garde, refuse les redirections, et accepte en prime `{"kind": "drive"}` et
-    `{"kind": "gmail"}` et `{"kind": "project_file"}` — l'audio peut donc venir
-    d'un Drive, d'une pièce jointe ou d'un fichier du projet, pas seulement d'une
-    URL publique.
+    Hand-written on the first pass, this function redid a size guard
+    and a schema check — but NOT the anti-SSRF: a URL supplied by an
+    agent could have made the server read `localhost` or the cloud IMDS. The seam
+    (`file_source.resolve`, already used by lighton and pennylane) carries that
+    guard, refuses redirects, and also accepts `{"kind": "drive"}` and
+    `{"kind": "gmail"}` and `{"kind": "project_file"}` — the audio can therefore come
+    from a Drive, an attachment or a project file, not only from a
+    public URL.
 
-    Rend `(octets, nom de fichier)` : le nom vient de la SOURCE (pièce jointe,
-    fichier Drive, dernier segment d'URL) et part en multipart. Le laisser
-    tomber ferait arriver toutes les notes vocales sous le même nom générique
-    côté lemlist.
+    Returns `(bytes, file name)`: the name comes from the SOURCE (attachment,
+    Drive file, last URL segment) and goes out as multipart. Dropping it
+    would make every voice note arrive under the same generic name
+    on the lemlist side.
     """
     from .. import file_source
 
@@ -213,24 +213,24 @@ def _refuse_auto_review(settings: dict) -> None:
     present = [k for k in AUTO_REVIEW_KEYS if k in settings]
     if present:
         raise _bad(
-            f"{', '.join(present)} ne se règle pas ici. Ce réglage fait partir "
-            "tout lead ajouté SANS revue : il transformerait `lemlist_create_lead` "
-            "en envoi. Il a son propre tool, `lemlist_campaign_auto_review`, masqué "
-            "par défaut (`oto_enable_tool lemlist_campaign_auto_review`) — armer "
-            "l'envoi demande un geste délibéré, pas une clé qui passe dans un dict "
-            "de réglages."
+            f"{', '.join(present)} cannot be set here. This setting makes any added "
+            "lead go out WITHOUT review: it would turn `lemlist_create_lead` "
+            "into a send. It has its own tool, `lemlist_campaign_auto_review`, hidden "
+            "by default (`oto_enable_tool lemlist_campaign_auto_review`) — arming "
+            "sending takes a deliberate action, not a key slipped into a settings "
+            "dict."
         )
 
 
 def _found_digest(data: dict) -> dict:
-    """Ce qui a VRAIMENT été trouvé, par axe — `data` porte toujours la clé de
-    l'axe demandé, même vide, donc sa seule présence ne dit rien.
+    """What was REALLY found, per axis — `data` always carries the key of
+    the requested axis, even empty, so its mere presence says nothing.
 
-    Formes relevées en live (au-delà du schéma publié) : `email` porte `email`
-    et un `status` de vérification (`deliverable`/`undeliverable`), `phone`
-    porte `phone`, `linkedin` porte un profil complet — ou `{}` quand le profil
-    n'a pas pu être résolu. `notFound` n'est PAS fiable : on l'a vu à `false`
-    sur une charge sans numéro.
+    Shapes observed live (beyond the published schema): `email` carries `email`
+    and a verification `status` (`deliverable`/`undeliverable`), `phone`
+    carries `phone`, `linkedin` carries a full profile — or `{}` when the profile
+    could not be resolved. `notFound` is NOT reliable: it was seen as `false`
+    on a payload with no number.
     """
     found = {}
     email = (data.get("email") or {}).get("email")
@@ -252,38 +252,38 @@ def _found_digest(data: dict) -> dict:
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` + DROITS.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` + RIGHTS.
 
-    `GET /team` (déjà dans le client — `LemlistClient.get_team`). Ce que la doc
-    établit :
+    `GET /team` (already in the client — `LemlistClient.get_team`). What the doc
+    establishes:
 
-    - **authentifié** — Basic auth, la clé en mot de passe, comme le reste de
-      l'API lemlist ;
-    - **sans effet de bord** — une lecture d'équipe (`_id`, `name`, `billing`) ;
-    - **le coût** — aucune mention de coût pour cet appel de lecture. Absence de
-      mention, indice, pas une preuve — comme Folk et Pennylane.
+    - **authenticated** — Basic auth, the key as the password, like the rest of
+      the lemlist API;
+    - **no side effect** — a team read (`_id`, `name`, `billing`);
+    - **the cost** — no mention of a cost for this read call. Absence of a
+      mention is a hint, not proof — like Folk and Pennylane.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : `billing.ok` distingue une
-    équipe dont l'abonnement est en règle d'une équipe dont il ne l'est plus
-    (impayé, suspendu) — un axe qui touche TOUT le connecteur. Ne lit PAS les
-    crédits d'enrichissement (`get_team_credits`) : ceux-ci ne gatent QU'une
-    fonctionnalité (`lemlist_enrich`) — les décréter « à sec » dirait « connecteur
-    mort » d'une clé qui peut encore tout faire sur campagnes/séquences/leads,
-    exactement l'inverse du vert trompeur que cette série corrige.
+    **Authenticated ≠ usable** (class oto#69): `billing.ok` tells apart a team
+    whose subscription is in good standing from one whose it no longer is
+    (unpaid, suspended) — an axis that touches the WHOLE connector. Does NOT read the
+    enrichment credits (`get_team_credits`): those gate ONLY one
+    feature (`lemlist_enrich`) — declaring them "dry" would say "connector
+    dead" of a key that can still do everything on campaigns/sequences/leads,
+    exactly the opposite of the misleading green that this series corrects.
     """
     from oto.tools.lemlist import LemlistClient
 
     infos = LemlistClient(api_key=fields["key"]).get_team() or {}
     if not infos.get("_id"):
         raise RuntimeError(
-            "Lemlist a répondu sans identifier d'équipe pour cette clé — "
-            f"réponse inattendue : {str(infos)[:200]}")
+            "Lemlist answered without identifying a team for this key — "
+            f"unexpected response: {str(infos)[:200]}")
     billing = infos.get("billing") or {}
     if billing.get("ok") is False:
         raise RuntimeError(
-            f"L'équipe « {infos.get('name') or '?'} » authentifie, mais sa "
-            "facturation Lemlist n'est pas en règle (abonnement impayé ou "
-            "suspendu) — réactive-la chez Lemlist.")
+            f"The team \"{infos.get('name') or '?'}\" authenticates, but its "
+            "Lemlist billing is not in good standing (unpaid or "
+            "suspended subscription) — reactivate it at Lemlist.")
 
 
 def register(mcp: FastMCP) -> None:
@@ -450,13 +450,13 @@ def register(mcp: FastMCP) -> None:
     def lemlist_get_leads(campaign_id: str) -> dict:
         """List all leads for a campaign with their state (sent, replied…).
 
-        ⚠️ Passe par l'export JSON, PAS par `get_all_leads` : ce dernier appelle
-        l'export sans `state`, donc avec le défaut de lemlist — qui filtre tout et
-        rend une liste vide se lisant « pas de leads ». Une campagne d'un lead
-        revenait ainsi vide (signal 719) alors que la route unitaire le rendait très
-        bien, et le guide annonçait le forçage comme acquis pour tout le connecteur.
-        `export_campaign_leads` porte le défaut `state="all"`, vérifié en live le
-        2026-08-31 : on prend la surface qui a la garde plutôt que d'en refaire une.
+        ⚠️ Goes through the JSON export, NOT `get_all_leads`: the latter calls
+        the export without `state`, hence with lemlist's default — which filters everything out and
+        returns an empty list that reads as "no leads". A one-lead campaign
+        thus came back empty (signal 719) while the single-lead route returned it just
+        fine, and the guide announced the forcing as a given for the whole connector.
+        `export_campaign_leads` carries the default `state="all"`, verified live on
+        2026-08-31: we take the surface that has the guard rather than rebuild one.
         """
         client, is_platform = _client()
         exported = client.export_campaign_leads(campaign_id, format="json")
@@ -542,12 +542,12 @@ def register(mcp: FastMCP) -> None:
         from oto.tools.common.errors import UpstreamHTTPError
 
         if not campaign_id.startswith("cam_"):
-            # oto#1072 : sans le préfixe, lemlist répondait 200 SANS créer de lead.
+            # oto#1072: without the prefix, lemlist answered 200 WITHOUT creating a lead.
             raise _refus(
                 "lemlist_campaign_id_format",
-                f"`campaign_id` doit être l'id lemlist avec son préfixe `cam_` "
-                f"(ex. `cam_{campaign_id}`), tel que lemlist_campaign le rend. "
-                "Rien n'a été envoyé.", campaign_id=campaign_id)
+                f"`campaign_id` must be the lemlist id with its `cam_` prefix "
+                f"(e.g. `cam_{campaign_id}`), as lemlist_campaign returns it. "
+                "Nothing was sent.", campaign_id=campaign_id)
         client, is_platform = _client()
         try:
             result = client.create_lead(
@@ -559,26 +559,26 @@ def register(mcp: FastMCP) -> None:
             if _campagne_introuvable(e):
                 raise _refus(
                     "lemlist_campaign_not_found",
-                    f"lemlist ne trouve pas la campagne `{campaign_id}` pour la clé "
-                    "utilisée (404). Vérifie l'id avec lemlist_campaign, et que la "
-                    "campagne appartient à l'équipe lemlist de cette clé (`_account` / "
-                    "`_instance`) : ses rapports peuvent rester lisibles quand ses leads "
-                    "ne le sont pas. Rien n'a été créé.", campaign_id=campaign_id)
+                    f"lemlist cannot find campaign `{campaign_id}` for the key "
+                    "used (404). Check the id with lemlist_campaign, and that the "
+                    "campaign belongs to this key's lemlist team (`_account` / "
+                    "`_instance`): its reports may stay readable when its leads "
+                    "are not. Nothing was created.", campaign_id=campaign_id)
             reason = _lead_deja_pris(e)
             if reason is None:
                 raise
             return {"created": False, "reason": reason, "message": e.body.strip(),
                     "campaign_id": campaign_id, "lead": lead}
         if not (isinstance(result, dict) and result.get("_id")):
-            # oto#1072 : un succès vide, sans lead créé, se lisait comme une réussite.
+            # oto#1072: an empty success, with no lead created, read as a success.
             raise _refus(
                 "lemlist_lead_not_created",
-                f"lemlist a répondu sans id de lead pour la campagne `{campaign_id}` : "
-                "aucun lead n'a été créé. Vérifie l'id de campagne et les champs du "
-                "lead avant de réessayer.", campaign_id=campaign_id)
+                f"lemlist answered without a lead id for campaign `{campaign_id}`: "
+                "no lead was created. Check the campaign id and the lead's "
+                "fields before retrying.", campaign_id=campaign_id)
         _record_if_platform(is_platform)
-        # oto#264 : l'état de revue n'est pas dans la réponse — le dire, et retirer
-        # le champ qui se lisait à tort comme sa réponse.
+        # oto#264: the review state is not in the response — say so, and drop
+        # the field that was wrongly read as its answer.
         return {**project(result, drop=("isPaused",)),
                 "review_state": REVIEW_STATE_UNKNOWN, "review_hint": REVIEW_HINT}
 
@@ -724,19 +724,19 @@ def register(mcp: FastMCP) -> None:
             row = {
                 "enrichment_id": res.get("enrichmentId", eid),
                 "status": status,
-                # `not-found` est terminal aussi : re-poller ne le fera pas
-                # apparaître, c'est un id inconnu de lemlist.
+                # `not-found` is terminal too: polling again will not make it
+                # appear, it is an id unknown to lemlist.
                 "done": status in ("done", "not-found"),
                 "input": res.get("input", {}),
                 "data": data,
                 "found": _found_digest(data),
             }
             if status == "done" and not row["found"]:
-                # Observé en live : lemlist bascule parfois sur `done` AVANT que
-                # la charge utile soit posée (un `data` vide, puis peuplé au
-                # relevé suivant). Sans ce garde-fou, un agent lit « done + rien »
-                # et conclut « pas trouvé » sur une donnée qui arrive juste après.
-                # Un relevé ne coûte pas de crédit : autant le refaire une fois.
+                # Observed live: lemlist sometimes flips to `done` BEFORE the
+                # payload is in place (an empty `data`, then populated at the
+                # next read). Without this safeguard, an agent reads "done + nothing"
+                # and concludes "not found" on data that arrives right after.
+                # A read costs no credit: might as well redo it once.
                 row["warning"] = (
                     "done but empty — lemlist sometimes flips to done before the "
                     "payload lands. Poll once more (~15s) before concluding "
@@ -745,11 +745,11 @@ def register(mcp: FastMCP) -> None:
             results.append(row)
         pending = [r["enrichment_id"] for r in results if not r["done"]]
         settling = [r["enrichment_id"] for r in results if r.get("warning")]
-        # `all_done` ne parle QUE de ce qui tourne encore : un résultat
-        # légitimement vide (personne introuvable) le resterait à jamais, et un
-        # agent qui boucle sur `all_done` ne s'arrêterait plus. Le re-relevé
-        # d'un `done` vide est une SUGGESTION, à faire une fois — pas une
-        # condition de sortie.
+        # `all_done` speaks ONLY of what is still running: a legitimately
+        # empty result (person not found) would stay so forever, and an
+        # agent looping on `all_done` would never stop. Re-reading
+        # an empty `done` is a SUGGESTION, to do once — not an
+        # exit condition.
         out = {"results": results, "all_done": not pending}
         if settling:
             out["recheck_suggested"] = settling
@@ -819,9 +819,9 @@ def register(mcp: FastMCP) -> None:
                         "companyDomain": person.get("company_domain"),
                     }.items() if v is not None
                 },
-                # Vocabulaire v2 : `verify`, pas `verify_email` — la table de
-                # correspondance vit dans le client, ce n'est pas un snake_case
-                # mécanique des flags v1.
+                # v2 vocabulary: `verify`, not `verify_email` — the mapping
+                # table lives in the client, it is not a mechanical snake_case
+                # of the v1 flags.
                 "enrichmentRequests": [BULK_ACTIONS[a] for a in actions],
                 "metadata": {"index": str(i)},
             }
@@ -829,19 +829,19 @@ def register(mcp: FastMCP) -> None:
 
         raw = client.bulk_enrich(items, webhook_url=webhook_url)
         if is_platform:
-            # Un bulk est facturé À LA PERSONNE : la consommation est le nombre
-            # d'entrées soumises, pas 1 pour l'appel (même règle que FullEnrich).
-            # `len(items)` et non un coût réel : la réponse de lemlist ne chiffre
-            # aucun coût par appel (seul `team/credits` donne un solde global), donc
-            # à ce moment-là l'amont ne dit rien — on ne devine pas.
+            # A bulk is billed PER PERSON: consumption is the number of
+            # entries submitted, not 1 for the call (same rule as FullEnrich).
+            # `len(items)` and not a real cost: lemlist's response gives no
+            # per-call cost (only `team/credits` gives a global balance), so
+            # at that point upstream says nothing — we do not guess.
             access.record_platform_usage("lemlist", len(items))
         submitted = []
         for i, entry in enumerate(raw if isinstance(raw, list) else []):
-            # `metadata` est renvoyé tel quel par lemlist, mais sa forme n'est
-            # pas stable (leur propre exemple montre `{"id": ...}` ET une
-            # chaîne nue) : on s'en sert quand il porte bien l'index qu'on a
-            # posé, sinon on retombe sur la position — les entrées reviennent
-            # dans l'ordre soumis.
+            # `metadata` is returned as is by lemlist, but its shape is not
+            # stable (their own example shows `{"id": ...}` AND a bare
+            # string): we use it when it does carry the index we
+            # set, otherwise we fall back on the position — entries come back
+            # in the submitted order.
             meta = entry.get("metadata")
             index = i
             if isinstance(meta, dict) and str(meta.get("index", "")).isdigit():
@@ -885,13 +885,13 @@ def register(mcp: FastMCP) -> None:
         _record_if_platform(is_platform)
         return result
 
-    # --- Gestion de campagne ---------------------------------------------------
+    # --- Campaign management ---------------------------------------------------
     #
-    # Trois tools à `op`, un tool nu. Le découpage n'est pas cosmétique : le
-    # masquage par défaut (`DEFAULT_HIDDEN_TOOLS`) a le grain du TOOL, pas de
-    # l'op. `start` — le seul geste ici qui mette des messages sur le fil — vit
-    # donc à part, masqué ; le reste (créer, régler, dupliquer, mettre en pause,
-    # valider) n'envoie rien et tient dans un tool visible par famille.
+    # Three `op` tools, one bare tool. The split is not cosmetic: the
+    # default hiding (`DEFAULT_HIDDEN_TOOLS`) has the grain of the TOOL, not of
+    # the op. `start` — the only action here that puts messages on the wire — therefore
+    # lives apart, hidden; the rest (create, configure, duplicate, pause,
+    # validate) sends nothing and fits in one visible tool per family.
 
     @mcp.tool()
     def lemlist_campaign(
@@ -916,7 +916,7 @@ def register(mcp: FastMCP) -> None:
         full: bool = False,
     ) -> dict:
         """Manage campaigns: create, configure, pause, duplicate, validate,
-        report, export. `oto_guide op=read slug="lemlist-playbook"` : ordre de construction, d'où vient chaque id, et les écarts doc↔API.
+        report, export. `oto_guide op=read slug="lemlist-playbook"`: build order, where each id comes from, and the doc↔API gaps.
 
         Nothing here sends: a created or duplicated campaign lands in DRAFT.
         Putting messages on the wire is `lemlist_campaign_start` (hidden by
@@ -974,32 +974,32 @@ def register(mcp: FastMCP) -> None:
 
         if op == "create":
             if not name:
-                raise _bad("`name` requis pour créer une campagne")
+                raise _bad("`name` required to create a campaign")
             _refuse_auto_review(settings)
             if settings:
-                # `POST /campaigns` ne prend que name + timezone : accepter un
-                # `settings` ici rendrait une campagne d'apparence réglée dont
-                # aucun réglage n'aurait pris. Refuser plutôt que jeter en
-                # silence — et plutôt que create-puis-update, qui laisse une
-                # campagne à moitié réglée quand le second appel échoue.
+                # `POST /campaigns` only takes name + timezone: accepting a
+                # `settings` here would give a campaign that looks configured but
+                # none of whose settings took. Refuse rather than silently
+                # discard — and rather than create-then-update, which leaves a
+                # half-configured campaign when the second call fails.
                 raise _bad(
-                    "`settings` ne s'applique pas à la création — la campagne "
-                    "naît avec `name` (+ `timezone`). Enchaîne "
-                    'op="update" sur l\'id rendu.')
+                    "`settings` does not apply at creation — the campaign "
+                    "is born with `name` (+ `timezone`). Follow with "
+                    'op="update" on the returned id.')
             result = client.create_campaign(name, timezone=timezone)
-            # Le retour de lemlist porte `state: running` et un `status` qui dit
-            # « draft » : l'agent qui lit le second croit la campagne à l'arrêt.
-            # On le dit plutôt que de le laisser déduire.
+            # lemlist's response carries `state: running` and a `status` that says
+            # "draft": an agent reading the latter thinks the campaign is stopped.
+            # We say so rather than let it be inferred.
             if isinstance(result, dict):
                 result = {**result, "warning": (
-                    "Campagne créée en state=running (son `status` affiche "
-                    "\"draft\" tant qu'elle n'a ni étape ni lead). Rien ne part "
-                    "tant qu'un lead n'est pas lancé, mais appelle "
-                    "op=\"pause\" si tu veux la construire interrupteur coupé.")}
+                    "Campaign created with state=running (its `status` shows "
+                    "\"draft\" as long as it has neither step nor lead). Nothing goes out "
+                    "until a lead is launched, but call "
+                    "op=\"pause\" if you want to build it with the switch off.")}
 
         elif op == "update":
             if not campaign_id:
-                raise _bad("`campaign_id` requis")
+                raise _bad("`campaign_id` required")
             _refuse_auto_review(settings)
             if name is not None:
                 settings["name"] = name
@@ -1007,33 +1007,33 @@ def register(mcp: FastMCP) -> None:
                 settings["sendUserIds"] = sender_user_ids
             if not settings:
                 raise _bad(
-                    "rien à mettre à jour — passe `name`, `sender_user_ids` "
-                    "et/ou `settings`")
+                    "nothing to update — pass `name`, `sender_user_ids` "
+                    "and/or `settings`")
             result = client.update_campaign(campaign_id, settings)
 
         elif op == "pause":
             if not campaign_id:
-                raise _bad("`campaign_id` requis")
+                raise _bad("`campaign_id` required")
             result = client.pause_campaign(campaign_id)
 
         elif op == "duplicate":
             if not campaign_id:
-                raise _bad("`campaign_id` requis")
+                raise _bad("`campaign_id` required")
             result = client.duplicate_campaign(campaign_id, name=name)
 
         elif op == "statutes":
             if not campaign_id:
-                raise _bad("`campaign_id` requis")
+                raise _bad("`campaign_id` required")
             result = client.get_campaign_statutes(campaign_id)
 
         elif op == "reports":
             if not campaign_ids:
-                raise _bad("`campaign_ids` requis (liste d'ids de campagne)")
+                raise _bad("`campaign_ids` required (list of campaign ids)")
             result = {"reports": client.get_campaign_reports(campaign_ids)}
 
         elif op == "batch_stats":
             if not campaign_ids:
-                raise _bad("`campaign_ids` requis (liste d'ids de campagne)")
+                raise _bad("`campaign_ids` required (list of campaign ids)")
             start, end = _default_window(start_date, end_date)
             result = client.get_batch_campaign_stats(
                 campaign_ids, start_date=start, end_date=end, channels=channels,
@@ -1045,26 +1045,26 @@ def register(mcp: FastMCP) -> None:
 
         elif op == "export_start":
             if not campaign_id:
-                raise _bad("`campaign_id` requis")
+                raise _bad("`campaign_id` required")
             result = client.start_campaign_export(campaign_id)
 
         elif op == "export_status":
             if not (campaign_id and export_id):
-                raise _bad("`campaign_id` ET `export_id` requis")
+                raise _bad("`campaign_id` AND `export_id` required")
             result = client.get_campaign_export_status(campaign_id, export_id)
 
         elif op == "export_email":
             if not (campaign_id and export_id and email):
-                raise _bad("`campaign_id`, `export_id` ET `email` requis")
+                raise _bad("`campaign_id`, `export_id` AND `email` required")
             result = client.set_campaign_export_email(campaign_id, export_id, email)
 
         elif op == "export_leads":
             if not campaign_id:
-                raise _bad("`campaign_id` requis")
-            # `state`/`format` OMIS quand ils ne sont pas demandés : le client
-            # a des défauts qui comptent (`state="all"`, sans quoi lemlist rend
-            # une liste vide qui se lit « pas de leads »), et passer None les
-            # écraserait. Un défaut client ne survit pas à un None explicite.
+                raise _bad("`campaign_id` required")
+            # `state`/`format` OMITTED when not requested: the client
+            # has defaults that matter (`state="all"`, without which lemlist returns
+            # an empty list that reads as "no leads"), and passing None would
+            # override them. A client default does not survive an explicit None.
             exported = client.export_campaign_leads(campaign_id, **{
                 k: v for k, v in (("state", state), ("format", format))
                 if v is not None})
@@ -1072,7 +1072,7 @@ def register(mcp: FastMCP) -> None:
 
         else:
             raise _bad(
-                f'op inconnu "{op}" — attendu: create, update, pause, duplicate, '
+                f'unknown op "{op}" — expected: create, update, pause, duplicate, '
                 "statutes, reports, batch_stats, export_start, export_status, "
                 "export_email, export_leads")
 
@@ -1144,24 +1144,24 @@ def register(mcp: FastMCP) -> None:
 
         if op == "get":
             if not campaign_id:
-                raise _bad("`campaign_id` requis")
+                raise _bad("`campaign_id` required")
             result = {"sequences": client.get_sequences(campaign_id)}
         else:
             if not sequence_id:
-                raise _bad("`sequence_id` requis (il vient de `lemlist_campaign` "
-                           "op=create, ou de op=\"get\" ici)")
+                raise _bad("`sequence_id` required (it comes from `lemlist_campaign` "
+                           "op=create, or from op=\"get\" here)")
             if op == "add_step":
                 if not step:
-                    raise _bad("`step` requis (au minimum `{\"type\": …}`)")
+                    raise _bad("`step` required (at minimum `{\"type\": …}`)")
                 result = client.add_step(sequence_id, step)
             elif op in ("update_step", "delete_step", "ab_create", "ab_get",
                         "ab_update", "ab_delete", "ab_winner"):
                 if not step_id:
-                    raise _bad("`step_id` requis")
+                    raise _bad("`step_id` required")
                 if op == "update_step":
                     if not step:
-                        raise _bad("`step` requis (et `step.type` doit correspondre "
-                                   "au type existant)")
+                        raise _bad("`step` required (and `step.type` must match "
+                                   "the existing type)")
                     result = client.update_step(sequence_id, step_id, step)
                 elif op == "delete_step":
                     result = client.delete_step(sequence_id, step_id)
@@ -1171,18 +1171,18 @@ def register(mcp: FastMCP) -> None:
                     result = client.get_ab_variant(sequence_id, step_id)
                 elif op == "ab_update":
                     if not step:
-                        raise _bad("`step` requis (les champs de la variante B)")
+                        raise _bad("`step` required (the fields of variant B)")
                     result = client.update_ab_variant(sequence_id, step_id, step)
                 elif op == "ab_delete":
                     result = client.delete_ab_variant(
                         sequence_id, step_id, variant=variant or "B")
                 else:  # ab_winner
                     if not variant:
-                        raise _bad("`variant` requis — 'A' ou 'B'")
+                        raise _bad("`variant` required — 'A' or 'B'")
                     result = client.select_ab_winner(sequence_id, step_id, variant)
             else:
                 raise _bad(
-                    f'op inconnu "{op}" — attendu: get, add_step, update_step, '
+                    f'unknown op "{op}" — expected: get, add_step, update_step, '
                     "delete_step, ab_create, ab_get, ab_update, ab_delete, ab_winner")
 
         _record_if_platform(is_platform)
@@ -1235,11 +1235,11 @@ def register(mcp: FastMCP) -> None:
                 sort_order="desc" if newest_first else None)
         elif op == "get":
             if not schedule_id:
-                raise _bad("`schedule_id` requis")
+                raise _bad("`schedule_id` required")
             result = client.get_schedule(schedule_id)
         elif op == "create":
             if not name:
-                raise _bad("`name` requis pour créer un planning")
+                raise _bad("`name` required to create a schedule")
             kwargs = {k: v for k, v in {
                 "timezone": timezone, "start": start, "end": end,
                 "weekdays": weekdays, "seconds_to_wait": seconds_to_wait,
@@ -1248,30 +1248,30 @@ def register(mcp: FastMCP) -> None:
             result = client.create_schedule(name, **kwargs)
         elif op == "update":
             if not schedule_id:
-                raise _bad("`schedule_id` requis")
+                raise _bad("`schedule_id` required")
             data = {k: v for k, v in {
                 "name": name, "timezone": timezone, "start": start, "end": end,
                 "weekdays": weekdays, "secondsToWait": seconds_to_wait,
                 "public": public,
             }.items() if v is not None}
             if not data:
-                raise _bad("rien à mettre à jour — passe au moins un champ")
+                raise _bad("nothing to update — pass at least one field")
             result = client.update_schedule(schedule_id, data)
         elif op == "delete":
             if not schedule_id:
-                raise _bad("`schedule_id` requis")
+                raise _bad("`schedule_id` required")
             result = client.delete_schedule(schedule_id)
         elif op == "for_campaign":
             if not campaign_id:
-                raise _bad("`campaign_id` requis")
+                raise _bad("`campaign_id` required")
             result = {"schedules": client.get_campaign_schedules(campaign_id)}
         elif op == "associate":
             if not (campaign_id and schedule_id):
-                raise _bad("`campaign_id` ET `schedule_id` requis")
+                raise _bad("`campaign_id` ET `schedule_id` required")
             result = client.associate_schedule(campaign_id, schedule_id)
         else:
             raise _bad(
-                f'op inconnu "{op}" — attendu: list, get, create, update, delete, '
+                f'unknown op "{op}" — expected: list, get, create, update, delete, '
                 "for_campaign, associate")
 
         _record_if_platform(is_platform)
@@ -1329,7 +1329,7 @@ def register(mcp: FastMCP) -> None:
         audio: Optional[dict] = None,
     ) -> dict:
         """Lead lifecycle inside a campaign — read, edit, pause, qualify, remove.
-        `oto_guide op=read slug="lemlist-playbook"` : ordre de construction, d'où vient chaque id, et les écarts doc↔API.
+        `oto_guide op=read slug="lemlist-playbook"`: build order, where each id comes from, and the doc↔API gaps.
 
         A LEAD is a person's copy inside ONE campaign (its sending state, its
         variables); the person themself is a contact (`lemlist_contact`).
@@ -1371,68 +1371,68 @@ def register(mcp: FastMCP) -> None:
 
         if op == "get":
             if not target:
-                raise _bad("`lead_id` ou `email` requis")
+                raise _bad("`lead_id` or `email` required")
             result = (client.get_lead(lead_id=lead_id) if lead_id
                       else client.get_lead_by_email(email))
 
         elif op == "list":
             if not campaign_id:
-                raise _bad("`campaign_id` requis")
-            # ⚠️ `state="all"` par DÉFAUT — le défaut de lemlist filtre TOUT et rend
-            # une liste vide qui se lit « pas de leads » (vérifié en live le
-            # 2026-08-31, cf. `export_campaign_leads` côté client). Le guide
-            # `lemlist-playbook` annonçait ce forçage comme acquis pour le connecteur
-            # entier ; il n'existait que sur la route d'export, et cette route-ci
-            # rendait donc `[]` sur une campagne qui contient bien des leads
-            # (signal 719). Un `state` explicite reste maître ; il n'y a PAS
-            # d'échappatoire vers le brut — une valeur magique non documentée serait
-            # le défaut d'à côté, et le brut n'est utile à personne : il filtre tout.
+                raise _bad("`campaign_id` required")
+            # ⚠️ `state="all"` by DEFAULT — lemlist's default filters EVERYTHING out and returns
+            # an empty list that reads as "no leads" (verified live on
+            # 2026-08-31, see `export_campaign_leads` on the client side). The guide
+            # `lemlist-playbook` announced this forcing as a given for the whole connector;
+            # it only existed on the export route, and this route
+            # therefore returned `[]` on a campaign that does contain leads
+            # (signal 719). An explicit `state` remains master; there is NO
+            # escape hatch to the raw — an undocumented magic value would be
+            # the neighbouring default, and the raw is useful to no one: it filters everything out.
             result = {"leads": client.get_campaign_leads(
                 campaign_id, state=(state or "all"), limit=limit)}
 
         elif op == "update":
             if not (campaign_id and lead_id and fields):
-                raise _bad("`campaign_id`, `lead_id` ET `fields` requis")
+                raise _bad("`campaign_id`, `lead_id` AND `fields` required")
             result = client.update_lead(campaign_id, lead_id, fields)
 
         elif op in ("delete", "unsubscribe"):
             if not (campaign_id and target):
-                raise _bad("`campaign_id` ET `lead_id`/`email` requis")
+                raise _bad("`campaign_id` AND `lead_id`/`email` required")
             result = client.delete_lead(
                 campaign_id, target, action="remove" if op == "delete" else None)
 
         elif op == "pause":
             if not lead_id:
-                raise _bad("`lead_id` requis")
+                raise _bad("`lead_id` required")
             result = client.pause_lead(lead_id, campaign_id=campaign_id)
 
         elif op == "resume":
             if not lead_id:
-                raise _bad("`lead_id` requis")
+                raise _bad("`lead_id` required")
             result = client.resume_lead(lead_id)
 
         elif op in ("interested", "not_interested"):
             if not target:
-                raise _bad("`lead_id` ou `email` requis")
+                raise _bad("`lead_id` or `email` required")
             mark = (client.mark_lead_interested if op == "interested"
                     else client.mark_lead_not_interested)
             result = mark(target, campaign_id=campaign_id)
 
         elif op == "vars_update":
             if not (lead_id and variables):
-                raise _bad("`lead_id` ET `variables` requis")
+                raise _bad("`lead_id` AND `variables` required")
             result = client.update_lead_variables(lead_id, variables)
 
         elif op == "vars_delete":
             if not (lead_id and variable_names):
-                raise _bad("`lead_id` ET `variable_names` requis")
+                raise _bad("`lead_id` AND `variable_names` required")
             result = client.delete_lead_variables(lead_id, variable_names)
 
         elif op == "import_crm":
             if not (campaign_id and crm and user_id and filter_id):
                 raise _bad(
-                    "`campaign_id`, `crm`, `user_id` ET `filter_id` requis — "
-                    'le filtre vient de `lemlist_team(op="crm_filters")`')
+                    "`campaign_id`, `crm`, `user_id` AND `filter_id` required — "
+                    'the filter comes from `lemlist_team(op="crm_filters")`')
             result = client.import_leads_from_crm(
                 campaign_id, crm=crm, user_id=user_id, filter_id=filter_id,
                 filter_type=filter_type, deduplicate=deduplicate)
@@ -1440,15 +1440,15 @@ def register(mcp: FastMCP) -> None:
         elif op == "upload_audio":
             if not (lead_id and step_id and audio):
                 raise _bad(
-                    "`lead_id`, `step_id` ET `audio` requis — `audio` est une "
-                    'source : {"kind": "url"|"drive"|"gmail"|"project_file", …}')
+                    "`lead_id`, `step_id` AND `audio` required — `audio` is a "
+                    'source: {"kind": "url"|"drive"|"gmail"|"project_file", …}')
             data, filename = _fetch_audio(audio)
             result = client.upload_lead_audio(
                 lead_id, step_id, data, filename=filename)
 
         else:
             raise _bad(
-                f'op inconnu "{op}" — attendu: get, list, update, delete, '
+                f'unknown op "{op}" — expected: get, list, update, delete, '
                 "unsubscribe, pause, resume, interested, not_interested, "
                 "vars_update, vars_delete, import_crm, upload_audio")
 

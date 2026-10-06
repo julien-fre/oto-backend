@@ -123,7 +123,7 @@ def test_la_doc_ne_revendique_pas_une_verification_live_inexistante():
     genre d'attestation que les fiches voisines portent à juste titre, et qui ne
     vaut que si elle est vraie."""
     corps = "\n".join(s.body_md for s in providers.REGISTRY["minari"].doc_sections)
-    assert "sans sonde contre un vrai compte" in corps
+    assert "without a probe against a real account" in corps
 
 
 # --- surface MCP ---------------------------------------------------------------
@@ -274,7 +274,7 @@ def test_op_lists_refuse_une_fenetre_en_dates():
     « depuis janvier » calculé sur la semaine, sans que rien ne le signale."""
     m, _cls, p = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="pas de fenêtre en dates"):
+        with pytest.raises(McpError, match="has no date window"):
             _tool(m, "minari_analytics")(op="lists", period="week", call_limit=3,
                                          start_date="2026-01-01", end_date="2026-08-01")
     finally:
@@ -286,7 +286,7 @@ def test_une_date_sans_son_pendant_est_refusee():
     rendrait la fenêtre par défaut sans le dire."""
     m, _cls, p = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="ensemble"):
+        with pytest.raises(McpError, match="go together"):
             _tool(m, "minari_analytics")(op="overview", start_date="2026-08-01")
     finally:
         p.stop()
@@ -336,7 +336,7 @@ def test_op_get_distingue_transcription_en_cours_de_zero_replique():
         out = _tool(m, "minari_call")(op="get", call_id="C1")
         assert out["data"]["transcript_utterances"] == 0
         assert "transcription" in out["note"]
-        assert "ne rendra rien de plus" in out["note"], (
+        assert "will return nothing more" in out["note"], (
             "un appel sans transcript ne doit pas coûter un second appel")
     finally:
         p.stop()
@@ -408,7 +408,7 @@ def test_max_contacts_est_plafonne_et_le_dit():
             "listId": "L1", "contacts": [{"contactId": str(i)} for i in range(1500)]}}
         out = _tool(m, "minari_list")(op="get", list_id="L1", max_contacts=1500)
         assert len(out["data"]["contacts"]) == minari._CEILING_MAX_CONTACTS
-        assert "ramené à" in out["note"]
+        assert "reduced to" in out["note"]
         assert out["data"]["total_contacts"] == 1500
     finally:
         p.stop()
@@ -474,8 +474,8 @@ def test_un_429_dit_que_le_budget_est_partage_par_lentreprise():
     pas SON rythme qui est en cause, mais celui de tout l'espace."""
     from oto.tools.common.errors import UpstreamHTTPError
     msg = minari._upstream_message(UpstreamHTTPError(429, {}, service="minari"))
-    assert "60 requêtes/minute" in msg
-    assert "l'entreprise" in msg and "sous la même clé" in msg
+    assert "60 requests/minute" in msg
+    assert "the WHOLE company" in msg and "under the same key" in msg
 
 
 def test_un_corps_derreur_non_json_nest_pas_effacé():
@@ -564,7 +564,7 @@ def test_tourner_la_page_rappelle_de_repasser_les_filtres():
             "next_url": "https://api.minari.ai/v1/calls?transcript_search=prix&cursor=abc"}
         out = _tool(m, "minari_call")(op="list", transcript_search="prix")
         assert out["next_cursor"] == "abc"
-        assert "mêmes filtres" in out["note"]
+        assert "same filters" in out["note"]
     finally:
         p.stop()
 
@@ -589,6 +589,6 @@ def test_deux_remarques_se_cumulent_au_lieu_de_secraser():
             "next_url": "https://api.minari.ai/v1/lists?cursor=xyz"}
         out = _tool(m, "minari_list")(op="list")
         assert "CSV" in out["note"]
-        assert "curseur" in out["note"]
+        assert "cursor" in out["note"]
     finally:
         p.stop()

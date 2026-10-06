@@ -79,7 +79,7 @@ def test_attachments_lentes_rendent_une_erreur_nommee(monkeypatch, wired):
     _, _, err = _joue(fn(
         body="hi", to="a@b.com",
         attachments=[{"kind": "url", "url": "https://example.invalid/x"}]))
-    assert err is not None and "trop longue" in err.error.message, (
+    assert err is not None and "too long" in err.error.message, (
         f"une pièce jointe lente doit rendre une McpError nommée, pas un gel — reçu {err!r}")
 
 

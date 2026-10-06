@@ -1,15 +1,15 @@
-"""Déclaration de registre du connecteur `attio`.
+"""Registry declaration of the `attio` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# attio : hors socle (2026-06-11) — le MCP Attio officiel est meilleur pour
-# l'instant. Code conservé (tools/attio.py) pour d'éventuelles implems
-# custom ; installable depuis la library.
+# attio: outside the core set (2026-06-11) — the official Attio MCP is better for
+# now. Code kept (tools/attio.py) for possible custom implementations;
+# installable from the library.
 CONNECTOR = _c(
     "attio", ["attio"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", default_quota=200,
@@ -21,9 +21,9 @@ PUBLISHER = "Attio"
 LOGO_DOMAIN = "attio.com"
 
 DESCRIPTION = (
-    "Un CRM léger et personnalisable : lister, créer et mettre à jour des "
-    "enregistrements (personnes, entreprises, deals) selon le schéma propre à "
-    "ton espace Attio. Hors socle depuis juin 2026 — le MCP officiel d'Attio "
-    "est aujourd'hui plus complet ; ce connecteur reste disponible pour des "
-    "implémentations sur mesure."
+    "A lightweight, customizable CRM: list, create and update "
+    "records (people, companies, deals) according to the schema specific to "
+    "your Attio workspace. Outside the core set since June 2026 — Attio's official MCP "
+    "is now more complete; this connector remains available for custom "
+    "implementations."
 )

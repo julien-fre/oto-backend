@@ -223,7 +223,7 @@ def test_dry_run_par_defaut_n_ecrit_rien(client, tool, kwargs, method, args, sen
     out = _tool(tool)(**kwargs)
     assert _ecrit(client) == []
     assert out["dry_run"] is True and out["would"] == kwargs.get("op", "create")
-    assert "Rien n'est écrit" in out["note"]
+    assert "Nothing is written" in out["note"]
     if isinstance(kwargs.get("data"), dict):
         assert kwargs["data"].items() <= out["data"].items()
     elif "data" in kwargs:
@@ -271,15 +271,15 @@ def test_une_suppression_204_le_dit(client):
     ("nextmotion_appointment", {"op": "update", "appointment_id": X,
                                 "data": {"calendar_event": dict(
                                     EVENT, treatment_session_status="done")}},
-     "`data.calendar_event` .*`treatment_session_status`"),
+     "`data.calendar_event`: .*`treatment_session_status`"),
     ("nextmotion_calendar", {"kind": "opening_hour", "op": "create", "clinic_id": C,
                              "data": {"calendar_event": dict(EVENT, champ_inconnu=1)}},
-     "`data.calendar_event` .*`champ_inconnu`"),
+     "`data.calendar_event`: .*`champ_inconnu`"),
     ("nextmotion_catalog", {"kind": "treatment_type", "op": "update", "item_id": X,
                             "data": {"name": "S", "pricings": [{"price": "1", "x": 1}]}},
-     r"`data.pricings\[0\]` .*`x`"),
+     r"`data.pricings\[0\]`: .*`x`"),
     ("nextmotion_catalog", {"kind": "visit_type", "op": "reorder", "clinic_id": C,
-                            "data": [{"id": X, "position": 1}]}, r"`data\[0\]` .*`position`"),
+                            "data": [{"id": X, "position": 1}]}, r"`data\[0\]`: .*`position`"),
     ("nextmotion_lead", {"op": "create", "clinic_id": C,
                          "data": {"first_name": "f", "last_name": "l", "age": 30}}, "`age`"),
     ("nextmotion_quote", {"op": "update", "quote_id": X,
@@ -291,7 +291,7 @@ def test_une_suppression_204_le_dit(client):
     ("nextmotion_invoice", {"op": "credit_note", "clinic_id": C,
                             "data": {"patient": X, "items": [{"amount": "1",
                                                               "treatment_id": X}]}},
-     r"`data.items\[0\]` .*`treatment_id`"),
+     r"`data.items\[0\]`: .*`treatment_id`"),
     ("nextmotion_invoice", {"op": "credit_note", "clinic_id": C,
                             "data": {"patient": X, "items": [
                                 {"amount": "1", "treatment_package_id": X,
@@ -306,51 +306,51 @@ def test_un_champ_inconnu_est_refuse_nommement(client, tool, kwargs, match):
 
 @pytest.mark.parametrize("tool,kwargs,match", [
     ("nextmotion_calendar", {"kind": "room", "op": "create", "clinic_id": C,
-                             "data": {"color": "FFFFFFFF"}}, "exige `name`"),
+                             "data": {"color": "FFFFFFFF"}}, "requires `name`"),
     ("nextmotion_patient", {"op": "create", "clinic_id": C, "data": {"email": "e"}},
-     "exige `first_name`, `last_name`, `gender`"),
+     "requires `first_name`, `last_name`, `gender`"),
     ("nextmotion_catalog", {"kind": "visit_type", "op": "update", "item_id": X},
-     "exige `data`"),
+     "requires `data`"),
     ("nextmotion_catalog", {"kind": "visit_type", "op": "reorder", "clinic_id": C,
-                            "data": {"id": X}}, "liste d'objets"),
+                            "data": {"id": X}}, "list of objects"),
     ("nextmotion_calendar", {"kind": "room", "op": "update", "item_id": X,
-                             "data": [{"name": "x"}]}, "doit être un objet"),
+                             "data": [{"name": "x"}]}, "must be an object"),
     ("nextmotion_calendar", {"kind": "room", "op": "create", "item_id": X,
-                             "data": {"name": "x"}}, "exige `clinic_id`"),
+                             "data": {"name": "x"}}, "requires `clinic_id`"),
     ("nextmotion_calendar", {"kind": "room", "op": "delete", "item_id": X,
-                             "clinic_id": C}, "n'utilise pas `clinic_id`"),
+                             "clinic_id": C}, "does not use `clinic_id`"),
     ("nextmotion_calendar", {"kind": "room", "op": "delete", "item_id": X,
-                             "data": {}}, "n'utilise pas `data`"),
+                             "data": {}}, "does not use `data`"),
     ("nextmotion_calendar", {"kind": "room", "op": "delete", "item_id": X,
-                             "show_all": False}, "n'utilise pas `show_all`"),
+                             "show_all": False}, "does not use `show_all`"),
     ("nextmotion_calendar", {"kind": "appointment_request", "op": "update", "item_id": X,
-                             "data": {}}, "op='update' inconnue"),
+                             "data": {}}, "unknown op='update'"),
     ("nextmotion_calendar", {"kind": "room", "clinic_id": C, "dry_run": False},
-     "n'utilise pas `dry_run`"),
+     "does not use `dry_run`"),
     ("nextmotion_calendar", {"kind": "room", "op": "get", "item_id": X, "data": {}},
-     "n'utilise pas `data`"),
+     "does not use `data`"),
     ("nextmotion_quote", {"op": "get", "quote_id": X, "dry_run": False},
-     "n'utilise pas `dry_run`"),
-    ("nextmotion_quote", {"op": "update", "data": {}}, "exige `quote_id`"),
+     "does not use `dry_run`"),
+    ("nextmotion_quote", {"op": "update", "data": {}}, "requires `quote_id`"),
     ("nextmotion_invoice", {"op": "pay", "invoice_id": X, "data": {"card": "1"},
-                            "offset": 0}, "n'utilise pas `offset`"),
+                            "offset": 0}, "does not use `offset`"),
     ("nextmotion_patient", {"op": "get", "patient_id": X, "search": "x"},
-     "n'utilise pas `search`"),
+     "does not use `search`"),
     ("nextmotion_patient", {"op": "create", "clinic_id": C, "patient_id": X,
-                            "data": {}}, "n'utilise pas `patient_id`"),
+                            "data": {}}, "does not use `patient_id`"),
     ("nextmotion_catalog", {"kind": "treatment_package_item", "item_id": X, "op": "get"},
      "op='items'"),
     ("nextmotion_catalog", {"kind": "visit_type", "op": "post_treatment", "item_id": X},
      "treatment_type"),
-    ("nextmotion_setting", {"kind": "webhook", "op": "placeholders"}, "ne vaut que"),
+    ("nextmotion_setting", {"kind": "webhook", "op": "placeholders"}, "only applies"),
     ("nextmotion_setting", {"kind": "survey_form", "op": "placeholders"},
-     "exige `survey_type`"),
+     "requires `survey_type`"),
     ("nextmotion_setting", {"kind": "document_template", "op": "placeholders",
-                            "survey_type": "bolt_note"}, "n'utilise pas `survey_type`"),
+                            "survey_type": "bolt_note"}, "does not use `survey_type`"),
     ("nextmotion_communication", {"kind": "message", "clinic_id": C,
                                   "data": {"communication_template_kind": "email",
                                            "communication_template_type": "prescription",
-                                           "object": X}}, "n'est pas servi"),
+                                           "object": X}}, "is not served"),
 ])
 def test_refus_avant_tout_appel(client, tool, kwargs, match):
     with pytest.raises(McpError, match=match):
@@ -382,7 +382,7 @@ def test_le_patient_sort_avec_son_identite_et_sans_le_clinique(client):
         assert fiche["last_name"] == "Nom-Test" and fiche["birth_date"] == "1900-01-01"
         assert fiche["postal_address"] == "Adresse-Test" and fiche["country"] == "FR"
         assert fiche["has_sms_contact_consent"] == "true" and fiche["is_archived"] is False
-    assert "commentaires du praticien" in one["withheld"]
+    assert "practitioner comments" in one["withheld"]
     client.list_patients.assert_called_once_with(
         C, search="Nom", birth_date=None, phone_number=None, invoice_total_gt=None,
         is_archived=None, limit=50, offset=0)
@@ -418,7 +418,7 @@ def test_les_en_tetes_d_un_webhook_entrent_mais_ne_sortent_jamais(client):
     data = {"action_type": "invoice_created", "url": "https://example.invalid/h",
             "headers": {"Authorization": S}}
     apercu = _tool("nextmotion_setting")(kind="webhook", op="create", clinic_id=C, data=data)
-    assert S not in json.dumps(apercu) and apercu["data"]["headers"] == "<masqué>"
+    assert S not in json.dumps(apercu) and apercu["data"]["headers"] == "<masked>"
     client.create_webhook.return_value = {"data": {"id": X, "url": data["url"],
                                                    "headers": {"Authorization": S}}}
     out = _tool("nextmotion_setting")(kind="webhook", op="create", clinic_id=C, data=data,
@@ -498,20 +498,20 @@ def test_une_notification_demandee_explicitement_part_et_l_apercu_le_dit(client)
 @pytest.mark.parametrize("tool,kwargs,match", [
     ("nextmotion_patient", {"op": "create", "clinic_id": "pas-un-uuid",
                             "data": {"email": "e", "first_name": "f", "last_name": "l",
-                                     "gender": "0"}}, "`clinic_id` doit être un UUID"),
+                                     "gender": "0"}}, "`clinic_id` must be a UUID"),
     ("nextmotion_catalog", {"kind": "treatment_package_item", "op": "update",
                             "item_id": "../../x", "data": {"pricing": X}},
-     "`item_id` doit être un UUID"),
+     "`item_id` must be a UUID"),
     ("nextmotion_communication", {"kind": "message", "clinic_id": "zzz",
                                   "data": {"communication_template_kind": "email",
                                            "communication_template_type": "quote",
-                                           "object": X}}, "`clinic_id` doit être un UUID"),
+                                           "object": X}}, "`clinic_id` must be a UUID"),
     ("nextmotion_quote", {"op": "delete", "quote_id": f"{X}/../x"},
-     "`quote_id` doit être un UUID"),
+     "`quote_id` must be a UUID"),
     ("nextmotion_invoice", {"op": "credit_note", "clinic_id": C,
                             "data": {"patient": X, "invoice": "zzz",
                                      "items": [{"amount": "1"}]}},
-     "`data.invoice` doit être un UUID"),
+     "`data.invoice` must be a UUID"),
 ])
 def test_l_apercu_refuse_un_id_que_l_ecriture_refuserait(client, tool, kwargs, match):
     with pytest.raises(McpError, match=match):
@@ -552,4 +552,4 @@ def test_un_lead_sert_son_identite_de_contact_sans_ses_notes(client):
     out = _tool("nextmotion_lead")(op="get", lead_id=X)
     assert out["lead"] == {"id": X, "first_name": "Prénom-Test", "last_name": "Nom-Test",
                            "email": "lead@example.invalid", "phone_number": "+00000"}
-    assert "référence externe" in out["withheld"]
+    assert "external reference" in out["withheld"]

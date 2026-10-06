@@ -1,41 +1,40 @@
-"""Déclaration de registre du connecteur `stripe`.
+"""Registry declaration of the `stripe` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# stripe : paiements & facturation — le compte Stripe du client.
-# byo-only (pas de clé plateforme) : ce sont ses livres de comptes, une clé
-# partagée entre orgs n'aurait aucun sens.
-# TROIS champs plutôt qu'`api_key` nu, parce que deux satellites NON secrets
-# décident CE QUE la clé lit : `api_version` (une version épinglée qui
-# diverge du compte change des formes de réponse en silence) et surtout
-# `stripe_account` — avec Connect, la MÊME question rend le chiffre
-# d'affaires d'une AUTRE société selon cet en-tête. En faire un champ de
-# credential est la forme la plus forte de « jamais déduit par appel » : ce
-# n'est un paramètre d'aucun tool, donc impossible à basculer en cours de
-# conversation.
+# stripe: payments & billing — the customer's Stripe account.
+# byo-only (no platform key): these are their account books, a key
+# shared between orgs would make no sense.
+# THREE fields rather than a bare `api_key`, because two NON-secret satellites
+# decide WHAT the key reads: `api_version` (a pinned version that
+# diverges from the account silently changes response shapes) and above all
+# `stripe_account` — with Connect, the SAME question returns the revenue
+# of a DIFFERENT company depending on this header. Making it a credential
+# field is the strongest form of "never inferred per call": it
+# is not a parameter of any tool, so it cannot be switched mid-conversation.
 CONNECTOR = _c(
     "stripe", ["stripe"], auth_modes={"byo_user", "byo_org"},
     secret_kind="fields", label="Stripe",
-    help="paiements & facturation — clients, abonnements, factures, encaissements, solde",
+    help="payments & billing — customers, subscriptions, invoices, payments, balance",
     href="https://stripe.com", credential_fields=(
-        CredentialField("api_key", "Clé restreinte (rk_…) ou secrète (sk_…)",
+        CredentialField("api_key", "Restricted key (rk_…) or secret key (sk_…)",
                         secret=True,
-                        help="Stripe Dashboard → Developers → API keys → « Create "
-                             "restricted key » ; des permissions en LECTURE suffisent. "
-                             "Une clé publiable `pk_…` est refusée : elle ne lit rien."),
-        CredentialField("api_version", "Version d'API", secret=False,
+                        help="Stripe Dashboard → Developers → API keys → \"Create "
+                             "restricted key\"; READ permissions are enough. "
+                             "A publishable key `pk_…` is refused: it reads nothing."),
+        CredentialField("api_version", "API version", secret=False,
                         required=False,
-                        help="vide = la version par défaut du compte, celle que montre "
-                             "son dashboard"),
-        CredentialField("stripe_account", "Compte connecté (optionnel, Connect)",
+                        help="empty = the account's default version, the one its "
+                             "dashboard shows"),
+        CredentialField("stripe_account", "Connected account (optional, Connect)",
                         secret=False, required=False,
-                        help="acct_… — TOUTES les lectures portent alors sur ce "
-                             "compte, pas sur le vôtre"),
+                        help="acct_… — ALL reads then apply to that "
+                             "account, not to yours"),
     ),
 )
 
@@ -44,8 +43,8 @@ PUBLISHER = "Stripe"
 LOGO_DOMAIN = "stripe.com"
 
 DESCRIPTION = (
-    "Les paiements et la facturation d'un compte Stripe : clients, abonnements, "
-    "factures, encaissements et solde. Trois champs de credential : la clé "
-    "secrète, une version d'API optionnelle, et l'identifiant de compte Connect "
-    "si tu factures pour plusieurs sociétés depuis un seul compte."
+    "The payments and billing of a Stripe account: customers, subscriptions, "
+    "invoices, payments and balance. Three credential fields: the secret "
+    "key, an optional API version, and the Connect account identifier "
+    "if you bill for several companies from a single account."
 )

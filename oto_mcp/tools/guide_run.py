@@ -1,12 +1,12 @@
-"""Runs — verbes de cycle de vie d'un déroulé (ADR 0017, barreau 2).
+"""Runs — lifecycle verbs of a walkthrough (ADR 0017, rung 2).
 
-`run_start` ouvre un run (mint un `run_id`, le pousse dans l'état de session) ;
-chaque appel d'outil jusqu'à `run_finish` est **attribué à ce run** par le sink
-calllog (corrélation côté serveur, l'agent ne thread rien). Un run avec `guide`
-= l'exécution d'un guide nommé (répétable) ; sans `guide` = un run one-shot
-(ad-hoc), même trace. Le chargement d'un guide reste `oto_procedure(op='get')`
-(inchangé). Spine plateforme : chargé explicitement dans `register_all`, hors gate
-d'activation.
+`run_start` opens a run (mints a `run_id`, pushes it into the session state);
+every tool call until `run_finish` is **attributed to that run** by the calllog
+sink (server-side correlation, the agent threads nothing). A run with `guide`
+= the execution of a named (repeatable) guide; without `guide` = a one-shot
+(ad-hoc) run, same trace. Loading a guide remains `oto_procedure(op='get')`
+(unchanged). Platform spine: loaded explicitly in `register_all`, outside the
+activation gate.
 """
 from __future__ import annotations
 
@@ -21,34 +21,34 @@ from .. import deprecations, guide_run as dr, run_status
 
 logger = logging.getLogger(__name__)
 
-# Source UNIQUE du vocabulaire (ADR 0058-D5) : le tool, sa docstring — donc le schéma
-# que lit l'agent — et toute surface qui valide une issue lisent la même liste. Elle a
-# divergé de la prose du bloc A pendant des mois, ce qui est la façon la plus discrète
-# de mentir à un agent : le schéma dit une chose, l'instruction une autre.
+# SINGLE source of the vocabulary (ADR 0058-D5): the tool, its docstring — hence the schema
+# the agent reads — and every surface that validates an outcome read the same list. It
+# diverged from the prose of block A for months, which is the most discreet way
+# of lying to an agent: the schema says one thing, the instruction another.
 _OUTCOMES = run_status.OUTCOMES
 
 
 def liberer_les_lignes_du_run(run_id: str) -> int | None:
-    """Rend à la file les lignes que ce run tenait encore — la troisième voie de
-    libération (#317), partagée par `run_finish` et la clôture REST (oto#227). Le compte
-    est TOUJOURS rendu (#633) : `0` écrit, `None` si la base a toussé (journalisé).
-    Best-effort — libérer est un service, jamais une condition de la clôture. Sync :
-    appelée hors boucle."""
+    """Returns to the queue the rows this run was still holding — the third release
+    path (#317), shared by `run_finish` and the REST close (oto#227). The count
+    is ALWAYS returned (#633): `0` written, `None` if the database coughed (logged).
+    Best-effort — releasing is a service, never a condition of closing. Sync:
+    called outside the loop."""
     from .. import db
     try:
         return db.datastore_release_by_run(run_id)
     except Exception:  # noqa: BLE001
-        logger.warning("libération des lignes du run %s échouée (best-effort)", run_id)
+        logger.warning("releasing the rows of run %s failed (best-effort)", run_id)
         return None
 
 
 def version_de_procedure(sub: str | None, slug: str) -> int | None:
-    """Version COURANTE de la procédure `slug`, lue dans l'ordre où
-    `oto_procedure(op='get')` la sert : l'org active d'abord, l'équipe active en
-    complément. None si le slug ne désigne aucune procédure — un run ad-hoc, une
-    guide d'un autre foyer, ou un slug inventé.
+    """CURRENT version of the procedure `slug`, read in the order
+    `oto_procedure(op='get')` serves it: the active org first, the active team as a
+    complement. None if the slug designates no procedure — an ad-hoc run, a
+    guide from another household, or an invented slug.
 
-    Lecture DB ⇒ appelée HORS boucle (`asyncio.to_thread`)."""
+    DB read ⇒ called OUTSIDE the loop (`asyncio.to_thread`)."""
     from .. import access, org_store
     org_id = access.current_org(sub) if sub else None
     if org_id is not None:
@@ -64,21 +64,21 @@ def version_de_procedure(sub: str | None, slug: str) -> int | None:
 
 
 async def _note_procedure_version(guide: str | None) -> int | None:
-    """L'EMPREINTE du run : QUELLE version de la procédure il exécute.
+    """The run's FINGERPRINT: WHICH version of the procedure it executes.
 
-    La colonne du journal ne porte qu'un **slug**, alors que les procédures sont versionnées
-    (`org_instructions.version`, snapshot par version dans `org_instruction_revisions`).
-    Un run n'enregistrait donc pas ce qu'il a réellement déroulé : rejouer « la même
-    procédure » trois semaines plus tard, c'est en jouer une autre sans le savoir.
-    ADR 0055-D10 / 0058-D1 : le gel de version EST l'empreinte du run.
+    The journal column only carries a **slug**, while procedures are versioned
+    (`org_instructions.version`, snapshot per version in `org_instruction_revisions`).
+    A run therefore didn't record what it actually walked through: replaying "the same
+    procedure" three weeks later means playing another one without knowing it.
+    ADR 0055-D10 / 0058-D1: the version freeze IS the run's fingerprint.
 
-    Elle atterrit dans le JOURNAL, à côté du slug tapé par l'agent — le relevé d'appel
-    (`session_org.note_call_trace`, allowlist `server._TRACED_ARGS`) verse la valeur
-    dans les args de CETTE ligne `run_start`. C'est le domicile cohérent avec le verdict
-    du 12/08 : le run est ses faits, pas sa ligne d'index.
+    It lands in the JOURNAL, next to the slug typed by the agent — the call trace
+    (`session_org.note_call_trace`, allowlist `server._TRACED_ARGS`) pours the value
+    into the args of THIS `run_start` row. This is the home consistent with the
+    verdict of 12/08: the run is its facts, not its index row.
 
-    Best-effort, comme tout ce qui entoure un run : une version indisponible n'empêche
-    jamais un déroulé de s'ouvrir."""
+    Best-effort, like everything around a run: an unavailable version never
+    prevents a run from opening."""
     if not guide:
         return None
     try:
@@ -87,7 +87,7 @@ async def _note_procedure_version(guide: str | None) -> int | None:
         sub = current_user_sub_from_token()
         version = await asyncio.to_thread(version_de_procedure, sub, guide)
     except Exception:
-        logger.warning("version de procédure indisponible pour %r (best-effort)",
+        logger.warning("procedure version unavailable for %r (best-effort)",
                        guide, exc_info=True)
         return None
     session_org.note_call_trace(doctrine_version=version)
@@ -95,19 +95,19 @@ async def _note_procedure_version(guide: str | None) -> int | None:
 
 
 async def _persist_open(run_id: str, label: str, guide: str | None) -> None:
-    """Trace durable de l'ouverture (best-effort, off-loop). La pile session reste
-    la source du run actif ; ceci ne fait qu'ajouter label/guide en base."""
+    """Durable trace of the opening (best-effort, off-loop). The session stack remains
+    the source of the active run; this only adds label/guide in the database."""
     try:
         from .. import access, db
         from ..auth.hooks import current_user_sub_from_token
         sub = current_user_sub_from_token()
         org_id = access.current_org(sub) if sub else None
-        project_id = access.current_project() if sub else None  # projet actif gelé (ADR 0032 B3)
+        project_id = access.current_project() if sub else None  # frozen active project (ADR 0032 B3)
         await asyncio.to_thread(
             db.insert_run, run_id, sub=sub, org_id=org_id, label=label,
             guide=guide, project_id=project_id)
     except Exception:
-        logger.warning("persistance run_start échouée pour run_id=%s (best-effort)",
+        logger.warning("run_start persistence failed for run_id=%s (best-effort)",
                        run_id, exc_info=True)
 
 
@@ -115,12 +115,12 @@ async def _persist_close(run_id: str, outcome: str, note: str | None) -> None:
     try:
         from .. import db
         from ..auth.hooks import current_user_sub_from_token
-        # Scope par sub : on ne clôt QUE son propre run (un run_id d'autrui — session
-        # réutilisée, #108 — ne peut pas être fermé). No-op si run_id/sub ne matchent pas.
+        # Scoped by sub: we only close OUR OWN run (someone else's run_id — reused
+        # session, #108 — cannot be closed). No-op if run_id/sub don't match.
         await asyncio.to_thread(db.finish_run, run_id, outcome, note,
                                 sub=current_user_sub_from_token())
     except Exception:
-        logger.warning("persistance run_finish échouée pour run_id=%s (best-effort)",
+        logger.warning("run_finish persistence failed for run_id=%s (best-effort)",
                        run_id, exc_info=True)
 
 
@@ -129,7 +129,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def run_start(ctx: Context, label: str, guide: str | None = None,
                         doctrine: str | None = None) -> dict:
-        """Open a run (a tracked 'déroulé') so a procedure can be reviewed later.
+        """Open a run (a tracked walkthrough) so a procedure can be reviewed later.
         Returns a `run_id` — keep it and pass it to `run_finish` when you're done.
         Every tool call until then is automatically attributed to this run.
 
@@ -151,9 +151,9 @@ def register(mcp: FastMCP) -> None:
         guide = guide if guide is not None else doctrine
         run_id = dr.new_run_id()
         await dr.push_run(ctx, run_id, label, guide)
-        # Axe d'appel run_id (#108) : pose SANS reset — la ContextVar meurt avec la
-        # requête, mais stampe le tool_call de run_start lui-même sous son run, et
-        # amorce l'axe pour l'agent (qui le repasse ensuite via `_run_id=`).
+        # run_id call axis (#108): set WITHOUT reset — the ContextVar dies with the
+        # request, but stamps run_start's own tool_call under its run, and
+        # primes the axis for the agent (who then passes it via `_run_id=`).
         from .. import session_org
         session_org.set_call_run(run_id)
         version = await _note_procedure_version(guide)
@@ -186,26 +186,26 @@ def register(mcp: FastMCP) -> None:
         refus = run_status.refus_de_cloture(outcome, note)
         if refus:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=refus[1]))
-        # La clôture appartient au déroulé qu'elle clôt : sans ce stamp, `tool_calls.
-        # run_id` reste NULL sur cette ligne (l'axe `_run_id=` n'est pas advertisé sur
-        # les verbes de run) et la timeline d'un run — `get_run`, qui filtre sur la
-        # colonne — n'affiche jamais sa propre fin, pendant que l'issue est lue de
-        # cette ligne-là. Même geste que `run_start`, symétrique et sans reset.
+        # The close belongs to the run it closes: without this stamp, `tool_calls.
+        # run_id` stays NULL on this row (the `_run_id=` axis is not advertised on
+        # the run verbs) and a run's timeline — `get_run`, which filters on the
+        # column — never shows its own end, while the outcome is read from
+        # that row. Same gesture as `run_start`, symmetric and without reset.
         from .. import session_org
         session_org.set_call_run(run_id)
         removed = await dr.pop_run(ctx, run_id)
         await _persist_close(run_id, outcome, note)
-        # TROISIÈME voie de libération du verrou de file (#317) : un run qui se
-        # termine ne travaille plus, donc ne tient plus rien — quel que soit son
-        # issue. C'est la réponse au cas mesuré : un worker disparu laissait sa ligne
-        # bloquée jusqu'à expiration du bail, soit 18 jours sur la seule ligne
-        # réservée qu'ait portée la production, sans que personne ne le voie.
-        # Best-effort et HORS de la boucle : libérer est un service rendu, jamais une
-        # condition de la fermeture du run — un run doit pouvoir se clore même si la
-        # base tousse.
-        # Le compte est TOUJOURS écrit (#633) : un poste de flotte distingue « zéro
-        # ligne rendue » (0) de « rien n'a été tenté » (null — la base a toussé, le
-        # journal le dit) ; un champ absent ne disait ni l'un ni l'autre.
+        # THIRD release path of the queue lock (#317): a run that
+        # ends no longer works, hence holds nothing anymore — whatever its
+        # outcome. This is the answer to the measured case: a vanished worker left its row
+        # blocked until the lease expired, i.e. 18 days on the only
+        # reserved row production had ever carried, with nobody seeing it.
+        # Best-effort and OUTSIDE the loop: releasing is a service rendered, never a
+        # condition of closing the run — a run must be able to close even if the
+        # database coughs.
+        # The count is ALWAYS written (#633): a fleet post tells "zero
+        # rows returned" (0) apart from "nothing was attempted" (null — the database coughed, the
+        # journal says so); an absent field said neither.
         from starlette.concurrency import run_in_threadpool
         liberees = await run_in_threadpool(liberer_les_lignes_du_run, run_id)
         return {"ok": True, "run_id": run_id, "outcome": outcome,

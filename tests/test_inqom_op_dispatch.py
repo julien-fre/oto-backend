@@ -108,32 +108,32 @@ def test_entry_line_list_commence_page_1(client):
 # --- arguments requis et hors op --------------------------------------------------
 
 def test_dossier_list_exige_company_id(client):
-    with pytest.raises(McpError, match="op='list' requiert company_id"):
+    with pytest.raises(McpError, match="op='list' requires company_id"):
         _tool("inqom_dossier")()
     client.list_dossiers.assert_not_called()
 
 
 def test_dossier_get_exige_dossier_id(client):
-    with pytest.raises(McpError, match="op='get' requiert dossier_id"):
+    with pytest.raises(McpError, match="op='get' requires dossier_id"):
         _tool("inqom_dossier")(op="get")
     client.get_dossier.assert_not_called()
 
 
 def test_un_argument_hors_op_est_refuse_meme_a_zero(client):
-    with pytest.raises(McpError, match="n'utilise pas company_id"):
+    with pytest.raises(McpError, match="does not use company_id"):
         _tool("inqom_dossier")(op="get", dossier_id=12, company_id=0)
     client.get_dossier.assert_not_called()
 
 
 def test_count_refuse_page_number_et_journal_id(client):
-    with pytest.raises(McpError, match="n'utilise pas page_number"):
+    with pytest.raises(McpError, match="does not use page_number"):
         _tool("inqom_entry_line")(op="count", dossier_id=12, start_date="2026-01-01",
                                   end_date="2026-01-31", page_number=2)
     client.count_entry_lines.assert_not_called()
 
 
 def test_ref_refuse_les_filtres_de_comptes_hors_accounts(client):
-    with pytest.raises(McpError, match="n'utilise pas number_prefix"):
+    with pytest.raises(McpError, match="does not use number_prefix"):
         _tool("inqom_ref")(kind="journals", dossier_id=12, number_prefix="401")
     client.list_journals.assert_not_called()
 
@@ -160,8 +160,8 @@ def test_entry_create_ne_part_jamais_et_decrit_les_ecritures(rien_ne_part):
     err = _refus(dossier_id=12, entries=[_entry(), {**_entry(journal=4), "EntryRef": "F-7"}])
     assert err.data["code"] == "inqom_write_not_wired"
     assert err.data["retryable"] is False and err.data["op"] == "create"
-    assert "cela aurait créé 2 écriture(s) comptable(s) dans le dossier 12" in err.message
-    assert "rien n'a été envoyé à Inqom" in err.message
+    assert "this would have created 2 accounting entry(ies) in dossier 12" in err.message
+    assert "nothing was sent to Inqom" in err.message
     assert err.data["would_have"]["ecritures"] == [
         {"JournalId": 3, "Date": "2026-01-15", "lignes": 2,
          "total_debit": "120.50", "total_credit": "120.50"},
@@ -257,16 +257,16 @@ def test_prefixes_pagine_le_resultat_filtre(client, monkeypatch):
 
 def test_prefixes_refuse_une_periode_trop_large_avant_de_lire(client):
     client.count_entry_lines.return_value = {"TotalPagesCount": 51}
-    with pytest.raises(McpError, match="resserre"):
+    with pytest.raises(McpError, match="narrow"):
         _tool("inqom_entry_line")(dossier_id=12, start_date="2026-01-01",
                                   end_date="2026-12-31", account_prefixes=["6"])
     client.list_entry_lines.assert_not_called()
 
 
 @pytest.mark.parametrize("kwargs,fragment", [
-    ({"account_prefixes": ["6"], "account_number": "606100"}, "s'excluent"),
-    ({"account_prefixes": []}, "liste non vide"),
-    ({"account_prefixes": ["6", " "]}, "préfixe vide"),
+    ({"account_prefixes": ["6"], "account_number": "606100"}, "mutually exclusive"),
+    ({"account_prefixes": []}, "non-empty list"),
+    ({"account_prefixes": ["6", " "]}, "empty prefix"),
 ])
 def test_prefixes_arguments_refuses_avant_tout_appel(client, kwargs, fragment):
     with pytest.raises(McpError, match=fragment):
@@ -312,7 +312,7 @@ def test_un_404_se_reconnait_au_status_code_pas_au_texte(client):
     from oto.tools.common.errors import UpstreamHTTPError
 
     client.get_dossier.side_effect = UpstreamHTTPError(404, "no body mentioning the code")
-    with pytest.raises(McpError, match="introuvable"):
+    with pytest.raises(McpError, match="not found"):
         _tool("inqom_dossier")(op="get", dossier_id=12)
 
 
@@ -320,5 +320,5 @@ def test_un_texte_contenant_404_n_est_pas_un_404(client):
     from oto.tools.common.errors import UpstreamHTTPError
 
     client.get_dossier.side_effect = UpstreamHTTPError(400, "(404) dans le texte")
-    with pytest.raises(McpError, match=r"refusé la requête \(HTTP 400\)"):
+    with pytest.raises(McpError, match=r"refused the request \(HTTP 400\)"):
         _tool("inqom_dossier")(op="get", dossier_id=12)

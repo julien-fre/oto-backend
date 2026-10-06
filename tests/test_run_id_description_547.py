@@ -166,7 +166,7 @@ def test_le_refus_nomme_l_omission_quand_la_ligne_est_tenue_par_ton_run(table, m
 
     msg = surface._row_locked_message(_refus(ns))
 
-    assert "_run_id" in msg and "probablement omis" in msg, msg
+    assert "_run_id" in msg and "probably omitted" in msg, msg
     assert run in msg, "le run de l'appelant lui est rendu — c'est le sien"
     assert "data_release" in msg, "le refus garde sa sortie explicite (#317)"
 
@@ -184,7 +184,7 @@ def test_le_refus_ne_nomme_pas_le_run_d_un_TIERS(table, monkeypatch):
     msg = surface._row_locked_message(_refus(ns))
 
     assert run not in msg, "un refus ne publie pas le run d'un tiers"
-    assert "probablement omis" not in msg
+    assert "probably omitted" not in msg
 
 
 def test_pas_d_indice_quand_l_appel_porte_deja_un_run(table, monkeypatch):
@@ -205,7 +205,7 @@ def test_pas_d_indice_quand_l_appel_porte_deja_un_run(table, monkeypatch):
     finally:
         session_org.reset_call_run(tok)
 
-    assert "probablement omis" not in msg
+    assert "probably omitted" not in msg
 
 
 def test_les_deux_traductions_du_refus_passent_par_le_meme_seam():

@@ -1,20 +1,20 @@
-"""Déclaration de registre du connecteur `silae`.
+"""Registry declaration of the `silae` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# silae : paie FR. Auth OAuth2 client-credentials (Azure AD B2C) = 3 secrets
-# → modèle générique multi-champs (ADR 0011). PAS keyed (résolu via
-# access.resolve_credential_fields, pas de clé plateforme ni quota : byo-only,
-# le credential EST le grant). Hors socle → installable à la demande
-# (cran d'activation par org). IBAN/BIC masqués avant l'agent (tools/silae.py).
+# silae: French payroll. OAuth2 client-credentials auth (Azure AD B2C) = 3 secrets
+# → generic multi-field model (ADR 0011). NOT keyed (resolved via
+# access.resolve_credential_fields, no platform key or quota: byo-only,
+# the credential IS the grant). Outside the base set → installable on demand
+# (activation gate per org). IBAN/BIC masked before the agent (tools/silae.py).
 CONNECTOR = _c(
     "silae", ["silae"], auth_modes={"byo_user"}, secret_kind="fields",
-    label="Silae", help="paie FR (lecture) — API Silae Paie v1",
+    label="Silae", help="French payroll (read) — Silae Paie API v1",
     href="https://www.silae.fr", credential_fields=(
         CredentialField("client_id", "Client ID", secret=True),
         CredentialField("client_secret", "Client Secret", secret=True),
@@ -27,7 +27,7 @@ PUBLISHER = "Silae"
 LOGO_DOMAIN = "silae.fr"
 
 DESCRIPTION = (
-    "La paie d'une entreprise dans Silae (lecture) : bulletins, salariés, "
-    "éléments variables. IBAN et BIC sont masqués avant d'atteindre l'agent. "
-    "OAuth2 à trois secrets, généré côté admin Silae."
+    "A company's payroll in Silae (read): payslips, employees, "
+    "variable elements. IBAN and BIC are masked before reaching the agent. "
+    "OAuth2 with three secrets, generated in the Silae admin."
 )

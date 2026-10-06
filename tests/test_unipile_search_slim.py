@@ -63,7 +63,7 @@ def test_le_plafond_sans_curseur_est_nomme_et_chiffre():
     assert out["returned"] == 25 and out["truncated"] is True
     alerte = " ".join(out["warnings"])
     assert "61" in alerte and "86" in alerte      # ce qui manque, sur quoi
-    assert "INATTEIGNABLES" in alerte             # pas « il reste des pages »
+    assert "UNREACHABLE" in alerte             # pas « il reste des pages »
 
 
 def test_une_page_partielle_avec_curseur_dit_de_continuer():
@@ -73,7 +73,7 @@ def test_une_page_partielle_avec_curseur_dit_de_continuer():
     out = U._slim_search({"items": [{"id": "1"}], "total_count": 40, "cursor": "C"})
     assert out["truncated"] is True
     alerte = " ".join(out["warnings"])
-    assert "cursor" in alerte and "INATTEIGNABLES" not in alerte
+    assert "cursor" in alerte and "UNREACHABLE" not in alerte
 
 
 def test_zero_sur_facette_ne_se_lit_pas_comme_un_vivier_vide():
@@ -82,7 +82,7 @@ def test_zero_sur_facette_ne_se_lit_pas_comme_un_vivier_vide():
     et ne le dit pas ; un zéro nu faisait conclure à un vivier vide."""
     out = U._slim_search({"items": [], "total_count": 0}, facettes=("company",))
     alerte = " ".join(out["warnings"])
-    assert "company" in alerte and "recoupe" in alerte
+    assert "company" in alerte and "cross-check" in alerte
 
     # Sans facette posée, un zéro est un zéro : rien à avouer.
     assert "warnings" not in U._slim_search({"items": [], "total_count": 0})
@@ -95,7 +95,7 @@ def test_sans_total_ni_curseur_la_page_ne_se_dit_pas_complete():
     out = U._slim_search({"items": [{"id": "1"}, {"id": "2"}], "cursor": None})
     assert "total_count" not in out and "truncated" not in out
     alerte = " ".join(out["warnings"])
-    assert "AUCUN total" in alerte and "balayée" in alerte
+    assert "NO total" in alerte and "swept" in alerte
 
     # Avec un curseur, la suite est atteignable : rien de plus à avouer.
     assert "warnings" not in U._slim_search({"items": [{"id": "1"}], "cursor": "C"})
@@ -109,7 +109,7 @@ def test_une_page_paginee_avertit_que_le_filtre_n_est_pas_re_applique():
     out = U._slim_search({"items": [{"id": "1"}], "cursor": "C2"},
                          facettes=("company",), page_suivante=True)
     alerte = " ".join(out["warnings"])
-    assert "CURSOR-ONLY" in alerte and "employeur" in alerte
+    assert "CURSOR-ONLY" in alerte and "employer" in alerte
 
 
 def _search_tool():

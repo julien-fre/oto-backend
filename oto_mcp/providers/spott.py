@@ -1,21 +1,21 @@
-"""Déclaration de registre du connecteur `spott`.
+"""Registry declaration for the `spott` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# spott : ATS **et** CRM des cabinets de recrutement (agences/staffing) — le
-# candidat ET l'entreprise cliente dans le même produit, d'où un périmètre plus
-# large que les autres ATS (clients, contacts clients, placements/honoraires).
-# keyed api_key (header x-api-key), byo-only : chaque cabinet pose SA clé.
+# spott: ATS **and** CRM for recruitment firms (agencies/staffing) — the
+# candidate AND the client company in the same product, hence a wider scope
+# than other ATSs (clients, client contacts, placements/fees).
+# keyed api_key (x-api-key header), byo-only: each firm sets ITS own key.
 CONNECTOR = _c(
     "spott", ["spott"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Spott",
-    help="ATS et CRM des cabinets de recrutement — candidats, offres et "
-         "candidatures, mais aussi clients et placements",
+    help="ATS and CRM for recruitment firms — candidates, jobs and "
+         "applications, plus clients and placements",
     href="https://spott.io",
 )
 
@@ -24,7 +24,7 @@ PUBLISHER = "Spott"
 LOGO_DOMAIN = "spott.io"
 
 DESCRIPTION = (
-    "L'ATS ET le CRM d'un cabinet de recrutement : candidats, offres et "
-    "candidatures, mais aussi les entreprises clientes et les placements "
-    "facturés — le candidat et le client dans le même produit."
+    "The ATS AND the CRM of a recruitment firm: candidates, jobs and "
+    "applications, plus client companies and invoiced placements "
+    "— the candidate and the client in the same product."
 )

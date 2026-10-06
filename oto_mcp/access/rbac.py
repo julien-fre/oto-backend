@@ -1,25 +1,25 @@
-"""Qui a le DROIT — la gouvernance d'accès, hors résolution (ADR 0031/0038/0044).
+"""Who has the RIGHT — access governance, outside resolution (ADR 0031/0038/0044).
 
-Trois familles, toutes des GARDES ou des ÉNUMÉRATIONS, jamais une résolution :
+Three families, all GUARDS or ENUMERATIONS, never a resolution:
 
-- **visibilité de tools** masqués par l'org_admin ou le chef d'équipe (0031) ;
-- **partage d'instance** : la garde de niveau d'une instance épinglée (0038 B6)
-  et les prêts nominatifs `share_side` (0044) ;
-- **instances à portée** : ce qu'un jeton d'appel atteindrait légitimement, pour
-  que l'erreur « rien ne résout » remonte les choix au lieu d'un refus sec.
+- **tool visibility** hidden by the org_admin or the team lead (0031);
+- **instance sharing**: the level guard of a pinned instance (0038 B6)
+  and the named loans `share_side` (0044);
+- **instances within reach**: what a call token could legitimately reach, so
+  that the "nothing resolves" error surfaces the choices instead of a bare refusal.
 
-S'y ajoute `resolve_field_filter` : la politique de REDACTION de l'org active —
-même nature (ce que l'org gouverne s'applique à l'acteur), autre surface (les
-champs de la réponse plutôt que l'accès au connecteur).
+Added to these is `resolve_field_filter`: the REDACTION policy of the active org —
+same nature (what the org governs applies to the actor), another surface (the
+response fields rather than access to the connector).
 
-Il n'y a plus de RBAC connecteur (ADR 0025/0012 B2, retiré le 24/09/2026) :
-réserver un connecteur à une partie des membres n'existe plus. Restreindre, c'est
-PLACER la clé au bon niveau (ADR 0053 D1) — une clé perso n'est résolue que pour
-son porteur, une clé d'équipe que pour les membres de l'équipe.
+There is no more connector RBAC (ADR 0025/0012 B2, removed 2026-09-24):
+reserving a connector for part of the members no longer exists. Restricting means
+PLACING the key at the right level (ADR 0053 D1) — a personal key is only resolved for
+its holder, a team key only for the team's members.
 
-Dépend de `scope` (rôle, contexte, appartenance) et de `cascade` (la liste des
-connecteurs org-partageables). Ne dépend PAS de la résolution : c'est elle qui
-appelle ces gardes.
+Depends on `scope` (role, context, membership) and `cascade` (the list of
+org-shareable connectors). Does NOT depend on resolution: it is resolution that
+calls these guards.
 """
 from __future__ import annotations
 
@@ -37,25 +37,25 @@ logger = logging.getLogger(__name__)
 
 
 def org_admin_hidden_tools(org: Optional[int]) -> set:
-    """Tools masqués PAR DÉFAUT pour `org` (denylist posé par l'org_admin) —
-    gouvernance de visibilité, PAS une barrière de sécurité (ADR 0031, même esprit
-    que `tool_visibility.DEFAULT_HIDDEN_TOOLS`) : un override perso positif
-    (`user_enabled_tools`) le lève toujours. Pas d'escalade à exempter — même un
-    org_admin qui a masqué le tool le voit masqué, et se le réactive lui-même
-    comme n'importe qui (cohérent avec DEFAULT_HIDDEN_TOOLS aujourd'hui). LÈVE sur
-    hoquet DB : chaque surface (session_visibility, oto_list_my_tools) garde sa
-    propre règle fail-open, indépendante du palier équipe."""
+    """Tools hidden BY DEFAULT for `org` (denylist set by the org_admin) —
+    visibility governance, NOT a security barrier (ADR 0031, same spirit
+    as `tool_visibility.DEFAULT_HIDDEN_TOOLS`): a positive personal override
+    (`user_enabled_tools`) always lifts it. No escalation to exempt — even an
+    org_admin who hid the tool sees it hidden, and re-enables it for themselves
+    like anyone else (consistent with DEFAULT_HIDDEN_TOOLS today). RAISES on a
+    DB hiccup: each surface (session_visibility, oto_list_my_tools) keeps its
+    own fail-open rule, independent of the team tier."""
     if org is None:
         return set()
     return set(db.list_org_disabled_tools(org))
 
 
 def group_admin_hidden_tools(group: Optional[int]) -> set:
-    """Mirror au grain ÉQUIPE — un chef d'équipe masque un tool pour SON équipe.
-    Additif pur (l'appelant UNIT ce résultat avec `org_admin_hidden_tools`) : ce
-    seam n'exprime jamais une levée, une équipe ne peut donc jamais révéler un tool
-    que l'org a masqué. LÈVE sur hoquet DB (fail-open par palier, à la charge de
-    l'appelant)."""
+    """Mirror at TEAM grain — a team lead hides a tool for THEIR team.
+    Purely additive (the caller UNIONs this result with `org_admin_hidden_tools`): this
+    seam never expresses a lift, so a team can never reveal a tool
+    the org hid. RAISES on a DB hiccup (fail-open per tier, up to the
+    caller)."""
     if group is None:
         return set()
     return set(db.list_group_disabled_tools(group))
@@ -63,13 +63,13 @@ def group_admin_hidden_tools(group: Optional[int]) -> set:
 
 def _instance_side_shares_safe(entity_type: str, entity_id: str, provider: str,
                                account: str = "") -> list:
-    """`share_side` (prêts nominatifs) d'une instance, RÉSILIENT : sur hoquet DB →
-    `[]` + warning = **fail-CLOSED** (aucun prêt accordé sans preuve). En prod ce
-    chemin n'est atteint qu'après une lecture de clé réussie (même DB) — le fail-safe
-    ne mord donc qu'aux tests unitaires sans DB. (Le cran `share_down` BYO a été
-    retiré : une instance BYO est utilisable par tout le sous-arbre de son owner,
-    restreindre = la poser au bon niveau. `share_down` ne vit plus que sur les
-    instances PLATFORM, comme liste de grantees — `_platform_instance_usable`.)"""
+    """`share_side` (named loans) of an instance, RESILIENT: on a DB hiccup →
+    `[]` + warning = **fail-CLOSED** (no loan granted without proof). In prod this
+    path is only reached after a successful key read (same DB) — the fail-safe
+    therefore only bites in unit tests without a DB. (The BYO `share_down` notch was
+    removed: a BYO instance is usable by the whole subtree of its owner,
+    restricting = placing it at the right level. `share_down` now only lives on
+    PLATFORM instances, as a list of grantees — `_platform_instance_usable`.)"""
     try:
         _, side = credentials_store.get_instance_sharing(entity_type, entity_id, provider, account)
         return side
@@ -79,46 +79,46 @@ def _instance_side_shares_safe(entity_type: str, entity_id: str, provider: str,
 
 
 def _refuser_si_preteur_en_pause(ref) -> None:
-    """Un prêt `share_side` s'arrête avec la pause de son prêteur, et revient à son
-    réveil (#898, option A du 23/09/2026) : refus nommé `lender_suspended`."""
+    """A `share_side` loan stops with its lender's pause, and comes back when they
+    wake (#898, option A of 2026-09-23): refusal named `lender_suspended`."""
     from .. import account_suspension
-    refus = account_suspension.refus_preteur(ref.sub, f"La clé `{ref.connector}`")
+    refus = account_suspension.refus_preteur(ref.sub, f"The `{ref.connector}` key")
     if refus is not None:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=str(refus),
                                  data={"code": refus.code, "retryable": False}))
 
 
 def guard_instance_access(sub: str, ref) -> Optional[int]:
-    """Garde d'accès à une instance de connecteur par NIVEAU (ADR 0038 B6) — même
-    sémantique que la projection B4 : member = MA ligne dans une org où je suis
-    membre ; group = groupe dont je suis lecteur ; org = org dont je suis membre ;
-    platform = refusé (le grant se résout déjà en dernier palier). Renvoie l'org de
-    l'instance (à co-poser). McpError actionnable sinon. Chemin DB sync — appelants
-    inbound chauds : threadpool. Partagée par l'axe `_instance=` (pose) et la
-    résolution d'un binding de projet (re-garde pour l'APPELANT, qui n'est pas
-    forcément celui qui a bindé)."""
+    """Access guard for a connector instance by LEVEL (ADR 0038 B6) — same
+    semantics as the B4 projection: member = MY row in an org I am a member of;
+    group = group I am a reader of; org = org I am a member of;
+    platform = refused (the grant already resolves at the last tier). Returns the
+    instance's org (to co-set). Actionable McpError otherwise. Sync DB path — hot
+    inbound callers: threadpool. Shared by the `_instance=` axis (pin) and the
+    resolution of a project binding (re-guard for the CALLER, who is not
+    necessarily the one who bound)."""
     from .. import group_store, roles
-    # Lot L6 : `parse_ref` accepte désormais l'identifiant stable `inst:{id}` — mais
-    # RIEN ne le résout encore (la résolution par identifiant est L7). Sans cette
-    # branche, un `inst:` tomberait dans le refus final et s'entendrait dire que
-    # « les refs platform: ne s'épinglent pas » : un message faux est pire qu'un
-    # refus, il envoie chercher au mauvais endroit.
+    # Batch L6: `parse_ref` now accepts the stable identifier `inst:{id}` — but
+    # NOTHING resolves it yet (resolution by identifier is L7). Without this
+    # branch, an `inst:` would fall into the final refusal and be told that
+    # "`platform:` refs cannot be pinned": a wrong message is worse than a
+    # refusal, it sends people looking in the wrong place.
     if ref.level == "inst":
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=("L'identifiant d'instance `inst:` n'est pas encore épinglable : "
-                     "repasse le `ref` rendu par oto_instance(op='list').")))
+            message=("The `inst:` instance identifier cannot be pinned yet: "
+                     "pass back the `ref` returned by oto_instance(op='list').")))
     if ref.level == "member":
-        if ref.sub == sub:                       # owner : ma propre instance
+        if ref.sub == sub:                       # owner: my own instance
             if not roles.is_org_member(sub, ref.org_id):
                 raise McpError(ErrorData(
                     code=INVALID_PARAMS,
-                    message=f"Instance refusée : tu n'es plus membre de l'org #{ref.org_id}."))
+                    message=f"Instance refused: you are no longer a member of org #{ref.org_id}."))
             return ref.org_id
-        # Prêt à un pair (share_side, ADR 0044) : instance d'un AUTRE membre, autorisée
-        # ssi `sub` est nommé dans son share_side. On EMPRUNTE la clé mais on garde le
-        # contexte de l'APPELANT → co-pose SON org (pas celle de l'owner ; cross-org OK,
-        # le prêt nominatif EST le consentement). Pin explicite → refus DUR si non prêté.
+        # Loan to a peer (share_side, ADR 0044): instance of ANOTHER member, allowed
+        # iff `sub` is named in its share_side. We BORROW the key but keep the
+        # CALLER's context → co-set THEIR org (not the owner's; cross-org OK,
+        # the named loan IS the consent). Explicit pin → HARD refusal if not lent.
         side = _instance_side_shares_safe(
             credentials_store.MEMBER, credentials_store.member_id(ref.org_id, ref.sub),
             ref.connector, ref.account)
@@ -127,57 +127,57 @@ def guard_instance_access(sub: str, ref) -> Optional[int]:
             return scope.current_org(sub)
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=("Instance refusée : elle appartient à un autre membre et ne t'est "
-                     "pas prêtée (share_side).")))
+            message=("Instance refused: it belongs to another member and is not "
+                     "lent to you (share_side).")))
     if ref.level == "group":
-        # Lecteur du groupe = membre OU admin de l'org (escalade `can_read_group`,
-        # roles.py) — c'est le chemin par lequel un org_admin utilise l'instance
-        # d'une équipe de son org (pin `_instance=` / binding projet).
+        # Group reader = member OR org admin (escalation `can_read_group`,
+        # roles.py) — this is the path by which an org_admin uses the instance
+        # of a team in their org (pin `_instance=` / project binding).
         if not roles.can_read_group(sub, ref.group_id):
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"Instance refusée : tu n'es pas membre du groupe #{ref.group_id}."))
+                message=f"Instance refused: you are not a member of group #{ref.group_id}."))
         g = group_store.get_group(ref.group_id)
         return g.get("org_id") if g else None
     if ref.level == "org":
         if not roles.is_org_member(sub, ref.org_id):
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"Instance refusée : tu n'es pas membre de l'org #{ref.org_id}."))
+                message=f"Instance refused: you are not a member of org #{ref.org_id}."))
         return ref.org_id
     if ref.level == "tenant":
-        # L-clés PR 1 : la clé d'un tenant s'épingle par ses comptes et eux seuls — le
-        # tenant se lit sur le sub qualifié (`rung_tenant`), jamais sur l'org. Le
-        # contexte reste celui de l'APPELANT (la clé ne porte pas d'org).
+        # L-keys PR 1: a tenant's key is pinned by its accounts and them alone — the
+        # tenant is read from the qualified sub (`rung_tenant`), never from the org. The
+        # context stays the CALLER's (the key carries no org).
         from .. import tenant_vault
         if tenant_vault.rung_tenant(sub) != ref.tenant:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=(f"Instance refusée : cette clé appartient au tenant "
-                         f"`{ref.tenant}`, et ton compte n'en relève pas.")))
+                message=(f"Instance refused: this key belongs to tenant "
+                         f"`{ref.tenant}`, and your account is not part of it.")))
         return scope.current_org(sub)
     raise McpError(ErrorData(
         code=INVALID_PARAMS,
-        message="Les refs `platform:` ne s'épinglent pas (le grant plateforme se "
-                "résout déjà tout seul en dernier palier)."))
+        message="`platform:` refs cannot be pinned (the platform grant "
+                "already resolves by itself at the last tier)."))
 
 
 def reachable_instances(sub: str, org: Optional[int], provider: str) -> list[dict]:
-    """Instances `provider` utilisables dans un AUTRE contexte que l'ambiant :
-    équipes de `org` dont `sub` est MEMBRE (secret présent, équipe pas forcément
-    active) + ses AUTRES orgs (clé d'org partagée, ou sa clé membre là-bas). La
-    cascade ne les lit pas — mais un jeton d'appel (`_group=`/`_org=`/`_instance=`)
-    les atteint légitimement (mêmes gardes d'appartenance). Nourrit l'erreur
-    « rien ne résout » : on REMONTE les choix pour que l'agent pinne explicitement,
-    jamais de choix silencieux entre identités. Best-effort : ne lève jamais,
-    renvoie ce qui a pu être énuméré (vécu Zoho/un client 2026-07-16 : clé sur
-    l'équipe sales, 3 membres, 0 actif → « pas de clé » sec et session perdue).
+    """`provider` instances usable in a context OTHER than the ambient one:
+    teams of `org` that `sub` is a MEMBER of (secret present, team not necessarily
+    active) + their OTHER orgs (shared org key, or their member key there). The
+    cascade does not read them — but a call token (`_group=`/`_org=`/`_instance=`)
+    legitimately reaches them (same membership guards). Feeds the
+    "nothing resolves" error: we SURFACE the choices so the agent pins explicitly,
+    never a silent choice between identities. Best-effort: never raises,
+    returns whatever could be enumerated (seen with Zoho/a client 2026-07-16: key on
+    the sales team, 3 members, 0 active → bare "no key" and a lost session).
 
-    `provider` est normalisé vers le PORTEUR du credential (délégation) : les
-    instances d'un canal unipile SONT celles du compte, il n'en existe pas d'autres.
-    Sans ça, la carte d'un canal perdait le signal « une équipe a la clé » — et pour
-    un connecteur par-personne, c'est le signal qui évite de reconnecter un compte
-    déjà lié ailleurs (le doublon d'`account_id` de #172)."""
+    `provider` is normalized to the credential's CARRIER (delegation): the
+    instances of a unipile channel ARE those of the account, there are no others.
+    Without that, a channel's card lost the "a team has the key" signal — and for
+    a per-person connector, that is the signal that avoids reconnecting an account
+    already linked elsewhere (the `account_id` duplicate of #172)."""
     provider = providers.credential_provider(provider)
     out: list[dict] = []
     shareable = provider in cascade.ORG_SHAREABLE_PROVIDERS
@@ -189,20 +189,20 @@ def reachable_instances(sub: str, org: Optional[int], provider: str) -> list[dic
                     out.append({"kind": "group", "id": g["group_id"],
                                 "name": g["name"]})
                     seen_gids.add(g["group_id"])
-            # #218 : l'org_admin GOUVERNE ses équipes sans en être MEMBRE — sa clé de
-            # groupe lui est accessible par escalade (group=/instance= re-gardés par
-            # can_read_group). Le hint était aveugle là (list_groups_for_user = membre
-            # STRICT) → « pas de clé » sec alors que la clé existe sur une équipe qu'il
-            # gouverne. On complète par les équipes de l'org visibles par escalade.
+            # #218: the org_admin GOVERNS their teams without being a MEMBER — their group
+            # key is reachable by escalation (group=/instance= re-guarded by
+            # can_read_group). The hint was blind there (list_groups_for_user = STRICT
+            # member) → bare "no key" while the key exists on a team they
+            # govern. We complete with the org's teams visible by escalation.
             from .. import roles
-            try:  # escalade best-effort ISOLÉE : ne doit pas abîmer l'énumération
-                if roles.is_org_admin(sub, org):  # ci-dessous (orgs) si elle hoquette.
+            try:  # ISOLATED best-effort escalation: must not damage the enumeration
+                if roles.is_org_admin(sub, org):  # below (orgs) if it hiccups.
                     for g in group_store.list_groups(org):
                         gid = g["id"]
                         if gid not in seen_gids and group_store.has_group_secret(gid, provider):
                             out.append({"kind": "group", "id": gid, "name": g["name"]})
                             seen_gids.add(gid)
-            # noqa: SILENT — fail-open de visibilité, backstop dur au call-time
+            # noqa: SILENT — visibility fail-open, hard backstop at call time
             except Exception:
                 pass
         for o in org_store.list_orgs_for_user(sub):
@@ -213,7 +213,7 @@ def reachable_instances(sub: str, org: Optional[int], provider: str) -> list[dic
                     or db.has_member_api_key(sub, oid, provider)):
                 out.append({"kind": "org", "id": oid,
                             "name": o.get("name") or f"org {oid}"})
-    # noqa: SILENT — fail-open de visibilité, backstop dur au call-time
+    # noqa: SILENT — visibility fail-open, hard backstop at call time
     except Exception:
         return out
     return out
@@ -222,21 +222,21 @@ def reachable_instances(sub: str, org: Optional[int], provider: str) -> list[dic
 def reachable_team_key(sub: str, org: Optional[int], provider: str,
                        groups: "Optional[list[dict]]" = None,
                        secrets_by_group: "Optional[dict]" = None) -> Optional[dict]:
-    """Première équipe de `org` dont `sub` est membre et qui détient un secret
-    `provider` — le hint `team_key_group` de `status_for` (drawer). `groups` =
-    liste pré-chargée de `list_groups_for_user` (hissée par l'appelant batch,
-    /api/me boucle sur ~50 providers). Best-effort, ne lève jamais.
+    """First team of `org` that `sub` is a member of and that holds a `provider`
+    secret — the `team_key_group` hint of `status_for` (drawer). `groups` =
+    preloaded list from `list_groups_for_user` (hoisted by the batch caller,
+    /api/me loops over ~50 providers). Best-effort, never raises.
 
-    `secrets_by_group` = la carte de `cascade.group_secret_map` quand l'appelant
-    l'a déjà construite. Sans elle le comportement est INCHANGÉ (une lecture par
-    équipe et par connecteur) : c'est ce que font les autres appelants et les
-    tests. Avec elle, `/api/me` cesse de payer un aller-retour par connecteur
-    `forbidden` — soit la majorité d'un compte réel, 67 lectures mesurées sur une
-    seule équipe, et autant de plus par équipe supplémentaire.
+    `secrets_by_group` = the map from `cascade.group_secret_map` when the caller
+    has already built it. Without it the behavior is UNCHANGED (one read per
+    team and per connector): that is what the other callers and the tests do.
+    With it, `/api/me` stops paying a round trip per `forbidden` connector —
+    the majority of a real account, 67 reads measured on a single team, and as
+    many more per additional team.
 
-    L'ORDRE est le contrat : la première équipe de `groups` qui détient le secret
-    gagne, carte ou pas. Répondre depuis la carte ne change que l'endroit où la
-    réponse est lue, jamais laquelle."""
+    The ORDER is the contract: the first team in `groups` that holds the secret
+    wins, map or not. Answering from the map only changes where the answer is
+    read, never which one."""
     if org is None or provider not in cascade.ORG_SHAREABLE_PROVIDERS:
         return None
     try:
@@ -248,26 +248,26 @@ def reachable_team_key(sub: str, org: Optional[int], provider: str,
                        else group_store.has_group_secret(g["group_id"], provider))
             if detient:
                 return {"id": g["group_id"], "name": g["name"]}
-    # noqa: SILENT — fail-open de visibilité, backstop dur au call-time
+    # noqa: SILENT — visibility fail-open, hard backstop at call time
     except Exception:
         return None
     return None
 
 
 def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict]]:
-    """`{provider: [instances à portée]}` en UNE passe — version BATCHÉE de
-    `reachable_instances`, pour annoter un catalogue entier (≈40 connecteurs).
+    """`{provider: [instances within reach]}` in ONE pass — BATCHED version of
+    `reachable_instances`, to annotate a whole catalog (≈40 connectors).
 
-    `reachable_instances` interroge la DB **par provider** (has_group_secret /
-    has_org_secret) : l'appeler en boucle sur le catalogue ferait N×M
-    allers-retours sur un serveur mono-loop. Ici on liste les secrets de chaque
-    entité UNE fois (`list_group_secrets` / `list_org_secrets`) et on inverse en
-    mémoire → coût borné par le nombre d'équipes + d'orgs, pas de providers.
+    `reachable_instances` queries the DB **per provider** (has_group_secret /
+    has_org_secret): calling it in a loop over the catalog would make N×M
+    round trips on a single-loop server. Here we list each entity's secrets
+    ONCE (`list_group_secrets` / `list_org_secrets`) and invert in
+    memory → cost bounded by the number of teams + orgs, not providers.
 
-    Limite assumée : ne couvre pas « ma clé MEMBRE dans une autre org » (pas de
-    listing groupé côté `db.has_member_api_key`, qui est per-provider). Le hint
-    d'erreur, lui, la couvre — le catalogue est une surface de découverte, pas
-    l'autorité. Best-effort : ne lève jamais."""
+    Accepted limit: does not cover "my MEMBER key in another org" (no grouped
+    listing on the `db.has_member_api_key` side, which is per-provider). The error
+    hint does cover it — the catalog is a discovery surface, not the
+    authority. Best-effort: never raises."""
     out: dict[str, list[dict]] = {}
 
     def _add(provider: str, item: dict) -> None:
@@ -277,8 +277,8 @@ def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict
         if org is not None:
             seen_gids: set = set()
             groups = list(group_store.list_groups_for_user(sub, org))
-            # #218 : l'org_admin gouverne ses équipes sans en être membre — ses clés
-            # d'équipe lui sont atteignables par escalade (re-gardées à l'appel).
+            # #218: the org_admin governs their teams without being a member — their team
+            # keys are reachable by escalation (re-guarded at call time).
             from .. import roles
             try:
                 if roles.is_org_admin(sub, org):
@@ -286,7 +286,7 @@ def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict
                     groups += [{"group_id": g["id"], "name": g["name"]}
                                for g in group_store.list_groups(org)
                                if g["id"] not in known]
-            # noqa: SILENT — fail-open de visibilité, backstop dur au call-time
+            # noqa: SILENT — visibility fail-open, hard backstop at call time
             except Exception:
                 pass
             for g in groups:
@@ -307,14 +307,14 @@ def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict
                 if p and p in cascade.ORG_SHAREABLE_PROVIDERS:
                     _add(p, {"kind": "org", "id": oid,
                              "name": o.get("name") or f"org {oid}"})
-    # noqa: SILENT — fail-open de visibilité, backstop dur au call-time
+    # noqa: SILENT — visibility fail-open, hard backstop at call time
     except Exception:
         return out
-    # Délégation : la carte d'un canal doit montrer les instances de SON compte —
-    # ce sont les seules qui existent, et c'est la même liste, pas une approximation.
-    # Le catalogue annote par NOM de connecteur (`connectors_selection`), donc sans
-    # cet alias la ligne `whatsapp` reste muette pendant que `unipile` affiche la clé
-    # d'équipe qui la ferait marcher.
+    # Delegation: a channel's card must show the instances of ITS account —
+    # they are the only ones that exist, and it is the same list, not an approximation.
+    # The catalog annotates by connector NAME (`connectors_selection`), so without
+    # this alias the `whatsapp` row stays mute while `unipile` shows the team
+    # key that would make it work.
     for c in providers._REGISTRY_LIST:
         if c.credential_of and c.credential_of in out:
             out[c.name] = list(out[c.credential_of])
@@ -322,18 +322,18 @@ def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict
 
 
 def resolve_field_filter(service: str):
-    """Construit le `FieldFilter` à appliquer aux réponses d'un connecteur pour
-    le sub courant, selon la politique de redaction de son **org active**.
+    """Builds the `FieldFilter` to apply to a connector's responses for
+    the current sub, according to the redaction policy of its **active org**.
 
-    Cascade (décision « contrôle total org ») :
-      1. l'org active a une politique pour ce service → elle est **autoritaire**
-         (peut lever le masquage baseline, ou ne rien masquer) ;
-      2. sinon → repli sur le **défaut serveur** (`field_filter_defaults`, plancher
-         PII explicite, ex. IBAN Silae) ;
-      3. sinon → filtre vide (no-op, aucune redaction).
+    Cascade ("full org control" decision):
+      1. the active org has a policy for this service → it is **authoritative**
+         (may lift the baseline masking, or mask nothing);
+      2. otherwise → fall back to the **server default** (`field_filter_defaults`, explicit
+         PII floor, e.g. Silae IBAN);
+      3. otherwise → empty filter (no-op, no redaction).
 
-    Sans org active, on retombe sur le défaut serveur. Une erreur DB, elle, LÈVE :
-    l'appelant (`redaction.redact_payload`) retient alors la sortie (#1045)."""
+    Without an active org, we fall back to the server default. A DB error, however, RAISES:
+    the caller (`redaction.redact_payload`) then withholds the output (#1045)."""
     from oto.tools.common import FieldFilter
 
     from .. import field_filter_defaults

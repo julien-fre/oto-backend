@@ -1,15 +1,15 @@
-## prerequisite — ton token api + company id recruitee
+## prerequisite — your recruitee api token + company id
 
-recruitee demande **deux champs** :
-- `api_token` — ton token api personnel (recruitee, **settings → apps & plugins → personal API tokens**)
-- `company_id` — l'identifiant de ta société recruitee (visible dans l'url de ton espace, ex. `recruitee.com/c/<company_id>`)
-renseigne les deux dans tes [clés de connecteurs](https://manage.oto.cx/).
-- doc éditeur : [recruitee.com](https://www.recruitee.com)
+recruitee requires **two fields**:
+- `api_token` — your personal api token (recruitee, **settings → apps & plugins → personal API tokens**)
+- `company_id` — your recruitee company identifier (visible in your workspace url, e.g. `recruitee.com/c/<company_id>`)
+enter both in your [connector keys](https://manage.oto.cx/).
+- vendor docs: [recruitee.com](https://www.recruitee.com)
 
-## usage — ce que tu peux faire
+## usage — what you can do
 
-pilote ton ats recruitee : un poste = une **offer**, un candidat est rattaché à des offers.
-- « liste les candidats du poste 12 » → `recruitee_candidates` (filtres `offer_id`, `query` par nom/email), détail → `recruitee_candidate`
-- « crée un candidat et attache-le à l'offer 12 » → `recruitee_create_candidate` (`offer_ids`)
-- « ajoute une note sur ce candidat » → `recruitee_add_note`
-- « liste mes offres actives » → `recruitee_offers` (`scope` active/archived, `kind` job/talent_pool), détail → `recruitee_offer`
+drive your recruitee ats: a job = an **offer**, a candidate is attached to offers.
+- "list the candidates for job 12" → `recruitee_candidates` (filters `offer_id`, `query` by name/email), details → `recruitee_candidate`
+- "create a candidate and attach them to offer 12" → `recruitee_create_candidate` (`offer_ids`)
+- "add a note to this candidate" → `recruitee_add_note`
+- "list my active offers" → `recruitee_offers` (`scope` active/archived, `kind` job/talent_pool), details → `recruitee_offer`

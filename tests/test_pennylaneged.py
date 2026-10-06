@@ -146,7 +146,7 @@ def test_une_ecriture_dont_l_issue_est_inconnue_ne_passe_pas_pour_un_succes(subs
     with pytest.raises(McpError) as e:
         asyncio.run(_tool("pennylaneged_delete")(company_id=1, item_id=2))
     msg = str(e.value).lower()
-    assert "peut avoir" in msg or "vérifie" in msg, (
+    assert "may have" in msg or "re-read" in msg, (
         "une écriture au sort inconnu doit inviter à RELIRE l'arbre, pas "
         "laisser croire à un échec franc (#600)")
 
@@ -239,10 +239,10 @@ def test_une_sonde_sans_verdict_leve_au_lieu_de_dire_pas_logue(st):
     msg = str(e.value)
     assert S._PROBE_PATH in msg and str(st) in msg, \
         "l'anomalie nomme l'endpoint sondé et ce qu'il a répondu"
-    assert "ne recommence pas" in msg.lower(), \
+    assert "do not retry" in msg.lower(), \
         "et elle COUPE la boucle : le problème n'est pas chez l'utilisateur"
     if st == 404:
-        assert "déplacée" in msg or "n'existe plus" in msg
+        assert "moved" in msg or "no longer exists" in msg
 
 
 def _finalize_avec(verify, monkeypatch, nom):
@@ -322,7 +322,7 @@ def test_un_404_metier_ne_se_dit_pas_comme_une_session_expiree(substrat):
     msg = str(e.value)
     assert "404" in msg and "/portfolio/crm/flow_companies" in msg
     assert "401" in msg, "et il rappelle à quoi ressemble une VRAIE session expirée"
-    assert "NE RELANCE PAS" in msg, \
+    assert "DO NOT RERUN" in msg, \
         "il coupe la boucle de reconnexion : six essais chez la cliente le 2026-09-03"
     assert "minimal=true" in msg, \
         "et il donne la voie qui reste ouverte — sans promettre que le connecteur est mort"
@@ -369,7 +369,7 @@ def test_la_garde_sur_l_espace_d_id_est_dans_CHAQUE_outil_qui_le_consomme():
         # vérifie. La chercher dans la description passerait à côté.
         doc = ((t.parameters.get("properties") or {}).get("company_id") or {}).get(
             "description", "")
-        assert "pennylane`" in doc and "PAS" in doc, (
+        assert "pennylane`" in doc and "NOT" in doc, (
             f"{nom} prend un `company_id` sans dire de quel ESPACE il vient : "
             "l'id de l'API publique n'est pas celui de la GED")
         assert "app.pennylane.com/companies/" in doc, (
@@ -392,9 +392,9 @@ def test_un_refus_sur_une_societe_n_accuse_pas_la_session(substrat):
         asyncio.run(_tool("pennylaneged_tree")(company_id=23077330))
     msg = str(e.value)
     assert "23077330" in msg, "le refus nomme la société visée"
-    assert "pennylane" in msg and "publique" in msg, \
+    assert "pennylane" in msg and "public" in msg, \
         "et la cause la plus fréquente : l'id vient de l'autre connecteur"
-    assert "AUTRE société" in msg or "autre société" in msg, \
+    assert "ANOTHER company" in msg or "another company" in msg, \
         "et comment trancher sans reconnecter"
 
 
@@ -434,11 +434,11 @@ def test_un_404_nomme_les_DEUX_causes_et_le_test_qui_tranche(substrat):
     msg = str(e.value)
 
     # La cause qui manquait, et qui est la plus fréquente sur une route de cabinet.
-    assert "PÉRIMÈTRE" in msg, (
+    assert "SCOPE" in msg, (
         "le refus doit nommer le cas « ton compte n'a pas ce périmètre » : sans lui, "
         "un compte d'entreprise ordinaire est renvoyé chercher un bug chez nous")
     # Celle d'origine, conservée : elle reste vraie, elle n'était pas seule.
-    assert "BOUGÉ" in msg or "bougé" in msg
+    assert "MOVED" in msg or "moved" in msg
     # Et de quoi trancher, sans reconnecter ni attendre notre diagnostic.
     assert "minimal=true" in msg, (
         "le refus doit donner le test discriminant — une autre route, même session")
@@ -454,7 +454,7 @@ def test_un_404_ne_dit_jamais_de_se_reconnecter(substrat):
     with pytest.raises(McpError) as e:
         asyncio.run(_tool("pennylaneged_companies")(page=1))
     msg = str(e.value)
-    assert "NE RELANCE PAS" in msg and "session est bonne" in msg
+    assert "DO NOT RERUN" in msg and "session is good" in msg
 
 
 def test_le_texte_servi_ne_promet_plus_une_cause_unique():
@@ -463,8 +463,8 @@ def test_le_texte_servi_ne_promet_plus_une_cause_unique():
     import inspect
 
     entete = P.__doc__ or ""
-    assert "deux causes" in entete.lower(), entete[:300]
+    assert "two causes" in entete.lower(), entete[:300]
     doc = inspect.getdoc(_tool("pennylaneged_companies")) or ""
-    assert "cabinet" in doc and "minimal=true" in doc, (
+    assert "firm" in doc and "minimal=true" in doc, (
         "la docstring de l'outil doit porter la même nuance que le refus : c'est "
         "elle que l'agent lit AVANT d'appeler")

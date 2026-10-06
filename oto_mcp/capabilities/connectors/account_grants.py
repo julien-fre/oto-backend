@@ -1,25 +1,25 @@
-"""Autorisation de compte connecteur partagé (otomata-private#55) — surface du
-PROPRIÉTAIRE : accorder / révoquer à un user nommé (OU un groupe entier, extension
-2026-09) le droit d'opérer SON compte Unipile sur un canal (agence multi-clients,
-compte d'org opéré par une équipe, freelance externe). **Cross-org assumé** : le
-grantee n'a PAS besoin de partager une org avec le propriétaire — on partage son
-PROPRE compte, à qui on veut.
+"""Shared connector account authorization (otomata-private#55) — OWNER's
+surface: grant / revoke to a named user (OR an entire group, extension
+2026-09) the right to operate THEIR Unipile account on a channel (multi-client agency,
+org account operated by a team, external freelancer). **Cross-org by design**: the
+grantee does NOT need to share an org with the owner — one shares one's OWN
+account, with whomever one wants.
 
-`grantee` = sub OU email d'un user, OU `group:<id>` pour un groupe — auquel cas
-TOUS SES MEMBRES ACTUELS opèrent le compte, en fan-out DYNAMIQUE (l'appartenance
-est relue en live à chaque appel, jamais une liste figée au grant : rejoindre ou
-quitter le groupe change l'accès sans reprêt individuel). L'issue d'origine (#55)
-demandait déjà « membres nommés OU un département » — le groupe n'avait jamais été
-livré (ADR 0051 l'avait laissé orthogonal au partage d'instance, sans trancher la
-cible du grant lui-même).
+`grantee` = a user's sub OR email, OR `group:<id>` for a group — in which case
+ALL ITS CURRENT MEMBERS operate the account, in DYNAMIC fan-out (membership
+is re-read live on every call, never a list frozen at grant time: joining or
+leaving the group changes access without an individual re-lending). The original issue (#55)
+already asked for « named members OR a department » — the group had never been
+delivered (ADR 0051 had left it orthogonal to instance sharing, without settling the
+target of the grant itself).
 
-Deny-by-default, révocation à effet immédiat (le grant est revalidé à chaque appel
-dans la résolution, cf. `connector_identities.resolve_operated_account_id`), audité
-(`granted_by`/`granted_at`). Autz `SUB_ONLY` : « réservé au propriétaire » est
-garanti PAR CONSTRUCTION — `owner_sub := ctx.sub`, jamais accepté d'un param client
-(même verrou structurel que l'injection `org_id` des combinateurs). Aucune escalade
-org_admin : seul le propriétaire du compte accorde (exigence #55) — vrai pour une
-cible groupe comme pour un user nommé.
+Deny-by-default, revocation with immediate effect (the grant is revalidated on every call
+in resolution, see `connector_identities.resolve_operated_account_id`), audited
+(`granted_by`/`granted_at`). `SUB_ONLY` authz: « reserved to the owner » is
+guaranteed BY CONSTRUCTION — `owner_sub := ctx.sub`, never accepted from a client param
+(same structural lock as the `org_id` injection of the combinators). No org_admin
+escalation: only the account owner grants (requirement #55) — true for a group
+target as for a named user.
 """
 from __future__ import annotations
 
@@ -36,62 +36,62 @@ Channel = Literal["linkedin", "whatsapp", "telegram", "instagram"]
 
 
 def _provider_for(channel: str) -> str:
-    """Canal front → provider DB (source unique : `tools/unipile.UNIPILE_CHANNELS`).
-    Import paresseux — pas de dépendance module-level capacités → runtime tools."""
+    """Front channel → DB provider (single source: `tools/unipile.UNIPILE_CHANNELS`).
+    Lazy import — no module-level dependency capabilities → runtime tools."""
     from ...tools.unipile import UNIPILE_CHANNELS
     return UNIPILE_CHANNELS[channel]
 
 
 def _parse_group_target(grantee: str) -> Optional[int]:
-    """`grantee` au format `group:<id>` cible un groupe plutôt qu'un user — même
-    permissivité cross-org que le grantee individuel (aucune exigence que le
-    propriétaire soit lui-même membre du groupe nommé : il partage SON PROPRE
-    compte, à qui/quoi il veut). None si `grantee` n'a pas cette forme."""
+    """A `grantee` in the format `group:<id>` targets a group rather than a user — same
+    cross-org permissiveness as the individual grantee (no requirement that the
+    owner be a member of the named group themselves: they share THEIR OWN
+    account, with whom/what they like). None if `grantee` does not have this form."""
     if not grantee.startswith("group:"):
         return None
     raw = grantee[len("group:"):]
     if not raw.isdigit():
         raise AuthzDenied(400, "invalid_group_target",
-                          f"Cible de groupe invalide : {grantee!r} (attendu group:<id>)")
+                          f"Invalid group target: {grantee!r} (expected group:<id>)")
     return int(raw)
 
 
 def _un_seul_porteur(email: str) -> Optional[dict]:
-    """La fiche du compte portant cette adresse — ou un REFUS si elle en désigne
-    plusieurs. `None` quand personne ne la porte : l'appelant décide (l'octroi
-    lève 404, la révocation tolère et retombe sur la chaîne fournie).
+    """The record of the account bearing this address — or a REFUSAL if it designates
+    several. `None` when nobody bears it: the caller decides (the grant
+    raises 404, the revocation tolerates it and falls back to the supplied string).
 
-    ⚠️ Une adresse ne désigne pas un compte. Deux comptes peuvent la porter — le
-    nôtre et celui d'un tenant, ou deux des nôtres (mesuré : dix adresses, vingt
-    comptes, dont une paire sans aucun tenant). En choisir un en silence, c'est
-    accorder l'accès à son compte connecteur au mauvais destinataire, ou croire
-    l'avoir retiré au bon. Le `grantee` accepte DÉJÀ un sub : le refus a donc une
-    sortie immédiate, et il la nomme.
+    ⚠️ An address does not designate one account. Two accounts can bear it — ours
+    and a tenant's, or two of ours (measured: ten addresses, twenty
+    accounts, including a pair with no tenant at all). Silently picking one is
+    granting access to one's connector account to the wrong recipient, or believing
+    one has withdrawn it from the right one. `grantee` ALREADY accepts a sub: the refusal therefore has
+    an immediate way out, and it names it.
     """
     porteurs = db.get_users_by_email(email)
     if len(porteurs) > 1:
         subs = ", ".join(f"`{u['sub']}`" for u in porteurs)
         raise AuthzDenied(
             400, "ambiguous_email",
-            f"L'adresse `{email}` désigne {len(porteurs)} comptes : {subs}. "
-            "Reprends avec le `sub` de celui que tu vises — `grantee` l'accepte.")
+            f"The address `{email}` designates {len(porteurs)} accounts: {subs}. "
+            "Retry with the `sub` of the one you mean — `grantee` accepts it.")
     return porteurs[0] if porteurs else None
 
 
 def _resolve_grantee(ctx: ResolvedCtx, grantee: str) -> dict:
-    """`grantee` = sub OU email → fiche user. Le propriétaire partage SON PROPRE
-    compte (owner := ctx.sub par construction) → il peut l'accorder à N'IMPORTE
-    QUEL user oto, **y compris hors de ses orgs** (cross-org assumé : agence /
-    freelance externe). Seuls garde-fous : l'user doit exister, et pas de
-    self-grant (tu opères déjà ton compte)."""
+    """`grantee` = sub OR email → user record. The owner shares THEIR OWN
+    account (owner := ctx.sub by construction) → they can grant it to ANY
+    oto user, **including outside their orgs** (cross-org by design: agency /
+    external freelancer). The only safeguards: the user must exist, and no
+    self-grant (you already operate your account)."""
     if "@" in grantee:
         user = _un_seul_porteur(grantee)
     else:
         user = db.get_user(grantee)
     if not user:
-        raise AuthzDenied(404, "unknown_user", f"Utilisateur inconnu : {grantee}")
+        raise AuthzDenied(404, "unknown_user", f"Unknown user: {grantee}")
     if user["sub"] == ctx.sub:
-        raise AuthzDenied(400, "self_grant", "Tu opères déjà ton propre compte.")
+        raise AuthzDenied(400, "self_grant", "You already operate your own account.")
     return user
 
 
@@ -101,96 +101,96 @@ class AccountGrantsListInput(BaseModel):
 
 class AccountGrantInput(BaseModel):
     channel: Channel
-    grantee: str                         # sub, email, ou `group:<id>` (fan-out live)
+    grantee: str                         # sub, email, or `group:<id>` (live fan-out)
 
 
 class GrantedByMe(BaseModel):
-    """Une autorisation que J'AI accordée : « untel — ou tout un groupe — peut
-    opérer mon compte sur ce canal ». Exactement un des deux couples
-    (`grantee_sub`/`grantee_email`/`grantee_name`) ou (`grantee_group_id`/
-    `grantee_group_name`) est renseigné selon la cible du grant."""
-    # ⚠️ `provider` n'est PAS le `channel` de l'entrée : c'est le provider DB, en
-    # MAJUSCULES (`LINKEDIN`, `WHATSAPP`…). On accorde par `channel=linkedin` et on
-    # relit `provider="LINKEDIN"` — un client qui compare les deux tel quel ne
-    # matche jamais.
+    """An authorization that I GRANTED: « so-and-so — or a whole group — may
+    operate my account on this channel ». Exactly one of the two sets
+    (`grantee_sub`/`grantee_email`/`grantee_name`) or (`grantee_group_id`/
+    `grantee_group_name`) is filled in, depending on the grant's target."""
+    # ⚠️ `provider` is NOT the entry's `channel`: it is the DB provider, in
+    # UPPERCASE (`LINKEDIN`, `WHATSAPP`…). One grants by `channel=linkedin` and
+    # reads back `provider="LINKEDIN"` — a client that compares the two as is never
+    # matches.
     provider: str
-    # État LIVE du compte (LEFT JOIN), pas le snapshot d'audit du grant : `null`
-    # si le canal a été déconnecté depuis — le grant existe encore mais est INERTE.
+    # LIVE state of the account (LEFT JOIN), not the grant's audit snapshot: `null`
+    # if the channel has been disconnected since — the grant still exists but is INERT.
     account_id: Optional[str] = None
     account_name: Optional[str] = None
     grantee_sub: Optional[str] = None
-    grantee_email: Optional[str] = None     # null si l'user n'a pas de ligne `users`
+    grantee_email: Optional[str] = None     # null if the user has no `users` row
     grantee_name: Optional[str] = None
     grantee_group_id: Optional[int] = None
     grantee_group_name: Optional[str] = None
     granted_by: Optional[str] = None
     granted_at: Optional[str] = None
-    # DÉRIVÉ de `account_id IS NOT NULL` : `false` = j'ai déconnecté le canal, le
-    # grant dort. Ce n'est ni une révocation ni une erreur — reconnecter le
-    # ressuscite tel quel.
+    # DERIVED from `account_id IS NOT NULL`: `false` = I disconnected the channel, the
+    # grant sleeps. It is neither a revocation nor an error — reconnecting
+    # resurrects it as is.
     active: bool
 
 
 class GrantedToMe(BaseModel):
-    """Une autorisation que J'AI REÇUE : un compte d'autrui que je peux opérer."""
-    provider: str                           # provider DB en MAJUSCULES (cf. GrantedByMe)
+    """An authorization that I RECEIVED: someone else's account that I can operate."""
+    provider: str                           # DB provider in UPPERCASE (see GrantedByMe)
     owner_sub: str
     owner_email: Optional[str] = None
     owner_name: Optional[str] = None
-    account_id: Optional[str] = None        # null = le propriétaire a déconnecté le canal
+    account_id: Optional[str] = None        # null = the owner disconnected the channel
     account_name: Optional[str] = None
-    # L'org sous laquelle le PROPRIÉTAIRE a connecté ce compte — dit d'OÙ vient le
-    # partage. Le grant lui-même n'est scopé à aucune org (cross-org assumé) : ce
-    # n'est donc pas un filtre d'accès.
+    # The org under which the OWNER connected this account — says WHERE the
+    # share comes from. The grant itself is not scoped to any org (cross-org by design): this is
+    # therefore not an access filter.
     owner_org_id: Optional[int] = None
     owner_org_name: Optional[str] = None
     granted_at: Optional[str] = None
-    active: bool                            # false : canal déconnecté OU prêteur en pause
-    # Le propriétaire est EN PAUSE (#898) : le prêt est suspendu avec lui, pas révoqué,
-    # et reprend tel quel à son réveil. Sans ce champ, `active=false` se lirait
-    # « déconnecté » et renverrait vers un propriétaire qui ne peut rien y faire.
+    active: bool                            # false: channel disconnected OR lender paused
+    # The owner is PAUSED (#898): the loan is suspended with them, not revoked,
+    # and resumes as is on their wake-up. Without this field, `active=false` would read
+    # « disconnected » and point to an owner who can do nothing about it.
     owner_suspended: bool = False
-    # None = grant nominatif. Sinon, le groupe dont l'appartenance PORTE cet accès
-    # (fan-out dynamique — un départ du groupe le fait disparaître au prochain appel).
+    # None = named grant. Otherwise, the group whose membership CARRIES this access
+    # (dynamic fan-out — leaving the group makes it vanish on the next call).
     via_group_id: Optional[int] = None
     via_group_name: Optional[str] = None
 
 
 class AccountGrants(BaseModel):
-    """Les deux faces du partage de compte connecteur (#55), du point de vue du
-    caller. Deny-by-default : deux listes vides = personne n'opère rien."""
+    """The two faces of connector account sharing (#55), from the caller's
+    point of view. Deny-by-default: two empty lists = nobody operates anything."""
     granted_by_me: list[GrantedByMe]
     granted_to_me: list[GrantedToMe]
 
 
 class AccountGrantCreated(BaseModel):
-    """Écho d'une autorisation accordée. Exactement l'un de `grantee_sub` (cible
-    user) ou `grantee_group_id` (cible groupe) est renseigné."""
+    """Echo of a granted authorization. Exactly one of `grantee_sub` (user
+    target) or `grantee_group_id` (group target) is filled in."""
     ok: bool
-    channel: str                            # le canal FRONT tel que passé (minuscules)
-    account_id: str                         # le compte visé, snapshot au moment du grant
-    grantee_sub: Optional[str] = None       # sub RÉSOLU (l'entrée pouvait être un email)
+    channel: str                            # the FRONT channel as passed (lowercase)
+    account_id: str                         # the targeted account, snapshot at grant time
+    grantee_sub: Optional[str] = None       # RESOLVED sub (the input could be an email)
     grantee_email: Optional[str] = None
     grantee_group_id: Optional[int] = None
     grantee_group_name: Optional[str] = None
-    # Limitation documentée, renvoyée telle quelle : le grant autorise, il ne
-    # fournit pas la clé. Le(s) bénéficiaire(s) doi(ven)t encore joindre ce compte
-    # avec LEUR clé (partagée org/plateforme = OK ; une clé BYO perso ne le voit
-    # pas → 404 à l'appel).
+    # Documented limitation, returned as is: the grant authorizes, it does not
+    # supply the key. The beneficiary(ies) must still reach this account
+    # with THEIR key (shared org/platform = OK; a personal BYO key does not see it
+    # → 404 at call time).
     note: str
 
 
 class AccountGrantRevoked(BaseModel):
-    """Écho d'une révocation. Idempotent : `revoked=false` = il n'y avait pas de
-    grant à retirer, pas un refus. Exactement l'un de `grantee_sub`/`grantee_group_id`
-    est renseigné, selon la cible passée en entrée."""
+    """Echo of a revocation. Idempotent: `revoked=false` = there was no
+    grant to withdraw, not a refusal. Exactly one of `grantee_sub`/`grantee_group_id`
+    is filled in, depending on the target passed as input."""
     ok: bool
     channel: str
-    # ⚠️ Écho de l'entrée quand elle n'a pas pu être résolue : un email INCONNU
-    # est renvoyé tel quel ici (aucune erreur — le retrait ne fait que ne rien
-    # trouver, là où `grant` aurait levé un 404). Un `grantee_sub` contenant un
-    # « @ » + `revoked:false` est donc le signe d'une cible mal nommée, pas d'un
-    # grant déjà retiré.
+    # ⚠️ Echo of the input when it could not be resolved: an UNKNOWN email
+    # is returned as is here (no error — the withdrawal merely finds nothing,
+    # where `grant` would have raised a 404). A `grantee_sub` containing an
+    # « @ » + `revoked:false` is therefore the sign of a badly named target, not of a
+    # grant already withdrawn.
     grantee_sub: Optional[str] = None
     grantee_group_id: Optional[int] = None
     revoked: bool
@@ -206,36 +206,36 @@ def _list(ctx: ResolvedCtx, inp: AccountGrantsListInput) -> dict:
 
 def _grant(ctx: ResolvedCtx, inp: AccountGrantInput) -> dict:
     provider = _provider_for(inp.channel)
-    # Scope membre (ADR 0033) : le compte du propriétaire vit dans SON org de
-    # contexte — `ctx.org_id` est injecté par SUB_ONLY (= access.current_org).
+    # Member scope (ADR 0033): the owner's account lives in THEIR context
+    # org — `ctx.org_id` is injected by SUB_ONLY (= access.current_org).
     account_id = db.get_unipile_account_id(ctx.sub, ctx.org_id, provider)
     if not account_id:
         raise AuthzDenied(404, "channel_not_connected",
-                          f"Tu n'as pas de compte {inp.channel} connecté — connecte-le "
-                          "d'abord (dashboard, carte du connecteur).")
+                          f"You have no {inp.channel} account connected — connect it "
+                          "first (dashboard, connector card).")
     group_id = _parse_group_target(inp.grantee)
     if group_id is not None:
         group = group_store.get_group(group_id)
         if not group:
-            raise AuthzDenied(404, "unknown_group", f"Groupe inconnu : {inp.grantee}")
+            raise AuthzDenied(404, "unknown_group", f"Unknown group: {inp.grantee}")
         db.set_account_group_grant(ctx.sub, provider, account_id, group_id,
                                    granted_by=ctx.sub)
         return {
             "ok": True, "channel": inp.channel, "account_id": account_id,
             "grantee_group_id": group_id, "grantee_group_name": group["name"],
-            "note": "Chaque membre ACTUEL du groupe opère ce compte via le "
-                    "sélecteur d'identité (oto_identity op=set) ou un pin de "
-                    "projet — l'accès suit l'appartenance au groupe, en live.",
+            "note": "Every CURRENT member of the group operates this account via the "
+                    "identity selector (oto_identity op=set) or a project "
+                    "pin — access follows group membership, live.",
         }
     user = _resolve_grantee(ctx, inp.grantee)
     db.set_account_grant(ctx.sub, provider, account_id, user["sub"], granted_by=ctx.sub)
     return {
         "ok": True, "channel": inp.channel, "account_id": account_id,
         "grantee_sub": user["sub"], "grantee_email": user.get("email"),
-        # Limitation documentée : la clé du grantee doit joindre ce compte (clé
-        # partagée org/plateforme = OK ; owner sur une clé BYO perso ≠ 404 à l'appel).
-        "note": "Le membre autorisé opère ce compte via le sélecteur d'identité "
-                "(oto_identity op=set) ou un pin de projet.",
+        # Documented limitation: the grantee's key must reach this account (shared
+        # org/platform key = OK; owner on a personal BYO key ≠ 404 at call time).
+        "note": "The authorized member operates this account via the identity selector "
+                "(oto_identity op=set) or a project pin.",
     }
 
 
@@ -248,16 +248,16 @@ def _revoke(ctx: ResolvedCtx, inp: AccountGrantInput) -> dict:
         return {"ok": True, "channel": inp.channel, "grantee_group_id": group_id,
                 "revoked": revoked}
     if "@" in inp.grantee:
-        # ⚠️ La révocation aussi : sur une adresse ambiguë, révoquer « un des deux »
-        # laisse l'accès au second — et le propriétaire croit l'avoir retiré. Le
-        # refus est donc le même ici que pour l'octroi, pour la raison inverse.
+        # ⚠️ Revocation too: on an ambiguous address, revoking « one of the two »
+        # leaves access to the second — and the owner believes they withdrew it. The
+        # refusal is therefore the same here as for the grant, for the opposite reason.
         user = _un_seul_porteur(inp.grantee)
         grantee_sub = user["sub"] if user else inp.grantee
     else:
         grantee_sub = inp.grantee
     revoked = db.clear_account_grant(ctx.sub, provider, grantee_sub)
-    # Hygiène : efface le pointeur du grantee s'il opérait ce compte. Le backstop
-    # ne repose PAS dessus (grant re-checké à chaque appel).
+    # Hygiene: clear the grantee's pointer if they were operating this account. The backstop
+    # does NOT rely on it (grant re-checked on every call).
     db.clear_operated_pointers_to(ctx.sub, provider, grantee_sub)
     return {"ok": True, "channel": inp.channel, "grantee_sub": grantee_sub,
             "revoked": revoked}

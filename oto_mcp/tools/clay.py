@@ -1,20 +1,20 @@
-"""Clay — tables (écriture par webhook) + Public API (routines, recherche, tables).
+"""Clay — tables (write via webhook) + Public API (routines, search, tables).
 
-Wrappe `oto.tools.clay` (`ClayClient`, `ClayTableWebhook`). UNE carte, deux sortes
-d'entrées nommées sur le credential `clay` (cf. `providers/clay.py`) :
+Wraps `oto.tools.clay` (`ClayClient`, `ClayTableWebhook`). ONE card, two kinds
+of named entries on the `clay` credential (see `providers/clay.py`):
 
-- `kind=table` — le webhook entrant d'une table Clay. Le NOM de l'entrée est le nom
-  de la table côté oto : `clay_push_rows(table="<nom>")`. Seul chemin d'écriture
-  dans Clay (l'API publique est en lecture/exécution).
-- `kind=api` — la clé Public API : `clay_account`, routines, recherche, tables.
+- `kind=table` — a Clay table's incoming webhook. The entry NAME is the table
+  name on the oto side: `clay_push_rows(table="<name>")`. Only write path
+  into Clay (the public API is read/execute).
+- `kind=api` — the Public API key: `clay_account`, routines, search, tables.
 
-`kind` vit dans `meta` : le listing des entrées ne déchiffre rien. Une entrée
-précise se résout par la cascade habituelle (`resolve_credential_fields(account=)`,
-membre > équipe > org).
+`kind` lives in `meta`: listing the entries decrypts nothing. A specific entry
+is resolved by the usual cascade (`resolve_credential_fields(account=)`,
+member > team > org).
 
-Plafond Clay : 50 000 envois par webhook, jamais remis à zéro (même en supprimant
-des lignes). On compte les envois réussis dans `meta` (clé liée à l'URL : coller un
-nouveau webhook repart de zéro) et on prévient avant le mur.
+Clay cap: 50,000 sends per webhook, never reset (even by deleting
+rows). Successful sends are counted in `meta` (key tied to the URL: pasting a
+new webhook starts again from zero) and we warn before the wall.
 """
 from __future__ import annotations
 
@@ -37,27 +37,27 @@ logger = logging.getLogger(__name__)
 
 CONNECTOR = "clay"
 
-# Lignes par appel : un POST webhook par ligne, sous le plafond dur de 45 s du
-# chemin REST (`capabilities/tools_me.py`, `asyncio.wait_for(..., timeout=45)`).
-# ~0,3-0,6 s par POST + la pause ci-dessous → 50 lignes tiennent avec de la marge.
+# Rows per call: one webhook POST per row, under the 45 s hard cap of the
+# REST path (`capabilities/tools_me.py`, `asyncio.wait_for(..., timeout=45)`).
+# ~0.3-0.6 s per POST + the pause below → 50 rows fit with margin.
 MAX_ROWS = 50
 PACE_S = 0.1
-# Plafond dur d'un appel sur le chemin REST (`capabilities/tools_me.py`,
-# `asyncio.wait_for(..., timeout=45)`), et délai (connexion, lecture) d'UN POST webhook.
+# Hard cap of a call on the REST path (`capabilities/tools_me.py`,
+# `asyncio.wait_for(..., timeout=45)`), and timeout (connect, read) of ONE webhook POST.
 REST_CALL_LIMIT_S = 45.0
 WEBHOOK_TIMEOUT = (5, 10)
-# Budget d'horloge d'un lot : passé ce délai on rend le reçu PARTIEL (le reste marqué
-# non envoyé) plutôt que de laisser le délai d'appel couper sans reçu — l'agent
-# réessaierait tout et Clay recevrait des doublons. Le budget n'est vérifié qu'AVANT
-# chaque POST : un POST lancé juste avant l'échéance peut encore durer tout son délai.
-# D'où : plafond REST − le pire POST − une marge pour ce qui précède la boucle
-# (résolution de l'entrée, coffre). Vérifié par les tests : jamais au-delà de 45 s.
+# Wall-clock budget of a batch: past this delay we return the PARTIAL receipt (the rest marked
+# not sent) rather than let the call timeout cut it off with no receipt — the agent
+# would retry everything and Clay would receive duplicates. The budget is only checked BEFORE
+# each POST: a POST started just before the deadline can still last its whole timeout.
+# Hence: REST cap − the worst POST − a margin for what precedes the loop
+# (entry resolution, vault). Verified by the tests: never beyond 45 s.
 BATCH_MARGIN_S = 5.0
 BATCH_BUDGET_S = REST_CALL_LIMIT_S - sum(WEBHOOK_TIMEOUT) - BATCH_MARGIN_S
 MAX_ROUTINE_ITEMS = 100
-#: Une valeur texte plus longue devient sa TAILLE dans la vue par défaut d'une page
-#: (`<champ>_length`) : on retire une colonne, on ne tronque jamais un texte
-#: (`output_projection.summarize`). `fields=["*"]` rend la page brute.
+#: A longer text value becomes its SIZE in a page's default view
+#: (`<field>_length`): we drop a column, we never truncate a text
+#: (`output_projection.summarize`). `fields=["*"]` returns the raw page.
 LONG_TEXT = 280
 
 WEBHOOK_LIMIT = 50_000
@@ -71,8 +71,8 @@ def _bad(message: str) -> McpError:
 
 
 def _webhook_of(fields: dict) -> tuple[str, Optional[str]]:
-    """(url, jeton) d'une entrée table : le champ `webhook` accepte l'URL nue ou la
-    commande cURL copiée depuis Clay ; `auth_token` explicite prime sur celui du cURL."""
+    """(url, token) of a table entry: the `webhook` field accepts the bare URL or the
+    cURL command copied from Clay; an explicit `auth_token` wins over the cURL's."""
     from oto.tools.clay import parse_curl
 
     parsed = parse_curl(fields.get("webhook") or "")
@@ -84,13 +84,13 @@ def _url_mark(url: str) -> str:
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """Probe for "test the connection" — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    Selon la sorte d'entrée :
-    - `api` : `GET /me` (déjà dans le client — `get_me`), le plus petit appel
-      authentifié de l'API publique ; un 401 = clé refusée.
-    - `table` : forme seule (URL https sur un hôte clay.com, cURL lisible). Un POST
-      de test écrirait une ligne parasite dans la table du client : on ne le fait pas.
+    Depending on the entry kind:
+    - `api`: `GET /me` (already in the client — `get_me`), the smallest
+      authenticated call of the public API; a 401 = key refused.
+    - `table`: shape only (https URL on a clay.com host, readable cURL). A test POST
+      would write a stray row into the customer's table: we don't do that.
     """
     from oto.tools.clay import ClayClient, is_clay_webhook_url
 
@@ -100,7 +100,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:
         return
     url, _ = _webhook_of(fields)
     if not is_clay_webhook_url(url):
-        raise ValueError("webhook : URL https://…clay.com/… attendue")
+        raise ValueError("webhook: https://…clay.com/… URL expected")
     egress.check_url(url, connector=CONNECTOR, field="webhook")
 
 
@@ -109,8 +109,8 @@ _HEADING = re.compile(r"^(#{1,4}) +(.+?)\s*$")
 
 
 def _sections(text: str) -> list[dict]:
-    """Découpe un Markdown en sections `{level, title, start, end}` — `end` = début
-    du prochain titre de niveau ≤, donc une section INCLUT ses sous-sections."""
+    """Split a Markdown into sections `{level, title, start, end}` — `end` = start
+    of the next heading of level ≤, so a section INCLUDES its subsections."""
     lines = text.split("\n")
     heads, pos = [], 0
     for line in lines:
@@ -125,11 +125,11 @@ def _sections(text: str) -> list[dict]:
 
 
 def _shape_page(page: Any, fields: Optional[list[str]]) -> Any:
-    """Page Clay resserrée : dans `data`, une colonne de TEXTE LONG devient sa taille
-    (`<champ>_length`) ; `fields=[…]` ne garde que ces colonnes (+ `id`) ;
-    `fields=["*"]` rend la page brute. L'enveloppe (curseur, `has_more`, `status`,
-    quota…) reste intacte : sans elle l'agent croit avoir tout vu. Une page d'une autre
-    forme passe telle quelle — une API tierce change de forme sans prévenir."""
+    """Tightened Clay page: in `data`, a LONG TEXT column becomes its size
+    (`<field>_length`); `fields=[…]` keeps only those columns (+ `id`);
+    `fields=["*"]` returns the raw page. The envelope (cursor, `has_more`, `status`,
+    quota…) stays intact: without it the agent thinks it has seen everything. A page of another
+    shape passes through as is — a third-party API changes shape without warning."""
     if not isinstance(page, dict):
         return page
     rows = page.get("data")
@@ -139,8 +139,8 @@ def _shape_page(page: Any, fields: Optional[list[str]]) -> Any:
                     if isinstance(v, str) and len(v) > LONG_TEXT})
     data, notice = output_projection.summarize(
         rows, body_fields=longs, fields=fields, always=("id",),
-        hint=f'Vue par défaut : textes longs réduits à leur taille. `fields=["{output_projection.RAW}"]` '
-             "rend la page brute, `fields=[…]` choisit les colonnes.")
+        hint=f'Default view: long texts reduced to their size. `fields=["{output_projection.RAW}"]` '
+             "returns the raw page, `fields=[…]` picks the columns.")
     out = {**page, "data": data}
     if notice:
         out["projection"] = notice
@@ -148,8 +148,8 @@ def _shape_page(page: Any, fields: Optional[list[str]]) -> Any:
 
 
 def _slim_reference(text: str, section: Optional[str], offset: int) -> dict:
-    """La référence de requête Clay (un Markdown de ~180 Ko) servie par morceaux :
-    sommaire + l'essentiel sans `section`, sinon la section demandée, paginée."""
+    """The Clay query reference (a ~180 KB Markdown) served in chunks:
+    table of contents + the essentials without `section`, otherwise the requested section, paginated."""
     heads = _sections(text)
     toc = [{"title": h["title"], "level": h["level"], "chars": h["end"] - h["start"]}
            for h in heads]
@@ -162,7 +162,7 @@ def _slim_reference(text: str, section: Optional[str], offset: int) -> dict:
     hit = (next((h for h in heads if h["title"].lower() == want), None)
            or next((h for h in heads if want in h["title"].lower()), None))
     if hit is None:
-        raise _bad(f"Section « {section} » introuvable. Sections : "
+        raise _bad(f"Section \"{section}\" not found. Sections: "
                    + ", ".join(h["title"] for h in heads))
     body = text[hit["start"]:hit["end"]]
     offset = max(0, offset)
@@ -175,8 +175,8 @@ def _slim_reference(text: str, section: Optional[str], offset: int) -> dict:
 
 
 def _entries(sub: str) -> dict[str, dict]:
-    """Entrées `clay` VISIBLES du sub, par nom : {kind, entity}. Le palier le plus
-    proche gagne (membre > équipe > org), comme la cascade de résolution."""
+    """`clay` entries VISIBLE to the sub, by name: {kind, entity}. The nearest
+    tier wins (member > team > org), like the resolution cascade."""
     from .. import credentials_store
     from ..connectors.identities import keyed_entity
 
@@ -214,9 +214,9 @@ def register(mcp: FastMCP) -> None:
         apis = [n for n, e in _entries(_sub()).items() if e["kind"] == "api"]
         if not apis:
             raise _bad(
-                "Aucune clé API Clay posée : sur la carte Clay, ajoute une entrée de "
-                "type `api` (Clay → Settings → Account → API keys). Les webhooks de "
-                "table ne suffisent pas pour ce tool.")
+                "No Clay API key set: on the Clay card, add an entry of "
+                "type `api` (Clay → Settings → Account → API keys). Table "
+                "webhooks are not enough for this tool.")
         fields = access.resolve_credential_fields(CONNECTOR, account=apis[0])
         return ClayClient(api_key=fields.get("api_key"))
 
@@ -226,17 +226,17 @@ def register(mcp: FastMCP) -> None:
         entry = entries.get(name)
         if entry is None or entry["kind"] != "table":
             raise _bad(
-                f"Table Clay `{name}` inconnue. Tables enregistrées : "
-                f"{', '.join(tables) or 'aucune'}. Pour en ajouter une : dans Clay, "
-                "+ Add → Monitor webhook, copie la commande cURL, puis colle-la sur la "
-                "carte Clay (type `table`, nom = le nom à passer ici).")
+                f"Unknown Clay table `{name}`. Registered tables: "
+                f"{', '.join(tables) or 'none'}. To add one: in Clay, "
+                "+ Add → Monitor webhook, copy the cURL command, then paste it on the "
+                "Clay card (type `table`, name = the name to pass here).")
         fields = access.resolve_credential_fields(CONNECTOR, account=name)
         url, token = _webhook_of(fields)
         egress.check_url(url, connector=CONNECTOR, field="webhook")
         try:
             hook = ClayTableWebhook(url, auth_token=token, timeout=WEBHOOK_TIMEOUT)
         except ValueError as e:
-            raise _bad(f"Table `{name}` : {e} — recolle le webhook sur la carte Clay.")
+            raise _bad(f"Table `{name}`: {e} — paste the webhook again on the Clay card.")
         return hook, entry, _url_mark(url)
 
     def _sent_so_far(entry: dict, mark: str) -> int:
@@ -244,21 +244,21 @@ def register(mcp: FastMCP) -> None:
         return int(meta.get("submissions") or 0) if meta.get("submissions_url") == mark else 0
 
     def _mark_of(name: str) -> Optional[str]:
-        """Marque de l'URL du webhook ACTUELLEMENT collé sur l'entrée `name`, ou None
-        si elle ne se lit pas. Le compteur ne vaut que pour l'URL qu'il a comptée : un
-        webhook recollé repart de zéro (même règle que `clay_push_rows`)."""
+        """Mark of the webhook URL CURRENTLY pasted on entry `name`, or None
+        if it cannot be read. The counter only holds for the URL it counted: a
+        re-pasted webhook starts again from zero (same rule as `clay_push_rows`)."""
         try:
             url, _ = _webhook_of(access.resolve_credential_fields(CONNECTOR, account=name))
             return _url_mark(url)
-        except Exception:  # noqa: SILENT — la liste reste servie ; le compteur de cette table est dit inconnu
-            logger.warning("clay : webhook de la table illisible pour le compteur",
+        except Exception:  # noqa: SILENT — the list is still served; this table's counter is reported unknown
+            logger.warning("clay: table webhook unreadable for the counter",
                            exc_info=True)
             return None
 
     def _upstream(e: UpstreamHTTPError) -> dict:
         return {"status": e.status_code, "error": str(e.body)[:300]}
 
-    # --- tables (écriture) ----------------------------------------------------
+    # --- tables (write) ----------------------------------------------------
 
     @mcp.tool()
     def clay_list_tables() -> dict:
@@ -314,24 +314,24 @@ def register(mcp: FastMCP) -> None:
                 receipt {total, succeeded, failed: [{index, error}]}.
             dry_run: validate and show what would be sent, send nothing."""
         if (row is None) == (rows is None):
-            raise _bad("Passe exactement un de `row` (une ligne) ou `rows` (plusieurs).")
+            raise _bad("Pass exactly one of `row` (one row) or `rows` (several).")
         batch = [row] if row is not None else list(rows or [])
         if not batch:
-            raise _bad("`rows` est vide.")
+            raise _bad("`rows` is empty.")
         if len(batch) > MAX_ROWS:
-            raise _bad(f"{len(batch)} lignes : maximum {MAX_ROWS} par appel "
-                       "(un POST par ligne, sous le délai d'un appel). Découpe en lots.")
+            raise _bad(f"{len(batch)} rows: maximum {MAX_ROWS} per call "
+                       "(one POST per row, within a call's timeout). Split into batches.")
         for i, r in enumerate(batch):
             if not isinstance(r, dict) or not r:
-                raise _bad(f"Ligne {i} : un objet JSON non vide est attendu.")
+                raise _bad(f"Row {i}: a non-empty JSON object is expected.")
 
         hook, entry, mark = _table(table)
         sent = _sent_so_far(entry, mark)
         if sent + len(batch) > WEBHOOK_LIMIT:
             raise _bad(
-                f"Le webhook de `{table}` a déjà reçu {sent} lignes ; Clay plafonne un "
-                f"webhook à {WEBHOOK_LIMIT} envois. Crée un nouveau webhook dans la "
-                "table (+ Add → Monitor webhook) et recolle-le sur cette entrée.")
+                f"The webhook of `{table}` has already received {sent} rows; Clay caps a "
+                f"webhook at {WEBHOOK_LIMIT} sends. Create a new webhook in the "
+                "table (+ Add → Monitor webhook) and paste it back on this entry.")
 
         if dry_run:
             return {"dry_run": True, "table": table, "would_send": len(batch),
@@ -364,19 +364,19 @@ def register(mcp: FastMCP) -> None:
                     if e.status_code in (401, 403):
                         _rest(i + 1, "batch aborted")
                         break
-                except Exception as e:  # noqa: SILENT — rendu dans le reçu (failed[]) ; réseau : on arrête le lot
+                except Exception as e:  # noqa: SILENT — reported in the receipt (failed[]); network: we stop the batch
                     failed.append({"index": i, "error": f"{type(e).__name__}: {e}"[:300]})
                     _rest(i + 1, "batch aborted")
                     break
         finally:
-            # Même si l'appel est coupé en plein lot : ce qui est parti chez Clay compte.
+            # Even if the call is cut mid-batch: what went out to Clay counts.
             if ok:
                 _count(entry, table, mark, sent + ok)
         out: dict[str, Any] = {"table": table, "total": len(batch),
                                "succeeded": ok, "failed": failed}
         if sent + ok >= WEBHOOK_WARN_AT:
-            out["warning"] = (f"{sent + ok}/{WEBHOOK_LIMIT} envois sur ce webhook : "
-                              "prévois un nouveau webhook pour cette table.")
+            out["warning"] = (f"{sent + ok}/{WEBHOOK_LIMIT} sends on this webhook: "
+                              "plan a new webhook for this table.")
         return out
 
     def _count(entry: dict, table: str, mark: str, total: int) -> None:
@@ -386,12 +386,12 @@ def register(mcp: FastMCP) -> None:
                 ent[0], ent[1], CONNECTOR, table,
                 {"submissions": total, "submissions_url": mark})
         except Exception:
-            # Le compteur est un garde-fou, pas la vérité : jamais au prix de
-            # l'écriture déjà faite chez Clay — mais on le dit.
-            log.warning("clay: compteur d'envois non mis à jour (table %s)", table,
+            # The counter is a safeguard, not the truth: never at the cost of
+            # the write already done at Clay — but we say so.
+            log.warning("clay: send counter not updated (table %s)", table,
                         exc_info=True)
 
-    # --- API publique -------------------------------------------------------------
+    # --- Public API -------------------------------------------------------------
 
     @mcp.tool()
     def clay_account() -> dict:
@@ -413,11 +413,11 @@ def register(mcp: FastMCP) -> None:
             items: [{"id": "<your id, ≤64 chars>", "inputs": {...}}] — `id` comes
                 back with each result so you can match them."""
         if not 1 <= len(items or []) <= MAX_ROUTINE_ITEMS:
-            raise _bad(f"`items` : 1 à {MAX_ROUTINE_ITEMS} éléments (limite Clay).")
+            raise _bad(f"`items`: 1 to {MAX_ROUTINE_ITEMS} elements (Clay limit).")
         for i, it in enumerate(items):
             if not isinstance(it, dict) or not it.get("id") or not isinstance(
                     it.get("inputs"), dict):
-                raise _bad(f"items[{i}] : forme attendue {{\"id\": \"…\", \"inputs\": {{…}}}}.")
+                raise _bad(f"items[{i}]: expected shape {{\"id\": \"…\", \"inputs\": {{…}}}}.")
         return _client().run_routine(routine_id, items)
 
     @mcp.tool()
@@ -445,7 +445,7 @@ def register(mcp: FastMCP) -> None:
         `companies`, with Clay's usage guidance. Read this before building
         `filters`."""
         if source_type not in SOURCE_TYPES:
-            raise _bad(f"source_type : {' | '.join(SOURCE_TYPES)}.")
+            raise _bad(f"source_type: {' | '.join(SOURCE_TYPES)}.")
         return _client().list_search_fields(source_type)
 
     @mcp.tool()
@@ -485,7 +485,7 @@ def register(mcp: FastMCP) -> None:
         limit = max(1, min(limit, 500))
         c = _client()
         if query and (filters or source_type):
-            raise _bad("Passe `query` SEUL, ou `source_type` + `filters` — pas les deux.")
+            raise _bad("Pass `query` ALONE, or `source_type` + `filters` — not both.")
         if query:
             created = c.create_query_search(query)
             page = c.run_query_search(created["search_id"], limit=limit)
@@ -493,8 +493,8 @@ def register(mcp: FastMCP) -> None:
                                 "source_type": created.get("source_type"), **page},
                                fields)
         if source_type not in SOURCE_TYPES or not isinstance(filters, dict):
-            raise _bad("Mode filtres : `source_type` (people | companies) + `filters` "
-                       "(cf. clay_search_fields). Mode requête : `query`.")
+            raise _bad("Filters mode: `source_type` (people | companies) + `filters` "
+                       "(see clay_search_fields). Query mode: `query`.")
         created = c.create_filters_search(source_type, filters)
         page = c.run_filters_search(created["search_id"], limit=limit)
         return _shape_page({"search_id": created["search_id"], "mode": "filters",
@@ -514,7 +514,7 @@ def register(mcp: FastMCP) -> None:
             return _shape_page(c.run_query_search(search_id, limit=limit), fields)
         if mode == "filters":
             return _shape_page(c.run_filters_search(search_id, limit=limit), fields)
-        raise _bad("mode : filters | query (celui rendu par clay_search).")
+        raise _bad("mode: filters | query (the one returned by clay_search).")
 
     @mcp.tool()
     def clay_tables_query(query: dict, cursor: Optional[str] = None,
@@ -532,10 +532,10 @@ def register(mcp: FastMCP) -> None:
                 query, cursor=cursor, limit=max(1, min(limit, 100))), fields)
         except UpstreamHTTPError as e:
             detail = str(e.body)[:300]
-            # Constaté en live : une table sans sync ClayQL répond 400, pas 403.
+            # Observed live: a table without ClayQL sync answers 400, not 403.
             if e.status_code == 403 or "ClayQL sync" in detail:
                 raise _bad(
-                    "Clay refuse la lecture de cette table : la synchronisation API "
-                    "(« ClayQL sync », plan Enterprise) n'y est pas activée. L'écriture "
-                    f"par clay_push_rows reste possible. Détail : {detail}")
+                    "Clay refuses to read this table: API synchronization "
+                    "(\"ClayQL sync\", Enterprise plan) is not enabled on it. Writing "
+                    f"via clay_push_rows is still possible. Detail: {detail}")
             raise

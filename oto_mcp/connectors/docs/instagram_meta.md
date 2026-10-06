@@ -1,49 +1,49 @@
-## prerequisite — un compte instagram professionnel, et une invitation de testeur
+## prerequisite — a professional instagram account, and a tester invitation
 
-oto lit les statistiques de **ton** compte instagram : tu l'autorises une fois, chez instagram, et rien ne transite par facebook.
+oto reads the statistics of **your** instagram account: you authorize it once, at instagram, and nothing goes through facebook.
 
-- il faut un **compte professionnel** — business ou créateur (instagram → paramètres → type de compte). un compte personnel ne donne accès à aucune statistique, chez personne
-- ⚠️ **tant que notre application n'a pas passé la revue de meta, seuls les comptes INVITÉS comme testeurs peuvent l'autoriser.** ce n'est pas un réglage de ton côté : si ton compte n'a pas été invité, instagram refusera l'autorisation, et il le fera avec le même message que si tu avais cliqué « refuser »
-  - demande l'invitation à l'exploitant de cette instance oto (chez otomata : `oto@otomata.tech`), en donnant ton **nom d'utilisateur instagram**
-  - puis accepte-la : **instagram → modifier le profil → applications et sites web → invitations de testeur**
-  - reviens ensuite ici et clique « connecter »
-- l'autorisation vaut **60 jours**. oto la renouvelle tout seul, tous les jours, tant qu'elle est vivante — tu n'as rien à faire. mais elle ne se renouvelle **que tant qu'elle vit** : si le connecteur est retiré, ou l'instance arrêtée plus de deux mois, il faudra la refaire
-- pour révoquer : instagram → modifier le profil → applications et sites web → retirer l'accès. la fiche passera alors « à reconnecter »
+- you need a **professional account** — business or creator (instagram → settings → account type). a personal account gives access to no statistics, anywhere
+- ⚠️ **until our application has passed meta's review, only accounts INVITED as testers can authorize it.** this is not a setting on your side: if your account has not been invited, instagram will refuse the authorization, and it will do so with the same message as if you had clicked "deny"
+  - ask the operator of this oto instance for the invitation (at otomata: `oto@otomata.tech`), giving your **instagram username**
+  - then accept it: **instagram → edit profile → apps and websites → tester invitations**
+  - then come back here and click "connect"
+- the authorization is valid for **60 days**. oto renews it on its own, every day, as long as it is alive — you have nothing to do. but it is only renewed **while it is alive**: if the connector is removed, or the instance is stopped for more than two months, it will have to be redone
+- to revoke: instagram → edit profile → apps and websites → remove access. the card will then show "to reconnect"
 
-## setup — l'url de retour à déclarer chez meta
+## setup — the callback url to declare at meta
 
-réservé à l'exploitant de l'instance. il faut une **application meta** avec le cas d'usage « instagram api with instagram login », les permissions `instagram_business_basic` et `instagram_business_manage_insights`, et cette url de retour déclarée au byte près :
+reserved for the instance operator. you need a **meta application** with the use case "instagram api with instagram login", the permissions `instagram_business_basic` and `instagram_business_manage_insights`, and this callback url declared to the byte:
 
 {{callback:/api/instagram_meta/oauth/callback}}
 
-les deux coordonnées de l'application se posent ensuite au scope plateforme, une fois pour l'instance :
+the application's two credentials are then set at platform scope, once for the instance:
 
 - `oto_admin_connector_setting(op="set", connector="instagram_meta", key="app_id", value="…")`
 - `oto_admin_connector_setting(op="set", connector="instagram_meta", key="app_secret", value="…")`
 
-tant qu'elles manquent, le connecteur reste visible et le bouton « connecter » refuse **en nommant la clé absente** : ce n'est alors pas le compte de l'utilisatrice qui est en cause, et il n'y a rien à reposer de son côté.
+while they are missing, the connector stays visible and the "connect" button refuses **naming the missing key**: it is then not the user's account that is at fault, and there is nothing to set again on their side.
 
-⚠️ `app_secret` est un **vrai secret** : il signe l'échange du code. il n'est jamais rendu par une api, jamais écrit dans un journal, et `oto_admin_connector_setting` est réservé à l'administration de la plateforme. les préproductions et la production n'ont pas la même url de retour — les deux se déclarent chez meta, sinon un consentement lancé depuis l'une échoue sur un `redirect_uri_mismatch`.
+⚠️ `app_secret` is a **real secret**: it signs the code exchange. it is never returned by an api, never written to a log, and `oto_admin_connector_setting` is reserved for platform administration. preproduction and production do not share the same callback url — both are declared at meta, otherwise a consent started from one fails with a `redirect_uri_mismatch`.
 
-## usage — profil, publications, portée
+## usage — profile, posts, reach
 
-lecture seule. rien n'est publié, modifié ni supprimé — les permissions demandées ne le permettraient pas.
+read-only. nothing is published, modified or deleted — the permissions requested would not allow it.
 
-- `instagram_meta_get_profile` pour commencer : il confirme **quel** compte est connecté (nom d'utilisateur, abonnés, nombre de publications)
-- `instagram_meta_get_recent_media` liste les dernières publications avec leurs likes et commentaires — c'est là qu'on récupère l'`id` à passer aux insights
-- `instagram_meta_get_media_insights` détaille **une** publication : portée, vues, enregistrements, partages, interactions. les métriques dépendent du type (post de fil, reel, story) et sont choisies pour toi
-- `instagram_meta_get_account_insights` donne le compte entier sur les N derniers jours (**30 au maximum** — c'est la fenêtre de l'api, pas un choix d'oto)
-- `instagram_meta_get_best_hours` classe les meilleures heures et jours de publication d'après l'engagement moyen des dernières publications
+- `instagram_meta_get_profile` to start: it confirms **which** account is connected (username, followers, number of posts)
+- `instagram_meta_get_recent_media` lists the latest posts with their likes and comments — this is where you get the `id` to pass to insights
+- `instagram_meta_get_media_insights` details **one** post: reach, views, saves, shares, interactions. the metrics depend on the type (feed post, reel, story) and are chosen for you
+- `instagram_meta_get_account_insights` gives the whole account over the last N days (**30 at most** — that is the api's window, not oto's choice)
+- `instagram_meta_get_best_hours` ranks the best hours and days to post based on the average engagement of the latest posts
 
-## note — ce que ces chiffres sont, et ne sont pas
+## note — what these figures are, and are not
 
-- **les meilleures heures sont une heuristique locale**, pas une statistique d'instagram : oto la calcule sur l'engagement moyen des publications qu'il vient de lire. le `sample_size` rendu avec le résultat est là pour ça — un classement sur six publications ne vaut pas un classement sur quarante
-- les heures sont celles des horodatages d'instagram (**utc**) : l'api ne dit pas dans quel fuseau publie le compte, et convertir au hasard décalerait le classement sans que rien ne le signale
-- **`profile_views` et `website_clicks` n'existent plus** dans cette variante de l'api. la métrique qui les remplace est `profile_links_taps` (les clics sur les liens du profil) — un chiffre plus étroit, pas le même
-- ce sont les **statistiques**, pas les messages : les dm ont leur propre connecteur, avec sa propre connexion
+- **the best hours are a local heuristic**, not an instagram statistic: oto computes it over the average engagement of the posts it has just read. the `sample_size` returned with the result is there for that — a ranking over six posts is not worth a ranking over forty
+- the hours are those of instagram's timestamps (**utc**): the api does not say in which timezone the account posts, and converting at random would shift the ranking without anything signaling it
+- **`profile_views` and `website_clicks` no longer exist** in this variant of the api. the metric that replaces them is `profile_links_taps` (clicks on the profile links) — a narrower figure, not the same one
+- these are the **statistics**, not the messages: dms have their own connector, with its own connection
 
-## note — ce qu'oto voit, et ce qu'il ne voit pas
+## note — what oto sees, and what it does not
 
-- oto ne voit **que ce que ce compte voit** : c'est le compte, et lui seul, qui définit le périmètre
-- l'autorisation ne porte **aucune écriture** : même en cas d'erreur, rien ne peut être publié en ton nom
-- tu peux la retirer quand tu veux depuis instagram (applications et sites web) : oto le constatera au prochain appel et la fiche te le dira
+- oto only sees **what this account sees**: the account, and it alone, defines the scope
+- the authorization carries **no write access**: even in case of error, nothing can be published in your name
+- you can remove it whenever you want from instagram (apps and websites): oto will notice at the next call and the card will tell you

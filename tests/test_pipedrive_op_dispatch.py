@@ -218,7 +218,7 @@ def test_lead_create_without_amount_sends_no_value(client):
 
 
 def test_lead_create_requires_a_person_or_an_organization(client):
-    with pytest.raises(McpError, match="person_id ou organization_id"):
+    with pytest.raises(McpError, match="person_id or organization_id"):
         _tool("pipedrive_lead")(op="create", title="T")
     client.create_lead.assert_not_called()
 
@@ -241,7 +241,7 @@ def test_users_lists_account_users(client):
 def test_unknown_op_is_refused_with_the_allowed_list(client, tool, kwargs):
     """Une op inconnue doit lever en nommant les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool(tool)(op="nope", **kwargs)
 
 

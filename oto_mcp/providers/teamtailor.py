@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `teamtailor`.
+"""Registry declaration of the `teamtailor` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from ._model import _c
 CONNECTOR = _c(
     "teamtailor", ["teamtailor"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Teamtailor",
-    help="ATS — candidats, jobs, candidatures (JSON:API)",
+    help="ATS — candidates, jobs, applications (JSON:API)",
     href="https://www.teamtailor.com",
 )
 
@@ -19,6 +19,6 @@ PUBLISHER = "Teamtailor"
 LOGO_DOMAIN = "teamtailor.com"
 
 DESCRIPTION = (
-    "Le recrutement suivi dans Teamtailor (ATS) : candidats, offres d'emploi et "
-    "candidatures."
+    "Recruiting tracked in Teamtailor (ATS): candidates, job postings and "
+    "applications."
 )

@@ -370,7 +370,7 @@ def test_campaign_missing_required_arg_names_the_op_and_the_arg(
     "brevo_transactional",
 ])
 def test_unknown_op_is_refused_with_the_allowed_list(client, tool):
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool(tool)(op="nope")
     _assert_silent(client)
 
@@ -389,7 +389,7 @@ def test_unknown_op_is_refused_with_the_allowed_list(client, tool):
     ("brevo_transactional", "delete_hardbounces"),
 ])
 def test_destructive_ops_are_not_reachable(client, tool, op):
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool(tool)(op=op)
     _assert_silent(client)
 

@@ -192,7 +192,7 @@ def test_limit_defaults_to_100_because_stripe_silently_truncates_to_10():
 def test_limit_out_of_range_is_refused():
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="entre 1 et 100"):
+        with pytest.raises(McpError, match="between 1 and 100"):
             _tool(m, "stripe_customer")(op="list", limit=500)
     finally:
         patcher.stop()
@@ -214,9 +214,9 @@ def test_customer_get_requires_id_and_refuses_list_filters():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "stripe_customer")
-        with pytest.raises(McpError, match="requiert .customer_id."):
+        with pytest.raises(McpError, match="requires .customer_id."):
             fn(op="get")
-        with pytest.raises(McpError, match="op='get' n'utilise pas"):
+        with pytest.raises(McpError, match="op='get' does not use"):
             fn(op="get", customer_id="cus_1", created_after=1)
         cls.return_value.get_customer.assert_not_called()
 
@@ -230,7 +230,7 @@ def test_customer_create_requires_something_findable():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "stripe_customer")
-        with pytest.raises(McpError, match="au moins `email` ou `name`"):
+        with pytest.raises(McpError, match="at least `email` or `name`"):
             fn(op="create")
         fn(op="create", email="a@b.co")
         cls.return_value.create_customer.assert_called_once()
@@ -241,7 +241,7 @@ def test_customer_create_requires_something_findable():
 def test_subscription_list_refuses_a_subscription_id():
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="op='list' n'utilise pas"):
+        with pytest.raises(McpError, match="op='list' does not use"):
             _tool(m, "stripe_subscription")(op="list", subscription_id="sub_1")
         cls.return_value.list_subscriptions.assert_not_called()
     finally:
@@ -277,7 +277,7 @@ def test_add_item_requires_amount_and_currency():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "stripe_invoice")
-        with pytest.raises(McpError, match="requiert `customer_id`"):
+        with pytest.raises(McpError, match="requires `customer_id`"):
             fn(op="add_item", amount=1000, currency="eur")
         with pytest.raises(McpError, match="`amount`.*`currency`"):
             fn(op="add_item", customer_id="cus_1")
@@ -340,7 +340,7 @@ def test_totals_declares_itself_incomplete_rather_than_lying():
             "data": [_invoice(100, id_="in_1")], "has_more": True}
         out = _tool(m, "stripe_invoice")(op="totals")
         assert out["complete"] is False
-        assert "INCOMPLET" in out["note"]
+        assert "INCOMPLETE" in out["note"]
         assert cls.return_value.list_invoices.call_count == stripe._AGGREGATE_MAX_PAGES
     finally:
         patcher.stop()
@@ -349,7 +349,7 @@ def test_totals_declares_itself_incomplete_rather_than_lying():
 def test_totals_refuses_write_and_targeting_fields():
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="op='totals' n'utilise pas"):
+        with pytest.raises(McpError, match="op='totals' does not use"):
             _tool(m, "stripe_invoice")(op="totals", invoice_id="in_1")
     finally:
         patcher.stop()
@@ -372,7 +372,7 @@ def test_search_passes_the_query_through():
 def test_update_price_refuses_a_new_amount_and_says_what_to_do():
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="immuable"):
+        with pytest.raises(McpError, match="immutable"):
             _tool(m, "stripe_catalog")(op="update_price", price_id="price_1",
                                        unit_amount=2500)
         cls.return_value.update_price.assert_not_called()
@@ -383,7 +383,7 @@ def test_update_price_refuses_a_new_amount_and_says_what_to_do():
 def test_create_price_requires_the_three_fields_stripe_needs():
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="requiert `product_id`"):
+        with pytest.raises(McpError, match="requires `product_id`"):
             _tool(m, "stripe_catalog")(op="create_price", unit_amount=1900)
         _tool(m, "stripe_catalog")(op="create_price", product_id="prod_1",
                                    unit_amount=1900, currency="eur",
@@ -400,11 +400,11 @@ def test_create_coupon_requires_duration_and_exactly_one_discount_kind():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "stripe_catalog")
-        with pytest.raises(McpError, match="requiert `duration`"):
+        with pytest.raises(McpError, match="requires `duration`"):
             fn(op="create_coupon", percent_off=20)
-        with pytest.raises(McpError, match="`percent_off` OU `amount_off`"):
+        with pytest.raises(McpError, match="`percent_off` OR `amount_off`"):
             fn(op="create_coupon", duration="once")
-        with pytest.raises(McpError, match="`percent_off` OU `amount_off`"):
+        with pytest.raises(McpError, match="`percent_off` OR `amount_off`"):
             fn(op="create_coupon", duration="once", percent_off=20, amount_off=500,
                currency="eur")
         cls.return_value.create_coupon.assert_not_called()
@@ -420,7 +420,7 @@ def test_create_coupon_amount_off_requires_currency():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "stripe_catalog")
-        with pytest.raises(McpError, match="requiert aussi `currency`"):
+        with pytest.raises(McpError, match="also requires `currency`"):
             fn(op="create_coupon", duration="once", amount_off=500)
         fn(op="create_coupon", duration="once", amount_off=500, currency="eur")
         assert cls.return_value.create_coupon.call_args.kwargs["currency"] == "eur"
@@ -444,9 +444,9 @@ def test_update_coupon_only_accepts_name_and_metadata():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "stripe_catalog")
-        with pytest.raises(McpError, match="requiert `coupon_id`"):
+        with pytest.raises(McpError, match="requires `coupon_id`"):
             fn(op="update_coupon", name="x")
-        with pytest.raises(McpError, match="rien d'autre de modifiable"):
+        with pytest.raises(McpError, match="nothing else that can be modified"):
             fn(op="update_coupon", coupon_id="cp_1")
         fn(op="update_coupon", coupon_id="cp_1", name="renamed")
         cls.return_value.update_coupon.assert_called_once_with("cp_1", name="renamed")
@@ -458,7 +458,7 @@ def test_create_promotion_code_requires_a_coupon():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "stripe_catalog")
-        with pytest.raises(McpError, match="requiert `coupon_id`"):
+        with pytest.raises(McpError, match="requires `coupon_id`"):
             fn(op="create_promotion_code", code="LAUNCH20")
         fn(op="create_promotion_code", coupon_id="cp_1", code="LAUNCH20",
            restrictions={"first_time_transaction": True})
@@ -474,7 +474,7 @@ def test_create_coupon_refuses_a_stray_promotion_code_text():
     ferait croire à tort que le coupon lui-même porte ce texte."""
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="op='create_coupon' n'utilise pas"):
+        with pytest.raises(McpError, match="op='create_coupon' does not use"):
             _tool(m, "stripe_catalog")(op="create_coupon", duration="once",
                                        percent_off=20, code="LAUNCH20")
         cls.return_value.create_coupon.assert_not_called()
@@ -487,7 +487,7 @@ def test_create_promotion_code_refuses_a_stray_active_flag():
     modification (`update_promotion_code`), pas à la création."""
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="op='create_promotion_code' n'utilise pas"):
+        with pytest.raises(McpError, match="op='create_promotion_code' does not use"):
             _tool(m, "stripe_catalog")(op="create_promotion_code", coupon_id="cp_1",
                                        active=False)
         cls.return_value.create_promotion_code.assert_not_called()
@@ -511,9 +511,9 @@ def test_update_promotion_code_can_deactivate():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = _tool(m, "stripe_catalog")
-        with pytest.raises(McpError, match="requiert `promotion_code_id`"):
+        with pytest.raises(McpError, match="requires `promotion_code_id`"):
             fn(op="update_promotion_code", active=False)
-        with pytest.raises(McpError, match="requiert .active. ou .metadata."):
+        with pytest.raises(McpError, match="requires .active. or .metadata."):
             fn(op="update_promotion_code", promotion_code_id="promo_1")
         fn(op="update_promotion_code", promotion_code_id="promo_1", active=False)
         cls.return_value.update_promotion_code.assert_called_once_with(
@@ -525,7 +525,7 @@ def test_update_promotion_code_can_deactivate():
 def test_checkout_create_link_requires_a_price():
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="requiert `price_id`"):
+        with pytest.raises(McpError, match="requires `price_id`"):
             _tool(m, "stripe_checkout")(op="create_link")
         _tool(m, "stripe_checkout")(op="create_link", price_id="price_1", quantity=3)
         cls.return_value.create_payment_link.assert_called_once()
@@ -638,7 +638,7 @@ def test_auth_error_mentions_restricted_key_permissions():
     from oto.tools.common.errors import UpstreamHTTPError
     msg = stripe._upstream_message(UpstreamHTTPError(403, {
         "error": {"message": "no perms"}, "request_id": "req_1"}, service="stripe"))
-    assert "RESTREINTE" in msg
+    assert "RESTRICTED" in msg
     assert "req_1" in msg, "le request_id est ce que le support Stripe demande en premier"
 
 

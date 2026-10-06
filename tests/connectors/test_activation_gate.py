@@ -113,7 +113,7 @@ def test_master_plateforme_off_refuse(etat, chemin):
     texte = _appeler(chemin, {"query": "x"})
 
     assert _refuse(texte), texte
-    assert "plateforme" in texte
+    assert "by the platform" in texte
 
 
 @pytest.mark.parametrize("chemin", CHEMINS)

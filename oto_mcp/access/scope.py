@@ -1,18 +1,18 @@
-"""Qui agit, et dans quel contexte (ADR 0023/0038) — la couche BASSE du package.
+"""Who acts, and in what context (ADR 0023/0038) — the LOW layer of the package.
 
-Trois questions, un seul endroit pour chacune :
+Three questions, one place for each:
 
-- **le rôle plateforme** du sub (`member` < `admin` < `super_admin`) ;
-- **le contexte de l'appel** — org, équipe et projet EFFECTIFS, résolus
-  `jeton d'appel ?? consultation ?? maison` ; `current_org` est le seam unique
-  par lequel passe tout ce qui scope une action (credentials, visibilité,
-  entitlements, redaction) ;
-- **ce que le projet actif ÉPINGLE** — identité, instance, slot de tableau.
+- **the platform role** of the sub (`member` < `admin` < `super_admin`);
+- **the call context** — EFFECTIVE org, team and project, resolved
+  `call token ?? view ?? home`; `current_org` is the single seam
+  through which everything that scopes an action passes (credentials, visibility,
+  entitlements, redaction);
+- **what the active project PINS** — identity, instance, table slot.
 
-Ce module ne dépend d'aucun autre sous-module d'`access` : tous les autres
-partent de lui. Une fonction qui a besoin de savoir « pour qui, sous quelle
-org » l'appelle — elle ne relit jamais la maison (`org_store.get_active_org`)
-en direct, cf. `tests/test_org_seam_tripwire.py`.
+This module depends on no other `access` submodule: all the others
+start from it. A function that needs to know "for whom, under which
+org" calls it — it never re-reads the home (`org_store.get_active_org`)
+directly, cf. `tests/test_org_seam_tripwire.py`.
 """
 from __future__ import annotations
 
@@ -29,10 +29,10 @@ from ..auth.hooks import current_user_sub_from_token
 logger = logging.getLogger(__name__)
 
 
-# Rôles plateforme, du plus faible au plus fort : `member` (défaut non-admin) <
-# `admin` (opérateur : supervision sans escalade en masse) < `super_admin`
-# (tout-puissant : escalade org/groupe, rôles, keys, tokens, orgs tierces).
-# `guest` retiré (2026-06-15) — c'était un alias sans effet, migré en `member`.
+# Platform roles, from weakest to strongest: `member` (non-admin default) <
+# `admin` (operator: supervision without mass escalation) < `super_admin`
+# (all-powerful: org/group escalation, roles, keys, tokens, third-party orgs).
+# `guest` removed (2026-06-15) — it was an alias with no effect, migrated to `member`.
 MEMBER = "member"
 ADMIN = "admin"
 SUPER_ADMIN = "super_admin"
@@ -40,10 +40,10 @@ ROLES = (MEMBER, ADMIN, SUPER_ADMIN)
 
 
 def get_user_role(sub: str) -> str:
-    """Rôle effectif du user — env override > DB > défaut member.
+    """Effective role of the user — env override > DB > default member.
 
-    Le bootstrap `OTO_MCP_ADMIN_SUB` force le **super_admin** (le tout-puissant)
-    — c'est le sub propriétaire de la plateforme."""
+    The `OTO_MCP_ADMIN_SUB` bootstrap forces **super_admin** (the all-powerful)
+    — it is the platform owner's sub."""
     admin_sub = os.environ.get("OTO_MCP_ADMIN_SUB")
     if admin_sub and sub == admin_sub:
         return SUPER_ADMIN
@@ -53,25 +53,25 @@ def get_user_role(sub: str) -> str:
 
 
 def is_super_admin(sub: str) -> bool:
-    """Tout-puissant : escalade org/groupe, rôles plateforme, keys, tokens,
-    écriture sur orgs tierces."""
+    """All-powerful: org/group escalation, platform roles, keys, tokens,
+    writes on third-party orgs."""
     return get_user_role(sub) == SUPER_ADMIN
 
 
 def is_platform_operator(sub: str) -> bool:
-    """Opérateur plateforme = `admin` (supervision) OU `super_admin`. Cran de
-    visibilité/supervision, SANS l'escalade en masse réservée au super_admin."""
+    """Platform operator = `admin` (supervision) OR `super_admin`. A notch of
+    visibility/supervision, WITHOUT the mass escalation reserved for super_admin."""
     return get_user_role(sub) in (ADMIN, SUPER_ADMIN)
 
 
 def is_operator_role(sub: str, role: Optional[str]) -> bool:
-    """MÊME prédicat qu'`is_platform_operator`, sur un `role` DÉJÀ EN MAIN (colonne
-    `users.role`) — pour un appelant qui a déjà lu la ligne (ex. la liste des membres
-    d'une org, `capabilities/orgs/reads.py::_members`, oto#270 suite) et ne doit pas
-    refaire un `db.get_user` par membre pour ce seul verdict. Même override
-    `OTO_MCP_ADMIN_SUB`, même repli sur `role` (pas de validation contre `ROLES` :
-    un rôle hors énumération ne matche ni `ADMIN` ni `SUPER_ADMIN`, donc `False`,
-    comme `get_user_role` qui le ramènerait à `MEMBER`)."""
+    """SAME predicate as `is_platform_operator`, on a `role` ALREADY IN HAND (column
+    `users.role`) — for a caller that has already read the row (e.g. an org's member
+    list, `capabilities/orgs/reads.py::_members`, oto#270 follow-up) and must not
+    redo a `db.get_user` per member for this one verdict. Same
+    `OTO_MCP_ADMIN_SUB` override, same fallback on `role` (no validation against `ROLES`:
+    a role outside the enumeration matches neither `ADMIN` nor `SUPER_ADMIN`, hence `False`,
+    like `get_user_role` which would bring it back to `MEMBER`)."""
     admin_sub = os.environ.get("OTO_MCP_ADMIN_SUB")
     if admin_sub and sub == admin_sub:
         return True
@@ -79,82 +79,82 @@ def is_operator_role(sub: str, role: Optional[str]) -> bool:
 
 
 def current_org(sub: str | None) -> Optional[int]:
-    """Org sous laquelle Claude AGIT pour le `sub` courant — **seam unique** de
-    résolution d'org (ADR 0023, amende 0015).
+    """Org under which Claude ACTS for the current `sub` — the **single seam** of
+    org resolution (ADR 0023, amends 0015).
 
-    Point de passage de TOUT ce qui scope une action sur l'org (credentials,
-    visibilité, entitlements, redaction). Aujourd'hui (barreau R0) =
-    l'org persistée (`org_store.get_active_org`, qui devient l'« org maison »).
+    Passage point for EVERYTHING that scopes an action on the org (credentials,
+    visibility, entitlements, redaction). Today (rung R0) =
+    the persisted org (`org_store.get_active_org`, which becomes the "home org").
 
-    Résout `jeton d'appel ?? org du run ?? consultation ?? maison` (ADR 0038, amende
-    0023 ; étage « org du run » ajouté le 30/08/2026, #639) :
-    - **jeton d'appel** (MCP) — `_org=`/`_project=`/`_group=` posés déjà gardés par
-      les axes/adaptateurs (contextvar per-requête) ; AUCUN état de session ;
-    - **org du run** (MCP) — sans jeton, un appel qui porte `_run_id=` se résout dans
-      `runs.org_id`, posée déjà gardée (appartenance) par le middleware
-      (`run_org.pin_for_call`) ; un run inconnu ne pose rien ;
-    - **org de consultation** (REST) — view-as du dashboard, contextvar per-requête
-      posé APRÈS validation d'appartenance par l'adaptateur REST ;
-    - sinon → repli sur la **maison** persistante (`org_store.get_active_org`).
+    Resolves `call token ?? run org ?? view ?? home` (ADR 0038, amends
+    0023; "run org" stage added on 30/08/2026, #639):
+    - **call token** (MCP) — `_org=`/`_project=`/`_group=` set already guarded by
+      the axes/adapters (per-request contextvar); NO session state;
+    - **run org** (MCP) — without a token, a call carrying `_run_id=` resolves into
+      `runs.org_id`, set already guarded (membership) by the middleware
+      (`run_org.pin_for_call`); an unknown run sets nothing;
+    - **view org** (REST) — dashboard view-as, per-request contextvar
+      set AFTER membership validation by the REST adapter;
+    - otherwise → fall back to the persisted **home** (`org_store.get_active_org`).
 
-    Jeton et consultation ne coexistent jamais (jeton = MCP only, consultation =
-    REST only). Garder ce seam étroit : candidat broker de credentials (ADR 0004)."""
+    Token and view never coexist (token = MCP only, view =
+    REST only). Keep this seam narrow: candidate credentials broker (ADR 0004)."""
     if sub is None:
-        # Endpoint MCP ANONYME (`<slug>.mcp.oto.cx`, ADR 0032) : pas de sub, mais l'org
-        # PROPRIÉTAIRE du projet est le contexte de résolution (credentials/redaction).
+        # ANONYMOUS MCP endpoint (`<slug>.mcp.oto.cx`, ADR 0032): no sub, but the project's
+        # OWNER org is the resolution context (credentials/redaction).
         from .. import subdomain_project
         return subdomain_project.current_anon_org()
-    # Jeton de DÉLÉGATION (`verrou_org.py`) : l'org de son travail, avant tout le
-    # reste — ni un jeton d'appel, ni l'org d'un run, ni la maison du porteur. Pour le
-    # porteur seul : l'org d'un TIERS se résout par son chemin ordinaire.
+    # DELEGATION token (`verrou_org.py`): the org of its work, before everything
+    # else — neither a call token, nor a run's org, nor the bearer's home. For the
+    # bearer alone: a THIRD PARTY's org resolves through its ordinary path.
     from .. import verrou_org
     if (verrou := verrou_org.borne(sub, route="current_org", ecart=True)) is not None:
         return verrou.org_id
-    # Endpoint scopé par sous-domaine (« 1 oto par org ») : épingle l'org de la
-    # connexion AVANT tout. Garde d'appartenance ici (sub connu) → un non-membre
-    # est ignoré (repli maison, zéro fuite). Précédence ⇒ hard-lock : `oto_use_org`
-    # (override de session) ne peut pas sortir de l'org du sous-domaine.
+    # Subdomain-scoped endpoint ("1 oto per org"): pins the connection's org
+    # BEFORE anything. Membership guard here (known sub) → a non-member
+    # is ignored (home fallback, zero leak). Precedence ⇒ hard-lock: `oto_use_org`
+    # (session override) cannot leave the subdomain's org.
     cand = session_org.current_subdomain_candidate()
     if cand is not None:
         from .. import roles
         if roles.is_org_member(sub, cand):
             return cand
-    # Jeton explicite de l'appel (`_org=`, modèle sans état de session) : posé par
-    # l'adaptateur capacité APRÈS validation d'appartenance → rendu tel quel. Prime
-    # sur l'override de session (qui, lui, ne survit pas au stateless claude.ai).
+    # Explicit call token (`_org=`, stateless-session model): set by the
+    # capability adapter AFTER membership validation → returned as is. Takes precedence
+    # over the session override (which does not survive stateless claude.ai).
     call = session_org.current_call_org()
     if call is not None:
         return call
-    # L'org du RUN (#639, 30/08/2026) : sans `_org=`, un appel fait DANS un run se
-    # résout dans l'org du run (`runs.org_id`), pas dans la maison du sub — c'est ce
-    # qui refusait « namespace inconnu » à 82 `data_write` sur sept jours et stampait
-    # le journal hors de l'org du travail (#630/#631). Posée par le middleware (une
-    # lecture par run, appartenance gardée, refus nommé sinon) — jamais relue ici :
-    # le seam reste sans requête.
+    # The RUN's org (#639, 30/08/2026): without `_org=`, a call made INSIDE a run
+    # resolves into the run's org (`runs.org_id`), not the sub's home — this is what
+    # refused "unknown namespace" to 82 `data_write` over seven days and stamped
+    # the journal outside the work's org (#630/#631). Set by the middleware (one
+    # read per run, membership guarded, named refusal otherwise) — never re-read here:
+    # the seam stays query-free.
     run_org = session_org.current_call_run_org()
     if run_org is not None:
         return run_org
-    # Le BRACELET de session (`oto_use_org`, dict keyé Mcp-Session-Id) n'est PLUS lu
-    # (ADR 0038 B3) : claude.ai renouvelle le session_id à chaque appel (jamais relu)
-    # et un session_id recyclé cross-compte faisait fuiter le scope (#108). Le scope
-    # est porté par l'appel (`_org=`/`_project=`/`_group=`, ci-dessus) ou retombe maison.
+    # The session WRISTBAND (`oto_use_org`, dict keyed by Mcp-Session-Id) is NO LONGER read
+    # (ADR 0038 B3): claude.ai renews the session_id on every call (never re-read)
+    # and a session_id recycled across accounts leaked the scope (#108). The scope
+    # is carried by the call (`_org=`/`_project=`/`_group=`, above) or falls back to home.
     view = session_org.current_view_org()
     if view is not None:
         return None if view == 0 else view
     return org_store.get_active_org(sub)
 
 
-# Sentinelle « param non fourni » — distingue « org=None » (perso, valeur légitime)
-# de « pas d'org explicite → résous via current_org ». Sert à calculer l'état d'un
-# TIERS (fiche admin) contre SON org persistée, sans laisser fuiter le contexte
-# view-as/session du REQUÉRANT (bug 2026-06-24 : has_option(cible) lisait l'org du
-# requérant). Le chemin self (/api/me) ne passe rien → comportement inchangé.
+# "Param not provided" sentinel — distinguishes "org=None" (personal, legitimate value)
+# from "no explicit org → resolve via current_org". Used to compute a THIRD PARTY's
+# state (admin sheet) against THEIR persisted org, without leaking the REQUESTER's
+# view-as/session context (bug 2026-06-24: has_option(target) read the requester's
+# org). The self path (/api/me) passes nothing → behaviour unchanged.
 _UNSET: object = object()
 
 
-# Tenants dont les membres d'équipe ne sont jamais « sans équipe » (règle OPT-IN,
-# déclarée par l'instance) : quand rien ne désigne d'équipe, `current_group` rend
-# l'équipe du sub dans l'org résolue au lieu du niveau org. Hors liste : inchangé.
+# Tenants whose team members are never "teamless" (OPT-IN rule,
+# declared by the instance): when nothing designates a team, `current_group` returns
+# the sub's team in the resolved org instead of the org level. Off the list: unchanged.
 ENV_EQUIPE_PAR_DEFAUT = "OTO_EQUIPE_PAR_DEFAUT_TENANTS"
 
 
@@ -164,8 +164,8 @@ def _tenants_equipe_par_defaut() -> frozenset[str]:
 
 
 def _equipe_par_defaut(sub: str, org: Optional[int]) -> Optional[int]:
-    """L'équipe du sub dans `org` si l'org relève d'un tenant opt-in, sinon None
-    (niveau org, le comportement de toujours)."""
+    """The sub's team in `org` if the org belongs to an opt-in tenant, otherwise None
+    (org level, the behaviour of old)."""
     if not org:
         return None
     tenants = _tenants_equipe_par_defaut()
@@ -175,19 +175,19 @@ def _equipe_par_defaut(sub: str, org: Optional[int]) -> Optional[int]:
 
 
 def current_group(sub: str | None) -> Optional[int]:
-    """Équipe (groupe) EFFECTIVE — mirror de `current_org` pour l'axe groupe
-    (ADR 0038). Résout `jeton d'appel ?? consultation ?? maison` en TENANT
-    l'invariant « groupe ⊂ org » : un jeton/consultation d'ORG **sans** groupe
-    explicite ⇒ niveau org (None), jamais le home_group d'une autre org.
+    """EFFECTIVE team (group) — mirror of `current_org` for the group axis
+    (ADR 0038). Resolves `call token ?? view ?? home` while HOLDING
+    the invariant "group ⊂ org": an ORG token/view **without** an explicit
+    group ⇒ org level (None), never another org's home_group.
 
-    Tenant opt-in (`OTO_EQUIPE_PAR_DEFAUT_TENANTS`) : là où on rendrait le niveau
-    org faute d'équipe désignée, on rend l'équipe du sub DANS l'org résolue
-    (`_equipe_par_defaut`). `X-Oto-Group: 0` garde toujours le niveau org.
+    Opt-in tenant (`OTO_EQUIPE_PAR_DEFAUT_TENANTS`): where the org level would be
+    returned for lack of a designated team, we return the sub's team IN the resolved org
+    (`_equipe_par_defaut`). `X-Oto-Group: 0` always keeps the org level.
 
-    Jeton de DÉLÉGATION (`verrou_org.py`) : une équipe hors de l'org du travail n'est
-    jamais rendue (niveau org), quelle que soit sa source — maison ou consultation.
-    Sans ça, la cascade de clés (`resolve._group_fetch`) prenait la clé d'équipe d'une
-    autre org du porteur."""
+    DELEGATION token (`verrou_org.py`): a team outside the work's org is
+    never returned (org level), whatever its source — home or view.
+    Without this, the key cascade (`resolve._group_fetch`) took the team key of another
+    org of the bearer."""
     g = _current_group(sub)
     if g is None or sub is None:
         return g
@@ -205,8 +205,8 @@ def current_group(sub: str | None) -> Optional[int]:
 def _current_group(sub: str | None) -> Optional[int]:
     if sub is None:
         return None
-    # Sous lock d'org par sous-domaine : le groupe n'est rendu QUE s'il ⊂ l'org
-    # épinglée (sinon None = niveau org) — hard-lock cohérent avec current_org.
+    # Under a subdomain org lock: the group is returned ONLY if it ⊂ the pinned
+    # org (otherwise None = org level) — hard-lock consistent with current_org.
     cand = session_org.current_subdomain_candidate()
     if cand is not None:
         from .. import roles
@@ -216,9 +216,9 @@ def _current_group(sub: str | None) -> Optional[int]:
         if ag is not None and (group_store.get_group(ag) or {}).get("org_id") == cand:
             return ag
         return _equipe_par_defaut(sub, cand)
-    # Jeton d'appel `_group=` : déjà gardé à la pose (can_read_group + org co-posée
-    # par l'axe, invariant par construction) → rendu tel quel. Le BRACELET de session
-    # (`oto_use_group`) n'est plus lu (ADR 0038 B3, même raison que current_org).
+    # `_group=` call token: already guarded when set (can_read_group + org co-set
+    # by the axis, invariant by construction) → returned as is. The session WRISTBAND
+    # (`oto_use_group`) is no longer read (ADR 0038 B3, same reason as current_org).
     call_g = session_org.current_call_group()
     if call_g is not None:
         return call_g
@@ -227,17 +227,17 @@ def _current_group(sub: str | None) -> Optional[int]:
         return None if vg == 0 else vg
     view_org = session_org.current_view_org()
     if view_org is not None:
-        return _equipe_par_defaut(sub, view_org)  # consultation d'org sans groupe
-    ag = group_store.get_active_group(sub)  # maison
+        return _equipe_par_defaut(sub, view_org)  # org view without a group
+    ag = group_store.get_active_group(sub)  # home
     call_org = session_org.current_call_org()
     if call_org is None:
         call_org = session_org.current_call_run_org()
     if ag is None:
         return _equipe_par_defaut(sub, call_org if call_org is not None
                                   else current_org(sub))
-    # Jeton d'org (`_org=`/`_project=`) — ou org du RUN (#639) — SANS groupe : le
-    # home_group n'est rendu que s'il appartient à l'org épinglée (invariant groupe ⊂
-    # org — jamais le home_group d'une AUTRE org sous une org de jeton ou de run).
+    # Org token (`_org=`/`_project=`) — or the RUN's org (#639) — WITHOUT a group: the
+    # home_group is returned only if it belongs to the pinned org (group ⊂
+    # org invariant — never the home_group of ANOTHER org under a token or run org).
     if call_org is not None:
         g = group_store.get_group(ag)
         if not g or g.get("org_id") != call_org:
@@ -246,13 +246,13 @@ def _current_group(sub: str | None) -> Optional[int]:
 
 
 def current_project() -> Optional[int]:
-    """Projet de l'APPEL courant (ADR 0038) = jeton `_project=` — posé déjà gardé
-    (`can_access` + org dérivée co-posée) par l'axe d'appel. Le BRACELET de session
-    (`oto_use_project`) n'est plus lu (B3b — même raison que org/groupe : claude.ai
-    renouvelle le session_id à chaque appel, et un session_id recyclé cross-compte
-    faisait hériter le contexte, #108). Pas de projet « maison » : pas de jeton ⇒
-    None (hors projet). Sert la surcharge connecteur PRÉFAITE du projet, les slots
-    (ADR 0035) et le gel `runs.project_id`."""
+    """Project of the current CALL (ADR 0038) = `_project=` token — set already guarded
+    (`can_access` + derived org co-set) by the call axis. The session WRISTBAND
+    (`oto_use_project`) is no longer read (B3b — same reason as org/group: claude.ai
+    renews the session_id on every call, and a session_id recycled across accounts
+    made the context inherited, #108). No "home" project: no token ⇒
+    None (outside a project). Serves the project's PREMADE connector override, the slots
+    (ADR 0035) and the `runs.project_id` freeze."""
     return session_org.current_call_project()
 
 
@@ -267,11 +267,11 @@ def current_user_sub_or_raise() -> str:
 
 
 def _sub_matches_scopes(sub: str, scopes) -> bool:
-    """Vrai si `sub` appartient à l'un des scopes listés — vocabulaire COMMUN aux
-    allowlists `share_down` et aux prêts `share_side` (ADR 0044) : `user:<sub>` | `group:<gid>` | `org:<id>` (appartenance
-    réelle) | `org` (tout le monde du sous-arbre). `org:<id>` (ADR 0044 §F) porte
-    l'ancien grant org-level d'une clé plateforme. Fail-closed par entrée (une ref
-    malformée est ignorée, jamais d'exception qui casserait la résolution)."""
+    """True if `sub` belongs to one of the listed scopes — vocabulary COMMON to the
+    `share_down` allowlists and the `share_side` loans (ADR 0044): `user:<sub>` | `group:<gid>` | `org:<id>` (real
+    membership) | `org` (everyone in the subtree). `org:<id>` (ADR 0044 §F) carries
+    the old org-level grant of a platform key. Fail-closed per entry (a malformed
+    ref is ignored, never an exception that would break resolution)."""
     from .. import group_store, roles
     for s in scopes or []:
         if s == "org":
@@ -295,12 +295,12 @@ def _sub_matches_scopes(sub: str, scopes) -> bool:
 
 
 def project_pinned_identity(connector: str, project_id: Optional[int] = None) -> Optional[str]:
-    """Identité (account) ÉPINGLÉE par le projet actif pour `connector`, ou None ⇒ la
-    résolution retombe sur le défaut user. Lit la clé de BINDING `project_links.identity_ref`
-    (ADR 0032 §4 amendé, #57). Multiplicité : **un seul** binding avec identité ⇒ on l'épingle ;
-    **plusieurs** ⇒ None (ambigu → l'agent doit préciser `_account=` à l'appel). `project_id`
-    omis ⇒ projet de session (`current_project`). **Fail-soft** : toute erreur ⇒ None
-    (jamais de plantage de la résolution d'un tool sur ce chemin)."""
+    """Identity (account) PINNED by the active project for `connector`, or None ⇒ resolution
+    falls back to the user default. Reads the BINDING key `project_links.identity_ref`
+    (ADR 0032 §4 amended, #57). Multiplicity: **a single** binding with an identity ⇒ it is pinned;
+    **several** ⇒ None (ambiguous → the agent must specify `_account=` on the call). `project_id`
+    omitted ⇒ session project (`current_project`). **Fail-soft**: any error ⇒ None
+    (never crash a tool's resolution on this path)."""
     pid = current_project() if project_id is None else project_id
     if pid is None:
         return None
@@ -316,20 +316,20 @@ def project_pinned_identity(connector: str, project_id: Optional[int] = None) ->
 
 
 def project_declared_identities(connector: str, project_id: int) -> list[str]:
-    """TOUTES les identités déclarées par un projet pour `connector` (ADR 0032 §4).
+    """ALL the identities declared by a project for `connector` (ADR 0032 §4).
 
-    Pendant de `project_pinned_identity`, pour le chemin **sans `sub`** (endpoint MCP
-    publié, ADR 0032) : là, il n'y a personne dont on puisse prendre le compte par
-    défaut, et « ambigu ⇒ None » n'est pas jouable — un projet qui déclare LinkedIn ET
-    WhatsApp sous le même connecteur `unipile` n'est pas ambigu, il déclare deux canaux.
-    On rend donc la liste, et c'est au module du connecteur de choisir sur un critère
-    qu'il est seul à connaître (le canal, ici) — la spécificité reste dans son module.
+    Counterpart of `project_pinned_identity`, for the **`sub`-less** path (published
+    MCP endpoint, ADR 0032): there, there is no one whose default account can be taken,
+    and "ambiguous ⇒ None" is not workable — a project that declares LinkedIn AND
+    WhatsApp under the same `unipile` connector is not ambiguous, it declares two channels.
+    We therefore return the list, and it is up to the connector's module to choose on a criterion
+    only it knows (the channel, here) — the specificity stays in its module.
 
-    ⚠️ Le résultat n'est PAS une autorisation : ces refs viennent d'un lien de projet,
-    donc de ce qu'un membre a écrit. Sur une clé PARTAGÉE (l'abonnement Unipile de la
-    plateforme adresse tous les comptes de tous les tenants), les servir tels quels
-    laisserait un lien nommer le compte d'autrui. L'appelant DOIT recouper contre les
-    comptes réellement rattachés à l'org propriétaire. Fail-soft : erreur ⇒ []."""
+    ⚠️ The result is NOT an authorization: these refs come from a project link,
+    hence from what a member wrote. On a SHARED key (the platform's Unipile subscription
+    addresses all accounts of all tenants), serving them as is
+    would let a link name someone else's account. The caller MUST cross-check against the
+    accounts actually attached to the owner org. Fail-soft: error ⇒ []."""
     try:
         return [str(link["identity_ref"])
                 for link in db.list_project_links(int(project_id))
@@ -342,13 +342,13 @@ def project_declared_identities(connector: str, project_id: int) -> list[str]:
 
 
 def project_pinned_instance(provider: str, project_id: Optional[int] = None):
-    """Instance de connecteur BINDÉE par le projet de l'appel pour `provider`
-    (`project_links.config.instance_ref`, ADR 0038 B5), ou None ⇒ cascade normale.
-    **Un seul** binding à instance ⇒ son ref (parsé) ; **plusieurs** ⇒ McpError
-    actionnable (identité d'action en jeu — jamais de choix silencieux : l'agent
-    précise `_instance=`). Lecture des liens fail-soft (DB en hoquet ⇒ None, comme
-    `project_pinned_identity`) ; un ref STOCKÉ inparsable lève (validé au link —
-    corruption = erreur, pas un repli muet)."""
+    """Connector instance BOUND by the call's project for `provider`
+    (`project_links.config.instance_ref`, ADR 0038 B5), or None ⇒ normal cascade.
+    **A single** binding with an instance ⇒ its ref (parsed); **several** ⇒ actionable
+    McpError (acting identity at stake — never a silent choice: the agent
+    specifies `_instance=`). Link reads are fail-soft (DB hiccup ⇒ None, like
+    `project_pinned_identity`); a STORED ref that cannot be parsed raises (validated at link time —
+    corruption = error, not a silent fallback)."""
     pid = current_project() if project_id is None else project_id
     if pid is None:
         return None
@@ -366,29 +366,29 @@ def project_pinned_instance(provider: str, project_id: Optional[int] = None):
     if len(refs) > 1:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"Le projet #{pid} binde PLUSIEURS instances `{provider}` — "
-                     f"précise laquelle avec `_instance=` ({', '.join(refs)}).")))
+            message=(f"Project #{pid} binds SEVERAL `{provider}` instances — "
+                     f"specify which one with `_instance=` ({', '.join(refs)}).")))
     from .. import instance_refs
     return instance_refs.parse_ref(refs[0])
 
 
-# Préfixe d'adressage par slot (ADR 0035 B3) : `slot:<name>` dans un argument
-# `namespace` des tools data_* = « le tableau bindé sous ce nom par le projet actif ».
+# Slot addressing prefix (ADR 0035 B3): `slot:<name>` in a `namespace` argument
+# of the data_* tools = "the table bound under this name by the active project".
 SLOT_PREFIX = "slot:"
 
 
 def resolve_datastore_ref(namespace: str) -> str:
-    """Résout une référence de tableau : `slot:<name>` → l'IDENTIFIANT du tableau
-    bindé par le projet actif ; un nom nu passe inchangé (zéro magie sur les noms
-    littéraux).
+    """Resolves a table reference: `slot:<name>` → the IDENTIFIER of the table
+    bound by the active project; a bare name passes through unchanged (zero magic on literal
+    names).
 
-    Source UNIQUE de cette résolution, appelée par les tools `data_*` comme par les
-    capacités du datastore. Elle a d'abord vécu dans `tools/datastore.py` seulement,
-    et c'est ce qui a fait le trou : une capacité datastore recevait `slot:vivier`
-    comme un nom littéral et répondait « tableau introuvable ». Sur un verbe destructif
-    (`data_drop_column`), l'échec est heureux — mais un agent qui travaille en slots
-    voit seize refus sans comprendre pourquoi, et croirait à un tableau déjà propre
-    si le refus n'était pas là."""
+    The SINGLE source of this resolution, called by the `data_*` tools as by the
+    datastore capabilities. It first lived only in `tools/datastore.py`,
+    and that is what made the hole: a datastore capability received `slot:vivier`
+    as a literal name and answered "table not found". On a destructive verb
+    (`data_drop_column`), the failure is a happy one — but an agent working with slots
+    sees sixteen refusals without understanding why, and would believe a table already clean
+    if the refusal were not there."""
     if (isinstance(namespace, str)
             and namespace.strip().lower().startswith(SLOT_PREFIX)):
         return resolve_slot_tableau(namespace.strip()[len(SLOT_PREFIX):])
@@ -396,25 +396,25 @@ def resolve_datastore_ref(namespace: str) -> str:
 
 
 def resolve_slot_tableau(name: str) -> str:
-    """Résout un slot `tableau` contre les bindings du projet ACTIF (ADR 0035 B3) →
-    l'IDENTIFIANT du tableau bindé (#365 — jamais son nom). **Enforcement serveur, jamais
-    de fallback** : pas de projet actif, slot non bindé, ou binding pendouillant ⇒
-    `McpError` ACTIONNABLE — on n'interprète jamais `slot:x` comme un nom littéral
-    et on ne « prend jamais le premier tableau venu »."""
+    """Resolves a `tableau` slot against the ACTIVE project's bindings (ADR 0035 B3) →
+    the IDENTIFIER of the bound table (#365 — never its name). **Server enforcement, never
+    a fallback**: no active project, unbound slot, or dangling binding ⇒
+    ACTIONABLE `McpError` — we never interpret `slot:x` as a literal name
+    and we "never take the first table that comes along"."""
     from .. import slots as slots_mod
     try:
         name = slots_mod.normalize_name(name)
     except ValueError as e:
-        raise McpError(ErrorData(code=INVALID_PARAMS, message=f"slot invalide : {e}"))
+        raise McpError(ErrorData(code=INVALID_PARAMS, message=f"invalid slot: {e}"))
     pid = current_project()
     if pid is None:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"`slot:{name}` exige un PROJET (le binding nom→instance vit "
-                     "dans le projet, ADR 0035). Passe `project=<id>` sur CET appel "
-                     "(liste : `oto_project op=list`) — ou crée un projet et binde le slot "
-                     f"(`oto_project op=link target_type=tableau … slot='{name}'`), ou "
-                     "passe un `namespace` explicite.")))
+            message=(f"`slot:{name}` requires a PROJECT (the name→instance binding lives "
+                     "in the project, ADR 0035). Pass `project=<id>` on THIS call "
+                     "(list: `oto_project op=list`) — or create a project and bind the slot "
+                     f"(`oto_project op=link target_type=tableau … slot='{name}'`), or "
+                     "pass an explicit `namespace`.")))
     links = db.list_project_links(int(pid))
     match = [l for l in links
              if l.get("target_type") == "tableau" and l.get("slot") == name]
@@ -423,32 +423,32 @@ def resolve_slot_tableau(name: str) -> str:
                        if l.get("target_type") == "tableau" and l.get("slot"))
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"le projet actif (#{pid}) ne binde aucun slot tableau `{name}`. "
-                     + (f"Slots bindés : {', '.join(bound)}. " if bound else
-                        "Aucun slot tableau bindé dans ce projet. ")
-                     + f"Binde-le : `oto_project op=link project_id={pid} "
+            message=(f"the active project (#{pid}) binds no table slot `{name}`. "
+                     + (f"Bound slots: {', '.join(bound)}. " if bound else
+                        "No table slot bound in this project. ")
+                     + f"Bind it: `oto_project op=link project_id={pid} "
                        f"target_type=tableau target_ref=<id> slot='{name}'`.")))
-    # ⚠️ **L'IDENTIFIANT, jamais le nom (#365).** `slot:` est la façon dont les
-    # procédures adressent « le tableau de ce projet » sans nom en dur : tout passe par
-    # ici. On rendait le NOM du tableau bindé, que le store résolvait ensuite dans la
-    # portée de l'APPELANT — son « vivier » perso passait donc devant le « vivier » que
-    # le projet a bindé, et la procédure écrivait chez l'homonyme, sans erreur. Le
-    # binding désigne un tableau précis : on rend son identifiant (`datastore_id`,
-    # résolu dans la portée du PROPRIÉTAIRE du projet, `db.list_project_links`).
+    # ⚠️ **The IDENTIFIER, never the name (#365).** `slot:` is how
+    # procedures address "this project's table" without a hard-coded name: everything goes through
+    # here. We used to return the NAME of the bound table, which the store then resolved in the
+    # CALLER's scope — their personal "vivier" thus took precedence over the "vivier" the
+    # project bound, and the procedure wrote to the namesake, without an error. The
+    # binding designates a precise table: we return its identifier (`datastore_id`,
+    # resolved in the PROJECT OWNER's scope, `db.list_project_links`).
     lien = match[0]
     if lien.get("datastore_ambigu"):
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"le slot `{name}` du projet #{pid} désigne son tableau par le NOM "
-                     f"« {lien.get('target_ref')} », que plusieurs tableaux portent dans "
-                     "la portée du projet — rien n'est servi. Re-binde-le par identifiant "
+            message=(f"slot `{name}` of project #{pid} designates its table by the NAME "
+                     f"“{lien.get('target_ref')}”, which several tables carry in "
+                     "the project's scope — nothing is served. Re-bind it by identifier "
                      f"(`oto_project op=link project_id={pid} target_type=tableau "
                      f"target_ref=<id> slot='{name}'`).")))
     ns_id = lien.get("datastore_id")
     if ns_id is None:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"le slot `{name}` du projet #{pid} pointe un tableau qui ne résout "
-                     f"plus (ref `{lien.get('target_ref')}`) — re-binde-le sur un "
-                     "tableau existant (`oto_project op=link`).")))
+            message=(f"slot `{name}` of project #{pid} points to a table that no longer "
+                     f"resolves (ref `{lien.get('target_ref')}`) — re-bind it to an "
+                     "existing table (`oto_project op=link`).")))
     return str(int(ns_id))

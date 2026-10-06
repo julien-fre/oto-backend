@@ -1,49 +1,49 @@
-"""Déclaration de registre du connecteur `routine`.
+"""Registry declaration of the `routine` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# routine : déclencher une ROUTINE Claude Code (agent autonome hébergé chez
-# Anthropic) par son endpoint `/fire`. oto ne fait pas tourner l'agent — il le
-# déclenche, et l'agent revient sur `/mcp` avec les outils de son compte.
+# routine: trigger a Claude Code ROUTINE (autonomous agent hosted at
+# Anthropic) through its `/fire` endpoint. oto does not run the agent — it
+# triggers it, and the agent comes back on `/mcp` with its account's tools.
 #
-# UNE INSTANCE = UNE ROUTINE (ADR 0038 B5, même patron que « une clé × un
-# workspace » chez lighton) : le jeton `/fire` est scopé par Anthropic à UNE
-# routine, donc une automatisation = une instance, révocable seule et bindable à
-# un projet. Un jeton unique qui déclencherait une routine « à tout faire »
-# perdrait exactement le cran de sécurité qui rend ce chemin intéressant.
+# ONE INSTANCE = ONE ROUTINE (ADR 0038 B5, same pattern as "one key × one
+# workspace" at lighton): the `/fire` token is scoped by Anthropic to ONE
+# routine, so one automation = one instance, revocable on its own and bindable to
+# a project. A single token that triggered a catch-all routine
+# would lose exactly the security notch that makes this path interesting.
 #
-# byo only : la routine appartient à un compte claude.ai (elle n'est pas un objet
-# d'org côté Anthropic, et ce qu'elle fait apparaît sous cette identité). Pas de
-# clé plateforme : il n'y a rien à mutualiser, chaque automatisation a son jeton.
+# byo only: the routine belongs to a claude.ai account (it is not an org
+# object on the Anthropic side, and what it does appears under that identity). No
+# platform key: there is nothing to pool, each automation has its token.
 CONNECTOR = _c(
     "routine", ["routine"], auth_modes={"byo_user", "byo_org"},
     secret_kind="fields",
-    label="Routine Claude Code",
-    help="déclenche une routine Claude Code (agent autonome) — une instance par "
-         "automatisation",
+    label="Claude Code Routine",
+    help="triggers a Claude Code routine (autonomous agent) — one instance per "
+         "automation",
     publisher="Anthropic", href="https://claude.ai/code/routines",
     credential_fields=(
         CredentialField(
-            "routine_id", "ID de la routine", secret=False,
-            help="visible dans l'URL de la routine sur claude.ai/code/routines "
-                 "(commence par `trig_`)"),
+            "routine_id", "Routine ID", secret=False,
+            help="visible in the routine's URL on claude.ai/code/routines "
+                 "(starts with `trig_`)"),
         CredentialField(
-            "token", "Jeton de déclenchement", secret=True,
-            help="généré dans le déclencheur API de la routine — affiché UNE "
-                 "fois, non récupérable ensuite"),
+            "token", "Trigger token", secret=True,
+            help="generated in the routine's API trigger — shown ONCE, "
+                 "not retrievable afterwards"),
     ),
 )
 
 LOGO_DOMAIN = "anthropic.com"
 
 DESCRIPTION = (
-    "Déclencher une routine Claude Code (agent autonome hébergé chez Anthropic) "
-    "via son endpoint `/fire` : oto ne fait pas tourner l'agent, il le lance — "
-    "l'agent revient ensuite avec les outils de ton propre compte. Une instance "
-    "= une routine, révocable seule."
+    "Trigger a Claude Code routine (autonomous agent hosted at Anthropic) "
+    "via its `/fire` endpoint: oto does not run the agent, it launches it — "
+    "the agent then comes back with your own account's tools. One instance "
+    "= one routine, revocable on its own."
 )

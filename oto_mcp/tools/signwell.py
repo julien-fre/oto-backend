@@ -1,31 +1,31 @@
-"""SignWell — signature électronique : documents et modèles.
+"""SignWell — electronic signature: documents and templates.
 
-Wrappe `oto.tools.signwell.client.SignWellClient` (`X-Api-Key`,
-`https://www.signwell.com/api/v1`). keyed `api_key`, **byo-only** : la clé agit
-au nom du compte qui l'a créée, c'est ce nom qui signe les invitations — une clé
-plateforme partagée enverrait des contrats au nom de quelqu'un d'autre.
+Wraps `oto.tools.signwell.client.SignWellClient` (`X-Api-Key`,
+`https://www.signwell.com/api/v1`). keyed `api_key`, **byo-only**: the key acts
+on behalf of the account that created it, that name is what signs the invitations — a shared
+platform key would send contracts in someone else's name.
 
-26 opérations sur CINQ tools, verbe en `op` : `signwell_document` et
-`signwell_template` ici ; `signwell_bulk_send`, `signwell_webhook` et
-`signwell_account` dans `signwell_envois.py`. Le socle commun (clé, refus, vue
-d'un document) vit dans `signwell_socle.py`.
+26 operations over FIVE tools, verb in `op`: `signwell_document` and
+`signwell_template` here; `signwell_bulk_send`, `signwell_webhook` and
+`signwell_account` in `signwell_envois.py`. The common base (key, refusal, view
+of a document) lives in `signwell_socle.py`.
 
-## Ce que la couche tool ajoute au transport
+## What the tool layer adds to the transport
 
-1. **Un document créé ne part PAS par défaut.** Chez SignWell `draft` vaut
-   `false` : créer, c'est envoyer un contrat à de vraies personnes dans le même
-   appel. Ici `op="create"` crée un BROUILLON sauf `draft=False` explicite, et
-   l'envoi reste un geste distinct (`op="send"`). Même règle pour un document
-   issu d'un modèle.
-2. **La vue d'un document** (`signwell_socle.vue_document`) : un lien de
-   signature par destinataire sous une seule clé, un `emailed` explicite, et des
-   `notes` sur ce que l'état ne dit pas (test mode détourné vers le titulaire,
-   `Sending` qui n'est pas un envoi). `full=True` rend la charge SignWell brute.
-3. **Le PDF signé se rend en LIEN**, jamais en octets (`url_only` forcé).
-4. **`dry_run` sur toute mutation** : validation identique, aucun appel mutant ;
-   là où l'objet se relit, l'aperçu est un vrai diff.
-5. **Aucun argument ignoré en silence** : un argument qu'un `op` n'utilise pas,
-   ou une clé inconnue dans `options`, est refusé.
+1. **A created document does NOT go out by default.** At SignWell `draft` is
+   `false`: creating means sending a contract to real people in the same
+   call. Here `op="create"` creates a DRAFT unless `draft=False` is explicit, and
+   sending stays a distinct gesture (`op="send"`). Same rule for a document
+   made from a template.
+2. **The document view** (`signwell_socle.vue_document`): one signing
+   link per recipient under a single key, an explicit `emailed`, and
+   `notes` on what the state does not say (test mode diverted to the holder,
+   `Sending` which is not a send). `full=True` returns the raw SignWell payload.
+3. **The signed PDF is returned as a LINK**, never as bytes (`url_only` forced).
+4. **`dry_run` on every mutation**: identical validation, no mutating call;
+   where the object can be re-read, the preview is a real diff.
+5. **No argument silently ignored**: an argument an `op` does not use,
+   or an unknown key in `options`, is refused.
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ from .signwell_socle import (
     fichiers_valides, options_valides, refus, sans_base64, vue_document,
 )
 
-#: Réglages rares de `POST /documents`, passables par `options` (spec, 2026-09-16).
+#: Rare settings of `POST /documents`, passable via `options` (spec, 2026-09-16).
 _OPTIONS_CREATE = (
     "send_sms_test_preview_email", "self_sign", "with_signature_page",
     "api_application_id", "embedded_signing_notifications", "custom_requester_name",
@@ -72,17 +72,17 @@ _OPTIONS_TPL_DOC = (
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : `GET /me`. Sans effet de bord, et elle échoue
-    exactement là où la clé est en cause."""
+    """"Test the connection" probe: `GET /me`. No side effect, and it fails
+    exactly where the key is at issue."""
     from oto.tools.common.errors import UpstreamHTTPError
     from oto.tools.signwell import SignWellClient
 
     cle = (fields.get("key") or "").strip()
-    # Refusée AVANT le client : construit sur une clé vide, il retombe sur le secret
-    # `SIGNWELL_API_KEY` du SERVEUR — la sonde validerait alors la clé de quelqu'un
-    # d'autre et dirait « connexion OK » à une carte vide.
+    # Refused BEFORE the client: built on an empty key, it falls back to the SERVER's
+    # `SIGNWELL_API_KEY` secret — the probe would then validate someone else's key
+    # and say "connection OK" to an empty card.
     if not cle:
-        raise ValueError(f"Clé SignWell vide : crée-la sur {OU_CREER_LA_CLE}, puis colle-la.")
+        raise ValueError(f"Empty SignWell key: create it at {OU_CREER_LA_CLE}, then paste it.")
     try:
         SignWellClient(api_key=cle).get_me()
     except UpstreamHTTPError as e:
@@ -91,7 +91,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
 
 def _qui_recoit(recipients: List[Dict[str, Any]], *, test_mode: bool,
                 embedded: bool) -> List[Dict[str, Any]]:
-    """Aperçu d'envoi : qui recevrait un courriel, avant que quoi que ce soit parte."""
+    """Send preview: who would receive an email, before anything goes out."""
     out = []
     for r in recipients:
         if test_mode:
@@ -201,8 +201,8 @@ def register(mcp: FastMCP) -> None:
             draft_effectif = True if draft is None else draft
             if (not draft_effectif and not fields and not text_tags
                     and not extra.get("with_signature_page")):
-                raise _bad("Un document envoyé (draft=False) doit porter au moins un champ : "
-                           "`fields`, `text_tags=True` ou options.with_signature_page.")
+                raise _bad("A sent document (draft=False) must carry at least one field: "
+                           "`fields`, `text_tags=True` or options.with_signature_page.")
             body = {k: v for k, v in {**explicites, "text_tags": text_tags, "fields": fields,
                                       **extra}.items() if v is not None}
             if dry_run:
@@ -216,7 +216,7 @@ def register(mcp: FastMCP) -> None:
                 files=files, recipients=recipients, draft=draft_effectif, **body))
             out = _vue(doc, full)
             if draft_effectif and not full:
-                out["next_step"] = ("Brouillon : rien n'est parti. Envoie-le avec "
+                out["next_step"] = ("Draft: nothing has gone out. Send it with "
                                     "signwell_document(op=\"send\", document_id=…).")
             return out
 
@@ -260,17 +260,17 @@ def register(mcp: FastMCP) -> None:
             if op == "update_recipients":
                 for i, r in enumerate(recipients):
                     if not all(r.get(k) for k in ("id", "name", "email")):
-                        raise _bad(f"recipients[{i}] : `id`, `name` et `email` sont tous requis.")
+                        raise _bad(f"recipients[{i}]: `id`, `name` and `email` are all required.")
             else:
                 destinataires_valides(recipients, email_requis=False)
             if dry_run:
                 courant = _run(lambda: _client().get_document(document_id))
                 par_id = {str(r.get("id")): r for r in (courant or {}).get("recipients") or []}
                 if op == "update_authentication":
-                    # Un code d'accès ne s'échoe jamais, même en aperçu.
+                    # A passcode is never echoed, even in a preview.
                     return {"dry_run": True, "would_update_authentication": [
                         {"id": r.get("id"), "known": str(r.get("id")) in par_id,
-                         "passcode": "posé" if r.get("passcode") else "inchangé"}
+                         "passcode": "set" if r.get("passcode") else "unchanged"}
                         for r in recipients]}
                 changes = []
                 for r in recipients:
@@ -299,15 +299,15 @@ def register(mcp: FastMCP) -> None:
                             document_id, url_only=True, audit_page=audit_page,
                             file_format=file_format)
                     except UpstreamHTTPError as e:
-                        # Relevé en live : un document qui EXISTE mais n'est pas encore
-                        # signé par tous rend 404 ici, pas un refus d'état. Jugé sur le
-                        # STATUT amont, jamais sur le texte d'un message traduit.
+                        # Observed live: a document that EXISTS but is not yet
+                        # signed by everyone returns 404 here, not a state refusal. Judged on the
+                        # upstream STATUS, never on the text of a translated message.
                         if e.status_code != 404:
                             raise
-                        raise _bad("SignWell rend 404 pour ce PDF : soit le document n'est "
-                                   "pas encore signé par tous (le PDF n'existe qu'une fois "
-                                   "« Completed » — vérifie avec op=\"get\"), soit "
-                                   "l'identifiant est inconnu.") from None
+                        raise _bad("SignWell returns 404 for this PDF: either the document is "
+                                   "not yet signed by everyone (the PDF only exists once "
+                                   "\"Completed\" — check with op=\"get\"), or "
+                                   "the identifier is unknown.") from None
 
                 res = _run(_pdf)
             else:
@@ -315,8 +315,8 @@ def register(mcp: FastMCP) -> None:
                 res = _run(lambda: _client().get_nom151_certificate(document_id, url_only=True))
             url = res.get("file_url") if isinstance(res, dict) else None
             return {"document_id": document_id, "file_url": url,
-                    "note": "lien porteur : quiconque le détient télécharge le document "
-                            "signé — ne pas le republier."}
+                    "note": "bearer link: whoever holds it downloads the signed "
+                            "document — do not republish it."}
 
         if op == "delete":
             _need(op, document_id=document_id)
@@ -326,11 +326,11 @@ def register(mcp: FastMCP) -> None:
             if dry_run:
                 courant = _run(lambda: _client().get_document(document_id))
                 return {"dry_run": True, "would_delete": vue_document(courant),
-                        "warning": "supprimer annule la signature en cours ; irréversible."}
+                        "warning": "deleting cancels the signing in progress; irreversible."}
             _run(lambda: _client().delete_document(document_id))
             return {"deleted": True, "document_id": document_id}
 
-        raise _bad(f"op inconnu : {op!r}")
+        raise _bad(f"unknown op: {op!r}")
 
     @mcp.tool()
     def signwell_template(
@@ -394,7 +394,7 @@ def register(mcp: FastMCP) -> None:
                      test_mode=test_mode, embedded_signing=embedded_signing, full=full)
             fichiers_valides(files)
             if not placeholders or any(not (p.get("id") and p.get("name")) for p in placeholders):
-                raise _bad("`placeholders` est requis : [{id, name}] (ex. {\"id\": \"1\", "
+                raise _bad("`placeholders` is required: [{id, name}] (e.g. {\"id\": \"1\", "
                            "\"name\": \"Client\"}).")
             extra = options_valides(op, options, _OPTIONS_TPL_CREATE)
             body = {k: v for k, v in {**explicites, "draft": draft, "text_tags": text_tags,
@@ -417,7 +417,7 @@ def register(mcp: FastMCP) -> None:
             patch = {k: v for k, v in {**explicites, "draft": draft, **extra}.items()
                      if v is not None}
             if not patch:
-                raise _bad("op='update' : rien à modifier.")
+                raise _bad("op='update': nothing to modify.")
             if dry_run:
                 courant = _run(lambda: _client().get_template(template_id)) or {}
                 return {"dry_run": True, "changes": {
@@ -439,7 +439,7 @@ def register(mcp: FastMCP) -> None:
 
         if op == "create_document":
             if (template_id is None) == (template_ids is None):
-                raise _bad("op='create_document' : passe `template_id` OU `template_ids`.")
+                raise _bad("op='create_document': pass `template_id` OR `template_ids`.")
             _hors_op(op, files=files, placeholders=placeholders)
             destinataires_valides(recipients)
             extra = options_valides(op, options, _OPTIONS_TPL_DOC)
@@ -459,8 +459,8 @@ def register(mcp: FastMCP) -> None:
                 recipients, draft=draft_effectif, **body))
             out = _vue(doc, full)
             if draft_effectif and not full:
-                out["next_step"] = ("Brouillon : rien n'est parti. Envoie-le avec "
+                out["next_step"] = ("Draft: nothing has gone out. Send it with "
                                     "signwell_document(op=\"send\", document_id=…).")
             return out
 
-        raise _bad(f"op inconnu : {op!r}")
+        raise _bad(f"unknown op: {op!r}")

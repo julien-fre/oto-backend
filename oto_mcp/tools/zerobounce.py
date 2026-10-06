@@ -1,7 +1,7 @@
 """ZeroBounce — email verification (deliverability).
 
-Wrappe `oto.tools.zerobounce.ZeroBounceClient`. Clé résolue par appel via
-`access.resolve_api_key("zerobounce")` — byo. Pas de clé plateforme.
+Wraps `oto.tools.zerobounce.ZeroBounceClient`. Key resolved per call via
+`access.resolve_api_key("zerobounce")` — byo. No platform key.
 """
 from __future__ import annotations
 

@@ -1,16 +1,16 @@
-"""Schéma OBSERVÉ des connecteurs — dérivé des vraies réponses (squelette clés+types,
-JAMAIS de valeurs/PII).
+"""OBSERVED schema of connectors — derived from real responses (keys+types skeleton,
+NEVER values/PII).
 
-Pourquoi observer plutôt que déclarer : les sorties connecteurs sont des **passthrough**
-d'API tierces qu'on ne possède pas (Unipile, ATS, Apollo…) ; un schéma écrit à la main
-dérive. Le schéma juste = ce qui transite réellement. On en extrait les **feuilles
-redactables** (scalaires + listes de scalaires) avec leur(s) chemin(s) et un type — et
-on persiste par service (namespace), en fusion incrémentale. Cache process pour ne pas
-écrire en base à chaque appel. Best-effort : ne JAMAIS casser un appel d'outil.
+Why observe rather than declare: connector outputs are **passthroughs** of
+third-party APIs that we do not own (Unipile, ATS, Apollo…); a hand-written schema
+drifts. The right schema = what actually flows through. We extract the **redactable
+leaves** (scalars + lists of scalars) with their path(s) and a type — and
+persist per service (namespace), with incremental merging. Process cache so as not to
+write to the database on every call. Best-effort: NEVER break a tool call.
 
-`name` peut apparaître à plusieurs chemins (ex. `skills[].name`, `languages[].name`) —
-on garde l'ensemble des chemins pour rendre l'ambiguïté VISIBLE dans l'UI (un toggle sur
-la clé `name` touche tous ces chemins).
+`name` may appear at several paths (e.g. `skills[].name`, `languages[].name`) —
+we keep the set of paths to make the ambiguity VISIBLE in the UI (a toggle on
+the `name` key affects all those paths).
 """
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ _SCALAR_TYPE = {bool: "boolean", int: "number", float: "number", str: "string", 
 _cache: dict[str, dict[str, dict]] = {}
 _lock = threading.Lock()
 
-# Garde-fous anti-empilement. Le schéma converge normalement (clés nommées, tableaux
-# collapsés en `[]`), mais une réponse à CLÉS DYNAMIQUES (map keyée par id) le ferait
-# exploser : au-delà du cap on n'ajoute plus de nouvelle clé / nouveau chemin.
+# Anti-pile-up safeguards. The schema normally converges (named keys, arrays
+# collapsed to `[]`), but a response with DYNAMIC KEYS (map keyed by id) would make it
+# explode: beyond the cap we no longer add new keys / new paths.
 _MAX_KEYS = 1000
 _MAX_PATHS_PER_KEY = 50
 
@@ -41,11 +41,11 @@ def _scalar(v: Any) -> bool:
 
 
 def leaves(payload: Any, path: str = "", out: dict[str, dict] | None = None) -> dict[str, dict]:
-    """Feuilles redactables observées : `{name: {"type", "paths": set}}`.
+    """Observed redactable leaves: `{name: {"type", "paths": set}}`.
 
-    Une feuille = une clé dont la valeur est un scalaire OU une liste de scalaires
-    (`emails: [...]`). Les dicts / listes de dicts sont parcourus en profondeur sans
-    être listés (structure, pas feuille)."""
+    A leaf = a key whose value is a scalar OR a list of scalars
+    (`emails: [...]`). Dicts / lists of dicts are traversed in depth without
+    being listed (structure, not leaf)."""
     if out is None:
         out = {}
     if isinstance(payload, dict):
@@ -71,8 +71,8 @@ def leaves(payload: Any, path: str = "", out: dict[str, dict] | None = None) -> 
 
 
 def observe(service: str, payload: Any) -> None:
-    """Fusionne le squelette de `payload` dans le schéma persisté du service.
-    Best-effort, jamais bloquant : toute erreur est avalée."""
+    """Merges the skeleton of `payload` into the service's persisted schema.
+    Best-effort, never blocking: any error is swallowed."""
     try:
         found = leaves(payload)
         if not found:
@@ -84,7 +84,7 @@ def observe(service: str, payload: Any) -> None:
                 _cache[service] = cur
             if _merge(cur, found):
                 db.upsert_connector_schema(service, _serialize(cur))
-    # noqa: SILENT — l'observation de schéma est optionnelle, jamais bloquante
+    # noqa: SILENT — schema observation is optional, never blocking
     except Exception:
         pass
 
@@ -100,7 +100,7 @@ def _merge(cur: dict[str, dict], found: dict[str, dict]) -> bool:
         e = cur.get(name)
         if e is None:
             if len(cur) >= _MAX_KEYS:
-                continue  # cap : on n'ajoute plus de nouvelle clé (réponse à clés dynamiques)
+                continue  # cap: no new key is added (response with dynamic keys)
             cur[name] = {"type": info["type"], "paths": set(list(info["paths"])[:_MAX_PATHS_PER_KEY])}
             changed = True
         else:
@@ -121,8 +121,8 @@ def _serialize(cur: dict[str, dict]) -> dict:
 
 
 def as_fields(raw: dict) -> list[dict]:
-    """Convertit un schéma observé (`{name: {type, paths}}`) en champs pour l'UI :
-    `[{name, label, type}]`. `label` = les chemins (montre où la clé apparaît, ex.
+    """Converts an observed schema (`{name: {type, paths}}`) into fields for the UI:
+    `[{name, label, type}]`. `label` = the paths (shows where the key appears, e.g.
     `skills[].name · languages[].name`)."""
     out = []
     for name in sorted(raw):

@@ -200,7 +200,7 @@ def test_default_resolves_active_org_kb(doc_app):
 
 def test_unreadable_project_yields_message_card(doc_app):
     card = doc_app(project_id=99).carte
-    assert "Projet introuvable" in card.texts()
+    assert "Project not found" in card.texts()
     assert card.tables() == []
 
 
@@ -231,8 +231,8 @@ def test_l_arbre_et_les_extraits_arrivent_au_modele_en_texte(doc_app):
 def test_une_carte_message_dit_son_message_au_modele(doc_app):
     """Un refus se dit aussi en texte : un modèle qui ne lit que le marqueur croirait
     la page servie."""
-    assert doc_app(project_id=99).texte == "Projet introuvable — Aucun projet #99 accessible."
-    assert "Page introuvable" in doc_app(doc_id=404).texte
+    assert doc_app(project_id=99).texte == "Project not found — No accessible project #99."
+    assert "Page not found" in doc_app(doc_id=404).texte
 
 
 # ── Bout en bout : vrai prefab_ui, vraie chaîne de middlewares servie ────────────

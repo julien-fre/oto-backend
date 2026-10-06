@@ -269,7 +269,7 @@ def test_une_SAS_muette_est_INDETERMINEE_jamais_independante(fr_groupe):
     out = fr_groupe(siren="315785188", op="ascendant")
     assert out["tetes"] == []
     assert out["confiance"] == "indeterminee"
-    assert "indépendant" in out["caveat"].lower()
+    assert "independent" in out["caveat"].lower()
 
 
 def test_l_absence_de_parent_est_une_REPONSE_pas_une_erreur(fr_groupe):
@@ -467,7 +467,7 @@ def test_un_siren_malforme_est_refuse_en_nommant_le_defaut(fr_groupe):
     from oto_mcp.mcp_errors import McpError
     with pytest.raises(McpError) as e:
         fr_groupe(siren="12345", op="ascendant")
-    assert "9 chiffres" in str(e.value)
+    assert "9 digits" in str(e.value)
 
 
 def test_un_siren_sans_denomination_est_refuse_pas_devine(fr_groupe):

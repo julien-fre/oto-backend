@@ -84,19 +84,19 @@ def test_une_copie_invalide_est_refusee(outil, cc):
 @pytest.mark.parametrize("cc", [["Bob <b@x.fr>"], ["b c@x.fr"], ["b@x"], ["b@@x.fr"],
                                 ["b@x.fr;c@x.fr"], [""]])
 def test_une_copie_hors_forme_stricte_est_refusee(outil, cc):
-    with pytest.raises(McpError, match="adresse invalide"):
+    with pytest.raises(McpError, match="invalid address"):
         _envoyer(outil, cc=cc)
 
 
 def test_trop_de_copies_est_refuse(outil):
-    with pytest.raises(McpError, match="10 adresses au plus"):
+    with pytest.raises(McpError, match="at most 10 addresses"):
         _envoyer(outil, cc=[f"c{i}@x.fr" for i in range(11)])
 
 
 def test_la_liste_brute_est_bornee_avant_le_dedoublonnage(outil):
     """Mille fois la même adresse ne se réduit pas à une seule copie : la borne porte
     sur ce que l'appel a envoyé, pas sur ce qu'il en reste."""
-    with pytest.raises(McpError, match="10 adresses au plus"):
+    with pytest.raises(McpError, match="at most 10 addresses"):
         _envoyer(outil, cc=["b@x.fr"] * 1000)
 
 
@@ -157,7 +157,7 @@ def test_le_plafond_commun_refuse_au_dela_nomme_et_rejouable(outil, commun):
         _envoyer(outil, force_now=True, cc=[f"c{i}@x.fr" for i in range(5)])
     assert e.value.error.data == {"code": "platform_email_daily_cap", "retryable": True,
                                   "limit": 200, "used": 195, "units": 6}
-    assert "minuit UTC" in e.value.error.message
+    assert "midnight UTC" in e.value.error.message
     assert commun["lu"] == [(42, "logto:sa")] and not commun["parti"]
 
 

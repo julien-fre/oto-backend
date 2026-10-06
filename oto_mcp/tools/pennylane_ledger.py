@@ -1,19 +1,19 @@
-"""Grand livre Pennylane — lire les écritures, en poser, lettrer des lignes.
+"""Pennylane general ledger — read entries, post some, letter lines.
 
-Second module du connecteur `pennylane` (cf. `Connector.modules` au registre) :
-même clé, même client, domaine distinct. Les journaux, eux, sont un référentiel
-et se lisent par `pennylane_ref(kind="journals")`, avec les autres.
+Second module of the `pennylane` connector (see `Connector.modules` in the registry):
+same key, same client, distinct domain. Journals, for their part, are reference data
+and are read through `pennylane_ref(kind="journals")`, with the others.
 
-⚠️ **Ce n'est pas la GED.** Le connecteur `pennylaneged` vise la même entreprise
-par une autre porte (API privée de l'interface, session navigateur), et ses
-`company_id` ne sont PAS ceux d'ici. Un id pris dans l'un et joué dans l'autre
-rend un refus qui imite une session expirée.
+⚠️ **This is not the GED (document management).** The `pennylaneged` connector targets the same company
+through another door (the interface's private API, browser session), and its
+`company_id`s are NOT the ones here. An id taken from one and played in the other
+returns a refusal that mimics an expired session.
 
-⚠️ **Trois scopes, pas un.** Pennylane a éclaté l'ancien scope `ledger` : lire
-les écritures demande `ledger_entries:*`, les journaux `journals:*`, le plan
-comptable `ledger_accounts:*`. Une clé qui lit l'un ne lit pas forcément les
-autres, et le périmètre est propre à qui a posé la clé. Les droits réels se
-lisent avec `pennylane_ref(kind="company")`, champ `scopes`.
+⚠️ **Three scopes, not one.** Pennylane split the old `ledger` scope: reading
+entries requires `ledger_entries:*`, journals `journals:*`, the chart
+of accounts `ledger_accounts:*`. A key that reads one does not necessarily read the
+others, and the scope is specific to whoever created the key. The real permissions are
+read with `pennylane_ref(kind="company")`, `scopes` field.
 """
 from __future__ import annotations
 
@@ -43,55 +43,55 @@ def register(mcp: FastMCP) -> None:
         piece_number: Optional[str] = None,
         fields: Optional[dict] = None,
     ) -> dict | list:
-        """Écritures du grand livre : lire, poser une écriture, la corriger.
+        """General-ledger entries: read, post an entry, correct it.
 
-        ⚠️ **`op="create"` n'a PAS de brouillon, et le geste est irréversible.**
-        Partout ailleurs dans ce connecteur, une écriture engageante se pose en
-        brouillon puis se finalise dans un second geste, après validation
-        humaine. Pennylane n'offre pas ce palier pour une écriture comptable :
-        elle est posée immédiatement, et l'API ne sait pas la supprimer — le
-        seul recours est `op="update"`, qui peut lui-même détruire des lignes.
-        **Annoncer à l'utilisateur le détail exact — journal, date, libellé, et
-        chaque ligne avec son compte et son montant — et attendre son accord
-        AVANT d'appeler.**
+        ⚠️ **`op="create"` has NO draft, and the action is irreversible.**
+        Everywhere else in this connector, a committing entry is posted as a
+        draft then finalized in a second action, after human
+        validation. Pennylane does not offer this step for an accounting entry:
+        it is posted immediately, and the API cannot delete it — the
+        only recourse is `op="update"`, which can itself destroy lines.
+        **Announce the exact detail to the user — journal, date, label, and
+        each line with its account and amount — and wait for their agreement
+        BEFORE calling.**
 
-        ⚠️ **`op="list"` sans `clauses` remonte TOUT l'historique** — sur une
-        comptabilité réelle, des milliers d'écritures, bien au-delà de la limite
-        de tokens. Filtrer à la source est le seul moyen de retrouver une
-        écriture ; `max_pages` borne les dégâts mais ne cible rien.
+        ⚠️ **`op="list"` without `clauses` brings back the WHOLE history** — on a
+        real accounting system, thousands of entries, well beyond the token
+        limit. Filtering at the source is the only way to find an
+        entry; `max_pages` limits the damage but targets nothing.
 
         Args:
-            op: "list" — les écritures, à filtrer avec `clauses` ;
-                "get" — UNE écriture par son `entry_id` ;
-                "lines" — les lignes d'une écriture, avec leur `id` (c'est cet
-                    id que consomme le lettrage, pas celui de l'écriture) ;
-                "lettered" — les lignes lettrées AVEC la ligne `line_id`, pour
-                    constater ce qu'un lettrage a réellement associé.
-            entry_id: id de l'écriture — requis par "get" et "lines".
-            line_id: id d'une LIGNE d'écriture — requis par "lettered".
-            clauses: filtre serveur, liste de `{"field", "operator", "value"}`.
-                Champs filtrables : `id`, `date`, `journal_id`. Opérateurs :
-                `lt`, `lteq`, `gt`, `gteq`, `eq`, `not_eq`, plus `in` et
-                `not_in` sur `id` et `journal_id`. Exemple :
+            op: "list" — the entries, to be filtered with `clauses`;
+                "get" — ONE entry by its `entry_id`;
+                "lines" — the lines of an entry, with their `id` (this is the
+                    id that lettering consumes, not the entry's);
+                "lettered" — the lines lettered WITH the line `line_id`, to
+                    see what a lettering actually associated.
+            entry_id: entry id — required by "get" and "lines".
+            line_id: id of an entry LINE — required by "lettered".
+            clauses: server-side filter, list of `{"field", "operator", "value"}`.
+                Filterable fields: `id`, `date`, `journal_id`. Operators:
+                `lt`, `lteq`, `gt`, `gteq`, `eq`, `not_eq`, plus `in` and
+                `not_in` on `id` and `journal_id`. Example:
                 `[{"field": "date", "operator": "gteq", "value": "2026-01-01"}]`.
-            max_pages: borne le nombre de pages ramenées.
-            date: op="create" — date de l'écriture (YYYY-MM-DD).
-            label: op="create" — libellé de l'écriture.
-            journal_id: op="create" — le journal où poser l'écriture. Se résout
-                avec `pennylane_ref(kind="journals")` : ces ids sont propres à
-                la société, jamais à coder en dur.
-            lines: op="create" — les lignes, 1 à 1000. Chacune `{"debit": "…",
-                "credit": "…", "ledger_account_id": …}` et un `label` optionnel.
-                Les montants sont des CHAÎNES décimales ("120.50"), et les
-                débits doivent égaler les crédits — sinon l'appel est refusé
-                avant d'atteindre Pennylane, avec l'écart chiffré. Les comptes
-                se résolvent avec `pennylane_ref(kind="ledger_accounts")`.
-            due_date / currency / piece_number: op="create", optionnels
-                (devise EUR par défaut, numéro de pièce auto-généré).
-            fields: op="update" — les champs à modifier sur l'écriture.
-                ⚠️ `ledger_entry_lines` y prend `create`/`update`/`delete` : ce
-                geste peut SUPPRIMER des lignes : il engage autant qu'une
-                création, et s'annonce de la même façon.
+            max_pages: bounds the number of pages fetched.
+            date: op="create" — entry date (YYYY-MM-DD).
+            label: op="create" — entry label.
+            journal_id: op="create" — the journal in which to post the entry. Resolve it
+                with `pennylane_ref(kind="journals")`: these ids are specific to
+                the company, never to be hard-coded.
+            lines: op="create" — the lines, 1 to 1000. Each `{"debit": "…",
+                "credit": "…", "ledger_account_id": …}` and an optional `label`.
+                Amounts are decimal STRINGS ("120.50"), and
+                debits must equal credits — otherwise the call is refused
+                before reaching Pennylane, with the figure of the gap. Accounts
+                are resolved with `pennylane_ref(kind="ledger_accounts")`.
+            due_date / currency / piece_number: op="create", optional
+                (EUR currency by default, auto-generated document number).
+            fields: op="update" — the fields to modify on the entry.
+                ⚠️ `ledger_entry_lines` takes `create`/`update`/`delete` there: this
+                action can DELETE lines: it commits as much as a
+                creation, and is announced in the same way.
         """
         c = _client()
         if op == "list":
@@ -110,13 +110,13 @@ def register(mcp: FastMCP) -> None:
                 journal_id=_need(journal_id, "journal_id", op),
                 ledger_entry_lines=_need(lines, "lines", op),
                 due_date=due_date, currency=currency, piece_number=piece_number),
-                "la création d'écriture comptable")
+                "accounting entry creation")
         if op == "update":
             return _ecrit(lambda: c.update_ledger_entry(_need(entry_id, "entry_id", op),
                                                 **(fields or {})),
-                          "la correction d'écriture comptable")
-        raise _bad("op doit être 'list', 'get', 'lines', 'lettered', 'create' "
-                   "ou 'update'")
+                          "accounting entry correction")
+        raise _bad("op must be 'list', 'get', 'lines', 'lettered', 'create' "
+                   "or 'update'")
 
     @mcp.tool()
     def pennylane_ledger_lettering(
@@ -124,38 +124,38 @@ def register(mcp: FastMCP) -> None:
         line_ids: list[int],
         unbalanced_lettering_strategy: Literal["none", "partial"] = "none",
     ) -> dict:
-        """Lettre des LIGNES du grand livre entre elles, ou défait ce lettrage.
+        """Letter general-ledger LINES with each other, or undo that lettering.
 
-        ⚠️ **Ce n'est pas `pennylane_match`.** Le mot « lettrage » recouvre deux
-        gestes sur deux objets : rapprocher une transaction bancaire d'une
-        facture, c'est `pennylane_match` ; associer entre elles des lignes
-        d'écriture au grand livre, c'est ici. Se tromper d'outil ne produit pas
-        d'erreur, seulement un geste posé au mauvais endroit.
+        ⚠️ **This is not `pennylane_match`.** The word "lettering" covers two
+        actions on two objects: reconciling a bank transaction with an
+        invoice is `pennylane_match`; associating entry lines
+        with each other in the general ledger is here. Picking the wrong tool does not produce an
+        error, only an action performed in the wrong place.
 
-        ⚠️ **Le lettrage est ABSORBANT** : si une ligne passée est déjà lettrée,
-        le lettrage s'étend à celles qui lui sont déjà associées. Demander
-        [A, C] quand A et B sont lettrées produit [A, B, C]. Pour constater ce
-        qui a réellement été associé, relire avec
+        ⚠️ **Lettering is ABSORBING**: if a line passed is already lettered,
+        the lettering extends to those already associated with it. Asking for
+        [A, C] when A and B are lettered produces [A, B, C]. To see
+        what was actually associated, re-read with
         `pennylane_ledger_entry(op="lettered", line_id=…)`.
 
-        Le geste est réversible (`op="unset"`), ce qui le distingue d'une
-        écriture comptable.
+        The action is reversible (`op="unset"`), which distinguishes it from an
+        accounting entry.
 
         Args:
-            op: "set" pour lettrer, "unset" pour défaire.
-            line_ids: au moins deux ids de LIGNES d'écriture — pas des ids
-                d'écritures. Ils se lisent avec
+            op: "set" to letter, "unset" to undo.
+            line_ids: at least two entry LINE ids — not entry
+                ids. They are read with
                 `pennylane_ledger_entry(op="lines", entry_id=…)`.
-            unbalanced_lettering_strategy: "none" refuse un lettrage
-                déséquilibré (défaut), "partial" l'accepte.
+            unbalanced_lettering_strategy: "none" refuses an unbalanced
+                lettering (default), "partial" accepts it.
         """
         c = _client()
         if op == "set":
-            return _ecrit(lambda: 
+            return _ecrit(lambda:
                 c.letter_ledger_entry_lines(line_ids, unbalanced_lettering_strategy),
-                "le lettrage de lignes du grand livre")
+                "general-ledger line lettering")
         if op == "unset":
-            return _ecrit(lambda: 
+            return _ecrit(lambda:
                 c.unletter_ledger_entry_lines(line_ids, unbalanced_lettering_strategy),
-                "le délettrage de lignes du grand livre")
-        raise _bad("op doit être 'set' ou 'unset'")
+                "general-ledger line unlettering")
+        raise _bad("op must be 'set' or 'unset'")

@@ -51,7 +51,7 @@ def test_unipile_hook_registered():
 def test_unipile_no_channel_linked(monkeypatch):
     monkeypatch.setattr(unipile, "status_for", lambda sub, *, org, group: _st())
     assert unipile._status_pending_action(
-        "u1", 1, None, {"mode": "platform"}) == "Connecte un canal"
+        "u1", 1, None, {"mode": "platform"}) == "Connect a channel"
 
 
 def test_unipile_channel_linked(monkeypatch):
@@ -107,7 +107,7 @@ def test_un_canal_lie_ne_fait_pas_taire_les_autres(monkeypatch):
     assert unipile._channel_pending_action("linkedin", "LinkedIn")(
         "u1", 1, None, entry) is None
     assert unipile._channel_pending_action("whatsapp", "WhatsApp")(
-        "u1", 1, None, entry) == "Connecte ton compte WhatsApp"
+        "u1", 1, None, entry) == "Connect your WhatsApp account"
 
 
 def test_canal_option_fermee_et_sans_cle(monkeypatch):

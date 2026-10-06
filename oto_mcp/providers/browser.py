@@ -1,41 +1,41 @@
-"""Déclaration de registre du connecteur `browser`.
+"""Registry declaration of the `browser` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). Cf. `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# browser : connecteur GÉNÉRIQUE de lecture derrière login (oto-private#79). Les
-# trois précédents sont écrits en dur pour UNE API privée qu'on exploite en
-# profondeur ; celui-ci sert le besoin inverse — lire N sites (média payant,
-# intranet, back-office sans API) sans un cycle de dev par site. **Multi-compte** :
-# un compte du coffre = un site (host), donc un Context Browserbase par site
-# (sessions isolées, cf. `cardinality`). byo_user : une session loguée
-# est physiologiquement personnelle. Hors socle, installable depuis la library ;
-# `browser_eval` (JS arbitraire) reste masqué par défaut (DEFAULT_HIDDEN_TOOLS).
+# browser: GENERIC connector for reading behind a login (oto-private#79). The
+# three previous ones are hardcoded for ONE private API that we exploit in
+# depth; this one serves the opposite need — reading N sites (paid media,
+# intranet, back-office without API) without a dev cycle per site. **Multi-account**:
+# one vault account = one site (host), hence one Browserbase Context per site
+# (isolated sessions, cf. `cardinality`). byo_user: a logged-in session
+# is physiologically personal. Outside the base, installable from the library;
+# `browser_eval` (arbitrary JS) stays hidden by default (DEFAULT_HIDDEN_TOOLS).
 CONNECTOR = _c(
     "browser", ["browser"], auth_modes={"byo_user"}, personal_session=True,
-    # Session cookie ⟹ la dérivation dirait mono ; or ici un compte est un SITE
-    # (un Context Browserbase par host), et il y en a par définition plusieurs.
+    # Cookie session ⟹ the derivation would say mono; but here an account is a SITE
+    # (one Browserbase Context per host), and by definition there are several.
     cardinality="multi", account_axis_static=True,
-    secret_kind="cookie", label="Navigateur connecté", account_noun="site",
-    help="lire un site qui exige d'être connecté — un compte par site, la session "
-         "tourne chez Browserbase",
+    secret_kind="cookie", label="Signed-in browser", account_noun="site",
+    help="read a site that requires being signed in — one account per site, the session "
+         "runs at Browserbase",
 )
 
-# Éditeur : le connecteur est le NÔTRE — on l'a écrit, et c'est nous qui recevons
-# l'appel (le cookie du site vit dans notre coffre ; la session tourne sur notre compte
-# Browserbase, une infra, pas une passerelle qui détiendrait le compte de la personne).
-# DÉCLARÉ, et pas dérivé d'un défaut : depuis le 2026-09-02 il n'y a plus de défaut, et
-# une omission ne doit pas pouvoir se lire comme un choix (`Connector.publisher_name`).
+# Publisher: the connector is OURS — we wrote it, and we are the ones receiving
+# the call (the site's cookie lives in our vault; the session runs on our Browserbase
+# account, an infrastructure, not a gateway that would hold the person's account).
+# DECLARED, and not derived from a default: since 2026-09-02 there is no default, and
+# an omission must not be readable as a choice (`Connector.publisher_name`).
 PUBLISHER = "Otomata"
 SANS_LOGO_DE_MARQUE = True
 
 DESCRIPTION = (
-    "Lire un site qui exige d'être connecté — un intranet, un média payant, un "
-    "back-office sans API — sans écrire de code dédié pour ce site. Un compte "
-    "du coffre = un site ; la session se connecte une fois par navigateur "
-    "hébergé et persiste ensuite."
+    "Read a site that requires being signed in — an intranet, paid media, a "
+    "back-office without an API — without writing dedicated code for that site. One vault "
+    "account = one site; the session connects once through a hosted "
+    "browser and persists afterwards."
 )

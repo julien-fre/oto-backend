@@ -1,10 +1,10 @@
-"""La ligne TENANT de `oto_instance op=list` (L-clés PR 2).
+"""The TENANT row of `oto_instance op=list` (L-keys PR 2).
 
-Un compte d'un tenant tiers voit la clé de son tenant comme une instance de niveau
-`tenant` — entre l'org et la plateforme, comme dans le walker. Un compte nu ne la
-voit pas : il ne pourrait pas la résoudre (`tenant_vault.rung_tenant` rend None), et
-« qui peut la résoudre la voit » (R9). Module à part pour ne pas alourdir la
-projection principale (605 lignes) : il rend les LIGNES, la projection reste là-bas.
+An account of a third-party tenant sees its tenant's key as a `tenant`-level
+instance — between the org and the platform, as in the walker. A bare account does not
+see it: it could not resolve it (`tenant_vault.rung_tenant` returns None), and
+"whoever can resolve it sees it" (R9). Separate module so as not to bloat the
+main projection (605 lines): it returns the ROWS, the projection stays there.
 """
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from ... import credentials_store, instance_refs, tenant_vault
 
 
 def tenant_rows(sub: Optional[str]) -> list[tuple[str, str, dict]]:
-    """`(slug, ref, ligne de coffre)` pour chaque clé du tenant de `sub` — vide pour
-    un compte nu ou anonyme."""
+    """`(slug, ref, vault row)` for each key of `sub`'s tenant — empty for a
+    bare or anonymous account."""
     slug = tenant_vault.rung_tenant(sub)
     if slug is None:
         return []

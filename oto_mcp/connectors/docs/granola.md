@@ -1,24 +1,24 @@
-## prerequisite — clé api granola
+## prerequisite — granola api key
 
-crée une clé API dans Granola (app desktop → Settings → Connectors → API keys → Create new key — voir la [doc d'intégration](https://docs.granola.ai/help-center/sharing/integrations/granola-api)), puis colle-la dans oto.
-- byo-only : pas de clé oto partagée
-- clé personnelle (tout membre d'un plan Business) ou clé workspace (provisionnée par un admin, plans Enterprise) — les deux fonctionnent ici de la même façon, Granola applique le scope de son côté
+create an API key in Granola (desktop app → Settings → Connectors → API keys → Create new key — see the [integration doc](https://docs.granola.ai/help-center/sharing/integrations/granola-api)), then paste it into oto.
+- byo-only: no shared oto key
+- personal key (any member of a Business plan) or workspace key (provisioned by an admin, Enterprise plans) — both work the same way here, Granola applies the scope on its side
 
-## usage — notes de réunion, transcripts, dossiers, webhooks
+## usage — meeting notes, transcripts, folders, webhooks
 
-granola donne accès aux notes de réunion, transcripts et résumés IA de l'espace connecté, en deux tools :
-- « quelles sont mes dernières notes de réunion ? » → `granola_content(op="list_notes", created_after="2026-08-01")`
-- « donne-moi le résumé et les participants de cette réunion » → `granola_content(op="get_note", note_id="not_...")`
-- « le transcript complet est trop long » → `granola_content(op="get_transcript", note_id="not_...")` (pagination dédiée, gère `TRANSCRIPT_TOO_LARGE`)
-- « quels dossiers ai-je ? » → `granola_content(op="list_folders")`
-- « préviens mon système externe à chaque nouvelle note » → `granola_webhook_endpoint(op="create", url="https://...", scopes=["workspace"])` (`["personal"]`/`["public"]` avec une clé personnelle — une clé workspace DOIT passer exactement `["workspace"]`, confirmé en live)
-- « quels webhooks ai-je déjà configurés / désactive celui-ci » → `granola_webhook_endpoint(op="list"|"update"|"delete", ...)`
+granola gives access to the meeting notes, transcripts and AI summaries of the connected workspace, through two tools:
+- "what are my latest meeting notes?" → `granola_content(op="list_notes", created_after="2026-08-01")`
+- "give me the summary and participants of this meeting" → `granola_content(op="get_note", note_id="not_...")`
+- "the full transcript is too long" → `granola_content(op="get_transcript", note_id="not_...")` (dedicated pagination, handles `TRANSCRIPT_TOO_LARGE`)
+- "which folders do I have?" → `granola_content(op="list_folders")`
+- "notify my external system on every new note" → `granola_webhook_endpoint(op="create", url="https://...", scopes=["workspace"])` (`["personal"]`/`["public"]` with a personal key — a workspace key MUST pass exactly `["workspace"]`, confirmed live)
+- "which webhooks have I already configured / disable this one" → `granola_webhook_endpoint(op="list"|"update"|"delete", ...)`
 
-## note — pagination, `signing_secret`, et portée `scopes`
+## note — pagination, `signing_secret`, and `scopes` reach
 
-- toutes les listes sont paginées par `cursor` (rendu dans `hasMore`/`cursor` de chaque réponse, jamais de numéro de page) ; bornes `page_size` : notes/dossiers 1-30 (défaut 10), transcript 1-100 (défaut 50)
-- `granola_webhook_endpoint(op="create")` rend un `signing_secret` (HMAC-SHA256, format Standard Webhooks) **une seule fois, dans cette réponse** — à stocker côté récepteur pour vérifier les livraisons ; il n'est jamais réémis
-- `scopes` détermine QUELLES notes déclenchent des événements pour un endpoint : `personal` (notes possédées ou partagées directement), `public` (notes visibles par tout l'espace) — une clé workspace doit passer exactement `["workspace"]`
-- limites de débit Granola : 25 requêtes/5s en rafale, 5 req/s (300/min) soutenu — au-delà, `429`
-- vérifié mot pour mot contre le spec OpenAPI 3.1.0 de Granola (`docs.granola.ai/api-reference/openapi.json`), pas contre un résumé de page doc — **et testé en live le 2026-08-20** contre un vrai workspace (clé workspace) : notes/transcript/dossiers + le cycle complet création→modification→suppression d'un webhook endpoint fonctionnent tel que codé, erreurs 400 comprises
-- le spec documente aussi `GET /v1/audit` (journal d'audit) ; testé en live, il a rendu `404 NOT_FOUND` sur cette clé (probablement une fonctionnalité de plan non activée pour cet espace) — retiré du connecteur plutôt que d'exposer un tool que personne ne peut actuellement utiliser
+- all lists are paginated by `cursor` (returned in `hasMore`/`cursor` of each response, never a page number); `page_size` bounds: notes/folders 1-30 (default 10), transcript 1-100 (default 50)
+- `granola_webhook_endpoint(op="create")` returns a `signing_secret` (HMAC-SHA256, Standard Webhooks format) **only once, in this response** — to be stored on the receiver side to verify deliveries; it is never reissued
+- `scopes` determines WHICH notes trigger events for an endpoint: `personal` (notes owned or directly shared), `public` (notes visible to the whole workspace) — a workspace key must pass exactly `["workspace"]`
+- Granola rate limits: 25 requests/5s burst, 5 req/s (300/min) sustained — beyond that, `429`
+- verified word for word against Granola's OpenAPI 3.1.0 spec (`docs.granola.ai/api-reference/openapi.json`), not against a doc page summary — **and tested live on 2026-08-20** against a real workspace (workspace key): notes/transcript/folders + the full create→update→delete cycle of a webhook endpoint work as coded, 400 errors included
+- the spec also documents `GET /v1/audit` (audit log); tested live, it returned `404 NOT_FOUND` on this key (probably a plan feature not enabled for this workspace) — removed from the connector rather than exposing a tool that nobody can currently use

@@ -173,14 +173,14 @@ def test_users_stays_a_tool_of_its_own(client):
 # --- refus --------------------------------------------------------------------
 
 @pytest.mark.parametrize("tool,expected", [
-    ("greenhouse_candidate", "'list', 'get', 'create' ou 'add_note'"),
-    ("greenhouse_job", "'list' ou 'get'"),
-    ("greenhouse_application", "'list' ou 'get'"),
+    ("greenhouse_candidate", "'list', 'get', 'create' or 'add_note'"),
+    ("greenhouse_job", "'list' or 'get'"),
+    ("greenhouse_application", "'list' or 'get'"),
 ])
 def test_unknown_op_is_refused_with_the_allowed_list(client, tool, expected):
     """Une op inconnue doit lever en NOMMANT les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être") as e:
+    with pytest.raises(McpError, match="op must be") as e:
         _tool(tool)(op="nope")
     assert expected in str(e.value)
 

@@ -83,7 +83,7 @@ def test_verify_probe_registered_and_checks_body():
         cls.return_value.test_connection.return_value = True
         waalaxy._verify({"key": "k"})
         cls.return_value.test_connection.return_value = {"html": "…"}
-        with pytest.raises(RuntimeError, match="pas répondu true"):
+        with pytest.raises(RuntimeError, match="did not answer true"):
             waalaxy._verify({"key": "k"})
     finally:
         patcher.stop()
@@ -113,9 +113,9 @@ def test_add_requires_exactly_one_of_prospect_prospects_and_list_id():
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("waalaxy_prospect")).fn
-        with pytest.raises(McpError, match="exactement un"):
+        with pytest.raises(McpError, match="exactly one"):
             fn(prospect_list_id="l1")
-        with pytest.raises(McpError, match="exactement un"):
+        with pytest.raises(McpError, match="exactly one"):
             fn(prospect_list_id="l1", prospect={"url": URL}, prospects=[{"url": URL}])
         with pytest.raises(McpError, match="prospect_list_id"):
             fn(prospect={"url": URL})
@@ -195,7 +195,7 @@ def test_upstream_401_is_a_clear_key_error():
     m, cls, patcher = _fn_with_mock_client()
     try:
         cls.return_value.list_campaigns.side_effect = UpstreamHTTPError(401, {"title": "Unauthorized"})
-        with pytest.raises(McpError, match="rejeté la clé"):
+        with pytest.raises(McpError, match="rejected the key"):
             asyncio.run(m.get_tool("waalaxy_campaign")).fn()
     finally:
         patcher.stop()

@@ -114,5 +114,5 @@ def test_upstream_402_becomes_an_actionable_tool_error():
     with key, cls as client_cls:
         client_cls.return_value.scrape.side_effect = UpstreamHTTPError(
             402, {"error": "Payment Required"}, service="firecrawl")
-        with pytest.raises(McpError, match="crédits"):
+        with pytest.raises(McpError, match="credits"):
             _tool("firecrawl_scrape").fn(url="https://acme.com")

@@ -1,15 +1,15 @@
-"""La résolution pour un endpoint MCP ANONYME (ADR 0032) — le miroir org-only.
+"""Resolution for an ANONYMOUS MCP endpoint (ADR 0032) — the org-only mirror.
 
-Extrait de `resolve.py` le 2026-08-29 (cliquet des 500 lignes, #584) : c'est une voie
-à part entière, avec son ADR, ses appelants (`subdomain_project`) et ses tests — pas
-une branche du chemin identifié. Elle partage le walker et le type de retour, rien
-d'autre.
+Extracted from `resolve.py` on 2026-08-29 (500-line ratchet, #584): it is a path in
+its own right, with its ADR, its callers (`subdomain_project`) and its tests — not
+a branch of the identified path. It shares the walker and the return type, nothing
+else.
 
-⚠️ **L'étage tenant, ici, ne vient QUE d'une arête** (L-clés PR 2). Le tenant d'un
-appelant se lit sur son sub qualifié, et l'anonyme n'en a pas ; lire le rattachement
-de l'org du projet est précisément ce qu'un chemin de résolution ne fait pas (lot
-L1). C'est le walker qui cherche l'arête vivante tenant→org (`grants_chain.
-tenant_for_org`) ; sans elle, la cascade reste `org > plateforme`.
+⚠️ **The tenant tier, here, ONLY comes from an edge** (L-keys PR 2). A caller's
+tenant is read from their qualified sub, and the anonymous caller has none; reading the
+project org's attachment is precisely what a resolution path does not do (lot
+L1). It is the walker that looks for the live tenant→org edge (`grants_chain.
+tenant_for_org`); without it, the cascade stays `org > platform`.
 """
 from __future__ import annotations
 
@@ -25,48 +25,48 @@ from .resolved_credential import ResolvedCredential
 
 def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int],
                              check_usage: bool = True) -> ResolvedCredential:
-    """Résolution pour un endpoint MCP ANONYME (ADR 0032) : aucun `sub`, aucune session
-    per-user → cascade réduite `org_secret > grant plateforme d'org > clé plateforme
-    ouverte`, scopée sur l'org PROPRIÉTAIRE du projet. Pas de user_key/group (inexistants
-    sans identité), pas de quota per-sub (le rate-limit du sous-domaine borne l'abus).
-    Miroir org-only des paliers de `_resolve_credential_impl` — ce qui n'est pas résoluble
-    au niveau org (oauth/cookie per-user) lève une McpError actionnable, fail-closed."""
+    """Resolution for an ANONYMOUS MCP endpoint (ADR 0032): no `sub`, no per-user
+    session → reduced cascade `org_secret > org platform grant > open platform
+    key`, scoped to the project's OWNER org. No user_key/group (nonexistent
+    without an identity), no per-sub quota (the subdomain's rate limit bounds abuse).
+    Org-only mirror of the `_resolve_credential_impl` rungs — whatever is not resolvable
+    at the org level (per-user oauth/cookie) raises an actionable McpError, fail-closed."""
     con = providers.connector_for_provider(provider)
     if con is None:
-        raise McpError(ErrorData(code=INVALID_PARAMS, message=f"Provider inconnu: {provider}"))
+        raise McpError(ErrorData(code=INVALID_PARAMS, message=f"Unknown provider: {provider}"))
     if org_id is None:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"L'endpoint anonyme n'a pas d'org propriétaire pour résoudre "
-                     f"`{provider}` (projet sans org).")))
-    # Walker avec sub=None : les barreaux membre/groupe/tenant se sautent d'eux-mêmes
-    # → cascade réduite org > plateforme (ADR 0044 §F R3 : anon → instance 'open'
-    # free-tier, ou 'closed' dont le share_down vise `org:<org_id>`).
-    # ⚠️ Le barreau org sélectionne son COMPTE comme le chemin réel (`_org_fetch` :
-    # unique/`is_default`), jamais `''` en dur — `ensure_named_coexistence` migre la
-    # ligne mono vers « principal » au premier compte nommé, et l'endpoint anonyme
-    # cessait alors de résoudre pendant que `has_org_secret` disait « configuré »
-    # (review #399 F3). Pas de compte nommable ici : aucun sub, aucun axe d'appel.
+            message=(f"The anonymous endpoint has no owner org to resolve "
+                     f"`{provider}` (project without an org).")))
+    # Walker with sub=None: the member/group/tenant rungs skip themselves
+    # → reduced cascade org > platform (ADR 0044 §F R3: anon → 'open' free-tier
+    # instance, or 'closed' whose share_down targets `org:<org_id>`).
+    # ⚠️ The org rung selects its ACCOUNT like the real path (`_org_fetch`:
+    # unique/`is_default`), never a hardcoded `''` — `ensure_named_coexistence` migrates the
+    # mono row to "principal" at the first named account, and the anonymous endpoint
+    # then stopped resolving while `has_org_secret` said "configured"
+    # (review #399 F3). No nameable account here: no sub, no call axis.
     def _anon_org_fetch(oid: int, mprov: str):
-        # Mono D'ABORD : la ligne `''` historique répond sans lire la table des
-        # comptes (zéro coût ajouté pour les orgs pré-migration, et le contrat des
-        # tests qui stubbent `get_org_secret` seul reste entier). La sélection
-        # nommée n'est tentée QUE si la ligne mono manque — le cas F3, où
-        # `ensure_named_coexistence` l'a migrée vers « principal ».
+        # Mono FIRST: the historical `''` row answers without reading the accounts
+        # table (zero added cost for pre-migration orgs, and the contract of the
+        # tests that stub `get_org_secret` alone stays intact). Named selection
+        # is attempted ONLY if the mono row is missing — the F3 case, where
+        # `ensure_named_coexistence` migrated it to "principal".
         key = org_store.get_org_secret(oid, mprov)
         if key or not cascade._is_multi_account(mprov, oid):
             return key
         eff = cascade._shared_auto_account("org", str(oid), mprov,
-                                   "pour l'org de ce projet", scope="org")
+                                   "for this project's org", scope="org")
         if not eff:
             return None
         key = org_store.get_org_secret(oid, mprov, eff)
         return (key, eff) if key else None
 
-    # `legacy_user` n'est jamais atteint ici (le barreau se gate sur `sub is not
-    # None`, et l'anonyme n'en a pas) — la sonde réelle est passée quand même,
-    # champ requis de `CascadeProbe` (#409 : une sonde qui l'omettrait le
-    # sauterait en silence si un jour ce barreau devenait atteignable ici).
+    # `legacy_user` is never reached here (the rung is gated on `sub is not
+    # None`, and the anonymous caller has none) — the real probe is passed anyway,
+    # a required field of `CascadeProbe` (#409: a probe that omitted it would
+    # skip it silently if this rung ever became reachable here).
     probe = cascade.CascadeProbe(member=cascade.FETCH_PROBE.member,
                          member_cross=cascade.FETCH_PROBE.member_cross,
                          legacy_user=cascade.FETCH_PROBE.legacy_user,
@@ -79,26 +79,26 @@ def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int],
         if want == "byo":
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"Aucun credential `{provider}` configuré pour l'org de ce projet."))
+                message=f"No `{provider}` credential configured for this project's org."))
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"L'endpoint anonyme ne peut pas résoudre `{provider}` : configure "
-                     f"une clé d'org, ou grant une clé plateforme à l'org du projet.")))
+            message=(f"The anonymous endpoint cannot resolve `{provider}`: configure "
+                     f"an org key, or grant a platform key to the project's org.")))
     if win.mode == "org":
         return ResolvedCredential(provider, win.payload, False, "org", "org",
                                   str(org_id), account=win.account)
     if win.mode == "tenant":
-        # Servi par une arête vivante (jamais autrement pour l'anonyme) : son budget
-        # par org s'applique — l'org entière y puise, anonyme compris.
+        # Served by a live edge (never otherwise for the anonymous caller): its per-org
+        # budget applies — the whole org draws from it, anonymous included.
         tenant_budget.enforce(win.entity_id, providers.credential_provider(provider), org_id)
         return ResolvedCredential(provider, win.payload, False, "tenant",
                                   credentials_store.TENANT, win.entity_id,
                                   account=win.account)
-    # L'option payante relue à chaque usage, comme au chemin identifié (ADR 0070 §7) :
-    # l'org propriétaire du projet doit porter le droit vivant.
+    # The paid option is reread on each use, as on the identified path (ADR 0070 §7):
+    # the project's owner org must hold the live entitlement.
     if check_usage:
         quotas.exiger_option_payante(provider, None, org_id)
-    # Même règle qu'au palier plateforme du chemin identifié : le secret reste
-    # dans le `CascadeRung` (repr expurgé), jamais dans un dict nu de cette frame.
+    # Same rule as at the platform rung of the identified path: the secret stays
+    # in the `CascadeRung` (redacted repr), never in a bare dict of this frame.
     return ResolvedCredential(provider, win.payload["secret"], True, "platform",
                               credentials_store.PLATFORM, win.payload["label"])

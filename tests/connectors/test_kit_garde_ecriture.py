@@ -111,8 +111,8 @@ def test_un_nom_inconnu_est_refuse_et_le_refus_le_nomme(live, monkeypatch):
     org = _org("Kit3 inconnu", admin, m)
     code, corps = _kit(monkeypatch, admin, org, ["hunter", "pas-un-connecteur"])
     assert code == 404 and corps["error"] == "unknown_connector"
-    assert "`pas-un-connecteur` est inconnu du registre" in corps["detail"]
-    assert "rien n'a été écrit" in corps["detail"]
+    assert "`pas-un-connecteur` is unknown to the connector registry" in corps["detail"]
+    assert "nothing was written" in corps["detail"]
     assert corps["details"] == {"refused": [{"connector": "pas-un-connecteur",
                                              "reason": "unknown"}]}
     _rien_n_est_ecrit(org, admin, m)        # hunter, valide, n'est PAS passé non plus
@@ -124,7 +124,7 @@ def test_un_connecteur_coupe_par_l_org_est_refuse_et_dit_quoi_faire(live, monkey
     _coupe(monkeypatch, admin, org, "kaspr", False)
     code, corps = _ajout(monkeypatch, admin, org, "kaspr")
     assert code == 409 and corps["error"] == "org_disabled"
-    assert "rends-le disponible d'abord" in corps["detail"]
+    assert "make it available first" in corps["detail"]
     code, corps = _kit(monkeypatch, admin, org, ["kaspr"])
     assert code == 409 and corps["error"] == "org_disabled"
     _rien_n_est_ecrit(org, admin, m)
@@ -140,7 +140,7 @@ def test_un_connecteur_coupe_par_la_plateforme_est_refuse_comme_tel(live, monkey
     finally:
         activation.set_activation("osm", True)
     assert code == 409 and corps["error"] == "platform_disabled"
-    assert "coupé par la plateforme" in corps["detail"]
+    assert "is cut by the platform" in corps["detail"]
     _rien_n_est_ecrit(org, admin)
 
 
@@ -167,7 +167,7 @@ def test_coupe_apres_coup_reste_au_kit_s_installe_masque_et_revient_seul(live, m
     assert code == 200 and _vus_par_l_agent(ancien, org) == {"folk"}
     # L'org coupe folk : la réponse dit qu'il est au kit, et ce que ça fait.
     corps = _coupe(monkeypatch, admin, org, "folk", False)
-    assert corps["in_kit"] is True and "couper ne l'en retire pas" in corps["kit_note"]
+    assert corps["in_kit"] is True and "cutting does not remove it from there" in corps["kit_note"]
     assert _vus_par_l_agent(ancien, org) == set()          # masqué chez l'ancien…
     assert _ligne(ancien, org, "folk") == {"state": "active", "origin": "kit"}   # … installé
     # Un membre arrive PENDANT la coupure : son semis installe le kit ENTIER.
@@ -176,10 +176,10 @@ def test_coupe_apres_coup_reste_au_kit_s_installe_masque_et_revient_seul(live, m
     assert _ligne(arrivant, org, "folk") == {"state": "active", "origin": "kit"}
     # Un geste du kit liste le connecteur coupé, et le dit.
     code, corps = _kit(monkeypatch, admin, org, ["folk", "osm"])
-    assert code == 200 and corps["cut"] == ["folk"] and "revient seul" in corps["cut_note"]
+    assert code == 200 and corps["cut"] == ["folk"] and "comes back on its own" in corps["cut_note"]
     # Réouverture : sans AUCUN geste de rattrapage, les deux le voient.
     corps = _coupe(monkeypatch, admin, org, "folk", True)
-    assert corps["in_kit"] is True and "reviennent" in corps["kit_note"]
+    assert corps["in_kit"] is True and "come back" in corps["kit_note"]
     assert "folk" in _vus_par_l_agent(ancien, org)
     assert "folk" in _vus_par_l_agent(arrivant, org)
 

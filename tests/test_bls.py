@@ -182,10 +182,10 @@ def test_dash_value_keeps_raw_and_footnote():
 
 
 @pytest.mark.parametrize("kwargs,fragment", [
-    ({"soc": "software developer"}, "code SOC invalide"),
+    ({"soc": "software developer"}, "invalid SOC code"),
     ({"soc": "15-1299", "areas": ["Chicago"]}, "CBSA"),
-    ({"soc": "15-1299", "areas": []}, "vide"),
-    ({"soc": "15-1299", "areas": ["US"] * 13}, "12 au plus"),
+    ({"soc": "15-1299", "areas": []}, "empty"),
+    ({"soc": "15-1299", "areas": ["US"] * 13}, "at most 12"),
 ])
 def test_bad_input_refused_before_any_call(kwargs, fragment):
     calls, p = _upstream()
@@ -201,14 +201,14 @@ def test_daily_quota_refusal_is_actionable():
                                "been reached."])
     with p, pytest.raises(McpError) as e:
         _call(soc="15-1299")
-    assert "quota journalier" in str(e.value) and "daily threshold" in str(e.value)
+    assert "daily quota" in str(e.value) and "daily threshold" in str(e.value)
 
 
 def test_upstream_http_error_is_translated():
     _, p = _upstream(http=503)
     with p, pytest.raises(McpError) as e:
         _call(soc="15-1299")
-    assert "indisponible" in str(e.value)
+    assert "unavailable" in str(e.value)
 
 
 def test_tool_layer_with_patched_client_class():

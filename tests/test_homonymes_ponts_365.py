@@ -161,7 +161,7 @@ def test_un_nom_AMBIGU_dans_la_portee_n_est_resolu_vers_aucun(monde, monkeypatch
     monkeypatch.setattr(access, "current_project", lambda: pid)
     with pytest.raises(McpError) as e:
         access.resolve_datastore_ref("slot:sortie")
-    assert "« partage »" in str(e.value)
+    assert "“partage”" in str(e.value)
 
 
 # Pont ⑤ — l'endpoint partagé et la page partagée : la MÊME résolution que le rail.

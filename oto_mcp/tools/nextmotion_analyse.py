@@ -1,40 +1,40 @@
-"""Nextmotion — deux AGRÉGATS de la clinique : sa patientèle (code postal, ville, pays,
-genre, tranche d'âge) et l'occupation de ses appareils. Aucune ligne patient ne sort.
+"""Nextmotion — two clinic AGGREGATES: its clientele (zip code, city, country,
+gender, age band) and the occupancy of its devices. No patient row ever comes out.
 
-Module frère de `nextmotion.py` (cf. `Connector.modules`).
+Sibling module of `nextmotion.py` (cf. `Connector.modules`).
 
-## La patientèle : la liste des patients, lue pour COMPTER
+## The clientele: the patient list, read to COUNT
 
-Décision du 2026-10-01 (demande du marketing d'une clinique cliente) : la liste des
-patients est lue par CE module pour en tirer des comptages (l'identité, elle, se lit
-par `nextmotion_patient`, décision du même jour). Ce qui tient la garde ici :
+Decision of 2026-10-01 (request from the marketing team of a client clinic): the patient
+list is read by THIS module to derive counts (identity, for its part, is read
+through `nextmotion_patient`, decision of the same day). What holds the guard here:
 
-- **rien d'individuel ne sort** : ni ligne, ni id, ni nom ; l'outil lit chaque page,
-  incrémente des compteurs et jette la page. Seuls les champs de dimension sont lus
-  (`zip_code`, `city`, `country`, `gender`, `birth_date`) ; l'adresse, le nom, les
-  coordonnées et les commentaires ne sont jamais touchés ;
-- **une case de moins de `SEUIL` patients est masquée** (secret statistique) : elle ne
-  sort ni par sa clé ni par son effectif, seul le total masqué est rendu. Croiser
-  plusieurs dimensions fait vite tomber les cases sous le seuil ; c'est voulu ;
-- **l'âge sort en tranche**, jamais en date de naissance ni en âge exact.
+- **nothing individual comes out**: no row, no id, no name; the tool reads each page,
+  increments counters and discards the page. Only the dimension fields are read
+  (`zip_code`, `city`, `country`, `gender`, `birth_date`); the address, name,
+  contact details and comments are never touched;
+- **a cell of fewer than `SEUIL` patients is masked** (statistical secrecy): it comes out
+  neither by its key nor by its count, only the masked total is returned. Crossing
+  several dimensions quickly drops cells below the threshold; this is intended;
+- **age comes out as a band**, never as a date of birth or an exact age.
 
-Risque résiduel assumé : deux appels sur des dimensions différentes peuvent, par
-différence, approcher une petite case. Le seuil le rend coûteux, pas impossible.
+Accepted residual risk: two calls on different dimensions can, by
+difference, approach a small cell. The threshold makes it costly, not impossible.
 
-Le profil socio-démographique d'un territoire (population, revenus, ménages) n'est
-PAS recalculé ici : c'est l'open data, `urba_socio` / `urba_iris` par code INSEE.
+The socio-demographic profile of a territory (population, income, households) is NOT
+recomputed here: that is open data, `urba_socio` / `urba_iris` by INSEE code.
 
-## Les appareils : l'usage RÉSERVÉ à l'agenda
+## The devices: the usage BOOKED in the calendar
 
-L'API n'a aucune statistique par appareil. L'outil lit l'agenda jour par jour (seul
-filtre de date de `calendar_appointments`) et compte, par appareil, les rendez-vous
-tenus, leurs minutes et les non tenus (annulé au dernier moment, absent, suspendu,
-supprimé). C'est l'usage **réservé**, pas l'usage réel de la machine (tirs, durée
-effective), que Nextmotion ne connaît pas.
+The API has no per-device statistic. The tool reads the calendar day by day (the only
+date filter of `calendar_appointments`) and counts, per device, the appointments
+held, their minutes and those not held (cancelled at the last minute, absent, suspended,
+deleted). This is the **booked** usage, not the machine's real usage (shots, effective
+duration), which Nextmotion does not know.
 
-Dérivé de la spec OpenAPI publique (lue le 2026-10-01) ; **jamais exercé avec une vraie
-clé** : la forme réelle de `gender` (typé `string` sur le patient, entier 0/1/2
-ailleurs) n'est pas vérifiée — une valeur inconnue LÈVE plutôt que d'être devinée.
+Derived from the public OpenAPI spec (read on 2026-10-01); **never exercised with a real
+key**: the real shape of `gender` (typed `string` on the patient, integer 0/1/2
+elsewhere) is not verified — an unknown value RAISES rather than being guessed.
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ _NON_TENUS = {"canceled_last_minute", "absent", "suspended", "deleted"}
 _JOUR = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
-# --- patientèle ----------------------------------------------------------------------
+# --- clientele ----------------------------------------------------------------------
 
 def _texte(valeur: Any) -> str:
     texte = str(valeur).strip().upper() if valeur is not None else ""
@@ -72,9 +72,9 @@ def _texte(valeur: Any) -> str:
 
 
 def _departement(patient: dict) -> str:
-    """Le département d'un code postal français (Corse 2A/2B, outre-mer sur 3
-    chiffres) ; « étranger » si le pays n'est pas la France. Un pays vide compte pour
-    la France : la clinique y est, et Nextmotion ne remplit pas toujours le champ."""
+    """The department of a French zip code (Corsica 2A/2B, overseas on 3
+    digits); « étranger » if the country is not France. An empty country counts as
+    France: the clinic is there, and Nextmotion does not always fill in the field."""
     pays = str(patient.get("country") or "").strip().upper()
     if pays not in _FRANCE:
         return "étranger"
@@ -92,8 +92,8 @@ def _genre(patient: dict) -> str:
         return _INCONNU
     genre = _GENRES.get(str(brut).strip())
     if genre is None:
-        raise ValueError(f"Nextmotion : genre de patient inattendu ({str(brut)[:20]!r}) — "
-                         "la spec annonce 0, 1 ou 2 ; agrégat interrompu plutôt que deviné.")
+        raise ValueError(f"Nextmotion: unexpected patient gender ({str(brut)[:20]!r}) — "
+                         "the spec announces 0, 1 or 2; aggregate aborted rather than guessed.")
     return genre
 
 
@@ -104,9 +104,9 @@ def _tranche(patient: dict, aujourd_hui: date) -> str:
     try:
         naissance = date.fromisoformat(str(brut).strip()[:10])
     except ValueError:
-        # La valeur n'est pas citée : c'est une date de naissance.
-        raise ValueError("Nextmotion : une date de naissance de patient n'est pas au "
-                         "format AAAA-MM-JJ — agrégat interrompu.") from None
+        # The value is not quoted: it is a date of birth.
+        raise ValueError("Nextmotion: a patient's date of birth is not in "
+                         "YYYY-MM-DD format — aggregate aborted.") from None
     age = aujourd_hui.year - naissance.year - (
         (aujourd_hui.month, aujourd_hui.day) < (naissance.month, naissance.day))
     if age < 0:
@@ -127,8 +127,8 @@ def _cle(patient: dict, dimensions: list, aujourd_hui: date) -> tuple:
 
 
 def _parcourir(lire_page: Callable[[int], Any], plafond: int, quoi: str):
-    """Chaque ligne de chaque page amont, jusqu'à la dernière ; LÈVE si le plafond de
-    pages coupe (un agrégat partiel présenté comme complet mentirait)."""
+    """Every row of every upstream page, up to the last; RAISES if the page cap
+    cuts the read (a partial aggregate presented as complete would lie)."""
     offset = 0
     for _ in range(plafond):
         env = lire_page(offset)
@@ -138,16 +138,16 @@ def _parcourir(lire_page: Callable[[int], Any], plafond: int, quoi: str):
         if env.get("next") is None:
             return
         if not lignes:
-            raise ValueError(f"Nextmotion : page vide alors que `next` annonce une suite "
+            raise ValueError(f"Nextmotion: empty page although `next` announces more "
                              f"({quoi}, offset {offset}).")
         offset += len(lignes)
-    raise ValueError(f"Nextmotion : plus de {plafond * PAGE} {quoi} — plafond de lecture "
-                     "atteint, agrégat non rendu.")
+    raise ValueError(f"Nextmotion: more than {plafond * PAGE} {quoi} — read cap "
+                     "reached, aggregate not returned.")
 
 
 def patientele(lire_page: Callable[[int], Any], dimensions: list,
                aujourd_hui: date) -> dict:
-    """Les effectifs par combinaison de `dimensions`, cases sous `SEUIL` masquées."""
+    """Head counts per combination of `dimensions`, cells under `SEUIL` masked."""
     effectifs: Counter = Counter()
     for patient in _parcourir(lire_page, MAX_PAGES_PATIENTS, "patients"):
         effectifs[_cle(patient, dimensions, aujourd_hui)] += 1
@@ -163,11 +163,11 @@ def patientele(lire_page: Callable[[int], Any], dimensions: list,
     }
 
 
-# --- appareils -----------------------------------------------------------------------
+# --- devices -----------------------------------------------------------------------
 
 def _jour(valeur: str, nom: str) -> date:
     if not isinstance(valeur, str) or not _JOUR.fullmatch(valeur):
-        raise ValueError(f"`{nom}` doit être une date YYYY-MM-DD — reçu {valeur!r}.")
+        raise ValueError(f"`{nom}` must be a YYYY-MM-DD date — got {valeur!r}.")
     return date.fromisoformat(valeur)
 
 
@@ -190,13 +190,13 @@ def _minutes(rdv: dict) -> int:
         debut = datetime.fromisoformat(evt["start_time"])
         fin = datetime.fromisoformat(evt["end_time"])
     except (KeyError, TypeError, ValueError):
-        raise ValueError(f"Nextmotion : le rendez-vous {rdv.get('id')!r} n'a ni durée ni "
-                         "bornes lisibles.") from None
+        raise ValueError(f"Nextmotion: appointment {rdv.get('id')!r} has neither a duration nor "
+                         "readable bounds.") from None
     return int((fin - debut).total_seconds() // 60)
 
 
 def _appareils_du_rdv(rdv: dict) -> dict:
-    """{id: nom} des appareils d'un rendez-vous : `device`, plus ceux de son évènement."""
+    """{id: name} of an appointment's devices: `device`, plus those of its event."""
     evt = rdv.get("calendar_event") if isinstance(rdv.get("calendar_event"), dict) else {}
     tous = [rdv.get("device")] + list(evt.get("appointment_devices") or [])
     return {a["id"]: a.get("name") for a in tous if isinstance(a, dict) and a.get("id")}
@@ -204,8 +204,8 @@ def _appareils_du_rdv(rdv: dict) -> dict:
 
 def occupation(lire_jour: Callable[[date, int], Any], lire_appareils: Callable[[int], Any],
                debut: date, fin: date, period_type: Optional[str]) -> dict:
-    """Par appareil (y compris ceux sans rendez-vous) : rendez-vous tenus, minutes
-    réservées, non tenus — au total et, avec `period_type`, par période."""
+    """Per device (including those with no appointment): appointments held, booked
+    minutes, not held — in total and, with `period_type`, per period."""
     noms = {a["id"]: a.get("name") for a in _parcourir(lire_appareils, MAX_PAGES_APPAREILS,
                                                        "appareils") if a.get("id")}
     compteurs: dict = {}
@@ -213,7 +213,7 @@ def occupation(lire_jour: Callable[[date, int], Any], lire_appareils: Callable[[
     jour = debut
     while jour <= fin:
         for rdv in _parcourir(lambda o, j=jour: lire_jour(j, o), MAX_PAGES_JOUR,
-                              f"rendez-vous le {jour.isoformat()}"):
+                              f"appointments on {jour.isoformat()}"):
             lus += 1
             statuts = set(rdv.get("statuses") or []) | {rdv.get("status")}
             tenu = not statuts & _NON_TENUS
@@ -278,11 +278,11 @@ def register(mcp: FastMCP) -> None:
         """
         dimensions = ["zip_code"] if by is None else by
         if not isinstance(dimensions, list) or not dimensions:
-            raise _bad("`by` doit être une liste non vide de dimensions.")
+            raise _bad("`by` must be a non-empty list of dimensions.")
         inconnues = [d for d in dimensions if d not in _DIMENSIONS]
         if inconnues or len(set(dimensions)) != len(dimensions):
-            raise _bad(f"`by` : dimensions parmi {', '.join(_DIMENSIONS)}, sans doublon "
-                       f"— reçu {dimensions!r}.")
+            raise _bad(f"`by`: dimensions among {', '.join(_DIMENSIONS)}, no duplicates "
+                       f"— got {dimensions!r}.")
         _need("demographics", clinic_id=clinic_id)
         archives = bool(include_archived)
         c = _client()
@@ -324,10 +324,10 @@ def register(mcp: FastMCP) -> None:
         except ValueError as e:
             raise _bad(str(e)) from None
         if debut > fin:
-            raise _bad("`start_date` est postérieur à `end_date`.")
+            raise _bad("`start_date` is after `end_date`.")
         if (fin - debut).days + 1 > MAX_JOURS:
-            raise _bad(f"Période de plus de {MAX_JOURS} jours : découpe-la en plusieurs "
-                       "appels.")
+            raise _bad(f"Period of more than {MAX_JOURS} days: split it into several "
+                       "calls.")
         c = _client()
         out = _run(lambda: occupation(
             lambda jour, o: c.list_appointments(clinic_id, date=jour.isoformat(),

@@ -171,7 +171,7 @@ def test_entitlement_ops_route_to_the_right_client_method(client, op, method, ot
 def test_unknown_op_is_refused_with_the_allowed_list(client, tool):
     """Une cible inconnue doit lever en nommant les cibles valides — et n'atteindre
     AUCUNE méthode du client (donc aucun crédit consommé par un chemin dérivé)."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool(tool)(op="nope")
     assert client.method_calls == []
 

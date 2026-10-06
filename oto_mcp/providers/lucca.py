@@ -1,30 +1,30 @@
-"""Déclaration de registre du connecteur `lucca`.
+"""Registry declaration of the `lucca` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it doesn't
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# lucca : RH FR (annuaire, absences, notes de frais, organisation), API v3
-# "legacy". Auth = clé API statique en HEADER (PAS OAuth2, PAS Bearer —
-# "Authorization: lucca application={key}") + un domaine de tenant, deux
-# secrets → modèle générique multi-champs (ADR 0011), même famille que silae.
-# PAS keyed (byo-only : le credential EST le grant, pas de clé plateforme ni
-# de quota — chaque cabinet/employeur a son propre compte Lucca). Hors socle
-# → installable à la demande (cran d'activation par org).
+# lucca: FR HR (directory, absences, expense claims, organization), API v3
+# "legacy". Auth = static API key in a HEADER (NOT OAuth2, NOT Bearer —
+# "Authorization: lucca application={key}") + a tenant domain, two
+# secrets → generic multi-field model (ADR 0011), same family as silae.
+# NOT keyed (byo-only: the credential IS the grant, no platform key or
+# quota — each firm/employer has their own Lucca account). Outside the
+# base set → installable on demand (activation gate per org).
 CONNECTOR = _c(
     "lucca", ["lucca"], auth_modes={"byo_user"}, secret_kind="fields",
-    label="Lucca", help="RH FR (lecture) — annuaire, absences, frais, organisation",
+    label="Lucca", help="FR HR (read) — directory, absences, expenses, organization",
     href="https://www.lucca.fr", credential_fields=(
         CredentialField(
-            "api_key", "Clé API", secret=True,
-            help="Compte Lucca → Réglages → API → générer une clé d'application."),
+            "api_key", "API key", secret=True,
+            help="Lucca account → Settings → API → generate an application key."),
         CredentialField(
-            "domain", "Sous-domaine", secret=False,
-            help="Le sous-domaine SEUL de ton instance Lucca — ex. « acme » pour "
-                 "acme.ilucca.net (pas l'URL complète)."),
+            "domain", "Subdomain", secret=False,
+            help="ONLY the subdomain of your Lucca instance — e.g. \"acme\" for "
+                 "acme.ilucca.net (not the full URL)."),
     ),
 )
 
@@ -33,7 +33,7 @@ PUBLISHER = "Lucca"
 LOGO_DOMAIN = "lucca.fr"
 
 DESCRIPTION = (
-    "L'annuaire, les absences, les notes de frais et l'organisation d'une "
-    "entreprise dans Lucca (lecture). Clé API à générer côté admin Lucca, "
-    "propre au sous-domaine de l'instance."
+    "A company's directory, absences, expense claims and organization "
+    "in Lucca (read). API key to generate on the Lucca admin side, "
+    "specific to the instance's subdomain."
 )

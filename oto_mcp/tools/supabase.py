@@ -1,8 +1,8 @@
 """Supabase Management API — projects, auth config, logs.
 
-Wrappe `oto.tools.supabase.client` (fonctions module-level). Le PAT (`sbp_…`)
-est résolu par appel via `access.resolve_api_key("supabase")` — byo, passé en
-`token=` à chaque fonction (aucun secret au niveau du process).
+Wraps `oto.tools.supabase.client` (module-level functions). The PAT (`sbp_…`)
+is resolved per call via `access.resolve_api_key("supabase")` — byo, passed as
+`token=` to each function (no process-level secret).
 """
 from __future__ import annotations
 
@@ -15,16 +15,16 @@ from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth` SEUL.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth` ONLY.
 
-    `GET /v1/projects` (déjà dans le client — `list_projects`, appelée par
-    `supabase_list_projects`). Bearer token (PAT `sbp_…`), lecture sans effet
-    de bord. Aucune mention de coût ni de limite de débit particulière pour cet
-    appel dans la doc.
+    `GET /v1/projects` (already in the client — `list_projects`, called by
+    `supabase_list_projects`). Bearer token (PAT `sbp_…`), read with no side
+    effect. No particular cost or rate-limit mention for this call in the
+    docs.
 
-    **Authentifié ≠ utilisable** (classe oto#69) : ne distingue pas ici — une
-    liste VIDE est un état normal (organisation Supabase sans projet), pas un
-    refus. Seul le fait que l'appel n'ait PAS levé compte.
+    **Authenticated ≠ usable** (oto#69 class): it does not distinguish here — an
+    EMPTY list is a normal state (Supabase organization with no projects), not a
+    refusal. Only the fact that the call did NOT raise matters.
     """
     from oto.tools.supabase import client as sb
 

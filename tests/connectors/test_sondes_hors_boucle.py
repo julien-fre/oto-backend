@@ -95,7 +95,7 @@ def test_une_sonde_qui_ne_repond_pas_rend_une_erreur_nommee(monkeypatch):
     def _sonde_qui_dort(fields, config):
         time.sleep(0.5)
 
-    with pytest.raises(TimeoutError, match="n'a pas répondu"):
+    with pytest.raises(TimeoutError, match="did not respond"):
         asyncio.run(connector_verify.executer(_sonde_qui_dort, {}, {}))
 
 

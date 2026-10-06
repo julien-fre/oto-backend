@@ -65,5 +65,5 @@ def test_keyed_select_unknown_raises(monkeypatch):
     monkeypatch.setattr(credentials_store, "member_id", lambda org, sub: "1:u1")
     monkeypatch.setattr(credentials_store, "list_accounts", lambda et, eid, con: [
         {"account": "zoho-fr", "meta": {}}])
-    with pytest.raises(ValueError, match="inconnu"):
+    with pytest.raises(ValueError, match="Unknown account"):
         ci.select_identity("u1", "zoho", "zoho-de")

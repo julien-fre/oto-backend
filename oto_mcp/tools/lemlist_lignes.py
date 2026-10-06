@@ -1,15 +1,15 @@
-"""Lemlist — pousser les lignes d'un tableau en leads, PAR RÉFÉRENCE.
+"""Lemlist — push a table's rows as leads, BY REFERENCE.
 
-Troisième module du connecteur (`lemlist` tient la campagne, `lemlist_crm` le reste) :
-celui-ci ne porte qu'un geste, `lemlist_push_rows`. `lemlist_create_lead` prenait la
-personne en ARGUMENTS — nom, email, téléphone traversaient l'appel d'outil, une fois
-par lead. Ici l'agent désigne des lignes ; le serveur les lit, crée les leads, écrit en
-retour l'id lemlist et l'état sur chaque ligne, et ne rend que des comptes. La mécanique
-commune (lot, bail, écriture en retour, reçu) vit dans `datastore/par_reference.py`.
+Third module of the connector (`lemlist` holds the campaign, `lemlist_crm` the rest):
+this one carries a single action, `lemlist_push_rows`. `lemlist_create_lead` took the
+person as ARGUMENTS — name, email, phone went through the tool call, once per
+lead. Here the agent designates rows; the server reads them, creates the leads, writes
+back the lemlist id and the state on each row, and only returns counts. The shared
+mechanics (batch, lease, write-back, receipt) live in `datastore/par_reference.py`.
 
-⚠️ Comme `lemlist_create_lead`, ce geste n'ENVOIE rien : un lead créé attend la revue
-de la campagne. Ce qui met un message sur le fil reste `lemlist_launch_lead` et
-`lemlist_campaign_start`, masqués par défaut (cf. `tools/lemlist.py`).
+⚠️ Like `lemlist_create_lead`, this action SENDS nothing: a created lead waits for the
+campaign's review. What puts a message on the wire remains `lemlist_launch_lead` and
+`lemlist_campaign_start`, hidden by default (see `tools/lemlist.py`).
 """
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ from ..datastore import par_reference as pr
 from ..datastore.identite import AdresseJson as Adresse
 from .lemlist import _campagne_introuvable, _lead_deja_pris
 
-#: Les noms de `lemlist_create_lead` → le champ de lemlist. Une clé de
-#: `field_mapping` hors de cette table part telle quelle : lemlist range toute clé
-#: inconnue en variable personnalisée (`{{nom}}` dans un modèle).
+#: The names of `lemlist_create_lead` → the lemlist field. A `field_mapping`
+#: key outside this table goes through as is: lemlist files any unknown key
+#: as a custom variable (`{{nom}}` in a template).
 CHAMPS = {
     "email": "email",
     "first_name": "firstName",
@@ -38,15 +38,15 @@ CHAMPS = {
     "timezone": "timezone",
     "contact_owner": "contactOwner",
 }
-#: Un lead sans aucun de ces champs n'est joignable par aucune étape d'une campagne.
+#: A lead with none of these fields is reachable by no step of a campaign.
 IDENTITE = ("email", "linkedinUrl", "phone")
 
 POUSSE, DOUBLON, ECHEC = "pushed", "duplicate", "failed"
 
 
 def _texte(v) -> Optional[str]:
-    """La valeur d'une case telle que lemlist l'accepte : une chaîne. Une liste de
-    scalaires se joint ; un objet ne se devine pas (None)."""
+    """A cell's value as lemlist accepts it: a string. A list of
+    scalars is joined; an object is not guessed at (None)."""
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, (str, int, float)):
@@ -57,7 +57,7 @@ def _texte(v) -> Optional[str]:
 
 
 def construire_lead(ligne: dict, mapping: dict[str, str]) -> tuple[dict, Optional[str]]:
-    """`(lead, code)` — le lead à envoyer, ou le code qui l'écarte."""
+    """`(lead, code)` — the lead to send, or the code that rules it out."""
     lead: dict = {}
     for champ, colonne in mapping.items():
         v = pr.valeur(ligne, colonne)
@@ -128,16 +128,16 @@ def register(mcp: FastMCP) -> None:
         """
         if not campaign_id.startswith("cam_"):
             raise pr.refus("lemlist_campaign_id_format",
-                           "`campaign_id` doit porter son préfixe `cam_`, tel que "
-                           "lemlist_campaign le rend. Rien n'a été envoyé.")
+                           "`campaign_id` must carry its `cam_` prefix, as "
+                           "lemlist_campaign returns it. Nothing was sent.")
         mapping = pr.valider_correspondance(field_mapping)
         lot = pr.ouvrir(datastore, row_ids=row_ids, filter=filter,
                         colonne_etat=status_column, limite=batch_size)
         inconnues = pr.colonnes_inconnues(lot, mapping.values())
         if inconnues:
             raise pr.refus("push_rows_unknown_columns",
-                           f"colonnes absentes du tableau : {', '.join(inconnues)}. "
-                           "Rien n'a été envoyé.", columns=inconnues)
+                           f"columns missing from the table: {', '.join(inconnues)}. "
+                           "Nothing was sent.", columns=inconnues)
 
         recu = pr.Recu()
         client = is_platform = None
@@ -173,7 +173,7 @@ def register(mcp: FastMCP) -> None:
                 raison = _lead_deja_pris(e)
                 statut = getattr(e, "status_code", None)
                 if raison is None and statut in (401, 403, 429):
-                    # La clé, le plan ou le débit : la ligne suivante tomberait pareil.
+                    # The key, the plan or the rate: the next row would fail the same way.
                     traitees -= 1
                     recu.arret = "rate_limited" if statut == 429 else f"lemlist_http_{statut}"
                     break
@@ -200,15 +200,15 @@ def register(mcp: FastMCP) -> None:
                 id_column: lead_id, f"{id_column}.comment": f"lemlist {campaign_id}",
                 status_column: POUSSE})
             if ecrit:
-                # Le lead EXISTE chez lemlist : ce code dit que la ligne ne le sait pas.
+                # The lead EXISTS at lemlist: this code says the row does not know it.
                 recu.echec(rid, f"writeback_{ecrit}")
 
         poussees = recu.comptes.get("pushed", 0)
         if is_platform and poussees:
             access.record_platform_usage("lemlist", poussees)
         if not dry_run:
-            # La ligne FACTURÉE compte les leads créés, comme N appels à
-            # lemlist_create_lead l'auraient fait (`tool_calls.quantity`).
+            # The BILLED line counts the leads created, as N calls to
+            # lemlist_create_lead would have (`tool_calls.quantity`).
             session_org.note_call_trace(quantity=poussees)
         doublons = recu.comptes.get("duplicates", 0)
         avis = {"existing_left_untouched": (

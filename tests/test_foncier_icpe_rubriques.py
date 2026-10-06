@@ -44,7 +44,7 @@ def test_une_rubrique_energetique_est_LUE_pas_seulement_rendue():
     """Le numéro seul suppose que l'appelant connaît la nomenclature ICPE."""
     _, energie, _ = _compact_rubriques([_rubrique("2910", "Combustion")])
     assert energie[0]["numero"] == "2910"
-    assert energie[0]["lecture"] == "combustion (chaudières, moteurs)"
+    assert energie[0]["lecture"] == "combustion (boilers, engines)"
 
 
 def test_une_rubrique_sans_signal_energetique_n_est_pas_interpretee():

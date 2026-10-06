@@ -1,11 +1,11 @@
-## prerequisite — clé api topograph
+## prerequisite — topograph api key
 
-connecteur **byo** facturé à la requête : chacun connecte son propre compte (pas de clé plateforme).
-- crée un compte et génère ta clé sur [topograph](https://www.topograph.co) ([doc api](https://docs.topograph.co))
-- pose-la sur ton dashboard oto (connecteur `topograph`)
+**byo** connector billed per request: everyone connects their own account (no platform key).
+- create an account and generate your key on [topograph](https://www.topograph.co) ([api docs](https://docs.topograph.co))
+- put it on your oto dashboard (connector `topograph`)
 
-## usage — kyb registres européens
+## usage — kyb from european registries
 
-données et documents kyb normalisés depuis les registres publics européens (FR, GB, DE…).
-- `topograph_search(query=…, country=…)` — trouve une entreprise par nom ou numéro d'immatriculation
-- `topograph_company(country=…, registration_number=…)` — données normalisées, `mode="onboarding"` (rapide) ou `"verification"` (kyb rigoureux)
+Normalized kyb data and documents from European public registries (FR, GB, DE…).
+- `topograph_search(query=…, country=…)` — find a company by name or registration number
+- `topograph_company(country=…, registration_number=…)` — normalized data, `mode="onboarding"` (fast) or `"verification"` (rigorous kyb)

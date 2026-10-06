@@ -14,71 +14,71 @@ def register_all(mcp: FastMCP) -> None:
 
     log = logging.getLogger("oto_mcp.tools")
 
-    # Méta-tools — pilotage de la visibility par l'user depuis la conversation.
-    # Pas de dépendance externe, register en premier.
+    # Meta-tools — the user controls tool visibility from the conversation.
+    # No external dependency, registered first.
     from . import meta
     meta.register(mcp)
 
-    # (La fiche « situation avec oto » — `oto_profile` — est une CAPACITÉ depuis le
-    # 2026-07-28, montée par `_mcp_adapter` : plus de tool écrit à la main ici.
-    # ADR 0042 §Convergence des surfaces, Décision 4.)
+    # (The "my situation with oto" profile — `oto_profile` — has been a CAPABILITY
+    # since 2026-07-28, mounted by `_mcp_adapter`: no hand-written tool here anymore.
+    # ADR 0042 §Surface convergence, Decision 4.)
 
-    # Whoami — identité MCP courante (compte × org active × groupe actif) servie à
-    # l'agent pour savoir pour qui/dans quel contexte il agit. Spine, hors gate
-    # d'activation, toujours visible (PROTECTED_TOOLS). Pas de dépendance externe.
+    # Whoami — current MCP identity (account × active org × active group) served to
+    # the agent so it knows who it acts for and in what context. Spine, outside the
+    # activation gate, always visible (PROTECTED_TOOLS). No external dependency.
     from . import whoami
     whoami.register(mcp)
 
-    # (Les guides — `oto_guide` — sont une CAPACITÉ depuis le 2026-07-28, montée par
-    # `_mcp_adapter`. Leur index per-(sub, org) enrichit toujours la description au
-    # `tools/list` — `DynamicInstructionsMiddleware`, par NOM de tool.)
+    # (Guides — `oto_guide` — have been a CAPABILITY since 2026-07-28, mounted by
+    # `_mcp_adapter`. Their per-(sub, org) index always enriches the description at
+    # `tools/list` — `DynamicInstructionsMiddleware`, by tool NAME.)
 
-    # Email — envoi d'un message à contenu libre (rédigé par l'agent) via le mailer
-    # Otomata. Brique d'onboarding piloté par l'agent (guide + datastore). Spine,
-    # hors gate d'activation ; gaté super_admin dans le handler + masqué par défaut.
+    # Email — sends a free-form message (written by the agent) via the Otomata
+    # mailer. Building block for agent-driven onboarding (guide + datastore). Spine,
+    # outside the activation gate; super_admin-gated in the handler + hidden by default.
     from . import email
     email.register(mcp)
 
-    # Le palier organization (orgs/membres/secrets/switch + guide/instructions)
-    # est 100% migré en capacités (ADR 0009) — monté par `_mcp_adapter`/`_rest_adapter`
-    # depuis `capabilities.registry`, plus aucun `tools/orgs.py`.
+    # The organization tier (orgs/members/secrets/switch + guide/instructions)
+    # is 100% migrated to capabilities (ADR 0009) — mounted by `_mcp_adapter`/`_rest_adapter`
+    # from `capabilities.registry`, no `tools/orgs.py` anymore.
 
-    # Datastore (ADR 0016) — spine plateforme `data_*` sur substrat PG natif, plus
-    # un connecteur Google. Chargé explicitement (comme meta/orgs), donc hors
-    # gate d'activation. Pas de dépendance externe.
+    # Datastore (ADR 0016) — platform spine `data_*` on a native PG substrate, plus
+    # a Google connector. Loaded explicitly (like meta/orgs), hence outside the
+    # activation gate. No external dependency.
     from . import datastore
     datastore.register(mcp)
 
-    # Docs app — variante MCP App rendue d'`oto_doc` (lecture/parcours des pages d'un
-    # projet + KB d'org). Spine, hors gate d'activation ; ne s'enregistre que si
-    # l'extra prefab_ui est présent (import gardé dans le module).
+    # Docs app — MCP App variant rendered from `oto_doc` (read/browse a project's
+    # pages + org KB). Spine, outside the activation gate; only registers if the
+    # prefab_ui extra is present (guarded import in the module).
     from . import docs_app
     docs_app.register(mcp)
 
-    # File de revue — la seule MCP App qui écrit (un statut, sur une ligne encore en
-    # attente). Spine `data_*`, import prefab_ui gardé comme ci-dessus.
+    # Review queue — the only MCP App that writes (a status, on a still-pending
+    # row). Spine `data_*`, prefab_ui import guarded as above.
     from . import datastore_review_app
     datastore_review_app.register(mcp)
 
-    # Runs / déroulés (ADR 0017) — verbes run_start/finish (spine). Le run_id posé
-    # en état de session est stampé sur chaque tool_call par le sink calllog. Pas
-    # de dépendance externe.
+    # Runs (ADR 0017) — run_start/finish verbs (spine). The run_id set in
+    # session state is stamped on every tool_call by the calllog sink. No
+    # external dependency.
     from . import guide_run
     guide_run.register(mcp)
 
-    # Connecteurs — chargement DÉRIVÉ DU REGISTRE (ADR 0010/0011, #24). Fin de la
-    # liste hardcodée : pour chaque provider `kind="tools"`, on importe ses
-    # modules `tools/<m>.py` (`Connector.modules`, défaut = le nom du provider) et
-    # on appelle `register(mcp)`. Le registre `providers/` est l'UNIQUE source.
+    # Connectors — loading DERIVED FROM THE REGISTRY (ADR 0010/0011, #24). End of
+    # the hardcoded list: for each `kind="tools"` provider, we import its
+    # `tools/<m>.py` modules (`Connector.modules`, default = the provider name) and
+    # call `register(mcp)`. The `providers/` registry is the ONLY source.
     #
-    # - `kind="remote"` est EXCLU : géré par remote.register (générique).
-    # - try/except par module (résilience uniforme) : un connecteur dont une dép
-    #   optionnelle manque (oto-cli en retard, duckdb/o-browser absents, parquet
-    #   introuvable…) se désactive en loggant un warning SANS faire tomber le
-    #   serveur — exactement la classe du 502 qu'on élimine.
-    # - L'exposition réelle reste gouvernée à la VISIBILITÉ par session
-    #   (UserDisabledToolsMiddleware + connector_activation), pas au chargement.
-    from .. import providers  # oto_mcp.providers (parent package, pas tools/)
+    # - `kind="remote"` is EXCLUDED: handled by remote.register (generic).
+    # - try/except per module (uniform resilience): a connector missing an
+    #   optional dependency (oto-cli behind, duckdb/o-browser absent, parquet
+    #   not found…) disables itself by logging a warning WITHOUT taking the
+    #   server down — exactly the class of 502 we are eliminating.
+    # - Actual exposure is still governed by per-session VISIBILITY
+    #   (UserDisabledToolsMiddleware + connector_activation), not at load time.
+    from .. import providers  # oto_mcp.providers (parent package, not tools/)
 
     loaded: set[str] = set()
     for c in providers.REGISTRY.values():

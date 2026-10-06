@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `ashby`.
+"""Registry declaration of the `ashby` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -19,6 +19,6 @@ PUBLISHER = "Ashby"
 LOGO_DOMAIN = "ashbyhq.com"
 
 DESCRIPTION = (
-    "Le recrutement suivi dans Ashby (ATS) : candidats, offres d'emploi, "
-    "candidatures et notes."
+    "Recruiting tracked in Ashby (ATS): candidates, job postings, "
+    "applications and notes."
 )

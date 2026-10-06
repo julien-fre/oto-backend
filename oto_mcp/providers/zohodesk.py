@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `zohodesk`.
+"""Registry declaration of the `zohodesk` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -10,27 +10,27 @@ from ._model import CredentialField, _c
 CONNECTOR = _c(
     "zohodesk", ["zohodesk"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
     label="Zoho Desk",
-    help="support Zoho Desk (tickets, threads, contacts, articles KB)",
+    help="Zoho Desk support (tickets, threads, contacts, KB articles)",
     href="https://desk.zoho.com", credential_fields=(
         CredentialField("client_id", "Client ID", secret=True,
                         help="1000.XXXXXXXX… (self-client)"),
         CredentialField("client_secret", "Client Secret", secret=True,
-                        help="secret du self-client"),
-        # FACULTATIF : en mode « se connecter avec Zoho » (server-based) il n'est
-        # pas collé — le flux de consentement le remplit. Requis seulement si on
-        # pose un self client à la main.
+                        help="self-client secret"),
+        # OPTIONAL: in "sign in with Zoho" mode (server-based) it is not
+        # pasted — the consent flow fills it in. Required only when a self client
+        # is set up by hand.
         CredentialField("refresh_token", "Refresh Token", secret=True,
                         required=False,
-                        help="1000.xxxxx.yyyyy — laisse vide si tu te connectes via Zoho"),
-        # FACULTATIF : les endpoints KB (articles) résolvent le portail depuis le
-        # token mono-org — vérifié empiriquement. Et un credential scopé
-        # `Desk.articles.READ` seul ne PEUT pas le découvrir (/organizations →
-        # 403 SCOPE_MISMATCH), donc l'exiger rendait le connecteur impossible à
-        # poser pour ce cas. Reste utile aux endpoints qui réclament l'en-tête
-        # `orgId` (tickets…), qui l'exigeront alors côté API.
-        CredentialField("org_id", "Org ID (facultatif)", secret=False,
+                        help="1000.xxxxx.yyyyy — leave empty if you sign in via Zoho"),
+        # OPTIONAL: the KB endpoints (articles) resolve the portal from the
+        # single-org token — verified empirically. And a credential scoped to
+        # `Desk.articles.READ` alone CANNOT discover it (/organizations →
+        # 403 SCOPE_MISMATCH), so requiring it made the connector impossible to
+        # set up for that case. Still useful for endpoints that require the
+        # `orgId` header (tickets…), which will then demand it on the API side.
+        CredentialField("org_id", "Org ID (optional)", secret=False,
                         required=False,
-                        help="ex. 800123456 — inutile pour lire les articles"),
+                        help="e.g. 800123456 — not needed to read articles"),
         CredentialField("data_center", "Data center (com, eu, in, au, jp, ca)",
                         secret=False, help="eu"),
     ),
@@ -41,6 +41,6 @@ PUBLISHER = "Zoho"
 LOGO_DOMAIN = "zoho.com"
 
 DESCRIPTION = (
-    "Le support client dans Zoho Desk : tickets, fils de conversation, contacts "
-    "et articles de la base de connaissance."
+    "Customer support in Zoho Desk: tickets, conversation threads, contacts "
+    "and knowledge-base articles."
 )

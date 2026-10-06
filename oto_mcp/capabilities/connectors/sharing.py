@@ -1,14 +1,14 @@
-"""Capacité de PARTAGE d'instance (ADR 0044) — surface d'ÉCRITURE de `share_side`.
+"""Instance SHARING capability (ADR 0044) — WRITE surface of `share_side`.
 
-`share_side` = EXTENSION : un membre prête SON instance (sa clé dans l'org courante)
-à un pair nommé. L'usage se fait ensuite en pinnant l'instance (`_instance=`) ; la
-garde `access.guard_instance_access` autorise le bénéficiaire (emprunte la clé, garde
-son PROPRE contexte d'org — cross-org OK, le prêt nominatif est le consentement).
-Owner-scopé : `SUB_ONLY`, le handler ne touche QUE la ligne du coffre du caller
-(`member_id(org courante, sub)`) → on ne prête jamais que sa propre clé.
+`share_side` = EXTENSION: a member lends THEIR instance (their key in the current org)
+to a named peer. The beneficiary then uses it by pinning the instance (`_instance=`); the
+guard `access.guard_instance_access` authorizes the beneficiary (borrows the key, keeps
+their OWN org context — cross-org OK, the named loan is the consent).
+Owner-scoped: `SUB_ONLY`, the handler touches ONLY the caller's vault row
+(`member_id(current org, sub)`) → you only ever lend your own key.
 
-⚠️ `share_down` (RESTREINDRE une clé partagée d'org/équipe) est l'axe OPPOSÉ (deny-by-
-default) — surface d'écriture distincte, non exposée ici.
+⚠️ `share_down` (RESTRICTING an org/team shared key) is the OPPOSITE axis (deny-by-
+default) — distinct write surface, not exposed here.
 """
 from __future__ import annotations
 
@@ -22,36 +22,36 @@ from ..registry import CAPABILITIES
 
 class LendInstanceInput(BaseModel):
     connector: str
-    to: str = Field(description="sub du pair à qui prêter (ou à qui révoquer le prêt)")
+    to: str = Field(description="sub of the peer to lend to (or to revoke the loan from)")
     account: str = ""
     revoke: bool = False
 
 
 class LendInstanceResult(BaseModel):
-    """État du prêt APRÈS l'opération — pas un accusé de réception du geste seul."""
+    """State of the loan AFTER the operation — not just an acknowledgment of the action."""
     ok: bool
     connector: str
-    revoked: bool                           # écho de l'intention (`revoke` de l'entrée)
-    # ⚠️ La liste COMPLÈTE des emprunteurs après coup, pas le seul pair visé : un
-    # `revoke` renvoie donc une liste non vide s'il restait d'autres prêts. Et elle
-    # ne porte QUE les entrées nominatives `user:` — un `share_side` visant une
-    # ÉQUIPE existe dans le coffre mais n'apparaît pas ici (cette surface ne prête
-    # qu'à des personnes). Un `lent_to` vide ne prouve pas que l'instance n'est
-    # partagée avec personne.
-    lent_to: list[str]                      # subs des emprunteurs
+    revoked: bool                           # echo of the intent (`revoke` from the input)
+    # ⚠️ The COMPLETE list of borrowers afterwards, not just the targeted peer: a
+    # `revoke` therefore returns a non-empty list if other loans remained. And it
+    # carries ONLY the named `user:` entries — a `share_side` targeting a
+    # TEAM exists in the vault but doesn't appear here (this surface only lends
+    # to people). An empty `lent_to` doesn't prove the instance isn't
+    # shared with anyone.
+    lent_to: list[str]                      # borrowers' subs
 
 
 def _lend_instance(ctx: ResolvedCtx, inp: LendInstanceInput) -> dict:
     if providers.connector_for_provider(inp.connector) is None:
-        raise AuthzDenied(400, "unknown_connector", f"Connecteur `{inp.connector}` inconnu.")
+        raise AuthzDenied(400, "unknown_connector", f"Unknown connector `{inp.connector}`.")
     org = access.current_org(ctx.sub)
     if org is None:
         raise AuthzDenied(400, "no_active_org",
-                          "Aucune org active — impossible de prêter une instance.")
+                          "No active org — unable to lend an instance.")
     if inp.to == ctx.sub:
-        raise AuthzDenied(400, "self_lend", "Prêter à soi-même n'a pas de sens.")
+        raise AuthzDenied(400, "self_lend", "Lending to yourself makes no sense.")
     if db.get_user(inp.to) is None:
-        raise AuthzDenied(404, "unknown_user", f"Utilisateur `{inp.to}` inconnu.")
+        raise AuthzDenied(404, "unknown_user", f"Unknown user `{inp.to}`.")
     eid = credentials_store.member_id(org, ctx.sub)
     _, side = credentials_store.get_instance_sharing(
         credentials_store.MEMBER, eid, inp.connector, inp.account)
@@ -65,8 +65,8 @@ def _lend_instance(ctx: ResolvedCtx, inp: LendInstanceInput) -> dict:
         credentials_store.MEMBER, eid, inp.connector, inp.account, share_side=side)
     if not ok:
         raise AuthzDenied(404, "no_instance",
-                          f"Aucune instance `{inp.connector}` posée dans cette org — "
-                          f"rien à prêter (configure d'abord ta clé).")
+                          f"No `{inp.connector}` instance set in this org — "
+                          f"nothing to lend (configure your key first).")
     return {"ok": True, "connector": inp.connector, "revoked": inp.revoke,
             "lent_to": [s[len("user:"):] for s in side if s.startswith("user:")]}
 

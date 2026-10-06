@@ -172,19 +172,19 @@ def test_irrelevant_arg_is_refused_not_ignored():
 
 
 def test_unknown_option_key_is_refused():
-    with pytest.raises(McpError, match="options inconnues"):
+    with pytest.raises(McpError, match="unknown options"):
         _call("signwell_document", op="create", files=FILES, recipients=RECIPIENTS,
               options={"copied_contact": []})
 
 
 def test_file_needs_exactly_one_source():
-    with pytest.raises(McpError, match="exactement UNE source"):
+    with pytest.raises(McpError, match="exactly ONE source"):
         _call("signwell_document", op="create", recipients=RECIPIENTS,
               files=[{"name": "a.pdf", "file_url": "u", "file_base64": "b"}])
 
 
 def test_duplicate_recipient_id_is_refused():
-    with pytest.raises(McpError, match="répété"):
+    with pytest.raises(McpError, match="repeated"):
         _call("signwell_document", op="create", files=FILES,
               recipients=RECIPIENTS + [{"id": "1", "email": "b@example.com"}])
 
@@ -201,7 +201,7 @@ def test_create_is_a_draft_by_default():
 
 
 def test_explicit_send_on_create_needs_a_field():
-    with pytest.raises(McpError, match="au moins un champ"):
+    with pytest.raises(McpError, match="at least one field"):
         _call("signwell_document", op="create", files=FILES, recipients=RECIPIENTS,
               draft=False)
 
@@ -237,7 +237,7 @@ def test_embedded_link_comes_from_the_other_key_and_is_not_emailed():
                    op="get", document_id="doc-1")
     assert res["recipients"][0]["signing_link"].endswith("/emb/")
     assert res["recipients"][0]["emailed"] is False
-    assert any("quiconque" in n for n in res["notes"])
+    assert any("whoever" in n for n in res["notes"])
 
 
 def test_test_mode_says_invites_go_to_the_owner():
@@ -246,7 +246,7 @@ def test_test_mode_says_invites_go_to_the_owner():
                                            _doc(test_mode=True)),
                    op="get", document_id="doc-1")
     assert res["recipients"][0]["emailed"] is False
-    assert any("TITULAIRE" in n for n in res["notes"])
+    assert any("HOLDER" in n for n in res["notes"])
 
 
 def test_sending_status_is_not_reported_as_sent():
@@ -374,7 +374,7 @@ def test_401_is_translated_to_key_instruction():
     def setup(i):
         i.get_me.side_effect = UpstreamHTTPError(401, {"message": "Unauthorized"},
                                                  service="signwell")
-    with pytest.raises(McpError, match="refuse cette clé"):
+    with pytest.raises(McpError, match="rejects this key"):
         _call("signwell_account", setup=setup, op="me")
 
 
@@ -386,7 +386,7 @@ def test_completed_pdf_404_names_the_unsigned_case():
         i.get_completed_pdf.side_effect = UpstreamHTTPError(
             404, {"message": "Not found", "meta": {"messages": ["Couldn't find the document requested"]}},
             service="signwell")
-    with pytest.raises(McpError, match="pas encore signé"):
+    with pytest.raises(McpError, match="not yet signed"):
         _call("signwell_document", setup=setup, op="completed_pdf", document_id="doc-1")
 
 
@@ -421,7 +421,7 @@ def test_verify_refuses_an_empty_key_before_building_the_client():
     « connexion OK » à une carte vide."""
     with patch("oto.tools.signwell.SignWellClient") as cls:
         for vide in ({}, {"key": ""}, {"key": "   "}):
-            with pytest.raises(ValueError, match="vide"):
+            with pytest.raises(ValueError, match="Empty"):
                 signwell._verify(vide)
     cls.assert_not_called()
 
@@ -437,7 +437,7 @@ def test_verify_refuses_an_empty_key_before_building_the_client():
 def test_explicit_false_is_refused_where_the_op_ignores_it(tool, kwargs):
     """Un `False` EXPLICITE est un argument donné : refusé là où l'`op` ne s'en sert
     pas, comme n'importe quel autre — seule l'omission (`None`) vaut absence."""
-    with pytest.raises(McpError, match="ne prend pas"):
+    with pytest.raises(McpError, match="does not take"):
         _call(tool, **kwargs)
 
 
@@ -453,4 +453,4 @@ def test_completed_pdf_judges_the_upstream_status_not_the_text():
     with pytest.raises(McpError) as e:
         _call("signwell_document", setup=setup, op="completed_pdf", document_id="doc-1")
     assert "(409)" in str(e.value)
-    assert "pas encore signé" not in str(e.value)
+    assert "not yet signed" not in str(e.value)

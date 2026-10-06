@@ -169,7 +169,7 @@ def test_get_refuses_without_an_event_id(client):
 def test_unknown_op_is_refused_with_the_allowed_list(client):
     """Une op inconnue doit lever en NOMMANT les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être") as e:
+    with pytest.raises(McpError, match="op must be") as e:
         _call("calendar_event", op="nope")
     msg = e.value.error.message
     assert "'list'" in msg and "'get'" in msg and "'create'" in msg
@@ -189,7 +189,7 @@ def test_unknown_op_never_reaches_the_write_path(client, op):
     doivent tomber sur le refus qui nomme la liste — pas être avalés par un alias
     de complaisance, qui ferait diverger les deux connecteurs dans l'autre sens.
     `update` a quitté cette liste le 03/09 : il est devenu un op valide."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _call("calendar_event", op=op, summary="Point", start="2026-08-12T10:00:00Z")
     client.create_event.assert_not_called()
     client.update_event.assert_not_called()

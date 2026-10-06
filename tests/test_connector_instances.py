@@ -497,7 +497,7 @@ def test_l6_l_indisponibilite_des_identifiants_ne_casse_pas_le_listing(seams, ca
     with caplog.at_level(logging.WARNING):
         out = _run()
     assert out["count"] == 1 and "id" not in out["instances"][0]
-    assert any("identifiants stables" in r.message for r in caplog.records)
+    assert any("stable identifiers" in r.message for r in caplog.records)
 
 
 # ─── 7. R9 — l'audience DÉRIVÉE, servie à côté de l'identifiant ──────────────
@@ -552,7 +552,7 @@ def test_r9_une_audience_indisponible_n_empeche_pas_de_servir_l_identifiant(seam
     with caplog.at_level(logging.WARNING):
         inst = _run()["instances"][0]
     assert inst["id"] == "inst:1" and "visible_to" not in inst
-    assert any("partage" in r.message for r in caplog.records)
+    assert any("sharing" in r.message for r in caplog.records)
 
 
 def test_r9_la_liste_n_est_ni_elargie_ni_restreinte_par_l_audience(seams):

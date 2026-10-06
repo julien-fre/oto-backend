@@ -1,45 +1,45 @@
-## prerequisite — ta clé api signwell
+## prerequisite — your signwell api key
 
-crée une clé dans SignWell : **Settings → API → Create API key**, puis colle-la dans oto.
-- byo-only : pas de clé oto partagée, et ce n'est pas un choix de catalogue — une clé SignWell **agit au nom du compte qui l'a créée**. C'est ce nom qui figure sur les invitations et dans la piste d'audit du document signé : pose celle du compte au nom duquel les documents doivent partir.
-- envoyée en en-tête `X-Api-Key`. Le mode test de l'API (`test_mode`) est gratuit et sans valeur juridique.
+create a key in SignWell: **Settings → API → Create API key**, then paste it into oto.
+- byo-only: no shared oto key, and this is not a catalog choice — a SignWell key **acts on behalf of the account that created it**. That name is what appears on the invitations and in the audit trail of the signed document: set the key of the account in whose name the documents should go out.
+- sent in the `X-Api-Key` header. The API's test mode (`test_mode`) is free and has no legal value.
 
-## usage — envoyer un document à signer, suivre, récupérer le pdf
+## usage — send a document to sign, track it, retrieve the pdf
 
-cinq tools, verbe en `op` :
-- « envoie ce NDA à signer » → `signwell_document(op="create", files=[{name, file_url}], recipients=[{id:"1", name, email}], text_tags=True)` crée un **brouillon** ; relis-le, puis `signwell_document(op="send", document_id=…)`
-- « un fichier du projet » → `oto_project_files(op="list")` rend un `download_url` signé : c'est le `file_url` à passer
-- « où en est la signature ? » → `signwell_document(op="get", document_id=…)` — statut, et pour chaque destinataire son `signing_link`, s'il a reçu un courriel (`emailed`) et où il en est
-- « relance-le » → `signwell_document(op="remind", document_id=…)`
-- « donne-moi le PDF signé » → `signwell_document(op="completed_pdf", document_id=…, audit_page=True)`
-- « un lien à envoyer moi-même, sans courriel SignWell » → `embedded_signing=True` à la création : chaque destinataire reçoit un `signing_link` ouvrable dans un navigateur
-- « depuis mon modèle » → `signwell_template(op="create_document", template_id=…, recipients=[{id, placeholder_name, name, email}])`
-- « un envoi par ligne d'un fichier » → `signwell_bulk_send(op="csv_template")`, remplir, `op="validate_csv"`, puis `op="create"` (aperçu tant que `dry_run=False` n'est pas passé)
-- « préviens mon système quand c'est signé » → `signwell_webhook(op="create", callback_url="https://…")`
+five tools, verb in `op`:
+- "send this NDA to be signed" → `signwell_document(op="create", files=[{name, file_url}], recipients=[{id:"1", name, email}], text_tags=True)` creates a **draft**; review it, then `signwell_document(op="send", document_id=…)`
+- "a file from the project" → `oto_project_files(op="list")` returns a signed `download_url`: that is the `file_url` to pass
+- "where does the signature stand?" → `signwell_document(op="get", document_id=…)` — status, and for each recipient their `signing_link`, whether they received an email (`emailed`) and where they are
+- "remind them" → `signwell_document(op="remind", document_id=…)`
+- "give me the signed PDF" → `signwell_document(op="completed_pdf", document_id=…, audit_page=True)`
+- "a link I will send myself, without a SignWell email" → `embedded_signing=True` at creation: each recipient gets a `signing_link` that opens in a browser
+- "from my template" → `signwell_template(op="create_document", template_id=…, recipients=[{id, placeholder_name, name, email}])`
+- "one send per row of a file" → `signwell_bulk_send(op="csv_template")`, fill it in, `op="validate_csv"`, then `op="create"` (a preview until `dry_run=False` is passed)
+- "notify my system when it is signed" → `signwell_webhook(op="create", callback_url="https://…")`
 
-placer les champs dans le fichier (text tags) : `oto_guide op=read slug="signwell-envoi"`.
+placing the fields in the file (text tags): `oto_guide op=read slug="signwell-envoi"`.
 
-## note — ce que les outils font autrement que l'api
+## note — what the tools do differently from the api
 
-- **créer ne veut pas dire envoyer.** Chez SignWell, `POST /documents` ENVOIE par défaut. Ici `op="create"` (et `signwell_template(op="create_document")`) crée un brouillon sauf `draft=False` explicite ; l'envoi est `op="send"`.
-- **un seul lien par destinataire** : SignWell le rend sous `signing_url` ou `embedded_signing_url` selon le mode ; la vue le rend toujours sous `signing_link`, avec `emailed` qui dit si SignWell écrit à cette personne. `full=True` rend la charge brute.
-- **le PDF signé se rend en lien**, jamais en octets. Ce lien est porteur : quiconque le détient télécharge le document.
-- **pas de liste des documents** : l'API n'en a pas. Garde l'`id` rendu à la création — il ne se retrouve pas après coup.
-- toute écriture accepte `dry_run=True` : validation identique, rien n'est écrit ni envoyé ; un changement de destinataires rend un vrai diff, un code d'accès n'est jamais réécrit en clair.
+- **creating does not mean sending.** At SignWell, `POST /documents` SENDS by default. Here `op="create"` (and `signwell_template(op="create_document")`) creates a draft unless `draft=False` is explicit; sending is `op="send"`.
+- **a single link per recipient**: SignWell returns it under `signing_url` or `embedded_signing_url` depending on the mode; the view always returns it under `signing_link`, with `emailed` saying whether SignWell writes to that person. `full=True` returns the raw payload.
+- **the signed PDF is returned as a link**, never as bytes. This link is a bearer: whoever holds it downloads the document.
+- **no document list**: the API has none. Keep the `id` returned at creation — it cannot be found afterwards.
+- every write accepts `dry_run=True`: identical validation, nothing is written or sent; a recipient change returns a real diff, an access code is never rewritten in clear.
 
-## note — relevé en live (2026-09-16), à connaître avant d'envoyer
+## note — observed live (2026-09-16), to know before sending
 
-- **le mode test n'écrit JAMAIS aux destinataires** : chaque invitation d'un document `test_mode` part au **titulaire du compte**, sujet préfixé `[TEST]`, avec le nom du destinataire prévu dans le corps. Un test « je n'ai rien reçu » se lit dans la boîte du titulaire.
-- **`Sending` n'est pas un envoi** : le statut passe `Created → Sending → Sent`. Un document est resté en `Sending` plusieurs minutes sans que l'invitation parte, quand un document identique créé juste après est passé à `Sent`. Seul `Sent` (ou plus loin) atteste l'envoi.
-- **les champs issus des text tags arrivent en différé** : la réponse de création peut porter zéro champ, un `get` quelques secondes plus tard les liste tous.
-- **un lien de signature embarquée s'ouvre dans un simple navigateur**, pas seulement en iframe — et SignWell n'y vérifie pas l'adresse du signataire : quiconque a le lien peut signer. Pour une identité vérifiée, laisser SignWell envoyer l'invitation par courriel.
-- avec `embedded_signing=True` et `send_email: false`, le titulaire a quand même reçu un avis « impossible d'envoyer ce document » pour une adresse de destinataire invalide : ne pas compter sur l'absence totale de courriel SignWell. Cause non établie.
+- **test mode NEVER writes to the recipients**: every invitation of a `test_mode` document goes to the **account holder**, subject prefixed `[TEST]`, with the intended recipient's name in the body. An "I received nothing" test is read in the holder's mailbox.
+- **`Sending` is not a send**: the status goes `Created → Sending → Sent`. A document stayed in `Sending` for several minutes without the invitation going out, while an identical document created just after reached `Sent`. Only `Sent` (or later) attests the send.
+- **fields coming from text tags arrive deferred**: the creation response may carry zero fields, a `get` a few seconds later lists them all.
+- **an embedded signing link opens in a plain browser**, not only in an iframe — and SignWell does not check the signer's address there: whoever has the link can sign. For a verified identity, let SignWell send the invitation by email.
+- with `embedded_signing=True` and `send_email: false`, the holder still received an "unable to send this document" notice for an invalid recipient address: do not count on the total absence of SignWell email. Cause not established.
 
-## note — état de vérification
+## note — verification status
 
-client et outils dérivés des définitions OpenAPI des pages de référence SignWell (lues le 2026-09-16), **et exercés en live le 2026-09-16** avec une vraie clé (compte Business), à travers les outils eux-mêmes :
-- **exercé à travers les outils, conforme au code** : `signwell_account(op="me")` ; `signwell_document` — création d'un brouillon en test mode depuis un `.docx` en base64 avec text tags (15 champs détectés en différé), `get`, aperçus `dry_run` de `create`, `send` et `update_recipients` (vrai diff), `delete` ; `signwell_template` — `create` avec text tags et deux rôles, `get` (statut `Available`), `delete` ; `signwell_bulk_send(op="list")` et `op="csv_template"` (l'en-tête rendu est dérivé des rôles et des libellés de champs du modèle) ; `signwell_webhook(op="list")` ; les refus 401 (clé invalide) et 404.
-- **exercé sur l'API directement, par les mêmes endpoints** (avant l'écriture des outils) : envoi réel d'un document, envoi en test mode, signature embarquée avec `send_email: false` — d'où les relevés de la note précédente.
-- **le PDF signé d'un document PAS encore complété rend 404** (« Couldn't find the document requested »), pas un refus d'état : l'outil le dit plutôt que de laisser croire l'identifiant perdu.
-- **forme d'un refus** : `{message, meta: {error, message, messages[]}}` — le motif utile est dans `meta.messages`.
-- **non exercé, spec seul** (aurait envoyé de vrais courriels, ou demande un document complété) : `send` réel via l'outil, `remind`, `update_recipients` et `update_authentication` réels, le PDF signé et le certificat NOM-151 d'un document complété, `create_document` depuis un modèle, `validate_csv` et la création d'un envoi groupé, la création et la suppression d'un webhook, les applications API.
+client and tools derived from the OpenAPI definitions of the SignWell reference pages (read on 2026-09-16), **and exercised live on 2026-09-16** with a real key (Business account), through the tools themselves:
+- **exercised through the tools, matches the code**: `signwell_account(op="me")`; `signwell_document` — creating a test-mode draft from a base64 `.docx` with text tags (15 fields detected, deferred), `get`, `dry_run` previews of `create`, `send` and `update_recipients` (real diff), `delete`; `signwell_template` — `create` with text tags and two roles, `get` (status `Available`), `delete`; `signwell_bulk_send(op="list")` and `op="csv_template"` (the returned header is derived from the template's roles and field labels); `signwell_webhook(op="list")`; the 401 (invalid key) and 404 refusals.
+- **exercised on the API directly, through the same endpoints** (before the tools were written): a real document send, a test-mode send, embedded signing with `send_email: false` — hence the observations of the previous note.
+- **the signed PDF of a document NOT yet completed returns 404** ("Couldn't find the document requested"), not a state refusal: the tool says so rather than letting the caller think the identifier is lost.
+- **shape of a refusal**: `{message, meta: {error, message, messages[]}}` — the useful reason is in `meta.messages`.
+- **not exercised, spec only** (would have sent real emails, or requires a completed document): a real `send` through the tool, `remind`, real `update_recipients` and `update_authentication`, the signed PDF and the NOM-151 certificate of a completed document, `create_document` from a template, `validate_csv` and bulk send creation, webhook creation and deletion, the API applications.

@@ -1,28 +1,28 @@
-"""Google Calendar — surface oto-core (CalendarClient) exposée par-utilisateur, multi-compte.
+"""Google Calendar — oto-core surface (CalendarClient) exposed per user, multi-account.
 
-Même substrat que Gmail/Tasks : chaque user connecte un ou plusieurs comptes
-Google sur `https://manage.oto.cx/` (flow OAuth unifié, scope `calendar` inclus).
-Les tools `calendar_*` agissent sur le compte par défaut, ou sur le compte ciblé
-par le paramètre `account` (l'adresse email). Pas de clé plateforme : accès
-strictement per-user via OAuth.
+Same substrate as Gmail/Tasks: each user connects one or more Google accounts
+on `https://manage.oto.cx/` (unified OAuth flow, `calendar` scope included).
+The `calendar_*` tools act on the default account, or on the account targeted
+by the `account` parameter (the email address). No platform key: strictly
+per-user access via OAuth.
 
-Le scope demandé est `https://www.googleapis.com/auth/calendar` (lecture ET
-écriture d'événements ; scope SENSIBLE chez Google — vérification de marque à la
-publication, pas d'audit CASA — cf. `google_oauth.SCOPES`).
+The requested scope is `https://www.googleapis.com/auth/calendar` (read AND
+write of events; SENSITIVE scope at Google — brand verification at
+publication, no CASA audit — see `google_oauth.SCOPES`).
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au produit calendar)** : un tool
-par OBJET métier, le verbe en paramètre `op` — `calendar_event` (list/get/create, tous
-scopés par `calendar_id`, tous rendant un événement ou une liste d'événements).
-`calendar_calendars` reste SEUL : c'est de la DÉCOUVERTE sans aucun paramètre métier
-(juste `account`), et elle produit le `calendar_id` que `calendar_event` consomme —
-fusionner mélangerait un tool sans cible avec un tool toujours ciblé (même cas que
-`zoho_modules`). Les raccourcis « aujourd'hui / prochains jours » se font en passant
+**Consolidated surface (ADR 0047 §Amendment, applied to the calendar product)**: one tool
+per business OBJECT, the verb in the `op` parameter — `calendar_event` (list/get/create, all
+scoped by `calendar_id`, all returning an event or a list of events).
+`calendar_calendars` stays ALONE: it is DISCOVERY with no business parameter
+(just `account`), and it produces the `calendar_id` that `calendar_event` consumes —
+merging would mix a tool with no target with an always-targeted tool (same case as
+`zoho_modules`). The "today / next few days" shortcuts are done by passing
 `time_min`/`time_max`.
 
-⚠️ **`op="create"` ÉCRIT dans un agenda réel.** Deux conséquences tenues ici : le défaut
-d'`op` est une LECTURE (`list`) — un appel sans `op` ne crée jamais rien ; et un argument
-obligatoire manquant lève une erreur actionnable, jamais un fallback qui inventerait un
-titre ou une date.
+⚠️ **`op="create"` WRITES into a real calendar.** Two consequences held here: the default
+`op` is a READ (`list`) — a call without `op` never creates anything; and a missing
+required argument raises an actionable error, never a fallback that would invent a
+title or a date.
 """
 from __future__ import annotations
 
@@ -38,10 +38,10 @@ from ..auth import google as google_oauth
 
 
 def _client_for_user(account: Optional[str] = None):
-    """Instancie un CalendarClient oto-core avec les credentials du user.
+    """Instantiate an oto-core CalendarClient with the user's credentials.
 
-    `account` (email) cible un compte précis ; None = compte par défaut.
-    Lève une McpError actionnable si aucun compte Google n'est connecté.
+    `account` (email) targets a specific account; None = default account.
+    Raises an actionable McpError if no Google account is connected.
     """
     sub = access.current_user_sub_or_raise()
     try:
@@ -53,8 +53,8 @@ def _client_for_user(account: Optional[str] = None):
 
 
 _GOOGLE_CLIENT_TIMEOUT_S = 20
-# oto-backend#867 lot 2 — voir gmail.py::_client_for_user_async pour la
-# justification (même mécanisme de rafraîchissement de jeton, même méthode).
+# oto-backend#867 lot 2 — see gmail.py::_client_for_user_async for the
+# justification (same token-refresh mechanism, same method).
 async def _client_for_user_async(account: Optional[str] = None):
     try:
         return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
@@ -62,8 +62,8 @@ async def _client_for_user_async(account: Optional[str] = None):
     except asyncio.TimeoutError:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
-                    "(rafraîchissement de jeton) — réessaie."))
+            message=f"Google did not respond within {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                    "(token refresh) — retry."))
 
 
 def register(mcp: FastMCP) -> None:
@@ -72,13 +72,13 @@ def register(mcp: FastMCP) -> None:
         return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
     def _need(value, name: str, op: str):
-        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
+        """Required argument for THIS op — actionable error, never a fallback.
 
-        ⚠️ `op="create"` écrit dans un agenda réel : combler un manque par un défaut
-        y créerait un événement que personne n'a demandé.
+        ⚠️ `op="create"` writes into a real calendar: filling a gap with a default
+        would create an event nobody asked for.
         """
         if value is None:
-            raise _bad(f"op='{op}' requiert {name}")
+            raise _bad(f"op='{op}' requires {name}")
         return value
 
     @mcp.tool()
@@ -171,8 +171,8 @@ def register(mcp: FastMCP) -> None:
         client = await _client_for_user_async(account)
 
         if op == "list":
-            # ⚠️ ordre POSITIONNEL du client : (calendar_id, time_min, time_max,
-            # max_results, query) — `max_results` AVANT `query`, contre-intuitif.
+            # ⚠️ the client's POSITIONAL order: (calendar_id, time_min, time_max,
+            # max_results, query) — `max_results` BEFORE `query`, counter-intuitive.
             events = await asyncio.to_thread(
                 client.list_events, calendar_id, time_min, time_max, max_results,
                 query,
@@ -189,8 +189,8 @@ def register(mcp: FastMCP) -> None:
                 calendar_id, attendees=attendees, send_updates=send_updates,
             )
         if op == "update":
-            # Le client REFUSE un patch vide : sans champ, l'appel dépenserait une
-            # écriture et rendrait un succès sans rien changer (signal #686).
+            # The client REFUSES an empty patch: with no field, the call would spend a
+            # write and return a success while changing nothing (signal #686).
             return await asyncio.to_thread(
                 client.update_event, _need(event_id, "event_id", op), summary,
                 start, end, description, location, all_day, calendar_id,
@@ -201,4 +201,4 @@ def register(mcp: FastMCP) -> None:
                 client.delete_event, _need(event_id, "event_id", op), calendar_id,
                 send_updates,
             )
-        raise _bad("op doit être 'list', 'get', 'create', 'update' ou 'rm'")
+        raise _bad("op must be 'list', 'get', 'create', 'update' or 'rm'")

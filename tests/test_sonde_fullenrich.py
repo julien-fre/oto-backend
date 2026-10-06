@@ -65,7 +65,7 @@ def test_une_cle_refusee_leve(monkeypatch):
 
 def test_un_solde_ILLISIBLE_ne_fabrique_pas_de_quota_mais_echoue(monkeypatch):
     _brancher(monkeypatch, {"foo": "bar"})
-    with pytest.raises(RuntimeError, match="sans solde"):
+    with pytest.raises(RuntimeError, match="without a readable credit balance"):
         FE._verify(_fields("k"))
 
 

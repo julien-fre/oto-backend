@@ -1,17 +1,17 @@
-## prerequisite — autorise Gmail sur ton compte Google
+## prerequisite — authorize Gmail on your Google account
 
-depuis cette carte, clique **connecter** : Google te demande d'autoriser **Gmail seulement** (scope `gmail.modify`) sur le compte que tu choisis. le compte Google lui-même (adresse, jeton) est porté par le connecteur **Compte Google** — un même compte peut autoriser plusieurs services, un service à la fois, sans réautoriser les autres.
-- plusieurs comptes Google : chaque outil agit sur le compte par défaut, ou sur celui que tu cibles par `account=<email>` ; `google_accounts` dit lesquels ont autorisé Gmail
-- un compte qui n'a pas autorisé Gmail est refusé par les outils en nommant cette carte — reviens ici pour l'autoriser
+From this card, click **connect**: Google asks you to authorize **Gmail only** (scope `gmail.modify`) on the account you choose. The Google account itself (address, token) is carried by the **Google Account** connector — one account can authorize several services, one service at a time, without re-authorizing the others.
+- multiple Google accounts: each tool acts on the default account, or on the one you target with `account=<email>`; `google_accounts` tells you which ones have authorized Gmail
+- an account that has not authorized Gmail is refused by the tools, naming this card — come back here to authorize it
 
-## usage — chercher, lire, rédiger, envoyer
+## usage — search, read, draft, send
 
-`gmail_message(op=search|get|attachment|drafts|archive|trash)` et `gmail_compose` — sous le compte choisi.
-- « cherche les mails non lus de cette semaine et archive les newsletters »
-- « rédige un brouillon de réponse à ce mail » ou « envoie-le »
-- `gmail_compose` appose la **signature Gmail** du compte émetteur (après `--`), comme le client web — l'API Gmail ne le fait jamais seule. `sign=False` compose sans ; la réponse dit `signature` : `appended`, `none_configured` ou `disabled`
-- « lis le tableur `.xlsx` joint à ce mail, onglet `devis` » — une pièce jointe (`op=attachment`) revient en CSV par feuille, borné
+`gmail_message(op=search|get|attachment|drafts|archive|trash)` and `gmail_compose` — under the chosen account.
+- "find this week's unread emails and archive the newsletters"
+- "draft a reply to this email" or "send it"
+- `gmail_compose` appends the sending account's **Gmail signature** (after `--`), like the web client — the Gmail API never does it on its own. `sign=False` composes without it; the response reports `signature`: `appended`, `none_configured` or `disabled`
+- "read the `.xlsx` spreadsheet attached to this email, `devis` sheet" — an attachment (`op=attachment`) comes back as CSV per sheet, truncated
 
-## note — périmètre de projet (#605)
+## note — project scope (#605)
 
-une pièce jointe `{kind: "url"}` de `gmail_compose` est lue côté serveur : sous un projet à `excluded_url_prefixes`, une url correspondante est refusée en nommant le motif (seam `file_source`). détail : `docs/projects.md`.
+A `{kind: "url"}` attachment in `gmail_compose` is read server-side: under a project with `excluded_url_prefixes`, a matching url is refused, naming the pattern (`file_source` seam). Details: `docs/projects.md`.

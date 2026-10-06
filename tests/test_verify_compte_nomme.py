@@ -59,13 +59,13 @@ def test_auto_sans_compte_laisse_la_cascade_choisir(monkeypatch):
 def test_lambiguite_devient_un_refus_nomme(monkeypatch):
     def _ambigu(*a, **k):
         raise cascade.CompteAmbigu(ErrorData(code=INVALID_PARAMS,
-                                             message="Plusieurs comptes …"))
+                                             message="Multiple accounts …"))
 
     monkeypatch.setattr(access, "resolve_credential", _ambigu)
     with pytest.raises(AuthzDenied) as exc:
         cv._fields_config_scope(_Ctx(), _inp())
     assert (exc.value.status, exc.value.code) == (400, "account_required")
-    assert "Plusieurs comptes" in exc.value.message
+    assert "Multiple accounts" in exc.value.message
 
 
 def test_le_refus_est_declare_sur_la_capacite():

@@ -1,22 +1,22 @@
-## prerequisite — clé api lightfield
+## prerequisite — lightfield api key
 
-crée une clé API dans Lightfield (Settings → API keys, admin uniquement — [doc](https://docs.lightfield.app/using-the-api/api-keys/)), puis colle-la dans oto.
-- byo-only : pas de clé oto partagée — ce sont les données de ton CRM, chaque organisation pose la sienne
-- ⚠️ **les scopes se choisissent à la CRÉATION de la clé et ne s'ajoutent pas après coup.** Coche au minimum `accounts:read`, `contacts:read`, `opportunities:read` ; pour écrire, ajoute les `:create` et `:update` correspondants ; pour l'envoi d'email, `emails:create`. Une clé sans lecture CRM est refusée par le bouton « tester la connexion », qui te dira les scopes réellement accordés
-- l'envoi d'email exige en plus une boîte Google ou Microsoft **connectée dans Lightfield** par le propriétaire de la clé
+create an API key in Lightfield (Settings → API keys, admins only — [docs](https://docs.lightfield.app/using-the-api/api-keys/)), then paste it into oto.
+- byo-only: no shared oto key — it is your CRM's data, each organization sets its own
+- ⚠️ **scopes are chosen at key CREATION and cannot be added afterwards.** Tick at least `accounts:read`, `contacts:read`, `opportunities:read`; to write, add the matching `:create` and `:update`; to send email, `emails:create`. A key without CRM read is refused by the "test connection" button, which will tell you the scopes actually granted
+- sending email additionally requires a Google or Microsoft mailbox **connected in Lightfield** by the key owner
 
-## usage — le CRM dont les champs t'appartiennent
+## usage — the CRM whose fields belong to you
 
-le modèle de champs de Lightfield est propre à CHAQUE workspace : les clés sont celles que ton équipe a créées, pas des noms universels.
-- avant la première écriture → `lightfield_accounts(op="definitions")` (idem contacts, opportunités, notes, tâches) : c'est la liste des clés valides
-- « quelles sociétés du CRM correspondent à… » → `lightfield_accounts(op="search", filters={...})`
-- « l'état à jour de cette société » → `lightfield_accounts(op="get", record_id="…")`
-- « crée / mets à jour cette société » → `lightfield_accounts(op="upsert", fields={...})` (ajoute `record_id` pour mettre à jour)
-- objets personnalisés → `lightfield_objects(op="list")` puis `op="definitions"` sur le slug rendu
-- écrire un email depuis la boîte connectée → `lightfield_emails(op="send", sender="…", to=[...], dry_run=False)`
+Lightfield's field model is specific to EACH workspace: the keys are the ones your team created, not universal names.
+- before the first write → `lightfield_accounts(op="definitions")` (same for contacts, opportunities, notes, tasks): it is the list of valid keys
+- "which companies in the CRM match…" → `lightfield_accounts(op="search", filters={...})`
+- "the up-to-date state of this company" → `lightfield_accounts(op="get", record_id="…")`
+- "create / update this company" → `lightfield_accounts(op="upsert", fields={...})` (add `record_id` to update)
+- custom objects → `lightfield_objects(op="list")` then `op="definitions"` on the returned slug
+- write an email from the connected mailbox → `lightfield_emails(op="send", sender="…", to=[...], dry_run=False)`
 
-## note — trois pièges qui coûtent cher
+## note — three costly pitfalls
 
-- ⚠️ **`op="search"` lit un index qui peut être en retard.** Après une écriture, relis par `op="get"` : la recherche peut rendre l'état d'AVANT. C'est écrit dans la doc éditeur, et ça se voit surtout quand on enchaîne écrire-puis-vérifier
-- ⚠️ **`limit` plafonne à 25** (imposé par l'API) : au-delà, paginer avec `offset`
-- ⚠️ **l'envoi ne sait ni répondre ni transférer** : `op="send"` crée TOUJOURS un message neuf, jamais une réponse dans un fil existant — si le contexte compte, cite-le toi-même dans le corps. Et `op="send"` est en **dry-run par défaut** : il faut `dry_run=False` pour que quelque chose parte
+- ⚠️ **`op="search"` reads an index that may lag.** After a write, re-read with `op="get"`: search may return the state from BEFORE. This is stated in the vendor docs, and it shows most when chaining write-then-verify
+- ⚠️ **`limit` caps at 25** (imposed by the API): beyond that, paginate with `offset`
+- ⚠️ **sending can neither reply nor forward**: `op="send"` ALWAYS creates a new message, never a reply in an existing thread — if the context matters, quote it yourself in the body. And `op="send"` is **dry-run by default**: you need `dry_run=False` for anything to go out

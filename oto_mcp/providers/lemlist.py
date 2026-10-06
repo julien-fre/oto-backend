@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `lemlist`.
+"""Registry declaration for the `lemlist` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ CONNECTOR = _c(
     "lemlist", ["lemlist"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key",
     label="Lemlist", help="cold outreach", href="https://app.lemlist.com",
-    # Trois modules pour UN connecteur, par lisibilité et non par périmètre :
-    # `lemlist` tient la campagne et ses leads, `lemlist_crm` tout le reste
-    # (CRM, inbox, désinscriptions, signaux, réglages), `lemlist_lignes` le seul
-    # geste qui pousse les lignes d'un tableau PAR RÉFÉRENCE. Le namespace reste
-    # `lemlist` partout — c'est lui, pas le nom de fichier, que le gate lit
-    # (`namespace_of`).
+    # Three modules for ONE connector, for readability rather than scope:
+    # `lemlist` holds the campaign and its leads, `lemlist_crm` everything else
+    # (CRM, inbox, unsubscribes, signals, settings), `lemlist_lignes` the single
+    # action that pushes a table's rows BY REFERENCE. The namespace stays
+    # `lemlist` everywhere — it is the namespace, not the file name, that the
+    # gate reads (`namespace_of`).
     modules=("lemlist", "lemlist_crm", "lemlist_lignes"),
 )
 
@@ -25,7 +25,7 @@ PUBLISHER = "lemlist"
 LOGO_DOMAIN = "lemlist.com"
 
 DESCRIPTION = (
-    "Les campagnes de cold outreach Lemlist : créer et piloter une campagne, "
-    "gérer ses leads, plus tout le reste du compte (CRM natif, inbox, "
-    "désinscriptions, signaux, réglages) dans un module séparé."
+    "Lemlist cold outreach campaigns: create and run a campaign, "
+    "manage its leads, plus the rest of the account (native CRM, inbox, "
+    "unsubscribes, signals, settings) in a separate module."
 )

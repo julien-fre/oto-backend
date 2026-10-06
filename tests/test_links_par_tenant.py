@@ -196,9 +196,9 @@ def test_le_patron_dit_ce_qu_il_reclame(registre):
 
 
 @pytest.mark.parametrize("sub, params, attendu", [
-    ("acme:u", {"id": 203}, "ne déclare aucune page de tableau"),
-    ("beta:u", {"id": 203}, "ne déclare aucune page de tableau"),
-    ("gamma:u", {"id": 203}, "réclame `org`"),
+    ("acme:u", {"id": 203}, "declares no table page"),
+    ("beta:u", {"id": 203}, "declares no table page"),
+    ("gamma:u", {"id": 203}, "requires `org`"),
 ])
 def test_un_lien_absent_dit_pourquoi(registre, sub, params, attendu):
     assert links.link_for("table", sub=sub, **params) is None

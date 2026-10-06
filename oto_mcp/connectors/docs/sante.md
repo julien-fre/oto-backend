@@ -1,6 +1,6 @@
-## usage — établissements de santé & ESSMS
+## usage — healthcare establishments & ESSMS
 
-annuaire des établissements sanitaires et médico-sociaux + évaluations qualité has — open data, sans clé.
-- `sante_finess_search(q=…, departement=…, categorie=…)` — recherche finess par nom ou code (ex. categorie « EHPAD »)
-- `sante_finess(finess)` — fiche d'un établissement par code exact (ET ou EJ)
-- `sante_essms_dimensions()` puis `sante_essms_search(region_libelle=…, secteur=…)` — évaluations qualité des essms (référentiel has)
+directory of healthcare and medico-social establishments + has quality evaluations — open data, no key.
+- `sante_finess_search(q=…, departement=…, categorie=…)` — finess search by name or code (e.g. categorie "EHPAD")
+- `sante_finess(finess)` — record of an establishment by exact code (ET or EJ)
+- `sante_essms_dimensions()` then `sante_essms_search(region_libelle=…, secteur=…)` — quality evaluations of essms (has framework)

@@ -1,16 +1,16 @@
-"""Taxonomie d'erreurs de tools — classification + scrub partagés (D2, oto-backend#124).
+"""Tool error taxonomy — shared classification + scrub (D2, oto-backend#124).
 
-Point unique qui CLASSE une exception de tool remontée par fastmcp (catégorie machine
-`code` + `retryable`) et SCRUBBE son message pour l'agent. Réutilisé par :
+Single place that CLASSIFIES a tool exception surfaced by fastmcp (machine category
+`code` + `retryable`) and SCRUBS its message for the agent. Reused by:
 
-- `sentry_setup` : décider si une erreur est un bug backend (report) ou gérée (drop) —
-  les prédicats `_is_*` ci-dessous ;
-- `ErrorEnvelopeMiddleware` (`middleware/error_envelope.py`) : rendre à l'agent une erreur au **contrat
-  uniforme** `{code, retryable, hint}`, sans stacktrace / route interne / id technique
-  (`classify` + `scrub`).
+- `sentry_setup`: decide whether an error is a backend bug (report) or handled (drop) —
+  the `_is_*` predicates below;
+- `ErrorEnvelopeMiddleware` (`middleware/error_envelope.py`): hand the agent an error with a
+  **uniform contract** `{code, retryable, hint}`, without stacktrace / internal route /
+  technical id (`classify` + `scrub`).
 
-fastmcp emballe l'erreur d'un tool dans un `ToolError` → tous les prédicats **remontent
-la chaîne** `__cause__`/`__context__` jusqu'à l'exception d'origine.
+fastmcp wraps a tool's error in a `ToolError` → all the predicates **walk up the
+chain** `__cause__`/`__context__` to the original exception.
 """
 from __future__ import annotations
 
@@ -26,14 +26,14 @@ from .mcp_errors import McpError
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST
 from pydantic import ValidationError
 
-# Codes JSON-RPC d'erreur d'ENTRÉE/CONFIG côté user (pendant natif d'un 4xx amont) :
-# « pose ta clé », « connecte ton compte », param/org invalide. Levés
-# intentionnellement par les tools/capacités, pas des bugs backend.
+# JSON-RPC codes for user INPUT/CONFIG errors (native counterpart of an upstream 4xx):
+# "set your key", "connect your account", invalid param/org. Raised
+# intentionally by the tools/capabilities, not backend bugs.
 _USER_INPUT_CODES = {INVALID_PARAMS, INVALID_REQUEST}
 
 
 def _chain(exc) -> Iterator[BaseException]:
-    """L'exception et sa chaîne de causes (`__cause__` puis `__context__`), sans cycle."""
+    """The exception and its cause chain (`__cause__` then `__context__`), without cycles."""
     seen: set[int] = set()
     while exc is not None and id(exc) not in seen:
         seen.add(id(exc))
@@ -42,11 +42,11 @@ def _chain(exc) -> Iterator[BaseException]:
 
 
 def _upstream_status(exc) -> Optional[int]:
-    """Code HTTP amont porté par UNE exception, sinon None.
+    """Upstream HTTP code carried by ONE exception, else None.
 
-    Couvre `UpstreamHTTPError` (oto-core, `.status_code`), `httpx`/`requests`
-    HTTPError (`.response.status_code`) et les erreurs connecteur typées maison
-    (`.status`, ex. `NinjaError`).
+    Covers `UpstreamHTTPError` (oto-core, `.status_code`), `httpx`/`requests`
+    HTTPError (`.response.status_code`) and our own typed connector errors
+    (`.status`, e.g. `NinjaError`).
     """
     for attr in ("status_code", "status"):
         v = getattr(exc, attr, None)
@@ -57,13 +57,13 @@ def _upstream_status(exc) -> Optional[int]:
 
 
 def _upstream_retryable(exc) -> Optional[bool]:
-    """Sémantique de réessai DÉCLARÉE par le connecteur amont, sinon None.
+    """Retry semantics DECLARED by the upstream connector, else None.
 
-    Le statut HTTP seul ment chez certains fournisseurs : Hunter renvoie 429 pour
-    « crédits du plan épuisés » (rien à réessayer) et 403 pour la limite de débit
-    (transitoire) — l'inverse de la convention. Le module connecteur est le seul à
-    savoir ; il le dit via un attribut `retryable` sur son exception, la taxonomie
-    l'honore. Seam générique, spécificité DANS le module (jamais un `if hunter`).
+    The HTTP status alone lies with some providers: Hunter returns 429 for
+    "plan credits exhausted" (nothing to retry) and 403 for the rate limit
+    (transient) — the opposite of the convention. Only the connector module
+    knows; it says so via a `retryable` attribute on its exception, and the taxonomy
+    honors it. Generic seam, specifics INSIDE the module (never an `if hunter`).
     """
     for e in _chain(exc):
         v = getattr(e, "retryable", None)
@@ -73,7 +73,7 @@ def _upstream_retryable(exc) -> Optional[bool]:
 
 
 def upstream_status_in_chain(exc) -> Optional[int]:
-    """Premier code HTTP amont trouvé en remontant la chaîne, sinon None."""
+    """First upstream HTTP code found walking up the chain, else None."""
     for e in _chain(exc):
         sc = _upstream_status(e)
         if sc is not None:
@@ -82,8 +82,8 @@ def upstream_status_in_chain(exc) -> Optional[int]:
 
 
 def _is_managed_connector_error(exc) -> bool:
-    """True si la chaîne porte un refus client amont (4xx) — erreur de connecteur
-    gérée, pas un bug backend."""
+    """True if the chain carries an upstream client refusal (4xx) — a handled
+    connector error, not a backend bug."""
     for e in _chain(exc):
         sc = _upstream_status(e)
         if sc is not None and 400 <= sc < 500:
@@ -92,8 +92,8 @@ def _is_managed_connector_error(exc) -> bool:
 
 
 def _is_user_input_error(exc) -> bool:
-    """True si la chaîne porte une `McpError` de code d'entrée/config user
-    (INVALID_PARAMS / INVALID_REQUEST) — refus explicite, pas un bug backend."""
+    """True if the chain carries an `McpError` with a user input/config code
+    (INVALID_PARAMS / INVALID_REQUEST) — explicit refusal, not a backend bug."""
     for e in _chain(exc):
         if isinstance(e, McpError) and getattr(e.error, "code", None) in _USER_INPUT_CODES:
             return True
@@ -101,31 +101,31 @@ def _is_user_input_error(exc) -> bool:
 
 
 def _is_arg_validation_error(exc) -> bool:
-    """True si la chaîne porte une `ValidationError` pydantic (args rejetés)."""
+    """True if the chain carries a pydantic `ValidationError` (args rejected)."""
     for e in _chain(exc):
         if isinstance(e, ValidationError):
             return True
     return False
 
 
-# Types pydantic d'une erreur de SIGNATURE (outil écrit à la main, validé par FastMCP 3),
-# et son titre : `call[data_write]` — dont on ne sert que le nom de l'outil (oto#135).
+# Pydantic types of a SIGNATURE error (hand-written tool, validated by FastMCP 3),
+# and its title: `call[data_write]` — of which we only serve the tool name (oto#135).
 _TYPES_DE_SIGNATURE = frozenset({"unexpected_keyword_argument", "missing_argument",
                                  "unexpected_positional_argument", "multiple_argument_values"})
 _TITRE_D_OUTIL = re.compile(r"^(?:call\[)?([A-Za-z_]\w*)\]?$")
 
 
 def outil_de_signature(exc) -> Optional[str]:
-    """Le nom de l'outil dont la SIGNATURE a refusé les arguments, ou `None`.
+    """The name of the tool whose SIGNATURE refused the arguments, or `None`.
 
-    FastMCP 3 titre l'erreur `call[data_write]` : le nom se LIT dans le titre. Le titre
-    d'une erreur de MODÈLE nomme une classe, jamais servi comme nom d'outil."""
+    FastMCP 3 titles the error `call[data_write]`: the name is READ from the title. The title
+    of a MODEL error names a class, never served as a tool name."""
     err = next((e for e in _chain(exc) if isinstance(e, ValidationError)), None)
     if err is None:
         return None
     try:
         signature = any((d.get("type") or "") in _TYPES_DE_SIGNATURE for d in err.errors())
-    # noqa: SILENT — forme pydantic inattendue : pas de nom d'outil, le message reste
+    # noqa: SILENT — unexpected pydantic shape: no tool name, the message stays
     except Exception:  # noqa: BLE001
         return None
     m = _TITRE_D_OUTIL.match(err.title or "") if signature else None
@@ -133,31 +133,31 @@ def outil_de_signature(exc) -> Optional[str]:
 
 
 def _arg_error_message(exc, parametres: Optional[list] = None) -> str:
-    """« Arguments invalides » qui NOMME la clé fautive — parité avec la face REST.
+    """"Invalid arguments" that NAMES the faulty key — parity with the REST face.
 
-    `parametres` = les paramètres de l'outil, quand la surface les connaît
-    (`ErrorEnvelopeMiddleware`) : une clé inconnue qui ressemble à l'un d'eux rend le
-    geste à rejouer (« Rejoue `data_write(…)` avec `rows=` à la place de
-    `rows_data` », oto#135) au lieu de faire relire le schéma entier.
+    `parametres` = the tool's parameters, when the surface knows them
+    (`ErrorEnvelopeMiddleware`): an unknown key that resembles one of them makes the
+    gesture to replay explicit ("Replay `data_write(…)` with `rows=` instead of
+    `rows_data`", oto#135) instead of making the agent reread the whole schema.
 
-    La face REST refuse un champ inconnu en nommant l'excédent ET les attendus
-    (`_rest_adapter`, 400 `unknown_fields`) ; la face MCP disait « vérifie les paramètres
-    de l'outil », ce qui laisse deviner LEQUEL. Mesuré le 14/08 : deux formes fautives
-    (`{op:"draft"}`, `{action:"draft"}`) refusées sans nommer la clé, puis l'appel
-    recomposé à neuf — en oubliant le paramètre cherché depuis quatre essais.
+    The REST face refuses an unknown field by naming the excess AND the expected ones
+    (`_rest_adapter`, 400 `unknown_fields`); the MCP face said "check the tool's
+    parameters", which leaves you guessing WHICH. Measured on 14/08: two faulty forms
+    (`{op:"draft"}`, `{action:"draft"}`) refused without naming the key, then the call
+    recomposed from scratch — forgetting the parameter being sought for four attempts.
 
-    La `ValidationError` pydantic porte tout : `loc` = la clé, `type` = la nature du
-    refus (`extra_forbidden` = clé inconnue, `missing` = clé requise absente)."""
+    The pydantic `ValidationError` carries everything: `loc` = the key, `type` = the nature
+    of the refusal (`extra_forbidden` = unknown key, `missing` = required key absent)."""
     err = next((e for e in _chain(exc) if isinstance(e, ValidationError)), None)
     if err is None:
-        return "Arguments invalides — vérifie les paramètres de l'outil."
+        return "Invalid arguments — check the tool's parameters."
     inconnus, manquants, autres = [], [], []
     valeurs: dict = {}
     try:
         for d in err.errors():
             cle = ".".join(str(p) for p in (d.get("loc") or ())) or "?"
             kind = d.get("type") or ""
-            # FastMCP 3 type une clé inconnue `unexpected_keyword_argument` (oto#135).
+            # FastMCP 3 types an unknown key `unexpected_keyword_argument` (oto#135).
             if kind in ("extra_forbidden", "unexpected_keyword_argument"):
                 inconnus.append(cle)
                 valeurs[cle] = d.get("input")
@@ -165,25 +165,25 @@ def _arg_error_message(exc, parametres: Optional[list] = None) -> str:
                 manquants.append(cle)
             else:
                 autres.append(f"{cle} ({d.get('msg') or kind})")
-    # noqa: SILENT — message d'aide dégradé, la taxonomie rend son défaut
-    except Exception:      # forme pydantic inattendue : on ne casse pas le message
-        return "Arguments invalides — vérifie les paramètres de l'outil."
+    # noqa: SILENT — degraded help message, the taxonomy returns its default
+    except Exception:      # unexpected pydantic shape: don't break the message
+        return "Invalid arguments — check the tool's parameters."
     outil = outil_de_signature(err)
-    from . import deprecations  # tardif : la taxonomie est importée partout
-    # oto#127 : les anciens réglages de tête de `data_patch_schema` se refusent
-    # ENSEMBLE — l'équivalent se calcule sur la combinaison reçue.
+    from . import deprecations  # late import: the taxonomy is imported everywhere
+    # oto#127: the old head settings of `data_patch_schema` are refused
+    # TOGETHER — the equivalent is computed on the combination received.
     if outil == "data_patch_schema":
         from .datastore import reglages
         refus = reglages.refus_parametres({c: valeurs.get(c) for c in inconnus}, outil)
         if refus:
-            return "Arguments invalides — " + refus
+            return "Invalid arguments — " + refus
     for cle in inconnus:
         refus = deprecations.refus_parametre_renomme(cle, valeurs.get(cle), outil)
-        if refus:  # le nom neuf n'est alors pas « requis absent » : il est mal nommé
-            return "Arguments invalides — " + refus
-    # oto#135 : une clé inconnue qui ressemble à un paramètre de l'outil a une
-    # destination — le refus la dit, et le paramètre ainsi nommé n'est plus un
-    # « requis absent » : il est mal écrit.
+        if refus:  # the new name is then not "required but absent": it is misnamed
+            return "Invalid arguments — " + refus
+    # oto#135: an unknown key that resembles a tool parameter has a
+    # destination — the refusal says it, and the parameter thus named is no longer a
+    # "required but absent": it is misspelled.
     proches = {}
     for cle in inconnus:
         trouve = get_close_matches(cle, list(parametres or ()), n=1, cutoff=0.6)
@@ -192,67 +192,67 @@ def _arg_error_message(exc, parametres: Optional[list] = None) -> str:
     manquants = [c for c in manquants if c not in proches.values()]
     bouts = []
     if inconnus:
-        bouts.append(f"champ(s) non reconnu(s) : {', '.join(inconnus)}")
+        bouts.append(f"unrecognized field(s): {', '.join(inconnus)}")
     if manquants:
-        bouts.append(f"champ(s) requis absent(s) : {', '.join(manquants)}")
+        bouts.append(f"required field(s) missing: {', '.join(manquants)}")
     if autres:
-        bouts.append(f"valeur(s) refusée(s) : {'; '.join(autres)}")
+        bouts.append(f"rejected value(s): {'; '.join(autres)}")
     if not bouts:
-        return "Arguments invalides — vérifie les paramètres de l'outil."
+        return "Invalid arguments — check the tool's parameters."
     schema = f'oto_tool_schema(name="{outil}")' if outil else "oto_tool_schema(name=…)"
     rejeu = ""
     if proches:
-        appel = f"`{outil}(…)`" if outil else "le même appel"
-        rejeu = (f" Rejoue {appel} avec "
-                 + ", ".join(f"`{p}=` à la place de `{c}`" for c, p in proches.items())
+        appel = f"`{outil}(…)`" if outil else "the same call"
+        rejeu = (f" Replay {appel} with "
+                 + ", ".join(f"`{p}=` instead of `{c}`" for c, p in proches.items())
                  + ".")
-    return ("Arguments invalides — " + " · ".join(bouts) + "." + rejeu
-            + f" Le schéma exact : {schema}.")
+    return ("Invalid arguments — " + " · ".join(bouts) + "." + rejeu
+            + f" The exact schema: {schema}.")
 
 
 def _is_oauth_exchange_refused(exc) -> bool:
-    """True si la chaîne porte un REFUS du serveur d'autorisation (`OAuthExchangeRefused`).
+    """True if the chain carries a REFUSAL from the authorization server (`OAuthExchangeRefused`).
 
-    Le refus décrit la Connected App ou le grant de l'UTILISATEUR — code expiré, scopes
-    absents, callback divergente, restriction IP — jamais notre code. La chaîne suffit :
-    chaque connecteur re-lève son message traduit `from e`, donc la cause d'origine reste
-    visible ici sans que la taxonomie ait à connaître un seul connecteur par son nom.
+    The refusal describes the USER's Connected App or grant — expired code, missing scopes,
+    mismatched callback, IP restriction — never our code. The chain is enough:
+    each connector re-raises its translated message `from e`, so the original cause remains
+    visible here without the taxonomy having to know a single connector by name.
 
-    Import local : `oauth_flow` importe la config au chargement, et ce module est importé
-    très tôt par le middleware Sentry."""
+    Local import: `oauth_flow` imports the config at load time, and this module is imported
+    very early by the Sentry middleware."""
     try:
         from .auth.flow import OAuthExchangeRefused
-    # noqa: SILENT — prédicat de forme : indécidable ⇒ False (pas d'OAuth deviné)
+    # noqa: SILENT — shape predicate: undecidable => False (no OAuth guessed)
     except Exception:
         return False
     return any(isinstance(e, OAuthExchangeRefused) for e in _chain(exc))
 
 
 def _is_upstream_managed_error(exc) -> bool:
-    """True si la chaîne porte une erreur de connecteur amont d'INPUT/config SANS
-    statut HTTP (oto-backend#90) : facette LinkedIn introuvable, compte non connecté,
-    param non supporté, identity_mismatch… `UnipileError` (oto-core) modélise ça — un
-    refus d'entrée user, jamais un bug backend. Les 4xx portent déjà `.status_code`
-    (couverts par `_is_managed_connector_error`) ; les erreurs RÉSEAU (message «
-    réseau ») restent reportées (transitoire, potentielle panne, hors input).
+    """True if the chain carries an upstream connector INPUT/config error WITHOUT an
+    HTTP status (oto-backend#90): LinkedIn facet not found, account not connected,
+    unsupported param, identity_mismatch… `UnipileError` (oto-core) models this — a
+    user input refusal, never a backend bug. 4xx errors already carry `.status_code`
+    (covered by `_is_managed_connector_error`); NETWORK errors (message "network")
+    stay reported (transient, potential outage, not an input problem).
 
-    Reconnu par NOM de classe (`UnipileError`) pour ne pas coupler la taxonomie à
-    l'import d'oto-core (le module doit rester importable seul, sans cycle)."""
+    Recognized by class NAME (`UnipileError`) so as not to couple the taxonomy to
+    the oto-core import (the module must remain importable on its own, without cycles)."""
     for e in _chain(exc):
         if type(e).__name__ == "UnipileError" and getattr(e, "status_code", None) is None:
-            if "réseau" not in str(e).lower():
+            if "network" not in str(e).lower():
                 return True
     return False
 
 
-# Déconnexion du CLIENT pendant qu'on lui répondait. Le client MCP ferme le POST
-# (onglet fermé, conversation abandonnée, timeout côté claude.ai) et le serveur écrit
-# dans un stream déjà mort. Rien n'a mal tourné CHEZ NOUS : il n'y a plus personne au
-# bout du fil. Deux formes du MÊME incident, chaînées dans le même event :
-#   - `ClosedResourceError` (anyio) quand le SDK MCP pousse dans le stream fermé ;
+# CLIENT disconnect while we were replying. The MCP client closes the POST
+# (tab closed, conversation abandoned, timeout on the claude.ai side) and the server writes
+# into an already-dead stream. Nothing went wrong ON OUR SIDE: there is no one left at the
+# other end of the line. Two forms of the SAME incident, chained in the same event:
+#   - `ClosedResourceError` (anyio) when the MCP SDK pushes into the closed stream;
 #   - `RuntimeError: Unexpected ASGI message … after response already completed`
-#     quand uvicorn refuse les headers d'une réponse déjà terminée.
-# 38 événements Sentry en 3 semaines, aucun actionnable.
+#     when uvicorn refuses the headers of an already-finished response.
+# 38 Sentry events in 3 weeks, none actionable.
 _CLIENT_DISCONNECT_TYPES = {
     "ClosedResourceError", "BrokenResourceError", "EndOfStream", "ClientDisconnect",
 }
@@ -260,17 +260,17 @@ _ASGI_AFTER_COMPLETE = "after response already completed"
 
 
 def _is_client_disconnect(exc) -> bool:
-    """True si la chaîne porte une déconnexion client en cours de réponse.
+    """True if the chain carries a client disconnect mid-response.
 
-    Reconnu par NOM de classe (comme `_is_upstream_managed_error`) : la taxonomie ne
-    doit pas importer anyio ni le SDK MCP pour rester importable seule.
+    Recognized by class NAME (like `_is_upstream_managed_error`): the taxonomy must
+    not import anyio or the MCP SDK so it can remain importable on its own.
 
-    ⚠️ VOLONTAIREMENT hors de `_is_expected_error` : ce prédicat ne répond pas à la
-    même question. `_is_expected_error` = « faut-il en tenir l'agent responsable ? »,
-    et sert aussi à `ErrorEnvelopeMiddleware` pour composer la réponse RENDUE à
-    l'agent. Ici, il n'y a plus d'agent à qui répondre — la seule décision qui reste
-    est « faut-il réveiller quelqu'un ? », qui est une question Sentry. D'où l'appel
-    séparé dans `_before_send`.
+    ⚠️ DELIBERATELY outside `_is_expected_error`: this predicate does not answer the
+    same question. `_is_expected_error` = "should the agent be held responsible?",
+    and is also used by `ErrorEnvelopeMiddleware` to compose the response RETURNED to
+    the agent. Here, there is no agent left to answer — the only decision remaining
+    is "should someone be woken up?", which is a Sentry question. Hence the separate
+    call in `_before_send`.
     """
     for e in _chain(exc):
         if type(e).__name__ in _CLIENT_DISCONNECT_TYPES:
@@ -284,13 +284,13 @@ _UNKNOWN_TOOL = re.compile(r"Unknown tool: '([^']+)'")
 
 
 def _unknown_tool_name(exc) -> Optional[str]:
-    """Nom de l'outil si la chaîne porte le refus de dispatch fastmcp « Unknown
-    tool » — l'outil n'est pas monté dans CETTE session (connecteur non installé,
-    sélection ADR 0019/0050, ou tool masqué). La visibilité filtre `tools/list`,
-    pas `tools/call` : un agent peut toujours TENTER un nom (il le déduit d'un
-    ref d'instance, du catalogue, d'une conversation) → le refus serveur doit
-    être actionnable, pas un 500 opaque (vécu 2026-07-16, signaux #224/#225 :
-    deux agents ont conclu à un bug credential). None sinon."""
+    """Tool name if the chain carries fastmcp's "Unknown tool" dispatch
+    refusal — the tool is not mounted in THIS session (connector not installed,
+    ADR 0019/0050 selection, or hidden tool). Visibility filters `tools/list`,
+    not `tools/call`: an agent can still TRY a name (it infers it from an
+    instance ref, the catalog, a conversation) → the server refusal must
+    be actionable, not an opaque 500 (experienced 2026-07-16, signals #224/#225:
+    two agents concluded a credential bug). None otherwise."""
     for e in _chain(exc):
         if isinstance(e, NotFoundError):
             m = _UNKNOWN_TOOL.search(str(e))
@@ -300,29 +300,29 @@ def _unknown_tool_name(exc) -> Optional[str]:
 
 
 def _connector_of_tool(name: str) -> Optional[str]:
-    """Connecteur propriétaire du namespace de `name`, si le registre le connaît.
-    Import paresseux — la taxonomie reste importable seule (et sans cycle)."""
+    """Connector owning the namespace of `name`, if the registry knows it.
+    Lazy import — the taxonomy remains importable on its own (and without cycles)."""
     try:
         from . import providers
         from .tool_visibility import namespace_of
         con = providers.connector_for_namespace(namespace_of(name))
         return con.name if con else None
-    # noqa: SILENT — hint d'appartenance connecteur : absent plutôt que faux
+    # noqa: SILENT — connector-ownership hint: absent rather than wrong
     except Exception:
         return None
 
 
 def _surviving_siblings(name: str) -> Optional[list[str]]:
-    """Les outils du MÊME namespace qui existent encore — quand `name`, lui, n'existe pas.
+    """The tools of the SAME namespace that still exist — when `name` itself does not.
 
-    `None` = on ne peut rien affirmer : le nom EST au registre (il n'est donc pas retiré,
-    juste non monté), ou le registre n'est pas réchauffé (hors serveur il rend une liste
-    vide — en conclure « l'outil n'existe plus » ferait mentir CHAQUE message), ou son
-    namespace n'a plus rien à proposer.
+    `None` = nothing can be asserted: the name IS in the registry (so it is not removed,
+    just not mounted), or the registry is not warmed up (outside the server it returns an empty
+    list — concluding "the tool no longer exists" would make EVERY message lie), or its
+    namespace has nothing left to offer.
 
-    DÉRIVÉ, jamais une table de renommages à tenir : une table serait à nourrir à chaque
-    consolidation, donc périmée au premier oubli — et c'est exactement ce genre d'oubli
-    qui produit le message trompeur qu'on ferme ici."""
+    DERIVED, never a rename table to maintain: a table would have to be fed on each
+    consolidation, hence stale at the first oversight — and it is exactly this kind of oversight
+    that produces the misleading message we are closing here."""
     try:
         from . import tool_registry
         from .tool_visibility import namespace_of
@@ -332,16 +332,16 @@ def _surviving_siblings(name: str) -> Optional[list[str]]:
         ns = namespace_of(name)
         voisins = sorted(t for t in connus if namespace_of(t) == ns)
         return voisins or None
-    # noqa: SILENT — hint de fratrie : absent plutôt que faux
+    # noqa: SILENT — sibling hint: absent rather than wrong
     except Exception:
         return None
 
 
 def _is_expected_error(exc) -> bool:
-    """Erreur gérée, à NE PAS reporter à Sentry : 4xx amont OU refus d'entrée/config
-    user OU args rejetés OU refus d'échange OAuth OU outil non monté (condition de
-    toolbox, pas un bug).
-    Les vraies exceptions code (5xx, KeyError, InvalidTag…) restent reportées."""
+    """Handled error, NOT to be reported to Sentry: upstream 4xx OR user input/config
+    refusal OR rejected args OR OAuth exchange refusal OR unmounted tool (toolbox
+    condition, not a bug).
+    Real code exceptions (5xx, KeyError, InvalidTag…) stay reported."""
     return (_is_managed_connector_error(exc)
             or _is_user_input_error(exc)
             or _is_arg_validation_error(exc)
@@ -350,52 +350,52 @@ def _is_expected_error(exc) -> bool:
             or _unknown_tool_name(exc) is not None)
 
 
-# --- Enveloppe d'erreur rendue à l'agent (D2) --------------------------------
+# --- Error envelope returned to the agent (D2) --------------------------------
 
 @dataclass
 class ErrorInfo:
-    """Erreur normalisée présentée à l'agent. `code` = catégorie machine ;
-    `retryable` = l'agent peut réessayer tel quel ; `message` scrubbé (zéro
-    stacktrace/route/id) ; `hint` = quoi faire, quand dérivable."""
+    """Normalized error presented to the agent. `code` = machine category;
+    `retryable` = the agent can retry as is; `message` scrubbed (zero
+    stacktrace/route/id); `hint` = what to do, when derivable."""
     code: str
     retryable: bool
     message: str
     hint: Optional[str] = None
-    # Connecteur en cause, quand il est dérivable du nom de l'outil (`tool_not_mounted`).
-    # Le classifieur reste PUR (il ne voit qu'une exception) : c'est l'enveloppe, qui a
-    # le contexte de session, qui s'en sert pour enrichir le hint (instances à portée).
+    # Connector at fault, when derivable from the tool name (`tool_not_mounted`).
+    # The classifier stays PURE (it only sees an exception): it is the envelope, which has
+    # the session context, that uses it to enrich the hint (instances in scope).
     connector: Optional[str] = None
 
 
-#: La conduite rendue avec `quota_exhausted` (402) : rien à corriger dans l'appel.
-QUOTA_HINT = ("inutile de réessayer ni de corriger l'appel : le compte du fournisseur "
-              "est à sec — recharge ses crédits chez le fournisseur, ou pose une autre clé")
+#: The guidance returned with `quota_exhausted` (402): nothing to fix in the call.
+QUOTA_HINT = ("no point retrying or fixing the call: the provider account "
+              "is out of credit — top up its credits with the provider, or set another key")
 
 
-# net::ERR_* (erreurs Chromium crues) — remplacent tout le message (aucune info utile).
+# net::ERR_* (raw Chromium errors) — replace the whole message (no useful info).
 _NET_ERR = re.compile(r"net::ERR_[A-Z_]+")
-# Routes internes (« Cannot GET /api/v1/… », chemins d'API) — fuite de topologie serveur.
+# Internal routes ("Cannot GET /api/v1/…", API paths) — server topology leak.
 _ROUTE = re.compile(r"(?:Cannot\s+(?:GET|POST|PUT|DELETE|PATCH)\s+)?/(?:api|v\d)[\w/.\-]*", re.I)
-# Jetons techniques longs (account_id, uuid) ≥ 20 chars — fuite d'identifiants internes.
+# Long technical tokens (account_id, uuid) >= 20 chars — internal identifier leak.
 _LONG_ID = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9_\-]{19,}\b")
 _TIMEOUT_MARKERS = ("timeout", "timed out", "délai d'attente", "read timed out")
 
 
 def scrub(message: str) -> str:
-    """Retire d'un message d'erreur les fuites internes (net::ERR_*, routes, ids
-    techniques). Best-effort — appliqué aux messages amont, jamais aux `McpError`
-    qu'on a nous-mêmes curées."""
+    """Strip internal leaks (net::ERR_*, routes, technical ids) from an error message.
+    Best-effort — applied to upstream messages, never to the `McpError`s
+    we curated ourselves."""
     if not message:
         return ""
     if _NET_ERR.search(message):
-        return "Échec réseau amont (hôte non résolu ou service injoignable)."
-    message = _ROUTE.sub("[route interne]", message)
+        return "Upstream network failure (host not resolved or service unreachable)."
+    message = _ROUTE.sub("[internal route]", message)
     message = _LONG_ID.sub("[id]", message)
     return message.strip()
 
 
 def _first_upstream_message(exc) -> str:
-    """Str de la 1ʳᵉ exception de la chaîne portant un statut amont (pour scrub)."""
+    """Str of the 1st exception in the chain carrying an upstream status (for scrub)."""
     for e in _chain(exc):
         if _upstream_status(e) is not None:
             return str(e)
@@ -412,149 +412,149 @@ def _looks_like_timeout(exc) -> bool:
 
 
 def classify(exc, parametres: Optional[list] = None) -> ErrorInfo:
-    """Classe une exception de tool en `ErrorInfo` au contrat uniforme.
+    """Classify a tool exception into an `ErrorInfo` with the uniform contract.
 
-    Ordre : (1) `McpError` qu'on a levée (message curé conservé) ; (2) args pydantic
-    rejetés ; (3) statut HTTP amont (timeout/rate-limit/not-found/authz/4xx/5xx) ;
-    (4) timeout non typé ; (5) reste = interne — **aucun écho du `str(exc)`** (anti-fuite).
+    Order: (1) `McpError` we raised (curated message kept); (2) rejected pydantic
+    args; (3) upstream HTTP status (timeout/rate-limit/not-found/authz/4xx/5xx);
+    (4) untyped timeout; (5) the rest = internal — **no echo of `str(exc)`** (anti-leak).
     """
-    # (0) Crédits épuisés : un 402 amont, où qu'il soit dans la chaîne — y compris
-    # sous la `McpError` curée qu'un outil lève dans son `except` (theirstack, AI Ark
-    # le font). Sans ça, le curage l'emportait et l'agent recevait `invalid_input` :
-    # « corrige ton appel », sur un appel qui était juste et un compte à sec. Le message
-    # curé est gardé (il dit déjà quoi faire) ; le CODE dit la catégorie, et c'est lui
-    # que l'enveloppe lit pour marquer la clé servie (`connectors.health`).
+    # (0) Credits exhausted: an upstream 402, wherever it is in the chain — including
+    # under the curated `McpError` that a tool raises in its `except` (theirstack, AI Ark
+    # do this). Without this, the curation won and the agent received `invalid_input`:
+    # "fix your call", on a call that was right and an account out of credit. The curated
+    # message is kept (it already says what to do); the CODE gives the category, and it is
+    # what the envelope reads to mark the served key (`connectors.health`).
     if upstream_status_in_chain(exc) == 402:
         curated = next((((getattr(e.error, "message", None) or "").strip())
                         for e in _chain(exc) if isinstance(e, McpError)), "")
         return ErrorInfo("quota_exhausted", False,
                          curated or scrub(_first_upstream_message(exc))
-                         or "Crédits épuisés côté service amont.",
+                         or "Credits exhausted on the upstream service.",
                          QUOTA_HINT)
 
-    # (1) McpError curée par un tool/capacité : message déjà agent-facing.
+    # (1) McpError curated by a tool/capability: message already agent-facing.
     for e in _chain(exc):
         if isinstance(e, McpError):
             jcode = getattr(e.error, "code", None)
             msg = (getattr(e.error, "message", None) or "").strip()
             if jcode in _USER_INPUT_CODES:
-                return ErrorInfo("invalid_input", False, msg or "Requête invalide.")
-            # McpError levée avec un autre code (rare) : on garde le texte curé,
-            # traité comme interne non-retryable.
-            return ErrorInfo("internal", False, msg or "Erreur interne du serveur.")
+                return ErrorInfo("invalid_input", False, msg or "Invalid request.")
+            # McpError raised with another code (rare): we keep the curated text,
+            # treated as internal non-retryable.
+            return ErrorInfo("internal", False, msg or "Internal server error.")
 
-    # (2) Arguments rejetés (le LLM a passé de mauvais paramètres) — en NOMMANT la clé.
+    # (2) Rejected arguments (the LLM passed bad parameters) — NAMING the key.
     if _is_arg_validation_error(exc):
         return ErrorInfo("invalid_input", False, _arg_error_message(exc, parametres))
 
-    # (2b) Refus de dispatch fastmcp : l'outil est enregistré côté serveur mais pas
-    # monté dans CETTE session (connecteur non installé / masqué). Rendu actionnable
-    # avec les deux voies : `oto_call` (immédiat, sans installation — ADR 0036) ou
-    # l'installation du connecteur. Sans ça : « Erreur interne du serveur ».
+    # (2b) fastmcp dispatch refusal: the tool is registered server-side but not
+    # mounted in THIS session (connector not installed / hidden). Made actionable
+    # with both routes: `oto_call` (immediate, no installation — ADR 0036) or
+    # installing the connector. Without this: "Internal server error".
     name = _unknown_tool_name(exc)
     if name:
-        # Un nom RETIRÉ DÉLIBÉRÉMENT (`outils_retires`) : son refus est ÉCRIT et nomme le
-        # geste qui aboutit — ce que ni la fratrie dérivée ci-dessous (~60 `oto_*` pour
-        # `oto_kb`) ni « inconnu » ne savent dire. Consulté AVANT elle : un retrait n'est
-        # pas une consolidation, il n'y a pas de voisin qui porte les verbes.
+        # A name DELIBERATELY REMOVED (`outils_retires`): its refusal is WRITTEN and names the
+        # gesture that works — which neither the derived siblings below (~60 `oto_*` for
+        # `oto_kb`) nor "unknown" can say. Consulted BEFORE them: a removal is not
+        # a consolidation, there is no neighbor carrying the verbs.
         retire = outils_retires.retrait(name)
         if retire is not None:
             return ErrorInfo("unknown_tool", False, retire.message, retire.hint)
-        # Un nom RETIRÉ n'est pas un connecteur absent — et le confondre envoie chercher
-        # un problème de montage qui n'existe pas. Vécu le 14/08 : `gmail_search`,
-        # supprimé par la consolidation google (33→13 tools), répondait « le connecteur
-        # google n'est pas installé dans ta toolbox » alors que google ÉTAIT installé et
-        # que les verbes du nom disparu vivaient dans `gmail_message`. La session a
-        # cherché un demi-montage inexistant.
+        # A REMOVED name is not an absent connector — and confusing them sends people looking
+        # for a mounting problem that does not exist. Experienced on 14/08: `gmail_search`,
+        # removed by the google consolidation (33→13 tools), answered "the google
+        # connector is not installed in your toolbox" while google WAS installed and
+        # the verbs of the vanished name lived in `gmail_message`. The session
+        # looked for a nonexistent half-mount.
         voisins = _surviving_siblings(name)
         if voisins is not None:
             return ErrorInfo(
                 "unknown_tool", False,
-                f"L'outil `{name}` n'existe plus (nom retiré ou jamais existé). "
-                f"Les outils de ce domaine aujourd'hui : {', '.join(voisins)}.",
-                "ses verbes vivent probablement sous l'un d'eux, en paramètre `op` — "
-                f"lis son schéma avec oto_tool_schema(name='{voisins[0]}')")
+                f"The tool `{name}` no longer exists (name removed or never existed). "
+                f"The tools of this domain today: {', '.join(voisins)}.",
+                "its verbs probably live under one of them, as the `op` parameter — "
+                f"read its schema with oto_tool_schema(name='{voisins[0]}')")
         con = _connector_of_tool(name)
         if con:
             return ErrorInfo(
                 "tool_not_mounted", False,
-                f"L'outil `{name}` n'est pas monté dans ta session — ce n'est pas "
-                f"une panne du connecteur `{con}` : il peut ne pas être installé dans "
-                f"ta toolbox, l'outil peut y être masqué ou absent de la liste figée à "
-                f"l'ouverture de la session, ou le nom n'existe plus.",
-                f"appelle-le immédiatement via oto_call(name='{name}', args={{…}}) ; "
-                f"ou installe le connecteur — oto_connector(op='select', name='{con}') "
-                f"— et ouvre une nouvelle conversation pour le voir listé",
+                f"The tool `{name}` is not mounted in your session — this is not "
+                f"an outage of the `{con}` connector: it may not be installed in "
+                f"your toolbox, the tool may be hidden there or missing from the list frozen at "
+                f"session start, or the name no longer exists.",
+                f"call it immediately via oto_call(name='{name}', args={{…}}); "
+                f"or install the connector — oto_connector(op='select', name='{con}') "
+                f"— and open a new conversation to see it listed",
                 connector=con)
-        return ErrorInfo("unknown_tool", False, f"Outil `{name}` inconnu.",
-                         "vérifie le nom exact avec oto_list_my_tools")
+        return ErrorInfo("unknown_tool", False, f"Unknown tool `{name}`.",
+                         "check the exact name with oto_list_my_tools")
 
-    # (3) Statut HTTP amont.
+    # (3) Upstream HTTP status.
     sc = upstream_status_in_chain(exc)
     if sc is not None:
         raw = scrub(_first_upstream_message(exc))
         if sc in (408, 504):
             return ErrorInfo("upstream_timeout", True,
-                             "Délai d'attente dépassé côté service amont.",
-                             "réessaie dans un instant")
+                             "Timed out on the upstream service.",
+                             "retry in a moment")
         if sc == 429:
-            # Le connecteur peut démentir le statut (Hunter : 429 = crédits du plan
-            # épuisés, pas un débit trop rapide) → son verdict prime, et son message
-            # dit quoi faire à la place.
+            # The connector can contradict the status (Hunter: 429 = plan credits
+            # exhausted, not too fast a rate) → its verdict wins, and its message
+            # says what to do instead.
             declared = _upstream_retryable(exc)
             retryable = True if declared is None else declared
             return ErrorInfo("rate_limited" if retryable else "quota_exhausted",
                              retryable,
-                             raw or "Trop de requêtes côté service amont.",
-                             "réessaie après une courte pause" if retryable
-                             else "inutile de réessayer : change de source ou fais "
-                                  "monter le plan du connecteur")
+                             raw or "Too many requests on the upstream service.",
+                             "retry after a short pause" if retryable
+                             else "no point retrying: change source or upgrade "
+                                  "the connector plan")
         if sc == 404:
             return ErrorInfo("not_found", False,
-                             raw or "Ressource introuvable côté service amont.")
+                             raw or "Resource not found on the upstream service.")
         if sc in (401, 403):
             return ErrorInfo("not_authorized", False,
-                             raw or "Accès refusé par le service amont.",
-                             "vérifie que le connecteur est connecté et autorisé")
+                             raw or "Access denied by the upstream service.",
+                             "check that the connector is connected and authorized")
         if 400 <= sc < 500:
             return ErrorInfo("upstream_4xx", False,
-                             raw or f"Requête refusée par le service amont ({sc}).")
+                             raw or f"Request refused by the upstream service ({sc}).")
         if 500 <= sc < 600:
             return ErrorInfo("upstream_5xx", True,
-                             f"Le service amont a rencontré une erreur ({sc}).",
-                             "réessaie plus tard")
+                             f"The upstream service hit an error ({sc}).",
+                             "retry later")
 
-    # (4) Timeout non porté par un statut.
+    # (4) Timeout not carried by a status.
     if _looks_like_timeout(exc):
         return ErrorInfo("upstream_timeout", True,
-                         "Délai d'attente dépassé.", "réessaie dans un instant")
+                         "Timed out.", "retry in a moment")
 
-    # (4b) Erreur connecteur amont GÉRÉE sans statut HTTP (UnipileError d'input/config,
-    # #90) : son message est agent-utile (« Facette introuvable… », « compte non
-    # connecté ») → on l'écho TEL QUEL plutôt qu'un « Erreur interne » opaque.
+    # (4b) HANDLED upstream connector error without an HTTP status (UnipileError for input/config,
+    # #90): its message is agent-useful ("Facet not found…", "account not
+    # connected") → we echo it AS IS rather than an opaque "Internal error".
     #
-    # PAS de `scrub` ici (retiré le 2026-07-28, signal #282) : ces messages sont rédigés
-    # PAR NOUS dans oto-core, pas relayés de l'amont — c'est exactement le cas que la
-    # docstring de `scrub` exclut (« jamais aux McpError qu'on a nous-mêmes curées »).
-    # Les scrubber détruisait leur seule valeur : `identity_mismatch` compare l'id
-    # DEMANDÉ et l'id REÇU, tous deux des identifiants LinkedIn publics de >20 caractères
-    # → `_LONG_ID` rendait « profil demandé '[id]', reçu '[id]' », c'est-à-dire un message
-    # qui dit qu'il y a une différence sans jamais dire laquelle. Les messages VRAIMENT
-    # amont gardent leur scrub : ils passent par le chemin (3), au-dessus.
+    # NO `scrub` here (removed on 2026-07-28, signal #282): these messages are written
+    # BY US in oto-core, not relayed from upstream — exactly the case that `scrub`'s
+    # docstring excludes ("never to the McpErrors we curated ourselves").
+    # Scrubbing them destroyed their only value: `identity_mismatch` compares the REQUESTED
+    # id and the RECEIVED id, both public LinkedIn identifiers of >20 characters
+    # → `_LONG_ID` rendered "requested profile '[id]', received '[id]'", i.e. a message
+    # that says there is a difference without ever saying which. TRULY upstream messages
+    # keep their scrub: they go through path (3), above.
     if _is_upstream_managed_error(exc):
         for e in _chain(exc):
             if type(e).__name__ == "UnipileError":
                 return ErrorInfo("invalid_input", False,
-                                 str(e) or "Requête refusée par le service amont.")
+                                 str(e) or "Request refused by the upstream service.")
 
-    # (5) Reste = bug/erreur interne : PAS d'écho de str(exc) (anti-fuite).
-    return ErrorInfo("internal", False, "Erreur interne du serveur.")
+    # (5) The rest = bug/internal error: NO echo of str(exc) (anti-leak).
+    return ErrorInfo("internal", False, "Internal server error.")
 
 
 def jsonrpc_code(info: ErrorInfo) -> int:
-    """Code JSON-RPC de la `McpError` rendue : INVALID_PARAMS pour un refus d'entrée
-    (arguments, outil non monté/inconnu — l'agent doit changer son APPEL, pas
-    réessayer), INTERNAL_ERROR sinon (le discriminant fin vit dans `data.oto.code`)."""
+    """JSON-RPC code of the returned `McpError`: INVALID_PARAMS for an input refusal
+    (arguments, unmounted/unknown tool — the agent must change its CALL, not
+    retry), INTERNAL_ERROR otherwise (the fine discriminant lives in `data.oto.code`)."""
     return (INVALID_PARAMS
             if info.code in ("invalid_input", "tool_not_mounted", "unknown_tool")
             else INTERNAL_ERROR)

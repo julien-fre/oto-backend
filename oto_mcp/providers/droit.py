@@ -1,30 +1,30 @@
-"""Déclaration de registre du connecteur `droit`.
+"""Registry declaration of the `droit` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# droit : jurisprudence (juris_*) + codes consolidés (loi_*) + conventions
-# collectives (ccn_*), servis par le service FOD (fod/juris, fod/loi, fod/ccn). Extrait
-# de `sirene`/`fr` (n'était pas de l'INSEE : DILA/Justice/Légifrance). Open
-# data, sans clé. 3 namespaces → 1 carte « Info légale FR ».
+# droit: case law (juris_*) + consolidated codes (loi_*) + collective
+# agreements (ccn_*), served by the FOD service (fod/juris, fod/loi, fod/ccn). Extracted
+# from `sirene`/`fr` (it was not INSEE data: DILA/Justice/Légifrance). Open
+# data, no key. 3 namespaces → 1 card "Info légale FR".
 CONNECTOR = _c(
     "droit", ["juris", "loi", "ccn"], secret_kind="none",
     label="Info légale FR",
-    help="jurisprudence, codes consolidés, conventions collectives (open data DILA/Légifrance)",
+    help="case law, consolidated codes, collective agreements (open data DILA/Légifrance)",
     href="https://www.legifrance.gouv.fr", modules=("droit",),
 )
 
 CATEGORY = "Data FR"
 PUBLISHER = "Légifrance / DILA"
 DESCRIPTION = (
-    "L'information légale française : jurisprudence (Cour de "
-    "cassation, Conseil d'État, Conseil constitutionnel, CEDH/CJUE), "
-    "codes consolidés versionnés (texte en vigueur à une date) et "
-    "conventions collectives de branche (KALI). Sources "
+    "French legal information: case law (Cour de "
+    "cassation, Conseil d'État, Conseil constitutionnel, ECHR/CJEU), "
+    "versioned consolidated codes (text in force at a given date) and "
+    "sector-level collective agreements (KALI). Sources: "
     "DILA/Légifrance."
 )
 LOGO_DOMAIN = "legifrance.gouv.fr"

@@ -1,58 +1,58 @@
 """Grain — meeting recordings, transcripts, sharing, webhooks, workspace org data.
 
-Wrappe `oto.tools.grain.client.GrainClient` (API v2, Bearer +
-`Public-Api-Version`). keyed `api_key`, byo-only (pas de clé plateforme) :
-chaque user/org pose SA clé Grain — Personal Access Token (par user) ou
-Workspace Access Token (admin, « accès à TOUTES les données du workspace »),
-toutes deux un Bearer simple ici, Grain applique le scope lui-même.
+Wraps `oto.tools.grain.client.GrainClient` (API v2, Bearer +
+`Public-Api-Version`). keyed `api_key`, byo-only (no platform key):
+each user/org sets THEIR Grain key — Personal Access Token (per user) or
+Workspace Access Token (admin, "access to ALL the workspace's data"),
+both a simple Bearer here, Grain applies the scope itself.
 
-**5 tools, un par objet métier** (silae, ADR 0047) — Grain a plus d'objets
-distincts que Granola, donc pas de fusion à 2 comme pour ce dernier :
-- `grain_recording` — CRUD + partage d'une réunion (op=list/get/update/tag/
+**5 tools, one per business object** (silae, ADR 0047) — Grain has more distinct
+objects than Granola, so no merge into 2 as for the latter:
+- `grain_recording` — CRUD + sharing of a meeting (op=list/get/update/tag/
   untag/share_user/unshare_user/share_team/unshare_team).
-- `grain_transcript` — les 4 formats de transcript (json/txt/vtt/srt), à part
-  parce que la nature de la réponse (texte brut vs JSON) diffère radicalement
-  du reste des tools ici.
-- `grain_recording_file` — download + obtention d'une URL d'upload, à part
-  parce que ce sont des octets bruts, pas du JSON (op=download/create_upload_url).
-- `grain_hook` — CRUD complet des webhooks (op=list/create/delete) — pas
-  destructeur de DONNÉE utilisateur, juste de la plomberie d'intégration
-  (même parti pris que `granola_webhook_endpoint`).
-- `grain_org` — les 3 listes sans filtre (users/teams/meeting_types),
-  fusionnées en un seul tool tant elles sont triviales (op=users/teams/
+- `grain_transcript` — the 4 transcript formats (json/txt/vtt/srt), separate
+  because the nature of the response (plain text vs JSON) differs radically
+  from the rest of the tools here.
+- `grain_recording_file` — download + getting an upload URL, separate
+  because these are raw bytes, not JSON (op=download/create_upload_url).
+- `grain_hook` — full CRUD of webhooks (op=list/create/delete) — not
+  destructive of USER DATA, just integration plumbing
+  (same stance as `granola_webhook_endpoint`).
+- `grain_org` — the 3 unfiltered lists (users/teams/meeting_types),
+  merged into a single tool since they are so trivial (op=users/teams/
   meeting_types).
 
-**Aucun param n'est retenu au silence** : un `op` qui ne reconnaît pas un
-argument fourni REFUSE plutôt que de l'ignorer (silae `_refuse_ignored`).
+**No param is silently dropped**: an `op` that does not recognize a
+supplied argument REFUSES rather than ignoring it (silae `_refuse_ignored`).
 
-⚠️ **Aucun spec machine-readable n'existe pour cette API** (openapi.json/
-docs.json/mint.json/llms.txt rendent tous 403, un blocage WAF constant, pas
-un 404 d'absence) — tout ici vient d'abord d'une lecture de pages de doc.
+⚠️ **No machine-readable spec exists for this API** (openapi.json/
+docs.json/mint.json/llms.txt all return 403, a constant WAF block, not
+a 404 of absence) — everything here first comes from reading doc pages.
 
-**Testé en live le 2026-08-20** avec un Personal Access Token réel
-(workspace folk.app) : 20 des 21 méthodes ont marché du premier coup —
-list/get recordings, les 4 formats de transcript, tag/untag, share/unshare
-user, update (renommage), download (21 Mo réels), create_upload_url (une
-vraie URL S3 pré-signée — confirme le choix de ne PAS y envoyer le Bearer
-Grain), et le cycle complet des hooks (create contre une URL joignable
-réelle, list, delete). **Un vrai bug trouvé et corrigé** : `share_with_team`
-attendait `team_id` dans le corps JSON (PUT pluriel `.../teams`), pas dans
-le chemin comme la doc le suggérait — voir `GrainClient.share_with_team`
-pour le détail. Exactement la classe de bug
-que la vérification OpenAPI d'Ahrefs avait attrapée et qu'une recherche
-doc-seule avait manquée ici aussi.
+**Tested live on 2026-08-20** with a real Personal Access Token
+(folk.app workspace): 20 of the 21 methods worked first time —
+list/get recordings, the 4 transcript formats, tag/untag, share/unshare
+user, update (rename), download (21 MB real), create_upload_url (a
+real pre-signed S3 URL — confirms the choice of NOT sending the Grain
+Bearer to it), and the full hook cycle (create against a real reachable
+URL, list, delete). **One real bug found and fixed**: `share_with_team`
+expected `team_id` in the JSON body (plural PUT `.../teams`), not in
+the path as the doc suggested — see `GrainClient.share_with_team`
+for details. Exactly the class of bug
+that Ahrefs' OpenAPI verification had caught and that a doc-only search
+had missed here too.
 
-⚠️ **Un Personal Access Token N'EST PAS scopé aux réunions du porteur.**
-Vérifié en live : `grain_recording(op="list")` sans filtre rend les
-enregistrements `share_state="public"` de TOUTE l'organisation (vus dans le
-test : des réunions enregistrées par d'autres membres du workspace, où le
-porteur du token n'était même pas participant) — le PAT donne accès aux
-notes personnelles (possédées/partagées) **ET** aux notes publiques de
-l'espace, pas seulement aux siennes. Pour scoper à « mes réunions » :
-`filter={"attendance": "hosted"}` (animées par le porteur) ou `"attended"`
-(auxquelles il a participé) — confirmé en live, ces deux valeurs filtrent
-bien. Sans ce filtre, un agent qui liste sans précaution peut remonter des
-appels clients d'un collègue.
+⚠️ **A Personal Access Token IS NOT scoped to the holder's meetings.**
+Verified live: `grain_recording(op="list")` without a filter returns the
+`share_state="public"` recordings of the WHOLE organization (seen in the
+test: meetings recorded by other workspace members, where the
+token holder was not even a participant) — the PAT gives access to
+personal notes (owned/shared) **AND** to the workspace's public notes,
+not only its own. To scope to "my meetings":
+`filter={"attendance": "hosted"}` (hosted by the holder) or `"attended"`
+(that they took part in) — confirmed live, these two values filter
+correctly. Without this filter, an agent that lists carelessly can surface
+a colleague's client calls.
 """
 from __future__ import annotations
 
@@ -71,33 +71,33 @@ def _bad(msg: str) -> McpError:
 
 
 def _refuse_ignored(op: str, hint: str, **provided) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention,
-    pas un détail — sinon `grain_recording(op="list", recording_id=...)`
-    rendrait TOUTES les réunions en laissant croire que `recording_id` a
-    filtré sur une seule."""
+    """A supplied argument that THIS op does not use is an error of intent,
+    not a detail — otherwise `grain_recording(op="list", recording_id=...)`
+    would return ALL meetings while letting the caller believe `recording_id`
+    filtered down to one."""
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op={op!r} n'utilise pas `{name}` — {hint}")
+            raise _bad(f"op={op!r} does not use `{name}` — {hint}")
 
 
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"Grain a rejeté la clé API (HTTP {status}) — vérifie la clé posée sur ce "
-                "connecteur (Grain : Settings → Integrations → API).")
+        return (f"Grain rejected the API key (HTTP {status}) — check the key set on this "
+                "connector (Grain: Settings → Integrations → API).")
     if status == 404:
-        return f"Grain : ressource introuvable (HTTP 404) — {e.body}"
+        return f"Grain: resource not found (HTTP 404) — {e.body}"
     if status == 429:
-        return ("Grain : trop de requêtes (429) — limite 300/minute. "
-                "Réessaie dans un instant.")
+        return ("Grain: too many requests (429) — limit 300/minute. "
+                "Try again in a moment.")
     if status in (500, 502, 503, 504):
-        return f"Grain est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Grain a refusé la requête (HTTP {status}) : {e.body}"
+        return f"Grain is temporarily unavailable (HTTP {status}) — try again later."
+    return f"Grain refused the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : liste des types de réunion, sans
-    filtre, la plus légère des 3 listes org."""
+    """Probe for "test the connection": list of meeting types, unfiltered,
+    the lightest of the 3 org lists."""
     from oto.tools.grain.client import GrainClient
     GrainClient(api_key=fields["key"]).list_meeting_types()
 
@@ -175,55 +175,55 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='get' pour une réunion précise",
+            _refuse_ignored(op, "use op='get' for a specific meeting",
                              recording_id=recording_id, title=title, tag=tag,
                              user_id=user_id, team_id=team_id)
             body = {k: v for k, v in dict(cursor=cursor, filter=filter, include=include).items()
                     if v is not None}
             return _run(lambda: client.list_recordings(**body))
         if recording_id is None:
-            raise _bad(f"op={op!r} requiert `recording_id`")
+            raise _bad(f"op={op!r} requires `recording_id`")
         if op == "get":
-            _refuse_ignored(op, "ces filtres ne s'appliquent qu'à op='list'",
+            _refuse_ignored(op, "these filters only apply to op='list'",
                              cursor=cursor, filter=filter, title=title, tag=tag,
                              user_id=user_id, team_id=team_id)
             kwargs = {"include": include} if include is not None else {}
             return _run(lambda: client.get_recording(recording_id, **kwargs))
         if op == "update":
-            _refuse_ignored(op, "op='update' ne change que le titre",
+            _refuse_ignored(op, "op='update' only changes the title",
                              cursor=cursor, filter=filter, include=include, tag=tag,
                              user_id=user_id, team_id=team_id)
             if not title:
-                raise _bad("op='update' requiert `title`")
+                raise _bad("op='update' requires `title`")
             return _run(lambda: client.update_recording(recording_id, title))
         if op in ("tag", "untag"):
-            _refuse_ignored(op, f"op={op!r} ne prend que `tag`",
+            _refuse_ignored(op, f"op={op!r} only takes `tag`",
                              cursor=cursor, filter=filter, include=include, title=title,
                              user_id=user_id, team_id=team_id)
             if not tag:
-                raise _bad(f"op={op!r} requiert `tag`")
+                raise _bad(f"op={op!r} requires `tag`")
             if op == "tag":
                 return _run(lambda: client.add_tag(recording_id, tag))
             return _run(lambda: client.remove_tag(recording_id, tag))
         if op in ("share_user", "unshare_user"):
-            _refuse_ignored(op, f"op={op!r} ne prend que `user_id`",
+            _refuse_ignored(op, f"op={op!r} only takes `user_id`",
                              cursor=cursor, filter=filter, include=include, title=title,
                              tag=tag, team_id=team_id)
             if not user_id:
-                raise _bad(f"op={op!r} requiert `user_id`")
+                raise _bad(f"op={op!r} requires `user_id`")
             if op == "share_user":
                 return _run(lambda: client.share_with_user(recording_id, user_id))
             return _run(lambda: client.unshare_from_user(recording_id, user_id))
         if op in ("share_team", "unshare_team"):
-            _refuse_ignored(op, f"op={op!r} ne prend que `team_id`",
+            _refuse_ignored(op, f"op={op!r} only takes `team_id`",
                              cursor=cursor, filter=filter, include=include, title=title,
                              tag=tag, user_id=user_id)
             if not team_id:
-                raise _bad(f"op={op!r} requiert `team_id`")
+                raise _bad(f"op={op!r} requires `team_id`")
             if op == "share_team":
                 return _run(lambda: client.share_with_team(recording_id, team_id))
             return _run(lambda: client.unshare_from_team(recording_id, team_id))
-        raise _bad("op inconnu")
+        raise _bad("unknown op")
 
     # ================================================================
     # Transcript — 4 formats
@@ -250,7 +250,7 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.get_transcript_vtt(recording_id))
         if format == "srt":
             return _run(lambda: client.get_transcript_srt(recording_id))
-        raise _bad("format doit être 'json', 'txt', 'vtt' ou 'srt'")
+        raise _bad("format must be 'json', 'txt', 'vtt' or 'srt'")
 
     # ================================================================
     # Recording file — upload/download (raw bytes)
@@ -282,21 +282,21 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "download":
-            _refuse_ignored(op, "utilise op='create_upload_url' pour en envoyer une nouvelle",
+            _refuse_ignored(op, "use op='create_upload_url' to upload a new one",
                              filename=filename, user_id=user_id)
             if not recording_id:
-                raise _bad("op='download' requiert `recording_id`")
+                raise _bad("op='download' requires `recording_id`")
             content = _run(lambda: client.download_recording(recording_id))
             return {"recording_id": recording_id, "size_bytes": len(content),
                     "note": "Binary content returned as bytes, not shown inline."}
         if op == "create_upload_url":
-            _refuse_ignored(op, "op='create_upload_url' ne télécharge rien",
+            _refuse_ignored(op, "op='create_upload_url' downloads nothing",
                              recording_id=recording_id)
             if not filename:
-                raise _bad("op='create_upload_url' requiert `filename`")
+                raise _bad("op='create_upload_url' requires `filename`")
             kwargs = {"user_id": user_id} if user_id is not None else {}
             return _run(lambda: client.create_upload_url(filename, **kwargs))
-        raise _bad("op doit être 'download' ou 'create_upload_url'")
+        raise _bad("op must be 'download' or 'create_upload_url'")
 
     # ================================================================
     # Hooks (webhooks) — full CRUD
@@ -339,26 +339,26 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='create' pour en enregistrer un nouveau, "
-                             "op='delete' pour en cibler un existant",
+            _refuse_ignored(op, "use op='create' to register a new one, "
+                             "op='delete' to target an existing one",
                              hook_id=hook_id, hook_url=hook_url, hook_type=hook_type,
                              include=include)
             body = {"filter": filter} if filter is not None else {}
             return _run(lambda: client.list_hooks(**body))
         if op == "create":
-            _refuse_ignored(op, "un nouveau hook n'a pas encore d'id, `filter` ne vaut que pour 'list'",
+            _refuse_ignored(op, "a new hook has no id yet, `filter` only applies to 'list'",
                              hook_id=hook_id, filter=filter)
             if not hook_url or not hook_type:
-                raise _bad("op='create' requiert `hook_url` et `hook_type`")
+                raise _bad("op='create' requires `hook_url` and `hook_type`")
             kwargs = {"include": include} if include is not None else {}
             return _run(lambda: client.create_hook(hook_url, hook_type, **kwargs))
         if op == "delete":
-            _refuse_ignored(op, "une suppression ne prend que `hook_id`",
+            _refuse_ignored(op, "a deletion only takes `hook_id`",
                              hook_url=hook_url, hook_type=hook_type, include=include, filter=filter)
             if not hook_id:
-                raise _bad("op='delete' requiert `hook_id`")
+                raise _bad("op='delete' requires `hook_id`")
             return _run(lambda: client.delete_hook(hook_id))
-        raise _bad("op doit être 'list', 'create' ou 'delete'")
+        raise _bad("op must be 'list', 'create' or 'delete'")
 
     # ================================================================
     # Org — users, teams, meeting types (all list-only, no filters)
@@ -381,4 +381,4 @@ def register(mcp: FastMCP) -> None:
             return _run(lambda: client.list_teams())
         if op == "meeting_types":
             return _run(lambda: client.list_meeting_types())
-        raise _bad("op doit être 'users', 'teams' ou 'meeting_types'")
+        raise _bad("op must be 'users', 'teams' or 'meeting_types'")

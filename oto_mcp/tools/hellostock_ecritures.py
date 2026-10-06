@@ -1,31 +1,31 @@
-"""HelloStock administration — les trois gestes qui AGISSENT sur la marketplace de
-production.
+"""HelloStock administration — the three actions that ACT on the production
+marketplace.
 
-Trois outils, un par geste, parce qu'aucun ne partage ses paramètres avec une
-lecture (ADR 0047 : paramètres disjoints → le NOM porte l'avertissement) — et parce
-que `status`, filtre d'une liste, deviendrait ici la valeur écrite : le même mot
-avec deux sens dans une même surface.
+Three tools, one per action, because none shares its parameters with a
+read (ADR 0047: disjoint parameters → the NAME carries the warning) — and because
+`status`, a list filter, would become the written value here: the same word
+with two meanings on a single surface.
 
-- `hellostock_demande_send` **envoie un courriel** à des membres réels. C'est le
-  seul geste dont l'effet atteint une personne : il est en **dry-run PAR DÉFAUT**
-  (convention du dépôt pour ce qui part chez un tiers), et l'aperçu nomme les
-  destinataires, ceux qui l'ont déjà reçue, et ce que le courriel contient.
-- `hellostock_demande_set_status` et `hellostock_offre_update` changent ce que la
-  marketplace AFFICHE : seul `published` est visible publiquement, et un mot-clé
-  d'offre alimente la recherche publique. Aucun courriel ne part. `dry_run`
-  disponible, défaut `False`, comme les écritures des autres connecteurs.
+- `hellostock_demande_send` **sends an email** to real members. It is the
+  only action whose effect reaches a person: it is **dry-run BY DEFAULT**
+  (the repo's convention for whatever goes out to a third party), and the preview names the
+  recipients, those who already received it, and what the email contains.
+- `hellostock_demande_set_status` and `hellostock_offre_update` change what the
+  marketplace DISPLAYS: only `published` is publicly visible, and an offer
+  keyword feeds the public search. No email goes out. `dry_run`
+  available, default `False`, like the writes of the other connectors.
 
-**Ce que ce module ajoute au contrat**, parce que l'API ne le fait pas :
+**What this module adds to the contract**, because the API does not:
 
-- **aucun renvoi en double sans le vouloir** : HelloStock trace chaque envoi mais
-  n'en refuse aucun, et n'a pas de clé d'idempotence — un agent qui rejoue son tour
-  écrirait deux fois aux mêmes fournisseurs. Un destinataire qui a déjà reçu cette
-  demande est refusé, sauf `allow_resend=True` (une relance voulue) ;
-- **le message borné ici** : au-delà de 2 000 caractères, le serveur répond « aucun
-  destinataire sélectionné », ce qui ferait chercher l'erreur ailleurs ;
-- **une écriture se lit AVANT** (l'identifiant inconnu d'une demande rend une 500
-  côté serveur, pas un 404) **et se relit APRÈS** pour une offre (le serveur
-  normalise les mots-clés : on rend ce qui est stocké, pas ce qui a été demandé).
+- **no unintended duplicate resend**: HelloStock traces each send but
+  refuses none, and has no idempotency key — an agent that replays its turn
+  would write twice to the same suppliers. A recipient who already received this
+  request is refused, unless `allow_resend=True` (a deliberate reminder);
+- **the message bounded here**: beyond 2,000 characters, the server answers « no
+  recipient selected », which would make one look for the error elsewhere;
+- **a write is read BEFORE** (an unknown request id returns a 500
+  server-side, not a 404) **and re-read AFTER** for an offer (the server
+  normalizes keywords: we return what is stored, not what was requested).
 """
 from __future__ import annotations
 
@@ -42,52 +42,52 @@ from .hellostock_socle import _bad, _client, _run, traduire
 _MESSAGE_MAX = 2000
 _DESTINATAIRES_MAX = 50
 
-# Ce que le courriel d'envoi porte, et ce qu'il tait (contrat + gabarit du serveur).
+# What the sending email carries, and what it withholds (contract + server template).
 _SPECS = ("matiere", "nuance", "format", "dimensions", "epaisseur", "quantite",
           "delai", "certificatRequis")
-_VISIBILITE = ("`published` est visible sur la marketplace publique immédiatement ; "
-               "tout autre statut la retire des pages publiques. Aucun courriel ne part.")
+_VISIBILITE = ("`published` is visible on the public marketplace immediately; "
+               "any other status takes it off the public pages. No email goes out.")
 
 
 def _destinataires(user_ids: list[int]) -> list[int]:
     if not user_ids:
-        raise _bad("`user_ids` : au moins un membre destinataire (ids de hellostock_membre).")
+        raise _bad("`user_ids`: at least one recipient member (ids from hellostock_membre).")
     if len(user_ids) > _DESTINATAIRES_MAX:
-        raise _bad(f"`user_ids` : {_DESTINATAIRES_MAX} destinataires au plus par envoi "
-                   f"({len(user_ids)} reçus).")
+        raise _bad(f"`user_ids`: at most {_DESTINATAIRES_MAX} recipients per send "
+                   f"({len(user_ids)} received).")
     doublons = sorted({u for u in user_ids if user_ids.count(u) > 1})
     if doublons:
-        raise _bad(f"`user_ids` contient des doublons : {doublons}.")
+        raise _bad(f"`user_ids` contains duplicates: {doublons}.")
     return list(user_ids)
 
 
 def _deja_recus(demande: dict) -> dict[int, str]:
-    """`{user_id: date du dernier envoi}` d'après les envois tracés de la demande."""
+    """`{user_id: date of the last send}` from the request's traced sends."""
     out: dict[int, str] = {}
     for e in demande.get("envois") or []:
         uid = e.get("userId")
-        if isinstance(uid, int) and uid not in out:  # du plus récent au plus ancien
+        if isinstance(uid, int) and uid not in out:  # from newest to oldest
             out[uid] = e.get("sentAt")
     return out
 
 
 def _avertissements(demande: dict, ids: list[int]) -> list[str]:
-    """Des FAITS sur l'envoi, pas des refus : l'administrateur tranche."""
+    """FACTS about the send, not refusals: the administrator decides."""
     out = []
     if demande.get("status") != "published":
-        out.append(f"statut `{demande.get('status')}` : les liens du courriel ouvrent la "
-                   "page publique de la demande, qui n'affiche que les demandes "
-                   "publiées — les destinataires tomberont sur « Demande indisponible » "
-                   "tant qu'elle ne l'est pas.")
+        out.append(f"status `{demande.get('status')}`: the email's links open the "
+                   "request's public page, which only displays published "
+                   "requests — recipients will land on « Demande indisponible » "
+                   "until it is.")
     acheteur = (demande.get("contact") or {}).get("userId")
     if acheteur in ids:
-        out.append(f"le membre {acheteur} est l'acheteur qui a déposé cette demande.")
+        out.append(f"member {acheteur} is the buyer who posted this request.")
     return out
 
 
 def _apercu_destinataires(client, ids: list[int]) -> tuple[list[dict], list[int]]:
-    """Qui recevrait le courriel — et les ids qui ne sont pas des membres (l'envoi
-    réel serait refusé en entier : HelloStock vérifie tous les ids avant d'envoyer)."""
+    """Who would receive the email — and the ids that are not members (the real
+    send would be refused entirely: HelloStock checks all the ids before sending)."""
     from oto.tools.common.errors import UpstreamHTTPError
 
     trouves, inconnus = [], []
@@ -139,8 +139,8 @@ def register(mcp: FastMCP) -> None:
         """
         ids = _destinataires(user_ids)
         if message is not None and len(message) > _MESSAGE_MAX:
-            raise _bad(f"`message` : {_MESSAGE_MAX} caractères au plus "
-                       f"({len(message)} reçus) — rien n'est parti.")
+            raise _bad(f"`message`: at most {_MESSAGE_MAX} characters "
+                       f"({len(message)} received) — nothing was sent.")
         client = _client()
         demande = _run(lambda: client.get_demande(demande_id))
         deja = _deja_recus(demande)
@@ -150,8 +150,8 @@ def register(mcp: FastMCP) -> None:
         if dry_run:
             recipients, inconnus = _apercu_destinataires(client, ids)
             if inconnus:
-                avert.append(f"ids qui ne sont pas des membres : {inconnus} — l'envoi "
-                             "réel serait refusé en entier.")
+                avert.append(f"ids that are not members: {inconnus} — the real "
+                             "send would be refused entirely.")
             bloque = bool(deja_servis) and not allow_resend
             return {
                 "dry_run": True,
@@ -162,17 +162,17 @@ def register(mcp: FastMCP) -> None:
                 "already_sent": [{"user_id": u, "sent_at": deja[u]} for u in deja_servis],
                 "message": message,
                 "warnings": avert,
-                "note": ("Rien n'est parti. dry_run=False écrit à "
-                         f"{len(recipients)} membre(s) réel(s), sans retour possible"
-                         + (" — refusé tant que `already_sent` n'est pas vide, sauf "
+                "note": ("Nothing was sent. dry_run=False writes to "
+                         f"{len(recipients)} real member(s), with no way back"
+                         + (" — refused while `already_sent` is not empty, unless "
                             "allow_resend=True." if bloque else ".")),
             }
 
         if deja_servis and not allow_resend:
             raise _bad(
-                "Déjà reçue par " + ", ".join(f"{u} (le {deja[u]})" for u in deja_servis)
-                + " : rien n'est parti. Retire ces membres de `user_ids`, ou passe "
-                "`allow_resend=True` si c'est une relance voulue.")
+                "Already received by " + ", ".join(f"{u} (on {deja[u]})" for u in deja_servis)
+                + ": nothing was sent. Remove these members from `user_ids`, or pass "
+                "`allow_resend=True` if it is a deliberate reminder.")
         from oto.tools.common.errors import UpstreamHTTPError
         try:
             out = client.send_demande(demande_id, ids, message=message)
@@ -182,17 +182,17 @@ def register(mcp: FastMCP) -> None:
             if e.status_code == 502:
                 echecs = e.body.get("echecs") if isinstance(e.body, dict) else None
                 raise McpError(ErrorData(code=INTERNAL_ERROR, message=(
-                    "HelloStock n'a pu envoyer aucun courriel (502) : aucun envoi n'a "
-                    f"été enregistré. Échecs : {echecs or 'non détaillés'}. Ne relance "
-                    "pas en boucle — préviens un administrateur HelloStock."))) from None
+                    "HelloStock could not send any email (502): no send was "
+                    f"recorded. Failures: {echecs or 'not detailed'}. Do not retry "
+                    "in a loop — alert a HelloStock administrator."))) from None
             raise traduire(e) from None
         notes = []
         if out.get("noop"):
-            notes.append("noop=true : la messagerie de HelloStock n'est pas configurée — "
-                         "AUCUN courriel n'est parti, et pourtant les envois sont "
-                         "enregistrés dans la demande.")
+            notes.append("noop=true: HelloStock's mailer is not configured — "
+                         "NO email went out, and yet the sends are "
+                         "recorded on the request.")
         if out.get("echecs"):
-            notes.append(f"{len(out['echecs'])} courriel(s) en échec, non enregistrés : "
+            notes.append(f"{len(out['echecs'])} email(s) failed, not recorded: "
                          f"{out['echecs']}.")
         return {**out, "demande_id": demande_id, "user_ids": ids, "warnings": avert,
                 **({"note": " ".join(notes)} if notes else {})}
@@ -219,7 +219,7 @@ def register(mcp: FastMCP) -> None:
         avant = _run(lambda: client.get_demande(demande_id)).get("status")
         base = {"demande_id": demande_id, "from": avant, "to": status}
         if avant == status:
-            return {**base, "unchanged": True, "note": "déjà dans ce statut, rien écrit."}
+            return {**base, "unchanged": True, "note": "already in this status, nothing written."}
         if dry_run:
             return {**base, "dry_run": True, "effect": _VISIBILITE}
         return {**_run(lambda: client.update_demande_status(demande_id, status)),
@@ -253,7 +253,7 @@ def register(mcp: FastMCP) -> None:
             dry_run: True = show the change, write nothing.
         """
         if status is None and keywords is None:
-            raise _bad("`status` ou `keywords` : au moins l'un des deux.")
+            raise _bad("`status` or `keywords`: at least one of the two.")
         client = _client()
         avant = _run(lambda: client.get_offre(offre_id))
         voulu = {k: v for k, v in (("status", status), ("keywords", keywords))

@@ -331,7 +331,7 @@ def test_les_identites_proposent_les_comptes_partages_etiquetes(monkeypatch):
     _partages(monkeypatch)
     ids = identities.list_identities("u", "gmail")
     assert [i["id"] for i in ids] == ["group@x.test", "org@x.test"]
-    assert all(i["is_default"] is False and "partagé" in i["label"] for i in ids)
+    assert all(i["is_default"] is False and "shared" in i["label"] for i in ids)
 
 
 def test_le_compte_google_accepte_le_palier_org_et_ses_services_non():

@@ -1,33 +1,33 @@
-"""Déclaration de registre du connecteur `telegram` — la messagerie Telegram opérée.
+"""Registry declaration of the `telegram` connector — operated Telegram messaging.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE. La forme
-commune aux six connexions hébergées vit chez le porteur de la clé
-(`providers/unipile.channel`) — ici, ce qui distingue CELLE-CI.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it. The shape
+shared by the six hosted connections lives with the key holder
+(`providers/unipile.channel`) — here, only what distinguishes THIS one.
 """
 from __future__ import annotations
 
 from .unipile import channel
 
-# Telegram : la personne connecte SON compte par un flux hébergé, et l'outil
-# `telegram_chat(op=list|read|send)` agit sous cette identité. Dérivé de la factory de
-# messagerie commune (`tools/unipile.register_messaging_tools`) — l'API `/chats` du
-# fournisseur est channel-agnostic, c'est le canal du compte opéré qui décide de la
+# Telegram: the person connects THEIR account through a hosted flow, and the tool
+# `telegram_chat(op=list|read|send)` acts under that identity. Derived from the shared
+# messaging factory (`tools/unipile.register_messaging_tools`) — the provider's
+# `/chats` API is channel-agnostic, the channel of the operated account decides the
 # route.
 #
-# La carte ne nomme pas notre fournisseur : ce qu'on connecte, c'est un compte
-# Telegram. Le compte fournisseur (la clé) est un connecteur à part, `unipile`.
+# The card does not name our provider: what we connect is a Telegram account.
+# The provider account (the key) is a separate connector, `unipile`.
 CONNECTOR = channel(
     "telegram",
     hosted_channel="TELEGRAM",
     label="Telegram",
-    help="Ton Telegram — lire tes conversations et envoyer des messages. "
-         "Ton compte se connecte chez Unipile, notre prestataire, qui détient la session.",
+    help="Your Telegram — read your conversations and send messages. "
+         "Your account connects through Unipile, our provider, which holds the session.",
     href="https://telegram.org",
 )
 
 CATEGORY = "Messagerie"
 LOGO_DOMAIN = "telegram.org"
 DESCRIPTION = (
-    "Ton compte Telegram : lister tes conversations, lire un fil et envoyer "
-    "un message, sous ton propre compte."
+    "Your Telegram account: list your conversations, read a thread and send "
+    "a message, under your own account."
 )

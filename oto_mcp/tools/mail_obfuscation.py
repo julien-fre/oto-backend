@@ -1,33 +1,33 @@
-"""Les adresses de contact qu'un rendu markdown fait DISPARAÎTRE (signal #681).
+"""The contact addresses that a markdown rendering makes DISAPPEAR (signal #681).
 
-Mesuré le 03/09/2026, en appelant le scraper hébergé (Serper) sur trois pages
-réelles : il rend 200, un markdown propre de plusieurs milliers de caractères —
-et **zéro adresse**, alors que le HTML en porte une, lisible à l'œil nu. Trois
-motifs, tous relevés à la source :
+Measured on 03/09/2026, by calling the hosted scraper (Serper) on three real
+pages: it returns 200, a clean markdown of several thousand characters —
+and **zero addresses**, whereas the HTML carries one, readable to the naked eye. Three
+patterns, all taken from the source:
 
   - `<joomla-hidden-mail text="cHJlc2lkZW50ZUBsYXZvaXhkZXNsaXZyZXMuZnI=">`
-    (lavoixdeslivres.fr/index.php/l-association) — l'adresse est en base64 dans
-    un ATTRIBUT ; un rendu qui ne garde que le texte ne peut rien en montrer ;
+    (lavoixdeslivres.fr/index.php/l-association) — the address is base64 in
+    an ATTRIBUTE; a rendering that only keeps the text cannot show any of it;
   - `mailto:&#115;&#116;ran…&#064;&#103;&#109;ail&#046;com`
-    (stranumundueditions.wordpress.com) — entités décimales dans le href ;
+    (stranumundueditions.wordpress.com) — decimal entities in the href;
   - `<span class="__cf_email__" data-cfemail="7f13100a…">`
-    (association.lourugby.fr/rugby-loisir) — Cloudflare, XOR sur le 1ᵉʳ octet.
-    Celui-là n'est pas silencieux, il est MENTEUR : le rendu affiche le texte
-    littéral `[email protected]`, qu'aucune regex d'adresse ne reconnaît.
+    (association.lourugby.fr/rugby-loisir) — Cloudflare, XOR on the 1st byte.
+    That one is not silent, it LIES: the rendering shows the literal
+    text `[email protected]`, which no address regex recognizes.
 
-Un outil qui rend « rien » là où il y a quelque chose fabrique une affirmation
-fausse chez un agent parfaitement honnête : il a ouvert la page, il n'a rien vu,
-il l'écrit. Sur le palier de contrôle du 03/09, 8 fiches sur 23 portaient un
-faux négatif de contact, dont 4 imputables à l'outil — cinq entreprises actives
-classées « indéterminé », deux écartées du fichier.
+A tool that returns "nothing" where there is something fabricates a false
+claim in a perfectly honest agent: it opened the page, saw nothing,
+and writes it. On the 03/09 control batch, 8 records out of 23 carried a
+false-negative contact, 4 of them attributable to the tool — five active companies
+classified "undetermined", two dropped from the file.
 
-⚠️ Le décodage a besoin du HTML, et le scraper hébergé n'en rend PAS : sa
-réponse ne porte que `text`, `markdown`, `metadata`, `jsonld`, `credits`
-(vérifié le 03/09 sur l'API). L'information n'est donc pas dans ce qu'on
-reçoit — il faut aller chercher la page NOUS-MÊMES. C'est pourquoi ce module
-porte aussi le fetch direct (UA navigateur), qui sert les trois demandes du
-signal d'un seul mécanisme : décoder, rendre le HTML brut, et se replier quand
-le fournisseur refuse.
+⚠️ Decoding needs the HTML, and the hosted scraper does NOT return it: its
+response only carries `text`, `markdown`, `metadata`, `jsonld`, `credits`
+(verified on 03/09 on the API). The information is therefore not in what we
+receive — we have to fetch the page OURSELVES. That is why this module
+also carries the direct fetch (browser UA), which serves the signal's three requests
+with a single mechanism: decode, return the raw HTML, and fall back when
+the provider refuses.
 """
 from __future__ import annotations
 
@@ -37,31 +37,31 @@ import html as _html
 import re
 from typing import Optional
 
-# ⚠️ Ces motifs lisent une page NON FIABLE, dans un thread de travail qui tient
-# le GIL : un motif qui cesse d'être LINÉAIRE affame la boucle d'événements et
-# gèle tout le processus. C'est arrivé le 13/09/2026 — un `+` libre sur la partie
-# locale rendait `search` quadratique sur une longue suite de caractères admis, et
-# un seul `serper_scrape` a figé la prod plusieurs heures. D'où deux règles :
-# chaque suite est BORNÉE, et aucune suite libre n'est suivie d'un élément qui
-# obligerait la recherche à revenir sur chaque caractère (banc :
+# ⚠️ These patterns read an UNTRUSTED page, in a worker thread that holds
+# the GIL: a pattern that stops being LINEAR starves the event loop and
+# freezes the whole process. It happened on 13/09/2026 — a free `+` on the local
+# part made `search` quadratic on a long run of allowed characters, and
+# a single `serper_scrape` froze prod for several hours. Hence two rules:
+# every run is BOUNDED, and no free run is followed by an element that
+# would force the search to backtrack over each character (bench:
 # tests/test_mail_obfuscation_bornes.py).
 
-# Une adresse « visible » — sert à décider si la page montre DÉJÀ un contact
-# (auquel cas on ne dépense pas de requête) et à valider ce qu'on décode.
-# Bornes : 64 pour la partie locale (RFC 5321), 63 par libellé (RFC 1035).
+# A "visible" address — used to decide whether the page ALREADY shows a contact
+# (in which case we don't spend a request) and to validate what we decode.
+# Bounds: 64 for the local part (RFC 5321), 63 per label (RFC 1035).
 ADRESSE_RE = re.compile(
     r"[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9\-]{1,63}(?:\.[A-Za-z0-9\-]{1,63}){0,10}\.[A-Za-z]{2,24}")
 
-# La balise se lit sans exiger son `>` : `[^>]*>` repartait de chaque ouverture
-# jusqu'au bout de la page quand le `>` manquait.
+# The tag is read without requiring its `>`: `[^>]*>` restarted from every opening
+# to the end of the page when the `>` was missing.
 _JOOMLA_RE = re.compile(r"<joomla-hidden-mail\b([^>]{0,4096})", re.I)
-# Un nom d'attribut ne démarre qu'en début de mot : sinon chaque lettre d'une
-# longue suite relançait la lecture du nom.
+# An attribute name only starts at the beginning of a word: otherwise every letter of a
+# long run restarted the name read.
 _ATTR_RE = re.compile(r'(?<![A-Za-z\-])([A-Za-z\-]{1,64})\s*=\s*"([^"]*)"')
-# Un `mailto:` qui porte au moins une entité numérique. Une adresse en clair
-# n'est pas obfusquée : elle est déjà dans le rendu, rien à récupérer. La suite
-# est prise d'un bloc et l'entité se cherche après : `[^…]*&\#[^…]*` revenait
-# sur chaque caractère d'une suite de `mailto:` sans entité.
+# A `mailto:` that carries at least one numeric entity. A plain-text address
+# is not obfuscated: it is already in the rendering, nothing to recover. The run
+# is taken as one block and the entity is searched afterwards: `[^…]*&\#[^…]*` backtracked
+# over every character of a `mailto:` run with no entity.
 _MAILTO_RE = re.compile(r"mailto:([^\"'\s<>]{1,2000})", re.I)
 _CF_RE = re.compile(
     r'(?:data-cfemail="|/cdn-cgi/l/email-protection\#)([0-9a-fA-F]{6,})')
@@ -72,12 +72,12 @@ def _mailtos_en_entites(page: str) -> list:
 
 
 def contient_adresse(texte: Optional[str]) -> bool:
-    """La page montre-t-elle déjà une adresse en clair ?"""
+    """Does the page already show a plain-text address?"""
     return bool(ADRESSE_RE.search(texte or ""))
 
 
 def _b64(valeur: str) -> Optional[str]:
-    """Décode un attribut base64 de Joomla, ou None si ce n'en est pas un."""
+    """Decodes a Joomla base64 attribute, or None if it is not one."""
     if not valeur:
         return None
     try:
@@ -90,9 +90,9 @@ def _b64(valeur: str) -> Optional[str]:
 def _joomla(page: str) -> list:
     """`<joomla-hidden-mail first="…" last="…" text="…">`, tout en base64.
 
-    `text` porte l'adresse entière quand le composant en affiche une ; sinon on
-    recompose `first@last` — c'est la même page vue par deux attributs, et un
-    site qui n'a pas de `text` (lien sans libellé) reste lisible."""
+    `text` carries the whole address when the component displays one; otherwise we
+    recompose `first@last` — it is the same page seen through two attributes, and a
+    site that has no `text` (link without a label) stays readable."""
     trouvees = []
     for m in _JOOMLA_RE.finditer(page):
         attrs = {k.lower(): v for k, v in _ATTR_RE.findall(m.group(1))}
@@ -109,9 +109,9 @@ def _joomla(page: str) -> list:
 
 
 def _entites(page: str) -> list:
-    """`mailto:` écrit en entités HTML décimales (`&#64;`) ou hexa (`&#x40;`).
+    """`mailto:` written in decimal (`&#64;`) or hex (`&#x40;`) HTML entities.
 
-    `html.unescape` couvre les deux formes ; le `?subject=…` éventuel tombe."""
+    `html.unescape` covers both forms; any `?subject=…` is dropped."""
     trouvees = []
     for brut in _mailtos_en_entites(page):
         clair = _html.unescape(brut).split("?")[0].strip()
@@ -121,7 +121,7 @@ def _entites(page: str) -> list:
 
 
 def _cloudflare(page: str) -> list:
-    """`data-cfemail` / `/cdn-cgi/l/email-protection#…` : hexa, XOR clé = 1ᵉʳ octet."""
+    """`data-cfemail` / `/cdn-cgi/l/email-protection#…`: hex, XOR key = 1st byte."""
     trouvees = []
     for hexa in _CF_RE.findall(page):
         if len(hexa) % 2:
@@ -134,22 +134,22 @@ def _cloudflare(page: str) -> list:
     return trouvees
 
 
-# (nom servi à l'agent, présence du motif, décodeur). La présence est testée à
-# part du décodage : un motif VU qu'on ne sait pas décoder doit quand même se
-# dire — « le pire n'est pas de ne pas décoder, c'est que la page semble ne rien
-# contenir » (#681). C'est la demande n°2 du signal, celle du repli.
+# (name served to the agent, pattern presence, decoder). Presence is tested
+# separately from decoding: a pattern SEEN that we cannot decode must still be
+# reported — "the worst is not failing to decode, it is the page seeming to contain
+# nothing" (#681). This is request no. 2 of the signal, the fallback one.
 _MOTIFS = (
     ("joomla-hidden-mail", _JOOMLA_RE.search, _joomla),
-    ("mailto en entités HTML", _mailtos_en_entites, _entites),
+    ("mailto in HTML entities", _mailtos_en_entites, _entites),
     ("cloudflare-email-protection", _CF_RE.search, _cloudflare),
 )
 
 
 def lire(page: Optional[str]) -> dict:
-    """`{adresses, motifs}` — ce que le HTML cache, et sous quelle forme.
+    """`{adresses, motifs}` — what the HTML hides, and in what form.
 
-    `motifs` liste ce qui a été VU, décodé ou non : c'est lui qui permet de
-    dire « il y a une adresse ici » quand le décodage échoue."""
+    `motifs` lists what was SEEN, decoded or not: it is what makes it possible to
+    say "there is an address here" when decoding fails."""
     page = page or ""
     adresses, motifs = [], []
     for nom, presence, decode in _MOTIFS:
@@ -162,50 +162,50 @@ def lire(page: Optional[str]) -> dict:
     return {"adresses": adresses, "motifs": motifs}
 
 
-# ── ce qu'on va chercher nous-mêmes ──────────────────────────────────────────
-# Budget COURT et distinct de celui d'une lecture ordinaire : cette requête
-# s'ajoute à un scrape déjà payé, sur le chemin chaud d'un agent. Le signal #662
-# a mesuré ce que coûte une attente — pas la seconde perdue, le cache de
-# contexte qui expire pendant : un plafond généreux ici rendrait le remède plus
-# cher que le mal.
+# ── what we go and fetch ourselves ───────────────────────────────────────────
+# SHORT budget, distinct from that of an ordinary read: this request
+# is added on top of an already-paid scrape, on an agent's hot path. Signal #662
+# measured what a wait costs — not the lost second, the context
+# cache that expires meanwhile: a generous ceiling here would make the remedy more
+# expensive than the problem.
 SONDE_DELAI_S = 8
 
 
 def fetch(url: str, deadline_s: float = SONDE_DELAI_S) -> dict:
-    """Le HTML de `url`, par notre propre requête, avec un UA de navigateur.
+    """The HTML of `url`, via our own request, with a browser UA.
 
-    Réutilise le cran ① de `web_read` : même garde SSRF, mêmes bornes de
-    lecture, mêmes redirections marchées à la main. Refaire un fetch ici, c'est
-    refaire ses bugs — celui-là a déjà payé #491.
+    Reuses notch ① of `web_read`: same SSRF guard, same read bounds,
+    same redirects followed by hand. Redoing a fetch here means
+    redoing its bugs — that one already paid for #491.
 
-    Rend le dict de `web._fetch_http` : `{ok, verdict, html?, final_url?}`."""
-    from . import web  # tardif : `web` importe `browserbase`, inutile au register
+    Returns the dict of `web._fetch_http`: `{ok, verdict, html?, final_url?}`."""
+    from . import web  # late: `web` imports `browserbase`, useless at register time
     return web._fetch_http(url, deadline_s=deadline_s)
 
 
 def marqueur(lu: dict) -> str:
-    """La ligne à COLLER dans le contenu servi — vide s'il n'y a rien à dire.
+    """The line to PASTE into the served content — empty if there is nothing to say.
 
-    Elle va dans le markdown, pas seulement dans un champ à côté : un agent lit
-    la page, et c'est là qu'il conclut « aucun contact publié »."""
+    It goes into the markdown, not only into a field alongside: an agent reads
+    the page, and that is where it concludes "no published contact"."""
     if lu.get("adresses"):
-        return ("\n\n[adresses obfusquées dans le HTML, décodées par oto : "
+        return ("\n\n[addresses obfuscated in the HTML, decoded by oto: "
                 + ", ".join(lu["adresses"]) + "]")
     if lu.get("motifs"):
-        return ("\n\n[obfuscation d'adresse détectée dans le HTML ("
-                + ", ".join(lu["motifs"]) + ") mais non décodable : le rendu "
-                "ci-dessus ne montre PAS tous les contacts de la page — "
-                "reprends-la avec format=\"html\"]")
+        return ("\n\n[address obfuscation detected in the HTML ("
+                + ", ".join(lu["motifs"]) + ") but not decodable: the rendering "
+                "above does NOT show all the contacts of the page — "
+                "retry it with format=\"html\"]")
     return ""
 
 
-# ── les trois usages du HTML qu'on est allé chercher ─────────────────────────
-# Budget d'une lecture DEMANDÉE (format="html") ou d'un repli : plus généreux
-# que la sonde, parce qu'elle est le seul chemin restant — mais toujours borné
-# par le `timeout_s` de l'appelant s'il en a posé un.
+# ── the three uses of the HTML we went to fetch ──────────────────────────────
+# Budget of a REQUESTED read (format="html") or of a fallback: more generous
+# than the probe, because it is the only path left — but still bounded
+# by the caller's `timeout_s` if they set one.
 LECTURE_DELAI_S = 20
-# Le HTML brut part dans le contexte de l'agent : un plafond, et le total DIT à
-# côté — un plafond posé sur une lecture déjà tronquée serait inatteignable.
+# The raw HTML goes into the agent's context: a ceiling, and the total STATED
+# alongside — a ceiling applied to an already-truncated read would be unreachable.
 HTML_MAX_CHARS = 120_000
 
 
@@ -216,23 +216,23 @@ def _refus(message: str):
 
 
 def _hors_perimetre(final_url, per) -> None:
-    """Le périmètre du projet vaut aussi sur l'URL où l'on ATTERRIT (#632)."""
+    """The project's perimeter also applies to the URL where we LAND (#632)."""
     from .. import url_perimeter
     url_perimeter.refuse_if_excluded(final_url, per)
 
 
 def html_brut(url: str, per, deadline_s: float = LECTURE_DELAI_S) -> dict:
-    """`format="html"` — la page telle qu'elle est servie, sans le scraper.
+    """`format="html"` — the page as it is served, without the scraper.
 
-    Passer par le scraper hébergé n'aurait servi à rien : sa réponse ne porte
-    aucun champ HTML. C'est donc notre propre requête, avec un UA de
-    navigateur — et zéro crédit."""
+    Going through the hosted scraper would have been useless: its response carries
+    no HTML field. So it is our own request, with a browser
+    UA — and zero credits."""
     lu = fetch(url, deadline_s=deadline_s)
     if not lu.get("ok"):
         raise _refus(
-            f"Lecture directe impossible pour {url} : {lu.get('verdict')}. "
-            "Le HTML brut n'a pas de repli — reprends en format=\"markdown\" "
-            "pour tenter le scraper hébergé.")
+            f"Direct read impossible for {url}: {lu.get('verdict')}. "
+            "The raw HTML has no fallback — retry with format=\"markdown\" "
+            "to try the hosted scraper.")
     _hors_perimetre(lu.get("final_url"), per)
     page = lu["html"]
     obf = lire(page)
@@ -240,7 +240,7 @@ def html_brut(url: str, per, deadline_s: float = LECTURE_DELAI_S) -> dict:
               "html_caracteres": len(page),
               "html_tronque": len(page) > HTML_MAX_CHARS,
               "final_url": lu.get("final_url"),
-              "source": "lecture directe (UA navigateur), 0 crédit",
+              "source": "direct read (browser UA), 0 credits",
               "credits": 0}
     if obf["motifs"]:
         sortie["motifs_obfuscation"] = obf["motifs"]
@@ -250,28 +250,28 @@ def html_brut(url: str, per, deadline_s: float = LECTURE_DELAI_S) -> dict:
 
 
 def repli(url: str, per, deadline_s: float = LECTURE_DELAI_S) -> tuple:
-    """Le fournisseur a refusé la page : on la lit NOUS-MÊMES. `(sortie|None, verdict)`.
+    """The provider refused the page: we read it OURSELVES. `(output|None, verdict)`.
 
-    Sur le palier du 03/09, trois sites sur quatre refusés par le scraper (deux
-    Wix, un WordPress.com) répondent normalement à une requête ordinaire portant
-    un UA de navigateur. Le repli DIT son chemin — il ne se fait pas passer pour
-    le scraper — et rend du texte, pas du markdown : on n'a pas de convertisseur
-    ici, et prétendre le contraire serait pire que le dire."""
+    On the 03/09 batch, three sites out of four refused by the scraper (two
+    Wix, one WordPress.com) answer normally to an ordinary request carrying
+    a browser UA. The fallback STATES its path — it does not pass itself off as
+    the scraper — and returns text, not markdown: we have no converter
+    here, and claiming otherwise would be worse than saying so."""
     lu = fetch(url, deadline_s=deadline_s)
     if not lu.get("ok"):
-        return None, lu.get("verdict", "échec")
+        return None, lu.get("verdict", "failure")
     _hors_perimetre(lu.get("final_url"), per)
     from .web import _EMPTY_TEXT_CHARS, extract_text
     texte, titre = extract_text(lu["html"])
     if len(texte.strip()) < _EMPTY_TEXT_CHARS:
-        return None, f"page lue en direct mais vide ({len(texte.strip())} car. utiles)"
+        return None, f"page read directly but empty ({len(texte.strip())} useful chars)"
     obf = lire(lu["html"])
     sortie = {"text": texte + marqueur(obf),
               "metadata": {"title": titre},
               "final_url": lu.get("final_url"),
               "format_servi": "text",
-              "source": ("lecture directe (UA navigateur) — le scraper hébergé "
-                         "a refusé cette page")}
+              "source": ("direct read (browser UA) — the hosted scraper "
+                         "refused this page")}
     if obf["motifs"]:
         sortie["motifs_obfuscation"] = obf["motifs"]
     if obf["adresses"]:
@@ -280,39 +280,39 @@ def repli(url: str, per, deadline_s: float = LECTURE_DELAI_S) -> tuple:
 
 
 def completer(res: dict, url: str, per) -> None:
-    """Le scrape a réussi mais ne montre AUCUNE adresse : va voir le HTML.
+    """The scrape succeeded but shows NO address: go look at the HTML.
 
-    Une requête de plus, et SEULEMENT là — c'est très exactement l'instant où
-    un agent s'apprête à écrire « aucun contact publié ». Une page qui affiche
-    déjà une adresse ne déclenche rien : le remède ne doit pas coûter plus que
-    le mal (#662).
+    One more request, and ONLY there — it is exactly the moment when
+    an agent is about to write "no published contact". A page that already
+    shows an address triggers nothing: the remedy must not cost more than
+    the problem (#662).
 
-    Le résultat est écrit dans les champs servis ET collé dans le contenu :
-    l'agent lit la page, c'est là qu'il conclut."""
+    The result is written into the served fields AND pasted into the content:
+    the agent reads the page, that is where it concludes."""
     if contient_adresse(" ".join(str(res.get(k) or "") for k in ("markdown", "text"))):
         return
     from ..mcp_errors import McpError
     try:
         lu = fetch(url)
         if not lu.get("ok"):
-            res["sonde_obfuscation"] = f"non concluante ({lu.get('verdict')})"
+            res["sonde_obfuscation"] = f"inconclusive ({lu.get('verdict')})"
             return
         _hors_perimetre(lu.get("final_url"), per)
     except McpError as refus:
-        # La sonde ne SERT pas de contenu : un refus (hôte non public, page
-        # sortie du périmètre d'URL du projet) l'ÉCARTE — il ne fait pas
-        # échouer un scrape qui, lui, a réussi. Le refus se DIT dans la
-        # réponse, il n'est pas avalé.
-        res["sonde_obfuscation"] = f"écartée — {refus.error.message}"
+        # The probe does NOT SERVE content: a refusal (non-public host, page
+        # outside the project's URL perimeter) DISCARDS it — it does not make
+        # a scrape that itself succeeded fail. The refusal is STATED in the
+        # response, it is not swallowed.
+        res["sonde_obfuscation"] = f"discarded — {refus.error.message}"
         return
     obf = lire(lu["html"])
     if not obf["motifs"]:
-        # Rien de caché : la réponse ne bouge PAS. Le silence est alors une
-        # information juste — la description servie dit que l'outil va toujours
-        # relire le HTML d'une page sans adresse, donc « rien » veut dire « on a
-        # regardé, il n'y a rien », et non « on n'a pas regardé ». Ajouter un
-        # champ ici ferait grossir la quasi-totalité des réponses pour redire
-        # ce que le contrat promet déjà.
+        # Nothing hidden: the response does NOT change. Silence is then a
+        # correct piece of information — the served description says the tool always
+        # re-reads the HTML of a page without an address, so "nothing" means "we
+        # looked, there is nothing", not "we did not look". Adding a
+        # field here would bloat nearly all responses to restate
+        # what the contract already promises.
         return
     res["motifs_obfuscation"] = obf["motifs"]
     if obf["adresses"]:

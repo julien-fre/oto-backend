@@ -1,19 +1,19 @@
-"""Le verdict d'accès d'UN connecteur, tel que `access.status_for` le produit.
+"""The access verdict for ONE connector, as `access.status_for` produces it.
 
-Servi sous `providers` par `GET /api/me` depuis toujours, et déclaré `dict[str, Any]`
-jusqu'au 2026-09-01 : riche, consommé par le dashboard produit, et nommé nulle part.
-Un front qui construit une colonne « état » ne pouvait donc rien en dériver sans
-observer le payload — c'est le motif de #669.
+Served under `providers` by `GET /api/me` since forever, and declared `dict[str, Any]`
+until 2026-09-01: rich, consumed by the product dashboard, and named nowhere. A front end
+building a “status” column therefore couldn't derive anything from it without observing
+the payload — that is the reason for #669.
 
-⚠️ **La crainte écrite qui gardait `Any` porte sur les CLÉS du dictionnaire, pas sur
-la forme d'une valeur** : « un objet ouvert plutôt qu'une énumération qui mentirait au
-premier connecteur ajouté ». Les clés restent ouvertes (`dict[str, ProviderStatus]`) —
-c'est la VALEUR qui se déclare, et elle est stable depuis des mois.
+⚠️ **The written fear that kept `Any` concerns the dictionary's KEYS, not the shape of a
+value**: “an open object rather than an enumeration that would lie at the first connector
+added”. The keys stay open (`dict[str, ProviderStatus]`) — it is the VALUE that is
+declared, and it has been stable for months.
 
-Quatre familles produisent une entrée, et leurs champs diffèrent : à clé (`keyed`), sans
-clé, `cookie` et `oauth`. D'où des champs optionnels **par famille** et non par
-incertitude : `identity_label` n'a pas de sens pour un connecteur à clé, et son absence
-est une information, pas un trou.
+Four families produce an entry, and their fields differ: keyed (`keyed`), keyless,
+`cookie` and `oauth`. Hence optional fields **per family** and not out of uncertainty:
+`identity_label` makes no sense for a keyed connector, and its absence is information,
+not a gap.
 """
 from __future__ import annotations
 
@@ -23,73 +23,73 @@ from pydantic import BaseModel, Field
 
 
 class ProviderStatus(BaseModel):
-    """L'accès effectif à un connecteur, pour l'acteur et dans l'org active.
+    """The effective access to a connector, for the actor and in the active org.
 
-    ⚠️ **Deux refus différents, qu'un écran ne doit pas confondre** :
-    `mode='forbidden'` = aucune clé ne résout ; `health_ko` = la clé est là mais elle
-    ne répond plus. Il n'existe plus de règle qui réserve un connecteur à une partie
-    des membres (retirée le 24/09/2026, ADR 0053 D1) : aucun écran ne doit afficher
-    « réservé à certaines équipes ».
+    ⚠️ **Two different refusals, which a screen must not confuse**:
+    `mode='forbidden'` = no key resolves; `health_ko` = the key is there but it no
+    longer responds. There is no longer any rule reserving a connector for some of the
+    members (removed on 24/09/2026, ADR 0053 D1): no screen should display
+    “reserved for some teams”.
     """
 
     mode: str = Field(description=(
-        "Comment l'accès se résout — le palier gagnant de la cascade, ou son refus. "
-        "Valeurs servies au 2026-09-01 : `user` | `group` | `org` | `tenant` | "
-        "`platform` (le palier qui fournit la clé), `over_quota` (une clé résout mais "
-        "le quota du jour est épuisé), `forbidden` (aucune clé ne résout). Déclaré "
-        "`str` et non énuméré à dessein : les cinq premiers viennent de la cascade, "
-        "qui a son propre domicile — un énuméré ici ferait échouer un client généré le "
-        "jour où elle en rend un sixième."))
+        "How access resolves — the winning tier of the cascade, or its refusal. "
+        "Values served as of 2026-09-01: `user` | `group` | `org` | `tenant` | "
+        "`platform` (the tier that supplies the key), `over_quota` (a key resolves but "
+        "today's quota is exhausted), `forbidden` (no key resolves). Declared "
+        "`str` and not enumerated on purpose: the first five come from the cascade, "
+        "which has its own home — an enum here would break a generated client the "
+        "day it returns a sixth."))
 
-    # ── Ce qui est POSÉ, palier par palier ────────────────────────────────────
-    # Trois booléens plutôt qu'un seul `mode` : le mode dit qui GAGNE, ceux-ci disent
-    # ce qui EXISTE. Un écran « retirer ma clé » a besoin de savoir qu'elle est là même
-    # quand c'est celle de l'org qui résout.
+    # ── What is SET, tier by tier ─────────────────────────────────────────────
+    # Three booleans rather than a single `mode`: the mode says who WINS, these say
+    # what EXISTS. A “remove my key” screen needs to know it is there even when it is
+    # the org's key that resolves.
     user_key_configured: bool = False
     group_secret_configured: bool = False
     org_secret_configured: bool = False
-    # Le libellé de la clé plateforme ATTEIGNABLE — pas « celle qui résout ».
-    # Drapeau de NIVEAU : servi même quand une clé plus proche répond, parce que
-    # « ce sur quoi tu retomberais » est une information juste (le front l'affiche
-    # depuis v1.12.0). À ne PAS confondre avec les champs de quota ci-dessous, qui
-    # décrivent l'effet COURANT et se taisent hors barreau plateforme.
+    # The label of the REACHABLE platform key — not “the one that resolves”.
+    # LEVEL flag: served even when a closer key responds, because
+    # “what you would fall back on” is a valid piece of information (the front end
+    # displays it since v1.12.0). NOT to be confused with the quota fields below, which
+    # describe the CURRENT effect and stay silent outside the platform tier.
     platform_key_label: Optional[str] = None
-    # L'équipe dont la clé serait ATTEIGNABLE pour ce connecteur, quand il y en a une.
+    # The team whose key would be REACHABLE for this connector, when there is one.
     team_key_group: Optional[int] = None
 
-    # ── Le quota, quand la clé qui RÉPOND en porte un ─────────────────────────
-    # Les deux se lisent sur le barreau GAGNANT, jamais sur la seule présence d'un
-    # barreau plateforme dans la cascade : hors de ce barreau, le quota n'est ni
-    # compté (`record_platform_usage` est sous `if is_platform`) ni opposé
-    # (`resolve_api_key` rend avant `_win_quota`). `null` des deux côtés = ce
-    # chemin d'accès n'a pas de quota — PAS « zéro autorisé ».
-    # ⚠️ `quota_used_today` était `int = 0` : servir `null` sur un connecteur sans
-    # plafond levait alors une ValidationError sur la route entière, pas un champ
-    # vide. Le rendre Optional fait partie du même correctif, pas d'un nettoyage.
+    # ── The quota, when the key that RESPONDS carries one ─────────────────────
+    # Both are read on the WINNING tier, never on the mere presence of a platform tier
+    # in the cascade: outside that tier, the quota is neither counted
+    # (`record_platform_usage` is under `if is_platform`) nor enforced
+    # (`resolve_api_key` returns before `_win_quota`). `null` on both sides = this
+    # access path has no quota — NOT “zero allowed”.
+    # ⚠️ `quota_used_today` used to be `int = 0`: serving `null` on a connector without a
+    # cap then raised a ValidationError on the whole route, not an empty field. Making it
+    # Optional is part of the same fix, not a cleanup.
     quota_used_today: Optional[int] = None
     quota_daily: Optional[int] = None
 
-    # ── Familles `cookie` et `oauth` : une session, pas une clé ───────────────
+    # ── `cookie` and `oauth` families: a session, not a key ───────────────────
     session_set_at: Optional[str] = None
     group_session_set_at: Optional[str] = None
     org_session_set_at: Optional[str] = None
-    # L'identité par défaut d'un connecteur qui en porte plusieurs (les canaux
-    # hébergés). Absente partout ailleurs.
+    # The default identity of a connector that carries several (the hosted
+    # channels). Absent everywhere else.
     identity_id: Optional[str] = None
     identity_label: Optional[str] = None
 
-    # ── Les verdicts qu'un écran doit distinguer ─────────────────────────────
+    # ── The verdicts a screen must distinguish ───────────────────────────────
     pending_action: Optional[str] = Field(default=None, description=(
-        "L'étape qui reste à faire alors que la clé résout déjà — lier un canal, par "
-        "exemple. Renseignée par le module du connecteur, `null` partout où il n'y a "
-        "rien à faire. ⚠️ Ce n'est PAS un refus : l'accès existe, il est incomplet."))
+        "The step that remains to be done even though the key already resolves — linking "
+        "a channel, for example. Filled in by the connector's module, `null` wherever "
+        "there is nothing to do. ⚠️ This is NOT a refusal: access exists, it is "
+        "incomplete."))
     health_ko: Optional[bool] = Field(default=None, description=(
-        "La clé est posée mais le connecteur ne répond plus (session expirée, jeton "
-        "révoqué…), constaté par la sonde de vérification et **persistant** jusqu'à "
-        "une reconnexion ou un test réussi. Absent tant que rien n'a été constaté."))
+        "The key is set but the connector no longer responds (expired session, revoked "
+        "token…), observed by the verification probe and **persistent** until a "
+        "reconnection or a successful test. Absent as long as nothing has been observed."))
     health_reason: Optional[str] = Field(default=None, description=(
-        "Pourquoi la clé ne répond plus, quand la sonde a su le dire — son texte, "
-        "tel quel. ⚠️ Peut être `null` **alors même que `health_ko` est vrai** : on "
-        "sait que ça ne répond plus, sans savoir pourquoi. Afficher l'état sans "
-        "inventer la cause — un message fabriqué enverrait chercher au mauvais "
-        "endroit."))
+        "Why the key no longer responds, when the probe was able to say — its text, "
+        "as is. ⚠️ May be `null` **even though `health_ko` is true**: we know it no "
+        "longer responds, without knowing why. Display the state without inventing the "
+        "cause — a fabricated message would send people looking in the wrong place."))

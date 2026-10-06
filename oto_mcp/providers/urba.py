@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `urba`.
+"""Registry declaration of the `urba` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -9,17 +9,17 @@ from ._model import _c
 
 CONNECTOR = _c(
     "urba", ["urba"], secret_kind="none",
-    label="Urbanisme", help="zonage PLU/GPU, risques, QPV, EPFIF, socio-démo commune (open data)",
+    label="Urban planning", help="PLU/GPU zoning, risks, QPV, EPFIF, commune socio-demographics (open data)",
 )
 
 DESCRIPTION = (
-    "L'urbanisme réglementaire en open data : zonage PLU/GPU et "
-    "règlements, risques naturels, argiles, QPV et proximité, EPFIF, "
-    "socio-démographie communale."
+    "Regulatory urban planning as open data: PLU/GPU zoning and "
+    "regulations, natural risks, clay soils, QPV and proximity, EPFIF, "
+    "commune socio-demographics."
 )
-# Open data de l'État (Géoportail de l'urbanisme, Géorisques, INSEE…), pas un
-# connecteur maison : l'éditeur retombait sur « Otomata » et la carte était rangée
-# dans « Autres » — même famille que `foncier` (2026-09-02).
+# French State open data (Géoportail de l'urbanisme, Géorisques, INSEE…), not an
+# in-house connector: the publisher used to fall back to "Otomata" and the card was filed
+# under "Autres" — same family as `foncier` (2026-09-02).
 CATEGORY = "Data FR"
-PUBLISHER = "État (open data)"
+PUBLISHER = "French State (open data)"
 LOGO_DOMAIN = "geoportail-urbanisme.gouv.fr"

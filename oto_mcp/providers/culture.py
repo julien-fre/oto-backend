@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `culture`.
+"""Registry declaration of the `culture` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -9,18 +9,18 @@ from ._model import _c
 
 CONNECTOR = _c(
     "culture", ["culture"], secret_kind="none",
-    # Le connecteur ne couvre QUE le spectacle vivant : « Culture » promettait
-    # patrimoine, musées, audiovisuel (2026-09-02).
+    # The connector covers ONLY live performance: "Culture" promised
+    # heritage, museums, audiovisual (2026-09-02).
     label="Spectacle vivant",
-    help="entreprises titulaires d'une licence d'entrepreneur de spectacle — "
-         "open data Ministère de la Culture",
+    help="companies holding a live-performance entrepreneur licence — "
+         "open data from the Ministère de la Culture",
 )
 
 CATEGORY = "Data FR"
 PUBLISHER = "Ministère de la Culture"
 DESCRIPTION = (
-    "Les entreprises du spectacle vivant, en open data du Ministère "
-    "de la Culture : recherche multicritère, fiches détaillées, "
-    "statistiques sectorielles et export."
+    "Live-performance companies, from the Ministère de la Culture "
+    "open data: multi-criteria search, detailed records, "
+    "sector statistics and export."
 )
 LOGO_DOMAIN = "culture.gouv.fr"

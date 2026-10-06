@@ -247,11 +247,11 @@ def test_un_siren_en_echec_ne_fait_pas_tomber_le_lot_ni_disparaitre_de_la_repons
 
 
 def test_bornes_d_entree(fr_directors):
-    with pytest.raises(McpError, match="pas les deux"):
+    with pytest.raises(McpError, match="not both"):
         fr_directors(siren="1", sirens=["2"])
-    with pytest.raises(McpError, match="pas les deux"):
+    with pytest.raises(McpError, match="not both"):
         fr_directors()
-    with pytest.raises(McpError, match="vide"):
+    with pytest.raises(McpError, match="is empty"):
         fr_directors(sirens=["  "])
-    with pytest.raises(McpError, match="limité à 100"):
+    with pytest.raises(McpError, match="limited to 100"):
         fr_directors(sirens=[str(i).zfill(9) for i in range(101)])

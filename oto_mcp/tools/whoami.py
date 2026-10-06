@@ -1,13 +1,13 @@
-"""Whoami — l'identité sous laquelle Claude agit quand il appelle les outils.
+"""Whoami — the identity under which Claude acts when it calls the tools.
 
-`oto_whoami()` répond à la question « pour qui / dans quel contexte est-ce que
-j'agis ? » : le **compte** (sub Logto + email + rôle plateforme) croisé avec
-l'**org active** et l'éventuel **groupe actif** — exactement ce qui gouverne la
-résolution des credentials et le scope des données (cf. badge « identité MCP » du
-dashboard). Lecture seule, best-effort (jamais d'exception sur un hoquet DB).
+`oto_whoami()` answers the question « for whom / in what context am I
+acting? »: the **account** (Logto sub + email + platform role) crossed with the
+**active org** and the possible **active group** — exactly what governs
+credential resolution and the data scope (see the « MCP identity » badge of the
+dashboard). Read-only, best-effort (never an exception on a DB hiccup).
 
-Spine : chargé explicitement dans `register_all`, hors gate d'activation, toujours
-visible (`PROTECTED_TOOLS`). Pas de dépendance externe.
+Spine: loaded explicitly in `register_all`, outside the activation gate, always
+visible (`PROTECTED_TOOLS`). No external dependency.
 """
 from __future__ import annotations
 
@@ -24,19 +24,19 @@ from .. import config
 
 logger = logging.getLogger(__name__)
 
-# ⚠️ PAS une constante de module : l'adresse dépend du TENANT du compte, donc de
-# l'appel. La figer au chargement servirait la nôtre à tout le monde — y compris aux
-# utilisateurs d'un partenaire, à qui elle propose un produit qui n'est pas le leur.
+# ⚠️ NOT a module constant: the address depends on the account's TENANT, hence on the
+# call. Freezing it at load time would serve ours to everyone — including to a
+# partner's users, to whom it offers a product that is not theirs.
 
 
 def _require_sub() -> str:
-    # Un échec d'identité MONTE (le seam le journalise avec sa raison, #464) : seul
-    # un appel réellement sans jeton est « non authentifié ».
+    # An identity failure BUBBLES UP (the seam logs it with its reason, #464): only
+    # a call truly without a token is « unauthenticated ».
     sub = current_user_sub_from_token()
     if not sub:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message="Auth requise — ces tools ne marchent que sur le transport HTTP authentifié.",
+            message="Auth required — these tools only work on the authenticated HTTP transport.",
         ))
     return sub
 
@@ -44,44 +44,44 @@ def _require_sub() -> str:
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def oto_whoami(ctx: Context) -> dict:
-        """Identité MCP courante : sous quel compte et dans quelle org/groupe tu agis.
+        """Current MCP identity: under which account and in which org/group you act.
 
-        Appelle-la quand tu as besoin de savoir POUR QUI tu travailles, ou avant une
-        action sensible (écriture CRM, envoi de message, dépense de crédits) pour
-        confirmer le contexte. C'est ce couple **compte × org active × groupe actif**
-        qui détermine quelles clés API sont résolues et à quelles données tu accèdes.
+        Call it when you need to know FOR WHOM you are working, or before a
+        sensitive action (CRM write, message send, credit spend) to
+        confirm the context. It is this pair **account × active org × active group**
+        that determines which API keys are resolved and which data you access.
 
-        Renvoie : `account` (sub, email, name, rôle plateforme), `tenant` (le slug du
-        partenaire dont dépend ton compte, s'il en a un — `None` pour un compte oto
-        ordinaire ; le tenant est AU-DESSUS de ton org, pas en dessous : c'est le
-        compte de plus haut niveau chez le fournisseur, appelé « hébergeur » dans la
-        doc publique), `org` (org active —
-        id, name, rôle ; tu es TOUJOURS dans une org), `group` (groupe actif éventuel),
-        `connectors` (résumé des connecteurs
-        configurés — dont `platform_quotas`, le quota du jour `{used, limit,
-        remaining}` des connecteurs plateforme au quota plafonné : regarde-le avant
-        un lot d'appels qui dépensent, pour arbitrer sans découvrir la limite au
-        milieu du lot), et un `summary` lisible. Lecture seule.
+        Returns: `account` (sub, email, name, platform role), `tenant` (the slug of the
+        partner your account depends on, if it has one — `None` for an ordinary oto
+        account; the tenant is ABOVE your org, not below it: it is the
+        top-level account at the provider, called « hébergeur » in the public
+        docs), `org` (active org —
+        id, name, role; you are ALWAYS in an org), `group` (possible active group),
+        `connectors` (summary of the configured connectors
+        — including `platform_quotas`, the day's quota `{used, limit,
+        remaining}` of the platform connectors with a capped quota: look at it before
+        a batch of calls that spend, to decide without discovering the limit in the
+        middle of the batch), and a readable `summary`. Read-only.
 
-        Pour agir sous une autre org/équipe/projet : passe le jeton `_org=` /
-        `_group=` / `_project=` directement sur chaque appel de travail (aucun état
-        de session, ADR 0038) — `oto_whoami(org=X)` montre le contexte résultant.
-        L'org/équipe PAR DÉFAUT (maison) ne se change que dans le dashboard —
-        l'agent ne mute jamais le défaut.
+        To act under another org/team/project: pass the token `_org=` /
+        `_group=` / `_project=` directly on each work call (no session
+        state, ADR 0038) — `oto_whoami(org=X)` shows the resulting context.
+        The DEFAULT (home) org/team can only be changed in the dashboard —
+        the agent never mutates the default.
         """
         sub = _require_sub()
 
-        # Slug du tenant (partenaire) dont dépend ce compte, `None` pour un compte
-        # oto ordinaire — même résolution que la clé de coffre `tenant_key`
+        # Slug of the tenant (partner) this account depends on, `None` for an ordinary
+        # oto account — same resolution as the vault key `tenant_key`
         # (`instances_tenant.py`).
         #
-        # ⚠️ PAS de fail-open ici, contrairement aux blocs DB qui suivent, et c'est la
-        # description servie qui l'impose : elle donne `None` pour un FAIT (« compte oto
-        # ordinaire »). Avaler l'échec rendrait ce fait-là sur une résolution qui n'a pas
-        # eu lieu — un compte hébergé se verrait répondre qu'il ne l'est pas, et l'agent
-        # n'aurait aucun moyen de faire la différence. `rung_tenant` ne fait d'ailleurs
-        # AUCUNE I/O (classification par préfixe dans le registre du process) : il n'y a
-        # pas de « hoquet » à amortir, seulement un registre cassé, qui doit se voir.
+        # ⚠️ NO fail-open here, unlike the DB blocks that follow, and it is the served
+        # description that requires it: it gives `None` for a FACT (« ordinary oto
+        # account »). Swallowing the failure would render that fact on a resolution that
+        # did not happen — a hosted account would be told it is not, and the agent
+        # would have no way to tell the difference. `rung_tenant` does NO I/O anyway
+        # (prefix classification in the process registry): there is no
+        # « hiccup » to absorb, only a broken registry, which must be seen.
         tenant = tenant_vault.rung_tenant(sub)
 
         user = {}
@@ -91,13 +91,13 @@ def register(mcp: FastMCP) -> None:
             logger.warning("whoami: get_user failed: %s", e)
         try:
             role = access.get_user_role(sub)
-        # noqa: SILENT — rôle non lisible ⇒ non affiché, jamais deviné
+        # noqa: SILENT — role unreadable ⇒ not displayed, never guessed
         except Exception:
             role = None
 
-        # Org EFFECTIVE sous laquelle tu agis (ADR 0038) = jeton d'appel ?? maison.
-        # `scope`='call' = org épinglée par le jeton de CET appel (org=/project=/group=) ;
-        # 'home' = ton org maison (défaut de tout appel sans jeton). 0/None = perso.
+        # EFFECTIVE org under which you act (ADR 0038) = call token ?? home.
+        # `scope`='call' = org pinned by THIS call's token (org=/project=/group=);
+        # 'home' = your home org (default of any call without a token). 0/None = personal.
         org_block = None
         active_org = None
         try:
@@ -110,14 +110,14 @@ def register(mcp: FastMCP) -> None:
                     "name": o["name"] if o else None,
                     "role": org_store.get_org_role(active_org, sub),
                     "scope": "call" if has_call_pin else "home",
-                    # MFA obligatoire de l'org (le 2ᵉ facteur est imposé au login des
-                    # membres, enforcé par Logto via l'org miroir — cf. mfa_mirror).
+                    # The org's mandatory MFA (the 2nd factor is imposed at members'
+                    # login, enforced by Logto via the mirror org — see mfa_mirror).
                     "require_mfa": org_store.get_org_mfa(active_org)["require_mfa"],
                 }
         except Exception as e:
             logger.warning("whoami: org lookup failed: %s", e)
 
-        # Groupe actif (sous-palier ADR 0012) — invariant : appartient à l'org active.
+        # Active group (sub-tier ADR 0012) — invariant: belongs to the active org.
         group_block = None
         try:
             from .. import group_store, roles
@@ -132,7 +132,7 @@ def register(mcp: FastMCP) -> None:
         except Exception as e:
             logger.warning("whoami: group lookup failed: %s", e)
 
-        # Projet de l'appel (jeton project= — le bracelet de session est retiré, ADR 0038 B3b).
+        # The call's project (token project= — the session wristband is removed, ADR 0038 B3b).
         project_block = None
         try:
             active_project = access.current_project()
@@ -143,13 +143,13 @@ def register(mcp: FastMCP) -> None:
         except Exception as e:
             logger.warning("whoami: project lookup failed: %s", e)
 
-        # Connecteurs configurés (résumé, pas le détail des clés). `platform_quotas`
-        # réutilise le calcul déjà fait par `status_for` (aucune marche en plus) :
-        # pour un connecteur en mode plateforme dont le quota jour est PLAFONNÉ
-        # (ex. apollo — cf. `access.platform_quota_hint`), regarder ici AVANT un
-        # lot d'appels qui dépensent évite de découvrir la limite au milieu d'un
-        # lot (oto-backend#710). `over_quota` reste listé — masquer le connecteur
-        # une fois épuisé dirait « pas configuré » à qui n'a que ça d'épuisé.
+        # Configured connectors (summary, not the key details). `platform_quotas`
+        # reuses the computation already done by `status_for` (no extra step):
+        # for a connector in platform mode whose day quota is CAPPED
+        # (e.g. apollo — see `access.platform_quota_hint`), looking here BEFORE a
+        # batch of calls that spend avoids discovering the limit in the middle of a
+        # batch (oto-backend#710). `over_quota` stays listed — hiding the connector
+        # once exhausted would say « not configured » to someone who only has that exhausted.
         configured: list[str] = []
         platform_ready: list[str] = []
         platform_quotas: dict[str, dict] = {}
@@ -171,23 +171,23 @@ def register(mcp: FastMCP) -> None:
         except Exception as e:
             logger.warning("whoami: status_for failed: %s", e)
 
-        # ⚠️ Plus de champ `knowledge` (retiré le 10/09/2026 avec le verbe `oto_kb`) : il
-        # rendait l'id du projet de l'ex-« base de connaissance », et un agent qui lit
-        # « ta KB est le projet N » y écrit — un recrutement par la RÉPONSE, le défaut
-        # même qui a fait retirer le verbe. Ce projet reste un projet ordinaire.
+        # ⚠️ No more `knowledge` field (removed on 10/09/2026 with the verb `oto_kb`): it
+        # returned the id of the former « knowledge base » project, and an agent that reads
+        # « your KB is project N » writes to it — a recruitment by the RESPONSE, the very
+        # defect that got the verb removed. That project remains an ordinary project.
 
         who = user.get("name") or user.get("email") or sub
         if org_block:
-            scope = f"org « {org_block['name']} » (rôle {org_block['role']})"
+            scope = f"org « {org_block['name']} » (role {org_block['role']})"
             if group_block:
-                scope += f", groupe « {group_block['name']} »"
+                scope += f", group « {group_block['name']} »"
         else:
-            scope = "espace perso (aucune org active)"
+            scope = "personal space (no active org)"
         if org_block and org_block["scope"] == "call":
-            scope += " — épinglée par le jeton de CET appel (org=/project=/group=)"
+            scope += " — pinned by THIS call's token (org=/project=/group=)"
         if project_block:
-            scope += f" — projet actif « {project_block['name']} »"
-        summary = f"Tu agis pour {who} dans {scope}."
+            scope += f" — active project « {project_block['name']} »"
+        summary = f"You are acting for {who} in {scope}."
 
         return {
             "account": {
@@ -203,9 +203,9 @@ def register(mcp: FastMCP) -> None:
             "connectors": {
                 "configured": configured,
                 "platform_available": platform_ready,
-                # {name: {used, limit, remaining}} pour les seuls connecteurs
-                # plateforme au quota PLAFONNÉ aujourd'hui — absent sinon (quota
-                # illimité, ou org sur un plan `unmetered`, ADR 0043).
+                # {name: {used, limit, remaining}} for only the platform connectors
+                # with a CAPPED quota today — absent otherwise (unlimited
+                # quota, or org on an `unmetered` plan, ADR 0043).
                 "platform_quotas": platform_quotas,
             },
             "summary": summary,

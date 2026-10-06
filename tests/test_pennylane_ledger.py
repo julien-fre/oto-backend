@@ -64,7 +64,7 @@ def test_lettered_part_d_une_LIGNE_et_non_d_une_ecriture(client):
 @pytest.mark.parametrize("op,manquant", [("get", "entry_id"), ("lines", "entry_id"),
                                          ("lettered", "line_id")])
 def test_un_op_sans_son_id_est_refuse_avant_tout_appel(client, op, manquant):
-    with pytest.raises(McpError, match=f"op='{op}' requiert {manquant}"):
+    with pytest.raises(McpError, match=f"op='{op}' requires {manquant}"):
         _tool("pennylane_ledger_entry")(op=op)
     assert not client.method_calls, "rien ne doit partir sans son identifiant"
 
@@ -112,7 +112,7 @@ def test_create_passe_les_champs_requis_et_les_lignes(client):
     ("lines", {"date": "2026-09-04", "label": "OD", "journal_id": 5}),
 ])
 def test_create_refuse_un_champ_requis_manquant_avant_tout_appel(client, manquant, kwargs):
-    with pytest.raises(McpError, match=f"op='create' requiert {manquant}"):
+    with pytest.raises(McpError, match=f"op='create' requires {manquant}"):
         _tool("pennylane_ledger_entry")(op="create", **kwargs)
     client.create_ledger_entry.assert_not_called()
 
@@ -139,7 +139,7 @@ def test_la_description_dit_qu_il_n_y_a_pas_de_brouillon(client):
     m = FastMCP("t")
     importlib.import_module("oto_mcp.tools.pennylane_ledger").register(m)
     doc = asyncio.run(m.get_tool("pennylane_ledger_entry")).description or ""
-    assert "brouillon" in doc.lower(), doc
+    assert "draft" in doc.lower(), doc
     assert "update" in doc, "le seul recours doit être nommé"
 
 

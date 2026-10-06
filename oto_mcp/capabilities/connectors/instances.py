@@ -1,49 +1,49 @@
-"""Capacités « instances de connecteur » (ADR 0038 §B, barreau 4) — PROJECTION
-LECTURE du coffre existant (cas dégénéré) : chaque credential que la cascade de
-résolution sait trouver (membre (sub, org) > groupes > org > clé plateforme
-grantée/ouverte) est exposé comme une **instance possédée nommée**. Métadonnées
-seulement — le secret n'est NI déchiffré NI renvoyé (lecteurs non-déchiffrants
-uniquement : `list_credentials`, grants, `list_platform_keys_meta`). Zéro table
-nouvelle, zéro chemin d'écriture, `resolve_credential`/`status_for` intouchés.
+"""Capabilities "connector instances" (ADR 0038 §B, rung 4) — a READ PROJECTION of
+the existing vault (degenerate case): each credential the resolution cascade can
+find (member (sub, org) > groups > org > granted/open platform key) is exposed as a
+**named owned instance**. Metadata only — the secret is NEITHER decrypted NOR
+returned (non-decrypting readers only: `list_credentials`, grants,
+`list_platform_keys_meta`). Zero new tables, zero write path,
+`resolve_credential`/`status_for` untouched.
 
-LOT L6 (blueprint ADR 0053-D9, R1 tranché le 27/08) : chaque instance projetée porte
-désormais, en PLUS de son `ref`, l'identifiant STABLE de la table
-`connector_instances` (`id = "inst:{n}"`). La projection reste ce qu'elle était — une
-lecture du coffre, zéro déchiffrement, zéro écriture : le seul ajout est **une** requête
-qui traduit les quadruplets de coffre en identifiants, fail-open. Rien d'autre ne lit
-encore ces instances (ni la cascade, ni la résolution) ; `ref` reste la référence qu'on
-repasse (les gardes de pose refusent `inst:` nommément, cf. `access.rbac`).
-PIÈCE 2 (28/08) : l'instance naît désormais à la POSE, dans la transaction du coffre —
-cette projection n'a pas bougé d'un octet, mais son `id` ne manque plus par fraîcheur de
-la clé, seulement par fail-open. Elle sert en plus `visible_to` (R9, tranché le 27/08) :
-les scopes qui DÉCOUVRENT l'instance, dérivés de la chaîne d'accès par
-`connectors.instance_visibility`. ⚠️ **Descriptif, pas filtrant** — la liste n'est ni
-élargie ni restreinte, et un non-membre continue de voir « aucune clé configurée ».
+LOT L6 (blueprint ADR 0053-D9, R1 settled on 27/08): each projected instance now
+carries, IN ADDITION to its `ref`, the STABLE identifier from the
+`connector_instances` table (`id = "inst:{n}"`). The projection remains what it was — a
+vault read, zero decryption, zero writes: the only addition is **one** query
+that translates the vault quadruplets into identifiers, fail-open. Nothing else reads
+these instances yet (neither the cascade nor the resolution); `ref` remains the
+reference to pass back (the pin guards refuse `inst:` by name, see `access.rbac`).
+PIECE 2 (28/08): the instance is now born at SET time, in the vault transaction —
+this projection did not change by a single byte, but its `id` is no longer missing
+because of key freshness, only because of fail-open. It also serves `visible_to` (R9,
+settled on 27/08): the scopes that DISCOVER the instance, derived from the access
+chain by `connectors.instance_visibility`. ⚠️ **Descriptive, not filtering** — the
+list is neither widened nor narrowed, and a non-member still sees "no key configured".
 
-EXCLUSIONS (assumées, documentées) :
-- résidus `entity_type='user'` (scope legacy des ex-fédérations atlassian/folkmcp,
-  retirées le 2026-09-09 — les lignes, elles, dorment toujours en base)
-  — hors cascade de travail by design (ADR 0033) ;
-- grants de compte #55 (`connector_account_grants` = pointeurs d'identité
-  satellites, déjà servis par `oto_account_access`) — repliés en
-  « instances partagées » au B5 ;
-- identités distantes Unipile (`connector_identities` : les énumérer déchiffre
-  la clé et appelle l'API distante) — la clé BYO elle-même EST listée comme
-  instance membre.
+EXCLUSIONS (deliberate, documented):
+- `entity_type='user'` residues (legacy scope of the former atlassian/folkmcp
+  federations, removed on 2026-09-09 — the rows themselves still sleep in the database)
+  — outside the working cascade by design (ADR 0033);
+- account grants #55 (`connector_account_grants` = satellite identity
+  pointers, already served by `oto_account_access`) — folded into
+  "shared instances" at B5;
+- remote Unipile identities (`connector_identities`: enumerating them decrypts
+  the key and calls the remote API) — the BYO key itself IS listed as a
+  member instance.
 
-LIMITES (documentées) :
-- les `config_fields` packés DANS `secret_enc` (ex. `data_center` zoho posé via
-  POST api-keys) ne sortent PAS (les lire = `unpack_secret` = déchiffrement) ;
-  seule la part `meta` (publique) est projetée en `config`. La vraie table B5
-  dépackera à l'écriture.
-- pas de filtre activation/exposition (ADR 0031) : la résolution ne le fait pas
-  non plus — l'instance existe même si le connecteur n'est pas exposé
-  (divergence assumée avec `oto_connector op=list`). Au passage la projection liste
-  ce que `status_for` ignore (grant d'org, free-tier) : elle est le miroir
-  honnête de ce que la résolution trouverait.
-- PAS de `wins`/`mode` (le gagnant reste dit par `status_for` — une seule
-  vérité) : la préférence §C est portée par le TRI membre < groupe < org <
-  plateforme. B6 rendra cet ordre littéral.
+LIMITS (documented):
+- the `config_fields` packed INSIDE `secret_enc` (e.g. zoho `data_center` set via
+  POST api-keys) do NOT come out (reading them = `unpack_secret` = decryption);
+  only the (public) `meta` part is projected as `config`. The real B5 table
+  will unpack at write time.
+- no activation/exposure filter (ADR 0031): resolution doesn't apply one
+  either — the instance exists even if the connector is not exposed
+  (deliberate divergence from `oto_connector op=list`). Along the way the projection lists
+  what `status_for` ignores (org grant, free-tier): it is the honest mirror of
+  what resolution would find.
+- NO `wins`/`mode` (the winner is still told by `status_for` — a single
+  truth): the §C preference is carried by the SORT member < group < org <
+  platform. B6 will make this order literal.
 """
 from __future__ import annotations
 
@@ -52,9 +52,9 @@ from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Lecteurs NON-déchiffrants uniquement — jamais get_credential*, jamais
-# list_platform_keys (qui déchiffre), jamais les formes appauvries
-# list_org_secrets/list_group_secrets (elles écrasent account/meta/secret_kind).
+# NON-decrypting readers only — never get_credential*, never
+# list_platform_keys (which decrypts), never the impoverished forms
+# list_org_secrets/list_group_secrets (they overwrite account/meta/secret_kind).
 from ... import access, credentials_store, db, group_store, instance_refs, providers
 from . import instances_tenant
 from ._level_doc import DOC_LEVEL as _DOC_LEVEL, DOC_OWNER_TYPE as _DOC_OWNER_TYPE
@@ -65,147 +65,147 @@ from ..registry import CAPABILITIES
 
 logger = logging.getLogger(__name__)
 
-# Rang de proximité (§C) : la cascade relue comme niveaux, portée par le tri.
+# Proximity rank (§C): the cascade reread as levels, carried by the sort.
 _LEVEL_RANK = {"member": 0, "group": 1, "org": 2, "tenant": 3, "platform": 4}
 
 
 class ListInstancesInput(BaseModel):
-    connector: Optional[str] = None      # filtre par type de connecteur
+    connector: Optional[str] = None      # filter by connector type
     level: Optional[Literal["member", "group", "org", "tenant", "platform"]] = (
         Field(default=None, description=_DOC_LEVEL))
 
 
 class InstanceOwner(BaseModel):
-    """Propriétaire d'une instance. `type='user'` porte un sub, `group`/`org` un
-    entier, `platform` **aucun id** (une clé plateforme est identifiée par son
-    label, ADR 0044 §F) — d'où trois champs optionnels plutôt qu'un couple figé."""
+    """Owner of an instance. `type='user'` carries a sub, `group`/`org` an
+    integer, `platform` **no id** (a platform key is identified by its
+    label, ADR 0044 §F) — hence three optional fields rather than a fixed pair."""
     type: Literal["user", "group", "org", "tenant", "platform"] = Field(
         description=_DOC_OWNER_TYPE)
-    # sub (user) ou id de groupe/org — ENTIER quand il vient du contexte, CHAÎNE
-    # quand il est reconstruit depuis une ligne partagée (`entity_id`). Absent en
+    # sub (user) or group/org id — an INTEGER when it comes from the context, a STRING
+    # when rebuilt from a shared row (`entity_id`). Absent on
     # platform.
     id: Optional[Union[int, str]] = None
-    label: Optional[str] = None             # nom du groupe, ou label de la clé plateforme
+    label: Optional[str] = None             # group name, or platform key label
 
 
 class ConnectorInstance(BaseModel):
-    """Une instance = un connecteur × un paramétrage d'auth, projeté depuis le
-    coffre (lecture seule). Métadonnées uniquement : le secret n'est NI déchiffré
-    NI renvoyé.
+    """An instance = a connector × an auth setup, projected from the
+    vault (read-only). Metadata only: the secret is NEITHER decrypted
+    NOR returned.
 
-    Deux familles derrière la même forme, et leurs clés diffèrent : une instance
-    de COFFRE (member/group/org) porte `account`/`secret_kind`/`config`/`set_by` ;
-    une instance PLATEFORME n'a aucune ligne de coffre, donc rien de tout ça —
-    seulement `daily_quota` (grant) ou `set_at` (free-tier)."""
+    Two families behind the same shape, and their keys differ: a VAULT
+    instance (member/group/org) carries `account`/`secret_kind`/`config`/`set_by`;
+    a PLATFORM instance has no vault row, hence none of that —
+    only `daily_quota` (grant) or `set_at` (free-tier)."""
     model_config = ConfigDict(extra="allow")
 
-    # L'IDENTIFIANT STABLE de l'instance (`inst:{id}`, lot L6) — la forme CIBLE,
-    # servie EN PLUS de `ref` et destinée à le remplacer (lui et le `connectionId`
-    # du shell). Ce que `ref` ne sait pas faire : survivre au renommage d'un compte
-    # ou du label d'une clé plateforme (le ref composé projette la clé du coffre, qui
-    # DÉPLACE la ligne au renommage), désigner une sous-instance, désigner une
-    # instance sans secret.
-    # ⚠️ **Peut être absent**, et le client doit le supporter — mais plus pour la raison
-    # d'hier : depuis la pièce 2 (28/08) l'instance naît à la POSE, dans la transaction
-    # du coffre, donc une clé fraîche a son identifiant. La seule absence restante est
-    # le fail-open de `_stamp_instance_identity` (la requête n'a pas répondu). Tant que la
-    # bascule n'est pas faite, `ref` reste la référence à repasser (`_instance=`,
-    # bindings) — `id` est là pour être stocké et préparé, pas encore pour être épinglé
-    # (les gardes de pose le refusent nommément).
-    # Opaque comme `ref` : à repasser tel quel, jamais à parser.
+    # The STABLE IDENTIFIER of the instance (`inst:{id}`, lot L6) — the TARGET shape,
+    # served IN ADDITION to `ref` and meant to replace it (it and the shell's
+    # `connectionId`). What `ref` cannot do: survive the renaming of an account
+    # or of a platform key label (the composed ref projects the vault key, which
+    # MOVES the row on rename), designate a sub-instance, designate an
+    # instance without a secret.
+    # ⚠️ **May be absent**, and the client must cope — but no longer for yesterday's
+    # reason: since piece 2 (28/08) the instance is born at SET time, in the vault
+    # transaction, so a fresh key has its identifier. The only remaining absence is
+    # the fail-open of `_stamp_instance_identity` (the query did not answer). Until the
+    # switch is made, `ref` remains the reference to pass back (`_instance=`,
+    # bindings) — `id` is there to be stored and prepared, not yet to be pinned
+    # (the pin guards refuse it by name).
+    # Opaque like `ref`: pass it back as-is, never parse it.
     id: Optional[str] = None
-    # Handle opaque et STABLE, cible d'un pin `_instance=`. Ne pas le parser.
+    # Opaque and STABLE handle, target of an `_instance=` pin. Do not parse it.
     ref: str
     connector: str
-    # Rang de PROXIMITÉ dans la cascade, qui porte le tri (membre < groupe < org <
-    # plateforme). Ce n'est PAS le gagnant : la liste ne dit jamais qui résout —
-    # une seule vérité pour ça, `status_for`.
+    # PROXIMITY rank in the cascade, which carries the sort (member < group < org <
+    # platform). It is NOT the winner: the list never says who resolves —
+    # a single truth for that, `status_for`.
     level: Literal["member", "group", "org", "tenant", "platform"] = Field(
         description=_DOC_LEVEL)
     owner: InstanceOwner
-    # DÉRIVÉ, jamais stocké : `meta.label` > « Connecteur · compte » > « Connecteur ·
-    # label de clé » > label du connecteur. Deux instances peuvent donc porter le
-    # même nom ; `ref` est l'identité.
+    # DERIVED, never stored: `meta.label` > "Connector · account" > "Connector ·
+    # key label" > connector label. Two instances may therefore bear the
+    # same name; `ref` is the identity.
     name: str
-    # Discrimine plusieurs instances du même connecteur au même niveau (multi-compte).
-    # `""` = l'instance par défaut. Absent des instances plateforme.
+    # Discriminates several instances of the same connector at the same level (multi-account).
+    # `""` = the default instance. Absent from platform instances.
     account: Optional[str] = None
     secret_kind: Optional[str] = None
-    # Part PUBLIQUE du meta seulement. ⚠️ Les `config_fields` packés DANS le secret
-    # (ex. `data_center` zoho) n'y sont PAS — les lire supposerait de déchiffrer.
-    # Un `config` vide ne signifie donc pas « aucune configuration ».
+    # PUBLIC part of the meta only. ⚠️ The `config_fields` packed INSIDE the secret
+    # (e.g. zoho `data_center`) are NOT in it — reading them would mean decrypting.
+    # An empty `config` therefore does not mean "no configuration".
     config: Optional[dict] = None
     set_by: Optional[str] = None
     set_at: Optional[str] = None
-    # D'OÙ vient l'instance. Jeu FERMÉ, et les sept valeurs sont posées en dur dans ce
-    # module — aucune n'est dérivée d'une donnée, donc le contrat peut les nommer :
+    # WHERE the instance comes from. CLOSED set, and the seven values are hard-coded in this
+    # module — none is derived from data, so the contract can name them:
     #
-    # | `credential`         | une ligne du coffre à ma portée (membre, équipe, org) |
-    # | `tenant_key`         | la clé du TENANT de l'appelant, entre l'org et la plateforme |
-    # | `user_grant`         | palier plateforme accordé à MOI |
-    # | `org_grant`          | palier plateforme accordé à mon ORG |
-    # | `free_tier`          | clé plateforme ouverte, sans grant (ADR 0031) |
-    # | `shared_with_me`     | prêt NOMINATIF d'un pair (ADR 0044 `share_side`) — cross-org possible, le prêt vaut consentement |
-    # | `personal_cross_org` | MA propre clé, posée dans une AUTRE org (#172) |
+    # | `credential`         | a vault row within my reach (member, team, org) |
+    # | `tenant_key`         | the caller's TENANT key, between the org and the platform |
+    # | `user_grant`         | platform level granted to ME |
+    # | `org_grant`          | platform level granted to my ORG |
+    # | `free_tier`          | open platform key, no grant (ADR 0031) |
+    # | `shared_with_me`     | NAMED loan from a peer (ADR 0044 `share_side`) — cross-org possible, the loan is consent |
+    # | `personal_cross_org` | MY own key, set in ANOTHER org (#172) |
     #
-    # ⚠️ **Prêt et cross-org se distinguent ici, et nulle part ailleurs** : les deux
-    # sont des instances vues depuis une org qui ne les porte pas. `shared_with_me`
-    # appartient à quelqu'un d'autre, `personal_cross_org` est la mienne — `owner` le
-    # confirme, mais c'est `via` qui le DIT.
+    # ⚠️ **Loan and cross-org are told apart here, and nowhere else**: both
+    # are instances seen from an org that does not carry them. `shared_with_me`
+    # belongs to someone else, `personal_cross_org` is mine — `owner` confirms
+    # it, but `via` is what SAYS it.
     #
-    # ⚠️ Écart assumé avec `AuthDescriptor.method`, qui reste un `str` par crainte
-    # qu'un énuméré fasse échouer un client généré le jour d'une valeur de plus. Deux
-    # raisons de trancher autrement ici : `method` est DÉRIVÉ (une fonction le calcule
-    # par connecteur), `via` est un littéral posé à sept endroits d'un seul module ; et
-    # `level`, son voisin immédiat dans ce même modèle, est déjà un `Literal`. Le
-    # cliquet `tests/test_instance_via_declare.py` lit l'AST du module et rougit à la
-    # huitième valeur — c'est LUI qui rend l'énuméré tenable, pas la discipline.
+    # ⚠️ Deliberate gap with `AuthDescriptor.method`, which stays a `str` for fear
+    # that an enum would break a generated client the day one more value is added. Two
+    # reasons to decide otherwise here: `method` is DERIVED (a function computes it
+    # per connector), `via` is a literal set in seven places of a single module; and
+    # `level`, its immediate neighbour in this same model, is already a `Literal`. The
+    # ratchet `tests/test_instance_via_declare.py` reads the module's AST and goes red at the
+    # eighth value — it is THAT which makes the enum tenable, not discipline.
     via: Literal["credential", "tenant_key", "user_grant", "org_grant", "free_tier",
                  "shared_with_me", "personal_cross_org"] = Field(
         description=(
-            "D'où vient l'instance. `credential` : une ligne du coffre à ma portée "
-            "(membre, équipe, org). `tenant_key` : la clé du tenant de l'appelant. "
-            "`user_grant` / `org_grant` / `free_tier` : paliers plateforme (accordé à "
-            "moi, à mon org, ou ouvert sans grant). `shared_with_me` : prêt nominatif "
-            "d'un pair, cross-org possible — l'instance appartient à QUELQU'UN "
-            "D'AUTRE. `personal_cross_org` : MA propre clé, posée dans une autre org. "
-            "Ces deux dernières sont les seules à se ressembler, et c'est ce champ "
-            "qui les distingue."))
-    is_default: Optional[bool] = None       # présent (true) seulement si marqué défaut
-    # Présent (true) seulement si l'instance est mise de côté : la cascade la SAUTE,
-    # mais elle reste listée et réactivable — un `suspended` n'est pas une absence.
+            "Where the instance comes from. `credential`: a vault row within my reach "
+            "(member, team, org). `tenant_key`: the caller's tenant key. "
+            "`user_grant` / `org_grant` / `free_tier`: platform levels (granted to "
+            "me, to my org, or open without a grant). `shared_with_me`: named loan "
+            "from a peer, cross-org possible — the instance belongs to SOMEONE "
+            "ELSE. `personal_cross_org`: MY own key, set in another org. "
+            "The last two are the only ones that look alike, and this field "
+            "tells them apart."))
+    is_default: Optional[bool] = None       # present (true) only if marked default
+    # Present (true) only if the instance is set aside: the cascade SKIPS it,
+    # but it stays listed and reactivable — a `suspended` is not an absence.
     suspended: Optional[bool] = None
-    daily_quota: Optional[int] = None       # paliers plateforme grantés seulement
-    # QUI VOIT cette instance (R9, tranché le 27/08) — scopes `user:<sub>` /
-    # `group:<id>` / `org:<id>` / `platform` (tout le monde : une clé plateforme en
-    # free-tier). DÉRIVÉ de la chaîne d'accès, jamais stocké : qui peut la résoudre la
-    # voit, et la colonne `visibility` de l'instance ne porte que la SURCHARGE du
-    # propriétaire (`inherited` par défaut, donc rien à surcharger aujourd'hui).
-    # ⚠️ **Descriptif, pas filtrant** : ce champ n'élargit ni ne restreint cette liste,
-    # et un non-membre continue de voir « aucune clé configurée ». La divulgation
-    # (« il existe un accès à demander, et chez qui ») reste une question produit,
-    # rangée par R9 dans un réglage d'org opt-in.
-    # ⚠️ **Peut être absent** — même fail-open que `id`.
+    daily_quota: Optional[int] = None       # granted platform levels only
+    # WHO SEES this instance (R9, settled on 27/08) — scopes `user:<sub>` /
+    # `group:<id>` / `org:<id>` / `platform` (everyone: a free-tier platform key).
+    # DERIVED from the access chain, never stored: whoever can resolve it
+    # sees it, and the instance's `visibility` column only carries the owner's
+    # OVERRIDE (`inherited` by default, so nothing to override today).
+    # ⚠️ **Descriptive, not filtering**: this field neither widens nor narrows this list,
+    # and a non-member still sees "no key configured". Disclosure
+    # ("there is an access to request, and from whom") remains a product question,
+    # filed by R9 under an opt-in org setting.
+    # ⚠️ **May be absent** — same fail-open as `id`.
     visible_to: Optional[list[str]] = None
 
 
 class ConnectorInstances(BaseModel):
-    """Les instances visibles depuis l'org active, par proximité.
+    """The instances visible from the active org, by proximity.
 
-    Deux angles morts assumés, qui font qu'une absence ne prouve rien : la liste
-    n'applique AUCUN filtre d'activation/exposition (une instance existe même si
-    le connecteur n'est pas exposé — divergence voulue avec `connectors.me`), et
-    ses sections « partagé avec moi » / « perso cross-org » sont fail-open loggé
-    (un incident les rend vides sans erreur)."""
+    Two deliberate blind spots, which mean an absence proves nothing: the list
+    applies NO activation/exposure filter (an instance exists even if
+    the connector is not exposed — deliberate divergence from `connectors.me`), and
+    its "shared with me" / "personal cross-org" sections are logged fail-open
+    (an incident makes them empty without an error)."""
     instances: list[ConnectorInstance]
-    count: int                              # = len(instances), APRÈS filtres
+    count: int                              # = len(instances), AFTER filters
 
 
 class SuspendInstanceResult(BaseModel):
-    """Écho de la mise de côté (ou réactivation) de MA clé membre."""
+    """Echo of setting aside (or reactivating) MY member key."""
     connector: str
-    # `null` quand l'instance visée est celle sans compte nommé (le `""` de
-    # l'entrée ressort en `null`) — pas « compte inconnu ».
+    # `null` when the targeted instance is the one without a named account (the input's
+    # `""` comes out as `null`) — not "unknown account".
     account: Optional[str] = None
     suspended: bool
 
@@ -217,9 +217,9 @@ def _connector_label(connector: str) -> str:
 
 def _instance_name(connector: str, meta_label, account: str = "",
                    key_label: str = "") -> str:
-    """Nom d'instance DÉRIVÉ, déterministe (rien de stocké) : `meta.label` non
-    vide > « Connecteur · compte » > « Connecteur · label de clé » (platform)
-    > label du connecteur."""
+    """DERIVED, deterministic instance name (nothing stored): non-empty `meta.label`
+    > "Connector · account" > "Connector · key label" (platform)
+    > connector label."""
     clabel = _connector_label(connector)
     if meta_label:
         return str(meta_label)
@@ -231,18 +231,18 @@ def _instance_name(connector: str, meta_label, account: str = "",
 
 
 def _vault_key(entity_type: str, entity_id, connector: str, account: str) -> tuple:
-    """La clé à quatre colonnes d'une ligne de coffre — le LIEN vers son instance
-    (`connector_instances`), qui porte le même quadruplet. Convention du coffre :
-    `account` vaut `''` en mono-compte, jamais None."""
+    """The four-column key of a vault row — the LINK to its instance
+    (`connector_instances`), which carries the same quadruplet. Vault convention:
+    `account` is `''` in single-account mode, never None."""
     return (entity_type, str(entity_id), connector, account or "")
 
 
 def _cred_instance(level: str, owner: dict, ref: str, row: dict,
                    vault_key: Optional[tuple] = None) -> dict:
-    """Projette une ligne du coffre (forme `list_credentials`) en instance.
-    `meta` sort déjà filtré `_public_meta` à la source ; on ré-applique
-    `public_meta` en défense en profondeur (jamais un bearer vers le client).
-    `config` = meta public MOINS les clés extraites en top-level."""
+    """Projects a vault row (`list_credentials` shape) into an instance.
+    `meta` already comes out filtered `_public_meta` at the source; we re-apply
+    `public_meta` as defense in depth (never a bearer to the client).
+    `config` = public meta MINUS the keys extracted at top level."""
     meta = credentials_store.public_meta(row.get("meta"))
     account = row.get("account") or ""
     inst = {
@@ -257,54 +257,54 @@ def _cred_instance(level: str, owner: dict, ref: str, row: dict,
         "set_by": row.get("set_by"),
         "set_at": row.get("set_at"),
         "via": "credential",
-        # Clé PRIVÉE, retirée avant sérialisation (`_stamp_instance_identity`) : elle ne
-        # sert qu'à résoudre l'identifiant stable en UNE requête pour toute la liste.
+        # PRIVATE key, removed before serialization (`_stamp_instance_identity`): it only
+        # serves to resolve the stable identifier in ONE query for the whole list.
         "_vault_key": vault_key,
     }
     if meta.get("is_default"):
         inst["is_default"] = True
-    # État SUSPENDU (lot 2) : instance mise de côté → sautée par la cascade, mais
-    # listée pour le KeyStack (« suspendue · Réactiver »).
+    # SUSPENDED state (lot 2): instance set aside → skipped by the cascade, but
+    # listed for the KeyStack ("suspended · Reactivate").
     if meta.get("suspended"):
         inst["suspended"] = True
     return inst
 
 
 def _platform_instance(provider: str, label: str, via: str, extra: dict) -> dict:
-    """Instance « clé plateforme » (ADR 0044 §F : identifiée par (connector, label),
-    plus de surrogate platform_key_id)."""
+    """"Platform key" instance (ADR 0044 §F: identified by (connector, label),
+    no more platform_key_id surrogate)."""
     return {
         "ref": instance_refs.make_platform_ref(provider, label),
         "connector": provider,
         "level": "platform",
         "owner": {"type": "platform", "label": label},
         "name": _instance_name(provider, None, key_label=label),
-        # ADR 0044 §F : une clé plateforme EST une ligne du coffre — `entity_type`
-        # 'platform', `entity_id` = son label. Elle a donc une instance comme les
-        # autres, y compris quand elle est atteinte par un grant ou le free-tier.
+        # ADR 0044 §F: a platform key IS a vault row — `entity_type`
+        # 'platform', `entity_id` = its label. It therefore has an instance like the
+        # others, including when reached through a grant or the free-tier.
         "_vault_key": _vault_key(credentials_store.PLATFORM, label, provider, ""),
         **extra,
-        # ⚠️ APRÈS `extra`, et c'est le sujet : `via` est déclaré au contrat comme un
-        # jeu FERMÉ, donc aucun dict d'appoint ne doit pouvoir y glisser une huitième
-        # valeur. Avant `extra`, un appelant qui aurait passé `{"via": …}` produisait
-        # une valeur hors énuméré — un client généré échoue là-dessus, sur une donnée
-        # que rien n'aurait signalée.
+        # ⚠️ AFTER `extra`, and that is the point: `via` is declared in the contract as a
+        # CLOSED set, so no auxiliary dict must be able to slip an eighth
+        # value into it. Before `extra`, a caller passing `{"via": …}` would produce
+        # a value outside the enum — a generated client fails on that, on data
+        # that nothing would have flagged.
         "via": via,
     }
 
 
 def _platform_eligible(provider: str) -> bool:
-    """Le chemin plateforme de la cascade est gaté sur `auth_modes` (cf.
-    `resolve_credential`) : un provider byo-only ne résout JAMAIS une clé
-    plateforme — la projeter serait un mensonge (revue B4, finding major)."""
+    """The cascade's platform path is gated on `auth_modes` (see
+    `resolve_credential`): a byo-only provider NEVER resolves a platform
+    key — projecting one would be a lie (review B4, major finding)."""
     con = providers.REGISTRY.get(provider)
     return con is not None and "platform" in con.auth_modes
 
 
 def _shared_ref(entity_type: str, entity_id: str, connector: str,
                 account: str) -> Optional[str]:
-    """Ref PINNABLE d'une instance partagée avec moi (share_side), reconstruit depuis
-    (entity_type, entity_id). None si non-pinnable (résidu oauth `user`, id malformé)."""
+    """PINNABLE ref of an instance shared with me (share_side), rebuilt from
+    (entity_type, entity_id). None if not pinnable (oauth `user` residue, malformed id)."""
     if entity_type == "member":
         oid, _, osub = entity_id.partition(":")
         if not (oid.isdigit() and osub):
@@ -318,7 +318,7 @@ def _shared_ref(entity_type: str, entity_id: str, connector: str,
 
 
 def _shared_owner(entity_type: str, entity_id: str) -> dict:
-    """Propriétaire (le PRÊTEUR) d'une instance partagée — pas moi."""
+    """Owner (the LENDER) of a shared instance — not me."""
     if entity_type == "member":
         _, _, osub = entity_id.partition(":")
         return {"type": "user", "id": osub}
@@ -326,25 +326,25 @@ def _shared_owner(entity_type: str, entity_id: str) -> dict:
 
 
 def _stamp_instance_identity(out: list[dict]) -> None:
-    """Pose `id = inst:{id}` et `visible_to` sur chaque instance, et RETIRE la clé privée.
+    """Sets `id = inst:{id}` and `visible_to` on each instance, and REMOVES the private key.
 
-    **Deux requêtes pour toute la liste**, jamais deux par instance : l'une rend
-    `(id, visibility)` depuis la table des instances, l'autre le partage de chaque
-    ligne de coffre. La projection tourne inline sur un serveur mono-loop, contre une
-    base managée distante — un lookup par instance ferait N allers-retours sur une
-    surface qui en rend des dizaines. (Les clés plateforme d'un connecteur basculé
-    lisent en plus leurs arêtes ; il y en a une poignée, et c'est le seul palier dont
-    l'audience n'est pas structurelle.)
+    **Two queries for the whole list**, never two per instance: one returns
+    `(id, visibility)` from the instances table, the other the sharing of each
+    vault row. The projection runs inline on a single-loop server, against a
+    remote managed database — a lookup per instance would make N round trips on a
+    surface that returns dozens. (The platform keys of a switched connector
+    additionally read their edges; there are a handful, and it is the only level whose
+    audience is not structural.)
 
-    **Fail-open loggé**, comme les sections « partagé avec moi » et « perso cross-org »
-    de cette même liste : `id` et `visible_to` sont descriptifs, rien ne les consomme
-    encore, et `ref` reste servi. Faire tomber le listing des clés d'un utilisateur
-    parce que la table des instances n'a pas répondu serait hors de proportion. La
-    contrepartie est explicite dans le modèle de sortie : **les deux peuvent être
-    absents**.
+    **Logged fail-open**, like the "shared with me" and "personal cross-org" sections
+    of this same list: `id` and `visible_to` are descriptive, nothing consumes them
+    yet, and `ref` is still served. Taking down a user's key listing
+    because the instances table did not answer would be out of proportion. The
+    counterpart is explicit in the output model: **both may be
+    absent**.
 
-    ⚠️ La clé privée `_vault_key` est retirée dans TOUS les cas (le modèle de sortie
-    est `extra="allow"` : ce qui reste dans le dict part sur le fil).
+    ⚠️ The private key `_vault_key` is removed in ALL cases (the output model
+    is `extra="allow"`: whatever stays in the dict goes out on the wire).
     """
     cles = [i.get("_vault_key") for i in out]
     for i in out:
@@ -353,13 +353,13 @@ def _stamp_instance_identity(out: list[dict]) -> None:
     try:
         connues = db.instances_for_vault_rows(vraies)
     except Exception:
-        logger.warning("instances: identifiants stables indisponibles (fail-open)",
+        logger.warning("instances: stable identifiers unavailable (fail-open)",
                        exc_info=True)
         return
     try:
         partages = credentials_store.sharing_for_vault_rows(vraies)
     except Exception:
-        logger.warning("instances: partage indisponible — `visible_to` omis (fail-open)",
+        logger.warning("instances: sharing unavailable — `visible_to` omitted (fail-open)",
                        exc_info=True)
         partages = None
     for inst, cle in zip(out, cles):
@@ -377,14 +377,14 @@ def _stamp_instance_identity(out: list[dict]) -> None:
 
 
 def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
-    # Handler SYNC exécuté INLINE par les adaptateurs de capacité (pattern des
-    # capacités existantes — pas de threadpool ici) : requêtes courtes indexées.
+    # SYNC handler run INLINE by the capability adapters (pattern of the existing
+    # capabilities — no threadpool here): short indexed queries.
     sub, org = ctx.sub, ctx.org_id
     out: list[dict] = []
 
     if org is not None:
-        # 1. MEMBRE — mes credentials dans CETTE org (ADR 0033 : jamais de repli
-        # org-agnostique). Une ligne (connector, account) = une instance.
+        # 1. MEMBER — my credentials in THIS org (ADR 0033: never an org-agnostic
+        # fallback). One (connector, account) row = one instance.
         member_eid = credentials_store.member_id(org, sub)
         for row in credentials_store.list_credentials(credentials_store.MEMBER,
                                                       member_eid):
@@ -396,16 +396,16 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
                 _vault_key(credentials_store.MEMBER, member_eid, row["connector"],
                            row.get("account") or "")))
 
-        # 2. GROUPES — les groupes que je peux LIRE (miroir de `can_read_group`,
-        # la garde de résolution) : mes groupes, et TOUS les groupes de l'org pour
-        # un org_admin (escalade roles.py — « un connecteur par département, vu au
-        # niveau org » : l'admin voit et administre chaque instance départementale).
-        # Depuis B3, `_group=` est un jeton d'appel → toute instance listée ici est
-        # atteignable = visible au sens §C.
+        # 2. GROUPS — the groups I can READ (mirror of `can_read_group`,
+        # the resolution guard): my groups, and ALL the org's groups for
+        # an org_admin (roles.py escalation — "one connector per department, seen at
+        # org level": the admin sees and administers every departmental instance).
+        # Since B3, `_group=` is a call token → every instance listed here is
+        # reachable = visible in the §C sense.
         from ... import roles as _roles
         try:
             org_admin = _roles.is_org_admin(sub, org)
-        # noqa: SILENT — dette déclarée : énumération partielle rendue comme complète (#424, verdict C)
+        # noqa: SILENT — declared debt: partial enumeration returned as complete (#424, verdict C)
         except Exception:
             org_admin = False
         groups = (group_store.list_groups(org) if org_admin
@@ -422,8 +422,8 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
                     _vault_key("group", gid, row["connector"],
                                row.get("account") or "")))
 
-        # 3. ORG — secrets de l'org active, visibles de tout membre (précédent :
-        # la fiche org les liste déjà aux membres).
+        # 3. ORG — secrets of the active org, visible to every member (precedent:
+        # the org sheet already lists them to members).
         for row in credentials_store.list_credentials("org", str(org)):
             out.append(_cred_instance(
                 "org", {"type": "org", "id": org},
@@ -433,8 +433,8 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
                 _vault_key("org", org, row["connector"],
                            row.get("account") or "")))
 
-    # 3 bis. TENANT (L-clés PR 2) — la clé du tenant de l'APPELANT (sub qualifié),
-    # entre l'org et la plateforme comme dans le walker. Vide pour un compte nu.
+    # 3 bis. TENANT (L-keys PR 2) — the key of the CALLER's tenant (qualified sub),
+    # between the org and the platform as in the walker. Empty for a bare account.
     for slug, ref, row in instances_tenant.tenant_rows(sub):
         inst = _cred_instance("tenant", {"type": "tenant", "id": slug}, ref, row,
                               _vault_key(credentials_store.TENANT, slug, row["connector"],
@@ -442,11 +442,11 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
         inst["via"] = "tenant_key"
         out.append(inst)
 
-    # 4. PLATEFORME — grants user + org + free-tier. La cascade ne résout qu'UNE
-    # clé plateforme par provider (user_grant > org_grant > free_tier) → dédup
-    # par PROVIDER (ordre d'insertion = priorité ; dédup par clé listait un
-    # free-tier fantôme après rotation, revue B4). Gate `auth_modes` miroir de
-    # la résolution : un provider byo-only ne projette aucun palier plateforme.
+    # 4. PLATFORM — user grants + org grants + free-tier. The cascade resolves only ONE
+    # platform key per provider (user_grant > org_grant > free_tier) → dedup
+    # by PROVIDER (insertion order = priority; dedup by key listed a phantom
+    # free-tier after rotation, review B4). `auth_modes` gate mirrors
+    # resolution: a byo-only provider projects no platform level.
     seen_providers: set = set()
     for gr in db.list_grants_for_user(sub):
         if gr["provider"] in seen_providers or not _platform_eligible(gr["provider"]):
@@ -464,9 +464,9 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
             out.append(_platform_instance(
                 gr["provider"], gr.get("label") or "", "org_grant",
                 {"daily_quota": gr.get("daily_quota")}))
-    # Free-tier ADR 0031 : clé la plus récente de chaque provider `platform_key_open`,
-    # utilisable sans grant (ADR 0044 §F : instances scope PLATFORM du coffre unifié,
-    # triées set_at DESC → 1re rencontrée par provider = la plus récente).
+    # Free-tier ADR 0031: most recent key of each `platform_key_open` provider,
+    # usable without a grant (ADR 0044 §F: PLATFORM-scope instances of the unified vault,
+    # sorted set_at DESC → first encountered per provider = the most recent).
     last_open: dict[str, dict] = {}
     for k in credentials_store.list_platform_credentials():
         con = providers.REGISTRY.get(k["provider"])
@@ -480,11 +480,11 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
             k["provider"], k.get("label") or "", "free_tier",
             {"set_at": k.get("set_at")}))
 
-    # 5. PARTAGÉ AVEC MOI (ADR 0044 share_side) : instances d'AUTRES dont le
-    # share_side me vise (nominatif `user:` ou via un de mes groupes). Cross-org
-    # possible (le prêt nominatif = consentement). Le pin résout la clé de l'owner.
-    # Dédup par ref (une instance de groupe déjà listée en §2 ne
-    # réapparaît pas).
+    # 5. SHARED WITH ME (ADR 0044 share_side): instances of OTHERS whose
+    # share_side targets me (named `user:` or via one of my groups). Cross-org
+    # possible (the named loan = consent). The pin resolves the owner's key.
+    # Dedup by ref (a group instance already listed in §2 does not
+    # reappear).
     my_scopes = [f"user:{sub}"]
     if org is not None:
         for g in group_store.list_groups_for_user(sub, org):
@@ -494,12 +494,12 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
     try:
         shared = credentials_store.list_shared_with(my_scopes)
     except Exception:
-        logger.warning("instances: 'partagé avec moi' indisponible (fail-open)", exc_info=True)
+        logger.warning("instances: 'shared with me' unavailable (fail-open)", exc_info=True)
         shared = []
     for row in shared:
         et, eid = row["entity_type"], row["entity_id"]
         if et == "member" and eid in my_eids:
-            continue  # défensif : jamais ma propre ligne
+            continue  # defensive: never my own row
         ref = _shared_ref(et, eid, row["connector"], row.get("account") or "")
         if ref is None or ref in existing_refs:
             continue
@@ -510,22 +510,22 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
         inst["via"] = "shared_with_me"
         out.append(inst)
 
-    # 6. PERSONNELLES CROSS-ORG (issue #172, piste A) : mes instances membre d'un
-    # connecteur PAR-PERSONNE (unipile) posées dans une AUTRE org me suivent — la
-    # résolution de proximité les trouve depuis n'importe quelle org (cf.
-    # `access.personal_instance_org`), donc la liste DOIT les montrer, sinon le manque
-    # #1 (« rien ne signale que j'ai déjà une instance perso ailleurs » → on reconnecte
-    # → doublon). Pinnable (`guard_instance_access` : ma propre ligne, org où je suis
-    # membre). Dédup par ref (déjà listée si l'org de contexte EST l'org porteuse).
+    # 6. PERSONAL CROSS-ORG (issue #172, track A): my member instances of a
+    # PER-PERSON connector (unipile) set in ANOTHER org follow me — proximity
+    # resolution finds them from any org (see
+    # `access.personal_instance_org`), so the list MUST show them, otherwise gap
+    # #1 ("nothing signals that I already have a personal instance elsewhere" → we reconnect
+    # → duplicate). Pinnable (`guard_instance_access`: my own row, org where I am
+    # a member). Dedup by ref (already listed if the context org IS the carrying org).
     try:
         for provider in providers.PERSONAL_CROSS_ORG_PROVIDERS:
-            # Un connecteur qui DÉLÈGUE son credential n'a aucune ligne au coffre :
-            # son instance perso est celle de son porteur, déjà listée sous lui. Le
-            # sonder coûterait une requête par canal pour une liste toujours vide.
-            # Un pin posé sur cette instance vaut BIEN pour les appels du canal :
-            # `_instance=` se compare ET se lit sous le porteur (access/resolve.py) —
-            # les deux, pas seulement la comparaison, sinon le pin est reconnu puis
-            # perdu au coffre.
+            # A connector that DELEGATES its credential has no vault row:
+            # its personal instance is its carrier's, already listed under it. Probing
+            # it would cost one query per channel for an always-empty list.
+            # A pin set on this instance DOES hold for the channel's calls:
+            # `_instance=` is compared AND read under the carrier (access/resolve.py) —
+            # both, not only the comparison, otherwise the pin is recognized then
+            # lost at the vault.
             if providers.delegates_credential(provider):
                 continue
             for other_org in credentials_store.list_member_orgs_for(sub, provider):
@@ -549,21 +549,21 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
                     inst["via"] = "personal_cross_org"
                     out.append(inst)
     except Exception:
-        logger.warning("instances: 'perso cross-org' indisponible (fail-open)",
+        logger.warning("instances: 'personal cross-org' unavailable (fail-open)",
                        exc_info=True)
 
-    # Filtres d'input.
+    # Input filters.
     if inp.connector:
         out = [i for i in out if i["connector"] == inp.connector]
     if inp.level:
         out = [i for i in out if i["level"] == inp.level]
 
-    # Préférence §C portée par le TRI : membre < groupe < org < plateforme.
+    # §C preference carried by the SORT: member < group < org < platform.
     out.sort(key=lambda i: (i["connector"], _LEVEL_RANK[i["level"]],
                             i.get("account") or ""))
-    # L'identité (identifiant stable + audience dérivée), EN DERNIER : après les
-    # filtres, pour ne résoudre que ce qui sort, et parce que la clé privée doit
-    # disparaître de TOUT ce qui sort.
+    # The identity (stable identifier + derived audience), LAST: after the
+    # filters, to resolve only what comes out, and because the private key must
+    # disappear from EVERYTHING that comes out.
     _stamp_instance_identity(out)
     return {"instances": out, "count": len(out)}
 
@@ -574,7 +574,7 @@ CAPABILITIES += [
         handler=_list_instances,
         Input=ListInstancesInput,
         Output=ConnectorInstances,
-        authz=SUB_ONLY,   # org_id injecté du seam acteur, jamais d'un param client
+        authz=SUB_ONLY,   # org_id injected from the actor seam, never from a client param
         description=(
             "List the connector INSTANCES (connector x auth/config) visible to you in the active "
             "org, by proximity: yours (member), your groups', the org's, your tenant's "
@@ -594,27 +594,27 @@ CAPABILITIES += [
 
 
 class SuspendInstanceInput(BaseModel):
-    connector: str                       # type de connecteur (ex. "unipile")
-    account: str = ""                    # discrimine si plusieurs instances membre
-    suspended: bool = True               # False = réactiver
+    connector: str                       # connector type (e.g. "unipile")
+    account: str = ""                    # discriminates if several member instances
+    suspended: bool = True               # False = reactivate
 
 
 def _suspend_instance(ctx: ResolvedCtx, inp: SuspendInstanceInput) -> dict:
-    """Suspend / réactive TA clé membre du connecteur dans l'org active (lot 2).
-    Une instance suspendue est SAUTÉE par la résolution de credential (le barreau
-    du dessous — groupe/org/plateforme — prend le relais), mais reste listée et
-    réactivable (`suspended=False`). N'écrit QUE `meta.suspended` — le secret n'est
-    jamais touché ni lu. Réservé à TA propre clé (SUB_ONLY, org du seam acteur)."""
+    """Suspends / reactivates YOUR member key for the connector in the active org (lot 2).
+    A suspended instance is SKIPPED by credential resolution (the rung
+    below — group/org/platform — takes over), but stays listed and
+    reactivable (`suspended=False`). Writes ONLY `meta.suspended` — the secret is
+    never touched nor read. Reserved to YOUR own key (SUB_ONLY, actor-seam org)."""
     sub, org = ctx.sub, ctx.org_id
     if org is None:
         raise AuthzDenied(400, "no_active_org",
-                          "Aucune org active pour résoudre l'instance.")
+                          "No active org to resolve the instance.")
     ok = credentials_store.update_meta(
         credentials_store.MEMBER, credentials_store.member_id(org, sub),
         inp.connector, inp.account, {"suspended": bool(inp.suspended)})
     if not ok:
         raise AuthzDenied(404, "no_instance",
-                          f"Aucune clé membre '{inp.connector}' à suspendre.")
+                          f"No member key '{inp.connector}' to suspend.")
     return {"connector": inp.connector, "account": inp.account or None,
             "suspended": bool(inp.suspended)}
 
@@ -625,7 +625,7 @@ CAPABILITIES += [
         handler=_suspend_instance,
         Input=SuspendInstanceInput,
         Output=SuspendInstanceResult,
-        authz=SUB_ONLY,   # ta propre clé, org du seam acteur — jamais un tiers
+        authz=SUB_ONLY,   # your own key, actor-seam org — never a third party
         description=(
             "Suspend or reactivate YOUR OWN member key for a connector in the active "
             "org. A suspended instance is SKIPPED by credential resolution (the next "
@@ -633,11 +633,11 @@ CAPABILITIES += [
             "reactivable (`suspended=false`). Only meta.suspended is written; the "
             "secret is never touched."),
         errors=(DeclaredError(400, "no_active_org",
-                              "aucune org de contexte : une instance se met de "
-                              "côté DANS un espace de travail"),
+                              "no context org: an instance is set aside "
+                              "WITHIN a workspace"),
                 DeclaredError(404, "no_instance",
-                              "aucune clé à toi pour ce connecteur et ce compte "
-                              "— il n'y a rien à suspendre"),),
+                              "no key of yours for this connector and account "
+                              "— there is nothing to suspend"),),
         rest=RestBinding("POST", "/api/me/connector-instances/suspend"),
     ),
 ]

@@ -1,35 +1,35 @@
-## prerequisite — ta clé d'API Monid, et le portefeuille qu'elle débite
+## prerequisite — your Monid API key, and the wallet it debits
 
-crée une clé dans le tableau de bord de [Monid](https://monid.ai) → API keys (elle commence par `monid_`), puis colle-la dans oto.
-- **chaque appel est débité du portefeuille Monid** du workspace auquel la clé est rattachée : ce que tu lances se paie là, pas chez oto
-- une clé rattachée à aucun workspace répond 403 ; une clé révoquée ou mal copiée, 401 — on en recrée une et on remplace l'ancienne sur la carte
-- la clé de la plateforme ne s'ouvre que sur grant explicite : sans grant, c'est ta clé ou celle de ton org
-- ⚠️ sous la clé de la plateforme, le workspace Monid est **partagé** par les orgs qui ont un grant : la liste des runs y est refusée (elle montrerait les leurs) ; un run se relit et s'arrête par son identifiant
-- ⚠️ sous la clé de la plateforme, le **solde** est refusé aussi : c'est celui du portefeuille partagé de la plateforme, pas le tien. Un lancement qui manque de fonds le dit (402) ; pour voir un solde, pose ta propre clé Monid
-- le bouton « tester la connexion » appelle l'identité de la clé (gratuit) : il ne lance rien et ne lit pas le solde
+create a key in the [Monid](https://monid.ai) dashboard → API keys (it starts with `monid_`), then paste it into oto.
+- **each call is debited from the Monid wallet** of the workspace the key is tied to: what you launch is paid there, not at oto
+- a key tied to no workspace answers 403; a revoked or badly copied key, 401 — create a new one and replace the old one on the card
+- the platform key opens only on explicit grant: without a grant, it is your key or your org's
+- ⚠️ under the platform key, the Monid workspace is **shared** by the orgs that have a grant: the list of runs is refused there (it would show theirs); a run is re-read and stopped by its identifier
+- ⚠️ under the platform key, the **balance** is refused too: it is that of the platform's shared wallet, not yours. A launch short of funds says so (402); to see a balance, set your own Monid key
+- the "test the connection" button calls the key's identity (free): it launches nothing and does not read the balance
 
-## usage — trouver l'endpoint, lire son prix, le lancer
+## usage — find the endpoint, read its price, launch it
 
-Monid met derrière une seule clé quelque 2 000 endpoints d'environ 70 fournisseurs : recherche web, scraping, enrichissement de contacts, réseaux sociaux…
-- « trouve le mail pro de ce profil LinkedIn » → `monid_endpoint(q="work email from a linkedin profile")` pour trouver l'endpoint, puis `monid_endpoint(op="inspect", provider=…, endpoint=…)` pour son schéma d'entrée et son prix, enfin `monid_run(provider=…, endpoint=…, query_params={…})`
-- run long (le lancement rend un run pas encore fini) → `monid_runs(op="get", run_id=…, wait_seconds=30)` jusqu'à `done: true`
-- « arrête ça » → `monid_runs(op="stop", run_id=…)` (arrête la dépense ; l'arrêt est asynchrone)
-- « qu'est-ce que j'ai lancé ? » → `monid_runs()` (du plus récent au plus ancien) — **avec ta propre clé Monid** (ou celle de ton org) : sous la clé de la plateforme, la liste est refusée
-- « combien il reste ? » → `monid_wallet()` : `balance` est le dépensable (il peut être négatif), `held` ce qui est réservé aux runs en cours — **avec ta propre clé Monid** (ou celle de ton org) : sous la clé de la plateforme, le solde est refusé
+Monid puts roughly 2,000 endpoints from about 70 providers behind a single key: web search, scraping, contact enrichment, social networks…
+- "find the work email of this LinkedIn profile" → `monid_endpoint(q="work email from a linkedin profile")` to find the endpoint, then `monid_endpoint(op="inspect", provider=…, endpoint=…)` for its input schema and price, finally `monid_run(provider=…, endpoint=…, query_params={…})`
+- long run (the launch returns a run not yet finished) → `monid_runs(op="get", run_id=…, wait_seconds=30)` until `done: true`
+- "stop that" → `monid_runs(op="stop", run_id=…)` (stops the spending; the stop is asynchronous)
+- "what have I launched?" → `monid_runs()` (newest to oldest) — **with your own Monid key** (or your org's): under the platform key, the list is refused
+- "how much is left?" → `monid_wallet()`: `balance` is the spendable amount (it can be negative), `held` what is reserved for runs in flight — **with your own Monid key** (or your org's): under the platform key, the balance is refused
 
-## note — l'entrée, le prix et ce qui est facturé
+## note — the input, the price and what is billed
 
-- l'entrée d'un run a **trois parties** — `body`, `query_params`, `path_params` — là où le schéma d'`inspect` les place, jamais à plat ; `provider` et `endpoint` passent tels que `discover` les a rendus
-- le prix qui fait foi est celui d'`inspect`. Ses types sont ouverts (à l'appel, au résultat avec frais fixe, à l'unité, par paliers, par matrice…), et les paramètres de volume (`maxItems`, `limit`) s'appliquent souvent **par requête** : trois termes × 10 résultats, c'est 30 résultats facturés
-- ⚠️ pour un prix par paliers ou par matrice, `amount` n'est qu'une base, parfois 0 sur un endpoint payant : le vrai tarif est dans `default` / `tiers` / `variants`, et un palier lu sur la sortie ne se connaît qu'après le run, donc le prix affiché est un plancher
-- ⚠️ **statut du run ≠ statut du fournisseur** : `COMPLETED` veut dire « le fournisseur a répondu », quoi qu'il ait répondu. `COMPLETED` + 404 = « rien trouvé », non facturé ; `provider_ok` le tranche pour toi — et reste vide quand Monid ne donne aucun statut du fournisseur (lis alors `next_step`)
-- `BLOCKED` = un plafond du workspace Monid (budget, nombre de runs) a refusé le run avant exécution : rien n'est facturé, et relancer bloque de nouveau tant que le plafond n'est pas changé chez Monid. `FAILED` (panne côté Monid), `TIMED_OUT` et `STOPPED` ne sont pas facturés non plus
-- ⚠️ **ne relance jamais un run dont l'issue est inconnue** : Monid n'a pas de clé d'idempotence, relancer peut payer deux fois. C'est le cas quand le lancement ne répond pas à temps — un fournisseur synchrone qui garde la connexion plus de ~35 s rend ce refus, et le run existe sans doute. Le retrouver dans `monid_runs()` demande ta propre clé Monid ; sous la clé de la plateforme, c'est un administrateur qui regarde le workspace de la plateforme
-- l'attente d'un lancement est bornée (40 s au plus, ~55 s en délais par socket — tant que la connexion s'établit du premier coup : chaque adresse injoignable ajoute jusqu'à 10 s, et la résolution DNS n'est pas bornée) : au-delà, l'outil rend le run en cours et la marche à suivre plutôt que de faire raccrocher le client
-- `cost_usd` est ce que Monid déclare facturé, lu dans la réponse et jamais recalculé ; il reste vide tant que le run n'est pas réglé
+- a run's input has **three parts** — `body`, `query_params`, `path_params` — where `inspect`'s schema places them, never flattened; `provider` and `endpoint` pass as `discover` returned them
+- the price that counts is the one from `inspect`. Its types are open (per call, per result with a flat fee, per unit, tiered, per matrix…), and volume parameters (`maxItems`, `limit`) often apply **per query**: three terms × 10 results is 30 billed results
+- ⚠️ for a tiered or matrix price, `amount` is only a base, sometimes 0 on a paid endpoint: the real rate is in `default` / `tiers` / `variants`, and a tier read on the output is only known after the run, so the displayed price is a floor
+- ⚠️ **run status ≠ provider status**: `COMPLETED` means "the provider answered", whatever it answered. `COMPLETED` + 404 = "nothing found", not billed; `provider_ok` settles it for you — and stays empty when Monid gives no provider status (then read `next_step`)
+- `BLOCKED` = a Monid workspace cap (budget, number of runs) refused the run before execution: nothing is billed, and relaunching blocks again until the cap is changed at Monid. `FAILED` (failure on Monid's side), `TIMED_OUT` and `STOPPED` are not billed either
+- ⚠️ **never relaunch a run whose outcome is unknown**: Monid has no idempotency key, relaunching can pay twice. That is the case when the launch does not answer in time — a synchronous provider holding the connection longer than ~35 s returns this refusal, and the run probably exists. Finding it in `monid_runs()` requires your own Monid key; under the platform key, an administrator looks at the platform's workspace
+- the wait on a launch is bounded (40 s at most, ~55 s in per-socket timeouts — as long as the connection is established on the first try: each unreachable address adds up to 10 s, and DNS resolution is not bounded): beyond that, the tool returns the run in progress and the next step rather than making the client hang up
+- `cost_usd` is what Monid declares billed, read from the response and never recomputed; it stays empty until the run is settled
 
-## note — état de vérification
+## note — verification status
 
-écrit sur le contrat OpenAPI `0.1.0` publié par Monid, et éprouvé sur un faux transport qui en rejoue les réponses (runs rendus sous un code HTTP qui recopie celui du fournisseur, enveloppe d'erreur, 202 puis relecture, 409 d'arrêt, portefeuille). **Pas encore exercé contre un vrai compte** : ni la forme exacte de `whoami`, ni le curseur de la liste des runs, ni le format réel de la clé.
+written against the OpenAPI contract `0.1.0` published by Monid, and tested on a fake transport that replays its responses (runs returned under an HTTP code copying the provider's, error envelope, 202 then re-read, stop 409, wallet). **Not yet exercised against a real account**: neither the exact shape of `whoami`, nor the cursor of the list of runs, nor the real format of the key.
 
-**hors d'atteinte ici, à dessein** : les budgets et plafonds de runs du workspace, les ressources, la gestion des clés d'API, la recharge et l'historique du portefeuille, le registre public. Les `hints` de Monid ne sont pas demandés (aucun en-tête de client n'est envoyé) et ne sont pas lus.
+**out of reach here, on purpose**: the workspace's budgets and run caps, resources, API key management, wallet top-up and history, the public registry. Monid's `hints` are not requested (no client header is sent) and are not read.

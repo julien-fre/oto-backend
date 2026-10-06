@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `pennylane`.
+"""Registry declaration of the `pennylane` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from ._model import _c
 CONNECTOR = _c(
     "pennylane", ["pennylane"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key",
-    # Le grand livre, les devis et les factures d'achat sont des domaines à eux :
-    # leur propre module, même clé et même namespace (`pennylane_*`, le gate
-    # d'activation lit le 1er token).
+    # The general ledger, quotes and supplier invoices are domains of their own:
+    # their own module, same key and same namespace (`pennylane_*`, the activation
+    # gate reads the 1st token).
     modules=("pennylane", "pennylane_ledger", "pennylane_devis", "pennylane_achats"),
-    label="Pennylane", help="compta", href="https://app.pennylane.com",
+    label="Pennylane", help="accounting", href="https://app.pennylane.com",
 )
 
 CATEGORY = "Finance"
@@ -22,10 +22,10 @@ PUBLISHER = "Pennylane"
 LOGO_DOMAIN = "pennylane.com"
 
 DESCRIPTION = (
-    "La comptabilité de l'entreprise dans Pennylane : devis, factures, clients, "
-    "fournisseurs, transactions bancaires, balance comptable, et le grand livre "
-    "— lire les écritures, en poser une, lettrer des lignes entre elles. À "
-    "distinguer de `pennylaneged`, qui donne accès au bac documentaire (GED) via "
-    "une session navigateur plutôt qu'une clé API. Les droits dépendent de la clé "
-    "posée, pas du connecteur : chaque geste demande son propre scope."
+    "The company's accounting in Pennylane: quotes, invoices, customers, "
+    "suppliers, bank transactions, trial balance, and the general ledger "
+    "— read entries, post one, letter lines with each other. To be "
+    "distinguished from `pennylaneged`, which gives access to the document store (GED) via "
+    "a browser session rather than an API key. Permissions depend on the key "
+    "set, not on the connector: each action requires its own scope."
 )

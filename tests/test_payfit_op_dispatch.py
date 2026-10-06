@@ -133,12 +133,12 @@ def test_the_french_company_is_asked_for_explicitly(client):
 # --- refus -------------------------------------------------------------------------
 
 @pytest.mark.parametrize("tool,kwargs,match", [
-    ("payfit_collaborator", {"op": "get"}, "exige `collaborator_id`"),
-    ("payfit_contract", {"op": "get"}, "exige `contract_id`"),
-    ("payfit_payslip", {}, "exige `collaborator_id`"),
-    ("payfit_payslip", {"op": "download", "collaborator_id": K}, "exige `contract_id`"),
-    ("payfit_payroll", {}, "exige `date`"),
-    ("payfit_document", {"op": "download"}, "exige `document_id`"),
+    ("payfit_collaborator", {"op": "get"}, "requires `collaborator_id`"),
+    ("payfit_contract", {"op": "get"}, "requires `contract_id`"),
+    ("payfit_payslip", {}, "requires `collaborator_id`"),
+    ("payfit_payslip", {"op": "download", "collaborator_id": K}, "requires `contract_id`"),
+    ("payfit_payroll", {}, "requires `date`"),
+    ("payfit_document", {"op": "download"}, "requires `document_id`"),
 ])
 def test_missing_required_argument_is_named(client, tool, kwargs, match):
     with pytest.raises(McpError, match=match):
@@ -163,7 +163,7 @@ def test_missing_required_argument_is_named(client, tool, kwargs, match):
     ("payfit_document", {"document_id": K}, "`document_id`"),
 ])
 def test_an_argument_the_op_does_not_use_is_refused(client, tool, kwargs, match):
-    with pytest.raises(McpError, match=f"n'utilise pas {match}"):
+    with pytest.raises(McpError, match=f"does not use {match}"):
         _tool(tool)(**kwargs)
     assert not client.method_calls
 
@@ -183,7 +183,7 @@ def test_an_argument_the_op_does_not_use_is_refused(client, tool, kwargs, match)
     ("payfit_payroll", {"op": "dsn"}),
 ])
 def test_an_op_the_api_does_not_have_is_refused(client, tool, kwargs):
-    with pytest.raises(McpError, match="inconnu"):
+    with pytest.raises(McpError, match="unknown"):
         _tool(tool)(**kwargs)
     assert not client.method_calls
 
@@ -226,7 +226,7 @@ def test_nothing_is_withheld_from_a_collaborator_any_more(client):
     client.get_collaborator.return_value = brut
     out = _tool("payfit_collaborator")(op="get", collaborator_id=K)
     assert out["collaborator"] == brut
-    assert "défaut serveur" in out["redaction"]
+    assert "server redaction default" in out["redaction"]
 
 
 def test_fields_can_only_narrow_a_page(client):
@@ -262,7 +262,7 @@ def test_an_empty_credential_never_falls_back_to_a_server_secret(monkeypatch):
     construit = []
     monkeypatch.setattr("oto.tools.payfit.PayfitClient",
                         lambda **kw: construit.append(kw))
-    with pytest.raises(McpError, match="aucune clé API posée"):
+    with pytest.raises(McpError, match="no API key set"):
         _tool("payfit_company")()
     assert not construit
 
@@ -271,7 +271,7 @@ def test_the_probe_refuses_an_empty_key():
     from oto_mcp.connectors import verify as connector_verify
     from oto_mcp.tools import payfit_garde
 
-    with pytest.raises(connector_verify.NonAutorise, match="vide"):
+    with pytest.raises(connector_verify.NonAutorise, match="empty"):
         payfit_garde.verify({"key": "  "})
 
 

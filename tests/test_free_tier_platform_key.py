@@ -47,11 +47,11 @@ def test_free_tier_quota_exceeded_raises(_no_byo_no_grant, monkeypatch):
     monkeypatch.setattr(access.db, "get_usage_today", lambda sub, p: 200)  # = rate_limit
     # Le refus nommé, pas `Exception` : une capture large passait aussi sur une base
     # absente ou un refus d'identité, sans que le quota ait été lu (#896).
-    with pytest.raises(McpError, match="Quota plateforme serper dépassé"):
+    with pytest.raises(McpError, match="Platform quota serper exceeded"):
         access.resolve_credential("serper", sub="u")
 
 
 def test_free_tier_absent_platform_key_raises(_no_byo_no_grant, monkeypatch):
     # platform_key_open mais AUCUNE instance plateforme (fixture: list_platform_instances=[]).
-    with pytest.raises(McpError, match="Aucune clé `serper` configurée"):
+    with pytest.raises(McpError, match="No `serper` key configured"):
         access.resolve_credential("serper", sub="u")

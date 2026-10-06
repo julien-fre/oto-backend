@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `frenchtech`.
+"""Registry declaration of the `frenchtech` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ from ._model import _c
 
 CONNECTOR = _c(
     "frenchtech", ["frenchtech"], secret_kind="none",
-    label="French Tech", help="annuaire écosystème d'une capitale French Tech (startups/structures/prestataires) + événements, appels à projet, financements + French Tech Central (open data, défaut Aix-Marseille)",
+    label="French Tech", help="ecosystem directory of a French Tech capital (startups/organizations/service providers) + events, calls for projects, funding + French Tech Central (open data, default Aix-Marseille)",
 )
 
 CATEGORY = "Data FR"
 PUBLISHER = "La French Tech (open data)"
 DESCRIPTION = (
-    "L'écosystème d'une capitale French Tech (défaut Aix-Marseille) : "
-    "annuaire des startups, structures et prestataires, événements, "
-    "appels à projets, financements et French Tech Central."
+    "The ecosystem of a French Tech capital (default Aix-Marseille): "
+    "directory of startups, organizations and service providers, events, "
+    "calls for projects, funding and French Tech Central."
 )
 LOGO_DOMAIN = "lafrenchtech.com"

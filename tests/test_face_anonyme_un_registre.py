@@ -144,7 +144,7 @@ def test_la_face_anonyme_n_appelle_pas_un_outil_hors_allowlist(racine):
     s = _Session(racine({"mcp_access": "anonymous"}), f"banc.mcp.{_DOMAINE}")
     rep = s.requete("tools/call", {"name": "oto_project", "arguments": {}})
     assert rep["result"] == {"content": [{"type": "text",
-                                          "text": "Outil `oto_project` inconnu."}],
+                                          "text": "Unknown tool `oto_project`."}],
                              "isError": True}, rep
 
 

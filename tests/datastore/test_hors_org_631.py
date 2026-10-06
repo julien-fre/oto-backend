@@ -171,7 +171,7 @@ def test_le_bail_localise_mais_ne_donne_aucun_droit(orgs, monkeypatch):
     monkeypatch.setattr(T, "_project_hint", lambda n: None)
     msg = _refus({"datastore": ns, "id": ligne["_id"],
                   "row": {"statut": "vole"}, "_run_id": run})
-    assert f"datastore `{ns}` inconnu" in msg, msg
+    assert f"datastore `{ns}` unknown" in msg, msg
     assert _valeur(ns_id, ligne["_id"], "statut") == "a_faire"
 
 
@@ -186,7 +186,7 @@ def test_sans_reservation_le_refus_nomme_les_deux_orgs_et_l_axe(surface):
     run = uuid.uuid4().hex
 
     msg = _refus({"datastore": ns, "row": {"siren": "999"}, "_run_id": run})
-    assert f"datastore `{ns}` inconnu" in msg, msg
+    assert f"datastore `{ns}` unknown" in msg, msg
     assert f"org {surface['travail']}" in msg and "Travail 631" in msg, msg
     assert f"org {surface['maison']}" in msg and "Maison 631" in msg, msg
     assert f"`_org={surface['travail']}`" in msg, msg
@@ -196,7 +196,7 @@ def test_un_nom_qui_n_existe_nulle_part_reste_un_refus_nu(surface):
     """On ne suggère que le tableau DEMANDÉ — pas une org au hasard."""
     msg = _refus({"datastore": "n-existe-pas-" + uuid.uuid4().hex[:6],
                   "row": {"siren": "999"}})
-    assert "inconnu" in msg and "_org=" not in msg, msg
+    assert "unknown" in msg and "_org=" not in msg, msg
 
 
 def test_avec_l_axe_org_rien_ne_change(surface):

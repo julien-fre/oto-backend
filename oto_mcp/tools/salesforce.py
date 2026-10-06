@@ -1,42 +1,42 @@
 """Salesforce — generic CRUD over sObjects (Contact, Account…) via REST + SOQL.
 
-Credential = OAuth2 Connected App à 3 secrets (client_id/client_secret/refresh_token)
-+ `login_url` non-secret (login.salesforce.com prod, test.salesforce.com sandbox, ou
-My Domain) → modèle générique multi-champs (ADR 0011), résolu par appel via
-`access.resolve_credential_fields("salesforce")`. byo_user OU byo_org (pas de quota
-plateforme : le credential EST le grant). Contrairement à Zoho, pas de table de
-région fixe : le refresh Salesforce renvoie l'`instance_url`, mis en cache en mémoire
-côté client avec l'access token.
+Credential = OAuth2 Connected App with 3 secrets (client_id/client_secret/refresh_token)
++ non-secret `login_url` (login.salesforce.com prod, test.salesforce.com sandbox, or
+My Domain) → generic multi-field model (ADR 0011), resolved per call via
+`access.resolve_credential_fields("salesforce")`. byo_user OR byo_org (no platform
+quota: the credential IS the grant). Unlike Zoho, no fixed region table: the
+Salesforce refresh returns the `instance_url`, cached in memory on the client
+side with the access token.
 
-"Companies" = l'sObject standard **Account** ; contacts = **Contact**. Surface
-générique par `sobject` (comme hubspot/zoho) plutôt que des tools contact/account
-dédiés — couvre aussi Lead/Opportunity/objets custom sans code supplémentaire.
+"Companies" = the standard **Account** sObject; contacts = **Contact**. Generic
+surface per `sobject` (like hubspot/zoho) rather than dedicated contact/account
+tools — also covers Lead/Opportunity/custom objects with no extra code.
 
-**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur salesforce)** :
-un tool par OBJET métier, le verbe en paramètre `op` — `salesforce_record`
-(list/get/create/update/delete/upsert/bulk_create/bulk_update, tous scopés par
-`sobject`), `salesforce_query` (soql/sosl) et `salesforce_note` (list/create sur
-un enregistrement). Les deux décisions de périmètre :
+**Consolidated surface (ADR 0047 §Amendment, applied to the salesforce connector)**:
+one tool per business OBJECT, the verb as an `op` parameter — `salesforce_record`
+(list/get/create/update/delete/upsert/bulk_create/bulk_update, all scoped by
+`sobject`), `salesforce_query` (soql/sosl) and `salesforce_note` (list/create on
+a record). The two scoping decisions:
 
-- **les bulk sont des `op` de `salesforce_record`**, pas un tool à part : `items`
-  est le pluriel de `data`, tout est scopé par le même `sobject`, et l'avertissement
-  « prends-moi plutôt que N create » se lit alors À CÔTÉ de `op="create"`, là où
-  l'agent le cherche. Coût réel de la fusion : deux paramètres (`items`,
-  `all_or_none`), pas une variante disjointe.
-- **`salesforce_query` porte SOQL *et* SOSL** : deux langages, mais un seul
-  paramètre, de même forme (une chaîne) et de même retour — le critère est
-  l'homogénéité des paramètres, et ici elle est totale. `op` nomme le langage.
+- **the bulk ops are `op`s of `salesforce_record`**, not a separate tool: `items`
+  is the plural of `data`, everything is scoped by the same `sobject`, and the
+  "use me instead of N creates" warning then reads NEXT TO `op="create"`, where
+  the agent looks for it. Real cost of the merge: two parameters (`items`,
+  `all_or_none`), not a disjoint variant.
+- **`salesforce_query` carries SOQL *and* SOSL**: two languages, but a single
+  parameter, of the same shape (a string) and the same return — the criterion is
+  parameter homogeneity, and here it is total. `op` names the language.
 
-`salesforce_describe` reste **SEUL** : il décrit un TYPE, pas un enregistrement ;
-sa sortie est un schéma projeté (pas des lignes), son `verbose` n'a de contrepartie
-nulle part, et c'est lui qui énumère les `fields` que les autres consomment — même
-rôle de découverte que `zoho_modules` / `gmail_list_accounts`.
+`salesforce_describe` stays **ALONE**: it describes a TYPE, not a record;
+its output is a projected schema (not rows), its `verbose` has no counterpart
+anywhere, and it is what enumerates the `fields` the others consume — same
+discovery role as `zoho_modules` / `gmail_list_accounts`.
 
-⚠️ **Ce module ÉCRIT dans le CRM du client** : `salesforce_record` op=create /
-update / delete / upsert / bulk_create / bulk_update, et `salesforce_note`
-op=create. Tous les défauts d'`op` sont des LECTURES (`salesforce_record`
-op="list", `salesforce_note` op="list", `salesforce_query` op="soql") : un appel
-sans `op` ne peut ni écrire, ni supprimer.
+⚠️ **This module WRITES to the customer's CRM**: `salesforce_record` op=create /
+update / delete / upsert / bulk_create / bulk_update, and `salesforce_note`
+op=create. All `op` defaults are READS (`salesforce_record`
+op="list", `salesforce_note` op="list", `salesforce_query` op="soql"): a call
+without `op` can neither write nor delete.
 """
 from __future__ import annotations
 
@@ -58,25 +58,25 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable qui NOMME l'op et
-    l'argument, jamais un fallback.
+    """Required argument for THIS op — an actionable error that NAMES the op and
+    the argument, never a fallback.
 
-    Une chaîne VIDE compte comme absente : `record_id=""` ne désigne aucun
-    enregistrement, et l'URL construite viserait la COLLECTION — donc un autre
-    enregistrement que celui voulu, ou une suppression qui rate sa cible."""
+    An EMPTY string counts as absent: `record_id=""` designates no
+    record, and the URL built would target the COLLECTION — hence a different
+    record than intended, or a delete that misses its target."""
     if value is None or (isinstance(value, str) and not value.strip()):
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
 def _login_url(login_url: Optional[str]) -> str:
-    """Le serveur d'auth à appeler — point de passage UNIQUE des deux chemins
-    (sonde et tools), donc l'endroit où la garde d'egress mord une seule fois.
+    """The auth server to call — the SINGLE crossing point of both paths
+    (probe and tools), hence the place where the egress guard bites exactly once.
 
-    Le défaut est une constante de ce module : rien à contrôler. Une valeur
-    SAISIE, elle, vient de la carte d'une organisation, et un `login_url` qui
-    résout vers l'intérieur enverrait le refresh token — donc un secret — vers
-    un service de la machine (`oto_mcp/egress.py`)."""
+    The default is a constant of this module: nothing to check. An ENTERED
+    value, on the other hand, comes from an organization's card, and a `login_url`
+    that resolves to the inside would send the refresh token — hence a secret — to
+    a service on the machine (`oto_mcp/egress.py`)."""
     valeur = (login_url or "").strip().rstrip("/")
     if not valeur:
         return "https://login.salesforce.com"
@@ -84,9 +84,9 @@ def _login_url(login_url: Optional[str]) -> str:
     return valeur
 
 
-# Ce qu'il faut d'un champ pour le LIRE ou l'ÉCRIRE — le reste des 57 clés que
-# Salesforce renvoie par champ (aggregatable, byteLength, compoundFieldName, mask…)
-# ne sert à personne côté agent.
+# What a field needs to be READ or WRITTEN — the rest of the 57 keys that
+# Salesforce returns per field (aggregatable, byteLength, compoundFieldName, mask…)
+# is of no use to the agent.
 _DESCRIBE_FIELD_KEYS = ("name", "label", "type", "length", "nillable",
                         "createable", "updateable", "referenceTo", "defaultValue")
 _DESCRIBE_OBJECT_KEYS = ("name", "label", "labelPlural", "custom", "createable",
@@ -94,19 +94,19 @@ _DESCRIBE_OBJECT_KEYS = ("name", "label", "labelPlural", "custom", "createable",
 
 
 def _project_describe(raw: dict) -> dict:
-    """Projection resserrée d'un describe sObject (signal #339).
+    """Tightened projection of an sObject describe (signal #339).
 
-    Le payload brut d'un Account standard fait ~220 Ko / 45 clés (127
-    childRelationships, actionOverrides, recordTypeInfos…) : trop gros pour le
-    contexte d'un agent, donc tronqué et déporté en fichier par le client — donc
-    inchaînable, alors que seuls 51 champs comptent. On garde l'objet + ses champs,
-    `verbose=True` rend le brut à qui en a besoin."""
+    The raw payload of a standard Account is ~220 KB / 45 keys (127
+    childRelationships, actionOverrides, recordTypeInfos…): too big for an
+    agent's context, so truncated and spilled to a file by the client — hence
+    unchainable, while only 51 fields matter. We keep the object + its fields,
+    `verbose=True` returns the raw payload to whoever needs it."""
     fields = []
     for f in (raw.get("fields") or []):
         out = {k: f.get(k) for k in _DESCRIBE_FIELD_KEYS if f.get(k) not in (None, [], "")}
-        out["name"] = f.get("name")          # toujours présent, même vide
-        # Un picklist n'est utile qu'en VALEURS d'API actives (l'objet complet porte
-        # label/validFor/defaultValue par entrée = 4× le poids pour rien).
+        out["name"] = f.get("name")          # always present, even if empty
+        # A picklist is only useful as active API VALUES (the full object carries
+        # label/validFor/defaultValue per entry = 4x the weight for nothing).
         picks = [p.get("value") for p in (f.get("picklistValues") or []) if p.get("active")]
         if picks:
             out["picklistValues"] = picks
@@ -115,53 +115,53 @@ def _project_describe(raw: dict) -> dict:
     obj["fields"] = fields
     obj["field_count"] = len(fields)
     obj["_note"] = ("Projection (name/label/type/length/nillable/createable/updateable/"
-                    "referenceTo/picklistValues). verbose=true pour le payload Salesforce brut.")
+                    "referenceTo/picklistValues). verbose=true for the raw Salesforce payload.")
     return obj
 
 
 def _salesforce_credential_state(fields: dict) -> status_hints.CredentialState:
-    """SOURCE UNIQUE de « ce credential Salesforce est-il utilisable ? ».
+    """SINGLE SOURCE of "is this Salesforce credential usable?".
 
-    Connexion en DEUX temps, comme Zoho : on pose la Connected App (Consumer Key +
-    Secret + Login URL), puis on consent — et c'est le consentement qui produit le
-    refresh_token. L'état intermédiaire est NORMAL, pas une panne : sans cette
-    déclaration, `api_key_save` sonderait un credential incomplet par construction,
-    refuserait la pose, et le bouton Connecter deviendrait injoignable (le blocage
-    circulaire vécu sur Zoho le 28/07). Un seul libellé, rendu tel quel par toutes
-    les surfaces."""
+    Connection in TWO steps, like Zoho: we set the Connected App (Consumer Key +
+    Secret + Login URL), then consent — and it is the consent that produces the
+    refresh_token. The intermediate state is NORMAL, not an outage: without this
+    declaration, `api_key_save` would probe a credential that is incomplete by
+    construction, refuse the save, and the Connect button would become unreachable
+    (the circular block experienced on Zoho on 28/07). A single label, rendered
+    as-is by all surfaces."""
     if (fields.get("client_id") and fields.get("client_secret")
             and not fields.get("refresh_token")):
         return status_hints.CredentialState(
             complete=False, missing=("refresh_token",),
-            next_action=("Connected App enregistrée, mais l'autorisation n'a pas "
-                         "encore été donnée — clique « Connecter » sur la fiche du "
-                         "connecteur pour ouvrir le consentement Salesforce."))
+            next_action=("Connected App registered, but authorization has not "
+                         "been given yet — click \"Connect\" on the connector's "
+                         "card to open the Salesforce consent screen."))
     return status_hints.CredentialState(complete=True)
 
 
 def _salesforce_pending_action(sub: str, org, group, entry: dict):  # noqa: ARG001
-    """Étape qui manque, pour le verdict de la fiche — le PENDANT d'affichage de
+    """Missing step, for the card's verdict — the display COUNTERPART of
     `_salesforce_credential_state`.
 
-    Les deux hooks sont nécessaires et ne servent pas au même moment : `register_state`
-    dit à la POSE si l'incomplétude est attendue (sinon la sonde refuse d'écrire),
-    celui-ci dit à la LECTURE ce qu'il reste à faire. Sans lui, la carte paraît
-    configurée — l'app est bien posée — et échoue au premier appel d'outil. Calqué sur
-    `zoho._pending_action_for` : même seam, même fail-open, même libellé unique rendu
-    tel quel par toutes les surfaces."""
+    Both hooks are necessary and serve different moments: `register_state`
+    says at SAVE time whether incompleteness is expected (otherwise the probe refuses
+    to write), this one says at READ time what is left to do. Without it, the card
+    looks configured — the app is set — and fails on the first tool call. Modeled on
+    `zoho._pending_action_for`: same seam, same fail-open, same single label rendered
+    as-is by all surfaces."""
     if entry.get("mode") == "forbidden":
-        return None   # rien de posé → le verdict « à connecter » suffit
+        return None   # nothing set → the "to connect" verdict is enough
     try:
-        # `resolve_credential(sub=…)` : le hook tourne depuis /api/me (REST), hors
-        # contexte MCP → le sub doit être EXPLICITE. `emit_on_failure=False` : sonde
-        # d'affichage, elle ne doit pas fausser le signal d'usage.
+        # `resolve_credential(sub=…)`: the hook runs from /api/me (REST), outside
+        # MCP context → the sub must be EXPLICIT. `emit_on_failure=False`: display
+        # probe, it must not skew the usage signal.
         fields = access.resolve_credential(
             "salesforce", want="byo", sub=sub, emit_on_failure=False).fields
-    # noqa: SILENT — sonde d'affichage : sans credential, pas d'action en attente à proposer
-    except Exception:  # noqa: BLE001 — fail-open, jamais /api/me en erreur
+    # noqa: SILENT — display probe: without a credential, no pending action to offer
+    except Exception:  # noqa: BLE001 — fail-open, never /api/me in error
         return None
     st = _salesforce_credential_state(fields)
-    return None if st.complete else "Autorise oto chez Salesforce"
+    return None if st.complete else "Authorize oto at Salesforce"
 
 
 status_hints.register_state("salesforce", _salesforce_credential_state)
@@ -169,96 +169,96 @@ status_hints.register("salesforce", _salesforce_pending_action)
 
 
 def _start_flow(ctx, values: dict) -> dict:
-    """Point d'entrée du flux générique — délègue au MÊME handler que la capacité
-    `me.salesforce_connect`, pour qu'il n'existe qu'une façon de démarrer.
+    """Entry point of the generic flow — delegates to the SAME handler as the
+    `me.salesforce_connect` capability, so there is only one way to start.
 
-    `app` (comme `scope`) est une clé cachée, pas un `FlowParam` déclaré : le
-    dashboard/front la passe hors formulaire (le client sait qui il est), elle ne
-    doit jamais devenir un champ visible à l'utilisateur."""
+    `app` (like `scope`) is a hidden key, not a declared `FlowParam`: the
+    dashboard/front passes it outside the form (the client knows who it is), it must
+    never become a field visible to the user."""
     from ..capabilities import salesforce_connect
     return salesforce_connect.start_for(
         ctx, (values.get("scope") or "member"), values.get("app"))
 
 
-# Le flux de consentement, déclaré comme celui de Zoho — c'est ce qui fait apparaître le
-# bouton sur la fiche, SANS que le dashboard ait à connaître le nom « salesforce ».
-# ⚠️ PAS de paramètre « Pour qui ? ». Il a existé, et c'était un pansement : la surface
-# ORG n'avait pas de bouton de connexion, donc consentir pour l'org ne pouvait se faire
-# que depuis la fiche PERSONNELLE, en le déclarant dans un menu. Le levier manquant a été
-# posé (02/08) — le sélecteur est alors devenu une question absurde : on est sur sa fiche,
-# on autorise pour soi ; on est sur la fiche de l'org, on autorise pour l'org. Le scope se
-# DÉDUIT de la surface, l'appelant le passe (`values["scope"]`), on ne le demande plus.
+# The consent flow, declared like Zoho's — this is what makes the button appear on the
+# card, WITHOUT the dashboard having to know the name "salesforce".
+# ⚠️ NO "For whom?" parameter. It existed, and it was a band-aid: the ORG surface
+# had no connect button, so consenting for the org could only be done from the PERSONAL
+# card, by declaring it in a menu. The missing lever was put in place (02/08) — the
+# selector then became an absurd question: on your own card, you authorize for yourself;
+# on the org's card, you authorize for the org. The scope is DEDUCED from the surface,
+# the caller passes it (`values["scope"]`), it is no longer asked for.
 connector_flow.declare(
     "salesforce",
     start=_start_flow,
-    label="Autoriser oto chez Salesforce",
+    label="Authorize oto at Salesforce",
     callback_path="/api/salesforce/oauth/callback",
 )
 
 
 def _sf_error_hint(exc: Exception) -> str:
-    """Traduit l'erreur OAuth Salesforce brute en message actionnable. Utilisée
-    par la sonde `_verify` (credential déjà posé) ET par le flow OAuth live
-    (`salesforce_oauth.exchange_code`, échec de l'échange authorization_code) —
-    les deux surfaces d'erreur Salesforce partagent le même vocabulaire brut,
-    donc les mêmes branches de correspondance s'appliquent.
+    """Translates the raw Salesforce OAuth error into an actionable message. Used
+    by the `_verify` probe (credential already set) AND by the live OAuth flow
+    (`salesforce_oauth.exchange_code`, authorization_code exchange failure) —
+    both Salesforce error surfaces share the same raw vocabulary,
+    so the same matching branches apply.
 
-    ⚠️ Une traduction AJOUTE, elle ne REMPLACE jamais. La version précédente
-    substituait sa supposition au dire du fournisseur : un `invalid_grant` était
-    systématiquement rendu « refresh token périmé, ou login_url incorrect », alors
-    que Salesforce disait autre chose (code d'autorisation expiré, appel depuis
-    une IP non autorisée…). Le message accusait la mauvaise pièce et envoyait
-    corriger ce qui marchait — une heure perdue le 31/07."""
+    ⚠️ A translation ADDS, it never REPLACES. The previous version
+    substituted its guess for the provider's own words: an `invalid_grant` was
+    systematically rendered as "stale refresh token, or wrong login_url", while
+    Salesforce said something else (expired authorization code, call from
+    an unauthorized IP…). The message blamed the wrong part and sent people to
+    fix what worked — an hour lost on 31/07."""
     raw = " ".join(str(exc).split())[:220]
     low = raw.lower()
     hint = _sf_hint_for(low)
-    return f"{hint} (Salesforce dit : {raw})" if hint else (
-        f"échec de connexion Salesforce : {raw}")
+    return f"{hint} (Salesforce says: {raw})" if hint else (
+        f"Salesforce connection failed: {raw}")
 
 
 def _sf_hint_for(low: str) -> str:
-    """La correspondance seule — sans le dire du fournisseur, que l'appelant joint."""
+    """The match alone — without the provider's own words, which the caller appends."""
     if "invalid_client" in low or "invalid_client_id" in low:
-        return ("client_id / client_secret incorrect — vérifie la Connected App "
-                "Salesforce (Consumer Key / Consumer Secret).")
+        return ("client_id / client_secret incorrect — check the Salesforce "
+                "Connected App (Consumer Key / Consumer Secret).")
     if "invalid_grant" in low:
-        return ("le grant a été refusé — jeton révoqué ou expiré, code d'autorisation "
-                "déjà consommé, ou appel bloqué par les restrictions IP de l'app "
-                "(le rafraîchissement part de NOTRE serveur, pas de ton navigateur). "
-                "Le motif exact est entre parenthèses ci-dessous.")
+        return ("the grant was refused — token revoked or expired, authorization code "
+                "already consumed, or call blocked by the app's IP restrictions "
+                "(the refresh comes from OUR server, not from your browser). "
+                "The exact reason is in parentheses below.")
     if "invalid_scope" in low:
-        return ("les OAuth Scopes de la Connected App n'incluent pas `api` et "
-                "`refresh_token` (ou `offline_access`) — Setup → App Manager → "
-                "ton app → Edit Policies → OAuth Scopes, puis réessaie.")
+        return ("the Connected App's OAuth Scopes don't include `api` and "
+                "`refresh_token` (or `offline_access`) — Setup → App Manager → "
+                "your app → Edit Policies → OAuth Scopes, then retry.")
     if "redirect_uri_mismatch" in low:
-        # DÉRIVÉE, jamais écrite : ce message est lu depuis la prod ET la preprod, et
-        # chacune envoie sa propre redirect_uri. Une URL en dur y désignait toujours la
-        # prod — donc un utilisateur de preprod lisait « doit être exactement <prod> »
-        # alors que son backend envoyait autre chose. Le message accusait la victime.
+        # DERIVED, never hard-coded: this message is read from prod AND preprod, and
+        # each sends its own redirect_uri. A hard-coded URL there always pointed to
+        # prod — so a preprod user read "must be exactly <prod>"
+        # while their backend sent something else. The message blamed the victim.
         from ..connectors import flow as connector_flow
-        attendue = connector_flow.callback_url("salesforce") or "l'URL affichée sur la fiche"
-        return ("Callback URL de la Connected App incorrecte — doit être exactement "
-                f"{attendue} (vérifie qu'il n'y a pas d'espace ni de slash final en trop).")
+        attendue = connector_flow.callback_url("salesforce") or "the URL shown on the card"
+        return ("Connected App Callback URL incorrect — must be exactly "
+                f"{attendue} (check there is no extra space or trailing slash).")
     return ""
 
 
 def _verify(fields: dict, config: dict | None = None,
-            instance: tuple | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
-    """Sonde en deux temps (auth PUIS accès réel) :
+            instance: tuple | None = None) -> None:  # noqa: ARG001 (config: probe contract, unused here)
+    """Two-step probe (auth THEN real access):
 
-    1. **refresh du token OAuth** : valide client_id + client_secret + refresh_token +
-       login_url d'un coup (échec → message actionnable via `_sf_error_hint`) ;
-    2. **lecture réelle** (`SELECT Id FROM Contact LIMIT 1`) : un token peut
-       authentifier mais le profil/permission set de la Connected App peut ne pas
-       donner accès à l'objet Contact — capté ici plutôt qu'au premier appel agent.
+    1. **OAuth token refresh**: validates client_id + client_secret + refresh_token +
+       login_url all at once (failure → actionable message via `_sf_error_hint`);
+    2. **real read** (`SELECT Id FROM Contact LIMIT 1`): a token can
+       authenticate but the Connected App's profile/permission set may not
+       grant access to the Contact object — caught here rather than on the first agent call.
 
-    ⚠️ **Elle n'est plus « sans effet de bord », et ne peut pas l'être.** Sous rotation
-    (RTR, imposée par Salesforce), l'étape 1 consomme le refresh token et en reçoit un
-    neuf : une sonde qui ne persiste pas ce remplaçant DÉTRUIT la connexion qu'elle
-    prétend vérifier. C'est ce qui s'est produit le 31/07 — la sonde post-écriture de
-    `persist_token` tuait le jeton 500 ms après sa pose. Elle branche donc la même
-    persistance que le chemin des outils, quand elle porte sur un credential déjà
-    stocké.
+    ⚠️ **It is no longer "side-effect free", and cannot be.** Under rotation
+    (RTR, imposed by Salesforce), step 1 consumes the refresh token and receives a
+    new one: a probe that doesn't persist this replacement DESTROYS the connection it
+    claims to verify. This is what happened on 31/07 — the post-write probe of
+    `persist_token` killed the token 500 ms after it was set. It therefore wires the
+    same persistence as the tools path, when it targets an already
+    stored credential.
     """
     from oto.tools.salesforce.client import SalesforceClient
 
@@ -267,43 +267,43 @@ def _verify(fields: dict, config: dict | None = None,
         client_secret=fields.get("client_secret"),
         refresh_token=fields.get("refresh_token"),
         login_url=_login_url(fields.get("login_url")),
-        # `instance` = la clé RÉELLEMENT sondée, fournie par l'appelant. Sans elle on
-        # ne peut que deviner via la cascade — qui désigne la plus proche, pas celle
-        # qu'on teste : un `verify level=org` chez quelqu'un qui a AUSSI une clé perso
-        # comparait le jeton d'org au jeton perso, ne reconnaissait pas, ne persistait
-        # rien, et tuait donc le jeton d'org en le rafraîchissant. Vécu 03/08.
+        # `instance` = the key ACTUALLY probed, supplied by the caller. Without it we
+        # can only guess via the cascade — which designates the nearest, not the one
+        # being tested: a `verify level=org` for someone who ALSO has a personal key
+        # compared the org token to the personal token, didn't recognize it, persisted
+        # nothing, and thus killed the org token by refreshing it. Lived 03/08.
         on_refresh=_rotation_writer_for(fields.get("refresh_token") or "", instance),
     )
     try:
         client.query("SELECT Id FROM Contact LIMIT 1")
-    except Exception as e:  # noqa: BLE001 — l'erreur provider EST le retour de la sonde
+    except Exception as e:  # noqa: BLE001 — the provider error IS the probe's return
         raise ValueError(_sf_error_hint(e)) from e
 
 
 class _Cible:
-    """L'entité sondée, sous la forme attendue par `_rotation_writer`."""
+    """The probed entity, in the shape expected by `_rotation_writer`."""
 
     def __init__(self, entity_type, entity_id, account=""):
         self.entity_type, self.entity_id, self.account = entity_type, entity_id, account
 
 
 def _rotation_writer_for(jeton_lu: str, instance: tuple | None = None):
-    """Le writer de rotation pour la SONDE.
+    """The rotation writer for the PROBE.
 
-    Quand l'appelant DIT quelle entité il teste (`instance`), on écrit là — sans
-    deviner. C'est le cas nominal, et le seul correct dès qu'il existe plusieurs clés
-    pour un même connecteur : la cascade désigne la plus PROCHE, pas celle qu'on sonde.
+    When the caller SAYS which entity it is testing (`instance`), we write there —
+    without guessing. This is the nominal case, and the only correct one as soon as
+    several keys exist for one connector: the cascade designates the NEAREST, not the one being probed.
 
-    Sinon (appelants qui ne le fournissent pas encore) on retombe sur la cascade, et
-    on ne branche l'écriture que si le credential résolu porte bien le jeton qu'on
-    s'apprête à consommer. Deux cas où l'on ne persiste rien, volontairement :
+    Otherwise (callers that don't supply it yet) we fall back to the cascade, and
+    only wire the write if the resolved credential does carry the token we are
+    about to consume. Two cases where we deliberately persist nothing:
 
-    - **sonde avant persistance** (`api_key_save`) : les champs testés sont des
-      candidats, aucune ligne ne les porte encore — il n'y a rien à mettre à jour ;
-    - **hors contexte de requête** (CLI, test) : pas d'org, donc pas de cascade.
+    - **probe before persistence** (`api_key_save`): the tested fields are
+      candidates, no row carries them yet — there is nothing to update;
+    - **outside request context** (CLI, test): no org, hence no cascade.
 
-    Dans les deux cas on retombe sur l'ancien comportement (aucune écriture), ce qui
-    est correct : on ne peut pas corrompre ce qu'on n'a pas identifié.
+    In both cases we fall back to the old behavior (no write), which
+    is correct: we can't corrupt what we haven't identified.
     """
     from .. import access
 
@@ -312,8 +312,8 @@ def _rotation_writer_for(jeton_lu: str, instance: tuple | None = None):
         return _rotation_writer(_Cible(etype, eid, reste[0] if reste else ""), jeton_lu)
     try:
         rc = access.resolve_credential("salesforce", emit_on_failure=False)
-    # noqa: SILENT — dette déclarée : le jeton rafraîchi n'est pas persisté (#424, verdict C)
-    except Exception:  # noqa: BLE001 — pas de credential résolu = rien à persister
+    # noqa: SILENT — declared debt: the refreshed token is not persisted (#424, verdict C)
+    except Exception:  # noqa: BLE001 — no credential resolved = nothing to persist
         return None
     if rc.entity_type is None or (rc.fields or {}).get("refresh_token") != jeton_lu:
         return None
@@ -321,33 +321,33 @@ def _rotation_writer_for(jeton_lu: str, instance: tuple | None = None):
 
 
 def _rotation_writer(rc, jeton_lu: str):
-    """Persiste le refresh token RENOUVELÉ, là où l'ancien a été lu.
+    """Persists the RENEWED refresh token, where the old one was read.
 
-    Salesforce impose la rotation (RTR) sur les External Client Apps : chaque
-    rafraîchissement invalide le jeton utilisé et en renvoie un neuf. Ne pas
-    l'écrire revient à révoquer la connexion au premier appel — et à la faire
-    révoquer *complètement* au second, Salesforce traitant la réutilisation d'un
-    jeton consommé comme une compromission (révocation du jeton courant ET des
-    access tokens associés).
+    Salesforce enforces rotation (RTR) on External Client Apps: each
+    refresh invalidates the token used and returns a new one. Not writing
+    it amounts to revoking the connection on the first call — and getting it
+    revoked *completely* on the second, Salesforce treating reuse of a
+    consumed token as a compromise (revocation of the current token AND of the
+    associated access tokens).
 
-    ⚠️ **Écriture conditionnelle**, pas un écrasement : on ne réécrit que si le
-    jeton stocké est toujours celui qu'on a lu. Deux appels concurrents (ou la
-    preprod, qui partage cette base avec la prod) peuvent avoir tourné entre-temps ;
-    écraser aveuglément remettrait en place un jeton déjà consommé, c'est-à-dire
-    exactement le geste que Salesforce interprète comme une attaque.
+    ⚠️ **Conditional write**, not an overwrite: we only rewrite if the
+    stored token is still the one we read. Two concurrent calls (or
+    preprod, which shares this database with prod) may have rotated in the meantime;
+    blindly overwriting would put back an already-consumed token, which is
+    exactly the gesture Salesforce interprets as an attack.
     """
     from .. import credentials_store
 
     def _write(token_data: dict) -> None:
-        # `on_refresh` n'est invoqué qu'APRÈS un refresh d'access token RÉUSSI (jamais
-        # sur échec — cf. `oto.tools.salesforce.client`) : c'est le déclencheur
-        # "refresh réussi" du démarquage (oto#25 lot b3), inconditionnel — qu'il y ait
-        # ROTATION du refresh token ou non, contrairement à la persistance ci-dessous.
+        # `on_refresh` is only invoked AFTER a SUCCESSFUL access-token refresh (never
+        # on failure — see `oto.tools.salesforce.client`): it is the
+        # "refresh succeeded" trigger of the unmarking (oto#25 lot b3), unconditional — whether or not there is
+        # ROTATION of the refresh token, unlike the persistence below.
         if rc.entity_type is not None:
             connector_health.record_health(
                 "salesforce", (rc.entity_type, rc.entity_id, rc.account), True, None)
         nouveau = token_data.get("refresh_token")
-        # Pas de rotation, ou grant plateforme (pas de ligne de coffre à réécrire).
+        # No rotation, or platform grant (no vault row to rewrite).
         if not nouveau or nouveau == jeton_lu or rc.entity_type is None:
             return
         row = credentials_store.get_credential_with_meta(
@@ -356,14 +356,14 @@ def _rotation_writer(rc, jeton_lu: str):
             return
         champs = credentials_store.unpack_secret("salesforce", row["secret"])
         if champs.get("refresh_token") != jeton_lu:
-            return  # quelqu'un d'autre a déjà tourné : sa valeur est plus récente
-        # ⚠️ `meta` DOIT être repassé. L'upsert fait `meta = EXCLUDED.meta` avec
-        # `json.dumps(meta or {})` : omettre l'argument n'est pas « ne pas toucher au
-        # meta », c'est l'ÉCRASER par {}. Comme la rotation réécrit à chaque appel
-        # d'outil, la version précédente effaçait `instance_url`/`identity_url`/
-        # `connected_at` dès le premier usage — on ne savait alors plus sur quelle org
-        # Salesforce la clé pointait. Repéré le 03/08, sur une clé qui avait tourné
-        # depuis la veille pendant qu'une clé fraîche avait encore son meta intact.
+            return  # someone else already rotated: their value is more recent
+        # ⚠️ `meta` MUST be passed again. The upsert does `meta = EXCLUDED.meta` with
+        # `json.dumps(meta or {})`: omitting the argument is not "leave the
+        # meta alone", it OVERWRITES it with {}. Since rotation rewrites on every tool
+        # call, the previous version wiped `instance_url`/`identity_url`/
+        # `connected_at` on first use — we then no longer knew which Salesforce
+        # org the key pointed to. Spotted on 03/08, on a key that had rotated
+        # since the day before while a fresh key still had its meta intact.
         credentials_store.set_credential(
             rc.entity_type, rc.entity_id, "salesforce",
             credentials_store.pack_secret("salesforce",
@@ -373,57 +373,57 @@ def _rotation_writer(rc, jeton_lu: str):
     return _write
 
 
-# sObject Collections plafonne à 200 enregistrements par appel — limite DURE
-# Salesforce (vérifiée sur la doc officielle), pas une politique oto : on la
-# fait échouer tôt côté tool plutôt que de laisser Salesforce renvoyer un 400.
+# sObject Collections caps at 200 records per call — a HARD Salesforce
+# limit (verified against the official docs), not an oto policy: we
+# fail early on the tool side rather than let Salesforce return a 400.
 _MAX_COLLECTION_RECORDS = 200
 
 
 def _validate_bulk_items(items: list) -> None:
     if not items:
-        raise _bad("items : au moins un enregistrement requis.")
+        raise _bad("items: at least one record required.")
     if len(items) > _MAX_COLLECTION_RECORDS:
         raise _bad(
-            f"{len(items)} éléments — sObject Collections plafonne à "
-            f"{_MAX_COLLECTION_RECORDS} par appel, découper en plusieurs appels."
+            f"{len(items)} items — sObject Collections caps at "
+            f"{_MAX_COLLECTION_RECORDS} per call, split into several calls."
         )
 
 
 def _validate_update_items_have_id(items: list) -> None:
     for i, item in enumerate(items):
         if not item.get("Id"):
-            raise _bad(f"items[{i}] : \"Id\" requis pour mettre à jour un enregistrement.")
+            raise _bad(f"items[{i}]: \"Id\" required to update a record.")
 
 
 def _bulk_receipt(raw: list[dict]) -> dict:
-    """Normalise la réponse sObject Collections (liste de {id, success, errors},
-    même ordre que les items envoyés) en un reçu indexé — même esprit que le
-    reçu bulk de folk_create, jamais N corps de réponse complets."""
+    """Normalizes the sObject Collections response (list of {id, success, errors},
+    same order as the items sent) into an indexed receipt — same spirit as the
+    bulk receipt of folk_create, never N full response bodies."""
     results = [{"index": i, **r} for i, r in enumerate(raw)]
     return {"total": len(raw),
             "succeeded": sum(1 for r in raw if r.get("success")),
             "results": results}
 
 
-# Ops de chaque tool, lectures d'abord. SOURCE UNIQUE : la garde d'entrée, le
-# message de refus ET l'enum du schéma (`Literal[…]` en signature) en dérivent — une
-# op ajoutée ne peut donc pas être acceptée sans être annoncée (ni annoncée sans être
-# acceptée). Le découpage read/write n'est pas décoratif : il documente ce qu'un
-# défaut d'`op` peut atteindre (jamais une écriture).
+# Ops of each tool, reads first. SINGLE SOURCE: the entry guard, the
+# refusal message AND the schema enum (`Literal[…]` in the signature) derive from it — an
+# added op therefore cannot be accepted without being announced (nor announced without being
+# accepted). The read/write split is not decorative: it documents what a
+# default `op` can reach (never a write).
 _RECORD_READ_OPS = ("list", "get")
 _RECORD_WRITE_OPS = ("create", "update", "delete", "upsert",
                      "bulk_create", "bulk_update")
 _RECORD_OPS = _RECORD_READ_OPS + _RECORD_WRITE_OPS
-_RECORD_OPS_ERROR = ("op doit être 'list', 'get', 'create', 'update', 'delete', "
-                     "'upsert', 'bulk_create' ou 'bulk_update'")
+_RECORD_OPS_ERROR = ("op must be 'list', 'get', 'create', 'update', 'delete', "
+                     "'upsert', 'bulk_create' or 'bulk_update'")
 
-_QUERY_OPS = ("soql", "sosl")            # les deux sont des LECTURES
-_QUERY_OPS_ERROR = "op doit être 'soql' ou 'sosl'"
+_QUERY_OPS = ("soql", "sosl")            # both are READS
+_QUERY_OPS_ERROR = "op must be 'soql' or 'sosl'"
 
 _NOTE_READ_OPS = ("list",)
 _NOTE_WRITE_OPS = ("create",)
 _NOTE_OPS = _NOTE_READ_OPS + _NOTE_WRITE_OPS
-_NOTE_OPS_ERROR = "op doit être 'list' ou 'create'"
+_NOTE_OPS_ERROR = "op must be 'list' or 'create'"
 
 
 def register(mcp: FastMCP) -> None:
@@ -432,11 +432,11 @@ def register(mcp: FastMCP) -> None:
     from oto.tools.salesforce.client import SalesforceClient
 
     def _client() -> tuple[SalesforceClient, "access.ResolvedCredential"]:
-        # On passe par `resolve_credential` (et non `resolve_credential_fields`) parce
-        # qu'on a besoin de l'ENTITÉ gagnante de la cascade : sous rotation, il faut
-        # réécrire le jeton renouvelé exactement là où il a été lu — clé membre, clé
-        # d'équipe ou clé d'org — sinon on le range au mauvais niveau. La même entité
-        # sert aussi à marquer une ligne rejetée (oto#25 lot b2, `rc` rendu à l'appelant).
+        # We go through `resolve_credential` (not `resolve_credential_fields`) because
+        # we need the cascade's winning ENTITY: under rotation, the renewed token must be
+        # rewritten exactly where it was read — member key, team key
+        # or org key — otherwise we file it at the wrong level. The same entity
+        # also serves to mark a rejected row (oto#25 lot b2, `rc` returned to the caller).
         rc = access.resolve_credential("salesforce")
         creds = rc.fields
         client = SalesforceClient(
@@ -450,12 +450,12 @@ def register(mcp: FastMCP) -> None:
 
     @contextmanager
     def _marks_rejection(rc):
-        """Sur `SalesforceAuthError` (refus du REFRESH — grant mort ; jamais un 401 nu
-        d'un geste applicatif sur un enregistrement précis, avec une clé par ailleurs
-        saine — cf. `oto.tools.salesforce.client`, seul point qui la lève), marque la
-        ligne DE COFFRE réellement servie rejetée (`connectors.health.mark_rejected`,
-        même garde de portée que `verify`), PUIS RE-LÈVE — marquer n'est jamais un
-        fallback qui avale l'erreur réelle (oto#25 lot b2)."""
+        """On `SalesforceAuthError` (REFRESH refusal — dead grant; never a bare 401
+        from an application gesture on a specific record, with an otherwise
+        healthy key — see `oto.tools.salesforce.client`, the only place that raises it), marks the
+        VAULT row actually served as rejected (`connectors.health.mark_rejected`,
+        same scope guard as `verify`), THEN RE-RAISES — marking is never a
+        fallback that swallows the real error (oto#25 lot b2)."""
         try:
             yield
         except SalesforceAuthError as e:
@@ -566,14 +566,14 @@ def register(mcp: FastMCP) -> None:
                 default): successes are kept, failures are reported per-record
                 below.
         """
-        # Refus AVANT toute résolution de credential : une op inconnue n'atteint
-        # jamais le client — donc jamais, par un chemin dérivé, une écriture.
+        # Refuse BEFORE any credential resolution: an unknown op never reaches
+        # the client — hence never, via a derived path, a write.
         if op not in _RECORD_OPS:
             raise _bad(_RECORD_OPS_ERROR)
         client, rc = _client()
 
         with _marks_rejection(rc):
-            # ---- lectures ------------------------------------------------------
+            # ---- reads ---------------------------------------------------------
             if op == "list":
                 return client.list_records(sobject, fields=fields, where=where,
                                            limit=limit)
@@ -581,7 +581,7 @@ def register(mcp: FastMCP) -> None:
                 return client.get_record(sobject, _need(record_id, "record_id", op),
                                          fields=fields)
 
-            # ---- écritures -----------------------------------------------------
+            # ---- writes --------------------------------------------------------
             if op == "create":
                 return client.create_record(sobject, _need(data, "data", op))
             if op == "update":
@@ -606,9 +606,9 @@ def register(mcp: FastMCP) -> None:
                 raw = client.update_records(sobject, items, all_or_none=all_or_none)
                 return _bulk_receipt(raw)
 
-            # Structurellement inatteignable (garde d'entrée ci-dessus) — filet contre
-            # un `return None` implicite si une op était ajoutée à `_RECORD_OPS` sans
-            # sa branche : mieux vaut refuser que rendre « rien » pour un succès.
+            # Structurally unreachable (entry guard above) — safety net against
+            # an implicit `return None` if an op were added to `_RECORD_OPS` without
+            # its branch: better to refuse than to return "nothing" as a success.
             raise _bad(_RECORD_OPS_ERROR)
 
     @mcp.tool()
@@ -639,7 +639,7 @@ def register(mcp: FastMCP) -> None:
                 return client.query(_need(query, "query", op))
             if op == "sosl":
                 return client.search(_need(query, "query", op))
-            raise _bad(_QUERY_OPS_ERROR)   # inatteignable, cf. salesforce_record
+            raise _bad(_QUERY_OPS_ERROR)   # unreachable, see salesforce_record
 
     @mcp.tool()
     def salesforce_note(
@@ -672,4 +672,4 @@ def register(mcp: FastMCP) -> None:
             if op == "create":
                 return client.create_note(record_id, _need(title, "title", op),
                                           _need(body, "body", op))
-            raise _bad(_NOTE_OPS_ERROR)    # inatteignable, cf. salesforce_record
+            raise _bad(_NOTE_OPS_ERROR)    # unreachable, see salesforce_record

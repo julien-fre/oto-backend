@@ -113,11 +113,11 @@ def test_exceeded_message_keeps_the_pinned_contract_and_adds_what_was_missing(
     with pytest.raises(McpError) as e:
         access.resolve._resolve_credential_impl("apollo", "auto", "u")
     msg = str(e.value)
-    assert "Quota plateforme apollo dépassé aujourd'hui (20/20)" in msg
-    assert "la clé `env`" in msg
-    assert "0 restant" in msg
-    assert "minuit" in msg
-    assert "propre clé" in msg
+    assert "Platform quota apollo exceeded today (20/20)" in msg
+    assert "for key `env`" in msg
+    assert "0 remaining" in msg
+    assert "midnight" in msg
+    assert "your own key" in msg
 
 
 # ── Un lot est vérifié pour SA taille (oto#168) ──────────────────────────────
@@ -137,11 +137,11 @@ def test_a_lot_larger_than_what_remains_is_refused_before_the_call(
     with pytest.raises(McpError) as e:
         _resolve_with(monkeypatch, used=19, units=10)
     msg = str(e.value)
-    assert "il reste 1 unité(s)" in msg
-    assert "ce lot en demande 10" in msg
+    assert "1 unit(s) left" in msg
+    assert "this batch needs 10" in msg
     assert "(19/20)" in msg
-    assert "réduis le lot" in msg
-    assert "propre clé" in msg
+    assert "reduce the batch" in msg
+    assert "your own key" in msg
 
 
 def test_a_lot_larger_than_the_WHOLE_quota_is_refused_by_its_name(
@@ -151,11 +151,11 @@ def test_a_lot_larger_than_the_WHOLE_quota_is_refused_by_its_name(
     with pytest.raises(McpError) as e:
         _resolve_with(monkeypatch, used=0, units=30)
     msg = str(e.value)
-    assert "ce lot (30) dépasse le quota TOTAL" in msg
-    assert "(20/jour)" in msg
-    assert "même à zéro utilisé" in msg
-    assert "lots de ≤ 20" in msg
-    assert "propre clé" in msg
+    assert "this batch (30) exceeds the TOTAL quota" in msg
+    assert "(20/day)" in msg
+    assert "even at zero used" in msg
+    assert "batches of ≤ 20" in msg
+    assert "your own key" in msg
     assert e.value.error.data["code"] == "platform_quota_lot_trop_grand"
 
 
@@ -176,5 +176,5 @@ def test_a_single_call_is_unchanged_by_the_lot_check(_platform_only, monkeypatch
     assert _resolve_with(monkeypatch, used=19).is_platform is True
     with pytest.raises(McpError) as e:
         _resolve_with(monkeypatch, used=20)
-    assert "dépassé aujourd'hui (20/20)" in str(e.value)
-    assert "ce lot" not in str(e.value)
+    assert "exceeded today (20/20)" in str(e.value)
+    assert "this batch" not in str(e.value)

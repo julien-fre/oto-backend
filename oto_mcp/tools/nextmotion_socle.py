@@ -1,39 +1,39 @@
-"""Nextmotion — la projection en LISTE BLANCHE de tout ce qui sort du connecteur.
+"""Nextmotion — the ALLOWLIST projection of everything that leaves the connector.
 
-Séparée des modules d'outils : c'est la seule partie qui décide ce qui SORT d'une
-ressource, donc la partie à relire quand l'API change. Chaque ressource a sa liste,
-écrite d'après la spec (lue le 2026-09-17) : un champ absent ne passe pas, y compris
-un champ que l'API ajouterait demain. Le pourquoi (données de santé, textes libres)
-est dans la docstring de `nextmotion.py`.
+Separate from the tool modules: this is the only part that decides what COMES OUT of a
+resource, hence the part to re-read when the API changes. Each resource has its list,
+written from the spec (read on 2026-09-17): a missing field does not pass, including
+a field the API would add tomorrow. The why (health data, free texts)
+is in the docstring of `nextmotion.py`.
 
-Une liste est un tuple de champs : un NOM laisse passer une valeur feuille ; une paire
-`(nom, sous_liste)` descend dans un objet ou une liste d'objets. **Une feuille ne
-transporte jamais d'objet** : si l'API y met un dict, il ne passe pas, et d'une liste
-ne passent que les scalaires — un champ non typé par la spec ne devient pas une
-échappatoire.
+A list is a tuple of fields: a NAME lets a leaf value through; a pair
+`(name, sublist)` descends into an object or a list of objects. **A leaf never
+carries an object**: if the API puts a dict there, it does not pass, and from a list
+only scalars pass — a field not typed by the spec does not become an
+escape hatch.
 
-Règles qui valent partout :
-- **hors de l'outil patient, le patient n'est servi que par son `id`** (`_PATIENT`) ;
-  son identité se lit par `nextmotion_patient` (`_PATIENT_IDENTITY` : nom, coordonnées,
-  date de naissance, âge, genre, adresse, consentements de contact, numéro, archivé),
-  jamais les commentaires du praticien, la photo ni les coordonnées GPS. Un lead sert
-  son identité de contact (nom, prénom, email, téléphone), jamais ses notes ni sa
-  référence externe ; la personne d'une demande de rendez-vous en ligne n'est pas
-  servie du tout (nom, email, téléphone, date de naissance, sexe) ;
-- **aucun texte libre sur un patient** : `notes`, `free_text`, `details` d'une ligne de
-  devis/facture, `rebate_details`, titres, sous-titres et notes d'un évènement d'agenda,
-  textes des SMS/WhatsApp de rappel, `pre_payment_message` ;
-- **aucun fichier** (photo, document PDF d'un devis ou d'une facture, pièce d'info) ;
-- **rien de médical par ricochet** : le lien d'une ligne vers le soin réalisé
-  (`treatment`), la consultation d'un parcours, la visite d'un rendez-vous, les
+Rules that hold everywhere:
+- **outside the patient tool, the patient is served only by their `id`** (`_PATIENT`);
+  their identity is read through `nextmotion_patient` (`_PATIENT_IDENTITY`: name, contact details,
+  date of birth, age, gender, address, contact consents, number, archived),
+  never the practitioner's comments, the photo or the GPS coordinates. A lead serves
+  its contact identity (last name, first name, email, phone), never its notes or its
+  external reference; the person behind an online appointment request is not
+  served at all (name, email, phone, date of birth, sex);
+- **no free text about a patient**: `notes`, `free_text`, `details` of a
+  quote/invoice line, `rebate_details`, titles, subtitles and notes of a calendar event,
+  texts of the SMS/WhatsApp reminders, `pre_payment_message`;
+- **no file** (photo, PDF document of a quote or invoice, info document);
+- **nothing medical by ricochet**: the link from a line to the treatment performed
+  (`treatment`), the consultation of a journey, the visit of an appointment, the
   questionnaires (`bolt_note`, `survey_form`).
 
-⚠️ Ce qui reste en texte : les libellés du CATALOGUE (type de visite, nom d'une ligne,
-d'un sous-tarif, `details` d'un tarif du catalogue), les noms et coordonnées
-PROFESSIONNELLES des praticiens, les étiquettes (source, statut, soin souhaité, zone
-d'un lead). Ils décrivent la prestation, le soignant ou le pipeline, pas le patient ; la
-spec ne dit pas si un libellé de ligne est éditable à la main, donc un nom saisi là par
-un praticien passerait — risque résiduel assumé, pas un oubli.
+⚠️ What remains as text: the CATALOGUE labels (visit type, line name,
+sub-pricing name, `details` of a catalogue pricing), the practitioners' PROFESSIONAL
+names and contact details, the labels (source, status, desired treatment, zone
+of a lead). They describe the service, the caregiver or the pipeline, not the patient; the
+spec does not say whether a line label can be hand-edited, so a name typed there by
+a practitioner would pass — accepted residual risk, not an oversight.
 """
 from __future__ import annotations
 
@@ -41,15 +41,15 @@ from typing import Any, Callable, Optional
 
 from .. import output_projection
 
-_WITHHELD = ("patient servi par son seul id, sans nom ni coordonnées — son identité se "
-             "lit par nextmotion_patient(op='get') ; données de santé et textes libres "
-             "retirés.")
-_IDENTITE = ("identité du patient seule : commentaires du praticien, photo, coordonnées "
-             "GPS et dossier médical retirés.")
-_TEXTES = "titres, notes et textes libres retirés."
-_PERSONNE = ("personne anonymisée : ni nom, ni email, ni téléphone, ni date de "
-             "naissance ; notes retirées.")
-_LEAD_RETIRE = "notes, textes libres et référence externe du lead retirés."
+_WITHHELD = ("patient served by their id only, without name or contact details — their identity is "
+             "read through nextmotion_patient(op='get'); health data and free texts "
+             "removed.")
+_IDENTITE = ("patient identity only: practitioner comments, photo, GPS coordinates "
+             "and medical file removed.")
+_TEXTES = "titles, notes and free texts removed."
+_PERSONNE = ("anonymised person: no name, no email, no phone, no date of "
+             "birth; notes removed.")
+_LEAD_RETIRE = "lead notes, free texts and external reference removed."
 
 _T = ("id", "created_time", "modified_time")
 _PATIENT = ("id",)
@@ -168,12 +168,12 @@ _PRODUCT = _T + ("lot_number", "expiration_date", "stock_level", "warning_level"
                  "physical_stock_level", "physical_stock_diff", "unit_price",
                  ("global_product", _GLOBAL_PRODUCT))
 _CHART = ("title", "labels", ("datasets", ("data", "color")))
-# Ni la date d'ouverture du dossier, ni l'activité photo : c'est la vie du dossier médical.
+# Neither the file's opening date nor the photo activity: that is the life of the medical file.
 _PATIENT_STATS = ("first_visit_time", "last_visit_time", "review_request_count",
                   "review_click_count", "quoted_total", "invoiced_total", "paid_total",
                   "credit_note_total", "reimbursments_total", "reimbursed_total")
-# L'identité de contact du prospect est servie (décision du 2026-10-01) ; ni ses notes
-# ni sa référence externe (un identifiant chez un tiers).
+# The prospect's contact identity is served (decision of 2026-10-01); neither their notes
+# nor their external reference (an identifier at a third party).
 _LEAD = _T + ("first_name", "last_name", "email", "phone_number", ("source", _LABEL),
               "is_done", ("desired_treatment", _LABEL),
               ("treatment_zone", _LABEL), ("status", _LABEL), "last_contact_time",
@@ -181,32 +181,32 @@ _LEAD = _T + ("first_name", "last_name", "email", "phone_number", ("source", _LA
               "scheduled_appointment_time", ("assigned_doctor", _DOCTOR_NAME),
               "follow_up_count", "messages_sent_count", "nurturing_time")
 _NAMED = _T + ("name",)
-# Métadonnées seules : le corps d'un gabarit est un objet libre, non décrit par la spec.
+# Metadata only: a template's body is a free-form object, not described by the spec.
 _COMMUNICATION_TEMPLATE = _T + ("kind", "type", "is_enabled", "is_empty",
                                 "sendgrid_template_id", "brevo_template_id")
 _DOCUMENT_TEMPLATE = _T + ("has_source", ("master", ("id", "name")),
                            ("doctor", _DOCTOR_NAME), "type", "name", "has_patient_sign",
                            "has_autocomplete_template", "has_template_text",
                            "display_in_consultations", "autoshow", "is_default", "has_slave")
-# Sans `headers` : ils portent d'ordinaire le secret du destinataire.
+# Without `headers`: they usually carry the recipient's secret.
 _WEBHOOK = _T + ("clinic_id", "action_type", "url")
 _PLACEHOLDER = ("code", "label", "required")
 _PLACEHOLDERS = ("type", ("autocomplete_list", _PLACEHOLDER), ("link_list", _PLACEHOLDER))
-# Modèle de questionnaire : métadonnées et champs de fusion, sans son corps (objet libre).
+# Questionnaire model: metadata and merge fields, without its body (free-form object).
 _SURVEY_FORM = _T + ("clinic_chain", "clinic", "type", "name",
                      ("note_tmpl", _PLACEHOLDERS[1:]),
                      ("custom_patient_fields_tmpl", _PLACEHOLDERS[1:]))
-# Sans la pièce jointe (un fichier) ni le corps des emails.
+# Without the attachment (a file) or the email bodies.
 _FOLLOW_UP_EMAIL = ("delay_seconds", "is_enabled", ("survey_form", ("id", "type", "name")))
 _POST_TREATMENT_CONFIG = _T + ("deal_lost_after_seconds",
                                ("post_follow_up_email", _FOLLOW_UP_EMAIL),
                                ("reminder_email", _FOLLOW_UP_EMAIL))
-# Un appel : ni le numéro appelé, ni les notes, la transcription, le résumé ou
-# l'enregistrement — ce qu'une personne a dit au téléphone.
+# A call: neither the number called, nor the notes, transcript, summary or
+# recording — what a person said on the phone.
 _CALL = _T + ("source", "time", "time_utc_offset", "time_utc_offset_seconds",
               ("status", _LABEL), "direction", "duration", "is_appointment_made", "is_new",
               ("patient", _PATIENT))
-# Un message envoyé : ni son destinataire (email, téléphone), ni son objet.
+# A sent message: neither its recipient (email, phone) nor its subject.
 _COMMUNICATION_RECORD = _T + ("communication_template_kind", "communication_template_type",
                               "object_type", "object_id",
                               ("events", _T + ("source", "type", "error_code", "has_error")))
@@ -214,8 +214,8 @@ _CREDIT_NOTE = _T + ("issued_time", "void_time", "invoice", ("patient", _PATIENT
                      "is_patient_deleted", ("issuer_details", _DOCTOR_NAME), "number_id",
                      "value", "vat_rate", "status", "vat_value", "vat_excl_value",
                      "can_download_document", "allow_cancel")
-# L'identité du patient, pour `nextmotion_patient` SEUL : ni `doctor_comments`, ni
-# photographie, ni latitude / longitude.
+# The patient's identity, for `nextmotion_patient` ALONE: neither `doctor_comments`, nor
+# photograph, nor latitude / longitude.
 _PATIENT_IDENTITY = _T + ("first_name", "last_name", "email", "phone_number", "birth_date",
                           "age", "gender", "postal_address", "zip_code", "city", "country",
                           "has_email_contact_consent", "has_phone_contact_consent",
@@ -251,7 +251,7 @@ def _project(value: Any, spec: tuple) -> Any:
 
 
 def _shape(spec: tuple) -> Callable[[Any], Any]:
-    """La fonction de projection d'une liste blanche (une ressource de premier niveau)."""
+    """The projection function of an allowlist (a top-level resource)."""
     def shape(obj: Any) -> Any:
         return _project(obj, spec) if isinstance(obj, dict) else obj
     return shape
@@ -265,12 +265,12 @@ _product = _shape(_PRODUCT)
 
 def _page(env: Any, key: str, shape=None, fields: Optional[list] = None,
           withheld: Optional[str] = _WITHHELD) -> dict:
-    """Une page de liste. `shape` = la liste blanche de la ressource ; `fields` = les
-    colonnes que l'appelant garde (l'`id` toujours).
+    """A list page. `shape` = the resource's allowlist; `fields` = the
+    columns the caller keeps (the `id` always).
 
-    ⚠️ `fields` s'applique APRÈS la liste blanche et ne peut que retirer : `["*"]`
-    rend la vue par défaut, jamais le brut de l'amont (aucune échappatoire vers les
-    données de santé)."""
+    ⚠️ `fields` applies AFTER the allowlist and can only remove: `["*"]`
+    returns the default view, never the raw upstream (no escape hatch to
+    health data)."""
     env = env if isinstance(env, dict) else {}
     rows = env.get("data") or []
     if shape is not None:

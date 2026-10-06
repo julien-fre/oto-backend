@@ -1,35 +1,35 @@
-"""Lucca — RH FR (lecture) : annuaire, absences, notes de frais, organisation.
+"""Lucca — FR HR (read): directory, absences, expense claims, organization.
 
-Credential = clé API statique + sous-domaine de tenant, deux secrets. Résolu
-par appel via `access.resolve_credential_fields("lucca")` — modèle générique
-multi-champs (ADR 0011), même famille que silae. byo_user : chaque
-cabinet/employeur pose sa propre clé Lucca ; ses données ne sont visibles que
-par lui.
+Credential = static API key + tenant subdomain, two secrets. Resolved
+per call via `access.resolve_credential_fields("lucca")` — generic
+multi-field model (ADR 0011), same family as silae. byo_user: each
+firm/employer sets their own Lucca key; their data is only visible to
+them.
 
-**Surface consolidée (ADR 0047 §Amendement)** : un tool par OBJET métier, le
-verbe en paramètre `op` — `lucca_employee` (list/get), `lucca_absence`
-(list/get, `date` REQUIS par Lucca sur list), `lucca_leave_request`
-(list/get), `lucca_expense_claim` (list SEUL — Lucca n'expose aucun détail
-par id sur cette ressource, cf. `oto.tools.lucca.LuccaClient`), `lucca_department`
-(list/get) et `lucca_establishment` (list SEUL, base URL et pagination
-différentes des cinq autres — cf. le client).
+**Consolidated surface (ADR 0047 §Amendment)**: one tool per business OBJECT, the
+verb as an `op` parameter — `lucca_employee` (list/get), `lucca_absence`
+(list/get, `date` REQUIRED by Lucca on list), `lucca_leave_request`
+(list/get), `lucca_expense_claim` (list ONLY — Lucca exposes no detail
+by id on this resource, see `oto.tools.lucca.LuccaClient`), `lucca_department`
+(list/get) and `lucca_establishment` (list ONLY, base URL and pagination
+different from the other five — see the client).
 
-⚠️ **Lecture seule** : le client oto-core ne porte AUCUNE écriture pour Lucca —
-rien à omettre ici, la frontière est déjà celle du client. La symétrie 1:1
-ci-dessus (un tool par ressource, aucun arbitrage sur ce qu'on expose) vaut
-TANT QUE le client amont reste en lecture seule : une première méthode
-d'écriture (poser un congé, valider une note de frais) rouvre la question de
-ce qu'on expose — la même symétrie ferait alors apparaître un tool d'écriture
-par défaut, ce qui n'est pas du même ordre qu'une lecture.
+⚠️ **Read-only**: the oto-core client carries NO write for Lucca —
+nothing to omit here, the boundary is already the client's. The 1:1 symmetry
+above (one tool per resource, no arbitration over what we expose) holds
+AS LONG AS the upstream client stays read-only: a first write
+method (posting a leave, approving an expense claim) reopens the question of
+what we expose — the same symmetry would then make a write tool appear
+by default, which is not of the same order as a read.
 
-⚠️ **Aucune politique de rédaction posée par défaut.** Le masquage de champs
-(IBAN, numéro de sécu, nom…) est disponible à la frontière des tools
-(`FieldRedactionMiddleware`, politique résolue par NAMESPACE `lucca` —
-insensible au nom des tools), mais `field_filter_defaults.SERVER_DEFAULTS` ne
-porte rien pour `lucca` : rien n'est redacté tant que l'org n'a pas posé sa
-propre politique. L'annuaire (`lucca_employee`) et les notes de frais
-(`lucca_expense_claim`) sont les deux surfaces les plus susceptibles de
-porter des données personnelles.
+⚠️ **No redaction policy set by default.** Field masking
+(IBAN, social security number, name…) is available at the tools boundary
+(`FieldRedactionMiddleware`, policy resolved by NAMESPACE `lucca` —
+insensitive to tool names), but `field_filter_defaults.SERVER_DEFAULTS` carries
+nothing for `lucca`: nothing is redacted until the org sets its
+own policy. The directory (`lucca_employee`) and the expense claims
+(`lucca_expense_claim`) are the two surfaces most likely to
+carry personal data.
 """
 from __future__ import annotations
 
@@ -46,10 +46,10 @@ from ..connectors import verify as connector_verify
 
 
 def _base_url(domain: str) -> str:
-    """L'URL que le client construira lui-même — recalculée ICI pour que la garde
-    d'egress (`oto_mcp/egress.py`) juge la VRAIE destination avant tout octet
-    réseau. `domain` vient du credential d'une org : c'est exactement le cas
-    qu'un huitième connecteur à hôte libre doit garder (`tests/test_egress_guard.py`)."""
+    """The URL the client will build itself — recomputed HERE so that the egress
+    guard (`oto_mcp/egress.py`) judges the REAL destination before any network
+    byte. `domain` comes from an org's credential: this is exactly the case
+    that an eighth free-host connector must guard (`tests/test_egress_guard.py`)."""
     return f"https://{domain}.ilucca.net"
 
 
@@ -58,40 +58,40 @@ def _bad(msg: str) -> McpError:
 
 
 def _need(value, name: str, op: str):
-    """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
+    """Required argument for THIS op — actionable error, never a fallback."""
     if value is None or value == "":
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
 def _refuse_ignored(op: str, hint: str, **provided) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention,
-    pas un détail — même raison que silae/ahrefs : un silence rendrait un
-    résultat plausible mais à côté de la demande."""
+    """A supplied argument that THIS op doesn't use is an intent error,
+    not a detail — same reason as silae/ahrefs: silence would return a
+    plausible result that is beside the request."""
     for name, value in provided.items():
         if value is not None and value != "":
-            raise _bad(f"op='{op}' n'utilise pas {name} — {hint}")
+            raise _bad(f"op='{op}' does not use {name} — {hint}")
 
 
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return f"Lucca : accès refusé (HTTP {status}) — clé API ou sous-domaine invalide."
+        return f"Lucca: access denied (HTTP {status}) — invalid API key or subdomain."
     if status == 429:
-        return "Lucca : trop de requêtes (429) — réessaie dans un instant."
+        return "Lucca: too many requests (429) — retry in a moment."
     if status in (500, 502, 503, 504):
-        return f"Lucca est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Lucca a refusé la requête (HTTP {status}) : {e.body}"
+        return f"Lucca is temporarily unavailable (HTTP {status}) — retry later."
+    return f"Lucca rejected the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » (otomata-tech/oto#69).
+    """"Test the connection" probe (otomata-tech/oto#69).
 
-    `list_departments()` : le plus petit appel du client sans paramètre
-    requis — contrairement à `list_leaves` (exige `date`) ou
-    `list_establishments` (base URL différente, pourrait être hors périmètre
-    de la clé sans que ce soit un défaut d'auth). Une liste VIDE est un état
-    normal (compte fraîchement créé), jamais un refus."""
+    `list_departments()`: the smallest client call with no required
+    parameter — unlike `list_leaves` (requires `date`) or
+    `list_establishments` (different base URL, could be outside the key's
+    scope without it being an auth fault). An EMPTY list is a
+    normal state (freshly created account), never a refusal."""
     from oto.tools.lucca import LuccaClient
     from oto.tools.common.errors import UpstreamHTTPError
 
@@ -112,10 +112,10 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> LuccaClient:
         creds = access.resolve_credential_fields("lucca")
-        # Pas de `field_filter` explicite : le défaut du client lit un fichier
-        # YAML LOCAL (~/.otomata/config.yaml) qui n'existe pas sur le serveur,
-        # donc no-op — la rédaction pour le backend passe par
-        # `FieldRedactionMiddleware` (cf. docstring de module), pas par ici.
+        # No explicit `field_filter`: the client's default reads a LOCAL YAML
+        # file (~/.otomata/config.yaml) that doesn't exist on the server,
+        # hence a no-op — redaction for the backend goes through
+        # `FieldRedactionMiddleware` (see module docstring), not here.
         egress.check_url(_base_url(creds.get("domain") or ""), connector="lucca")
         return LuccaClient(api_key=creds.get("api_key"), domain=creds.get("domain"))
 
@@ -127,7 +127,7 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
 
-    # --- Annuaire (directory) ---
+    # --- Directory ---
 
     @mcp.tool()
     def lucca_employee(
@@ -165,12 +165,12 @@ def register(mcp: FastMCP) -> None:
                 former_employees=former_employees))
             return {"employees": rows}
         if op == "get":
-            _refuse_ignored(op, "n'existe que sur op='list'",
+            _refuse_ignored(op, "only exists on op='list'",
                             mail=mail, login=login, former_employees=former_employees)
             row = _run(lambda: client.get_user(
                 _need(user_id, "user_id", op), fields=fields))
             return {"employee": row}
-        raise _bad("op doit être 'list' ou 'get'")
+        raise _bad("op must be 'list' or 'get'")
 
     # --- Absences (Timmi Absences) ---
 
@@ -211,7 +211,7 @@ def register(mcp: FastMCP) -> None:
         client = _client()
 
         if op == "list":
-            _refuse_ignored(op, "n'existe que sur op='get'", leave_id=leave_id)
+            _refuse_ignored(op, "only exists on op='get'", leave_id=leave_id)
             rows = _run(lambda: client.list_leaves(
                 _need(date, "date", op), offset=offset, limit=limit,
                 owner_id=owner_id, department_id=department_id))
@@ -219,13 +219,13 @@ def register(mcp: FastMCP) -> None:
                 rows, body_fields=("comment",), fields=fields, always=("id",))
             return {"leaves": rows, **({"projection": notice} if notice else {})}
         if op == "get":
-            _refuse_ignored(op, "n'existe que sur op='list'",
+            _refuse_ignored(op, "only exists on op='list'",
                             date=date, owner_id=owner_id, department_id=department_id)
             row = _run(lambda: client.get_leave(_need(leave_id, "leave_id", op)))
             return {"leave": row}
-        raise _bad("op doit être 'list' ou 'get'")
+        raise _bad("op must be 'list' or 'get'")
 
-    # --- Demandes de congé (le workflow d'approbation, distinct des absences) ---
+    # --- Leave requests (the approval workflow, distinct from absences) ---
 
     @mcp.tool()
     def lucca_leave_request(
@@ -249,7 +249,7 @@ def register(mcp: FastMCP) -> None:
         client = _client()
 
         if op == "list":
-            _refuse_ignored(op, "n'existe que sur op='get'",
+            _refuse_ignored(op, "only exists on op='get'",
                             leave_request_id=leave_request_id)
             rows = _run(lambda: client.list_leave_requests())
             return {"leave_requests": rows}
@@ -257,9 +257,9 @@ def register(mcp: FastMCP) -> None:
             row = _run(lambda: client.get_leave_request(
                 _need(leave_request_id, "leave_request_id", op)))
             return {"leave_request": row}
-        raise _bad("op doit être 'list' ou 'get'")
+        raise _bad("op must be 'list' or 'get'")
 
-    # --- Notes de frais (Cleemy Expenses) ---
+    # --- Expense claims (Cleemy Expenses) ---
 
     @mcp.tool()
     def lucca_expense_claim(
@@ -298,7 +298,7 @@ def register(mcp: FastMCP) -> None:
             rows, body_fields=(), fields=fields, always=("id",))
         return {"expense_claims": rows, **({"projection": notice} if notice else {})}
 
-    # --- Organisation : départements ---
+    # --- Organization: departments ---
 
     @mcp.tool()
     def lucca_department(
@@ -334,7 +334,7 @@ def register(mcp: FastMCP) -> None:
         client = _client()
 
         if op == "list":
-            _refuse_ignored(op, "n'existe que sur op='get'", department_id=department_id)
+            _refuse_ignored(op, "only exists on op='get'", department_id=department_id)
             rows = _run(lambda: client.list_departments(
                 offset=offset, limit=limit, head_id=head_id, parent_id=parent_id))
             rows, notice = output_projection.summarize(
@@ -342,14 +342,14 @@ def register(mcp: FastMCP) -> None:
                 always=("id", "name"))
             return {"departments": rows, **({"projection": notice} if notice else {})}
         if op == "get":
-            _refuse_ignored(op, "n'existe que sur op='list'",
+            _refuse_ignored(op, "only exists on op='list'",
                             head_id=head_id, parent_id=parent_id)
             row = _run(lambda: client.get_department(
                 _need(department_id, "department_id", op)))
             return {"department": row}
-        raise _bad("op doit être 'list' ou 'get'")
+        raise _bad("op must be 'list' or 'get'")
 
-    # --- Organisation : établissements ---
+    # --- Organization: establishments ---
 
     @mcp.tool()
     def lucca_establishment(

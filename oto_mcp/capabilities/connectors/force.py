@@ -1,19 +1,19 @@
-"""« Pousser à un membre » : installer un connecteur dans la boîte à outils d'UN membre.
+"""“Push to a member”: install a connector in ONE member's toolbox.
 
-ADR 0050 §E, décision Q2 du 11/09/2026 (amende l'ADR 0031, force-connecteur-par-user).
+ADR 0050 §E, decision Q2 of 11/09/2026 (amends ADR 0031, force-connector-per-user).
 
-Le geste posait une préférence de visibilité par outil (`user_enabled_tools`), que le
-régime de sélection ignore sur un connecteur non installé : en production, 18 poussées
-du 11/08 au 11/09, dont 11 visaient un membre qui n'avait pas le connecteur — rien n'est
-jamais apparu chez lui, et la réponse disait `ok`. Désormais le geste INSTALLE,
-provenance `admin`, par la fonction unique du kit (`connectors.kit.appliquer(…,
-pousser_a=sub)`) — sans toucher au kit, et avec les exceptions du membre (§E6) : une
-ligne active n'est pas réécrite ; une PAUSE ou un RETRAIT de sa part n'est jamais
-défait, et le geste est alors REFUSÉ (avec la date du retrait) plutôt que de répondre
-`ok` sur un geste qui n'a rien fait. Plus aucune préférence par outil n'est écrite.
+The gesture used to set a per-tool visibility preference (`user_enabled_tools`), which the
+selection regime ignores for a connector that isn't installed: in production, 18 pushes
+from 11/08 to 11/09, 11 of which targeted a member who didn't have the connector — nothing
+ever appeared for them, and the response said `ok`. The gesture now INSTALLS, provenance
+`admin`, through the kit's single function (`connectors.kit.appliquer(…,
+pousser_a=sub)`) — without touching the kit, and with the member's exceptions (§E6): an
+active row is not rewritten; a PAUSE or a REMOVAL by the member is never undone, and the
+gesture is then REFUSED (with the removal date) rather than answering `ok` for a gesture
+that did nothing. No per-tool preference is written any more.
 
-Installer n'est pas autoriser (§E1) : l'accès réel reste gardé à l'appel (credential).
-autz `ORG_ADMIN_OF` : l'org_admin gouverne SON org.
+Installing is not authorizing (§E1): real access stays guarded at call time (credential).
+authz `ORG_ADMIN_OF`: the org_admin governs THEIR org.
 """
 from __future__ import annotations
 
@@ -34,40 +34,40 @@ _ID_CONN = {"id": "org_id", "connector": "connector"}
 class ForceConnectorInput(BaseModel):
     org_id: int
     connector: str
-    member: str  # sub Logto OU email du membre cible
+    member: str  # Logto sub OR email of the target member
 
 
 class ForceConnectorResult(BaseModel):
-    """Le connecteur est installé et actif dans la boîte à outils du membre, pour cette
-    org — visible pour son agent à sa PROCHAINE conversation. Un geste sans effet
-    (pause ou retrait du membre) n'arrive jamais ici : il est refusé."""
-    ok: bool                                  # toujours vrai sur un 200
+    """The connector is installed and active in the member's toolbox, for this org —
+    visible to their agent at their NEXT conversation. A gesture with no effect
+    (pause or removal by the member) never gets here: it is refused."""
+    ok: bool                                  # always true on a 200
     org_id: int
     connector: str
-    # Le sub RÉSOLU du membre — l'entrée acceptait un email, la réponse ne le renvoie jamais.
+    # The member's RESOLVED sub — the input accepted an email, the response never returns it.
     member: str
-    # `installed` = posé par ce geste (provenance `admin`) ; `already_active` = il l'avait
-    # déjà, actif (sa ligne n'est pas réécrite).
+    # `installed` = placed by this gesture (provenance `admin`); `already_active` = they
+    # already had it, active (their row is not rewritten).
     result: Literal["installed", "already_active"]
-    # ALIAS déprécié (champ d'avant la décision Q2, qui comptait des préférences par
-    # outil) : le nombre d'outils du connecteur, lus du registre BOOT, que sa boîte porte
-    # désormais. `0` = registre non réchauffé (script hors serveur), pas un connecteur
-    # sans outils.
+    # Deprecated ALIAS (field from before decision Q2, which counted per-tool
+    # preferences): the number of tools of the connector, read from the BOOT registry, that
+    # their toolbox now carries. `0` = registry not warmed up (script outside the server),
+    # not a connector without tools.
     tools_forced: int
     note: str
 
 
 def _resolve_member(org_id: int, target: str) -> str:
-    """Résout le sub du membre cible (email accepté) + vérifie son appartenance à l'org."""
+    """Resolves the target member's sub (email accepted) + checks they belong to the org."""
     sub = target
     if "@" in target:
         u = db.get_user_by_email(target)
         if not u:
-            raise AuthzDenied(404, "unknown_user", f"Aucun user avec l'email `{target}`.")
+            raise AuthzDenied(404, "unknown_user", f"No user with the email `{target}`.")
         sub = u["sub"]
     if org_store.get_org_role(org_id, sub) is None:
         raise AuthzDenied(400, "user_not_in_org",
-                          f"`{target}` n'est pas membre de l'org #{org_id}.")
+                          f"`{target}` is not a member of org #{org_id}.")
     return sub
 
 
@@ -78,16 +78,16 @@ async def _force_connector(ctx: ResolvedCtx, inp: ForceConnectorInput) -> dict:
     if ch["removed_by_member"]:
         raise AuthzDenied(
             409, "removed_by_member",
-            f"Refusé, rien n'a été écrit : ce membre a retiré `{inp.connector}` lui-même le "
-            f"{ch.get('removed_at')} (UTC). La plateforme ne défait pas son geste ; s'il en "
-            f"a besoin, c'est à lui de le réinstaller.",
+            f"Refused, nothing was written: this member removed `{inp.connector}` themselves on "
+            f"{ch.get('removed_at')} (UTC). The platform does not undo their action; if they "
+            f"need it, it is up to them to reinstall it.",
             details={"removed_at": ch.get("removed_at")})
     if ch["paused"]:
         raise AuthzDenied(
             409, "paused_by_member",
-            f"Refusé, rien n'a été écrit : ce membre a `{inp.connector}` installé et l'a mis "
-            f"en pause lui-même. La plateforme ne le reprend pas à sa place ; il le reprend "
-            f"quand il veut.")
+            f"Refused, nothing was written: this member has `{inp.connector}` installed and "
+            f"paused it themselves. The platform does not resume it for them; they resume it "
+            f"whenever they want.")
     return {"ok": True, "org_id": inp.org_id, "connector": inp.connector, "member": sub,
             "result": "installed" if ch["installed"] else "already_active",
             "tools_forced": len(_connector_tools(inp.connector)), "note": out["note"]}
@@ -104,16 +104,16 @@ CAPABILITIES += [
                     "unknown or not available for your org. Not an access grant: keys and "
                     "access rules still apply at call time. Their agent sees it at their "
                     "NEXT conversation. `member` = sub or email.",
-        errors=(DeclaredError(404, "unknown_user", "aucun compte ne porte cet email"),
-                DeclaredError(400, "user_not_in_org", "la cible n'est pas membre de l'org"),
-                DeclaredError(404, "unknown_connector", "nom inconnu du registre"),
+        errors=(DeclaredError(404, "unknown_user", "no account carries this email"),
+                DeclaredError(400, "user_not_in_org", "the target is not a member of the org"),
+                DeclaredError(404, "unknown_connector", "name unknown to the registry"),
                 DeclaredError(409, "org_disabled",
-                              "connecteur non disponible pour les membres de l'org"),
-                DeclaredError(409, "platform_disabled", "connecteur coupé par la plateforme"),
+                              "connector not available to the org's members"),
+                DeclaredError(409, "platform_disabled", "connector switched off by the platform"),
                 DeclaredError(409, "removed_by_member",
-                              "le membre l'a retiré lui-même — jamais défait, rien n'est écrit"),
+                              "the member removed it themselves — never undone, nothing is written"),
                 DeclaredError(409, "paused_by_member",
-                              "le membre l'a mis en pause lui-même — rien n'est écrit"),),
+                              "the member paused it themselves — nothing is written"),),
         rest=RestBinding("POST", "/api/orgs/{id}/connectors/{connector}/force", _ID_CONN),
     ),
 ]

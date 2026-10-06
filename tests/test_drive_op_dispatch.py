@@ -282,7 +282,7 @@ def test_no_read_or_write_op_ever_deletes(client, op):
 # --- refus ---------------------------------------------------------------------
 
 def test_unknown_op_is_refused_with_the_allowed_list(client):
-    with pytest.raises(McpError, match="op doit être") as e:
+    with pytest.raises(McpError, match="op must be") as e:
         _call("drive_file", op="nope")
     msg = e.value.error.message
     for op in ("list", "metadata", "download", "export", "create_folder",
@@ -295,7 +295,7 @@ def test_unknown_op_is_refused_with_the_allowed_list(client):
 def test_sharing_verbs_are_not_ops_of_drive_file(client, op):
     """Le partage vit dans `drive_access`. Un agent qui tente `op="share"` doit se
     faire refuser — surtout pas voir sa demande retomber sur le défaut."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _call("drive_file", op=op, file_id="f1")
     _assert_untouched(client, "share", "unshare", "delete_file")
 

@@ -1,28 +1,28 @@
-"""Déclaration de registre du connecteur `minari`.
+"""Registry declaration for the `minari` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# minari : prospection téléphonique — journal d'appels transcrits (résumé IA,
-# objections détectées), listes de contacts à composer, champs personnalisés,
-# analytics d'équipe (taux de décroché, conversations, RDV pris).
-# keyed api_key (Bearer), byo-only, PAS de clé plateforme : la clé se crée dans
-# Settings → API & webhook et porte les droits de TOUTE l'entreprise — le
-# journal d'appels d'un client est le sien, une clé partagée entre orgs n'aurait
-# aucun sens (même principe que `stripe` et `fireflies`).
-# ⚠️ La portée des endpoints n'est pas uniforme côté Minari : listes et contacts
-# ne voient que la source import CSV, tandis qu'appels et analytics couvrent
-# toutes les sources (CRM inclus). Le module de tools le dit dans ses réponses,
-# c'est le piège n°1 du connecteur.
+# minari: phone prospecting — transcribed call log (AI summary, detected
+# objections), contact lists to dial, custom fields, team analytics
+# (pickup rate, conversations, meetings booked).
+# keyed api_key (Bearer), byo-only, NO platform key: the key is created in
+# Settings → API & webhook and carries the rights of the WHOLE company — a
+# customer's call log is theirs, a key shared across orgs would make no
+# sense (same principle as `stripe` and `fireflies`).
+# ⚠️ Endpoint scope is not uniform on Minari's side: lists and contacts
+# only see the CSV import source, while calls and analytics cover
+# all sources (CRM included). The tools module says so in its responses,
+# it is the connector's trap no. 1.
 CONNECTOR = _c(
     "minari", ["minari"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Minari",
-    help="prospection téléphonique — appels transcrits, objections, listes à "
-         "composer, analytics d'équipe",
+    help="phone prospecting — transcribed calls, objections, call lists, "
+         "team analytics",
     href="https://minari.ai",
 )
 
@@ -31,8 +31,8 @@ PUBLISHER = "Minari"
 LOGO_DOMAIN = "minari.ai"
 
 DESCRIPTION = (
-    "La prospection téléphonique suivie par Minari : journal d'appels "
-    "transcrits (résumé IA, objections détectées), listes de contacts à "
-    "composer, champs personnalisés, statistiques d'équipe (taux de décroché, "
-    "conversations, rendez-vous pris)."
+    "Phone prospecting tracked by Minari: transcribed call log "
+    "(AI summary, detected objections), contact lists to dial, "
+    "custom fields, team statistics (pickup rate, conversations, "
+    "meetings booked)."
 )

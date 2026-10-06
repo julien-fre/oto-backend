@@ -102,7 +102,7 @@ def test_un_400_not_enough_credits_est_quota_exhausted(outils):
         fns["serper_search"](query="acme")
     info = error_taxonomy.classify(exc.value)
     assert info.code == "quota_exhausted" and info.retryable is False
-    assert "à sec" in info.message
+    assert "out of credits" in info.message
 
 
 def test_un_402_nu_de_serper_est_quota_exhausted(outils):
@@ -203,7 +203,7 @@ def test_web_read_saute_le_cran_serper_a_sec(monkeypatch, coffre):
     finally:
         session_org.reset_call_trace(tok)
         serper._CLIENTS.clear()
-    assert "à sec" in exc.value.error.message, "le cran sauté DIT pourquoi"
+    assert "dry" in exc.value.error.message, "le cran sauté DIT pourquoi"
     assert [ligne for ligne, _ in coffre["meta"]] == [BYO]
     assert "credential_row" not in trace, (
         "retirée du relevé : un web_read réussi par un autre cran effacerait la marque")
@@ -216,9 +216,9 @@ def test_sans_cle_plateforme_le_refus_ne_propose_pas_de_pret(monkeypatch):
     monkeypatch.setattr(indices.links, "ou_poser_la_cle", lambda *a, **k: " (page X)")
     monkeypatch.setattr(indices.credentials_store, "list_platform_instances", lambda p: [])
     texte = indices._poser_ou_accorder("sub", 264, "serper")
-    assert "Pose ta propre clé (page X)" in texte
-    assert "prêter" not in texte and "grant" not in texte
-    assert "ne fournit pas de clé plateforme `serper`" in texte
+    assert "Set your own key (page X)" in texte
+    assert "lend" not in texte and "grant" not in texte
+    assert "does not provide a `serper` platform key" in texte
 
 
 def test_avec_cle_plateforme_le_refus_propose_le_pret_par_oto(monkeypatch):
@@ -227,7 +227,7 @@ def test_avec_cle_plateforme_le_refus_propose_le_pret_par_oto(monkeypatch):
     monkeypatch.setattr(indices.credentials_store, "list_platform_instances",
                         lambda p: [{"label": "defaut"}])
     texte = indices._poser_ou_accorder("sub", 264, "serper")
-    assert "admins d'oto" in texte and "prêter" in texte
+    assert "oto's admins" in texte and "lend" in texte
 
 
 def test_un_hoquet_de_base_rend_le_refus_sans_proposer_le_pret(monkeypatch):
@@ -239,4 +239,4 @@ def test_un_hoquet_de_base_rend_le_refus_sans_proposer_le_pret(monkeypatch):
 
     monkeypatch.setattr(indices.links, "ou_poser_la_cle", lambda *a, **k: "")
     monkeypatch.setattr(indices.credentials_store, "list_platform_instances", _panne)
-    assert indices._poser_ou_accorder("sub", 264, "serper") == "Pose ta propre clé."
+    assert indices._poser_ou_accorder("sub", 264, "serper") == "Set your own key."

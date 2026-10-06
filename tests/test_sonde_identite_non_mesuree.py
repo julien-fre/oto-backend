@@ -46,8 +46,8 @@ def test_sonde_en_panne_le_statut_est_dit_NON_mesure(revente, monkeypatch):
     ident = asyncio.run(I._unipile_list("u1"))[0]
     assert ident["status"] == "ok"
     assert ident["status_measured"] is False
-    assert "dernier état CONNU" in ident["status_hint"]
-    assert "mort" in ident["status_hint"], "le hint doit nommer le risque, pas le taire"
+    assert "last KNOWN state" in ident["status_hint"]
+    assert "dead" in ident["status_hint"], "le hint doit nommer le risque, pas le taire"
 
 
 def test_sonde_qui_repond_ne_dit_RIEN_de_plus(revente, monkeypatch):

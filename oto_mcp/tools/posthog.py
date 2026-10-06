@@ -1,43 +1,43 @@
-"""PostHog — analytics produit : HogQL, events, personnes, comptes, insights,
+"""PostHog — product analytics: HogQL, events, persons, accounts, insights,
 feature flags, session recordings.
 
-Wrappe `oto.tools.posthog.client.PostHogClient`. Credential à TROIS champs
-(`secret_kind="fields"`, résolu par `access.resolve_credential_fields`) :
+Wraps `oto.tools.posthog.client.PostHogClient`. Credential with THREE fields
+(`secret_kind="fields"`, resolved by `access.resolve_credential_fields`):
 
-- `api_key` — la clé **personnelle** `phx_…`. ⚠️ La clé de PROJET `phc_…`, celle
-  que PostHog met le plus en avant, est refusée par l'API de lecture ; le client
-  la rejette à la construction avec le message qui dit où prendre la bonne.
-- `host` — NON secret : `https://us.posthog.com` (défaut) ou
-  `https://eu.posthog.com`, ou une instance auto-hébergée. La région fait partie
-  de l'adresse ; une clé US est inconnue côté EU (le symptôme est un 401, pas un
-  message de région).
-- `project_id` — NON secret, facultatif : épingle la clé sur UN projet. Omis, le
-  projet est découvert depuis la clé.
+- `api_key` — the **personal** key `phx_…`. ⚠️ The PROJECT key `phc_…`, the one
+  PostHog puts forward most, is refused by the read API; the client
+  rejects it at construction with a message saying where to get the right one.
+- `host` — NOT secret: `https://us.posthog.com` (default) or
+  `https://eu.posthog.com`, or a self-hosted instance. The region is part
+  of the address; a US key is unknown on the EU side (the symptom is a 401, not a
+  region message).
+- `project_id` — NOT secret, optional: pins the key to ONE project. Omitted, the
+  project is discovered from the key.
 
-**byo-only** : ce sont les données produit du client, pas de clé oto partagée.
+**byo-only**: this is the customer's product data, there is no shared oto key.
 
-**Huit tools**, verbe en `op=` (ADR 0047). Aucun paramètre n'est retenu au
-silence (`_refuse_ignored`).
+**Eight tools**, verb in `op=` (ADR 0047). No parameter is silently
+dropped (`_refuse_ignored`).
 
-**Rien ne change le produit.** Créer ou basculer un feature flag, écrire un
-insight, supprimer une personne ou un enregistrement n'existent pas sur le
-client — pas seulement « non exposés ici ». Basculer un flag modifie le produit
-pour de vrais utilisateurs ; supprimer une personne est irréversible et
-réglementaire. La SEULE écriture est l'annotation, purement additive.
+**Nothing changes the product.** Creating or toggling a feature flag, writing an
+insight, deleting a person or a recording do not exist on the
+client — not merely "not exposed here". Toggling a flag modifies the product
+for real users; deleting a person is irreversible and
+regulated. The ONLY write is the annotation, purely additive.
 
-⚠️ **La réponse brute de `/query/` est à 93 % du bruit** : mesurée à 2 525
-caractères pour un résultat de deux cellules, dont 1 156 de `modifiers` et 510
-de SQL ClickHouse généré. `_projeter` la réduit aux champs utiles (175 car. sur
-le même appel) — sans quoi chaque requête mangerait le budget de réponse
-(cf. `docs/conventions.md`).
+⚠️ **The raw `/query/` response is 93% noise**: measured at 2,525
+characters for a two-cell result, of which 1,156 are `modifiers` and 510
+generated ClickHouse SQL. `_projeter` reduces it to the useful fields (175 chars on
+the same call) — without which every query would eat the response budget
+(see `docs/conventions.md`).
 
-**Testé en live le 2026-08-22** contre un vrai projet PostHog Cloud US
-(organisation cliente réelle) : identité, découverte de projet, HogQL,
-requêtes typées, ré-exécution d'un insight sauvegardé, schéma (156 tables,
-`events` à 52 colonnes), les 14 familles de ressources et l'écriture
-d'annotation répondent comme codé. `groups_types` rend une liste NUE (pas
-l'enveloppe `{results}`), et `/events/` comme `/persons/` ne portent PAS de
-`count` — trois formes qui ne se déduisent pas de la doc.
+**Live-tested on 2026-08-22** against a real PostHog Cloud US project
+(real customer organization): identity, project discovery, HogQL,
+typed queries, re-running a saved insight, schema (156 tables,
+`events` at 52 columns), the 14 resource families and annotation
+writing respond as coded. `groups_types` returns a BARE list (not
+the `{results}` envelope), and `/events/` like `/persons/` carry NO
+`count` — three shapes that cannot be deduced from the docs.
 """
 from __future__ import annotations
 
@@ -52,11 +52,11 @@ from ..connectors import verify as connector_verify
 
 
 def _check_host(host) -> None:
-    """Garde d'egress sur l'hôte PostHog, quand il est posé.
+    """Egress guard on the PostHog host, when set.
 
-    Vide = le SaaS, une constante de la lib. Renseigné, il désigne une instance
-    auto-hébergée — donc potentiellement un hôte du réseau interne de la
-    plateforme (`oto_mcp/egress.py`)."""
+    Empty = the SaaS, a constant of the lib. Filled in, it designates a
+    self-hosted instance — hence potentially a host on the platform's
+    internal network (`oto_mcp/egress.py`)."""
     valeur = (host or "").strip()
     if valeur:
         egress.check_url(valeur, connector="posthog", field="host")
@@ -64,8 +64,8 @@ def _check_host(host) -> None:
 
 _DEFAULT_LIMIT = 100
 
-# Les champs de la réponse `/query/` qui portent une information ; tout le reste
-# (modifiers, clickhouse, cache_key, timings…) est du diagnostic interne.
+# The fields of the `/query/` response that carry information; everything else
+# (modifiers, clickhouse, cache_key, timings…) is internal diagnostics.
 _QUERY_KEEP = ("columns", "types", "results", "hasMore", "hogql", "error")
 
 
@@ -76,17 +76,17 @@ def _bad(msg: str) -> McpError:
 def _refuse_ignored(op: str, hint: str, **provided) -> None:
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op={op!r} n'utilise pas `{name}` — {hint}")
+            raise _bad(f"op={op!r} does not use `{name}` — {hint}")
 
 
 def _projeter(reponse: Any) -> Any:
-    """Réduit une réponse `/query/` aux champs utiles (cf. docstring du module)."""
+    """Reduce a `/query/` response to the useful fields (see the module docstring)."""
     if not isinstance(reponse, dict):
         return reponse
     out = {k: reponse[k] for k in _QUERY_KEEP if k in reponse and reponse[k] is not None}
     if reponse.get("hasMore"):
-        out["note"] = ("Résultat TRONQUÉ par PostHog. Ajoute un LIMIT explicite, "
-                       "agrège côté requête, ou restreins la fenêtre.")
+        out["note"] = ("Result TRUNCATED by PostHog. Add an explicit LIMIT, "
+                       "aggregate in the query, or narrow the window.")
     return out or reponse
 
 
@@ -96,33 +96,33 @@ def _upstream_message(e) -> str:
     detail = body.get("detail") or body.get("error") or ""
     code = body.get("code")
     if code == "hogql_query_error" or status == 400:
-        # Le message de PostHog nomme le champ fautif et sa position : il est plus
-        # utile à l'agent que n'importe quelle reformulation.
+        # PostHog's message names the offending field and its position: it is more
+        # useful to the agent than any rewording.
         errs = ((body.get("extra") or {}).get("hogql_metadata") or {}).get("errors") or []
         pos = f" (position {errs[0].get('start')}-{errs[0].get('end')})" if errs else ""
-        return (f"PostHog a refusé la requête{pos} : {detail} — vérifie les noms de "
-                f"tables et de colonnes avec `posthog_schema`.")
+        return (f"PostHog refused the query{pos}: {detail} — check the table and "
+                f"column names with `posthog_schema`.")
     if status in (401, 403):
-        return (f"PostHog a rejeté la clé (HTTP {status}) : {detail} — vérifie (1) que "
-                f"c'est bien une clé PERSONNELLE `phx_…` et non une clé de projet "
-                f"`phc_…`, (2) la RÉGION configurée (us/eu — une clé d'une région est "
-                f"inconnue de l'autre), (3) les scopes de la clé.")
+        return (f"PostHog rejected the key (HTTP {status}): {detail} — check (1) that "
+                f"it is a PERSONAL `phx_…` key and not a project key "
+                f"`phc_…`, (2) the configured REGION (us/eu — a key from one region is "
+                f"unknown to the other), (3) the key's scopes.")
     if status == 404:
-        return f"PostHog : ressource introuvable — {detail}"
+        return f"PostHog: resource not found — {detail}"
     if status == 429:
-        return "PostHog : trop de requêtes (429) — réessaie dans un instant."
+        return "PostHog: too many requests (429) — retry in a moment."
     if status >= 500:
-        return f"PostHog est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"PostHog a refusé la requête (HTTP {status}) : {detail}"
+        return f"PostHog is temporarily unavailable (HTTP {status}) — retry later."
+    return f"PostHog refused the request (HTTP {status}): {detail}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » : identité → projet → requête.
+    """"Test the connection" probe: identity → project → query.
 
-    Une clé PostHog porte des SCOPES choisis à sa création : une clé sans
-    `query:read` s'authentifie parfaitement puis échoue au premier appel réel.
-    Se contenter d'un GET d'identité dirait « OK » là où l'outil phare est
-    inutilisable — d'où les trois étapes, la dernière exerçant vraiment `/query/`.
+    A PostHog key carries SCOPES chosen at creation: a key without
+    `query:read` authenticates perfectly then fails on the first real call.
+    Settling for an identity GET would say "OK" where the flagship tool is
+    unusable — hence the three steps, the last one really exercising `/query/`.
     """
     from oto.tools.posthog.client import PostHogClient
     cfg = config or {}
@@ -133,11 +133,11 @@ def _verify(fields: dict, config: dict | None = None) -> None:
     project = client.resolve_project_id()
     try:
         client.query("SELECT 1")
-    except Exception as e:  # noqa: BLE001 — le message d'exception EST le retour d'erreur
+    except Exception as e:  # noqa: BLE001 — the exception message IS the error return
         raise RuntimeError(
-            f"La clé authentifie bien et voit le projet {project}, mais ne peut pas "
-            f"exécuter de requête — il lui manque probablement le scope `query:read`. "
-            f"Détail : {e}") from e
+            f"The key authenticates fine and sees project {project}, but cannot "
+            f"run a query — it is probably missing the `query:read` scope. "
+            f"Detail: {e}") from e
 
 
 def register(mcp: FastMCP) -> None:
@@ -161,7 +161,7 @@ def register(mcp: FastMCP) -> None:
             raise _bad(_upstream_message(e))
 
     # ================================================================
-    # La requête — HogQL libre OU type nommé
+    # The query — free HogQL OR a named type
     # ================================================================
 
     @mcp.tool()
@@ -206,15 +206,15 @@ def register(mcp: FastMCP) -> None:
             project_id: target another project than the configured default.
         """
         if bool(hogql) == bool(query):
-            raise _bad("Fournis EXACTEMENT un de `hogql` (SQL libre) ou `query` (objet "
-                       "typé avec son `kind`) — pas les deux, pas aucun.")
+            raise _bad("Provide EXACTLY one of `hogql` (free SQL) or `query` (typed "
+                       "object with its `kind`) — not both, not neither.")
         client = _client()
         if hogql:
             return _run(lambda: _projeter(client.query(hogql, project_id=project_id)))
         return _run(lambda: _projeter(client.run_query(query, project_id=project_id)))
 
     # ================================================================
-    # Le vocabulaire du projet — sans quoi aucune requête n'est écrivable
+    # The project's vocabulary — without which no query can be written
     # ================================================================
 
     @mcp.tool()
@@ -247,7 +247,7 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "tables":
-            _refuse_ignored(op, "utilise op='columns' pour les colonnes d'UNE table",
+            _refuse_ignored(op, "use op='columns' for the columns of ONE table",
                             table=table, property_key=property_key, search=search)
 
             def _tables():
@@ -255,12 +255,12 @@ def register(mcp: FastMCP) -> None:
                 tables = schema.get("tables") or {}
                 return {"tables": sorted(tables),
                         "count": len(tables),
-                        "note": "Colonnes d'une table : op='columns', table='events'."}
+                        "note": "A table's columns: op='columns', table='events'."}
             return _run(_tables)
         if op == "columns":
             if not table:
-                raise _bad("op='columns' requiert `table` (ex. 'events', 'persons')")
-            _refuse_ignored(op, "ces champs ne s'appliquent pas à op='columns'",
+                raise _bad("op='columns' requires `table` (e.g. 'events', 'persons')")
+            _refuse_ignored(op, "these fields do not apply to op='columns'",
                             property_key=property_key, search=search)
 
             def _columns():
@@ -268,7 +268,7 @@ def register(mcp: FastMCP) -> None:
                 tables = schema.get("tables") or {}
                 entry = tables.get(table)
                 if entry is None:
-                    raise _bad(f"Table {table!r} inconnue de ce projet — liste-les avec "
+                    raise _bad(f"Table {table!r} is unknown to this project — list them with "
                                "op='tables'.")
                 fields = entry.get("fields") or {}
                 return {"table": table,
@@ -276,26 +276,26 @@ def register(mcp: FastMCP) -> None:
                         "count": len(fields)}
             return _run(_columns)
         if op == "events":
-            _refuse_ignored(op, "ces champs ne s'appliquent pas à op='events'",
+            _refuse_ignored(op, "these fields do not apply to op='events'",
                             table=table, property_key=property_key)
             return _run(lambda: client.list_event_definitions(
                 project_id=project_id, search=search, limit=_DEFAULT_LIMIT))
         if op == "properties":
-            _refuse_ignored(op, "ces champs ne s'appliquent pas à op='properties'",
+            _refuse_ignored(op, "these fields do not apply to op='properties'",
                             table=table, property_key=property_key)
             return _run(lambda: client.list_property_definitions(
                 project_id=project_id, search=search, limit=_DEFAULT_LIMIT))
         if op == "values":
             if not property_key:
-                raise _bad("op='values' requiert `property_key`")
-            _refuse_ignored(op, "ces champs ne s'appliquent pas à op='values'",
+                raise _bad("op='values' requires `property_key`")
+            _refuse_ignored(op, "these fields do not apply to op='values'",
                             table=table, search=search)
             return _run(lambda: client.list_property_values(
                 property_key, project_id=project_id))
-        raise _bad("op doit être 'tables', 'columns', 'events', 'properties' ou 'values'")
+        raise _bad("op must be 'tables', 'columns', 'events', 'properties' or 'values'")
 
     # ================================================================
-    # Personnes & cohortes
+    # Persons & cohorts
     # ================================================================
 
     @mcp.tool()
@@ -328,36 +328,36 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='get' pour une personne précise",
+            _refuse_ignored(op, "use op='get' for a specific person",
                             person_id=person_id)
             return _run(lambda: client.list_persons(
                 project_id=project_id, search=search, cohort=cohort_id,
                 limit=limit or _DEFAULT_LIMIT))
         if op == "cohorts":
-            _refuse_ignored(op, "la liste des cohortes ne prend pas ces filtres",
+            _refuse_ignored(op, "the cohort list does not take these filters",
                             person_id=person_id, cohort_id=cohort_id, search=search)
             return _run(lambda: client.list_cohorts(
                 project_id=project_id, limit=limit or _DEFAULT_LIMIT))
         if op == "cohort_persons":
             if not cohort_id:
-                raise _bad("op='cohort_persons' requiert `cohort_id`")
-            _refuse_ignored(op, "ces champs ne s'appliquent pas à op='cohort_persons'",
+                raise _bad("op='cohort_persons' requires `cohort_id`")
+            _refuse_ignored(op, "these fields do not apply to op='cohort_persons'",
                             person_id=person_id, search=search)
             return _run(lambda: client.list_cohort_persons(
                 cohort_id, project_id=project_id, limit=limit or _DEFAULT_LIMIT))
         if op in ("get", "activity"):
             if not person_id:
-                raise _bad(f"op={op!r} requiert `person_id`")
-            _refuse_ignored(op, "ces filtres ne s'appliquent qu'à op='list'",
+                raise _bad(f"op={op!r} requires `person_id`")
+            _refuse_ignored(op, "these filters only apply to op='list'",
                             cohort_id=cohort_id, search=search)
             if op == "get":
                 return _run(lambda: client.get_person(person_id, project_id=project_id))
             return _run(lambda: client.list_person_activity(
                 person_id, project_id=project_id, limit=limit or _DEFAULT_LIMIT))
-        raise _bad("op inconnu pour posthog_person")
+        raise _bad("unknown op for posthog_person")
 
     # ================================================================
-    # Groupes — l'analytics par COMPTE (B2B)
+    # Groups — analytics per ACCOUNT (B2B)
     # ================================================================
 
     @mcp.tool()
@@ -388,7 +388,7 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "types":
-            _refuse_ignored(op, "la liste des types ne prend pas ces filtres",
+            _refuse_ignored(op, "the type list does not take these filters",
                             group_type_index=group_type_index, group_key=group_key,
                             search=search)
 
@@ -396,26 +396,26 @@ def register(mcp: FastMCP) -> None:
                 types = client.list_group_types(project_id=project_id)
                 if not types:
                     return {"group_types": [],
-                            "note": ("Ce projet ne fait pas d'analytics de groupe : il n'y "
-                                     "a pas de niveau COMPTE ici, seulement des personnes.")}
+                            "note": ("This project does not do group analytics: there is "
+                                     "no ACCOUNT level here, only persons.")}
                 return {"group_types": types}
             return _run(_types)
         if group_type_index is None:
-            raise _bad(f"op={op!r} requiert `group_type_index` — lis-le avec op='types'")
+            raise _bad(f"op={op!r} requires `group_type_index` — read it with op='types'")
         if op == "list":
-            _refuse_ignored(op, "utilise op='find' pour un groupe précis", group_key=group_key)
+            _refuse_ignored(op, "use op='find' for a specific group", group_key=group_key)
             return _run(lambda: client.list_groups(
                 group_type_index, project_id=project_id, search=search))
         if op == "find":
             if not group_key:
-                raise _bad("op='find' requiert `group_key`")
-            _refuse_ignored(op, "op='find' cible une clé précise", search=search)
+                raise _bad("op='find' requires `group_key`")
+            _refuse_ignored(op, "op='find' targets a specific key", search=search)
             return _run(lambda: client.find_group(
                 group_type_index, group_key, project_id=project_id))
-        raise _bad("op doit être 'types', 'list' ou 'find'")
+        raise _bad("op must be 'types', 'list' or 'find'")
 
     # ================================================================
-    # Insights & dashboards — le travail déjà fait par l'équipe
+    # Insights & dashboards — the work the team has already done
     # ================================================================
 
     @mcp.tool()
@@ -452,40 +452,40 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='get' pour un insight précis",
+            _refuse_ignored(op, "use op='get' for a specific insight",
                             insight_id=insight_id, dashboard_id=dashboard_id,
                             date_from=date_from, date_to=date_to)
             return _run(lambda: client.list_insights(
                 project_id=project_id, search=search, limit=limit or _DEFAULT_LIMIT))
         if op == "dashboards":
-            _refuse_ignored(op, "la liste des tableaux de bord ne prend pas ces filtres",
+            _refuse_ignored(op, "the dashboard list does not take these filters",
                             insight_id=insight_id, dashboard_id=dashboard_id,
                             date_from=date_from, date_to=date_to)
             return _run(lambda: client.list_dashboards(
                 project_id=project_id, limit=limit or _DEFAULT_LIMIT))
         if op == "dashboard":
             if not dashboard_id:
-                raise _bad("op='dashboard' requiert `dashboard_id`")
-            _refuse_ignored(op, "ces champs ne s'appliquent pas à op='dashboard'",
+                raise _bad("op='dashboard' requires `dashboard_id`")
+            _refuse_ignored(op, "these fields do not apply to op='dashboard'",
                             insight_id=insight_id, date_from=date_from,
                             date_to=date_to, search=search)
             return _run(lambda: client.get_dashboard(dashboard_id, project_id=project_id))
         if op in ("get", "run"):
             if not insight_id:
-                raise _bad(f"op={op!r} requiert `insight_id`")
-            _refuse_ignored(op, "ces champs ne s'appliquent pas ici",
+                raise _bad(f"op={op!r} requires `insight_id`")
+            _refuse_ignored(op, "these fields do not apply here",
                             dashboard_id=dashboard_id, search=search)
             if op == "get":
-                _refuse_ignored(op, "la fenêtre ne se remplace qu'à l'exécution (op='run')",
+                _refuse_ignored(op, "the window can only be replaced at execution (op='run')",
                                 date_from=date_from, date_to=date_to)
                 return _run(lambda: client.get_insight(insight_id, project_id=project_id))
             return _run(lambda: _projeter(client.run_insight(
                 insight_id, date_from=date_from, date_to=date_to,
                 project_id=project_id)))
-        raise _bad("op inconnu pour posthog_insight")
+        raise _bad("unknown op for posthog_insight")
 
     # ================================================================
-    # Feature flags & expériences — LECTURE
+    # Feature flags & experiments — READ
     # ================================================================
 
     @mcp.tool()
@@ -511,26 +511,26 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='get' pour un flag précis",
+            _refuse_ignored(op, "use op='get' for a specific flag",
                             flag_id=flag_id, experiment_id=experiment_id)
             return _run(lambda: client.list_feature_flags(
                 project_id=project_id, limit=limit or _DEFAULT_LIMIT))
         if op == "experiments":
-            _refuse_ignored(op, "la liste des expériences ne prend pas ces filtres",
+            _refuse_ignored(op, "the experiment list does not take these filters",
                             flag_id=flag_id, experiment_id=experiment_id)
             return _run(lambda: client.list_experiments(
                 project_id=project_id, limit=limit or _DEFAULT_LIMIT))
         if op == "get":
             if not flag_id:
-                raise _bad("op='get' requiert `flag_id`")
-            _refuse_ignored(op, "op='get' cible un flag", experiment_id=experiment_id)
+                raise _bad("op='get' requires `flag_id`")
+            _refuse_ignored(op, "op='get' targets a flag", experiment_id=experiment_id)
             return _run(lambda: client.get_feature_flag(flag_id, project_id=project_id))
         if op == "experiment":
             if not experiment_id:
-                raise _bad("op='experiment' requiert `experiment_id`")
-            _refuse_ignored(op, "op='experiment' cible une expérience", flag_id=flag_id)
+                raise _bad("op='experiment' requires `experiment_id`")
+            _refuse_ignored(op, "op='experiment' targets an experiment", flag_id=flag_id)
             return _run(lambda: client.get_experiment(experiment_id, project_id=project_id))
-        raise _bad("op doit être 'list', 'get', 'experiments' ou 'experiment'")
+        raise _bad("op must be 'list', 'get', 'experiments' or 'experiment'")
 
     # ================================================================
     # Session recordings
@@ -562,22 +562,22 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "list":
-            _refuse_ignored(op, "utilise op='get' pour un enregistrement précis",
+            _refuse_ignored(op, "use op='get' for a specific recording",
                             recording_id=recording_id)
             return _run(lambda: client.list_session_recordings(
                 project_id=project_id, person_uuid=person_uuid, date_from=date_from,
                 date_to=date_to, limit=limit or _DEFAULT_LIMIT))
         if op == "get":
             if not recording_id:
-                raise _bad("op='get' requiert `recording_id`")
-            _refuse_ignored(op, "ces filtres ne s'appliquent qu'à op='list'",
+                raise _bad("op='get' requires `recording_id`")
+            _refuse_ignored(op, "these filters only apply to op='list'",
                             person_uuid=person_uuid, date_from=date_from, date_to=date_to)
             return _run(lambda: client.get_session_recording(
                 recording_id, project_id=project_id))
-        raise _bad("op doit être 'list' ou 'get'")
+        raise _bad("op must be 'list' or 'get'")
 
     # ================================================================
-    # Projet & annotations — dont la seule écriture
+    # Project & annotations — including the only write
     # ================================================================
 
     @mcp.tool()
@@ -608,7 +608,7 @@ def register(mcp: FastMCP) -> None:
         """
         client = _client()
         if op == "current":
-            _refuse_ignored(op, "op='current' ne prend pas ces champs",
+            _refuse_ignored(op, "op='current' does not take these fields",
                             content=content, date_marker=date_marker)
 
             def _current():
@@ -620,17 +620,17 @@ def register(mcp: FastMCP) -> None:
                         "host": client.host}
             return _run(_current)
         if op == "list":
-            _refuse_ignored(op, "op='list' ne prend pas ces champs",
+            _refuse_ignored(op, "op='list' does not take these fields",
                             content=content, date_marker=date_marker)
             return _run(lambda: client.list_projects())
         if op == "annotations":
-            _refuse_ignored(op, "utilise op='annotate' pour en poser une",
+            _refuse_ignored(op, "use op='annotate' to add one",
                             content=content, date_marker=date_marker)
             return _run(lambda: client.list_annotations(
                 project_id=project_id, limit=limit or _DEFAULT_LIMIT))
         if op == "annotate":
             if not content:
-                raise _bad("op='annotate' requiert `content`")
+                raise _bad("op='annotate' requires `content`")
             return _run(lambda: client.create_annotation(
                 content, date_marker=date_marker, project_id=project_id))
-        raise _bad("op doit être 'current', 'list', 'annotations' ou 'annotate'")
+        raise _bad("op must be 'current', 'list', 'annotations' or 'annotate'")

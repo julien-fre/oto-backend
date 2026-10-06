@@ -1,21 +1,21 @@
-"""SIRENE stock — accès au parquet INSEE complet via DuckDB.
+"""SIRENE stock — access to the full INSEE parquet via DuckDB.
 
-Volet « stock » du connecteur entreprises FR (`sirene`) : namespace `fr_stock_*`,
-pendant des `fr_*` live (qui frappent les APIs SIRENE/Recherche Entreprises). Le
-parquet (~2GB compressé, ~35M lignes : sièges + secondaires, actifs/fermés) est lu
-depuis l'Object Storage en httpfs (`SIRENE_STOCK_PARQUET_PATH=s3://…`, ADR 0002),
-refresh mensuel par `deploy/refresh_sirene_stock_s3.sh`.
+"Stock" side of the FR companies connector (`sirene`): `fr_stock_*` namespace,
+counterpart of the live `fr_*` tools (which hit the SIRENE/Recherche Entreprises APIs). The
+parquet (~2GB compressed, ~35M rows: headquarters + secondary, active/closed) is read
+from Object Storage over httpfs (`SIRENE_STOCK_PARQUET_PATH=s3://…`, ADR 0002),
+refreshed monthly by `deploy/refresh_sirene_stock_s3.sh`.
 
-Tools (source parquet — sans clé, exhaustif/bulk, millésime mensuel) :
-- `fr_stock_enrich(sirens=[...])` — sièges d'une LISTE en UN scan (bulk)
-- `fr_stock_siege(siren)` — siège d'un SIREN
-- `fr_stock_etablissements(siren)` — tous les établissements d'une boîte
-- `fr_stock_siret(siret)` — un établissement par SIRET
-- `fr_stock_search(...)` — recherche multi-critères (NAF, commune, enseigne…)
+Tools (parquet source — no key, exhaustive/bulk, monthly vintage):
+- `fr_stock_enrich(sirens=[...])` — headquarters of a LIST in ONE scan (bulk)
+- `fr_stock_siege(siren)` — headquarters of a SIREN
+- `fr_stock_etablissements(siren)` — all establishments of a company
+- `fr_stock_siret(siret)` — one establishment by SIRET
+- `fr_stock_search(...)` — multi-criteria search (NAF, commune, enseigne…)
 
-Cas d'usage typique : enrichissement batch de plusieurs milliers de SIRENs où
-l'API SIRENE (rate-limited) ou Recherche Entreprises (~10 req/s) sont trop
-lentes, et l'énumération exhaustive (>10k) qu'une API indexée ne permet pas.
+Typical use case: batch enrichment of several thousand SIRENs where
+the SIRENE API (rate-limited) or Recherche Entreprises (~10 req/s) are too
+slow, and exhaustive enumeration (>10k) that an indexed API does not allow.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from fastmcp import FastMCP
 
 from .lecture import LECTURE
 
-from oto_mcp.fod import client as sirene_duckdb  # ADR 0028 : scan déporté sur FOD
+from oto_mcp.fod import client as sirene_duckdb  # ADR 0028: scan offloaded to FOD
 
 
 def register(mcp: FastMCP) -> None:
@@ -104,7 +104,7 @@ def register(mcp: FastMCP) -> None:
         All filters are AND'd. Returns paginated establishments matching.
 
         Use cases:
-        - All NAF 4711F (supermarchés) in Marseille (`code_commune=13201` or `code_postal=13001`)
+        - All NAF 4711F (supermarkets) in Marseille (`code_commune=13201` or `code_postal=13001`)
         - All "Carrefour Express" branded locations (`enseigne='carrefour express'`)
         - All "Intermarché" supermarkets in a département (`enseigne='intermarché', naf='47.11F', departement='26'`)
         - **Companies of 100-499 employees HEADQUARTERED in a département**
@@ -115,9 +115,10 @@ def register(mcp: FastMCP) -> None:
             naf: APE/NAF code exact match (ex. "4711F").
             code_commune: INSEE COG code (5 digits, ex. "13201").
             code_postal: 5 digits (ex. "13001").
-            departement: 2 chars métropole (ex. "26") ou 3 chars DOM (ex. "971").
-                Match sur le préfixe du code postal — enseigne+naf+departement
-                énumère tous les sites d'une enseigne dans un département.
+            departement: 2 chars for mainland France (e.g. "26") or 3 chars for overseas
+                departments (e.g. "971"). Matches on the postal code prefix —
+                enseigne+naf+departement enumerates all sites of a brand in a
+                département.
             denomination: case-insensitive substring on denomination usuelle.
             enseigne: case-insensitive substring across enseigne 1/2/3.
             active_only: filter etatAdministratif='A' (default True).
@@ -126,7 +127,7 @@ def register(mcp: FastMCP) -> None:
                 establishments whose effectif is one of them. Codes: 00=0, 01=1-2,
                 02=3-5, 03=6-9, 11=10-19, 12=20-49, 21=50-99, 22=100-199, 31=200-249,
                 32=250-499, 41=500-999, 42=1000-1999, 51=2000-4999, 52=5000-9999,
-                53=10000+. Ex. "22,31,32" = 100-499 salariés. With sieges_only=True
+                53=10000+. Ex. "22,31,32" = 100-499 employees. With sieges_only=True
                 this filters by company size for single-site firms.
             limit: max 1000, default 100.
             offset: pagination offset.

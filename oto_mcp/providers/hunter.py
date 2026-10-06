@@ -1,7 +1,7 @@
-"""Déclaration de registre du connecteur `hunter`.
+"""Registry declaration of the `hunter` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
@@ -18,6 +18,6 @@ PUBLISHER = "Hunter.io"
 LOGO_DOMAIN = "hunter.io"
 
 DESCRIPTION = (
-    "Retrouver et vérifier des adresses email professionnelles chez Hunter.io. "
-    "Une clé plateforme gratuite est disponible, avec un quota limité par jour."
+    "Find and verify professional email addresses with Hunter.io. "
+    "A free platform key is available, with a limited daily quota."
 )

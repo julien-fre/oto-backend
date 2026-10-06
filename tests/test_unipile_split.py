@@ -173,7 +173,7 @@ def test_le_compte_garde_son_code_de_production():
     assert con.namespaces == ("unipile",)
     assert con.auth_method == "hosted"
     assert connector_flow.supports("unipile")
-    assert con.label == "Messagerie hébergée (Unipile)"
+    assert con.label == "Hosted messaging (Unipile)"
     assert con.credential_of is None
 
 

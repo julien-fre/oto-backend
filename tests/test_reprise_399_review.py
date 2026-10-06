@@ -164,7 +164,7 @@ def test_named_account_without_context_org_never_resolves_platform(monkeypatch):
     with pytest.raises(McpError) as e:
         access.resolve_credential("serper", sub="u1", account="x",
                                   emit_on_failure=False)
-    assert "introuvable" in str(e.value)
+    assert "not found" in str(e.value)
 
 
 def test_unnamed_account_without_context_org_still_reaches_platform(monkeypatch):
@@ -196,7 +196,7 @@ def test_named_account_on_member_only_connector_says_not_found(monkeypatch):
     with pytest.raises(McpError) as e:
         access.resolve_credential("planity", sub="u1", account="x",
                                   emit_on_failure=False)
-    assert "Compte `x` introuvable" in str(e.value)
+    assert "Account `x` not found" in str(e.value)
     assert "Aucune clé" not in str(e.value)
 
 
@@ -222,7 +222,7 @@ def test_member_rung_ambiguity_message_is_unchanged(monkeypatch):
                         lambda et, eid, con: rows if et == access.credentials_store.MEMBER else [])
     with pytest.raises(McpError) as e:
         access.resolve_credential("serper", sub="u1", emit_on_failure=False)
-    assert "Plusieurs comptes" in str(e.value)
+    assert "Multiple accounts" in str(e.value)
     assert "scope=" not in str(e.value)
 
 

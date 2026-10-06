@@ -169,7 +169,7 @@ def test_add_note_passes_the_body_first_then_the_target(client):
 def test_unknown_op_is_refused_with_the_allowed_list(client):
     """Une op inconnue doit lever en NOMMANT les ops valides — jamais retomber
     silencieusement sur le défaut (l'agent croirait sa demande honorée)."""
-    with pytest.raises(McpError, match="op doit être"):
+    with pytest.raises(McpError, match="op must be"):
         _tool("hubspot_object")(op="nope", object_type="contacts")
     for m in ("search", "list", "get", "create", "update", "delete",
               "associations", "add_note"):
@@ -304,7 +304,7 @@ def test_missing_scopes_is_translated_into_the_gesture_to_make(client):
     msg = e.value.error.message
     assert "tickets" in msg                     # l'objet refusé est nommé
     assert "Scopes" in msg                      # …et l'écran où le corriger
-    assert "trompeur" in msg                    # …et que le message amont ment
+    assert "misleading" in msg                   # …et que le message amont ment
     # le corps brut du fournisseur ne part plus tel quel
     assert "correlationId" not in msg
 

@@ -1,10 +1,10 @@
-"""WhatsApp — messagerie hébergée via Unipile (compte WhatsApp connecté par l'user).
+"""WhatsApp — messaging hosted via Unipile (WhatsApp account connected by the user).
 
-Ex-Baileys (self-hosted, subprocess Node.js) → remplacé par Unipile : le compte
-WhatsApp vit chez Unipile (linked-device), connecté par l'user via le hosted-auth
-(dashboard, `?channel=whatsapp`). Outil `whatsapp_chat(op=…)` dérivé de la factory
-messagerie commune (cf. `tools/unipile.register_messaging_tools`). L'engine Baileys
-reste archivé dans oto-core (`oto.tools.whatsapp`) + la CLI `oto whatsapp`.
+Formerly Baileys (self-hosted, Node.js subprocess) → replaced by Unipile: the
+WhatsApp account lives at Unipile (linked-device), connected by the user via hosted-auth
+(dashboard, `?channel=whatsapp`). `whatsapp_chat(op=…)` tool derived from the shared
+messaging factory (see `tools/unipile.register_messaging_tools`). The Baileys engine
+stays archived in oto-core (`oto.tools.whatsapp`) + the `oto whatsapp` CLI.
 """
 from __future__ import annotations
 

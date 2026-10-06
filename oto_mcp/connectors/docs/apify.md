@@ -1,21 +1,21 @@
-## prerequisite — token api apify
+## prerequisite — apify api token
 
-récupère le token API dans [Apify](https://console.apify.com/settings/integrations) (il commence par `apify_api_`), puis colle-le dans oto.
-- byo-only : les runs sont facturés sur le compte Apify de l'org
+get the API token from [Apify](https://console.apify.com/settings/integrations) (it starts with `apify_api_`), then paste it into oto.
+- byo-only: runs are billed to the org's Apify account
 
-## usage — lancer un scraper déjà écrit (les « actors »)
+## usage — run a ready-made scraper (the "actors")
 
-apify est un catalogue de scrapers prêts à l'emploi — Google Maps, LinkedIn, Instagram, Amazon, Booking, TikTok… — qu'on lance avec un JSON d'entrée et dont on lit la sortie.
-- « scrape les avis Google Maps des boulangeries de Marseille » → `apify_store_search("google maps")` pour trouver l'actor, puis `apify_run_sync` avec son input
-- « quel actor pour ce site ? » → `apify_store_search` (rend aussi le prix et la popularité de chacun)
-- « quelles options a cet actor ? » → `apify_actor` (mémoire et timeout par défaut ; les champs d'INPUT sont documentés sur sa fiche du Store)
-- run long (> 5 min) → `apify_run` puis `apify_run_status` jusqu'à `SUCCEEDED`, enfin `apify_dataset_items(defaultDatasetId)`
-- « arrête ça » → `apify_abort_run` (stoppe la facturation)
+apify is a catalog of ready-to-use scrapers — Google Maps, LinkedIn, Instagram, Amazon, Booking, TikTok… — that you launch with a JSON input and whose output you read.
+- "scrape the Google Maps reviews of bakeries in Marseille" → `apify_store_search("google maps")` to find the actor, then `apify_run_sync` with its input
+- "which actor for this site?" → `apify_store_search` (also returns each actor's price and popularity)
+- "what options does this actor have?" → `apify_actor` (default memory and timeout; the INPUT fields are documented on its Store page)
+- long run (> 5 min) → `apify_run`, then `apify_run_status` until `SUCCEEDED`, finally `apify_dataset_items(defaultDatasetId)`
+- "stop that" → `apify_abort_run` (stops billing)
 
-## note — l'identifiant, l'input et le coût
+## note — identifier, input and cost
 
-- un actor s'écrit `username/actor-name` (ce que montre le Store) ou par son id — les deux marchent, la conversion vers la forme d'URL est faite pour toi
-- `run_input` est **propre à chaque actor** : ses champs ne s'inventent pas, ils se lisent sur la fiche du Store (ex. `{"searchStringsArray": [...], "maxCrawledPlaces": 20}` pour le scraper Google Maps)
-- un run se facture à l'usage : poser `max_items` (et au besoin `max_total_charge_usd`, `timeout_secs`) au LANCEMENT est la seule protection — après, c'est consommé
-- `apify_run_sync` attend au plus 300 s ; au-delà Apify répond 408 et il faut passer par le mode asynchrone
-- les items d'un actor sont souvent très larges : `fields` / `omit` évitent de ramener des objets énormes
+- an actor is written `username/actor-name` (what the Store shows) or by its id — both work, the conversion to the URL form is done for you
+- `run_input` is **specific to each actor**: its fields are not invented, they are read on the Store page (e.g. `{"searchStringsArray": [...], "maxCrawledPlaces": 20}` for the Google Maps scraper)
+- a run is billed by usage: setting `max_items` (and if needed `max_total_charge_usd`, `timeout_secs`) at LAUNCH is the only protection — afterwards it is consumed
+- `apify_run_sync` waits at most 300 s; beyond that Apify answers 408 and you must use the asynchronous mode
+- an actor's items are often very wide: `fields` / `omit` avoid bringing back huge objects

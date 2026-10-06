@@ -1,13 +1,13 @@
-"""AI Ark — recherche société/personne B2B + enrichissement contact (LinkedIn).
+"""AI Ark — B2B company/person search + contact enrichment (LinkedIn).
 
-Connecteur classique (kind="tools", ex-mount #152→#160) sur l'API REST synchrone
-d'AI Ark (docs.ai-ark.com). Contrat LLM curé ici ; le client HTTP vit dans oto-core
-(`oto.tools.aiark.client.AiArkClient`). Cascade de clé standard
-(`resolve_api_key("aiark")` : BYO user/org > grant plateforme + quota) → mode
-plateforme possible via `record_platform_usage`.
+Classic connector (kind="tools", ex-mount #152→#160) on AI Ark's synchronous REST API
+(docs.ai-ark.com). LLM contract curated here; the HTTP client lives in oto-core
+(`oto.tools.aiark.client.AiArkClient`). Standard key cascade
+(`resolve_api_key("aiark")`: BYO user/org > platform grant + quota) → platform
+mode possible via `record_platform_usage`.
 
-v1 = endpoints SYNCHRONES seulement. Les exports/find-emails EN LOT d'AI Ark
-répondent par webhook (async) → hors périmètre (itération suivante).
+v1 = SYNCHRONOUS endpoints only. AI Ark's BULK exports/find-emails
+answer by webhook (async) → out of scope (next iteration).
 """
 from __future__ import annotations
 
@@ -24,117 +24,117 @@ from .. import access, output_projection, session_org
 from .lecture import LECTURE
 from ..connectors import verify as connector_verify
 
-# ── Vue de tri d'une page de recherche ───────────────────────────────────────────
-# Une page `size=100` rendait 2,8 à 3,2 M de caractères : au-delà du plafond d'un tool
-# result, donc un déversement en fichier + un `jq` à CHAQUE page (11 pages sur un seul run
-# de sourcing). Et un agent sans shell — client MCP nu, n8n — n'a pas cette échappatoire.
+# ── Triage view of a search page ─────────────────────────────────────────────────
+# A `size=100` page returned 2.8 to 3.2 M characters: beyond a tool result's cap,
+# hence a spill to file + a `jq` on EVERY page (11 pages in a single sourcing run).
+# And an agent without a shell — bare MCP client, n8n — has no such escape hatch.
 #
-# DENYLIST de clés nommées, jamais une allowlist : une allowlist a déjà fait disparaître
-# `liste_idcc` en silence sur `fr_get` (champ « IDCC vérifié » resté vide sur 500 lignes).
-# Une denylist ne peut escamoter qu'un champ qu'on a écrit ; un champ neuf d'AI Ark passe.
+# DENYLIST of named keys, never an allowlist: an allowlist once made
+# `liste_idcc` silently disappear on `fr_get` ("verified IDCC" field left empty on 500 rows).
+# A denylist can only hide a field we wrote down; a new AI Ark field gets through.
 #
-# Mesuré le 14/08 sur un enregistrement réel (~12 000 c.) : `position_groups` en pèse à lui
-# seul plus de la moitié — la description COMPLÈTE de chaque société où la personne est
-# passée, jusqu'au stage de 2010. Ce que le sourcing lit tient dans `profile` (nom, titre,
-# headline), `location`, `link`, `department.seniority` et l'identité de la société.
+# Measured on 14/08 on a real record (~12,000 chars): `position_groups` alone weighs
+# more than half — the FULL description of every company the person
+# went through, down to the 2010 internship. What sourcing reads fits in `profile` (name, title,
+# headline), `location`, `link`, `department.seniority` and the company's identity.
 _PERSON_DROP = ("educations", "volunteer_experiences", "awards", "skills", "languages",
                 "member_badges", "statistics", "position_groups")
-# `company` est GARDÉ (le sourcing en a besoin) mais délesté : ces blocs sont répétés à
-# l'identique sur chacune des 100 personnes d'une même société.
+# `company` is KEPT (sourcing needs it) but lightened: these blocks are repeated
+# identically on each of the 100 people of one company.
 _COMPANY_DROP = ("technologies", "keywords", "naics", "industries", "languages",
                  "last_updated")
 
-# ── Filtres qu'AI Ark ACCEPTE et n'applique JAMAIS ───────────────────────────────
-# Une clé de filtre non indexée ne fait pas 400 : l'API l'avale et rend la base ENTIÈRE,
-# triée par effectif. L'agent lit alors 72 M de sociétés en croyant lire son résultat
-# filtré — un faux, pas un échec. Vécu le 14/08 (`account.website` = finecobank.com →
-# `totalElements` 72 343 404, Tata Group et Amazon en tête de « FinecoBank »).
+# ── Filters AI Ark ACCEPTS and NEVER applies ─────────────────────────────────────
+# An unindexed filter key does not 400: the API swallows it and returns the WHOLE database,
+# sorted by headcount. The agent then reads 72 M companies believing it is reading its
+# filtered result — a false result, not a failure. Lived on 14/08 (`account.website` = finecobank.com →
+# `totalElements` 72,343,404, Tata Group and Amazon topping "FinecoBank").
 #
-# Vérifié par DIFFÉRENTIEL le 15/08/2026 (même requête `size=1` avec et sans la clé) :
-#   account.website → 72 343 404 dans les DEUX formes (liste nue ET wrapper SMART),
-#                     là où `account.domain` en liste nue rend 3.
-#   contact.title   → 8 191 335 avec et sans, au même premier id.
-# D'où le refus plutôt que l'avertissement : sur un filtre mort, tout ce qui revient est
-# faux, et rien dans la réponse ne le signale.
+# Verified by DIFFERENTIAL on 15/08/2026 (same `size=1` query with and without the key):
+#   account.website → 72,343,404 in BOTH forms (bare list AND SMART wrapper),
+#                     where `account.domain` as a bare list returns 3.
+#   contact.title   → 8,191,335 with and without, at the same first id.
+# Hence the refusal rather than the warning: on a dead filter, everything that comes back is
+# wrong, and nothing in the response says so.
 _DEAD_FILTERS: dict[str, dict[str, str]] = {
     "account": {
-        # Mesuré le 2026-09-02 (signal #642) : `account.linkedin_url` en wrapper
-        # `{"any": {"include": […]}}` rend `totalElements` 72 508 445 — la base
-        # entière, exactement comme `website`. Même pathologie, même refus.
-        "linkedin_url": 'domain, en liste nue : {"domain": {"any": {"include": '
-                        '["exemple.com"]}}} — résoudre une société par son URL '
-                        "LinkedIn n'est pas indexé chez AI Ark",
-        "website": 'domain, en liste nue : {"domain": {"any": {"include": '
-                   '["exemple.com"]}}} (le wrapper {"mode": "SMART", "content": […]} '
-                   "ne vaut que pour `name`)",
+        # Measured on 2026-09-02 (signal #642): `account.linkedin_url` in the wrapper
+        # `{"any": {"include": […]}}` returns `totalElements` 72,508,445 — the whole
+        # database, exactly like `website`. Same pathology, same refusal.
+        "linkedin_url": 'domain, as a bare list: {"domain": {"any": {"include": '
+                        '["example.com"]}}} — resolving a company by its LinkedIn '
+                        "URL is not indexed at AI Ark",
+        "website": 'domain, as a bare list: {"domain": {"any": {"include": '
+                   '["example.com"]}}} (the wrapper {"mode": "SMART", "content": […]} '
+                   "only applies to `name`)",
     },
     "contact": {
-        "title": "seniority (+ location), puis un tri des titres CÔTÉ CLIENT sur les "
-                 "pages rendues — AI Ark n'indexe pas l'intitulé de poste",
-        # Mesuré le 2026-09-03 (signal #694), deux domaines, différentiel strict :
-        # grasset.fr seul → 63 ; + `department: ["human_resources"]` → 63, les MÊMES
-        # enregistrements dans le MÊME ordre (un auteur, un romancier, un éditeur…),
-        # aucun avec `department.departments == ["human_resources"]`. Idem
-        # dargaud.com + [human_resources, finance] → 68, dont zéro RH et zéro finance.
-        # ⚠️ Le champ `department.departments` EXISTE sur les enregistrements rendus :
-        # la donnée est indexée, c'est le filtre EN ENTRÉE qui ne mord pas. Le piège
-        # est donc plus fin que pour `title` — on voit la donnée, on croit pouvoir la
-        # filtrer. Coût : 63 enregistrements facturés pour en garder zéro ou un.
-        "department": "un tri CÔTÉ CLIENT sur `department.departments` des pages "
-                      "rendues (le champ est présent sur chaque enregistrement) — "
-                      "combiné à `seniority` pour réduire la pagination",
+        "title": "seniority (+ location), then a CLIENT-SIDE sort of titles on the "
+                 "returned pages — AI Ark does not index the job title",
+        # Measured on 2026-09-03 (signal #694), two domains, strict differential:
+        # grasset.fr alone → 63; + `department: ["human_resources"]` → 63, the SAME
+        # records in the SAME order (an author, a novelist, a publisher…),
+        # none with `department.departments == ["human_resources"]`. Likewise
+        # dargaud.com + [human_resources, finance] → 68, of which zero HR and zero finance.
+        # ⚠️ The `department.departments` field EXISTS on the returned records:
+        # the data is indexed, it is the INPUT filter that does not bite. The trap
+        # is therefore subtler than for `title` — you see the data, you think you can
+        # filter on it. Cost: 63 records billed to keep zero or one.
+        "department": "a CLIENT-SIDE sort on `department.departments` of the returned "
+                      "pages (the field is present on every record) — "
+                      "combined with `seniority` to reduce pagination",
     },
 }
 
 
-# ── … et ceux qui ne sont morts QUE sur le point d'accès SOCIÉTÉS ────────────────
-# Mesuré le 23/09/2026 par différentiel `size=1` (op="companies", `location` France +
-# `employeeSize` 11-50), otomata-tech/oto#207 :
-#   témoin sans `keywords`                                   → 131 281
-#   + `keywords: ["packaging"]`                              → 131 281
-#   + `keywords: {"any": {"include": ["packaging"]}}`        → 131 281
-#   + `keywords: {"any": {"include": {"mode": "SMART", …}}}` → 131 281
-# Les QUATRE au même premier id. Aucune forme ne mord (même constat que le retour du
-# 12/09, 81 063 partout sur un autre pays). Refus limité à `op="companies"` : sur la
-# recherche de PERSONNES, `account.keywords` n'a pas été mesuré — le refuser là
-# serait affirmer ce qu'on ne sait pas.
+# ── … and those that are dead ONLY on the COMPANIES endpoint ─────────────────────
+# Measured on 23/09/2026 by `size=1` differential (op="companies", `location` France +
+# `employeeSize` 11-50), otomata-tech/oto#207:
+#   control without `keywords`                               → 131,281
+#   + `keywords: ["packaging"]`                              → 131,281
+#   + `keywords: {"any": {"include": ["packaging"]}}`        → 131,281
+#   + `keywords: {"any": {"include": {"mode": "SMART", …}}}` → 131,281
+# All FOUR at the same first id. No form bites (same finding as the 12/09 report,
+# 81,063 everywhere on another country). Refusal limited to `op="companies"`: on the
+# PEOPLE search, `account.keywords` was not measured — refusing it there
+# would be asserting what we do not know.
 _DEAD_COMPANY_FILTERS: dict[str, dict[str, str]] = {
     "account": {
-        "keywords": "`lookalike_domains` (jusqu'à 5 sociétés du secteur visé), ou "
-                    "un tri CÔTÉ CLIENT sur le champ `keywords` des enregistrements "
-                    "rendus avec `full=True` (la vue par défaut le retire) — en "
-                    "resserrant d'abord par `location` et `employeeSize`, qui, eux, "
-                    "mordent",
+        "keywords": "`lookalike_domains` (up to 5 companies of the targeted sector), or "
+                    "a CLIENT-SIDE sort on the `keywords` field of the records "
+                    "returned with `full=True` (the default view removes it) — "
+                    "narrowing first by `location` and `employeeSize`, which "
+                    "do bite",
     },
 }
 
 
 def _reject_dead_filters(table: dict[str, dict[str, str]] = _DEAD_FILTERS,
                          **blocks) -> None:
-    """Refuse un filtre qu'AI Ark accepterait sans l'appliquer (cf. `_DEAD_FILTERS`,
-    et `_DEAD_COMPANY_FILTERS` pour le point d'accès sociétés)."""
+    """Refuses a filter that AI Ark would accept without applying it (see `_DEAD_FILTERS`,
+    and `_DEAD_COMPANY_FILTERS` for the companies endpoint)."""
     for block, value in blocks.items():
         for field, remedy in table.get(block, {}).items():
             if isinstance(value, dict) and field in value:
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                    f"Filtre `{block}.{field}` : AI Ark l'accepte et ne l'applique "
-                    f"PAS — la recherche rendrait la base entière en la faisant passer "
-                    f"pour un résultat filtré (vérifié par différentiel). "
-                    f"À la place : {remedy}.")))
-# URLs d'images : un agent ne les regarde pas.
+                    f"Filter `{block}.{field}`: AI Ark accepts it and does NOT apply "
+                    f"it — the search would return the whole database passing it off "
+                    f"as a filtered result (verified by differential). "
+                    f"Instead: {remedy}.")))
+# Image URLs: an agent does not look at them.
 #
-# Élargi le 10/09/2026 après mesure sur 11 enregistrements réels de `op=people` rendus
-# par la vue de tri : **53 % du poids restant n'était lu par personne**. `summary` (le
-# « À propos » LinkedIn) en pesait 23 % à lui seul — absent sur la plupart des profils,
-# ~700 c. quand il est là ; les clés TOUJOURS nulles sur l'échantillon (`middle_name`,
-# `birth_date`, les trois réseaux hors LinkedIn, `location.position`) 11 % ; les
-# sous-blocs de `department` 12 % ; `location.short/state` 7 %. Même règle que le
-# reste du module : le détail non lu part du DÉFAUT et revient sur `full=True`.
+# Widened on 10/09/2026 after measuring 11 real `op=people` records rendered
+# by the triage view: **53% of the remaining weight was read by nobody**. `summary` (the
+# LinkedIn "About") weighed 23% by itself — absent on most profiles,
+# ~700 chars when present; the keys ALWAYS null on the sample (`middle_name`,
+# `birth_date`, the three non-LinkedIn networks, `location.position`) 11%; the
+# `department` sub-blocks 12%; `location.short/state` 7%. Same rule as the
+# rest of the module: unread detail leaves the DEFAULT and comes back on `full=True`.
 #
-# ⚠️ `department.departments` est GARDÉ : c'est le tri côté client que recommande le
-# refus du filtre mort `contact.department` (`_DEAD_FILTERS`) — le retirer rendrait ce
-# remède impossible à suivre. `location.country` aussi : c'est le seul champ qui dise
-# le pays quand `city` est vide (vécu : « China, Asia », sans ville).
+# ⚠️ `department.departments` is KEPT: it is the client-side sort that the
+# refusal of the dead filter `contact.department` (`_DEAD_FILTERS`) recommends — removing it would make that
+# remedy impossible to follow. `location.country` too: it is the only field that gives
+# the country when `city` is empty (lived: "China, Asia", without a city).
 _PROFILE_DROP = ("picture", "background", "summary", "middle_name", "birth_date")
 _LINK_DROP = ("twitter", "github", "facebook")
 _LOCATION_DROP = ("short", "state", "position")
@@ -147,7 +147,7 @@ def _slim_company(company: object) -> object:
     out = {k: v for k, v in company.items() if k not in _COMPANY_DROP}
     loc = out.get("location")
     if isinstance(loc, dict) and "headquarter" in loc:
-        # `locations[]` reprend le siège et ses annexes ; le siège suffit à situer.
+        # `locations[]` repeats the headquarters and its branches; the HQ is enough to locate.
         out["location"] = {"headquarter": loc["headquarter"]}
     return out
 
@@ -166,15 +166,15 @@ def _slim_person(row: object) -> object:
 
 
 def _shape(payload: object, op: str, full: bool, fields: Optional[list[str]]) -> object:
-    """Page AI Ark resserrée. `full=True` = la page brute, `fields=[…]` = ces clés seules.
+    """Tightened AI Ark page. `full=True` = the raw page, `fields=[…]` = only those keys.
 
-    Le nom porte l'intention (ADR 0047) : `full=True` dit ce qu'on obtient, là où
-    `compact=False` se lisait comme une double négation. Et le défaut RESSERRE : une
-    économie qu'il faut connaître pour en bénéficier ne bénéficie à personne — mesuré,
-    aucun agent branché en direct ne passait l'opt-in.
+    The name carries the intent (ADR 0047): `full=True` says what you get, where
+    `compact=False` read as a double negative. And the default TIGHTENS: a
+    saving you have to know about to benefit from benefits nobody — measured,
+    no agent plugged in directly passed the opt-in.
 
-    L'enveloppe (`totalElements`, `totalPages`, `trackId`, la pagination) est intacte :
-    sans elle l'agent croit avoir tout vu."""
+    The envelope (`totalElements`, `totalPages`, `trackId`, pagination) is intact:
+    without it the agent thinks it has seen everything."""
     if full or not isinstance(payload, dict):
         return payload
     rows = payload.get("content")
@@ -188,47 +188,47 @@ def _shape(payload: object, op: str, full: bool, fields: Optional[list[str]]) ->
     return out
 
 
-# ── Échec de TRANSPORT : AI Ark n'a jamais répondu ───────────────────────────────
-# Signal #675 (2026-09-03, org 196) : l'endpoint EXPORT rend des « Read timed out.
-# (read timeout=30) » par rafales — 7 fois sur 4 URLs de profil — pendant que la
-# RECHERCHE répond normalement dans les mêmes minutes. Rejouer l'appel IDENTIQUE finit
-# par passer.
+# ── TRANSPORT failure: AI Ark never answered ─────────────────────────────────────
+# Signal #675 (2026-09-03, org 196): the EXPORT endpoint returns "Read timed out.
+# (read timeout=30)" in bursts — 7 times on 4 profile URLs — while
+# SEARCH answers normally in the same minutes. Replaying the IDENTICAL call eventually
+# goes through.
 #
-# Deux défauts, mesurés sur la chaîne réelle (tool → client oto-core → requests) :
-#   1. AUCUNE reprise, ni ici ni dans le client : une tentative, puis l'échec ;
-#   2. l'échec sortait EMBALLÉ dans une `McpError(INVALID_PARAMS)` → la taxonomie le
-#      classait `code="invalid_input"`, `retryable=false`. Le MÊME timeout non emballé
-#      est classé `upstream_timeout`, `retryable=true`, « réessaie dans un instant » :
-#      notre traduction INVERSAIT le verdict que la plateforme sait déjà rendre, et son
-#      message (« n'a pas pu traiter la requête ») accusait l'entrée d'un appel qu'AI
-#      Ark n'a jamais lu.
+# Two defects, measured on the real chain (tool → oto-core client → requests):
+#   1. NO retry, neither here nor in the client: one attempt, then failure;
+#   2. the failure came out WRAPPED in a `McpError(INVALID_PARAMS)` → the taxonomy
+#      classed it `code="invalid_input"`, `retryable=false`. The SAME unwrapped timeout
+#      is classed `upstream_timeout`, `retryable=true`, "try again in a moment":
+#      our translation REVERSED the verdict the platform already knows how to give, and its
+#      message ("could not process the request") blamed the input of a call AI
+#      Ark never read.
 #
-# C'est le pire endroit pour se tromper de verdict. Sur un export, un agent à qui on
-# répond « ton appel est mauvais, ne réessaie pas » conclut à une ABSENCE et écrit
-# `not_found` sur quelqu'un que personne n'a résolu.
+# This is the worst place to get the verdict wrong. On an export, an agent told
+# "your call is bad, do not retry" concludes an ABSENCE and writes
+# `not_found` on someone nobody resolved.
 #
-# D'où : reprise bornée, puis le timeout REMONTE TEL QUEL. L'emballer curerait le
-# message au prix du verdict — `error_taxonomy.classify` traite toute `McpError` en
-# premier et n'en rend jamais une `retryable`, les deux ne sont pas cumulables depuis
-# ici. Ce que le message perd, la description de l'outil le dit (relue à chaque appel).
-_TRANSPORT_TENTATIVES = 2      # la tentative initiale + UNE reprise
+# Hence: bounded retry, then the timeout PROPAGATES AS IS. Wrapping it would fix the
+# message at the price of the verdict — `error_taxonomy.classify` handles any `McpError`
+# first and never returns a `retryable` one, the two cannot be combined from
+# here. What the message loses, the tool's description says (re-read on every call).
+_TRANSPORT_TENTATIVES = 2      # the initial attempt + ONE retry
 _TRANSPORT_PAUSE_S = 1.5
 
 
 def _appel_avec_reprise(fn, client):
-    """Exécute `fn(client)`, en reprenant les seuls échecs de TRANSPORT.
+    """Runs `fn(client)`, retrying only TRANSPORT failures.
 
-    `requests.exceptions.Timeout` = AI Ark n'a jamais répondu : ni un refus, ni une
-    absence, RIEN. C'est le seul cas où rejouer l'appel identique a un sens (mesuré :
-    la tentative suivante passe) et le seul où l'agent ne doit surtout pas conclure.
-    Tout le reste — 4xx, 5xx, corps illisible — est une RÉPONSE d'AI Ark : on ne la
-    rejoue pas, elle part au traducteur d'erreurs.
+    `requests.exceptions.Timeout` = AI Ark never answered: neither a refusal nor an
+    absence, NOTHING. It is the only case where replaying the identical call makes sense (measured:
+    the next attempt goes through) and the only one where the agent must not conclude anything.
+    Everything else — 4xx, 5xx, unreadable body — is a RESPONSE from AI Ark: we do not
+    replay it, it goes to the error translator.
 
-    Bornée à `_TRANSPORT_TENTATIVES` : une tentative coûte jusqu'à 30 s de read timeout
-    (`AiArkClient.TIMEOUT`, oto-core), donc deux tiennent encore dans le budget d'un
-    appel d'outil là où trois monopoliseraient une minute et demie un thread du pool —
-    et c'est ce pool qui a hangé la box le 25/06. Au-delà, la reprise revient à l'agent,
-    et la réponse le lui dit (`retryable: true`).
+    Bounded to `_TRANSPORT_TENTATIVES`: one attempt costs up to 30 s of read timeout
+    (`AiArkClient.TIMEOUT`, oto-core), so two still fit in a tool call's budget
+    where three would tie up a pool thread for a minute and a half —
+    and it is that pool that hung the box on 25/06. Beyond that, the retry goes back to the agent,
+    and the response tells it so (`retryable: true`).
     """
     for n in range(1, _TRANSPORT_TENTATIVES + 1):
         try:
@@ -239,30 +239,30 @@ def _appel_avec_reprise(fn, client):
             time.sleep(_TRANSPORT_PAUSE_S)
 
 
-def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
-    """Sonde « tester la connexion » — couvre `auth+quota` (otomata-tech/oto#144).
+def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001 (config: probe contract, unused here)
+    """"Test the connection" probe — covers `auth+quota` (otomata-tech/oto#144).
 
-    `verify_key()` (oto-core) fait un GET crédits sans effet de bord — 401 sur clé
-    invalide — et rend `{"valid": True, "credits": <int>}`. Le solde était jeté :
-    sur un compte à zéro la clé authentifie parfaitement, la sonde restait verte et
-    un préflight partait travailler pour prendre des 402 en cours de route. On le
-    LIT donc, et un compte à sec lève `QuotaEpuise` (verdict `no_quota`).
+    `verify_key()` (oto-core) does a credits GET with no side effect — 401 on an invalid
+    key — and returns `{"valid": True, "credits": <int>}`. The balance used to be thrown away:
+    on a zero account the key authenticates perfectly, the probe stayed green and
+    a preflight went off to work only to hit 402s along the way. We therefore
+    READ it, and a drained account raises `QuotaEpuise` (verdict `no_quota`).
 
-    ⚠️ Un solde positif ne garantit pas qu'un appel passera : AI Ark refuse PAR
-    POINT D'ACCÈS (mesuré le 07/09/2026 : `op="people"` en 402 pendant que
-    `op="companies"` répondait, même compte, même instant). La sonde prouve « la
-    clé authentifie et le compte n'est pas à zéro », rien de plus.
+    ⚠️ A positive balance does not guarantee a call will go through: AI Ark refuses PER
+    ENDPOINT (measured on 07/09/2026: `op="people"` at 402 while
+    `op="companies"` answered, same account, same instant). The probe proves "the
+    key authenticates and the account is not at zero", nothing more.
     """
     from oto.tools.aiark.client import AiArkClient
 
     restant = AiArkClient(api_key=fields["key"]).verify_key().get("credits")
     if not isinstance(restant, int):
         raise RuntimeError(
-            f"AI Ark a répondu sans solde de crédits lisible : {str(restant)[:200]}")
+            f"AI Ark answered without a readable credit balance: {str(restant)[:200]}")
     if restant <= 0:
         raise connector_verify.QuotaEpuise(
-            "La clé AI Ark est bonne, mais le compte est à sec (0 crédit restant). "
-            "Recharge le compte chez AI Ark — reconnecter n'y changerait rien.")
+            "The AI Ark key is good, but the account is drained (0 credits left). "
+            "Top up the account at AI Ark — reconnecting would change nothing.")
     return {"quota": {"restant": restant, "unite": "crédits"}}
 
 
@@ -276,60 +276,60 @@ def register(mcp: FastMCP) -> None:
         return AiArkClient(api_key=key), is_platform
 
     def _run(fn):
-        """Exécute un appel AI Ark : traduit une RÉPONSE d'erreur en McpError
-        actionnable et compte l'usage plateforme sur succès.
+        """Runs an AI Ark call: translates an error RESPONSE into an actionable
+        McpError and counts platform usage on success.
 
-        ⚠️ Un 5xx amont n'innocente PAS l'entrée — le message ne l'affirme donc
-        plus (il le disait, mot pour mot comme le connecteur Kaspr, où c'était
-        faux : Kaspr rend 500 sur un `dataToGet` inconnu). La reprise est bornée
-        à une tentative différée, cohérent avec le `retryable: false` que rend la
-        taxonomie pour cette McpError : « rejouable tel quel » n'est pas le
-        premier geste quand l'entrée peut être en cause.
+        ⚠️ An upstream 5xx does NOT clear the input — the message therefore no longer
+        claims it (it used to, word for word like the Kaspr connector, where it was
+        false: Kaspr returns 500 on an unknown `dataToGet`). The retry is bounded
+        to one deferred attempt, consistent with the `retryable: false` the
+        taxonomy returns for this McpError: "replayable as is" is not the
+        first move when the input may be at fault.
 
-        Un échec de TRANSPORT, lui, ne dit rien de l'entrée : AI Ark n'a pas lu
-        l'appel. Il est repris une fois (`_appel_avec_reprise`) puis remonte NU —
-        cf. le bloc `_TRANSPORT_*`. La distinction est toute la correction du
-        signal #675 : ici, une erreur mal traduite se lit comme une absence."""
+        A TRANSPORT failure, by contrast, says nothing about the input: AI Ark did not read
+        the call. It is retried once (`_appel_avec_reprise`) then propagates BARE —
+        see the `_TRANSPORT_*` block. The distinction is the whole fix for
+        signal #675: here, a badly translated error reads as an absence."""
         client, is_platform = _client()
         try:
             result = _appel_avec_reprise(fn, client)
         except McpError:
             raise
         except requests.exceptions.Timeout:
-            # NE PAS emballer : tel quel la taxonomie rend `upstream_timeout` /
-            # `retryable: true` ; emballé, elle rendrait `invalid_input` /
-            # `retryable: false` — « corrige ton appel » sur un appel jamais lu.
+            # DO NOT wrap: as is, the taxonomy returns `upstream_timeout` /
+            # `retryable: true`; wrapped, it would return `invalid_input` /
+            # `retryable: false` — "fix your call" on a call never read.
             raise
         except Exception as e:
             resp = getattr(e, "response", None)
             status = getattr(resp, "status_code", None)
             if status and status >= 500:
-                msg = (f"AI Ark a rendu une erreur serveur ({status}). Un 5xx amont "
-                       "ne prouve pas une panne : vérifie d'abord les paramètres de "
-                       "l'appel. Si l'entrée est correcte : une seule nouvelle "
-                       "tentative, différée.")
+                msg = (f"AI Ark returned a server error ({status}). An upstream 5xx "
+                       "does not prove an outage: first check the call's "
+                       "parameters. If the input is correct: a single further "
+                       "attempt, deferred.")
             elif status == 401:
-                msg = "Clé AI Ark invalide ou révoquée (401). Vérifie la clé posée."
+                msg = "AI Ark key invalid or revoked (401). Check the key that is set."
             elif status == 402:
-                # 402 = le COMPTE refuse, faute de crédits (otomata-tech/oto#144).
-                # Rendu par la branche générique, il disait « n'a pas pu traiter la
-                # requête » : l'agent corrigeait son entrée, rejouait une requête
-                # déjà réussie en `size=3`, puis s'arrêtait sans savoir pourquoi
-                # (run arrêté à 120 lignes sur 438, 17/08/2026). Le refus est PAR
-                # POINT D'ACCÈS : `op="companies"` peut répondre pendant que
-                # `op="people"` rend 402 — ce n'est pas un indice sur l'entrée.
-                recharge = ("Ces crédits sont fournis par oto : signale-le "
-                            "(`feedback`, signal='gap'), ou pose ta propre clé AI Ark."
+                # 402 = the ACCOUNT refuses, for lack of credits (otomata-tech/oto#144).
+                # Rendered by the generic branch, it said "could not process the
+                # request": the agent fixed its input, replayed a request
+                # that had already succeeded at `size=3`, then stopped without knowing why
+                # (run stopped at 120 rows out of 438, 17/08/2026). The refusal is PER
+                # ENDPOINT: `op="companies"` can answer while
+                # `op="people"` returns 402 — it is not a hint about the input.
+                recharge = ("These credits are provided by oto: report it "
+                            "(`feedback`, signal='gap'), or set your own AI Ark key."
                             if is_platform else
-                            "Recharge le compte chez AI Ark, puis reprends là où tu "
-                            "t'es arrêté.")
-                msg = ("AI Ark a refusé l'appel faute de crédits (402) — c'est le "
-                       "compte qui est à sec sur ce point d'accès, pas ton entrée. "
-                       "Ni réduire `size`, ni changer de page ou de filtres, ni "
-                       f"réessayer n'y changera rien tant qu'il n'est pas rechargé. "
+                            "Top up the account at AI Ark, then resume where you "
+                            "stopped.")
+                msg = ("AI Ark refused the call for lack of credits (402) — it is the "
+                       "account that is drained on this endpoint, not your input. "
+                       "Neither reducing `size`, nor changing page or filters, nor "
+                       f"retrying will change anything until it is topped up. "
                        f"{recharge}")
             else:
-                msg = f"AI Ark n'a pas pu traiter la requête ({e})."
+                msg = f"AI Ark could not process the request ({e})."
             raise McpError(ErrorData(code=INVALID_PARAMS, message=msg))
         if is_platform:
             access.record_platform_usage("aiark")
@@ -346,8 +346,8 @@ def register(mcp: FastMCP) -> None:
         _, is_platform = _client()
         if is_platform:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                "Ces crédits AI Ark sont fournis par oto : leur solde ne t'est pas "
-                "exposé. Pose ta propre clé AI Ark pour suivre un solde.")))
+                "These AI Ark credits are provided by oto: their balance is not "
+                "exposed to you. Set your own AI Ark key to track a balance.")))
         return _run(lambda c: c.credits())
 
     @mcp.tool(annotations=LECTURE)
@@ -385,13 +385,13 @@ def register(mcp: FastMCP) -> None:
                 include/exclude matcher. Examples:
                 - name: {"name": {"any": {"include": {"mode": "SMART", "content": ["Amazon"]}}}}
                 - location: {"location": {"any": {"include": ["United States"]}}}
-                  ⚠️ C'est le **SIÈGE**, pas « a un bureau là ». Une société dont le
-                  siège est ailleurs rend `0` même si elle emploie des centaines de
-                  personnes dans le pays demandé, et l'échec est indiscernable de
-                  « personne ne correspond ». Mesuré le 04/09/2026 : `account.location
-                  = United Kingdom` sur une banque au siège new-yorkais → 0 ;
-                  `contact.location = United Kingdom` sur la même → 89 personnes.
-                  Pour « qui travaille dans ce pays », filtre sur `contact.location`.
+                  ⚠️ This is the **HEADQUARTERS**, not "has an office there". A company whose
+                  HQ is elsewhere returns `0` even if it employs hundreds of
+                  people in the requested country, and the failure is indistinguishable from
+                  "nobody matches". Measured on 04/09/2026: `account.location
+                  = United Kingdom` on a bank headquartered in New York → 0;
+                  `contact.location = United Kingdom` on the same → 89 people.
+                  For "who works in this country", filter on `contact.location`.
                 - employee size: {"employeeSize": {"type": "RANGE", "range": [{"start": 1000, "end": 5000}]}}
                 - a company's site: {"domain": {"any": {"include": ["example.com"]}}}
                   — plain list, NOT the SMART wrapper (that one is for `name` only).
@@ -409,14 +409,14 @@ def register(mcp: FastMCP) -> None:
             contact: op="people" — filters on the person, e.g.
                 {"seniority": {"any": {"include": ["founder"]}}}. Supports seniority
                 and location.
-                ⚠️ `seniority` est un niveau **normalisé, dérivé de l'intitulé de
-                poste** — pas l'intitulé lui-même. Dans les secteurs où le titre ne
-                suit pas la hiérarchie (banque d'affaires, conseil), il écarte
-                massivement les bonnes personnes : mesuré le 04/09/2026, ajouter
-                `seniority: "director"` à une requête qui rendait 89 personnes l'a
-                ramenée à 2, dont la première était une directrice des ressources
-                humaines. Un « Managing Director » ne porte pas `director`. Utilise-le
-                pour réduire la pagination, jamais comme critère de sélection.
+                ⚠️ `seniority` is a **normalized level, derived from the job
+                title** — not the title itself. In sectors where the title does not
+                follow the hierarchy (investment banking, consulting), it massively
+                discards the right people: measured on 04/09/2026, adding
+                `seniority: "director"` to a query that returned 89 people brought it
+                down to 2, the first of whom was a human resources
+                director. A "Managing Director" does not carry `director`. Use it
+                to reduce pagination, never as a selection criterion.
                 ⚠️ `title` and `department` are REFUSED for the same reason: AI Ark
                 accepts them and silently ignores them, so you get the company's first
                 page and pay for it. Filter on `seniority`, then sort client-side —
@@ -438,20 +438,20 @@ def register(mcp: FastMCP) -> None:
             fields: keep ONLY these keys on each record; the envelope (totals,
                 pagination, trackId) always stays — without it you would think you
                 saw everything. Combine with `full=True` to project the raw record.
-                ⚠️ Ce sont les clés RÉELLES de premier niveau. op="people", vue par
-                défaut : `id`, `identifier`, `profile`, `link`, `location`,
-                `industry`, `department`, `company`, `last_updated` (avec
-                `full=True`, s'y ajoutent les blocs que la vue retire).
-                op="companies", le même bloc que le `company` d'une personne, vue
-                par défaut : `id`, `summary`, `link`, `location` (+ `industries`,
+                ⚠️ These are the REAL top-level keys. op="people", default view:
+                `id`, `identifier`, `profile`, `link`, `location`,
+                `industry`, `department`, `company`, `last_updated` (with
+                `full=True`, the blocks the view removes are added).
+                op="companies", the same block as a person's `company`, default
+                view: `id`, `summary`, `link`, `location` (+ `industries`,
                 `technologies`, `keywords`, `naics`, `languages`, `last_updated`
-                avec `full=True`). Un nom
-                non reconnu est **écarté en silence**, pas refusé : une projection de
-                noms inventés rend des enregistrements qui ont l'air VIDES, et
-                l'absence se lit « pas de donnée » au lieu de « mauvaise clé »
-                (signal 717). Omettre `company` est d'ailleurs tout l'intérêt de la
-                projection — c'est le bloc répété à l'identique sur chaque personne
-                d'une même société.
+                with `full=True`). An unrecognized
+                name is **silently discarded**, not refused: a projection of
+                invented names returns records that look EMPTY, and
+                the absence reads as "no data" instead of "wrong key"
+                (signal 717). Omitting `company` is in fact the whole point of the
+                projection — it is the block repeated identically on every person
+                of the same company.
         """
         _reject_dead_filters(account=account, contact=contact)
         if op == "people":
@@ -464,12 +464,12 @@ def register(mcp: FastMCP) -> None:
                 lookalike_domains=lookalike_domains, page=page, size=size))
         else:
             raise McpError(ErrorData(code=INVALID_PARAMS,
-                                     message="op doit être 'people' ou 'companies'"))
-        # Métrage par unité (facturation du partenaire, 21/08) : le nombre de records RENDUS
-        # dans cette page, pas `size` demandé (une page en fin de résultat peut en
-        # rendre moins). C'est ce qu'AI Ark facture réellement ("BILLS CREDITS per
-        # returned record", docstring ci-dessus) — le même axe que ce tool doit
-        # exposer à `tool_calls.quantity`.
+                                     message="op must be 'people' or 'companies'"))
+        # Per-unit metering (partner billing, 21/08): the number of records RETURNED
+        # in this page, not the requested `size` (a page at the end of the results can
+        # return fewer). It is what AI Ark actually bills ("BILLS CREDITS per
+        # returned record", docstring above) — the same axis this tool must
+        # expose to `tool_calls.quantity`.
         content = result.get("content") if isinstance(result, dict) else None
         if isinstance(content, list):
             session_org.note_call_trace(quantity=len(content))
@@ -522,20 +522,20 @@ def register(mcp: FastMCP) -> None:
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
         if op == "export":
-            _need(bool(id or url), "op='export' exige `id` ou `url`.")
+            _need(bool(id or url), "op='export' requires `id` or `url`.")
             result = _run(lambda c: c.export_person(id=id, url=url))
         elif op == "reverse":
-            _need(bool(search), "op='reverse' exige `search`.")
+            _need(bool(search), "op='reverse' requires `search`.")
             result = _run(lambda c: c.reverse_lookup(search))
         elif op == "mobile":
             _need(bool(linkedin) or bool(domain and name),
-                  "op='mobile' exige `linkedin` OU (`domain` ET `name`).")
+                  "op='mobile' requires `linkedin` OR (`domain` AND `name`).")
             result = _run(lambda c: c.mobile_phone(
                 linkedin=linkedin, domain=domain, name=name))
         else:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message="op doit être 'export', 'reverse' ou 'mobile'"))
+                message="op must be 'export', 'reverse' or 'mobile'"))
 
         if result is None:
             return {"found": False}

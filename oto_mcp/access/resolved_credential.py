@@ -1,10 +1,10 @@
-"""Ce qu'une résolution REND : le credential gagnant, son origine, sa config (ADR 0024).
+"""What a resolution RETURNS: the winning credential, its origin, its config (ADR 0024).
 
-Extrait de `resolve.py` le 2026-08-29 (cliquet des 500 lignes, #584) : c'est le type
-que TOUTES les voies de résolution produisent — le chemin identifié (`resolve`), le
-chemin anonyme (`resolve_anon`), l'instance épinglée — et il ne dépend d'aucune
-d'elles. Le mettre en bas du package est ce qui permet à ces voies d'être des
-modules frères sans cycle.
+Extracted from `resolve.py` on 2026-08-29 (500-line ratchet, #584): this is the type
+that ALL resolution paths produce — the identified path (`resolve`), the anonymous
+path (`resolve_anon`), the pinned instance — and it depends on none of them.
+Placing it at the bottom of the package is what lets those paths be sibling
+modules without a cycle.
 """
 from __future__ import annotations
 
@@ -17,19 +17,19 @@ from . import secret_repr
 
 @dataclass(frozen=True)
 class ResolvedCredential:
-    """Credential GAGNANT de la cascade (ADR 0024) — la clé, son origine, ET sa
-    config non-secrète (endpoint/host) en un seul objet. Source unique : toute
-    résolution (clé seule, multi-champs, ou endpoint) en dérive.
+    """WINNING credential of the cascade (ADR 0024) — the key, its origin, AND its
+    non-secret config (endpoint/host) in a single object. Single source: every
+    resolution (key only, multi-field, or endpoint) derives from it.
 
-    - `secret` : la valeur stockée brute (la clé pour un keyed ; le pack JSON pour
-      un multi-champs). `key` = alias (un keyed s'instancie avec).
-    - `is_platform` / `mode` : origine (user|group|org|tenant|platform) — miroir de
+    - `secret`: the raw stored value (the key for a keyed provider; the JSON pack for
+      a multi-field one). `key` = alias (a keyed client is instantiated with it).
+    - `is_platform` / `mode`: origin (user|group|org|tenant|platform) — mirror of
       `status_for`.
-    - `fields` (lazy) : champs unpackés (un client multi-secrets s'instancie avec).
-    - `config` (lazy) : champs NON-secrets déclarés (data_center, base_url…) ∪ `meta`
-      public du credential (ex. `dsn` unipile). La config voyage avec la clé.
-    - `entity_type`/`entity_id` : niveau gagnant (None pour un grant plateforme — sa
-      config est l'environnement, pas un credential du coffre)."""
+    - `fields` (lazy): unpacked fields (a multi-secret client is instantiated with them).
+    - `config` (lazy): declared NON-secret fields (data_center, base_url…) ∪ the
+      credential's public `meta` (e.g. unipile `dsn`). The config travels with the key.
+    - `entity_type`/`entity_id`: winning level (None for a platform grant — its
+      config is the environment, not a vault credential)."""
     provider: str
     secret: str
     is_platform: bool
@@ -39,7 +39,7 @@ class ResolvedCredential:
     account: str = ""
 
     def __repr__(self) -> str:
-        # La clé ne sort JAMAIS par le repr (#564) — cf. `secret_repr`.
+        # The key NEVER leaks through repr (#564) — see `secret_repr`.
         return secret_repr.expurge(self, "secret")
 
     @property
@@ -52,15 +52,15 @@ class ResolvedCredential:
 
     @property
     def config(self) -> dict:
-        """Config non-secrète appariée à la clé gagnante. Lazy : aucun coût pour
-        les appelants qui ne lisent que `key` (chemin chaud resolve_api_key)."""
+        """Non-secret config paired with the winning key. Lazy: no cost for
+        callers that only read `key` (hot path resolve_api_key)."""
         porteur = providers.credential_provider(self.provider)
         _, cfg = credentials_store.split_secret_config(porteur, self.fields)
         if self.entity_type is not None:
             try:
                 row = credentials_store.get_credential_with_meta(
                     self.entity_type, self.entity_id, porteur, self.account)
-            # noqa: SILENT — config non-secrète absente ⇒ la clé gagnante reste utilisable
+            # noqa: SILENT — non-secret config absent ⇒ the winning key stays usable
             except Exception:
                 row = None
             if row:
