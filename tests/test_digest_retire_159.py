@@ -168,12 +168,14 @@ def test_publier_et_forker_non_plus(monkeypatch):
 
     monkeypatch.setattr(dl.org_store, "get_library_entry",
                         lambda **k: {"id": 1, "body_md": _SANS_DIGEST})
-    monkeypatch.setattr(dl.org_store, "fork_into_org",
-                        lambda **k: {"org_id": 7, "slug": "s", "version": 1,
+    monkeypatch.setattr(dl.org_store, "fork_library_entry",
+                        lambda **k: {"owner_type": k["owner_type"], "owner_id": k["owner_id"],
+                                     "slug": "s", "version": 1, "guide_id": 11,
                                      "forked_from": 1, "source_title": "t"})
+    monkeypatch.setattr(dl.roles, "is_org_admin", lambda sub, org_id: True)
 
     class _F:
-        slug = "s"; new_slug = None
+        slug = "s"; new_slug = None; scope = None; project_id = None
 
     assert CLE not in dl._fork(_Ctx(), _F())
 

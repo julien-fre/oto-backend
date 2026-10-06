@@ -12,8 +12,12 @@ org). Co-déclarées MCP + REST (ADR 0009) :
   bibliothèque publique est une vitrine éditée par la plateforme, ses entrées sont
   signées **Otomata**. Le corps se lit dans l'**org active**, donc l'org reste
   REQUISE — la règle l'exige APRÈS le rôle.
-- fork = org_admin de l'**org active** (injectée par `ORG_MEMBER`, jamais d'un
+- fork = tout membre de l'**org active** (injectée par `ORG_MEMBER`, jamais d'un
   param client → verrou IDOR ; l'org est REQUISE même pour un platform-operator).
+  Le PALIER de la copie suit le rôle réel (décision d'Alexis, 06/10/2026) : un
+  org_admin forke en procédure d'org, un simple membre en procédure PERSONNELLE
+  (à lui seul, ADR 0068). `scope` peut le préciser ; `scope='org'` reste réservé à
+  l'org_admin.
 - publier est **borné à l'auteur** : le slug public est unique (c'est l'adresse de
   l'entrée, toute l'API adresse par slug) et POSSÉDÉ — republier le sien
   incrémente sa version, viser celui d'un autre auteur est refusé (409 `slug_taken`,
@@ -21,17 +25,18 @@ org). Co-déclarées MCP + REST (ADR 0009) :
 - dépublication = l'auteur (org_admin de l'org auteur) ou un admin plateforme.
 
 Handlers SYNC (les adaptateurs n'awaitent pas). Le fork réutilise
-`org_store.set_instruction` → le guide forké devient un skill d'org versionné.
+`org_store.set_instruction` → le guide forké devient une procédure versionnée du
+palier choisi, rattachable à un projet (`project_id`, lien `procedure` du projet).
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from .. import access, deprecations, org_store, procedure_diagram, roles
+from .. import access, db, deprecations, org_store, ownership, procedure_diagram, roles
 from ._authz import (LIBRARY_PUBLISHER, ORG_MEMBER, SUB_ONLY,
-                     _refus_publication_bibliotheque)
+                     _refus_org_admin, _refus_publication_bibliotheque)
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
@@ -69,6 +74,12 @@ class PublishInput(BaseModel):
 class ForkInput(BaseModel):
     slug: str                            # slug public de l'entrée à forker
     new_slug: Optional[str] = None
+    # Palier de la copie. Absent = selon le rôle réel : `org` pour un org_admin,
+    # `user` pour un membre. `org` demandé par un membre = refus nommé.
+    scope: Optional[Literal["user", "org"]] = None
+    # Projet où rattacher la copie (lien `procedure` du projet) ; l'appelant doit
+    # pouvoir y écrire, vérifié AVANT le fork (pas de copie orpheline sur un refus).
+    project_id: Optional[int] = None
 
 
 class UnpublishInput(BaseModel):
@@ -203,24 +214,35 @@ class PublishResult(BaseModel):
 
 
 class ForkResult(BaseModel):
-    """Accusé de fork : le guide public a été COPIÉ dans l'org active comme
-    nouveau skill versionné. Copie ponctuelle, sans lien vivant — republier la
-    source ne mettra jamais à jour le fork."""
+    """Accusé de fork : le guide public a été COPIÉ en procédure versionnée, au
+    palier `scope`. Copie ponctuelle, sans lien vivant — republier la source ne
+    mettra jamais à jour le fork."""
     forked: bool = Field(description="Toujours `true` (un échec lève : 404 entrée "
-                                     "inconnue, 403 sans org_admin).")
-    org_id: int = Field(description="Org d'accueil = l'org ACTIVE de l'appelant, jamais "
-                                    "un paramètre — c'est le verrou anti-IDOR.")
-    slug: str = Field(description="Slug du skill créé dans l'org. Peut différer du "
-                                  "`new_slug` demandé : en cas de collision avec un "
-                                  "skill existant, il est suffixé -2, -3… plutôt que "
-                                  "d'écraser.")
-    version: int = Field(description="Version du skill d'org créé — vaut toujours 1, le "
-                                     "slug étant dédoublonné avant écriture (un fork "
+                                     "inconnue, 403 `scope='org'` sans org_admin, 403 "
+                                     "projet non modifiable).")
+    org_id: int = Field(description="Org ACTIVE de l'appelant, jamais un paramètre — "
+                                    "c'est le verrou anti-IDOR. Propriétaire de la copie "
+                                    "quand `scope='org'`.")
+    scope: Literal["user", "org"] = Field(
+        description="Palier de la copie : `org` (procédure d'org, vue de tous les "
+                    "membres) ou `user` (procédure personnelle de l'appelant). Sans "
+                    "`scope` demandé : `org` pour un org_admin, `user` pour un membre.")
+    slug: str = Field(description="Slug de la procédure créée. Peut différer du "
+                                  "`new_slug` demandé : en cas de collision dans le "
+                                  "palier, il est suffixé -2, -3… plutôt que d'écraser.")
+    version: int = Field(description="Version de la procédure créée — vaut toujours 1, "
+                                     "le slug étant dédoublonné avant écriture (un fork "
                                      "n'écrase jamais une procédure existante).")
+    guide_id: Optional[int] = Field(default=None,
+                                    description="Identifiant STABLE de la procédure créée.")
     forked_from: int = Field(description="Identifiant de l'entrée de bibliothèque "
                                          "source, conservé pour la traçabilité.")
     source_title: str = Field(description="Titre de l'entrée source au moment du fork "
                                           "('' si elle n'en portait pas).")
+    project_id: Optional[int] = Field(
+        default=None,
+        description="Projet auquel la copie a été rattachée (lien `procedure`), si "
+                    "demandé.")
     diagram_warning: Optional[str] = Field(
         default=None,
         description="Le SCHÉMA manquant du corps forké (cf. `procedure_diagram`). "
@@ -343,17 +365,51 @@ def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
             **procedure_diagram.diagram_check(src.get("body_md") or "")}
 
 
+# Ce qui reste ouvert au membre qui demande `scope='org'` sans être admin.
+_FORK_PERSO = ("Sans `scope`, ou avec `scope='user'`, le fork crée une procédure qui "
+               "n'appartient qu'à TOI, que tu peux modifier puis partager.")
+
+
 def _fork(ctx: ResolvedCtx, inp: ForkInput) -> dict:
-    org_id = _require_org_admin(ctx, "Forker")
+    # Ouvert à tout membre de l'org active (retour client 06/10). L'org reste exigée
+    # ici, le handler pouvant être servi hors de la règle ORG_MEMBER.
+    if ctx.org_id is None:
+        raise AuthzDenied(400, "no_active_org",
+                          "Forker demande une org active — choisis-en une avec oto_use_org.")
+    org_id = ctx.org_id
+    # Le palier suit le rôle RÉEL dans l'org active, jamais un paramètre seul : une
+    # procédure d'org est vue de tous les membres et fait autorité pour leurs agents,
+    # l'écrire reste un geste d'org_admin (même garde que `oto_procedure set scope=org`).
+    admin = roles.is_org_admin(ctx.sub, org_id)
+    scope = inp.scope or ("org" if admin else "user")
+    if scope == "org" and not admin:
+        raise _refus_org_admin(org_id, _FORK_PERSO, sub=ctx.sub)
+    if inp.project_id is not None:
+        projet = db.get_project_by_id(int(inp.project_id))
+        if not projet or not ownership.can_access(ctx.sub, "project",
+                                                  str(inp.project_id), "write"):
+            raise AuthzDenied(403, "project_not_writable",
+                              f"Projet #{inp.project_id} introuvable ou non modifiable par "
+                              "toi : rien n'a été forké. Choisis un projet où tu peux "
+                              "écrire, ou forke sans `project_id`.")
     entry = org_store.get_library_entry(slug=inp.slug, include_unlisted=True)
     if not entry:
         raise AuthzDenied(404, "unknown_entry", f"Guide public `{inp.slug}` inconnu.")
-    res = org_store.fork_into_org(entry_id=entry["id"], org_id=org_id,
-                                  new_slug=inp.new_slug, set_by=ctx.sub)
-    # Le fork est une écriture de procédure comme une autre : l'org repart avec un
-    # corps qu'elle n'a pas écrit, et c'est elle qui devra lui dessiner son schéma.
-    return {"forked": True, **res,
-            **procedure_diagram.diagram_check(entry.get("body_md") or "")}
+    owner = ("org", org_id) if scope == "org" else ("user", ctx.sub)
+    res = org_store.fork_library_entry(entry_id=entry["id"], owner_type=owner[0],
+                                       owner_id=owner[1], new_slug=inp.new_slug,
+                                       set_by=ctx.sub)
+    out = {"forked": True, "org_id": org_id, "scope": scope, "slug": res["slug"],
+           "version": res["version"], "guide_id": res["guide_id"],
+           "forked_from": res["forked_from"], "source_title": res["source_title"]}
+    if inp.project_id is not None:
+        db.add_project_link(int(inp.project_id), "procedure", str(res["guide_id"]))
+        db.log_project_activity(int(inp.project_id), ctx.sub, "project.link",
+                                f"procedure:{res['slug']}")
+        out["project_id"] = int(inp.project_id)
+    # Le fork est une écriture de procédure comme une autre : on repart avec un
+    # corps qu'on n'a pas écrit, et c'est à nous de lui dessiner son schéma.
+    return {**out, **procedure_diagram.diagram_check(entry.get("body_md") or "")}
 
 
 def _unpublish(ctx: ResolvedCtx, inp: UnpublishInput) -> dict:
@@ -393,7 +449,7 @@ CAPABILITIES += [
                     "so others can find and fork it. Reserved to platform super_admin "
                     "accounts (403 publication_reservee_a_la_plateforme): the library is "
                     "curated by the platform and its entries are signed Otomata. Still open: "
-                    "your personal procedures, and — if you are org_admin — forking a library "
+                    "your personal procedures, and forking a library "
                     "entry into your org. Needs an active org (the body is read from it). "
                     "slug = the org skill to publish ; visibility = public | unlisted. "
                     "Public names are unique and OWNED: re-publishing a platform entry bumps "
@@ -404,9 +460,12 @@ CAPABILITIES += [
     ),
     Capability(
         key="library.fork", handler=_fork, Input=ForkInput, authz=ORG_MEMBER,
-        description="Fork (copy) a public-library guide into your active org as a new "
-                    "versioned skill. Requires org_admin of your active org. slug = the public "
-                    "entry ; new_slug optional (defaults to source slug, de-duplicated).",
+        description="Fork (copy) a public-library guide as a new versioned procedure. Open "
+                    "to any member of your active org: an org_admin gets an org procedure, a "
+                    "member a personal one (yours alone) — `scope` user|org overrides, org "
+                    "needs org_admin. slug = the public entry ; new_slug optional (defaults "
+                    "to source slug, de-duplicated) ; project_id optional (links the copy "
+                    "to that project, which you must be able to edit).",
         Output=ForkResult,
         rest=RestBinding("POST", "/api/me/guide-library/fork"),
     ),

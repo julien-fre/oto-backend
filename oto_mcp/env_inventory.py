@@ -251,6 +251,12 @@ _REGLAGES: tuple[Variable, ...] = (
              "fonction — `oto_function` op=run/test/publish rend 503 "
              "`sandbox_unavailable`, le reste répond.",
              ("oto_mcp/functions/executor.py:60",)),
+    Variable("OTO_ABONNEMENT_OUVERT_A_TOUS", Classe.REGLAGE, "",
+             "Agents sur l'abonnement Claude de la personne : ouverts à TOUT compte "
+             "de l'instance (`1`, `true`, `yes`, `on`). Absente, vide ou un non = "
+             "seulement les porteurs de l'option `claude_subscription` ; toute autre "
+             "valeur lève.",
+             ("oto_mcp/capabilities/_abonnement.py:213",)),
     Variable("OTO_EQUIPE_PAR_DEFAUT_TENANTS", Classe.REGLAGE, "",
              "Slugs de tenants (virgules) dont les membres d'équipe ne sont jamais "
              "« sans équipe » : faute d'équipe désignée, l'équipe du sub dans l'org "

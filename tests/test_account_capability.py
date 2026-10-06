@@ -26,6 +26,8 @@ from _datastore_rest import call, stub_authz
 
 from oto_mcp.capabilities import me_account as ma
 
+_OUVERT = ma._abonnement.ouvert
+
 
 @pytest.fixture()
 def socle(monkeypatch):
@@ -50,6 +52,7 @@ def socle(monkeypatch):
                         lambda gid: {"id": gid, "name": "Growth", "org_id": 35})
     monkeypatch.setattr(ma.group_store, "get_active_group", lambda sub: 7)
     monkeypatch.setattr(ma.billing, "is_enabled", lambda: True)
+    monkeypatch.setattr(ma._abonnement, "ouvert", lambda sub: False)
     from oto_mcp import roles
     monkeypatch.setattr(roles, "effective_group_role", lambda sub, gid: "group_admin")
 
@@ -77,7 +80,7 @@ def test_les_cles_de_api_me_sont_exactement_celles_servies(monkeypatch, socle):
     code, out = call("me.get")
     assert code == 200, out
     assert sorted(out) == sorted([
-        "sub", "email", "name", "avatar_url", "locale", "role",
+        "sub", "email", "name", "avatar_url", "locale", "role", "claude_subscription",
         "active_org", "active_org_name", "active_org_logo_url", "org_role",
         "active_org_readonly", "view_as_read_only",
         "view_as_bound_org", "view_as_refused_prefixes",
@@ -89,6 +92,22 @@ def test_les_cles_de_api_me_sont_exactement_celles_servies(monkeypatch, socle):
     ])
     assert out["features"] == {"billing": True}
     assert out["providers"] == {"serper": {"mode": "platform"}}
+
+
+def test_api_me_dit_l_instance_ouverte_a_tous(monkeypatch, socle):
+    """Même source que la garde : une instance qui ouvre le chemin à tous le dit à
+    chaque compte, option ou pas — le front affiche la connexion Claude."""
+    stub_authz(monkeypatch)
+    monkeypatch.setattr(ma._abonnement, "ouvert", _OUVERT)
+    monkeypatch.setattr(ma._abonnement.access, "has_option", lambda sub, option, **k: False)
+    monkeypatch.setenv(ma._abonnement.ENV_OUVERT_A_TOUS, "1")
+    code, out = call("me.get")
+    assert code == 200, out
+    assert out["claude_subscription"] is True
+    monkeypatch.delenv(ma._abonnement.ENV_OUVERT_A_TOUS)
+    code, out = call("me.get")
+    assert code == 200, out
+    assert out["claude_subscription"] is False
 
 
 def test_api_me_declare_tout_ce_qu_il_sert(monkeypatch, socle):

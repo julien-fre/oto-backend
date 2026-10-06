@@ -448,8 +448,8 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   `library.list/get` (`SUB_ONLY`, MCP `oto_procedure` op=library_list/library_get + REST
   `GET /api/me/guide-library[/{slug}]`), `library.publish` (`LIBRARY_PUBLISHER` :
   **super_admin plateforme seulement**, depuis le 14/09/2026 — MCP `oto_procedure` op=publish +
-  REST `POST /api/me/guide-library/publish`), `library.fork` (`ORG_MEMBER` + gate org_admin
-  en handler, MCP `oto_procedure` op=fork + REST `POST /api/me/guide-library/fork`),
+  REST `POST /api/me/guide-library/publish`), `library.fork` (`ORG_MEMBER`, palier selon le
+  rôle en handler, MCP `oto_procedure` op=fork + REST `POST /api/me/guide-library/fork`),
   `library.unpublish` (auteur/PLATFORM_ADMIN, `DELETE /api/me/guide-library/{id}`).
   **Qui publie** : la bibliothèque publique est une vitrine éditée par la plateforme, donc
   seul un `super_admin` y publie. La règle est DÉCLARÉE (`_authz.LIBRARY_PUBLISHER`, plancher
@@ -458,14 +458,19 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   condition que celle qui refuse (#695) ; `_publish` garde un filet qui lève le même refus.
   Un org_admin ou un opérateur `admin` reçoit 403 `publication_reservee_a_la_plateforme`,
   AVANT l'exigence d'org active et toute lecture de la procédure source ; le refus dit ce qui
-  reste ouvert — ses procédures personnelles, et le fork pour un org_admin. Un super_admin
+  reste ouvert — ses procédures personnelles, et le fork pour tout membre de l'org active. Un super_admin
   sans org active reçoit 400 `no_active_org` (le corps publié s'y lit). ⚠️ Côté MCP la règle
   d'autz tourne avant le handler : hors super_admin, le refus de plateforme parle le premier ;
   pour un super_admin, la garde d'agent `publication_reservee_a_l_humain` (inchangée) le
   renvoie au dashboard.
   **Auteur** = `otomata`. Une entrée signée par une `org` reste possédée par elle : la
   plateforme ne la reprend pas (409 `slug_taken`), son org_admin peut la dépublier.
-  **Fork** réutilise `org_store.set_instruction` → skill d'org versionné. **Aucune surface
+  **Fork** réutilise `org_store.set_instruction` (`fork_library_entry`) → procédure
+  versionnée dont le palier suit le rôle réel dans l'org active (décision du 06/10/2026) :
+  procédure d'org pour un org_admin, procédure PERSONNELLE pour un membre ; `scope=user|org`
+  le précise, `org` sans org_admin = 403 (le refus d'org_admin, qui nomme le palier ouvert).
+  `project_id` rattache la copie au projet (lien `procedure`), écriture sur le projet
+  vérifiée AVANT le fork (403 `project_not_writable`, rien de copié). **Aucune surface
   ANONYME** : les vitrines `GET /api/guide-library[/{slug}]` (marché) et
   `GET /api/guides/library[/{slug}]` (guides plateforme), servies sans jeton au build de
   oto.cx, sont retirées avec leurs alias `/api/doctrines/library[/{slug}]`

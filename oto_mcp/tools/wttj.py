@@ -329,9 +329,8 @@ def register(mcp: FastMCP) -> None:
         API): each `{candidate: {reference}, from: {stage, job}, to: {stage, job},
         created_at}`. Answers "who moved where, when" on that job.
 
-        Needs the `moves_r` scope; WTTJ may also require a partner scope
-        (`su_moves_r`) that client accounts do not get — the refusal then names
-        it, and the history cannot be read with that token."""
+        Needs the `moves_r` scope on the token: without it the call is refused
+        (403 `invalid_scope`) — the scope is added by WTTJ on request."""
         rows = _run(lambda: _client().list_moves(
             organization_reference, job_reference=job_reference, page=page,
             per_page=per_page))

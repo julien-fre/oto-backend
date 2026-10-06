@@ -139,6 +139,7 @@ class ProcedureInput(BaseModel):
     tags: Optional[list] = None            # publish
     visibility: Optional[str] = None       # publish : public | unlisted
     new_slug: Optional[str] = None         # fork / rename
+    project_id: Optional[int] = None       # fork : projet où rattacher la copie
     id: Optional[int] = None               # unpublish : id d'entrée bibliothèque
     author_kind: Optional[str] = None      # library_list : otomata | org
     limit: int = 100                       # library_list
@@ -222,9 +223,13 @@ def _dispatch_procedure(ctx: ResolvedCtx, inp: ProcedureInput):
     if inp.op.startswith("share_"):
         return _dispatch_share(ctx, inp)
     if inp.op == "fork":
+        if inp.scope not in (None, "user", "org"):
+            raise AuthzDenied(400, "bad_scope",
+                              f"`scope='{inp.scope}'` n'existe pas pour fork : `user` (à "
+                              "toi seul) ou `org` (procédure d'org, org_admin).")
         return lib._fork(ctx, lib.ForkInput(
             slug=_need(inp.slug, "missing_slug", "`slug` (public) requis pour fork."),
-            new_slug=inp.new_slug))
+            new_slug=inp.new_slug, scope=inp.scope, project_id=inp.project_id))
     return lib._unpublish(ctx, lib.UnpublishInput(
         id=_need(inp.id, "missing_id", "`id` (entrée bibliothèque) requis pour unpublish.")))
 
@@ -332,7 +337,9 @@ CAPABILITIES += [
             "`scope='group'` needs the team LEAD) — and the PUBLIC library: "
             "op=library_list (browse/search, filter category/author_kind) / library_get (full "
             "body by public slug) / publish (share one of your org's skills; visibility="
-            "public|unlisted) / fork (copy a public entry into your org, optional `new_slug`) "
+            "public|unlisted) / fork (copy a public entry: an org procedure for an org_admin, a "
+            "personal one for a member — `scope` user|org overrides, org needs org_admin; "
+            "optional `new_slug`, `project_id` to link the copy to a project) "
             "/ unpublish (`id`). WEB LINK of one org procedure (org_admin): "
             "op=share_get / share_readers (who read it) / share_unpublish / share_set "
             "(`show_readers`); share_publish is done by a person in the app, never by "

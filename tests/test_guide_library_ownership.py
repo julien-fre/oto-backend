@@ -198,11 +198,11 @@ def test_le_store_refuse_une_entree_org_sans_proprietaire(surface):
 
 def test_operateur_plateforme_sans_org_active_recoit_un_refus_lisible(monkeypatch):
     """Le gate exigeait l'org APRÈS l'escalade plateforme : `org_id=None`
-    atteignait `fork_into_org` (colonne NOT NULL → 500) et rendait à la
+    atteignait `fork_library_entry` (colonne NOT NULL → 500) et rendait à la
     publication un 404 « absente de ton org active » — alors qu'il n'y a
     justement pas d'org active."""
     monkeypatch.setattr(lib.access, "get_user_role", lambda sub: "super_admin")
-    monkeypatch.setattr(org_store, "fork_into_org",
+    monkeypatch.setattr(org_store, "fork_library_entry",
                         lambda **k: (_ for _ in ()).throw(AssertionError("ne doit PAS écrire")))
     ctx = ResolvedCtx(sub="ops", org_id=None, role="super_admin")
     for handler, inp in ((lib._publish, lib.PublishInput(slug="x")),

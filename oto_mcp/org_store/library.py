@@ -208,31 +208,37 @@ def get_library_entry(*, entry_id: Optional[int] = None, slug: Optional[str] = N
     return dict(row) if row else None
 
 
-def fork_into_org(*, entry_id: int, org_id: int, new_slug: Optional[str] = None,
-                  set_by: Optional[str] = None) -> dict:
-    """Copie une entrée de la bibliothèque dans org_instructions de `org_id` sous
-    un nouveau slug (défaut = slug source, suffixé -2/-3… si collision). Réutilise
-    set_instruction → le guide forké devient un skill d'org versionné (v1)."""
+def fork_library_entry(*, entry_id: int, owner_type: str, owner_id: int | str,
+                       new_slug: Optional[str] = None,
+                       set_by: Optional[str] = None) -> dict:
+    """Copie une entrée de la bibliothèque en PROCÉDURE du palier `owner_type`/
+    `owner_id` (`org` ou `user`, cf. `instructions.OWNER_TYPES`) sous un nouveau slug
+    (défaut = slug source, suffixé -2/-3… si collision DANS CE PALIER). Réutilise
+    set_instruction → la procédure forkée est versionnée (v1). Le palier est décidé
+    par l'appelant (la capacité, sur le rôle réel), jamais ici."""
     entry = get_library_entry(entry_id=entry_id, include_unlisted=True)
     if not entry:
         raise ValueError("entrée de bibliothèque inconnue")
+    otype, oid = instructions._owner(owner_type, owner_id)
     base_slug = instructions.normalize_slug(new_slug or entry["slug"])
     slug = base_slug
     n = 2
     # Libre dans les DEUX familles (oto#100) : un guide à charger du même slug dans
-    # l'org ferait refuser la création.
-    while (instructions.get_instruction("org", org_id, slug) is not None
-           or guide_du_slug("org", str(org_id), slug) is not None):
+    # le palier ferait refuser la création.
+    while (instructions.get_instruction(otype, oid, slug) is not None
+           or guide_du_slug(otype, oid, slug) is not None):
         slug = f"{base_slug}-{n}"
         n += 1
     version = instructions.set_instruction(
-        "org", org_id, slug, entry["body_md"], title=entry.get("title") or "",
+        otype, oid, slug, entry["body_md"], title=entry.get("title") or "",
         description=entry.get("description") or "", set_by=set_by,
         slots=entry.get("slots") or [],
     )
+    cree = instructions.get_instruction(otype, oid, slug) or {}
     return {
-        "org_id": org_id, "slug": slug, "version": version,
-        "forked_from": entry["id"], "source_title": entry.get("title") or "",
+        "owner_type": otype, "owner_id": oid, "slug": slug, "version": version,
+        "guide_id": cree.get("id"), "forked_from": entry["id"],
+        "source_title": entry.get("title") or "",
     }
 
 
