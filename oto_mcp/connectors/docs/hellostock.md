@@ -1,6 +1,6 @@
 ## prerequisite — your HelloStock API token, from an administrator account
 
-create a token at hellostock.fr → Mon espace → Réglages → « Jetons d'API », then paste it into oto. It is only shown once; it starts with `hs_`.
+create a token at hellostock.fr → My account → Settings → API tokens (in the French UI: *Mon espace → Réglages → Jetons d'API*), then paste it into oto. It is only shown once; it starts with `hs_`.
 - **one token per person**: it carries the rights of THEIR account, and what is done with it is done in their name (a request send is recorded under the name of the administrator whose token it is). No org token or shared oto key.
 - **the account must be an administrator of the marketplace**: otherwise HelloStock answers 403, and recreating a token changes nothing — it is the account's role that is missing. The role is re-read on every call: a demoted account goes to 403 without the token changing.
 - a revoked (or unknown) token answers 401: create a new one, then replace the old one on the card.

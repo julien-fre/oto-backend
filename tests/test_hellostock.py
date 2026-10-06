@@ -107,7 +107,7 @@ def test_a_revoked_token_says_recreate_it_and_where(fake, jeton):
     with pytest.raises(McpError) as e:
         _outil("hellostock_demande")()
     msg = e.value.error.message
-    assert "401" in msg and "revoked" in msg and "Jetons d'API" in msg
+    assert "401" in msg and "revoked" in msg and "API tokens" in msg
     assert "/account" in msg
 
 

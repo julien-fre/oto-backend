@@ -35,7 +35,8 @@ CONNECTOR = _c(
     credential_fields=(
         CredentialField(
             "key", "HelloStock API token (hs_…)", secret=True,
-            help="hellostock.fr → Mon espace → Réglages → « Jetons d'API » → create "
+            help="hellostock.fr → My account → Settings → API tokens (in the French UI: "
+                 "Mon espace → Réglages → Jetons d'API) → create "
                  "a token; it is only shown once. It must be the token of an "
                  "ADMINISTRATOR account of the marketplace."),
     ),

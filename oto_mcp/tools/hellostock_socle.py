@@ -26,8 +26,10 @@ from .. import access, output_projection
 if TYPE_CHECKING:  # the annotation of `_client()` only — never evaluated
     from oto.tools.hellostock import HelloStockAdminClient
 
-# Where the user creates their token, in THEIR HelloStock account (French UI labels).
-OU_CREER_LE_JETON = "hellostock.fr → Mon espace → Réglages → « Jetons d'API »"
+# Where the user creates their token, in THEIR HelloStock account (a French-only UI: the
+# original labels follow the English path so they can be found on the screen).
+OU_CREER_LE_JETON = ("hellostock.fr → My account → Settings → API tokens "
+                     "(in the French UI: Mon espace → Réglages → Jetons d'API)")
 
 
 def _client() -> HelloStockAdminClient:

@@ -55,7 +55,8 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
     if not token.startswith("hs_"):
         raise ValueError(
             "This is not a HelloStock API token: they start with « hs_ ». "
-            "Create one from hellostock.fr → Mon espace → Réglages → « Jetons d'API ».")
+            "Create one from hellostock.fr → My account → Settings → API tokens "
+            "(in the French UI: Mon espace → Réglages → Jetons d'API).")
     try:
         HelloStockAdminClient(token=token).list_demandes(limit=1)
     except UpstreamHTTPError as e:
