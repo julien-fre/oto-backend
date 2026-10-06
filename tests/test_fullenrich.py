@@ -29,6 +29,31 @@ def _contacts(n: int) -> list[dict]:
            for i in range(n)]
 
 
+@pytest.fixture(autouse=True)
+def _compte_approvisionne(monkeypatch):
+    """La soumission lit le solde d'abord (`_solde`) : un compte approvisionné par
+    défaut, pour que ces bancs n'appellent jamais FullEnrich pour de vrai."""
+    from oto_mcp.tools import fullenrich
+    monkeypatch.setattr(fullenrich, "_solde", lambda headers: 100)
+
+
+def test_un_compte_A_SEC_est_refuse_AVANT_de_soumettre(monkeypatch):
+    """Signaux oto #1276, #1280, #1340 : FullEnrich acceptait un lot qu'il ne pouvait
+    pas payer, et l'échec n'apparaissait qu'au relevé. Le refus est un 402, que la
+    taxonomie lit `quota_exhausted` (et qui marque la clé servie)."""
+    from oto_mcp import error_taxonomy
+    from oto_mcp.tools import fullenrich
+    monkeypatch.setattr(fullenrich, "_solde", lambda headers: 0)
+    with patch("oto_mcp.access.resolve_api_key", return_value=("k", False)), \
+         patch("oto_mcp.tools.fullenrich.session_org.note_call_trace") as trace, \
+         patch("oto.tools.fullenrich.client.FullenrichClient") as client_cls:
+        with pytest.raises(fullenrich.FullenrichASec) as exc:
+            _tool("fullenrich_enrich_linkedin").fn(contacts=_contacts(3))
+    client_cls.return_value.submit.assert_not_called()
+    trace.assert_not_called()
+    assert error_taxonomy.classify(exc.value).code == "quota_exhausted"
+
+
 @pytest.mark.parametrize("is_platform", [True, False])
 def test_enrich_linkedin_traces_the_submitted_contact_count(is_platform):
     with patch("oto_mcp.access.resolve_api_key", return_value=("fake-key", is_platform)), \

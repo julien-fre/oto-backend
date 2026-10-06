@@ -68,30 +68,45 @@ def _minutes_depuis(submitted_at: Optional[str]) -> Optional[float]:
     return (_dt.datetime.now(_dt.timezone.utc) - t).total_seconds() / 60
 
 
+class FullenrichASec(RuntimeError):
+    """Compte FullEnrich à sec, vu AVANT de soumettre. Porte `status_code = 402` EXPRÈS,
+    comme `serper.SerperASec` : la taxonomie (`error_taxonomy`, cran 0 →
+    `quota_exhausted` + marquage de la clé servie) le lit comme tout 402, sans chemin
+    parallèle à entretenir."""
+    status_code = 402
+
+
+def _solde(headers: dict) -> int:
+    """Le solde de crédits du compte : `GET /api/v1/account/credits` (⚠️ v1, PAS le v2
+    du reste du client — deux préfixes de version distincts chez FullEnrich, vérifié).
+    Lecture sans effet de bord. Lève si le solde est illisible : un solde deviné
+    laisserait passer un lot impayable, ou en refuserait un bon."""
+    import requests
+
+    r = requests.get(_CREDITS_URL, headers=headers, timeout=15)
+    r.raise_for_status()
+    infos = r.json() or {}
+    restant = infos.get("balance")
+    if not isinstance(restant, int) or isinstance(restant, bool):
+        raise RuntimeError(
+            "FullEnrich a répondu sans solde de crédits lisible : "
+            f"{str(infos)[:200]}")
+    return restant
+
+
 def _verify(fields: dict, config: dict | None = None) -> dict:
     """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth+quota`.
 
-    `GET /api/v1/account/credits` (⚠️ v1, PAS le v2 du reste du client — deux
-    préfixes de version distincts chez FullEnrich, vérifié). Bearer token,
-    lecture de solde sans effet de bord. Aucune mention explicite de
+    Bearer token, lecture de solde (`_solde`). Aucune mention explicite de
     « gratuit » dans ce qu'on a trouvé — absence de mention, indice, pas une
     preuve, comme Folk et Pennylane.
 
     Le solde (`balance`) distingue une clé morte d'un compte à sec — recharger
     n'est pas reconnecter.
     """
-    import requests
     from oto.tools.fullenrich.client import FullenrichClient
 
-    headers = FullenrichClient(api_key=fields["key"])._headers()
-    r = requests.get(_CREDITS_URL, headers=headers, timeout=15)
-    r.raise_for_status()
-    infos = r.json() or {}
-    restant = infos.get("balance")
-    if not isinstance(restant, int):
-        raise RuntimeError(
-            "FullEnrich a répondu sans solde de crédits lisible : "
-            f"{str(infos)[:200]}")
+    restant = _solde(FullenrichClient(api_key=fields["key"])._headers())
     if restant <= 0:
         raise connector_verify.QuotaEpuise(
             "La clé FullEnrich est bonne, mais le compte est à sec (0 crédit "
@@ -134,6 +149,15 @@ def register(mcp: FastMCP) -> None:
                 10 credits/phone, 1/work_email, 3/personal_email.
         """
         client, is_platform = _client(units=len(contacts))
+        # Le solde AVANT de soumettre : FullEnrich accepte un lot qu'il ne peut pas
+        # payer, et l'échec n'apparaissait qu'au relevé, minutes plus tard (signaux oto
+        # #1276, #1280, #1340). Une lecture gratuite contre un job perdu. On ne refuse
+        # qu'à zéro : le coût d'un lot n'est connu qu'au résultat (facturé à la donnée
+        # trouvée), un solde « trop bas » serait une devinette.
+        if _solde(client._headers()) <= 0:
+            raise FullenrichASec(
+                "FullEnrich : le compte de la clé servie est à sec (0 crédit restant). "
+                "L'appel était correct : ne le corrige pas et ne le réessaie pas.")
         try:
             enrichment_id = client.submit(contacts, enrich_fields=enrich_fields)
         except ValueError as e:
