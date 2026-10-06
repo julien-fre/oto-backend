@@ -32,7 +32,7 @@ Trois familles de schémas, rangées par les mêmes règles :
   accepte, elles sont listées ;
 - les **schémas cibles des slots des entrées de bibliothèque** (`guide_library.slots`,
   oto#34) — un fork copie ces slots TELS QUELS dans la procédure qu'il crée
-  (`org_store.fork_into_org`) : les laisser en l'état réintroduirait l'ancien
+  (`org_store.fork_library_entry`) : les laisser en l'état réintroduirait l'ancien
   vocabulaire dans chaque procédure forkée, donc dans chaque tableau qu'elle
   provisionne.
 

@@ -15,7 +15,8 @@ canal posé au seuil → handler, celle de `_rest_adapter` et de `_mcp_adapter`)
 - le droit ANNONCÉ (`capacite_autorise`, `platform_floor`) lit la même règle ;
 - sur `oto_procedure`, la garde d'agent parle toujours avant le handler pour un
   super_admin, et un compte qui ne publiera nulle part reçoit le refus de plateforme ;
-- le fork est ouvert à tout membre de l'org active, admin ou non.
+- le fork est ouvert à tout membre de l'org active, admin ou non ; le palier de la
+  copie suit le rôle (org pour un org_admin, personnel pour un membre).
 
 ⚠️ Le rôle se pose sur `access.get_user_role`, la source commune des deux prédicats
 (`is_super_admin`, `is_platform_operator`), jamais sur l'un d'eux : les stubber
@@ -199,23 +200,32 @@ def test_la_console_garde_l_ordre_des_refus(banc):
     assert banc.lu == [] and banc.ecrit == []
 
 
-def test_le_fork_reste_ouvert_a_l_org_admin(banc, monkeypatch):
+def _fork_stub(monkeypatch, banc):
     monkeypatch.setattr(org_store, "get_library_entry",
                         lambda **k: {"id": 3, "body_md": "# corps"})
-    monkeypatch.setattr(org_store, "fork_into_org",
-                        lambda **k: {"org_id": k["org_id"], "slug": "veille-concurrence",
-                                     "version": 1, "forked_from": 3, "source_title": "T"})
+
+    def _fork(**k):
+        banc.ecrit.append(k)
+        return {"owner_type": k["owner_type"], "owner_id": k["owner_id"],
+                "slug": "veille-concurrence", "version": 1, "guide_id": 21,
+                "forked_from": 3, "source_title": "T"}
+    monkeypatch.setattr(org_store, "fork_library_entry", _fork)
+
+
+def test_le_fork_d_un_org_admin_cree_une_procedure_d_org(banc, monkeypatch):
+    _fork_stub(monkeypatch, banc)
     out = _servir("library.fork", "compte-membre", "rest", slug="veille-concurrence")
-    assert out["forked"] is True and out["org_id"] == ORG
+    assert out["forked"] is True and out["org_id"] == ORG and out["scope"] == "org"
+    assert (banc.ecrit[-1]["owner_type"], banc.ecrit[-1]["owner_id"]) == ("org", ORG)
 
 
-def test_le_fork_est_ouvert_au_simple_membre(banc, monkeypatch):
-    """Ajouter un process de la communauté à son org n'est pas réservé aux admins."""
+def test_le_fork_d_un_simple_membre_cree_une_procedure_perso(banc, monkeypatch):
+    """Ajouter un process de la communauté n'est pas réservé aux admins, et ce qu'un
+    membre crée lui appartient : une procédure PERSONNELLE, pas une procédure d'org
+    que tous les membres verraient (décision du 06/10/2026)."""
     monkeypatch.setattr(roles, "is_org_admin", lambda sub, org_id: False)
-    monkeypatch.setattr(org_store, "get_library_entry",
-                        lambda **k: {"id": 3, "body_md": "# corps"})
-    monkeypatch.setattr(org_store, "fork_into_org",
-                        lambda **k: {"org_id": k["org_id"], "slug": "veille-concurrence",
-                                     "version": 1, "forked_from": 3, "source_title": "T"})
+    _fork_stub(monkeypatch, banc)
     out = _servir("library.fork", "compte-membre", "rest", slug="veille-concurrence")
-    assert out["forked"] is True and out["org_id"] == ORG
+    assert out["forked"] is True and out["org_id"] == ORG and out["scope"] == "user"
+    assert (banc.ecrit[-1]["owner_type"],
+            banc.ecrit[-1]["owner_id"]) == ("user", "compte-membre")

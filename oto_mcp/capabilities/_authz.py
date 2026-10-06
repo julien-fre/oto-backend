@@ -308,8 +308,7 @@ def _refus_publication_bibliotheque() -> AuthzDenied:
     `guide_library._publish` : le même mur ne se dit pas de deux façons.
 
     Il dit ce qui reste ouvert ET à qui : les procédures personnelles le sont à tout
-    compte, le fork à tout membre de l'org active (#632 : le fait, puis au plus une
-    condition)."""
+    compte, le fork à tout membre de l'org active."""
     return AuthzDenied(
         403, "publication_reservee_a_la_plateforme",
         "Publier dans la bibliothèque publique est réservé aux super-administrateurs de "
