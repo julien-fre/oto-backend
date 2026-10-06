@@ -17,7 +17,7 @@ from .. import config
 from .. import logodev
 from ..db import _connect
 from ..db.billing import ABONNEMENT_QUI_PRELEVE
-from ..db.tenants import TenantDesactive
+from ..db.tenants import TenantDesactive, tenant_desactive_de_l_org
 from ..tenancy import primary_slug
 
 _log = logging.getLogger(__name__)
@@ -141,15 +141,12 @@ def resume_org(org_id: int) -> bool:
     d'autres tenants. Lu sous le verrou de la ligne : une désactivation concurrente
     attend la levée puis re-suspend l'org, ou l'a déjà fait et se voit ici."""
     with _connect() as conn:
-        etat = conn.execute(
-            "SELECT o.suspended_at, t.slug AS tenant_desactive, t.disabled_reason "
-            "FROM orgs o LEFT JOIN tenants t "
-            "  ON t.id = o.tenant_id AND t.disabled_at IS NOT NULL "
-            "WHERE o.id = %s FOR UPDATE OF o", (org_id,)).fetchone()
+        etat = conn.execute("SELECT suspended_at FROM orgs WHERE id = %s FOR UPDATE",
+                            (org_id,)).fetchone()
         if etat is None or etat["suspended_at"] is None:
             return False
-        if etat["tenant_desactive"]:
-            raise TenantDesactive(etat["tenant_desactive"], etat["disabled_reason"] or "",
+        if (coupe := tenant_desactive_de_l_org(conn, org_id)):
+            raise TenantDesactive(coupe["slug"], coupe["disabled_reason"] or "",
                                   f"Lever la suspension de l'org #{org_id}")
         conn.execute(
             "UPDATE orgs SET suspended_at = NULL, suspended_by = NULL, "

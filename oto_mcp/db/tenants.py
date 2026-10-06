@@ -154,6 +154,21 @@ def tenant_ligne(slug: str) -> "dict | None":
     return dict(row) if row else None
 
 
+def tenant_desactive_de_l_org(conn, org_id: int) -> "dict | None":
+    """`{slug, disabled_reason}` du tenant DÉSACTIVÉ auquel l'org est rattachée
+    (`orgs.tenant_id`), `None` sinon. Lue dans la connexion de l'appelant :
+    `org_store.resume_org` la lit sous le verrou de la ligne de l'org qu'il va lever.
+
+    Une des deux lectures du rattachement que fait la désactivation (avec le balayage
+    de `desactiver_tenant`), gardées ici, dans le module de suivi que
+    `tests/test_tenant_l1_migration.py` admet comme lecteur."""
+    row = conn.execute(
+        "SELECT t.slug, t.disabled_reason FROM orgs o "
+        "JOIN tenants t ON t.id = o.tenant_id AND t.disabled_at IS NOT NULL "
+        "WHERE o.id = %s", (org_id,)).fetchone()
+    return dict(row) if row else None
+
+
 def desactiver_tenant(slug: str, *, by: str, reason: str) -> "dict | None":
     """Désactive un tenant ET révoque ce qui est émis pour ses comptes, en UNE
     transaction. `None` si le slug n'existe pas.

@@ -29,6 +29,7 @@ autre lot, avec sa propre revue.
 from __future__ import annotations
 
 import pathlib
+import re
 
 from oto_mcp.db import _schema
 
@@ -88,7 +89,23 @@ _LECTEURS_ADMIS = {
     "db/activation.py",
     # Le CONTRÔLE DE CONFORMITÉ du rattachement (2026-09-03) vit dans `db/tenants.py`,
     # déjà admis ci-dessus — rien à ajouter pour lui.
+    #
+    # La DÉSACTIVATION d'un tenant (2026-10-06, oto-backend#1165) lit aussi le
+    # rattachement, dans `db/tenants.py`, déjà admis — et c'est un changement de NATURE,
+    # décidé et non glissé : désactiver un tenant suspend les orgs qui lui sont
+    # rattachées (`desactiver_tenant`), et la levée d'une de ses orgs par le geste d'org
+    # est refusée tant qu'il l'est (`tenant_desactive_de_l_org`, appelée par
+    # `org_store.resume_org`). Le rattachement n'y sert qu'à COUPER (suspendre, refuser
+    # une levée), jamais à accorder : aucune identité, aucun credential, aucune
+    # visibilité n'en dépend. Les deux lectures restent dans ce fichier : un nouveau
+    # lecteur ailleurs tombe ici. (`orgs.suspended_tenant_id`, l'ORIGINE d'une
+    # suspension, est une autre colonne : le mot entier ne l'attrape pas.)
 }
+
+# L'AXE gardé : la colonne `tenant_id`, en mot ENTIER — `suspended_tenant_id` (l'origine
+# d'une suspension d'org, #1165) n'est ni une lecture ni une écriture du rattachement.
+# `o.tenant_id`, `tenant_id = %s`, `(… tenant_id)` restent attrapés.
+_COLONNE = re.compile(r"\btenant_id\b")
 
 # ── L'ÉCRIVAIN (2026-09-03) ──────────────────────────────────────────────────
 #
@@ -121,7 +138,7 @@ def test_only_the_tracking_read_touches_tenant_id():
     for path in root.rglob("*.py"):
         src = path.read_text(encoding="utf-8")
         for line in src.splitlines():
-            if "tenant_id" not in line:
+            if not _COLONNE.search(line):
                 continue
             # Ni la DDL (`_schema` et les fragments de `db/schema/`), ni la
             # migration (`_init`), ni un commentaire — Python ou SQL — ne sont des
@@ -141,6 +158,34 @@ def test_only_the_tracking_read_touches_tenant_id():
         f"(« l'existant est nommé, pas déplacé ») : {readers}. Un chemin de "
         "résolution qui dépend du rattachement d'org est un LOT, avec sa revue : "
         f"l'ajouter à _LECTEURS_ADMIS doit être un acte délibéré.")
+
+
+def _ecrit_la_colonne(bloc: str) -> bool:
+    """Ce qui suit `INSERT INTO orgs` / `UPDATE orgs` ÉCRIT-il la colonne ?
+
+    La portée d'un ordre SQL, généreusement : 400 caractères, assez pour attraper la
+    colonne dans la liste d'un INSERT comme dans un SET. Coupée au premier `WHERE` : ce
+    qui le suit FILTRE, n'écrit pas — un `UPDATE orgs … WHERE tenant_id = …` LIT le
+    rattachement (le garde des lecteurs le voit) sans le poser. Une écriture de la
+    colonne est toujours AVANT : dans la liste d'un INSERT, dans un SET, ou dans le
+    SET d'un `ON CONFLICT DO UPDATE`."""
+    return bool(_COLONNE.search(bloc[:400].split("WHERE", 1)[0]))
+
+
+def test_le_garde_des_ecrivains_vise_la_colonne_et_rien_d_autre():
+    """Le contrefactuel du garde : sans lui, un garde affaibli serait vert."""
+    assert _ecrit_la_colonne(" (name, tenant_id) VALUES (%s, %s)")
+    assert _ecrit_la_colonne(" SET tenant_id = %s WHERE id = %s")
+    assert _ecrit_la_colonne(" o SET name = %s, tenant_id = t.id FROM tenants t WHERE t.slug = %s")
+    assert _ecrit_la_colonne(" (id, tenant_id) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE "
+                             "SET tenant_id = EXCLUDED.tenant_id WHERE orgs.id > 0")
+    # L'origine d'une suspension n'est pas le rattachement ; un filtre n'est pas une pose.
+    assert not _ecrit_la_colonne(" SET suspended_at = NOW(), suspended_tenant_id = %s "
+                                 "WHERE tenant_id = %s AND suspended_at IS NULL")
+    assert not _ecrit_la_colonne(" SET suspended_tenant_id = NULL WHERE suspended_tenant_id = %s")
+    # Les lecteurs : le mot entier, préfixe d'alias compris.
+    assert _COLONNE.search("ON t.id = o.tenant_id") and _COLONNE.search("WHERE tenant_id = %s")
+    assert not _COLONNE.search("o.suspended_tenant_id IS NOT NULL")
 
 
 def test_le_rattachement_a_un_ecrivain_et_un_seul():
@@ -167,10 +212,7 @@ def test_le_rattachement_a_un_ecrivain_et_un_seul():
             continue  # DDL et migration : ils CRÉENT la colonne, ils ne la peuplent pas
         for ordre in ("INSERT INTO orgs", "UPDATE orgs"):
             for bloc in src.split(ordre)[1:]:
-                # La portée d'un ordre SQL, généreusement : ce qui suit jusqu'au
-                # prochain `)` fermant de l'appel Python. Assez pour attraper la
-                # colonne dans la liste comme dans un SET.
-                if "tenant_id" in bloc[:400]:
+                if _ecrit_la_colonne(bloc):
                     ecrivains.append(rel)
     assert ecrivains, (
         "PERSONNE n'écrit `orgs.tenant_id` : le provisioning est retombé au DEFAULT "

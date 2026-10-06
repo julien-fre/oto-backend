@@ -1,7 +1,7 @@
 """orgs : une suspension dit si elle vient de la désactivation d'un TENANT
 (`orgs.suspended_tenant_id`) — oto-backend#1165.
 
-Désactiver un tenant suspend aussi toutes ses orgs (`orgs.tenant_id`), par le mécanisme
+Désactiver un tenant suspend aussi toutes les orgs qui lui sont rattachées, par le mécanisme
 de suspension d'org existant (`org_suspension`). Le réactiver doit lever CES
 suspensions-là, et elles seules : une org suspendue pour une autre raison (un essai fini
 sans abonnement, posé par le commerce) reste suspendue. `suspended_by` (un sub, repointé

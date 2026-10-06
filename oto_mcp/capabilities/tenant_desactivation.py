@@ -20,7 +20,8 @@ qualifié (`sub_aliases`, drain d'alias) ne passent jamais par cet émetteur
    délégation, `user_api_tokens.revoked_*`). Les jetons signés par son annuaire
    (session de tableau de bord, accès et rafraîchissement OAuth du MCP) n'existent pas
    chez nous : ils sont refusés à chaque présentation ;
-3. suspend toutes ses ORGS (`orgs.tenant_id`) par la suspension d'org existante
+3. suspend toutes ses ORGS (son rattachement déclaré, lu par `db.desactiver_tenant`)
+   par la suspension d'org existante
    (`org_suspension`, décision du 06/10/2026) : plus personne n'y agit — un compte d'un
    autre tenant membre d'une de ses orgs compris —, ses projets publiés ne sont plus
    servis, ses automatisations (cron, webhooks, travaux d'agent) n'enfilent ni ne
