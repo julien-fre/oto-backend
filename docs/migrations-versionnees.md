@@ -422,9 +422,9 @@ n'aurait de toute façon su qu'ajouter des colonnes, et c'est déjà le travail 
 | `alembic.ini` | l'emplacement des révisions. **Aucun DSN** |
 | `oto_mcp/db/migrations/env.py` | la connexion, lue dans `DATABASE_URL` comme le pool applicatif, et le **verrou consultatif** |
 | `oto_mcp/db/migrations/versions/` | une révision par changement |
-| `tests/test_migrations_registre.py` | la file reste unique : un seul point de départ, une seule fin, chaque révision décrite |
-| `oto_mcp/db/_version_alembic.py` | la version d'une base **neuve**, posée par le démarrage (§5.2) |
-| `tests/test_boot_pose_la_version.py` | les trois cas du §5.2, sur vraie base |
+| `tests/test_migrations_registre.py` | la file reste unique : un seul point de départ — la référence (§5.4) —, une seule fin, chaque révision décrite, aucune révision retirée qui revienne |
+| `oto_mcp/db/_version_alembic.py` | la version d'une base **neuve**, posée par le démarrage (§5.2) ; la référence du registre et le refus nommé d'une base plus ancienne (§5.4) |
+| `tests/test_boot_pose_la_version.py` | les cas du §5.2 et le refus du §5.4, sur vraie base |
 
 **Le verrou n'est pas fourni par l'outil** : Alembic n'en pose aucun. `env.py` prend un
 verrou consultatif PostgreSQL avant d'écrire et le rend ensuite. Ce n'est pas une
@@ -490,428 +490,72 @@ déploiement (`deploy/cible/deployer.sh`) refuse, avant de démarrer la couleur 
 la base du rôle n'est pas à la tête du registre DU TAG — et nomme la commande qui migre,
 sans jamais la jouer (docs/instance-cible.md, § Les migrations, un geste explicite).
 
-Donc, une révision au-delà du point de départ (ex. `0002_runner_jobs_index_vivant`) ne
+Donc, une révision au-delà de la référence (ex. `0042_orgs_suspension_par_tenant`) ne
 prend effet qu'après un geste D'EXPLOITATION, manuel, joué par qui déploie — la même
 procédure que `stamp head` ci-dessus : `oto-mcp migrer upgrade head` sur la box, par le
 lanceur (la ligne `systemd-run` du §5).
 
-**L'ordre entre ce geste et le tag applicatif n'importe pas** — les deux sens sont
-sûrs, jamais cassants, seulement plus ou moins rapides (vérifié le 17/09/2026, sur
-vraie base PostgreSQL, avec un état préalable identique à la production : table
-peuplée, ancien index seul) :
+**L'ordre entre ce geste et le tag applicatif se lit dans l'en-tête de chaque révision.**
+Deux régimes :
 
-- code réécrit + ancien index (migration pas encore jouée) → le planificateur retombe
-  sur un `Seq Scan` (comme avant ce lot), pas d'erreur ;
-- ancien code + nouvel index (migration jouée avant le tag) → **PostgreSQL utilise
-  déjà le nouvel index partiel pour l'ancienne forme de la requête** (l'`OR` nu
-  implique le même `status IN ('pending','claimed')` que le nouveau prédicat partiel :
-  le planificateur le déduit tout seul). L'ancien code profite donc du gain de
-  vitesse avant même d'être remplacé.
-
-Aucune fenêtre où l'un des deux états casse l'autre — seulement une fenêtre plus lente
-tant que le geste manuel n'a pas été joué.
-
-⚠️ **Cette indifférence à l'ordre tient à 0002, pas au registre.** La révision
-`0003_runner_fleets_preneur` (21/09/2026) ajoute une colonne que le code du même lot
-LIT (`runner_fleets.taken_by`) : jouée après la fusion, la préproduction répondrait
-`UndefinedColumn` sur chaque verbe de `runner.fleets`. Elle se joue donc **avant la
-fusion** — l'ancien code ignore la colonne. Chaque révision dit son ordre dans son
-en-tête : le lire avant de promouvoir.
-
-`0004_org_entitlements` (23/09/2026, ADR 0070 §7) crée une table NEUVE, que le
-démarrage crée aussi (`CREATE TABLE IF NOT EXISTS`, fragment `db/schema/entitlements.py`,
-que la révision exécute tel quel). Les deux sont idempotents l'un envers l'autre et
-rien ne lit encore la table : l'ordre est indifférent. Seul coût : la clé étrangère
-vers `orgs` prend un verrou sur `orgs` à la création, borné par `lock_timeout` des deux
-côtés.
-
-`0005_journal_archives` (23/09/2026, #665) crée la table NEUVE `journal_archives`, que
-le démarrage crée aussi (fragment `db/schema/usage.py::JOURNAL_ARCHIVES`, exécuté tel
-quel par la révision). Aucune clé étrangère : aucun verrou hors de la table neuve.
-L'ordre avec le tag est indifférent ; elle doit seulement exister avant le premier tir
-de l'archive qui supprime un mois — sans elle, l'archive s'arrête avant de supprimer.
-
-`0006_unipile_fin_de_droit` (23/09/2026, oto-backend#806) ajoute deux colonnes
-nullables à `unipile_accounts` (`entitlement_lost_at`, `entitlement_notice_at`), que le
-démarrage pose aussi (`ALTER … ADD COLUMN IF NOT EXISTS`, sauté par le garde des DDL
-une fois posées). Même régime que 0004 : idempotents l'un envers l'autre, ordre
-indifférent — le code qui les lit arrive avec le démarrage qui les pose.
-
-`0007_jetons_revocation_tracee` (23/09/2026, #523) ajoute trois colonnes nullables à
-`user_api_tokens` (`revoked_at`, `revoked_by`, `revoked_reason`) que le code du même lot
-LIT à chaque authentification par jeton (`verify_api_token`) : comme 0003, elle se joue
-**avant la fusion**, sinon chaque requête par jeton répondrait `UndefinedColumn`. Pas
-au démarrage : cette table a déjà connu le deadlock `ALTER` de boot contre requête.
-
-`0009_coffre_secret_obligatoire` (23/09/2026, #521, après `0008_billing_contracts` de #806) pose `NOT NULL` sur
-`connector_credentials.secret_enc` — la première contrainte reposée sur la base servie.
-Le code du même lot ne filtre plus `secret_enc IS NOT NULL` (« détenir une clé » = la
-ligne existe) : elle se joue **avant la fusion**. Elle **échoue d'elle-même** si une
-ligne nulle existe (rien n'est écrit) ; la requête de vérification est dans son en-tête.
-Le démarrage ne pose plus la colonne (`ADD COLUMN IF NOT EXISTS secret_enc TEXT` retiré
-d'`_init.py`, inerte sur toute base servie) : un `ALTER` qui rendait la colonne sans
-son `NOT NULL` aurait ouvert une neuvième divergence au cliquet de
-`tests/test_boot_order_replay.py`.
-
-`0010_tool_calls_result_shape` (24/09/2026, oto-backend#644, après `0009_coffre_secret_obligatoire`) ajoute une colonne nullable
-à `tool_calls` (`result_shape`), que le code du même lot ÉCRIT à chaque appel et LIT dans
-la liste et la fiche du journal : comme 0003, 0007 et 0009, elle se joue **avant la fusion** —
-sans elle, chaque insertion de journal échouerait en `UndefinedColumn`, avalée en warning
-(le journal se viderait sans bruit). Pas au démarrage : table de plusieurs millions de
-lignes, où chaque appel écrit. Sa contrainte de vocabulaire fermé est posée `NOT VALID` :
-aucun parcours des lignes existantes sous le verrou exclusif.
-
-`0011_journal_revisions_ligne` (24/09/2026, oto#273 M1, après `0010_tool_calls_result_shape`) crée la table NEUVE
-`datastore_row_revisions`, que le démarrage crée aussi (fragment
-`db/schema/datastore.py::REVISIONS`, exécuté tel quel par la révision). Même régime que
-0004 : idempotents l'un envers l'autre, ordre indifférent — rien ne lit la table en M1.
-Seul coût : la clé étrangère vers `user_datastores` prend un verrou à la création,
-borné par `lock_timeout`. L'index, la fonction et les deux déclencheurs AFTER sur
-`datastore_rows` restent au démarrage (`db/journal_revisions.py`, sous garde de
-catalogue) : ils suivent le code servi. Le retour arrière retire d'abord déclencheurs et
-fonction — qui feraient sinon échouer chaque écriture de ligne sur une table absente —,
-puis la table ET ses lignes ; le démarrage suivant repose tout.
-
-`0012_partages_echeance` (24/09/2026, otomata-tech/oto#39, après `0011_journal_revisions_ligne`) ajoute
-une colonne nullable à `resource_grants` (`expires_at`, l'échéance d'un partage), que le code
-du même lot LIT dans chaque contrôle d'accès à un contenu (le prédicat
-`db/_partage_vivant.py`) : comme 0007 et 0010, elle se joue **avant la fusion**, sinon
-chaque lecture de partage répondrait `UndefinedColumn`. Pas au démarrage : la table est lue
-par chaque contrôle d'accès, et l'`ALTER` y prend un verrou exclusif, borné par
-`lock_timeout`. Le retour arrière retire la colonne : un partage échu redevient valide.
-
-`0013_pages_versions_regroupees` (24/09/2026, otomata-tech/oto#274, après `0012_partages_echeance`)
-ajoute deux colonnes nullables, `docs.updated_by` (l'auteur de la dernière modification) et
-`doc_revisions.face` (la porte, `mcp` ou `rest`, de l'écriture qui a remplacé l'instantané),
-que le code du même lot ÉCRIT à chaque écriture de page : comme 0007 et 0010, elle se joue
-**avant la fusion**. Pas au démarrage : `docs` est lue par chaque lecture de page. Elle
-remplit `updated_by` depuis la révision appariée (la règle que servaient les « modifications
-récentes »), **par tranches de 5 000 identifiants hors de la transaction des `ALTER`**, chacune
-sous `lock_timeout` : ≈ 18 s par million de pages sur la base de test — mesurer
-`count(*)` de `docs` avant de la jouer. Entre la fusion et le tag, une page modifiée par
-l'ancien code de production garde l'auteur précédent jusqu'à sa prochaine écriture ;
-rejouer le remplissage après le tag referme cette fenêtre. Le retour arrière retire les
-deux colonnes.
-
-`0014_droits_portee_personne` et `0015_droits_valeur_obligatoire` (24/09/2026,
-oto-backend#1066, après `0013_pages_versions_regroupees`) donnent à `org_entitlements` sa
-forme cible — portée personne (`sub`), `value` jamais vide, unicité
-`org_entitlements_une_ligne` (`UNIQUE NULLS NOT DISTINCT (org_id, sub, right_key,
-source)`) à la place de la clé primaire (`docs/droits-declares.md`). **Deux révisions,
-deux moments**, parce que le code d'avant pose `value` NULL et fait `ON CONFLICT (org_id,
-right_key, source)` :
-
-- **0014 AVANT la fusion** : `ADD COLUMN sub`, `value` NULL → 1, la contrainte. Additive
-  pour l'ancien code (vérifié sur vraie base : il réécrit et pose encore du NULL après
-  elle) ; le code du lot, lui, lit `sub` et cible la contrainte — sans elle, chaque
-  lecture de droit en préproduction répondrait `UndefinedColumn` ;
-- **0015 APRÈS le tag de production** : `value` NULL → 1 encore (les lignes posées par
-  l'ancien code entre-temps), `SET NOT NULL`, `DROP CONSTRAINT org_entitlements_pkey`.
-  Jouée avant le tag, elle ferait échouer la réconciliation des droits de la
-  production — y compris juste après l'activation d'un abonnement.
-
-Les deux sont idempotentes (une base neuve a déjà la forme : chaque geste est sauté) et
-bornées par `lock_timeout`. La 0004 porte désormais son propre `CREATE TABLE` (celui de sa
-date) au lieu d'exécuter le fragment courant, qui a pris la forme cible.
-
-`0016_journal_suppression` (24/09/2026, oto#273, après `0015_droits_valeur_obligatoire`)
-ajoute `datastore_row_revisions.suppression BOOLEAN NOT NULL DEFAULT false` : la
-suppression d'une ligne devient une révision. Défaut constant, donc écriture de catalogue
-seule ; l'`AccessExclusiveLock` sur le journal (que chaque écriture de ligne alimente) est
-borné par `lock_timeout`. **Ordre indifférent**, comme 0011 : le démarrage pose la même
-colonne s'il ne la trouve pas (`journal_revisions.DDL_COLONNE_SUPPRESSION`, sous garde de
-catalogue), AVANT la fonction et le déclencheur `AFTER DELETE` qui l'écrivent — un
-déclencheur posé sans sa colonne ferait échouer chaque suppression de ligne. L'ancien code
-ne lit ni n'écrit la colonne (ses révisions prennent `false`). Le retour arrière retire
-d'abord le déclencheur et la fonction de suppression, puis la colonne ; celui de 0011
-retire aussi ce déclencheur, qui survivrait sinon à la table qu'il écrit. 0011 exécute
-toujours le fragment courant, qui porte la colonne : sur une base qui rejoue le registre,
-0016 est alors sans effet.
-
-`0017_tableaux_contexte_org` (24/09/2026, oto#160, après `0016_journal_suppression`)
-ajoute `user_datastores.context_org_id BIGINT REFERENCES orgs(id) ON DELETE SET NULL` :
-l'org active de l'appel qui a créé un tableau personnel. Sans défaut, donc écriture de
-catalogue seule, et la clé étrangère se valide sur une colonne toute NULL ;
-l'`AccessExclusiveLock` sur `user_datastores` et le verrou sur `orgs` sont bornés par
-`lock_timeout`. **Ordre indifférent** : le démarrage pose la même colonne s'il ne la
-trouve pas (`datastore_ns.DDL_COLONNE_CONTEXTE_ORG`, sous garde de catalogue). L'ancien
-code ne la lit ni ne l'écrit (ses créations la laissent NULL). Le retour arrière retire
-la colonne ; le code qui l'écrit doit être retiré avant lui.
-
-`0018_contexte_org_rempli` (25/09/2026, oto#160 phase 2, après `0017_tableaux_contexte_org`)
-est une révision de **données** : un seul `UPDATE` remplit `context_org_id` des tableaux
-personnels restés NULL, là où une trace désigne UNE org — le journal d'abord
-(`tool_calls` : `data_create_datastore` du même compte au même nom à ±2 min, ou
-`POST /api/datastores` du même compte à ±10 s), sinon les projets qui lient le tableau.
-Rien n'est deviné (pas d'« org unique du membre ») : un indécidable garde NULL et reste
-visible dans toutes les orgs de son propriétaire. Une org désignée mais supprimée n'est
-pas posée. Idempotente (`WHERE owner_type = 'user' AND context_org_id IS NULL` : un
-tableau rempli, par le code ou un premier passage, n'est jamais réécrit), sous
-`lock_timeout` 5 s et `statement_timeout` 120 s. **Rien au démarrage** — une donnée se
-reconstitue une fois, elle ne se tient pas comme un schéma. **Ordre indifférent** avec
-le tag : l'ancien code ignore la colonne, le nouveau montre partout un tableau encore
-NULL. Le retour arrière **ne fait rien** : une valeur remplie ici ne se distingue pas
-d'une valeur posée à la création. Mesure préalable en production (24/09) : 36
-personnels, 13 décidés par le journal, 8 par un projet, 15 indécidables, aucun
-désaccord entre sources. Banc : `tests/datastore/test_contexte_org_remplissage_160.py`.
+- **avant la fusion** — le code du lot LIT ou ÉCRIT ce que la révision pose (une colonne
+  lue à chaque requête, une contrainte dont le code ne se garde plus) : jouée après, la
+  préproduction répondrait `UndefinedColumn`. L'ancien code ignore l'ajout : la jouer
+  avant le déploiement est sûr. Prod et préprod partagent la base ;
+- **ordre indifférent** — la révision pose un objet neuf que le démarrage d'une base
+  neuve pose aussi (`CREATE TABLE IF NOT EXISTS`, même fragment `db/schema/…`), ou un
+  index que l'ancien code profite déjà d'avoir : les deux sens sont sûrs, seulement plus
+  ou moins rapides.
 
 ⚠️ L'identifiant d'une révision tient en **32 caractères** : `alembic_version.version_num`
 est un `VARCHAR(32)`, que le démarrage d'une base neuve estampille à la tête du registre
 (§5.2) — un identifiant plus long y fait échouer chaque démarrage à neuf.
 
-`0019_plafond_abonnements` (25/09/2026, après `0018_contexte_org_rempli`) pose le
-plafond de consommation des abonnements personnels : la table NEUVE
-`org_model_subscription_limits` (fragment `db/schema/runs.py::MODEL_SUBSCRIPTION_LIMITS`,
-exécuté tel quel, clé étrangère vers `orgs` bornée par `lock_timeout`) et la colonne
-nullable `user_model_subscriptions.limite_pct SMALLINT CHECK (1..100)`, sans défaut — le
-`CHECK` parcourt une table d'une ligne par personne abonnée. **Ordre indifférent**,
-comme 0017 : le démarrage crée la table et pose la colonne s'il ne la trouve pas
-(`user_subscriptions.DDL_COLONNE_LIMITE`, sous garde de catalogue). L'ancien code ne lit
-ni l'une ni l'autre. Le code du lot LIT la colonne à chaque lecture d'abonnement : la
-jouer avant la fusion ferme la fenêtre où un démarrage raté sur `lock_timeout` la
-laisserait absente. Le retour arrière retire la colonne puis la table.
-
-`0020_pool_abonnements` (25/09/2026, après `0019_plafond_abonnements`) crée les deux
-tables NEUVES du pool d'org des abonnements (fragment
-`db/schema/runs.py::MODEL_SUBSCRIPTION_POOL`, exécuté tel quel) :
-`org_model_subscription_modes` (le mode `personnel` | `pool` d'une org, par famille) et
-`user_model_subscription_loans` (le prêt d'un abonnement au pool d'une org), clés
-étrangères vers `orgs` bornées par `lock_timeout`. **Aucun `ALTER`** : l'abonnement qui
-sert un travail s'écrit dans sa charge (`_plateforme.abonnement`), pas dans une colonne
-de `runner_jobs`. Le démarrage crée les mêmes tables s'il ne les trouve pas ; l'ancien
-code ne les lit pas. Le code du lot les LIT à chaque réservation d'un travail
-d'abonnement : la jouer **avant la fusion**, comme 0019. Le retour arrière retire les
-deux tables.
-
-`0021_limites_du_run` (25/09/2026, après `0020_pool_abonnements`) ajoute trois colonnes
-nullables, sans défaut : `runner_triggers.max_tokens`, `runner_triggers.max_run_seconds`,
-`runner_fleets.max_run_seconds` — les limites d'un run déclarées sur l'agent
-(`capabilities/_limites_du_run.py`). Écritures de catalogue seulement. Le démarrage pose
-les mêmes colonnes s'il ne les trouve pas (même régime que 0006). Le code du lot les LIT
-à chaque lecture d'un déclencheur ou d'une flotte (`_COLS`), donc à chaque tick : la
-jouer **avant la fusion**. L'ancien code les ignore. Le retour arrière retire les
-colonnes et les limites déclarées.
-
-`0022_journal_membres_org` (25/09/2026, otomata-tech/oto#145, après `0021_limites_du_run`)
-crée la table NEUVE `org_member_events` — le journal des entrées, sorties et changements
-de rôle d'un membre d'org — et son index (fragment `db/schema/orgs.py::MEMBER_EVENTS`,
-exécuté tel quel, clé étrangère vers `orgs` bornée par `lock_timeout`). **Aucun
-`ALTER`**, aucune reprise : le journal commence au déploiement. Le démarrage crée la
-même table s'il ne la trouve pas ; l'ancien code ne la lit ni ne l'écrit. Le code du lot
-l'ÉCRIT dans la transaction de chaque ajout, retrait ou changement de rôle : la jouer
-**avant la fusion**, comme 0020. Le retour arrière retire la table et son historique.
-
-`0024_droits_personne_partout` (28/09/2026, oto-backend#1089, après `0023_signature_webhook`) ouvre la
-portée « personne, toutes orgs » des droits déclarés (`docs/droits-declares.md`) : la
-contrainte `org_entitlements_une_portee` `CHECK (org_id IS NOT NULL OR sub IS NOT NULL)`,
-posée d'abord (chaque ligne la satisfait, `org_id` étant encore NOT NULL), puis
-`ALTER COLUMN org_id DROP NOT NULL`. L'unicité `org_entitlements_une_ligne` (NULLS NOT
-DISTINCT) couvre déjà la nouvelle portée et ne bouge pas. **Verrous** : les deux ordres
-prennent `AccessExclusiveLock` sur `org_entitlements` seule, jusqu'à la fin de la
-transaction ; `DROP NOT NULL` est une écriture de catalogue, le `CHECK` parcourt la table
-une fois (une poignée de lignes) ; l'attente est bornée par `lock_timeout` 5 s. Suppose la
-0015 jouée (sans quoi `DROP NOT NULL` échoue sur la clé primaire). **Pas au démarrage** :
-une base neuve a la forme par le fragment, une base servie par cette révision seule.
-**Avant la fusion de préférence** : l'ancien code n'écrit que des lignes à `org_id` posé
-et ne lit que par `org_id = …` ; le code du lot lit la portée sans elle, et seule la pose
-d'une ligne de personne partout échoue sans elle (500 `NotNullViolation`, jamais en
-silence). Le retour arrière repose `NOT NULL` et **échoue de lui-même** tant qu'une ligne
-à `org_id` NULL existe — rien n'est supprimé en douce.
-`0025_repli_api` (28/09/2026, oto-backend#1086, après `0024_droits_personne_partout`)
-pose le repli d'un abonnement épuisé sur la clé API de l'org
-(`docs/runner-et-automatisations.md`) : trois `ADD COLUMN IF NOT EXISTS` du fragment
-`schema/runs.py::MODEL_SUBSCRIPTION_REPLI`, exécuté tel quel —
-`org_model_subscription_modes.repli_api BOOLEAN NOT NULL DEFAULT FALSE` (l'interrupteur,
-fermé), `user_model_subscriptions.limit_epuise BOOLEAN NOT NULL DEFAULT FALSE` et
-`limit_utilisation DOUBLE PRECISION` (la cause d'une pause). Défauts constants : rien ne
-se réécrit (PG ≥ 11), verrous bornés par `lock_timeout` 5 s. Le démarrage joue le même
-fragment, sous le garde des DDL. **Avant la fusion** : le code du lot lit `repli_api` à
-chaque lecture du mode (`get_mode`, donc à chaque remise d'un travail d'abonnement) et
-écrit la cause à chaque rapport de forfait. Le fragment de `0020` n'a pas bougé. Le
-retour arrière retire les trois colonnes.
-
-`0026_transcription_tours` (28/09/2026, ADR 0074, après `0025_repli_api`)
-ajoute `transcription_jobs.transcript JSONB` : les tours verbatim d'une transcription,
-que la face REST rend et la face MCP jamais. À part de `result` exprès — l'ancienne face
-MCP recopie `result` dans sa réponse, et le worker draine la même file en préprod et en
-prod. Sans défaut, écriture de catalogue seule, `AccessExclusiveLock` borné par
-`lock_timeout`. **Ordre indifférent** : le démarrage pose la même colonne s'il ne la
-trouve pas (`transcription.DDL_COLONNE_TRANSCRIPT`, sous garde de catalogue). L'ancien
-code ne la lit ni ne l'écrit. Le retour arrière retire la colonne ; le code qui l'écrit
-doit être retiré avant lui.
-
-`0027_apollo_phone_reveals` (28/09/2026, après `0026_transcription_tours`) crée la table
-NEUVE `apollo_phone_reveals` et ses deux index (fragment
-`db/schema/connectors.py::APOLLO_PHONE_REVEALS`, exécuté tel quel) : les reveals de
-téléphone Apollo reçus par oto (`docs/donnees-par-reference.md`). **Aucune clé
-étrangère** — ni verrou sur `orgs` ni sur `users` — et l'index `(cle_portee, request_id)`
-est délibérément NON unique (la portée de la clé Apollo qui a payé est la clé de lecture). Le démarrage crée la même table s'il ne la trouve pas ;
-l'ancien code ne la lit ni ne l'écrit. Le code du lot l'ÉCRIT à chaque reveal de
-téléphone (la commande naît avant l'appel à Apollo) : la jouer **avant la fusion**,
-comme 0020. Le retour arrière retire la table et les numéros qu'elle garde ; le sondage
-d'Apollo reste alors le seul chemin de lecture.
-
-`0028_partage_en_attente` (29/09/2026, après `0027_apollo_phone_reveals`) pose le
-PARTAGE EN ATTENTE d'un objet vers une adresse sans compte : six `ADD COLUMN IF NOT
-EXISTS` sur `org_invitations` (`resource_type`, `resource_kind`, `resource_id`,
-`resource_role`, `resource_ttl_days`, `resource_name`, toutes NULL) et l'index unique
-partiel `idx_org_invitations_ressource_attente` (un partage en attente par objet et par
-adresse) : fragment `schema/orgs.py::INVITATIONS_RESSOURCE`, puis
-`db/invitations_ressource.py::DDL_INDEX_RESSOURCE_ATTENTE` — hors assemblage, son
-prédicat lit `declined_at`, qu'un ALTER de `_init.py` pose après lui. Sans
-défaut : écriture de catalogue seule ; l'index ne porte aucune ligne existante. Le
-démarrage joue le même fragment. **Avant la fusion** : le code du lot lit ces colonnes
-à chaque acceptation d'invitation et à chaque inscription. Le retour arrière retire
-l'index et les colonnes, et perd les partages encore en attente.
-
-`0030_file_de_travail_ordre` (30/09/2026, oto#101, après `0029_cle_metier_valeur_servie`)
-pose l'ordre de service de la file de travail (`docs/datastore.md`) :
-`datastore_rows.claimed_at TIMESTAMPTZ` (sans défaut, écriture de catalogue seule,
-`AccessExclusiveLock` borné par `lock_timeout` 5 s) puis l'index partiel
-`idx_datastore_rows_file (ns_id, claimed_at ASC NULLS FIRST, row_id) WHERE
-abandon_reason IS NULL`, **CONCURRENTLY** dans un `autocommit_block` (même régime que
-0002 : la table est chaude). Les lignes existantes valent NULL, « jamais servie ». Le
-démarrage pose la même colonne et le même index s'il ne les trouve pas
-(`rowlock.DDL_COLONNE_DERNIERE_PRISE`, `rowlock.DDL_INDEX_FILE`) — mais son index n'est
-PAS concurrent : **avant la fusion**, pour que le démarrage n'ait rien à construire sur
-la base peuplée. Le code du lot écrit la colonne à chaque réservation ; l'ancien ne la
-lit ni ne l'écrit. Un échec pendant la construction laisse un index invalide, à retirer
-(`DROP INDEX CONCURRENTLY`) avant de rejouer. Le retour arrière retire l'index puis la
-colonne ; le code qui l'écrit doit être retiré avant lui.
-
-`0031_selection_org_reelle` (01/10/2026, oto-backend#959, après
-`0030_file_de_travail_ordre`) interdit en base la sélection de connecteur sous
-l'ancienne sentinelle `org_id = 0` : `CHECK (org_id > 0)` VALIDÉ
-(`user_selected_connectors_org_reelle`, `connector_selection_removed_org_reelle`) et
-`DROP DEFAULT` sur les deux ; `connector_selection_seeded` garde `0` pour ses
-sentinelles de démarrage. Verrou exclusif bref (quelques milliers de lignes), sous
-`lock_timeout` 5 s. **Échoue tant qu'une ligne sous `0` reste** : à jouer APRÈS
-`scripts/selections_org_zero.py --appliquer` (947a59c4), dans un tag postérieur — le
-script et son banc partent avec elle. Le retour arrière retire les `CHECK` et repose
-`DEFAULT 0`.
-
-`0032_tool_calls_org_outil_ok` (04/10/2026, oto-backend#1145, après
-`0031_selection_org_reelle`) pose `idx_tool_calls_org_tool_ok ON tool_calls (org_id,
-tool, created_at DESC) WHERE ok`, **CONCURRENTLY IF NOT EXISTS** dans un
-`autocommit_block` : les relevés d'org par outil lisaient tous les appels de l'org sur
-la fenêtre avant de jeter les autres outils. Le démarrage d'une base neuve pose le même
-index, NON concurrent. **Ni la révision ni le démarrage ne le construisent sur une
-grosse table** (verdict commun, `oto_mcp/db/index_releve.py`) : au-delà de
-`CONSTRUCTION_MAX_LIGNES` (100 000, estimées par `pg_class.reltuples`), la révision
-lève `ConstructionManuelleRequise` et le démarrage le dit en erreur sans construire —
-mesuré en production, 172 s pour environ 12 M lignes, au-delà des 120 s de la fenêtre
-de démarrage. Une base servie le reçoit donc par le geste manuel, que la révision
-constate ensuite :
+**Un index sur une grosse table servie** se pose CONCURRENTLY, sous le verdict commun
+d'`oto_mcp/db/index_concurrent.py` (révision : `poser_par_revision` ; démarrage d'une base
+neuve : `poser_au_demarrage`, non concurrent). Au-delà du seuil de taille (estimé par
+`pg_class.reltuples`), ni la révision ni le démarrage ne le construisent — mesuré en
+production, 172 s pour environ 12 M lignes de `tool_calls`, au-delà des 120 s de la
+fenêtre de démarrage : la révision lève `ConstructionManuelleRequise`, le démarrage le dit
+en erreur et continue. Le geste manuel, que la révision rejouée constate ensuite :
 
 ```sql
 SET statement_timeout = 0;          -- la construction lit deux fois toute la table
 SET lock_timeout = '5min';
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tool_calls_org_tool_ok
-    ON tool_calls (org_id, tool, created_at DESC) WHERE ok;
-SELECT indisvalid FROM pg_index
- WHERE indexrelid = 'idx_tool_calls_org_tool_ok'::regclass;   -- doit valoir t
--- si f : DROP INDEX CONCURRENTLY IF EXISTS idx_tool_calls_org_tool_ok; puis rejouer le CREATE
+CREATE INDEX CONCURRENTLY IF NOT EXISTS <nom> ON <table> <forme>;
+SELECT indisvalid FROM pg_index WHERE indexrelid = '<nom>'::regclass;   -- doit valoir t
+-- si f : DROP INDEX CONCURRENTLY IF EXISTS <nom>; puis rejouer le CREATE
 ```
+
+Le `CREATE` exact se tire du code (`IndexConcurrent.ddl_concurrent`), il ne se retape pas :
+une expression d'index qui diffère d'un caractère de celle de la requête ne sert aucune
+lecture.
 
 ⚠️ **`lock_timeout` de quelques minutes, pas de quelques secondes** : la phase
 concurrente attend la fin de chaque transaction plus ancienne qu'elle par une attente
 de verrou sur son `virtualxid`, et `lock_timeout` coupe aussi ces attentes. À 2 s, la
 construction a échoué en production derrière une transaction `idle in transaction`
 (`LockNotAvailable`), laissant l'index **invalide** au catalogue. Pendant cette attente,
-seul un `ShareUpdateExclusiveLock` est demandé sur `tool_calls` : ni les lectures ni
-les écritures ne sont bloquées.
+seul un `ShareUpdateExclusiveLock` est demandé sur la table : ni les lectures ni les
+écritures ne sont bloquées.
 
 ⚠️ **Un index invalide ne se répare pas tout seul** : `IF NOT EXISTS` le prend pour
 fait, et il ne sert aucune lecture. D'où la vérification d'`indisvalid` après chaque
 construction, et le `DROP INDEX CONCURRENTLY` avant de reconstruire. Ni la révision ni
 le démarrage ne le font à votre place : la révision lève `IndexInvalide` en donnant ces
-gestes, le démarrage le dit en erreur et continue. Retour arrière : `DROP INDEX
-CONCURRENTLY`.
+gestes, le démarrage le dit en erreur et continue.
 
-`0033_verrou_org_delegation` (02/10/2026, oto-backend#1118, après
-`0032_tool_calls_org_outil_ok` de #1145) ajoute à `user_api_tokens` les trois colonnes
-nullables du jeton de délégation : `job_id`, `verrou_org`, `verrou_org_id`
-(`oto_mcp/verrou_org.py`). `ADD COLUMN IF NOT EXISTS` sans défaut ni réécriture, sous
-`lock_timeout`. **Avant la fusion** : le code du lot lit ces colonnes à chaque
-vérification de jeton. L'ancien code ne les lit pas ; un jeton émis avant elle n'est
-pas verrouillé jusqu'à la fin de son bail. Le retour arrière retire les trois colonnes.
+**Le registre au 06/10/2026** (squash, §5.4) — la liste par révision qui précédait, de
+`0001_point_de_depart` à `0040_tenants_desactivation`, est archivée dans git (le tag
+`v1.441.0` porte ce document entier, révisions et en-têtes compris) :
 
-`0037_emails_cc` (04/10/2026, oto-backend#1133, après `0036_partages_de_procedure`)
-garde les copies d'un email différé : `scheduled_emails.cc TEXT[]`, nullable sans défaut
-(écriture de catalogue, `lock_timeout` 5 s ; NULL = aucune copie, les lignes existantes
-gardent leur envoi). **Avant la fusion** : le code du lot l'écrit à la mise en file et la
-lit au tirage. Le retour arrière retire la colonne (les copies des envois encore en file
-sont perdues).
+| révision | statut | ce qu'elle porte |
+|---|---|---|
+| `0041_recherche_valeurs_servies` | **référence** — vide, sans précédente | rien : elle documente « schéma = celui du démarrage au 06/10/2026 ». Y monter lève, en descendre lève |
+| `0042_orgs_suspension_par_tenant` | vivante | `orgs.suspended_tenant_id BIGINT`, nullable sans défaut ni index (écriture de catalogue ; `AccessExclusiveLock` bref sur `orgs`, attente bornée par `lock_timeout` 5 s). NULL = suspension posée sur l'org ; sinon le tenant dont la désactivation l'a posée, et que sa réactivation lève. **Avant la fusion** (oto-backend#1165). Retour arrière : retire la colonne |
 
-`0038_abandon_run` (05/10/2026, oto-backend#491, après `0037_emails_cc`) garde le run de
-la dernière tentative d'une ligne abandonnée : `datastore_rows.abandon_run TEXT`, nullable
-sans défaut (écriture de catalogue, `lock_timeout` 5 s ; les lignes existantes restent
-NULL). **Avant la fusion** : le code du lot la lit dans chaque projection de ligne et
-l'écrit à l'abandon. Le retour arrière retire la colonne (les motifs restent).
-
-`0039_feed_synced_at_retiree` (06/10/2026, oto-backend#1162, après `0038_abandon_run`)
-retire `unipile_accounts.feed_synced_at`, morte depuis que le feed LinkedIn est servi en
-direct. Son `DROP` avait été joué **à la main** sur la base partagée, sur la foi d'un
-commentaire de `_init.py` : une instance née avant ce geste l'a gardée, et l'import de
-périmètre vers elle a refusé des « colonnes différentes » (§5.3). La révision lit le
-catalogue (`pg_attribute`, sans verrou sur la table) et ne lance
-`ALTER TABLE unipile_accounts DROP COLUMN IF EXISTS feed_synced_at` que si la colonne
-existe : sur la base partagée et sur une base neuve, **aucun ordre, aucun verrou**.
-Ailleurs, `AccessExclusiveLock` bref sur `unipile_accounts` (écriture de catalogue, sans
-réécriture), attente bornée par `lock_timeout` 5 s. **Ordre indifférent** : aucun code ne
-lit ni n'écrit la colonne. **Le retour arrière lève** (irréversible) : un banc qui
-descend sous 0039 estampille la révision qu'il éprouve au lieu de `head`.
-
-`0041_recherche_valeurs_servies` (06/10/2026, oto-backend#307, après `0040_tenants_desactivation`)
-sert la portée `q_scope=values` de la recherche des lignes : la fonction IMMUTABLE
-`datastore_valeurs_texte_v1(jsonb)` (`db/paths.py` ; posée si elle MANQUE, son corps
-est figé — changer la règle, c'est une `_v2` et ses index), puis
-`idx_datastore_rows_valeurs_fts` et `idx_datastore_rows_valeurs_trgm` (GIN sur
-l'expression, `db/search.py::INDEX_VALEURS`), **CONCURRENTLY IF NOT EXISTS**, sous le
-verdict de 0032 — désormais `oto_mcp/db/index_concurrent.py`, partagé par les deux
-révisions et le démarrage. Seuil abaissé à **10 000 lignes** : un appel de fonction par
-ligne en plus du GIN, et une construction non concurrente au démarrage bloquerait les
-écritures de `datastore_rows`. Sur la base servie, la révision lève donc
-`ConstructionManuelleRequise` ; le geste manuel, puis la révision rejouée qui constate :
-
-```sql
-SET statement_timeout = 0;          -- deux parcours de datastore_rows, une fonction par ligne
-SET lock_timeout = '5min';
--- la fonction d'abord, si to_regprocedure('datastore_valeurs_texte_v1(jsonb)') est nul
-CREATE FUNCTION datastore_valeurs_texte_v1(data jsonb) RETURNS text … ;
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_datastore_rows_valeurs_fts ON datastore_rows
-    USING GIN (to_tsvector('french', translate(datastore_valeurs_texte_v1(data), …)));
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_datastore_rows_valeurs_trgm ON datastore_rows
-    USING GIN ((translate(datastore_valeurs_texte_v1(data), …)) gin_trgm_ops);
-SELECT c.relname, i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
- WHERE c.relname LIKE 'idx_datastore_rows_valeurs_%';                 -- deux t attendus
--- si f : DROP INDEX CONCURRENTLY IF EXISTS <nom>; puis rejouer le CREATE
-```
-
-Les `…` sont le texte exact de `paths.DDL_FONCTION_VALEURS_TEXTE` et de
-`IndexConcurrent.ddl_concurrent` (le corps de la fonction, le repli d'accents
-`translate`) : les tirer du code du lot (`python -c "from oto_mcp.db.paths import
-DDL_FONCTION_VALEURS_TEXTE as F; from oto_mcp.db.search import INDEX_VALEURS as I;
-print(';\n'.join([F] + [i.ddl_concurrent for i in I]) + ';')"`), jamais les retaper —
-une expression d'index qui diffère d'un caractère de celle de la requête ne sert
-aucune lecture. **Avant la fusion** : le démarrage du lot construirait sinon les
-deux index NON concurrents si la table était sous le seuil ; au-dessus, il le dit en
-erreur et continue. Sans les index, `q_scope=values` répond juste, en parcourant les
-lignes du tableau visé. **Preuve en production** : au journal du démarrage, aucune
-ligne `démarrage : idx_datastore_rows_valeurs_…` ; au catalogue (lecture seule),
-`to_regprocedure('datastore_valeurs_texte_v1(jsonb)')` non nul et les deux
-`indisvalid = t`. Retour arrière : les deux `DROP INDEX CONCURRENTLY`, puis `DROP
-FUNCTION`, APRÈS le retrait du code qui l'appelle.
-
-`0042_orgs_suspension_par_tenant` (06/10/2026, oto-backend#1165, après
-`0041_recherche_valeurs_servies`) dit l'origine d'une suspension d'org :
-`orgs.suspended_tenant_id BIGINT`, nullable sans défaut, sans index ni clé étrangère
-(écriture de catalogue ; `AccessExclusiveLock` bref sur `orgs`, lue à presque chaque
-requête, attente bornée par `lock_timeout` 5 s). NULL = suspension posée sur l'org ;
-sinon le tenant dont la désactivation l'a posée, et que sa réactivation lève. **Avant la
-fusion** : le code du lot l'écrit à chaque suspension, levée d'org et (dés)activation de
-tenant. Le retour arrière retire la colonne (une suspension posée par un tenant devient
-une suspension d'org ordinaire).
+Les bases vivantes ce jour-là : la base partagée prod/préprod, en `0042`, et une instance
+dédiée (prod et préprod), en `0041`. `0042` vit tant que cette instance ne l'a pas reçue.
 
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
@@ -926,7 +570,8 @@ le registre sur un schéma qui le porte déjà. Le geste juste sur une base neuv
 | état constaté **avant le premier ordre du démarrage**, sous son verrou consultatif | ce que fait le démarrage |
 |---|---|
 | **neuve** — le schéma courant ne contient aucune table | crée `alembic_version` (forme d'Alembic) et y écrit la tête du registre, **en fin de la même transaction** que le schéma |
-| **versionnée** — `alembic_version` existe, quelle que soit sa révision | n'y touche jamais ; sa tenue est à Alembic (§5.1) |
+| **versionnée** — `alembic_version` existe | n'y touche jamais ; sa tenue est à Alembic (§5.1) |
+| **antérieure à la référence** — `alembic_version` porte une révision retirée par un squash | **refuse de démarrer**, en nommant la révision, la référence et le tag qui la monte d'abord (§5.4) |
 | **sans version** — des tables, pas d'`alembic_version` | n'estampille pas (on ignore quelles révisions elle a reçues) et **le dit en erreur** à chaque démarrage |
 
 Ce n'est pas une migration (ADR 0065) : aucune révision n'est exécutée, seule la version
@@ -936,7 +581,8 @@ fait échouer le démarrage d'une base neuve plutôt que d'en choisir une.
 
 **Une base « sans version »** se traite à la main : établir la dernière révision que son
 schéma porte déjà (lire l'en-tête de chaque révision et le catalogue), puis
-`alembic stamp <révision>` et `alembic upgrade head`.
+`alembic stamp <révision>` et `alembic upgrade head` — depuis l'arbre du tag d'avant le
+squash si cette révision est antérieure à la référence (§5.4).
 
 **Ce que la naissance exige, vérifié avant le premier ordre** (`oto_mcp/db/_prerequis.py`,
 28/09/2026) : refus nommé (`PrerequisBaseManquant`) au lieu d'une erreur PostgreSQL brute
@@ -978,6 +624,60 @@ partagée), il attend que plus aucun code servi ne lise l'objet (`docs/live-migr
 « la danse en N lots »), et la révision le rend **idempotent** — constat au catalogue
 avant l'ordre, pour ne prendre aucun verrou là où il est déjà fait. Son retour arrière
 lève plutôt que de recréer un objet vide.
+
+### 5.4 Une révision ne vit que tant qu'une base vivante est en retard sur elle (06/10/2026, oto-backend#1162)
+
+Une base neuve ne rejoue aucune révision : elle naît à la tête (§5.2). Le registre ne sert
+donc qu'aux bases **en retard** — et une révision que toutes les bases vivantes ont déjà
+reçue ne sert plus à rien, sinon à coûter : un banc par révision qui la rejoue sur un
+schéma ramené en arrière, des aides gardées pour elle seule, une liste à relire.
+
+**La règle.** Une révision vit tant qu'une base vivante est en retard sur elle. Quand
+toutes l'ont dépassée, elle part, au **squash** suivant :
+
+1. recenser les bases vivantes et la révision que porte chacune (`migrer current`, en
+   lecture seule) — une base qui n'est plus servie n'en est pas une, et ne conditionne
+   rien ;
+2. la plus ancienne révision portée devient la **référence** : même identifiant (les bases
+   le portent dans `alembic_version`), `down_revision = None`, aucun ordre — son
+   `upgrade()` et son `downgrade()` lèvent ; son en-tête dit « schéma = celui du démarrage
+   à cette date ». Ce qu'elle posait est déjà dans le démarrage d'une base neuve ;
+3. toutes les révisions qui la précèdent sont supprimées du registre, et leurs bancs avec
+   elles ; un banc qui tenait un comportement durable (ce que le démarrage pose, ce que la
+   base refuse) est réécrit sans révision ;
+4. dans `oto_mcp/db/_version_alembic.py`, une entrée `Squash` de plus dans `SQUASHS` :
+   la référence, la date, les identifiants retirés, et le **dernier tag** qui les porte
+   encore. Les entrées précédentes restent : une base très ancienne dit encore quel tag la
+   monte ;
+5. ici, la liste par révision du §5.1 est remplacée par la référence et les révisions
+   vivantes ; l'ancienne reste dans git.
+
+**Une base plus ancienne que la référence est refusée en la nommant**, partout où une base
+se lit :
+
+| qui | ce qu'il fait d'une base à une révision retirée |
+|---|---|
+| le démarrage (`_version_alembic.constater`, sous son verrou, avant son premier ordre) | refuse de démarrer (`BaseAnterieureALaReference`) |
+| `oto-mcp migrer` et toute commande d'Alembic (`env.py`, avant `upgrade`, `downgrade`, `current`, `stamp`) | sort en la nommant — jamais sur le « Can't locate revision identified by … » d'Alembic, qui ne dit pas quoi faire |
+| `deploy/cible/migrations_a_jour.py` | refuse la montée (code 1), sans proposer `upgrade head` du tag qu'on monte |
+
+Le message : « révision `<x>` antérieure à la référence `<référence>` (squash du
+`<date>`) : monter d'abord cette base avec un tag antérieur au squash (`<tag>`) ». Le geste :
+installer ce tag dans un arbre, y jouer `migrer upgrade head` (la base passe la référence),
+puis monter le code d'après le squash. Aucun repli : le registre d'après ne sait pas
+rejouer ce qu'il n'a plus.
+
+⚠️ **Une révision inconnue n'est pas une révision retirée.** Une base migrée par le tag
+SUIVANT (une révision « avant la fusion », jouée sur la base partagée) porte une révision
+que le code qui sert ne connaît pas encore : le démarrage la laisse passer — la refuser
+casserait le bleu/vert et la préprod qui partage la base. Seuls les identifiants retirés,
+nommés dans `SQUASHS`, sont refusés au démarrage ; `migrations_a_jour.py`, lui, refuse
+toute révision inconnue du tag avant une montée (docs/instance-cible.md).
+
+Le premier squash, le 06/10/2026 : quarante révisions retirées (`0001` à `0040`), référence
+`0041_recherche_valeurs_servies`, dernier tag qui les porte `v1.441.0`. Bancs :
+`tests/test_migrations_registre.py`, `tests/test_boot_pose_la_version.py`,
+`tests/deploy/test_migrations_cible_1163.py`.
 
 ## 6. Références
 

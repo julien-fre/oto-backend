@@ -14,7 +14,7 @@ Ce que ces bancs tiennent :
    d'un tableau supprimé partent, sans que la cascade ne lève ;
 4. **l'interrupteur** — `OTO_JOURNAL_REVISIONS=off` coupe le journal pour les
    connexions du processus, une valeur illisible lève ;
-5. **le boot** — rejouer la pose ne recrée rien ;
+5. **le boot** — rejouer la pose ne recrée rien, et le démarrage repose ce qui manque ;
 6. **jamais bloquant** — un `data` qui n'est pas un objet JSON s'écrit quand même, sans
    révision, avec un `WARNING` qui nomme la ligne.
 """
@@ -290,17 +290,7 @@ def test_data_qui_n_est_pas_un_objet_n_empeche_pas_l_ecriture(live):
     assert _revisions(ns_id)[-1]["diff"] == {"a": {"avant": 5, "apres": 6}}
 
 
-# ── la révision Alembic ────────────────────────────────────────────────────────
-
-def _alembic():
-    from pathlib import Path
-
-    from alembic.config import Config
-    racine = Path(__file__).resolve().parent.parent.parent
-    cfg = Config(str(racine / "alembic.ini"))
-    cfg.set_main_option("script_location", str(racine / "oto_mcp" / "db" / "migrations"))
-    return cfg
-
+# ── le démarrage repose ce qui manque ─────────────────────────────────────────
 
 def _pose(dsn: str) -> dict:
     """Ce que porte la base : la table, les fonctions, les déclencheurs."""
@@ -324,15 +314,14 @@ def _pose(dsn: str) -> dict:
 
 
 _TOUT = {"table": True, "colonne": True, "fonctions": 2, "declencheurs": 3}
-_RIEN = {"table": False, "colonne": False, "fonctions": 0, "declencheurs": 0}
 
 
-def test_la_revision_pose_la_table_se_defait_et_le_boot_repose_tout(live, pg_module_dsn):
-    """`0011` crée la table (le boot aussi) ; son retour arrière retire d'abord
-    déclencheurs et fonction — sinon la prochaine écriture de ligne lèverait sur une
-    table absente — puis la table. Le boot suivant repose tout."""
+def test_une_base_neuve_recoit_tout_et_le_demarrage_repose_ce_qui_manque(live,
+                                                                          pg_module_dsn):
+    """Le journal naît du démarrage. Retiré à la main (déclencheurs, fonctions, table),
+    une écriture de ligne passe encore, sans journal ; le démarrage suivant repose tout,
+    et le journal écrit de nouveau."""
     import psycopg
-    from alembic import command
 
     from oto_mcp.db import init_db
     from oto_mcp.db import journal_revisions as j
@@ -344,15 +333,8 @@ def test_la_revision_pose_la_table_se_defait_et_le_boot_repose_tout(live, pg_mod
         for fonction in (j.NOM_FONCTION, j.NOM_FONCTION_SUPPRESSION):
             c.execute(f"DROP FUNCTION {fonction}()")
         c.execute(f"DROP TABLE {j.TABLE}")
-    cfg = _alembic()
-    command.stamp(cfg, "0010_tool_calls_result_shape")
-    command.upgrade(cfg, "0011_journal_revisions_ligne")
-    assert _pose(pg_module_dsn)["table"], "la révision n'a rien écrit"
-    command.downgrade(cfg, "0010_tool_calls_result_shape")
-    assert _pose(pg_module_dsn) == _RIEN, "le retour arrière a laissé quelque chose"
     ns_id = _table({"a": 1})                # une écriture de ligne passe sans journal
     _ecrire(ns_id, {"a": 2})
-    command.upgrade(cfg, "head")
     init_db()
     assert _pose(pg_module_dsn) == _TOUT
     _ecrire(ns_id, {"a": 3})
@@ -360,43 +342,6 @@ def test_la_revision_pose_la_table_se_defait_et_le_boot_repose_tout(live, pg_mod
                                   "acteur": None, "run_id": None, "source": None,
                                   "geste_id": None, "suppression": False}], \
         "le journal n'écrit plus"
-
-
-def test_la_revision_0016_pose_la_colonne_se_defait_et_le_boot_repose_tout(
-        live, pg_module_dsn):
-    """`0016` ajoute `suppression` à une table qui ne l'a pas ; son retour arrière
-    retire d'abord le déclencheur et la fonction de suppression — sinon chaque
-    suppression de ligne lèverait sur une colonne absente — puis la colonne. Le boot
-    suivant repose la colonne AVANT la fonction qui l'écrit."""
-    from alembic import command
-
-    from oto_mcp.db import init_db
-    cfg = _alembic()
-    # Estampillée à 0016 et pas à la tête : le retour à 0015 ne doit défaire que 0016,
-    # pas les révisions suivantes (0017 retire une colonne de `user_datastores`).
-    command.stamp(cfg, "0016_journal_suppression")
-    command.downgrade(cfg, "0015_droits_valeur_obligatoire")
-    assert _pose(pg_module_dsn) == {"table": True, "colonne": False, "fonctions": 1,
-                                    "declencheurs": 2}
-    ns_id = _table({"a": 1})
-    _sql("DELETE FROM datastore_rows WHERE ns_id = %s", ns_id)   # passe, sans journal
-    assert len(_revisions_brutes(pg_module_dsn, ns_id)) == 1
-    command.upgrade(cfg, "0016_journal_suppression")
-    assert _pose(pg_module_dsn)["colonne"]
-    assert _sql("SELECT suppression FROM datastore_row_revisions WHERE ns_id = %s",
-                ns_id) == [{"suppression": False}], "l'existant prend le défaut"
-    command.downgrade(cfg, "0015_droits_valeur_obligatoire")
-    init_db()                             # le boot rattrape une base sans la révision
-    assert _pose(pg_module_dsn) == _TOUT
-    command.stamp(cfg, "head")
-    db_ns = _table({"b": 1})
-    _sql("DELETE FROM datastore_rows WHERE ns_id = %s", db_ns)
-    assert [r["suppression"] for r in _revisions(db_ns)] == [False, True]
-
-
-def _revisions_brutes(dsn: str, ns_id: int) -> list:
-    """Sans nommer `suppression`, que la base n'a peut-être pas."""
-    import psycopg
-    with psycopg.connect(dsn) as c:
-        return c.execute("SELECT rev FROM datastore_row_revisions WHERE ns_id = %s",
-                         (ns_id,)).fetchall()
+    autre = _table({"b": 1})
+    _sql("DELETE FROM datastore_rows WHERE ns_id = %s", autre)
+    assert [r["suppression"] for r in _revisions(autre)] == [False, True]

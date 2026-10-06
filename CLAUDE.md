@@ -276,7 +276,7 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `silences-2026-08-27.md` — `except` muets, `# noqa: SILENT`
 - `redaction.md` — rédaction de champs, résultat servi, **un seul canal** (le structuré se mérite)
 - `live-migrations.md` — migrations vivantes, base partagée ; un ordre de boot sans rien à faire ne part pas (`db/_ddl_garde.py`, zéro verrou fort sur base à jour)
-- `migrations-versionnees.md` — ce que le boot exécute ; une base neuve naît estampillée à la tête du registre Alembic, jamais une base existante (`db/_version_alembic.py`, §5.2), sur des prérequis vérifiés (`db/_prerequis.py`) et sous le tenant primaire que l'instance DÉCLARE (`OTO_TENANT_PRIMAIRE_SLUG`, `docs/tenants.md`) ; un retrait (DROP, non additif) passe toujours par une révision, jamais par un geste manuel (§5.3)
+- `migrations-versionnees.md` — ce que le boot exécute ; une base neuve naît estampillée à la tête du registre Alembic, jamais une base existante (`db/_version_alembic.py`, §5.2), sur des prérequis vérifiés (`db/_prerequis.py`) et sous le tenant primaire que l'instance DÉCLARE (`OTO_TENANT_PRIMAIRE_SLUG`, `docs/tenants.md`) ; un retrait (DROP, non additif) passe toujours par une révision, jamais par un geste manuel (§5.3) ; le registre part d'une RÉFÉRENCE vide et ne garde que les révisions sur lesquelles une base vivante est en retard — une base plus ancienne est refusée en nommant le tag qui la monte (§5.4)
 - `sirene-stock.md` — DuckDB sur parquet INSEE
 - `connector-test-gate-theirstack-origami.md` — porte de test locale
 - `billing.md` — abonnement par org, Mollie, TVA, **avantage offert / échéance / usage inclus**

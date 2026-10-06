@@ -331,18 +331,19 @@ def _vecteur_des_lignes(portee: str) -> str:
         return rank_expr("datastore_rows")
     return _vec(TEXTE_DES_LIGNES[portee])
 
-# Les deux index de la portée `values`, posés CONCURRENTLY par la révision 0041 ou à la
-# main (`index_concurrent`). Seuil bas (10 000 lignes) : chaque ligne coûte un appel de
-# la fonction en plus du GIN, et, au démarrage, la construction non concurrente
-# bloquerait les écritures de `datastore_rows` — la table que chaque agent écrit.
-_REVISION_VALEURS = "0041_recherche_valeurs_servies"
+# Les deux index de la portée `values` : toute base vivante les porte (posés à la main,
+# CONCURRENTLY, avant la référence du registre — docs/migrations-versionnees.md §5.4) ;
+# une base neuve les reçoit du démarrage (`index_concurrent`). Seuil bas (10 000
+# lignes) : chaque ligne coûte un appel de la fonction en plus du GIN, et, au démarrage,
+# la construction non concurrente bloquerait les écritures de `datastore_rows` — la
+# table que chaque agent écrit.
 INDEX_VALEURS = (
     IndexConcurrent(nom="idx_datastore_rows_valeurs_fts", table="datastore_rows",
                     forme=f"USING GIN ({_vec(ROW_SERVED_VALUES_TEXT_SQL)})",
-                    revision=_REVISION_VALEURS, max_lignes=10_000),
+                    max_lignes=10_000),
     IndexConcurrent(nom="idx_datastore_rows_valeurs_trgm", table="datastore_rows",
                     forme=f"USING GIN ({_trgm(ROW_SERVED_VALUES_TEXT_SQL)})",
-                    revision=_REVISION_VALEURS, max_lignes=10_000),
+                    max_lignes=10_000),
 )
 
 

@@ -8,7 +8,9 @@ base EXISTANTE   le CREATE TABLE est sauté ; elle vient de la révision
                  `0042_orgs_suspension_par_tenant`, jouée À LA MAIN (ADR 0065)
 ```
 
-Même banc que `test_tenants_desactivation_migration.py`.
+La précédente est la RÉFÉRENCE du registre (squash, docs/migrations-versionnees.md §5.4) :
+une base estampillée là, sans la colonne, est exactement une base vivante restée à la
+référence — elle monte à la tête par cette révision.
 """
 from __future__ import annotations
 

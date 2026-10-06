@@ -22,7 +22,9 @@ Sortie : 0 si la base est à la tête du tag, ou NEUVE (aucune table : le démar
 schéma et y pose la tête) ; 3 si elle est EN RETARD sur une révision du registre du tag
 (`migrer upgrade head` la rattrape) ; 1 si rien ne se conclut — registre à plusieurs
 têtes ou vide, base injoignable, base sans version, révision inconnue du tag, plusieurs
-révisions en base. Aucun cas ne passe par défaut.
+révisions en base, révision retirée par un squash (antérieure à la référence du registre :
+le refus nomme le tag d'avant le squash qui la monte d'abord, docs/migrations-versionnees.md
+§5.4). Aucun cas ne passe par défaut.
 """
 from __future__ import annotations
 
@@ -39,7 +41,8 @@ import psycopg  # noqa: E402
 from alembic.script import ScriptDirectory  # noqa: E402
 from psycopg.rows import dict_row  # noqa: E402
 
-from oto_mcp.db._version_alembic import _REGISTRE, EtatRegistre, constater  # noqa: E402
+from oto_mcp.db._version_alembic import (_REGISTRE, BaseAnterieureALaReference,  # noqa: E402
+                                         EtatRegistre, constater, versions_de)
 
 A_JOUR = 0
 ILLISIBLE = 1
@@ -69,16 +72,16 @@ def lire_base(dsn: str) -> tuple[EtatRegistre, list[str]]:
 
     Une erreur de connexion ou de lecture refuse en nommant sa classe seulement : son
     message peut porter l'hôte ou l'utilisateur de la base, et ce journal remonte jusqu'au
-    run du workflow."""
+    run du workflow. Une base antérieure à la référence refuse avec le message du constat
+    (la révision, la référence, le tag d'avant le squash) — rien de la connexion."""
     try:
         with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=DELAI_S) as conn:
             conn.read_only = True
             conn.execute(f"SET statement_timeout = '{DELAI_S}s'")
             etat = constater(conn)
-            versions = []
-            if etat is EtatRegistre.VERSIONNEE:
-                versions = sorted(r["version_num"] for r in conn.execute(
-                    "SELECT version_num FROM alembic_version").fetchall())
+            versions = versions_de(conn) if etat is EtatRegistre.VERSIONNEE else []
+    except BaseAnterieureALaReference as refus:
+        raise Refus(str(refus)) from refus
     except psycopg.Error as erreur:
         etat_sql = f", SQLSTATE {erreur.sqlstate}" if erreur.sqlstate else ""
         raise Refus(f"base du rôle illisible ({type(erreur).__name__}{etat_sql})") from erreur

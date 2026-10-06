@@ -142,6 +142,7 @@ n'a pas été touché : rien n'a démarré, rien n'a basculé.
 | à la tête du registre du tag | la montée continue |
 | neuve (aucune table) | la montée continue : le démarrage crée le schéma et pose la tête (`migrations-versionnees.md` §5.2) |
 | en retard sur une révision du registre du tag | **refus** : la révision actuelle, la révision attendue, et la commande qui migre |
+| à une révision retirée par un squash (antérieure à la référence du registre) | **refus** : la révision, la référence, et le tag d'avant le squash qui la monte d'abord (`migrations-versionnees.md` §5.4) |
 | sans `alembic_version`, plusieurs révisions, révision inconnue du tag (base plus récente, autre file), injoignable | **refus** : le motif, et les commandes qui lisent l'état (`migrer current`, `migrer heads`) |
 | registre du tag à plusieurs têtes ou vide | **refus**, sans lire la base |
 

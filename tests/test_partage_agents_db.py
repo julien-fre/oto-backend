@@ -3,29 +3,15 @@
 1. `partages_d_agents` lit en UNE requête le meilleur partage VIVANT parmi les
    principaux de l'appelant (`write` l'emporte, un partage échu ne compte pas).
 2. Supprimer un agent retire ses partages.
-3. La révision 0035 ouvre chaque agent EXISTANT à son org, sans écraser un partage
-   déjà posé, et se défait.
-4. Le forfait d'un propriétaire ne se prête qu'à la PERSONNE qu'il a nommée
+3. Le forfait d'un propriétaire ne se prête qu'à la PERSONNE qu'il a nommée
    éditrice (`forfaits_pretes`), et la garde d'écriture de `update_trigger` le lit
    elle aussi.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import psycopg
-import pytest
 
-RACINE = Path(__file__).resolve().parents[1]
-AVANT, APRES = "0034_recettes", "0035_agents_partages_a_l_org"
 ORG = 8200
-
-
-def _alembic():
-    from alembic.config import Config
-    cfg = Config(str(RACINE / "alembic.ini"))
-    cfg.set_main_option("script_location", str(RACINE / "oto_mcp" / "db" / "migrations"))
-    return cfg
 
 
 def _agent(db, sub="proprio", org=ORG):
@@ -58,31 +44,6 @@ def test_supprimer_un_agent_retire_ses_partages(live):
     db.grant_resource("runner_trigger", str(t["id"]), "user", "editeur", role="editor")
     assert db.delete_trigger(t["id"], ORG)
     assert db.list_resource_grants("runner_trigger", str(t["id"])) == []
-
-
-def test_la_revision_0035_ouvre_les_agents_existants_a_leur_org(live, pg_module_dsn):
-    from alembic import command
-    from oto_mcp import db
-    ouvert, ferme = _agent(db), _agent(db, org=ORG + 1)
-    # Un partage d'org DÉJÀ posé en lecture n'est pas réécrit en écriture.
-    db.grant_resource("runner_trigger", str(ferme["id"]), "org", str(ORG + 1),
-                      role="viewer")
-    cfg = _alembic()
-    command.stamp(cfg, AVANT)
-    try:
-        command.upgrade(cfg, APRES)
-        assert db.get_resource_grant("runner_trigger", str(ouvert["id"]), "org",
-                                     str(ORG))["role"] == "editor"
-        assert db.get_resource_grant("runner_trigger", str(ferme["id"]), "org",
-                                     str(ORG + 1))["role"] == "viewer"
-        command.downgrade(cfg, AVANT)
-        assert db.get_resource_grant("runner_trigger", str(ouvert["id"]), "org",
-                                     str(ORG)) is None
-        assert db.get_resource_grant("runner_trigger", str(ferme["id"]), "org",
-                                     str(ORG + 1)) is not None, (
-            "le retour arrière ne retire que ce que la révision a posé")
-    finally:
-        command.stamp(cfg, "head")
 
 
 def test_le_forfait_ne_se_prete_que_par_son_proprietaire_a_une_personne(live, pg_module_dsn):

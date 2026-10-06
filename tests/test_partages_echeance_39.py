@@ -12,7 +12,7 @@ Deux parties :
    `PARTAGE_VIVANT`, sauf exemption motivée ;
 2. **le comportement**, contre un PostgreSQL réel : un partage échu ne donne plus
    accès (projet, tableau, page, héritage des clés), un partage non échu et un partage
-   sans échéance fonctionnent comme avant, la révision monte et descend.
+   sans échéance fonctionnent comme avant.
 """
 from __future__ import annotations
 
@@ -329,34 +329,3 @@ def test_ttl_days_hors_d_un_partage_a_un_principal_est_refuse(monde, kw):
                      R.ResourceInput(resource_type="project", resource_id=str(m["pid"]),
                                      email=f"{m['benef']}@example.test", ttl_days=3, **kw))
     assert (e.value.status, e.value.code) == (400, "ttl_days_grant_only")
-
-
-# ── 4. La révision ────────────────────────────────────────────────────────────
-
-def _colonne(dsn: str) -> bool:
-    import psycopg
-    with psycopg.connect(dsn) as c:
-        return c.execute("SELECT 1 FROM information_schema.columns WHERE table_name = "
-                         "'resource_grants' AND column_name = 'expires_at'").fetchone() is not None
-
-
-def test_la_revision_monte_et_descend_et_le_boot_ne_pose_rien(live, pg_module_dsn):
-    import psycopg
-    from alembic import command
-    from alembic.config import Config
-
-    from oto_mcp.db import init_db
-    assert _colonne(pg_module_dsn), "une base NEUVE la reçoit du CREATE TABLE"
-    with psycopg.connect(pg_module_dsn, autocommit=True) as c:
-        c.execute("ALTER TABLE resource_grants DROP COLUMN expires_at")
-    init_db()
-    assert not _colonne(pg_module_dsn), "le démarrage ne doit pas la poser"
-    cfg = Config(str(RACINE / "alembic.ini"))
-    cfg.set_main_option("script_location", str(PAQUET / "db" / "migrations"))
-    command.stamp(cfg, "0011_journal_revisions_ligne")
-    command.upgrade(cfg, "0012_partages_echeance")
-    assert _colonne(pg_module_dsn), "la révision n'a rien écrit"
-    command.downgrade(cfg, "0011_journal_revisions_ligne")
-    assert not _colonne(pg_module_dsn), "le retour arrière n'a rien retiré"
-    command.upgrade(cfg, "head")
-    assert _colonne(pg_module_dsn)

@@ -1,11 +1,13 @@
 """Un index posé CONCURRENTLY sur une table servie : quand le construire soi-même, quand
 le laisser à la main.
 
-Né pour `idx_tool_calls_org_tool_ok` (oto-backend#1145, révision 0032), généralisé pour
-les index de la recherche dans les valeurs servies (#307, révision 0041) : chaque index
-de ce régime naît par deux chemins — sa révision Alembic (CONCURRENTLY, hors
-transaction) et le démarrage d'une base neuve (`_init.py`, non concurrent, dans sa
-transaction) — et les deux appliquent le MÊME verdict, écrit ici une fois :
+Né pour `idx_tool_calls_org_tool_ok` (oto-backend#1145), généralisé pour les index de la
+recherche dans les valeurs servies (#307) : chaque index de ce régime naît par deux
+chemins — sa révision Alembic (CONCURRENTLY, hors transaction) ou le geste manuel sur une
+base servie, et le démarrage d'une base neuve (`_init.py`, non concurrent, dans sa
+transaction) — et les deux appliquent le MÊME verdict, écrit ici une fois. Un index posé
+avant la référence du registre (squash, docs/migrations-versionnees.md §5.4) n'a plus de
+révision : toute base vivante le porte, et seul le démarrage d'une base neuve le pose.
 
 - l'index existe et il est valide → rien à faire ;
 - il existe et il est INVALIDE (construction CONCURRENTLY interrompue) → `IndexInvalide` :
@@ -56,8 +58,9 @@ class IndexConcurrent:
     table: str
     #: Tout ce qui suit `ON <table>` : colonnes ou `USING GIN (…)`, prédicat partiel.
     forme: str
-    #: L'identifiant de la révision qui le pose — cité par la procédure manuelle.
-    revision: str
+    #: L'identifiant de la révision qui le pose — cité par la procédure manuelle. `None`
+    #: pour un index antérieur à la référence du registre : aucune révision à rejouer.
+    revision: Optional[str] = None
     max_lignes: int = CONSTRUCTION_MAX_LIGNES
 
     @property
@@ -88,12 +91,13 @@ class IndexConcurrent:
 
     @property
     def procedure(self) -> str:
+        rejouer = f" et rejouer la révision {self.revision}" if self.revision else ""
         return (
             "À la main, hors fenêtre de démarrage ou de migration "
             "(docs/migrations-versionnees.md §5.1) : SET statement_timeout = 0; "
             "SET lock_timeout = '5min'; "
             f"DROP INDEX CONCURRENTLY IF EXISTS {self.nom}; {self.ddl_concurrent}; "
-            f"puis vérifier `indisvalid` et rejouer la révision {self.revision}."
+            f"puis vérifier `indisvalid`{rejouer}."
         )
 
 

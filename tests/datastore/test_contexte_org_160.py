@@ -8,9 +8,8 @@ NULL pour un tableau d'org ou d'équipe, dont le contexte se dérive du proprié
 
 Un banc par face : l'outil MCP `data_create_datastore`, la route `POST /api/datastores`,
 le vivier provisionné par la copie d'un projet (la création implicite de l'écriture à clé,
-`upsert_row`, est retirée depuis oto#156). Plus la révision `0017` (pose, retrait,
-rattrapage par le boot) et une garde sur le source : toute voie de création du code
-nomme `context_org_id`.
+`upsert_row`, est retirée depuis oto#156). Plus une garde sur le source : toute voie de
+création du code nomme `context_org_id`.
 """
 from __future__ import annotations
 
@@ -121,42 +120,6 @@ def test_une_org_supprimee_laisse_le_tableau_sans_contexte(orgs):
         conn.execute("DELETE FROM orgs WHERE id = %s", (ephemere,))
     assert db.get_datastore_by_id(ns_id) is not None
     assert _contexte(ns_id) is None
-
-
-def _alembic():
-    from alembic.config import Config
-    cfg = Config(str(RACINE / "alembic.ini"))
-    cfg.set_main_option("script_location", str(RACINE / "oto_mcp" / "db" / "migrations"))
-    return cfg
-
-
-def _colonne(dsn: str) -> bool:
-    import psycopg
-    with psycopg.connect(dsn) as c:
-        return c.execute("SELECT 1 FROM information_schema.columns WHERE table_name = "
-                         "'user_datastores' AND column_name = 'context_org_id'"
-                         ).fetchone() is not None
-
-
-def test_la_revision_0017_pose_la_colonne_se_defait_et_le_boot_la_repose(
-        orgs, pg_module_dsn):
-    from alembic import command
-
-    from oto_mcp.db import init_db
-    cfg = _alembic()
-    # Pas `head` : 0039 refuse de descendre (irréversible). Seul le retour de 0017 compte ici.
-    command.stamp(cfg, "0017_tableaux_contexte_org")
-    command.downgrade(cfg, "0016_journal_suppression")
-    assert not _colonne(pg_module_dsn)
-    command.upgrade(cfg, "0017_tableaux_contexte_org")
-    assert _colonne(pg_module_dsn)
-    command.downgrade(cfg, "0016_journal_suppression")
-    init_db()                              # le boot rattrape une base sans la révision
-    assert _colonne(pg_module_dsn)
-    command.stamp(cfg, "head")
-    from oto_mcp import db
-    assert _contexte(db.create_datastore("user", SUB, _nom(),
-                                         context_org_id=orgs[0])) == orgs[0]
 
 
 def test_toute_voie_de_creation_du_code_nomme_le_contexte():

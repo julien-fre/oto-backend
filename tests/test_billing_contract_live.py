@@ -3,14 +3,12 @@
 Depuis la coupure du cœur (#1097), un contrat ne se déclare ni ne se résilie plus ici
 (`billing_moved`, cf. `test_coupure_du_coeur.py`) et ne pose aucun droit : oto-commerce
 les tient. Un contrat déjà en base reste lu. Ce que ces bancs tiennent :
-- le runner ne le prélève jamais, et il n'ouvre aucun droit ;
-- la révision `0008_billing_contracts` pose la table, se défait, et le boot la sait posée.
+- le runner ne le prélève jamais, et il n'ouvre aucun droit.
 """
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -51,41 +49,3 @@ def test_un_contrat_en_base_ne_pose_aucun_droit(live):
     with _connect() as conn:
         assert conn.execute("SELECT count(*) AS n FROM org_entitlements WHERE org_id = %s",
                             (org,)).fetchone()["n"] == 0
-
-
-# ── la révision ──────────────────────────────────────────────────────────────
-
-RACINE = Path(__file__).resolve().parent.parent
-
-
-def _alembic():
-    from alembic.config import Config
-    cfg = Config(str(RACINE / "alembic.ini"))
-    cfg.set_main_option("script_location", str(RACINE / "oto_mcp" / "db" / "migrations"))
-    return cfg
-
-
-def _a_la_table(dsn: str) -> bool:
-    import psycopg
-    with psycopg.connect(dsn) as c:
-        return c.execute("SELECT to_regclass('billing_contracts') IS NOT NULL"
-                         ).fetchone()[0]
-
-
-def test_la_revision_pose_la_table_se_defait_et_le_boot_la_sait_posee(live, pg_module_dsn):
-    import psycopg
-    from alembic import command
-
-    from oto_mcp.db import init_db
-    assert _a_la_table(pg_module_dsn), "une base NEUVE la reçoit du démarrage"
-    with psycopg.connect(pg_module_dsn, autocommit=True) as c:
-        c.execute("DROP TABLE billing_contracts")
-    cfg = _alembic()
-    command.stamp(cfg, "0007_jetons_revocation_tracee")
-    command.upgrade(cfg, "0008_billing_contracts")
-    assert _a_la_table(pg_module_dsn), "la révision n'a rien écrit"
-    command.downgrade(cfg, "0007_jetons_revocation_tracee")
-    assert not _a_la_table(pg_module_dsn), "le retour arrière n'a rien retiré"
-    command.upgrade(cfg, "head")
-    init_db()
-    assert _a_la_table(pg_module_dsn)

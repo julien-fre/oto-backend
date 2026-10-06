@@ -10,6 +10,10 @@ change, c'est d'où vient la configuration — du paquet, jamais du répertoire 
   dossier ;
 - la connexion par `DATABASE_URL`, lue par `db/migrations/env.py` comme le pool.
 
+Une base plus ancienne que la référence du registre (squash, docs/migrations-versionnees.md
+§5.4) est refusée par `env.py` avant toute commande : `migrer` sort en la nommant, avec le
+tag qui la monte d'abord — jamais sur le « Can't locate revision » d'Alembic.
+
 **Pourquoi une sous-commande et pas `python -m alembic`** (oto-backend#1105) : sur une box
 passée au lanceur de secrets (`deploy/lanceur_secrets.py`), `DATABASE_URL` n'existe que
 dans l'environnement que le lanceur construit, et le lanceur n'exécute que `oto-mcp …` ou
@@ -20,7 +24,7 @@ from __future__ import annotations
 
 from alembic.config import CommandLine, Config
 
-from .db._version_alembic import _REGISTRE
+from .db._version_alembic import _REGISTRE, BaseAnterieureALaReference
 
 ALEMBIC_INI = _REGISTRE.parents[2] / "alembic.ini"
 
@@ -37,5 +41,8 @@ def main(argv: list[str]) -> int:
         ligne.parser.error("-c/--config : la configuration est celle du dépôt, pas une autre")
     config = Config(file_=str(ALEMBIC_INI), ini_section=options.name, cmd_opts=options)
     config.set_main_option("script_location", str(_REGISTRE))
-    ligne.run_cmd(config, options)
+    try:
+        ligne.run_cmd(config, options)
+    except BaseAnterieureALaReference as refus:
+        raise SystemExit(f"oto-mcp migrer : {refus}") from refus
     return 0

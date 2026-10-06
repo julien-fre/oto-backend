@@ -179,28 +179,3 @@ def test_le_jeton_du_lien_est_masque_au_journal():
     chemin = "/api/invitations/inv_" + "a" * 43
     route, masques = journal_secrets.route_and_secrets(chemin)
     assert "inv_" + "a" * 43 not in route
-
-
-def _colonnes(dsn: str) -> set:
-    import psycopg
-    with psycopg.connect(dsn) as c:
-        return {r[0] for r in c.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'org_invitations' AND column_name LIKE 'resource_%'")}
-
-
-def test_la_revision_descend_et_remonte(live, pg_module_dsn):
-    """Une base neuve les reçoit du démarrage ; la révision les retire et les remet."""
-    from pathlib import Path
-
-    from alembic import command
-    from alembic.config import Config
-    racine = Path(__file__).resolve().parent.parent
-    assert len(_colonnes(pg_module_dsn)) == 6
-    cfg = Config(str(racine / "alembic.ini"))
-    cfg.set_main_option("script_location", str(racine / "oto_mcp" / "db" / "migrations"))
-    command.stamp(cfg, "0028_partage_en_attente")
-    command.downgrade(cfg, "0027_apollo_phone_reveals")
-    assert not _colonnes(pg_module_dsn), "le retour arrière n'a rien retiré"
-    command.upgrade(cfg, "head")
-    assert len(_colonnes(pg_module_dsn)) == 6

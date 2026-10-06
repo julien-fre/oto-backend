@@ -8,20 +8,17 @@ a appelé l'outil et mal rapporté » contre « il ne l'a pas appelé ».
 `result_shape` est un vocabulaire FERMÉ — `empty` | `non_empty` | `refused(<code>)` —
 jamais le contenu. Le banc suit les quatre relais de #340 : le middleware la calcule
 sur la forme que fastmcp fait RÉELLEMENT passer, le sink l'écrit, la colonne
-l'accueille (révision 0008, pas le démarrage), la liste et la fiche la rendent.
+l'accueille, la liste et la fiche la rendent.
 """
 from __future__ import annotations
 
 import asyncio
 import types
 import uuid
-from pathlib import Path
 
 import pytest
 
 from oto_mcp import calllog
-
-RACINE = Path(__file__).resolve().parent.parent
 
 
 async def _drain():
@@ -185,50 +182,3 @@ def test_la_BASE_refuse_toute_valeur_hors_du_vocabulaire(live, valeur):
         with _connect() as conn:
             conn.execute("INSERT INTO tool_calls (tool, result_shape) VALUES (%s, %s)",
                          ("t644_libre", valeur))
-
-
-# ── 4. la révision : une base existante la reçoit d'Alembic, jamais du boot ──
-
-def _alembic():
-    from alembic.config import Config
-    cfg = Config(str(RACINE / "alembic.ini"))
-    cfg.set_main_option("script_location", str(RACINE / "oto_mcp" / "db" / "migrations"))
-    return cfg
-
-
-def _a_la_colonne(dsn: str) -> bool:
-    import psycopg
-    with psycopg.connect(dsn) as c:
-        return bool(c.execute(
-            "SELECT 1 FROM information_schema.columns "
-            "WHERE table_name = 'tool_calls' AND column_name = 'result_shape'").fetchone())
-
-
-def test_la_revision_pose_la_colonne_que_le_boot_ne_pose_pas(live, pg_module_dsn):
-    """⚠️ Le piège de #340 : une colonne ajoutée au seul `CREATE TABLE` n'arrive jamais
-    sur la table de production, qui existe déjà. Mesuré, pas affirmé : on la retire, le
-    démarrage ne la rend pas (par décision — table énorme, où chaque appel écrit), la
-    révision la rend, et le retour arrière la retire."""
-    import psycopg
-    from alembic import command
-    from oto_mcp.db import init_db
-
-    assert _a_la_colonne(pg_module_dsn), "une base NEUVE la reçoit du CREATE TABLE"
-    with psycopg.connect(pg_module_dsn, autocommit=True) as c:
-        c.execute("ALTER TABLE tool_calls DROP COLUMN result_shape")
-
-    init_db()
-    assert not _a_la_colonne(pg_module_dsn), "le démarrage ne pose pas cette colonne"
-
-    cfg = _alembic()
-    # Le registre à la révision d'avant : une base neuve naît à la tête (#969).
-    command.stamp(cfg, "0009_coffre_secret_obligatoire")
-    command.upgrade(cfg, "0010_tool_calls_result_shape")
-    assert _a_la_colonne(pg_module_dsn), "la révision n'a rien écrit"
-    with psycopg.connect(pg_module_dsn, autocommit=True) as c:
-        with pytest.raises(psycopg.errors.CheckViolation):
-            c.execute("INSERT INTO tool_calls (tool, result_shape) VALUES ('t', 'libre')")
-    command.downgrade(cfg, "0009_coffre_secret_obligatoire")
-    assert not _a_la_colonne(pg_module_dsn), "le retour arrière n'a rien retiré"
-    command.upgrade(cfg, "head")
-    assert _a_la_colonne(pg_module_dsn)

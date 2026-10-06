@@ -22,13 +22,20 @@ importable.py`) en fait partie, puisque ce module vit DANS le paquet — `contex
 vide et `context.config` lève `AttributeError` (vécu le 14/09/2026, à la pose
 d'Alembic). Un import n'a le droit d'exiger RIEN de l'environnement
 (docs/commands.md) ; `_sous_alembic()` en est la garde, pour que la même contrainte
-tienne ici comme partout ailleurs dans le paquet."""
+tienne ici comme partout ailleurs dans le paquet.
+
+**Une base plus ancienne que la référence du registre est refusée en la nommant**
+(squash, docs/migrations-versionnees.md §5.4) : sa révision n'existe plus dans le
+registre, et Alembic lèverait « Can't locate revision » sans dire quoi faire. La garde
+(`_version_alembic.refuser_si_anterieure`) lit `alembic_version` AVANT toute commande —
+`upgrade`, `downgrade`, `current`, `stamp` —, dans la transaction d'Alembic."""
 from __future__ import annotations
 
 from alembic import context
 from sqlalchemy import create_engine, text
 
 from oto_mcp.config import require_env
+from oto_mcp.db._version_alembic import refuser_si_anterieure
 
 # Clé du verrou consultatif. Arbitraire, mais FIGÉE : la changer ouvrirait une
 # seconde file qui ignorerait la première.
@@ -87,6 +94,9 @@ def run_migrations_online() -> None:
         try:
             context.configure(connection=connection)
             with context.begin_transaction():
+                # DANS la transaction d'Alembic, jamais avant : une lecture hors d'elle en
+                # ouvrirait une implicite, et tout serait annulé (le piège ci-dessus).
+                refuser_si_anterieure(context.get_context().get_current_heads())
                 context.run_migrations()
         finally:
             # Le verrou tombe aussi à la fermeture de la connexion ; on le rend

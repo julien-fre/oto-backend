@@ -15,11 +15,9 @@ ancien appariement à la révision de même horodatage n'aurait plus trouvé d'a
 après une écriture regroupée.
 
 Banc LIVE : ce qui est neuf est du SQL sous verrou (la lecture du dernier instantané,
-la fenêtre en `interval`) et une révision Alembic. Un double ne prouverait rien.
+la fenêtre en `interval`). Un double ne prouverait rien.
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -27,7 +25,6 @@ from oto_mcp import db, ownership, session_org
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 from oto_mcp.capabilities.docs import core as D
 
-RACINE = Path(__file__).resolve().parent.parent
 A, B = "user-a-274", "user-b-274"
 
 
@@ -176,47 +173,3 @@ def test_les_modifications_recentes_gardent_l_auteur_apres_une_rafale(page):
         _ecrire(B, page["did"], corps)
     lignes = rc.recent_changes([page["pid"]], [], limit=5, base_slug="claude_md")
     assert [(l["id"], l["author_sub"]) for l in lignes] == [(page["did"], B)]
-
-
-# ── 5. La révision Alembic ───────────────────────────────────────────────────
-
-def _colonnes(dsn: str) -> set[tuple[str, str]]:
-    import psycopg
-    with psycopg.connect(dsn) as c:
-        return {(r[0], r[1]) for r in c.execute(
-            "SELECT table_name, column_name FROM information_schema.columns "
-            "WHERE (table_name, column_name) IN (('docs', 'updated_by'), "
-            "('doc_revisions', 'face'))").fetchall()}
-
-
-def test_la_revision_monte_remplit_et_descend(page, pg_module_dsn):
-    import psycopg
-    from alembic import command
-    from alembic.config import Config
-
-    from oto_mcp.db import init_db
-    toutes = {("docs", "updated_by"), ("doc_revisions", "face")}
-    assert _colonnes(pg_module_dsn) == toutes, "une base NEUVE les reçoit du CREATE TABLE"
-    # L'état d'avant, écrit par l'ancien régime : une modification avec sa révision
-    # appariée, une page jamais modifiée, une page déplacée.
-    modifiee = page["did"]
-    db.update_doc(modifiee, body_md="v1", edited_by=B)
-    neuve = db.create_doc(page["pid"], "Neuve", created_by=A)
-    deplacee = db.create_doc(page["pid"], "Déplacée", created_by=A)
-    db.move_doc(deplacee, neuve)
-    with psycopg.connect(pg_module_dsn, autocommit=True) as c:
-        c.execute("ALTER TABLE docs DROP COLUMN updated_by")
-        c.execute("ALTER TABLE doc_revisions DROP COLUMN face")
-    init_db()
-    assert _colonnes(pg_module_dsn) == set(), "le démarrage ne doit pas les poser"
-    cfg = Config(str(RACINE / "alembic.ini"))
-    cfg.set_main_option("script_location", str(RACINE / "oto_mcp" / "db" / "migrations"))
-    command.stamp(cfg, "0012_partages_echeance")
-    command.upgrade(cfg, "0013_pages_versions_regroupees")
-    assert _colonnes(pg_module_dsn) == toutes, "la révision n'a rien écrit"
-    auteurs = {d: db.get_doc_by_id(d)["updated_by"] for d in (modifiee, neuve, deplacee)}
-    assert auteurs == {modifiee: B, neuve: A, deplacee: None}
-    command.downgrade(cfg, "0012_partages_echeance")
-    assert _colonnes(pg_module_dsn) == set(), "le retour arrière n'a rien retiré"
-    command.upgrade(cfg, "head")
-    assert _colonnes(pg_module_dsn) == toutes

@@ -8,8 +8,10 @@ nommant l'écart et la commande qui migre ; il ne migre jamais lui-même.
 
 Deux étages :
 - le script (`deploy/cible/migrations_a_jour.py`) : tête lue dans un VRAI registre Alembic
-  (jetable), état de la base dicté — à jour, en retard, plusieurs têtes, base illisible… ;
-  plus, sur un PostgreSQL réel quand il y en a un, la lecture de la base elle-même ;
+  (jetable), état de la base dicté — à jour, en retard, plusieurs têtes, base illisible,
+  base antérieure à la référence du registre (squash, docs/migrations-versionnees.md
+  §5.4)… ; plus, sur un PostgreSQL réel quand il y en a un, la lecture de la base
+  elle-même, contre le registre du dépôt ;
 - la chaîne (`_banc_cible.py`, root simulé) : le refus arrive après l'installation dans la
   couleur inactive et AVANT son démarrage — rien ne démarre, rien ne bascule.
 """
@@ -121,6 +123,40 @@ def test_chaque_etat_a_son_verdict(lineaire, monkeypatch, capsys, etat, versions
     assert motif in sortie.out + sortie.err
 
 
+class _BaseDictee:
+    """Une connexion qui répond comme une base versionnée à `versions` — sans PostgreSQL."""
+
+    def __init__(self, versions):
+        self.versions, self.read_only = versions, False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, *params):
+        if "pg_class" in sql:
+            lignes = [{"relname": "alembic_version"}, {"relname": "orgs"}]
+        elif "FROM alembic_version" in sql:
+            lignes = [{"version_num": v} for v in self.versions]
+        else:
+            lignes = []
+        return type("Curseur", (), {"fetchall": lambda _: lignes})()
+
+
+def test_une_base_anterieure_a_la_reference_refuse_en_nommant_le_tag(lineaire, monkeypatch,
+                                                                     capsys):
+    monkeypatch.setattr(garde.psycopg, "connect",
+                        lambda *a, **k: _BaseDictee(["0039_feed_synced_at_retiree"]))
+    monkeypatch.setenv("DATABASE_URL", "postgresql://exemple.invalid/base")
+    assert garde.main(registre=lineaire) == garde.ILLISIBLE == 1
+    err = capsys.readouterr().err
+    assert ("révision 0039_feed_synced_at_retiree antérieure à la référence "
+            "0041_recherche_valeurs_servies (squash du 06/10/2026) : monter d'abord cette "
+            "base avec un tag antérieur au squash (v1.441.0)") in err
+
+
 def test_le_registre_du_depot_a_une_seule_tete():
     """Le script lit le registre de l'arbre où il tourne : celui du dépôt doit conclure."""
     tete, connues = garde.tete_du_tag(garde._REGISTRE)
@@ -154,6 +190,28 @@ def test_lecture_reelle_de_la_base(pg_dsn):
         absente = dsn.rsplit("/", 1)[0] + "/base_absente_1163"
         with pytest.raises(garde.Refus, match="illisible"):
             garde.lire_base(absente)
+
+
+@pytest.mark.parametrize("version, code, motif", [
+    ("0042_orgs_suspension_par_tenant", 0, "base à la tête du tag"),
+    ("0041_recherche_valeurs_servies", 3,
+     "la base est en 0041_recherche_valeurs_servies, le tag attend"),
+    ("0039_feed_synced_at_retiree", 1,
+     "révision 0039_feed_synced_at_retiree antérieure à la référence "
+     "0041_recherche_valeurs_servies (squash du 06/10/2026)"),
+])
+def test_contre_le_registre_du_depot(pg_dsn, monkeypatch, capsys, version, code, motif):
+    """Sur un PostgreSQL réel et le registre du dépôt : une base à la tête est à jour, une
+    base à la référence est en retard (`migrer upgrade head` la monte), une base à une
+    révision retirée est refusée en le nommant."""
+    from _base_jetable import base_jetable
+    with base_jetable(pg_dsn) as ouvrir:
+        with ouvrir() as c:
+            c.execute("CREATE TABLE alembic_version (version_num varchar(32) PRIMARY KEY)")
+            c.execute("INSERT INTO alembic_version VALUES (%s)", (version,))
+        assert garde.main() == code
+        sortie = capsys.readouterr()
+        assert motif in sortie.out + sortie.err
 
 
 # --- la chaîne -------------------------------------------------------------------------

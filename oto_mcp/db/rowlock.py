@@ -101,9 +101,6 @@ _CORPS_INDEX_FILE = (f"{INDEX_FILE} ON datastore_rows "
                      "(ns_id, claimed_at ASC NULLS FIRST, row_id) "
                      "WHERE abandon_reason IS NULL")
 DDL_INDEX_FILE = f"CREATE INDEX IF NOT EXISTS {_CORPS_INDEX_FILE}"
-# Sur une base peuplée : jamais un `CREATE INDEX` ordinaire, qui bloquerait les
-# écritures de `datastore_rows` le temps du parcours (révision 0030).
-DDL_INDEX_FILE_CONCURRENT = f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {_CORPS_INDEX_FILE}"
 
 
 def _perimetre_reclamable(ns_id: int, filters: Optional[list]) -> tuple:
