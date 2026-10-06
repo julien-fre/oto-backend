@@ -13,10 +13,15 @@ job and addressed by their integer `id`; a **candidate** belongs to a job.
 No global list of candidates: the API requires the job.
 
 **Consolidated surface (ADR 0047 §Amendment)**: one tool per business OBJECT, the verb
-in `op` — `wttj_organization` (list/get), `wttj_job` (list/get), `wttj_candidate`
-(list/get/create/update). Two tools stand alone, their parameters do not overlap
-those of a neighbor: `wttj_comment` (a write, no read exists
-upstream) and `wttj_moves` (the pipeline history, addressed by organization).
+in `op` — `wttj_job` (list/get), `wttj_candidate` (list/get/create/update). Three
+tools stand alone, their parameters do not overlap those of a neighbor:
+`wttj_organization` (the token's organizations, no parameters), `wttj_comment`
+(a write, no read exists upstream) and `wttj_moves` (a job's pipeline
+history).
+
+⚠️ An organization's detail (`GET /organizations/{ref}`) requires a partner scope
+(`su_organizations_r`) that a client account does not get: it is not served, the
+token's list of organizations already carries their name and reference.
 
 ⚠️ This module WRITES into the client's ATS: `wttj_candidate` op="create"/"update"
 (update MOVES a candidate by `job_stage_id` or archives them) and `wttj_comment`.
@@ -39,7 +44,6 @@ from ..mcp_errors import McpError
 OU_OBTENIR_LA_CLE = ("ask WTTJ via help.welcometothejungle.com "
                      "(the token is not generated self-service)")
 
-_ORGANIZATION_OPS = ("list", "get")
 _JOB_OPS = ("list", "get")
 _CANDIDATE_OPS = ("list", "get", "create", "update")
 
@@ -138,35 +142,13 @@ def register(mcp: FastMCP) -> None:
     # --- Organizations ------------------------------------------------------
 
     @mcp.tool()
-    def wttj_organization(
-        op: Literal["list", "get"] = "list",
-        organization_reference: Optional[str] = None,
-        offices: Optional[bool] = None,
-        websites: Optional[bool] = None,
-    ) -> dict:
+    def wttj_organization() -> dict:
         """The Welcome to the Jungle organizations this token reaches — start here:
-        every other wttj tool needs an `organization_reference` or a job.
+        every other wttj tool needs an `organization_reference` or a job. Returns
+        the token's user with `organizations: [{reference, name, …}]`."""
+        return {"user": _run(lambda: _client().get_current_user(organizations=True))}
 
-        `op`:
-        - **"list"** (default): the token's user and the organizations it can reach
-          (with their `reference`).
-        - **"get"**: one organization (`organization_reference`): name, description,
-          sectors, size; `offices` / `websites` on request.
-        """
-        if op not in _ORGANIZATION_OPS:
-            raise _bad(_ops_error(_ORGANIZATION_OPS))
-        if op == "list":
-            _refuse_ignored(op, "exists only on op='get'",
-                            organization_reference=organization_reference,
-                            offices=offices, websites=websites)
-            return {"user": _run(lambda: _client().get_current_user(organizations=True))}
-        if op == "get":
-            ref = _need(organization_reference, "organization_reference", op)
-            return {"organization": _run(lambda: _client().get_organization(
-                ref, offices=offices, websites=websites))}
-        raise _bad(_ops_error(_ORGANIZATION_OPS))
-
-    # --- Jobs ---------------------------------------------------------------
+    # --- Jobs --------------------------------------------------------------
 
     @mcp.tool()
     def wttj_job(
@@ -227,7 +209,7 @@ def register(mcp: FastMCP) -> None:
                 ref, stages=True, candidates_count=candidates_count))}
         raise _bad(_ops_error(_JOB_OPS))
 
-    # --- Candidates ---------------------------------------------------------
+    # --- Candidates ----------------------------------------------------------
 
     @mcp.tool()
     def wttj_candidate(
@@ -324,7 +306,7 @@ def register(mcp: FastMCP) -> None:
             return {"candidate": _run(lambda: _client().update_candidate(ref, **changes))}
         raise _bad(_ops_error(_CANDIDATE_OPS))
 
-    # --- Comments -----------------------------------------------------------
+    # --- Comments -------------------------------------------------------
 
     @mcp.tool()
     def wttj_comment(candidate_reference: str, content: str) -> dict:
@@ -333,19 +315,23 @@ def register(mcp: FastMCP) -> None:
         return {"comment": _run(lambda: _client().create_comment(
             candidate_reference, content))}
 
-    # --- Pipeline history ---------------------------------------------------
+    # --- Pipeline history ---------------------------------------------
 
     @mcp.tool()
     def wttj_moves(
         organization_reference: str,
-        job_reference: Optional[str] = None,
+        job_reference: str,
         page: Optional[int] = None,
         per_page: Optional[int] = None,
         fields: Optional[list[str]] = None,
     ) -> dict:
-        """History of stage changes in an organization (optionally one job): each
-        `{candidate: {reference}, from: {stage, job}, to: {stage, job}, created_at}`.
-        Answers "who moved where, when" — a pipeline activity feed."""
+        """History of stage changes of ONE job (`job_reference` is required by the
+        API): each `{candidate: {reference}, from: {stage, job}, to: {stage, job},
+        created_at}`. Answers "who moved where, when" on that job.
+
+        Needs the `moves_r` scope; WTTJ may also require a partner scope
+        (`su_moves_r`) that client accounts do not get — the refusal then names
+        it, and the history cannot be read with that token."""
         rows = _run(lambda: _client().list_moves(
             organization_reference, job_reference=job_reference, page=page,
             per_page=per_page))
