@@ -106,6 +106,20 @@ def revoke_edges(resource_id: str, grantee_kind: str, grantee_id: str) -> int:
     return len(rows)
 
 
+def revoke_unconstrained_edges(resource_ids: Iterable[str], conn) -> int:
+    """ARCHIVE les arêtes vivantes SANS contrainte qui désignent l'une de ces
+    ressources, quel qu'en soit le bénéficiaire ; rend leur nombre. Hors chemin chaud :
+    sert un geste d'exploitation (la conversion des clés d'un tenant devenu primaire,
+    `export_perimetre.cles_du_primaire`), DANS sa transaction."""
+    ids = sorted(set(resource_ids))
+    if not ids:
+        return 0
+    return len(conn.execute(
+        "UPDATE grants SET revoked_at = NOW() WHERE revoked_at IS NULL "
+        "AND resource_id = ANY(%s) AND constraints = '{}'::jsonb RETURNING id",
+        (ids,)).fetchall())
+
+
 def bump_counter(grant_id: int, calls: int = 1) -> None:
     """Débite l'ARÊTE (0053-D7 : « l'arête porte la règle et les incréments »).
     Fenêtre = le jour (`window_start DATE`). Un seul UPSERT par PK — l'écriture la

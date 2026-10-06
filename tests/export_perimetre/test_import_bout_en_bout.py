@@ -282,10 +282,28 @@ def test_les_secrets_se_lisent_avec_la_cle_cible(cible):
         ("connector_credentials", "serper"): SECRET.format(A, "serper"),
         ("connector_credentials", "apollo"): SECRET.format(A, "apollo"),
         ("connector_credentials", "tavily"): SECRET.format(A, "tavily"),
-        ("connector_credentials", "pappers"): SECRET.format(A, "pappers"),
+        ("connector_credentials", "hunter"): SECRET.format(A, "hunter"),
         ("runner_triggers", None): SECRET.format(A, "hook"),
         ("transcription_jobs", None): SECRET.format(A, "transcription"),
     }
+
+
+def test_la_cle_du_tenant_devenu_primaire_est_une_instance_plateforme_ouverte(cible):
+    """Le primaire ne porte pas de clé tenant : la sienne arrive en instance plateforme,
+    ouverte à tous, sous son slug (`cles_du_primaire`)."""
+    slug = slug_de(A)
+    with psycopg.connect(cible["dsn"], row_factory=dict_row) as c:
+        assert c.execute("SELECT count(*) AS n FROM connector_credentials "
+                         "WHERE entity_type = 'tenant'").fetchone()["n"] == 0
+        cle = c.execute("SELECT entity_id, share_mode, share_down, share_side "
+                        "FROM connector_credentials WHERE entity_type = 'platform' "
+                        "AND connector = 'hunter'").fetchall()
+        assert cle == [{"entity_id": slug, "share_mode": "open", "share_down": [],
+                        "share_side": []}]
+        assert c.execute("SELECT count(*) AS n FROM grants WHERE resource_id = %s AND "
+                         "grantee_kind = 'platform' AND grantee_id = 'platform' AND "
+                         "revoked_at IS NULL", (f"platform:hunter:{slug}",)
+                         ).fetchone()["n"] == 1
 
 
 def test_les_aad_viennent_du_code_qui_ecrit_les_secrets():

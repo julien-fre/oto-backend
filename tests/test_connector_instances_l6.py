@@ -90,6 +90,10 @@ _LECTEURS_ADMIS = {
     # et la recopie telle quelle vers une autre base. Il ne résout rien : ni cascade,
     # ni coffre, ni autorisation ne passent par lui.
     "export_perimetre/classement.py",
+    # Les clés d'un tenant devenu PRIMAIRE à l'import, rangées en instances plateforme.
+    # Ne résout rien : il lit l'instance d'une ligne tenant pour archiver les arêtes qui
+    # la désignent, et vérifie que la ligne plateforme posée par le coffre est nommée.
+    "export_perimetre/cles_du_primaire.py",
 }
 
 # Dans le coffre, les SEULES fonctions admises à nommer une instance. Ce sont les

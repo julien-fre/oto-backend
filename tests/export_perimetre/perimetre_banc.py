@@ -246,7 +246,9 @@ def semer(c, m: str, *, cle: bytes | None = None) -> dict:
         _credential(c, cle, "org", str(o), "serper", m)
         _credential(c, cle, "member", f"{o}:{alice}", "apollo", m)
         _credential(c, cle, "user", alice, "tavily", m)
-        _credential(c, cle, "tenant", slug, "pappers", m)
+        # Une clé TENANT d'un connecteur qui sert le barreau plateforme : le tenant
+        # devient le primaire de la cible, elle y devient une instance plateforme.
+        _credential(c, cle, "tenant", slug, "hunter", m)
         declencheur = c.execute(
             "INSERT INTO runner_triggers (org_id, sub, label, procedure, kind, tools) "
             "VALUES (%s, %s, %s, 'p', 'webhook', '[]') RETURNING id", (o, alice, f"hook {m}")

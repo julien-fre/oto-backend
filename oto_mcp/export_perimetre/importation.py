@@ -24,6 +24,10 @@ l'export s'est servi pour les AAD : le tenant devient la ligne 1 (la ligne semé
 ses valeurs), toute clé vers `tenants(id)` vaut 1, les comptes perdent leur préfixe, et
 les URL de notre stockage public deviennent celles du stockage de la cible.
 
+Après la relecture, les clés `tenant` du tenant exporté, devenu le primaire, se rangent
+en instances plateforme ouvertes à tous (`cles_du_primaire`) : le primaire ne porte pas
+de clé tenant, personne ne les lirait.
+
 Les objets (`objets`) se versent de l'archive dans le stockage de la cible, après la
 relecture et avant la validation : un objet qui ne se verse pas annule tout, et un
 nouvel essai saute ceux qui sont déjà là. La relecture refuse s'il subsiste la moindre
@@ -48,12 +52,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 
 import psycopg
 
 from ..crypto import _load_master_key
 from .classement import CLASSEMENT, EXPORTEES, Table, sans_journal
+from .cles_du_primaire import ConversionRefusee, convertir
 from .decouverte import lire_schema, verifier_classement
 from .extraction import FORMAT, Lecture, _colonnes, ouvrir
 from .objets import ObjetsRefuses, Stockage, controler_archive
@@ -63,6 +69,8 @@ from .transformation import Transformation
 
 _MODULE = 2 ** 256
 TAILLE_LOT = 500
+
+logger = logging.getLogger(__name__)
 
 
 class ImportRefuse(RuntimeError):
@@ -149,6 +157,7 @@ def importer(conn: psycopg.Connection, chemin: Path | str, *,
         relu = relire(conn, ouvrir(conn, manifeste["perimetre"]["orgs_declarees"],
                                    classement_du(manifeste)), bases)
         comparer(attendu, relu)
+        ranger_cles_du_primaire(conn, manifeste["tenant"]["slug"])
         verser_archive(archive, manifeste, stockage, cle)
     return {t: {"lignes": n, "empreinte": f"{h:064x}"} for t, (n, h) in relu.items()}
 
@@ -174,6 +183,21 @@ def comparer(attendu: dict, relu: dict) -> None:
     if relu != attendu:
         ecarts = sorted(t for t in set(attendu) | set(relu) if attendu.get(t) != relu.get(t))
         raise VerificationEchouee(f"la cible relue diffère de ce qui a été écrit : {ecarts}")
+
+
+def ranger_cles_du_primaire(conn, slug: str) -> dict[str, str]:
+    """Dans la transaction, APRÈS la relecture : les clés `tenant` du tenant exporté,
+    devenu le primaire, rangées en instances plateforme ouvertes à tous
+    (`cles_du_primaire`). Un refus annule tout l'import ; une conversion se journalise,
+    puisqu'elle change le mode de clé (`platform`) et les quotas de ces connecteurs."""
+    try:
+        labels = convertir(conn, slug)
+    except ConversionRefusee as e:
+        raise ImportRefuse(str(e)) from e
+    if labels:
+        logger.warning("perimetre import : clés du tenant %s rangées en instances plateforme "
+                       "ouvertes à tous : %s", slug, labels)
+    return labels
 
 
 def verser_archive(archive: Path | None, manifeste: dict, stockage, cle) -> None:

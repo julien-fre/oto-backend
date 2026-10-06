@@ -298,6 +298,41 @@ Ce qui change en chemin est `transformation.Transformation`, rien d'autre :
 L'écriture se fait par lots (`TAILLE_LOT` lignes par aller-retour, `executemany`) : un
 journal d'appels complet compte des centaines de milliers de lignes.
 
+### Les clés du tenant devenu primaire
+
+Un tenant tiers range ses clés partagées au scope `tenant` du coffre. Le primaire n'en
+porte jamais : ses clés partagées sont les instances PLATEFORME, et la cascade ne sonde
+pas son barreau tenant. Versées telles quelles, ces lignes n'auraient personne pour les
+lire, et les orgs du tenant perdraient en silence les clés qu'il leur fournissait.
+
+Après la relecture, dans la même transaction, `cles_du_primaire.convertir` les range
+donc en instances plateforme ouvertes à tous (`share_mode='open'`, aucun partage) :
+
+- le secret est reposé par le coffre (`set_credential`), rechiffré sous l'AAD
+  plateforme, `meta` et `set_by` conservés, avec une trace `_conversion` ; le label
+  est le compte de la ligne s'il en porte un (« Main »), sinon le slug du tenant ;
+- la ligne posée est relue avant de continuer : ouverte, déchiffrable sous sa propre
+  AAD avec la même empreinte que l'original, instance nommée ;
+- l'arête « tout le monde » (`grants_chain.EVERYONE`) est posée sur l'instance ;
+- la ligne tenant est retirée par le coffre (son instance s'archive), et les arêtes
+  tenant→org SANS contrainte qui la désignaient s'archivent.
+
+Refus nommés, avant toute écriture, qui annulent l'import (`ImportRefuse`) : un
+connecteur sans mode `platform` (sa clé n'aurait pas de place : la retirer à la source,
+ou donner le mode au connecteur), deux clés tenant pour un même connecteur, une ligne
+tenant qui porte un partage, une instance plateforme déjà là pour ce connecteur, une
+arête AVEC contrainte (un quota par org) ou un lien de projet qui désigne une ligne
+tenant — l'ouvrir à tous effacerait cette borne. Rejouée, la conversion ne change rien.
+
+⚠️ **Ce que la conversion change pour les orgs du tenant**, à connaître avant d'importer :
+
+- le **mode de clé** de ces connecteurs devient `platform` (`key_mode`) : c'est ce que
+  lit la facturation partenaire ;
+- les **quotas journaliers des clés plateforme** (`access.quotas`) s'appliquent
+  désormais à ces appels, sauf pour qui porte le droit `platform_unmetered` ;
+- un outil qui exige une clé de l'appelant refuse : Apollo avec `want="byo"`, par
+  exemple, ne voit plus la clé du tenant comme la sienne.
+
 Les déclencheurs de la cible (journal des révisions, vecteur de recherche) sont
 suspendus le temps de la transaction : l'import reproduit un état, il ne rejoue pas des
 gestes. Les clés étrangères restent vérifiées. Les auto-références (une page sous une
