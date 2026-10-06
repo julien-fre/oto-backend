@@ -1749,6 +1749,10 @@ enabled` avant tout autre refus. La garde vit dans `_abonnement.exiger_ouvert`, 
 les QUATRE chemins de pose — le quatrième, `runner_jobs op=enqueue`, était ouvert jusqu'à
 la revue du 23/09 (une flotte s'y enfilait sur un forfait) — et par les routes de
 connexion.
+**Ouvert à tous par instance (06/10/2026).** `OTO_ABONNEMENT_OUVERT_A_TOUS=1` ouvre le
+chemin à tout compte de l'instance, option ou pas (`_abonnement.ouvert`, seule source).
+`/api/me` rend `claude_subscription` (booléen, même source) pour que le front n'affiche
+la connexion qu'à qui la garde laissera passer.
 
 **La ferme (24/09/2026).** Les sandboxes vivent sur une box dédiée, `ferme-0`
 (`otomata-tech/claude-sandbox-manager`) : un sandbox = un utilisateur Unix, chaque run une unité

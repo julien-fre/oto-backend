@@ -30,6 +30,7 @@ ne traverse pas le backend — c'est la condition qui rend ce chemin licite.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -55,6 +56,10 @@ DEFAUT_LIMITE_PCT = 80
 #: sur une plateforme partagée reste un usage que le fournisseur n'a pas
 #: confirmé par écrit (24/09/2026) — on l'ouvre à des personnes nommées.
 OPTION = "claude_subscription"
+
+#: Ouvre le chemin à TOUT compte de l'instance, option ou pas (`1`/`true`/`on`).
+#: Décision de l'instance, pas d'une personne : absente = nommément, comme avant.
+ENV_OUVERT_A_TOUS = "OTO_ABONNEMENT_OUVERT_A_TOUS"
 
 #: La borne d'une échéance de plafond rapportée par un worker. Les fenêtres du
 #: fournisseur durent cinq heures ou sept jours : au-delà, le rapport est faux
@@ -192,9 +197,18 @@ def servable(sub: Optional[str], famille: str) -> tuple[bool, Optional[str], Opt
     return False, statut, sandbox
 
 
+def ouvert(sub: str) -> bool:
+    """Le chemin est-il ouvert à `sub` ? L'instance l'ouvre à tous
+    (`ENV_OUVERT_A_TOUS`), sinon la personne porte l'option `OPTION`. Seule source,
+    lue par la garde ET par `/api/me` (le front n'affiche que ce qui passera)."""
+    if os.environ.get(ENV_OUVERT_A_TOUS, "").strip().lower() in ("1", "true", "on"):
+        return True
+    return access.has_option(sub, OPTION)
+
+
 def exiger_ouvert(sub: str, famille: str) -> None:
-    """Ce chemin n'est ouvert qu'aux personnes qui portent l'option `OPTION`."""
-    if not access.has_option(sub, OPTION):
+    """Ce chemin n'est ouvert qu'aux personnes pour qui `ouvert` répond vrai."""
+    if not ouvert(sub):
         raise AuthzDenied(
             403, "subscription_not_enabled",
             f"les modèles `{famille}` tournent sur l'abonnement personnel de qui les "

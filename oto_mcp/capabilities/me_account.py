@@ -36,6 +36,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, field_validator
 
 from .. import access, billing, db, group_store, org_store, session_org
+from . import _abonnement
 from ._authz import SUB_ONLY
 from ._lecture_bornee import bornee
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
@@ -118,6 +119,8 @@ class MeView(BaseModel):
     locale: Optional[str] = None
     # Rôle PLATEFORME (user | admin | super_admin) — à ne pas confondre avec `org_role`.
     role: Optional[str] = None
+    # Peut connecter son compte Claude (`_abonnement.ouvert`).
+    claude_subscription: bool = False
     active_org: Optional[int] = None
     active_org_name: Optional[str] = None
     # Logo EFFECTIF : upload sinon dérivé logo.dev du domaine déclaré.
@@ -327,6 +330,9 @@ def _me(ctx: ResolvedCtx, inp: MeInput) -> dict:
         # (le front retombe sur la langue du navigateur). Écrite via PUT /api/me/locale.
         "locale": user.get("locale"),
         "role": status["role"],
+        # Peut-il connecter son compte Claude (agents sur son abonnement) ? Même
+        # source que la garde (`_abonnement.ouvert`) : le front n'affiche que ce qui passera.
+        "claude_subscription": _abonnement.ouvert(sub),
         "active_org": active_org,
         "active_org_name": active_org_name,
         "active_org_logo_url": active_org_logo_url,

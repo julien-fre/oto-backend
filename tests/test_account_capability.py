@@ -50,6 +50,7 @@ def socle(monkeypatch):
                         lambda gid: {"id": gid, "name": "Growth", "org_id": 35})
     monkeypatch.setattr(ma.group_store, "get_active_group", lambda sub: 7)
     monkeypatch.setattr(ma.billing, "is_enabled", lambda: True)
+    monkeypatch.setattr(ma._abonnement, "ouvert", lambda sub: False)
     from oto_mcp import roles
     monkeypatch.setattr(roles, "effective_group_role", lambda sub, gid: "group_admin")
 
@@ -77,7 +78,7 @@ def test_les_cles_de_api_me_sont_exactement_celles_servies(monkeypatch, socle):
     code, out = call("me.get")
     assert code == 200, out
     assert sorted(out) == sorted([
-        "sub", "email", "name", "avatar_url", "locale", "role",
+        "sub", "email", "name", "avatar_url", "locale", "role", "claude_subscription",
         "active_org", "active_org_name", "active_org_logo_url", "org_role",
         "active_org_readonly", "view_as_read_only",
         "view_as_bound_org", "view_as_refused_prefixes",

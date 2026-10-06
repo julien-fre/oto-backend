@@ -167,6 +167,20 @@ class TestOption:
         _option_ouverte.clear()
         _abonnement.exiger_a_la_pose(_PORTEUR, _PORTEUR, "anthropic")
 
+    def test_l_instance_ouvre_a_tous_sans_option(self, monkeypatch, _option_ouverte):
+        _option_ouverte.clear()
+        monkeypatch.setenv(_abonnement.ENV_OUVERT_A_TOUS, "1")
+        assert _abonnement.ouvert(_PORTEUR)
+        _abonnement.exiger_ouvert(_PORTEUR, _FAMILLE)
+
+    def test_sans_l_env_ni_l_option_c_est_ferme(self, monkeypatch, _option_ouverte):
+        _option_ouverte.clear()
+        monkeypatch.delenv(_abonnement.ENV_OUVERT_A_TOUS, raising=False)
+        assert not _abonnement.ouvert(_PORTEUR)
+        with pytest.raises(Exception) as e:
+            _abonnement.exiger_ouvert(_PORTEUR, _FAMILLE)
+        assert e.value.code == "subscription_not_enabled"
+
 
 class TestEnfilage:
     """Le QUATRIÈME chemin de pose : un travail enfilé à la main (revue du 23/09/2026)."""
