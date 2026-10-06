@@ -42,7 +42,7 @@ CONNECTOR = _c(
     href="https://www.boondmanager.com",
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "BoondManager"
 LOGO_DOMAIN = "boondmanager.com"
 

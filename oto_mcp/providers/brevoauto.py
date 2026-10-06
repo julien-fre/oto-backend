@@ -24,7 +24,7 @@ CONNECTOR = _c(
     publisher="Brevo", href="https://app.brevo.com/automation/automations",
 )
 
-CATEGORY = "Automatisation"
+CATEGORY = "Automation"
 LOGO_DOMAIN = "brevo.com"
 
 DESCRIPTION = (

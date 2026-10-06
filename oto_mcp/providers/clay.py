@@ -48,7 +48,7 @@ CONNECTOR = _c(
     ),
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Clay"
 LOGO_DOMAIN = "clay.com"
 

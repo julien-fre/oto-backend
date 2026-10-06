@@ -30,7 +30,7 @@ CONNECTOR = _c(
     ),
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Monid"
 LOGO_DOMAIN = "monid.ai"
 

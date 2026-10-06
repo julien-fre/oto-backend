@@ -15,7 +15,7 @@ CONNECTOR = _c(
     href="https://www.hithorizons.com",
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "HitHorizons"
 LOGO_DOMAIN = "hithorizons.com"
 

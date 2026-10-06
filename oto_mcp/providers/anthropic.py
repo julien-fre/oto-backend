@@ -40,6 +40,6 @@ CONNECTOR = _c(
     href="https://console.anthropic.com/settings/keys",
 )
 
-CATEGORY = "Modèles"
+CATEGORY = "AI models"
 PUBLISHER = "Anthropic"
 LOGO_DOMAIN = "anthropic.com"

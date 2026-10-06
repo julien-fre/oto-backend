@@ -25,7 +25,7 @@ CONNECTOR = _c(
     ),
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Waalaxy"
 LOGO_DOMAIN = "waalaxy.com"
 

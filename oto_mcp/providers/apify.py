@@ -20,7 +20,7 @@ CONNECTOR = _c(
     href="https://apify.com",
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Apify"
 LOGO_DOMAIN = "apify.com"
 

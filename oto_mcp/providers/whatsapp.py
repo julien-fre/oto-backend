@@ -25,7 +25,7 @@ CONNECTOR = channel(
     href="https://www.whatsapp.com",
 )
 
-CATEGORY = "Messagerie"
+CATEGORY = "Messaging"
 LOGO_DOMAIN = "whatsapp.com"
 DESCRIPTION = (
     "Your WhatsApp account, connected as a linked device like "

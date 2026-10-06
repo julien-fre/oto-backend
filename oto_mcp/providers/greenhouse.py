@@ -19,7 +19,7 @@ CONNECTOR = _c(
     href="https://www.greenhouse.io",
 )
 
-CATEGORY = "Recrutement"
+CATEGORY = "Recruiting"
 PUBLISHER = "Greenhouse"
 LOGO_DOMAIN = "greenhouse.io"
 

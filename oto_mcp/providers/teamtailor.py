@@ -14,7 +14,7 @@ CONNECTOR = _c(
     href="https://www.teamtailor.com",
 )
 
-CATEGORY = "Recrutement"
+CATEGORY = "Recruiting"
 PUBLISHER = "Teamtailor"
 LOGO_DOMAIN = "teamtailor.com"
 

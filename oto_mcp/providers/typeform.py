@@ -37,7 +37,7 @@ CONNECTOR = _c(
     ),
 )
 
-CATEGORY = "Métier"
+CATEGORY = "Business apps"
 PUBLISHER = "Typeform"
 LOGO_DOMAIN = "typeform.com"
 

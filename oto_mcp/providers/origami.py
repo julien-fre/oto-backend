@@ -23,7 +23,7 @@ CONNECTOR = _c(
     href="https://origami.chat",
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Origami"
 LOGO_DOMAIN = "origami.chat"
 

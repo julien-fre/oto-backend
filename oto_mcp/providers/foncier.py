@@ -24,7 +24,7 @@ CONNECTOR = _c(
          "(distribution AND transmission), risks and ICPE, permits, isochrones — open data",
 )
 
-CATEGORY = "Data FR"
+CATEGORY = "French data"
 PUBLISHER = "French State (open data)"
 DESCRIPTION = (
     "French sites in open data: BAN geocoding, cadastral parcels, "

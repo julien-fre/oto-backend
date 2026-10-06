@@ -25,7 +25,7 @@ CONNECTOR = _c(
     ),
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Snitcher"
 LOGO_DOMAIN = "snitcher.com"
 

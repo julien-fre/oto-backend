@@ -24,7 +24,7 @@ CONNECTOR = _c(
     ),
 )
 
-CATEGORY = "RH"
+CATEGORY = "HR"
 PUBLISHER = "O*NET (U.S. Department of Labor)"
 LOGO_DOMAIN = "onetcenter.org"
 

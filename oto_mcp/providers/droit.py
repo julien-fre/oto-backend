@@ -18,7 +18,7 @@ CONNECTOR = _c(
     href="https://www.legifrance.gouv.fr", modules=("droit",),
 )
 
-CATEGORY = "Data FR"
+CATEGORY = "French data"
 PUBLISHER = "Légifrance / DILA"
 DESCRIPTION = (
     "French legal information: case law (Cour de "

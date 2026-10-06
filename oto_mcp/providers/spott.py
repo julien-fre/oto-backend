@@ -19,7 +19,7 @@ CONNECTOR = _c(
     href="https://spott.io",
 )
 
-CATEGORY = "Recrutement"
+CATEGORY = "Recruiting"
 PUBLISHER = "Spott"
 LOGO_DOMAIN = "spott.io"
 

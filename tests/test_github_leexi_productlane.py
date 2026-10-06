@@ -112,7 +112,7 @@ def _with(chemin, fake):
 @pytest.mark.parametrize("nom,categorie,editeur,domaine", [
     ("github", "Dev", "GitHub", "github.com"),
     ("leexi", "Knowledge", "Leexi", "leexi.ai"),
-    ("productlane", "Métier", "Productlane", "productlane.com"),
+    ("productlane", "Business apps", "Productlane", "productlane.com"),
 ])
 def test_les_trois_sont_des_connecteurs_byo_hors_socle(nom, categorie, editeur,
                                                        domaine):

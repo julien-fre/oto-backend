@@ -35,7 +35,7 @@ CONNECTOR = _c(
     ),
 )
 
-CATEGORY = "Métier"
+CATEGORY = "Business apps"
 PUBLISHER = "SignWell"
 LOGO_DOMAIN = "signwell.com"
 

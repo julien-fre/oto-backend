@@ -264,7 +264,7 @@ class Connector:
         """Usage domain (*user* axis, ADR 0011) — CURATED (`CATEGORY` constant
         of the declaration module), for grouping in the UI."""
         from . import _CATEGORY_BY_CONNECTOR
-        return _CATEGORY_BY_CONNECTOR.get(self.name, "Autres")
+        return _CATEGORY_BY_CONNECTOR.get(self.name, "Other")
 
     @property
     def doc_sections(self) -> tuple:

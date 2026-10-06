@@ -20,7 +20,7 @@ CONNECTOR = _c(
     modules=("lemlist", "lemlist_crm", "lemlist_lignes"),
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "lemlist"
 LOGO_DOMAIN = "lemlist.com"
 

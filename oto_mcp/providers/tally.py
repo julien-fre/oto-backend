@@ -21,7 +21,7 @@ CONNECTOR = _c(
     href="https://tally.so",
 )
 
-CATEGORY = "Métier"
+CATEGORY = "Business apps"
 PUBLISHER = "Tally"
 LOGO_DOMAIN = "tally.so"
 

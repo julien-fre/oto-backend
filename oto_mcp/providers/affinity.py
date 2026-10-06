@@ -23,7 +23,7 @@ CONNECTOR = _c(
     href="https://www.affinity.co",
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Affinity"
 LOGO_DOMAIN = "affinity.co"
 

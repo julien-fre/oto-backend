@@ -21,7 +21,7 @@ CONNECTOR = _c(
     href="https://cloro.dev",
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Cloro"
 LOGO_DOMAIN = "cloro.dev"
 

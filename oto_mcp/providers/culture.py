@@ -16,7 +16,7 @@ CONNECTOR = _c(
          "open data from the Ministère de la Culture",
 )
 
-CATEGORY = "Data FR"
+CATEGORY = "French data"
 PUBLISHER = "Ministère de la Culture"
 DESCRIPTION = (
     "Live-performance companies, from the Ministère de la Culture "

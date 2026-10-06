@@ -22,7 +22,7 @@ CONNECTOR = _c(
     href="https://www.bls.gov/oes/",
 )
 
-CATEGORY = "RH"
+CATEGORY = "HR"
 PUBLISHER = "U.S. Bureau of Labor Statistics"
 DESCRIPTION = (
     "Wages and employment by occupation in the United States, from the Bureau "

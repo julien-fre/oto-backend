@@ -8,7 +8,7 @@ from __future__ import annotations
 from ._model import _c
 
 # mailpool: the cold-email infrastructure behind a sending tool (domains, DNS,
-# mailboxes, warmup) — neighbour of `lemlist`, hence the Prospection category.
+# mailboxes, warmup) — neighbour of `lemlist`, hence the Prospecting category.
 #
 # keyed `api_key`: one workspace key, sent in the `X-Api-Authorization` header.
 # Strict BYOK (`byo_user` + `byo_org`): these are the customer's own sending
@@ -20,7 +20,7 @@ CONNECTOR = _c(
     href="https://www.mailpool.ai",
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Mailpool"
 LOGO_DOMAIN = "mailpool.ai"
 

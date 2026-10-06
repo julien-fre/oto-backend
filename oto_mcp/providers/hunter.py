@@ -13,7 +13,7 @@ CONNECTOR = _c(
     label="Hunter.io", help="emails", href="https://hunter.io",
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Hunter.io"
 LOGO_DOMAIN = "hunter.io"
 

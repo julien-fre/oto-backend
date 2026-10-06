@@ -17,7 +17,7 @@ CONNECTOR = _c(
     ),
 )
 
-CATEGORY = "Recrutement"
+CATEGORY = "Recruiting"
 PUBLISHER = "Recruitee"
 LOGO_DOMAIN = "recruitee.com"
 

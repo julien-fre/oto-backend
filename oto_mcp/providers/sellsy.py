@@ -23,7 +23,7 @@ CONNECTOR = _c(
     ),
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Sellsy"
 LOGO_DOMAIN = "sellsy.com"
 

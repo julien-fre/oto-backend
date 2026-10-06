@@ -20,7 +20,7 @@ CONNECTOR = _c(
     modules=("brevo", "brevo_crm"),
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 LOGO_DOMAIN = "brevo.com"
 
 DESCRIPTION = (

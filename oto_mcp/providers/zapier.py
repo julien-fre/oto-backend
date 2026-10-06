@@ -14,7 +14,7 @@ CONNECTOR = _c(
     href="https://actions.zapier.com",
 )
 
-CATEGORY = "Automatisation"
+CATEGORY = "Automation"
 PUBLISHER = "Zapier"
 LOGO_DOMAIN = "zapier.com"
 

@@ -15,7 +15,7 @@ CONNECTOR = _c(
          "HAS ESSMS evaluations (open data)",
 )
 
-CATEGORY = "Data FR"
+CATEGORY = "French data"
 PUBLISHER = "HAS / FINESS"
 DESCRIPTION = (
     "French healthcare and medico-social establishments: "

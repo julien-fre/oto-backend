@@ -52,7 +52,7 @@ def test_firecrawl_is_keyed_connector_platform_grant_only():
     assert c.platform_key_open is False
     assert c.default_quota == 0
     assert "firecrawl" in providers.KEY_PROVIDERS
-    assert c.category == "Prospection"
+    assert c.category == "Prospecting"
     assert c.publisher_name == "Firecrawl"
 
 

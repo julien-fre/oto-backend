@@ -20,7 +20,7 @@ CONNECTOR = _c(
     modules=("hubspot", "hubspot_lignes"),
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "HubSpot"
 LOGO_DOMAIN = "hubspot.com"
 

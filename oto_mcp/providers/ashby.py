@@ -14,7 +14,7 @@ CONNECTOR = _c(
     href="https://www.ashbyhq.com",
 )
 
-CATEGORY = "Recrutement"
+CATEGORY = "Recruiting"
 PUBLISHER = "Ashby"
 LOGO_DOMAIN = "ashbyhq.com"
 

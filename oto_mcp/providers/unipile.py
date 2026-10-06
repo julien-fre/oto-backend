@@ -54,7 +54,7 @@ CONNECTOR = _c(
     modules=("unipile", "whatsapp", "telegram", "instagram"),
 )
 
-CATEGORY = "Prospection"
+CATEGORY = "Prospecting"
 PUBLISHER = "Unipile"
 LOGO_DOMAIN = "unipile.com"
 DESCRIPTION = (
