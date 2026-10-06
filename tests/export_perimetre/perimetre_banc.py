@@ -28,6 +28,7 @@ A, B = "A7d1e", "B9f3c"
 SECRET = "clair-{}-{}"
 BASE_SOURCE = "https://stockage-source.exemple.test"
 BASE_CIBLE = "https://stockage-cible.exemple.test"
+PNG = b"\x89PNG\r\n\x1a\n"  # la signature qu'`upload_image` exige d'une image publique
 
 
 def url_source(cle: str) -> str:
@@ -55,14 +56,17 @@ class _NoSuchKey(_ClientError):
 
 class FauxS3:
     """Un seau en mémoire, à l'API de boto3 (`get_object`, `put_object`, `head_object`,
-    `exceptions`) — `alterer` simule une cible qui abîme ce qu'on lui écrit."""
+    `get_object_acl`, `exceptions`) — `alterer` simule une cible qui abîme ce qu'on lui
+    écrit, `entetes` pose ceux d'objets de départ (`ContentType`, `ACL`…)."""
 
     class exceptions:  # noqa: N801 — la forme de `client.exceptions` chez boto3
         ClientError = _ClientError
         NoSuchKey = _NoSuchKey
 
-    def __init__(self, objets: dict[str, bytes] | None = None, alterer: bool = False):
-        self.objets = {k: (v, {}) for k, v in (objets or {}).items()}
+    def __init__(self, objets: dict[str, bytes] | None = None, alterer: bool = False,
+                 entetes: dict[str, dict] | None = None):
+        self.objets = {k: (v, {}, dict((entetes or {}).get(k, {})))
+                       for k, v in (objets or {}).items()}
         self.alterer = alterer
         self.ecritures = 0
 
@@ -71,15 +75,28 @@ class FauxS3:
             raise _NoSuchKey()
         return {"Body": io.BytesIO(self.objets[Key][0])}
 
-    def put_object(self, Bucket, Key, Body, Metadata=None):  # noqa: N803
+    def put_object(self, Bucket, Key, Body, Metadata=None, **entetes):  # noqa: N803
         self.ecritures += 1
-        self.objets[Key] = (Body[:-1] if self.alterer else Body, dict(Metadata or {}))
+        self.objets[Key] = (Body[:-1] if self.alterer else Body, dict(Metadata or {}),
+                            entetes)
 
     def head_object(self, Bucket, Key):  # noqa: N803
         if Key not in self.objets:
             raise _ClientError("404")
-        donnees, meta = self.objets[Key]
-        return {"ContentLength": len(donnees), "Metadata": meta}
+        donnees, meta, entetes = self.objets[Key]
+        return {"ContentLength": len(donnees), "Metadata": meta,
+                **{k: v for k, v in entetes.items() if k != "ACL"}}
+
+    def get_object_acl(self, Bucket, Key):  # noqa: N803
+        if Key not in self.objets:
+            raise _NoSuchKey()
+        grants = [{"Grantee": {"Type": "CanonicalUser", "ID": "proprietaire"},
+                   "Permission": "FULL_CONTROL"}]
+        if self.objets[Key][2].get("ACL") == "public-read":
+            grants.append({"Grantee": {"Type": "Group",
+                                       "URI": "http://acs.amazonaws.com/groups/global/AllUsers"},
+                           "Permission": "READ"})
+        return {"Grants": grants}
 
 
 @contextmanager
@@ -174,11 +191,14 @@ def semer(c, m: str, *, cle: bytes | None = None) -> dict:
     alice, bob = f"{slug}:{m}-alice", f"{slug}:{m}-bob"
     membre(c, o, alice)
     membre(c, o, bob)
-    objets = {f"avatars/{quote(alice, safe='')}/{m}.png": f"avatar {m}".encode(),
-              f"org-logos/{o}/{m}.png": f"logo {m}".encode(),
-              f"projets/{m}/f.txt": f"fichier {m}".encode(),
-              f"images/{quote(alice, safe='')}/{m}-page.png": f"image page {m}".encode(),
-              f"images/{quote(alice, safe='')}/{m}-ligne.png": f"image ligne {m}".encode()}
+    # Des clés et des octets d'écriture native : l'import repose les en-têtes d'après le
+    # préfixe et, pour une image publique, d'après sa signature (`entetes_d_objet`).
+    objets = {f"avatars/{quote(alice, safe='')}/{m}.png": PNG + f"avatar {m}".encode(),
+              f"org-logos/{o}/{m}.png": PNG + f"logo {m}".encode(),
+              f"project-files/{m}/abc/f.txt": f"fichier {m}".encode(),
+              f"images/{quote(alice, safe='')}/{m}-page.png": PNG + f"image page {m}".encode(),
+              f"images/{quote(alice, safe='')}/{m}-ligne.png":
+                  PNG + f"image ligne {m}".encode()}
     url = {cle: url_source(cle) for cle in objets}
     cles = list(objets)
     c.execute("UPDATE users SET avatar_url = %s WHERE sub = %s", (url[cles[0]], alice))
@@ -256,7 +276,7 @@ def semer(c, m: str, *, cle: bytes | None = None) -> dict:
         c.execute("UPDATE runner_triggers SET hook_signing_secret_enc = %s WHERE id = %s",
                   (encrypt_with_key(cle, SECRET.format(m, "hook"),
                                     runner_hook._aad_du_secret(declencheur)), declencheur))
-        audio = f"audio/{m}/a.mp3"
+        audio = f"transcription-jobs/{m}/abc/a.mp3"
         objets[audio] = f"audio {m}".encode()
         c.execute("INSERT INTO transcription_jobs (project_id, sub, status, audio_key, "
                   "filename, mime, api_key_enc) VALUES (%s, %s, 'queued', %s, %s, "

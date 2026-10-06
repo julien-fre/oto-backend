@@ -23,7 +23,16 @@ l'objet scellé (`crypto.seal`, AES-256-GCM) sous la clé cible, l'AAD liant le 
 SA clé d'objet. Le manifeste inscrit l'archive (son empreinte SHA-256) et, par objet,
 sa taille et l'empreinte SHA-256 du clair. L'import vérifie l'archive avant toute
 écriture, puis chaque objet déchiffré. Un objet déjà présent dans le stockage cible
-avec la même empreinte est sauté : un import interrompu se reprend.
+avec la même empreinte ET les mêmes en-têtes est sauté : un import interrompu se reprend.
+
+**Les en-têtes** (ACL, `Content-Type`, `Cache-Control`, `Content-Disposition`) : l'import
+repose sur chaque objet ceux de l'écriture native, d'après son préfixe
+(`media_store.entetes_d_objet`, la source unique) — une image publique (`avatars/`,
+`org-logos/`, `images/`) redevient lisible de tous et en cache immuable, un blob durable
+(`project-files/`, `transcription-jobs/`) reste privé, sauf un document partagé. Ce que
+la règle ne lit pas sur les octets, l'export le relève à la source et le manifeste le
+porte, par objet : le type de l'objet (`content_type`) et s'il était public (`public`).
+Un préfixe sans règle refuse.
 
 Les archives froides du journal mêlent tous les propriétaires : aucune de leurs clés
 n'entre ici.
@@ -39,6 +48,7 @@ from pathlib import Path
 from typing import Iterable, Protocol
 from urllib.parse import unquote
 
+from .. import media_store
 from ..crypto import seal, unseal
 
 COLONNES_DE_CLES = frozenset({"project_files.s3_key", "transcription_jobs.audio_key"})
@@ -55,8 +65,13 @@ class ObjetsRefuses(RuntimeError):
 
 class Stockage(Protocol):
     def lire(self, cle: str) -> bytes | None: ...
-    def ecrire(self, cle: str, donnees: bytes, empreinte: str) -> None: ...
+    def ecrire(self, cle: str, donnees: bytes, empreinte: str, entetes: dict) -> None: ...
     def decrire(self, cle: str) -> tuple[int, str] | None: ...
+    def entetes(self, cle: str) -> dict: ...
+
+
+_TOUT_LE_MONDE = "http://acs.amazonaws.com/groups/global/AllUsers"
+_ENTETES_RELUS = ("ContentType", "CacheControl", "ContentDisposition")
 
 
 class StockageS3:
@@ -73,9 +88,21 @@ class StockageS3:
         except self.client.exceptions.NoSuchKey:
             return None
 
-    def ecrire(self, cle: str, donnees: bytes, empreinte: str) -> None:
+    def ecrire(self, cle: str, donnees: bytes, empreinte: str, entetes: dict) -> None:
         self.client.put_object(Bucket=self.seau, Key=cle, Body=donnees,
-                               Metadata={"sha256": empreinte})
+                               Metadata={"sha256": empreinte}, **entetes)
+
+    def entetes(self, cle: str) -> dict:
+        """Les en-têtes de l'objet, sous la forme où `ecrire` les pose : `ACL` vaut
+        `public-read` si tout le monde peut le lire, et n'y est pas sinon."""
+        tete = self.client.head_object(Bucket=self.seau, Key=cle)
+        entetes = {k: tete[k] for k in _ENTETES_RELUS if tete.get(k)}
+        acl = self.client.get_object_acl(Bucket=self.seau, Key=cle)
+        if any(g.get("Grantee", {}).get("URI") == _TOUT_LE_MONDE
+               and g.get("Permission") in ("READ", "FULL_CONTROL")
+               for g in acl.get("Grants", [])):
+            entetes["ACL"] = "public-read"
+        return entetes
 
     def decrire(self, cle: str) -> tuple[int, str] | None:
         try:
@@ -122,9 +149,11 @@ def cles_dans(texte: str, base_publique: str) -> set[str]:
 def archiver(cles: Iterable[str], source: Stockage, chemin: Path,
              cle_cible: bytes) -> tuple[dict[str, dict], str]:
     """Écrit l'archive des objets `cles`, scellés sous `cle_cible` ; rend, par clé, la
-    taille et l'empreinte du clair, et l'empreinte de l'archive. Un objet absent de la
-    source refuse, tous nommés, avant d'écrire quoi que ce soit."""
+    taille et l'empreinte du clair, son type et s'il est public à la source, et
+    l'empreinte de l'archive. Un objet absent de la source refuse, tous nommés, avant
+    d'écrire quoi que ce soit."""
     cles = sorted(set(cles))
+    _refuser_sans_regle(cles)
     manquantes = [c for c in cles if source.decrire(c) is None]
     if manquantes:
         raise ObjetsRefuses(f"{len(manquantes)} objet(s) du périmètre absent(s) du stockage "
@@ -134,7 +163,10 @@ def archiver(cles: Iterable[str], source: Stockage, chemin: Path,
     with tarfile.open(provisoire, "x", format=tarfile.PAX_FORMAT) as archive:
         for cle in cles:
             donnees = source.lire(cle)
-            liste[cle] = {"taille": len(donnees), "sha256": _empreinte(donnees)}
+            entetes = source.entetes(cle)
+            liste[cle] = {"taille": len(donnees), "sha256": _empreinte(donnees),
+                          "content_type": entetes.get("ContentType", ""),
+                          "public": entetes.get("ACL") == "public-read"}
             scelle = seal(cle_cible, donnees, _aad(cle))
             membre = tarfile.TarInfo(cle)
             membre.size = len(scelle)
@@ -158,20 +190,52 @@ def controler_archive(chemin: Path, empreinte: str) -> None:
                             "manifeste : archive tronquée ou modifiée")
 
 
+def _refuser_sans_regle(cles: Iterable[str]) -> None:
+    """Un objet dont le préfixe n'a pas de règle d'écriture (`media_store`) refuse, tous
+    nommés : l'import ne saurait ni son ACL ni ses en-têtes."""
+    connus = media_store.PREFIXES_PUBLICS | media_store.PREFIXES_DURABLES
+    sans_regle = sorted(c for c in cles if c.split("/", 1)[0] not in connus)
+    if sans_regle:
+        raise ObjetsRefuses(f"{len(sans_regle)} objet(s) sous un préfixe sans règle "
+                            f"d'écriture (`media_store`) : {sans_regle[:20]}")
+
+
+def _controler_regles(liste: dict[str, dict]) -> None:
+    """Avant toute écriture : chaque objet a une règle d'écriture (son préfixe), et le
+    manifeste porte ce que la règle ne lit pas sur les octets. Un manifeste qui ne les
+    relève pas (export antérieur) refuse : on ne devine ni un type, ni une ACL."""
+    _refuser_sans_regle(liste)
+    muets = sorted(n for n, porte in liste.items()
+                   if "content_type" not in porte or "public" not in porte)
+    if muets:
+        raise ObjetsRefuses(f"le manifeste ne dit ni le type ni l'ACL de {len(muets)} "
+                            f"objet(s) (export antérieur à leur relevé) : refaire l'export "
+                            f"— {muets[:20]}")
+
+
+def _entetes_attendus(nom: str, donnees: bytes, porte: dict) -> dict:
+    """Les en-têtes de l'écriture native pour l'objet `nom` (`media_store.entetes_d_objet`),
+    d'après ce que le manifeste a relevé à la source."""
+    try:
+        return media_store.entetes_d_objet(nom, donnees, porte["content_type"],
+                                           porte["public"])
+    except media_store.MediaError as e:
+        raise ObjetsRefuses(f"{nom} : {e}") from e
+
+
 def verser(chemin: Path, liste: dict[str, dict], cible: Stockage, cle: bytes) -> Rapport:
     """Verse chaque objet de l'archive dans `cible` : déchiffré sous `cle` (celle de
-    l'instance), vérifié contre le manifeste, écrit, puis RELU. Un objet déjà présent
-    avec la même empreinte est sauté."""
+    l'instance), vérifié contre le manifeste, écrit avec les en-têtes de l'écriture
+    native, puis RELU (octets et en-têtes). Un objet déjà présent avec la même empreinte
+    et les mêmes en-têtes est sauté ; présent avec d'autres en-têtes, il est réécrit."""
     rapport = Rapport()
     with tarfile.open(chemin, "r") as archive:
         membres = {m.name: m for m in archive.getmembers()}
         if set(membres) != set(liste):
             raise ObjetsRefuses("l'archive et le manifeste ne listent pas les mêmes objets")
+        _controler_regles(liste)
         for nom in sorted(liste):
             attendu = (liste[nom]["taille"], liste[nom]["sha256"])
-            if cible.decrire(nom) == attendu:
-                rapport.deja_la.append(nom)
-                continue
             try:
                 donnees = unseal(cle, archive.extractfile(membres[nom]).read(), _aad(nom))
             except RuntimeError as e:
@@ -179,8 +243,12 @@ def verser(chemin: Path, liste: dict[str, dict], cible: Stockage, cle: bytes) ->
                                     "instance") from e
             if (len(donnees), _empreinte(donnees)) != attendu:
                 raise ObjetsRefuses(f"{nom} : déchiffré, il n'est pas celui du manifeste")
-            cible.ecrire(nom, donnees, attendu[1])
-            if cible.decrire(nom) != attendu:
+            entetes = _entetes_attendus(nom, donnees, liste[nom])
+            if cible.decrire(nom) == attendu and cible.entetes(nom) == entetes:
+                rapport.deja_la.append(nom)
+                continue
+            cible.ecrire(nom, donnees, attendu[1], entetes)
+            if cible.decrire(nom) != attendu or cible.entetes(nom) != entetes:
                 raise ObjetsRefuses(f"{nom} : le stockage cible ne rend pas ce qu'on y a écrit")
             rapport.copies.append(nom)
             rapport.octets += attendu[0]

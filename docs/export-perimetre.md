@@ -195,14 +195,27 @@ seule. Il n'y a ni copie directe d'un seau à l'autre, ni URL signée.
   scellé (`crypto.seal`, AES-256-GCM) sous la clé de l'instance CIBLE, avec une AAD
   qui le lie à sa clé d'objet. Elle est écrite chez nous, depuis notre stockage
   (`stockage`, `media_store`). Le manifeste l'inscrit (`objets` : nom, empreinte
-  SHA-256, notre base publique, et par objet la taille et l'empreinte du clair). Un
-  objet absent de notre stockage refuse, tous nommés, et un export refusé ne laisse
-  derrière lui ni lignes ni archive.
+  SHA-256, notre base publique, et par objet la taille et l'empreinte du clair, son
+  type `content_type` et s'il était public, `public`, relevés à la source). Un objet
+  absent de notre stockage, ou sous un préfixe sans règle d'écriture, refuse, tous
+  nommés, et un export refusé ne laisse derrière lui ni lignes ni archive.
 - **À l'import**, l'archive est vérifiée avant toute écriture. Elle se verse dans le
   stockage de la cible, avec ses propres identifiants, après la relecture et avant la
   validation. Chaque objet est déchiffré sous la clé de l'instance, comparé au
-  manifeste, écrit sous la MÊME clé, puis relu. Un objet déjà là avec la même
-  empreinte est sauté : un import interrompu se reprend.
+  manifeste, écrit sous la MÊME clé avec les en-têtes de l'écriture native, puis relu,
+  octets et en-têtes. Un objet déjà là avec la même empreinte et les mêmes en-têtes est
+  sauté : un import interrompu se reprend ; avec d'autres en-têtes, il est réécrit.
+- **Les en-têtes** (ACL, `Content-Type`, `Cache-Control`, `Content-Disposition`) suivent
+  la règle de l'écriture native, une seule source : `media_store.entetes_d_objet`,
+  d'après le préfixe de la clé.
+  - `avatars/`, `org-logos/`, `images/` (`upload_image`) : lisibles de tous
+    (`public-read`), `Cache-Control: public, max-age=31536000, immutable`, type lu sur
+    les octets — même si l'objet était privé à la source.
+  - `project-files/`, `transcription-jobs/` (`upload_object`) : privés, type servi
+    (`type_servi`) d'après le type de l'objet source, téléchargement forcé s'il est
+    neutralisé ; un document partagé (`make_public`) à la source reste public.
+  - Tout autre préfixe n'a pas de règle : l'export comme l'import refusent. Un
+    manifeste antérieur au relevé des types et des ACL refuse aussi : refaire l'export.
 - **Les URL** sont réécrites par la `Transformation` : `<notre base>/` devient `<base
   cible>/` dans toute valeur texte, colonne ou contenu ; le chemin ne bouge pas. La
   base cible est celle que la cible déclare (`media_store.public_base`), sans défaut de

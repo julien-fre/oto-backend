@@ -201,10 +201,16 @@ def test_un_import_interrompu_reprend_ses_objets_sans_les_recopier(source, expor
             with pytest.raises(RuntimeError, match="coupure"):
                 _importer(dsn, export_a[0], seau=seau)
         assert seau.objets == {}          # rien n'est versé avant la relecture
-        # Un objet déjà là (versé par un essai précédent) : il est sauté, pas recopié.
+        # Un objet déjà là (versé par un essai précédent, avec les en-têtes de l'écriture
+        # native) : il est sauté, pas recopié.
+        from oto_mcp import media_store
         liste = export_a[1]["objets"]["liste"]
         deja = sorted(liste)[0]
-        StockageS3(seau, "cible").ecrire(deja, source[A]["objets"][deja], liste[deja]["sha256"])
+        donnees = source[A]["objets"][deja]
+        StockageS3(seau, "cible").ecrire(deja, donnees, liste[deja]["sha256"],
+                                         media_store.entetes_d_objet(
+                                             deja, donnees, liste[deja]["content_type"],
+                                             liste[deja]["public"]))
         _importer(dsn, export_a[0], seau=seau)
         assert seau.ecritures == len(liste)          # 1 (déjà là) + les autres, une fois
         assert {c: v[0] for c, v in seau.objets.items()} == source[A]["objets"]

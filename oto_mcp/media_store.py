@@ -31,6 +31,14 @@ _ALLOWED = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
             "image/webp": "webp"}
 _DEFAULT_MAX_BYTES = 2 * 1024 * 1024  # 2 Mo
 
+# La règle d'écriture de chaque préfixe, source UNIQUE : l'écriture native la pose
+# (`upload_image`, `upload_object`), l'import d'un périmètre la repose sur chaque objet
+# versé (`entetes_d_objet`). Un préfixe absent de ces deux ensembles n'a pas de règle.
+PREFIXES_PUBLICS = frozenset({"avatars", "org-logos", "images"})
+PREFIXES_DURABLES = frozenset({"project-files", "transcription-jobs"})
+_ENTETES_PUBLICS = {"ACL": "public-read",
+                    "CacheControl": "public, max-age=31536000, immutable"}
+
 _client = None  # singleton boto3, gardé comme db._pool
 
 
@@ -221,6 +229,48 @@ def public_url(key: str) -> str:
 # le CDN logo.dev (cf. `providers.Connector.logo_url_for`). Plus de seed ni d'assets.
 
 
+def _entetes_publics(data: bytes) -> dict:
+    """Les en-têtes d'une image publique : son type lu sur ses octets (jamais le
+    déclaré), lisible de tous, en cache immuable — sa clé change avec son contenu."""
+    sniffed = _sniff_content_type(data)
+    if sniffed is None or sniffed not in _ALLOWED:
+        raise MediaError(400, "unsupported_type", "Formats acceptés : png, jpeg, gif, webp.")
+    return {"ContentType": sniffed, **_ENTETES_PUBLICS}
+
+
+def _entetes_durables(data: bytes, declare: str, name: str) -> dict:
+    """Les en-têtes d'un blob durable : le type SERVI (`type_servi`, #562), et le
+    téléchargement forcé quand il est neutralisé. Privé : aucune ACL."""
+    servi = type_servi(data, declare)
+    entetes = {"ContentType": servi.content_type}
+    if servi.attachment:
+        entetes["ContentDisposition"] = f"attachment; filename*=UTF-8''{name}"
+    return entetes
+
+
+def entetes_d_objet(key: str, data: bytes, declare: str | None, public: bool) -> dict:
+    """Les en-têtes qu'écrit l'écriture native pour l'objet `key`, d'après son préfixe :
+    ce que l'import d'un périmètre repose sur chaque objet versé (#1088).
+
+    - préfixe public (`upload_image`) : type lu sur les octets, `public-read`, cache
+      immuable — quel que soit l'état de l'objet à la source ;
+    - préfixe durable (`upload_object`) : type servi d'après `declare` (le type de
+      l'objet source, que `type_servi` redécide sur le contenu), privé, sauf un document
+      partagé (`make_public`), dont `public` dit qu'il l'était à la source.
+
+    Un autre préfixe n'a pas de règle : `MediaError`, jamais une ACL devinée."""
+    prefix = key.split("/", 1)[0]
+    if prefix in PREFIXES_PUBLICS:
+        return _entetes_publics(data)
+    if prefix in PREFIXES_DURABLES:
+        entetes = _entetes_durables(data, declare or "", key.rsplit("/", 1)[1])
+        if public:
+            entetes["ACL"] = "public-read"
+        return entetes
+    raise MediaError(500, "unknown_prefix", f"Aucune règle d'écriture pour le préfixe "
+                                            f"{prefix!r} (objet {key!r}).")
+
+
 def upload_image(prefix: str, owner_id: str, data: bytes, content_type: str) -> str:
     """Valide une image et l'uploade en public-read. Retourne son URL publique.
 
@@ -230,25 +280,17 @@ def upload_image(prefix: str, owner_id: str, data: bytes, content_type: str) -> 
     naturel (un nouveau contenu = une nouvelle URL) — et **non devinable** : 128 bits
     de SHA-256, qu'on ne retrouve qu'en possédant l'image.
     """
+    if prefix not in PREFIXES_PUBLICS:
+        raise MediaError(500, "unknown_prefix", f"Préfixe d'image publique inconnu : {prefix!r}.")
     if not data:
         raise MediaError(400, "missing_file", "Fichier vide.")
     if len(data) > max_image_bytes():
         raise MediaError(413, "image_too_large", f"Image > {max_image_bytes()} octets.")
-    sniffed = _sniff_content_type(data)
-    if sniffed is None or sniffed not in _ALLOWED:
-        raise MediaError(400, "unsupported_type", "Formats acceptés : png, jpeg, gif, webp.")
-    ext = _ALLOWED[sniffed]
+    entetes = _entetes_publics(data)
     digest = hashlib.sha256(data).hexdigest()[:32]
-    key = f"{prefix}/{quote(owner_id, safe='')}/{digest}.{ext}"
+    key = f"{prefix}/{quote(owner_id, safe='')}/{digest}.{_ALLOWED[entetes['ContentType']]}"
     try:
-        _get_client().put_object(
-            Bucket=_bucket(),
-            Key=key,
-            Body=data,
-            ContentType=sniffed,
-            ACL="public-read",
-            CacheControl="public, max-age=31536000, immutable",
-        )
+        _get_client().put_object(Bucket=_bucket(), Key=key, Body=data, **entetes)
     except MediaError:
         raise
     except Exception as e:  # boto / réseau
@@ -339,6 +381,8 @@ def upload_object(prefix: str, owner_id: str, data: bytes, content_type: str,
     ⚠️ `content_type` est un type DÉCLARÉ : l'objet est écrit sous `type_servi`
     (#562), décidé sur le contenu — neutre et en téléchargement s'il est actif ou
     non reconnu. C'est ce que serviront son URL présignée et son URL publique."""
+    if prefix not in PREFIXES_DURABLES:
+        raise MediaError(500, "unknown_prefix", f"Préfixe de blob durable inconnu : {prefix!r}.")
     if not data:
         raise MediaError(400, "missing_file", "Contenu vide.")
     limit = max_bytes if max_bytes is not None else max_image_bytes()
@@ -347,10 +391,7 @@ def upload_object(prefix: str, owner_id: str, data: bytes, content_type: str,
     digest = hashlib.sha256(data).hexdigest()[:32]
     name = quote(filename or "file", safe="")
     key = f"{prefix}/{quote(owner_id, safe='')}/{digest}/{name}"
-    servi = type_servi(data, content_type)
-    entetes = {"ContentType": servi.content_type}
-    if servi.attachment:
-        entetes["ContentDisposition"] = f"attachment; filename*=UTF-8''{name}"
+    entetes = _entetes_durables(data, content_type, name)
     try:
         _get_client().put_object(Bucket=_bucket(), Key=key, Body=data, **entetes)
         return key
