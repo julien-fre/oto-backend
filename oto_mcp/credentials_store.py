@@ -75,6 +75,21 @@ def member_id(org_id: int, sub: str) -> str:
     return f"{org_id}:{sub}"
 
 
+def entity_for_scope(scope: str, org_id: int, sub: str,
+                     group_id: Optional[int] = None) -> tuple[str, str]:
+    """`(entity_type, entity_id)` de la ligne qu'un flux « Connecter » écrit au palier
+    choisi (`member` | `org` | `group`) — la même table pour tous les flux."""
+    if scope == ORG:
+        return ORG, str(org_id)
+    if scope == "group":
+        if group_id is None:
+            raise ValueError("palier équipe sans équipe")
+        return "group", str(group_id)
+    if scope == MEMBER:
+        return MEMBER, member_id(org_id, sub)
+    raise ValueError(f"palier inconnu : {scope!r}")
+
+
 def get_instance_sharing(entity_type: str, entity_id: str, connector: str,
                          account: str = "") -> tuple[list, list]:
     """(share_down, share_side) d'une instance du coffre (ADR 0044). `share_down` =

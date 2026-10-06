@@ -280,7 +280,7 @@ CLASSEMENT: dict[str, Table] = {
     "alembic_version": instance("la version du schéma : la cible pose la sienne à sa "
                                 "naissance (#969)"),
     "platform_instructions": instance("le socle d'instructions de la plateforme"),
-    "upload_tokens_used": instance("anti-rejeu des jetons d'upload signés par NOTRE clé"),
+    "upload_tokens_used": instance("anti-rejeu des jetons signés par NOTRE clé (upload, state de flux)"),
 }
 
 
