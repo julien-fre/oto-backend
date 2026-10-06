@@ -101,16 +101,24 @@ def _sur(dsn: str, slug: str, nom: str):
             _conn._pool = pool_avant
 
 
-def naitre(pg_dsn: str, slug: str, nom: str) -> str:
-    """Une base NEUVE montée par `init_db`, pour l'instance du tenant `slug` (nom `nom`),
-    où l'app n'a jamais démarré ; rend son DSN. À `detruire`."""
-    from oto_mcp.db import init_db
+def base_vide(pg_dsn: str) -> str:
+    """Une base VIDE (aucune table) sur le serveur `pg_dsn` ; rend son DSN. À `detruire`."""
     base = "oto_test_" + uuid.uuid4().hex[:8]
     with psycopg.connect(pg_dsn, autocommit=True) as root:
         root.execute(f'CREATE DATABASE "{base}"')
-    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + base
-    with _sur(dsn, slug, nom):
-        init_db()
+    return pg_dsn.rsplit("/", 1)[0] + "/" + base
+
+
+def naitre(pg_dsn: str, slug: str, nom: str) -> str:
+    """Une base NEUVE née par le geste de l'opérateur (`oto-mcp perimetre naitre`), pour
+    l'instance du tenant `slug` (nom `nom`), où l'app n'a jamais démarré ; rend son DSN.
+    À `detruire`."""
+    from psycopg.rows import dict_row
+
+    from oto_mcp.export_perimetre.naissance import naitre as naitre_schema
+    dsn = base_vide(pg_dsn)
+    with _sur(dsn, slug, nom), psycopg.connect(dsn, row_factory=dict_row) as c:
+        naitre_schema(c)
     return dsn
 
 

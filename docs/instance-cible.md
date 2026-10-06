@@ -379,10 +379,27 @@ lignes (les guides plateforme, `nodes` et `blocks`) dans des tables que l'import
 sous des identifiants qu'il préserve. L'import refuse alors la base dès son contrôle
 préalable, en nommant chaque table et son nombre de lignes, sans option pour passer
 outre : une base où l'app a déjà démarré ne se rattrape pas, on repart d'une base neuve.
-Pour une cible qui reçoit des données, la base du rôle naît par `init_db`, reçoit
-l'import, et c'est ensuite seulement que l'app y démarre. Aujourd'hui, seul le démarrage
-fait naître le schéma d'une base neuve (§ Les migrations, un geste explicite) : faire
-naître la base par `init_db` sans démarrer l'app n'a pas encore de geste outillé.
+
+Pour une cible qui reçoit des données, la séquence est donc, par rôle, sur sa base
+**vide** et AVANT sa première montée :
+
+1. **Naître** — `oto-mcp perimetre naitre`, depuis l'arbre du tag que la montée
+   installera (la tête du registre posée est la sienne), avec l'environnement du rôle :
+   le schéma et la version Alembic, sans rien démarrer. Une base qui a déjà des tables
+   est refusée. Sur la machine, par le lanceur, comme `migrer` (§ Les migrations), depuis
+   un arbre où ce tag est installé, sous l'environnement du rôle (`DATABASE_URL`,
+   et `OTO_TENANT_PRIMAIRE_SLUG` et `OTO_BRAND_NAME`, qui sèment le tenant primaire) :
+   ```bash
+   systemd-run --pipe --wait --quiet --collect -p WorkingDirectory=/opt/<i>/<r>-<couleur> \
+     -p EnvironmentFile=/etc/<i>/<r>/app.env -p EnvironmentFile=/etc/<i>/<r>/lanceur.env \
+     -p LoadCredential=scw:/etc/<i>/scw.key \
+     /opt/<i>/<r>-<couleur>/.venv/bin/python /opt/<i>/<r>-<couleur>/deploy/lanceur_secrets.py perimetre naitre
+   ```
+2. **Importer** — `oto-mcp perimetre import perimetre.jsonl` (et les tranches du
+   journal), par le même lanceur : `docs/export-perimetre.md`.
+3. **Démarrer** — la première montée du tag. Sa garde des migrations trouve la base à la
+   tête du registre du tag et continue ; le démarrage sème alors ses guides à côté des
+   lignes importées.
 
 Retour arrière d'un rôle : `-f action=retour -f etape=<rôle>`.
 

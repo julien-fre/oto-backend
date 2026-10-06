@@ -1,4 +1,4 @@
-"""`oto-mcp perimetre export|import|journal` — l'outil en ligne de commande (#1088).
+"""`oto-mcp perimetre export|naitre|import|journal` — l'outil en ligne de commande (#1088).
 
     oto-mcp perimetre export --org 12 [--org 13 …] --sortie perimetre.jsonl [--sans-journal]
         lit la base de CETTE instance (`DATABASE_URL`), en lecture seule, et son
@@ -8,8 +8,14 @@
         dans `perimetre.jsonl.objets.tar`, scellés sous la même clé cible.
         `--sans-journal` laisse le journal d'appels : il voyage par tranches.
 
+    oto-mcp perimetre naitre
+        fait naître le schéma de la base de l'instance (`DATABASE_URL`), NEUVE, sans
+        démarrer l'app : `init_db` et la tête du registre des migrations, rien de ce que
+        sème le démarrage (#1161, `naissance`). Une base qui a déjà des tables refuse.
+        Depuis l'arbre du tag que l'instance servira.
+
     oto-mcp perimetre import perimetre.jsonl
-        verse le fichier dans la base de l'instance (`DATABASE_URL`), née par `init_db`
+        verse le fichier dans la base de l'instance (`DATABASE_URL`), née par `naitre`
         et où l'app n'a JAMAIS démarré — sinon refus, qui nomme les tables déjà semées —,
         et l'archive des objets dans SON stockage (`OTO_MCP_S3_*`), en
         réécrivant les URL vers SA base publique ; secrets et objets doivent être
@@ -45,13 +51,14 @@ from .decouverte import ClassementIncomplet, JournalNonDetachable
 from .extraction import ReferencesHorsPerimetre, SecretsChiffres, exporter
 from .importation import ImportRefuse, importer
 from .journal import TrancheRefusee, exporter_tranche, importer_tranche, instant
+from .naissance import NaissanceRefusee, naitre
 from .objets import ObjetsRefuses, StockageS3
 from .perimetre import PerimetreRefuse
 from .rechiffrement import RechiffrementImpossible
 
 REFUS = (ClassementIncomplet, PerimetreRefuse, ComptesHorsRegle, SecretsChiffres,
          ReferencesHorsPerimetre, RechiffrementImpossible, ObjetsRefuses, ImportRefuse,
-         JournalNonDetachable, TrancheRefusee, FileExistsError)
+         JournalNonDetachable, TrancheRefusee, NaissanceRefusee, FileExistsError)
 
 
 def _stockage() -> StockageS3:
@@ -84,6 +91,8 @@ def _analyseur() -> argparse.ArgumentParser:
     e.add_argument("--sortie", required=True)
     e.add_argument("--sans-journal", action="store_true",
                    help="laisser le journal d'appels : il voyage par tranches (journal)")
+    sous.add_parser("naitre", help="faire naître le schéma de la base NEUVE de cette "
+                    "instance, sans démarrer l'app (avant l'import)")
     i = sous.add_parser("import", help="importer un export dans la base de cette instance")
     i.add_argument("fichier")
     j = sous.add_parser("journal", help="le journal d'appels, par tranches de dates")
@@ -101,6 +110,8 @@ def _analyseur() -> argparse.ArgumentParser:
 
 
 def _jouer(conn, args) -> dict:
+    if args.geste == "naitre":
+        return naitre(conn)
     objets = {"stockage": _stockage(), "base_publique": media_store.public_base()}
     if args.geste == "export":
         return _resume(exporter(conn, args.orgs, args.sortie, cle_cible=_cle_cible(),

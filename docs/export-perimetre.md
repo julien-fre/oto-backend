@@ -31,10 +31,12 @@ fenêtre »).**
 # instance) — écrit perimetre.jsonl et perimetre.jsonl.objets.tar :
 OTO_EXPORT_CLE_CIBLE=<clé de l'instance cible> \
   oto-mcp perimetre export --org 12 [--org 13 …] --sortie perimetre.jsonl
-# Sur l'instance cible, dont la base est née par `init_db` et où l'app n'a JAMAIS
-# démarré (sa DATABASE_URL, SA clé maîtresse, SON stockage OTO_MCP_S3_*) — les deux
-# fichiers côte à côte :
-oto-mcp perimetre import perimetre.jsonl
+# Sur l'instance cible (sa DATABASE_URL, SA clé maîtresse, SON stockage OTO_MCP_S3_*),
+# depuis l'arbre du tag qu'elle servira, dans CET ordre — naître, importer, démarrer :
+oto-mcp perimetre naitre                      # base VIDE → schéma, tête du registre, rien d'autre
+oto-mcp perimetre import perimetre.jsonl      # les deux fichiers côte à côte
+#   … puis seulement, le premier démarrage de l'app (la première montée) : il sème ses
+#   guides plateforme à côté des lignes importées.
 
 # Le jour J : le journal d'appels voyage à part (« Le journal hors fenêtre ») —
 oto-mcp perimetre export --org 12 --sans-journal --sortie perimetre.jsonl
@@ -51,8 +53,21 @@ propres lignes dans des tables que l'import écrit (les guides plateforme : `nod
 `blocks`), sous des identifiants que l'import préserve : il tombait tard, en
 `nodes_pkey`. Il refuse désormais une telle cible dès son contrôle préalable, en nommant
 chaque table et son nombre de lignes. Il n'y a pas d'option pour passer outre : repartir
-d'une base neuve, née par `init_db`, et y importer avant de démarrer l'app. Sur une
-instance cible, l'ordre de la première montée : `docs/instance-cible.md`.
+d'une base neuve, et y importer avant de démarrer l'app.
+
+**`oto-mcp perimetre naitre`** (`naissance.naitre`) fait naître cette base sans démarrer
+l'app : la moitié « schéma » du démarrage et elle seule — `init_db`, qui crée le schéma
+et pose la tête du registre des migrations sur une base neuve (`db/_version_alembic.py`),
+avec ce que sème `init_db` lui-même (les lignes de `naissance` du classement), et rien
+de ce que fait ensuite la préparation du démarrage (backfills, blocs et guides
+plateforme). La base doit être VIDE : une base qui porte déjà des tables, ou une
+`alembic_version`, est refusée en code 2 (`NaissanceRefusee`). La tête posée est celle
+de l'arbre qui joue la commande : la lancer depuis le tag que l'instance servira, celui
+dont l'export a la version de schéma. Le démarrage qui suit l'import complète la base :
+ses semis tombent sur des séquences que l'import a portées au-delà de ses lignes. Le banc
+`test_naitre_importer_puis_demarrer` joue la séquence entière et exige que chaque étape
+de la préparation du démarrage réussisse. Sur une instance cible, l'ordre de la première
+montée : `docs/instance-cible.md`.
 
 ## Le classement : chaque table, une classe
 
@@ -245,7 +260,7 @@ de `oto-mcp perimetre export` l'affiche.
 ## L'import
 
 `importation.importer(conn, fichier)` verse le fichier dans une base **née par
-`init_db`, et jamais démarrée**, pour l'instance du propriétaire, en UNE transaction.
+`oto-mcp perimetre naitre`, et jamais démarrée**, pour l'instance du propriétaire, en UNE transaction.
 L'import ne connaît que la clé de SON instance. Avant d'écrire, il refuse
 (`ImportRefuse`) dans ces cas :
 
@@ -372,10 +387,12 @@ instance NÉE par le démarrage, que l'import principal ait eu lieu ou non :
 
 ### L'ordre du jour J : pousser, puis le diff
 
-1. **La veille.** La base cible naît par `init_db` (tenant primaire en ligne 1, ni orgs
-   ni comptes), et l'app n'y démarre PAS avant l'import principal (#1161). On y POUSSE
-   les 30 derniers jours, en une ou plusieurs tranches contiguës, la première avec `--faits-de-run-complets` :
+1. **La veille.** La base cible naît par `oto-mcp perimetre naitre` (tenant primaire en
+   ligne 1, ni orgs ni comptes), et l'app n'y démarre PAS avant l'import principal
+   (#1161). On y POUSSE les 30 derniers jours, en une ou plusieurs tranches contiguës,
+   la première avec `--faits-de-run-complets` :
    ```bash
+   oto-mcp perimetre naitre                           # sur la cible, base vide
    oto-mcp perimetre journal export --org 12 --depuis 2026-09-01T00:00:00Z \
      --jusqu-a 2026-10-01T00:00:00Z --faits-de-run-complets --sortie push.jsonl
    oto-mcp perimetre journal import push.jsonl        # sur la cible
@@ -389,6 +406,8 @@ instance NÉE par le démarrage, que l'import principal ait eu lieu ou non :
      --jusqu-a <G> --sortie diff.jsonl                # le SEUL diff, avec une heure de
    oto-mcp perimetre journal import diff.jsonl        # recouvrement de sécurité
    ```
+3. **Puis seulement, le premier démarrage de l'app** sur la cible (sa première montée,
+   `docs/instance-cible.md`) : il sème ses guides plateforme à côté des lignes importées.
 
 **Couvrir sans trou.** Des tranches demi-ouvertes contiguës (`jusqu-a` de l'une = `depuis`
 de la suivante) couvrent chaque instant une fois ; un recouvrement ne coûte rien (clé

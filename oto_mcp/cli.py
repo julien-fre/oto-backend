@@ -63,7 +63,7 @@ def main() -> None:
             "(--help pour la liste)\n"
             "  oto-mcp migrer <args alembic>  Alembic avec la configuration du dépôt "
             "(upgrade head, current…)\n"
-            "  oto-mcp perimetre export|import|journal  export par périmètre de "
+            "  oto-mcp perimetre export|naitre|import|journal  export par périmètre de "
             "propriétaire (docs/export-perimetre.md)")
     # AVANT l'import : cet import EST déjà du démarrage, et il journalise.
     _configurer_le_journal()

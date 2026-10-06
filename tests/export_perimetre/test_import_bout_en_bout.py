@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import logging
 import os
 
 import pytest
@@ -34,7 +35,8 @@ from oto_mcp.crypto import decrypt_with_key, encrypt_with_key  # noqa: E402
 from oto_mcp.export_perimetre import commande  # noqa: E402
 from oto_mcp.export_perimetre.classement import CLASSEMENT, EXPORTEES  # noqa: E402
 from oto_mcp.export_perimetre.comptes import ComptesHorsRegle  # noqa: E402
-from oto_mcp.export_perimetre.decouverte import Cle, Schema  # noqa: E402
+from oto_mcp.export_perimetre.decouverte import (  # noqa: E402
+    Cle, Schema, lire_schema, verifier_classement)
 from oto_mcp.export_perimetre.extraction import exporter  # noqa: E402
 from oto_mcp.export_perimetre.importation import (  # noqa: E402
     TAILLE_LOT, ImportRefuse, importer)
@@ -42,8 +44,8 @@ from oto_mcp.export_perimetre.rechiffrement import AAD, empreinte_cle  # noqa: E
 from oto_mcp.export_perimetre.transformation import Transformation  # noqa: E402
 from oto_mcp.export_perimetre.objets import StockageS3  # noqa: E402
 from perimetre_banc import (  # noqa: E402
-    A, B, BASE_CIBLE, BASE_SOURCE, SECRET, FauxS3, _credential, demarrer, membre, naitre,
-    org, semer, slug_de, tenant, url_cible)
+    A, B, BASE_CIBLE, BASE_SOURCE, SECRET, FauxS3, _credential, _sur, base_vide, demarrer,
+    membre, naitre, org, semer, slug_de, tenant, url_cible)
 from perimetre_banc import detruire as _detruire  # noqa: E402
 
 CLE_SOURCE, CLE_CIBLE = os.urandom(32), os.urandom(32)
@@ -378,6 +380,103 @@ def test_une_ligne_hors_naissance_d_une_table_semee_refuse(export_a, pg_dsn, mon
         assert "nodes" not in message
     finally:
         _detruire(pg_dsn, dsn)
+
+
+def _naitre_par_la_commande(dsn: str, capsys) -> tuple[int, str, str]:
+    """`oto-mcp perimetre naitre`, tel que l'opérateur le joue sur la base `dsn`."""
+    with _sur(dsn, slug_de(A), NOM_A):
+        code = commande.main(["naitre"])
+    sortie = capsys.readouterr()
+    return code, sortie.out, sortie.err
+
+
+def _tables(dsn: str) -> set[str]:
+    with psycopg.connect(dsn, row_factory=dict_row) as c:
+        return {r["t"] for r in c.execute(
+            "SELECT relname AS t FROM pg_class WHERE relnamespace = "
+            "current_schema()::regnamespace AND relkind IN ('r', 'p')")}
+
+
+def _cles_exportees(dsn: str) -> dict[str, set[str]]:
+    """Par table exportée à clé primaire, l'ensemble des clés de ses lignes."""
+    with psycopg.connect(dsn, row_factory=dict_row) as c:
+        schema = lire_schema(c)
+        cles = {}
+        for t, e in verifier_classement(schema, CLASSEMENT).items():
+            if e.classe in EXPORTEES and schema.primaires.get(t):
+                colonnes = ", ".join(schema.primaires[t])
+                cles[t] = {r["k"] for r in c.execute(
+                    f"SELECT row_to_json(x)::text AS k FROM (SELECT {colonnes} FROM {t}) x")}
+        return cles
+
+
+def test_naitre_importer_puis_demarrer(source, export_a, pg_dsn, capsys, caplog,
+                                      monkeypatch):
+    """#1161, la séquence de l'opérateur : `naitre` fait naître le schéma d'une base vide
+    à la tête du registre, sans rien semer de ce que sème le démarrage ; l'import y passe
+    son contrôle préalable ; le premier démarrage de l'app, ENSUITE, sous la clé de
+    l'instance, complète la base — aucune étape de sa préparation n'échoue (« at boot
+    failed »), les guides plateforme sont semés à côté des nœuds importés sans heurter
+    leurs identifiants, et aucune ligne importée ne disparaît. (Le démarrage peut en
+    ajouter ou en déplacer — l'espace perso d'un compte qui n'en a pas, un credential
+    passé du scope `user` au scope membre : ses backfills font sur la cible ce qu'ils
+    font partout.)"""
+    from oto_mcp.db._version_alembic import tete_du_registre
+    dsn = base_vide(pg_dsn)
+    try:
+        code, sortie, erreur = _naitre_par_la_commande(dsn, capsys)
+        assert code == 0, erreur
+        assert json.loads(sortie)["version_schema"] == [tete_du_registre()]
+        with psycopg.connect(dsn, row_factory=dict_row) as c:
+            assert c.execute("SELECT count(*) AS n FROM nodes").fetchone()["n"] == 0
+        _importer(dsn, export_a[0])
+        assert _marquees(dsn, A) == _marquees(source["dsn"], A)
+        importees = _cles_exportees(dsn)
+        noeuds = _lignes(dsn, "nodes")["nodes"]
+        monkeypatch.setenv("OTO_MCP_MASTER_KEY", CLE_CIBLE.hex())
+        with caplog.at_level(logging.WARNING):
+            demarrer(dsn, slug_de(A), NOM_A)
+        assert not [r.getMessage() for r in caplog.records
+                    if "at boot failed" in r.getMessage()]
+        with psycopg.connect(dsn, row_factory=dict_row) as c:
+            guides = c.execute("SELECT count(*) AS n FROM nodes WHERE owner_type = "
+                               "'platform'").fetchone()["n"]
+        assert guides, "le démarrage n'a semé aucun guide plateforme"
+        assert _lignes(dsn, "nodes")["nodes"] == noeuds + guides
+        apres = _cles_exportees(dsn)
+        disparues = {t: [json.loads(x) for x in k - apres[t]]
+                     for t, k in importees.items() if k - apres[t]}
+        # La seule ligne qui change de clé : le credential de compte hors oauth que le
+        # banc sème au scope `user`, passé au scope membre par `backfill_member_scope`.
+        passees = disparues.pop("connector_credentials", [])
+        assert disparues == {}
+        assert all(x["entity_type"] == "user" for x in passees)
+        with psycopg.connect(dsn, row_factory=dict_row) as c:
+            for x in passees:
+                assert c.execute(
+                    "SELECT count(*) AS n FROM connector_credentials WHERE entity_type = "
+                    "'member' AND entity_id LIKE %s AND connector = %s",
+                    (f"%:{x['entity_id']}", x["connector"])).fetchone()["n"] == 1, x
+    finally:
+        _detruire(pg_dsn, dsn)
+
+
+def test_naitre_refuse_une_base_qui_n_est_pas_neuve(pg_dsn, capsys):
+    """Une base née (elle a déjà `alembic_version`) ou qui porte une table sans version :
+    `naitre` refuse en code 2, nommément, et n'y crée rien."""
+    nee = naitre(pg_dsn, slug_de(A), NOM_A)
+    autre = base_vide(pg_dsn)
+    try:
+        code, _, erreur = _naitre_par_la_commande(nee, capsys)
+        assert code == 2 and "NaissanceRefusee" in erreur and "versionnée" in erreur
+        with psycopg.connect(autre) as c:
+            c.execute("CREATE TABLE deja_la (id INT)")
+        code, _, erreur = _naitre_par_la_commande(autre, capsys)
+        assert code == 2 and "sans version : 1 table(s)" in erreur
+        assert _tables(autre) == {"deja_la"}
+    finally:
+        _detruire(pg_dsn, nee)
+        _detruire(pg_dsn, autre)
 
 
 def test_une_cible_d_un_autre_tenant_ou_d_un_autre_nom_refuse(export_a, pg_dsn):
