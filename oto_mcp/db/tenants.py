@@ -44,7 +44,8 @@ def list_tenant_issuers() -> list:
             # au host), jamais la vérification d'un jeton — celle-ci ne connaît que
             # l'émetteur. Les lire ici ne change donc rien au chemin d'auth.
             "SELECT slug, name, issuer, jwks_uri, hosts, oauth_client_id, "
-            "dashboard_url, link_paths, tool_prefix, brand, logto_mgmt FROM tenants "
+            "dashboard_url, link_paths, tool_prefix, brand, logto_mgmt, disabled_at "
+            "FROM tenants "
             "WHERE issuer IS NOT NULL AND btrim(issuer) <> '' ORDER BY id"
         ).fetchall()
     return [dict(r) for r in rows]
@@ -89,6 +90,126 @@ def remove_tenant_admin(slug: str, sub: str) -> bool:
         cur = conn.execute("DELETE FROM tenant_admins WHERE slug = %s AND sub = %s",
                            (slug, sub))
         return (cur.rowcount or 0) > 0
+
+
+# ── Désactiver un tenant (oto-backend#1165) ──────────────────────────────────
+#
+# L'état vit sur la ligne (`disabled_at`, `disabled_by`, `disabled_reason`), JAMAIS dans
+# l'absence d'émetteur : vider `issuer` ne coupait que les jetons signés par l'annuaire
+# du tenant, dans le seul processus rechargé — les jetons d'API, de délégation et les
+# anciens identifiants redirigés vers ses comptes continuaient de servir. Le prédicat est
+# lu à CHAQUE vérification d'identité (`garde_identite`), sans cache : une désactivation
+# mord à la requête suivante, dans tous les processus, jeton déjà émis compris.
+
+class TenantDesactive(RuntimeError):
+    """Le geste refusé porte sur un compte d'un tenant DÉSACTIVÉ (`tenants.disabled_at`).
+
+    Levée par `users.upsert_user` quand elle ferait NAÎTRE un compte qualifié sous un
+    tenant désactivé : un annuaire qui continue d'émettre des jetons ne crée plus rien
+    chez nous. Exception plutôt que valeur falsy pour la même raison que
+    `CompteEnPause` : les appelants d'`upsert_user` ignorent sa valeur de retour."""
+
+    code = "tenant_disabled"
+
+    def __init__(self, slug: str, motif: str, quoi: str):
+        # Le motif reste à l'exploitant (journal) : le message part au PORTEUR, un compte
+        # du tenant — même règle que `tenant_desactive.message`.
+        self.slug, self.motif = slug, motif
+        super().__init__(f"{quoi} : l'accès par l'espace « {slug} » est désactivé — "
+                         "le rétablissement est un acte de l'exploitant de la plateforme")
+
+
+_DESACTIVATION_COLS = "slug, disabled_at, disabled_by, disabled_reason"
+
+# Le tenant DÉSACTIVÉ qui qualifie un sub : `<slug>:` en tête, mot pour mot. Un slug ne
+# contient pas de `:` (`tenancy._SLUG_RE`) et un sub Logto non plus : la comparaison de
+# préfixe classe sans ambiguïté, sans jamais découper le sub. Lue dans la BASE et pas
+# dans le registre du processus : un tenant dont l'émetteur a été retiré du registre doit
+# rester refusé, et un processus qui n'a pas été rechargé aussi.
+_TENANT_DESACTIVE_DU_SUB_SQL = f"""
+    SELECT {_DESACTIVATION_COLS} FROM tenants
+     WHERE disabled_at IS NOT NULL
+       AND left(%(sub)s, length(slug) + 1) = slug || ':'
+     LIMIT 1
+"""
+
+
+def tenant_desactive_du_sub(sub: str) -> "dict | None":
+    """L'état de désactivation du tenant qui qualifie `sub`, ou `None` (cas de tous).
+
+    SOURCE UNIQUE du prédicat servi : le seam `tenant_desactive` est le seul appelant
+    prévu. Ne rattrape rien — un hoquet de base REMONTE : rendre `None` servirait un
+    compte coupé comme s'il était vivant."""
+    with _connect() as conn:
+        row = conn.execute(_TENANT_DESACTIVE_DU_SUB_SQL, {"sub": sub}).fetchone()
+    return dict(row) if row else None
+
+
+def tenant_ligne(slug: str) -> "dict | None":
+    """`{id, slug, disabled_at}` d'un tenant, ou `None` s'il n'existe pas — la garde du
+    geste de désactivation (inconnu ⇒ 404, ligne 1 ⇒ refus)."""
+    with _connect() as conn:
+        row = conn.execute("SELECT id, slug, disabled_at FROM tenants WHERE slug = %s",
+                           (slug,)).fetchone()
+    return dict(row) if row else None
+
+
+def desactiver_tenant(slug: str, *, by: str, reason: str) -> "dict | None":
+    """Désactive un tenant ET révoque ce qui est émis pour ses comptes, en UNE
+    transaction. `None` si le slug n'existe pas.
+
+    1. **L'état** : `disabled_*` posés. Re-désactiver ne réécrit RIEN (ni l'auteur, ni la
+       date, ni le motif d'origine) — `changed` dit si CE geste a posé l'état.
+    2. **La révocation** des jetons que NOUS émettons et stockons (`user_api_tokens`,
+       jetons d'API comme jetons de délégation d'un travail d'agent) de TOUS les comptes
+       qualifiés sous le tenant, vivants et non expirés : `revoked_*` posés, la ligne
+       reste (#523). Rejouée à chaque geste, même sur un tenant déjà désactivé : elle
+       ramasse ce qui aurait été émis depuis (un travail réservé entre-temps).
+    3. **Les comptes et les anciens identifiants coupés**, comptés pour le rapport : ce
+       que la garde d'identité refuse désormais à chaque requête.
+
+    Ce qui n'est PAS stocké ici ne se révoque pas ici : les jetons signés par l'annuaire
+    du tenant (session de tableau de bord, jeton d'accès et de rafraîchissement OAuth du
+    MCP) sont des JWT sans état chez nous. Ils restent signés jusqu'à leur expiration —
+    et sont refusés par `garde_identite` à chaque présentation."""
+    pfx = f"{slug}:%"
+    motif_jeton = f"tenant {slug} désactivé : {reason}"
+    with _connect() as conn:
+        avant = conn.execute("SELECT disabled_at FROM tenants WHERE slug = %s FOR UPDATE",
+                             (slug,)).fetchone()
+        if avant is None:
+            return None
+        etat = conn.execute(
+            "UPDATE tenants SET disabled_at = COALESCE(disabled_at, NOW()), "
+            "  disabled_by = COALESCE(disabled_by, %s), "
+            "  disabled_reason = COALESCE(disabled_reason, %s) "
+            f"WHERE slug = %s RETURNING {_DESACTIVATION_COLS}",
+            (by, reason, slug)).fetchone()
+        revoques: dict[str, int] = {}
+        for r in conn.execute(
+                "UPDATE user_api_tokens SET revoked_at = NOW(), revoked_by = %s, "
+                "  revoked_reason = %s "
+                "WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW()) "
+                "  AND sub LIKE %s RETURNING kind",
+                (by, motif_jeton, pfx)).fetchall():
+            revoques[r["kind"]] = revoques.get(r["kind"], 0) + 1
+        comptes = conn.execute("SELECT COUNT(*) AS n FROM users WHERE sub LIKE %s",
+                               (pfx,)).fetchone()["n"]
+        alias = conn.execute("SELECT COUNT(*) AS n FROM sub_aliases WHERE new_sub LIKE %s",
+                             (pfx,)).fetchone()["n"]
+    return {**dict(etat), "changed": avant["disabled_at"] is None,
+            "revoked": revoques, "accounts_cut": int(comptes), "aliases_cut": int(alias)}
+
+
+def reactiver_tenant(slug: str) -> bool:
+    """Lève la désactivation. True si elle était posée. Ne rétablit AUCUN jeton : la
+    révocation est définitive, les personnes se reconnectent."""
+    with _connect() as conn:
+        row = conn.execute(
+            "UPDATE tenants SET disabled_at = NULL, disabled_by = NULL, "
+            "  disabled_reason = NULL "
+            "WHERE slug = %s AND disabled_at IS NOT NULL RETURNING slug", (slug,)).fetchone()
+    return bool(row)
 
 
 # ── Suivi (console plateforme) ───────────────────────────────────────────────
@@ -156,7 +277,7 @@ def _tenant_counts_sql(where_tenant: str = "") -> str:
          )
     SELECT t.id, t.slug, t.name, t.issuer, t.jwks_uri, t.hosts, t.oauth_client_id,
            t.dashboard_url, t.link_paths, t.tool_prefix, t.brand, t.logto_mgmt,
-           t.created_at,
+           t.created_at, t.disabled_at, t.disabled_by, t.disabled_reason,
            COALESCE(oc.orgs, 0) AS orgs,
            COALESCE(oc.orgs_archivees, 0) AS orgs_archivees,
            COALESCE(ac.comptes, 0) AS comptes,
@@ -333,7 +454,8 @@ def get_tenant_overview(slug: str, *, days: int = 30) -> dict | None:
 
 _TENANT_ROW_SQL = """
     SELECT id, slug, name, issuer, jwks_uri, hosts, oauth_client_id, dashboard_url,
-           link_paths, tool_prefix, brand, logto_mgmt, created_at
+           link_paths, tool_prefix, brand, logto_mgmt, created_at,
+           disabled_at, disabled_by, disabled_reason
       FROM tenants WHERE slug = %(slug)s
 """
 

@@ -78,6 +78,9 @@ def client(monkeypatch, journal):
     monkeypatch.setattr(upload_tokens, "check_target_access", _autz)
     monkeypatch.setattr(upload_tokens, "materialize", _materialise)
     monkeypatch.setattr(db, "consume_upload_token", _consomme)
+    # La garde d'identité (#1165) lit la pause du sub scellé : personne n'est en pause
+    # ici (le refus lui-même est éprouvé par `tests/test_garde_identite_chemins.py`).
+    monkeypatch.setattr(db, "get_suspension", lambda sub: None)
 
     return TestClient(Starlette(routes=[
         Route("/api/upload/{token}", uploads.upload_receive, methods=["PUT", "POST"]),

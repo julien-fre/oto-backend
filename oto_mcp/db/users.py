@@ -161,6 +161,21 @@ def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = Non
                 raise CompteEnPause(bloquant["sub"],
                                     bloquant.get("suspended_reason") or "sans motif",
                                     f"l'identifiant {sub} y redirige")
+            # Un tenant DÉSACTIVÉ ne fait naître aucun compte (oto-backend#1165) : son
+            # annuaire peut continuer d'émettre des jetons valides, la première
+            # présentation d'une identité neuve ne crée rien chez nous. Même gate
+            # `inserted` (une lecture une fois dans la vie d'un compte), et seulement
+            # pour un sub QUALIFIÉ — un sub nu relève du tenant primaire, que rien ne
+            # désactive. La levée annule la transaction : la ligne repart avec.
+            if ":" in sub:
+                from .tenants import TenantDesactive, _TENANT_DESACTIVE_DU_SUB_SQL
+                coupe = conn.execute(_TENANT_DESACTIVE_DU_SUB_SQL, {"sub": sub}).fetchone()
+                if coupe:
+                    logger.warning("upsert_user: compte du tenant désactivé %s non créé "
+                                   "(sub=%s)", coupe["slug"], sub)
+                    raise TenantDesactive(coupe["slug"],
+                                          coupe.get("disabled_reason") or "sans motif",
+                                          f"le compte {sub} n'est pas créé")
     # Les DEUX effets de première inscription sont tentés, PUIS l'échec est rendu :
     # que l'un tombe ne dispense pas de l'autre, et l'erreur finale dit lesquels ont
     # manqué. Ils n'étaient ni journalisés ni remontés jusqu'au 2026-08-27 (sites B8
@@ -524,6 +539,8 @@ _SUB_COLUMNS = [
     # Qui a suspendu une ORG (`org_suspension`) — même nature : une signature
     # d'auteur, repointée vers le compte qui survit à la fusion.
     ("orgs", "suspended_by"),
+    # Qui a désactivé un TENANT (oto-backend#1165) — même nature, signature d'auteur.
+    ("tenants", "disabled_by"),
     # Dossier du 29/09 (#439) — neuf colonnes à sub que la garde d'inventaire ne VOYAIT
     # pas : sa famille de noms (`created_by`, `set_by`…) ignorait `updated_by`,
     # `edited_by`, `disabled_by` et tout `*_sub` qui n'était pas dans sa liste. Elle

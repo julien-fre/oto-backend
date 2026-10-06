@@ -92,7 +92,8 @@ def test_tenant_surfaces_read_platform_admin_reload_super_admin(monkeypatch):
                          "admin.tenant_connector_clear",
                          "admin.tenant_admins", "admin.tenant_admin_add",
                          "admin.tenant_admin_remove", "admin.tenant_org_grants",
-                         "admin.tenant_org_grant", "admin.tenant_org_revoke"}
+                         "admin.tenant_org_grant", "admin.tenant_org_revoke",
+                         "admin.tenant_disablement"}
     assert caps["admin.tenants"].authz is PLATFORM_ADMIN
     # PR 2 : la fiche s'ouvre à l'admin du tenant (plancher plateforme `None`, la
     # règle plateforme PLATFORM_ADMIN essayée d'abord — `test_tenant_admin_role.py`).
@@ -142,6 +143,9 @@ def test_the_tracking_surface_cannot_write():
         "admin.tenant_admin_add": ("POST", "super"),
         "admin.tenant_admin_remove": ("DELETE", "super"),
         "admin.tenant_org_grant": ("PUT", None), "admin.tenant_org_revoke": ("DELETE", None),
+        # Désactiver / réactiver un tenant (#1165) : il n'écrit pas la DÉCLARATION du
+        # tenant, il la coupe — super admin, POST pour les deux ops.
+        "admin.tenant_disablement": ("POST", "super"),
     }
     for c in _caps():
         if c.key == "admin.tenants_reload":

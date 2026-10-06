@@ -98,7 +98,7 @@ def sans_compte(monkeypatch):
     def jamais(*a, **k):
         raise AssertionError("une identité de service ne touche pas à `users`")
     monkeypatch.setattr(ab.db, "upsert_user", jamais)
-    monkeypatch.setattr(ab.account_suspension, "refus", jamais)
+    monkeypatch.setattr(ab.garde_identite, "refus", jamais)
 
 
 # ── L'authentification ───────────────────────────────────────────────────────
@@ -154,7 +154,7 @@ def test_un_jeton_d_une_autre_audience_suit_le_chemin_des_personnes(cle, monkeyp
 
 def test_le_fait_service_ne_survit_pas_a_la_requete_suivante(cle, sans_compte, monkeypatch):
     monkeypatch.setattr(ab.db, "verify_api_token", lambda t: {"sub": "u-1", "scopes": None})
-    monkeypatch.setattr(ab.account_suspension, "refus", lambda sub: None)
+    monkeypatch.setattr(ab.garde_identite, "refus", lambda sub: None)
 
     async def scenario():
         await ab._authenticate(_req(_jeton(cle)), _VerifierDesPersonnes(), allow_service=True)

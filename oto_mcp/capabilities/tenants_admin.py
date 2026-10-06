@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .. import db, tenancy, tool_alias
 from ..auth import facade
-from . import tenant_admins, tenant_grants, tenant_keys
+from . import tenant_admins, tenant_desactivation, tenant_grants, tenant_keys
 from ._authz import ADMIN_BY_OP, PLATFORM_ADMIN, SUPER_ADMIN, TENANT_ADMIN_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding, cap_limit
 from ._lecture_bornee import bornee
@@ -92,6 +92,12 @@ class TenantRow(BaseModel):
                     "lequel ses clients (Codex…) ne reçoivent aucun jeton de "
                     "rafraîchissement. "
                     "Vide = annuaire non administrable par la plateforme.")
+
+    disabled_at: Optional[str] = Field(
+        default=None, description="Désactivé depuis (op=disable) : chaque requête de ses "
+                                  "comptes est refusée. null = servi.")
+    disabled_by: Optional[str] = None
+    disabled_reason: Optional[str] = None
 
     primary: bool = Field(description="Le tenant de la plateforme (`oto`), dont "
                                       "l'émetteur vient de l'env, pas de la base.")
@@ -163,7 +169,8 @@ class TenantDetail(BaseModel):
 
 class TenantConsoleOut(BaseModel):
     """Enveloppe op-aware : `list` rend `tenants`+`totals`, `get` rend `tenant`,
-    `reload` rend `reload`, `keys` rend `keys`, `key_clear` rend `key_clear`.
+    `reload` rend `reload`, `keys` rend `keys`, `key_clear` rend `key_clear`,
+    `disable`/`enable` rendent `disablement`.
     Déclarée en union plutôt qu'en intersection (vide) — cf. dette de sortie."""
     days: int
     tenants: Optional[list[TenantRow]] = None
@@ -178,6 +185,7 @@ class TenantConsoleOut(BaseModel):
     org_grants: Optional[Any] = None
     org_grant: Optional[Any] = None
     org_revoke: Optional[Any] = None
+    disablement: Optional[Any] = None
 
 
 def _live_registry() -> dict:
@@ -279,13 +287,15 @@ def _reload(ctx: ResolvedCtx, inp: ReloadInput) -> dict:
 class TenantConsoleInput(BaseModel):
     op: Literal["list", "get", "reload", "keys", "key_clear",
                 "admins", "admin_add", "admin_remove",
-                "org_grants", "org_grant", "org_revoke"] = "list"
+                "org_grants", "org_grant", "org_revoke",
+                "disable", "enable"] = "list"
     slug: Optional[str] = None
     provider: Optional[str] = None      # key_clear, org_grants, org_grant, org_revoke
     account: str = ""                   # key_clear, multi-compte ('' = mono)
     sub: Optional[str] = None           # admin_add, admin_remove
     org_id: Optional[int] = None        # org_grant, org_revoke
     daily_quota: Optional[int] = None   # org_grant (0 = illimité)
+    reason: Optional[str] = None        # disable (exigé)
     days: int = _DEFAULT_DAYS
 
     @field_validator("days")
@@ -315,6 +325,12 @@ def _console(ctx: ResolvedCtx, inp: TenantConsoleInput) -> dict:
         return {"days": inp.days, **_console_admins(ctx, inp, slug)}
     if inp.op in ("org_grants", "org_grant", "org_revoke"):
         return {"days": inp.days, **_console_grants(ctx, inp, slug)}
+    if inp.op in ("disable", "enable"):
+        # La MÊME capacité que `POST /api/admin/tenants/{slug}/disablement`, un seul
+        # handler (`tenant_desactivation`) : les deux faces ne peuvent pas diverger.
+        return {"days": inp.days, "disablement": tenant_desactivation._disablement(
+            ctx, tenant_desactivation.TenantDisablementInput(
+                slug=slug, op=inp.op, reason=inp.reason))}
     return _tenant(ctx, TenantInput(slug=slug, days=inp.days))
 
 
@@ -382,7 +398,9 @@ CAPABILITIES += [
                            # de chaque compte) ; l'admin de tenant agit par REST.
                            "admins": PLATFORM_ADMIN, "admin_add": SUPER_ADMIN,
                            "admin_remove": SUPER_ADMIN, "org_grants": PLATFORM_ADMIN,
-                           "org_grant": SUPER_ADMIN, "org_revoke": SUPER_ADMIN}),
+                           "org_grant": SUPER_ADMIN, "org_revoke": SUPER_ADMIN,
+                           # #1165 — couper un tenant entier : le palier de `reload`.
+                           "disable": SUPER_ADMIN, "enable": SUPER_ADMIN}),
         description=(
             "[platform admin] Tenant tracking (identity tier, ADR 0052). op=list → one "
             "row per declared tenant: issuer + jwks + hosts + oauth client + dashboard "
@@ -414,7 +432,12 @@ CAPABILITIES += [
             "unlimited; replaces) / org_revoke (`org_id`; the org falls back to the "
             "platform key) — super_admin. Without any grant the key serves every org "
             "of the tenant; the anonymous endpoint of an org gets it only through a "
-            "live grant."),
+            "live grant. op=disable (`slug`, `reason`; super_admin) disables the "
+            "tenant: every request of its accounts is refused from the next one on "
+            "(any token, dashboard sessions included), new authorizations on its hosts "
+            "are refused, its API/delegation tokens are revoked — counts by type "
+            "returned. op=enable (`slug`) reopens new connections only; revoked tokens "
+            "stay revoked. Never edit `issuer` by hand to disable a tenant."),
         mcp="oto_admin_tenant",
     ),
 ]

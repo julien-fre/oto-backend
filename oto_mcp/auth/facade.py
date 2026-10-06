@@ -660,6 +660,32 @@ def tenant_for_host(host: str):
     return tenancy.current().for_host(host)
 
 
+def refus_tenant_desactive(entry) -> "JSONResponse | None":
+    """Le refus d'une autorisation NOUVELLE sur le host d'un tenant désactivé
+    (oto-backend#1165) — ou `None` si le host ne sert aucun tenant, ou un tenant servi.
+
+    Sur le host d'un tenant, la façade enregistre le client, relaie l'autorisation et
+    échange les codes et les jetons de rafraîchissement vers SON annuaire. Un tenant
+    désactivé n'y obtient plus rien : ni enregistrement, ni autorisation, ni
+    rafraîchissement — refus NOMMÉ, jamais un repli vers notre annuaire (le host reste
+    celui du tenant).
+
+    L'état se lit sur l'entrée du REGISTRE (`TenantIssuer.disabled`), comme tout ce que
+    la façade sert : ses routes restent indépendantes de la base, comme l'est
+    l'authentification. Le geste recharge le registre du processus qui le traite ; un
+    autre processus le voit à son rechargement (`op=reload`) ou à son démarrage — et
+    d'ici là, tout jeton qu'il laisserait obtenir est refusé à chaque requête, sur toutes
+    les instances, par `garde_identite`, qui lit la BASE."""
+    if entry is None or not getattr(entry, "disabled", False):
+        return None
+    from .. import tenant_desactive
+    _log.warning("oauth: autorisation refusée sur le host du tenant désactivé %r",
+                 entry.slug)
+    return JSONResponse({"error": tenant_desactive.CODE,
+                         "error_description": tenant_desactive.message({"slug": entry.slug})},
+                        status_code=403, headers={"cache-control": "no-store", **_cors()})
+
+
 def _refus_annuaire(entry, directory: "Directory | None", requested: list):
     """Ce que la façade REFUSE de promettre sur le host d'un tenant — ou `None` si la
     voie est libre.
@@ -807,6 +833,8 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         # et de l'annuaire visés : trois lectures du même `entry`, jamais trois résolutions.
         host = _host_of(request)
         entry = tenant_for_host(host)
+        if (coupe := refus_tenant_desactive(entry)) is not None:
+            return coupe
         requested = body.get("redirect_uris") or []
         if not isinstance(requested, list) or any(
                 not redirect_autorise(entry, u) for u in requested):

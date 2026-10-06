@@ -81,6 +81,7 @@ def test_read_ops_cover_dashboard_reads():
 ECRITURES = {
     "admin.account": {"suspend", "resume"},
     "admin.org_suspension": {"suspend", "resume"},
+    "admin.tenant_disablement": {"disable", "enable"},
     "service.org.suspension": {"suspend", "resume"},
     "admin.outreach": {"test", "send", "optout_clear"},
     "me.doc": {"create", "bulk_create", "update", "patch", "delete", "move", "revert",

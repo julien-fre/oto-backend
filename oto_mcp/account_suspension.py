@@ -128,8 +128,8 @@ def refus_preteur(sub: str, quoi: str) -> Optional[PreteurEnPause]:
 def refus(sub: str) -> Optional[tuple[str, dict]]:
     """`(message, état)` si le compte est en pause, `None` sinon.
 
-    Point d'appel unique des deux gardes d'entrée (`api.base._authenticate` côté REST,
-    `AccountSuspendedMiddleware` côté MCP). Journalise chaque refus en `warning` : un
+    Appelé par la seule garde d'identité (`garde_identite.refus`), que traversent les
+    portes d'entrée REST, MCP et le lien d'upload signé. Journalise chaque refus en `warning` : un
     compte en pause qui continue de frapper à la porte est un fait d'exploitation qu'on
     veut voir — c'est ce qui dira si la pause a été comprise, ou si une automatisation
     tourne encore sous cette identité."""

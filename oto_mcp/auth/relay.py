@@ -327,6 +327,10 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
             return refus_autorisation(c, "not_declared", "invalid_request",
                                       "le relais d'autorisation n'est pas actif sur ce host : "
                                       "relancer la découverte (/.well-known/oauth-authorization-server)")
+        # Tenant désactivé (#1165) : aucune autorisation nouvelle, refus nommé.
+        if (coupe := facade.refus_tenant_desactive(
+                facade.tenant_for_host(c.host))) is not None:
+            return coupe
         demande, raison = lire_demande(requete)
         if demande is None:
             return refus_autorisation(c, raison, "invalid_request", _REFUS_DEMANDE[raison])
@@ -407,6 +411,12 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         if not _seau_ok(ip_observee(request), time.monotonic()):
             return _refus("temporarily_unavailable", "trop de requêtes — réessayer", 429,
                           cors=True, **{"retry-after": "30"})
+        # Tenant désactivé (#1165) : ni code échangé, ni jeton RAFRAÎCHI — le jeton de
+        # rafraîchissement qu'il a émis ne rapporte plus rien par ce relais. Après le
+        # seau, comme toute réponse de cette route.
+        if (coupe := facade.refus_tenant_desactive(
+                facade.tenant_for_host(c.host))) is not None:
+            return coupe
         if not request.headers.get("content-type", "").lower().startswith(
                 "application/x-www-form-urlencoded"):
             return _refus("invalid_request", "corps attendu en "

@@ -30,6 +30,7 @@ from . import tenant_keys  # noqa: F401 — admin.tenant_key{s,_set,_clear} (la 
 from . import tenant_apps  # noqa: F401 — admin.tenant_app{s,_set,_clear} (l'app OAuth d'un tenant, scopée à son slug)
 from . import tenant_connectors  # noqa: F401 — admin.tenant_connector{s,_set,_clear} (le plafond d'activation d'un tenant)
 from . import tenant_admins  # noqa: F401 — admin.tenant_admin{s,_add,_remove} (le rôle « admin de tenant », L-clés PR 2)
+from . import tenant_desactivation  # noqa: F401 — admin.tenant_disablement (désactiver un tenant, #1165)
 from . import tenant_grants  # noqa: F401 — admin.tenant_org_{grants,grant,revoke} (l'arête tenant→org de 0053, L-clés PR 2)
 from . import access_shadow_admin  # noqa: F401 — admin.access_shadow (fenêtre de double lecture L7, ADR 0053)
 from . import unipile_seats  # noqa: F401 — admin.unipile_seats + admin.unipile_seat_release

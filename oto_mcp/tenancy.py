@@ -174,6 +174,13 @@ class TenantIssuer:
     # host relayé ; sur un autre, le client s'autorise chez l'annuaire du tenant et la
     # plateforme ne voit pas la demande.
     refresh_tokens: bool = False
+    # DÉSACTIVÉ (`tenants.disabled_at`, oto-backend#1165), tel que lu au chargement du
+    # registre. Sert la FAÇADE OAuth de ses hosts (aucun enregistrement, aucune
+    # autorisation, aucun rafraîchissement) — jamais la vérification d'un jeton : celle-ci
+    # lit l'état dans la BASE à chaque requête (`garde_identite`), sur toutes les
+    # instances, sans attendre un rechargement. L'entrée reste dans le registre : son
+    # émetteur sert à reconnaître — et refuser nommément — les jetons du tenant.
+    disabled: bool = False
 
 
 def qualify(slug: Optional[str], sub: Optional[str]) -> Optional[str]:
@@ -244,7 +251,7 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
 
     def _put(slug: str, issuer, jwks_uri=None, name="", hosts=(),
              oauth_client_id="", dashboard_url="", link_paths=None,
-             tool_prefix="", brand=None, logto_mgmt=None) -> None:
+             tool_prefix="", brand=None, logto_mgmt=None, disabled=False) -> None:
         iss = normalize_issuer(issuer)
         if not iss:
             return
@@ -261,7 +268,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
                                     brand=brand if isinstance(brand, dict) else None,
                                     logto_mgmt=_normalize_mgmt(logto_mgmt, slug),
                                     dcr_redirects=_normalize_redirects(logto_mgmt, slug),
-                                    refresh_tokens=_normalize_refresh_tokens(logto_mgmt, slug))
+                                    refresh_tokens=_normalize_refresh_tokens(logto_mgmt, slug),
+                                    disabled=bool(disabled))
 
     primaire = primary_slug()
     _put(primaire, primary_issuer)
@@ -295,7 +303,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
              link_paths=(row or {}).get("link_paths"),
              tool_prefix=(row or {}).get("tool_prefix"),
              brand=(row or {}).get("brand"),
-             logto_mgmt=(row or {}).get("logto_mgmt"))
+             logto_mgmt=(row or {}).get("logto_mgmt"),
+             disabled=(row or {}).get("disabled_at") is not None)
     return entries
 
 

@@ -72,6 +72,13 @@ Le refus tombe **à l'entrée de chaque requête**, sur les quatre portes :
 | REST, JWT | `api.base._authenticate`, branche basse | `403 account_suspended` |
 | REST, ancien identifiant | la levée de `db.upsert_user` | `403 account_suspended` |
 | MCP, **toute** requête | `AccountSuspendedMiddleware.on_request` | `McpError`, `account_suspended` |
+| lien d'upload signé (sub scellé, sans jeton) | `api.uploads._do_signed_upload` | `403 account_suspended` |
+
+Depuis le 06/10/2026 (oto-backend#1165), ces portes n'appellent plus le prédicat de pause
+directement : elles traversent la **garde d'identité** unique, `garde_identite.refus`, qui
+juge d'abord le **tenant désactivé** (`tenant_disabled`, `docs/tenants.md` §Désactiver un
+tenant) puis la pause. Le lien d'upload signé — un porteur d'identité 15 minutes durant,
+sans aucun jeton — n'était gardé par rien jusque-là ; il l'est par la même fonction.
 
 Côté MCP, la garde est sur `on_request` et pas sur `on_call_tool` : le handshake
 injecte les instructions de l'org (guides de plateforme, d'org, d'équipe) et

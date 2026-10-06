@@ -34,7 +34,7 @@ from .. import config, db
 from ..auth import platform_worker, service_identity, token_scopes
 from .. import verrou_org
 from ..tenant_migration import alias_drain_armed
-from .. import account_suspension
+from .. import garde_identite
 
 # Signature de `_authenticate`, telle que la consomment les modules de routes.
 AuthFn = Callable[..., Awaitable["tuple[str | None, JSONResponse | None]"]]
@@ -291,8 +291,12 @@ async def _authenticate(
         # porte sur le PORTEUR du jeton, avant `_maybe_view_as` : un opérateur qui
         # consulte « en tant que » un compte en pause doit pouvoir le faire, c'est
         # même le premier geste de diagnostic après une mise en pause.
-        if (pause := await run_in_threadpool(account_suspension.refus, row["sub"])):
-            return None, _json_error(request, 403, account_suspension.CODE, pause[0])
+        #
+        # Même garde, même place : le compte d'un TENANT DÉSACTIVÉ (#1165). Son jeton
+        # `oto_` ne passe jamais par l'émetteur du tenant — retirer celui-ci du
+        # registre ne le coupait pas.
+        if (coupe := await run_in_threadpool(garde_identite.refus, row["sub"])):
+            return None, _json_error(request, 403, *coupe)
         verrou_org.poser(verrou := verrou_org.depuis_ligne(row))
         servi = _maybe_view_as(row["sub"], apply_view_as)
         # Le verrou ne vise que le porteur : « voir en tant que » un autre compte
@@ -342,8 +346,13 @@ async def _authenticate(
     # CHAQUE requête, pas au login : le jeton qu'il porte a été émis avant la pause
     # et reste signé jusqu'à son expiration ; une pause vérifiée à la connexion
     # laisserait une heure de sursis à ce qu'elle est censée arrêter.
-    if (pause := await run_in_threadpool(account_suspension.refus, sub)):
-        return None, _json_error(request, 403, account_suspension.CODE, pause[0])
+    #
+    # Et le TENANT DÉSACTIVÉ (#1165), sur le sub CANONIQUE : un JWT de NOTRE annuaire
+    # dont l'ancien identifiant a été redirigé vers un compte du tenant arrive ici
+    # qualifié par le drain — c'est la session de tableau de bord qui survivait au retrait
+    # de l'émetteur du tenant. Vérifier avant le drain ne la verrait pas.
+    if (coupe := await run_in_threadpool(garde_identite.refus, sub)):
+        return None, _json_error(request, 403, *coupe)
     # upsert_user = DB à CHAQUE requête REST → threadpool (jamais dans la loop).
     # locale (#701) : signal déduit de l'en-tête, jamais un choix — `upsert_user`
     # ne le pose que si la ligne n'en porte encore aucun (COALESCE côté SQL).
@@ -353,13 +362,15 @@ async def _authenticate(
                 sub, email=access_token.claims.get("email"),
                 name=access_token.claims.get("name"),
                 locale=_locale_from_accept_language(request.headers.get("accept-language"))))
-    except db.CompteEnPause as refus:
+    except (db.CompteEnPause, db.TenantDesactive) as refus:
         # L'ANCIEN identifiant d'un compte mis en pause. Il n'a pas de ligne à lui
         # (la fusion l'a supprimée), donc la garde ci-dessus ne l'a pas vu : c'est
         # `upsert_user` qui reconnaît, au moment de le RECRÉER, que son alias mène à
         # un compte neutralisé. Sans ce refus, le porteur repartirait avec un compte
-        # neuf et un espace personnel neuf — la résurrection déjà vécue.
-        return None, _json_error(request, 403, db.CompteEnPause.code, str(refus))
+        # neuf et un espace personnel neuf — la résurrection déjà vécue. Même levée pour
+        # la NAISSANCE d'un compte d'un tenant désactivé (#1165) — la garde ci-dessus la
+        # précède déjà sur ce chemin ; celle-ci tient si un appelant l'omet.
+        return None, _json_error(request, 403, refus.code, str(refus))
     servi = _maybe_view_as(sub, apply_view_as)
     # Session interactive : pas de jeton nommé, le porteur suffit. Publié quand
     # même — sinon le journal continuerait de le RE-DÉDUIRE de l'en-tête, et une

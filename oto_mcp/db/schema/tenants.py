@@ -50,7 +50,14 @@ CREATE TABLE IF NOT EXISTS tenants (
     -- DÉCLARÉ, jamais dérivé du slug : un renommage rompt les procédures et la prose
     -- déjà écrites du tenant, donc il se décide plutôt qu'il ne s'attrape.
     tool_prefix TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- DÉSACTIVATION (oto-backend#1165) : posée par `oto_admin_tenant op=disable`, lue
+    -- à CHAQUE vérification d'identité d'un compte qualifié sous ce tenant
+    -- (`garde_identite`). NULL = servi. Jamais sur le tenant primaire (id 1). Base
+    -- existante : révision Alembic `0040_tenants_desactivation`, jamais le démarrage.
+    disabled_at TIMESTAMPTZ,
+    disabled_by TEXT,
+    disabled_reason TEXT
 );
 -- Le rôle « ADMIN DE TENANT » (L-clés PR 2, 2026-08-29 — la sortie nommée du régime
 -- transitoire de 0052 §Amendement 27/08). Un compte du tenant (sub QUALIFIÉ sous son

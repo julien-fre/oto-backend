@@ -128,8 +128,13 @@ async def _do_signed_upload(request: Request, payload: dict, data: bytes,
                             ct: str | None) -> JSONResponse:
     """Cœur commun des réceptions d'upload signé : autz réappliquée → borne de
     taille → consommation à usage unique → matérialisation. DB sync → threadpool."""
-    from .. import upload_tokens
+    from .. import garde_identite, upload_tokens
     sub, target = payload["sub"], payload["target"]
+    # Le lien porte le sub SCELLÉ au mint, et sert sans aucun jeton : c'est un porteur
+    # d'identité à part entière, 15 minutes durant. Il passe donc par la garde d'identité
+    # comme les autres portes — compte en pause, tenant désactivé (#1165).
+    if (coupe := await run_in_threadpool(garde_identite.refus, sub)):
+        return _json_error(request, 403, *coupe)
     try:
         await run_in_threadpool(upload_tokens.check_target_access, sub, target)
     except upload_tokens.UploadError as e:

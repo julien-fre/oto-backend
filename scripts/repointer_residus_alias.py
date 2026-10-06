@@ -139,6 +139,7 @@ BORNEES: dict[tuple[str, str], str] = {
     ("unipile_operated_accounts", "owner_sub"): _UNE_PAR_COMPTE,
     ("apollo_phone_reveals", "sub"): "commandes en attente, trente jours de vie",
     ("users", "suspended_by"): "une ligne par compte",
+    ("tenants", "disabled_by"): "une ligne par tenant",
     # Pré-traitée DANS la transaction (dédoublonnage de l'étape 2 quinquies) : la
     # sortir en lots séparerait le dédoublonnage du repointage qu'il prépare.
     ("outreach_sends", "sub"): "une relance par compte et par campagne",

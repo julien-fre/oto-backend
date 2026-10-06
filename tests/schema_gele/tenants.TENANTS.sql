@@ -6,7 +6,10 @@ issuer TEXT UNIQUE,
 jwks_uri TEXT,
 hosts JSONB NOT NULL DEFAULT '[]'::jsonb,
 tool_prefix TEXT,
-created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+disabled_at TIMESTAMPTZ,
+disabled_by TEXT,
+disabled_reason TEXT
 );
 CREATE TABLE IF NOT EXISTS tenant_admins (
 slug TEXT NOT NULL REFERENCES tenants(slug) ON DELETE CASCADE,

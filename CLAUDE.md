@@ -74,6 +74,11 @@ pause, `migrate_sub` refuse la fusion **dans les deux sens, acte d'opérateur co
 charge PAS** (son prédicat de vivacité est l'existence de la ligne, qu'une pause conserve) · ⚠️ **les sièges ne
 bougent pas parce qu'il n'y en a aucun** (forfaits plats par org) · ⚠️ **pas un org_admin** — un compte n'appartient
 pas à une org ; c'est l'admin de **tenant**, sur les comptes du sien (`docs/comptes-en-pause.md`).
+**Désactiver un tenant** = `oto_admin_tenant op=disable` (REST `POST /api/admin/tenants/{slug}/disablement`),
+**jamais** vider son `issuer` : l'état `tenants.disabled_at` est lu à chaque requête par la garde d'identité unique
+(`garde_identite.refus`, sub canonique, toutes portes : REST, MCP, upload signé ; la façade OAuth lit le registre,
+rechargé par le geste), et le geste révoque les jetons `oto_` de ses comptes · ⚠️ un ancien identifiant de NOTRE annuaire redirigé vers un compte du tenant est
+coupé aussi — retirer l'émetteur ne le voyait pas (`docs/tenants.md` §Désactiver un tenant).
 `/api/*` sous le même `JWTVerifier` que `/mcp` ; `GET /openapi.json` **dérivé** du registre de capacités ; un jeton
 `oto_` peut naître **porté** · ⚠️ **CORS : aucune liste dans le code**, chaque instance déclare `OTO_MCP_CORS_ORIGINS`
 (`docs/rest-api.md`). Une étiquette de version unique sur trois surfaces (`GET /api/version`, `info.version`

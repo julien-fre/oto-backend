@@ -32,6 +32,97 @@ naissait avec notre tenant (ADR 0070 §7.2). Elle se **déclare** désormais, sa
   (`TenantPrimaireDiscordant`) — une base ne change pas de tenant primaire par un réglage ;
 - l'instance historique déclare le slug `oto`, ce que porte sa base (qui garde son nom).
 
+## Désactiver un tenant — un geste, jamais l'édition de la ligne (oto-backend#1165)
+
+> **Procédure.** `oto_admin_tenant op=disable slug=<slug> reason="<pourquoi, et à quelle
+> condition réactiver>"` (MCP) ou `POST /api/admin/tenants/{slug}/disablement
+> {"op": "disable", "reason": …}` (REST), super admin. Réactiver : `op=enable`. **Ne
+> jamais vider `issuer`/`jwks_uri` à la main pour couper un tenant**, et ne pas compter
+> sur `op=reload` pour le faire : c'est précisément ce qui a laissé une session ouverte.
+
+**Ce qui s'est passé.** Pour désactiver un tenant on a vidé `issuer` et `jwks_uri` de sa
+ligne puis rechargé le registre : un compte qualifié par ce tenant a continué de lire
+l'admin REST depuis une session de tableau de bord déjà ouverte, jusqu'à ce qu'on
+rétrograde son rôle à la main. Retirer l'émetteur n'éteint que les JWT **signés par
+l'annuaire du tenant**, et dans le **seul processus rechargé** (le registre est par
+processus). Trois portes n'y passent jamais :
+
+- le **jeton `oto_`** (API ou délégation d'un travail d'agent) porte son sub en base ;
+- l'**ancien identifiant** d'une personne basculée vers le tenant : son JWT est signé par
+  NOTRE annuaire sous son sub nu, que le drain d'alias (`sub_aliases`, armé en
+  permanence, `tenant_migration.py`) canonicalise en `<slug>:…`. Une session de tableau
+  de bord ouverte sur notre annuaire sert donc le compte du tenant, émetteur du tenant ou
+  pas — c'est la lecture la plus probable de l'incident, les comptes d'un premier
+  partenaire ayant été basculés ainsi ;
+- le **processus non rechargé** (préprod ↔ prod, bleu/vert).
+
+**L'état est une colonne** (`tenants.disabled_at`, `disabled_by`, `disabled_reason`,
+révision `0040_tenants_desactivation`), lue à **chaque vérification d'identité** par la
+garde centrale `garde_identite.refus`, sur le sub **canonique** (après le drain), sans
+cache, dans la base — donc sur toutes les instances, dès le geste, sans rechargement :
+
+| porte | où | refus |
+|---|---|---|
+| REST, jeton `oto_` (API, délégation) | `api.base._authenticate`, branche haute | `403 tenant_disabled` |
+| REST, JWT (tout émetteur, ancien identifiant compris) | `api.base._authenticate`, branche basse | `403 tenant_disabled` |
+| MCP, toute requête (JWT OAuth ou `oto_`) | `AccountSuspendedMiddleware.on_request` | `McpError`, `data.code=tenant_disabled` |
+| lien d'upload signé (sub scellé, sans jeton) | `api.uploads._do_signed_upload` | `403 tenant_disabled` |
+| naissance d'un compte du tenant | `db.upsert_user` (gate `inserted`) | `TenantDesactive` → `tenant_disabled` |
+| enregistrement, autorisation relayée, échange de code et **rafraîchissement** sur ses hosts | `auth.facade.refus_tenant_desactive` (DCR, relais), sur l'entrée du **registre** | `403 tenant_disabled` |
+
+La façade OAuth est la seule porte qui lit l'état dans le **registre** (`TenantIssuer.disabled`,
+chargé avec l'émetteur) plutôt qu'en base : ses routes restent indépendantes de la base,
+comme l'authentification canonique. Le geste recharge le registre du processus qui le
+traite (`registry_reloaded` dans la réponse) ; un autre processus le suit à son
+`op=reload` ou à son démarrage — et d'ici là, tout jeton qu'il laisserait obtenir est
+refusé à chaque requête, partout, par la garde d'identité, qui lit la base. L'entrée d'un
+tenant désactivé **reste** dans le registre : son émetteur sert à reconnaître ses jetons
+pour les refuser nommément, et ses comptes restent classés sous lui.
+
+La même garde porte la **pause de compte** (`docs/comptes-en-pause.md`) : le tenant est
+jugé d'abord, la personne ensuite. Les deux prédicats ne s'appellent nulle part
+ailleurs ; `tests/test_garde_identite_chemins.py` énumère les chemins et fige les
+appelants. Coût : **zéro lecture pour un sub nu** (tenant primaire), une lecture d'une
+table de quelques lignes pour un compte qualifié.
+
+**Ce que rend `op=disable`.** L'état, `changed` (re-désactiver ne réécrit ni l'auteur ni
+la date ni le motif), et ce que le geste a coupé :
+
+- `revoked` — les jetons que nous **stockons**, révoqués pour **tous** les comptes
+  qualifiés sous le tenant, par type (`user` = API, `delegation` = travail d'agent ;
+  `user_api_tokens.revoked_*`, la ligne reste, #523). Le geste rejoué ramasse ce qui a
+  été émis depuis ;
+- `accounts_cut`, `aliases_cut` — les comptes et les anciens identifiants désormais
+  refusés ;
+- `refused_not_stored` — ce que nous **ne stockons pas** et ne pouvons donc ni compter
+  ni révoquer à la source : session de tableau de bord (JWT), jetons d'accès et de
+  rafraîchissement OAuth du MCP (émis par l'annuaire du tenant), liens d'upload signés.
+  Ils restent signés jusqu'à expiration et sont refusés à chaque présentation ; un
+  rafraîchissement par le relais de la façade est refusé à la source.
+
+Le geste est journalisé (`warning` + le journal des appels, auteur et arguments).
+
+**`op=enable`** rouvre les **nouvelles** connexions. La révocation ne se réactive pas :
+les jetons révoqués restent morts, les personnes se reconnectent et réémettent leurs
+jetons d'API.
+
+**Garde-fous.** Le tenant primaire (ligne 1) ne se désactive pas (`409 primary_tenant`) ;
+un slug inconnu rend `404 unknown_tenant` ; `reason` est exigé et refusé entier au-delà
+de 500 caractères ; on ne désactive pas le tenant de son propre compte
+(`409 self_tenant`). L'émetteur reste déclaré : il sert à reconnaître — et refuser
+nommément — les jetons du tenant, au lieu d'un `401 invalid_token` anonyme. Un export de
+périmètre ne transporte pas la désactivation (le tenant devient le primaire de sa cible).
+
+**Ce que le geste ne fait PAS — décision de produit ouverte.** Il coupe les COMPTES du
+tenant, pas ses ORGS : un compte d'un autre tenant (ou du primaire) membre d'une org du
+tenant continue d'y travailler, l'endpoint anonyme d'un projet publié d'une de ses orgs
+reste servi, et les automatisations (cron, webhooks) d'une de ses orgs s'enfilent encore
+— leurs jetons de délégation sont refusés à l'usage. Options : (A) en rester là — le
+compte est l'unité d'identité ; (B) suspendre aussi ses orgs (`orgs-suspendues.md`,
+`orgs.tenant_id`) dans le même geste ; (C) l'offrir en option (`suspend_orgs=true`).
+Révoquer les sessions **dans l'annuaire du tenant** (Management API, quand nous
+l'administrons) est une autre décision non prise (`tenancy.ForeignTenantDirectory`).
+
 ## Un tenant tiers est SERVI depuis le 13/08 (oto-private#83)
 
 > **Un tenant tiers est SERVI, depuis le 13/08 (oto-private#83).** Le premier partenaire a

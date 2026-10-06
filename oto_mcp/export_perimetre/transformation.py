@@ -9,8 +9,8 @@ Ce qu'elle change, et rien d'autre :
 - **les comptes** perdent le préfixe `<slug>:` que leur donnait un tenant tiers
   (`Perimetre.comptes_cible`) : toute VALEUR exactement égale à un sub du périmètre,
   ou à sa forme membre `<org>:<sub>`, à toute profondeur d'un JSON ;
-- **le tenant** devient la ligne 1 de la cible : sa ligne prend l'id 1, et toute clé
-  étrangère vers `tenants(id)` vaut 1 ;
+- **le tenant** devient la ligne 1 de la cible : sa ligne prend l'id 1, toute clé
+  étrangère vers `tenants(id)` vaut 1, et sa désactivation éventuelle ne le suit pas ;
 - **les URL de notre stockage public** (décision du 28/09/2026) : dans toute valeur
   texte, colonne ou contenu (page, JSON), `<base source>/` devient `<base cible>/` ; les
   objets, eux, gardent leur clé (`objets`). Seul l'import connaît la base cible, que la
@@ -61,4 +61,10 @@ class Transformation:
                 cible[c] = 1
         if table == "tenants":
             cible["id"] = 1
+            # Une instance ne naît pas désactivée (#1165) : un tenant désactivé ICI au
+            # moment de son départ vers sa propre instance y devient le primaire, que
+            # rien ne désactive ni ne réactive.
+            for c in ("disabled_at", "disabled_by", "disabled_reason"):
+                if c in cible:
+                    cible[c] = None
         return cible

@@ -191,6 +191,8 @@ POST /api/admin/tenants/{slug}/admins -> _handler
 OPTIONS /api/admin/tenants/{slug}/admins -> options_handler
 DELETE /api/admin/tenants/{slug}/admins/{sub} -> _handler
 OPTIONS /api/admin/tenants/{slug}/admins/{sub} -> options_handler
+POST /api/admin/tenants/{slug}/disablement -> _handler
+OPTIONS /api/admin/tenants/{slug}/disablement -> options_handler
 GET,HEAD /api/admin/tenants/{slug}/keys/{provider}/grants -> _handler
 OPTIONS /api/admin/tenants/{slug}/keys/{provider}/grants -> options_handler
 PUT /api/admin/tenants/{slug}/keys/{provider}/grants/{org_id} -> _handler

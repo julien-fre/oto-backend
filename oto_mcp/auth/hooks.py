@@ -40,14 +40,17 @@ class IdentiteIndisponible(RuntimeError):
 
 def _raison_d_echec(exc: BaseException) -> str:
     """La RAISON d'un échec de canonicalisation, en une étiquette stable pour le
-    journal : `alias_<motif>` (chaîne d'alias refusée), `compte_en_pause`, sinon la
-    classe de l'erreur d'infrastructure."""
+    journal : `alias_<motif>` (chaîne d'alias refusée), `compte_en_pause`,
+    `tenant_desactive`, sinon la classe de l'erreur d'infrastructure."""
     from ..db.sub_aliases import AliasNonResolvable
+    from ..db.tenants import TenantDesactive
     from ..db.users import CompteEnPause
     if isinstance(exc, AliasNonResolvable):
         return f"alias_{exc.motif}"
     if isinstance(exc, CompteEnPause):
         return "compte_en_pause"
+    if isinstance(exc, TenantDesactive):
+        return "tenant_desactive"
     return f"base_indisponible:{type(exc).__name__}"
 
 
