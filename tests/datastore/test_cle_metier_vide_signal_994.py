@@ -1,7 +1,7 @@
 """Signal feedback 994 — une clé métier DÉCLARÉE écrite à vide, et son voisin muet.
 
-L'index `ds_bkey_<ns>` est partiel sur `IS NOT NULL` : `""` y entre. `@empty` (et
-`@clear`) posent `""` à la création, donc deux lignes « vidées » sur la clé se heurtent
+L'index `ds_bkey_<ns>` est partiel sur `IS NOT NULL` : `""` y entre. `@empty` pose `""`
+à la création (`@clear`, qui le faisait aussi, est refusé à l'entrée depuis oto#140 J3), donc deux lignes « vidées » sur la clé se heurtent
 à l'index — et la convergence cherchait le mot `"@empty"`, jamais la valeur stockée :
 `UniqueViolation` brute, 500. Le voisin : une clé `""` en clair retrouvait l'AUTRE ligne
 sans clé par la convergence, et les fusionnait sans un mot.
@@ -21,7 +21,7 @@ from oto_mcp.datastore.core import DatastorePg
 
 SCHEMA = {"key": "siren", "fields": [{"key": "siren", "type": "text"},
                                      {"key": "nom", "type": "text"}]}
-VIDES = ["@empty", "@clear", "", {"valeur": ""}]
+VIDES = ["@empty", "", {"valeur": ""}]
 REFUS = "clé métier vide ne désigne aucune entité"
 
 

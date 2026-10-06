@@ -1,31 +1,23 @@
-"""Second temps du préavis : l'origine s'écrit DÉCLARÉE (oto#70 lot 2, barreau 2).
+"""L'origine s'écrit DÉCLARÉE (oto#70 lot 2) — refusée en silence, permise déclarée.
 
-Le barreau 1 prévenait. Celui-ci refuse — mais pas ce qu'on croyait refuser au départ.
 Décision d'Alexis (05/09/2026, « c'est notre modèle d'agent experience ») : **écrire
 l'origine reste possible pour tout le monde**, à condition que l'appelant remplisse un
-paramètre par lequel il déclare comprendre ce qu'il fait. Pas de scope, pas de droit à
-accorder, pas de population à reconnaître : ce qui est refusé, c'est le SILENCE.
+paramètre par lequel il déclare comprendre ce qu'il fait (`origine_override`). Pas de
+scope, pas de droit à accorder : ce qui est refusé, c'est le SILENCE. Le préavis daté
+qui l'annonçait (01/10/2026) est retiré : le refus est la règle, sans date ni réglage.
 
-Trois choses tiennent ce barreau, et il en faut trois :
+Ce qui tient la règle :
 
-- **le paramètre**, sur les deux faces, absent par défaut ;
-- **le refus qui dit ce que l'avertissement disait** — corps partagé, pas recopié :
-  celui qui s'est préparé pendant le préavis ne doit pas découvrir au moment du refus
-  qu'on lui demandait autre chose ;
-- **la trace qui distingue les deux écritures** — sans elle, « s'est adapté » et « a
-  disparu » se lisent pareil après la date : dans les deux cas les écritures non
-  déclarées tombent à zéro.
-
-⚠️ Ce fichier grave aussi une omission du barreau 1, trouvée en le posant : le relevé
-avait été branché sur quatre chemins d'écriture, pas sur `update_row` — le patch par
-`id`, « le geste le plus courant d'un agent », dit le commentaire du fichier six lignes
-au-dessus, où la MÊME omission avait déjà coûté l'effacement de l'origine.
+- **le paramètre**, sur les deux faces, absent par défaut — et jamais ignoré : déclaré,
+  l'écriture passe et se trace comme déclarée ;
+- **le refus qui nomme les deux gestes** (écrire la valeur seule, ou déclarer) et la
+  couche qui accueille la provenance (`comment`, oto#79) ;
+- **la trace des écritures déclarées** (`origine_ecritures`).
 """
 from __future__ import annotations
 
 import re
 import uuid
-from datetime import date
 
 import pytest
 
@@ -37,78 +29,57 @@ from oto_mcp.datastore import schema as dsv2
 from oto_mcp.datastore import champs_reserves
 
 
-# ── la date : le code la porte, le réglage la déplace ─────────────────────────
+# ── ce que l'appel POSE, indépendamment du format ─────────────────────────────
 
-def test_la_date_vit_dans_le_CODE_pour_que_l_annonce_soit_vraie(monkeypatch):
-    """⚠️ L'inverse de ce que le barreau 1 avait écrit, et c'est délibéré. Une date qui
-    n'existerait que dans l'env d'une box se lit « prochainement » partout où personne
-    ne l'a posée : le produit annoncerait une échéance floue et n'en tiendrait aucune.
-    Ici, ce que le tronc ANNONCE est ce qu'il REFUSERA."""
-    monkeypatch.delenv(dsv2.ENV_ORIGINE_REFUS_LE, raising=False)
-    assert dsv2.date_refus() == dsv2.ORIGINE_REFUS_LE
-    assert dsv2.date_refus_fr() in dsv2.avertissement_origine(["c"])
+def test_poser_une_origine_est_releve():
+    assert dsv2.origine_posee({"col": {"valeur": "x", "origine": "forgé"}}) == ["col"]
 
 
-def test_le_REGLAGE_deplace_la_date_sans_deployer(monkeypatch):
-    """La vraie exigence du barreau 1 : la fenêtre bougera si un écrivain se manifeste,
-    et la déplacer ne doit pas demander un déploiement."""
-    monkeypatch.setenv(dsv2.ENV_ORIGINE_REFUS_LE, "2026-11-15")
-    assert dsv2.date_refus() == date(2026, 11, 15)
-    assert "15 novembre 2026" in dsv2.avertissement_origine(["c"])
+def test_reecrire_la_MEME_origine_ne_releve_rien():
+    """⚠️ Relire puis repousser tel quel est un geste banal : le compter ferait refuser
+    des appels qui ne changent rien."""
+    avant = {"col": {"valeur": "B", "origine": "A"}}
+    assert dsv2.origine_posee({"col": {"valeur": "x", "origine": "A"}}, avant) == []
 
 
-def test_le_francais_est_DERIVE_de_la_date_qui_refuse(monkeypatch):
-    """Deux réglages — « la date affichée » et « la date qui coupe » — divergeraient un
-    jour, et c'est l'affichage qui aurait tort : on annoncerait un jour et on
-    refuserait un autre."""
-    monkeypatch.setenv(dsv2.ENV_ORIGINE_REFUS_LE, "2027-03-01")
-    assert "1er mars 2027" in dsv2.refus_origine(["c"])
-    assert not dsv2.refus_arme(date(2027, 2, 28))
-    assert dsv2.refus_arme(date(2027, 3, 1))
+def test_ecrire_la_valeur_seule_ne_releve_rien():
+    """Le geste que le refus recommande ne doit surtout pas le déclencher."""
+    assert dsv2.origine_posee({"col": "x"}, {"col": {"valeur": "B", "origine": "A"}}) == []
 
 
-def test_un_reglage_illisible_LEVE_il_ne_retombe_pas_sur_le_defaut(monkeypatch):
-    """⚠️ Le repli serait le pire des deux : une faute de frappe ferait promettre une
-    échéance que rien n'applique, et personne ne le verrait — le produit continuerait
-    d'annoncer poliment une date morte."""
-    monkeypatch.setenv(dsv2.ENV_ORIGINE_REFUS_LE, "1er octobre 2026")
-    with pytest.raises(ValueError) as e:
-        dsv2.date_refus()
-    assert dsv2.ENV_ORIGINE_REFUS_LE in str(e.value)
+def test_effacer_une_origine_est_releve_aussi():
+    """`{"origine": null}` retire une origine en place : c'est une modification de la
+    couche, pas une abstention."""
+    avant = {"col": {"valeur": "B", "origine": "A"}}
+    assert dsv2.origine_posee({"col": {"origine": None}}, avant) == ["col"]
 
 
-def test_la_bascule_se_lit_en_UTC_pas_au_fuseau_de_la_box(monkeypatch):
-    """Deux box dans deux fuseaux refuseraient à deux instants différents, et le
-    fuseau d'une machine n'est pas un fait de produit."""
-    monkeypatch.delenv(dsv2.ENV_ORIGINE_REFUS_LE, raising=False)
-    veille = dsv2.ORIGINE_REFUS_LE.toordinal() - 1
-    assert not dsv2.refus_arme(date.fromordinal(veille))
-    assert dsv2.refus_arme(dsv2.ORIGINE_REFUS_LE)
+# ── le texte du refus ─────────────────────────────────────────────────────────
 
-
-# ── le refus dit ce que l'avertissement disait ────────────────────────────────
-
-def test_le_refus_et_l_avertissement_PARTAGENT_leur_corps(monkeypatch):
-    """⚠️ Partagé, pas recopié. La substitution le prouve : renommer le paramètre doit
-    changer les DEUX textes. S'il n'en changeait qu'un, celui qui s'est préparé pendant
-    le préavis se verrait refuser au nom d'un autre geste que celui qu'on lui avait
-    demandé d'apprendre."""
-    monkeypatch.delenv(dsv2.ENV_ORIGINE_REFUS_LE, raising=False)
-    avant = (dsv2.avertissement_origine(["c"]), dsv2.refus_origine(["c"]))
+def test_le_refus_LIT_le_parametre_dans_la_constante(monkeypatch):
+    """La substitution le prouve : si la phrase recopiait le nom en littéral, renommer
+    la constante servirait un paramètre qui n'existe pas."""
+    avant = dsv2.refus_origine(["c"])
     monkeypatch.setattr(champs_reserves, "PARAMETRE_ORIGINE", "zzz_sentinelle")
-    apres = (dsv2.avertissement_origine(["c"]), dsv2.refus_origine(["c"]))
-    assert apres[0] != avant[0] and apres[1] != avant[1], "AUCUNE substitution"
-    assert all("zzz_sentinelle" in t for t in apres)
+    apres = dsv2.refus_origine(["c"])
+    assert apres != avant, "AUCUNE substitution"
+    assert "zzz_sentinelle" in apres
 
 
-def test_le_refus_nomme_les_DEUX_gestes_et_ne_renvoie_vers_PERSONNE(monkeypatch):
+def test_le_refus_nomme_les_DEUX_gestes_et_ne_renvoie_vers_PERSONNE():
     """Il n'y a rien à demander : pas de droit, donc pas de tiers. Un refus qui
     enverrait demander quelque chose ferait attendre une réponse qui ne viendra jamais
     — et, comme sur l'autre verrou de la plateforme (#668), enverrait chercher une
     manœuvre."""
-    monkeypatch.delenv(dsv2.ENV_ORIGINE_REFUS_LE, raising=False)
     texte = dsv2.refus_origine(["prio"])
     assert "écrivez la valeur seule" in texte.lower()
+    assert "reste possible" in texte
+    # Pour un import, le geste qui pose l'origine sans l'écrire soi-même est nommé.
+    assert "`donnees_d_origine: true`" in texte
+    # Plus de date : le refus est la règle, il ne raconte pas son histoire.
+    assert "octobre" not in texte and "depuis le" not in texte
+    # Plus de promesse d'un filet mort (rien ne pose l'origine d'office).
+    assert "posée par la plateforme quand elle manque" not in texte
     assert f"`{dsv2.PARAMETRE_ORIGINE}: true`" in texte
     assert "rien n'a été écrit" in texte.lower()
     # ⚠️ Celui qui importe par URL signée ne PEUT pas suivre « ajoutez-le à cet appel » :
@@ -121,16 +92,16 @@ def test_le_refus_nomme_les_DEUX_gestes_et_ne_renvoie_vers_PERSONNE(monkeypatch)
     assert not re.search(r"\b(ton|ta|tes|tu|écris)\b", texte, re.I), texte
 
 
-def test_la_description_servie_NOMME_le_paramètre(monkeypatch):
+def test_la_description_servie_NOMME_le_paramètre():
     """⚠️ Une capacité qu'aucun texte ne nomme n'existe pas pour un agent : il ne la
     découvrira pas, il retombera sur la manœuvre qu'on cherche à supprimer. C'est ce
     qui s'est passé sur l'autre verrou (#658/#668) — le refus était exact, la sortie
     n'était écrite nulle part, et deux agents ont réinventé « lever, écrire,
     remettre »."""
-    monkeypatch.delenv(dsv2.ENV_ORIGINE_REFUS_LE, raising=False)
     for texte in (dsv2.description_parametre_origine(),
                   dsv2.description_parametre_origine(en=True)):
         assert dsv2.PARAMETRE_ORIGINE in texte
+        assert "2026-10-01" not in texte and "octobre" not in texte
         assert not re.search(r"\b(demandez|permission|ask your|admin)\b", texte, re.I)
 
 
@@ -138,13 +109,12 @@ def test_les_deux_faces_disent_LE_MEME_paramètre():
     """La face REST sert la description française, la face MCP recopie l'anglaise dans
     sa docstring (`@mcp.tool()` lit la docstring littérale, et `description=`
     emporterait les descriptions d'arguments). La copie est donc SURVEILLÉE ici, faute
-    de pouvoir être évitée : le jour où le nom ou la date bouge, ce banc tombe."""
+    de pouvoir être évitée : le jour où le nom bouge, ce banc tombe."""
     from oto_mcp.tools import datastore as tools_ds
 
     src = __import__("inspect").getsource(tools_ds)
     assert dsv2.PARAMETRE_ORIGINE in src
-    assert str(dsv2.ORIGINE_REFUS_LE) in src, (
-        "la docstring MCP annonce une autre date que celle qui refuse")
+    assert "2026-10-01" not in src, "la docstring MCP annonce encore la date du préavis"
 
 
 # ── l'upload signé : la porte de l'IMPORT ─────────────────────────────────────
@@ -264,14 +234,6 @@ def _table(schema=SCHEMA):
     return st, ns, ns_id
 
 
-def _arme(monkeypatch, arme: bool = True):
-    """Le refus, armé ou non, par la DATE — jamais par un drapeau de test : c'est la
-    date qui le déclenchera en production, et une épreuve qui court-circuiterait ce
-    chemin-là ne prouverait rien de ce qui se passera le jour venu."""
-    quand = date(2000, 1, 1) if arme else date(2099, 1, 1)
-    monkeypatch.setenv(dsv2.ENV_ORIGINE_REFUS_LE, quand.isoformat())
-
-
 def _trace(ns_id: int) -> list[dict]:
     from oto_mcp.db._conn import _connect
     with _connect() as conn:
@@ -280,18 +242,9 @@ def _trace(ns_id: int) -> list[dict]:
             "FROM origine_ecritures WHERE ns_id=%s ORDER BY colonne", (ns_id,)).fetchall())
 
 
-def test_avant_la_date_l_ecriture_passe_avec_son_avertissement(live, monkeypatch):
-    """Le barreau 1 tient tel quel : rien n'est refusé tant que la date n'est pas là."""
-    _arme(monkeypatch, arme=False)
-    st, ns, ns_id = _table()
-    row = st.append_row(ns, {"ref": "a", "prio": {"valeur": "B", "origine": "A"}},
-                        versions=("current", "origine"))
-    assert (row["prio"], row["prio.origine"]) == ("B", "A")
-    assert dsv2.PARAMETRE_ORIGINE in st.off_schema_report()["origine_warning"]
 
 
-def test_apres_la_date_l_ecriture_SILENCIEUSE_est_refusee(live, monkeypatch):
-    _arme(monkeypatch)
+def test_l_ecriture_SILENCIEUSE_est_refusee(live):
     st, ns, ns_id = _table()
     with pytest.raises(ValueError) as e:
         st.append_row(ns, {"ref": "b", "prio": {"valeur": "B", "origine": "A"}})
@@ -299,35 +252,34 @@ def test_apres_la_date_l_ecriture_SILENCIEUSE_est_refusee(live, monkeypatch):
     assert st.list_rows(ns) == [], "la ligne a été écrite malgré le refus"
 
 
-def test_apres_la_date_la_MEME_ecriture_DECLAREE_passe(live, monkeypatch):
+def test_la_MEME_ecriture_DECLAREE_passe_sans_avertissement(live):
     """⚠️ Le fond de la décision : ce n'est pas l'écriture qu'on refuse. Un import qui
-    doit vraiment poser l'origine le peut, sans rien demander à personne."""
-    _arme(monkeypatch)
+    doit vraiment poser l'origine le peut, sans rien demander à personne — et le
+    paramètre n'est jamais ignoré : l'écriture déclarée se trace comme telle, et aucun
+    avertissement de préavis ne la suit."""
     st, ns, ns_id = _table()
     row = st.append_row(ns, {"ref": "c", "prio": {"valeur": "B", "origine": "A"}},
                         origine_override=True, versions=("current", "origine"))
     assert (row["prio"], row["prio.origine"]) == ("B", "A")
+    assert "origine_warning" not in st.off_schema_report()
+    assert [t["ecritures_declarees"] for t in _trace(ns_id)] == [1]
 
 
-def test_ecrire_la_valeur_seule_n_a_jamais_besoin_du_paramètre(live, monkeypatch):
-    """L'autre chemin que l'avertissement nomme. Celui qui n'écrit pas d'origine ne
-    doit RIEN changer — un préavis qui ferait bouger ces appels-là coûterait à des gens
-    qui n'y sont pour rien."""
-    _arme(monkeypatch)
+def test_ecrire_la_valeur_seule_n_a_jamais_besoin_du_paramètre(live):
+    """L'autre chemin que le refus nomme. Celui qui n'écrit pas d'origine ne doit RIEN
+    changer."""
     st, ns, ns_id = _table()
     assert st.append_row(ns, {"ref": "d", "prio": "B"})["prio"] == "B"
     assert _trace(ns_id) == []
 
 
-def test_le_patch_par_id_est_gardé_COMME_LES_AUTRES(live, monkeypatch):
+def test_le_patch_par_id_est_gardé_COMME_LES_AUTRES(live):
     """⚠️ Le chemin que le barreau 1 avait oublié. `update_row` n'appelle pas
     `_merge_into_row` : c'est un cinquième chemin d'écriture, et c'est « le geste le
     plus courant d'un agent » — le fichier le dit lui-même, à l'endroit exact où la
     même omission avait déjà effacé l'origine une première fois."""
-    _arme(monkeypatch, arme=False)
     st, ns, ns_id = _table()
     row = st.append_row(ns, {"ref": "e", "prio": "B"})
-    _arme(monkeypatch)
     with pytest.raises(ValueError) as e:
         st.update_row(ns, row["_id"], {"prio": {"valeur": "C", "origine": "forgée"}})
     assert dsv2.PARAMETRE_ORIGINE in str(e.value)
@@ -336,36 +288,12 @@ def test_le_patch_par_id_est_gardé_COMME_LES_AUTRES(live, monkeypatch):
     assert [t["ecritures_declarees"] for t in _trace(ns_id)] == [1]
 
 
-def test_la_trace_SEPARE_l_ecriture_declaree_de_l_autre(live, monkeypatch):
-    """⚠️ C'est elle qui dira, après la date, si un écrivain s'est ADAPTÉ ou a DISPARU.
-    Les écritures non déclarées tombent à zéro dans les deux cas : un compteur unique
-    ne saurait pas les distinguer, et on lirait un silence comme une réussite."""
-    _arme(monkeypatch, arme=False)
-    st, ns, ns_id = _table()
-    st.append_row(ns, {"ref": "f", "prio": {"valeur": "B", "origine": "A"}})
-    (ligne,) = _trace(ns_id)
-    assert (ligne["ecritures"], ligne["ecritures_declarees"]) == (1, 0)
-    assert ligne["derniere_declaree_at"] is None
-
-    st.append_row(ns, {"ref": "g", "prio": {"valeur": "B", "origine": "A"}},
-                  origine_override=True)
-    (ligne,) = _trace(ns_id)
-    assert (ligne["ecritures"], ligne["ecritures_declarees"]) == (2, 1)
-    assert ligne["derniere_declaree_at"] is not None
-
-    # ⚠️ Une écriture non déclarée qui SUIT ne doit pas effacer la date de la déclarée,
-    # sinon « s'est adapté puis a rechuté » se lirait « n'a jamais déclaré ».
-    st.append_row(ns, {"ref": "h", "prio": {"valeur": "B", "origine": "A"}})
-    (ligne,) = _trace(ns_id)
-    assert (ligne["ecritures"], ligne["ecritures_declarees"]) == (3, 1)
-    assert ligne["derniere_declaree_at"] is not None
 
 
-def test_un_appel_REFUSÉ_ne_gonfle_pas_la_population(live, monkeypatch):
+def test_un_appel_REFUSÉ_ne_gonfle_pas_la_population(live):
     """Un refus n'est pas une écriture. Le compter ferait grossir la population de gens
     qui, précisément, n'ont pas réussi à écrire — et c'est sur ce nombre-là qu'on
     décidera s'il faut prévenir quelqu'un."""
-    _arme(monkeypatch)
     st, ns, ns_id = _table()
     with pytest.raises(ValueError):
         st.append_row(ns, {"ref": "i", "prio": {"valeur": "B", "origine": "A"}})
@@ -374,7 +302,7 @@ def test_un_appel_REFUSÉ_ne_gonfle_pas_la_population(live, monkeypatch):
 
 # --- oto#79 : le texte nomme la couche qui accueille l'intention -----------------
 
-def test_le_texte_nomme_la_couche_qui_accueille_l_intention_oto79(monkeypatch):
+def test_le_texte_nomme_la_couche_qui_accueille_l_intention_oto79():
     """Huit refus sur dix-huit rejouaient le geste refusé, la reprise la plus rapide à
     neuf secondes. L'agent ne cherchait pas à écrire une valeur : il cherchait à dire
     d'où elle venait, et le texte ne nommait jamais la couche qui accueille ça. Le refus
@@ -382,9 +310,7 @@ def test_le_texte_nomme_la_couche_qui_accueille_l_intention_oto79(monkeypatch):
 
     ⚠️ La forme d'écriture est exigée avec le nom : nommer `comment` sans montrer où il
     se met laisse l'agent deviner, et c'est ce qu'on cherche à supprimer."""
-    monkeypatch.delenv(dsv2.ENV_ORIGINE_REFUS_LE, raising=False)
-    for texte in (dsv2.avertissement_origine(["charge_affaires"]),
-                  dsv2.refus_origine(["charge_affaires"])):
+    for texte in (dsv2.refus_origine(["charge_affaires"]),):
         assert "`charge_affaires.comment`" in texte, texte
         assert '{"charge_affaires": {"comment": …}}' in texte, texte
         # Le registre ne change pas : ces textes VOUVOIENT (une personne décidera).

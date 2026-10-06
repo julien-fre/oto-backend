@@ -1197,20 +1197,19 @@ de fin de passage détectait après coup.
   PostgreSQL (`test_champs_reserves_live.py::test_terrain_*`).
   `details.expected_column = "<colonne>.comment"` pour la face REST (#545) ; le code ne
   bouge pas (`row_invalid` / INVALID_PARAMS), c'est le texte qui enseigne.
-- **⚠️ Écrire l'origine se DÉCLARE, à partir du 1er octobre 2026 (oto#70 lot 2).** Ce
+- **⚠️ Écrire l'origine se DÉCLARE (oto#70 lot 2, refus en vigueur depuis le 01/10/2026).** Ce
   qui est refusé n'est pas l'écriture, c'est le **silence** : `origine_override=true`
   sur l'appel (les deux faces) et elle passe ; sans lui, elle est refusée par un message
   qui nomme les deux issues — écrire la valeur seule, ou déclarer. **Rien à demander à
   personne**, aucun droit à provisionner : le paramètre engage celui qui l'envoie, et
   c'est tout (décision d'Alexis, 05/09/2026 : « c'est notre modèle d'agent experience »).
-  La date vit dans le code (`ORIGINE_REFUS_LE`) pour que ce qui est annoncé soit ce qui
-  refuse, et le réglage `OTO_ORIGINE_REFUS_LE` la déplace sans déploiement. **Avant cette
-  date**, l'écriture passe et la réponse porte `origine_warning` — la seule annonce faite
-  aux écrivains, aucun envoi ne partira. **Un relevé** (`origine_ecritures`, une ligne
+  Le préavis daté (`origine_warning`, réglage de date) est retiré le 06/10/2026 : le
+  refus est la règle, sans date. Pour un import, `donnees_d_origine=true` pose l'origine
+  sans que l'appelant l'écrive, et le refus le nomme. **Un relevé** (`origine_ecritures`, une ligne
   par écrivain × tableau × colonne) compte les deux populations séparément : le journal
   d'appels ne peut pas dire qui écrit une COUCHE (il ne garde que les clés de premier
   niveau et tronque les arguments), et les compteurs déclaré/non-déclaré sont ce qui
-  distinguera, après la date, l'écrivain qui s'est adapté de celui qui a disparu.
+  distingue l'écrivain qui s'est adapté de celui qui a disparu.
   **La manœuvre « lever le format, écrire, remettre » ne rouvre rien** : la garde
   regarde ce que l'appelant écrit, pas ce que la colonne déclare (mesuré). En revanche
   `data_drop_column` et `data_delete_row` **emportent** l'origine — rien n'y écrit une
@@ -1289,23 +1288,20 @@ de fin de passage détectait après coup.
   ⚠️ **`null` efface, et le reste (oto#140, décidé le 23/09/2026).** La « fin de `null` »
   (préavis puis refus au 1er décembre 2026) est ANNULÉE : `null` efface une case quel que
   soit son type, et `@empty` (sa raison dans `comment`) dit « cherché, rien » — les deux
-  seuls gestes. `@keep` et `@clear`, qui doublaient l'omission et `null`, sont DÉPRÉCIÉS
-  (jalon J0) : une écriture qui les porte réussit, et la réponse porte dans `notices` un
-  avertissement daté — refus au 8 octobre 2026, `@clear` → `null`, `@keep` → omettre le
-  sous-champ (ou renvoyer sa valeur quand elle doit survivre à une valeur qui change).
-  Une seule date, `mots_deprecies.MOTS_DEPRECIES_REFUSES_LE`, dont l'avertissement et la
-  description de `data_write` sont dérivés ; posé sur les trois chemins d'écriture
-  (création, patch par `id`, lot). Suivront `""`/`[]` qui remplacent la valeur en place
-  (J2) et le retrait des deux mots (J3).
-  ⚠️ **J2, le préavis (23/09/2026) : `""` et `[]` REMPLACERONT la valeur en place au
-  6 octobre 2026** (`vide_remplace.VIDE_REMPLACE_LE`, une seule date dont le texte est
-  dérivé). D'ici là rien ne change à l'écriture — l'écart (#608) et le refus « écriture
-  sans effet » (#724) tiennent —, mais la réponse porte dans `notices` l'avertissement
-  daté qui nomme les colonnes et dit comment garder la valeur (omettre la colonne) ; le
-  refus porte la même annonce, et la description de `data_write` comme le guide
-  `datastore-semantics` l'affichent. `{}` n'est pas concerné (jamais une valeur, oto#165).
-  Posé sur les deux arbitrages (`ecriture`, qui porte aussi les lots, et `ecriture_par_id`).
+  seuls gestes. **`@keep` et `@clear`, qui doublaient l'omission et `null`, sont REFUSÉS
+  (J3)** : une écriture qui les porte, où que ce soit, est refusée ENTIÈRE, lot compris, et
+  le refus nomme le geste à la place — `@clear` → `null`, `@keep` → omettre le sous-champ
+  (ou renvoyer sa valeur quand elle doit survivre à une valeur qui change)
+  (`mots_deprecies.controler`, sur les quatre chemins d'écriture : création, patch par
+  `id`, lot, import par URL signée). Sans ce refus, `"@keep"` serait stocké comme une
+  valeur littérale.
+  ⚠️ **J2 : `""` et `[]` sont des VALEURS** — ils remplacent la valeur en place, et la
+  valeur remplacée revient dans `valeurs_effacees`. L'écart (#608) et le refus « écriture
+  sans effet » (#724) ne valent plus que pour `{}` (jamais une valeur, oto#165). Posé sur
+  les deux arbitrages (`ecriture`, qui porte aussi les lots, et `ecriture_par_id`).
   Au même jalon, `null` efface une case au vide ASSUMÉ, marqueur compris (section oto#204).
+  Les préavis datés de J2 (06/10/2026) et J3 (08/10/2026) et leurs réglages de date ont
+  été retirés le 06/10/2026 : la règle s'applique sans date.
   ⚠️ **`force: [chemins]` (oto#140)** remplace la portée « tout l'appel » du booléen :
   `force=["raison_sociale.origine"]` ne force que ce qui est nommé, colonne ou couche.
   Le nommer vaut demande — pas besoin de `readonly_override` en plus. ⚠️ **Ça change la
@@ -1986,8 +1982,7 @@ lignes écrites, rien ne le disant). La règle :
   - Paramètre `upsert: bool` (défaut `false`) sur toutes les faces qui prennent une clé :
     `data_write` (ligne et lot), `POST …/rows` (`?upsert=true`), `POST …/rows/batch`, la
     frappe d'un upload signé (scellé comme `donnees_d_origine`) et `oto_import`. Livré
-    en **préavis daté** (`datastore/upsert_implicite.py`, patron de `vide_remplace` et
-    `mots_deprecies`) : une date `UPSERT_IMPLICITE_REFUSE_LE` (2026-10-21), déplaçable
+    en **préavis daté** (`datastore/upsert_implicite.py`) : une date `UPSERT_IMPLICITE_REFUSE_LE` (2026-10-21), déplaçable
     par `OTO_UPSERT_IMPLICITE_REFUSE_LE` (illisible ⇒ lève, `champs_reserves.date_reglee`),
     dont le texte servi est dérivé.
   - **Avant la date** : rien ne change à l'écriture ; un ajout qui fusionne, ou un
@@ -3261,12 +3256,12 @@ relit sous cette forme (`empties=sentinel`, section suivante).
 Un `null` écrit sur une cellule marquée l'EFFACE, marqueur compris, comme sur toute autre case
 (oto#140, J2) : le vide assumé est une valeur en place, et `columns.sans_les_nulls_sans_effet`
 ne l'écarte plus comme un `null` sans effet. C'est le geste qui remplace `@clear` (étape 2),
-déprécié et refusé au 08/10/2026. Jusqu'au J2, ce `null` était écarté (oto#182) et `@clear`
+refusé (J3). Jusqu'au J2, ce `null` était écarté (oto#182) et `@clear`
 seul démarquait. Bancs : `tests/datastore/test_vide_est_une_valeur_j2.py`.
 
 Bancs : `tests/datastore/test_vide_assume_lecture_204.py` et `…_204_live.py`.
 
-## Le vide ASSUMÉ — étape 2 : `@empty` l'émet, `@clear` l'efface, `empties=sentinel` le relit (oto#204, 13/09/2026)
+## Le vide ASSUMÉ — étape 2 : `@empty` l'émet, `empties=sentinel` le relit (oto#204, 13/09/2026)
 
 **Le défaut fermé.** Une liste sans `of.key` se remplace en bloc (#120). Relue au défaut puis
 renvoyée, une case au vide assumé revenait `""`, un vide ORDINAIRE. Sur un requis, l'écriture
@@ -3279,23 +3274,27 @@ assoupli, ni obligation de clé.
 ⚠️ **Ce lot ÉMET le marqueur** : il ne touche `main` qu'une fois l'étape 1 servie en production,
 préprod et prod partageant la base.
 
-### Les trois mots
+### Le mot
 
 | mot | sur la VALEUR d'une case | sur une COUCHE (`comment`, `link`) |
 |---|---|---|
-| `@keep` *(déprécié, refusé au 08/10/2026)* | tient ce qui est en place ; sur une case neuve, rien | tient la couche |
 | `@empty` | vide ASSUMÉ : valeur `""`, marqueur posé — satisfait `required` | vide la couche seule |
-| `@clear` *(déprécié, refusé au 08/10/2026)* | efface SANS assumer : valeur `""`, marqueur retiré — refusé sur un requis | vide la couche seule |
+
+`@keep` et `@clear` (étape 2 d'origine : « tient ce qui est en place », « efface sans
+assumer ») sont **retirés** (oto#140 J3) : refusés à l'entrée de toute écriture par
+`mots_deprecies.controler`, ils n'atteignent plus la fusion, et leur résolution a été retirée
+le 06/10/2026. La preuve que tout chemin qui fusionne passe d'abord par `controler` est une
+garde (`tests/datastore/test_controler_garde_toutes_les_ecritures.py`) : un nouveau point
+d'entrée qui fusionnerait sans lui la fait tomber — sinon `"@keep"` serait stocké comme du
+texte.
 
 `""` garde son comportement : le `""` servi, renvoyé sur une case marquée, ne change rien ; sur
-une valeur en place il est écarté (#608). Formes acceptées : `"champ": "@clear"` et
-`"champ": {"valeur": "@clear", …}`, au premier niveau et sur les cellules des éléments de liste.
+une valeur en place il la remplace (oto#140 J2).
 
-**Une table, un résolveur** : `columns._MOTS`, lue par la fusion (`_merge_column`, `_merge_items`,
-`_sentinelles_dans_les_items`) et par la création (`columns.mots_resolus_a_la_creation`, appelée
-par `append_row` sans clé métier et la ligne neuve d'un lot, avant la capture
-d'origine et la validation). Un mot de plus = une entrée ici et son nom dans
-`couches.SENTINELLES` (`test_la_table_couvre_tout_le_vocabulaire`).
+**Un résolveur** : `couches.est_vide_delibere`, lu par la fusion (`_merge_column`,
+`_merge_items`, `_sentinelles_dans_les_items`) et par la création
+(`columns.mots_resolus_a_la_creation`, appelée par `append_row` sans clé métier et la ligne
+neuve d'un lot, avant la capture d'origine et la validation).
 
 Couches et origine suivent les règles existantes (bancs `test_4a…`, `test_4b…`, `test_4c…`) :
 
@@ -3303,14 +3302,11 @@ Couches et origine suivent les règles existantes (bancs `test_4a…`, `test_4b�
   `link` non envoyé reste ; sur une valeur en place, `comment` et `link` non envoyés tombent et
   `origine` survit ;
 - un mot dans une couche ne vide que cette couche : ni la valeur ni le marqueur ne bougent ;
-- une `origine` renvoyée inchangée ne change rien au geste ;
-- `@clear` sur une case marquée qui porte un `comment` : le marqueur part, le `comment` reste
-  (la valeur, `""`, ne change pas) ;
-- `{"valeur": "@clear", "comment": "@keep"}` : le commentaire est tenu, le `link` tombe.
+- une `origine` renvoyée inchangée ne change rien au geste.
 
 **Deux trous fermés.** À la création, `"@empty"` partait en base comme texte et satisfaisait
 `required` (#183). Dans une liste à clé, un élément NOUVEAU entrait tel quel (`_merge_items`),
-mots compris : il se résout désormais comme une liste sans identité, et `@keep` y est refusé.
+mot compris : il se résout désormais comme une liste sans identité.
 
 ### Où un mot se pose
 
@@ -3318,7 +3314,7 @@ Sur une CASE : une colonne, ou l'attribut d'une fiche dans une liste, chacune av
 Ailleurs, refus `row_invalid` qui nomme le chemin, rien n'est écrit
 (`columns.refuser_les_mots_mal_places`, sur les cinq points d'entrée) :
 
-- l'identité d'un élément (`of.key`) — ni `@empty`, ni `@clear`, ni `@keep` ;
+- l'identité d'un élément (`of.key`) — pas de `@empty` ;
 - un élément d'une liste de valeurs (`tags[1]`) ;
 - un sous-champ d'objet, le contenu d'une colonne `json`, le contenu d'un attribut.
 
@@ -3347,14 +3343,14 @@ n'est inventée.
 - **Requis** : `row_invalid`, dont le message nomme le chemin (`contacts[0].fonction`), `@empty`
   et la relecture `empties=sentinel`. Atomique : base et `_revision` intactes.
 - **Relecture périmée** : `expected_revision` rend `409 revision_conflict`, rien n'est écrit.
-- **Relique pointée** : `@clear` est un effacement comme `null` et `@empty` (`reliques._efface`) ;
-  sur une relique qui porte une valeur, refusé.
-- **`valeurs_effacees`** : `@clear` et `@empty` sur une valeur en place la nomment, comme `null`.
+- **Relique pointée** : `@empty` est un effacement comme `null` (`reliques._efface`) ; sur une
+  relique qui porte une valeur, refusé.
+- **`valeurs_effacees`** : `@empty` sur une valeur en place la nomme, comme `null`.
   Les valeurs rendues le sont sans clé interne.
 - **Vide assumé non requis rendu ordinaire** : `couches_effacees`, couche `@empty`
   (`columns.vides_assumes_perdus`), jugé après la fusion, par attribut et par COMPTE — un
   marqueur de moins ET un vide ordinaire de plus. Pas relevés, délibérément : une vraie valeur,
-  un `@clear` écrit à cette place, un élément retiré, une liste réordonnée renvoyée en
+  un élément retiré, une liste réordonnée renvoyée en
   `sentinel`. Le chemin est celui de la liste ÉCRITE.
 
 OpenAPI : `invalid_layers` et `invalid_empties` déclarés sur les quatre lectures.
@@ -3661,8 +3657,7 @@ est REFUSÉE, sur TOUS les tableaux**, quel que soit `unknown_columns`, tableau 
 schéma compris. Pour écrire dans une colonne nouvelle, on la déclare d'abord
 (`data_patch_schema(fields=[{"key": …}])`, REST `PATCH …/schema`).
 
-- **Préavis daté** (`datastore/colonnes_non_declarees.py`, patron d'`upsert_implicite`,
-  `mots_deprecies`, `vide_remplace`) : `COLONNE_NON_DECLAREE_REFUSEE_LE` = 2026-10-21,
+- **Préavis daté** (`datastore/colonnes_non_declarees.py`, patron d'`upsert_implicite`) : `COLONNE_NON_DECLAREE_REFUSEE_LE` = 2026-10-21,
   le même jour que la bascule d'`upsert` ; réglage `OTO_COLONNE_NON_DECLAREE_REFUSEE_LE`
   (illisible ⇒ lève) ; texte servi DÉRIVÉ de la date (`data_write`, `data_set_schema`,
   `data_patch_schema`, routes REST d'écriture, guide

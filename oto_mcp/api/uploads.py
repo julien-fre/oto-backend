@@ -264,7 +264,7 @@ class AccuseDeDepot(BaseModel):
     entetes_traduits: Optional[dict[str, str]] = Field(None, description=(
         "`datastore` CSV : en-têtes renommés (un point ne peut pas figurer dans un nom "
         "de colonne) — ancien → nouveau"))
-    # Les relevés d'écriture (`hors_schema`, `hors_options`, `origine_warning`…) du
+    # Les relevés d'écriture (`hors_schema`, `hors_options`…) du
     # datastore s'ajoutent tels quels : ce sont ceux de toute écriture de lignes.
     model_config = {"extra": "allow"}
 

@@ -80,13 +80,13 @@ def org_sans_politique(monkeypatch):
 
 @pytest.fixture
 def org_qui_leve(monkeypatch):
-    """Un org_admin a posé `rules: []` sur `payfit` : sa politique est AUTORITAIRE
-    et vide ⟹ plus rien n'est masqué. C'est le geste exact qui lève le plancher."""
+    """Un org_admin a NOMMÉ tout le plancher de `payfit` dans `unmask` : c'est le geste
+    exact qui le lève (décision du 06/10/2026, signal oto #1269)."""
     monkeypatch.setattr("oto_mcp.access.current_user_sub_from_token",
                         lambda: "sub-test")
     monkeypatch.setattr("oto_mcp.access.current_org", lambda sub: 1)
     monkeypatch.setattr("oto_mcp.access.rbac.org_store.get_org_field_filters",
-                        lambda org_id: {"payfit": {"rules": []}})
+                        lambda org_id: {"payfit": {"rules": [], "unmask": ["socialSecurityNumber", "numeroSecuriteSociale", "temporaryTechnicalNumber", "numeroTechniqueTemporaire", "iban", "bic", "absence_type"]}})
 
 
 def _rendu(payload) -> str:
@@ -175,15 +175,52 @@ def test_the_mask_never_touches_a_homonym_of_type(org_sans_politique):
 
 @pytest.mark.parametrize("sentinelle", [NIR, NTT, IBAN, BIC, MOTIF])
 def test_an_org_that_lifts_the_filter_gets_everything(org_qui_leve, sentinelle):
-    """`rules: []` = une politique d'org VIDE et autoritaire. L'entreprise
-    propriétaire de ses données de paie peut les lire."""
+    """Le plancher nommé dans `unmask` sort en clair. L'entreprise propriétaire de
+    ses données de paie peut les lire, en le disant champ par champ."""
     out = redaction.redact_payload("payfit", _payload())
     assert out is redaction.PASSTHROUGH or sentinelle in json.dumps(out)
 
 
+@pytest.mark.parametrize("sentinelle", [NIR, NTT, IBAN, BIC, MOTIF])
+def test_an_empty_policy_no_longer_lifts_the_floor(monkeypatch, caplog, sentinelle):
+    """Signal oto #1269 : `rules: []` seul levait tout, sans rien nommer. Une politique
+    stockée de cette forme ne lève plus rien, et sa lecture le journalise."""
+    monkeypatch.setattr("oto_mcp.access.current_user_sub_from_token",
+                        lambda: "sub-test")
+    monkeypatch.setattr("oto_mcp.access.current_org", lambda sub: 1)
+    monkeypatch.setattr("oto_mcp.access.rbac.org_store.get_org_field_filters",
+                        lambda org_id: {"payfit": {"rules": []}})
+    with caplog.at_level("WARNING"):
+        assert sentinelle not in _rendu(_payload())
+    assert "without naming a field" in caplog.text
+
+
+def test_an_org_rule_adds_to_the_floor_instead_of_replacing_it(monkeypatch):
+    """Une org qui masque la date de naissance garde le plancher : sa politique
+    s'ajoute, elle ne remplace plus."""
+    monkeypatch.setattr("oto_mcp.access.current_user_sub_from_token",
+                        lambda: "sub-test")
+    monkeypatch.setattr("oto_mcp.access.current_org", lambda sub: 1)
+    monkeypatch.setattr("oto_mcp.access.rbac.org_store.get_org_field_filters",
+                        lambda org_id: {"payfit": {"rules": [
+                            {"fields": ["birthDate"], "action": "drop"}]}})
+    rendu = _rendu(_payload())
+    assert NIR not in rendu and IBAN not in rendu and "1990-01-01" not in rendu
+
+
+def test_unmasking_one_field_leaves_the_rest_of_the_floor(monkeypatch):
+    monkeypatch.setattr("oto_mcp.access.current_user_sub_from_token",
+                        lambda: "sub-test")
+    monkeypatch.setattr("oto_mcp.access.current_org", lambda sub: 1)
+    monkeypatch.setattr("oto_mcp.access.rbac.org_store.get_org_field_filters",
+                        lambda org_id: {"payfit": {"rules": [], "unmask": ["iban"]}})
+    rendu = _rendu(_payload())
+    assert IBAN in rendu and NIR not in rendu and BIC not in rendu
+
+
 def test_clearing_the_policy_does_the_OPPOSITE_of_lifting(monkeypatch):
     """⚠️ Le piège : `rules: null` EFFACE la politique d'org, donc REMET le défaut
-    serveur. Lever un plancher se fait avec `rules: []`, jamais en effaçant."""
+    serveur tel quel. Lever un plancher se fait en le nommant (`unmask`)."""
     monkeypatch.setattr("oto_mcp.access.current_user_sub_from_token",
                         lambda: "sub-test")
     monkeypatch.setattr("oto_mcp.access.current_org", lambda sub: 1)

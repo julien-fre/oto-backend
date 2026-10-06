@@ -796,8 +796,8 @@ def _write_rows(ctx: ResolvedCtx, inp: WriteRowsInput) -> dict:
     Un client REST pur n'avait AUCUN chemin de lot : 8 907 `PATCH` ligne à ligne,
     douze minutes sur la production. Le moteur, lui, est indifférent à la face qui
     l'appelle — ce n'était qu'un trou de surface. Mêmes refus nommant la ligne
-    fautive, mêmes notices, mêmes bascules datées (`@keep`/`@clear` jugés sur le lot
-    ENTIER avant la première ligne)."""
+    fautive, mêmes notices, mêmes refus jugés sur le lot ENTIER avant la première
+    ligne (`@keep`/`@clear`)."""
     ns, _ = _adresse(inp.datastore)
     _verifier_contenu(inp.rows)
     store = make_store(ctx.sub)
@@ -1034,7 +1034,7 @@ CAPABILITIES += [
                      "`inserted`, `updated`, `count`, `ids` (un par ligne envoyée, "
                      "rang pour rang), `fusions` (les lignes qui ont fusionné), et "
                      "les relevés du geste cumulés sur le lot. Une écriture qui porte un mot refusé (`@keep`, "
-                     "`@clear`, après leur date) est refusée ENTIÈRE, rien n'est "
+                     "`@clear`) est refusée ENTIÈRE, rien n'est "
                      "écrit. ⚠️ Sinon le lot n'est PAS atomique : une ligne refusée "
                      "arrête le lot, les lignes d'avant restent écrites, et le refus "
                      "dit à quelle ligne reprendre. Pour un volume au-delà de "

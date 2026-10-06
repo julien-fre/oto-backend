@@ -113,13 +113,12 @@ def test_le_REMPLACANT_est_nomme_là_où_le_filet_est_annoncé_absent():
         "l'absence de filet est annoncée sans nommer le geste qui la remplace")
 
 
-def test_la_date_du_refus_servie_est_celle_du_CODE():
-    """Un préavis daté dans un texte servi et une date dans le code qui divergent, et
-    c'est le texte qui aura tort le jour venu."""
+def test_le_refus_servi_est_la_regle_sans_date():
+    """Le préavis du 01/10/2026 est passé et retiré : le texte servi dit la règle au
+    présent, sans annoncer une date que plus rien ne porte."""
     from oto_mcp.datastore import champs_reserves as cr
     import oto_mcp.tools.datastore as T
-    attendue = cr.ORIGINE_REFUS_LE.isoformat()
     src = inspect.getsource(T)
-    assert attendue in src, (
-        f"le texte servi ne porte pas la date du code ({attendue}) — deux dates "
-        f"divergeraient, et l'affichage aurait tort")
+    assert "2026-10-01" not in src
+    assert "is REFUSED unless the call declares" in src
+    assert "2026-10-01" not in cr.description_parametre_origine(en=True)

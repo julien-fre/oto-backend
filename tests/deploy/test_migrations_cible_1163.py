@@ -192,8 +192,12 @@ def test_lecture_reelle_de_la_base(pg_dsn):
             garde.lire_base(absente)
 
 
+# La tête se lit dans le registre : figée ici, chaque nouvelle révision cassait ce banc.
+_TETE_DU_REGISTRE = garde.tete_du_tag(garde._REGISTRE)[0]
+
+
 @pytest.mark.parametrize("version, code, motif", [
-    ("0042_orgs_suspension_par_tenant", 0, "base à la tête du tag"),
+    (_TETE_DU_REGISTRE, 0, "base à la tête du tag"),
     ("0041_recherche_valeurs_servies", 3,
      "la base est en 0041_recherche_valeurs_servies, le tag attend"),
     ("0039_feed_synced_at_retiree", 1,

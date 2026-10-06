@@ -319,7 +319,8 @@ def normaliser_ligne(schema: Optional[dict], data: dict) -> tuple[dict, set]:
             return valeur
         lue = lire(valeur, ftype)
         if lue is None:
-            # `@empty`, `@keep`… se résolvent plus loin : ce ne sont pas des dates.
+            # `@empty` se résout plus loin (`@keep`/`@clear` sont refusés avant) : ce
+            # ne sont pas des dates.
             if not (isinstance(valeur, str) and valeur.startswith("@")):
                 releve.illisibles.setdefault(chemin, ftype)
             return valeur

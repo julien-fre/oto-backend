@@ -22,7 +22,7 @@ en faute s'écrit sur ses autres colonnes ; la faute qu'elle porte se DIT (`hors
 elle ne refuse rien.
 
 Mécanisme : celui des autres bascules datées (`colonnes_non_declarees`,
-`upsert_implicite`, `vide_remplace`), pas un de plus.
+`upsert_implicite`), pas un de plus.
 
 - **Avant la date**, sur un tableau qui n'était pas réglé pour faire contrat :
   l'écriture qu'aurait refusée la validation complète PASSE, et la réponse porte dans

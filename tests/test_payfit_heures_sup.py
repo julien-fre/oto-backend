@@ -183,8 +183,8 @@ def test_the_default_policy_withholds_the_raw_line_and_says_why(client, monkeypa
     assert out["line_withheld"] == payfit_garde.OVERTIME_LINE_LOCKED
 
 
-def test_an_org_that_lifted_the_masks_gets_the_raw_line(client, monkeypatch):
-    _politique(monkeypatch, {"payfit": {"rules": []}})
+def test_an_org_that_opened_the_documents_gets_the_raw_line(client, monkeypatch):
+    _politique(monkeypatch, {"payfit": {"rules": [], "documents": True}})
     out = _payslip()(op="overtime", collaborator_id=K, date="202601")
     assert all(l["line"] for l in out["payslips"][0]["lines"])
     assert "line_withheld" not in out

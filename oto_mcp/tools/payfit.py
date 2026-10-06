@@ -34,8 +34,9 @@ meal vouchers, contact details, birth, nationality, seniority, manager.
 
 ⚠️ **DOCUMENTS (payslip PDF, accounting export, payment file, tax
 document) are locked**: a filter does not read inside a file, so they
-only come out if the org's effective policy for `payfit` masks nothing —
-otherwise a named refusal, and fail-closed if it is unreadable (`payfit_garde.serve_document`).
+only come out if the org opened them by name (`documents: true` in its `payfit`
+policy, which lifts no mask) — otherwise a named refusal, and fail-closed if it is
+unreadable (`payfit_garde.serve_document`).
 
 ⚠️ **Only one key is renamed, and it is mechanical**: an absence's type comes out
 as `absence_type`, because `FieldFilter` matches by leaf name and a rule on `type`

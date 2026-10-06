@@ -324,8 +324,8 @@ def import_rows(sub: str, target: dict, rows: list, *, deadline: float,
     from .datastore import upsert_implicite as upi
     store = ds.make_store(sub)
     ns_id = int(target["ns_id"])
-    # Deprecated-word refusals are judged on the whole file before the first slice.
-    mdp.controler(set(), *(r for r in rows[resume_from:] if isinstance(r, dict)))
+    # Retired-word refusals are judged on the whole file before the first slice.
+    mdp.controler(*(r for r in rows[resume_from:] if isinstance(r, dict)))
     # oto#124: so are undeclared columns, from their date — nothing written.
     try:
         cnd.juger_le_lot(store._schema_of(ns_id), rows[resume_from:])

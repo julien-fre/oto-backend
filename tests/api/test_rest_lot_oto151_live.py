@@ -180,10 +180,8 @@ def test_donnees_d_origine_pose_l_origine_et_le_reimport_ne_la_touche_pas(client
 
 # ── rien d'écrit à moitié, et les refus nommés ───────────────────────────────
 
-def test_un_mot_refuse_refuse_le_lot_entier_rien_n_est_ecrit(client, monkeypatch):
-    """J3 franchi : `@keep` sur la DEUXIÈME ligne refuse le lot avant la première."""
-    from oto_mcp.datastore import mots_deprecies as mdp
-    monkeypatch.setenv(mdp.ENV_MOTS_DEPRECIES_REFUSES_LE, "2026-01-01")
+def test_un_mot_refuse_refuse_le_lot_entier_rien_n_est_ecrit(client):
+    """`@keep` sur la DEUXIÈME ligne refuse le lot avant la première."""
     ns, ns_id = _table(SCHEMA)
     r = _lot(client, ns, {"rows": [{"siren": "1", "nom": "A"},
                                    {"siren": "2", "nom": "@keep"}]})
@@ -213,15 +211,14 @@ def test_un_champ_inconnu_du_corps_est_refuse(client):
 # ── les deux faces, un seul geste ────────────────────────────────────────────
 
 def test_les_deux_faces_rendent_la_meme_enveloppe_et_les_memes_notices(client, data_write):
-    """Avant sa date, `@keep` passe avec un avertissement daté : une notice, qui doit
-    être la même phrase sur les deux faces."""
-    lot = [{"siren": "1", "nom": "A"}, {"siren": "2", "nom": {"valeur": "B",
-                                                           "comment": "@keep"}}]
+    """`donnees_d_origine` relève ce qu'il a posé : une notice, qui doit être la même
+    phrase sur les deux faces."""
+    lot = [{"siren": "1", "nom": "A"}, {"siren": "2", "nom": "B"}]
     ns_rest, _ = _table(SCHEMA)
     ns_mcp, _ = _table(SCHEMA)
-    rest = _lot(client, ns_rest, {"rows": lot})
+    rest = _lot(client, ns_rest, {"rows": lot, "donnees_d_origine": True})
     assert rest.status_code == 200, rest.text
-    mcp = data_write(datastore=ns_mcp, rows=lot)
+    mcp = data_write(datastore=ns_mcp, rows=lot, donnees_d_origine=True)
     rest = rest.json()
     assert rest["notices"] and rest["notices"] == mcp["notices"]
     for cle in ("inserted", "updated", "count", "key"):

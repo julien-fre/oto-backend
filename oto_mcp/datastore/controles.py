@@ -458,14 +458,6 @@ class ControlesMixin:
         quoi en faire. Union sur un lot : un renommage fautif se voit une fois,
         pas une par row."""
         out: dict = {}
-        # oto#70 lot 2, premier temps : l'avertissement part avec CHAQUE écriture qui
-        # pose une origine, pas une seule fois. Un écrivain qui repasse sur une ligne
-        # par semaine ne verrait jamais un message servi une fois — et c'est précisément
-        # ce profil-là que la mesure a trouvé (52 lignes touchées sur une semaine, toutes
-        # réécrites après leur création).
-        if self._origine_posee:
-            out["origine_warning"] = dsv2.avertissement_origine(
-                sorted(self._origine_posee))
         keys = sorted(self.off_schema)
         if keys:
             out["hors_schema"] = keys
@@ -558,20 +550,14 @@ class ControlesMixin:
 def _relever_origine_module(store, ns_id, payload, avant=None,
                             schema=None, declare: bool = False) -> None:
     """Relève les colonnes dont CET appel pose la couche `origine`, et REFUSE l'appel
-    qui ne les déclare pas une fois la date passée (oto#70 lot 2).
+    qui ne les déclare pas (oto#70 lot 2).
 
     ⚠️ **Ce qui est refusé n'est pas l'écriture, c'est le SILENCE.** `declare` porte le
     paramètre de l'appelant (`origine_override`) : avec, l'écriture passe et laisse une
-    trace distincte ; sans, elle passe aussi tant que la date n'est pas atteinte, avec
-    l'avertissement pour toute réponse. Après, elle est refusée par un message qui dit
-    exactement ce que l'avertissement disait.
+    trace distincte ; sans, elle est refusée par un message qui nomme les deux gestes.
 
-    ⚠️ **La date arme la garde toute seule**, sans déploiement (`dsv2.refus_arme()`).
-    C'est ce qui a été annoncé aux écrivains à chaque écriture depuis le barreau 1 ; un
-    refus qui attendrait qu'on y pense ne serait pas le préavis qu'on leur a promis.
-
-    ⚠️ **La trace distingue les deux populations** (`declare`), et c'est elle qui dira,
-    après la date, si un écrivain s'est ADAPTÉ ou a DISPARU. Deux faits que le même
+    ⚠️ **La trace distingue les deux populations** (`declare`), et c'est elle qui dit
+    si un écrivain s'est ADAPTÉ ou a DISPARU. Deux faits que le même
     compteur confondrait : dans les deux cas les écritures non déclarées tombent à zéro.
 
     ⚠️ **`face` reste NULL** : le store ne connaît pas le canal d'appel — il voit un
@@ -583,12 +569,11 @@ def _relever_origine_module(store, ns_id, payload, avant=None,
     colonnes = dsv2.origine_posee(payload, avant)
     if not colonnes:
         return
-    if not declare and dsv2.refus_arme():
+    if not declare:
         # Rien n'est relevé : rien n'a été écrit. Un refus n'est pas une écriture, et
         # le compter gonflerait la population de gens qui, précisément, n'ont pas
         # réussi à écrire.
         raise ValueError(dsv2.refus_origine(colonnes))
-    store._origine_posee.update(colonnes)
     # ⚠️ Les deux populations sont relevées SÉPARÉMENT. Sur une colonne qui ne déclare
     # pas le format, la plateforme ne pose JAMAIS d'origine : celle-ci vient donc
     # forcément de l'écrivain — c'est le cas que la définition interdit, et le seul

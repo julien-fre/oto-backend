@@ -129,8 +129,8 @@ def test_la_creation_unitaire_dit_aussi_ce_qu_elle_pose(live):
 def test_l_origine_posee_par_le_parametre_n_est_pas_ecrite_sans_le_dire(live):
     """Découvert en rejouant #164 : sur une ligne EXISTANTE, l'origine que la
     plateforme pose pour `donnees_d_origine=true` entrait dans le relevé des origines
-    écrites par l'appelant sans le déclarer (oto#70) — averti aujourd'hui, refusé à la
-    date. Le ré-import aurait été refusé pour avoir fait ce qu'il déclarait."""
+    écrites par l'appelant sans le déclarer (oto#70), qui sont refusées. Le ré-import
+    aurait été refusé pour avoir fait ce qu'il déclarait."""
     ns, ns_id = _tableau()
     from oto_mcp import db
     db.datastore_insert_row(ns_id, "r1", {"siren": "1", "email": "ancien@x"})

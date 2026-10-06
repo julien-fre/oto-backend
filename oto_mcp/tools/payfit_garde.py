@@ -11,10 +11,11 @@ Split out of the tool modules to keep them under 500 lines. Five rules live here
   different company than the one whose key is set;
 - **no write is wired**: every write op returns the named refusal
   `payfit_write_not_wired`, without resolving the key or calling PayFit (24/09/2026);
-- **a document only goes out if the org's policy masks nothing**: a PDF or a
-  file cannot be filtered, so it stays locked until the PayFit masks are
-  lifted (`serve_document`). A verbatim EXCERPT of a document (the raw line of a
-  payslip) follows the same lock (`documents_unlocked`).
+- **a document only goes out with the org's named consent** (`documents: true`
+  in its `payfit` policy): a PDF or a file cannot be filtered, so it stays
+  locked until the org has opened it, and opening it lifts no mask from the
+  JSON responses (`serve_document`). A verbatim EXCERPT of a document (the raw
+  line of a payslip) follows the same lock (`documents_unlocked`).
 """
 from __future__ import annotations
 
@@ -109,15 +110,6 @@ def not_wired(op: str, action: str, **what: Any) -> McpError:
 # mask by default
 # ---------------------------------------------------------------------------
 
-_SONDE = "sonde-de-redaction"
-
-
-def _masque(ff, champ: str) -> bool:
-    """True if policy `ff` rewrites or removes `champ` — tested through its
-    `apply`, the very path of the output, rather than by re-reading its rules."""
-    return ff.apply({champ: _SONDE}).get(champ) != _SONDE
-
-
 def redaction_notice() -> str:
     """The notice served with every response that may carry a sensitive field.
 
@@ -133,10 +125,8 @@ def redaction_notice() -> str:
     from .. import field_filter_defaults
 
     ff = access.resolve_field_filter(_NAME)
-    sensibles = [c for regle in field_filter_defaults.SERVER_DEFAULTS[_NAME]["rules"]
-                 for c in regle["fields"]]
-    masques = [c for c in sensibles if _masque(ff, c)]
-    clairs = [c for c in sensibles if c not in masques]
+    clairs = field_filter_defaults.champs_du_plancher_en_clair(_NAME, ff)
+    masques = [c for c in field_filter_defaults.champs_du_plancher(_NAME) if c not in clairs]
     lever = ("an org_admin sets this connector's policy (dashboard, or "
              "`oto_org_settings domain=field_filters service=payfit`)")
     if not clairs:
@@ -159,10 +149,11 @@ def redaction_notice() -> str:
 # workaround. An agent that is suggested another route takes it.
 DOCUMENTS_LOCKED = (
     "PayFit: document not served. It contains per-employee data (NIR, IBAN, "
-    "names and amounts) that your org's field-filter policy masks for "
-    "PayFit — and a filter cannot mask the inside of a file. To open "
-    "PayFit documents, an org_admin of the org must lift the masks of the "
-    "`payfit` connector (policy with no rule at all).")
+    "names and amounts), and a field filter cannot mask the inside of a "
+    "file: PayFit documents only go out if the org has opened them. An "
+    "org_admin of the org does so by setting `documents: true` on the "
+    "field-filter policy of the `payfit` connector — this consent lifts no mask "
+    "from the JSON responses.")
 DOCUMENTS_POLICY_UNREADABLE = (
     "PayFit: document not served. Your org's field-filter policy could "
     "not be read, and a document carrying NIR or IBAN does not go out without it. "
@@ -170,28 +161,28 @@ DOCUMENTS_POLICY_UNREADABLE = (
 OVERTIME_LINE_LOCKED = (
     "PayFit: the raw payslip line (`line`) is not served. It is document text, "
     "which a field filter cannot see, and your org's field-filter policy "
-    "masks PayFit fields. `kind`, `label`, `numbers` and "
-    "`rates` are still served, filtered by this policy. To get the raw "
-    "line, an org_admin of the org must lift the masks of the `payfit` connector "
-    "(policy with no rule at all).")
+    "has not opened PayFit documents. `kind`, `label`, "
+    "`numbers` and `rates` are still served, filtered by this policy. To get "
+    "the raw line, an org_admin of the org sets `documents: true` on the policy of "
+    "the `payfit` connector — this consent lifts no mask from the JSON responses.")
 
 
 def documents_open() -> bool:
-    """The document LOCK: true only if the caller's EFFECTIVE policy for
-    `payfit` masks NOTHING.
+    """The document LOCK: true only if the caller's active org has consented,
+    by name, to serving PayFit documents (`documents: true` in its `payfit`
+    policy).
 
-    The policy is read through the existing mechanism, `access.resolve_field_filter` —
-    the same cascade as the JSON output (the active org's policy, else the server
-    floor). Without an org policy, the floor applies: it masks NIR,
-    IBAN, BIC and `absence_type`, so the lock is closed. It only opens on an
-    EMPTY org policy (`rules: []`, authoritative).
+    Decision of 2026-10-06 (oto signal #1269), which replaces the one of 2026-09-18
+    where the lock only opened on a policy that masked NOTHING (`rules: []`):
+    opening the documents then lifted, in the same gesture, the NIR, the IBAN and the
+    absence reason from all JSON responses. The two needs are now separate — consent
+    to documents lifts no field, and a floor field is only lifted by naming it
+    (`field_filter_defaults.bloc_effectif`).
 
-    ⚠️ Why "masks nothing" and not "does not mask the NIR": a file cannot be
-    filtered at all. An org that set ANY rule on `payfit` has said
-    that a field must not go out; the PDF containing it would let it out anyway.
-    The only state in which a document respects the policy is the one where it
-    removes nothing."""
-    return access.resolve_field_filter(_NAME).is_empty
+    The policy is read through `access.resolve_org_field_policy`, the same source as
+    the JSON output. Without an org policy, or without `documents: true`, the lock
+    is closed."""
+    return bool((access.resolve_org_field_policy(_NAME) or {}).get("documents"))
 
 
 def documents_unlocked() -> bool:

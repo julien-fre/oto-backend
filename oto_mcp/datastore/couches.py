@@ -68,45 +68,22 @@ ALL_LAYER_KEYS = (VALUE_LAYER, *LAYER_KEYS)
 # c'est pourquoi elle est la seule à survivre à une réécriture.
 VALUE_BOUND_LAYERS = tuple(k for k in LAYER_KEYS if k != ORIGIN_LAYER)
 
-# --- Les deux mots qu'une écriture peut poser à la place d'un contenu (oto#140) ----
+# --- Le mot qu'une écriture peut poser à la place d'un contenu (oto#140) -----------
 #
-# Le contrat d'écriture d'une case, arrêté le 07/09/2026, dit qu'un sous-champ dit
-# TOUJOURS l'une de trois choses : un contenu (il remplace), `@keep` (je n'y touche
-# pas, sans avoir à le renvoyer), `@empty` (je le vide, délibérément).
+# Le contrat d'écriture d'une case tient en deux gestes : `null` efface, `@empty` dit
+# « cherché, rien » (la raison dans `comment`) ; omettre un sous-champ n'y touche pas.
 #
-# **Ce que `@keep` répare, et c'est le premier palier du contrat.** Aujourd'hui, écrire
-# une valeur fait TOMBER le commentaire et le lien qui l'accompagnaient — logique, ils
-# décrivaient l'ancienne valeur. Conséquence : un agent qui corrige une coquille doit
-# **retaper la provenance**. Or un agent qui retape une provenance ne la recopie pas,
-# il la reformule : à chaque passage, la source dérive un peu. Mesuré à l'échelle d'une
-# campagne, c'est une dégradation lente et invisible de ce qu'on pourra restituer.
-#
-# ⚠️ **Et la règle de chute, elle, ne change PAS** — je l'ai d'abord écrit autrement, et
-# c'était faux. Les couches liées tombent toujours avec la valeur, exactement comme
-# avant ; `@keep` ne les empêche pas de tomber, il les **repose** aussitôt avec ce qui
-# était là. Le résultat est le même, la mécanique non — et confondre les deux ferait
-# chercher demain une garde qui n'existe pas.
-#
-# Ce qui change vraiment tient en une phrase : **l'appelant peut désormais reposer
-# l'existant sans le connaître.** Avant, garder une provenance exigeait de la relire
-# puis de la renvoyer — donc de la retaper, donc de la reformuler.
-#
-# ⚠️ **Collision assumée** : une colonne dont la vraie valeur serait la chaîne `@keep`
-# ne peut plus l'écrire en couches. C'est le prix d'une sentinelle dans le même espace
-# que les données, et il a été pesé au contrat contre les alternatives — un paramètre
-# à côté de la charge (que le modèle règle au hasard), ou une clé de plus par couche
-# (qui double la forme). Le préfixe `@` a été choisi parce qu'aucune valeur mesurée en
-# production ne commence par lui.
-GARDE = "@keep"
+# ⚠️ **Collision assumée** : une colonne dont la vraie valeur serait la chaîne `@empty`
+# ne peut pas l'écrire. C'est le prix d'une sentinelle dans le même espace que les
+# données ; le préfixe `@` a été choisi parce qu'aucune valeur mesurée en production ne
+# commence par lui.
 VIDE_DELIBERE = "@empty"
-#: oto#204 : vider SANS assumer — la valeur part, le vide assumé éventuel avec elle.
-#: ⚠️ Déprécié avec `@keep` (oto#140, 23/09/2026) : `null` efface et reste, ces deux
-#: mots seront refusés à la date de `mots_deprecies.MOTS_DEPRECIES_REFUSES_LE`.
-EFFACEMENT = "@clear"
 
-#: Tout le vocabulaire, pour un test d'appartenance lisible. Ce que fait chacun vit dans
-#: UNE table, `columns._MOTS` — un mot de plus est une entrée là et son nom ici.
-SENTINELLES = (GARDE, VIDE_DELIBERE, EFFACEMENT)
+#: Les deux mots RETIRÉS (oto#140) : `@keep` doublait l'omission, `@clear` doublait
+#: `null`. Ils ne sont plus connus que pour être REFUSÉS à l'entrée de toute écriture
+#: (`mots_deprecies.controler`) — jamais résolus, jamais stockés.
+GARDE = "@keep"
+EFFACEMENT = "@clear"
 
 #: Le marqueur interne du vide ASSUMÉ (oto#204), rangé dans l'enveloppe de la cellule :
 #: `{"valeur": "", "oto.vide_assume": true}`. Il distingue « aucune source ne donne ce
@@ -123,26 +100,22 @@ SENTINELLES = (GARDE, VIDE_DELIBERE, EFFACEMENT)
 VIDE_ASSUME = "oto.vide_assume"
 CLES_INTERNES = (VIDE_ASSUME,)
 
-# ⚠️ **Ces deux mots se résolvent dans `columns._merge_column`, et NULLE PART ailleurs.**
-# Une surface d'écriture qui ne passerait pas par la fusion les stockerait tels quels —
-# et `@keep` finirait servi à une cliente comme sa propre donnée.
+# ⚠️ **`@empty` se résout dans `columns._merge_column`** (et à la création, par la même
+# fonction, `mots_resolus_a_la_creation`). Une surface d'écriture qui ne passerait pas
+# par la fusion le stockerait tel quel — et la chaîne finirait servie à une cliente
+# comme sa propre donnée. `@keep` et `@clear` sont refusés AVANT la fusion, sur tous
+# les chemins : `test_controler_garde_toutes_les_ecritures.py` en tient la preuve.
 #
-# Les deux chemins qu'un agent peut emprunter (le patch par `id` et le lot) fusionnent
-# tous deux, et la création résout les mots contre rien (`mots_resolus_a_la_creation`).
-# Le seul chemin qui REMPLAÇAIT une ligne sans fusionner (`upsert_row`, servi au seul
-# miroir du flux LinkedIn) est retiré depuis oto#156 : le trou cesserait d'être fermé au
-# premier chemin d'écriture qui contournerait la fusion.
-#
-# **La règle pour qui en ajoute un : résoudre, ou refuser en nommant le geste qui
-# marche. Jamais stocker.**
+# **La règle pour qui ajoute un chemin d'écriture : passer par `mots_deprecies.controler`
+# puis par la fusion, ou refuser en nommant le geste qui marche. Jamais stocker.**
 
 
-def est_sentinelle(v: Any) -> bool:
-    """Vrai si cette valeur est un des deux mots réservés — jamais un contenu.
+def est_vide_delibere(v: Any) -> bool:
+    """Vrai si cette valeur est le mot `@empty` — jamais un contenu.
 
-    Comparaison au TYPE près : `0`, `False`, `None` n'en sont pas, et une valeur
-    numérique ne peut pas se confondre avec une chaîne."""
-    return isinstance(v, str) and v in SENTINELLES
+    Comparaison au TYPE près et au mot ENTIER : `0`, `False`, `None` n'en sont pas, et
+    `contact@empty.fr` reste du texte."""
+    return isinstance(v, str) and v == VIDE_DELIBERE
 
 # La couche d'origine POSÉE PAR LE SYSTÈME (#586) : `{"key": "x", "origine": "system"}`
 # au schéma. Vocabulaire fermé à UNE valeur — une origine « posée par l'agent » n'est

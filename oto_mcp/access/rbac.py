@@ -321,33 +321,41 @@ def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict
     return out
 
 
+def resolve_org_field_policy(service: str) -> Optional[dict]:
+    """La politique de rédaction que l'**org active** de l'appelant a posée pour
+    `service`, telle que stockée (`rules`, `salt`, `unmask`, `documents`), ou None si
+    elle n'en a pas posé (ou sans appelant, ou sans org active). Ce n'est PAS ce qui
+    s'applique : la cascade est `field_filter_defaults.bloc_effectif`. Une erreur DB
+    LÈVE."""
+    sub = current_user_sub_from_token()
+    if not sub:
+        return None
+    active_org = scope.current_org(sub)
+    if active_org is None:
+        return None
+    return org_store.get_org_field_filters(active_org).get(service)
+
+
 def resolve_field_filter(service: str):
     """Builds the `FieldFilter` to apply to a connector's responses for
     the current sub, according to the redaction policy of its **active org**.
 
-    Cascade ("full org control" decision):
-      1. the active org has a policy for this service → it is **authoritative**
-         (may lift the baseline masking, or mask nothing);
-      2. otherwise → fall back to the **server default** (`field_filter_defaults`, explicit
-         PII floor, e.g. Silae IBAN);
-      3. otherwise → empty filter (no-op, no redaction).
+    Cascade (`field_filter_defaults.bloc_effectif`, the single source):
+      1. no org policy → the **server default** (explicit PII floor, e.g. PayFit
+         NIR/IBAN), otherwise an empty filter (no-op);
+      2. service without a floor → the org policy is **authoritative**;
+      3. service with a floor → the policy is **added to** the floor, which can only be
+         lifted by naming its fields (`unmask`) — decision of 2026-10-06, oto signal
+         #1269; a stored policy that lifted without naming (`rules: []` alone) no longer
+         lifts anything, and reading it logs that.
 
     Without an active org, we fall back to the server default. A DB error, however, RAISES:
     the caller (`redaction.redact_payload`) then withholds the output (#1045)."""
-    from oto.tools.common import FieldFilter
-
     from .. import field_filter_defaults
 
-    block: Optional[dict] = None
-    sub = current_user_sub_from_token()
-    if sub:
-        active_org = scope.current_org(sub)
-        if active_org is not None:
-            configured = org_store.get_org_field_filters(active_org)
-            if service in configured:
-                block = configured[service]
-    if block is None:
-        block = field_filter_defaults.SERVER_DEFAULTS.get(service)
-    if not block:
-        return FieldFilter()
-    return FieldFilter(rules=block.get("rules", []), salt=block.get("salt"))
+    block = resolve_org_field_policy(service)
+    if field_filter_defaults.leve_sans_nommer(service, block):
+        logger.warning("field filters: the org policy for %s lifts the floor without "
+                       "naming a field (`rules: []`) — it has lifted nothing since "
+                       "2026-10-06, the floor applies", service)
+    return field_filter_defaults.filtre(field_filter_defaults.bloc_effectif(service, block))

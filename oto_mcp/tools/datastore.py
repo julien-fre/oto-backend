@@ -20,7 +20,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, ownership
-from ..datastore import claimable, couches, identite, jetons, mots_deprecies, vide_remplace
+from ..datastore import claimable, couches, identite, jetons, mots_deprecies
 from ..datastore import recherche, upsert_implicite
 from ..datastore import colonnes_non_declarees
 from ..datastore import validation_complete
@@ -51,7 +51,6 @@ from ..datastore.core import (
 
 _MARQUE_COUCHES = "<<couches>>"
 _MARQUE_MOTS_DEPRECIES = "<<mots_deprecies>>"
-_MARQUE_VIDE_REMPLACE = "<<vide_remplace>>"
 _MARQUE_UPSERT_IMPLICITE = "<<upsert_implicite>>"
 _MARQUE_UPSERT = "<<upsert>>"
 _MARQUE_CLE_METIER = "<<cle_metier>>"
@@ -75,13 +74,11 @@ def _inserer(fn, phrases: dict):
 def _avec_la_phrase_des_couches(fn):
     """Inserts into the served description the layers sentence, held by
     `couches.DESCRIPTION_ECRITURE` — the same one the REST face serves (oto#91) —,
-    the dated announcement of deprecated words, DERIVED from the date that will refuse them, the one
-    on `""`/`[]` that will replace the value in place (oto#140 J2), and the one on
+    the refusal of the removed words (`@keep`, `@clear`, oto#140) and the one on
     merging on the business key, which is REQUESTED (`upsert`, oto#141)."""
     return _inserer(fn, {
         _MARQUE_COUCHES: couches.DESCRIPTION_ECRITURE,
         _MARQUE_MOTS_DEPRECIES: mots_deprecies.DESCRIPTION_ECRITURE,
-        _MARQUE_VIDE_REMPLACE: vide_remplace.DESCRIPTION_ECRITURE,
         _MARQUE_UPSERT_IMPLICITE: upsert_implicite.DESCRIPTION_ECRITURE,
         _MARQUE_UPSERT: upsert_implicite.description_parametre(),
         _MARQUE_COLONNES: (colonnes_non_declarees.DESCRIPTION_ECRITURE + " "
@@ -953,9 +950,9 @@ def register(mcp: FastMCP) -> None:
         ⚠️ **Provenance goes in `comment`, never in `origine`.** Put WHAT you
         established and WHERE it came from in `<field>.comment`, and the page in
         `<field>.link`. `origine` is the platform's layer — an agent never writes
-        it. Writing `<field>.origine` still PASSES today, but it is refused from
-        2026-10-01 on unless the call declares `origine_override=true` — which
-        belongs to an import, not to a write of your own.
+        it. Writing `<field>.origine` is REFUSED unless the call declares
+        `origine_override=true` — which belongs to an import, not to a write of
+        your own.
 
         <<couches>>
         What a write destroys, what `readonly` and the business key protect,
@@ -983,7 +980,9 @@ def register(mcp: FastMCP) -> None:
 
         <<mots_deprecies>>
 
-        <<vide_remplace>>
+        `""` and `[]` are values: they REPLACE the value in place, like any other
+        value, and the replaced value comes back in `valeurs_effacees`. To keep a
+        value, leave the field out; to erase it, write `null`.
 
         <<upsert_implicite>>
 
@@ -1121,7 +1120,7 @@ def register(mcp: FastMCP) -> None:
 
         `origine_override=true` belongs to an IMPORT, not to a write of your own:
         it declares that this call knowingly sets the `origine` layer — refused
-        without it from 2026-10-01 on. ⚠️ For a real import, prefer
+        without it. ⚠️ For a real import, prefer
         `donnees_d_origine=true`, which sets the first version (origin) in one gesture; the
         override only says "I know what I am doing on this layer".
 
@@ -1202,8 +1201,8 @@ def register(mcp: FastMCP) -> None:
                 writes, instead of being refused. Owner or governor of the table
                 only ; valid for this call alone ; journaled.
             origine_override: IMPORT path only — declares that this call sets the
-                `origine` layer knowingly (without it, such a write is refused from
-                2026-10-01 on). ⚠️ `origine: "system"` was removed on 2026-09-08:
+                `origine` layer knowingly (without it, such a write is refused).
+                ⚠️ `origine: "system"` was removed on 2026-09-08:
                 there is no longer a "formatted column". For a real import, prefer
                 `donnees_d_origine`. This call only.
             layers: shape of the ROW this write returns (`flat` default, `nested`) —

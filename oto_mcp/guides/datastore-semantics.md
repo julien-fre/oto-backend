@@ -140,8 +140,8 @@ de chaque écriture, 90 jours par défaut — et rien ne la remet en place pour 
 | `{"champ": Y}` ou `{"champ": {"valeur": Y}}` | valeur remplacée ; `origine` intacte ; `comment` et `link` **tombent** (ils décrivaient l'ancienne valeur) |
 | `{"champ": Y}` avec Y identique à la valeur en place | **no-op** : toutes les couches restent |
 | `{"champ": null}` | valeur effacée ; une `origine` pleine survit ; l'effacement revient dans `valeurs_effacees` (champ, ligne, valeur perdue) |
-| `{"champ": ""}` ou `{"champ": []}` sur une valeur en place | **à partir du 6 octobre 2026** : valeur **remplacée**, comme par n'importe quelle valeur ; la valeur remplacée revient dans `valeurs_effacees`. Avant cette date : ignoré (ci-dessous) |
-| `{"champ": {}}` sur une valeur en place (et, avant le 6 octobre 2026, `""` ou `[]`) | **ignoré** : la valeur reste, le relevé `valeurs_ignorees` le dit ; si c'était tout ce que l'écriture posait, l'appel est **refusé** en nommant `null` |
+| `{"champ": ""}` ou `{"champ": []}` sur une valeur en place | valeur **remplacée**, comme par n'importe quelle valeur ; la valeur remplacée revient dans `valeurs_effacees` |
+| `{"champ": {}}` sur une valeur en place | **ignoré** : la valeur reste, le relevé `valeurs_ignorees` le dit ; si c'était tout ce que l'écriture posait, l'appel est **refusé** en nommant `null` |
 | `{"champ": {"comment": C}}` | comment posé ; valeur et autres couches intactes |
 | `{"champ": {"valeur": Y_identique, "comment": C}}` | comment posé, rien ne tombe |
 | `{"champ": {"origine": null}}` | origine effacée ; la colonne redevient plate |
@@ -319,22 +319,17 @@ remise par la cliente, si elle a été posée à l'import, reste lisible dans
 `champ.origine` (`versions`, 4 ter). **Omettre le champ veut dire « pas à moi »** (la
 valeur est gardée), et une couche `comment` seule ne dit pas « cherché, rien ».
 
-⚠️ **`@keep` et `@clear` sont dépréciés, REFUSÉS à partir du 8 octobre 2026** : une
-écriture qui les porte, où que ce soit (valeur, couche, élément de liste, ligne d'un
-lot), est alors refusée ENTIÈRE, et le refus nomme les colonnes et le geste à faire.
-Avant cette date, elle réussit et la réponse porte un avertissement daté dans
-`notices`. À la place de `@clear`, écris `null`. À la place de `@keep`, omets le
-sous-champ — ou, pour un `comment` ou un `link` qui doit survivre à une valeur qui
-change, renvoie-le tel quel : écrire une valeur fait tomber le `comment` et le `link`
-qui l'accompagnaient.
+⚠️ **`@keep` et `@clear` ne sont pas acceptés** : une écriture qui les porte, où que ce
+soit (valeur, couche, élément de liste, ligne d'un lot), est refusée ENTIÈRE, et le
+refus nomme les colonnes et le geste à faire. À la place de `@clear`, écris `null`.
+À la place de `@keep`, omets le sous-champ — ou, pour un `comment` ou un `link` qui
+doit survivre à une valeur qui change, renvoie-le tel quel : écrire une valeur fait
+tomber le `comment` et le `link` qui l'accompagnaient.
 
-⚠️ **`""` et `[]` sont des valeurs : ils REMPLACENT la valeur en place à partir du
-6 octobre 2026**, et la valeur remplacée revient dans `valeurs_effacees`. Avant cette
-date, un `""` ou un `[]` sur une case qui porte une valeur est ignoré (et refusé comme
-écriture sans effet quand il est tout le geste), et la réponse porte un avertissement
-daté dans `notices`. Un `""` posé ne satisfait pas `required` et compte comme vide :
-pour dire « cherché, rien », c'est `@empty`. Pour garder une valeur, omets la colonne ;
-pour l'effacer, écris `null`. `{}` n'est pas une valeur et ne sera jamais stocké.
+⚠️ **`""` et `[]` sont des valeurs : ils REMPLACENT la valeur en place**, et la valeur
+remplacée revient dans `valeurs_effacees`. Un `""` posé ne satisfait pas `required` et
+compte comme vide : pour dire « cherché, rien », c'est `@empty`. Pour garder une
+valeur, omets la colonne ; pour l'effacer, écris `null`. `{}` n'est pas une valeur et n'est jamais stocké.
 
 `null` efface aussi une case au vide assumé (`@empty`), marqueur compris : c'est le
 geste qui remplace `@clear` pour la démarquer.
@@ -602,7 +597,7 @@ Ouvrir, écrire, refermer : `data_patch_schema(new_rows="create")`, l'écriture,
 Un **lot** (`data_write(rows=[…])`, `oto_upload_url`) n'est pas atomique : il s'arrête à
 la première ligne refusée, les précédentes restent écrites, le refus nomme la ligne et
 dit combien ont atterri. Deux refus font exception, jugés sur le lot ENTIER avant sa
-première ligne : un mot déprécié (`@keep`, `@clear`) et, sans `upsert`, une clé en
+première ligne : un mot refusé (`@keep`, `@clear`) et, sans `upsert`, une clé en
 doublon ou déjà portée par un ajout (ci-dessus). `key=` sur le lot désigne par une autre
 colonne que la clé déclarée s'il le faut ; sur une ligne seule, seule la clé déclarée
 joue.

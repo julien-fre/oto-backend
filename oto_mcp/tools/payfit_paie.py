@@ -49,7 +49,7 @@ def _overtime(c, collaborator_id: str, date: Optional[str]) -> dict:
     filters them by name, like any JSON output. `line`, on the other hand, is a
     VERBATIM excerpt of the payslip, which repeats amounts and rates under a name the policy does not
     link to `numbers` or `rates`: it follows the documents lock and only goes out
-    if the policy masks nothing (security scanner alert)."""
+    if the org opened the documents (`documents: true`, security scanner alert)."""
     if date is not None and not re.fullmatch(r"\d{4}(0[1-9]|1[0-2])", date):
         raise _bad(f"PayFit: `date` is written `YYYYMM` (January = 01), got \"{date}\".")
     brute = documents_unlocked()
