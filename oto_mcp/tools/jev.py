@@ -4,7 +4,8 @@ Wraps `oto.tools.jev.client.JevClient`. `jev_ask` = one state, whole rubric in o
 `jev_items` = many states, same rubric, nothing written; `jev_rows` = a table's rows,
 read, judged and written back on the server (helpers in `jev_rows.py`).
 
-⚠️ TENANT key only (see `providers/jev.py`); a closer key is refused, naming who removes it.
+⚠️ Shared key only (see `providers/jev.py`): the TENANT's key, or a shared key set at the
+PLATFORM level of the instance; a closer key is refused, naming who removes it.
 Billing: `quantity` = the real upstream cost in micro-dollars (like `serper`), not a call count.
 """
 from __future__ import annotations
@@ -27,10 +28,12 @@ from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 from . import jev_rows as jr
 
-#: The only cascade rung this tool serves. A closer rung wins the cascade first and is refused.
-RANGS_SERVIS = ("tenant",)
+#: The cascade rungs this tool serves: the shared keys. A closer rung wins the cascade
+#: first and is refused. PLATFORM: a shared key set at the instance's platform level
+#: (granted to orgs, never a free tier); the primary tenant of an instance has no other.
+RANGS_SERVIS = (credentials_store.TENANT, credentials_store.PLATFORM)
 
-#: Who can remove a key that shadows the tenant's, per rung.
+#: Who can remove a key that shadows the shared one, per rung.
 QUI_RETIRE = {"org": "an org admin",
               "group": "a team admin",
               "user": "its owner, on their account page"}
@@ -59,11 +62,12 @@ def _bad(msg: str) -> McpError:
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"OpenRouter rejected the key (HTTP {status}): the tenant's Jev key is "
-                "invalid or revoked. A tenant admin must set it again.")
+        return (f"OpenRouter rejected the key (HTTP {status}): the shared Jev key is "
+                "invalid or revoked. Whoever set it (tenant admin, or instance admin for a "
+                "platform key) must set it again.")
     if status == 402:
-        return ("OpenRouter credits exhausted (402): a tenant admin must top up the "
-                "tenant's key.")
+        return ("OpenRouter credits exhausted (402): whoever set the shared Jev key "
+                "(tenant admin, or instance admin for a platform key) must top it up.")
     if status == 429:
         return "Jev: too many requests (429). Retry shortly."
     if status == 400:
@@ -86,12 +90,13 @@ def _verify(fields: dict, config: dict | None = None,  # noqa: ARG001
             instance: tuple | None = None) -> None:
     """"Test connection" probe: the smallest possible call (one word, one yes/no).
 
-    ⚠️ A key on any rung but TENANT fails here without a call: it would be refused at use.
-    Without `instance` (check before saving), only the key is tested."""
-    if instance is not None and instance[0] != credentials_store.TENANT:
+    ⚠️ A key on any rung but a shared one (TENANT, PLATFORM) fails here without a call:
+    it would be refused at use. Without `instance` (check before saving), only the key
+    is tested."""
+    if instance is not None and instance[0] not in RANGS_SERVIS:
         raise ValueError(
             f"a `jev` key set at the '{instance[0]}' level is not used: Jev only runs "
-            "on the TENANT key, which this one would shadow.")
+            "on the TENANT's key or a PLATFORM key, which this one would shadow.")
     from oto.tools.jev.client import JevClient
     JevClient(api_key=fields["key"]).decide(
         {"word": "test"},
@@ -107,7 +112,7 @@ def register(mcp: FastMCP) -> None:
     connector_verify.register("jev", _verify)
 
     def _client(units: int = 1) -> JevClient:
-        """Client on the tenant key; `units` = answers in this call (quota pre-check).
+        """Client on the shared key; `units` = answers in this call (quota pre-check).
 
         ⚠️ The winning rung is CHECKED: an org/user key would bill someone who didn't
         opt in, invisibly to the tenant. The generic "set your own key" refusal is
@@ -117,16 +122,16 @@ def register(mcp: FastMCP) -> None:
         except CredentialUnavailable as e:
             raise CredentialUnavailable(ErrorData(
                 code=INVALID_PARAMS,
-                message=("No `jev` key for your org: Jev runs on the key your TENANT "
-                         "sets (a tenant admin sets it once for all its orgs). There is "
-                         "no platform key, and org, team or personal keys are not "
-                         "used."))) from e
+                message=("No `jev` key for your org: Jev runs on a shared key, either "
+                         "your TENANT's (a tenant admin sets it once for all its orgs) "
+                         "or one set at the instance's platform level and granted to "
+                         "your org. Org, team or personal keys are not used."))) from e
         if rc.mode not in RANGS_SERVIS:
             qui = QUI_RETIRE.get(rc.mode, "whoever set it")
             raise _bad(
-                f"A `jev` key set at the '{rc.mode}' level shadows the TENANT key: "
-                "Jev only runs on the tenant key, so this one is not used. "
-                f"To use the tenant key, {qui} must remove it (Jev connector card).")
+                f"A `jev` key set at the '{rc.mode}' level shadows the shared key: "
+                "Jev only runs on the TENANT's key or a PLATFORM key, so this one is not used. "
+                f"To use the shared key, {qui} must remove it (Jev connector card).")
         return JevClient(api_key=rc.key)
 
     def _etat_borne(state, ou: str) -> None:

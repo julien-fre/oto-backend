@@ -1,10 +1,10 @@
-## prerequisite — an OpenRouter API key, set by the tenant
+## prerequisite — a shared OpenRouter API key: the tenant's, or the instance's platform key
 
-jev is a **TypeSafe** model served by **OpenRouter**: the key is an [OpenRouter API key](https://openrouter.ai/settings/keys) (starts with `sk-or-`), not a TypeSafe key — there is none. **The tenant** sets it once for all its organizations. oto provides no platform jev key.
+jev is a **TypeSafe** model served by **OpenRouter**: the key is an [OpenRouter API key](https://openrouter.ai/settings/keys) (starts with `sk-or-`), not a TypeSafe key — there is none. It is a **shared** key: either **the tenant's**, set once for all its organizations, or a key set at the **platform level of the instance** and granted to the organizations it serves.
 - use a dedicated key with its own spend cap: the same key elsewhere opens OpenRouter's whole model catalog
-- a key set on an organization, team or person is **not** used and shadows the tenant's: the tool refuses it and names who must remove it
+- a key set on an organization, team or person is **not** used and shadows the shared one: the tool refuses it and names who must remove it
 - no key, no call — there is no free tier
-- the state goes to a **third party** (OpenRouter, then TypeSafe), as a subprocessor of the tenant that set the key
+- the state goes to a **third party** (OpenRouter, then TypeSafe), as a subprocessor of whoever set the key (the tenant, or the instance for a platform key)
 
 ## usage — triage a batch with one rubric
 

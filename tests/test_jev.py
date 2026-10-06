@@ -1,7 +1,7 @@
 """Jev connector (TypeSafe via OpenRouter).
 
-Locks: registry entry (no personal/platform key, no free tier), the tenant-key-only rule
-(closer keys refused, naming who removes them), billing in real micro-dollars, the two
+Locks: registry entry (no personal key, no free tier), the shared-key-only rule (tenant
+or instance platform key; closer keys refused, naming who removes them), billing in real micro-dollars, the two
 MCP tools, the verify probe, and batch behaviour (order, per-item errors, stop on key or
 balance problems without losing billing, send window, state size cap).
 """
@@ -71,9 +71,10 @@ def _fn(m, name):
 def test_registry_no_personal_key_no_free_tier():
     c = providers.REGISTRY["jev"]
     assert c.kind == "tools" and c.keyed and c.secret_kind == "api_key"
-    # No `byo_user` (not a personal key), no `platform` (the tenant brings the key).
-    assert c.auth_modes == frozenset({"byo_org"})
-    # No free tier: without a key the refusal is explicit.
+    # No `byo_user` (not a personal key). `platform`: the primary tenant of an instance
+    # has no tenant key, its shared key is a platform instance.
+    assert c.auth_modes == frozenset({"byo_org", "platform"})
+    # No free tier: the platform key serves only the orgs it is granted to.
     assert c.platform_key_open is False
     assert c.cardinality == "mono"
     assert "jev" in providers.KEY_PROVIDERS
@@ -105,22 +106,22 @@ def test_verify_probe_registered(monte):
 
 
 def test_probe_fails_for_a_key_that_would_be_refused(monte):
-    """A non-tenant key fails the probe WITHOUT a call (a green card would lie)."""
+    """A key that is not shared fails the probe WITHOUT a call (a green card would lie)."""
     with patch("oto.tools.jev.client.JevClient") as cls:
         with pytest.raises(ValueError, match="TENANT"):
             jev._verify({"key": "sk-or-x"}, {}, instance=("org", "7", ""))
         assert cls.call_count == 0
         jev._verify({"key": "sk-or-x"}, {}, instance=("tenant", "pilote", ""))
+        jev._verify({"key": "sk-or-x"}, {}, instance=("platform", "Main", ""))
         jev._verify({"key": "sk-or-x"}, {})  # before saving: key only
-        assert cls.return_value.decide.call_count == 2
+        assert cls.return_value.decide.call_count == 3
 
 
-# --- the rule: tenant key only ---------------------------------------------
+# --- the rule: shared key only (tenant or instance platform key) ------------
 
 @pytest.mark.parametrize("mode, who", [("org", "an org admin"),
                                        ("user", "its owner"),
-                                       ("group", "a team admin"),
-                                       ("platform", "whoever set it")])
+                                       ("group", "a team admin")])
 def test_a_key_shadowing_the_tenant_key_is_refused_naming_who_removes_it(
         monte, monkeypatch, mode, who):
     m, client, _, _ = monte
@@ -138,6 +139,18 @@ def test_tenant_rung_passes(monte):
     r = _fn(m, "jev_ask")({"a": "b"}, {"q": NOUL})
     assert r["answers"]["q"]["noul"] == 0.9
     assert r["model"] == "typesafe/jev-1.13-20260917"
+
+
+def test_platform_rung_passes_without_a_tenant_key(monte, monkeypatch):
+    """The primary tenant of an instance never carries a tenant key: its shared Jev key
+    is a PLATFORM instance, and the cascade lands there. Served, on that key."""
+    m, client, _, _ = monte
+    monkeypatch.setattr("oto_mcp.access.resolve_credential",
+                        lambda provider, want="auto", **kw: _Rung(mode="platform",
+                                                                  key="sk-or-instance"))
+    r = _fn(m, "jev_ask")({"a": "b"}, {"q": NOUL})
+    assert r["answers"]["q"]["noul"] == 0.9
+    assert client.decide.call_count == 1
 
 
 def test_no_key_refusal_names_the_only_path(monte, monkeypatch):
