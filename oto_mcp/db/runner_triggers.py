@@ -282,7 +282,8 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
     return dict(row) if row else None
 
 
-def trigger_par_secret(trigger_id: int, secret_hash: str) -> Optional[dict]:
+def trigger_par_secret(trigger_id: int, secret_hash: str,
+                       hook_auth: str = "bearer") -> Optional[dict]:
     """Le déclencheur webhook d'un id ET d'un secret — les deux, ou rien.
 
     ⚠️ La comparaison du haché est faite EN SQL, dans le même `WHERE` que l'id :
@@ -294,6 +295,9 @@ def trigger_par_secret(trigger_id: int, secret_hash: str) -> Optional[dict]:
     que la route réponde 409 (« il existe, il est en pause ») plutôt que 404. La
     pause est une information que son propriétaire a le droit de recevoir — c'est
     lui qui a donné le secret à la source.
+
+    `hook_auth` : le préréglage dont ce porteur est la preuve — `bearer` (en-tête)
+    ou un préréglage `body_secret` (le même `otoh_`, renvoyé dans le corps).
     """
     with _connect() as conn:
         row = conn.execute(
@@ -302,8 +306,10 @@ def trigger_par_secret(trigger_id: int, secret_hash: str) -> Optional[dict]:
             # ⚠️ Un agent passé en mode SIGNATURE n'ouvre plus au porteur, même
             # avec le bon : c'est ce que « désactiver le porteur » veut dire. La
             # garde est dans le WHERE, comme le haché — même refus, même durée.
-            f"AND hook_auth = 'bearer'",
-            (trigger_id, secret_hash),
+            # Et un porteur montré par l'en-tête n'ouvre pas un agent qui l'attend
+            # dans le corps (ni l'inverse) : chacun sa porte.
+            f"AND hook_auth = %s",
+            (trigger_id, secret_hash, hook_auth),
         ).fetchone()
     return dict(row) if row else None
 
@@ -325,6 +331,25 @@ def trigger_signe(trigger_id: int) -> Optional[dict]:
         row = conn.execute(
             f"SELECT {_COLS}, hook_signing_secret_enc FROM runner_triggers "
             f"WHERE id = %s AND kind = 'webhook' AND hook_auth = 'standard_webhooks'",
+            (trigger_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def trigger_sans_preuve(trigger_id: int) -> Optional[dict]:
+    """Le webhook d'un id qui a CHOISI de n'exiger aucune preuve (`hook_auth =
+    'none'`), et seulement s'il a une adresse PRIVÉE.
+
+    ⚠️ `hook_slug IS NOT NULL` est dans le `WHERE` : sans preuve, l'adresse
+    (128 bits) est le seul secret, et un id numérique se parcourt. La route ne
+    nous appelle que par l'adresse privée ; la garde SQL tient même si un
+    appelant futur l'oubliait.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            f"SELECT {_COLS} FROM runner_triggers "
+            f"WHERE id = %s AND kind = 'webhook' AND hook_auth = 'none' "
+            f"AND hook_slug IS NOT NULL",
             (trigger_id,),
         ).fetchone()
     return dict(row) if row else None

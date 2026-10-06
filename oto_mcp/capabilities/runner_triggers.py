@@ -845,9 +845,10 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             # genre » pour un appelant qui n'a pas à le savoir.
             raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
         _exiger_la_porte(ctx, t)
-        if (t.get("hook_auth") or runner_hook.BEARER) != runner_hook.BEARER:
-            # Un porteur neuf sur un agent en mode signature serait refusé à la
-            # porte : le fabriquer ferait croire à une rotation qui n'ouvre rien.
+        if not runner_hook.prereglage(t.get("hook_auth")).porte_le_porteur:
+            # Un porteur neuf sur un agent en mode signature (ou sans preuve)
+            # serait refusé à la porte : le fabriquer ferait croire à une rotation
+            # qui n'ouvre rien.
             raise AuthzDenied(
                 400, "signature_mode",
                 "cet agent authentifie par SIGNATURE : il n'a pas de porteur. Le "
@@ -1035,6 +1036,15 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                 # `max_per_day=0` RETIRE le plafond : stocké NULL, pas 0 — un 0
                 # stocké se lirait « aucune livraison acceptée ».
                 champs[col] = (v or None) if c == "max_per_day" else v
+        if (champs.get("max_per_day", 1) is None
+                and runner_hook.prereglage(_actuel().get("hook_auth")).schema
+                == runner_hook.NONE):
+            # Retirer le plafond d'un agent SANS preuve rouvrirait une dépense sans
+            # fond à quiconque voit l'adresse.
+            raise AuthzDenied(
+                400, "daily_cap_required",
+                "cet agent n'exige aucune preuve (`none`) : son plafond `max_per_day` "
+                "ne se retire pas. Change d'abord sa méthode d'authentification.")
     if inp.cron is not None or inp.tz is not None:
         if not _actuel():
             raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
@@ -1257,14 +1267,21 @@ def _partager(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
 
 class HookAuthInput(BaseModel):
     trigger_id: int
-    hook_auth: Literal["bearer", "standard_webhooks"] = Field(description=(
+    hook_auth: Literal["bearer", "standard_webhooks", "lemlist", "none"] = Field(
+        description=(
         "How the sender proves who it is. `bearer`: the sender posts "
         "`Authorization: Bearer otoh_…`, a secret the platform generates. "
         "`standard_webhooks`: the sender SIGNS each delivery with its OWN secret "
         "(`whsec_…` — Granola, Svix, Resend, Clerk…) in the headers `webhook-id`, "
         "`webhook-timestamp`, `webhook-signature`; the bearer is then REFUSED for "
         "this agent, and a retry of an already-accepted `webhook-id` does not "
-        "start a second run."))
+        "start a second run. `lemlist`: Lemlist cannot set a header; give it the "
+        "agent's `otoh_…` token as the hook's `secret` — it comes back in every "
+        "body, is checked, and is REMOVED before the agent sees the body; a retry "
+        "of the same activity `_id` does not start a second run. `none`: NO proof "
+        "at all — anyone who has the agent's private address can start it. Needs a "
+        "private address and a `max_per_day` cap; the agent is told its input is "
+        "unauthenticated."))
     signing_secret: Optional[str] = Field(default=None, description=(
         "`standard_webhooks` only: the signing secret the SENDER generated "
         "(starts with `whsec_`). Required when switching to `standard_webhooks`; "
@@ -1314,6 +1331,21 @@ def _valide_l_authentification(inp: HookAuthInput, actuel: Optional[dict]) -> No
             "le secret de signature doit être celui que la SOURCE a généré : "
             "`whsec_` suivi de base64. Un jeton `otoh_` ou une clé d'API n'en sont "
             "pas.")
+    if inp.hook_auth == runner_hook.NONE:
+        # ⚠️ SANS preuve, l'adresse est le seul secret : un id numérique se
+        # parcourt, il n'en est pas un.
+        if not actuel.get("hook_slug"):
+            raise AuthzDenied(
+                400, "private_address_required",
+                "`none` n'est permis qu'avec une adresse PRIVÉE (`h_…`) : sans "
+                "preuve, l'adresse est le seul secret. Passe d'abord l'agent en "
+                "`private_address=true`.")
+        # Quiconque voit l'adresse déclenche : la dépense doit avoir un fond.
+        if not actuel.get("max_per_day"):
+            raise AuthzDenied(
+                400, "daily_cap_required",
+                "`none` exige un plafond `max_per_day` : quiconque voit l'adresse "
+                "peut déclencher l'agent. Pose-le d'abord (op=update).")
     if secret is not None and inp.hook_auth != runner_hook.STANDARD_WEBHOOKS:
         raise AuthzDenied(
             400, "not_signature_mode",
@@ -1349,6 +1381,7 @@ def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
     _exiger_la_porte(ctx, actuel)
     mode_avant = actuel.get("hook_auth") or runner_hook.BEARER
     porteur = None
+    vise = runner_hook.prereglage(inp.hook_auth)
     if inp.hook_auth == runner_hook.STANDARD_WEBHOOKS:
         enveloppe = (runner_hook.chiffrer_secret_de_signature(
                          inp.trigger_id, inp.signing_secret)
@@ -1360,14 +1393,26 @@ def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
         logger.warning("webhook %s (org %s) : authentification par SIGNATURE posée "
                        "par %s%s", inp.trigger_id, ctx.org_id, ctx.sub,
                        " (secret posé)" if enveloppe else "")
+    elif mode_avant != inp.hook_auth and not vise.porte_le_porteur:
+        # SANS preuve : ni porteur ni secret de signature ne doivent survivre —
+        # un credential dormant se réveillerait au prochain changement de mode.
+        db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, inp.hook_auth,
+                              effacer_le_secret=True)
+        db.poser_secret_de_hook(inp.trigger_id, ctx.org_id, None)
+        logger.warning("webhook %s (org %s) : passé SANS PREUVE (`none`) par %s — "
+                       "porteur et secret de signature effacés", inp.trigger_id,
+                       ctx.org_id, ctx.sub)
     elif mode_avant != inp.hook_auth:
+        # Vers un préréglage qui s'ouvre avec NOTRE porteur (en-tête ou corps) : un
+        # porteur NEUF à chaque changement — l'ancien n'a été montré qu'une fois,
+        # et la source devra de toute façon recevoir celui-ci.
         db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, inp.hook_auth,
                               effacer_le_secret=True)
         porteur, hache = runner_hook.nouveau_secret()
         db.poser_secret_de_hook(inp.trigger_id, ctx.org_id, hache)
-        logger.warning("webhook %s (org %s) : retour au PORTEUR par %s — secret de "
+        logger.warning("webhook %s (org %s) : passé en `%s` par %s — secret de "
                        "signature effacé, porteur neuf émis", inp.trigger_id,
-                       ctx.org_id, ctx.sub)
+                       ctx.org_id, inp.hook_auth, ctx.sub)
     t = db.get_trigger(inp.trigger_id, ctx.org_id) or actuel
     return _avec_mon_acces(ctx, {"trigger": _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)),
                                  "hook_secret": porteur})
@@ -1456,6 +1501,9 @@ CAPABILITIES += [
             DeclaredError(400, "numeric_address_retired",
                           "`private_address=false` — l'adresse numérique d'un webhook "
                           "ne se choisit plus ; `rotate_address` pour en changer"),
+            DeclaredError(400, "daily_cap_required",
+                          "`max_per_day=0` sur un webhook SANS preuve (`none`) : son "
+                          "plafond ne se retire pas"),
             DeclaredError(404, "trigger_not_found",
                           "automatisation inconnue dans l'org du porteur"),
             DeclaredError(403, "org_admin_required",
@@ -1572,6 +1620,10 @@ CAPABILITIES += [
                           "`signing_secret` avec `hook_auth=bearer` — il serait inerte"),
             DeclaredError(400, "missing_signing_secret",
                           "`standard_webhooks` sans secret, ni fourni ni déjà posé"),
+            DeclaredError(400, "private_address_required",
+                          "`none` sans adresse privée : l'id numérique se parcourt"),
+            DeclaredError(400, "daily_cap_required",
+                          "`none` sans plafond `max_per_day`"),
             DeclaredError(503, "encryption_unavailable",
                           "le serveur ne peut pas chiffrer le secret"),
             DeclaredError(404, "trigger_not_found",
@@ -1586,9 +1638,12 @@ CAPABILITIES += [
             "`Authorization: Bearer otoh_…`, generated by the platform. "
             "`standard_webhooks`: the sender signs with its own `whsec_…` secret "
             "(Granola, Svix, Resend, Clerk…); the bearer is then refused and "
-            "retries of an accepted `webhook-id` are deduplicated. Switching back "
-            "to `bearer` erases the signing secret and returns a fresh "
-            "`hook_secret`, once. REST only: a raw secret never goes through a "
+            "retries of an accepted `webhook-id` are deduplicated. `lemlist`: the "
+            "`otoh_…` token travels as the `secret` field of the body (Lemlist "
+            "cannot set headers) and is stripped before the agent sees it. `none`: "
+            "no proof, opt-in, only with a private address and a `max_per_day` "
+            "cap. Switching to `bearer` or `lemlist` erases the signing secret and "
+            "returns a fresh `hook_secret`, once. REST only: a raw secret never goes through a "
             "tool call. Only the agent's owner or an org admin may change it: the "
             "agent runs as its owner."),
     ),

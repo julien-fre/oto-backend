@@ -133,6 +133,9 @@ def test_l_adresse_privee_n_est_PAS_un_credential(porte, monkeypatch):
     """La bonne adresse sans la preuve n'ouvre rien."""
     porte["trigger"]["hook_slug"] = "h_abc"
     monkeypatch.setattr(runner_hook.db, "trigger_par_secret", lambda i, h: None)
+    # Un agent au porteur n'a pas choisi `none` : la recherche sans preuve ne le
+    # trouve pas (garde SQL `hook_auth = 'none'`).
+    monkeypatch.setattr(runner_hook.db, "trigger_sans_preuve", lambda i: None)
     with pytest.raises(runner_hook.HookRefus) as e:
         runner_hook.declencher(5, "otoh_faux", {}, "src", par_adresse_privee=True)
     assert e.value.statut == 404
