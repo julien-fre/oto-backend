@@ -223,4 +223,4 @@ def test_la_sonde_theirstack_lit_api_credits_comme_l_ALLOCATION(monkeypatch):
 
     with pytest.raises(connector_verify.QuotaEpuise) as exc:
         _sonde(monkeypatch, {"api_credits": 1700, "used_api_credits": 1700})
-    assert "1700 utilisés sur 1700" in str(exc.value)
+    assert "1700 used out of 1700" in str(exc.value)
