@@ -378,23 +378,73 @@ def _alerte_activee() -> bool:
     return os.environ.get(_ENV_ALERTE, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _cles_ko_par_org() -> dict[int, list[dict]]:
+    """Les clés rouges à annoncer, par org, **gardées seulement si un agent programmé
+    actif en dépend** : une clé morte que rien ne fait tourner n'a pas d'urgence hors
+    bande, sa carte rouge suffit. Chaque ligne porte les libellés de ces agents.
+
+    Clôt d'abord les épisodes des clés redevenues vertes : leur prochaine chute sera
+    annoncée de nouveau."""
+    from .db import alertes_credential as db_alertes
+    from .db import runner_triggers
+
+    db_alertes.clore_episodes_gueris()
+    par_org: dict[int, list[dict]] = {}
+    for l in db_alertes.cles_ko_a_annoncer():
+        if l.get("org_id") is None:
+            continue
+        agents = runner_triggers.triggers_actifs_utilisant(int(l["org_id"]), l["connector"])
+        if not agents:
+            continue
+        par_org.setdefault(int(l["org_id"]), []).append(
+            {**dict(l), "agents": [a.get("label") or a.get("procedure") for a in agents]})
+    return par_org
+
+
+def _paragraphe_cles_ko(cles: list[dict], esc) -> str:
+    """Le paragraphe des clés refusées ou à sec, pour un humain qui ne connaît pas le
+    vocabulaire de la plateforme : quelle clé, ce que dit le fournisseur, combien
+    d'agents butent dessus, et les deux gestes possibles."""
+    from .credentials_store import NO_QUOTA_VERDICT
+
+    items = []
+    for c in cles:
+        a_sec = c.get("verdict") == NO_QUOTA_VERDICT
+        etat = "n'a plus de crédits" if a_sec else "est refusée par le fournisseur"
+        raison = f" ({esc(c['raison'])})" if c.get("raison") else ""
+        items.append(f"<li>La clé {esc(c['connector'])} {etat}{raison} : "
+                     f"{len(c['agents'])} agent(s) programmé(s) actif(s) l'utilisent.</li>")
+    return ("<ul>" + "".join(items) + "</ul>"
+            "<p>Ces agents partent à l'heure et échouent en vol : rechargez ou reposez "
+            "la clé, ou coupez-les.</p>")
+
+
 def alertes_credential(*, dry_run: bool = False) -> dict:
-    """Prévient le titulaire d'une org qu'une clé est partie sous ses agents programmés.
+    """Prévient le titulaire d'une org qu'une clé est partie, refusée ou à sec sous ses
+    agents programmés.
 
     Le 03/09/2026, une clé a disparu et **une douzaine de passages programmés ont tourné
     à l'aveugle pendant 36 heures**. Le canal qui aurait annoncé la panne tournait sur le
     credential tombé : six fois par jour, un run découvrait qu'il était cassé, l'inscrivait
     sur une ligne que personne ne regardait, et se taisait — correctement, selon ses
-    propres règles. La panne était silencieuse **par construction** (oto#59).
+    propres règles. La panne était silencieuse **par construction** (oto#59). Une clé
+    REFUSÉE par le fournisseur ou un compte À SEC font la même panne, plus souvent :
+    33 passages d'une même org sur une clé morte, sans personne de prévenu (signaux oto
+    #1168, #1189). Ils passent par ce même travail.
+
+    **Une alerte par clé et par épisode** : une clé rouge est annoncée au premier passage
+    qui la voit rouge alors qu'un agent programmé actif en dépend, puis plus jamais tant
+    qu'elle reste rouge. Redevenue verte, sa prochaine chute est un épisode neuf
+    (`db.alertes_credential.clore_episodes_gueris`).
 
     ⚠️ **Le courriel part par le courrier de PLATEFORME**, jamais par un connecteur de
     l'org. C'est la seule propriété qui distingue cette alerte du registre qu'elle
     remplace : le canal qui prévient ne doit pas pouvoir mourir avec ce dont il annonce
     la mort.
 
-    ⚠️ **UN courriel par org**, pas un par ligne : trois clés retirées le même jour font
-    un message. Un destinataire qui en reçoit trois pour un incident apprend à les
-    ignorer.
+    ⚠️ **UN courriel par org**, pas un par ligne : trois clés retirées ou refusées le
+    même jour font un message. Un destinataire qui en reçoit trois pour un incident
+    apprend à les ignorer.
 
     ⚠️ **Rien ne part tant que `OTO_ALERTE_CREDENTIAL` n'est pas posé**, et le travail
     le DIT dans son retour plutôt que de rendre un zéro qui se lirait « rien à
@@ -413,11 +463,12 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
     from .db import users as db_users
     from . import org_store
 
-    groupes = db_alertes.a_notifier()
+    retraits = {int(g["org_id"]): g for g in db_alertes.a_notifier()}
+    cles_ko = _cles_ko_par_org()
     actif = _alerte_activee()
     envoyes, marques, sans_destinataire = 0, 0, 0
-    for g in groupes:
-        org_id = int(g["org_id"])
+    for org_id in sorted(set(retraits) | set(cles_ko)):
+        g, ko = retraits.get(org_id), cles_ko.get(org_id, [])
         admins = [m["sub"] for m in org_store.list_org_members(org_id)
                   if m.get("org_role") == "org_admin"]
         adresses = [e for e in db_users.emails_by_subs(admins).values() if e]
@@ -429,23 +480,32 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
             continue
         if not actif or dry_run:
             continue
-        connecteurs = ", ".join(g["connectors"] or [])
         # Écrit pour un humain qui ne connaît pas le vocabulaire de la plateforme :
         # ce qui est arrivé, ce que ça casse, et les deux gestes possibles.
-        corps = (
-            f"<p>Une clé de connecteur a été retirée de votre organisation "
-            f"({_email._esc(connecteurs)}), alors que "
-            f"{int(g['agents_max'] or 0)} agent(s) programmé(s) actif(s) "
-            "l'utilisaient.</p>"
-            "<p>Ils continueront de partir à l'heure et échoueront en vol, sans que "
-            "personne d'autre en soit averti : coupez-les, ou reposez une clé.</p>"
-            "<p>Oto, pour Alexis</p>")
-        if _email._send(to=adresses[0],
-                        subject="Une clé retirée sous vos agents programmés",
-                        html=corps):
+        corps = ""
+        if g:
+            connecteurs = ", ".join(g["connectors"] or [])
+            corps += (
+                f"<p>Une clé de connecteur a été retirée de votre organisation "
+                f"({_email._esc(connecteurs)}), alors que "
+                f"{int(g['agents_max'] or 0)} agent(s) programmé(s) actif(s) "
+                "l'utilisaient.</p>"
+                "<p>Ils continueront de partir à l'heure et échoueront en vol, sans que "
+                "personne d'autre en soit averti : coupez-les, ou reposez une clé.</p>")
+        if ko:
+            corps += _paragraphe_cles_ko(ko, _email._esc)
+        corps += "<p>Oto, pour Alexis</p>"
+        sujet = ("Une clé retirée sous vos agents programmés" if g and not ko else
+                 "Une clé en panne sous vos agents programmés")
+        if _email._send(to=adresses[0], subject=sujet, html=corps):
             envoyes += 1
-            marques += db_alertes.marquer_notifie(list(g["ids"] or []))
-    return {"orgs_a_prevenir": len(groupes), "envoyes": envoyes, "marques": marques,
+            if g:
+                marques += db_alertes.marquer_notifie(list(g["ids"] or []))
+            if ko:
+                marques += db_alertes.marquer_cles_annoncees(ko)
+    return {"orgs_a_prevenir": len(set(retraits) | set(cles_ko)),
+            "cles_en_panne": sum(len(v) for v in cles_ko.values()),
+            "envoyes": envoyes, "marques": marques,
             "sans_destinataire": sans_destinataire,
             "actif": actif,
             "note": (None if actif else

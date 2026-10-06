@@ -85,3 +85,90 @@ def marquer_notifie(ids: list) -> int:
             "UPDATE credential_disparitions SET notifie_at = NOW() "
             "WHERE id = ANY(%s) AND notifie_at IS NULL",
             ([int(i) for i in ids],)).rowcount or 0
+
+
+# --- Clés REJETÉES ou À SEC sous des agents programmés (signaux oto #1168, #1189…) ----
+#
+# Une clé retirée n'est pas la seule à faire tourner des agents à l'aveugle : une clé
+# que le fournisseur REFUSE (401/403) ou un compte À SEC (402) le font tout autant, et
+# bien plus souvent. 33 passages programmés d'une même org ont buté sur une clé morte
+# sans que personne soit prévenu. La marque existe déjà (`meta.health_ko` +
+# `health_verdict`, posée par `connectors/health.py` au moment de l'appel) : on la LIT,
+# on n'invente pas un second suivi.
+#
+# L'ÉPISODE est tenu ici, au passage quotidien, et pas au moment de la marque :
+# `health_vu_ko_at` = le passage qui a vu la clé rouge en premier, `health_alerte_at` =
+# celui qui l'a annoncée. Une clé redevenue verte les perd au passage suivant
+# (`clore_episodes_gueris`) : sa prochaine chute est un épisode neuf, donc une alerte
+# neuve. Cent refus de suite entre deux passages restent UN épisode.
+
+#: Les paliers dont la marque est lisible ici : ceux que `connectors/health.py` accepte
+#: de peindre en rouge (jamais tenant ni plateforme, partagés au-delà d'une org), et
+#: dont on sait remonter à UNE org. Le palier `user` (legacy, sans org) n'y est pas.
+_PALIERS_ORG = ("org", "member", "group")
+
+_ORG_DE_LA_LIGNE = """
+    CASE c.entity_type
+      WHEN 'org' THEN CASE WHEN c.entity_id ~ '^[0-9]+$' THEN c.entity_id::bigint END
+      WHEN 'member' THEN CASE WHEN split_part(c.entity_id, ':', 1) ~ '^[0-9]+$'
+                              THEN split_part(c.entity_id, ':', 1)::bigint END
+      WHEN 'group' THEN g.org_id
+    END"""
+
+
+def cles_ko_a_annoncer() -> list[dict[str, Any]]:
+    """Les clés rouges dont l'épisode n'a pas encore été annoncé, avec leur org.
+
+    Pose au passage `health_vu_ko_at` sur celles qu'on voit rouges pour la première
+    fois : c'est le début de l'épisode tel que ce travail l'observe. Une ligne dont on
+    ne sait pas remonter à une org n'est pas rendue (rien à qui l'annoncer)."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE connector_credentials SET meta = meta || "
+            "jsonb_build_object('health_vu_ko_at', now()::text) "
+            "WHERE entity_type = ANY(%s) AND meta->>'health_ko' = 'true' "
+            "AND meta->>'health_vu_ko_at' IS NULL",
+            (list(_PALIERS_ORG),))
+        return list(conn.execute(
+            f"""SELECT c.entity_type, c.entity_id, c.connector, c.account,
+                       c.meta->>'health_reason' AS raison,
+                       c.meta->>'health_verdict' AS verdict,
+                       {_ORG_DE_LA_LIGNE} AS org_id
+                  FROM connector_credentials c
+                  LEFT JOIN org_groups g
+                    ON c.entity_type = 'group' AND g.id::text = c.entity_id
+                 WHERE c.entity_type = ANY(%s)
+                   AND c.meta->>'health_ko' = 'true'
+                   AND c.meta->>'health_alerte_at' IS NULL
+                 ORDER BY c.connector""",
+            (list(_PALIERS_ORG),)))
+
+
+def marquer_cles_annoncees(lignes: list) -> int:
+    """Pose `health_alerte_at` sur les clés annoncées — APRÈS l'envoi, jamais avant
+    (même règle que `marquer_notifie`). Seulement si elles sont toujours rouges : une
+    clé reposée entre la lecture et l'envoi ouvre un épisode neuf, qu'on ne clôt pas."""
+    n = 0
+    with _connect() as conn:
+        for l in lignes:
+            n += conn.execute(
+                "UPDATE connector_credentials SET meta = meta || "
+                "jsonb_build_object('health_alerte_at', now()::text) "
+                "WHERE entity_type=%s AND entity_id=%s AND connector=%s AND account=%s "
+                "AND meta->>'health_ko' = 'true'",
+                (l["entity_type"], l["entity_id"], l["connector"], l["account"] or ""),
+            ).rowcount or 0
+    return n
+
+
+def clore_episodes_gueris() -> int:
+    """Retire l'épisode des clés redevenues vertes (sonde rejouée, crédits rechargés,
+    clé reposée) : leur prochaine chute sera annoncée. Rend le nombre d'épisodes clos."""
+    with _connect() as conn:
+        return conn.execute(
+            "UPDATE connector_credentials "
+            "SET meta = meta - 'health_vu_ko_at' - 'health_alerte_at' "
+            "WHERE entity_type = ANY(%s) "
+            "AND COALESCE(meta->>'health_ko', 'false') <> 'true' "
+            "AND (meta ? 'health_vu_ko_at' OR meta ? 'health_alerte_at')",
+            (list(_PALIERS_ORG),)).rowcount or 0

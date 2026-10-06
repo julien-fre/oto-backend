@@ -33,6 +33,10 @@ def bureau(monkeypatch):
     ])
     marques: list = []
     monkeypatch.setattr(A, "marquer_notifie", lambda ids: marques.extend(ids) or len(ids))
+    # Aucune clé rouge par défaut : ces bancs-ci tiennent le RETRAIT ; les clés
+    # refusées ou à sec ont les leurs plus bas.
+    monkeypatch.setattr(A, "clore_episodes_gueris", lambda: 0)
+    monkeypatch.setattr(A, "cles_ko_a_annoncer", lambda: [])
     monkeypatch.setattr(O, "list_org_members",
                         lambda org: [{"sub": "u-admin", "org_role": "org_admin"},
                                      {"sub": "u-membre", "org_role": "org_member"}])
@@ -114,3 +118,85 @@ def test_le_travail_tourne_dans_le_timer_quotidien():
     assert "alertes-credential" in M._ALL
     assert "alertes-credential" not in M._ACTES, (
         "ce n'est pas un acte d'opérateur : il tourne seul, gardé par son interrupteur")
+
+
+# --- Clés REFUSÉES ou À SEC sous des agents programmés (signaux oto #1168, #1189) ------
+
+
+def _rouge(connector="snitcher", org_id=7, verdict=None, raison="403 Forbidden"):
+    return {"entity_type": "org", "entity_id": str(org_id), "connector": connector,
+            "account": "", "raison": raison, "verdict": verdict, "org_id": org_id}
+
+
+@pytest.fixture()
+def cles_rouges(bureau, monkeypatch):
+    """Une clé refusée dans l'org 7, un agent programmé qui en dépend, aucun retrait."""
+    envois, _ = bureau
+    from oto_mcp.db import alertes_credential as A
+    from oto_mcp.db import runner_triggers as T
+    lignes = [_rouge()]
+    annoncees: list = []
+    monkeypatch.setattr(A, "a_notifier", lambda: [])
+    monkeypatch.setattr(A, "cles_ko_a_annoncer", lambda: lignes)
+    monkeypatch.setattr(A, "marquer_cles_annoncees",
+                        lambda ls: annoncees.extend(ls) or len(ls))
+    agents = {("7", "snitcher"): [{"label": "veille quotidienne"}]}
+    monkeypatch.setattr(T, "triggers_actifs_utilisant",
+                        lambda org, c: agents.get((str(org), c), []))
+    return envois, lignes, annoncees, agents
+
+
+def test_une_cle_REFUSEE_sous_un_agent_programme_est_annoncee(cles_rouges, monkeypatch):
+    """33 passages d'une même org ont buté sur une clé morte sans que personne soit
+    prévenu (#1168). La marque rouge existait ; personne ne la portait hors bande."""
+    envois, _, annoncees, _ = cles_rouges
+    monkeypatch.setenv(M._ENV_ALERTE, "1")
+    out = M.alertes_credential()
+    assert out["envoyes"] == 1 and out["cles_en_panne"] == 1
+    assert "snitcher" in envois[0]["html"] and "refusée" in envois[0]["html"]
+    assert "1 agent(s)" in envois[0]["html"]
+    assert [l["connector"] for l in annoncees] == ["snitcher"], (
+        "la clé est marquée annoncée APRÈS l'envoi : c'est ce qui fait UNE alerte par "
+        "épisode, pas une par passage")
+
+
+def test_une_cle_A_SEC_dit_recharger_pas_reposer(cles_rouges, monkeypatch):
+    envois, lignes, _, _ = cles_rouges
+    from oto_mcp.credentials_store import NO_QUOTA_VERDICT
+    lignes[0].update(verdict=NO_QUOTA_VERDICT, raison="Not enough credits")
+    monkeypatch.setenv(M._ENV_ALERTE, "1")
+    M.alertes_credential()
+    assert "n'a plus de crédits" in envois[0]["html"]
+
+
+def test_une_cle_rouge_que_RIEN_ne_fait_tourner_ne_part_pas(cles_rouges, monkeypatch):
+    """Sans agent programmé, pas d'urgence hors bande : la carte rouge suffit. Et
+    l'épisode n'est PAS marqué : le jour où un agent en dépend, l'alerte partira."""
+    envois, _, annoncees, agents = cles_rouges
+    agents.clear()
+    monkeypatch.setenv(M._ENV_ALERTE, "1")
+    out = M.alertes_credential()
+    assert envois == [] and annoncees == [] and out["orgs_a_prevenir"] == 0
+
+
+def test_retrait_et_cle_rouge_dans_la_meme_org_font_UN_courriel(cles_rouges, monkeypatch):
+    envois, _, annoncees, _ = cles_rouges
+    from oto_mcp.db import alertes_credential as A
+    marques: list = []
+    monkeypatch.setattr(A, "a_notifier", lambda: [
+        {"org_id": 7, "ids": [4], "connectors": ["slack"], "agents_max": 1,
+         "depuis": None}])
+    monkeypatch.setattr(A, "marquer_notifie", lambda ids: marques.extend(ids) or len(ids))
+    monkeypatch.setenv(M._ENV_ALERTE, "1")
+    out = M.alertes_credential()
+    assert len(envois) == 1 and out["orgs_a_prevenir"] == 1
+    assert "retirée" in envois[0]["html"] and "snitcher" in envois[0]["html"]
+    assert marques == [4] and len(annoncees) == 1
+
+
+def test_ferme_par_defaut_la_cle_rouge_se_COMPTE_sans_partir(cles_rouges, monkeypatch):
+    envois, _, annoncees, _ = cles_rouges
+    monkeypatch.delenv(M._ENV_ALERTE, raising=False)
+    out = M.alertes_credential()
+    assert envois == [] and annoncees == []
+    assert out["cles_en_panne"] == 1 and out["orgs_a_prevenir"] == 1 and out["note"]

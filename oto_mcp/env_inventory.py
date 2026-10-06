@@ -491,8 +491,11 @@ _REGLAGES: tuple[Variable, ...] = (
              "observe seulement.",
              ("oto_mcp/access/chain_shadow.py:209",)),
     Variable("OTO_ALERTE_CREDENTIAL", Classe.REGLAGE, "",
-             "Cible d'alerte quand un credential attendu manque en maintenance.",
-             ("oto_mcp/maintenance.py:337", "oto_mcp/maintenance.py:341")),
+             "Ouvre l'envoi du travail `alertes-credential` : un courriel par org à "
+             "ses admins quand une clé est retirée, refusée ou à sec sous des agents "
+             "programmés actifs. Absente : le travail compte ce qui partirait, "
+             "n'envoie rien.",
+             ("oto_mcp/maintenance.py:374", "oto_mcp/maintenance.py:378")),
     Variable("OTO_UNIPILE_FIN_DE_DROIT", Classe.REGLAGE, "",
              "Ouvre le travail `unipile-fin-de-droit` (#806) : préavis puis suppression "
              "chez unipile des comptes sur la clé plateforme d'une org sans droit "
