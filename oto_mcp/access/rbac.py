@@ -334,8 +334,6 @@ def resolve_field_filter(service: str):
 
     Sans org active, on retombe sur le défaut serveur. Une erreur DB, elle, LÈVE :
     l'appelant (`redaction.redact_payload`) retient alors la sortie (#1045)."""
-    from oto.tools.common import FieldFilter
-
     from .. import field_filter_defaults
 
     block: Optional[dict] = None
@@ -346,8 +344,4 @@ def resolve_field_filter(service: str):
             configured = org_store.get_org_field_filters(active_org)
             if service in configured:
                 block = configured[service]
-    if block is None:
-        block = field_filter_defaults.SERVER_DEFAULTS.get(service)
-    if not block:
-        return FieldFilter()
-    return FieldFilter(rules=block.get("rules", []), salt=block.get("salt"))
+    return field_filter_defaults.filtre(field_filter_defaults.bloc_effectif(service, block))

@@ -119,3 +119,44 @@ TEMPLATES: dict[str, dict] = {
         "rules": [{"fields": ["iban", "bic", "rib"], "action": "mask", "keep_last": 4}],
     },
 }
+
+
+# Sonde : une valeur qu'aucune donnée réelle ne porte. Un champ est « masqué » par une
+# politique si son `apply` la réécrit ou la retire — éprouvé par le chemin même de la
+# sortie, jamais en relisant les règles (un `keep_last`, un `preserve` ou une action
+# inconnue, fail-safe en masque total, se lisent mal ; ils s'éprouvent bien).
+_SONDE = "sonde-de-redaction"
+
+
+def champs_du_plancher(service: str) -> list[str]:
+    """Les champs que le défaut serveur de `service` masque, sous leur nom de sortie
+    (vide pour un service sans plancher)."""
+    return [c for regle in SERVER_DEFAULTS.get(service, {}).get("rules", [])
+            for c in regle["fields"]]
+
+
+def masque(ff, champ: str) -> bool:
+    """Vrai si le `FieldFilter` `ff` réécrit ou retire `champ`."""
+    return ff.apply({champ: _SONDE}).get(champ) != _SONDE
+
+
+def champs_du_plancher_en_clair(service: str, ff) -> list[str]:
+    """Les champs du plancher de `service` que `ff` laisse sortir tels quels."""
+    return [c for c in champs_du_plancher(service) if not masque(ff, c)]
+
+
+def bloc_effectif(service: str, bloc_org: dict | None) -> dict | None:
+    """Le bloc de règles qui s'applique à `service` : la politique de l'org si elle en
+    a posé une (autoritaire), sinon le défaut serveur, sinon rien. Seule source de la
+    cascade : la sortie (`access.resolve_field_filter`), le dry-run et l'écriture
+    d'une politique la lisent ici."""
+    return bloc_org if bloc_org is not None else SERVER_DEFAULTS.get(service)
+
+
+def filtre(bloc: dict | None):
+    """Le `FieldFilter` d'un bloc (vide si le bloc est vide ou absent)."""
+    from oto.tools.common import FieldFilter
+
+    if not bloc:
+        return FieldFilter()
+    return FieldFilter(rules=bloc.get("rules", []), salt=bloc.get("salt"))

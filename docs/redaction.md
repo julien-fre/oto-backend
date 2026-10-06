@@ -65,6 +65,12 @@ puisse les rouvrir. Il sert désormais tout ce que l'API expose, et ce qui prot�
 `SERVER_DEFAULTS["payfit"]` : NIR/NTT et BIC masqués, IBAN masqué en préservant sa forme,
 `absence_type` masqué. L'org_admin le **lève** en posant `rules: []` (politique d'org vide,
 autoritaire) — ⚠️ l'**effacer** (`rules: null`) fait l'inverse : ça remet le plancher.
+Écrire une politique dit ce qu'elle expose : la réponse de `org.field_filters.set` liste dans
+`unmasked` les champs du plancher qui sortent désormais en clair, avec une phrase (`warning`)
+— signal oto #1269, où une org a levé le NIR et l'IBAN pour ouvrir ses documents sans que la
+réponse ne dise autre chose que `rules: 0`. La cascade (politique d'org, sinon plancher)
+s'écrit une seule fois, `field_filter_defaults.bloc_effectif`, lue par la sortie, le dry-run
+et l'écriture.
 Conditions pour poser un tel défaut : donnée sensible par nature, servie par construction,
 et **nom de feuille sans homonyme** — le type d'absence est servi sous `absence_type`
 et non `type` précisément parce qu'une règle sur `type` abîmerait `emails[].type` & co.

@@ -109,15 +109,6 @@ def not_wired(op: str, action: str, **what: Any) -> McpError:
 # masquerait par défaut
 # ---------------------------------------------------------------------------
 
-_SONDE = "sonde-de-redaction"
-
-
-def _masque(ff, champ: str) -> bool:
-    """Vrai si la politique `ff` réécrit ou retire `champ` — éprouvé par son
-    `apply`, le chemin même de la sortie, et non en relisant ses règles."""
-    return ff.apply({champ: _SONDE}).get(champ) != _SONDE
-
-
 def redaction_notice() -> str:
     """La mention servie avec chaque réponse qui peut porter un champ sensible.
 
@@ -133,10 +124,8 @@ def redaction_notice() -> str:
     from .. import field_filter_defaults
 
     ff = access.resolve_field_filter(_NAME)
-    sensibles = [c for regle in field_filter_defaults.SERVER_DEFAULTS[_NAME]["rules"]
-                 for c in regle["fields"]]
-    masques = [c for c in sensibles if _masque(ff, c)]
-    clairs = [c for c in sensibles if c not in masques]
+    clairs = field_filter_defaults.champs_du_plancher_en_clair(_NAME, ff)
+    masques = [c for c in field_filter_defaults.champs_du_plancher(_NAME) if c not in clairs]
     lever = ("un org_admin règle la politique de ce connecteur (dashboard, ou "
              "`oto_org_settings domain=field_filters service=payfit`)")
     if not clairs:
@@ -162,7 +151,10 @@ DOCUMENTS_LOCKED = (
     "noms et montants) que la politique de filtres de champs de ton org masque pour "
     "PayFit — et un filtre ne peut pas masquer l'intérieur d'un fichier. Pour ouvrir "
     "les documents PayFit, un org_admin de l'org doit lever les masques du "
-    "connecteur `payfit` (politique sans aucune règle).")
+    "connecteur `payfit` (politique sans aucune règle). ⚠️ Ce geste rend AUSSI le "
+    "NIR, l'IBAN/BIC et le motif d'absence EN CLAIR dans toutes les réponses JSON "
+    "PayFit, pour tous les membres de l'org : ce n'est pas une ouverture des seuls "
+    "documents.")
 DOCUMENTS_POLICY_UNREADABLE = (
     "PayFit : document non servi. La politique de filtres de champs de ton org n'a "
     "pas pu être lue, et un document qui porte NIR ou IBAN ne sort pas sans elle. "
@@ -173,7 +165,8 @@ OVERTIME_LINE_LOCKED = (
     "champs de ton org masque des champs PayFit. `kind`, `label`, `numbers` et "
     "`rates` restent servis, filtrés par cette politique. Pour obtenir la ligne "
     "brute, un org_admin de l'org doit lever les masques du connecteur `payfit` "
-    "(politique sans aucune règle).")
+    "(politique sans aucune règle) — ce qui rend AUSSI le NIR, les coordonnées "
+    "bancaires et le motif d'absence EN CLAIR dans toutes les réponses JSON PayFit.")
 
 
 def documents_open() -> bool:

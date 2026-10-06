@@ -112,6 +112,12 @@ class FieldFilterSet(BaseModel):
     cleared: bool
     # Nombre de règles posées (0 quand `cleared`).
     rules: int
+    # Champs du PLANCHER serveur de ce service (NIR, IBAN…) que la politique qui
+    # s'applique désormais laisse sortir EN CLAIR, sous leur nom de sortie. Vide pour
+    # un service sans plancher, ou quand le plancher tient.
+    unmasked: list[str] = []
+    # Une phrase quand `unmasked` n'est pas vide : ce que l'écriture vient d'exposer.
+    warning: Optional[str] = None
 
 
 class FieldFilterPreview(BaseModel):
@@ -208,8 +214,16 @@ def _set_field_filter(ctx: ResolvedCtx, inp: SetFieldFilterInput) -> dict:
             block["salt"] = inp.salt
 
     org_store.set_org_field_filters(inp.org_id, service, block)
-    return {"ok": True, "org_id": inp.org_id, "service": service,
-            "cleared": block is None, "rules": 0 if block is None else len(inp.rules or [])}
+    en_clair = field_filter_defaults.champs_du_plancher_en_clair(
+        service, field_filter_defaults.filtre(field_filter_defaults.bloc_effectif(service, block)))
+    out = {"ok": True, "org_id": inp.org_id, "service": service,
+           "cleared": block is None, "rules": 0 if block is None else len(inp.rules or []),
+           "unmasked": en_clair}
+    if en_clair:
+        out["warning"] = (f"Cette politique lève le masquage par défaut de `{service}` : "
+                          f"{', '.join(en_clair)} sortent désormais EN CLAIR dans toutes "
+                          f"les réponses du connecteur, pour tous les membres de l'org.")
+    return out
 
 
 def _preview_field_filter(ctx: ResolvedCtx, inp: PreviewFieldFilterInput) -> dict:
@@ -223,16 +237,13 @@ def _preview_field_filter(ctx: ResolvedCtx, inp: PreviewFieldFilterInput) -> dic
         raise AuthzDenied(400, "bad_payload", "`payload` doit être un objet ou une liste JSON.")
     service = (inp.service or "").strip()
 
-    from oto.tools.common import FieldFilter
-
     if inp.rules is not None:
         _validate_rules(inp.rules)
         block: Optional[dict] = {"rules": inp.rules, "salt": inp.salt} if inp.salt else {"rules": inp.rules}
     else:
-        configured = org_store.get_org_field_filters(inp.org_id)
-        block = configured.get(service) or field_filter_defaults.SERVER_DEFAULTS.get(service)
+        block = org_store.get_org_field_filters(inp.org_id).get(service)
 
-    ff = FieldFilter(rules=(block or {}).get("rules", []), salt=(block or {}).get("salt"))
+    ff = field_filter_defaults.filtre(field_filter_defaults.bloc_effectif(service, block))
     return {"org_id": inp.org_id, "service": service, "redacted": ff.apply(inp.payload)}
 
 
