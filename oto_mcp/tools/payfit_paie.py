@@ -49,7 +49,8 @@ def _overtime(c, collaborator_id: str, date: Optional[str]) -> dict:
     l'org les filtre par nom, comme toute sortie JSON. `line`, elle, est un extrait
     VERBATIM du bulletin, qui répète montants et taux sous un nom que la politique ne
     relie pas à `numbers` ni `rates` : elle suit le verrou des documents et ne sort
-    que si la politique ne masque rien (alerte du scanner de sécurité)."""
+    que si l'org a ouvert les documents (`documents: true`, alerte du scanner de
+    sécurité)."""
     if date is not None and not re.fullmatch(r"\d{4}(0[1-9]|1[0-2])", date):
         raise _bad(f"PayFit : `date` s'écrit `AAAAMM` (janvier = 01), reçu « {date} ».")
     brute = documents_unlocked()

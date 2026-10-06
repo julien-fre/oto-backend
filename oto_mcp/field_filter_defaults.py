@@ -12,8 +12,15 @@ en dur ce qu'il jugeait trop lourd : c'est ce que faisait `payfit`, et ça reven
 décider à la place de l'entreprise qui possède ses données. On a inversé les deux
 leviers : le connecteur sert **tout** ce que l'API expose, et ce qui protège est un
 défaut serveur **liftable**, ici. Ce qui n'a pas changé : la rédaction reste une
-POLITIQUE, pas un retrait — l'org_admin la lève connecteur par connecteur, et sa
-politique est autoritaire (`access.resolve_field_filter`).
+POLITIQUE, pas un retrait — l'org_admin la lève connecteur par connecteur.
+
+**Amendement du 2026-10-06 — un plancher ne se lève qu'en NOMMANT ses champs**
+(signal oto #1269). Jusque-là la politique d'org remplaçait le plancher, et `rules: []`
+levait tout : une org a posé ce geste pour ouvrir ses documents PayFit et a sorti du
+même coup le NIR et l'IBAN de tous ses salariés dans toutes les réponses. Désormais la
+politique s'AJOUTE au plancher (`bloc_effectif`) : un champ du plancher ne sort en clair
+que nommé dans `unmask` (ou visé par une règle de l'org), et les documents s'ouvrent
+par un consentement à part, `documents: true`, qui ne lève aucun champ.
 
 Un défaut ne se pose donc ici qu'à trois conditions : la donnée est sensible **par
 nature** (RGPD art. 9, identifiant national, coordonnée bancaire), le connecteur la
@@ -99,8 +106,9 @@ _PAYFIT_PII: list[dict] = [
     {"fields": ["absence_type"], "action": "mask"},
 ]
 
-# Défauts serveur, par service. Repli quand l'org n'a pas posé SA politique ; sa
-# politique, elle, est autoritaire et peut tout lever (`access.resolve_field_filter`).
+# Défauts serveur, par service : le plancher. Sans politique d'org, il s'applique tel
+# quel ; avec, la politique s'y AJOUTE et ne lève un champ qu'en le nommant
+# (`bloc_effectif`, décision du 2026-10-06).
 SERVER_DEFAULTS: dict[str, dict] = {
     "payfit": {"rules": _PAYFIT_PII},
 }
@@ -145,12 +153,47 @@ def champs_du_plancher_en_clair(service: str, ff) -> list[str]:
     return [c for c in champs_du_plancher(service) if not masque(ff, c)]
 
 
+# Services dont des DOCUMENTS (fichiers, extraits verbatim) portent les champs du
+# plancher : un filtre ne voit pas l'intérieur d'un fichier, donc ils ne sortent que sur
+# consentement NOMMÉ de l'org (`documents: true` dans sa politique du service).
+SERVICES_A_DOCUMENTS = frozenset({"payfit"})
+
+
 def bloc_effectif(service: str, bloc_org: dict | None) -> dict | None:
-    """Le bloc de règles qui s'applique à `service` : la politique de l'org si elle en
-    a posé une (autoritaire), sinon le défaut serveur, sinon rien. Seule source de la
-    cascade : la sortie (`access.resolve_field_filter`), le dry-run et l'écriture
-    d'une politique la lisent ici."""
-    return bloc_org if bloc_org is not None else SERVER_DEFAULTS.get(service)
+    """Le bloc de règles qui s'applique à `service`. Seule source de la cascade : la
+    sortie (`access.resolve_field_filter`), le dry-run et l'écriture la lisent ici.
+
+    - Sans politique d'org : le défaut serveur (le plancher), sinon rien.
+    - Service SANS plancher : la politique de l'org est autoritaire, `rules: []` ne
+      masque rien.
+    - Service AVEC plancher (décision du 2026-10-06, signal oto #1269, qui remplace
+      celle du 2026-09-18 « `rules: []` lève tout ») : la politique de l'org s'AJOUTE
+      au plancher. Un champ du plancher ne sort en clair que s'il est NOMMÉ — dans
+      `unmask`, ou par une règle de l'org qui le vise (elle remplace alors la règle du
+      plancher pour ce champ). Aucun geste ne lève un plancher sans le nommer."""
+    plancher = SERVER_DEFAULTS.get(service)
+    if bloc_org is None or not plancher:
+        return bloc_org if bloc_org is not None else plancher
+    nommes = {c.lower() for c in bloc_org.get("unmask") or []}
+    nommes |= {c.lower() for r in bloc_org.get("rules", []) for c in r.get("fields", [])}
+    garde = []
+    for regle in plancher["rules"]:
+        champs = [c for c in regle["fields"] if c.lower() not in nommes]
+        if champs:
+            garde.append({**regle, "fields": champs})
+    out: dict = {"rules": list(bloc_org.get("rules", [])) + garde}
+    if bloc_org.get("salt"):
+        out["salt"] = bloc_org["salt"]
+    return out
+
+
+def leve_sans_nommer(service: str, bloc_org: dict | None) -> bool:
+    """Vrai pour une politique STOCKÉE avant le 2026-10-06 qui levait le plancher sans
+    rien nommer (`rules: []` seul) : elle ne lève plus rien, et sa lecture le
+    journalise. Une écriture de cette forme est refusée (`floor_lift_must_be_explicit`)."""
+    return (bool(SERVER_DEFAULTS.get(service)) and bloc_org is not None
+            and not bloc_org.get("rules") and not bloc_org.get("unmask")
+            and not bloc_org.get("documents"))
 
 
 def filtre(bloc: dict | None):

@@ -63,14 +63,24 @@ plus de règle à éditer ni de template à appliquer depuis l'écran.
 en dur NIR, IBAN et motifs d'absence, sans que l'entreprise propriétaire de ses données
 puisse les rouvrir. Il sert désormais tout ce que l'API expose, et ce qui protège est
 `SERVER_DEFAULTS["payfit"]` : NIR/NTT et BIC masqués, IBAN masqué en préservant sa forme,
-`absence_type` masqué. L'org_admin le **lève** en posant `rules: []` (politique d'org vide,
-autoritaire) — ⚠️ l'**effacer** (`rules: null`) fait l'inverse : ça remet le plancher.
-Écrire une politique dit ce qu'elle expose : la réponse de `org.field_filters.set` liste dans
-`unmasked` les champs du plancher qui sortent désormais en clair, avec une phrase (`warning`)
-— signal oto #1269, où une org a levé le NIR et l'IBAN pour ouvrir ses documents sans que la
-réponse ne dise autre chose que `rules: 0`. La cascade (politique d'org, sinon plancher)
-s'écrit une seule fois, `field_filter_defaults.bloc_effectif`, lue par la sortie, le dry-run
-et l'écriture.
+`absence_type` masqué.
+
+**Un plancher ne se lève qu'en NOMMANT ses champs** (décision du 2026-10-06, signal oto
+#1269, qui remplace celle du 2026-09-18 où `rules: []` levait tout). Une org avait posé
+`rules: []` pour ouvrir ses documents PayFit et sorti du même geste le NIR et l'IBAN de
+tous ses salariés dans toutes les réponses, la réponse ne disant que `rules: 0`. Désormais :
+- la politique d'org s'**ajoute** au plancher ; un champ du plancher ne sort en clair que
+  nommé dans `unmask`, ou visé par une règle de l'org (qui remplace alors la règle du
+  plancher pour ce champ) ;
+- `rules: []` seul sur un service à plancher est refusé (`floor_lift_must_be_explicit`), en
+  montrant la forme explicite ; une politique stockée de cette forme ne lève plus rien et sa
+  lecture le journalise ;
+- les documents s'ouvrent par un consentement à part, `documents: true`, qui ne lève aucun
+  champ (cf. ci-dessous) ;
+- la réponse de `org.field_filters.set` liste dans `unmasked` les champs du plancher qui
+  sortent désormais en clair, avec une phrase (`warning`).
+La cascade s'écrit une seule fois, `field_filter_defaults.bloc_effectif`, lue par la sortie,
+le dry-run et l'écriture. ⚠️ l'**effacer** (`rules: null`) remet le plancher tel quel.
 Conditions pour poser un tel défaut : donnée sensible par nature, servie par construction,
 et **nom de feuille sans homonyme** — le type d'absence est servi sous `absence_type`
 et non `type` précisément parce qu'une règle sur `type` abîmerait `emails[].type` & co.
@@ -78,10 +88,13 @@ et non `type` précisément parce qu'une règle sur `type` abîmerait `emails[].
 ⚠️ **Un filtre ne voit pas l'intérieur d'un FICHIER.** Un connecteur qui sert à la fois
 des champs et des documents portant les mêmes données (PayFit : bulletin PDF → NIR,
 fichier de virement → IBAN, export comptable → noms et montants) doit VERROUILLER ses
-documents sur la politique : ils ne sortent que si la politique EFFECTIVE de l'appelant
-(`access.resolve_field_filter`, même cascade que la sortie) est vide — sinon refus nommé,
-et fail-closed si elle est illisible (`tools/payfit_garde.serve_document`, décision du
-2026-09-18). Masquer les champs et laisser passer le fichier serait une passoire.
+documents : ils ne sortent que si l'org active de l'appelant y a CONSENTI nommément
+(`documents: true` dans sa politique du service, lue par `access.resolve_org_field_policy`)
+— sinon refus nommé, et fail-closed si la politique est illisible
+(`tools/payfit_garde.serve_document`). Ce consentement ne lève AUCUN champ des réponses
+JSON (décision du 2026-10-06 ; du 2026-09-18 au 2026-10-06, le verrou ne s'ouvrait que sur
+une politique vide, qui levait du même geste tout le plancher). Masquer les champs et
+laisser passer le fichier sans consentement serait une passoire.
 Un document lu CÔTÉ SERVEUR dont on ne rend qu'un extrait nommé n'est pas un document
 qui sort : `payfit_payslip(op="overtime")` ne rend que les lignes heures sup du bulletin
 (`tools/payfit_bulletin.py`) et échappe donc au verrou — décision du 2026-09-29. Tout

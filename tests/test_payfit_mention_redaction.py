@@ -89,8 +89,9 @@ def test_under_the_server_default_the_notice_says_masked(monkeypatch, client):
 
 
 def test_a_lifted_policy_is_said_and_never_called_masked(monkeypatch, client):
-    """L'org a posé `rules: []` : tout sort en clair, et la mention le DIT."""
-    _politique(monkeypatch, {"payfit": {"rules": []}})
+    """L'org a nommé tout le plancher dans `unmask` : tout sort en clair, et la mention
+    le DIT."""
+    _politique(monkeypatch, {"payfit": {"rules": [], "unmask": ["socialSecurityNumber", "numeroSecuriteSociale", "temporaryTechnicalNumber", "numeroTechniqueTemporaire", "iban", "bic", "absence_type"]}})
     client.get_collaborator.return_value = _collaborateur()
     out = _get()
     assert redaction.redact_payload("payfit", out) is redaction.PASSTHROUGH
@@ -101,9 +102,9 @@ def test_a_lifted_policy_is_said_and_never_called_masked(monkeypatch, client):
 
 
 def test_a_partial_policy_names_what_stays_clear(monkeypatch, client):
-    """L'org ne masque que l'IBAN et le BIC : le NIR sort, et la mention le nomme."""
-    _politique(monkeypatch, {"payfit": {"rules": [
-        {"fields": ["iban", "bic"], "action": "mask"}]}})
+    """L'org ne lève que le NIR : il sort, et la mention le nomme ; l'IBAN et le BIC
+    restent masqués par le plancher."""
+    _politique(monkeypatch, {"payfit": {"rules": [], "unmask": ["socialSecurityNumber"]}})
     client.get_collaborator.return_value = _collaborateur()
     mention = _get()["redaction"]
     clair, _, masque = mention.partition("Restent masqués")

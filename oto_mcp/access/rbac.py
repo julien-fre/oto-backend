@@ -321,27 +321,41 @@ def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict
     return out
 
 
+def resolve_org_field_policy(service: str) -> Optional[dict]:
+    """La politique de rédaction que l'**org active** de l'appelant a posée pour
+    `service`, telle que stockée (`rules`, `salt`, `unmask`, `documents`), ou None si
+    elle n'en a pas posé (ou sans appelant, ou sans org active). Ce n'est PAS ce qui
+    s'applique : la cascade est `field_filter_defaults.bloc_effectif`. Une erreur DB
+    LÈVE."""
+    sub = current_user_sub_from_token()
+    if not sub:
+        return None
+    active_org = scope.current_org(sub)
+    if active_org is None:
+        return None
+    return org_store.get_org_field_filters(active_org).get(service)
+
+
 def resolve_field_filter(service: str):
     """Construit le `FieldFilter` à appliquer aux réponses d'un connecteur pour
     le sub courant, selon la politique de redaction de son **org active**.
 
-    Cascade (décision « contrôle total org ») :
-      1. l'org active a une politique pour ce service → elle est **autoritaire**
-         (peut lever le masquage baseline, ou ne rien masquer) ;
-      2. sinon → repli sur le **défaut serveur** (`field_filter_defaults`, plancher
-         PII explicite, ex. IBAN Silae) ;
-      3. sinon → filtre vide (no-op, aucune redaction).
+    Cascade (`field_filter_defaults.bloc_effectif`, seule source) :
+      1. pas de politique d'org → le **défaut serveur** (plancher PII explicite, ex.
+         NIR/IBAN PayFit), sinon filtre vide (no-op) ;
+      2. service sans plancher → la politique d'org est **autoritaire** ;
+      3. service avec plancher → la politique s'**ajoute** au plancher, qui ne se lève
+         qu'en nommant ses champs (`unmask`) — décision du 2026-10-06, signal oto
+         #1269 ; une politique stockée qui levait sans nommer (`rules: []` seul) ne
+         lève plus rien, et sa lecture le journalise.
 
     Sans org active, on retombe sur le défaut serveur. Une erreur DB, elle, LÈVE :
     l'appelant (`redaction.redact_payload`) retient alors la sortie (#1045)."""
     from .. import field_filter_defaults
 
-    block: Optional[dict] = None
-    sub = current_user_sub_from_token()
-    if sub:
-        active_org = scope.current_org(sub)
-        if active_org is not None:
-            configured = org_store.get_org_field_filters(active_org)
-            if service in configured:
-                block = configured[service]
+    block = resolve_org_field_policy(service)
+    if field_filter_defaults.leve_sans_nommer(service, block):
+        logger.warning("filtres de champs : la politique de l'org pour %s lève le "
+                       "plancher sans nommer de champ (`rules: []`) — elle ne lève plus "
+                       "rien depuis le 2026-10-06, le plancher s'applique", service)
     return field_filter_defaults.filtre(field_filter_defaults.bloc_effectif(service, block))

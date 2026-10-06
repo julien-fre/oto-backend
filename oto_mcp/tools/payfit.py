@@ -35,8 +35,9 @@ titres-restaurant, coordonnées, naissance, nationalité, ancienneté, manager.
 
 ⚠️ **Les DOCUMENTS (bulletin PDF, export comptable, fichier de virement, document
 fiscal) sont verrouillés** : un filtre ne lit pas l'intérieur d'un fichier, donc ils
-ne sortent que si la politique effective de l'org pour `payfit` ne masque rien —
-sinon refus nommé, et fail-closed si elle est illisible (`payfit_garde.serve_document`).
+ne sortent que si l'org les a ouverts nommément (`documents: true` dans sa politique
+`payfit`, qui ne lève aucun masque) — sinon refus nommé, et fail-closed si elle est
+illisible (`payfit_garde.serve_document`).
 
 ⚠️ **Une seule clé est renommée, et c'est mécanique** : le type d'une absence sort
 sous `absence_type`, parce que `FieldFilter` matche par nom de feuille et qu'une

@@ -11,9 +11,10 @@ Séparés des modules d'outils pour tenir sous 500 lignes. Cinq règles vivent i
   une autre entreprise que celle dont la clé est posée ;
 - **aucune écriture n'est câblée** : toute op d'écriture rend le refus nommé
   `payfit_write_not_wired`, sans résoudre la clé ni appeler PayFit (24/09/2026) ;
-- **un document ne sort que si la politique de l'org ne masque rien** : un PDF ou un
-  fichier ne se filtre pas, donc il est verrouillé tant que les masques PayFit ne
-  sont pas levés (`serve_document`). Un EXTRAIT verbatim d'un document (la ligne
+- **un document ne sort que sur consentement nommé de l'org** (`documents: true`
+  dans sa politique `payfit`) : un PDF ou un fichier ne se filtre pas, donc il est
+  verrouillé tant que l'org ne l'a pas ouvert, et l'ouvrir ne lève aucun masque des
+  réponses JSON (`serve_document`). Un EXTRAIT verbatim d'un document (la ligne
   brute d'un bulletin) suit le même verrou (`documents_unlocked`).
 """
 from __future__ import annotations
@@ -148,13 +149,11 @@ def redaction_notice() -> str:
 # détour. Un agent à qui l'on suggère une autre voie la prend.
 DOCUMENTS_LOCKED = (
     "PayFit : document non servi. Il contient des données par salarié (NIR, IBAN, "
-    "noms et montants) que la politique de filtres de champs de ton org masque pour "
-    "PayFit — et un filtre ne peut pas masquer l'intérieur d'un fichier. Pour ouvrir "
-    "les documents PayFit, un org_admin de l'org doit lever les masques du "
-    "connecteur `payfit` (politique sans aucune règle). ⚠️ Ce geste rend AUSSI le "
-    "NIR, l'IBAN/BIC et le motif d'absence EN CLAIR dans toutes les réponses JSON "
-    "PayFit, pour tous les membres de l'org : ce n'est pas une ouverture des seuls "
-    "documents.")
+    "noms et montants), et un filtre de champs ne peut pas masquer l'intérieur d'un "
+    "fichier : les documents PayFit ne sortent que si l'org les a ouverts. Un "
+    "org_admin de l'org le fait en posant `documents: true` sur la politique de "
+    "filtres de champs du connecteur `payfit` — ce consentement ne lève aucun masque "
+    "des réponses JSON.")
 DOCUMENTS_POLICY_UNREADABLE = (
     "PayFit : document non servi. La politique de filtres de champs de ton org n'a "
     "pas pu être lue, et un document qui porte NIR ou IBAN ne sort pas sans elle. "
@@ -162,29 +161,28 @@ DOCUMENTS_POLICY_UNREADABLE = (
 OVERTIME_LINE_LOCKED = (
     "PayFit : la ligne brute du bulletin (`line`) n'est pas servie. C'est du texte "
     "du document, qu'un filtre de champs ne voit pas, et la politique de filtres de "
-    "champs de ton org masque des champs PayFit. `kind`, `label`, `numbers` et "
-    "`rates` restent servis, filtrés par cette politique. Pour obtenir la ligne "
-    "brute, un org_admin de l'org doit lever les masques du connecteur `payfit` "
-    "(politique sans aucune règle) — ce qui rend AUSSI le NIR, les coordonnées "
-    "bancaires et le motif d'absence EN CLAIR dans toutes les réponses JSON PayFit.")
+    "champs de ton org n'a pas ouvert les documents PayFit. `kind`, `label`, "
+    "`numbers` et `rates` restent servis, filtrés par cette politique. Pour obtenir "
+    "la ligne brute, un org_admin de l'org pose `documents: true` sur la politique du "
+    "connecteur `payfit` — ce consentement ne lève aucun masque des réponses JSON.")
 
 
 def documents_open() -> bool:
-    """Le VERROU des documents : vrai seulement si la politique EFFECTIVE de
-    l'appelant pour `payfit` ne masque RIEN.
+    """Le VERROU des documents : vrai seulement si l'org active de l'appelant a
+    consenti, nommément, à servir les documents PayFit (`documents: true` dans sa
+    politique `payfit`).
 
-    La politique se lit par le mécanisme existant, `access.resolve_field_filter` —
-    la même cascade que la sortie JSON (politique de l'org active, sinon le plancher
-    serveur). Sans politique d'org, c'est le plancher qui s'applique : il masque NIR,
-    IBAN, BIC et `absence_type`, donc le verrou est fermé. Il ne s'ouvre que sur une
-    politique d'org VIDE (`rules: []`, autoritaire).
+    Décision du 2026-10-06 (signal oto #1269), qui remplace celle du 2026-09-18 où le
+    verrou ne s'ouvrait que sur une politique qui ne masquait RIEN (`rules: []`) :
+    ouvrir les documents levait alors du même geste le NIR, l'IBAN et le motif
+    d'absence de toutes les réponses JSON. Les deux besoins sont séparés — le
+    consentement aux documents ne lève aucun champ, et un champ du plancher ne se
+    lève qu'en le nommant (`field_filter_defaults.bloc_effectif`).
 
-    ⚠️ Pourquoi « ne masque rien » et pas « ne masque pas le NIR » : un fichier ne se
-    filtre pas du tout. Une org qui a posé N'IMPORTE QUELLE règle sur `payfit` a dit
-    qu'un champ ne doit pas sortir ; le PDF qui le contient le ferait sortir quand
-    même. Le seul état où un document respecte la politique est celui où elle ne
-    retire rien."""
-    return access.resolve_field_filter(_NAME).is_empty
+    La politique se lit par `access.resolve_org_field_policy`, la même source que la
+    sortie JSON. Sans politique d'org, ou sans `documents: true`, le verrou est
+    fermé."""
+    return bool((access.resolve_org_field_policy(_NAME) or {}).get("documents"))
 
 
 def documents_unlocked() -> bool:

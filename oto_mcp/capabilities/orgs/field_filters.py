@@ -103,9 +103,13 @@ class FieldFilterSet(BaseModel):
     `cleared: true` = la politique de ce connecteur a été RETIRÉE ; le repli est le
     défaut serveur — vide pour presque tous les connecteurs (⟹ plus rien n'est
     masqué), mais **pas pour ceux qui ont un plancher** (`payfit`), où effacer la
-    politique d'org REMET le masquage du défaut au lieu de l'enlever. Pour lever un
-    plancher, on pose `rules: []` (une politique d'org vide, autoritaire), on
-    n'efface pas."""
+    politique d'org REMET le masquage du défaut au lieu de l'enlever.
+
+    Un plancher ne se lève qu'en NOMMANT ses champs (`unmask`), et les documents
+    s'ouvrent à part (`documents: true`) — décision du 2026-10-06 (signal oto #1269),
+    qui remplace celle du 2026-09-18 où `rules: []` levait tout ; `rules: []` seul sur
+    un service à plancher est refusé (`floor_lift_must_be_explicit`). `unmasked` dit,
+    après chaque écriture, ce qui sort désormais en clair."""
     ok: bool
     org_id: int
     service: str
@@ -145,6 +149,12 @@ class SetFieldFilterInput(BaseModel):
     service: str
     rules: Optional[list[dict]] = None     # None efface la politique du service
     salt: Optional[str] = None
+    # Champs du PLANCHER serveur que l'org laisse sortir en clair, nommés un à un
+    # (sous leur nom de sortie). Seule façon de lever un plancher.
+    unmask: Optional[list[str]] = None
+    # Consentement à servir les DOCUMENTS du service (fichiers, extraits verbatim),
+    # qui portent les champs du plancher qu'un filtre ne voit pas. Ne lève aucun champ.
+    documents: Optional[bool] = None
 
 
 class PreviewFieldFilterInput(BaseModel):
@@ -163,6 +173,41 @@ def _validate_rules(rules: list[dict]) -> None:
         if action not in _ACTIONS:
             raise AuthzDenied(400, "unknown_action",
                               f"Action inconnue : {action!r} (attendu {sorted(_ACTIONS)}).")
+
+
+def _plancher_et_documents(service: str, inp: SetFieldFilterInput) -> dict:
+    """Ce qu'une politique dit du plancher et des documents, validé. Un plancher ne se
+    lève qu'en nommant ses champs (décision du 2026-10-06, signal oto #1269) : une
+    politique vide sur un service à plancher, sans `unmask` ni `documents`, ne dirait
+    plus rien d'autre que le défaut — elle est refusée en montrant la forme explicite."""
+    plancher = field_filter_defaults.champs_du_plancher(service)
+    out: dict = {}
+    if inp.unmask is not None:
+        if not plancher:
+            raise AuthzDenied(400, "no_floor",
+                              f"`{service}` n'a pas de plancher : rien à lever par `unmask`.")
+        connus = {c.lower() for c in plancher}
+        inconnus = [c for c in inp.unmask if c.lower() not in connus]
+        if inconnus or not inp.unmask:
+            raise AuthzDenied(400, "unknown_floor_field",
+                              f"`unmask` nomme des champs du plancher de `{service}` : "
+                              f"{', '.join(plancher)}. Reçu : {inp.unmask!r}.")
+        out["unmask"] = list(inp.unmask)
+    if inp.documents is not None:
+        if service not in field_filter_defaults.SERVICES_A_DOCUMENTS:
+            raise AuthzDenied(400, "no_documents",
+                              f"`{service}` ne sert aucun document verrouillé : `documents` "
+                              f"n'y a pas de sens.")
+        if inp.documents:
+            out["documents"] = True
+    if plancher and not inp.rules and not out:
+        raise AuthzDenied(
+            400, "floor_lift_must_be_explicit",
+            f"`rules: []` ne lève plus le plancher de `{service}` ({', '.join(plancher)}) : "
+            f"un champ sensible ne sort en clair que nommé. Lever des champs : "
+            f"`rules: [], unmask: [\"{plancher[0]}\", …]`. Ouvrir les documents sans rien "
+            f"lever : `rules: [], documents: true`. Revenir au défaut : `rules: null`.")
+    return out
 
 
 def _get_field_filters(ctx: ResolvedCtx, inp: GetFieldFiltersInput) -> dict:
@@ -206,12 +251,17 @@ def _set_field_filter(ctx: ResolvedCtx, inp: SetFieldFilterInput) -> dict:
 
     block: Optional[dict]
     if inp.rules is None:
+        if inp.unmask is not None or inp.documents is not None:
+            raise AuthzDenied(400, "rules_required",
+                              "`rules: null` efface la politique ; `unmask` et `documents` "
+                              "se posent avec une politique (`rules: []` permis).")
         block = None     # efface la politique de ce connecteur
     else:
         _validate_rules(inp.rules)
         block = {"rules": inp.rules}
         if inp.salt:
             block["salt"] = inp.salt
+        block.update(_plancher_et_documents(service, inp))
 
     org_store.set_org_field_filters(inp.org_id, service, block)
     en_clair = field_filter_defaults.champs_du_plancher_en_clair(
@@ -265,7 +315,11 @@ CAPABILITIES += [
                      "(+preserve email/phone/iban or keep_first/keep_last), pseudonym "
                      "(+kind), generalize (+to year/month/department/range), hash, "
                      "anonymize, drop. Pass rules=null to clear the connector's policy "
-                     "(falls back to the server default). The org policy is authoritative."),
+                     "(falls back to the server default). A connector with a server floor "
+                     "(payfit: NIR, IBAN/BIC, absence reason) keeps it under any org policy: "
+                     "a floor field is served in clear only if named in `unmask`; "
+                     "`documents: true` opens payfit documents without unmasking anything. "
+                     "The response lists in `unmasked` the floor fields now in clear."),
         rest=RestBinding("PUT", "/api/orgs/{id}/field-filters/{service}", _ID),
     ),
     Capability(

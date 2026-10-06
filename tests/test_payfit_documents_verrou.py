@@ -6,15 +6,18 @@ l'intérieur d'un fichier. Or quatre documents servis portent exactement ce que 
 masques cachent — le bulletin PDF (NIR), le fichier de virement (IBAN de chaque
 salarié), l'export comptable (noms et montants par personne), les documents fiscaux
 britanniques. Décision d'Alexis (18/09/2026) : **même verrou** — un document ne sort
-que si la politique EFFECTIVE de l'appelant pour `payfit` ne masque rien.
+que si l'org y a consenti nommément (`documents: true` dans sa politique `payfit`) —
+décision du 06/10/2026 (signal oto #1269), qui remplace « la politique ne masque
+rien » : ouvrir les documents ne lève plus aucun masque des réponses JSON.
 
 Ce fichier prouve, pour chaque document, par le chemin réel
 (`access.resolve_field_filter` → `payfit_garde.serve_document`) :
 - politique par défaut (le plancher serveur) → refus NOMMÉ, et l'amont n'est même
   pas appelé ;
-- org qui a posé une AUTRE règle → refus aussi (un fichier ne se filtre pas du tout) ;
-- org qui a levé les masques (`rules: []`) → le document est servi, sentinelle
-  comprise ;
+- org qui a posé une AUTRE règle, ou `rules: []` seul (l'ancienne levée) → refus
+  aussi : seul le consentement nommé ouvre ;
+- org qui a posé `documents: true` → le document est servi, sentinelle comprise, et
+  le plancher JSON tient toujours ;
 - politique illisible → refus (fail-closed), jamais le document.
 
 Toutes les valeurs sont factices.
@@ -104,8 +107,8 @@ def test_the_default_policy_refuses_the_document_by_name(monkeypatch, client, to
 def test_an_org_that_masks_ANYTHING_keeps_the_documents_locked(monkeypatch, client,
                                                                tool, kwargs, methode,
                                                                sentinelle):
-    """Une org qui masque seulement la date de naissance a quand même dit qu'un champ
-    ne sort pas — et un PDF ne se filtre pas. Le verrou ne s'ouvre que sur « rien »."""
+    """Une org qui pose une règle n'a pas consenti aux documents : le verrou ne
+    s'ouvre que sur `documents: true`."""
     _politique(monkeypatch, {"payfit": {"rules": [
         {"fields": ["birthDate"], "action": "drop"}]}})
     with pytest.raises(McpError, match="document non servi"):
@@ -120,15 +123,35 @@ def test_the_refusal_prescribes_no_detour():
         assert "payfit_" not in texte and "op=" not in texte and "_account" not in texte
 
 
+@pytest.mark.parametrize("tool,kwargs,methode,sentinelle", DOCUMENTS, ids=IDS)
+def test_the_old_silent_lift_no_longer_opens_the_documents(monkeypatch, client, tool,
+                                                           kwargs, methode, sentinelle):
+    """`rules: []` seul, stocké avant le 06/10/2026, n'ouvre plus rien."""
+    _politique(monkeypatch, {"payfit": {"rules": []}})
+    with pytest.raises(McpError, match="document non servi"):
+        _tool(tool)(**kwargs)
+    getattr(client, methode).assert_not_called()
+
+
 # --- verrou ouvert ------------------------------------------------------------
 
 @pytest.mark.parametrize("tool,kwargs,methode,sentinelle", DOCUMENTS, ids=IDS)
-def test_an_org_that_lifted_the_masks_gets_the_document(monkeypatch, client, tool,
-                                                        kwargs, methode, sentinelle):
-    _politique(monkeypatch, {"payfit": {"rules": []}})
+def test_an_org_that_consented_gets_the_document(monkeypatch, client, tool,
+                                                 kwargs, methode, sentinelle):
+    _politique(monkeypatch, {"payfit": {"rules": [], "documents": True}})
     out = _tool(tool)(**kwargs)
     assert out["encoding"] == "text" and sentinelle in out["content"]
     getattr(client, methode).assert_called_once()
+
+
+def test_consenting_to_documents_unmasks_no_json_field(monkeypatch):
+    """Le consentement aux documents ne lève AUCUN champ du plancher : le NIR d'une
+    réponse JSON reste masqué."""
+    from oto_mcp import redaction
+
+    _politique(monkeypatch, {"payfit": {"rules": [], "documents": True}})
+    out = redaction.redact_payload("payfit", {"socialSecurityNumber": "SENTINELLE-NIR-JSON"})
+    assert "SENTINELLE-NIR-JSON" not in str(out)
 
 
 # --- politique illisible : fail-closed ----------------------------------------
