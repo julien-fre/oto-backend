@@ -167,6 +167,41 @@ class TestOption:
         _option_ouverte.clear()
         _abonnement.exiger_a_la_pose(_PORTEUR, _PORTEUR, "anthropic")
 
+    def test_l_instance_ouvre_a_tous_sans_option(self, monkeypatch, _option_ouverte):
+        _option_ouverte.clear()
+        monkeypatch.setenv(_abonnement.ENV_OUVERT_A_TOUS, "1")
+        assert _abonnement.ouvert(_PORTEUR)
+        _abonnement.exiger_ouvert(_PORTEUR, _FAMILLE)
+
+    def test_sans_l_env_ni_l_option_c_est_ferme(self, monkeypatch, _option_ouverte):
+        _option_ouverte.clear()
+        monkeypatch.delenv(_abonnement.ENV_OUVERT_A_TOUS, raising=False)
+        assert not _abonnement.ouvert(_PORTEUR)
+        with pytest.raises(Exception) as e:
+            _abonnement.exiger_ouvert(_PORTEUR, _FAMILLE)
+        assert e.value.code == "subscription_not_enabled"
+
+    @pytest.mark.parametrize("valeur", ["1", "TRUE", " yes ", "on"])
+    def test_les_oui_ouvrent(self, monkeypatch, _option_ouverte, valeur):
+        _option_ouverte.clear()
+        monkeypatch.setenv(_abonnement.ENV_OUVERT_A_TOUS, valeur)
+        assert _abonnement.ouvert(_PORTEUR)
+
+    @pytest.mark.parametrize("valeur", ["", "0", "false", "no", "off"])
+    def test_les_non_ferment(self, monkeypatch, _option_ouverte, valeur):
+        _option_ouverte.clear()
+        monkeypatch.setenv(_abonnement.ENV_OUVERT_A_TOUS, valeur)
+        assert not _abonnement.ouvert(_PORTEUR)
+
+    @pytest.mark.parametrize("valeur", ["oui", "2", "ture"])
+    def test_une_valeur_illisible_leve_au_lieu_de_fermer(self, monkeypatch,
+                                                         _option_ouverte, valeur):
+        """Fermer en silence ferait recevoir un 403 à tous sans que l'exploitation le
+        sache : la déclaration fausse se dit, en la nommant."""
+        monkeypatch.setenv(_abonnement.ENV_OUVERT_A_TOUS, valeur)
+        with pytest.raises(_abonnement.OuvertureIllisible, match=_abonnement.ENV_OUVERT_A_TOUS):
+            _abonnement.ouvert(_PORTEUR)
+
 
 class TestEnfilage:
     """Le QUATRIÈME chemin de pose : un travail enfilé à la main (revue du 23/09/2026)."""
