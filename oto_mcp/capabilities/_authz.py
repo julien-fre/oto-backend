@@ -308,14 +308,13 @@ def _refus_publication_bibliotheque() -> AuthzDenied:
     `guide_library._publish` : le même mur ne se dit pas de deux façons.
 
     Il dit ce qui reste ouvert ET à qui : les procédures personnelles le sont à tout
-    compte, le fork demande org_admin. Promettre le fork sans sa condition enverrait
-    un simple membre vers un second refus (#632 : le fait, puis au plus une
+    compte, le fork à tout membre de l'org active (#632 : le fait, puis au plus une
     condition)."""
     return AuthzDenied(
         403, "publication_reservee_a_la_plateforme",
         "Publier dans la bibliothèque publique est réservé aux super-administrateurs de "
         "la plateforme : c'est une vitrine éditée par la plateforme. Ce qui reste "
-        "ouvert : tes procédures personnelles, et — si tu es org_admin — forker une "
+        "ouvert : tes procédures personnelles, et forker une "
         "entrée de la bibliothèque dans ton org.")
 
 

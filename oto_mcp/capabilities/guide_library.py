@@ -344,7 +344,13 @@ def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
 
 
 def _fork(ctx: ResolvedCtx, inp: ForkInput) -> dict:
-    org_id = _require_org_admin(ctx, "Forker")
+    # Ouvert à tout membre de l'org active : ajouter un process de la communauté
+    # n'est pas réservé aux admins (retour client 06/10). L'org reste exigée ici,
+    # le handler pouvant être servi hors de la règle ORG_MEMBER.
+    if ctx.org_id is None:
+        raise AuthzDenied(400, "no_active_org",
+                          "Forker demande une org active — choisis-en une avec oto_use_org.")
+    org_id = ctx.org_id
     entry = org_store.get_library_entry(slug=inp.slug, include_unlisted=True)
     if not entry:
         raise AuthzDenied(404, "unknown_entry", f"Guide public `{inp.slug}` inconnu.")
@@ -393,7 +399,7 @@ CAPABILITIES += [
                     "so others can find and fork it. Reserved to platform super_admin "
                     "accounts (403 publication_reservee_a_la_plateforme): the library is "
                     "curated by the platform and its entries are signed Otomata. Still open: "
-                    "your personal procedures, and — if you are org_admin — forking a library "
+                    "your personal procedures, and forking a library "
                     "entry into your org. Needs an active org (the body is read from it). "
                     "slug = the org skill to publish ; visibility = public | unlisted. "
                     "Public names are unique and OWNED: re-publishing a platform entry bumps "
@@ -405,7 +411,7 @@ CAPABILITIES += [
     Capability(
         key="library.fork", handler=_fork, Input=ForkInput, authz=ORG_MEMBER,
         description="Fork (copy) a public-library guide into your active org as a new "
-                    "versioned skill. Requires org_admin of your active org. slug = the public "
+                    "versioned skill. Open to any member of your active org. slug = the public "
                     "entry ; new_slug optional (defaults to source slug, de-duplicated).",
         Output=ForkResult,
         rest=RestBinding("POST", "/api/me/guide-library/fork"),

@@ -2,7 +2,7 @@
 
 La bibliothèque publique est une vitrine éditée par la plateforme : ses entrées sont
 signées Otomata. Ce qui reste ouvert ne change pas — ses procédures personnelles pour
-tout compte, le fork d'une entrée pour un org_admin — et garde ses propres gardes.
+tout compte, le fork d'une entrée pour tout membre d'org — et garde ses propres gardes.
 
 Ce que ces tests figent, sur la séquence SERVIE (validation → règle d'autz déclarée →
 canal posé au seuil → handler, celle de `_rest_adapter` et de `_mcp_adapter`) :
@@ -15,7 +15,7 @@ canal posé au seuil → handler, celle de `_rest_adapter` et de `_mcp_adapter`)
 - le droit ANNONCÉ (`capacite_autorise`, `platform_floor`) lit la même règle ;
 - sur `oto_procedure`, la garde d'agent parle toujours avant le handler pour un
   super_admin, et un compte qui ne publiera nulle part reçoit le refus de plateforme ;
-- le fork garde sa garde org_admin.
+- le fork est ouvert à tout membre de l'org active, admin ou non.
 
 ⚠️ Le rôle se pose sur `access.get_user_role`, la source commune des deux prédicats
 (`is_super_admin`, `is_platform_operator`), jamais sur l'un d'eux : les stubber
@@ -110,7 +110,7 @@ def test_le_refus_dit_qui_publie_et_ce_qui_reste_ouvert(banc):
     m = e.value.message
     assert "super-administrateurs de la plateforme" in m, "qui publie"
     assert "tes procédures personnelles" in m, "ce qui reste ouvert à tout compte"
-    assert "si tu es org_admin" in m, "le fork se promet AVEC sa condition"
+    assert "forker une entrée" in m, "le fork reste promis"
 
 
 @pytest.mark.parametrize("servir", [_publier_rest, _publier_mcp], ids=["rest", "mcp"])
@@ -200,6 +200,18 @@ def test_la_console_garde_l_ordre_des_refus(banc):
 
 
 def test_le_fork_reste_ouvert_a_l_org_admin(banc, monkeypatch):
+    monkeypatch.setattr(org_store, "get_library_entry",
+                        lambda **k: {"id": 3, "body_md": "# corps"})
+    monkeypatch.setattr(org_store, "fork_into_org",
+                        lambda **k: {"org_id": k["org_id"], "slug": "veille-concurrence",
+                                     "version": 1, "forked_from": 3, "source_title": "T"})
+    out = _servir("library.fork", "compte-membre", "rest", slug="veille-concurrence")
+    assert out["forked"] is True and out["org_id"] == ORG
+
+
+def test_le_fork_est_ouvert_au_simple_membre(banc, monkeypatch):
+    """Ajouter un process de la communauté à son org n'est pas réservé aux admins."""
+    monkeypatch.setattr(roles, "is_org_admin", lambda sub, org_id: False)
     monkeypatch.setattr(org_store, "get_library_entry",
                         lambda **k: {"id": 3, "body_md": "# corps"})
     monkeypatch.setattr(org_store, "fork_into_org",
