@@ -223,5 +223,18 @@ def test_la_copie_et_le_fork_contournent_le_slug_d_un_guide(monde):
     _guide("u-admin", op="write", scope="org", owner_id=org, slug=fork, body_md=_CORPS_G)
     entree = org_store.publish_guide(slug=fork, title="T", body_md=_CORPS_P,
                                      author_kind="otomata", published_by="u-admin")
-    assert org_store.fork_into_org(entry_id=entree["id"], org_id=int(org),
-                                   set_by="u-admin")["slug"] == f"{fork}-2"
+    assert org_store.fork_library_entry(entry_id=entree["id"], owner_type="org",
+                                        owner_id=int(org),
+                                        set_by="u-admin")["slug"] == f"{fork}-2"
+    # Le dédoublonnage se fait DANS le palier visé : le guide d'org ne gêne pas une
+    # copie personnelle, un guide personnel du même slug, si.
+    assert org_store.fork_library_entry(entry_id=entree["id"], owner_type="user",
+                                        owner_id="u-admin",
+                                        set_by="u-admin")["slug"] == fork
+    perso = _slug("perso")
+    _guide("u-admin", op="write", scope="user", slug=perso, body_md=_CORPS_G)
+    entree_p = org_store.publish_guide(slug=perso, title="T", body_md=_CORPS_P,
+                                       author_kind="otomata", published_by="u-admin")
+    assert org_store.fork_library_entry(entry_id=entree_p["id"], owner_type="user",
+                                        owner_id="u-admin",
+                                        set_by="u-admin")["slug"] == f"{perso}-2"
