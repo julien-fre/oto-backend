@@ -92,7 +92,7 @@ def test_every_multi_account_connector_documents_its_accounts():
     multi = [c for c in providers._REGISTRY_LIST if c.auth_multi_account]
     assert len(multi) > 20
     for con in multi:
-        noun = con.account_noun or "account"
+        noun = con.account_noun or "compte"
         titres = [s.title for s in con.doc_sections]
         assert f"multiple {noun}s" in titres, con.name
         corps = next(s.body_md for s in con.doc_sections if s.title == f"multiple {noun}s")

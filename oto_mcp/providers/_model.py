@@ -197,7 +197,8 @@ class Connector:
     account_axis_static: bool = False
     # Business word for an account at THIS provider, when "account" sounds wrong: a
     # Slack account in the vault is a workspace, a Zoho account an organization.
-    # Empty = "account". Published in the `auth` descriptor and displayed as-is.
+    # Empty = "compte". Published in the `auth` descriptor and displayed as-is.
+    # French on purpose: the dashboard displays and inflects it.
     account_noun: str = ""
     # Name of the field whose VALUE selects the others (`auth_mode` on `http`).
     # Empty (default) = flat-schema credential: all fields always apply.
@@ -283,7 +284,7 @@ class Connector:
         from ..connectors.docs_reader import DOC_SECTIONS, multi_account_section
         sections = tuple(DOC_SECTIONS.get(self.name, ()))
         if self.auth_multi_account:
-            sections += (multi_account_section(self.name, self.account_noun or "account",
+            sections += (multi_account_section(self.name, self.account_noun or "compte",
                                                par_connexion=self.secret_kind == "oauth"),)
         return sections
 
@@ -424,7 +425,7 @@ class Connector:
             # "account" is wrong for it: a Slack account in the vault IS a workspace.
             # The front displays it as-is (oto-dashboard#121) — it is the registry that
             # knows the provider's vocabulary, not the screen.
-            "account_noun": self.account_noun or "account",
+            "account_noun": self.account_noun or "compte",
             # The field whose value selects the others, when there is one
             # (`auth_mode` on `http`): the front does not need to know the connector
             # to show only the useful fields — it reads `when` (#449).

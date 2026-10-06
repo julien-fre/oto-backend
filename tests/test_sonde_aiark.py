@@ -38,7 +38,7 @@ def _brancher(monkeypatch, client):
 
 def test_un_solde_disponible_est_rendu(monkeypatch):
     cli = _brancher(monkeypatch, _FauxClient(credits=250))
-    assert A._verify(_fields("k")) == {"quota": {"restant": 250, "unite": "crédits"}}
+    assert A._verify(_fields("k")) == {"quota": {"restant": 250, "unite": "credits"}}
     assert cli.appels == 1
 
 

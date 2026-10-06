@@ -52,12 +52,13 @@ def _is_multi_account(provider: str, org: "int | None" = None) -> bool:
 
 def account_noun(provider: str) -> str:
     """The provider's WORD for an account of this connector — "workspace" for Slack,
-    "organisation" for Zoho, "site" for the signed-in browser, "account" by
+    "organisation" for Zoho, "site" for the signed-in browser, "compte" by
     default (`Connector.account_noun`). Used in the messages the AGENT reads when it
     is blocked: "multiple slack accounts" forces it to translate, "multiple
     workspaces" tells it what to look for. Never empty."""
     con = providers.connector_for_provider(provider)
-    return (getattr(con, "account_noun", "") or "account") if con else "account"
+    # French on purpose: the dashboard displays and inflects it.
+    return (getattr(con, "account_noun", "") or "compte") if con else "compte"
 
 
 class CompteAmbigu(McpError):

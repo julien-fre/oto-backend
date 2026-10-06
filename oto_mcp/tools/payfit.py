@@ -14,7 +14,8 @@ Everything: the company, the directory, the contracts (including the FR variant:
 nature, collective agreement, day-based package, termination reason, executive
 officer status), absences, payslips (metadata and PDF), payroll accounting entries and
 their export, the payment file, the payroll cycle status, actual worked time,
-meal vouchers, health insurance and provident fund, documents. And
+meal vouchers, health insurance (mutuelle) and death and disability cover
+(prévoyance), documents. And
 **no write**: creating a collaborator, a contract, an absence, cancelling it,
 affiliating a contract to a health insurance or requesting a regularization return
 the named refusal `payfit_write_not_wired`, which says what the call would have done —
@@ -54,7 +55,7 @@ This module:
 
 Sibling modules (same key, same client, mounted by `Connector.modules`):
 `payfit_paie` (payslips, accounting and payments, cycle status, worked
-time, meal vouchers), `payfit_social` (health insurance, provident fund, documents).
+time, meal vouchers), `payfit_social` (mutuelle, prévoyance, documents).
 
 **No argument is silently dropped** (`is not None`) → `payfit_garde`.
 **No write is wired**: `payfit_garde.not_wired`, with neither key nor client.

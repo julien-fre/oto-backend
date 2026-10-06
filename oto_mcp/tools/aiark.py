@@ -263,7 +263,7 @@ def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001 (
         raise connector_verify.QuotaEpuise(
             "The AI Ark key is good, but the account is drained (0 credits left). "
             "Top up the account at AI Ark — reconnecting would change nothing.")
-    return {"quota": {"restant": restant, "unite": "crédits"}}
+    return {"quota": {"restant": restant, "unite": "credits"}}
 
 
 def register(mcp: FastMCP) -> None:

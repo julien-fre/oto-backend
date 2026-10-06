@@ -324,7 +324,7 @@ def register(mcp: FastMCP) -> None:
           specific settings that get merged (e.g. segment trigger:
           `config={"segment_id":1,"segment_name":"Segment A","is_bulk":True,
           "schedule":{"interval":"daily","schedule_time":"14:00",
-          "timezone":"Europe/Paris"}}`). Renvoie `{status}`.
+          "timezone":"Europe/Paris"}}`). Returns `{status}`.
         - **"delete"**: deletes a trigger from a scenario. Returns `{status}`.
 
         Args:

@@ -1,4 +1,4 @@
-"""PayFit — complementary social protection (health insurance, provident fund) and documents.
+"""PayFit — complementary social protection (mutuelle, prévoyance) and documents.
 
 Sibling module of `payfit.py` (same key, same client, mounted by `Connector.modules`).
 The client, the guards, the file rendering and the probe live in `payfit_garde`.
@@ -41,10 +41,10 @@ def register(mcp: FastMCP) -> None:
         effective_date: Optional[str] = None,
         fields: Optional[list] = None,
     ) -> dict:
-        """Complementary health insurance and provident fund
-        of a French PayFit company — the company's contracts, read only.
+        """Complementary health insurance (mutuelle) and death and disability cover
+        (prévoyance) of a French PayFit company — the company's contracts, read only.
 
-        `kind` picks the family: `health` (health insurance) or `provident` (provident fund).
+        `kind` picks the family: `health` (mutuelle) or `provident` (prévoyance).
         Both read with the same scope upstream.
 
         `op`:
@@ -77,7 +77,8 @@ def register(mcp: FastMCP) -> None:
             return S.rows((env or {}).get("contracts"), "contracts", "idContrat",
                           fields=fields)
         if op == "affiliate":
-            famille = "health insurance" if kind == "health" else "provident fund"
+            famille = ("health insurance (mutuelle)" if kind == "health"
+                       else "death and disability cover (prévoyance)")
             raise not_wired(op, f"replaced the contract's {famille} affiliation",
                             contract_id=contract_id,
                             insurance_contract_ids=insurance_contract_ids)

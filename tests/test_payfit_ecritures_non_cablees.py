@@ -72,7 +72,7 @@ _ECRITURES = [
     ("payfit_insurance", {"op": "affiliate", "contract_id": K,
                           "insurance_contract_ids": [K2]}, "health insurance"),
     ("payfit_insurance", {"op": "affiliate", "kind": "provident", "contract_id": K,
-                          "insurance_contract_ids": [K2]}, "provident fund"),
+                          "insurance_contract_ids": [K2]}, "prévoyance"),
     ("payfit_insurance", {"op": "regularize", "contract_id": K,
                           "insurance_contract_ids": [K2],
                           "effective_date": "2026-01-01"}, "regularization"),

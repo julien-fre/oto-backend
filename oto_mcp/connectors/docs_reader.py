@@ -176,7 +176,7 @@ def multi_account_section(connector: str, noun: str,
     `par_connexion`: the account comes from a CONNECTION (OAuth — google, sharepoint),
     not from a stored key. It is then named by its address, the first linked one is
     the default, and nothing is set at the team or org level from this action: the
-    stored-keys rule "the first one unnamed, then "main"" would be wrong here."""
+    stored-keys rule "the first one unnamed, then "principal"" would be wrong here."""
     if par_connexion:
         nommage = (
             f"this connector accepts multiple {noun}s: connecting with another "

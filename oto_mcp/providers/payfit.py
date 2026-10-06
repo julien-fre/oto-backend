@@ -36,7 +36,7 @@ CONNECTOR = _c(
     # companies" and knows what it is looking for. Multi-account itself is not declared
     # here: it already applies to every connector whose credential can be set
     # (`Connector.auth_multi_account`).
-    account_noun="company",
+    account_noun="société",
 )
 
 CATEGORY = "HR"
@@ -49,7 +49,8 @@ DESCRIPTION = (
     "package, probation, termination), their absences, payslips (metadata and PDF), "
     "payroll accounting entries and their export, the payment file, "
     "the payroll cycle status, actual worked time, meal vouchers, "
-    "health insurance and provident fund. Read-only: the connector never writes "
+    "health insurance (mutuelle) and death and disability cover (prévoyance). "
+    "Read-only: the connector never writes "
     "to PayFit — create the key with read scopes. NIR, "
     "bank details and absence reason are "
     "masked by a server default that an org administrator can lift."

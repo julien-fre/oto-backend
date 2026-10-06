@@ -178,7 +178,7 @@ def diagnose(sub: str, connector: str, *, org, group) -> Optional[Diagnosis]:
     return None
 
 
-def no_identity_step(sub: Optional[str], connector: str, noun: str = "account") -> str:
+def no_identity_step(sub: Optional[str], connector: str, noun: str = "compte") -> str:
     """The default action when the identity list is empty without any layer
     missing (#504): the connector declares no `status_hints`, but silence is still
     the default to repair — we name the state rather than returning a bare `[]`.

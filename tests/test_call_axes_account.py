@@ -305,7 +305,7 @@ def test_no_pin_and_no_default_raises_ambiguity_error(monkeypatch):
         monkeypatch, "folk", 42, "u",
         [("boulot", {}), ("perso", {})],
         {"boulot": "K_BOULOT", "perso": "K_PERSO"})
-    with pytest.raises(McpError, match="Multiple accounts"):
+    with pytest.raises(McpError, match="Multiple comptes"):
         access.resolve_credential("folk", want="auto", sub="u")
 
 
@@ -317,5 +317,5 @@ def test_no_pin_and_two_defaults_still_raises(monkeypatch):
         monkeypatch, "folk", 42, "u",
         [("boulot", {"is_default": True}), ("perso", {"is_default": True})],
         {"boulot": "K_BOULOT", "perso": "K_PERSO"})
-    with pytest.raises(McpError, match="Multiple accounts"):
+    with pytest.raises(McpError, match="Multiple comptes"):
         access.resolve_credential("folk", want="auto", sub="u")

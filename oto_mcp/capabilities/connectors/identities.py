@@ -95,7 +95,7 @@ class ConnectorIdentities(BaseModel):
     # « compte » by default. Served here because it is the answer read by whoever
     # CHOOSES: saying « account » for a Slack workspace forces them to translate, and neither
     # the agent nor the screen has any way to guess the provider's vocabulary.
-    noun: str = "account"
+    noun: str = "compte"
     # ── Why the list is EMPTY (signal #504) ── present ONLY on `[]`.
     # `no_credential` | `paid_option_off` | `over_quota` | `credential_rejected`
     # (a layer is missing, see `connectors/readiness.py`) | `no_identity_connected`
