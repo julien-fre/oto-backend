@@ -33,6 +33,10 @@ requises non secrètes) — le refus arrive ici, avant le déploiement, plutôt 
 Et contre la bibliothèque bleu/vert de CE tag : tant que sa santé (`HEALTH_PATH`) lit un
 chemin que seule la façade DCR sert, chaque rôle déclare l'interrupteur de la façade
 (`exigees_par_la_sante`) — sans lui, la première montée échouerait sur un 404.
+Et contre le relais d'autorisation (`oto_mcp/auth/relay.py`, #1164) : un rôle dont le MCP
+sert la façade devant NOTRE annuaire administrable porte l'hôte de son URL publique dans
+`OTO_MCP_OAUTH_RELAY_HOSTS` (`hote_a_relayer`) — sans lui, le relais est éteint et les
+rafraîchissements des clients qui ont lu sa métadonnée sont refusés.
 
 Pur : bibliothèque standard seulement, exécuté par le Python du système de la cible.
 """
@@ -43,6 +47,7 @@ import re
 import shlex
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 ARBRE = Path(__file__).resolve().parents[2]
 if str(ARBRE) not in sys.path:
@@ -69,6 +74,13 @@ BIBLIOTHEQUE_BLEU_VERT = ARBRE / "deploy" / "oto-mcp-bluegreen.sh"
 # `oto_mcp/server.py` ne monte que si son interrupteur est posé et non vide.
 CHEMIN_DE_LA_FACADE = "/.well-known/oauth-authorization-server"
 INTERRUPTEUR_DE_LA_FACADE = "OTO_MCP_CLAUDE_APP_ID"
+# Le relais d'autorisation (#1164). La façade le consulte, pour NOTRE annuaire, sur l'hôte
+# de son URL publique (`facade.make_routes` : `relay.relais_actif(public_host)`), et il
+# n'agit que si cet annuaire est administrable — son credential de management présent
+# (`facade._credential_present`, `_PRIMARY_CREDENTIAL` + `_ID`/`_SECRET`).
+LISTE_DU_RELAIS = "OTO_MCP_OAUTH_RELAY_HOSTS"     # `relay.HOSTS_ENV`
+URL_PUBLIQUE = "OTO_MCP_PUBLIC_URL"               # le `public_url` de la façade
+CREDENTIAL_DE_L_ANNUAIRE = "OTO_MCP_LOGTO_M2M"    # `facade._PRIMARY_CREDENTIAL`
 
 
 class Refus(Exception):
@@ -117,6 +129,49 @@ def exigees_par_la_sante() -> tuple[str, ...]:
     """Ce que le `.env` d'un rôle doit porter, non vide, pour que sa couleur puisse
     devenir saine : l'interrupteur de la façade DCR, tant que la santé lit son chemin."""
     return (INTERRUPTEUR_DE_LA_FACADE,) if chemin_de_sante() == CHEMIN_DE_LA_FACADE else ()
+
+
+def hotes_du_relais(valeur: str) -> frozenset:
+    """La liste du relais telle que le serveur la lit (`relay.hosts_declares`) : des noms
+    d'hôte nus, casse et point final ignorés — un schéma ou un port n'y correspond à rien."""
+    return frozenset(h.strip().lower().rstrip(".") for h in valeur.split(",") if h.strip())
+
+
+def hote_a_relayer(env: dict, optionnels: list) -> str | None:
+    """L'hôte que le serveur de ce rôle cherche dans la liste du relais pour le servir —
+    ou None si le relais n'y agirait pas : façade non montée, ou annuaire non administrable
+    (le relais y répondrait 503). "" si la façade le chercherait sur une URL sans hôte."""
+    if not env.get(INTERRUPTEUR_DE_LA_FACADE):
+        return None
+    if not (env.get(f"{CREDENTIAL_DE_L_ANNUAIRE}_ID")
+            and f"{CREDENTIAL_DE_L_ANNUAIRE}_SECRET" in optionnels):
+        return None
+    url = env.get(URL_PUBLIQUE)
+    try:
+        hote = urlparse(url.rstrip("/")).hostname if isinstance(url, str) else None
+    except ValueError:   # une URL malformée n'a pas d'hôte : le refus le nomme
+        hote = None
+    return (hote or "").lower().rstrip(".")
+
+
+def _relais(ecarts: list[str], ou: str, nom: str, env: dict, optionnels: list) -> None:
+    hote = hote_a_relayer(env, optionnels)
+    if hote is None:
+        return
+    if not hote:
+        ecarts.append(f"{ou}.env.{URL_PUBLIQUE} : aucun nom d'hôte — le relais "
+                      "d'autorisation de ce rôle ne peut pas y être cherché")
+        return
+    liste = env.get(LISTE_DU_RELAIS, "")
+    if isinstance(liste, str) and hote in hotes_du_relais(liste):
+        return
+    ecarts.append(
+        f"{ou}.env.{LISTE_DU_RELAIS} : l'hôte public du rôle {nom}, « {hote} » (celui de "
+        f"{URL_PUBLIQUE}), n'y figure pas — ce rôle sert la façade OAuth devant un annuaire "
+        f"administrable ({CREDENTIAL_DE_L_ANNUAIRE}_ID et _SECRET déclarés) : sans son hôte "
+        "dans la liste, le relais d'autorisation est éteint et les rafraîchissements des "
+        "clients MCP qui ont lu sa métadonnée sont refusés. La liste se lit en noms d'hôte "
+        "nus séparés par des virgules (ni schéma ni port ; casse et point final ignorés)")
 
 
 def _role(ecarts: list[str], nom: str, r) -> None:
@@ -169,6 +224,8 @@ def _role(ecarts: list[str], nom: str, r) -> None:
                 f"{CHEMIN_DE_LA_FACADE}, que seule la façade DCR sert, et la façade n'est "
                 f"montée que si {n} est posée ; sans elle, la couleur répond 404 et la "
                 "montée échoue en « couleur pas devenue saine »")
+    if isinstance(optionnels, list):
+        _relais(ecarts, ou, nom, env, optionnels)
     # Ce que le process DÉCLARE être (`config.est_la_production`) est le rôle qu'on
     # déploie : une préprod qui se dirait prod agirait sur des tiers avec son code.
     if env.get("OTO_ENV") != nom:

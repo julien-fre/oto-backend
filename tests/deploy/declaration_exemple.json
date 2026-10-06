@@ -78,7 +78,8 @@
         "OTO_MCP_S3_ENDPOINT": "https://oto-mcp-s3-endpoint.exemple.test",
         "OTO_PROJECT_DOMAIN": "exemple.test",
         "OTO_TENANT_PRIMAIRE_SLUG": "exemple",
-        "OTO_MCP_LOGTO_M2M_ID": "m2m-exemple"
+        "OTO_MCP_LOGTO_M2M_ID": "m2m-exemple",
+        "OTO_MCP_OAUTH_RELAY_HOSTS": "mcp.exemple.test"
       }
     }
   }

@@ -263,6 +263,24 @@ la montée échoue en « couleur pas devenue saine » ; `verifier` la refuse don
 La règle lit `HEALTH_PATH` dans la bibliothèque du tag : elle tombe si la santé change de
 chemin.
 
+Un rôle dont le MCP sert la façade (`OTO_MCP_CLAUDE_APP_ID`) devant **notre annuaire
+administrable** — `OTO_MCP_LOGTO_M2M_ID` non vide dans `env` **et**
+`OTO_MCP_LOGTO_M2M_SECRET` dans `secrets_optionnels` — porte aussi
+`OTO_MCP_OAUTH_RELAY_HOSTS`, et l'hôte de son `OTO_MCP_PUBLIC_URL` y figure (#1164). C'est
+exactement là que le serveur consulte la liste : la façade y cherche l'hôte de son URL
+publique (`relay.relais_actif`), et le relais n'agit que si l'annuaire est administrable
+(`docs/auth-logto.md` § Le relais d'autorisation). Hôte absent : le relais est éteint, la
+métadonnée renvoie l'échange de jeton chez l'annuaire, et un client qui avait lu celle du
+relais — un hôte qui change d'instance, par exemple — voit ses rafraîchissements refusés
+jusqu'à sa prochaine découverte ; un client strict (RFC 9207) n'aboutit pas à sa première
+autorisation. `verifier` refuse donc en nommant le rôle, l'hôte et la variable. La liste se
+compare comme le serveur la lit : noms d'hôte nus séparés par des virgules, casse et point
+final ignorés ; un schéma (`https://`) ou un port n'y correspond à rien. Un rôle sans ce
+credential (le relais y répondrait 503) n'est pas concerné. Hors de portée de la
+déclaration : un hôte réclamé par un **tenant** (`tenants.hosts`, en base) relève de
+l'annuaire de ce tenant ; son inscription se constate avec
+`oto-mcp maintenance oauth-relay-callbacks` (`docs/commands.md`).
+
 ### 2. Le Secret Manager du projet de la cible
 
 Un secret par variable, **nommé comme la variable**, sous le chemin du rôle (`/preprod`,
