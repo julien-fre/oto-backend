@@ -330,3 +330,41 @@ def test_le_429_kaspr_est_classe_rejouable():
     info = classify(_erreur_du_429_kaspr())
     assert info.code == "rate_limited", info
     assert info.retryable is True, info
+
+
+# --- Kaspr 401/403 : la clé, pas le profil ---------------------------------------
+
+def _message_kaspr_pour(status: int) -> str:
+    from oto_mcp.mcp_errors import McpError
+    from oto_mcp.tools import kaspr
+
+    class _Resp:
+        status_code = status
+
+    class _Boom(Exception):
+        response = _Resp()
+
+    class _Stub:
+        def __init__(self, *a, **k):
+            pass
+
+        def enrich_linkedin(self, **k):
+            raise _Boom()
+
+    with patch("oto.tools.kaspr.client.KasprClient", _Stub), \
+            patch("oto_mcp.access.resolve_api_key", return_value=("k", False)):
+        m = FastMCP("t")
+        kaspr.register(m)
+        fn = asyncio.run(m.get_tool("kaspr_enrich_linkedin")).fn
+        with pytest.raises(McpError) as e:
+            fn(linkedin_id="jane-doe")
+        return e.value.error.message
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_le_refus_de_la_cle_ne_renvoie_pas_verifier_le_profil(status):
+    """Relevé le 06/10/2026 : une rafale de 403 sur la clé d'une org, les mêmes
+    profils refusés en slug comme en URL, rendue « Vérifie le profil LinkedIn »."""
+    msg = _message_kaspr_pour(status)
+    assert "Check the LinkedIn profile" not in msg, msg
+    assert f"({status})" in msg and "key" in msg and "not your input" in msg, msg

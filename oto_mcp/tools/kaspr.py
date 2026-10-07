@@ -135,6 +135,17 @@ def register(mcp: FastMCP) -> None:
                     "has anything to do with it. Space out your calls: wait a few "
                     "seconds, then replay the exact same call."),
                     service="kaspr") from e
+            elif status in (401, 403):
+                # 401/403 = Kaspr refuses the KEY, not the profile. Seen on
+                # 2026-10-06: a burst of 403 on an org key, the same profiles refused
+                # as slug and as full URL — rendered "Check the LinkedIn profile",
+                # the one lead that cannot help. A 401 is a dead key (marked by the
+                # common path); a bare 403 is undocumented by Kaspr: API access or
+                # plan of the key, so it is not declared a dead key.
+                msg = (f"Kaspr refused access with this key ({status}) — not your "
+                       "input: the profile and `data_to_get` have nothing to do with "
+                       "it. The key's API access or plan must be checked in Kaspr; "
+                       "retrying will not change anything until then.")
             else:
                 msg = (f"Kaspr could not enrich `{linkedin_id}` ({e}). Check the "
                        f"LinkedIn profile (valid slug or URL).")
