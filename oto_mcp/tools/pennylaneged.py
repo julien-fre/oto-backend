@@ -141,6 +141,19 @@ def _company_app(company_id: int) -> str:
 
 
 
+# Ce que `context` porte et qui ne décrit pas le dossier : la plomberie de Pennylane.
+# Mesuré le 2026-10-07 : la fiche servait tel quel `pusher_channel_access_token` — un
+# jeton — et les identifiants que Pennylane tient chez ses prestataires (temps réel,
+# banque, CRM). On écarte par FAMILLE, pas par nom : le prochain jeton ou le prochain
+# identifiant du même prestataire tombe sous la même règle.
+_PLOMBERIE = ("pusher_", "swan_", "salesforce_")
+
+
+def _sans_plomberie(company: dict) -> dict:
+    return {k: v for k, v in company.items()
+            if not k.startswith(_PLOMBERIE) and "token" not in k}
+
+
 async def _call_raw(app: str, path: str, method: str = "GET",
                     body: Optional[dict] = None) -> dict:
     """The internal API call, returned RAW: `{status, data}`.
@@ -364,6 +377,9 @@ def register(mcp: FastMCP) -> None:
         Hits `/companies/{cid}/context`. The feature-flag blocks of the
         response (`experiments`, `companyFeaturesAbility`, `userFeaturesAbility`) are
         DISCARDED: voluminous and of no business value, they would drown the record.
+        So are Pennylane's own plumbing fields — any access token, and the ids it
+        keeps for its real-time channel and its banking and CRM providers
+        (`pusher_*`, `swan_*`, `salesforce_*`): they say nothing about the file.
 
         ⚠️ ONE call = ONE company = ONE browser session. Enriching an entire
         portfolio therefore costs one call PER file — weigh it against the volume.
@@ -380,7 +396,7 @@ def register(mcp: FastMCP) -> None:
         if not company:
             raise _err(f"Unexpected `context` response for company {cid}: "
                        f"{str(res)[:200]}", code=INTERNAL_ERROR)
-        return {"company": company, "firm": res.get("firm"),
+        return {"company": _sans_plomberie(company), "firm": res.get("firm"),
                 "user_role": res.get("userRole")}
 
     # --- Tree / folders ------------------------------------------------------

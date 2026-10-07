@@ -51,6 +51,8 @@ NO_SESSION = "no_session"              # rien ne prouve un login : l'humain n'a 
 AUTH_REJECTED = "auth_rejected"        # 401/403, page de login : identifiants refusés
 PROBE_UNAVAILABLE = "probe_unavailable"  # la SONDE est en panne, pas l'utilisateur
 FORCED = "forced"                      # persisté sans vérification, à la demande
+WINDOW_CLOSED = "window_closed"        # la fenêtre de connexion n'existe plus : vérifier
+                                       # à nouveau ne PEUT pas réussir
 
 _REGISTRY: dict[str, Verify] = {}
 
@@ -262,6 +264,30 @@ def _persist(sub: str, connector: str, context_id: str, session_id: str,
         db.set_member_api_key(sub, org_id, connector, context_id, account=account)
 
 
+# Mesuré le 2026-10-07 : la Live View a expiré pendant que l'humain se loguait, la sonde
+# s'est cassée sur un `410 Gone - session not running`, et le refus disait « réessaie » —
+# deux fois, deux échecs : on ne revérifie pas une fenêtre qui n'existe plus. Or le login
+# fait AVANT la fermeture vit dans le Context (Browserbase le persiste à la fin de la
+# session) : `force` le récupère, et le premier appel métier dit s'il est bon.
+_FENETRE_FERMEE = (
+    "La fenêtre de connexion est fermée (la session du navigateur distant est "
+    "terminée) : vérifier à nouveau ne peut pas réussir. Si tu t'es connecté dans la "
+    "fenêtre avant sa fermeture, ta connexion est gardée dans le contexte : rappelle "
+    "la finalisation avec `force=true` sur les mêmes identifiants, puis confirme par un "
+    "vrai appel. Sinon, relance la connexion depuis le début (nouvelle fenêtre).")
+
+
+async def _fenetre_fermee(session_id: str) -> bool:
+    """La session distante est-elle terminée ? Mesuré sur Browserbase, pas déduit du
+    texte de l'exception. Sans réponse, on ne conclut pas : `False`, et le refus
+    générique reste celui d'avant."""
+    try:
+        return await asyncio.to_thread(browserbase.session_status, session_id) != "RUNNING"
+    except Exception:  # noqa: BLE001 — l'état est inconnu : on ne tranche pas
+        logger.exception("session status unavailable for %s", session_id)
+        return False
+
+
 async def finalize(sub: str, connector: str, context_id: str, session_id: str,
                    *, scope: str = "member", group_id: "int | None" = None,
                    account: str = "", force: bool = False) -> FinalizeResult:
@@ -316,6 +342,8 @@ async def finalize(sub: str, connector: str, context_id: str, session_id: str,
             warning = str(e)
         except Exception:  # noqa: BLE001 — détail loggué, jamais renvoyé (peut porter l'apiKey)
             logger.exception("session verify failed for %s", connector)
+            if await _fenetre_fermee(session_id):
+                return FinalizeResult(False, WINDOW_CLOSED, _FENETRE_FERMEE, retry=False)
             raise SessionError("vérification de la session impossible — réessaie.")
         if not verdict.connected:
             return FinalizeResult(False, verdict.reason, verdict.detail, verdict.retry)

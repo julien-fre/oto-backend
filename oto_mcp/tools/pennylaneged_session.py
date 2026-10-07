@@ -147,7 +147,12 @@ def register(mcp: FastMCP) -> None:
         - `auth_rejected` → Pennylane refused the session: redo the login;
         - `probe_unavailable` → your session IS saved (`connected: true`) but the
           probe could not confirm it, because it is broken on OUR side.
-          `retry: false`: **do not retry**, try a GED call directly.
+          `retry: false`: **do not retry**, try a GED call directly;
+        - `window_closed` → the Live View window has closed (it expires after a few
+          minutes): checking again CANNOT succeed. If you did log in before it
+          closed, call this tool again with `force=true` (the login is kept in the
+          context) and confirm with a GED call; otherwise rerun
+          `pennylaneged_connect_start`.
 
         ⚠️ `retry: false` means "retrying cannot succeed" — the problem
         is not on the user's side. Do not loop: say so and move on.

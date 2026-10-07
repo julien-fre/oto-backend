@@ -180,6 +180,26 @@ def test_la_fiche_societe_porte_le_fiscal_et_ecarte_les_drapeaux(substrat):
     assert "experiments" not in out and "companyFeaturesAbility" not in out
 
 
+def test_la_fiche_ne_sert_ni_jeton_ni_identifiant_de_prestataire(substrat):
+    """`context` porte la plomberie de Pennylane : un jeton d'accès à son canal
+    temps réel, les identifiants qu'il tient chez sa banque et son CRM. Rien de
+    cela ne décrit le dossier, et un jeton n'a rien à faire dans la réponse d'un
+    agent. On écarte par famille — un nom neuf de la même famille tombe aussi."""
+    async def _eval(ctx, app, js, arg):
+        return {"status": 200, "data": {"company": {
+            "id": 1, "fiscal_category": "bic_is", "vat_number": "FR00000000000",
+            "pusher_channel": "private-x", "pusher_channel_access_token": "t0k",
+            "swan_id": "s", "swan_onboarding_email": "a@b.c",
+            "salesforce_id": "001", "salesforce_business_segmentation": None,
+            "un_futur_refresh_token": "r"}, "firm": None, "userRole": "x"}}
+
+    substrat.setattr(P.browserbase, "run_page_eval", _eval)
+    fiche = asyncio.run(_tool("pennylaneged_company")(company_id=1))["company"]
+    assert fiche == {"id": 1, "fiscal_category": "bic_is",
+                     "vat_number": "FR00000000000"}, \
+        "le métier reste (le numéro de TVA n'est pas de la plomberie), le reste part"
+
+
 def test_une_fiche_sans_societe_est_refusee_pas_rendue_vide(substrat):
     """Rendre `{}` sur une réponse inattendue ferait passer une panne pour un
     dossier sans paramétrage — l'agent construirait un export faux sans le
@@ -286,6 +306,44 @@ def test_un_401_de_la_sonde_bloque_toujours_la_persistance(monkeypatch):
     assert persiste == [], "rien ne s'écrit au coffre tant que le login n'est pas fait"
     assert (out.reason, out.retry) == (browser_session.AUTH_REJECTED, True), \
         "celui-là, en revanche, se répare en refaisant le login"
+
+
+def _sonde_cassee_par_la_fenetre(monkeypatch, statut):
+    async def _sonde(_sid):
+        raise RuntimeError("connect_over_cdp: WebSocket error: 410 Gone")
+    monkeypatch.setattr(browser_session.browserbase, "session_status",
+                        lambda _sid: statut)
+    return _sonde
+
+
+def test_une_fenetre_fermee_ne_dit_pas_de_reessayer(monkeypatch):
+    """Mesuré le 07/10 : la Live View a expiré pendant le login, la sonde s'est
+    cassée sur un 410, et le refus disait « réessaie » — ce qui ne peut pas
+    réussir. Le motif dit ce qui est arrivé et les deux seules issues."""
+    sonde = _sonde_cassee_par_la_fenetre(monkeypatch, "TIMED_OUT")
+    out, persiste = _finalize_avec(sonde, monkeypatch, "_test_pl_410")
+    assert (out.connected, out.reason, out.retry) == (
+        False, browser_session.WINDOW_CLOSED, False)
+    assert persiste == [], "rien n'est écrit sans le geste explicite `force`"
+    assert "force=true" in out.detail and "relance" in out.detail
+    assert "réessaie" not in out.detail
+
+
+def test_une_sonde_cassee_sur_une_fenetre_vivante_reste_un_refus_generique(monkeypatch):
+    """Le pendant : si la fenêtre tourne encore, la panne est ailleurs — on ne
+    prétend pas qu'elle est fermée."""
+    sonde = _sonde_cassee_par_la_fenetre(monkeypatch, "RUNNING")
+    with pytest.raises(browser_session.SessionError):
+        _finalize_avec(sonde, monkeypatch, "_test_pl_vivante")
+
+
+def test_le_motif_window_closed_est_servi_a_l_agent():
+    from fastmcp import FastMCP
+
+    m = FastMCP("t")
+    S.register(m)
+    doc = asyncio.run(m.get_tool("pennylaneged_connect_status")).fn.__doc__
+    assert "`window_closed`" in doc and "force=true" in doc
 
 
 def test_le_portefeuille_tape_la_route_deplacee(substrat):
