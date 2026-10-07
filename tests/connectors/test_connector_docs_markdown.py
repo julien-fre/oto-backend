@@ -136,6 +136,34 @@ def test_lurl_de_rappel_suit_lenvironnement(monkeypatch):
     assert "{{callback" not in corps, "marqueur non résolu, servi tel quel à l'utilisateur"
 
 
+def test_lip_sortante_suit_linstance(monkeypatch):
+    """L'adresse à autoriser chez le fournisseur est celle de L'INSTANCE : la doc
+    Salesforce donnait celle d'une instance aux utilisateurs d'une autre, dont la liste
+    blanche refusait ensuite chaque renouvellement de jeton (`invalid_grant`)."""
+    monkeypatch.setenv("OTO_EGRESS_IP", "192.0.2.10")
+    corps = connector_docs._resoudre("Autorise {{egress_ip}} chez le fournisseur.")
+    assert corps == "Autorise `192.0.2.10` chez le fournisseur."
+
+
+def test_ip_sortante_non_declaree_ne_sinvente_pas(monkeypatch):
+    monkeypatch.delenv("OTO_EGRESS_IP", raising=False)
+    corps = connector_docs._resoudre("Autorise {{egress_ip}} chez le fournisseur.")
+    assert "{{egress_ip}}" not in corps
+    assert not re.search(r"\d+\.\d+\.\d+\.\d+", corps)
+    assert "support" in corps
+
+
+def test_aucune_ip_ecrite_en_dur():
+    """TRIPWIRE. Une IP en prose est celle d'UNE instance — utilise `{{egress_ip}}`."""
+    coupables = [
+        f"{f.name}: {ligne.strip()[:90]}"
+        for f in _DIR.glob("*.md")
+        for ligne in f.read_text(encoding="utf-8").splitlines()
+        if re.search(r"(?<![\w.])\d{1,3}(\.\d{1,3}){3}(?![\w.])", ligne)
+    ]
+    assert not coupables, "IP écrite en dur — utilise `{{egress_ip}}` :\n" + "\n".join(coupables)
+
+
 def test_aucun_domaine_de_callback_ecrit_en_dur():
     """TRIPWIRE. Le markdown rend l'écriture facile — donc l'écriture d'une URL en dur
     aussi. Toute URL de rappel doit passer par le marqueur."""

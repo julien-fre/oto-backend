@@ -25,7 +25,8 @@ still described an application model that Salesforce has since disabled.
 do, and link the vendor's doc page rather than invent an exact UI path — SaaS
 consoles move around, and a stale path sends the user into a wall.
 
-**Derived values**: `{{callback:/path}}`, resolved at read time (see `_resoudre`).
+**Derived values**: `{{callback:/path}}` and `{{egress_ip}}`, resolved at read time
+(see `_resoudre`).
 
 The public catalog and `/api/me/connectors` derive from them (`Connector.doc_sections`);
 it is rendered everywhere the connector is displayed — connection card, marketplace,
@@ -35,6 +36,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 import pathlib
 import re
 from dataclasses import dataclass
@@ -54,6 +56,11 @@ _TITRE = re.compile(r"^##\s+(" + "|".join(KINDS) + r")\s*[—-]\s*(.+?)\s*$")
 # 2026-08-27 on the Slack doc. A badly named title gets flagged, not swallowed.
 _TITRE_SUSPECT = re.compile(r"^##\s+([a-zA-Z][\w -]*?)\s*[—-]\s*(.+?)\s*$")
 _MARQUEUR = re.compile(r"\{\{callback:([^}]+)\}\}")
+_MARQUEUR_EGRESS = "{{egress_ip}}"
+EGRESS_IP_VAR = "OTO_EGRESS_IP"
+# Undeclared: the doc says the address exists without inventing one. A hard-coded IP
+# is the address of ONE instance, served to the users of all the others.
+_EGRESS_INCONNUE = "our server's outgoing address (ask support for it)"
 
 
 @dataclass(frozen=True)
@@ -70,7 +77,15 @@ def _resoudre(corps: str) -> str:
     prose URL lies as soon as it is read from the other one. Real bug: the docs of
     two connectors showed the PREPROD domain to production users, and the
     resulting `redirect_uri_mismatch` blamed the client. Resolved at READ time,
-    never at import."""
+    never at import.
+
+    `{{egress_ip}}` follows the same rule: the address our server calls providers
+    from is the instance's own (`OTO_EGRESS_IP`). Real bug: the Salesforce doc gave
+    one instance's address to the users of another, whose IP allowlist then refused
+    every token refresh with a misleading `invalid_grant`."""
+    if _MARQUEUR_EGRESS in corps:
+        ip = os.environ.get(EGRESS_IP_VAR, "").strip()
+        corps = corps.replace(_MARQUEUR_EGRESS, f"`{ip}`" if ip else _EGRESS_INCONNUE)
     if "{{callback:" not in corps:
         return corps
     from ..auth import flow as oauth_flow
