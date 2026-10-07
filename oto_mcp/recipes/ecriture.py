@@ -186,6 +186,15 @@ class Parents:
     store: Any
     adresse: str
     etat: str
+    filtre: Optional[dict] = None
+    #: Les colonnes que les arguments citent : une ligne où l'une est vide n'est pas
+    #: sélectionnée — l'appel serait payé pour rien, et la ligne reviendrait en tête de
+    #: chaque exécution. Elle reste en attente jusqu'à ce qu'on la remplisse.
+    requises: tuple = ()
+
+    def clauses(self) -> list[dict]:
+        return [{"field": self.etat, "op": "empty", "value": True}] + [
+            {"field": c, "op": "not_empty", "value": True} for c in self.requises]
 
 
 def _ouvrir_tableau(datastore: Any, *, ecrire: bool) -> tuple[Any, str, dict]:
@@ -208,15 +217,23 @@ def _ouvrir_tableau(datastore: Any, *, ecrire: bool) -> tuple[Any, str, dict]:
                                   "Nothing was called.")
 
 
-def ouvrir_parents(datastore: Any, colonne_etat: str, *, ecrire: bool) -> Parents:
+def ouvrir_parents(datastore: Any, colonne_etat: str, *, ecrire: bool,
+                   filtre: Optional[dict] = None, requises=()) -> Parents:
     """Le tableau parent, le droit d'y ÉCRIRE vérifié avant tout appel quand on écrit :
     l'état de chaque ligne y est écrit en retour, et c'est lui qui fait qu'une exécution
-    suivante ne repaie pas une ligne faite. Sa colonne d'état est déclarée si elle manque."""
+    suivante ne repaie pas une ligne faite. Sa colonne d'état est déclarée si elle
+    manque. Le filtre est éprouvé ici : refusé, il l'est avant tout appel."""
     store, adresse, schema = _ouvrir_tableau(datastore, ecrire=ecrire)
     colonnes = {f["key"] for f in (schema.get("fields") or []) if f.get("key")}
+    p = Parents(store, adresse, colonne_etat, filtre or None, tuple(sorted(requises)))
     if ecrire and colonne_etat not in colonnes:
         store.patch_schema(adresse, fields=[{"key": colonne_etat, "type": "text"}])
-    return Parents(store, adresse, colonne_etat)
+    try:
+        store.cursor_rows(adresse, filter=p.filtre, filters=p.clauses(), limit=1)
+    except ValueError as e:
+        raise TableauIndisponible("invalid_filter", f"`for_each.filter`: {e} Nothing was "
+                                                    "called.")
+    return p
 
 
 def parents_en_attente(p: Parents, *, limite: int, premiere: Optional[str],
@@ -224,13 +241,13 @@ def parents_en_attente(p: Parents, *, limite: int, premiere: Optional[str],
     """Les prochaines lignes parentes dont l'état est vide — `premiere` (la ligne d'une
     reprise) d'abord, si elle attend encore. Une ligne déjà vue dans cet appel n'est pas
     rendue deux fois (son état n'a pas pu s'écrire) : sans cela, la boucle tournerait."""
-    vide = [{"field": p.etat, "op": "empty", "value": True}]
     out: list[dict] = []
     if premiere:
-        page = p.store.cursor_rows(p.adresse, filter={"_id": {"in": [premiere]}},
-                                   filters=vide, limit=1)
+        page = p.store.cursor_rows(p.adresse, filter={**(p.filtre or {}),
+                                                      "_id": {"in": [premiere]}},
+                                   filters=p.clauses(), limit=1)
         out += page.get("rows") or []
-    page = p.store.cursor_rows(p.adresse, filters=vide,
+    page = p.store.cursor_rows(p.adresse, filter=p.filtre, filters=p.clauses(),
                                limit=min(LOT_PARENTS, limite + len(vues) + len(out)))
     for r in page.get("rows") or []:
         if len(out) >= limite:

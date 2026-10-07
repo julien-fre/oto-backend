@@ -49,6 +49,19 @@ def serveur(compte, monkeypatch):
         return {"content": lot, "last": (page + 1) * size >= len(tous)}
 
     @m.tool(annotations=LECTURE)
+    def acme_picky(company: str = "", page: int = 0, size: int = 2) -> dict:
+        # Refuse les sociétés qu'il ne connaît pas : un échec qui tient à la LIGNE.
+        appels.append({"company": company, "page": page})
+        if company not in PERSONNES:
+            from mcp.types import INVALID_PARAMS, ErrorData
+
+            from oto_mcp.mcp_errors import McpError
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="unknown company"))
+        tous = PERSONNES[company]
+        return {"content": tous[page * size:(page + 1) * size],
+                "last": (page + 1) * size >= len(tous)}
+
+    @m.tool(annotations=LECTURE)
     def acme_flat(page: int = 0, size: int = 12) -> dict:
         # Douze éléments sans `name` : la forme a changé.
         appels.append({"company": None, "page": page})
@@ -108,13 +121,13 @@ def test_chaque_ligne_parente_declenche_l_appel_puis_recoit_son_etat(serveur):
     parents, cible = _societes(), _tableau(CIBLE)
     recu = _executer(m, _corps(parents), cible)
     assert recu["done"] and recu["written"] == 7
-    assert recu["parents"] == {"done": 2, "empty": 1}
+    assert recu["parents"] == {"done": 2, "empty": 1, "failed": 0}
     assert _etats(parents) == {"acme": "done", "globex": "empty", "initech": "done"}
     assert {l["company"] for l in _lignes(cible)} == {"acme", "initech"}
     # Une exécution suivante ne repaie aucune ligne faite.
     avant = len(appels)
     recu = _executer(m, _corps(parents), cible)
-    assert recu["done"] and recu["parents"] == {"done": 0, "empty": 0}
+    assert recu["done"] and recu["parents"] == {"done": 0, "empty": 0, "failed": 0}
     assert len(appels) == avant
 
 
@@ -215,3 +228,55 @@ def test_le_contrat_de_for_each():
                                    {"path": "d", "op": "eq", "value": "x",
                                     "normalize": "rot13"}]})
     assert len(e.value.problemes) == 2
+
+
+def _parents(slugs) -> int:
+    return _tableau({"key": "slug", "fields": [
+        {"key": "slug", "type": "text"}, {"key": "tier", "type": "text"},
+        {"key": "people_status", "type": "text"}]},
+        [{"slug": sl, "tier": t} if sl else {"tier": t} for sl, t in slugs])
+
+
+def test_le_filtre_et_les_entrees_vides_ecartent_des_parents_sans_appel(serveur):
+    m, appels = serveur
+    parents = _parents([("acme", "a"), ("initech", "b"), (None, "a")])
+    cible = _tableau(CIBLE)
+    corps = _corps(parents, for_each={"datastore": parents, "status_column": "people_status",
+                                      "filter": {"tier": "a"}})
+    recu = _executer(m, corps, cible)
+    assert recu["done"] and recu["parents"]["done"] == 1
+    # Initech est hors filtre ; la ligne sans `slug` n'est pas sélectionnée.
+    assert {a["company"] for a in appels} == {"acme"}
+    etats = {(l.get("slug"), l["tier"]): l.get("people_status") for l in _lignes(parents)}
+    assert etats == {("acme", "a"): "done", ("initech", "b"): None, (None, "a"): None}
+
+
+def test_un_filtre_refuse_l_est_avant_tout_appel(serveur):
+    from oto_mcp.recipes import moteur
+    m, appels = serveur
+    parents, cible = _societes(), _tableau(CIBLE)
+    corps = _corps(parents, for_each={"datastore": parents, "status_column": "people_status",
+                                      "filter": {"slug": {"regex": "a.*"}}})
+    with pytest.raises(moteur.RecetteRefusee) as e:
+        _executer(m, corps, cible)
+    assert e.value.code == "invalid_filter" and appels == []
+
+
+def test_une_ligne_que_l_outil_refuse_est_marquee_et_l_execution_continue(serveur):
+    m, _ = serveur
+    parents = _parents([("acme", "a"), ("umbrella", "a"), ("initech", "a")])
+    cible = _tableau(CIBLE)
+    recu = _executer(m, _corps(parents, tool="acme_picky"), cible)
+    assert recu["done"] and recu["stopped"] is None
+    assert recu["parents"] == {"done": 2, "empty": 0, "failed": 1}
+    assert _etats(parents) == {"acme": "done", "umbrella": "failed:invalid_input",
+                               "initech": "done"}
+
+
+def test_une_serie_d_echecs_identiques_arrete_sans_rien_marquer(serveur):
+    m, appels = serveur
+    parents = _parents([(f"x{i}", "a") for i in range(5)])
+    cible = _tableau(CIBLE)
+    recu = _executer(m, _corps(parents, tool="acme_picky"), cible)
+    assert recu["stopped"] == "repeated_failure" and len(appels) == 3
+    assert set(_etats(parents).values()) == {None}

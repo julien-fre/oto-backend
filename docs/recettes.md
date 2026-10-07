@@ -116,9 +116,17 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
   élément sans valeur de clé est écarté — un gabarit dont un morceau manque n'en
   produit pas.
 - **Les colonnes manquantes sont créées** (texte) ; les existantes jamais retouchées.
-- **Une ligne parente faite reçoit son état** — `done` (des éléments), `empty` (aucun) —
-  dans `status_column`, déclarée si elle manque : c'est lui qui fait qu'une exécution
-  suivante ne repaie pas une ligne faite. Le tableau parent doit être ÉCRIVABLE et
+- **Une ligne parente faite reçoit son état** — `done` (des éléments), `empty` (aucun),
+  `failed:<code>` (l'outil a refusé SON entrée : `invalid_input`, `not_found`,
+  `call_refused`) — dans `status_column`, déclarée si elle manque : c'est lui qui fait
+  qu'une exécution suivante ne repaie pas une ligne faite. Un échec du compte ou du
+  fournisseur (clé, crédits, délai, limite de débit) arrête l'exécution et laisse la ligne
+  en attente. Trois lignes d'affilée qui échouent pareil arrêtent tout SANS les marquer
+  (`repeated_failure`) : c'est systémique, pas trois mauvaises lignes.
+- **Ne sont sélectionnées que les lignes du `filter`** (la grammaire de `data_rows`,
+  éprouvée avant tout appel : `invalid_filter`) **dont chaque colonne citée dans les
+  `arguments` est remplie** : une ligne sans `siren` ne paie pas un appel pour rien, et
+  attend qu'on la remplisse. Le tableau parent doit être ÉCRIVABLE et
   distinct de la cible (`for_each_same_table`), vérifié avant tout appel. Une ligne
   coupée par un plafond (dépense, pages, horloge) ou un refus de l'outil reste en
   attente : le jeton `resume` la reprend à sa page, une exécution neuve du début (les
