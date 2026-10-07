@@ -174,6 +174,22 @@ def current_token_axes() -> dict:
     return {k: claims[k] for k in ("token_id", "token_kind") if claims.get(k) is not None}
 
 
+def current_delegation_job() -> Optional[int]:
+    """Le travail du runner que porte le jeton de DÉLÉGATION de la requête MCP
+    (`user_api_tokens.job_id`, posé à l'émission par `runner_jobs._delegue`), ou None :
+    jeton humain, session OAuth, hors requête — ou jeton de délégation émis avant que
+    le jeton porte son travail. Lecture de contexte, aucune base."""
+    try:
+        from fastmcp.server.dependencies import get_access_token  # type: ignore
+        token = get_access_token()
+    # noqa: SILENT — hors contexte de requête MCP : aucun jeton, donc aucun travail
+    except Exception:
+        return None
+    claims = getattr(token, "claims", None) or {}
+    job = claims.get("job_id")
+    return int(job) if claims.get("token_kind") == "delegation" and job is not None else None
+
+
 def current_user_sub_from_token() -> Optional[str]:
     """Sub de l'utilisateur courant depuis le bearer JWT MCP (ou l'override REST)."""
     override = _sub_override.get()

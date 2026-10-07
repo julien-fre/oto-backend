@@ -251,7 +251,8 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `fonctions.md` — `oto_function` : code pur versionné, publié sous la garde de ses tests,
   exécuté dans un bac à sable Pyodide/Deno sans réseau (ADR 0073)
 - `recettes.md` — `oto_recipe` : un outil de connecteur vers un tableau sans modèle —
-  recette versionnée, pages appelées par le corps d'`oto_call`, reçu en comptes, refusée en agent hébergé
+  recette versionnée, pages appelées par le corps d'`oto_call`, reçu en comptes, bornée à la
+  liste d'outils du travail en agent hébergé
 - `datastore.md` — spine PG `data_*`, OAuth Google
 - `donnees-par-reference.md` — rien de personnel ni d'URL extérieure en argument :
   le receveur Apollo, les `*_push_rows`
