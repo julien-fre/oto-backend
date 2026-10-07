@@ -100,6 +100,11 @@ def _transcription() -> Fonction:
     return transcription_worker.run_transcription_loop
 
 
+def _jev_jobs() -> Fonction:
+    from . import jev_jobs_worker
+    return jev_jobs_worker.run_jev_jobs_loop
+
+
 def _runner_tick_arme() -> bool:
     from . import runner_tick
     return runner_tick.enabled()
@@ -162,6 +167,12 @@ BOUCLES: tuple[Boucle, ...] = (
     # un client de prod.
     Boucle(nom="transcription_worker", tiers=True,
            armee=_interrupteur("OTO_TRANSCRIPTION_WORKER_ENABLED"), fonction=_transcription),
+    # `jev_rows(background=true)` (jev_jobs_worker.py) : DÉPENSE sur la clé Jev partagée
+    # (OpenRouter) et écrit dans les tableaux. En double prod/préprod, deux processus
+    # jugeraient chacun une tranche sous des codes différents — le bail en base empêche
+    # le doublon, pas la divergence : seule la prod draine.
+    Boucle(nom="jev_jobs_worker", tiers=True,
+           armee=_interrupteur("OTO_JEV_JOBS_WORKER_ENABLED"), fonction=_jev_jobs),
     # Horloge des déclencheurs du runner (R3) : ENFILE un job, n'exécute rien, c'est
     # oto-runner qui agit. Deux ticks sur la même base, un seul gagne chaque échéance
     # (CAS sur `next_due`) : aucun doublon possible, d'où `tiers=False`.

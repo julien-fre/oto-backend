@@ -82,6 +82,9 @@ from . import (
     partages_procedure,
     # NON aplati : la borne des lectures d'agrégat (#1145) — `db.lecture_bornee.<nom>`.
     lecture_bornee,
+    # NON aplati : `ACTIVE`/`MAX_ERRORS` sont trop communs pour la surface plate.
+    # Les appelants écrivent `from ..db import jev_jobs as db_jev`.
+    jev_jobs,
 )
 
 # Ré-export plat (publics + privés à un underscore). Les noms dunder restent au
