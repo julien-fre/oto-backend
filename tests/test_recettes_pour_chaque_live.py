@@ -280,3 +280,47 @@ def test_une_serie_d_echecs_identiques_arrete_sans_rien_marquer(serveur):
     recu = _executer(m, _corps(parents, tool="acme_picky"), cible)
     assert recu["stopped"] == "repeated_failure" and len(appels) == 3
     assert set(_etats(parents).values()) == {None}
+
+
+def test_des_societes_inconnues_d_affilee_sont_marquees_sans_arreter(serveur, monkeypatch):
+    """Un 404 dit « cette ligne n'existe pas chez lui », rien de systémique : trois
+    d'affilée ne doivent pas bloquer chaque exécution sur les trois mêmes lignes."""
+    from oto_mcp.recipes import moteur
+    m, _ = serveur
+    vrai = moteur._appeler
+
+    async def introuvable(outil, sub, nom, args):
+        issue = await vrai(outil, sub, nom, args)
+        if args.get("company", "").startswith("x"):
+            issue.ok, issue.code, issue.retryable = False, "not_found", False
+        return issue
+    monkeypatch.setattr(moteur, "_appeler", introuvable)
+    parents = _parents([(f"x{i}", "a") for i in range(4)] + [("acme", "a")])
+    recu = _executer(m, _corps(parents), _tableau(CIBLE))
+    assert recu["done"] and recu["parents"]["failed"] == 4 and recu["parents"]["done"] == 1
+
+
+def test_une_entree_qui_se_normalise_en_rien_n_appelle_pas(serveur):
+    m, appels = serveur
+    parents = _parents([("n/a", "a")])
+    corps = _corps(parents, arguments={"company": "{{row.slug|digits}}"})
+    recu = _executer(m, corps, _tableau(CIBLE))
+    assert appels == [] and _etats(parents)["n/a"] == "failed:invalid_input"
+
+
+def test_un_jeton_d_une_autre_recette_ou_fabrique_est_refuse(serveur):
+    import base64
+    import json
+
+    from oto_mcp.recipes import moteur
+    m, _ = serveur
+    parents, cible = _societes(), _tableau(CIBLE)
+    corps = _corps(parents, limits={"max_units": 100, "max_pages": 1})
+    recu = _executer(m, corps, cible)
+    autre = _corps(parents, limits={"max_units": 99, "max_pages": 1})
+    with pytest.raises(moteur.RecetteRefusee):
+        _executer(m, autre, cible, reprise=recu["resume"])
+    etat = json.loads(base64.urlsafe_b64decode(recu["resume"]))
+    etat["u"] = -10_000
+    forge = base64.urlsafe_b64encode(json.dumps(etat).encode()).decode()
+    assert moteur.lire_reprise(forge, corps)["u"] == 0

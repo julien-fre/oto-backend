@@ -21,6 +21,7 @@ COMPTES et des CODES, jamais une valeur lue.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import time
@@ -57,18 +58,30 @@ def _jeton(etat: dict) -> str:
     return base64.urlsafe_b64encode(json.dumps(etat).encode()).decode()
 
 
-def lire_reprise(reprise: Optional[str]) -> dict:
-    """L'état d'une reprise. `r` = la ligne parente en cours (`for_each`) ; un jeton
-    d'avant `for_each` n'en porte pas et se relit tel quel."""
+def empreinte(corps: dict) -> str:
+    """L'empreinte d'une recette, portée par ses jetons de reprise : le jeton d'une
+    AUTRE recette (ou d'une autre version) ne se rejoue pas sur celle-ci."""
+    brut = json.dumps(corps, sort_keys=True, default=str).encode()
+    return hashlib.sha256(brut).hexdigest()[:16]
+
+
+def lire_reprise(reprise: Optional[str], corps: Optional[dict] = None) -> dict:
+    """L'état d'une reprise. `r` = la ligne parente en cours (`for_each`). Le jeton doit
+    porter l'empreinte de CETTE recette, et la dépense faite n'est jamais négative : un
+    jeton fabriqué ne rouvre pas le plafond."""
+    vide = {"p": None, "c": None, "u": 0, "r": None, "h": empreinte(corps) if corps else None}
     if not reprise:
-        return {"p": None, "c": None, "u": 0, "r": None}
+        return vide
     try:
         etat = json.loads(base64.urlsafe_b64decode(reprise.encode()).decode())
-        return {"p": etat.get("p"), "c": etat.get("c"), "u": int(etat.get("u", 0)),
-                "r": etat.get("r")}
+        lu = {"p": etat.get("p"), "c": etat.get("c"), "u": max(0, int(etat.get("u", 0))),
+              "r": etat.get("r"), "h": etat.get("h")}
     except (ValueError, TypeError, AttributeError):
+        lu = None
+    if lu is None or (corps is not None and lu["h"] != vide["h"]):
         raise RecetteRefusee("invalid_resume", "`resume` is not a token returned by a "
-                                               "previous run of this recipe.")
+                                               "previous run of this recipe (and version).")
+    return lu
 
 
 def _cles_sures(cles) -> list:
@@ -94,7 +107,11 @@ PAGE_TEMOIN = 10
 #: `failed:<code>` et l'exécution passe à la suivante. Tout autre échec (clé, crédits,
 #: délai, limite de débit, panne) tient au compte ou au fournisseur : l'exécution s'arrête
 #: et la ligne reste en attente.
-ECHECS_DE_LIGNE = frozenset({"invalid_input", "not_found", "call_refused"})
+ECHECS_DE_LIGNE = frozenset({"invalid_input", "not_found", "call_refused", "upstream_4xx"})
+#: …dont ces deux-là ne disent RIEN de systémique (« ce SIREN n'existe pas », « plusieurs
+#: candidats ») : la ligne est marquée aussitôt, hors disjoncteur — sinon trois sociétés
+#: inconnues d'affilée arrêteraient chaque exécution sur les mêmes trois lignes.
+HORS_DISJONCTEUR = frozenset({"not_found", "ambiguous"})
 #: …sauf quand plusieurs lignes d'affilée échouent pareil : c'est alors systémique (une
 #: garde d'activation, un argument mal écrit). L'exécution s'arrête SANS marquer la série.
 DISJONCTEUR = 3
@@ -129,6 +146,9 @@ async def _appeler(tool, sub: Optional[str], outil: str, args: dict):
 def _arguments(corps: dict, params: dict, etat: dict, restant: int,
                row: Optional[dict] = None) -> dict:
     args = co.rendre(corps.get("arguments") or {}, co._portees(params, row))
+    if row is not None:
+        # Sous `for_each`, une case vide de la ligne n'envoie rien (jamais `null`).
+        args = co.sans_vides(args)
     pag = corps["source"]["pagination"]
     if pag["type"] == "page":
         args[pag["param"]] = etat["p"] if etat["p"] is not None else pag.get("start", 0)
@@ -210,7 +230,7 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     remplissage par colonne (`fill`). `temoin` = le rapport d'épreuve de la version
     publiée : ses colonnes pleines sont surveillées (`mapping_drift`)."""
     recu = _recu()
-    etat = lire_reprise(reprise)
+    etat = lire_reprise(reprise, corps)
     recu["units"] = etat["u"]
     outil = await _outil(fastmcp, corps["tool"])
     col_cle = corps["key"]["column"]
@@ -241,6 +261,7 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     except ecriture.TableauIndisponible as e:
         raise RecetteRefusee(e.code, str(e))
     a_surveiller = surveillees(temoin)
+    exigees = co.colonnes_citees(corps.get("arguments"), "row") if fe else set()
     lim = corps["limits"]
     # `max_pages` borne CET appel (une reprise repart à zéro page) : le plafond de la
     # chaîne d'appels est celui de la dépense, porté par le jeton.
@@ -269,6 +290,9 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
             if recu["pages"] and time.monotonic() >= fin:
                 _arreter(recu, "time_budget", resume=_reprise())
                 return "time_budget", pris
+            if row is not None and co.exigees_vides(corps.get("arguments"),
+                                                    co._portees(params, row), exigees):
+                return "ligne:invalid_input", pris
             args = _arguments(corps, params, etat, restant, row)
             try:
                 issue = await _appeler(outil, sub, corps["tool"], dict(args))
@@ -283,7 +307,10 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                     and issue.code in ECHECS_DE_LIGNE:
                 return f"ligne:{issue.code}", pris
             if not issue.ok:
-                _arreter(recu, issue.code or "tool_failed", error=issue.message,
+                # Sous `for_each`, le message du fournisseur peut citer l'argument refusé —
+                # une valeur de la ligne : le reçu n'en porte que le code.
+                _arreter(recu, issue.code or "tool_failed",
+                         error=None if fe else issue.message,
                          retryable=issue.retryable, resume=_reprise())
                 return recu["stopped"], pris
             if issue.retenu:
@@ -402,7 +429,8 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
             if place <= 0:
                 if ecrire:
                     _arreter(recu, "max_parents", resume=_jeton(
-                        {"p": None, "c": None, "u": recu["units"], "r": None}))
+                        {"p": None, "c": None, "u": recu["units"], "r": None,
+                         "h": etat.get("h")}))
                 return
             lot = await run_in_threadpool(ecriture.parents_en_attente, parents,
                                           limite=place, premiere=premiere, vues=vues)
@@ -417,6 +445,13 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
                     etat["p"] = etat["c"] = None
                 etat["r"] = rid
                 arret, pris = await tirer(ecriture.portee_ligne(ligne))
+                if arret is not None and arret.startswith("ligne:") \
+                        and arret.split(":", 1)[1] in HORS_DISJONCTEUR:
+                    etat.update(r=None, p=None, c=None)
+                    await _solder()
+                    recu["parents"]["failed"] += 1
+                    await _marquer(rid, f"failed:{arret.split(':', 1)[1]}")
+                    continue
                 if arret is not None and arret.startswith("ligne:"):
                     code = arret.split(":", 1)[1]
                     etat.update(r=None, p=None, c=None)

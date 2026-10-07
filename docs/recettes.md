@@ -122,7 +122,11 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
   qu'une exécution suivante ne repaie pas une ligne faite. Un échec du compte ou du
   fournisseur (clé, crédits, délai, limite de débit) arrête l'exécution et laisse la ligne
   en attente. Trois lignes d'affilée qui échouent pareil arrêtent tout SANS les marquer
-  (`repeated_failure`) : c'est systémique, pas trois mauvaises lignes.
+  (`repeated_failure`) : c'est systémique, pas trois mauvaises lignes — sauf
+  `not_found` (une société inconnue du fournisseur), marqué aussitôt, hors disjoncteur.
+  Une entrée qui se normalise en rien (`n/a|digits`) n'appelle pas : `failed:invalid_input`.
+  Sous `for_each`, le reçu ne porte jamais le message du fournisseur (il peut citer une
+  valeur de la ligne), seulement son code.
 - **Ne sont sélectionnées que les lignes du `filter`** (la grammaire de `data_rows`,
   éprouvée avant tout appel : `invalid_filter`) **dont chaque colonne citée dans les
   `arguments` est remplie** : une ligne sans `siren` ne paie pas un appel pour rien, et
@@ -144,6 +148,8 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
   ne rien rendre. Elle n'écrit ni la cible, ni l'état des parents.
 - **Budget d'horloge de 30 s** et **`max_pages` par appel** : au-delà, reçu partiel et
   `resume`, que l'appel suivant passe pour continuer sans repayer les pages faites. Le
+  jeton porte l'empreinte de la recette (une autre recette, ou une autre version, le
+  refuse : `invalid_resume`) et jamais une dépense négative. Le
   plafond de dépense, lui, vaut pour toute la chaîne (le jeton porte la dépense faite).
 - **Seule une version PUBLIÉE écrit.** `publish` éprouve une page réelle sans écrire ;
   une recette passée en ligne (`recipe`) ne sert qu'à `test` — `run` la refuse
