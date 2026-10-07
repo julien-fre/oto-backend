@@ -208,6 +208,14 @@ def _arreter(recu: dict, code: str, **details) -> dict:
     return recu
 
 
+def requises(corps: dict, bloc: dict) -> set:
+    """Les colonnes qu'une ligne doit avoir remplies pour être prise : `require` s'il est
+    dit, sinon toutes celles que les `arguments` citent."""
+    if bloc.get("require"):
+        return set(bloc["require"])
+    return co.colonnes_citees(corps.get("arguments"), "row")
+
+
 def surveillees(temoin: Optional[dict]) -> list[str]:
     """Les colonnes que la publication a vues remplies (`test_report.fill`) : celles-là
     ne doivent pas revenir vides sur toute une page — un fournisseur qui change la forme
@@ -258,8 +266,7 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
         if fe:
             parents = await run_in_threadpool(
                 ecriture.ouvrir_parents, fe["datastore"], fe["status_column"], ecrire=ecrire,
-                filtre=fe.get("filter"),
-                requises=co.colonnes_citees(corps.get("arguments"), "row"))
+                filtre=fe.get("filter"), requises=requises(corps, fe))
         ensembles = await run_in_threadpool(ecriture.charger_ensembles, corps["where"])
         if ecrire:
             recu["created_columns"] = await run_in_threadpool(
@@ -534,8 +541,7 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
     try:
         lignes = await run_in_threadpool(
             ecriture.ouvrir_parents, datastore, rows["status_column"], ecrire=ecrire,
-            filtre=rows.get("filter"),
-            requises=co.colonnes_citees(corps.get("arguments"), "row"),
+            filtre=rows.get("filter"), requises=requises(corps, rows),
             a_creer=mappees + list(corps["values"]))
         ensembles = await run_in_threadpool(ecriture.charger_ensembles, corps["where"])
     except ecriture.TableauIndisponible as e:
@@ -556,7 +562,7 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
         if recu["pages"] and time.monotonic() >= fin:
             _arreter(recu, "time_budget", resume=_reprise())
             return "time_budget", 0
-        args = co.rendre(corps.get("arguments") or {}, co._portees(params, row))
+        args = co.sans_vides(co.rendre(corps.get("arguments") or {}, co._portees(params, row)))
         try:
             issue = await _appeler(outil, sub, corps["tool"], dict(args))
         except McpError:
@@ -582,6 +588,10 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
             return None, 0
         recu["items_seen"] += 1
         construite = co.ligne(res, corps["map"], corps["values"], params, row=row)
+        if all(co._vide(construite.get(c)) for c in mappees):
+            # Un résultat sans rien de ce que la recette lit (un profil vide : Dropcontact
+            # en rend un par contact, trouvé ou non) n'est pas un succès.
+            return None, 0
         fenetre.append(construite)
         if len(fenetre) >= PAGE_TEMOIN:
             derive = _derive(dict(enumerate(fenetre)), a_surveiller)

@@ -104,6 +104,12 @@ CETTE ligne.
 }
 ```
 
+- **`require`** (dans `rows` ou `for_each`) : les colonnes qui doivent être remplies pour
+  qu'une ligne soit prise. Sans lui, chaque colonne citée par les `arguments` l'est — trop
+  strict dès qu'un argument est facultatif. Un argument dont la valeur est vide n'est pas
+  envoyé (ni `null` ni `""`).
+- **Un résultat dont toutes les colonnes de la correspondance sont vides est `not_found`**
+  (un profil vide n'est pas un succès) : rien n'est écrit, pas même les `values`.
 - **Les cases vides seulement**, par défaut (`on_existing: "fill_empty"`) : une valeur
   posée par quelqu'un n'est pas écrasée ; `update` réécrit les colonnes de la
   correspondance. Une valeur absente du résultat ne vide jamais une case.

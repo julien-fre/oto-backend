@@ -34,7 +34,7 @@ def serveur(compte, monkeypatch):
     m = FastMCP("t-recettes-pl")
 
     @m.tool(annotations=LECTURE)
-    def acme_company(siren: str) -> dict:
+    def acme_company(siren: str, hint: str = "") -> dict:
         appels.append(siren)
         session_org.note_call_trace(quantity=1)
         if not siren.isdigit():
@@ -175,3 +175,23 @@ def test_le_contrat_de_per_row():
     assert ok["on_existing"] == "fill_empty" and ok["units"] == "calls"
     with pytest.raises(contrat.RecetteInvalide):
         contrat.valider({**base, "rows": {"status_column": "name"}})
+
+
+def test_require_ne_demande_que_les_colonnes_dites(serveur):
+    """Sans `require`, chaque colonne citée doit être remplie ; avec, seules les dites."""
+    m, appels = serveur
+    ns = _tableau([{"siren": "111"}])
+    args = {"siren": "{{row.siren}}", "hint": "{{row.name}}"}
+    assert _executer(m, _corps(arguments=args), ns)["rows"]["done"] == 0 and appels == []
+    recu = _executer(m, _corps(arguments=args, rows={"status_column": "fr_status",
+                                                     "require": ["siren"]}), ns)
+    assert recu["rows"]["done"] == 1
+
+
+def test_un_resultat_vide_n_est_pas_un_succes(serveur, monkeypatch):
+    m, _ = serveur
+    ns = _tableau([{"siren": "111"}])
+    recu = _executer(m, _corps(map={"name": "nope", "naf": "nada"},
+                               values={"source": "acme"}), ns)
+    assert recu["rows"] == {"done": 0, "not_found": 1, "failed": 0}
+    assert _lignes(ns)["111"].get("source") is None

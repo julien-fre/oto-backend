@@ -97,6 +97,16 @@ def _tableau_ok(v: Any) -> bool:
         or (isinstance(v, str) and v.isdigit())
 
 
+def _exigees(probs: list, ou: str, bloc: dict) -> None:
+    """`require` : les colonnes qui doivent être remplies pour qu'une ligne soit prise.
+    Sans lui, TOUTES les colonnes citées par les `arguments` le sont — trop strict dès
+    qu'un argument est facultatif (téléphone, LinkedIn…)."""
+    req = bloc.get("require")
+    if req is not None and (not isinstance(req, list) or not req
+                            or not all(_colonne_ok(c) for c in req)):
+        probs.append(f"`{ou}.require` must be a non-empty list of column names")
+
+
 def _lignes(probs: list, rows: Any) -> dict:
     """`rows` d'une recette `per_row` : quelles lignes du tableau enrichir."""
     if not isinstance(rows, dict):
@@ -108,6 +118,7 @@ def _lignes(probs: list, rows: Any) -> dict:
                      "`done`, `not_found` or `failed:<code>`, so a re-run skips it")
     if rows.get("filter") is not None and not isinstance(rows["filter"], dict):
         probs.append("`rows.filter` must be an object (the grammar of `data_rows`)")
+    _exigees(probs, "rows", rows)
     n = rows.setdefault("max_rows", MAX_PARENTS_DEFAUT)
     if not isinstance(n, int) or not 1 <= n <= MAX_PARENTS:
         probs.append(f"`rows.max_rows` (rows per call) must be 1 to {MAX_PARENTS}")
@@ -156,6 +167,7 @@ def _pour_chaque(probs: list, fe: Any) -> Optional[dict]:
                      "row gets `done` or `empty` once pulled, so a re-run skips it")
     if fe.get("filter") is not None and not isinstance(fe["filter"], dict):
         probs.append("`for_each.filter` must be an object (the grammar of `data_rows`)")
+    _exigees(probs, "for_each", fe)
     n = fe.setdefault("max_parents", MAX_PARENTS_DEFAUT)
     if not isinstance(n, int) or not 1 <= n <= MAX_PARENTS:
         probs.append(f"`for_each.max_parents` (parent rows per call) must be 1 to "
