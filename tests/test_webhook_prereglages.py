@@ -410,3 +410,15 @@ def test_none_l_agent_est_AVERTI_meme_en_mode_ignore(porte):
     runner_hook.declencher(5, None, {"x": 1}, "src", par_adresse_privee=True)
     entree = porte["enfile"]["payload"]["input"]
     assert runner_hook._SANS_PREUVE in entree and '"x"' not in entree
+
+
+def test_passer_en_none_n_ouvre_JAMAIS_l_ancienne_adresse_sur_un_echec(base, monkeypatch):
+    """Trois écritures, trois transactions : si l'adresse neuve n'a pas pu s'écrire,
+    l'agent reste dans son mode d'avant — jamais `none` sur l'adresse déjà servie."""
+    def _panne(t, o, slug):
+        raise RuntimeError("base injoignable")
+    monkeypatch.setattr(RT.db, "poser_adresse_de_hook", _panne)
+    with pytest.raises(RuntimeError):
+        _auth(hook_auth="none")
+    assert base["ligne"]["hook_auth"] == "bearer"
+    assert base["ligne"]["hook_slug"] == "h_privee"

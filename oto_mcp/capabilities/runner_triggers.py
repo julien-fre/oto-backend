@@ -1428,12 +1428,16 @@ def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
         # clair tant qu'elle n'ouvrait rien (lectures MCP, agents partagés) — elle
         # devient maintenant le credential, donc elle ne peut pas rester celle-là.
         # Redemander `none` sur un agent déjà `none` = la renouveler.
+        # ⚠️ L'adresse AVANT le mode : trois écritures, trois transactions. Un
+        # échec entre les deux laisse alors l'agent dans son ANCIEN mode (sa
+        # preuve toujours exigée) avec une adresse neuve — jamais en `none` sur
+        # l'adresse déjà servie en clair.
+        adresse = runner_hook.nouvelle_adresse()
+        db.poser_adresse_de_hook(inp.trigger_id, ctx.org_id, adresse)
         if mode_avant != inp.hook_auth:
             db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, inp.hook_auth,
                                   effacer_le_secret=True)
             db.poser_secret_de_hook(inp.trigger_id, ctx.org_id, None)
-        adresse = runner_hook.nouvelle_adresse()
-        db.poser_adresse_de_hook(inp.trigger_id, ctx.org_id, adresse)
         adresse_neuve = _url_du_hook(adresse)
         logger.warning("webhook %s (org %s) : SANS PREUVE (`none`) par %s — porteur "
                        "et secret de signature effacés, adresse neuve émise",
