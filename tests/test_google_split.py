@@ -112,6 +112,42 @@ def test_le_compte_demande_tout_sous_notre_app_et_lidentite_seule_sous_celle_dun
     assert G.scopes_for("google", _app("tenant:exemple")) == list(G.IDENTITY_SCOPES)
 
 
+def test_le_compte_se_restreint_aux_services_que_linstance_declare(monkeypatch):
+    """`GOOGLE_ACCOUNT_SERVICES` : une instance dont le projet Google n'est vérifié que
+    pour quatre services ne demande jamais les deux autres par la carte du compte."""
+    monkeypatch.setenv("GOOGLE_ACCOUNT_SERVICES", "gmail, drive,sheets,calendar")
+    assert G.scopes_for("google", _app("env")) == list(G.IDENTITY_SCOPES) + [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/calendar",
+    ]
+    # l'app d'un tenant reste à l'identité seule, réglage ou pas
+    assert G.scopes_for("google", _app("tenant:exemple")) == list(G.IDENTITY_SCOPES)
+    # une carte de service garde ses propres scopes : le réglage ne vise que le compte
+    assert G.scopes_for("tasks", _app("env")) == list(G.IDENTITY_SCOPES) + list(
+        G.SERVICE_SCOPES["tasks"])
+
+
+@pytest.mark.parametrize("valeur", ["none", "", "  NONE "])
+def test_none_ramene_le_compte_a_lidentite_seule(monkeypatch, valeur):
+    monkeypatch.setenv("GOOGLE_ACCOUNT_SERVICES", valeur)
+    assert G.scopes_for("google", _app("env")) == list(G.IDENTITY_SCOPES)
+
+
+def test_sans_reglage_le_compte_demande_les_six(monkeypatch):
+    monkeypatch.delenv("GOOGLE_ACCOUNT_SERVICES", raising=False)
+    assert set(G.scopes_for("google", _app("env"))) == set(G.IDENTITY_SCOPES) | set(G.SCOPES)
+
+
+@pytest.mark.parametrize("valeur", ["gmail,bigquery", "gmail,hunter"])
+def test_un_service_que_le_compte_ne_porte_pas_est_refuse(monkeypatch, valeur):
+    """bigquery ne s'autorise que depuis sa carte ; un nom inconnu n'est jamais deviné."""
+    monkeypatch.setenv("GOOGLE_ACCOUNT_SERVICES", valeur)
+    with pytest.raises(RuntimeError, match="GOOGLE_ACCOUNT_SERVICES"):
+        G.scopes_for("google", _app("env"))
+
+
 def test_un_service_post_split_ne_rejoint_pas_le_consentement_du_compte():
     """bigquery (2026-10-02) ne s'autorise QUE depuis sa carte : le consentement du
     compte sous notre app reste celui d'avant — un scope de plus n'y entre pas en
