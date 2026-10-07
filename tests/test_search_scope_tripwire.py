@@ -68,9 +68,10 @@ def test_scope_parity_with_op_list(calls):
 
 
 def test_org_perso_ajoute_moi_comme_proprietaire_et_destinataire(calls):
-    """Décision du 28/09/2026 : dans MON org perso, la liste (et donc la recherche)
-    rend tous mes projets perso — `createur` à `tout`, quel que soit leur
-    `context_org_id` — et ce qui m'est partagé en personne."""
+    """Dans MON org perso, la liste (et donc la recherche) rend ce qui m'est partagé en
+    personne (28/09/2026) et mes projets perso SANS org de création — `createur` à
+    `sans_org`. Plus ceux créés ailleurs (07/10/2026) : la clause SQL ne les prend
+    qu'à `context_org_id` nul (`test_liste_s_en_tient_a_l_org`, base réelle)."""
     ownership.accessible_project_ids("u1", 5)
     assert calls["owners"][-1] == [("org", "5"), ("group", "3")]
     assert calls["createurs"][-1] == ("u1", 5, True)
@@ -150,9 +151,10 @@ def test_each_source_gets_its_predicate(monkeypatch):
     assert rec["proc_org"] == 7
     # guides : org active + sub (org perso simulée : le personnel y entre)
     assert rec["guides"] == (7, "u1")
-    # tableaux : principals de la LISTE + grants scopés org/groupes + (org perso)
-    # partagés à moi
-    assert rec["ds_owners_a"][0] == [("org", "7"), ("user", "u1")]
+    # tableaux : propriétaires COLLECTIFS de la liste (jamais moi : mes tableaux perso
+    # passent par `mes_tableaux_ici`, 07/10/2026) + grants scopés org/groupes + (org
+    # perso) partagés à moi
+    assert rec["ds_owners_a"][0] == [("org", "7")]
     assert rec["ds_granted_a"] == ("u1", [7], [])
     assert rec["ds_to_me"] == ("u1",)
     assert rec["createur"] == ("u1", 7) and rec["ds_crees_ici"] == (("u1", 7, True),)

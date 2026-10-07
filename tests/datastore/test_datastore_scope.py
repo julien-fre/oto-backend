@@ -71,9 +71,10 @@ def test_list_datastores_scopes_groups_on_active_org(monkeypatch):
     assert rec["groups_for"] == ("u1", 99)          # le filtre org est bien passé
     # ADR 0049 (cadrage 10/07) : le contenu possédé = org active + MES équipes de cette
     # org (un tableau team-owned se liste sans grant, comme un projet de pôle).
-    # ⚠️ Et MOI (oto-backend#870, 04/09) — dans mon org PERSO seulement depuis le
-    # 28/09/2026 (99 est ici l'org perso ; le banc d'org de travail est plus bas).
-    assert rec["owners"] == [("org", "99"), ("user", "u1"), ("group", "5")]
+    # Jamais MOI comme propriétaire du jeu collectif (07/10/2026) : mes tableaux perso
+    # passent par `mes_tableaux_ici`, qui les range dans leur org de création — même
+    # dans l'org perso (99 ici), où `("user", u1)` ne sert plus qu'aux partages reçus.
+    assert rec["owners"] == [("org", "99"), ("group", "5")]
     assert rec["to_me"] == ["u1"]           # org perso : les partages faits à moi
     assert rec["granted_to"] == ("u1", [99], [5])   # grants org active + mes groupes de cette org
 
@@ -92,10 +93,10 @@ def test_list_datastores_org_admin_sees_all_team_tableaux(monkeypatch):
     monkeypatch.setattr(group_store, "list_groups",
                         lambda org_id: [{"id": 5, "org_id": org_id}, {"id": 6, "org_id": org_id}])
     D.make_store("adm").list_datastores()
-    # ⚠️ `("user", "adm")` — le DEMANDEUR, pas un sub en dur. Un org_admin voit les
-    # tableaux de toutes les équipes ET les siens ; il ne voit pas ceux des autres
-    # personnes, et cette liste ne les nomme pas (oto-backend#870).
-    assert rec["owners"] == [("org", "99"), ("user", "adm"), ("group", "5"), ("group", "6")]
+    # Un org_admin voit les tableaux de toutes les équipes ; les siens passent par
+    # `mes_tableaux_ici` (07/10/2026), jamais ceux des autres personnes
+    # (oto-backend#870) : aucun `("user", …)` dans le jeu collectif.
+    assert rec["owners"] == [("org", "99"), ("group", "5"), ("group", "6")]
 
 
 def test_org_store_lists_owned_without_sub(monkeypatch):
@@ -231,7 +232,7 @@ def test_org_store_read_only_blocks_write(monkeypatch):
     assert store._resolve("leads") == 1        # lecture OK en read_only
 
 
-def test_un_tableau_qu_on_vient_de_CREER_se_liste_dans_l_org_perso(monkeypatch):
+def test_un_tableau_qu_on_vient_de_CREER_se_liste_la_ou_il_est_cree(monkeypatch):
     """oto-backend#870 — le banc qui manquait, et son absence explique tout.
 
     Mesuré en PRODUCTION le 04/09 : `data_create_datastore` rend un id, la liste
@@ -245,24 +246,25 @@ def test_un_tableau_qu_on_vient_de_CREER_se_liste_dans_l_org_perso(monkeypatch):
     aucun ne joignait les deux — le défaut vivait exactement dans l'espace entre eux.
     Un test qui crée puis lit est le seul qui pouvait le voir.
     """
-    # Décision du 29/09/2026 (org perso = org) : un tableau créé sans précision est À LA
+    # Décisions des 29/09 et 07/10/2026 : un tableau créé sans précision est À LA
     # PERSONNE ; il se liste, pour elle seule, dans l'org où elle l'a CRÉÉ
-    # (`context_org_id`) et dans son org perso — plus « dans l'org perso seulement »
-    # (règle du 28/09, remplacée). 99 = org de création ; perso=5 en fait une org de
-    # travail. Un tableau créé AILLEURS (7) ne se liste que dans l'org perso.
+    # (`context_org_id`), et là seulement — l'org perso ne liste plus ceux créés
+    # ailleurs. Elle garde ceux SANS org de création (legacy), qui sinon ne sortiraient
+    # nulle part. 99 = org de création ; perso=5 en fait une org de travail.
     ici = {"id": 11, "datastore": "cree_ici", "owner_type": "user", "owner_id": "u1",
            "context_org_id": 99, "created_at": "2026-09-29", "schema": None}
     ailleurs = {**ici, "id": 12, "datastore": "cree_ailleurs", "context_org_id": 7}
-    for perso, attendus in ((99, {11, 12}), (5, {11})):
-        rec = {"rows_for": {(("user", "u1"),): [ici, ailleurs]}}
+    sans_org = {**ici, "id": 13, "datastore": "legacy", "context_org_id": None}
+    for perso, attendus in ((99, {11, 13}), (5, {11})):
+        rec = {"rows_for": {(("user", "u1"),): [ici, ailleurs, sans_org]}}
         _wire(monkeypatch, rec, perso=perso)
         store = D.make_store("u1")
         assert store._default_owner() == ("user", "u1")
         out = store.list_datastores()
         assert [("user", "u1")] in rec["appels"], "mes tableaux perso sont consultés"
-        assert {e["id"] for e in out} & {11, 12} == attendus, (
+        assert {e["id"] for e in out} & {11, 12, 13} == attendus, (
             "un tableau personnel se liste dans son org de création (pour son "
-            "propriétaire) et dans l'org perso")
+            "propriétaire), et l'org perso garde seulement ceux sans org de création")
 
 
 def test_dans_une_org_de_TRAVAIL_la_liste_ne_rend_ni_personnel_ni_partage_a_moi(monkeypatch):
@@ -298,7 +300,7 @@ def test_parite_recherche_liste(monkeypatch):
     src_liste = inspect.getsource(D.DatastorePg.list_datastores)
     src_reche = inspect.getsource(search._accessible_namespaces)
     for nom, src in (("liste", src_liste), ("recherche", src_reche)):
-        assert "principaux_de_liste" in src, (
+        assert "proprietaires_collectifs_de_liste" in src, (
             f"la {nom} n'interroge plus le même jeu de propriétaires que l'autre : "
             "l'invariant « cherchable ⇔ lisible » se rompt en silence, et c'est le "
             "sens de l'écart qui décide s'il cache ou s'il fuit")
@@ -315,3 +317,6 @@ def test_parite_recherche_liste(monkeypatch):
     assert ownership.principaux_de_liste("u1", 99) == [
         ("org", "99"), ("user", "u1"), ("group", "5")]
     assert ownership.principaux_de_liste("u1", 42) == [("org", "42"), ("group", "5")]
+    # Le jeu POSSÉDÉ, lui, n'est jamais personnel (07/10/2026), org perso comprise.
+    assert ownership.proprietaires_collectifs_de_liste("u1", 99) == [
+        ("org", "99"), ("group", "5")]

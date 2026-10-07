@@ -334,12 +334,12 @@ CAPABILITIES += [
         mcp=None,  # `data_list_datastores` tient déjà la face agent
         rest=RestBinding(verb="GET", path=_BASE),
         description=("Liste les tableaux de l'org active : ceux de l'org et de tes "
-                     "équipes, et ceux partagés à l'org ou à tes équipes — jamais un "
-                     "tableau personnel ni un partage fait à toi. Dans ton org PERSO "
-                     "seulement, s'y ajoutent TOUS tes tableaux personnels (quelle que "
-                     "soit l'org où ils ont été créés) et ceux partagés à toi en "
-                     "personne (`shared: true`). Un tableau s'ouvre toujours par son "
-                     "numéro, depuis n'importe quelle org."),
+                     "équipes, ceux partagés à l'org ou à tes équipes, et tes tableaux "
+                     "personnels créés DANS cette org (pour toi seul) — un tableau "
+                     "personnel ne se liste que dans l'org où il a été créé. Dans ton "
+                     "org PERSO s'y ajoutent ceux partagés à toi en personne (`shared: "
+                     "true`). Un tableau s'ouvre toujours par son numéro, depuis "
+                     "n'importe quelle org."),
     ),
     Capability(
         key="me.datastore.get_datastore",
@@ -397,7 +397,7 @@ CAPABILITIES += [
                      "ou au collègue qui ne le trouve pas, que ça se voit. La réponse "
                      "rend le propriétaire et vous avertit dans ce cas précis. Un "
                      "tableau personnel est LISTÉ, pour toi seul, dans l'org où il a été "
-                     "créé et dans ton org perso ; son numéro l'ouvre partout. "
+                     "créé, et là seulement ; son numéro l'ouvre partout. "
                      + colonnes_non_declarees.description_creation()),
     ),
     Capability(

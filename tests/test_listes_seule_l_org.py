@@ -23,7 +23,11 @@ projet ou un tableau personnel listé dans l'org où il a été créé (`context
   autre, fonctionnellement ce sont les mêmes ») : même règle pour les TABLEAUX
   personnels (`ownership.mes_tableaux_ici`), et les lentilles « moi » sont servies dans
   toute org, avec le même contenu — le 409 `personal_view_outside_personal_org` est
-  retiré. Les tests qui encodaient l'ancienne règle sont réécrits en disant pourquoi.
+  retiré. Les tests qui encodaient l'ancienne règle sont réécrits en disant pourquoi ;
+- troisième amendement du 07/10/2026 (Alexis : « l'affichage s'en tient à l'org
+  consultée, on ne mélange pas ») : l'org perso ne liste plus les projets et tableaux
+  perso créés dans une autre org, seulement ceux sans org de création et ce qui m'est
+  partagé en personne (`tests/test_liste_s_en_tient_a_l_org.py`).
 
 Base réelle, sur les faces servies : `POST /api/me/projects` (op=list, op=create),
 `GET /api/datastores` et `POST /api/datastores` sous `X-Oto-Org`, l'outil
@@ -161,10 +165,11 @@ def test_projets_dans_une_org_de_travail_l_org_et_mes_projets_crees_ici(monde, c
         "le projet personnel d'un autre est listé dans une org")
 
 
-def test_projets_dans_l_org_perso_tout_mon_personnel_et_ce_qui_m_est_partage(monde, client):
+def test_projets_dans_l_org_perso_mon_personnel_cree_ici_et_ce_qui_m_est_partage(monde, client):
+    # 07/10/2026 : plus `perso_a` (créé dans A) — il ne se liste que dans A.
     vus = {x["id"]: x for x in _projets_listes(client, monde["perso"])}
-    assert _connus(monde, "p", vus) == {"perso_a", "perso_p", "recu_moi"}
-    assert vus[monde["p"]["perso_a"]]["shared"] is False
+    assert _connus(monde, "p", vus) == {"perso_p", "recu_moi"}
+    assert vus[monde["p"]["perso_p"]]["shared"] is False
     assert vus[monde["p"]["recu_moi"]]["shared"] is True
 
 
@@ -181,10 +186,12 @@ def test_tableaux_rest_dans_une_org_de_travail_l_org_et_mes_tableaux_crees_ici(m
 
 
 def test_tableaux_rest_dans_l_org_perso(monde, client):
+    # 07/10/2026 : plus `perso_a` (créé dans A) ; `perso_null` (sans org de création)
+    # reste, faute de quoi il ne sortirait nulle part.
     vus = {x["id"]: x for x in _tableaux_listes(client, monde["perso"])}
-    assert _connus(monde, "t", vus) == {"perso_a", "perso_null", "recu_moi", "lie_recu"}
+    assert _connus(monde, "t", vus) == {"perso_null", "recu_moi", "lie_recu"}
     assert vus[monde["t"]["recu_moi"]]["shared"] is True
-    assert vus[monde["t"]["perso_a"]]["is_personal"] is True
+    assert vus[monde["t"]["perso_null"]]["is_personal"] is True
 
 
 def test_tableaux_face_agent_sous_org(monde, monkeypatch):
@@ -205,7 +212,7 @@ def test_tableaux_face_agent_sous_org(monde, monkeypatch):
             session_org.reset_call_org(jeton)
     # 29/09/2026 : même règle que la face REST — mon tableau créé dans A y est listé.
     assert vus[monde["a"]] == {"org_a", "equipe", "recu_a", "recu_equipe", "perso_a"}
-    assert vus[monde["perso"]] == {"perso_a", "perso_null", "recu_moi", "lie_recu"}
+    assert vus[monde["perso"]] == {"perso_null", "recu_moi", "lie_recu"}
 
 
 # --- recherche : « cherchable ⇔ lisible » ----------------------------------------
@@ -233,16 +240,17 @@ def test_une_page_partagee_a_moi_se_liste_dans_l_org_perso(monde):
 
 # --- création : à la personne, listée dans l'org perso (29/09/2026) ---------------
 
-def test_un_projet_sans_proprietaire_cree_dans_a_est_perso_et_se_liste_ici_et_en_perso(
+def test_un_projet_sans_proprietaire_cree_dans_a_est_perso_et_ne_se_liste_qu_ici(
         monde, client):
     nom = _nom()
     r = client.post("/api/me/projects", json={"op": "create", "name": nom},
                     headers=_entetes(monde["a"]))
     assert r.status_code == 200, r.text
     assert (r.json()["owner_type"], r.json()["context_org_id"]) == ("user", str(monde["a"]))
-    # 29/09/2026 : il se liste pour moi dans A, où je l'ai créé, et dans mon org perso.
+    # Il se liste pour moi dans A, où je l'ai créé (29/09/2026), et là seulement —
+    # plus dans mon org perso (07/10/2026).
     assert nom in {x["name"] for x in _projets_listes(client, monde["a"])}
-    assert nom in {x["name"] for x in _projets_listes(client, monde["perso"])}
+    assert nom not in {x["name"] for x in _projets_listes(client, monde["perso"])}
     # `owner_type=user` explicite depuis A : permis, même effet.
     r = client.post("/api/me/projects",
                     json={"op": "create", "name": _nom(), "owner_type": "user"},
@@ -250,17 +258,17 @@ def test_un_projet_sans_proprietaire_cree_dans_a_est_perso_et_se_liste_ici_et_en
     assert r.status_code == 200 and r.json()["owner_type"] == "user", r.text
 
 
-def test_un_tableau_sans_proprietaire_cree_dans_a_est_perso_et_se_liste_ici_et_en_perso(
+def test_un_tableau_sans_proprietaire_cree_dans_a_est_perso_et_ne_se_liste_qu_ici(
         monde, client):
-    # 29/09/2026 : comme un projet, il se liste pour moi dans A, où je l'ai créé, et
-    # dans mon org perso ; l'avertissement dit que les autres membres ne le voient pas.
+    # Comme un projet, il se liste pour moi dans A, où je l'ai créé, et là seulement
+    # (29/09 et 07/10/2026) ; l'avertissement dit que les autres membres ne le voient pas.
     nom = _nom()
     r = client.post("/api/datastores", json={"datastore": nom}, headers=_entetes(monde["a"]))
     assert r.status_code == 201, r.text
     assert r.json()["owner_type"] == "user"
     assert "ne le voient pas" in r.json()["avertissement"], "dit qui le voit"
     assert nom in {x["datastore"] for x in _tableaux_listes(client, monde["a"])}
-    assert nom in {x["datastore"] for x in _tableaux_listes(client, monde["perso"])}
+    assert nom not in {x["datastore"] for x in _tableaux_listes(client, monde["perso"])}
     # L'org se DEMANDE : ainsi il est à A et s'y liste.
     nom = _nom()
     r = client.post("/api/datastores",

@@ -108,5 +108,5 @@ def test_mon_projet_cree_dans_une_org_d_equipe_s_y_liste_pour_moi_seul(monde, cl
     assert pid in _ids(client, MOI, monde["a"])
     assert pid not in _ids(client, VOISIN, monde["a"])
     assert pid not in _ids(client, ADMIN, monde["a"])
-    # …et, comme le 28/09, dans mon org perso avec tout mon personnel.
-    assert pid in _ids(client, MOI, monde["perso"])
+    # …et là seulement : plus dans mon org perso (07/10/2026, « on ne mélange pas »).
+    assert pid not in _ids(client, MOI, monde["perso"])

@@ -68,8 +68,8 @@ def _prive(corps: dict) -> list[dict]:
 
 
 def test_le_rail_range_le_projet_et_ses_pages_sans_la_copie(base):
-    # Le personnel se range dans l'org PERSO (décision du 28/09/2026) — et là, TOUS
-    # les projets perso, quel que soit leur `context_org_id`.
+    # Un projet perso se range dans l'org où il a été créé, et là seulement
+    # (29/09 et 07/10/2026) : l'org perso ne rend plus celui créé dans une autre org.
     from oto_mcp import db, org_store
     db.upsert_user(MOI, email=f"{MOI}@t.invalid", name=MOI)
     perso = org_store.ensure_personal_org(MOI)
@@ -80,7 +80,11 @@ def test_le_rail_range_le_projet_et_ses_pages_sans_la_copie(base):
     assert "Alpha figé au 01/09" not in par_nom, "une ancienne copie est servie"
     assert "Zeta archivé" not in par_nom
     assert "Chez un autre" not in par_nom
-    assert "Perso créé dans une org" in par_nom, "un perso de l'org perso manque"
+    assert "Perso créé dans une org" not in par_nom, (
+        "un projet perso créé dans une autre org est rangé dans l'org perso")
+    ailleurs = {n["name"] for n in _prive(S._compose(ResolvedCtx(sub=MOI,
+                                                                 org_id=ORG_CONTEXTE)))}
+    assert "Perso créé dans une org" in ailleurs, "il manque dans son org de création"
 
     alpha = par_nom["Alpha"]
     assert alpha["id"] == P.public_id("prj", base["prj"])

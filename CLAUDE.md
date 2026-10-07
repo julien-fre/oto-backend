@@ -99,7 +99,8 @@ conteneur de travail possédé · ⚠️ une liste de contenu scope sur `active_
 `owner_pairs()`** — fuite fail-open (ADR 0030/0032, `docs/ownership.md`, `docs/projects.md`) · ⚠️ **une org perso
 est une org comme une autre** (« perso » = une étiquette ; seules exceptions : créée à l'inscription, son propriétaire
 ne la quitte pas) · ⚠️ **dans une org, une liste rend l'org, ses équipes, et MES objets perso créés en elle**
-(`ownership.mes_objets_ici`) — jamais ceux d'un autre membre sans partage ; l'org perso est la maison de ce qui n'a
+(`ownership.mes_objets_ici`), **et nulle part ailleurs, org perso comprise** (07/10/2026) — jamais ceux d'un autre
+membre sans partage ; l'org perso est la maison de ce qui n'a
 pas d'org de création et des partages faits à la personne ; les lentilles « moi » sont servies dans toute org
 (`docs/ownership.md`).
 

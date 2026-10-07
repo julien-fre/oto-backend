@@ -192,6 +192,12 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 `/projects` + page dédiée `/projects/:id` (`ProjectDetailView`, ADR 0030). Reliquats du modèle
 (MCP-App rendu, édition temps réel/lock, pré-set vendable=copie) **non faits**.
 
+> **Une liste s'en tient à l'org consultée (07/10/2026, remplace le paragraphe suivant
+> pour les projets perso).** Un projet perso se liste, pour moi seul, dans l'org où je l'ai
+> créé (`context_org_id`) et **nulle part ailleurs, org perso comprise** ; l'org perso ne
+> garde que mes projets perso sans org de création (legacy) et ce qui m'est partagé en
+> personne. Détail : `docs/ownership.md` « Une liste s'en tient à l'org consultée ».
+
 > **Dans une org, on ne voit QUE l'org (28/09/2026, ADR 0030 §9 — remplace le paragraphe
 > suivant pour les projets perso et les partages faits à moi).** `op=list` (portée `org`)
 > rend les projets de l'org consultée, de ses pôles, et ce qui est partagé à elle ou à mes

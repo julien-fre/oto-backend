@@ -88,26 +88,26 @@ def list_projects_for_owners(owners: list[tuple[str, str]], *,
                              createur: Optional[tuple[str, int, bool]] = None) -> list[dict]:
     """Projets possédés par l'un des `(owner_type, owner_id)` (perso + orgs/groupes).
     `templates_only` = ne garder que les modèles publiés (`is_template`, ADR 0032 §7 B5a).
-    `createur` = `(sub, org, tout)` (`ownership.mes_objets_ici`) : s'y ajoutent les
+    `createur` = `(sub, org, sans_org)` (`ownership.mes_objets_ici`) : s'y ajoutent les
     projets PERSONNELS de `sub` rangés dans l'org `org` (`context_org_id`) et, si
-    `tout` (son org perso), tous ses projets personnels."""
+    `sans_org` (son org perso), ceux qui n'ont pas d'org de création."""
     if not owners and createur is None:
         return []
     otypes = [o[0] for o in owners]
     oids = [o[1] for o in owners]
-    csub, corg, ctout = createur if createur is not None else (None, None, False)
+    csub, corg, csans_org = createur if createur is not None else (None, None, False)
     sql = (f"SELECT {_PROJECT_COLS} FROM projects p "
            "WHERE ((p.owner_type, p.owner_id) IN "
            "        (SELECT o.t, o.i FROM unnest(%s::text[], %s::text[]) AS o(t, i)) "
            "   OR (p.owner_type = 'user' AND p.owner_id = %s "
-           "       AND (p.context_org_id = %s OR %s))) ")
+           "       AND (p.context_org_id = %s OR (%s AND p.context_org_id IS NULL)))) ")
     if not include_archived:
         sql += "AND p.archived_at IS NULL "
     if templates_only:
         sql += "AND p.is_template "
     sql += "ORDER BY p.updated_at DESC"
     with _connect() as conn:
-        rows = conn.execute(sql, (otypes, oids, csub, corg, ctout)).fetchall()
+        rows = conn.execute(sql, (otypes, oids, csub, corg, csans_org)).fetchall()
         return [dict(r) for r in rows]
 
 

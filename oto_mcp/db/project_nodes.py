@@ -93,8 +93,9 @@ def lignes_pour_proprietaires(owners: Iterable[tuple[str, str]],
 
     `owners` = les propriétaires collectifs (l'org, ses équipes). Mes projets
     PERSONNELS passent par `createur` (`ownership.mes_objets_ici`, décision du
-    29/09/2026) : ceux que j'ai créés dans cette org et, dans mon org perso, tous —
-    la même règle que `oto_project op=list`.
+    29/09/2026, resserrée le 07/10/2026) : ceux que j'ai créés dans cette org et, dans
+    mon org perso, ceux qui n'ont pas d'org de création — la même règle que
+    `oto_project op=list`.
 
     Deux requêtes, jamais une par projet. L'ordre est celui des surfaces d'origine :
     projets par nom, pages par position puis titre.
@@ -102,16 +103,16 @@ def lignes_pour_proprietaires(owners: Iterable[tuple[str, str]],
     owners = list(owners)
     if not owners and createur is None:
         return []
-    csub, corg, ctout = createur if createur is not None else (None, None, False)
+    csub, corg, csans_org = createur if createur is not None else (None, None, False)
     with _connect() as conn:
         projets = conn.execute(
             "SELECT p.id, p.owner_type, p.owner_id, p.name FROM projects p "
             "WHERE p.archived_at IS NULL AND ((p.owner_type, p.owner_id) IN "
             "        (SELECT o.t, o.i FROM unnest(%s::text[], %s::text[]) AS o(t, i)) "
             "   OR (p.owner_type = 'user' AND p.owner_id = %s "
-            "       AND (p.context_org_id = %s OR %s))) "
+            "       AND (p.context_org_id = %s OR (%s AND p.context_org_id IS NULL)))) "
             "ORDER BY p.name, p.id",
-            ([o[0] for o in owners], [o[1] for o in owners], csub, corg, ctout)).fetchall()
+            ([o[0] for o in owners], [o[1] for o in owners], csub, corg, csans_org)).fetchall()
         ids = [p["id"] for p in projets]
         pages = conn.execute(
             "SELECT d.id, d.project_id, d.parent_id, d.title, d.position FROM docs d "

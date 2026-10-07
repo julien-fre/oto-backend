@@ -248,8 +248,9 @@ def search(sub: str, org_id: int, q: str, *,
 def _accessible_namespaces(sub: str, org_id: int) -> list[dict]:
     """Namespaces datastore du CONTEXTE — la liste des tableaux de l'org
     (`DatastorePg.list_datastores`), en parité EXACTE : possédés par
-    `ownership.principaux_de_liste` (l'org, mes équipes, et moi dans mon org perso)
-    ∪ mes tableaux perso créés dans cette org (`ownership.mes_tableaux_ici`, 29/09/2026)
+    `ownership.proprietaires_collectifs_de_liste` (l'org, mes équipes) ∪ mes tableaux
+    perso créés dans cette org (`ownership.mes_tableaux_ici`, 29/09/2026 ; dans mon org
+    perso, ceux sans org de création — 07/10/2026)
     ∪ accordés à l'org et à mes équipes ∪, dans mon org perso, partagés à moi en
     personne (décision du 28/09/2026). `test_parite_recherche_liste` tient la
     parité au lieu de la répéter. Source unique du scoping des sources `tableau` ET
@@ -261,7 +262,8 @@ def _accessible_namespaces(sub: str, org_id: int) -> list[dict]:
     aujourd'hui pour un org_admin, inchangé par ce lot."""
     principals = ownership.principaux_de_liste(sub, org_id)
     gids = [int(p[1]) for p in principals if p[0] == "group"]
-    rows = db.list_datastores_for_owners(principals)
+    rows = db.list_datastores_for_owners(
+        ownership.proprietaires_collectifs_de_liste(sub, org_id))
     seen = {r["id"] for r in rows}
     for r in ownership.mes_tableaux_ici(ownership.mes_objets_ici(sub, org_id)):
         if r["id"] not in seen:

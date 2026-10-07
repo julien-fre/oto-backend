@@ -125,7 +125,7 @@ def org_perso_de(sub: str, org_id: Optional[int]) -> bool:
     """`org_id` porte-t-elle l'étiquette d'org PERSO de `sub` (l'org créée à son
     inscription) ? Depuis le 29/09/2026, une org perso est fonctionnellement une org
     comme une autre ; l'étiquette ne sert plus qu'à désigner la MAISON de ce qui n'a pas
-    d'org de création (`perso_de_la_liste`, le `tout` de `mes_objets_ici`) et à
+    d'org de création (`perso_de_la_liste`, le `sans_org` de `mes_objets_ici`) et à
     interdire à son propriétaire de la quitter. Même source que
     `me.active_org_is_personal` (`org_store`)."""
     return org_id is not None and org_store.get_personal_org(sub) == int(org_id)
@@ -160,6 +160,17 @@ def principaux_de_liste(sub: str, org_id: Optional[int]) -> list[tuple[str, str]
             or p in moi]
 
 
+def proprietaires_collectifs_de_liste(sub: str, org_id: Optional[int]
+                                      ) -> list[tuple[str, str]]:
+    """Les propriétaires COLLECTIFS (l'org, mes équipes en elle) dont une liste rend les
+    objets POSSÉDÉS. Jamais `("user", sub)` : mes objets perso passent par
+    `mes_objets_ici`, qui les range dans leur org de création. Le principal personnel
+    de `principaux_de_liste` (org perso) ne sert qu'aux PARTAGES reçus — pris comme
+    propriétaire, il rendait dans l'org perso tous mes tableaux perso, d'où qu'ils
+    viennent (règle retirée le 07/10/2026, cf. `mes_objets_ici`)."""
+    return [p for p in principaux_de_liste(sub, org_id) if p[0] != "user"]
+
+
 def project_scope_owners(sub: str, org_id: Optional[int]) -> list[tuple[str, str]]:
     """Owners du CONTEXTE projet de l'org active (lot 3 Ship 1, factorisation du
     scoping d'`oto_project op=list`) : l'org active + ses pôles (ADR 0049 — mes
@@ -186,34 +197,40 @@ def project_list_owners(sub: str, org_id: Optional[int]) -> list[tuple[str, str]
 
 def mes_objets_ici(sub: Optional[str], org_id: Optional[int]
                    ) -> Optional[tuple[str, int, bool]]:
-    """`(sub, org, tout)` : les objets PERSONNELS (`owner_type='user'`, projets et
-    tableaux — ceux qui portent leur org de création, `context_org_id`) que `sub` voit
-    dans la liste de l'org `org_id` : ceux qu'il y a CRÉÉS (`context_org_id = org`) et,
-    dans son org perso (`tout`), tous ses objets personnels. `None` : aucun.
+    """`(sub, org, sans_org)` : les objets PERSONNELS (`owner_type='user'`, projets et
+    tableaux) que `sub` voit dans la liste de l'org `org_id` : ceux qu'il y a CRÉÉS
+    (`context_org_id = org`) et, dans son org perso (`sans_org`), ceux qui ne portent
+    AUCUNE org de création (`context_org_id` nul : legacy, ou créés hors de toute org).
+    `None` : aucun.
 
     Décisions d'Alexis du 29/09/2026 : un objet appartient à qui le crée et vit dans
     l'org où il l'a créé ; son propriétaire l'y voit TOUJOURS, que l'org porte
     l'étiquette perso ou non — « perso » n'est qu'une étiquette, fonctionnellement une
     org comme une autre. Les autres membres ne le voient que s'il le leur partage : la
-    clause ne porte que sur `sub`. `tout` est la maison des objets sans org de
-    création (legacy, ou créés hors de toute org) : l'org créée à l'inscription.
-    En vue bornée (oto#270), seul le contexte O compte."""
+    clause ne porte que sur `sub`.
+
+    Décision d'Alexis du 07/10/2026 : « l'affichage s'en tient à l'org consultée, on
+    ne mélange pas ». L'org perso ne liste plus les objets perso créés AILLEURS (elle
+    les listait tous depuis le 28/09, et l'on croyait qu'ils y vivaient) : elle ne
+    garde que ceux qui n'ont d'org de création nulle part, faute de quoi ils ne
+    sortiraient dans aucune liste. En vue bornée (oto#270), seul le contexte O compte."""
     if not sub or org_id is None:
         return None
-    tout = vue_bornee(sub) is None and org_perso_de(sub, org_id)
-    return (sub, int(org_id), tout)
+    sans_org = vue_bornee(sub) is None and org_perso_de(sub, org_id)
+    return (sub, int(org_id), sans_org)
 
 
 def mes_tableaux_ici(createur: Optional[tuple[str, int, bool]]) -> list[dict]:
     """Mes tableaux PERSONNELS que la liste de l'org rend, selon `mes_objets_ici` : ceux
-    créés dans cette org (`context_org_id`) et, dans mon org perso (`tout`), tous.
-    Source unique de la liste des tableaux et de la recherche (parité « cherchable ⇔
-    lisible »). `[]` sans `createur`."""
+    créés dans cette org (`context_org_id`) et, dans mon org perso (`sans_org`), ceux
+    qui n'ont pas d'org de création. Source unique de la liste des tableaux et de la
+    recherche (parité « cherchable ⇔ lisible »). `[]` sans `createur`."""
     if createur is None:
         return []
-    csub, corg, tout = createur
+    csub, corg, sans_org = createur
     return [n for n in db.list_datastores_for_owners([("user", csub)])
-            if tout or n.get("context_org_id") == corg]
+            if n.get("context_org_id") == corg
+            or (sans_org and n.get("context_org_id") is None)]
 
 
 def projets_possedes_ici(sub: str, org_id: Optional[int], *,

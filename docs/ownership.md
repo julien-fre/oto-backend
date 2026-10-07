@@ -117,7 +117,37 @@ JAMAIS `owner_pairs()`** (union de toutes les orgs = fuite fail-open ; tripwire
 (`orgs.personal_of`), défauts de création = org active.
 **Détail (datastore pilote, oto_resource, migration, abolition du perso) : `docs/ownership.md`**.
 
+## Une liste s'en tient à l'org consultée (décision d'Alexis du 07/10/2026)
+
+« L'affichage s'en tient à l'org consultée, on ne mélange pas. » Un objet personnel
+(projet ou tableau, `owner_type='user'`) se LISTE, pour son seul propriétaire, dans l'org
+où il a été créé (`context_org_id`) — **et nulle part ailleurs, org perso comprise**.
+Jusque-là, l'org perso listait **tous** les projets et tableaux perso de l'appelant, d'où
+qu'ils viennent : on croyait qu'ils y vivaient.
+
+- `ownership.mes_objets_ici` rend `(sub, org, sans_org)` : `sans_org` (vrai dans l'org
+  perso, hors vue bornée) n'ajoute plus que les objets **sans** org de création
+  (`context_org_id` nul : legacy), faute de quoi ils ne sortiraient dans aucune liste.
+  Les deux clauses SQL (`db.list_projects_for_owners`, `project_nodes.lignes_pour_proprietaires`)
+  et `mes_tableaux_ici` lisent cette règle ; la liste des projets, `list_templates`,
+  `archived=true`, la recherche, le rail et le bloc projets du handshake suivent.
+- Le jeu POSSÉDÉ d'une liste de tableaux (`list_datastores`, `search._accessible_namespaces`)
+  ne contient plus `("user", sub)` : `ownership.proprietaires_collectifs_de_liste` (l'org,
+  mes équipes). Pris comme propriétaire, le principal personnel de l'org perso rendait
+  tous mes tableaux perso. Il ne sert plus qu'aux **partages reçus**.
+- **Inchangé** : les partages faits à moi en personne se listent toujours dans l'org perso
+  (`perso_de_la_liste`) et par les lentilles « moi » dans toute org — leur place définitive
+  (l'org d'origine, en accès « invité ») est un lot à part ; les procédures, guides et
+  nœuds perso (sans org de création) restent dans l'org perso ; l'accès par identifiant ne
+  change pas.
+
+Banc : `tests/test_liste_s_en_tient_a_l_org.py` (base réelle : projets par la face servie,
+tableaux par la liste et par la recherche).
+
 ## Une org perso est une org comme une autre (décision d'Alexis du 29/09/2026)
+
+> ⚠️ Resserré le 07/10/2026 (section précédente) : l'org perso ne liste plus les objets
+> perso créés dans une autre org.
 
 « Perso » n'est qu'une **étiquette** (`orgs.personal_of`), du même genre que la maison.
 Fonctionnellement, une org perso est une org : on y invite, on y crée des équipes, on

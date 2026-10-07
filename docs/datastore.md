@@ -3133,6 +3133,11 @@ par la copie d'un projet (l'org où la copie est rangée). L'écriture à clé q
 tableau à la volée (`upsert_row`) est retirée depuis oto#156. Une garde d'AST (`tests/datastore/test_contexte_org_160.py`)
 refuse une voie qui l'omettrait.
 
+> ⚠️ **Resserré le 07/10/2026** (`docs/ownership.md` « Une liste s'en tient à l'org
+> consultée ») : un tableau perso se liste, pour son propriétaire, dans son org de création
+> et **nulle part ailleurs** — l'org perso ne rend plus ceux créés dans une autre org, seulement
+> ceux sans `context_org_id` et ceux partagés à moi en personne.
+
 > ⚠️ **Remplacé le 28/09/2026 (ADR 0030 §9, `docs/ownership.md` « Dans une org, on ne
 > voit QUE l'org »)** : un tableau personnel ne se liste plus dans son org de création
 > mais dans l'org PERSO de son propriétaire, quelle que soit cette org ; hors de l'org

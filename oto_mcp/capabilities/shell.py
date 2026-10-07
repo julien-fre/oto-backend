@@ -379,8 +379,8 @@ def _compose(ctx: ResolvedCtx) -> dict:
 
     proprios = ([("org", str(org_id))] if org_id is not None else [])
     proprios += [("group", str(g["group_id"])) for g in equipes]
-    # Le personnel — mes nœuds et TOUS mes projets perso — et les partages faits à moi
-    # ne se rangent que dans mon org PERSO (décision du 28/09/2026) : dans une autre
+    # Le personnel sans org de création — mes nœuds — et les partages faits à moi ne
+    # se rangent que dans mon org PERSO (décision du 28/09/2026) : dans une autre
     # org, on ne voit que l'org. La section « Privé » y garde mes exécutions dans l'org.
     moi = ownership.perso_de_la_liste(sub, org_id)
     proprios += moi

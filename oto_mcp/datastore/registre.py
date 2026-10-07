@@ -52,11 +52,11 @@ def _avertissement_de_portee(ns_id: int, owner_type: str, *,
     demandee = session_org.current_view_org() or session_org.current_call_org()
     if not demandee:
         return None
-    # Décision du 29/09/2026 : le perso se LISTE, pour son seul propriétaire, dans l'org
-    # où il a été créé (et dans l'org perso) — la phrase dit que les autres membres ne
-    # le voient pas.
+    # Décisions des 29/09 et 07/10/2026 : le perso se LISTE, pour son seul propriétaire,
+    # dans l'org où il a été créé et là seulement — la phrase dit que les autres membres
+    # ne le voient pas.
     tete = (f"Tableau créé PERSONNEL : toi seul le vois — il se liste pour toi dans "
-            f"l'organisation {demandee}, où tu l'as créé, et dans ton org perso, mais "
+            f"l'organisation {demandee}, où tu l'as créé, et là seulement ; "
             f"les autres membres ne le voient pas. Le contexte d'org ne décide pas du "
             f"propriétaire — il se demande.")
     if aga.appel_d_agent():
@@ -131,9 +131,10 @@ class RegistreMixin:
         groupe actif : un partage d'équipe doit se voir sans basculer), et MES tableaux
         perso créés dans cette org (`ownership.mes_objets_ici`, même règle que les
         projets, 29/09/2026) — jamais ceux d'un autre membre. Mon org PERSO rend en plus
-        TOUS mes tableaux perso et ceux partagés à moi en personne
-        (`ownership.perso_de_la_liste`). Dédupliqués par id (priorité possédé). Filtre
-        de LISTE : un tableau s'ouvre toujours par son numéro."""
+        mes tableaux perso sans org de création et ceux partagés à moi en personne
+        (`ownership.perso_de_la_liste`) — plus ceux créés dans une autre org (07/10/2026).
+        Dédupliqués par id (priorité possédé). Filtre de LISTE : un tableau s'ouvre
+        toujours par son numéro."""
         from .. import access
         createur = None
         if self.acting_org is not None:
@@ -144,7 +145,7 @@ class RegistreMixin:
             org = access.current_org(self.sub)
             if ownership.active_owner(org) is None:
                 return []
-            proprios = ownership.principaux_de_liste(self.sub, org)
+            proprios = ownership.proprietaires_collectifs_de_liste(self.sub, org)
             moi = ownership.perso_de_la_liste(self.sub, org)
             createur = ownership.mes_objets_ici(self.sub, org)
         # ADR 0049 (cadrage 10/07) : les tableaux TEAM-OWNED de l'org active sont listés
