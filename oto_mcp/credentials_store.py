@@ -527,6 +527,22 @@ class SecretUnpackError(RuntimeError):
     2026-08-27, site B6)."""
 
 
+def platform_fields(connector: str, secret: str) -> dict:
+    """The fields of a PLATFORM key. `/api/admin/platform-keys` posts ONE raw value
+    (`api_key`), even for a multi-field connector: a blob that does not unpack is that
+    value, and fills the connector's first SECRET field. Without it, `unpack_secret`
+    refused every raw platform key of a multi-field connector (`forager`,
+    `transcription`), and the "Test the connection" probe answered a 500 for a key
+    that works. A JSON blob posted by other means still unpacks as such."""
+    try:
+        return unpack_secret(connector, secret)
+    except SecretUnpackError:
+        c = providers.REGISTRY.get(connector)
+        champ = next((f.name for f in (c.vault_fields if c is not None else ())
+                      if f.secret), "key")
+        return {champ: secret}
+
+
 def unpack_secret(connector: str, secret: str) -> dict:
     """Inverse de `pack_secret` : reconstruit le dict des champs depuis la string
     stockée. Pour l'affichage (champs non-secrets) ET la résolution in-process
