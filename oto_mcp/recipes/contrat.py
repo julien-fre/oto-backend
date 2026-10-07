@@ -161,6 +161,25 @@ def _asynchrone(probs: list, c: dict, rows: dict) -> None:
             isinstance(k, str) and isinstance(v, str) for k, v in keep.items())):
         probs.append("`async.keep` must be {name: path}: fields of the submit reply kept "
                      "with the job, cited as {{job.name}}")
+    lot = a.get("batch")
+    if lot is not None:
+        racine = ou.GROUPABLES.get(c.get("tool"))
+        args = c.get("arguments") if isinstance(c.get("arguments"), dict) else {}
+        if racine is None:
+            probs.append(f"`async.batch`: `{c.get('tool')}` can't be batched (its results "
+                         f"don't echo a row id back); batchable: {sorted(ou.GROUPABLES)}")
+        elif not isinstance(lot, dict) or not isinstance(lot.get("argument"), str) \
+                or not (isinstance(args.get(lot["argument"]), list)
+                        and len(args[lot["argument"]]) == 1
+                        and isinstance(args[lot["argument"]][0], dict)):
+            probs.append("`async.batch.argument` must name the list argument holding ONE "
+                         "templated item (the item sent for each row)")
+        elif not isinstance(lot.get("echo"), str) or not lot["echo"].startswith(racine + "."):
+            probs.append(f"`async.batch.echo` must be a path under `{racine}.` (the field "
+                         "the provider echoes back, carrying the row id)")
+        n_lot = lot.setdefault("size", 25) if isinstance(lot, dict) else None
+        if isinstance(lot, dict) and (not isinstance(n_lot, int) or not 2 <= n_lot <= 100):
+            probs.append("`async.batch.size` must be 2 to 100")
     n = a.setdefault("max_wait_seconds", ATTENTE_DEFAUT)
     if not isinstance(n, int) or not 60 <= n <= ATTENTE_MAX:
         probs.append(f"`async.max_wait_seconds` must be 60 to {ATTENTE_MAX}")

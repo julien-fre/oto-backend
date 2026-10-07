@@ -28,23 +28,34 @@ def serveur(compte, monkeypatch):
     from oto_mcp.auth import hooks
     monkeypatch.setattr(access, "current_user_sub_or_raise", lambda: SUB)
     monkeypatch.setattr(hooks, "current_user_sub_from_token", lambda: SUB)
-    etat = {"pret": False, "appels": [], "crm": {}, "lent": False}
+    etat = {"pret": False, "appels": [], "crm": {}, "lent": False, "lots": {}}
     m = FastMCP("t-recettes-fx")
 
     @m.tool()
     def dropcontact_enrich(contacts: list[dict]) -> dict:
         etat["appels"].append(("submit", contacts[0].get("first_name")))
         session_org.note_call_trace(quantity=1)
+        if len(contacts) > 1:
+            rid = f"batch-{len(etat['lots'])}"
+            etat["lots"][rid] = contacts
+            return {"request_id": rid}
         return {"request_id": f"req-{contacts[0].get('first_name')}"}
+
+    def _profil(nom: str, echo=None) -> dict:
+        email = [] if nom == "Nobody" else [{"email": f"{nom.lower()}@acme.test"}]
+        return {"email": email, **({"custom_fields": echo} if echo else {})}
 
     @m.tool()
     def dropcontact_result(request_id: str) -> dict:
         etat["appels"].append(("collect", request_id))
         if not etat["pret"]:
             return {"done": False}
-        nom = request_id.removeprefix("req-")
-        email = [] if nom == "Nobody" else [{"email": f"{nom.lower()}@acme.test"}]
-        return {"done": True, "profiles": [{"email": email}]}
+        if request_id in etat["lots"]:
+            # Rendus dans le DÉSORDRE : seul l'écho rattache un profil à sa ligne.
+            return {"done": True, "profiles": [
+                _profil(c["first_name"], c.get("custom_fields"))
+                for c in reversed(etat["lots"][request_id])]}
+        return {"done": True, "profiles": [_profil(request_id.removeprefix("req-"))]}
 
     @m.tool()
     def hubspot_object(op: str = "search", object_type: Optional[str] = None,
@@ -357,3 +368,37 @@ def test_deux_executions_sur_le_meme_tableau_ne_se_croisent_pas(serveur):
     assert _executer(m, _pousse(), ns)["rows"]["created"] == 1
     # Rendu à la sortie : une exécution suivante passe.
     assert db_recipes.prendre_bail(cle, "x", 60)
+
+
+def test_async_par_lots_un_travail_et_chaque_resultat_a_sa_ligne(serveur):
+    m, etat = serveur
+    noms = ["Ann", "Bob", "Nobody", "Cid", "Dee"]
+    ns = _tableau(["first_name", "email", "dc_status"], [{"first_name": n} for n in noms])
+    corps = _asyn(**{"async": {"id": "request_id", "ready": "done",
+                               "batch": {"argument": "contacts", "size": 3,
+                                         "echo": "custom_fields.oto_row"},
+                               "collect": {"tool": "dropcontact_result",
+                                           "arguments": {"request_id": "{{job.id}}"}}}})
+    recu = _executer(m, corps, ns)
+    assert recu["jobs"]["submitted"] == 2 and len(etat["lots"]) == 2  # 3 + 2
+    etat["pret"] = True
+    recu = _executer(m, corps, ns)
+    collectes = [a for a in etat["appels"] if a[0] == "collect"]
+    assert len(collectes) == 2  # une collecte par travail, pas par ligne
+    lignes = _lignes(ns, "first_name")
+    assert lignes["Bob"]["email"] == "bob@acme.test" and lignes["Dee"]["email"] == "dee@acme.test"
+    assert lignes["Nobody"]["dc_status"] == "not_found"
+
+
+def test_un_lot_reduit_au_reste_du_plafond(serveur):
+    m, etat = serveur
+    ns = _tableau(["first_name", "email", "dc_status"],
+                  [{"first_name": n} for n in ("Ann", "Bob", "Cid", "Dee")])
+    corps = _asyn(limits={"max_units": 3},
+                  **{"async": {"id": "request_id", "ready": "done",
+                               "batch": {"argument": "contacts", "size": 10,
+                                         "echo": "custom_fields.oto_row"},
+                               "collect": {"tool": "dropcontact_result",
+                                           "arguments": {"request_id": "{{job.id}}"}}}})
+    recu = _executer(m, corps, ns)
+    assert recu["rows"]["submitted"] == 3 and recu["stopped"] == "spend_cap"

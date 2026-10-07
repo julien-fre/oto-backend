@@ -205,6 +205,15 @@ def portees_citees(gabarit: Any) -> set[str]:
             for m in _GABARIT.finditer(gabarit)}
 
 
+def poser(obj: dict, chemin: str, valeur: Any) -> None:
+    """Pose `valeur` au bout d'un chemin pointé d'objets (`custom_fields.oto_row`),
+    créant les objets intermédiaires."""
+    *tete, fin = [s for s in chemin.split(".") if s]
+    for seg in tete:
+        obj = obj.setdefault(seg, {})
+    obj[fin] = valeur
+
+
 def sans_vides(valeur: Any) -> Any:
     """Les arguments rendus, sans les clés dont la valeur est vide : une colonne vide
     n'envoie RIEN (jamais `null` ni `""`, qui videraient un champ chez le tiers ou feraient

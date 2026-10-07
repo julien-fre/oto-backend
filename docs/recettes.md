@@ -179,9 +179,14 @@ nommés, avec leur outil de collecte, dans une liste fermée (`oto_mcp/recipes/o
   jeton collecte (`job_running` tant que ce n'est pas prêt) puis rend le remplissage.
   `publish` se passe le même jeton, et refuse tant que le résultat n'est pas collecté
   (`test_pending`).
-- ⚠️ Apify (lancer, suivre, lire le jeu de données) est un `pull` asynchrone : pas
-  couvert. Un travail par ligne : les envois groupés (cent contacts par soumission)
-  viendront ensuite.
+- **Par lots** (`async.batch`: `argument`, `size` 2–100, `echo`) : UN travail pour
+  plusieurs lignes, l'identifiant de chaque ligne posé dans son élément sous `echo` et
+  relu dans le résultat — jamais la position. Seulement pour un outil dont le
+  fournisseur renvoie ce champ en écho (`recipes/outils.GROUPABLES` : Dropcontact,
+  `custom_fields`) ; FullEnrich n'en renvoie aucun et reste à une ligne par travail. Un
+  travail groupé se collecte une fois par exécution. Le plafond compte le lot ENTIER à
+  la soumission (au pire un crédit par contact), et un lot se réduit au reste du
+  plafond. Un lot refusé en bloc ne marque aucune ligne (`batch_refused:<code>`).
 
 ## Pousser vers une autre app (`mode: push`)
 

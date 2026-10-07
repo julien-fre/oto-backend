@@ -126,6 +126,7 @@ DISJONCTEUR = 3
 EFFET_FAIT = frozenset({"unknown_outcome", "id_not_written", "no_job_id"})
 #: Le signal d'une ligne à laisser EN ATTENTE sans échec (changée pendant l'exécution).
 GARDER = "keep_pending"
+_SANS = object()
 
 
 async def _outil(fastmcp, outil: str, usage: str = "read"):
@@ -651,10 +652,13 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
             return "time_budget"
         return None
 
-    async def _ecrire_resultat(issue, row: dict, ligne: dict) -> tuple[Optional[str], Any]:
+    async def _ecrire_resultat(issue, row: dict, ligne: dict,
+                               res: Any = _SANS) -> tuple[Optional[str], Any]:
         """Le résultat d'un appel (ou d'une collecte) écrit dans la ligne."""
-        res, refus = _resultat(redaction.extract_payload(issue.result), corps)
-        _compter(recu, corps, issue, [res] if res is not None else [])
+        refus = None
+        if res is _SANS:  # sinon : l'élément d'un lot, déjà compté à sa collecte
+            res, refus = _resultat(redaction.extract_payload(issue.result), corps)
+            _compter(recu, corps, issue, [res] if res is not None else [])
         if refus:
             return f"ligne:{refus}", 0
         if res is None or not co.garde(res, corps["where"], params, row=row,
@@ -723,6 +727,8 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
         vieux : `failed:timeout` — jamais resoumis, le fournisseur facturerait deux fois."""
         if time.time() - float(job.get("at") or 0) > asyn["max_wait_seconds"]:
             return "ligne:timeout", 0
+        if job.get("batch"):
+            return await _collecter_du_lot(row, ligne, job)
         arret = _hors_budget()
         if arret:
             return arret, 0
@@ -768,6 +774,112 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
             return "ligne:unknown_outcome", 0
         return None, "submitted"
 
+    lot = (asyn or {}).get("batch")
+    lots_lus: dict[str, Any] = {}  # travail → sa réponse, collectée UNE fois par exécution
+
+    async def _collecter_du_lot(row: dict, ligne: dict, job: dict) -> tuple[Optional[str], Any]:
+        """Un travail groupé se collecte une fois par exécution ; chaque ligne y retrouve
+        SON élément par l'identifiant renvoyé en écho — jamais par sa position."""
+        if job["id"] not in lots_lus:
+            arret = _hors_budget()
+            if arret:
+                return arret, 0
+            args = co.sans_vides(co.rendre(asyn["collect"]["arguments"],
+                                           {**co._portees(params, row), "job": job}))
+            issue, arret = await _appel(asyn["collect"]["tool"], collecteur, args)
+            if arret and not arret.startswith("ligne:"):
+                return arret, 0
+            if arret:
+                lots_lus[job["id"]] = arret
+            else:
+                charge = redaction.extract_payload(issue.result)
+                lots_lus[job["id"]] = charge if co.lire(charge, asyn["ready"]) else None
+                if lots_lus[job["id"]] is not None and issue.quantity is not None:
+                    recu["units"] += issue.quantity
+        charge = lots_lus[job["id"]]
+        if isinstance(charge, str):
+            return charge, 0
+        if charge is None:
+            recu["jobs"]["still_running"] += 1
+            return GARDER, 0
+        elements = co.lire(charge, corps["source"]["items"]) if corps["source"]["items"] \
+            else charge
+        miens = [e for e in (elements if isinstance(elements, list) else [])
+                 if str(co.lire(e, lot["echo"])) == str(row["_id"])]
+        if len(miens) > 1:
+            return "ligne:ambiguous", 0
+        if not miens:
+            return None, 0
+        return await _ecrire_resultat(None, row, ligne, res=miens[0])
+
+    async def _soumettre_par_lots() -> None:
+        """Les lignes en attente, par lots de `batch.size` (réduits au reste du plafond) :
+        UN travail par lot, l'identifiant de chaque ligne posé dans son élément
+        (`batch.echo`), le travail et l'état `submitted` écrits sur chaque ligne."""
+        gabarit = (corps.get("arguments") or {})[lot["argument"]][0]
+        commun = {k: v for k, v in (corps.get("arguments") or {}).items()
+                  if k != lot["argument"]}
+        vues: set = set()
+        faites = 0
+        while faites < rows["max_rows"]:
+            reste = lim["max_units"] - recu["units"]
+            if reste <= 0:
+                _arreter(recu, "spend_cap")
+                return
+            if recu["pages"] and time.monotonic() >= fin:
+                _arreter(recu, "time_budget", resume=_reprise())
+                return
+            taille = min(lot["size"], reste, rows["max_rows"] - faites)
+            prises = await run_in_threadpool(ecriture.parents_en_attente, lignes,
+                                             limite=taille, premiere=None, vues=vues)
+            if not prises:
+                recu["done"] = True
+                return
+            faites += len(prises)
+            elements, ids = [], []
+            for ligne in prises:
+                rid = str(ligne["_id"])
+                vues.add(rid)
+                portees = co._portees(params, ecriture.portee_ligne(ligne))
+                if co.exigees_vides(gabarit, portees, exigees):
+                    await run_in_threadpool(ecriture.marquer_parent, lignes, rid,
+                                            "failed:invalid_input")
+                    recu["rows"]["failed"] += 1
+                    continue
+                element = co.sans_vides(co.rendre(gabarit, portees))
+                co.poser(element, lot["echo"], rid)
+                elements.append(element)
+                ids.append(rid)
+            if not elements:
+                continue
+            args = co.sans_vides(co.rendre(commun, co._portees(params, None)))
+            args[lot["argument"]] = elements
+            issue, arret = await _appel(corps["tool"], outil, args)
+            if arret:
+                # Un lot refusé en bloc ne dit rien d'UNE ligne : rien n'est marqué.
+                if arret.startswith("ligne:"):
+                    _arreter(recu, f"batch_refused:{arret.split(':', 1)[1]}")
+                return
+            charge = redaction.extract_payload(issue.result)
+            # Au pire un crédit par contact : le plafond compte le lot entier, même si
+            # l'outil déclare moins à la soumission (Dropcontact facture au résultat).
+            recu["units"] += max(issue.quantity or 0, len(elements))
+            recu["units_basis"] = "declared"
+            jid = co.lire(charge, asyn["id"])
+            statut_job = {"id": str(jid), "at": int(time.time()), "batch": True,
+                          **{k: co.lire(charge, v) for k, v in (asyn.get("keep") or {}).items()}}
+            for rid in ids:
+                patch = ({asyn["job_column"]: json.dumps(statut_job),
+                          rows["status_column"]: "submitted"} if not co._vide(jid)
+                         else {rows["status_column"]: "failed:no_job_id"})
+                code = await run_in_threadpool(ecriture.ecrire_sans_garde, lignes, rid, patch)
+                if code:
+                    recu["failed"][code] = recu["failed"].get(code, 0) + 1
+                    await run_in_threadpool(ecriture.marquer_parent, lignes, rid,
+                                            "failed:unknown_outcome")
+            recu["jobs"]["submitted"] += 1
+            recu["rows"]["submitted"] = recu["rows"].get("submitted", 0) + len(ids)
+
     if asyn:
         recu["jobs"] = {"submitted": 0, "collected": 0, "still_running": 0}
         recu["rows"] = {"done": 0, "not_found": 0, "failed": 0}
@@ -777,8 +889,12 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
                                           _soumettre)
             else:
                 if await _collecte(recu, lignes, rows, _travail, _collecter) is None:
-                    await _parcourir({"max_parents": rows["max_rows"]}, lignes, True, etat,
-                                     recu, _soumettre, compte="rows", vide="not_found")
+                    if lot:
+                        await _soumettre_par_lots()
+                    else:
+                        await _parcourir({"max_parents": rows["max_rows"]}, lignes, True,
+                                         etat, recu, _soumettre, compte="rows",
+                                         vide="not_found")
         finally:
             if not ecrire:
                 n = recu["rows_built"] or 1

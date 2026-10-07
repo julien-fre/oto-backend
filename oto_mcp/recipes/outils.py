@@ -29,6 +29,11 @@ SOUMISSIONS: dict[str, frozenset] = {
     "lemlist_enrich": frozenset({"lemlist_enrich_result"}),
 }
 
+#: Les soumissions qu'on GROUPE (`async.batch`) : seulement celles dont le fournisseur
+#: renvoie en écho un champ libre de chaque élément — c'est lui qui rattache un résultat
+#: à sa ligne, jamais la position. FullEnrich n'en renvoie aucun : une ligne par travail.
+GROUPABLES: dict[str, str] = {"dropcontact_enrich": "custom_fields"}
+
 #: Outil de poussée → ses ops permises (None : l'outil n'a pas d'`op`).
 POUSSEES: dict[str, Optional[frozenset]] = {
     "hubspot_object": frozenset({"create", "update", "search"}),
