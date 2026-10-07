@@ -247,7 +247,11 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
                 else:
                     groups = [int(g["group_id"])
                               for g in group_store.list_groups_for_user(self.sub, org)]
-                self._active_scope_cache = ([org], groups)
+                # Un bénéficiaire HORS de l'org (projet partagé, `_project=`) n'a pas
+                # l'org pour portée : ni ses tableaux par nom ou numéro, ni ce qui lui
+                # est accordé (`ownership.owner_de_portee`, même seam que les listes).
+                portee = [org] if ownership.owner_de_portee(self.sub, org) else []
+                self._active_scope_cache = (portee, groups)
         return self._active_scope_cache
 
     def _resolve(self, datastore: str, *, write: bool = False) -> int:

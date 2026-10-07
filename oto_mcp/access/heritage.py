@@ -160,6 +160,19 @@ def org_partagee(org: Optional[int], cles: Optional[ClesDuProjet]) -> Optional[i
     return org
 
 
+def org_du_perimetre(sub: Optional[str], org: Optional[int]) -> Optional[int]:
+    """The org `sub` is a PRINCIPAL of in this call's context — the pendant of
+    `org_partagee` for SCOPE (lists, resolving a table, access by id): the context
+    org, except for a beneficiary OUTSIDE it (shared project, `_project=`): None.
+
+    `_project=` co-sets the project's org as the call's org, without membership —
+    on purpose (slots and the project's pinned identity resolve there). But every
+    scope seam read that org as one of the caller's own: a non-member listed the
+    org's whole table catalogue and read its tables by number. Inheritance
+    (`org_heritee`) changes nothing here: it lends KEYS, never membership."""
+    return None if hors_org(du_contexte(sub, org)) else org
+
+
 def org_du_lien(sub: str, org: Optional[int]) -> Optional[int]:
     """The org for the "where to set your key" link of a refusal: not that of a shared
     project the caller is not a member of (a page they cannot open) — None targets their account."""

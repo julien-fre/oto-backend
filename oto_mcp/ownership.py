@@ -108,15 +108,27 @@ def active_owner(org_id: Optional[int]) -> Optional[tuple[str, str]]:
     return None if org_id is None else ("org", str(org_id))
 
 
+def owner_de_portee(sub: Optional[str], org_id: Optional[int]) -> Optional[tuple[str, str]]:
+    """`active_owner` de l'org, si `sub` en est un PRINCIPAL dans ce contexte — None pour
+    un bénéficiaire HORS de l'org qui y travaille par un projet partagé (`_project=`,
+    `access.heritage.org_du_perimetre`). Source unique de la pièce `("org", X)` des
+    seams de portée : `active_org_principals` (donc `principaux_de_liste` et
+    `visible_in_org`), `project_scope_owners`, `owner_in_scope`. Sans verdict de
+    projet partagé (tout appel hors `_project=`), c'est `active_owner` à l'identique."""
+    from .access import heritage
+    return active_owner(heritage.org_du_perimetre(sub, org_id))
+
+
 def active_org_principals(sub: str, org_id: Optional[int]) -> list[tuple[str, str]]:
     """Principals du CONTEXTE de l'org active sous lesquels une ressource est visible
     ici : l'org active, l'acteur, et ses groupes DANS cette org. Le plan de l'ACCÈS
     par id (`visible_in_org`, ADR 0023) ; les LISTES en retirent l'acteur hors de son
-    org perso (`principaux_de_liste`, décision du 28/09/2026)."""
-    owner = active_owner(org_id)
-    if owner is None:
+    org perso (`principaux_de_liste`, décision du 28/09/2026). Un bénéficiaire HORS de
+    l'org (projet partagé) n'y a pas l'org pour principal (`owner_de_portee`)."""
+    if org_id is None:
         return []
-    return [owner, ("user", sub)] + [
+    owner = owner_de_portee(sub, org_id)
+    return ([owner] if owner is not None else []) + [("user", sub)] + [
         ("group", str(g["group_id"]))
         for g in group_store.list_groups_for_user(sub, org_id)]
 
@@ -175,15 +187,16 @@ def project_scope_owners(sub: str, org_id: Optional[int]) -> list[tuple[str, str
     """Owners du CONTEXTE projet de l'org active (lot 3 Ship 1, factorisation du
     scoping d'`oto_project op=list`) : l'org active + ses pôles (ADR 0049 — mes
     équipes, ou TOUTES si org_admin, même règle que `can_read_group`). Parité
-    gardée par tripwire (`test_search_scope_tripwire`)."""
-    owner = active_owner(org_id)
-    if owner is None:
+    gardée par tripwire (`test_search_scope_tripwire`). Un bénéficiaire HORS de l'org
+    (projet partagé) n'y a pas l'org (`owner_de_portee`)."""
+    if org_id is None:
         return []
+    owner = owner_de_portee(sub, org_id)
     if roles.is_org_admin(sub, int(org_id)):        # type: ignore[arg-type]
         gids = [int(g["id"]) for g in group_store.list_groups(int(org_id))]  # type: ignore[arg-type]
     else:
         gids = [int(g["group_id"]) for g in group_store.list_groups_for_user(sub, org_id)]
-    return [owner] + [("group", str(g)) for g in gids]
+    return ([owner] if owner is not None else []) + [("group", str(g)) for g in gids]
 
 
 def project_list_owners(sub: str, org_id: Optional[int]) -> list[tuple[str, str]]:
@@ -380,8 +393,8 @@ def owner_in_scope(sub: str, org_id: Optional[int],
     if borne is not None and (org_id is None or int(org_id) != borne):
         return False
     otype, oid = str(owner[0]), str(owner[1])
-    # 1. L'org active elle-même.
-    if (otype, oid) == active_owner(org_id):
+    # 1. L'org active elle-même — sauf pour un bénéficiaire HORS d'elle (projet partagé).
+    if (otype, oid) == owner_de_portee(sub, org_id):
         return True
     # 2. Scope MEMBRE (ADR 0030 amendé) : ma ressource perso m'est visible dans tout
     #    contexte où je suis — c'est la MIENNE. Le plan de LISTE, lui, ne la rend que

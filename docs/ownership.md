@@ -278,6 +278,19 @@ résolution des `[[…]]` (`db/backlinks`). Pour un tableau, il est écrit et pl
 > l'état existant intact (un re-partage qui ne change qu'un rôle ne retire pas un prêt) ;
 > `op=get` rend le `credentials` de chaque grant d'un projet.
 
+> **Hors des clés, la portée.** L'org co-posée par `_project=` n'est pas pour autant une
+> org de l'appelant : pour un bénéficiaire **hors de l'org** (verdict `membre=False`), la
+> pièce `("org", X)` sort de tous les seams de portée — `active_org_principals` (donc
+> `principaux_de_liste` et `visible_in_org`), `project_scope_owners`, `owner_in_scope`, le
+> `_active_scope` du datastore et les partages reçus de la recherche — par un seam unique,
+> `ownership.owner_de_portee` (← `heritage.org_du_perimetre`). Sans lui, `data_list_datastores`
+> sous `_project=` rendait tout le catalogue de l'org (nom, propriétaire, schéma), et un
+> tableau de l'org se lisait par son numéro ou par un `slot:` du projet (la lecture ne
+> repasse pas par `can_access`). Le partage d'un projet ne partage pas les tableaux qu'il
+> lie : le bénéficiaire lit ceux qui lui sont partagés. L'héritage des clés n'y change
+> rien — il prête des clés, jamais l'appartenance
+> (`tests/test_projet_partage_hors_org_listes.py`).
+
 ## L'échéance d'un partage (otomata-tech/oto#39, 24/09/2026)
 
 > **La règle.** Un partage de ressource (audience × rôle, ADR 0048) peut porter une

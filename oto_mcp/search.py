@@ -269,7 +269,10 @@ def _accessible_namespaces(sub: str, org_id: int) -> list[dict]:
         if r["id"] not in seen:
             rows.append(r)
             seen.add(r["id"])
-    recus = db.list_datastores_granted_to(sub, [org_id], gids)
+    # Les orgs du jeu de principals, pas `org_id` nu : un bénéficiaire HORS de l'org
+    # (projet partagé) n'en reçoit pas les partages (`ownership.owner_de_portee`).
+    oids = [int(p[1]) for p in principals if p[0] == "org"]
+    recus = db.list_datastores_granted_to(sub, oids, gids)
     if ("user", sub) in principals:
         recus += db.list_datastores_shared_to_user(sub)
     for r in recus:
