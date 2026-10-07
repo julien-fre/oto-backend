@@ -613,6 +613,43 @@ def can_govern(sub: str, resource_type: str, resource_id: str) -> bool:
         or _has_manager_grant(sub, resource_type, resource_id)
 
 
+def can_publish(sub: str, resource_type: str, resource_id: str) -> bool:
+    """Plan PUBLICATION (#1176) : rendre une ressource lisible SANS LOGIN (endpoint MCP
+    publié d'un projet, page ou fichier public) — l'appartenance au PROPRIÉTAIRE, en plus
+    du droit que le geste exige déjà (`can_govern` pour un endpoint, `write` pour une
+    page ou un fichier). Elle ne le remplace pas : ce prédicat ne dit rien du rôle.
+
+    **Pourquoi pas `can_govern`.** Le gérant (`manager`) est grantable à quiconque, membre
+    ou non. Or l'endpoint publié résout clés et quota SOUS L'ORG PROPRIÉTAIRE : un gérant
+    extérieur ouvrait au public l'usage des clés d'une org dont il ne fait pas partie.
+
+    - projet d'org → membre de cette org ;
+    - projet d'équipe → membre de l'org PARENTE de l'équipe (un membre de l'org atteint
+      déjà ses clés ; l'équipe ne restreint pas la publication) ;
+    - projet personnel → son propriétaire, et lui seul ;
+    - projet plateforme → personne d'autre que l'escalade ;
+    - escalade plateforme (`roles.is_platform_admin`) → toujours, comme partout ici.
+
+    Une page se publie sous la règle de son projet (`governed_by`)."""
+    if (k := RESOURCE_KINDS.get(resource_type)) and k.governed_by:  # une page → son projet
+        return (cible := k.governed_by(resource_id)) is not None and can_publish(sub, *cible)
+    owner = owner_of(resource_type, resource_id)
+    if owner is None:
+        return False
+    if roles.is_platform_admin(sub):
+        return True
+    owner_type, owner_id = owner
+    if owner_type == "user":
+        return sub == owner_id
+    if owner_type == "org":
+        return roles.is_org_member(sub, int(owner_id))
+    if owner_type == "group":
+        g = group_store.get_group(int(owner_id))
+        return bool(g and g.get("org_id") is not None
+                    and roles.is_org_member(sub, int(g["org_id"])))
+    return False
+
+
 # --- Mutations ----------------------------------------------------------------
 
 def grant(

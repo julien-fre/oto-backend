@@ -223,6 +223,43 @@ résolution des `[[…]]` (`db/backlinks`). Pour un tableau, il est écrit et pl
 > `oto_resource op=share` : axe **audience** (person/team/org→grant ; public/secret→publication
 > projet ; private→dépublier) × **rôle**. Rétro-compat `permission` en entrée.
 
+### Publier exige d'appartenir au propriétaire (#1176)
+
+Le gérant gouverne, il ne **publie** pas s'il est extérieur. Le rôle `manager` se donne à
+quiconque, membre ou non de l'org propriétaire, alors que l'endpoint MCP publié résout
+clés et quota **sous l'org propriétaire** : avec `can_govern` seul, un gérant extérieur
+ouvrait au public l'usage des clés d'une org dont il ne fait pas partie.
+
+**La règle** (`ownership.can_publish`), qui s'AJOUTE au droit du geste sans le remplacer :
+
+| propriétaire du projet | qui peut publier |
+| --- | --- |
+| une org | un membre de cette org |
+| une équipe | un membre de l'org **parente** (l'équipe ne restreint pas la publication) |
+| une personne | le propriétaire, et lui seul — pas un membre de l'org de rangement |
+| la plateforme | l'escalade plateforme seule |
+
+L'escalade plateforme (`roles.is_platform_admin`) passe toujours, comme partout dans ce
+seam. Une page se publie sous la règle de son projet.
+
+**Un seul point de décision, quatre chemins.** `capabilities/_publication.exiger_appartenance`
+porte le refus nommé **403 `publish_requires_membership`**, déclaré par chaque capacité
+qui l'atteint :
+- l'endpoint MCP — `publish_project_mcp`, le cœur commun d'`oto_project op=publish_mcp`
+  (tous modes, `org` compris) et d'`oto_resource`/`oto_resource_v2` audience
+  `public`/`secret`, sur les deux faces ;
+- la page publique — `oto_doc op=set_public public=true` (garde `write` d'abord) ;
+- le fichier public — `POST /api/me/projects/{project_id}/files/{file_id}/public` avec
+  `public=true` (garde `write` d'abord).
+
+`op=update` ne publie pas (les champs de publication y sont refusés,
+`publication_field_on_update`) ; corriger `mcp_instructions_md` reste sous `can_govern`.
+
+**Ce qui reste ouvert au gérant extérieur** : dépublier (`audience=private`,
+`unpublish_mcp`, refermer une page ou un fichier — réduire la portée n'est jamais
+gardé), modifier, partager à une personne, une équipe ou une org. Banc :
+`tests/test_publication_exige_appartenance_1176.py` (base réelle).
+
 ## Une procédure se gouverne sous son nom : `procedure` (oto#65)
 
 > **Le nom servi.** `oto_resource` / `POST /api/resources[/v2]` publient la famille

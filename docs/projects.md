@@ -289,7 +289,9 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > **Endpoint MCP par projet — `<slug>.mcp.oto.cx` (ADR 0032, amende #44).** Un projet
 > se **publie** comme serveur MCP dédié sur son propre sous-domaine (le « preset » de
 > l'ADR 0032 §7). Colonnes `projects.mcp_slug`/`mcp_access`(`off|anonymous|secret|org`)/`mcp_tools[]` ;
-> capacité `oto_project` op **`publish_mcp`/`unpublish_mcp`** (autz `can_govern`).
+> capacité `oto_project` op **`publish_mcp`/`unpublish_mcp`** (autz `can_govern` ; publier
+> exige EN PLUS d'être membre de l'org propriétaire, 403 `publish_requires_membership` —
+> `docs/ownership.md` §Publier exige d'appartenir au propriétaire, #1176).
 > ⚠️ **Publier au-delà de l'org ne sort pas d'une conversation (04/09/2026).** Décision
 > d'Alexis après l'inventaire des chemins d'élargissement : « org = explicite, public =
 > interdit à l'agent ». `mcp_access` **n'a plus de défaut** (il valait `anonymous` — le

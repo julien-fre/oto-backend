@@ -39,6 +39,7 @@ from typing import Annotated, Literal, Optional, Union
 from pydantic import BaseModel, Field, RootModel
 
 from .. import ownership
+from . import _publication
 from ._types import DeclaredError
 
 # Les quatre familles gouvernables. Source unique de l'énuméré publié ET du champ
@@ -349,6 +350,9 @@ REFUS: tuple[DeclaredError, ...] = (
     DeclaredError(403, "forbidden",
                   "`transfer` demandé par un gérant : la cession de propriété est "
                   "réservée au propriétaire / à un admin"),
+    # #1176 — audience public/secret par un gérant qui n'est pas membre de l'org
+    # propriétaire : levé par `publish_project_mcp`, la règle unique de publication.
+    _publication.REFUS_HORS_ORG,
     DeclaredError(403, "inherit_beyond_sharer_rights",
                   "`credentials='inherit'` demandé par qui n'est pas membre de l'org "
                   "propriétaire du projet — on ne prête que les clés qu'on atteint"),

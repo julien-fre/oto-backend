@@ -38,8 +38,8 @@ from ._types import Capability, RestBinding
 from .docs import partage as page
 from .registry import CAPABILITIES
 from .resources import (CREDENTIALS_DESCRIPTION, EXPIRY_DESCRIPTION,
-                        PENDING_DESCRIPTION, TRANSFER_PROCEDURE, ResourceInput,
-                        _resources)
+                        PENDING_DESCRIPTION, PUBLICATION_DESCRIPTION, TRANSFER_PROCEDURE,
+                        ResourceInput, _resources)
 from .resources_contract import REFUS, ResourceOut, ResourceType
 
 
@@ -108,7 +108,8 @@ CAPABILITIES += [
             "unguessable link) with `mcp_tools` (defaults to the already-published set); "
             "`private` → unpublish. ROLE (`role`) = what they can do: `viewer` (read), `editor` "
             "(write), `manager` (GOVERNANCE — re-share / delete / publish, grantable, but NOT "
-            "ownership transfer); public/secret force viewer. Legacy `permission` read|write is "
+            "ownership transfer); public/secret force viewer. " + PUBLICATION_DESCRIPTION
+            + " Legacy `permission` read|write is "
             "still accepted (mapped to viewer/editor). " + CREDENTIALS_DESCRIPTION
             + " " + EXPIRY_DESCRIPTION + " " + PENDING_DESCRIPTION
             + " DELIVER A FULL PROJECT (#52): "

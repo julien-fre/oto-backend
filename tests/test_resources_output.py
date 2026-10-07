@@ -345,6 +345,9 @@ _REJOUES = {
     "email_required", "doc_viewer_only", "publication_unsupported", "forbidden", "group_not_visible",
     "group_outside_resource_org", "credentials_project_share_only",
     "inherit_beyond_sharer_rights",
+    # #1176 : rejoué sur base réelle, les deux surfaces, dans
+    # `tests/test_publication_exige_appartenance_1176.py`.
+    "publish_requires_membership",
     # oto#39 : rejoué dans `tests/test_partages_echeance_39.py`.
     "ttl_days_grant_only",
     "not_group_member", "not_org_member", "unknown_user", "unknown_org",

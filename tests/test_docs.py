@@ -18,6 +18,7 @@ DOC = {"id": 3, "project_id": 7, "parent_id": None, "title": "Page", "body_md": 
 def seams(monkeypatch):
     rec = {"create": [], "update": [], "delete": [], "move": []}
     monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
+    monkeypatch.setattr(ownership, "can_publish", lambda sub, t, rid: True)  # #1176
     monkeypatch.setattr(db, "get_doc_by_id", lambda i: dict(DOC, id=i) if i in (3, 9) else None)
     monkeypatch.setattr(db, "create_doc",
                         lambda pid, title, parent_id=None, body_md="", kind="doc", created_by=None, description=None, trace=None:

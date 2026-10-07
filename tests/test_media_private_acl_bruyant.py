@@ -63,6 +63,7 @@ def bascule(monkeypatch):
                                      "title": "Brief", "filename": "doc.pdf"})
     import oto_mcp.ownership as ownership
     monkeypatch.setattr(ownership, "can_access", lambda *a, **k: True)
+    monkeypatch.setattr(ownership, "can_publish", lambda *a, **k: True)  # #1176
     monkeypatch.setattr(media_store, "_get_client", lambda: _AclRefusee())
     monkeypatch.setattr(media_store, "_bucket", lambda: "b")
     ecrits: list = []

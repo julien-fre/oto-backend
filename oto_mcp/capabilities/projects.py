@@ -493,11 +493,14 @@ def publish_project_mcp(sub: str, row: dict, *, access_mode: str,
                         expose_datastore_write: Optional[bool] = None,
                         expose_docs: Optional[bool] = None,
                         instructions_md: Optional[str] = None) -> dict:
-    """Cœur de la publication MCP d'un projet (ADR 0032). AUCUN contrôle d'autz (le
-    caller a déjà gaté `can_govern`) — partagé par la capacité `oto_project` et par le
-    « Partager » unifié (`oto_resource` audience public/secret/org, ADR 0048 B3). Lève
+    """Cœur de la publication MCP d'un projet (ADR 0032) — partagé par la capacité
+    `oto_project` et par le « Partager » unifié (`oto_resource` audience public/secret,
+    ADR 0048 B3). Le caller a déjà gaté `can_govern` ; s'y ajoute ICI, pour tous les
+    chemins et tous les modes d'accès, l'appartenance au propriétaire (#1176,
+    `_publication.exiger_appartenance`) : un gérant extérieur ne publie pas. Lève
     `AuthzDenied` sur entrée invalide (tools vide en public/org, slug manquant, slug pris)."""
     project_id = int(row["id"])
+    _publication.exiger_appartenance(sub, project_id)
     tools = [t for t in (mcp_tools or []) if t and t.strip()]
     # Un endpoint `anonymous`/`org` EST un preset d'outils figé → liste requise. Un lien
     # `secret` (UI navigable lecture seule) peut tout exposer → liste vide autorisée (le
@@ -1629,13 +1632,18 @@ CAPABILITIES += [
             "org key or drop them). mcp_expose_datastore (SECRET only) opts the `data_*` tools "
             "in: they then act under the OWNER ORG's authority (read/write the org's namespaces) "
             "without a login — off by default (the datastore stays private); refused on "
-            "anonymous/org. unpublish_mcp removes it. get returns "
+            "anonymous/org. Publishing takes governing the project AND being a member of "
+            "the org that owns it (the parent org of an owning team; the owner themself "
+            "for a personal project) — a manager from outside is refused 403 "
+            "`publish_requires_membership`. unpublish_mcp removes it, open to whoever "
+            "governs. get returns "
             "mcp_slug/mcp_access/mcp_tools/mcp_expose_datastore/mcp_url."
         ),
         errors=(DeclaredError(409, "confirm_required",
                               "op=archive sur un projet qui porte un brief ou une "
                               "procédure liée, sans `confirm=true` — rien n'a été "
-                              "archivé ; `details.unreachable` dit ce qui l'aurait été"),),
+                              "archivé ; `details.unreachable` dit ce qui l'aurait été"),
+                _publication.REFUS_HORS_ORG),
         mcp="oto_project",
         rest=RestBinding("POST", "/api/me/projects"),
     ),

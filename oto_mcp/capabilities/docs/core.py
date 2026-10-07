@@ -293,7 +293,10 @@ CAPABILITIES += [
             "/ set_public (public: true → shareable public read-only link to THIS PAGE "
             "ALONE: the reader gets its title and body, and nothing else — not the "
             "project, not the sibling pages, not this page's own sub-pages, which each "
-            "need their own link ; false → private ; returns public_url) "
+            "need their own link ; false → private ; returns public_url. Opening takes "
+            "being a member of the org that owns the project — the parent org of an "
+            "owning team, the owner themself for a personal project — or 403 "
+            "`publish_requires_membership`; closing stays open to whoever writes) "
             "/ delete (removes the page AND its whole subtree, "
             "revisions included — irreversible, there is no trash and no undelete. The "
             "response says how many pages went with it (`descendants`); ask FIRST with "
@@ -312,6 +315,7 @@ CAPABILITIES += [
             "over a hand-typed summary table when the data lives in a datastore (single source "
             "of truth, no drift)."
         ),
+        errors=(_publication.REFUS_HORS_ORG,),
         mcp="oto_doc",
         rest=RestBinding("POST", "/api/me/docs"),
     ),

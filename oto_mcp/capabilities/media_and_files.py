@@ -35,6 +35,7 @@ from typing import Any, Optional
 from pydantic import BaseModel
 
 from .. import access, db, org_store
+from . import _publication
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -204,6 +205,10 @@ def _file_public(ctx: ResolvedCtx, inp: ProjectFilePublicInput) -> dict:
     from .. import media_store
     existing = _fichier(ctx, inp.project_id, inp.file_id)
     make_public = bool(inp.public)
+    if make_public:
+        # Ouvrir au web exige d'appartenir au propriétaire du projet (#1176) ; refermer
+        # réduit la portée et reste ouvert à qui écrit.
+        _publication.exiger_appartenance(ctx.sub, inp.project_id)
     # La bascule S3 d'ABORD, la base ENSUITE : la ligne ne dit « public » ou « privé »
     # que si l'ACL a effectivement bougé. Les DEUX sens lèvent la même `MediaError`
     # (cf. `media_store.make_private`) — une ACL refusée est un refus rendu au client,
@@ -242,7 +247,10 @@ _D_DELETE = ("Supprime un fichier d'un projet (accès écriture). L'objet stock�
              "la ligne.")
 _D_PUBLIC = ("Ouvre ou ferme le partage public d'un fichier. `public` est REQUIS : un "
              "corps sans lui est refusé plutôt que traité comme « rendre privé », parce "
-             "qu'un corps mal formé ne doit pas départager un fichier en silence.")
+             "qu'un corps mal formé ne doit pas départager un fichier en silence. Ouvrir "
+             "exige d'être membre de l'org propriétaire du projet (de l'org parente pour "
+             "un projet d'équipe, d'en être le propriétaire pour un projet personnel), "
+             "sinon 403 `publish_requires_membership` ; fermer reste ouvert à qui écrit.")
 
 CAPABILITIES += [
     Capability(
@@ -268,7 +276,7 @@ CAPABILITIES += [
     Capability(
         key="me.project_file.set_public", handler=_file_public,
         Input=ProjectFilePublicInput, authz=SUB_ONLY, Output=ProjectFileSaved,
-        description=_D_PUBLIC, mcp=None,
+        description=_D_PUBLIC, errors=(_publication.REFUS_HORS_ORG,), mcp=None,
         rest=RestBinding("POST", _FILE + "/public"),
     ),
 ]

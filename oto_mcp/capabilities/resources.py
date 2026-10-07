@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from .. import (access, db, deprecations, email, group_store, org_store, ownership,
                partage_en_attente, roles)
 from ..access import heritage
-from . import _portee
+from . import _portee, _publication
 from ._authz import RESOURCE_GOVERN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .docs import partage as page
@@ -592,10 +592,14 @@ def _publish_audience(ctx: ResolvedCtx, inp: ResourceInput, rid: str,
                       access_mode: str) -> dict:
     """Audience public/secret → PUBLICATION MCP (ADR 0048 B3). Réservé aux projets
     (seule ressource dotée d'une mécanique de publication). Rôle forcé lecteur (le
-    lien/annuaire se consomme, ne s'édite pas). L'autz est déjà gatée (`can_govern`)."""
+    lien/annuaire se consomme, ne s'édite pas). L'autz est déjà gatée (`can_govern`) ;
+    l'appartenance au propriétaire (#1176) l'est par `publish_project_mcp`."""
     if inp.resource_type != "project":
         raise AuthzDenied(400, "publication_unsupported",
                           "Le partage public/secret n'existe que pour les projets.")
+    # #1176 — refusé ici, sur le chemin de cette capacité, avant toute lecture ;
+    # `publish_project_mcp` le re-garde pour tout appelant.
+    _publication.exiger_appartenance(ctx.sub, int(rid))
     row = db.get_project_by_id(int(rid))
     if not row:
         raise AuthzDenied(404, "not_found", "projet introuvable.")
@@ -834,6 +838,12 @@ TRANSFER_PROCEDURE = (
 
 
 # #480 — le texte servi aux deux surfaces (héritée et stricte), écrit une fois.
+PUBLICATION_DESCRIPTION = (
+    "PUBLISHING (`public`/`secret`) also takes being a member of the org that owns the "
+    "project (the parent org of an owning team; the owner themself for a personal "
+    "project): a manager from outside is refused 403 `publish_requires_membership` — "
+    "`private` (unpublish) stays open to whoever governs.")
+
 CREDENTIALS_DESCRIPTION = (
     "KEYS (`credentials`, project share only, same for person/team/org): a recipient "
     "works in the project with THEIR OWN keys (`own`, the default) — the owner org's "
@@ -890,7 +900,8 @@ CAPABILITIES += [
             "unguessable link) with `mcp_tools` (defaults to the already-published set); "
             "`private` → unpublish. ROLE (`role`) = what they can do: `viewer` (read), `editor` "
             "(write), `manager` (GOVERNANCE — re-share / delete / publish, grantable, but NOT "
-            "ownership transfer); public/secret force viewer. Legacy `permission` read|write is "
+            "ownership transfer); public/secret force viewer. " + PUBLICATION_DESCRIPTION
+            + " Legacy `permission` read|write is "
             "still accepted (mapped to viewer/editor). " + CREDENTIALS_DESCRIPTION
             + " " + EXPIRY_DESCRIPTION
             + " " + PENDING_DESCRIPTION

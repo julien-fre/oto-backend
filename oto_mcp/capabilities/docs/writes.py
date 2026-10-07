@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ... import db
+from .. import _publication
 from . import common, view
 from .common import require
 
@@ -60,6 +61,10 @@ def bulk_create(sub: Optional[str], inp) -> dict:
 def set_public(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     # Partager publiquement (ou retirer) — action d'écriture (gap #4a).
     require(common.can(sub, pid, "write"), "forbidden", "Écriture refusée.", 403)
+    if inp.public:
+        # Ouvrir au web exige d'appartenir au propriétaire du projet (#1176) ; refermer
+        # réduit la portée et reste ouvert à qui écrit.
+        _publication.exiger_appartenance(sub, pid)
     token = db.set_doc_public(int(inp.doc_id), bool(inp.public))
     db.log_project_activity(pid, sub, "doc.set_public",
                             f"{row.get('title')}:{bool(inp.public)}")

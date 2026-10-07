@@ -48,6 +48,7 @@ def socle(monkeypatch):
     monkeypatch.setattr(mf.access, "current_org", lambda sub: 35)
     monkeypatch.setattr(ownership, "visible_in_org", lambda sub, org, t, i: True)
     monkeypatch.setattr(ownership, "can_access", lambda sub, t, i, mode: True)
+    monkeypatch.setattr(ownership, "can_publish", lambda sub, t, i: True)  # #1176
     monkeypatch.setattr(mf.db, "get_project_by_id", lambda pid: {"id": pid})
     monkeypatch.setattr(mf.db, "list_project_files", lambda pid: [dict(_LIGNE)])
     monkeypatch.setattr(mf.db, "get_project_file", lambda fid: dict(_LIGNE))

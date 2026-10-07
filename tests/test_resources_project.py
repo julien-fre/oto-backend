@@ -221,6 +221,9 @@ def test_share_audience_public_publishes(monkeypatch):
     row = {"id": 7, "name": "Proj", "owner_type": "org", "owner_id": "42",
            "mcp_tools": ["fr_search"], "mcp_access": "off"}
     monkeypatch.setattr(R.db, "get_project_by_id", lambda i: row)
+    # L'acteur est membre de l'org propriétaire (#1176, banc sur base réelle :
+    # `test_publication_exige_appartenance_1176.py`).
+    monkeypatch.setattr(R.ownership, "can_publish", lambda sub, t, rid: True)
     from oto_mcp.capabilities import projects as P
     seen = {}
     monkeypatch.setattr(P, "publish_project_mcp",
