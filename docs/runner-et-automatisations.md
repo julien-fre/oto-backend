@@ -1131,6 +1131,97 @@ donc son mode, `runner_triggers.hook_auth` :
   d'un `ALTER` du boot, que le DDL précède (#450). Il est posé dans `db/_init.py`,
   juste après.
 
+#### Les PRÉRÉGLAGES de fournisseur : un schéma générique, une source = une donnée (06/10/2026)
+
+Une porte par fournisseur ne passe pas à l'échelle. Une source prouve qui elle est
+d'une des **quelques** manières génériques — le **schéma** — et un fournisseur n'est
+qu'un **préréglage** : une entrée de `runner_hook.PREREGLAGES` qui nomme son schéma
+et ses paramètres. `runner_triggers.hook_auth` porte le **nom du préréglage** ; les
+deux modes historiques sont leurs propres préréglages, donc **aucune ligne ne
+change** et aucune colonne n'est ajoutée.
+
+| préréglage | schéma | la preuve | identifiant de livraison |
+|---|---|---|---|
+| `bearer` (défaut) | `bearer` | en-tête `Authorization: Bearer otoh_…` | — |
+| `standard_webhooks` | `standard_webhooks` | signature `webhook-*` (ci-dessus) | `webhook-id`, signé |
+| `lemlist` | `body_secret` | le **même** `otoh_`, renvoyé par la source dans le champ `secret` de son corps JSON | `_id` du corps |
+| `none` | `none` | **aucune** — choix explicite du propriétaire | — |
+
+- **`body_secret`, pour une source qui ne sait ni poser un en-tête ni signer.**
+  Lemlist renvoie tel quel, dans chaque corps, le `secret` qu'on lui a donné à la
+  création du hook : on lui donne le porteur `otoh_` de l'agent. Il est haché et
+  comparé **dans le WHERE**, comme l'en-tête, avec le préfixe exigé. ⚠️ **Il est
+  RETIRÉ du corps avant l'enfilage** (`corps_sans_secret`) : en `inline` le corps
+  devient l'entrée de l'agent, et le jeton finirait dans son transcript et dans
+  `deliveries with_input`. L'identifiant (`_id`) n'est pas signé, mais seul qui
+  détient le secret peut le poser : il sert à la déduplication, comme `webhook-id`.
+  ⚠️ C'est une preuve **plus faible** qu'une signature : un corps capturé CONTIENT
+  le porteur. Le rejeu exact est écarté par `_id` ; un corps modifié (autre `_id`,
+  autre contenu) passe, comme passerait un porteur d'en-tête fuité. `max_per_day`
+  le borne **s'il est posé** — il reste optionnel, comme pour `bearer` : à poser
+  sur tout agent `lemlist` dont le volume est connu. Un porteur fuité se coupe par
+  `rotate_secret`. Seule une livraison ACCEPTÉE compte comme
+  doublon : un corps capturé pendant une pause (409) se rejoue UNE fois après la
+  reprise — assumé, c'est la même règle que pour une signature.
+  `champ_secret` est une clé de premier niveau (c'est elle qu'on retire du
+  corps) ; `chemin_id` est un chemin (`a.b`).
+- **Chacun sa porte, en SQL.** `trigger_par_secret(…, hook_auth)` filtre le mode :
+  le porteur montré par l'en-tête n'ouvre pas un agent `lemlist`, le même jeton dans
+  le corps n'ouvre pas un agent `bearer`. L'ordre des essais (en-tête, corps, rien)
+  n'ouvre donc jamais un agent par une preuve qu'il n'a pas choisie. Un champ
+  `secret` dans le corps d'un agent au porteur est une donnée comme une autre :
+  rien n'en est retiré.
+- **`none` : aucun credential, par choix — jamais par défaut.** L'adresse privée
+  (`h_`, 128 bits) devient le **seul** secret : quiconque la voit déclenche l'agent.
+  Garde-fous, chacun avec son banc (`tests/test_webhook_prereglages.py`) :
+  - **jamais par l'id numérique**, qui se parcourt : la route ne cherche un agent
+    sans preuve que par l'adresse privée, et `trigger_sans_preuve` exige aussi
+    `hook_slug IS NOT NULL` dans son WHERE ;
+  - **posé seulement avec un `max_per_day`** (`daily_cap_required`) — l'adresse
+    privée, elle, est émise par la pose même —, et ce plafond **ne se
+    retire pas** tant que l'agent est en `none` ; une ligne qui l'aurait perdu
+    garde quand même `PLAFOND_SANS_PREUVE_DEFAUT` par jour ;
+  - passer en `none` **efface** le porteur et le secret de signature — un
+    credential dormant se réveillerait au prochain changement de mode ;
+  - **l'agent le sait** : sa donnée reçue porte, sous la clôture habituelle, un
+    avertissement « personne n'a vérifié qui l'a envoyée » (`_SANS_PREUVE`).
+  - ⚠️ **l'adresse EST le credential, donc elle se traite comme le porteur** :
+    `hook_url` est servie **masquée** (`h_••••••••`) à toute lecture — `_avec_hook`
+    est le passage unique de get/list/create/update, MCP compris et pour qui
+    l'agent est seulement partagé. Elle sort en clair **une fois**, au retour de
+    `PUT …/hook-auth` (REST seul, propriétaire ou admin), champ `hook_url`. Passer
+    en `none` **émet une adresse NEUVE** — l'ancienne a été servie en clair tant
+    qu'elle n'ouvrait rien ; redemander `none` la renouvelle. `rotate_address` par
+    l'outil y est refusé (`no_auth_address`) : l'adresse neuve passerait par un
+    transcript. Sentry ne reçoit ni le chemin ni le corps d'une requête
+    `/api/hooks/*` (`sentry_setup._redact_hook_request` — le corps d'un agent
+    `lemlist` porte aussi son porteur). Le journal d'accès d'uvicorn masque le
+    chemin (`parametres_secrets`) ; ⚠️ celui du **reverse proxy** (dépôt `infra`)
+    le garde entier — l'adresse d'un agent `none` y est un credential.
+  - `hook_slug` n'est **jamais servi brut**, par aucune capacité (`_avec_hook` et
+    `_sans_adresse_brute`, à la sortie d'`oto_trigger` et de `hook-auth`) : un
+    `Output` décrit la réponse, il ne la filtre pas.
+- **Pose** : la même capacité REST `runner.trigger.hook_auth`. Passer vers un
+  préréglage qui s'ouvre avec le porteur (`bearer`, `lemlist`) **émet un porteur
+  neuf**, rendu une fois — l'ancien n'a été montré qu'une fois et la source doit de
+  toute façon recevoir celui-ci. `rotate_secret` marche sur ces deux-là, est refusé
+  sur `standard_webhooks` et `none` (il ne fabriquerait rien qui ouvre).
+- **Ajouter une source** qui suit un schéma existant = une entrée dans
+  `PREREGLAGES` + son banc (le vecteur publié par la source quand elle en a un).
+  `test_l_API_de_pose_sert_EXACTEMENT_le_registre` garde la pose et le registre
+  alignés. Un **nouveau schéma** (HMAC d'en-tête à la Stripe/GitHub/Slack, poignée
+  de main de vérification) reste du code — une fois par schéma, pas par source.
+- ⚠️ **Base partagée, fenêtre de déploiement** : l'ancien code ne connaît pas
+  `lemlist` ni `none`. Il les traite en **fermé** — son porteur filtre `bearer`, sa
+  signature filtre `standard_webhooks` : 404, rien n'enfile. Une ligne posée
+  depuis la preprod reste donc fermée côté prod tant que la prod ne porte pas ce
+  lot. Deux trous, d'où l'**ordre** : l'ancien `update max_per_day=0` ne connaît
+  pas la garde (le plafond par défaut lu à la livraison le couvre) ; et l'ancien
+  `_avec_hook` sert l'adresse d'un agent `none` **en clair** à toute lecture
+  (`oto_trigger op=get`), son `rotate_address` la renouvelle par un outil. ⚠️ **Ne
+  poser aucun `none` avant que la prod porte ce lot**, et renouveler l'adresse
+  (`hook_auth=none` redemandé) de tout agent posé pendant la fenêtre.
+
 #### Deux protections réglées par l'utilisateur
 
 Un agent existant ne change pas de comportement ; un webhook NEUF naît avec une
@@ -1342,8 +1433,9 @@ là, aucun déclencheur webhook sur la base partagée.
 (elle n'envoie pas d'identifiant : une retentative y crée un second travail —
 assumé), aucun **plafond de dépense**, et des signatures au **seul** format Standard
 Webhooks — ni Stripe (`Stripe-Signature: t=…,v1=<hex>`), ni GitHub
-(`X-Hub-Signature-256`). `hook_auth` est une énumération : les ajouter est un
-nouveau cas, pas une migration.
+(`X-Hub-Signature-256`). Depuis le 06/10/2026, `hook_auth` nomme un **préréglage**
+(voir « Les PRÉRÉGLAGES de fournisseur ») : ces signatures seront un schéma
+`hmac_signed` paramétré, puis un préréglage chacune — pas une migration.
 
 ### Un worker sans clé propre : ouvrir une famille aux clés clients (13/09/2026)
 
