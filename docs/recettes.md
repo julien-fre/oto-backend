@@ -61,14 +61,27 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
 
 - **Chemins** pointés avec index : `profile.title`, `emails[0].email`. Un chemin qui ne
   mène nulle part rend une case vide, jamais une erreur.
-- **Gabarits** `{{params.x}}`, `{{item.a.b}}`, filtres `slug`, `lower`, `upper`, `strip`,
-  `unaccent`. Un gabarit seul garde le type de sa valeur ; mêlé à du texte, il devient
-  du texte.
+- **Gabarits** `{{params.x}}`, `{{item.a.b}}`, `{{row.col}}` (sous `for_each`), filtres
+  `slug`, `lower`, `upper`, `strip`, `unaccent`, et les **normaliseurs** `domain`
+  (`https://www.Acme.com/x` et `jane@acme.com` → `acme.com`), `email` (vide si la valeur
+  n'en a pas la forme : jamais une phrase d'erreur dans une colonne `email`),
+  `email_domain`, `linkedin_slug` (`…/in/Jane-Doe/?trk=…` → `jane-doe`), `url`, `digits`.
+  Un gabarit seul garde le type de sa valeur ; mêlé à du texte, il devient du texte.
 - ⚠️ **`slug` reproduit la forme des clés déjà écrites** par les procédures de sourcing :
   minuscules, accents retirés, chaque suite non alphanumérique réduite à `_`, aucun `_`
   aux bords. La changer dédoublerait chaque ligne au premier passage.
 - **`where`** : `eq`, `ne`, `in`, `not_in`, `contains_any`, `empty`, `not_empty`, sans
-  casse ni accents.
+  casse ni accents — ou par le normaliseur de la clause (`normalize: "domain"`).
+  `in_table` / `not_in_table` (`table`, `column`) comparent à la colonne d'un AUTRE
+  tableau (liste d'exclusion, clients existants) : ses valeurs sont lues une fois par
+  exécution, normalisées comme l'élément, au plus 50 000 (`match_table_too_large`). Un
+  élément sans valeur n'est pas « dans » la liste : `not_in_table` le laisse passer.
+- **`for_each`** (`datastore`, `status_column`, `filter`, `max_parents`,
+  `max_items_per_row`) : chaque ligne d'un tableau PARENT dont la colonne d'état est vide
+  déclenche l'appel (les personnes d'une société, les offres d'un domaine), citée
+  `{{row.col}}` dans les arguments, la correspondance, les valeurs et la clé — et nulle
+  part ailleurs : `row` hors `for_each` est refusé à l'écriture. Ses pages repartent de
+  zéro à chaque parent ; `max_items_per_row` borne ce qu'un parent apporte.
 - Tout ce qui demande davantage (expression régulière, condition, calcul) ira dans une
   fonction (`oto_function`) — on ne fait pas grandir ce langage.
 
@@ -103,6 +116,24 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
   élément sans valeur de clé est écarté — un gabarit dont un morceau manque n'en
   produit pas.
 - **Les colonnes manquantes sont créées** (texte) ; les existantes jamais retouchées.
+- **Une ligne parente faite reçoit son état** — `done` (des éléments), `empty` (aucun) —
+  dans `status_column`, déclarée si elle manque : c'est lui qui fait qu'une exécution
+  suivante ne repaie pas une ligne faite. Le tableau parent doit être ÉCRIVABLE et
+  distinct de la cible (`for_each_same_table`), vérifié avant tout appel. Une ligne
+  coupée par un plafond (dépense, pages, horloge) ou un refus de l'outil reste en
+  attente : le jeton `resume` la reprend à sa page, une exécution neuve du début (les
+  lignes déjà écrites sont reconnues par leur clé ; les pages, elles, se repaient).
+  `max_parents` (25 par défaut, 200 au plus) borne les parents d'un appel (`max_parents`
+  au reçu, avec `resume`). Le reçu compte `parents: {done, empty}`.
+- **La dérive arrête l'exécution.** Les colonnes que l'épreuve de publication a remplies
+  sur au moins 80 % des lignes (`test_report.fill`) sont surveillées : une page d'au
+  moins 10 lignes où l'une revient vide PARTOUT n'est pas écrite, et l'exécution s'arrête
+  (`mapping_drift`, `drifted_columns`) — un fournisseur qui change la forme de sa réponse
+  remplirait sinon le tableau de lignes creuses. Une colonne clairsemée à la publication
+  (un `headline`, une ville) n'est pas surveillée.
+- **L'épreuve d'une recette `for_each`** essaie jusqu'à trois parents en attente, une page
+  chacun, et s'arrête au premier qui produit des lignes : le premier peut légitimement
+  ne rien rendre. Elle n'écrit ni la cible, ni l'état des parents.
 - **Budget d'horloge de 30 s** et **`max_pages` par appel** : au-delà, reçu partiel et
   `resume`, que l'appel suivant passe pour continuer sans repayer les pages faites. Le
   plafond de dépense, lui, vaut pour toute la chaîne (le jeton porte la dépense faite).
@@ -118,9 +149,9 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
 
 ## Ce qui vient ensuite
 
-`for_each` (une ligne qui déclenche un appel dont les éléments deviennent des lignes —
-les personnes d'une société), le bloc `async` (soumettre puis collecter : Dropcontact,
-FullEnrich, Apify), le mode par ligne et la poussée vers un CRM, les correspondances
-avec d'autres tableaux, les normaliseurs (`domain`, `linkedin_slug`, `phone_e164`), la
-détection de dérive contre le remplissage gardé à la publication, et les travaux de
-fond déclenchés par une planification ou un webhook.
+Le bloc `async` (soumettre puis collecter : Dropcontact, FullEnrich, Apify), le mode par
+ligne (`call` : remplir des cases d'une ligne existante) et la poussée vers un CRM
+(`push` — un effet chez le tiers : il lui faut une marche à blanc obligatoire et une
+liste des outils à effet, puisqu'une recette n'appelle aujourd'hui que des outils
+déclarés en lecture), puis les travaux de fond déclenchés par une planification ou un
+webhook (l'exécutant reste à choisir).

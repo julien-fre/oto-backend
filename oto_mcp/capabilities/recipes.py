@@ -55,8 +55,13 @@ class RecipeInput(BaseModel):
         "param, start, size, size_param, last, next}}, where [{path, op, value}], "
         "map {column: path | {path, max, default} | {template} | {const}}, values, "
         "key {column, template}, on_existing skip|update, limits {max_units, max_pages}, "
-        "units items|calls. Templates: {{params.x}}, {{item.a.b}}, filters |slug "
-        "|lower |upper |strip |unaccent."))
+        "units items|calls, for_each {datastore, status_column, filter, max_parents, "
+        "max_items_per_row} (each pending row of that table drives the call; cite it as "
+        "{{row.col}}). where ops: eq ne in not_in contains_any empty not_empty, and "
+        "in_table / not_in_table {table, column} (match against another table); any clause "
+        "takes `normalize`. Templates: {{params.x}}, {{item.a.b}}, {{row.col}}, filters "
+        "|slug |lower |upper |strip |unaccent |domain |email |email_domain |linkedin_slug "
+        "|url |digits."))
     note: Optional[str] = None
     expected_version: Optional[int] = Field(default=None, description=(
         "propose: the latest version you read."))
@@ -197,13 +202,14 @@ def _epingler_org(ctx: ResolvedCtx):
 
 
 async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: bool,
-                    pages_max: Optional[int] = None) -> dict:
+                    pages_max: Optional[int] = None, temoin: Optional[dict] = None) -> dict:
     fastmcp = _instance()
     jeton = _epingler_org(ctx)
     try:
         return await moteur.executer(corps, _params(corps, inp.params), fastmcp=fastmcp,
                                      sub=ctx.sub, datastore=inp.datastore,
-                                     reprise=inp.resume, ecrire=ecrire, pages_max=pages_max)
+                                     reprise=inp.resume, ecrire=ecrire, pages_max=pages_max,
+                                     temoin=temoin)
     except moteur.RecetteRefusee as e:
         raise AuthzDenied(400, e.code, str(e)) from None
     finally:
@@ -251,7 +257,8 @@ async def _recipe(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
                           "it first.")
     if inp.op == "run":
         return {"recipe": fiche, "version": {"version": version["version"]},
-                "receipt": await _executer(ctx, inp, version["body"], ecrire=True)}
+                "receipt": await _executer(ctx, inp, version["body"], ecrire=True,
+                                           temoin=version.get("test_report"))}
     recu = await _executer(ctx, inp, version["body"], ecrire=False, pages_max=1)
     if inp.op == "test":
         return {"recipe": fiche, "version": {"version": version["version"]}, "receipt": recu}
@@ -289,6 +296,10 @@ CAPABILITIES += [
             "(slug of a PUBLISHED recipe, params, datastore → counts only; `max_pages` "
             "bounds each call, `resume` continues a partial run; a table without a declared "
             "key gets the recipe's key on the first run) · op=list · op=get · op=versions. "
+            "`for_each` fans out: each row of a parent table whose `status_column` is empty "
+            "drives the call (people per company…), then gets `done` or `empty`. A run "
+            "stops with `mapping_drift` when a column the published test filled comes back "
+            "empty on a whole page. "
             "`limits.max_units` is required: a hard cap on what the tool BILLS (its own "
             "units; `units_basis` in the receipt says when it falls back on the recipe's "
             "count). Scope: your active org (default) or `scope='user'`. Refused inside a "

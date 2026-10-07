@@ -1,8 +1,9 @@
 """Lire un élément, fabriquer une ligne : chemins, gabarits, filtres, `where`. Pur.
 
 **Un langage volontairement petit.** Un chemin pointé (`profile.title`,
-`email[0].email`), un gabarit (`{{params.company|slug}}::{{item.link.linkedin}}`) et
-cinq filtres. Tout ce qui demande davantage — expression régulière, condition, calcul —
+`email[0].email`), un gabarit (`{{params.company|slug}}::{{item.link.linkedin}}`), des
+filtres de casse et des NORMALISEURS (`domain`, `email`, `linkedin_slug`…) — ceux qui
+font qu'une même société, écrite par deux outils, se reconnaît. Tout ce qui demande davantage — expression régulière, condition, calcul —
 va dans une fonction (`oto_function`), jamais dans une syntaxe qu'on ferait grandir ici.
 
 **Tolérant à la forme, jamais inventif.** Un chemin qui ne mène nulle part rend `None`
@@ -14,10 +15,18 @@ from __future__ import annotations
 import re
 import unicodedata
 from typing import Any, Optional
+from urllib.parse import unquote, urlsplit
 
 _SEGMENT = re.compile(r"([^.\[\]]+)|\[(\d+)\]")
 _GABARIT = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
-FILTRES = ("slug", "lower", "upper", "strip", "unaccent")
+FILTRES = ("slug", "lower", "upper", "strip", "unaccent", "domain", "email",
+           "email_domain", "linkedin_slug", "url", "digits")
+#: Les filtres qui NORMALISENT une valeur pour la comparer (`where.normalize`, les
+#: correspondances avec un tableau) : une valeur qui n'a pas la forme rend `None`.
+NORMALISEURS = ("lower", "unaccent", "slug", "domain", "email", "email_domain",
+                "linkedin_slug", "url", "digits")
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_LINKEDIN = re.compile(r"/(in|company|school|showcase)/([^/?#]+)", re.IGNORECASE)
 
 
 class GabaritInvalide(ValueError):
@@ -63,12 +72,71 @@ def slug(texte: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", base).strip("_")
 
 
+def _hote(texte: str) -> Optional[str]:
+    t = texte.strip().lower()
+    if not t:
+        return None
+    if "@" in t and "/" not in t:
+        t = t.rsplit("@", 1)[1]
+    t = urlsplit(t if "://" in t else f"//{t}").hostname or ""
+    t = t.removeprefix("www.").strip(".")
+    return t if "." in t else None
+
+
+def domaine(texte: Any) -> Optional[str]:
+    """Le domaine d'une adresse web ou d'un e-mail, sans `www.` ni chemin :
+    `https://www.Acme.com/about` → `acme.com`, `jane@acme.com` → `acme.com`."""
+    return _hote(str(texte)) if texte is not None else None
+
+
+def email(texte: Any) -> Optional[str]:
+    """Un e-mail en minuscules, ou None s'il n'en a pas la forme — jamais une phrase
+    d'erreur recopiée dans une colonne `email`."""
+    t = str(texte).strip().lower() if texte is not None else ""
+    return t if _EMAIL.match(t) else None
+
+
+def linkedin_slug(texte: Any) -> Optional[str]:
+    """L'identifiant d'un profil ou d'une page LinkedIn, quelle que soit l'URL :
+    `https://fr.linkedin.com/in/Jane-Doe/?x=1` → `jane-doe`. Un identifiant nu passe."""
+    t = unquote(str(texte or "")).strip()
+    m = _LINKEDIN.search(t)
+    if m:
+        return m.group(2).lower()
+    return t.lower() if t and "/" not in t and " " not in t else None
+
+
+def url(texte: Any) -> Optional[str]:
+    """Une adresse web avec son schéma, l'hôte en minuscules, sans `/` final."""
+    t = str(texte or "").strip()
+    if not t or " " in t:
+        return None
+    morceaux = urlsplit(t if "://" in t else f"https://{t}")
+    if not morceaux.hostname or "." not in morceaux.hostname:
+        return None
+    base = f"{morceaux.scheme}://{morceaux.netloc.lower()}{morceaux.path}".rstrip("/")
+    return base + (f"?{morceaux.query}" if morceaux.query else "")
+
+
 def _filtrer(valeur: Any, filtre: str) -> Any:
     if valeur is None:
         return None
     if filtre == "slug":
         return slug(valeur)
+    if filtre == "domain":
+        return domaine(valeur)
+    if filtre == "email":
+        return email(valeur)
+    if filtre == "email_domain":
+        e = email(valeur)
+        return e.rsplit("@", 1)[1] if e else None
+    if filtre == "linkedin_slug":
+        return linkedin_slug(valeur)
+    if filtre == "url":
+        return url(valeur)
     texte = str(valeur)
+    if filtre == "digits":
+        return re.sub(r"\D", "", texte) or None
     if filtre == "lower":
         return texte.lower()
     if filtre == "upper":
@@ -78,6 +146,16 @@ def _filtrer(valeur: Any, filtre: str) -> Any:
     if filtre == "unaccent":
         return sans_accents(texte)
     raise GabaritInvalide(f"unknown filter `{filtre}` (known: {', '.join(FILTRES)})")
+
+
+def normaliser(valeur: Any, filtre: Optional[str]) -> Any:
+    """La valeur comparée par une clause : son normaliseur, sinon le pli sans casse ni
+    accents des comparaisons de texte."""
+    if valeur is None:
+        return None
+    if filtre:
+        return _filtrer(valeur, filtre)
+    return _plie(valeur)
 
 
 def _expression(expr: str, portees: dict) -> Any:
@@ -135,13 +213,37 @@ def _vide(v: Any) -> bool:
     return v is None or (isinstance(v, (str, list, dict)) and not v)
 
 
-def garde(item: Any, clauses: list[dict], params: dict) -> bool:
+def _portees(params: dict, row: Optional[dict], item: Any = None) -> dict:
+    out: dict = {"params": params}
+    if row is not None:
+        out["row"] = row
+    if item is not None:
+        out["item"] = item
+    return out
+
+
+def garde(item: Any, clauses: list[dict], params: dict, *, row: Optional[dict] = None,
+          ensembles: Optional[dict] = None) -> bool:
     """L'élément passe-t-il TOUTES les clauses `where` ? Comparaisons de texte sans
-    casse ni accents : `Spain` = `spain`, `Côte` = `cote`."""
-    for c in clauses or []:
+    casse ni accents : `Spain` = `spain`, `Côte` = `cote` — ou par le normaliseur de la
+    clause (`normalize`). `in_table` / `not_in_table` lisent `ensembles[i]`, les valeurs
+    normalisées du tableau de la clause `i`, chargées une fois par exécution."""
+    for i, c in enumerate(clauses or []):
         v = lire(item, c["path"])
-        attendu = rendre(c.get("value"), {"params": params})
         op = c["op"]
+        if op in ("in_table", "not_in_table"):
+            cle = normaliser(v, c.get("normalize"))
+            dedans = cle is not None and cle in (ensembles or {}).get(i, set())
+            # Un élément sans valeur n'est pas « dans » la liste d'exclusion : il passe.
+            if (op == "in_table") != dedans:
+                return False
+            continue
+        attendu = rendre(c.get("value"), _portees(params, row))
+        if c.get("normalize") and op not in ("empty", "not_empty"):
+            v = normaliser(v, c["normalize"])
+            attendu = [x for x in (normaliser(a, c["normalize"]) for a in attendu or [])
+                       if x is not None] \
+                if isinstance(attendu, list) else normaliser(attendu, c["normalize"])
         if op == "empty":
             ok = _vide(v)
         elif op == "not_empty":
@@ -160,14 +262,14 @@ def garde(item: Any, clauses: list[dict], params: dict) -> bool:
     return True
 
 
-def cellule(item: Any, spec: Any, params: dict) -> Any:
+def cellule(item: Any, spec: Any, params: dict, *, row: Optional[dict] = None) -> Any:
     """La valeur d'une colonne pour un élément, d'après sa spécification."""
     if isinstance(spec, str):
         return lire(item, spec)
     if "const" in spec:
         return spec["const"]
     if "template" in spec:
-        v = rendre(spec["template"], {"params": params, "item": item})
+        v = rendre(spec["template"], _portees(params, row, item))
     else:
         v = lire(item, spec["path"])
     if v is None:
@@ -178,18 +280,21 @@ def cellule(item: Any, spec: Any, params: dict) -> Any:
     return v
 
 
-def ligne(item: Any, correspondance: dict, valeurs: dict, params: dict) -> dict:
+def ligne(item: Any, correspondance: dict, valeurs: dict, params: dict, *,
+          row: Optional[dict] = None) -> dict:
     """La ligne d'un élément : ses colonnes, puis les valeurs fixes de la recette."""
-    out = {col: cellule(item, spec, params) for col, spec in (correspondance or {}).items()}
+    out = {col: cellule(item, spec, params, row=row)
+           for col, spec in (correspondance or {}).items()}
     for col, gab in (valeurs or {}).items():
-        out[col] = rendre(gab, {"params": params})
+        out[col] = rendre(gab, _portees(params, row))
     return out
 
 
-def cle(item: Any, spec: dict, rangee: dict, params: dict) -> Optional[str]:
+def cle(item: Any, spec: dict, rangee: dict, params: dict, *,
+        row: Optional[dict] = None) -> Optional[str]:
     """La valeur de clé d'un élément : son gabarit, sinon la colonne-clé de la ligne."""
     if spec.get("template"):
-        portees = {"params": params, "item": item}
+        portees = _portees(params, row, item)
         # Un morceau absent annule la clé : `acme::` n'identifie personne, et deux
         # éléments sans profil se fondraient en une seule ligne.
         if any(_vide(_expression(m.group(1), portees))
