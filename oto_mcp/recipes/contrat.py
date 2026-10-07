@@ -227,8 +227,12 @@ def _pousse(probs: list, c: dict) -> None:
                                  maj.get("arguments"))
     rech = c.get("lookup")
     if rech is not None:
-        if not isinstance(rech, dict) or not isinstance(rech.get("id_path"), str):
-            probs.append("`lookup` must be an object {tool, arguments, items, id_path}")
+        if not isinstance(rech, dict) or not isinstance(rech.get("id_path"), str) \
+                or not isinstance(rech.get("items"), str) or not rech.get("items"):
+            probs.append("`lookup` must be an object {tool, arguments, items, id_path}: "
+                         "`items` (the path to the LIST of matches) and `id_path` are "
+                         "required — a lookup that can't count its matches would create "
+                         "duplicates")
         else:
             outil = rech.setdefault("tool", c.get("tool"))
             args = rech.get("arguments")

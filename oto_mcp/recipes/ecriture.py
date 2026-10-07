@@ -328,7 +328,9 @@ def ecrire_dans_la_ligne(p: Parents, row_id: str, patch: dict,
 
 def lignes_par_etat(p: Parents, etat: str, *, limite: int) -> list[dict]:
     """Les lignes dont la colonne d'état vaut `etat` (`async` : `submitted`, à collecter)."""
-    page = p.store.cursor_rows(p.adresse, filter=p.filtre,
+    # Sans le `filter` de la recette : une ligne soumise dont on a changé une colonne
+    # du filtre doit quand même être collectée (ou expirer), jamais rester `submitted`.
+    page = p.store.cursor_rows(p.adresse,
                                filters=[{"field": p.etat, "op": "eq", "value": etat}],
                                limit=limite)
     return list(page.get("rows") or [])

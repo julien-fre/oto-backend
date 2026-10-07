@@ -553,7 +553,7 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
     jamais par-dessus une saisie faite pendant l'exécution. État : `done`, `not_found`,
     `failed:<code>`. Même boucle que `for_each` (`_parcourir`)."""
     recu = _recu()
-    etat = lire_reprise(reprise)
+    etat = lire_reprise(reprise, corps)
     recu["units"] = etat["u"]
     if datastore is None:
         raise RecetteRefusee("missing_datastore", "`datastore` (the number of the table "
@@ -573,13 +573,15 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
     except ecriture.TableauIndisponible as e:
         raise RecetteRefusee(e.code, str(e))
     recu["created_columns"] = list(lignes.creees)
+    exigees = requises(corps, rows)
     a_surveiller = surveillees(temoin)
     fenetre: list[dict] = []
     lim = corps["limits"]
     fin = time.monotonic() + budget_s
 
     def _reprise() -> str:
-        return _jeton({"p": None, "c": None, "u": recu["units"], "r": None})
+        return _jeton({"p": None, "c": None, "u": recu["units"], "r": None,
+                       "h": etat.get("h")})
 
     async def _appel(nom_outil, tool, args: dict):
         """Un appel ; rend `(issue, arrêt)` — `arrêt` déjà posé au reçu, ou un échec
@@ -592,8 +594,9 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
             if not issue.retryable and issue.code in ECHECS_DE_LIGNE:
                 return None, ("ligne:not_found" if issue.code == "not_found"
                               else f"ligne:{issue.code}")
-            _arreter(recu, issue.code or "tool_failed", error=issue.message,
-                     retryable=issue.retryable, resume=_reprise())
+            # Le message du fournisseur peut citer une valeur de la ligne : le code seul.
+            _arreter(recu, issue.code or "tool_failed", retryable=issue.retryable,
+                     resume=_reprise())
             return None, recu["stopped"]
         if issue.retenu:
             _arreter(recu, "redaction_withheld",
@@ -660,8 +663,12 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
         arret = _hors_budget()
         if arret:
             return arret, 0
+        if co.exigees_vides(corps.get("arguments"), co._portees(params, row), exigees):
+            return "ligne:invalid_input", 0
         args = co.sans_vides(co.rendre(corps.get("arguments") or {}, co._portees(params, row)))
         issue, arret = await _appel(corps["tool"], outil, args)
+        if arret == "ligne:not_found":
+            return None, 0  # « rien chez lui pour cette ligne » : `not_found`
         if arret:
             return arret, 0
         return await _ecrire_resultat(issue, row, ligne)
@@ -698,6 +705,8 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
         arret = _hors_budget()
         if arret:
             return arret, 0
+        if co.exigees_vides(corps.get("arguments"), co._portees(params, row), exigees):
+            return "ligne:invalid_input", 0  # rien n'est dépensé pour une entrée vide
         args = co.sans_vides(co.rendre(corps.get("arguments") or {}, co._portees(params, row)))
         issue, arret = await _appel(corps["tool"], outil, args)
         if arret:
@@ -866,6 +875,7 @@ async def _executer_pousser(corps: dict, params: dict, *, fastmcp, sub: Optional
         raise RecetteRefusee(e.code, str(e))
     recu["created_columns"] = list(lignes.creees)
     recu["rows"] = {"failed": 0}
+    exigees = requises(corps, rows)
     lim = corps["limits"]
     fin = time.monotonic() + budget_s
     a_blanc = {"would_create": 0, "would_update": 0, "would_skip": 0, "arguments_fill": {}}
@@ -894,8 +904,7 @@ async def _executer_pousser(corps: dict, params: dict, *, fastmcp, sub: Optional
             return None, "ligne:call_refused"
         if not issue.ok:
             if issue.code in RIEN_FAIT or (issue.retryable and not cree):
-                _arreter(recu, issue.code or "tool_failed", error=issue.message,
-                         retryable=issue.retryable)
+                _arreter(recu, issue.code or "tool_failed", retryable=issue.retryable)
                 return None, recu["stopped"]
             if cree and (issue.retryable or issue.code not in ECHECS_DE_LIGNE):
                 return None, "ligne:unknown_outcome"
@@ -910,18 +919,60 @@ async def _executer_pousser(corps: dict, params: dict, *, fastmcp, sub: Optional
         return charge, None
 
     async def _noter_id(row: dict, valeur: Any) -> Optional[str]:
+        """L'identifiant revient dans la ligne. Impossible (ligne verrouillée…) : la
+        ligne est marquée `failed:id_not_written` pour qu'aucune exécution ne recrée la
+        fiche ; si même cela échoue, l'exécution s'arrête en le disant."""
         if not ecrire or co._vide(valeur):
             return None
         code = await run_in_threadpool(ecriture.ecrire_sans_garde, lignes, row["_id"],
                                        {ident["column"]: str(valeur)})
-        if code:
-            recu["failed"][code] = recu["failed"].get(code, 0) + 1
-            return "ligne:id_not_written"
-        return None
+        if not code:
+            return None
+        recu["failed"][code] = recu["failed"].get(code, 0) + 1
+        if await run_in_threadpool(ecriture.marquer_parent, lignes, row["_id"],
+                                   "failed:id_not_written"):
+            _arreter(recu, "id_not_written", error=(
+                "A record was created or found at the provider, but neither its id nor "
+                "the row's status could be written back (the row is locked?). Check the "
+                "table before running again: that row would be pushed again."))
+            return "id_not_written"
+        return "ligne:id_not_written"
+
+    async def _chercher(row: dict) -> tuple[Any, Optional[str]]:
+        """`lookup` : rend `(identifiant, arrêt)` — None si rien n'est trouvé. Une fiche
+        trouvée SANS identifiant lisible n'est pas « rien » : on ne crée pas à côté."""
+        charge, arret = await _appel(rech["tool"], outil_rech, _args(rech["arguments"], row),
+                                     cree=False)
+        if arret:
+            return None, arret
+        trouves = co.lire(charge, rech["items"])
+        if not isinstance(trouves, list):
+            return None, "ligne:lookup_unreadable"
+        if len(trouves) > 1:
+            return None, "ligne:ambiguous"
+        if not trouves:
+            return None, None
+        valeur = co.lire(trouves[0], rech["id_path"])
+        return (None, "ligne:lookup_no_id") if co._vide(valeur) else (valeur, None)
 
     async def _pousser(row: dict, ligne: dict) -> tuple[Optional[str], Any]:
         existant = row.get(ident["column"])
+        gabarit = maj["arguments"] if (existant and maj) else corps["arguments"]
+        if not (existant and not maj) and co.exigees_vides(
+                gabarit, co._portees(params, row), exigees):
+            return "ligne:invalid_input", 0  # une entrée exigée qui se rend vide
         if not ecrire:
+            if not existant and rech:
+                # La recherche LIT : la marche à blanc l'exécute, pour qu'un `id_path`
+                # faux se voie avant de créer des doublons.
+                trouve, arret = await _chercher(row)
+                if arret and not arret.startswith("ligne:"):
+                    return arret, 0
+                cle = ("lookup_" + arret.split(":", 1)[1]) if arret else (
+                    "would_link" if trouve else None)
+                if cle:
+                    a_blanc[cle] = a_blanc.get(cle, 0) + 1
+                    return None, "previewed"
             cible = maj["arguments"] if (existant and maj) else (
                 None if existant else corps["arguments"])
             cle = "would_update" if (existant and maj) else (
@@ -937,16 +988,11 @@ async def _executer_pousser(corps: dict, params: dict, *, fastmcp, sub: Optional
             return None, "exists"
         statut = "updated"
         if not existant and rech:
-            charge, arret = await _appel(rech["tool"], outil_rech, _args(rech["arguments"], row),
-                                         cree=False)
+            trouve, arret = await _chercher(row)
             if arret:
                 return arret, 0
-            trouves = co.lire(charge, rech.get("items") or "") if rech.get("items") else charge
-            trouves = trouves if isinstance(trouves, list) else ([trouves] if trouves else [])
-            if len(trouves) > 1:
-                return "ligne:ambiguous", 0
-            if trouves:
-                existant = co.lire(trouves[0], rech["id_path"])
+            if trouve is not None:
+                existant = trouve
                 arret = await _noter_id(row, existant)
                 if arret:
                     return arret, 0

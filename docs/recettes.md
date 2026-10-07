@@ -216,7 +216,9 @@ jamais `delete`, `merge` ni les `bulk_*`), gardée par `tests/test_recettes_outi
 - **Jamais deux fois** : une ligne qui porte déjà son identifiant est mise à jour
   (`update` déclaré → `updated`) ou laissée (`exists`, aucun appel) ; sinon `lookup`,
   s'il est déclaré, cherche la fiche — trouvée, elle est liée (`linked`), plusieurs
-  marquent `failed:ambiguous` ; sinon création (`created`). ⚠️ La recherche doit être
+  marquent `failed:ambiguous`, une fiche sans identifiant lisible `failed:lookup_no_id`
+  (jamais une création à côté) ; sinon création (`created`). `lookup.items` (le chemin
+  de la LISTE des fiches trouvées) est obligatoire. ⚠️ La recherche doit être
   EXACTE (un filtre d'égalité, pas une recherche plein texte) : une seule fiche voisine
   trouvée serait liée, puis mise à jour. L'identifiant est noté SANS
   garde de révision, aussitôt la fiche créée.
@@ -228,9 +230,13 @@ jamais `delete`, `merge` ni les `bulk_*`), gardée par `tests/test_recettes_outi
 - **Jamais un champ vidé** : un argument dont la valeur est vide n'est pas envoyé.
 - **`errors`** (un chemin dans la réponse) : une réponse « réussie » qui y porte quelque
   chose (doublon, champ refusé) marque `failed:provider_error`.
-- **`test` et `publish` sont une marche à blanc** : rien n'est appelé ; le reçu dit ce qui
-  serait créé, mis à jour ou laissé (`dry_run`) et le remplissage de chaque argument —
-  des comptes, jamais une valeur.
+- **`test` et `publish` sont une marche à blanc** : rien n'est écrit chez le tiers — seule
+  la recherche (`lookup`), qui lit, est exécutée ; le reçu dit ce qui serait créé, lié,
+  mis à jour ou laissé (`dry_run`) et le remplissage de chaque argument — des comptes,
+  jamais une valeur.
+- **Une entrée exigée qui se rend vide** (`{{row.email|email}}` sur `n/a`) n'appelle pas :
+  `failed:invalid_input`. L'identifiant qu'on ne peut pas réécrire dans la ligne la
+  marque `failed:id_not_written` ; si même cela échoue, l'exécution s'arrête en le disant.
 - ⚠️ **Ni `push` ni `async` dans un agent hébergé** (`side_effect_recipes_not_in_hosted_agents`),
   même quand la liste de son travail porterait l'outil : un agent hébergé lit du texte
   non sûr (webhook, e-mails, CRM), il ne pilote pas une écriture chez un tiers.

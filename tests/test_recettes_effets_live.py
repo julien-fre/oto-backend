@@ -274,12 +274,12 @@ def test_le_contrat_de_push():
     # Le garde-fou d'envoi vaut pour CHAQUE outil de la recette, recherche comprise.
     for bloc in ("lookup", "update"):
         with pytest.raises(contrat.RecetteInvalide) as e:
-            _pousse(**{bloc: {"tool": "lemlist_create_lead", "id_path": "id",
+            _pousse(**{bloc: {"tool": "lemlist_create_lead", "id_path": "id", "items": "r",
                               "arguments": {"campaign_id": "c"}}})
         assert "allow_sending" in " ".join(e.value.problemes), bloc
     with pytest.raises(contrat.RecetteInvalide) as e:
         _pousse(allow_sending=True, lookup={"tool": "lemlist_create_lead", "id_path": "id",
-                                            "arguments": {"campaign_id": "c"}})
+                                            "items": "r", "arguments": {"campaign_id": "c"}})
     assert "no search op" in " ".join(e.value.problemes)
 
 
@@ -296,3 +296,48 @@ def test_un_agent_heberge_ne_pilote_ni_push_ni_async(serveur, monkeypatch):
                                           corps, ecrire=True))
         assert e.value.code == "side_effect_recipes_not_in_hosted_agents"
     assert etat["appels"] == []
+
+
+def test_une_fiche_trouvee_sans_id_lisible_ne_cree_pas_de_doublon(serveur):
+    m, etat = serveur
+    etat["crm"]["hs1"] = {"email": "a@acme.test"}
+    ns = _tableau(CHAMPS, [{"email": "a@acme.test"}])
+    rech = {"arguments": {"op": "search", "object_type": "contacts", "query": "{{row.email}}"},
+            "items": "results", "id_path": "identifiant"}
+    _executer(m, _pousse(lookup=rech), ns)
+    assert _lignes(ns, "email")["a@acme.test"]["hs_status"] == "failed:lookup_no_id"
+    assert len(etat["crm"]) == 1
+
+
+def test_la_marche_a_blanc_execute_la_recherche(serveur):
+    m, etat = serveur
+    etat["crm"]["hs1"] = {"email": "a@acme.test"}
+    ns = _tableau(CHAMPS, [{"email": "a@acme.test"}, {"email": "b@acme.test"}])
+    rech = {"arguments": {"op": "search", "object_type": "contacts", "query": "{{row.email}}"},
+            "items": "results", "id_path": "id"}
+    recu = _executer(m, _pousse(lookup=rech), ns, ecrire=False)
+    assert recu["dry_run"]["would_link"] == 1 and recu["dry_run"]["would_create"] == 1
+    assert {a[0] for a in etat["appels"]} == {"search"}
+
+
+def test_une_entree_exigee_qui_se_rend_vide_n_appelle_pas(serveur):
+    m, etat = serveur
+    ns = _tableau(CHAMPS, [{"email": "n/a"}])
+    corps = _pousse(arguments={"op": "create", "object_type": "contacts",
+                               "properties": {"email": "{{row.email|email}}"}})
+    _executer(m, corps, ns)
+    assert _lignes(ns, "email")["n/a"]["hs_status"] == "failed:invalid_input"
+    assert etat["appels"] == []
+
+
+def test_une_ligne_soumise_est_collectee_meme_hors_du_filtre(serveur):
+    m, etat = serveur
+    etat["pret"] = True
+    job = json.dumps({"id": "req-Jane", "at": int(time.time())})
+    ns = _tableau(["first_name", "tier", "email", "dc_status", "dc_status_job"],
+                  [{"first_name": "Jane", "tier": "b", "dc_status": "submitted",
+                    "dc_status_job": job}])
+    corps = _asyn(rows={"status_column": "dc_status", "require": ["first_name"],
+                        "filter": {"tier": "a"}})
+    _executer(m, corps, ns)
+    assert _lignes(ns, "first_name")["Jane"]["dc_status"] == "done"

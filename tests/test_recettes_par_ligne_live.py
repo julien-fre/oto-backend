@@ -39,6 +39,11 @@ def serveur(compte, monkeypatch):
         session_org.note_call_trace(quantity=1)
         if not siren.isdigit():
             raise McpError(ErrorData(code=INVALID_PARAMS, message="bad siren"))
+        if siren == "404":
+            import httpx
+            req = httpx.Request("GET", "https://api.acme.test/company")
+            raise httpx.HTTPStatusError("missing", request=req,
+                                        response=httpx.Response(404, request=req))
         return {"company": SOCIETES.get(siren)}
 
     @m.tool(annotations=LECTURE)
@@ -195,3 +200,14 @@ def test_un_resultat_vide_n_est_pas_un_succes(serveur, monkeypatch):
                                values={"source": "acme"}), ns)
     assert recu["rows"] == {"done": 0, "not_found": 1, "failed": 0}
     assert _lignes(ns)["111"].get("source") is None
+
+
+def test_un_404_est_not_found_et_une_entree_vide_n_appelle_pas(serveur):
+    m, appels = serveur
+    ns = _tableau([{"siren": "404"}, {"siren": "n/a"}, {"siren": "4x0x4x"}])
+    corps = _corps(arguments={"siren": "{{row.siren|digits}}"})
+    recu = _executer(m, corps, ns)
+    lignes = _lignes(ns)
+    assert lignes["404"]["fr_status"] == "not_found"
+    assert lignes["n/a"]["fr_status"] == "failed:invalid_input"
+    assert "n/a" not in appels and recu["rows"]["not_found"] == 2
