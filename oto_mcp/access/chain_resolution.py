@@ -202,7 +202,7 @@ def _paliers(sub: str, provider: str, org: Optional[int], want: str,
                     and not credentials_store.instance_suspended(
                         credentials_store.TENANT, slug, porteur)):
                 # Same edge as the walker: SILENT ⟹ membership; REFUSES ⟹ move on.
-                verdict = grants_chain.tenant_rung(slug, porteur, org)
+                verdict = grants_chain.tenant_rung(slug, porteur, org_cles)  # #480
                 if verdict is None or verdict.granted:
                     yield ChainPick("tenant", credentials_store.TENANT, slug,
                                     via="grant" if verdict else "appartenance")

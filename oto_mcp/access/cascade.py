@@ -426,7 +426,10 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
                 # without a key: SILENT ⟹ the key serves (PR 1); GRANTS ⟹ it serves, the
                 # budget is settled at resolution (`tenant_budget`); REFUSES ⟹ the
                 # rung is SKIPPED and the org falls back to the platform.
-                verdict = grants_chain.tenant_rung(slug, provider, org)
+                # On the KEYS org (#480): the tenant→org edge is a right of the
+                # org — neither its budget nor its revocation reach a beneficiary
+                # outside it to whom nothing was lent.
+                verdict = grants_chain.tenant_rung(slug, provider, org_cles)
                 if verdict is None or verdict.granted:
                     payload, account = hit if isinstance(hit, tuple) else (hit, "")
                     yield CascadeRung("tenant", credentials_store.TENANT, slug, payload,

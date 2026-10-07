@@ -252,7 +252,10 @@ def tenant_ref(slug: str, provider: str) -> str:
 
 
 def tenant_rung(slug: str, provider: str, org: Optional[int]) -> Optional[ChainVerdict]:
-    """Le barreau TENANT vu par la chaîne, pour l'org de contexte. `None` = MUETTE
+    """Le barreau TENANT vu par la chaîne, pour l'org des CLÉS de l'appel — l'org de
+    contexte bornée par #480 (`access.heritage.org_partagee`) : un bénéficiaire HORS de
+    l'org d'un projet partagé, à qui rien n'est prêté, arrive ici avec `None` et ne
+    lit pas l'arête de cette org (ni son budget, ni sa révocation). `None` = MUETTE
     (aucune arête n'a jamais visé cette org ⟹ la clé sert comme en PR 1) ;
     `granted=False` = REFUSE (toutes révoquées ⟹ le barreau se saute, l'org retombe
     sur la plateforme) ; sinon ACCORDE, avec le budget de l'arête (R10 : partagé par

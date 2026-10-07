@@ -354,7 +354,10 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
 
     if check_usage and win.mode == "tenant":
         # Per-org budget of the tenant→org edge (L-keys PR 2) — no-op without an edge.
-        tenant_budget.enforce(win.entity_id, porteur, active_org)
+        # Read on the KEYS org (#480), like the walker: a beneficiary outside the
+        # project's org does not draw on that org's budget.
+        tenant_budget.enforce(win.entity_id, porteur,
+                              heritage.org_des_cles(sub, active_org))
     if win.mode != "platform":
         return ResolvedCredential(provider, win.payload, False, win.mode,
                                   win.entity_type, win.entity_id, account=win.account)

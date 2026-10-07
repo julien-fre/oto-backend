@@ -160,6 +160,12 @@ def org_partagee(org: Optional[int], cles: Optional[ClesDuProjet]) -> Optional[i
     return org
 
 
+def org_des_cles(sub: Optional[str], org: Optional[int]) -> Optional[int]:
+    """`org_partagee` for THIS call's verdict: the org whose shared rights `sub`
+    consumes in the context `org` — None for a beneficiary outside it, nothing lent."""
+    return org_partagee(org, du_contexte(sub, org))
+
+
 def org_du_perimetre(sub: Optional[str], org: Optional[int]) -> Optional[int]:
     """The org `sub` is a PRINCIPAL of in this call's context — the pendant of
     `org_partagee` for SCOPE (lists, resolving a table, access by id): the context

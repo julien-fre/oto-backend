@@ -92,7 +92,7 @@ def exiger_option_payante(connector: str, sub: "str | None", org: "int | None") 
     consume: for the beneficiary of a shared project to whom nothing is lent, no
     org (#480, `heritage.org_partagee`) — only their person rows everywhere remain.
     `sub` None (anonymous endpoint): the org alone."""
-    org_servie = heritage.org_partagee(org, heritage.du_contexte(sub, org))
+    org_servie = heritage.org_des_cles(sub, org)
     refus = paid_option_refusal(connector, sub, org_servie)
     if refus:
         if org_servie is not None:
@@ -186,7 +186,7 @@ def quotas_leves(sub: str, org: Optional[int]) -> bool:
     `sub` acting in `org` (ADR 0070 §7)? The right of the org the caller can
     consume — none for the beneficiary of a shared project without a loan (#480) —,
     or a row set on the person, in the org or everywhere."""
-    plan_org = heritage.org_partagee(org, heritage.du_contexte(sub, org))
+    plan_org = heritage.org_des_cles(sub, org)
     return entitlements.has_right(sub, plan_org, entitlements.PLATFORM_UNMETERED)
 
 

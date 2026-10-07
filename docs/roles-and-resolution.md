@@ -53,7 +53,10 @@ Résolution par appel (`resolve_api_key` / `resolve_credential`) :
 org dont l'appelant n'est pas membre, les paliers **org** (3) et les accès plateforme
 `org:<id>` (5) de cette org sont **sautés**, et le palier 2 s'ouvre à tout connecteur à clé
 personnelle (sa clé posée dans une autre de ses orgs) — sauf héritage déclaré au partage
-(`credentials="inherit"`), borné aux droits du partageur. Détail : `docs/ownership.md`.
+(`credentials="inherit"`), borné aux droits du partageur. L'arête tenant→org du palier
+tenant (4) se lit elle aussi sur cette org des clés bornée (`heritage.org_des_cles`) : ni
+le budget ni la révocation de l'org du projet n'atteignent un bénéficiaire à qui rien
+n'est prêté. Détail : `docs/ownership.md`.
 
 > **Cet énoncé est le seul.** La source est le walker `access/cascade.py` ; la cascade
 > était recopiée dans trois autres documents, et **trois sur quatre ignoraient l'étage
