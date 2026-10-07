@@ -189,6 +189,8 @@ import oto_mcp.capabilities.datastore.rows  # noqa: F401 — me.datastore.{list_
 # Purge d'une colonne morte (#296) — après un renommage, l'ancienne clé piège les agents.
 import oto_mcp.capabilities.datastore.columns  # noqa: F401 — me.datastore.drop_column (MCP data_drop_column)
 # Historique d'une ligne (oto#273 M3) — le journal des révisions, valeurs comprises. APRÈS `rows`.
+# Mise à jour PAR FILTRE — une règle posée côté serveur, sans `_id` dans le contexte.
+import oto_mcp.capabilities.datastore.update_where  # noqa: F401 — me.datastore.update_where (MCP data_update_where + REST)
 import oto_mcp.capabilities.datastore.history  # noqa: F401 — me.datastore.row_history (MCP data_row_history + REST)
 from . import automation  # noqa: F401 — me.automation.fire (MCP routine_fire + REST)
 from . import run_thread  # noqa: F401 — runs.thread append/read (MCP oto_run_thread + REST) — chantier runner R1
