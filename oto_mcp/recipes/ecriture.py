@@ -179,6 +179,10 @@ def _une(t: Tableau, ligne: dict) -> Optional[str]:
 #: Lignes parentes lues par requête : la boucle relit les EN ATTENTE après chaque lot,
 #: leur état écrit les en retire.
 LOT_PARENTS = 50
+#: Au plus tant de lignes lues par requête : les lignes déjà vues dans l'appel (état non
+#: écrit) s'y ajoutent, sans quoi la sélection rendrait vide et l'exécution se dirait
+#: finie, des lignes encore en attente.
+MAX_LUES = 1_000
 
 
 @dataclass
@@ -248,7 +252,7 @@ def parents_en_attente(p: Parents, *, limite: int, premiere: Optional[str],
                                    filters=p.clauses(), limit=1)
         out += page.get("rows") or []
     page = p.store.cursor_rows(p.adresse, filter=p.filtre, filters=p.clauses(),
-                               limit=min(LOT_PARENTS, limite + len(vues) + len(out)))
+                               limit=min(MAX_LUES, LOT_PARENTS + len(vues) + len(out)))
     for r in page.get("rows") or []:
         if len(out) >= limite:
             break

@@ -205,6 +205,31 @@ def portees_citees(gabarit: Any) -> set[str]:
             for m in _GABARIT.finditer(gabarit)}
 
 
+def sans_vides(valeur: Any) -> Any:
+    """Les arguments rendus, sans les clés dont la valeur est vide : une colonne vide
+    n'envoie RIEN (jamais `null` ni `""`, qui videraient un champ chez le tiers ou feraient
+    refuser l'appel). Récursif dans les objets et les listes."""
+    if isinstance(valeur, dict):
+        out = {k: sans_vides(v) for k, v in valeur.items()}
+        return {k: v for k, v in out.items() if not _vide(v)}
+    if isinstance(valeur, list):
+        return [x for x in (sans_vides(v) for v in valeur) if not _vide(x)]
+    return valeur
+
+
+def exigees_vides(gabarit: Any, portees: dict, colonnes) -> bool:
+    """Un morceau du gabarit qui cite une colonne EXIGÉE rend-il vide ? (`n/a|digits`
+    → rien) : l'appel partirait sans son filtre — une recherche rendrait sa page par
+    défaut, celle d'un inconnu."""
+    if isinstance(gabarit, dict):
+        return any(exigees_vides(v, portees, colonnes) for v in gabarit.values())
+    if isinstance(gabarit, list):
+        return any(exigees_vides(v, portees, colonnes) for v in gabarit)
+    if not isinstance(gabarit, str) or not (colonnes_citees(gabarit, "row") & set(colonnes)):
+        return False
+    return _vide(rendre(gabarit, portees))
+
+
 def colonnes_citees(gabarit: Any, portee: str) -> set[str]:
     """Les colonnes qu'un gabarit lit dans une portée (`{{row.siren|digits}}` →
     `siren`) — pour ne sélectionner que les lignes où elles sont remplies."""
