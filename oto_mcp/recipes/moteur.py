@@ -58,11 +58,14 @@ def _jeton(etat: dict) -> str:
 
 
 def lire_reprise(reprise: Optional[str]) -> dict:
+    """L'état d'une reprise. `r` = la ligne parente en cours (`for_each`) ; un jeton
+    d'avant `for_each` n'en porte pas et se relit tel quel."""
     if not reprise:
-        return {"p": None, "c": None, "u": 0}
+        return {"p": None, "c": None, "u": 0, "r": None}
     try:
         etat = json.loads(base64.urlsafe_b64decode(reprise.encode()).decode())
-        return {"p": etat.get("p"), "c": etat.get("c"), "u": int(etat.get("u", 0))}
+        return {"p": etat.get("p"), "c": etat.get("c"), "u": int(etat.get("u", 0)),
+                "r": etat.get("r")}
     except (ValueError, TypeError, AttributeError):
         raise RecetteRefusee("invalid_resume", "`resume` is not a token returned by a "
                                                "previous run of this recipe.")
@@ -78,6 +81,15 @@ def _recu() -> dict:
             "updated": 0, "existing_left_untouched": 0, "skipped_where": 0,
             "skipped_no_key": 0, "duplicates_in_call": 0, "failed": {},
             "created_columns": [], "done": False, "stopped": None, "resume": None}
+
+
+#: `test` / `publish` d'une recette `for_each` : la première ligne parente peut
+#: légitimement ne rien rendre — l'épreuve en essaie jusqu'à trois, une page chacune.
+ESSAI_PARENTS = 3
+#: Une colonne remplie sur au moins cette part des lignes à la publication est SURVEILLÉE.
+SEUIL_SURVEILLEE = 0.8
+#: …et une page d'au moins tant de lignes où elle est vide partout arrête l'exécution.
+PAGE_TEMOIN = 10
 
 
 async def _outil(fastmcp, outil: str):
@@ -106,8 +118,9 @@ async def _appeler(tool, sub: Optional[str], outil: str, args: dict):
     return await meta.executer_cible(tool, sub, outil, outil, args)
 
 
-def _arguments(corps: dict, params: dict, etat: dict, restant: int) -> dict:
-    args = co.rendre(corps.get("arguments") or {}, {"params": params})
+def _arguments(corps: dict, params: dict, etat: dict, restant: int,
+               row: Optional[dict] = None) -> dict:
+    args = co.rendre(corps.get("arguments") or {}, co._portees(params, row))
     pag = corps["source"]["pagination"]
     if pag["type"] == "page":
         args[pag["param"]] = etat["p"] if etat["p"] is not None else pag.get("start", 0)
@@ -165,13 +178,29 @@ def _arreter(recu: dict, code: str, **details) -> dict:
     return recu
 
 
+def surveillees(temoin: Optional[dict]) -> list[str]:
+    """Les colonnes que la publication a vues remplies (`test_report.fill`) : celles-là
+    ne doivent pas revenir vides sur toute une page — un fournisseur qui change la forme
+    de sa réponse remplirait sinon le tableau de lignes creuses, sans rien dire."""
+    fill = (temoin or {}).get("fill") or {}
+    return sorted(c for c, v in fill.items()
+                  if isinstance(v, (int, float)) and v >= SEUIL_SURVEILLEE)
+
+
+def _derive(lignes: dict, colonnes: list[str]) -> list[str]:
+    if len(lignes) < PAGE_TEMOIN:
+        return []
+    return [c for c in colonnes if all(co._vide(l.get(c)) for l in lignes.values())]
+
+
 async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                    datastore: Any = None, reprise: Optional[str] = None,
                    ecrire: bool = True, pages_max: Optional[int] = None,
-                   budget_s: float = BUDGET_S) -> dict:
+                   budget_s: float = BUDGET_S, temoin: Optional[dict] = None) -> dict:
     """Exécute une recette VALIDÉE (`contrat.valider`). `ecrire=False` = l'épreuve :
     les pages sont appelées (et facturées) mais rien n'est écrit ; le reçu porte le
-    remplissage par colonne (`fill`)."""
+    remplissage par colonne (`fill`). `temoin` = le rapport d'épreuve de la version
+    publiée : ses colonnes pleines sont surveillées (`mapping_drift`)."""
     recu = _recu()
     etat = lire_reprise(reprise)
     recu["units"] = etat["u"]
@@ -179,67 +208,99 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     col_cle = corps["key"]["column"]
     mappees = list(corps["map"])
     remplissage = {c: 0 for c in mappees}
-    tableau = None
-    if datastore is not None:
-        try:
+    fe = corps.get("for_each")
+    tableau = parents = None
+    if fe and datastore is not None and str(fe["datastore"]) == str(datastore):
+        raise RecetteRefusee("for_each_same_table", "`for_each.datastore` is the table the "
+                                                    "recipe writes into: the parent rows must "
+                                                    "live in another table. Nothing was called.")
+    try:
+        if datastore is not None:
             tableau = await run_in_threadpool(ecriture.ouvrir, datastore, col_cle,
                                               ecrire=ecrire)
-            if ecrire:
-                recu["created_columns"] = await run_in_threadpool(
-                    ecriture.creer_colonnes, tableau,
-                    mappees + list(corps["values"]) + [col_cle])
-        except ecriture.TableauIndisponible as e:
-            raise RecetteRefusee(e.code, str(e))
-    elif ecrire:
-        raise RecetteRefusee("missing_datastore", "`datastore` (the table number) is "
-                                                  "required to run a recipe.")
+        elif ecrire:
+            raise RecetteRefusee("missing_datastore", "`datastore` (the table number) is "
+                                                      "required to run a recipe.")
+        if fe:
+            parents = await run_in_threadpool(ecriture.ouvrir_parents, fe["datastore"],
+                                              fe["status_column"], ecrire=ecrire)
+        ensembles = await run_in_threadpool(ecriture.charger_ensembles, corps["where"])
+        if ecrire:
+            recu["created_columns"] = await run_in_threadpool(
+                ecriture.creer_colonnes, tableau, mappees + list(corps["values"]) + [col_cle])
+    except ecriture.TableauIndisponible as e:
+        raise RecetteRefusee(e.code, str(e))
+    a_surveiller = surveillees(temoin)
     lim = corps["limits"]
     # `max_pages` borne CET appel (une reprise repart à zéro page) : le plafond de la
     # chaîne d'appels est celui de la dépense, porté par le jeton.
     pages_max = min(pages_max or lim["max_pages"], lim["max_pages"])
+    if fe and not ecrire:
+        pages_max = max(pages_max, ESSAI_PARENTS)
     fin = time.monotonic() + budget_s
-    # `finally` : l'épreuve rend son remplissage quelle que soit la sortie de la boucle.
-    try:
+
+    def _reprise() -> str:
+        return _jeton({**etat, "u": recu["units"]})
+
+    async def _tirer(row: Optional[dict]) -> tuple[Optional[str], int]:
+        """Les pages d'UNE portée (la recette seule, ou une ligne parente). Rend `(arrêt,
+        éléments retenus)` — `arrêt` None quand la portée est épuisée."""
+        pris = 0
+        pages_ici = 0
+        cap = (fe or {}).get("max_items_per_row")
         while True:
             restant = lim["max_units"] - recu["units"]
             if restant <= 0 or _page_entiere_hors_plafond(corps, restant):
-                return _arreter(recu, "spend_cap")
+                _arreter(recu, "spend_cap")
+                return "spend_cap", pris
             if recu["pages"] >= pages_max:
-                return _arreter(recu, "max_pages", resume=_jeton({**etat, "u": recu["units"]}))
+                _arreter(recu, "max_pages", resume=_reprise())
+                return "max_pages", pris
             if recu["pages"] and time.monotonic() >= fin:
-                return _arreter(recu, "time_budget", resume=_jeton({**etat, "u": recu["units"]}))
-            args = _arguments(corps, params, etat, restant)
+                _arreter(recu, "time_budget", resume=_reprise())
+                return "time_budget", pris
+            args = _arguments(corps, params, etat, restant, row)
             try:
                 issue = await _appeler(outil, sub, corps["tool"], dict(args))
             except McpError as e:
                 # Arguments refusés par le schéma de l'outil, garde d'activation : rien n'a
                 # été appelé pour cette page.
-                return _arreter(recu, "call_refused", error=str(e.error.message)[:500])
+                _arreter(recu, "call_refused", error=str(e.error.message)[:500])
+                return "call_refused", pris
             if not issue.ok:
-                return _arreter(recu, issue.code or "tool_failed", error=issue.message,
-                                retryable=issue.retryable,
-                                resume=_jeton({**etat, "u": recu["units"]}))
+                _arreter(recu, issue.code or "tool_failed", error=issue.message,
+                         retryable=issue.retryable, resume=_reprise())
+                return recu["stopped"], pris
             if issue.retenu:
-                return _arreter(recu, "redaction_withheld",
-                                error="The org's redaction policy withheld this tool's output.")
+                _arreter(recu, "redaction_withheld",
+                         error="The org's redaction policy withheld this tool's output.")
+                return "redaction_withheld", pris
             payload = redaction.extract_payload(issue.result)
             elements = co.lire(payload, corps["source"]["items"]) if corps["source"]["items"] \
                 else payload
             if not isinstance(elements, list):
                 cles = _cles_sures(payload)[:20] if isinstance(payload, dict) else []
-                return _arreter(recu, "items_not_found",
-                                error=f"`source.items` does not point to a list. Top-level keys "
-                                      f"of the result: {cles}")
+                _arreter(recu, "items_not_found",
+                         error=f"`source.items` does not point to a list. Top-level keys "
+                               f"of the result: {cles}")
+                return "items_not_found", pris
             recu["pages"] += 1
+            pages_ici += 1
             recu["items_seen"] += len(elements)
             _compter(recu, corps, issue, elements)
+            plein = False
+            if cap is not None and pris + len(elements) >= cap:
+                recu["items_over_row_cap"] = recu.get("items_over_row_cap", 0) \
+                    + pris + len(elements) - cap
+                elements, plein = elements[:cap - pris], True
+            pris += len(elements)
             lignes: dict[str, dict] = {}
             for el in elements:
-                if not co.garde(el, corps["where"], params):
+                if not co.garde(el, corps["where"], params, row=row, ensembles=ensembles):
                     recu["skipped_where"] += 1
                     continue
-                rangee = co.ligne(el, corps["map"], corps["values"], params)
-                cle = co.cle(el, corps["key"], rangee, params)
+                rangee = co.ligne(el, corps["map"], corps["values"], params, row=row)
+                cle = co.cle(el, corps["key"], rangee, params, row=row)
                 if cle is None:
                     recu["skipped_no_key"] += 1
                     continue
@@ -248,6 +309,16 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                     recu["duplicates_in_call"] += 1
                     continue
                 lignes[cle] = rangee
+            derive = _derive(lignes, a_surveiller)
+            if derive:
+                # La page n'est PAS écrite : des lignes creuses ne valent pas mieux
+                # qu'aucune, et la recette est à reprendre, pas l'appel.
+                _arreter(recu, "mapping_drift", drifted_columns=derive,
+                         error=f"Column(s) {derive} came back empty on all {len(lignes)} "
+                               "rows of a page, though the published test filled them: "
+                               "the tool's output changed shape. Fix the recipe's `map`.")
+                return "mapping_drift", pris
+            for rangee in lignes.values():
                 for c in mappees:
                     if not co._vide(rangee.get(c)):
                         remplissage[c] += 1
@@ -258,15 +329,73 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                                             on_existing=corps["on_existing"],
                                             colonnes_mappees=mappees, recu=recu)
                 except ecriture.TableauIndisponible as e:
-                    return _arreter(recu, e.code, error=str(e))
-            if not _suite(corps, payload, elements, args, etat):
-                recu["done"] = True
-                break
+                    _arreter(recu, e.code, error=str(e))
+                    return e.code, pris
+            if plein or not _suite(corps, payload, elements, args, etat):
+                etat["p"] = etat["c"] = None
+                return None, pris
+            if fe and not ecrire and pages_ici >= 1:
+                etat["p"] = etat["c"] = None
+                return None, pris
+
+    # `finally` : l'épreuve rend son remplissage quelle que soit la sortie de la boucle.
+    try:
+        if not fe:
+            arret, _ = await _tirer(None)
+            recu["done"] = arret is None
+            return recu
+        await _parcourir(fe, parents, ecrire, etat, recu, _tirer)
     finally:
         if not ecrire:
             n = recu["rows_built"] or 1
             recu["fill"] = {c: round(v / n, 3) for c, v in remplissage.items()}
     return recu
+
+
+async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
+                     tirer) -> None:
+    """Les lignes parentes EN ATTENTE (colonne d'état vide), une à une : leur appel,
+    puis leur état (`done` : des éléments ; `empty` : aucun). Une ligne coupée par un
+    plafond reste en attente — le jeton `resume` la reprend à sa page, une exécution
+    neuve la reprend du début (les lignes déjà écrites sont reconnues par leur clé)."""
+    recu["parents"] = {"done": 0, "empty": 0}
+    vues: set = set()
+    premiere = etat.get("r")
+    while True:
+        faits = recu["parents"]["done"] + recu["parents"]["empty"]
+        place = ESSAI_PARENTS - faits if not ecrire else fe["max_parents"] - faits
+        if place <= 0:
+            if ecrire:
+                _arreter(recu, "max_parents",
+                         resume=_jeton({"p": None, "c": None, "u": recu["units"], "r": None}))
+            return
+        lot = await run_in_threadpool(ecriture.parents_en_attente, parents,
+                                      limite=place, premiere=premiere, vues=vues)
+        premiere = None
+        if not lot:
+            recu["done"] = True
+            return
+        for ligne in lot:
+            rid = str(ligne["_id"])
+            vues.add(rid)
+            if etat.get("r") != rid:
+                etat["p"] = etat["c"] = None
+            etat["r"] = rid
+            arret, pris = await tirer(ecriture.portee_ligne(ligne))
+            if arret is not None:
+                return
+            etat["r"] = None
+            statut = "done" if pris else "empty"
+            recu["parents"][statut] += 1
+            if ecrire:
+                code = await run_in_threadpool(ecriture.marquer_parent, parents, rid, statut)
+                if code:
+                    recu["failed"][code] = recu["failed"].get(code, 0) + 1
+            elif recu["rows_built"]:
+                return
+        if not ecrire:
+            recu["done"] = True
+            return
 
 
 def _forme(obj: Any, prefixe: str, out: dict, profondeur: int) -> None:

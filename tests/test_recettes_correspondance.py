@@ -129,3 +129,32 @@ def test_les_params_requis_manquants_et_inconnus_refusent():
         contrat.params_resolus(c, {"company": "Acme", "company_uuid": "u", "contry": "ES"})
     assert contrat.params_resolus(c, {"company": "Acme", "company_uuid": "u"}) == \
         {"company": "Acme", "company_uuid": "u"}
+
+
+@pytest.mark.parametrize("filtre,brut,attendu", [
+    ("domain", "https://www.Acme.test/about?x=1", "acme.test"),
+    ("domain", "jane@acme.test", "acme.test"),
+    ("domain", "acme", None),
+    ("email", " Jane@Acme.test ", "jane@acme.test"),
+    ("email", "not found", None),
+    ("email_domain", "jane@acme.test", "acme.test"),
+    ("linkedin_slug", "https://fr.linkedin.com/in/Jane-Doe/?trk=x", "jane-doe"),
+    ("linkedin_slug", "https://www.linkedin.com/company/acme-co/", "acme-co"),
+    ("linkedin_slug", "jane-doe", "jane-doe"),
+    ("url", "acme.test/", "https://acme.test"),
+    ("url", "HTTP://Acme.test/a/", "http://acme.test/a"),
+    ("digits", "+33 6 12 34", "3361234"),
+])
+def test_les_normaliseurs(filtre, brut, attendu):
+    assert co.rendre(f"{{{{params.v|{filtre}}}}}", {"params": {"v": brut}}) == attendu
+
+
+def test_une_clause_normalisee_compare_les_formes():
+    site = {"site": "https://www.acme.test/team"}
+    assert co.garde(site, [{"path": "site", "op": "eq", "value": "{{row.domain}}",
+                            "normalize": "domain"}], {}, row={"domain": "ACME.test"})
+    assert not co.garde(site, [{"path": "site", "op": "not_in_table", "normalize": "domain"}],
+                        {}, ensembles={0: {"acme.test"}})
+    # Un élément sans valeur n'est pas dans la liste d'exclusion : il passe.
+    assert co.garde({}, [{"path": "site", "op": "not_in_table", "normalize": "domain"}],
+                    {}, ensembles={0: {"acme.test"}})
