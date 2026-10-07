@@ -25,6 +25,7 @@ import hashlib
 import json
 import re
 import time
+import uuid
 from typing import Any, Optional
 
 from starlette.concurrency import run_in_threadpool
@@ -42,6 +43,9 @@ from . import outils as ou
 #: Budget d'horloge d'un appel, vérifié AVANT chaque page : passé ce délai le reçu est
 #: rendu partiel avec `resume`, plutôt que coupé sans reçu. Celui de `par_reference`.
 BUDGET_S = pr.BUDGET_S
+#: Le bail d'un tableau dure le budget d'horloge plus cette marge : un processus mort
+#: en pleine exécution ne bloque pas le tableau au-delà.
+BAIL_MARGE_S = 120
 #: Une clé de résultat qui n'a pas la forme d'un nom de champ est une VALEUR prise comme
 #: clé (un dictionnaire indexé par e-mail, par nom de société) : elle ne remonte pas.
 _NOM_DE_CHAMP = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,40}$")
@@ -249,10 +253,43 @@ def _derive(lignes: dict, colonnes: list[str]) -> list[str]:
     return [c for c in colonnes if all(co._vide(l.get(c)) for l in lignes.values())]
 
 
+def cle_de_bail(corps: dict, datastore: Any) -> Optional[str]:
+    """Le tableau dont une exécution écrit l'ÉTAT des lignes (le parent sous `for_each`,
+    sinon la cible) : deux exécutions qui s'y croisent — même recette ou non — paieraient
+    deux fois les mêmes lignes, ou créeraient deux fois la même fiche chez un tiers."""
+    fe = corps.get("for_each")
+    cible = fe["datastore"] if fe else datastore
+    return f"table:{cible}" if cible is not None else None
+
+
 async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                    datastore: Any = None, reprise: Optional[str] = None,
                    ecrire: bool = True, pages_max: Optional[int] = None,
                    budget_s: float = BUDGET_S, temoin: Optional[dict] = None) -> dict:
+    """Exécute une recette sous le BAIL de son tableau quand elle écrit : une deuxième
+    exécution concurrente est refusée avant tout appel (`run_in_progress`). L'épreuve,
+    qui n'écrit rien, n'en prend pas."""
+    from ..db import recipes as db_recipes
+    cle = cle_de_bail(corps, datastore) if ecrire else None
+    porteur = uuid.uuid4().hex
+    if cle is not None and not await run_in_threadpool(
+            db_recipes.prendre_bail, cle, porteur, int(budget_s) + BAIL_MARGE_S):
+        raise RecetteRefusee("run_in_progress", "Another run of a recipe is working on this "
+                                                "table right now: wait for it to finish, "
+                                                "then run again. Nothing was called.")
+    try:
+        return await _executer(corps, params, fastmcp=fastmcp, sub=sub, datastore=datastore,
+                               reprise=reprise, ecrire=ecrire, pages_max=pages_max,
+                               budget_s=budget_s, temoin=temoin)
+    finally:
+        if cle is not None:
+            await run_in_threadpool(db_recipes.rendre_bail, cle, porteur)
+
+
+async def _executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
+                    datastore: Any = None, reprise: Optional[str] = None,
+                    ecrire: bool = True, pages_max: Optional[int] = None,
+                    budget_s: float = BUDGET_S, temoin: Optional[dict] = None) -> dict:
     """Exécute une recette VALIDÉE (`contrat.valider`). `ecrire=False` = l'épreuve :
     les pages sont appelées (et facturées) mais rien n'est écrit ; le reçu porte le
     remplissage par colonne (`fill`). `temoin` = le rapport d'épreuve de la version

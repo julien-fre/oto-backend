@@ -55,3 +55,48 @@ CREATE TABLE IF NOT EXISTS recipe_versions (
     UNIQUE (recipe_id, version)
 );
 """
+
+#: Ce que l'EXÉCUTION d'une recette tient en base, au-delà de sa définition : le bail qui
+#: empêche deux exécutions sur le même tableau, le travail asynchrone en attente d'une
+#: recette `pull` (un lancement Apify payé ne se relance pas parce qu'un jeton s'est
+#: perdu), et les exécutions programmées.
+RECIPE_RUNS = """
+-- Un bail par tableau : deux exécutions simultanées sur les mêmes lignes paieraient
+-- deux fois ou créeraient deux fois la même fiche chez un tiers. Pris à l'entrée,
+-- rendu à la sortie, repris par un autre s'il a expiré (processus mort).
+CREATE TABLE IF NOT EXISTS recipe_leases (
+    lock_key TEXT PRIMARY KEY,
+    holder TEXT NOT NULL,
+    until TIMESTAMPTZ NOT NULL
+);
+
+-- Le travail asynchrone en cours d'une recette `pull` (un lancement Apify), par jeu de
+-- paramètres : une exécution le reprend au lieu d'en relancer un, payé, à côté.
+CREATE TABLE IF NOT EXISTS recipe_pending_jobs (
+    recipe_id BIGINT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    params_key TEXT NOT NULL,
+    job JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (recipe_id, params_key)
+);
+
+-- Une exécution programmée : la recette publiée, ses paramètres et son tableau, au
+-- nom de qui l'a posée (revérifié à chaque passage), dans son org.
+CREATE TABLE IF NOT EXISTS recipe_schedules (
+    id BIGSERIAL PRIMARY KEY,
+    recipe_id BIGINT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    sub TEXT NOT NULL,
+    org_id BIGINT,
+    params JSONB NOT NULL DEFAULT '{}'::jsonb,
+    datastore TEXT NOT NULL,
+    every_minutes INTEGER NOT NULL CHECK (every_minutes >= 15),
+    next_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    failures INTEGER NOT NULL DEFAULT 0,
+    last_run_at TIMESTAMPTZ,
+    last_receipt JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS recipe_schedules_due
+    ON recipe_schedules (next_run_at) WHERE enabled;
+"""

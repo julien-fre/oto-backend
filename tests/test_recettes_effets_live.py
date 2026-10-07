@@ -341,3 +341,19 @@ def test_une_ligne_soumise_est_collectee_meme_hors_du_filtre(serveur):
                         "filter": {"tier": "a"}})
     _executer(m, corps, ns)
     assert _lignes(ns, "first_name")["Jane"]["dc_status"] == "done"
+
+
+def test_deux_executions_sur_le_meme_tableau_ne_se_croisent_pas(serveur):
+    from oto_mcp.db import recipes as db_recipes
+    from oto_mcp.recipes import moteur
+    m, etat = serveur
+    ns = _tableau(CHAMPS, [{"email": "a@acme.test"}])
+    cle = moteur.cle_de_bail(_pousse(), ns)
+    assert db_recipes.prendre_bail(cle, "autre", 60)
+    with pytest.raises(moteur.RecetteRefusee) as e:
+        _executer(m, _pousse(), ns)
+    assert e.value.code == "run_in_progress" and etat["appels"] == []
+    db_recipes.rendre_bail(cle, "autre")
+    assert _executer(m, _pousse(), ns)["rows"]["created"] == 1
+    # Rendu à la sortie : une exécution suivante passe.
+    assert db_recipes.prendre_bail(cle, "x", 60)

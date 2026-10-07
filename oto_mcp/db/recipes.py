@@ -146,3 +146,115 @@ def decide_version(recipe_id: int, version: int, *, status: str, decided_by: str
             if status == "publiee":
                 conn.execute("UPDATE recipes SET published_version = %s, "
                              "updated_at = NOW() WHERE id = %s", (version, recipe_id))
+
+
+# ── Exécution : bail, travail en attente, programmes ─────────────────────────────
+def prendre_bail(cle: str, porteur: str, duree_s: int) -> bool:
+    """Prend le bail du tableau `cle`, ou le reprend s'il a expiré. False : une autre
+    exécution le tient."""
+    with _connect() as conn:
+        row = conn.execute(
+            "INSERT INTO recipe_leases (lock_key, holder, until) "
+            "VALUES (%s, %s, NOW() + make_interval(secs => %s)) "
+            "ON CONFLICT (lock_key) DO UPDATE SET holder = EXCLUDED.holder, "
+            "until = EXCLUDED.until WHERE recipe_leases.until < NOW() "
+            "RETURNING lock_key", (cle, porteur, duree_s)).fetchone()
+    return row is not None
+
+
+def rendre_bail(cle: str, porteur: str) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM recipe_leases WHERE lock_key = %s AND holder = %s",
+                     (cle, porteur))
+
+
+def travail_en_attente(recipe_id: int, params_key: str) -> Optional[dict]:
+    with _connect() as conn:
+        row = conn.execute("SELECT job FROM recipe_pending_jobs WHERE recipe_id = %s "
+                           "AND params_key = %s", (recipe_id, params_key)).fetchone()
+    return dict(row)["job"] if row else None
+
+
+def poser_travail(recipe_id: int, params_key: str, job: dict) -> None:
+    with _connect() as conn:
+        conn.execute("INSERT INTO recipe_pending_jobs (recipe_id, params_key, job) "
+                     "VALUES (%s, %s, %s) ON CONFLICT (recipe_id, params_key) "
+                     "DO UPDATE SET job = EXCLUDED.job, created_at = NOW()",
+                     (recipe_id, params_key, json.dumps(job)))
+
+
+def retirer_travail(recipe_id: int, params_key: str) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM recipe_pending_jobs WHERE recipe_id = %s "
+                     "AND params_key = %s", (recipe_id, params_key))
+
+
+_PROGRAMME_COLS = ("id, recipe_id, sub, org_id, params, datastore, every_minutes, "
+                   "next_run_at, enabled, failures, last_run_at, last_receipt, created_at")
+
+
+def creer_programme(*, recipe_id: int, sub: str, org_id: Optional[int], params: dict,
+                    datastore: str, every_minutes: int) -> dict:
+    with _connect() as conn:
+        row = conn.execute(
+            "INSERT INTO recipe_schedules (recipe_id, sub, org_id, params, datastore, "
+            f"every_minutes) VALUES (%s, %s, %s, %s, %s, %s) RETURNING {_PROGRAMME_COLS}",
+            (recipe_id, sub, org_id, json.dumps(params or {}), str(datastore),
+             every_minutes)).fetchone()
+    return dict(row)
+
+
+def programmes_de(recipe_id: int) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(f"SELECT {_PROGRAMME_COLS} FROM recipe_schedules "
+                            "WHERE recipe_id = %s ORDER BY id", (recipe_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def regler_programme(schedule_id: int, recipe_id: int, *, enabled: bool) -> bool:
+    """Active ou suspend un programme ; réactivé, son compteur d'échecs repart de zéro."""
+    with _connect() as conn:
+        row = conn.execute(
+            "UPDATE recipe_schedules SET enabled = %s, "
+            "failures = CASE WHEN %s THEN 0 ELSE failures END "
+            "WHERE id = %s AND recipe_id = %s RETURNING id",
+            (enabled, enabled, schedule_id, recipe_id)).fetchone()
+    return row is not None
+
+
+def supprimer_programme(schedule_id: int, recipe_id: int) -> bool:
+    with _connect() as conn:
+        row = conn.execute("DELETE FROM recipe_schedules WHERE id = %s AND recipe_id = %s "
+                           "RETURNING id", (schedule_id, recipe_id)).fetchone()
+    return row is not None
+
+
+def prendre_programme_du() -> Optional[dict]:
+    """LE prochain programme échu, avancé d'un pas dans la même écriture : deux
+    processus (bleu/vert) ne prennent jamais le même passage (`SKIP LOCKED`)."""
+    with _connect() as conn:
+        row = conn.execute(
+            "UPDATE recipe_schedules s SET next_run_at = NOW() + "
+            "make_interval(mins => s.every_minutes) WHERE s.id = ("
+            "  SELECT id FROM recipe_schedules WHERE enabled AND next_run_at <= NOW() "
+            "  ORDER BY next_run_at LIMIT 1 FOR UPDATE SKIP LOCKED) "
+            f"RETURNING {', '.join('s.' + c.strip() for c in _PROGRAMME_COLS.split(','))}"
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def noter_passage(schedule_id: int, *, recu: dict, echec: bool, seuil: int) -> None:
+    """Garde le dernier reçu ; `seuil` échecs d'affilée suspendent le programme."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE recipe_schedules SET last_run_at = NOW(), last_receipt = %s, "
+            "failures = CASE WHEN %s THEN failures + 1 ELSE 0 END, "
+            "enabled = enabled AND NOT (%s AND failures + 1 >= %s) WHERE id = %s",
+            (json.dumps(recu, default=str), echec, echec, seuil, schedule_id))
+
+
+def get_recipe_by_id(recipe_id: int) -> Optional[dict]:
+    with _connect() as conn:
+        row = conn.execute(f"SELECT {_RECIPE_COLS}, {_LATEST} FROM recipes r "
+                           "WHERE r.id = %s", (recipe_id,)).fetchone()
+    return dict(row) if row else None

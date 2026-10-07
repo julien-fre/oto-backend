@@ -125,10 +125,13 @@ CETTE ligne.
 - Même boucle que `for_each` : refus qui tiennent à la ligne, disjoncteur, plafond de
   dépense, budget d'horloge, dérive (sur dix lignes d'affilée).
 
-⚠️ Deux exécutions simultanées sur le même tableau peuvent payer deux fois la même ligne
-(vrai aussi en `pull` et `for_each`) — et, en `push`, créer deux fois la même fiche chez le
-tiers : rien ne réserve une ligne entre sa lecture et son état. Ne lancez pas deux
-exécutions d'une même recette en même temps.
+**Une exécution à la fois par tableau.** Une exécution qui écrit prend le BAIL du tableau
+dont elle écrit l'état des lignes (le parent sous `for_each`, sinon la cible ;
+`recipe_leases`) et le rend en sortie ; une deuxième, même d'une autre recette, est
+refusée avant tout appel (`run_in_progress`) — sinon elle paierait deux fois les mêmes
+lignes, ou créerait deux fois la même fiche chez un tiers. Un processus mort ne bloque
+pas le tableau au-delà de son budget d'horloge plus deux minutes. L'épreuve, qui n'écrit
+rien, n'en prend pas.
 
 ## Soumettre puis collecter (`async`, en `per_row`)
 
