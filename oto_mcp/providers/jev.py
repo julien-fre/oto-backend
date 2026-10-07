@@ -11,7 +11,7 @@ from ._model import CredentialField, _c
 # never carries a tenant key, its shared keys are platform keys, cf.
 # `credentials_store.TENANT`). `byo_org` is declared only because
 # `require_credential("tenant", …)` needs it; a closer key (org/team/user) is refused
-# at call time (`tools/jev.py::_client`). No free tier (`platform_key_open=False`): the
+# at call time (`tools/jev.py::client_partage`). No free tier (`platform_key_open=False`): the
 # platform key only serves the orgs it is granted to.
 CONNECTOR = _c(
     "jev", ["jev"],

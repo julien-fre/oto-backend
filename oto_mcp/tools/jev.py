@@ -105,34 +105,46 @@ def _verify(fields: dict, config: dict | None = None,  # noqa: ARG001
         timeout=20)
 
 
+def client_partage(units: int = 1):
+    """Client on the shared key; `units` = answers in this call (quota pre-check).
+
+    ⚠️ The winning rung is CHECKED: an org/user key would bill someone who didn't
+    opt in, invisibly to the tenant. The generic "set your own key" refusal is
+    replaced by the only valid path. Resolved under the CURRENT identity: the
+    background worker sets the job's (`jev_jobs_worker`)."""
+    from oto.tools.jev.client import JevClient
+    try:
+        rc = access.resolve_credential("jev", want="auto", units=units)
+    except CredentialUnavailable as e:
+        raise CredentialUnavailable(ErrorData(
+            code=INVALID_PARAMS,
+            message=("No `jev` key for your org: Jev runs on a shared key, either "
+                     "your TENANT's (a tenant admin sets it once for all its orgs) "
+                     "or one set at the instance's platform level and granted to "
+                     "your org. Org, team or personal keys are not used."))) from e
+    if rc.mode not in RANGS_SERVIS:
+        qui = QUI_RETIRE.get(rc.mode, "whoever set it")
+        raise _bad(
+            f"A `jev` key set at the '{rc.mode}' level shadows the shared key: "
+            "Jev only runs on the TENANT's key or a PLATFORM key, so this one is not used. "
+            f"To use the shared key, {qui} must remove it (Jev connector card).")
+    return JevClient(api_key=rc.key)
+
+
+def releve(cout_total: float) -> None:
+    """Record the call's REAL spend in micro-dollars (else a 200-item batch bills as one
+    call), on the current call's trace — the background worker opens one per slice."""
+    u = _microdollars(cout_total)
+    if u:
+        session_org.note_call_trace(quantity=u)
+
+
 def register(mcp: FastMCP) -> None:
     from oto.tools.common.errors import UpstreamHTTPError
-    from oto.tools.jev.client import DEFAULT_MODEL, JevClient
 
     connector_verify.register("jev", _verify)
 
-    def _client(units: int = 1) -> JevClient:
-        """Client on the shared key; `units` = answers in this call (quota pre-check).
-
-        ⚠️ The winning rung is CHECKED: an org/user key would bill someone who didn't
-        opt in, invisibly to the tenant. The generic "set your own key" refusal is
-        replaced by the only valid path."""
-        try:
-            rc = access.resolve_credential("jev", want="auto", units=units)
-        except CredentialUnavailable as e:
-            raise CredentialUnavailable(ErrorData(
-                code=INVALID_PARAMS,
-                message=("No `jev` key for your org: Jev runs on a shared key, either "
-                         "your TENANT's (a tenant admin sets it once for all its orgs) "
-                         "or one set at the instance's platform level and granted to "
-                         "your org. Org, team or personal keys are not used."))) from e
-        if rc.mode not in RANGS_SERVIS:
-            qui = QUI_RETIRE.get(rc.mode, "whoever set it")
-            raise _bad(
-                f"A `jev` key set at the '{rc.mode}' level shadows the shared key: "
-                "Jev only runs on the TENANT's key or a PLATFORM key, so this one is not used. "
-                f"To use the shared key, {qui} must remove it (Jev connector card).")
-        return JevClient(api_key=rc.key)
+    _client = client_partage
 
     def _etat_borne(state, ou: str) -> None:
         """Refuse a state over `MAX_ETAT_OCTETS` before any call."""
@@ -155,11 +167,7 @@ def register(mcp: FastMCP) -> None:
         except (requests.ConnectionError, requests.Timeout) as e:
             raise _bad(f"Jev unreachable (network/timeout). Retry later. {e}")
 
-    def _releve(cout_total: float) -> None:
-        """Record the call's REAL spend in micro-dollars (else a 200-item batch bills as one call)."""
-        u = _microdollars(cout_total)
-        if u:
-            session_org.note_call_trace(quantity=u)
+    _releve = releve
 
     @mcp.tool()
     def jev_ask(state: dict, questions: dict, model: Optional[str] = None) -> dict:
@@ -349,7 +357,7 @@ def register(mcp: FastMCP) -> None:
                  filters: Optional[list] = None, limit: int = jr.MAX_ROWS,
                  parallel: Optional[int] = None, dry_run: bool = False,
                  overwrite: bool = False, cursor: Optional[str] = None,
-                 model: Optional[str] = None) -> dict:
+                 model: Optional[str] = None, background: bool = False) -> dict:
         """Qualify a table's rows with Jev ON THE SERVER: rows are read, judged and written
         back here, and no row data passes through you. Write the rubric; review the sample.
 
@@ -366,10 +374,20 @@ def register(mcp: FastMCP) -> None:
 
         Only undecided rows are taken (`model_column` empty) unless `overwrite=true`, so a
         re-run resumes and never pays twice. Rows leased by another run are skipped, and a
-        row changed since it was read is never overwritten. Nothing reserves rows between
-        two `jev_rows` calls: do not run two at once on the same rows. Loop on
-        `next_cursor` until `done`, then finish with one pass WITHOUT cursor to pick up
-        skipped rows.
+        row changed since it was read is never overwritten.
+
+        A whole table: `background=true` (after a dry run). The call returns a `job_id`
+        at once and the server judges every matching row itself — no cursor loop, and a
+        dropped connection doesn't stop it. Follow it with `jev_job(op='status')`, stop
+        it with `jev_job(op='cancel')`. The key, the write right and the quota are
+        checked again before every slice: a revoked key or a spent quota stops the job,
+        and what was already judged stays written and billed. One active job per table
+        and `model_column`. A job keeps `_run_id` and bills its slices under it.
+
+        Without `background`, one call judges what fits in its time window (~100 rows):
+        loop on `next_cursor` until `done`, then finish with one pass WITHOUT cursor to
+        pick up skipped rows. Nothing reserves rows between two calls: do not run two at
+        once on the same rows.
 
         Any other upstream refusal (key, credits, a malformed request) stops the batch:
         what was already judged stays written and billed, and the error says how much.
@@ -389,7 +407,8 @@ def register(mcp: FastMCP) -> None:
         remaining, done, cost, model, sample}`. `errors` and `sample` name rows by `_id`
         with codes and what was written — never a value read from the table. `dry_run`
         returns `rows` (each judged row's `_id` and answers) and `would_create_columns`,
-        and writes nothing.
+        and writes nothing. `background` returns `{job_id, status, remaining,
+        created_columns}`.
 
         Args:
             datastore: the table number (ns_id) or `slot:<name>`.
@@ -402,246 +421,435 @@ def register(mcp: FastMCP) -> None:
             filter: `data_rows` filter grammar.
             filters: `data_rows` multi-column clauses.
             limit: max rows judged in this call (default and max 500; dry run max 20).
+                Ignored with `background`: the job takes every matching row.
             parallel: rows in flight (default 25, max 50).
             dry_run: judge and return, write nothing (still billed).
             overwrite: also re-judge rows that already have an answer.
-            cursor: `next_cursor` from the previous call.
+            cursor: `next_cursor` from the previous call (not with `background`).
             model: another model id (default: the pinned dated snapshot).
+            background: run the whole table as a server job; returns a `job_id`.
         """
-        from ..datastore import jetons
-        from ..datastore import par_reference as pr
-        from ..datastore.core import DatastoreNotFound, DatastoreReadOnly
-        from ..datastore.errors import InvalidCursor
-        from ..datastore.outils import _encode_cursor
-
         try:
             limite = int(limit)
             fil = max(1, min(int(parallel or jr.PARALLEL_DEFAULT), jr.PARALLEL_MAX))
         except (TypeError, ValueError):
             raise _bad("`limit` and `parallel` must be integers.")
+        if background and dry_run:
+            raise _bad("`background` and `dry_run` don't go together: run the dry run "
+                       "first, then the job. Nothing sent.")
+        if background and cursor:
+            raise _bad("`background` takes no `cursor`: the job walks the whole table "
+                       "itself. Nothing sent.")
         limite = max(1, min(limite, jr.MAX_DRY_RUN if dry_run else jr.MAX_ROWS))
+        plan = preparer(datastore, questions=questions, state_fields=state_fields,
+                        output=output, model_column=model_column, filter=filter,
+                        filters=filters, overwrite=overwrite, model=model, fil=fil,
+                        dry_run=dry_run)
+        if background:
+            return _deposer(plan)
+        out, panne = qualifier(plan, cursor=cursor, limite=limite,
+                               fenetre_s=LOT_FENETRE_S, relever=_releve)
+        if panne is not None:
+            raise _refus_de_panne(panne, out["decided"])
+        out.pop("_epuise", None)
+        if dry_run:
+            # `legend` dropped from each answer here, at the reply (it repeats the criteria).
+            out["rows"] = [{"_id": r["_id"], "answers": jr.answers_slim(r["answers"])}
+                           for r in out["rows"]]
+        return out
+
+    @mcp.tool()
+    def jev_job(op: str, job_id: int) -> dict:
+        """Follow or stop a `jev_rows(background=true)` job.
+
+        `op='status'` — where the job is: `{job_id, status, decided, jev_errors,
+        empty_state, skipped_leased, skipped_changed, low_confidence, thin_state,
+        remaining, cost, errors, error_count, error, slices, model, created_at,
+        updated_at, finished_at}`. `status` is `pending`, `running`, `done`, `failed`
+        (`error` says why; what was judged stays written and billed) or `cancelled`.
+        `remaining` = undecided rows matching the job, as of its last slice. Poll every
+        minute or so, not faster: a slice takes up to two minutes.
+        `op='cancel'` — stop the job. One with no slice in flight stops at once; one
+        mid-slice stops when that slice ends (rows it judged stay written and billed).
+        Relaunching `jev_rows(background=true)` later resumes on the undecided rows.
+
+        Args:
+            op: `status` or `cancel`.
+            job_id: the `job_id` returned by `jev_rows(background=true)`.
+        """
+        from ..db import jev_jobs as db_jev
+        if op not in ("status", "cancel"):
+            raise _bad("`op`: `status` or `cancel`.")
+        job = _job_de_l_appelant(job_id)
+        if op == "cancel":
+            db_jev.cancel_jev_job(int(job["id"]))
+            job = db_jev.get_jev_job(int(job["id"])) or job
+        return etat_du_job(job)
+
+
+# ── jev_rows: the core shared by the call and the background job ───────────────────────
+
+
+class Plan:
+    """A `jev_rows` call checked against its table: what every slice needs."""
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def preparer(datastore: Any, *, questions: dict, state_fields: list, output: dict,
+             model_column: str, filter: Optional[dict], filters: Optional[list],
+             overwrite: bool, model: Optional[str], fil: int, dry_run: bool) -> Plan:
+    """Check the call against the table, the key, the model and the rubric, then create
+    the missing output columns (never in a dry run). Raises the tool's refusals.
+
+    ⚠️ Called again before every background slice: it is what re-checks the write
+    right, the key (a revoked grant) and the rubric under the job's identity."""
+    from oto.tools.jev.client import DEFAULT_MODEL
+
+    from ..datastore import jetons
+    from ..datastore import par_reference as pr
+    from ..datastore.core import DatastoreNotFound, DatastoreReadOnly
+    try:
+        store, adresse = pr.tableau(datastore, ecrire=not dry_run)
+        schema = store.get_schema(adresse)
+    except jetons.JetonMalPlace as e:
+        raise _bad(str(e))
+    except DatastoreNotFound:
+        raise _bad(f"Table `{datastore}` not found. Nothing sent.")
+    except DatastoreReadOnly:
+        raise _bad(f"Table `{datastore}` is shared read-only. Nothing sent.")
+    fields = jr.fields_of(schema)
+    if not fields:
+        raise _bad("`jev_rows` needs a declared schema on the table. Nothing sent.")
+    # Missing output columns are created (typed from the questions); existing ones
+    # are checked, never altered.
+    a_creer = jr.missing_columns(questions, output, model_column, fields)
+    try:
+        cols = jr.check_state_fields(state_fields, fields, jr.hidden_of(schema))
+        jr.check_outputs(questions, output, model_column,
+                         {**fields, **{f["key"]: f for f in a_creer}},
+                         jr.closed_of(schema))
+    except jr.Refusal as e:
+        raise _bad(str(e))
+    # ⚠️ The key, the model and the rubric BEFORE any side effect: a refused call
+    # must leave the schema and the rows as they were. Each page re-checks the quota
+    # for what it will send.
+    client = client_partage(units=1)
+    with _vers_refus():
+        client.check_model(model or DEFAULT_MODEL)
+        client.check_questions(questions)
+    if a_creer and not dry_run:
         try:
-            store, adresse = pr.tableau(datastore, ecrire=not dry_run)
-            schema = store.get_schema(adresse)
-        except jetons.JetonMalPlace as e:
-            raise _bad(str(e))
-        except DatastoreNotFound:
-            raise _bad(f"Table `{datastore}` not found. Nothing sent.")
-        except DatastoreReadOnly:
-            raise _bad(f"Table `{datastore}` is shared read-only. Nothing sent.")
-        fields = jr.fields_of(schema)
-        if not fields:
-            raise _bad("`jev_rows` needs a declared schema on the table. Nothing sent.")
-        # Missing output columns are created (typed from the questions); existing ones
-        # are checked, never altered.
-        a_creer = jr.missing_columns(questions, output, model_column, fields)
+            store.patch_schema(adresse, fields=a_creer)
+        except ValueError as e:
+            raise _bad(f"Could not create the output columns: {e}. Nothing sent.")
+
+    clauses = list(filters or [])
+    # In a dry run a column still to be created is empty everywhere: no clause.
+    if not overwrite and not (dry_run and model_column in {f["key"] for f in a_creer}):
+        clauses.append({"field": model_column, "op": "empty", "value": True})
+    proj = [c for c, _ in cols] + ["_revision", "_claimed_by", "_claimed_until",
+                                    "_claimed_run"]
+    return Plan(store=store, adresse=adresse, cols=cols, a_creer=a_creer,
+                clauses=clauses, proj=proj, questions=questions, output=output,
+                model_column=model_column, filter=filter, filters=filters,
+                state_fields=state_fields, overwrite=overwrite, model=model, fil=fil,
+                dry_run=dry_run)
+
+
+@contextmanager
+def _vers_refus():
+    """`check_model`/`check_questions` refusals → the tool's refusal."""
+    try:
+        yield
+    except ValueError as e:
+        raise _bad(str(e))
+
+
+def _refus_de_panne(panne: Exception, decided: int) -> Exception:
+    """A batch stopped upstream → the error to raise, saying what was already billed."""
+    from oto.tools.common.errors import UpstreamHTTPError
+    deja = f" {decided} row(s) already written and billed."
+    if isinstance(panne, UpstreamHTTPError):
+        e = _bad(_upstream_message(panne) + " Batch stopped." + deja)
+        e.__cause__ = panne
+        return e
+    return panne
+
+
+def qualifier(plan: Plan, *, cursor: Optional[str], limite: int, fenetre_s: float,
+              relever, passer_les_echecs: bool = False) -> tuple[dict, Optional[Exception]]:
+    """Judge and write up to `limite` rows from `cursor`, sending nothing after
+    `fenetre_s`. `relever(cost)` records the spend, ALWAYS (even when it raises).
+
+    `passer_les_echecs` (the background job): a row whose call failed upstream (5xx,
+    429, unreachable) counts as handled, so the cursor moves past it. Otherwise the
+    watermark stops on it and, with `overwrite`, every later row of the page would be
+    judged — and billed — again on the next slice. The job's last pass retries it.
+
+    Returns `(result, panne)`: `panne` = the upstream refusal that stopped the batch
+    (key, credits, malformed request), what was judged before it stays written."""
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    from ..datastore import par_reference as pr
+    from ..datastore.errors import InvalidCursor
+    from ..datastore.outils import _encode_cursor
+
+    store, adresse, cols = plan.store, plan.adresse, plan.cols
+    questions, output, model_column = plan.questions, plan.output, plan.model_column
+    dry_run, model, filter, clauses = plan.dry_run, plan.model, plan.filter, plan.clauses
+    fin_depart = time.monotonic() + fenetre_s
+    arret = threading.Event()
+    client = None
+
+    # Per row, in table order: True once handled (written, marked or skipped).
+    ordre: list[str] = []
+    fait: dict[str, bool] = {}
+    n = {"decided": 0, "jev_errors": 0, "empty_state": 0, "skipped_leased": 0,
+         "skipped_changed": 0, "low_confidence": 0, "thin_state": 0}
+    # `{_id, code}` only: a refusal's text can quote a cell, and this reply never does.
+    erreurs: list[dict] = []
+    sample: list[dict] = []
+    judged: list[dict] = []
+    cout = 0.0
+    servi = None
+    panne: Optional[Exception] = None
+    page_cursor, epuise = cursor, False
+
+    def _ecrire(rid: str, rev, patch: dict) -> Optional[str]:
+        """Write one row by id on THIS thread (journal stamps). Code or None."""
+        return pr.ecrire_ligne(store, adresse, rid, patch, expected_revision=rev)
+
+    def _marquer(rid: str, rev, raison: str) -> None:
+        code = _ecrire(rid, rev, {model_column: (jr.ERROR_PREFIX + raison)[:500]})
+        if code is None:
+            n["jev_errors"] += 1
+        _issue(rid, code)
+
+    def _issue(rid: str, code: Optional[str]) -> None:
+        if code == "row_locked":
+            n["skipped_leased"] += 1
+        elif code == "row_changed":
+            n["skipped_changed"] += 1
+        elif code and code != "row_not_found":
+            erreurs.append({"_id": rid, "code": code})
+        fait[rid] = True
+
+    def _decide(state: dict) -> dict:
+        if arret.is_set() or time.monotonic() >= fin_depart:
+            return {"_non_parti": True}
         try:
-            cols = jr.check_state_fields(state_fields, fields, jr.hidden_of(schema))
-            jr.check_outputs(questions, output, model_column,
-                             {**fields, **{f["key"]: f for f in a_creer}},
-                             jr.closed_of(schema))
-        except jr.Refusal as e:
-            raise _bad(str(e))
-        # ⚠️ The key, the model and the rubric BEFORE any side effect: a refused call
-        # must leave the schema and the rows as they were. Each page re-checks the quota
-        # for what it will send.
-        client = _client(units=1)
-        with _upstream():
-            client.check_model(model or DEFAULT_MODEL)
-            client.check_questions(questions)
-        if a_creer and not dry_run:
+            return client.decide(state, questions, model=model, timeout=LECTURE_S)
+        except UpstreamHTTPError as e:
+            refus = jr.state_refusal(e.status_code, getattr(e, "body", ""))
+            # ⚠️ Key, balance or request problems stop the whole batch; only a 400
+            # about THIS state is the row's own.
+            if e.status_code in (401, 402, 403) or (e.status_code == 400
+                                                    and refus is None):
+                raise
+            return {"_code": f"upstream_{e.status_code}", "_refus": refus}
+        except (requests.ConnectionError, requests.Timeout):
+            return {"_code": "upstream_unreachable", "_refus": None}
+
+    try:
+        while len(ordre) < limite and not epuise and not arret.is_set() \
+                and time.monotonic() < fin_depart:
             try:
-                store.patch_schema(adresse, fields=a_creer)
+                page = store.cursor_rows(adresse, filter=filter or None,
+                                         filters=clauses or None,
+                                         limit=min(jr.PAGE, limite - len(ordre)),
+                                         cursor=page_cursor, fields=plan.proj)
+            except InvalidCursor:
+                raise _bad("`cursor` is not a `jev_rows` cursor.")
             except ValueError as e:
-                raise _bad(f"Could not create the output columns: {e}. Nothing sent.")
-
-        clauses = list(filters or [])
-        # In a dry run a column still to be created is empty everywhere: no clause.
-        if not overwrite and not (dry_run and model_column in {f["key"] for f in a_creer}):
-            clauses.append({"field": model_column, "op": "empty", "value": True})
-        proj = [c for c, _ in cols] + ["_revision", "_claimed_by", "_claimed_until",
-                                        "_claimed_run"]
-        fin_depart = time.monotonic() + LOT_FENETRE_S
-        arret = threading.Event()
-
-        # Per row, in table order: True once handled (written, marked or skipped).
-        ordre: list[str] = []
-        fait: dict[str, bool] = {}
-        n = {"decided": 0, "jev_errors": 0, "empty_state": 0, "skipped_leased": 0,
-             "skipped_changed": 0, "low_confidence": 0, "thin_state": 0}
-        # `{_id, code}` only: a refusal's text can quote a cell, and this reply never does.
-        erreurs: list[dict] = []
-        sample: list[dict] = []
-        judged: list[dict] = []
-        cout = 0.0
-        servi = None
-        panne: Optional[Exception] = None
-        page_cursor, epuise = cursor, False
-
-        def _ecrire(rid: str, rev, patch: dict) -> Optional[str]:
-            """Write one row by id on THIS thread (journal stamps). Code or None."""
-            return pr.ecrire_ligne(store, adresse, rid, patch, expected_revision=rev)
-
-        def _marquer(rid: str, rev, raison: str) -> None:
-            code = _ecrire(rid, rev, {model_column: (jr.ERROR_PREFIX + raison)[:500]})
-            if code is None:
-                n["jev_errors"] += 1
-            _issue(rid, code)
-
-        def _issue(rid: str, code: Optional[str]) -> None:
-            if code == "row_locked":
-                n["skipped_leased"] += 1
-            elif code == "row_changed":
-                n["skipped_changed"] += 1
-            elif code and code != "row_not_found":
-                erreurs.append({"_id": rid, "code": code})
-            fait[rid] = True
-
-        def _decide(state: dict) -> dict:
-            if arret.is_set() or time.monotonic() >= fin_depart:
-                return {"_non_parti": True}
-            try:
-                return client.decide(state, questions, model=model, timeout=LECTURE_S)
-            except UpstreamHTTPError as e:
-                refus = jr.state_refusal(e.status_code, getattr(e, "body", ""))
-                # ⚠️ Key, balance or request problems stop the whole batch; only a 400
-                # about THIS state is the row's own.
-                if e.status_code in (401, 402, 403) or (e.status_code == 400
-                                                        and refus is None):
-                    raise
-                return {"_code": f"upstream_{e.status_code}", "_refus": refus}
-            except (requests.ConnectionError, requests.Timeout):
-                return {"_code": "upstream_unreachable", "_refus": None}
-
-        try:
-            while len(ordre) < limite and not epuise and not arret.is_set() \
-                    and time.monotonic() < fin_depart:
-                try:
-                    page = store.cursor_rows(adresse, filter=filter or None,
-                                             filters=clauses or None,
-                                             limit=min(jr.PAGE, limite - len(ordre)),
-                                             cursor=page_cursor, fields=proj)
-                except InvalidCursor:
-                    raise _bad("`cursor` is not a `jev_rows` cursor.")
-                except ValueError as e:
-                    raise _bad(f"`filter`: {e}")
-                rows = page.get("rows") or []
-                page_cursor = page.get("next_cursor")
-                epuise = not page_cursor
-                envoi: list[tuple[str, Any, dict]] = []
-                for row in rows:
-                    rid = str(row["_id"])
-                    ordre.append(rid)
-                    fait[rid] = False
-                    if pr.tenue_ailleurs(row):
-                        _issue(rid, "row_locked")
+                raise _bad(f"`filter`: {e}")
+            rows = page.get("rows") or []
+            page_cursor = page.get("next_cursor")
+            epuise = not page_cursor
+            envoi: list[tuple[str, Any, dict]] = []
+            for row in rows:
+                rid = str(row["_id"])
+                ordre.append(rid)
+                fait[rid] = False
+                if pr.tenue_ailleurs(row):
+                    _issue(rid, "row_locked")
+                    continue
+                state = jr.state_of(row, cols)
+                rev = row.get("_revision")
+                if not state:
+                    # Not the row's verdict: its fields may be filled later.
+                    n["empty_state"] += 1
+                    fait[rid] = True
+                    continue
+                taille = len(json.dumps(state, ensure_ascii=False,
+                                        default=str).encode("utf-8"))
+                if taille > MAX_ETAT_OCTETS:
+                    if not dry_run:
+                        _marquer(rid, rev, f"state is {taille} bytes, max {MAX_ETAT_OCTETS}")
+                    else:
+                        fait[rid] = True
+                    continue
+                if jr.is_thin(state, cols[0][0]):
+                    n["thin_state"] += 1
+                envoi.append((rid, rev, state))
+            if not envoi:
+                continue
+            # Quota is checked per page, for what this page will send.
+            client = client_partage(units=len(envoi))
+            # Workers only make the HTTP call; reads and writes stay on this thread.
+            with ThreadPoolExecutor(max_workers=plan.fil) as ex:
+                futurs = {ex.submit(_decide, st): (rid, rev)
+                          for rid, rev, st in envoi}
+                for f in as_completed(futurs):
+                    rid, rev = futurs[f]
+                    try:
+                        r = f.result()
+                    except Exception as e:  # noqa: SILENT — kept, returned after billing
+                        if panne is None:
+                            panne = e
+                            arret.set()
+                            for autre in futurs:
+                                autre.cancel()
                         continue
-                    state = jr.state_of(row, cols)
-                    rev = row.get("_revision")
-                    if not state:
-                        # Not the row's verdict: its fields may be filled later.
-                        n["empty_state"] += 1
+                    if r.get("_non_parti"):
+                        continue          # not sent: stays undecided, not handled
+                    if "_code" in r:
+                        if r["_refus"] and not dry_run:
+                            _marquer(rid, rev, f"state refused upstream ({r['_refus']})")
+                        else:
+                            erreurs.append({"_id": rid, "code": r["_code"]})
+                            if passer_les_echecs:
+                                fait[rid] = True
+                        continue
+                    cout += (r.get("usage") or {}).get("cost") or 0
+                    servi = servi or r.get("model")
+                    answers = r.get("answers") or {}
+                    try:
+                        patch, conf = jr.patch_of(answers, output, model_column,
+                                                  r.get("model") or "")
+                    except (KeyError, TypeError):
+                        if not dry_run:
+                            _marquer(rid, rev, "incomplete answer")
+                        continue
+                    n["low_confidence"] += sum(1 for c in conf if c < jr.LOW_CONFIDENCE)
+                    if dry_run:
+                        judged.append({"_id": rid, "answers": answers})
                         fait[rid] = True
                         continue
-                    taille = len(json.dumps(state, ensure_ascii=False,
-                                            default=str).encode("utf-8"))
-                    if taille > MAX_ETAT_OCTETS:
-                        if not dry_run:
-                            _marquer(rid, rev, f"state is {taille} bytes, max {MAX_ETAT_OCTETS}")
-                        else:
-                            fait[rid] = True
+                    code = _ecrire(rid, rev, patch)
+                    if code == "writeback_refused":
+                        # Paid once: marked, so no later pass judges it again.
+                        erreurs.append({"_id": rid, "code": code})
+                        _marquer(rid, rev, "answer refused by the table schema")
                         continue
-                    if jr.is_thin(state, cols[0][0]):
-                        n["thin_state"] += 1
-                    envoi.append((rid, rev, state))
-                if not envoi:
-                    continue
-                # Quota is checked per page, for what this page will send.
-                client = _client(units=len(envoi))
-                # Workers only make the HTTP call; reads and writes stay on this thread.
-                with ThreadPoolExecutor(max_workers=fil) as ex:
-                    futurs = {ex.submit(_decide, st): (rid, rev)
-                              for rid, rev, st in envoi}
-                    for f in as_completed(futurs):
-                        rid, rev = futurs[f]
-                        try:
-                            r = f.result()
-                        except Exception as e:  # noqa: SILENT — kept, re-raised after billing
-                            if panne is None:
-                                panne = e
-                                arret.set()
-                                for autre in futurs:
-                                    autre.cancel()
-                            continue
-                        if r.get("_non_parti"):
-                            continue          # not sent: stays undecided, not handled
-                        if "_code" in r:
-                            if r["_refus"] and not dry_run:
-                                _marquer(rid, rev, f"state refused upstream ({r['_refus']})")
-                            else:
-                                erreurs.append({"_id": rid, "code": r["_code"]})
-                            continue
-                        cout += (r.get("usage") or {}).get("cost") or 0
-                        servi = servi or r.get("model")
-                        answers = r.get("answers") or {}
-                        try:
-                            patch, conf = jr.patch_of(answers, output, model_column,
-                                                      r.get("model") or "")
-                        except (KeyError, TypeError):
-                            if not dry_run:
-                                _marquer(rid, rev, "incomplete answer")
-                            continue
-                        n["low_confidence"] += sum(1 for c in conf if c < jr.LOW_CONFIDENCE)
-                        if dry_run:
-                            judged.append({"_id": rid, "answers": jr.answers_slim(answers)})
-                            fait[rid] = True
-                            continue
-                        code = _ecrire(rid, rev, patch)
-                        if code == "writeback_refused":
-                            # Paid once: marked, so no later pass judges it again.
-                            erreurs.append({"_id": rid, "code": code})
-                            _marquer(rid, rev, "answer refused by the table schema")
-                            continue
-                        if code is None:
-                            n["decided"] += 1
-                            if len(sample) < 5:
-                                sample.append({"_id": rid, "written": patch})
-                        _issue(rid, code)
-        finally:
-            _releve(cout)
+                    if code is None:
+                        n["decided"] += 1
+                        if len(sample) < 5:
+                            sample.append({"_id": rid, "written": patch})
+                    _issue(rid, code)
+    finally:
+        relever(cout)
 
-        if panne is not None:
-            deja = f" {n['decided']} row(s) already written and billed."
-            if isinstance(panne, UpstreamHTTPError):
-                raise _bad(_upstream_message(panne) + " Batch stopped." + deja) from panne
-            raise panne
+    if panne is not None:
+        return ({**n, "errors": erreurs[:20], "error_count": len(erreurs), "cost": cout,
+                 "model": servi}, panne)
 
-        # Watermark: the last row with every earlier row handled.
-        borne = None
-        for rid in ordre:
-            if not fait.get(rid):
-                break
-            borne = rid
-        remaining = (None if overwrite or dry_run
-                     else store.count_rows(adresse, filter=filter or None,
-                                           filters=clauses or None))
-        tout_fait = all(fait.get(r) for r in ordre)
-        if remaining is None:
-            done = epuise and tout_fait
-        else:
-            # A full pass (no cursor) that read and handled every undecided row: the
-            # only ones left wait for their state, so re-running would change nothing.
-            done = remaining == 0 or (cursor is None and epuise and tout_fait
-                                      and remaining <= n["empty_state"])
-        next_cursor = None if done else (_encode_cursor(borne) if borne else cursor)
-        creees = [f["key"] for f in a_creer]
-        out = {**n, "errors": erreurs[:20], "error_count": len(erreurs),
-               **({"would_create_columns": creees} if dry_run
-                  else {"created_columns": creees}),
-               "next_cursor": next_cursor, "remaining": remaining,
-               "done": done, "cost": cout, "model": servi, "dry_run": dry_run}
-        if dry_run:
-            out["rows"] = judged
-        else:
-            out["sample"] = sample
-        return out
+    # Watermark: the last row with every earlier row handled.
+    borne = None
+    for rid in ordre:
+        if not fait.get(rid):
+            break
+        borne = rid
+    overwrite = plan.overwrite
+    remaining = (None if overwrite or dry_run
+                 else store.count_rows(adresse, filter=filter or None,
+                                       filters=clauses or None))
+    tout_fait = all(fait.get(r) for r in ordre)
+    if remaining is None:
+        done = epuise and tout_fait
+    else:
+        # A full pass (no cursor) that read and handled every undecided row: the
+        # only ones left wait for their state, so re-running would change nothing.
+        done = remaining == 0 or (cursor is None and epuise and tout_fait
+                                  and remaining <= n["empty_state"])
+    next_cursor = None if done else (_encode_cursor(borne) if borne else cursor)
+    creees = [f["key"] for f in plan.a_creer]
+    out = {**n, "errors": erreurs[:20], "error_count": len(erreurs),
+           **({"would_create_columns": creees} if dry_run
+              else {"created_columns": creees}),
+           "next_cursor": next_cursor, "remaining": remaining,
+           "done": done, "cost": cout, "model": servi, "dry_run": dry_run,
+           # For the background job: the pass read to the end of the table.
+           "_epuise": epuise}
+    if dry_run:
+        out["rows"] = judged
+    else:
+        out["sample"] = sample
+    return out, None
+
+
+# ── jev_rows(background=true): the job ─────────────────────────────────────────────────
+
+#: What a job keeps of the call: everything `preparer` needs again on every slice.
+PARAMS_DU_JOB = ("questions", "state_fields", "output", "model_column", "filter",
+                 "filters", "overwrite", "model", "fil")
+
+
+def _deposer(plan: Plan) -> dict:
+    """Queue the job (columns already created by `preparer`) and return at once."""
+    from .. import access
+    from ..db import jev_jobs as db_jev
+    sub = access.current_user_sub_or_raise()
+    # The table's NUMBER, whatever the call named it by: by name and by number it is
+    # the same table for the one-active-job rule, and a name stops resolving one day.
+    ns_id = plan.store._resolve(plan.adresse, write=True)
+    remaining = (None if plan.overwrite else
+                 plan.store.count_rows(plan.adresse, filter=plan.filter or None,
+                                       filters=plan.clauses or None))
+    try:
+        jid = db_jev.create_jev_job(
+            org_id=access.current_org(sub), sub=sub,
+            project_id=session_org.current_call_project(),
+            run_id=session_org.current_call_run(), adresse=str(ns_id),
+            model_column=plan.model_column, remaining=remaining,
+            params={k: getattr(plan, k) for k in PARAMS_DU_JOB})
+    except db_jev.JevJobActive as e:
+        raise _bad(f"Job {e.job_id} is already running on this table and "
+                   f"`{plan.model_column}`: follow it with `jev_job(op='status', "
+                   f"job_id={e.job_id})`, or cancel it first. Nothing sent.")
+    return {"job_id": jid, "status": "pending", "remaining": remaining,
+            "created_columns": [f["key"] for f in plan.a_creer],
+            "next": f"jev_job(op='status', job_id={jid})"}
+
+
+def _job_de_l_appelant(job_id: Any) -> dict:
+    """The job, if the caller launched it or belongs to its org. Another org's job and a
+    missing one get the same answer: a job id reveals nothing."""
+    from .. import access, roles
+    from ..db import jev_jobs as db_jev
+    try:
+        jid = int(job_id)
+    except (TypeError, ValueError):
+        raise _bad("`job_id` must be an integer.")
+    sub = access.current_user_sub_or_raise()
+    job = db_jev.get_jev_job(jid)
+    if job is not None and (job["sub"] == sub or (
+            job["org_id"] is not None and roles.is_org_member(sub, int(job["org_id"])))):
+        return job
+    raise _bad(f"No `jev_rows` job {jid} in your organizations.")
+
+
+def etat_du_job(job: dict) -> dict:
+    c = job.get("counters") or {}
+    compte = {k: int(c.get(k) or 0) for k in (
+        "decided", "jev_errors", "empty_state", "skipped_leased", "skipped_changed",
+        "low_confidence", "thin_state")}
+    quand = {k: (v.isoformat() if hasattr(v, "isoformat") else v)
+             for k in ("created_at", "updated_at", "finished_at") for v in [job.get(k)]}
+    return {"job_id": int(job["id"]), "status": job["status"], **compte,
+            "remaining": job.get("remaining"), "cost": float(job.get("cost") or 0),
+            "errors": job.get("errors") or [], "error_count": job.get("error_count") or 0,
+            "error": job.get("error"), "slices": job.get("slices") or 0,
+            "model": job.get("model"), "cancel_requested": bool(job.get("cancel_requested")),
+            **quand}

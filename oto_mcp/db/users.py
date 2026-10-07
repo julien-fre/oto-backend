@@ -445,6 +445,11 @@ _SUB_COLUMNS = [
     # droit d'écriture pour un compte qui n'a jamais cessé d'exister, seulement
     # changé de nom.
     ("transcription_jobs", "sub"),
+    # Même raison encore : l'identité sous laquelle `jev_jobs_worker` joue chaque
+    # tranche d'un `jev_rows(background=true)` (droit d'écriture, clé, appartenance).
+    # Hors PK (`id`), aucune FK : non repointé, un travail en cours s'arrêterait
+    # (« plus membre ») pour un compte qui a seulement changé de nom.
+    ("jev_jobs", "sub"),
     # Qui a commandé un reveal de téléphone Apollo (`apollo_receiver.py`). Hors PK
     # (`token_hash`), sans FK ni unicité sur `sub` : UPDATE nu. Non repointée, une
     # commande en attente appartiendrait à un compte disparu pendant ses trente jours.

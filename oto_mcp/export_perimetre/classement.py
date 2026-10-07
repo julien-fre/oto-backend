@@ -239,6 +239,7 @@ CLASSEMENT: dict[str, Table] = {
     "org_model_subscription_modes": possedee(ParOrg()),
     "transcription_jobs": indirecte(_PROJETS, secrets=("api_key_enc",),
                                     hors_base=("audio_key",)),
+    "jev_jobs": possedee(_ORG_OU_COMPTE, comptes=("sub",)),
     # ── journal, usage, signaux ────────────────────────────────────────────────
     "tool_calls": possedee(_ORG_OU_COMPTE, "tout l'historique (décision du 28/09/2026) ; "
                            "ses mois archivés au froid ne partent pas ; au jour J, il "

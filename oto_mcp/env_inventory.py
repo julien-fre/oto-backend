@@ -452,6 +452,10 @@ _REGLAGES: tuple[Variable, ...] = (
              "Boucle de fond : worker de transcription (ADR 0074, #674) — prod "
              "seule, donc lu aussi par `est_la_production()`.",
              ("oto_mcp/boucles_de_fond.py:160",)),
+    Variable("OTO_JEV_JOBS_WORKER_ENABLED", Classe.REGLAGE, "1",
+             "Boucle de fond : `jev_rows(background=true)` — dépense sur la clé Jev "
+             "partagée, prod seule.",
+             ("oto_mcp/boucles_de_fond.py:175",)),
     Variable("OTO_BILLING_RUNNER_ENABLED", Classe.REGLAGE, "1",
              "Boucle de fond : runner de facturation — AGIT sur un tiers "
              "(prélèvement), donc lu aussi par `est_la_production()`.",
