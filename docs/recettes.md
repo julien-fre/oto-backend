@@ -125,9 +125,10 @@ CETTE ligne.
 - Même boucle que `for_each` : refus qui tiennent à la ligne, disjoncteur, plafond de
   dépense, budget d'horloge, dérive (sur dix lignes d'affilée).
 
-**Une exécution à la fois par tableau.** Une exécution qui écrit prend le BAIL du tableau
-dont elle écrit l'état des lignes (le parent sous `for_each`, sinon la cible ;
-`recipe_leases`) et le rend en sortie ; une deuxième, même d'une autre recette, est
+**Une exécution à la fois par tableau.** Une exécution qui écrit l'ÉTAT de ses lignes
+(`for_each`, `per_row`, `push`) prend le BAIL de ce tableau (le parent sous `for_each`,
+sinon la cible ; `recipe_leases`) — un `pull` simple n'en prend pas : la clé unique du
+tableau suffit, et plusieurs agents d'une flotte y écrivent ensemble — et le rend en sortie ; une deuxième, même d'une autre recette, est
 refusée avant tout appel (`run_in_progress`) — sinon elle paierait deux fois les mêmes
 lignes, ou créerait deux fois la même fiche chez un tiers. Un processus mort ne bloque
 pas le tableau au-delà de son budget d'horloge plus deux minutes. L'épreuve, qui n'écrit
@@ -208,7 +209,7 @@ un acteur écrit EN TOUTES LETTRES (jamais un gabarit) et un plafond en dollars
             "status": {"tool": "apify_run_status", "arguments": {"run_id": "{{job.id}}"},
                        "path": "status", "ready": ["SUCCEEDED"],
                        "failed": ["FAILED", "ABORTED", "TIMED-OUT"]}},
-  "source": {"items": "result", "pagination": {"type": "offset", "param": "offset",
+  "source": {"items": "", "pagination": {"type": "offset", "param": "offset",
                                                "size": 100, "size_param": "limit"}},
   "map": {"name": "title", "phone": "phone"},
   "key": {"column": "place_id", "template": "{{item.placeId}}"},
@@ -222,6 +223,10 @@ un acteur écrit EN TOUTES LETTRES (jamais un gabarit) et un plafond en dollars
   lecture ; tout lu, le travail est retiré et l'exécution suivante en lance un neuf.
   Échoué (`job_failed`) ou trop long (`job_timeout`, `max_wait_seconds`, 1 h par défaut) :
   retiré, rien n'est relancé dans la même exécution.
+- **La place du travail est RÉSERVÉE avant le lancement** : deux appels simultanés n'en
+  lancent qu'un (`job_starting` pour l'autre). Un lancement qui n'a pas confirmé (délai,
+  panne) reste `start_unknown` : rien n'est relancé avant `max_wait_seconds`
+  (`job_start_unknown`). La clé est faite des paramètres RÉSOLUS (défauts compris).
 - L'épreuve lance (ou reprend) le même travail : la publication le réutilise, la
   première exécution aussi. Une recette `start` doit être stockée pour s'éprouver.
 - Pagination `offset` : la page suivante commence après ce qu'on a lu (`size` et
@@ -307,8 +312,12 @@ son org (`recipe_schedules`). `schedules` les liste avec leur dernier reçu,
   bail du tableau ; son reçu (comptes et codes) est gardé. Trois échecs d'affilée le
   suspendent. Deux processus (bleu/vert) ne prennent jamais le même passage
   (`FOR UPDATE SKIP LOCKED`, échéance avancée dans la même écriture).
+- **Le programme est attaché à SA version** : une autre version publiée ensuite — peut-être
+  par un autre membre — le suspend (`version_changed`) au lieu de tourner sous l'identité
+  de qui l'a posé ; il le repose s'il la veut.
 - Seule une personne pose un programme, jamais un agent hébergé
-  (`schedules_not_in_hosted_agents`).
+  (`schedules_not_in_hosted_agents`). Seul son créateur le reprend ; lui ou un admin de
+  l'org le suspend ou le retire (`not_schedule_owner`).
 - ⚠️ Pas de déclenchement par webhook : le corps d'un webhook est du texte non sûr, et il
   ne pilote pas une recette qui peut écrire chez un tiers.
 

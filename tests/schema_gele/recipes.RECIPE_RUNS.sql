@@ -13,6 +13,7 @@ PRIMARY KEY (recipe_id, params_key)
 CREATE TABLE IF NOT EXISTS recipe_schedules (
 id BIGSERIAL PRIMARY KEY,
 recipe_id BIGINT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+version INTEGER NOT NULL,
 sub TEXT NOT NULL,
 org_id BIGINT,
 params JSONB NOT NULL DEFAULT '{}'::jsonb,

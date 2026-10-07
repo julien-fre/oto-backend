@@ -93,6 +93,11 @@ class RecipeInput(BaseModel):
         "set_schedule: false pauses it, true resumes it (and resets its failure count)."))
 
 
+def _admin(sub: str, org_id: int) -> bool:
+    from .. import roles
+    return bool(roles.is_org_admin(sub, org_id))
+
+
 def _programmer(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
     """Les ops de programme — synchrones, hors boucle. Un programme agit SANS personne
     devant l'écran, au nom de qui le pose : seule une personne en pose un (jamais un
@@ -105,6 +110,17 @@ def _programmer(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
         return {"recipe": fiche, "schedules": db_recipes.programmes_de(fiche["id"])}
     if inp.op in ("set_schedule", "unschedule"):
         sid = _besoin(inp.schedule_id, "missing_schedule_id", "`schedule_id` is required.")
+        prog = db_recipes.programme(sid, fiche["id"])
+        if prog is None:
+            raise AuthzDenied(404, "unknown_schedule", f"No schedule {sid} on this recipe.")
+        # Un programme agit AU NOM de qui l'a posé : seul lui le (ré)active ; son créateur
+        # ou un admin de l'org le suspend ou le retire.
+        reprend = inp.op == "set_schedule" and inp.enabled is not False
+        admin = prog["org_id"] is not None and _admin(ctx.sub, prog["org_id"])
+        if prog["sub"] != ctx.sub and (reprend or not admin):
+            raise AuthzDenied(403, "not_schedule_owner",
+                              "Only the person who set this schedule can resume it; they "
+                              "or an org admin can pause or remove it.")
         if inp.op == "unschedule":
             ok = db_recipes.supprimer_programme(sid, fiche["id"])
         else:
@@ -122,7 +138,8 @@ def _programmer(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
     datastore = _besoin(inp.datastore, "missing_datastore", "`datastore` is required.")
     corps = db_recipes.get_version(fiche["id"], fiche["published_version"])["body"]
     _params(corps, inp.params)  # refusés maintenant, pas au premier passage
-    db_recipes.creer_programme(recipe_id=fiche["id"], sub=ctx.sub, org_id=ctx.org_id,
+    db_recipes.creer_programme(recipe_id=fiche["id"], version=fiche["published_version"],
+                               sub=ctx.sub, org_id=ctx.org_id,
                                params=inp.params or {}, datastore=str(datastore),
                                every_minutes=int(minutes))
     return {"recipe": fiche, "schedules": db_recipes.programmes_de(fiche["id"])}
@@ -276,7 +293,10 @@ async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: 
                                      sub=ctx.sub, datastore=inp.datastore,
                                      reprise=inp.resume, ecrire=ecrire, pages_max=pages_max,
                                      temoin=temoin, cle_travail=(
-                                         (recette_id, moteur.empreinte(inp.params or {}))
+                                         # Les paramètres RÉSOLUS (défauts compris) : la
+                                         # même clé que la boucle des programmes.
+                                         (recette_id, moteur.empreinte(
+                                             _params(corps, inp.params)))
                                          if recette_id is not None else None))
     except moteur.RecetteRefusee as e:
         raise AuthzDenied(400, e.code, str(e)) from None

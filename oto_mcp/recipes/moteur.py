@@ -195,6 +195,20 @@ def _arguments(corps: dict, params: dict, etat: dict, restant: int,
     return args
 
 
+def _elements(payload: Any, chemin: str) -> Any:
+    """La liste d'éléments d'une page. Un outil qui rend une LISTE nue la sert telle
+    quelle, ou enveloppée sous `result` selon le client : les deux formes se lisent."""
+    if not chemin:
+        if isinstance(payload, dict) and set(payload) == {"result"} \
+                and isinstance(payload["result"], list):
+            return payload["result"]
+        return payload
+    valeur = co.lire(payload, chemin)
+    if valeur is None and chemin == "result" and isinstance(payload, list):
+        return payload
+    return valeur
+
+
 def _page_entiere_hors_plafond(corps: dict, restant: int) -> bool:
     """En pagination par numéro, une page n'est jamais coupée : si elle peut dépasser le
     reste du plafond, on ne l'appelle pas."""
@@ -265,6 +279,11 @@ def cle_de_bail(corps: dict, datastore: Any) -> Optional[str]:
     sinon la cible) : deux exécutions qui s'y croisent — même recette ou non — paieraient
     deux fois les mêmes lignes, ou créeraient deux fois la même fiche chez un tiers."""
     fe = corps.get("for_each")
+    if not fe and corps.get("mode", "pull") == "pull":
+        # Un `pull` simple n'écrit aucun état de ligne : la clé unique du tableau suffit
+        # à empêcher les doublons (plusieurs agents d'une flotte y écrivent ensemble).
+        # Un lancement (`start`) est tenu par sa réservation, pas par ce bail.
+        return None
     cible = fe["datastore"] if fe else datastore
     return f"table:{cible}" if cible is not None else None
 
@@ -407,8 +426,7 @@ async def _executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                          error="The org's redaction policy withheld this tool's output.")
                 return "redaction_withheld", pris
             payload = redaction.extract_payload(issue.result)
-            elements = co.lire(payload, corps["source"]["items"]) if corps["source"]["items"] \
-                else payload
+            elements = _elements(payload, corps["source"]["items"])
             if not isinstance(elements, list):
                 cles = _cles_sures(payload)[:20] if isinstance(payload, dict) else []
                 _arreter(recu, "items_not_found",
@@ -849,7 +867,7 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
             if recu["pages"] and time.monotonic() >= fin:
                 _arreter(recu, "time_budget", resume=_reprise())
                 return
-            taille = min(lot["size"], reste, rows["max_rows"] - faites)
+            taille = int(min(lot["size"], reste, rows["max_rows"] - faites))
             prises = await run_in_threadpool(ecriture.parents_en_attente, lignes,
                                              limite=taille, premiere=None, vues=vues)
             if not prises:
@@ -1213,9 +1231,21 @@ async def _lancement(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     job = await run_in_threadpool(db_recipes.travail_en_attente, *cle_travail)
     if job is None:
         tool = await _outil(fastmcp, st["tool"], "launch")
+        if not await run_in_threadpool(db_recipes.reserver_travail, *cle_travail):
+            _arreter(recu, "job_starting", error="Another call is starting this job right "
+                                                 "now: run again in a minute.")
+            return None
         args = co.sans_vides(co.rendre(st["arguments"], {"params": params}))
         issue = await _appeler(tool, sub, st["tool"], args)
         if not issue.ok:
+            if issue.code in RIEN_FAIT:
+                # Rien n'est parti : la réservation est levée.
+                await run_in_threadpool(db_recipes.retirer_travail, *cle_travail)
+            else:
+                # Délai, panne : le travail existe PEUT-ÊTRE chez le fournisseur. Jamais
+                # relancé d'office avant `max_wait_seconds`.
+                await run_in_threadpool(db_recipes.poser_travail, *cle_travail,
+                                        {"state": "start_unknown", "at": int(time.time())})
             _arreter(recu, issue.code or "tool_failed", retryable=issue.retryable)
             return None
         charge = redaction.extract_payload(issue.result)
@@ -1234,6 +1264,13 @@ async def _lancement(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
         return None
     if job.get("state") == "ready":
         return job
+    if job.get("state") in ("starting", "start_unknown") \
+            and time.time() - float(job.get("at") or 0) <= st["max_wait_seconds"]:
+        _arreter(recu, "job_start_unknown", error=(
+            "A start of this job didn't confirm (timeout, crash): it may be running at the "
+            "provider. Nothing is started again before `max_wait_seconds`; check the "
+            "provider."))
+        return None
     if time.time() - float(job.get("at") or 0) > st["max_wait_seconds"]:
         await run_in_threadpool(db_recipes.retirer_travail, *cle_travail)
         _arreter(recu, "job_timeout", error="The job never finished: it was dropped. The next "

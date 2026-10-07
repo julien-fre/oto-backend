@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 import pytest
 
@@ -43,7 +43,7 @@ def serveur(compte, monkeypatch):
 
     @m.tool()
     def apify_dataset_items(dataset_id: str, limit: Optional[int] = None,
-                            offset: Optional[int] = None) -> list:
+                            offset: Optional[int] = None) -> Any:
         etat["appels"].append(("items", offset))
         return ELEMENTS[offset or 0:(offset or 0) + (limit or 100)]
     return m, etat
@@ -61,7 +61,7 @@ def _corps(**surcharge) -> dict:
                        "status": {"tool": "apify_run_status",
                                   "arguments": {"run_id": "{{job.id}}"}, "path": "status",
                                   "ready": ["SUCCEEDED"], "failed": ["FAILED", "ABORTED"]}},
-             "source": {"items": "result", "pagination": {"type": "offset", "param": "offset",
+             "source": {"items": "", "pagination": {"type": "offset", "param": "offset",
                                                     "size": 2, "size_param": "limit"}},
              "map": {"title": "title"}, "key": {"column": "place_id", "template": "{{item.placeId}}"},
              "params": {"q": {"required": True}},
@@ -131,3 +131,12 @@ def test_le_contrat_de_start():
     probs = " ".join(e.value.problemes)
     for attendu in ("side_effects", "literally", "max_total_charge_usd"):
         assert attendu in probs, attendu
+
+
+def test_deux_appels_simultanes_ne_lancent_qu_un_travail(serveur):
+    from oto_mcp.db import recipes as db_recipes
+    m, etat = serveur
+    rid, ns = _recette(), _tableau()
+    assert db_recipes.reserver_travail(rid, "k")  # un autre appelant a gagné la place
+    assert _executer(m, _corps(), ns, rid)["stopped"] == "job_start_unknown"
+    assert [a for a in etat["appels"] if a[0] == "run"] == []

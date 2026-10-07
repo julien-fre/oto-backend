@@ -31,8 +31,9 @@ INTERVALLE_S = 60
 PASSAGE_S = 300
 ECHECS_MAX = 3
 #: Les arrêts d'un passage qui ne sont PAS des échecs : il reprendra au suivant.
-_ARRETS_NORMAUX = frozenset({None, "job_submitted", "job_running", "max_pages",
-                             "max_parents", "max_rows", "time_budget", "spend_cap"})
+_ARRETS_NORMAUX = frozenset({None, "job_submitted", "job_running", "job_starting",
+                             "max_pages", "max_parents", "max_rows", "time_budget",
+                             "spend_cap", "run_in_progress", "server_not_ready"})
 _REPRISES = frozenset({"max_pages", "max_parents", "max_rows", "time_budget"})
 
 
@@ -67,8 +68,11 @@ async def passer(prog: dict) -> dict:
         return {"stopped": "schedule_identity_invalid", "reason": raison, "fatal": True}
     fiche = await run_in_threadpool(db_recipes.get_recipe_by_id, prog["recipe_id"])
     numero = (fiche or {}).get("published_version")
-    version = await run_in_threadpool(db_recipes.get_version, prog["recipe_id"], numero) \
-        if numero else None
+    if numero != prog["version"]:
+        # Une autre version publiée depuis — peut-être par un autre membre — ne tourne
+        # jamais sous l'identité de qui a posé le programme : il le repose, s'il la veut.
+        return {"stopped": "version_changed", "fatal": True}
+    version = await run_in_threadpool(db_recipes.get_version, prog["recipe_id"], numero)
     if version is None:
         return {"stopped": "not_published", "fatal": True}
     corps = version["body"]

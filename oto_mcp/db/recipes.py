@@ -12,6 +12,7 @@ le pointeur vers la version publiée.
 from __future__ import annotations
 
 import json
+import time
 from typing import Iterable, Optional
 
 import psycopg
@@ -175,6 +176,18 @@ def travail_en_attente(recipe_id: int, params_key: str) -> Optional[dict]:
     return dict(row)["job"] if row else None
 
 
+def reserver_travail(recipe_id: int, params_key: str) -> bool:
+    """Réserve la place du travail AVANT de le lancer : un seul appelant gagne, les
+    autres voient la réservation — jamais deux lancements payés."""
+    with _connect() as conn:
+        row = conn.execute(
+            "INSERT INTO recipe_pending_jobs (recipe_id, params_key, job) VALUES (%s, %s, %s) "
+            "ON CONFLICT (recipe_id, params_key) DO NOTHING RETURNING recipe_id",
+            (recipe_id, params_key, json.dumps({"state": "starting", "at": int(time.time())}))
+        ).fetchone()
+    return row is not None
+
+
 def poser_travail(recipe_id: int, params_key: str, job: dict) -> None:
     with _connect() as conn:
         conn.execute("INSERT INTO recipe_pending_jobs (recipe_id, params_key, job) "
@@ -189,19 +202,27 @@ def retirer_travail(recipe_id: int, params_key: str) -> None:
                      "AND params_key = %s", (recipe_id, params_key))
 
 
-_PROGRAMME_COLS = ("id, recipe_id, sub, org_id, params, datastore, every_minutes, "
+_PROGRAMME_COLS = ("id, recipe_id, version, sub, org_id, params, datastore, every_minutes, "
                    "next_run_at, enabled, failures, last_run_at, last_receipt, created_at")
 
 
-def creer_programme(*, recipe_id: int, sub: str, org_id: Optional[int], params: dict,
-                    datastore: str, every_minutes: int) -> dict:
+def creer_programme(*, recipe_id: int, version: int, sub: str, org_id: Optional[int],
+                    params: dict, datastore: str, every_minutes: int) -> dict:
     with _connect() as conn:
         row = conn.execute(
-            "INSERT INTO recipe_schedules (recipe_id, sub, org_id, params, datastore, "
-            f"every_minutes) VALUES (%s, %s, %s, %s, %s, %s) RETURNING {_PROGRAMME_COLS}",
-            (recipe_id, sub, org_id, json.dumps(params or {}), str(datastore),
+            "INSERT INTO recipe_schedules (recipe_id, version, sub, org_id, params, "
+            f"datastore, every_minutes) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            f"RETURNING {_PROGRAMME_COLS}",
+            (recipe_id, version, sub, org_id, json.dumps(params or {}), str(datastore),
              every_minutes)).fetchone()
     return dict(row)
+
+
+def programme(schedule_id: int, recipe_id: int) -> Optional[dict]:
+    with _connect() as conn:
+        row = conn.execute(f"SELECT {_PROGRAMME_COLS} FROM recipe_schedules "
+                           "WHERE id = %s AND recipe_id = %s", (schedule_id, recipe_id)).fetchone()
+    return dict(row) if row else None
 
 
 def programmes_de(recipe_id: int) -> list[dict]:

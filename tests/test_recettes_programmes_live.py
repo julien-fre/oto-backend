@@ -31,7 +31,7 @@ def capa(compte, monkeypatch):
     from oto_mcp.capabilities._types import ResolvedCtx
     from oto_mcp.tools.lecture import LECTURE
     monkeypatch.setattr(access, "current_user_sub_or_raise",
-                        lambda: hooks.current_user_sub_from_token() or SUB)
+                        lambda: hooks.current_user_sub_from_token())
     m = FastMCP("t-recettes-prog")
     etat = {"panne": False}
 
@@ -152,8 +152,8 @@ def test_un_compte_sorti_de_l_org_suspend_le_programme_sans_appel(capa):
     slug = _publiee(appeler)
     org = org_store.create_org(f"Acme {uuid.uuid4().hex[:4]}", created_by="someone-else")
     fiche = db_recipes.get_recipe("user", SUB, slug)
-    prog = db_recipes.creer_programme(recipe_id=fiche["id"], sub=SUB, org_id=org, params={},
-                                      datastore=_table(), every_minutes=60)
+    prog = db_recipes.creer_programme(recipe_id=fiche["id"], version=1, sub=SUB, org_id=org,
+                                      params={}, datastore=_table(), every_minutes=60)
     _du(prog["id"])
     etat["panne"] = True  # un appel lèverait : aucun ne doit partir
     asyncio.run(programmes._un_tour())
@@ -166,3 +166,46 @@ def test_la_boucle_est_eteinte_par_defaut(monkeypatch):
     from oto_mcp.recipes import programmes
     monkeypatch.delenv("OTO_RECIPE_SCHEDULER_ENABLED", raising=False)
     assert not programmes.armee()
+
+
+def test_une_nouvelle_version_publiee_suspend_le_programme(capa):
+    from oto_mcp.recipes import programmes
+    appeler, _, etat = capa
+    slug = _publiee(appeler)
+    sid = appeler(op="schedule", slug=slug, every_minutes=60,
+                  datastore=_table())["schedules"][0]["id"]
+    appeler(op="propose", slug=slug, expected_version=1, recipe=CORPS)
+    appeler(op="publish", slug=slug, version=2)
+    etat["panne"] = True  # aucun appel ne doit partir
+    _du(sid)
+    asyncio.run(programmes._un_tour())
+    prog = _programme(sid)
+    assert not prog["enabled"] and prog["last_receipt"]["stopped"] == "version_changed"
+
+
+def test_seul_le_createur_reprend_son_programme(capa, monkeypatch):
+    from oto_mcp import db, org_store
+    from oto_mcp.capabilities import recipes
+    from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
+    from oto_mcp.auth import hooks
+    appeler, _, _ = capa
+    autre = f"sub-autre-{uuid.uuid4().hex[:4]}"
+    db.upsert_user(autre, email=f"{autre}@acme.test", name=autre)
+    org = org_store.create_org(f"Acme {uuid.uuid4().hex[:4]}", created_by=SUB)
+    org_store.add_org_member(org, SUB)
+    org_store.add_org_member(org, autre)
+    ctx_a, ctx_b = ResolvedCtx(sub=SUB, org_id=org), ResolvedCtx(sub=autre, org_id=org)
+    slug = f"prog-{uuid.uuid4().hex[:6]}"
+
+    def en(ctx, **kw):
+        with hooks.sub_override(ctx.sub):
+            return asyncio.run(recipes._recipe(ctx, recipes.RecipeInput(slug=slug, **kw)))
+    en(ctx_a, op="create", title="t", recipe=CORPS)
+    en(ctx_a, op="publish", version=1)
+    sid = en(ctx_a, op="schedule", every_minutes=60, datastore=_table())["schedules"][0]["id"]
+    en(ctx_a, op="set_schedule", schedule_id=sid, enabled=False)
+    with pytest.raises(AuthzDenied) as e:
+        en(ctx_b, op="set_schedule", schedule_id=sid, enabled=True)
+    assert e.value.code == "not_schedule_owner"
+    with pytest.raises(AuthzDenied):
+        en(ctx_b, op="unschedule", schedule_id=sid)

@@ -85,6 +85,9 @@ CREATE TABLE IF NOT EXISTS recipe_pending_jobs (
 CREATE TABLE IF NOT EXISTS recipe_schedules (
     id BIGSERIAL PRIMARY KEY,
     recipe_id BIGINT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    -- La version programmée : une autre version publiée ensuite (par un autre membre)
+    -- ne tourne JAMAIS sous l'identité de qui a posé ce programme.
+    version INTEGER NOT NULL,
     sub TEXT NOT NULL,
     org_id BIGINT,
     params JSONB NOT NULL DEFAULT '{}'::jsonb,
