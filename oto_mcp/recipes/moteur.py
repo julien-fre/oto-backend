@@ -145,7 +145,9 @@ async def _outil(fastmcp, outil: str, usage: str = "read"):
     if tool is None:
         raise RecetteRefusee("unknown_tool", f"Unknown tool `{outil}`.")
     permis = {"submit": outil in ou.SOUMISSIONS,
-              "collect": any(outil in c for c in ou.SOUMISSIONS.values()),
+              "collect": any(outil in c for c in ou.SOUMISSIONS.values())
+              or any(outil in (l["status"], l["read"]) for l in ou.LANCEMENTS.values()),
+              "launch": outil in ou.LANCEMENTS,
               "push": outil in ou.POUSSEES}
     if usage in permis:
         if not permis[usage]:
@@ -169,13 +171,16 @@ async def _appeler(tool, sub: Optional[str], outil: str, args: dict):
 
 
 def _arguments(corps: dict, params: dict, etat: dict, restant: int,
-               row: Optional[dict] = None) -> dict:
-    args = co.rendre(corps.get("arguments") or {}, co._portees(params, row))
+               row: Optional[dict] = None, travail: Optional[dict] = None) -> dict:
+    portees = co._portees(params, row)
+    if travail is not None:
+        portees["job"] = travail
+    args = co.rendre(corps.get("arguments") or {}, portees)
     if row is not None:
         # Sous `for_each`, une case vide de la ligne n'envoie rien (jamais `null`).
         args = co.sans_vides(args)
     pag = corps["source"]["pagination"]
-    if pag["type"] == "page":
+    if pag["type"] in ("page", "offset"):
         args[pag["param"]] = etat["p"] if etat["p"] is not None else pag.get("start", 0)
     elif pag["type"] == "cursor" and etat["c"]:
         args[pag["param"]] = etat["c"]
@@ -184,7 +189,7 @@ def _arguments(corps: dict, params: dict, etat: dict, restant: int,
         # Réduire la DERNIÈRE page au reste du plafond n'est juste qu'au curseur : en
         # pagination par numéro, une taille réduite décale la fenêtre (page 1 de taille
         # 1 = l'élément 1, déjà lu) — la boucle s'arrête plutôt avant la page.
-        if corps["units"] == "items" and pag["type"] == "cursor":
+        if corps["units"] == "items" and pag["type"] in ("cursor", "offset"):
             taille = max(1, min(taille, restant))
         args[pag["size_param"]] = taille
     return args
@@ -221,7 +226,8 @@ def _suite(corps: dict, payload: Any, elements: list, args: dict, etat: dict) ->
         return False
     if pag.get("size_param") and len(elements) < int(args.get(pag["size_param"]) or 0):
         return False
-    etat["p"] = args[pag["param"]] + 1
+    # Par décalage, la page suivante commence après ce qu'on a lu ; par numéro, au suivant.
+    etat["p"] = args[pag["param"]] + (len(elements) if pag["type"] == "offset" else 1)
     return True
 
 
@@ -266,7 +272,8 @@ def cle_de_bail(corps: dict, datastore: Any) -> Optional[str]:
 async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                    datastore: Any = None, reprise: Optional[str] = None,
                    ecrire: bool = True, pages_max: Optional[int] = None,
-                   budget_s: float = BUDGET_S, temoin: Optional[dict] = None) -> dict:
+                   budget_s: float = BUDGET_S, temoin: Optional[dict] = None,
+                   cle_travail: Optional[tuple] = None) -> dict:
     """Exécute une recette sous le BAIL de son tableau quand elle écrit : une deuxième
     exécution concurrente est refusée avant tout appel (`run_in_progress`). L'épreuve,
     qui n'écrit rien, n'en prend pas."""
@@ -281,7 +288,7 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     try:
         return await _executer(corps, params, fastmcp=fastmcp, sub=sub, datastore=datastore,
                                reprise=reprise, ecrire=ecrire, pages_max=pages_max,
-                               budget_s=budget_s, temoin=temoin)
+                               budget_s=budget_s, temoin=temoin, cle_travail=cle_travail)
     finally:
         if cle is not None:
             await run_in_threadpool(db_recipes.rendre_bail, cle, porteur)
@@ -290,7 +297,8 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
 async def _executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                     datastore: Any = None, reprise: Optional[str] = None,
                     ecrire: bool = True, pages_max: Optional[int] = None,
-                    budget_s: float = BUDGET_S, temoin: Optional[dict] = None) -> dict:
+                    budget_s: float = BUDGET_S, temoin: Optional[dict] = None,
+                    cle_travail: Optional[tuple] = None) -> dict:
     """Exécute une recette VALIDÉE (`contrat.valider`). `ecrire=False` = l'épreuve :
     les pages sont appelées (et facturées) mais rien n'est écrit ; le reçu porte le
     remplissage par colonne (`fill`). `temoin` = le rapport d'épreuve de la version
@@ -305,7 +313,9 @@ async def _executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     recu = _recu()
     etat = lire_reprise(reprise, corps)
     recu["units"] = etat["u"]
-    outil = await _outil(fastmcp, corps["tool"])
+    # Sous `start`, l'outil de la recette LIT ce que le lancement a produit : il est nommé
+    # par `recipes/outils.LANCEMENTS`, pas par la déclaration de lecture.
+    outil = await _outil(fastmcp, corps["tool"], "collect" if corps.get("start") else "read")
     col_cle = corps["key"]["column"]
     mappees = list(corps["map"])
     remplissage = {c: 0 for c in mappees}
@@ -332,6 +342,12 @@ async def _executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                 ecriture.creer_colonnes, tableau, mappees + list(corps["values"]) + [col_cle])
     except ecriture.TableauIndisponible as e:
         raise RecetteRefusee(e.code, str(e))
+    travail = None
+    if corps.get("start"):
+        travail = await _lancement(corps, params, fastmcp=fastmcp, sub=sub,
+                                   cle_travail=cle_travail, recu=recu)
+        if travail is None:
+            return recu
     a_surveiller = surveillees(temoin)
     exigees = co.colonnes_citees(corps.get("arguments"), "row") if fe else set()
     lim = corps["limits"]
@@ -366,7 +382,7 @@ async def _executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
             if row is not None and co.exigees_vides(corps.get("arguments"),
                                                     co._portees(params, row), exigees):
                 return "ligne:invalid_input", pris
-            args = _arguments(corps, params, etat, restant, row)
+            args = _arguments(corps, params, etat, restant, row, travail)
             try:
                 issue = await _appeler(outil, sub, corps["tool"], dict(args))
             except McpError as e:
@@ -458,6 +474,10 @@ async def _executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
         if not fe:
             arret, _ = await _tirer(None)
             recu["done"] = arret is None
+            if recu["done"] and travail is not None and ecrire:
+                # Tout est lu : l'exécution suivante relancera un travail neuf.
+                from ..db import recipes as db_recipes
+                await run_in_threadpool(db_recipes.retirer_travail, *cle_travail)
             return recu
         await _parcourir(fe, parents, ecrire, etat, recu, _tirer)
     finally:
@@ -1177,6 +1197,67 @@ async def _executer_pousser(corps: dict, params: dict, *, fastmcp, sub: Optional
         recu["rows_built"] = recu["rows"].pop("previewed", 0)
         recu["dry_run"] = a_blanc
     return recu
+
+
+async def _lancement(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
+                     cle_travail: Optional[tuple], recu: dict) -> Optional[dict]:
+    """`start` : le travail en cours de CETTE recette pour CES paramètres, gardé en base
+    (`recipe_pending_jobs`) — un jeton perdu ne relance jamais un travail payé. Rend le
+    travail PRÊT à lire, ou None (lancé, en cours, échoué : le reçu le dit)."""
+    from ..db import recipes as db_recipes
+    st = corps["start"]
+    if cle_travail is None:
+        raise RecetteRefusee("start_needs_stored_recipe", "A recipe that starts a job must "
+                                                          "be stored (`create`) to be tested "
+                                                          "or run: its job is kept with it.")
+    job = await run_in_threadpool(db_recipes.travail_en_attente, *cle_travail)
+    if job is None:
+        tool = await _outil(fastmcp, st["tool"], "launch")
+        args = co.sans_vides(co.rendre(st["arguments"], {"params": params}))
+        issue = await _appeler(tool, sub, st["tool"], args)
+        if not issue.ok:
+            _arreter(recu, issue.code or "tool_failed", retryable=issue.retryable)
+            return None
+        charge = redaction.extract_payload(issue.result)
+        _compter(recu, {**corps, "units": "calls"}, issue, [None])
+        jid = co.lire(charge, st["id"])
+        if co._vide(jid):
+            _arreter(recu, "no_job_id", error="The job started but its id was not found at "
+                                              "`start.id`: check the provider before "
+                                              "running again.")
+            return None
+        job = {"id": str(jid), "at": int(time.time()), "state": "running",
+               **{k: co.lire(charge, v) for k, v in (st.get("keep") or {}).items()}}
+        await run_in_threadpool(db_recipes.poser_travail, *cle_travail, job)
+        recu["next_step"] = "The job is running at the provider: run again in a minute."
+        _arreter(recu, "job_submitted")
+        return None
+    if job.get("state") == "ready":
+        return job
+    if time.time() - float(job.get("at") or 0) > st["max_wait_seconds"]:
+        await run_in_threadpool(db_recipes.retirer_travail, *cle_travail)
+        _arreter(recu, "job_timeout", error="The job never finished: it was dropped. The next "
+                                            "run starts a new one.")
+        return None
+    stat = st["status"]
+    tool = await _outil(fastmcp, stat["tool"], "collect")
+    issue = await _appeler(tool, sub, stat["tool"], co.sans_vides(
+        co.rendre(stat["arguments"], {"params": params, "job": job})))
+    if not issue.ok:
+        _arreter(recu, issue.code or "tool_failed", retryable=issue.retryable)
+        return None
+    valeur = str(co.lire(redaction.extract_payload(issue.result), stat["path"]))
+    if valeur in [str(v) for v in stat["failed"]]:
+        await run_in_threadpool(db_recipes.retirer_travail, *cle_travail)
+        _arreter(recu, "job_failed", job_status=valeur)
+        return None
+    if valeur not in [str(v) for v in stat["ready"]]:
+        recu["next_step"] = "The job is still running at the provider: run again in a minute."
+        _arreter(recu, "job_running", job_status=valeur)
+        return None
+    job["state"] = "ready"
+    await run_in_threadpool(db_recipes.poser_travail, *cle_travail, job)
+    return job
 
 
 def _forme(obj: Any, prefixe: str, out: dict, profondeur: int) -> None:

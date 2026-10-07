@@ -212,11 +212,12 @@ def _epingler_org(ctx: ResolvedCtx):
 def _a_effets(corps: dict) -> bool:
     """Une recette qui dépense des crédits sans lire (`async`) ou écrit chez un tiers
     (`push`)."""
-    return corps.get("mode") == "push" or bool(corps.get("async"))
+    return corps.get("mode") == "push" or bool(corps.get("async")) or bool(corps.get("start"))
 
 
 async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: bool,
-                    pages_max: Optional[int] = None, temoin: Optional[dict] = None) -> dict:
+                    pages_max: Optional[int] = None, temoin: Optional[dict] = None,
+                    recette_id: Optional[int] = None) -> dict:
     if _a_effets(corps) and current_token_axes().get("token_kind") == "delegation":
         # Un agent hébergé lit du texte non sûr (webhook, e-mails, CRM) : il ne pilote pas
         # une recette qui écrit chez un tiers ou dépense des crédits sans lire — même
@@ -231,7 +232,9 @@ async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: 
         return await moteur.executer(corps, _params(corps, inp.params), fastmcp=fastmcp,
                                      sub=ctx.sub, datastore=inp.datastore,
                                      reprise=inp.resume, ecrire=ecrire, pages_max=pages_max,
-                                     temoin=temoin)
+                                     temoin=temoin, cle_travail=(
+                                         (recette_id, moteur.empreinte(inp.params or {}))
+                                         if recette_id is not None else None))
     except moteur.RecetteRefusee as e:
         raise AuthzDenied(400, e.code, str(e)) from None
     finally:
@@ -280,11 +283,19 @@ async def _recipe(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
     if inp.op == "run":
         return {"recipe": fiche, "version": {"version": version["version"]},
                 "receipt": await _executer(ctx, inp, version["body"], ecrire=True,
-                                           temoin=version.get("test_report"))}
-    recu = await _executer(ctx, inp, version["body"], ecrire=False, pages_max=1)
+                                           temoin=version.get("test_report"),
+                                           recette_id=fiche["id"])}
+    recu = await _executer(ctx, inp, version["body"], ecrire=False, pages_max=1,
+                           recette_id=fiche["id"])
     if inp.op == "test":
         return {"recipe": fiche, "version": {"version": version["version"]}, "receipt": recu}
     # publish : l'épreuve doit avoir produit des lignes, sans refus.
+    if recu["stopped"] in ("job_submitted", "job_running") and recu.get("resume") is None \
+            and version["body"].get("start"):
+        raise AuthzDenied(409, "test_pending",
+                          "The job is running at the provider: call publish again in a "
+                          "minute (the same job is reused, never started twice).",
+                          details={"receipt": recu})
     if recu["stopped"] in ("job_submitted", "job_running"):
         # `async` : la publication exige un VRAI résultat collecté — repasser `resume`.
         raise AuthzDenied(409, "test_pending",

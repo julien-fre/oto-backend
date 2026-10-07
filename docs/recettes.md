@@ -188,6 +188,46 @@ nommés, avec leur outil de collecte, dans une liste fermée (`oto_mcp/recipes/o
   la soumission (au pire un crédit par contact), et un lot se réduit au reste du
   plafond. Un lot refusé en bloc ne marque aucune ligne (`batch_refused:<code>`).
 
+## Lancer, attendre, lire (`start`, en `pull`)
+
+Un scraping Apify ne rend pas ses résultats tout de suite : on lance un acteur, on suit
+son état, puis on lit son jeu de données page à page. ⚠️ Un acteur est un programme
+arbitraire, qui peut publier ou se connecter au nom de quelqu'un : `side_effects: true`,
+un acteur écrit EN TOUTES LETTRES (jamais un gabarit) et un plafond en dollars
+(`max_total_charge_usd`) sont exigés (`recipes/outils.LANCEMENTS`).
+
+```json
+{
+  "side_effects": true,
+  "tool": "apify_dataset_items",
+  "arguments": {"dataset_id": "{{job.dataset}}"},
+  "start": {"tool": "apify_run",
+            "arguments": {"actor_id": "<vendor>/<actor>", "run_input": {"query": "{{params.q}}"},
+                          "max_total_charge_usd": 5},
+            "id": "data.id", "keep": {"dataset": "data.defaultDatasetId"},
+            "status": {"tool": "apify_run_status", "arguments": {"run_id": "{{job.id}}"},
+                       "path": "status", "ready": ["SUCCEEDED"],
+                       "failed": ["FAILED", "ABORTED", "TIMED-OUT"]}},
+  "source": {"items": "result", "pagination": {"type": "offset", "param": "offset",
+                                               "size": 100, "size_param": "limit"}},
+  "map": {"name": "title", "phone": "phone"},
+  "key": {"column": "place_id", "template": "{{item.placeId}}"},
+  "limits": {"max_units": 1000}
+}
+```
+
+- **Le travail en cours est gardé EN BASE** (`recipe_pending_jobs`, par recette et jeu de
+  paramètres), pas seulement dans un jeton : une exécution sans `resume` reprend le même
+  travail, jamais un deuxième lancement payé. `job_submitted` → `job_running` → la
+  lecture ; tout lu, le travail est retiré et l'exécution suivante en lance un neuf.
+  Échoué (`job_failed`) ou trop long (`job_timeout`, `max_wait_seconds`, 1 h par défaut) :
+  retiré, rien n'est relancé dans la même exécution.
+- L'épreuve lance (ou reprend) le même travail : la publication le réutilise, la
+  première exécution aussi. Une recette `start` doit être stockée pour s'éprouver.
+- Pagination `offset` : la page suivante commence après ce qu'on a lu (`size` et
+  `size_param` obligatoires ; une page courte est la dernière).
+- Ni `for_each`, ni agent hébergé.
+
 ## Pousser vers une autre app (`mode: push`)
 
 Une recette `push` crée ou met à jour UNE fiche chez un tiers par ligne en attente, et
@@ -327,6 +367,5 @@ jamais `delete`, `merge` ni les `bulk_*`), gardée par `tests/test_recettes_outi
 
 ## Ce qui vient ensuite
 
-Apify en `pull` asynchrone, les soumissions et poussées groupées (un appel pour
-cinquante lignes), puis les travaux de fond déclenchés par une planification ou un
-webhook (l'exécutant reste à choisir).
+Les poussées groupées (exclues exprès : les ops `bulk_*` cachent leurs échecs par
+élément dans une réponse « réussie »), les déclenchements par webhook.

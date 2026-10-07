@@ -25,7 +25,7 @@ _COLONNE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,62}$")
 #: (`NAMESPACES_INTERDITS`, importé de `tools/meta` : le méta et le spine, qu'une recette
 #: n'appelle jamais — elle contournerait ses propres gardes.)
 NAMESPACES_A_MODELE = frozenset({"jev", "lighton"})
-PAGINATIONS = ("page", "cursor", "none")
+PAGINATIONS = ("page", "cursor", "offset", "none")
 OPS_WHERE = ("eq", "ne", "in", "not_in", "contains_any", "empty", "not_empty",
              "in_table", "not_in_table")
 OPS_TABLE = ("in_table", "not_in_table")
@@ -84,7 +84,11 @@ def _source(probs: list, source: Any) -> dict:
     if not isinstance(pag, dict) or pag.get("type") not in PAGINATIONS:
         probs.append(f"`source.pagination.type` must be one of {list(PAGINATIONS)}")
         return source
-    if pag["type"] in ("page", "cursor") and not isinstance(pag.get("param"), str):
+    if pag["type"] == "offset" and not (isinstance(pag.get("size"), int)
+                                        and isinstance(pag.get("size_param"), str)):
+        probs.append("`source.pagination` of type `offset` needs `size` and `size_param`: "
+                     "a page shorter than `size` is the last one")
+    if pag["type"] in ("page", "cursor", "offset") and not isinstance(pag.get("param"), str):
         probs.append("`source.pagination.param` (the argument that carries the page or "
                      "cursor) is required")
     if pag["type"] == "cursor" and not isinstance(pag.get("next"), str):
@@ -210,6 +214,61 @@ def _arguments_ecrivains(probs: list, ou_: str, outil: Any, args: Any,
     elif not ou.op_permise(outil, op) or op not in (ops_permises or ou.OPS_ECRITURE):
         probs.append(f"`{ou_}.arguments.op`: `{op}` is not allowed here for `{outil}` "
                      f"(allowed: {sorted((ops_permises or ou.OPS_ECRITURE) & (ou.POUSSEES[outil] or set()))})")
+
+
+def _lancement(probs: list, c: dict) -> None:
+    """`start` d'une recette `pull` : lancer un travail (Apify), le suivre, puis lire ses
+    résultats page à page avec l'outil de la recette."""
+    st = c.get("start")
+    if not isinstance(st, dict):
+        probs.append("`start` must be an object {tool, arguments, id, keep, status, "
+                     "max_wait_seconds}")
+        return
+    spec = ou.LANCEMENTS.get(st.get("tool"))
+    if spec is None:
+        probs.append(f"`start.tool` must be one of {sorted(ou.LANCEMENTS)}")
+        return
+    if c.get("side_effects") is not True:
+        probs.append(f"`side_effects: true` is required: `{st['tool']}` starts a paid job "
+                     "that can act on the web on your behalf")
+    if c.get("tool") != spec["read"]:
+        probs.append(f"`tool` must be `{spec['read']}` (it reads what `{st['tool']}` "
+                     "produced)")
+    args = st.setdefault("arguments", {})
+    if not isinstance(args, dict):
+        probs.append("`start.arguments` must be an object")
+        return
+    _portees(probs, "`start.arguments`", args, PORTEES_ARGUMENTS)
+    acteur = args.get(spec["actor"])
+    if not isinstance(acteur, str) or not acteur or co.portees_citees(acteur):
+        probs.append(f"`start.arguments.{spec['actor']}` must be written literally (never "
+                     "a template): which job runs is part of the recipe")
+    plafond = args.get(spec["charge"])
+    if not isinstance(plafond, (int, float)) or isinstance(plafond, bool) or plafond <= 0:
+        probs.append(f"`start.arguments.{spec['charge']}` (a positive number, the most the "
+                     "job may cost at the provider) is required")
+    if not isinstance(st.get("id"), str) or not st["id"]:
+        probs.append("`start.id` (path to the job id in the start reply) is required")
+    keep = st.get("keep")
+    if keep is not None and (not isinstance(keep, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in keep.items())):
+        probs.append("`start.keep` must be {name: path} in the start reply")
+    stat = st.get("status")
+    if not isinstance(stat, dict) or stat.get("tool") != spec["status"] \
+            or not isinstance(stat.get("path"), str) \
+            or not isinstance(stat.get("ready"), list) or not stat["ready"]:
+        probs.append(f"`start.status` must be {{tool: `{spec['status']}`, arguments, path, "
+                     "ready: [values], failed: [values]}")
+    else:
+        stat.setdefault("failed", [])
+        stat.setdefault("arguments", {})
+        _portees(probs, "`start.status.arguments`", stat["arguments"],
+                 PORTEES_ARGUMENTS | {PORTEE_TRAVAIL})
+    n = st.setdefault("max_wait_seconds", 3_600)
+    if not isinstance(n, int) or not 60 <= n <= ATTENTE_MAX:
+        probs.append(f"`start.max_wait_seconds` must be 60 to {ATTENTE_MAX}")
+    if c.get("for_each") is not None:
+        probs.append("`start` and `for_each` don't combine (one job per recipe run)")
 
 
 def _pousse(probs: list, c: dict) -> None:
@@ -393,7 +452,8 @@ def valider(corps: Any) -> dict:
     # `{{row.…}}` n'existe que sous `for_each`, `per_row` ou `push` : ailleurs, une faute
     # de frappe.
     avec_ligne = bool(fe) or par_ligne or pousse
-    p_args = PORTEES_ARGUMENTS | ({PORTEE_LIGNE} if avec_ligne else set())
+    p_args = PORTEES_ARGUMENTS | ({PORTEE_LIGNE} if avec_ligne else set()) \
+        | ({PORTEE_TRAVAIL} if c.get("start") is not None else set())
     p_elem = PORTEES_ELEMENT | ({PORTEE_LIGNE} if avec_ligne else set())
     args = c.setdefault("arguments", {})
     if not isinstance(args, dict):
@@ -421,6 +481,11 @@ def valider(corps: Any) -> dict:
         _par_ligne(probs, c)
     elif pousse:
         _pousse(probs, c)
+    if c.get("start") is not None:
+        if mode != "pull":
+            probs.append("`start` is for `pull` recipes only")
+        else:
+            _lancement(probs, c)
     elif not isinstance(cle, dict) or not _colonne_ok(cle.get("column")):
         probs.append("`key.column` (the column that identifies a row) is required")
     elif cle.get("template") is not None:

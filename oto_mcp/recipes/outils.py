@@ -34,6 +34,15 @@ SOUMISSIONS: dict[str, frozenset] = {
 #: à sa ligne, jamais la position. FullEnrich n'en renvoie aucun : une ligne par travail.
 GROUPABLES: dict[str, str] = {"dropcontact_enrich": "custom_fields"}
 
+#: `pull` asynchrone (`start`) : l'outil qui LANCE un travail chez le fournisseur → l'outil
+#: qui en suit l'état et celui qui en lit les résultats. Un lancement Apify exécute un
+#: acteur arbitraire (qui peut publier, se connecter…) : `side_effects: true`, un acteur
+#: écrit en toutes lettres et un plafond en dollars sont exigés par le contrat.
+LANCEMENTS: dict[str, dict] = {
+    "apify_run": {"status": "apify_run_status", "read": "apify_dataset_items",
+                  "actor": "actor_id", "charge": "max_total_charge_usd"},
+}
+
 #: Outil de poussée → ses ops permises (None : l'outil n'a pas d'`op`).
 POUSSEES: dict[str, Optional[frozenset]] = {
     "hubspot_object": frozenset({"create", "update", "search"}),
@@ -72,6 +81,9 @@ def outils(corps: dict) -> set[str]:
     jour. Ce qu'une garde par outil (la liste d'un agent hébergé) doit couvrir."""
     out = {corps.get("tool")}
     out.add(((corps.get("async") or {}).get("collect") or {}).get("tool"))
+    start = corps.get("start") or {}
+    out.add(start.get("tool"))
+    out.add((start.get("status") or {}).get("tool"))
     for bloc in ("lookup", "update"):
         b = corps.get(bloc) or {}
         out.add(b.get("tool") or (corps.get("tool") if b else None))
