@@ -85,6 +85,44 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
 - Tout ce qui demande davantage (expression régulière, condition, calcul) ira dans une
   fonction (`oto_function`) — on ne fait pas grandir ce langage.
 
+## Le mode par ligne (`per_row`)
+
+Une recette `per_row` ne crée pas de lignes : elle **enrichit celles d'un tableau**. Chaque
+ligne EN ATTENTE de `datastore` — colonne d'état vide, dans le `filter`, chaque colonne
+citée par les `arguments` remplie — déclenche UN appel, et son résultat est écrit dans
+CETTE ligne.
+
+```json
+{
+  "mode": "per_row",
+  "tool": "fr_get",
+  "arguments": {"siren": "{{row.siren|digits}}"},
+  "rows": {"status_column": "fr_status", "filter": {"country": "FR"}, "max_rows": 25},
+  "source": {"items": ""},
+  "map": {"naf": "activite_principale", "headcount": "tranche_effectif"},
+  "limits": {"max_units": 200}
+}
+```
+
+- **Les cases vides seulement**, par défaut (`on_existing: "fill_empty"`) : une valeur
+  posée par quelqu'un n'est pas écrasée ; `update` réécrit les colonnes de la
+  correspondance. Une valeur absente du résultat ne vide jamais une case.
+- **Jamais par-dessus une saisie faite pendant l'exécution** : l'écriture porte la
+  révision lue (`row_changed`, la ligne reste en attente).
+- **État** : `done`, `not_found` (aucun résultat, ou écarté par `where`),
+  `failed:<code>` (l'entrée de la ligne refusée), `failed:ambiguous` — le résultat est
+  une liste de plusieurs éléments et la recette n'a pas dit `pick: "first"` : choisir
+  entre des candidats, c'est résoudre une identité, et ça ne se fait pas en silence.
+- Ni `key`, ni pagination, ni `for_each` ; `units` vaut `calls` par défaut. `test` et
+  `publish` lisent `datastore` (obligatoire) et essaient jusqu'à trois lignes sans rien
+  écrire. Le reçu compte `rows: {done, not_found, failed}`.
+- Même boucle que `for_each` : refus qui tiennent à la ligne, disjoncteur, plafond de
+  dépense, budget d'horloge, dérive (sur dix lignes d'affilée).
+
+⚠️ Deux exécutions simultanées sur le même tableau peuvent payer deux fois la même ligne
+(vrai aussi en `pull` et `for_each`) : rien ne réserve une ligne entre sa lecture et son
+état.
+
 ## Les garde-fous
 
 - **Seul un outil DÉCLARÉ EN LECTURE est appelable** (`@mcp.tool(annotations=LECTURE)`,
@@ -163,8 +201,8 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
 
 ## Ce qui vient ensuite
 
-Le bloc `async` (soumettre puis collecter : Dropcontact, FullEnrich, Apify), le mode par
-ligne (`call` : remplir des cases d'une ligne existante) et la poussée vers un CRM
+Le bloc `async` (soumettre puis collecter : Dropcontact, FullEnrich, Apify — aucun n'est
+déclaré en lecture), la poussée vers un CRM
 (`push` — un effet chez le tiers : il lui faut une marche à blanc obligatoire et une
 liste des outils à effet, puisqu'une recette n'appelle aujourd'hui que des outils
 déclarés en lecture), puis les travaux de fond déclenchés par une planification ou un

@@ -34,6 +34,10 @@ PORTEES_ELEMENT = {"params", "item"}
 PORTEE_LIGNE = "row"
 MAX_PARENTS = 200
 MAX_PARENTS_DEFAUT = 25
+MODES = ("pull", "per_row")
+#: `per_row` : par défaut, seules les cases VIDES d'une ligne sont remplies — une valeur
+#: posée par quelqu'un n'est jamais écrasée sans le dire (`update`).
+EXISTANT_PAR_LIGNE = ("fill_empty", "update")
 MAX_PAGES = 50
 MAX_PAGES_DEFAUT = 20
 #: Plafond du plafond de dépense : 50 pages de 1 000 éléments. Au-delà, ce n'est plus une
@@ -91,6 +95,49 @@ def _tableau_ok(v: Any) -> bool:
     """Un tableau s'adresse par son NUMÉRO (`docs/datastore.md`)."""
     return (isinstance(v, int) and not isinstance(v, bool) and v > 0) \
         or (isinstance(v, str) and v.isdigit())
+
+
+def _lignes(probs: list, rows: Any) -> dict:
+    """`rows` d'une recette `per_row` : quelles lignes du tableau enrichir."""
+    if not isinstance(rows, dict):
+        probs.append("`rows` is required in `per_row` mode: {status_column, filter, "
+                     "max_rows}")
+        return {}
+    if not _colonne_ok(rows.get("status_column")):
+        probs.append("`rows.status_column` is required: the column where each row gets "
+                     "`done`, `not_found` or `failed:<code>`, so a re-run skips it")
+    if rows.get("filter") is not None and not isinstance(rows["filter"], dict):
+        probs.append("`rows.filter` must be an object (the grammar of `data_rows`)")
+    n = rows.setdefault("max_rows", MAX_PARENTS_DEFAUT)
+    if not isinstance(n, int) or not 1 <= n <= MAX_PARENTS:
+        probs.append(f"`rows.max_rows` (rows per call) must be 1 to {MAX_PARENTS}")
+    return rows
+
+
+def _par_ligne(probs: list, c: dict) -> None:
+    """Ce que `per_row` exige et refuse en plus du tronc commun."""
+    rows = _lignes(probs, c.get("rows"))
+    if c.get("for_each") is not None:
+        probs.append("`for_each` is for `pull`; in `per_row` the rows to enrich are "
+                     "chosen by `rows`")
+    if c.get("key") is not None:
+        probs.append("`key`: a `per_row` recipe writes back into the row it read — it "
+                     "needs no key")
+    if (c["source"].get("pagination") or {}).get("type", "none") != "none":
+        probs.append("`source.pagination`: a `per_row` call is one call per row, never "
+                     "paginated")
+    if c.get("pick") not in (None, "first"):
+        probs.append("`pick` can only be `first`: when the result is a list, take its "
+                     "first item. Without it, a list of several items marks the row "
+                     "`ambiguous`")
+    c.setdefault("on_existing", "fill_empty")
+    if c["on_existing"] not in EXISTANT_PAR_LIGNE:
+        probs.append(f"`on_existing` must be one of {list(EXISTANT_PAR_LIGNE)} in "
+                     "`per_row`")
+    etat = rows.get("status_column")
+    if etat and (etat in (c.get("map") or {}) or etat in (c.get("values") or {})):
+        probs.append(f"`rows.status_column` (`{etat}`) cannot also be written by `map` "
+                     "or `values`")
 
 
 def _pour_chaque(probs: list, fe: Any) -> Optional[dict]:
@@ -163,8 +210,9 @@ def valider(corps: Any) -> dict:
         raise RecetteInvalide(["the recipe must be an object"])
     c = copy.deepcopy(corps)
     mode = c.setdefault("mode", "pull")
-    if mode != "pull":
-        probs.append("`mode`: only `pull` is available in this version")
+    if mode not in MODES:
+        probs.append(f"`mode` must be one of {list(MODES)}")
+    par_ligne = mode == "per_row"
     outil = c.get("tool")
     if not isinstance(outil, str) or not outil:
         probs.append("`tool` (the connector tool to call) is required")
@@ -174,12 +222,13 @@ def valider(corps: Any) -> dict:
     elif namespace_of(outil) in NAMESPACES_A_MODELE:
         probs.append(f"`tool`: `{outil}` runs a model — a recipe never calls one (to "
                      "judge rows with a model, use `jev_rows`)")
-    fe = _pour_chaque(probs, c.get("for_each"))
-    if fe is None:
+    fe = None if par_ligne else _pour_chaque(probs, c.get("for_each"))
+    if fe is None and not par_ligne:
         c.pop("for_each", None)
-    # `{{row.…}}` n'existe que sous `for_each` : ailleurs, une faute de frappe.
-    p_args = PORTEES_ARGUMENTS | ({PORTEE_LIGNE} if fe else set())
-    p_elem = PORTEES_ELEMENT | ({PORTEE_LIGNE} if fe else set())
+    # `{{row.…}}` n'existe que sous `for_each` ou `per_row` : ailleurs, une faute de frappe.
+    avec_ligne = bool(fe) or par_ligne
+    p_args = PORTEES_ARGUMENTS | ({PORTEE_LIGNE} if avec_ligne else set())
+    p_elem = PORTEES_ELEMENT | ({PORTEE_LIGNE} if avec_ligne else set())
     args = c.setdefault("arguments", {})
     if not isinstance(args, dict):
         probs.append("`arguments` must be an object")
@@ -201,14 +250,16 @@ def valider(corps: Any) -> dict:
                 probs.append(f"`values`: `{col}` is not a valid column name")
             _portees(probs, f"`values.{col}`", gab, p_args)
     cle = c.get("key")
-    if not isinstance(cle, dict) or not _colonne_ok(cle.get("column")):
+    if par_ligne:
+        _par_ligne(probs, c)
+    elif not isinstance(cle, dict) or not _colonne_ok(cle.get("column")):
         probs.append("`key.column` (the column that identifies a row) is required")
     elif cle.get("template") is not None:
         _portees(probs, "`key.template`", cle["template"], p_elem)
     elif cle["column"] not in (c.get("map") or {}):
         probs.append("`key`: without `key.template`, `key.column` must be one of the "
                      "`map` columns")
-    if c.setdefault("on_existing", "skip") not in ("skip", "update"):
+    if not par_ligne and c.setdefault("on_existing", "skip") not in ("skip", "update"):
         probs.append("`on_existing` must be `skip` or `update`")
     lim = c.get("limits")
     if not isinstance(lim, dict) or not isinstance(lim.get("max_units"), int) \
@@ -220,7 +271,7 @@ def valider(corps: Any) -> dict:
         pages = lim.setdefault("max_pages", MAX_PAGES_DEFAUT)
         if not isinstance(pages, int) or not 1 <= pages <= MAX_PAGES:
             probs.append(f"`limits.max_pages` must be 1 to {MAX_PAGES}")
-    if c.setdefault("units", "items") not in ("items", "calls"):
+    if c.setdefault("units", "calls" if par_ligne else "items") not in ("items", "calls"):
         probs.append("`units` must be `items` (one unit per item returned) or `calls`")
     pag = (c.get("source") or {}).get("pagination") or {}
     if c["units"] == "items" and pag.get("type") == "page" and isinstance(pag.get("size"), int) \

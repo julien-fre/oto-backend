@@ -104,6 +104,9 @@ def _corps(parents: int, **surcharge) -> dict:
 
 def _executer(m, corps, ns, **kw):
     from oto_mcp.recipes import moteur
+    # Le budget d'horloge (30 s) n'est pas ce qu'on éprouve ici : une machine chargée
+    # le dépasserait au premier appel, et le reçu dirait `time_budget`.
+    kw.setdefault("budget_s", 600)
     return asyncio.run(moteur.executer(corps, {}, fastmcp=m, sub=SUB, datastore=ns, **kw))
 
 

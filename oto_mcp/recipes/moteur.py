@@ -115,6 +115,8 @@ HORS_DISJONCTEUR = frozenset({"not_found", "ambiguous"})
 #: …sauf quand plusieurs lignes d'affilée échouent pareil : c'est alors systémique (une
 #: garde d'activation, un argument mal écrit). L'exécution s'arrête SANS marquer la série.
 DISJONCTEUR = 3
+#: Le signal d'une ligne à laisser EN ATTENTE sans échec (changée pendant l'exécution).
+GARDER = "keep_pending"
 
 
 async def _outil(fastmcp, outil: str):
@@ -229,6 +231,10 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     les pages sont appelées (et facturées) mais rien n'est écrit ; le reçu porte le
     remplissage par colonne (`fill`). `temoin` = le rapport d'épreuve de la version
     publiée : ses colonnes pleines sont surveillées (`mapping_drift`)."""
+    if corps.get("mode") == "per_row":
+        return await _executer_par_ligne(corps, params, fastmcp=fastmcp, sub=sub,
+                                         datastore=datastore, reprise=reprise,
+                                         ecrire=ecrire, budget_s=budget_s, temoin=temoin)
     recu = _recu()
     etat = lire_reprise(reprise, corps)
     recu["units"] = etat["u"]
@@ -273,7 +279,8 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     def _reprise() -> str:
         return _jeton({**etat, "u": recu["units"]})
 
-    async def _tirer(row: Optional[dict]) -> tuple[Optional[str], int]:
+    async def _tirer(row: Optional[dict], _ligne: Optional[dict] = None
+                     ) -> tuple[Optional[str], int]:
         """Les pages d'UNE portée (la recette seule, ou une ligne parente). Rend `(arrêt,
         éléments retenus)` — `arrêt` None quand la portée est épuisée."""
         pris = 0
@@ -395,14 +402,16 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
 
 
 async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
-                     tirer) -> None:
+                     tirer, *, quota: Optional[int] = None, compte: str = "parents",
+                     vide: str = "empty") -> None:
     """Les lignes parentes EN ATTENTE (colonne d'état vide, filtre, entrées remplies),
     une à une : leur appel, puis leur état — `done` (des éléments), `empty` (aucun),
     `failed:<code>` (son entrée refusée : `ECHECS_DE_LIGNE`). Une ligne coupée par un
     plafond ou un échec du compte reste en attente — le jeton `resume` la reprend à sa
     page, une exécution neuve du début (les lignes déjà écrites sont reconnues par leur
     clé). Une série d'échecs identiques (`DISJONCTEUR`) arrête tout sans la marquer."""
-    recu["parents"] = {"done": 0, "empty": 0, "failed": 0}
+    quota = quota or fe["max_parents"]
+    recu[compte] = {"done": 0, vide: 0, "failed": 0}
     vues: set = set()
     premiere = etat.get("r")
     serie: list[str] = []          # les lignes de la série d'échecs en cours, à marquer
@@ -424,11 +433,11 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
 
     try:
         while True:
-            faits = sum(recu["parents"].values())
-            place = ESSAI_PARENTS - faits if not ecrire else fe["max_parents"] - faits
+            faits = sum(recu[compte].values())
+            place = ESSAI_PARENTS - faits if not ecrire else quota - faits
             if place <= 0:
                 if ecrire:
-                    _arreter(recu, "max_parents", resume=_jeton(
+                    _arreter(recu, f"max_{compte}", resume=_jeton(
                         {"p": None, "c": None, "u": recu["units"], "r": None,
                          "h": etat.get("h")}))
                 return
@@ -444,12 +453,16 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
                 if etat.get("r") != rid:
                     etat["p"] = etat["c"] = None
                 etat["r"] = rid
-                arret, pris = await tirer(ecriture.portee_ligne(ligne))
+                arret, pris = await tirer(ecriture.portee_ligne(ligne), ligne)
+                if arret == GARDER:
+                    # Ni faite ni en échec (changée pendant l'exécution) : elle attend.
+                    etat.update(r=None, p=None, c=None)
+                    continue
                 if arret is not None and arret.startswith("ligne:") \
                         and arret.split(":", 1)[1] in HORS_DISJONCTEUR:
                     etat.update(r=None, p=None, c=None)
                     await _solder()
-                    recu["parents"]["failed"] += 1
+                    recu[compte]["failed"] += 1
                     await _marquer(rid, f"failed:{arret.split(':', 1)[1]}")
                     continue
                 if arret is not None and arret.startswith("ligne:"):
@@ -459,12 +472,12 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
                         await _solder()
                         code_serie = code
                     serie.append(rid)
-                    recu["parents"]["failed"] += 1
+                    recu[compte]["failed"] += 1
                     if len(serie) >= DISJONCTEUR:
-                        recu["parents"]["failed"] -= len(serie)
+                        recu[compte]["failed"] -= len(serie)
                         serie.clear()
                         _arreter(recu, "repeated_failure", error=(
-                            f"{DISJONCTEUR} parent rows in a row failed with `{code}`: "
+                            f"{DISJONCTEUR} rows in a row failed with `{code}`: "
                             "that looks systemic (an argument, the connector), not a bad "
                             "row. None of them was marked; fix the cause and run again."))
                         return
@@ -473,8 +486,8 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
                     return
                 await _solder()
                 etat["r"] = None
-                statut = "done" if pris else "empty"
-                recu["parents"][statut] += 1
+                statut = "done" if pris else vide
+                recu[compte][statut] += 1
                 await _marquer(rid, statut)
                 if not ecrire and recu["rows_built"]:
                     return
@@ -483,6 +496,130 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
                 return
     finally:
         await _solder()
+
+
+def _resultat(payload: Any, corps: dict) -> tuple[Any, Optional[str]]:
+    """L'objet que rend l'outil pour UNE ligne : `source.items` y mène. Une liste n'est
+    réduite à son premier élément que si la recette le dit (`pick: "first"`) — choisir
+    entre plusieurs candidats, c'est résoudre une identité, et ça ne se fait pas en
+    silence : plusieurs éléments sans `pick` marquent la ligne `ambiguous`."""
+    res = co.lire(payload, corps["source"]["items"]) if corps["source"]["items"] else payload
+    if isinstance(res, list):
+        if not res:
+            return None, None
+        if len(res) > 1 and corps.get("pick") != "first":
+            return None, "ambiguous"
+        res = res[0]
+    return res, None
+
+
+async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
+                              datastore: Any, reprise: Optional[str], ecrire: bool,
+                              budget_s: float, temoin: Optional[dict]) -> dict:
+    """`per_row` : chaque ligne EN ATTENTE du tableau (colonne d'état vide, `filter`,
+    colonnes citées remplies) déclenche UN appel, et son résultat est écrit dans CETTE
+    ligne — les cases vides seulement par défaut (`fill_empty`), jamais une case vidée,
+    jamais par-dessus une saisie faite pendant l'exécution. État : `done`, `not_found`,
+    `failed:<code>`. Même boucle que `for_each` (`_parcourir`)."""
+    recu = _recu()
+    etat = lire_reprise(reprise)
+    recu["units"] = etat["u"]
+    if datastore is None:
+        raise RecetteRefusee("missing_datastore", "`datastore` (the number of the table "
+                                                  "whose rows are enriched) is required.")
+    outil = await _outil(fastmcp, corps["tool"])
+    rows = corps["rows"]
+    mappees = list(corps["map"])
+    remplissage = {c: 0 for c in mappees}
+    try:
+        lignes = await run_in_threadpool(
+            ecriture.ouvrir_parents, datastore, rows["status_column"], ecrire=ecrire,
+            filtre=rows.get("filter"),
+            requises=co.colonnes_citees(corps.get("arguments"), "row"),
+            a_creer=mappees + list(corps["values"]))
+        ensembles = await run_in_threadpool(ecriture.charger_ensembles, corps["where"])
+    except ecriture.TableauIndisponible as e:
+        raise RecetteRefusee(e.code, str(e))
+    recu["created_columns"] = list(lignes.creees)
+    a_surveiller = surveillees(temoin)
+    fenetre: list[dict] = []
+    lim = corps["limits"]
+    fin = time.monotonic() + budget_s
+
+    def _reprise() -> str:
+        return _jeton({"p": None, "c": None, "u": recu["units"], "r": None})
+
+    async def _enrichir(row: dict, ligne: dict) -> tuple[Optional[str], int]:
+        if lim["max_units"] - recu["units"] <= 0:
+            _arreter(recu, "spend_cap")
+            return "spend_cap", 0
+        if recu["pages"] and time.monotonic() >= fin:
+            _arreter(recu, "time_budget", resume=_reprise())
+            return "time_budget", 0
+        args = co.rendre(corps.get("arguments") or {}, co._portees(params, row))
+        try:
+            issue = await _appeler(outil, sub, corps["tool"], dict(args))
+        except McpError:
+            return "ligne:call_refused", 0
+        if not issue.ok:
+            if not issue.retryable and issue.code in ECHECS_DE_LIGNE:
+                return ("ligne:not_found" if issue.code == "not_found"
+                        else f"ligne:{issue.code}"), 0
+            _arreter(recu, issue.code or "tool_failed", error=issue.message,
+                     retryable=issue.retryable, resume=_reprise())
+            return recu["stopped"], 0
+        if issue.retenu:
+            _arreter(recu, "redaction_withheld",
+                     error="The org's redaction policy withheld this tool's output.")
+            return "redaction_withheld", 0
+        recu["pages"] += 1
+        res, refus = _resultat(redaction.extract_payload(issue.result), corps)
+        _compter(recu, corps, issue, [res] if res is not None else [])
+        if refus:
+            return f"ligne:{refus}", 0
+        if res is None or not co.garde(res, corps["where"], params, row=row,
+                                       ensembles=ensembles):
+            return None, 0
+        recu["items_seen"] += 1
+        construite = co.ligne(res, corps["map"], corps["values"], params, row=row)
+        fenetre.append(construite)
+        if len(fenetre) >= PAGE_TEMOIN:
+            derive = _derive(dict(enumerate(fenetre)), a_surveiller)
+            fenetre.clear()
+            if derive:
+                _arreter(recu, "mapping_drift", drifted_columns=derive,
+                         error=f"Column(s) {derive} came back empty on {PAGE_TEMOIN} rows "
+                               "in a row, though the published test filled them: the "
+                               "tool's output changed shape. Fix the recipe's `map`.")
+                return "mapping_drift", 0
+        # Jamais une case vidée ; `fill_empty` ne touche pas une case déjà remplie.
+        patch = {c: v for c, v in construite.items() if not co._vide(v)
+                 and (corps["on_existing"] == "update" or co._vide(row.get(c)))}
+        for c in mappees:
+            if not co._vide(construite.get(c)):
+                remplissage[c] += 1
+        recu["rows_built"] += 1
+        if not patch:
+            recu["existing_left_untouched"] += 1
+            return None, 1
+        if not ecrire:
+            return None, 1
+        code = await run_in_threadpool(ecriture.ecrire_dans_la_ligne, lignes, row["_id"],
+                                       patch, ligne.get("_revision"))
+        if code:
+            recu["failed"][code] = recu["failed"].get(code, 0) + 1
+            return GARDER, 0
+        recu["updated"] += 1
+        return None, 1
+
+    try:
+        await _parcourir({"max_parents": rows["max_rows"]}, lignes, ecrire, etat, recu,
+                         _enrichir, compte="rows", vide="not_found")
+    finally:
+        if not ecrire:
+            n = recu["rows_built"] or 1
+            recu["fill"] = {c: round(v / n, 3) for c, v in remplissage.items()}
+    return recu
 
 
 def _forme(obj: Any, prefixe: str, out: dict, profondeur: int) -> None:

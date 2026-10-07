@@ -195,6 +195,7 @@ class Parents:
     #: sélectionnée — l'appel serait payé pour rien, et la ligne reviendrait en tête de
     #: chaque exécution. Elle reste en attente jusqu'à ce qu'on la remplisse.
     requises: tuple = ()
+    creees: list = field(default_factory=list)
 
     def clauses(self) -> list[dict]:
         return [{"field": self.etat, "op": "empty", "value": True}] + [
@@ -222,20 +223,23 @@ def _ouvrir_tableau(datastore: Any, *, ecrire: bool) -> tuple[Any, str, dict]:
 
 
 def ouvrir_parents(datastore: Any, colonne_etat: str, *, ecrire: bool,
-                   filtre: Optional[dict] = None, requises=()) -> Parents:
+                   filtre: Optional[dict] = None, requises=(), a_creer=()) -> Parents:
     """Le tableau parent, le droit d'y ÉCRIRE vérifié avant tout appel quand on écrit :
     l'état de chaque ligne y est écrit en retour, et c'est lui qui fait qu'une exécution
     suivante ne repaie pas une ligne faite. Sa colonne d'état est déclarée si elle
-    manque. Le filtre est éprouvé ici : refusé, il l'est avant tout appel."""
+    manque — et `a_creer` aussi (`per_row` écrit dans ce même tableau). Le filtre est
+    éprouvé ici : refusé, il l'est avant tout appel."""
     store, adresse, schema = _ouvrir_tableau(datastore, ecrire=ecrire)
     colonnes = {f["key"] for f in (schema.get("fields") or []) if f.get("key")}
     p = Parents(store, adresse, colonne_etat, filtre or None, tuple(sorted(requises)))
-    if ecrire and colonne_etat not in colonnes:
-        store.patch_schema(adresse, fields=[{"key": colonne_etat, "type": "text"}])
+    neuves = [c for c in dict.fromkeys([colonne_etat, *a_creer]) if c not in colonnes]
+    if ecrire and neuves:
+        store.patch_schema(adresse, fields=[{"key": c, "type": "text"} for c in neuves])
+        p.creees = [c for c in neuves if c != colonne_etat]
     try:
         store.cursor_rows(adresse, filter=p.filtre, filters=p.clauses(), limit=1)
     except ValueError as e:
-        raise TableauIndisponible("invalid_filter", f"`for_each.filter`: {e} Nothing was "
+        raise TableauIndisponible("invalid_filter", f"The row `filter`: {e} Nothing was "
                                                     "called.")
     return p
 
@@ -313,3 +317,10 @@ def charger_ensembles(clauses: list[dict]) -> dict[int, set]:
                 break
         out[i] = valeurs
     return out
+
+
+def ecrire_dans_la_ligne(p: Parents, row_id: str, patch: dict,
+                         revision: Any) -> Optional[str]:
+    """`per_row` : écrit le résultat dans la ligne lue, sauf si elle a changé depuis la
+    lecture (`row_changed`) — une saisie faite pendant l'exécution n'est pas écrasée."""
+    return pr.ecrire_ligne(p.store, p.adresse, row_id, patch, expected_revision=revision)

@@ -57,7 +57,9 @@ class RecipeInput(BaseModel):
         "key {column, template}, on_existing skip|update, limits {max_units, max_pages}, "
         "units items|calls, for_each {datastore, status_column, filter, max_parents, "
         "max_items_per_row} (each pending row of that table drives the call; cite it as "
-        "{{row.col}}). where ops: eq ne in not_in contains_any empty not_empty, and "
+        "{{row.col}}). mode=per_row: one call per pending row of `datastore`, its result "
+        "written back into that row — rows {status_column, filter, max_rows}, "
+        "on_existing fill_empty|update, pick first, no key, no pagination. where ops: eq ne in not_in contains_any empty not_empty, and "
         "in_table / not_in_table {table, column} (match against another table); any clause "
         "takes `normalize`. Templates: {{params.x}}, {{item.a.b}}, {{row.col}}, filters "
         "|slug |lower |upper |strip |unaccent |domain |email |email_domain |linkedin_slug "
@@ -68,7 +70,8 @@ class RecipeInput(BaseModel):
     params: Optional[dict[str, Any]] = Field(default=None, description=(
         "test/publish/run: the recipe's parameters."))
     datastore: Optional[Any] = Field(default=None, description=(
-        "run: the table number to write into (test: optional, checks the key)."))
+        "run: the table number to write into (test: optional, checks the key). A "
+        "`per_row` recipe reads AND writes this table: required for test and publish too."))
     resume: Optional[str] = Field(default=None, description=(
         "run: the `resume` token of a previous partial run, to continue it."))
     tool: Optional[str] = Field(default=None, description="sample: the tool to call once.")
@@ -297,7 +300,10 @@ CAPABILITIES += [
             "bounds each call, `resume` continues a partial run; a table without a declared "
             "key gets the recipe's key on the first run) · op=list · op=get · op=versions. "
             "`for_each` fans out: each row of a parent table whose `status_column` is empty "
-            "drives the call (people per company…), then gets `done` or `empty`. A run "
+            "drives the call (people per company…), then gets `done` or `empty`. "
+            "`mode='per_row'` enriches the rows of `datastore` itself, one call per row "
+            "(fills empty cells only by default; status done / not_found / "
+            "failed:<code> / ambiguous). A run "
             "stops with `mapping_drift` when a column the published test filled comes back "
             "empty on a whole page. "
             "`limits.max_units` is required: a hard cap on what the tool BILLS (its own "
