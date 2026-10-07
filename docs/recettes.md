@@ -129,6 +129,101 @@ CETTE ligne.
 (vrai aussi en `pull` et `for_each`) : rien ne réserve une ligne entre sa lecture et son
 état.
 
+## Soumettre puis collecter (`async`, en `per_row`)
+
+Certains enrichissements ne répondent pas tout de suite : on soumet, le fournisseur
+travaille, on revient chercher le résultat (Dropcontact, FullEnrich, révélation de
+téléphone Apollo, enrichissement lemlist). Ces outils ne sont pas « en lecture » — ils
+dépensent des crédits — mais ne changent rien de visible chez le fournisseur : ils sont
+nommés, avec leur outil de collecte, dans une liste fermée (`oto_mcp/recipes/outils.py`,
+`SOUMISSIONS`).
+
+```json
+{
+  "mode": "per_row",
+  "tool": "dropcontact_enrich",
+  "arguments": {"contacts": [{"first_name": "{{row.first_name}}",
+                              "last_name": "{{row.last_name}}",
+                              "company": "{{row.company}}"}]},
+  "rows": {"status_column": "dc_status", "require": ["first_name", "last_name", "company"]},
+  "async": {"id": "request_id", "ready": "done",
+            "collect": {"tool": "dropcontact_result",
+                        "arguments": {"request_id": "{{job.id}}"}}},
+  "source": {"items": "profiles"}, "pick": "first",
+  "map": {"email": "email[0].email"},
+  "limits": {"max_units": 200}
+}
+```
+
+- **Une exécution collecte d'abord** les lignes `submitted` (travail noté dans
+  `async.job_column`, `<status_column>_job` par défaut) — encore en cours, elles
+  attendent — **puis soumet** les lignes en attente. On la relance donc : le reçu dit
+  `next_step` tant que des travaux tournent. Rien n'est jamais soumis deux fois.
+- **Le travail est noté sans garde de révision** : une soumission payée et non notée
+  serait refaite, et repayée. Notée impossible : `failed:unknown_outcome`.
+- **Au-delà de `max_wait_seconds`** (30 min par défaut) : `failed:timeout`, jamais
+  resoumis — la plupart des fournisseurs factureraient deux fois.
+- `{{job.id}}`, `{{job.at}}` et les champs gardés par `async.keep` ({nom: chemin dans la
+  réponse de soumission}) se citent dans les arguments de collecte.
+- **`rows.require` est obligatoire** : les colonnes qu'une ligne doit avoir avant qu'on
+  dépense des crédits pour elle.
+- **L'épreuve prouve la correspondance sur un VRAI résultat** : `test` sans `resume`
+  soumet UNE ligne (rien n'est écrit) et rend un jeton (`job_submitted`) ; `test` avec ce
+  jeton collecte (`job_running` tant que ce n'est pas prêt) puis rend le remplissage.
+  `publish` se passe le même jeton, et refuse tant que le résultat n'est pas collecté
+  (`test_pending`).
+- ⚠️ Apify (lancer, suivre, lire le jeu de données) est un `pull` asynchrone : pas
+  couvert. Un travail par ligne : les envois groupés (cent contacts par soumission)
+  viendront ensuite.
+
+## Pousser vers une autre app (`mode: push`)
+
+Une recette `push` crée ou met à jour UNE fiche chez un tiers par ligne en attente, et
+l'identifiant de la fiche revient dans la ligne. ⚠️ **C'est une extension assumée de la
+règle « une recette ne fait que lire »**, tenue par une liste fermée d'outils et d'ops
+(`oto_mcp/recipes/outils.py`, `POUSSEES` : `create`, `update`, `upsert`, `search` —
+jamais `delete`, `merge` ni les `bulk_*`), gardée par `tests/test_recettes_outils.py`.
+
+```json
+{
+  "mode": "push", "side_effects": true,
+  "tool": "hubspot_object",
+  "arguments": {"op": "create", "object_type": "contacts",
+                "properties": {"email": "{{row.email}}", "firstname": "{{row.first_name}}"}},
+  "rows": {"status_column": "hs_status", "require": ["email"], "filter": {"status": "validated"}},
+  "id": {"column": "hubspot_id", "path": "id"},
+  "lookup": {"arguments": {"op": "search", "object_type": "contacts", "query": "{{row.email}}"},
+             "items": "results", "id_path": "id"},
+  "update": {"arguments": {"op": "update", "object_type": "contacts",
+                           "object_id": "{{row.hubspot_id}}",
+                           "properties": {"firstname": "{{row.first_name}}"}}},
+  "limits": {"max_units": 100}
+}
+```
+
+- **Tout se dit** : `side_effects: true` ; l'`op` est écrite en toutes lettres (jamais un
+  gabarit) et revérifiée sur ce qui part ; un outil qui peut déclencher un envoi (une
+  piste ajoutée à une campagne lemlist) exige `allow_sending: true` ; `rows.require`
+  est obligatoire.
+- **Jamais deux fois** : une ligne qui porte déjà son identifiant est mise à jour
+  (`update` déclaré → `updated`) ou laissée (`exists`, aucun appel) ; sinon `lookup`,
+  s'il est déclaré, cherche la fiche — trouvée, elle est liée (`linked`), plusieurs
+  marquent `failed:ambiguous` ; sinon création (`created`). L'identifiant est noté SANS
+  garde de révision, aussitôt la fiche créée.
+- **Une création dont l'issue est inconnue** (délai, panne) marque
+  `failed:unknown_outcome` et n'est jamais refaite d'office : la fiche existe peut-être.
+  Un refus qui dit que rien n'a été fait (clé, crédits, débit) arrête l'exécution et
+  laisse la ligne en attente.
+- **Jamais un champ vidé** : un argument dont la valeur est vide n'est pas envoyé.
+- **`errors`** (un chemin dans la réponse) : une réponse « réussie » qui y porte quelque
+  chose (doublon, champ refusé) marque `failed:provider_error`.
+- **`test` et `publish` sont une marche à blanc** : rien n'est appelé ; le reçu dit ce qui
+  serait créé, mis à jour ou laissé (`dry_run`) et le remplissage de chaque argument —
+  des comptes, jamais une valeur.
+- ⚠️ **Ni `push` ni `async` dans un agent hébergé** (`side_effect_recipes_not_in_hosted_agents`),
+  même quand la liste de son travail porterait l'outil : un agent hébergé lit du texte
+  non sûr (webhook, e-mails, CRM), il ne pilote pas une écriture chez un tiers.
+
 ## Les garde-fous
 
 - **Seul un outil DÉCLARÉ EN LECTURE est appelable** (`@mcp.tool(annotations=LECTURE)`,
@@ -207,9 +302,6 @@ CETTE ligne.
 
 ## Ce qui vient ensuite
 
-Le bloc `async` (soumettre puis collecter : Dropcontact, FullEnrich, Apify — aucun n'est
-déclaré en lecture), la poussée vers un CRM
-(`push` — un effet chez le tiers : il lui faut une marche à blanc obligatoire et une
-liste des outils à effet, puisqu'une recette n'appelle aujourd'hui que des outils
-déclarés en lecture), puis les travaux de fond déclenchés par une planification ou un
+Apify en `pull` asynchrone, les soumissions et poussées groupées (un appel pour
+cinquante lignes), puis les travaux de fond déclenchés par une planification ou un
 webhook (l'exécutant reste à choisir).

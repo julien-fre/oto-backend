@@ -252,7 +252,8 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
   exécuté dans un bac à sable Pyodide/Deno sans réseau (ADR 0073)
 - `recettes.md` — `oto_recipe` : un outil de connecteur vers un tableau sans modèle —
   recette versionnée, pages appelées par le corps d'`oto_call`, reçu en comptes, `for_each` sur
-  les lignes d'un tableau, `per_row` qui enrichit les lignes d'un tableau, dérive surveillée,
+  les lignes d'un tableau, `per_row` qui enrichit les lignes d'un tableau (`async` : soumettre
+  puis collecter), `push` vers une autre app (liste fermée d'outils et d'ops), dérive surveillée,
   refusée en agent hébergé
 - `datastore.md` — spine PG `data_*`, OAuth Google
 - `donnees-par-reference.md` — rien de personnel ni d'URL extérieure en argument :

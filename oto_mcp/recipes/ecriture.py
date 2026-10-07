@@ -324,3 +324,18 @@ def ecrire_dans_la_ligne(p: Parents, row_id: str, patch: dict,
     """`per_row` : écrit le résultat dans la ligne lue, sauf si elle a changé depuis la
     lecture (`row_changed`) — une saisie faite pendant l'exécution n'est pas écrasée."""
     return pr.ecrire_ligne(p.store, p.adresse, row_id, patch, expected_revision=revision)
+
+
+def lignes_par_etat(p: Parents, etat: str, *, limite: int) -> list[dict]:
+    """Les lignes dont la colonne d'état vaut `etat` (`async` : `submitted`, à collecter)."""
+    page = p.store.cursor_rows(p.adresse, filter=p.filtre,
+                               filters=[{"field": p.etat, "op": "eq", "value": etat}],
+                               limit=limite)
+    return list(page.get("rows") or [])
+
+
+def ecrire_sans_garde(p: Parents, row_id: str, patch: dict) -> Optional[str]:
+    """Écrit sans révision : ce que le TIERS a déjà fait (une fiche créée, un travail
+    soumis) doit être noté même si la ligne a bougé — sinon une exécution suivante le
+    referait, et le paierait ou le dédoublerait."""
+    return pr.ecrire_ligne(p.store, p.adresse, row_id, patch)

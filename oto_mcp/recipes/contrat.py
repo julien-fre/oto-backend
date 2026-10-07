@@ -16,6 +16,7 @@ from typing import Any, Optional
 from ..tool_visibility import namespace_of
 from ..tools.meta import _NON_DISPATCHABLE as NAMESPACES_INTERDITS
 from . import correspondance as co
+from . import outils as ou
 
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 _COLONNE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,62}$")
@@ -34,7 +35,12 @@ PORTEES_ELEMENT = {"params", "item"}
 PORTEE_LIGNE = "row"
 MAX_PARENTS = 200
 MAX_PARENTS_DEFAUT = 25
-MODES = ("pull", "per_row")
+MODES = ("pull", "per_row", "push")
+PORTEE_TRAVAIL = "job"
+#: `async` : au-delà, un travail soumis est tenu pour perdu (`failed:timeout`) — jamais
+#: resoumis : la plupart des fournisseurs factureraient deux fois.
+ATTENTE_MAX = 86_400
+ATTENTE_DEFAUT = 1_800
 #: `per_row` : par défaut, seules les cases VIDES d'une ligne sont remplies — une valeur
 #: posée par quelqu'un n'est jamais écrasée sans le dire (`update`).
 EXISTANT_PAR_LIGNE = ("fill_empty", "update")
@@ -125,9 +131,128 @@ def _lignes(probs: list, rows: Any) -> dict:
     return rows
 
 
+def _asynchrone(probs: list, c: dict, rows: dict) -> None:
+    """`async` d'une recette `per_row` : soumettre (l'outil de la recette), puis
+    collecter (`collect.tool`, nommé par `recipes/outils.SOUMISSIONS`)."""
+    a = c.get("async")
+    if not isinstance(a, dict):
+        probs.append("`async` must be an object {id, ready, collect {tool, arguments}, "
+                     "max_wait_seconds}")
+        return
+    if c.get("tool") not in ou.SOUMISSIONS:
+        probs.append(f"`async`: `{c.get('tool')}` is not a submit tool a recipe may call "
+                     f"(allowed: {sorted(ou.SOUMISSIONS)})")
+    collect = a.get("collect")
+    if not isinstance(collect, dict) or collect.get("tool") not in ou.collecteurs(
+            c.get("tool")):
+        probs.append(f"`async.collect.tool` must be the collect tool of `{c.get('tool')}`: "
+                     f"{sorted(ou.collecteurs(c.get('tool'))) or 'none'}")
+    elif not isinstance(collect.setdefault("arguments", {}), dict):
+        probs.append("`async.collect.arguments` must be an object")
+    else:
+        _portees(probs, "`async.collect.arguments`", collect["arguments"],
+                 PORTEES_ARGUMENTS | {PORTEE_LIGNE, PORTEE_TRAVAIL})
+    for champ in ("id", "ready"):
+        if not isinstance(a.get(champ), str) or not a[champ]:
+            probs.append(f"`async.{champ}` (path in the {'submit' if champ == 'id' else 'collect'} "
+                         "reply) is required")
+    keep = a.get("keep")
+    if keep is not None and (not isinstance(keep, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in keep.items())):
+        probs.append("`async.keep` must be {name: path}: fields of the submit reply kept "
+                     "with the job, cited as {{job.name}}")
+    n = a.setdefault("max_wait_seconds", ATTENTE_DEFAUT)
+    if not isinstance(n, int) or not 60 <= n <= ATTENTE_MAX:
+        probs.append(f"`async.max_wait_seconds` must be 60 to {ATTENTE_MAX}")
+    etat = rows.get("status_column")
+    col = a.setdefault("job_column", f"{etat}_job" if etat else None)
+    if not _colonne_ok(col):
+        probs.append("`async.job_column` must be a column name")
+    if not rows.get("require"):
+        probs.append("`rows.require` is required with `async`: the columns a row must "
+                     "have before credits are spent on it")
+
+
+def _arguments_ecrivains(probs: list, ou_: str, outil: Any, args: Any,
+                         ops_permises: Optional[set] = None) -> None:
+    if not isinstance(args, dict):
+        probs.append(f"`{ou_}.arguments` must be an object")
+        return
+    _portees(probs, f"`{ou_}.arguments`", args, PORTEES_ARGUMENTS | {PORTEE_LIGNE})
+    if outil not in ou.POUSSEES:
+        probs.append(f"`{ou_}`: `{outil}` is not a tool a recipe may push to "
+                     f"(allowed: {sorted(ou.POUSSEES)})")
+        return
+    if ou.POUSSEES[outil] is None:
+        return
+    op = args.get("op")
+    if not isinstance(op, str) or co.portees_citees(op):
+        probs.append(f"`{ou_}.arguments.op` must be written literally (never a template)")
+    elif not ou.op_permise(outil, op) or op not in (ops_permises or ou.OPS_ECRITURE):
+        probs.append(f"`{ou_}.arguments.op`: `{op}` is not allowed here for `{outil}` "
+                     f"(allowed: {sorted((ops_permises or ou.OPS_ECRITURE) & (ou.POUSSEES[outil] or set()))})")
+
+
+def _pousse(probs: list, c: dict) -> None:
+    """Ce que `push` exige : un effet chez le tiers, donc tout se dit."""
+    if c.get("side_effects") is not True:
+        probs.append("`side_effects: true` is required: a `push` recipe creates or "
+                     "updates records in another app")
+    rows = _lignes(probs, c.get("rows"))
+    if not rows.get("require"):
+        probs.append("`rows.require` is required in `push`: the columns a row must have "
+                     "before it is sent")
+    for interdit in ("for_each", "key", "async", "pick", "map", "values"):
+        if c.get(interdit) not in (None, {}):
+            probs.append(f"`{interdit}` has no meaning in `push`")
+    if (c["source"].get("pagination") or {}).get("type", "none") != "none":
+        probs.append("`source.pagination`: a `push` call is one call per row")
+    _arguments_ecrivains(probs, "push", c.get("tool"), c.get("arguments"))
+    if c.get("tool") in ou.ENVOIENT and c.get("allow_sending") is not True:
+        probs.append(f"`{c.get('tool')}` can trigger a send (a lead added to a running "
+                     "campaign gets its sequence): `allow_sending: true` is required")
+    ident = c.get("id")
+    if not isinstance(ident, dict) or not _colonne_ok(ident.get("column")) \
+            or not isinstance(ident.get("path"), str):
+        probs.append("`id` {column, path} is required: where the created record's id is "
+                     "read in the reply, and the column it is written back to — what makes "
+                     "a re-run update instead of creating twice")
+    maj = c.get("update")
+    if maj is not None:
+        if not isinstance(maj, dict):
+            probs.append("`update` must be an object {tool, arguments}")
+        else:
+            _arguments_ecrivains(probs, "update", maj.setdefault("tool", c.get("tool")),
+                                 maj.get("arguments"))
+    rech = c.get("lookup")
+    if rech is not None:
+        if not isinstance(rech, dict) or not isinstance(rech.get("id_path"), str):
+            probs.append("`lookup` must be an object {tool, arguments, items, id_path}")
+        else:
+            outil = rech.setdefault("tool", c.get("tool"))
+            args = rech.get("arguments")
+            if not isinstance(args, dict):
+                probs.append("`lookup.arguments` must be an object")
+            else:
+                _portees(probs, "`lookup.arguments`", args,
+                         PORTEES_ARGUMENTS | {PORTEE_LIGNE})
+                # Une recherche : l'op `search` d'un outil de poussée, ou un outil
+                # déclaré en lecture (vérifié à l'exécution, sur le catalogue servi).
+                if outil in ou.POUSSEES and ou.POUSSEES[outil] is not None:
+                    _arguments_ecrivains(probs, "lookup", outil, args, {"search"})
+    if c.get("errors") is not None and not isinstance(c["errors"], str):
+        probs.append("`errors` must be a path in the reply")
+    c["map"], c["values"] = {}, {}
+    etat = rows.get("status_column")
+    if etat and isinstance(ident, dict) and etat == ident.get("column"):
+        probs.append("`id.column` and `rows.status_column` must differ")
+
+
 def _par_ligne(probs: list, c: dict) -> None:
     """Ce que `per_row` exige et refuse en plus du tronc commun."""
     rows = _lignes(probs, c.get("rows"))
+    if c.get("async") is not None:
+        _asynchrone(probs, c, rows)
     if c.get("for_each") is not None:
         probs.append("`for_each` is for `pull`; in `per_row` the rows to enrich are "
                      "chosen by `rows`")
@@ -225,6 +350,7 @@ def valider(corps: Any) -> dict:
     if mode not in MODES:
         probs.append(f"`mode` must be one of {list(MODES)}")
     par_ligne = mode == "per_row"
+    pousse = mode == "push"
     outil = c.get("tool")
     if not isinstance(outil, str) or not outil:
         probs.append("`tool` (the connector tool to call) is required")
@@ -234,11 +360,12 @@ def valider(corps: Any) -> dict:
     elif namespace_of(outil) in NAMESPACES_A_MODELE:
         probs.append(f"`tool`: `{outil}` runs a model — a recipe never calls one (to "
                      "judge rows with a model, use `jev_rows`)")
-    fe = None if par_ligne else _pour_chaque(probs, c.get("for_each"))
-    if fe is None and not par_ligne:
+    fe = None if (par_ligne or pousse) else _pour_chaque(probs, c.get("for_each"))
+    if fe is None and not (par_ligne or pousse):
         c.pop("for_each", None)
-    # `{{row.…}}` n'existe que sous `for_each` ou `per_row` : ailleurs, une faute de frappe.
-    avec_ligne = bool(fe) or par_ligne
+    # `{{row.…}}` n'existe que sous `for_each`, `per_row` ou `push` : ailleurs, une faute
+    # de frappe.
+    avec_ligne = bool(fe) or par_ligne or pousse
     p_args = PORTEES_ARGUMENTS | ({PORTEE_LIGNE} if avec_ligne else set())
     p_elem = PORTEES_ELEMENT | ({PORTEE_LIGNE} if avec_ligne else set())
     args = c.setdefault("arguments", {})
@@ -252,7 +379,8 @@ def valider(corps: Any) -> dict:
     c["source"] = _source(probs, c.get("source"))
     for i, w in enumerate(c.setdefault("where", []) or []):
         _clause(probs, i, w, p_args)
-    _correspondance(probs, c.get("map"), p_elem)
+    if not pousse:
+        _correspondance(probs, c.get("map"), p_elem)
     valeurs = c.setdefault("values", {})
     if not isinstance(valeurs, dict):
         probs.append("`values` must be an object {column: value or template}")
@@ -264,6 +392,8 @@ def valider(corps: Any) -> dict:
     cle = c.get("key")
     if par_ligne:
         _par_ligne(probs, c)
+    elif pousse:
+        _pousse(probs, c)
     elif not isinstance(cle, dict) or not _colonne_ok(cle.get("column")):
         probs.append("`key.column` (the column that identifies a row) is required")
     elif cle.get("template") is not None:
@@ -271,7 +401,8 @@ def valider(corps: Any) -> dict:
     elif cle["column"] not in (c.get("map") or {}):
         probs.append("`key`: without `key.template`, `key.column` must be one of the "
                      "`map` columns")
-    if not par_ligne and c.setdefault("on_existing", "skip") not in ("skip", "update"):
+    if not (par_ligne or pousse) and c.setdefault("on_existing", "skip") \
+            not in ("skip", "update"):
         probs.append("`on_existing` must be `skip` or `update`")
     lim = c.get("limits")
     if not isinstance(lim, dict) or not isinstance(lim.get("max_units"), int) \
@@ -283,7 +414,8 @@ def valider(corps: Any) -> dict:
         pages = lim.setdefault("max_pages", MAX_PAGES_DEFAUT)
         if not isinstance(pages, int) or not 1 <= pages <= MAX_PAGES:
             probs.append(f"`limits.max_pages` must be 1 to {MAX_PAGES}")
-    if c.setdefault("units", "calls" if par_ligne else "items") not in ("items", "calls"):
+    if c.setdefault("units", "calls" if (par_ligne or pousse) else "items") \
+            not in ("items", "calls"):
         probs.append("`units` must be `items` (one unit per item returned) or `calls`")
     pag = (c.get("source") or {}).get("pagination") or {}
     if c["units"] == "items" and pag.get("type") == "page" and isinstance(pag.get("size"), int) \

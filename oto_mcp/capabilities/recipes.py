@@ -59,7 +59,12 @@ class RecipeInput(BaseModel):
         "max_items_per_row} (each pending row of that table drives the call; cite it as "
         "{{row.col}}). mode=per_row: one call per pending row of `datastore`, its result "
         "written back into that row — rows {status_column, filter, max_rows}, "
-        "on_existing fill_empty|update, pick first, no key, no pagination. where ops: eq ne in not_in contains_any empty not_empty, and "
+        "on_existing fill_empty|update, pick first, no key, no pagination; with async "
+        "{id, ready, collect {tool, arguments}, keep, max_wait_seconds} it submits paid "
+        "jobs then collects them ({{job.id}}). mode=push (side_effects: true): creates or "
+        "updates one record per pending row in another app — rows {status_column, "
+        "require, filter, max_rows}, id {column, path}, lookup {arguments, items, "
+        "id_path}, update {arguments}, errors, allow_sending; op written literally. where ops: eq ne in not_in contains_any empty not_empty, and "
         "in_table / not_in_table {table, column} (match against another table); any clause "
         "takes `normalize`. Templates: {{params.x}}, {{item.a.b}}, {{row.col}}, filters "
         "|slug |lower |upper |strip |unaccent |domain |email |email_domain |linkedin_slug "
@@ -204,8 +209,22 @@ def _epingler_org(ctx: ResolvedCtx):
     return session_org.set_call_org(ctx.org_id) if ctx.org_id is not None else None
 
 
+def _a_effets(corps: dict) -> bool:
+    """Une recette qui dépense des crédits sans lire (`async`) ou écrit chez un tiers
+    (`push`)."""
+    return corps.get("mode") == "push" or bool(corps.get("async"))
+
+
 async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: bool,
                     pages_max: Optional[int] = None, temoin: Optional[dict] = None) -> dict:
+    if _a_effets(corps) and current_token_axes().get("token_kind") == "delegation":
+        # Un agent hébergé lit du texte non sûr (webhook, e-mails, CRM) : il ne pilote pas
+        # une recette qui écrit chez un tiers ou dépense des crédits sans lire — même
+        # quand la liste de son travail porterait l'outil.
+        raise AuthzDenied(403, "side_effect_recipes_not_in_hosted_agents",
+                          "Recipes that push to another app or submit paid jobs don't run "
+                          "inside hosted agents. Run it yourself, or from a person's "
+                          "session.")
     fastmcp = _instance()
     jeton = _epingler_org(ctx)
     try:
@@ -266,11 +285,17 @@ async def _recipe(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
     if inp.op == "test":
         return {"recipe": fiche, "version": {"version": version["version"]}, "receipt": recu}
     # publish : l'épreuve doit avoir produit des lignes, sans refus.
+    if recu["stopped"] in ("job_submitted", "job_running"):
+        # `async` : la publication exige un VRAI résultat collecté — repasser `resume`.
+        raise AuthzDenied(409, "test_pending",
+                          "The test job is running at the provider: call publish again "
+                          "with this `resume` in a minute, until it is collected.",
+                          details={"receipt": recu})
     if recu["stopped"] not in (None, "max_pages") or not recu["rows_built"]:
         raise AuthzDenied(409, "test_failed",
                           "The test page produced no row (or was refused): fix the recipe "
                           "or its params before publishing.", details={"receipt": recu})
-    rapport = {k: recu[k] for k in ("items_seen", "rows_built", "skipped_where",
+    rapport = {k: recu.get(k) for k in ("items_seen", "rows_built", "skipped_where",
                                     "skipped_no_key", "fill")}
     await run_in_threadpool(db_recipes.decide_version, fiche["id"], version["version"],
                             status="publiee", decided_by=ctx.sub, test_report=rapport)
@@ -303,7 +328,12 @@ CAPABILITIES += [
             "drives the call (people per company…), then gets `done` or `empty`. "
             "`mode='per_row'` enriches the rows of `datastore` itself, one call per row "
             "(fills empty cells only by default; status done / not_found / "
-            "failed:<code> / ambiguous). A run "
+            "failed:<code> / ambiguous). With `async` it submits paid jobs (Dropcontact, "
+            "FullEnrich…) and collects them on the next run. `mode='push'` creates or "
+            "updates records in a CRM or campaign tool (HubSpot, Folk, Attio, Pipedrive, "
+            "Salesforce, lemlist), never twice: the record id comes back into the row; test "
+            "and publish are a dry run that calls nothing. Neither push nor async runs "
+            "inside a hosted agent. A run "
             "stops with `mapping_drift` when a column the published test filled comes back "
             "empty on a whole page. "
             "`limits.max_units` is required: a hard cap on what the tool BILLS (its own "

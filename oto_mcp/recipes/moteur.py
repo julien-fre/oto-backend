@@ -37,6 +37,7 @@ from ..tools import lecture
 from . import contrat
 from . import correspondance as co
 from . import ecriture
+from . import outils as ou
 
 #: Budget d'horloge d'un appel, vérifié AVANT chaque page : passé ce délai le reçu est
 #: rendu partiel avec `resume`, plutôt que coupé sans reçu. Celui de `par_reference`.
@@ -69,13 +70,14 @@ def lire_reprise(reprise: Optional[str], corps: Optional[dict] = None) -> dict:
     """L'état d'une reprise. `r` = la ligne parente en cours (`for_each`). Le jeton doit
     porter l'empreinte de CETTE recette, et la dépense faite n'est jamais négative : un
     jeton fabriqué ne rouvre pas le plafond."""
-    vide = {"p": None, "c": None, "u": 0, "r": None, "h": empreinte(corps) if corps else None}
+    vide = {"p": None, "c": None, "u": 0, "r": None, "j": None,
+            "h": empreinte(corps) if corps else None}
     if not reprise:
         return vide
     try:
         etat = json.loads(base64.urlsafe_b64decode(reprise.encode()).decode())
         lu = {"p": etat.get("p"), "c": etat.get("c"), "u": max(0, int(etat.get("u", 0))),
-              "r": etat.get("r"), "h": etat.get("h")}
+              "r": etat.get("r"), "h": etat.get("h"), "j": etat.get("j")}
     except (ValueError, TypeError, AttributeError):
         lu = None
     if lu is None or (corps is not None and lu["h"] != vide["h"]):
@@ -119,9 +121,11 @@ DISJONCTEUR = 3
 GARDER = "keep_pending"
 
 
-async def _outil(fastmcp, outil: str):
-    """L'outil, s'il est appelable par une recette — refus nommé sinon. Jugé AVANT tout
-    effet (ouverture du tableau, colonnes créées, clé déclarée)."""
+async def _outil(fastmcp, outil: str, usage: str = "read"):
+    """L'outil, s'il est appelable par une recette POUR CET USAGE — refus nommé sinon.
+    Jugé AVANT tout effet (ouverture du tableau, colonnes créées, clé déclarée).
+    `read` : déclaré en lecture ; `submit` / `collect` / `push` : nommé par
+    `recipes/outils` ; `lookup` : l'un ou l'autre (une recherche)."""
     from ..tools import meta
     if namespace_of(outil) in contrat.NAMESPACES_INTERDITS:
         raise RecetteRefusee("tool_not_allowed",
@@ -132,6 +136,17 @@ async def _outil(fastmcp, outil: str):
     tool = await meta.resoudre_outil(fastmcp, outil)
     if tool is None:
         raise RecetteRefusee("unknown_tool", f"Unknown tool `{outil}`.")
+    permis = {"submit": outil in ou.SOUMISSIONS,
+              "collect": any(outil in c for c in ou.SOUMISSIONS.values()),
+              "push": outil in ou.POUSSEES}
+    if usage in permis:
+        if not permis[usage]:
+            raise RecetteRefusee("recipe_tool_not_allowed",
+                                 f"`{outil}` is not on the recipes' {usage} list "
+                                 "(`recipes/outils.py`). Nothing was called.")
+        return tool
+    if usage == "lookup" and outil in ou.POUSSEES:
+        return tool
     if not lecture.en_lecture(tool):
         raise RecetteRefusee("recipe_tool_not_read_only",
                              f"`{outil}` is not declared read-only: a recipe only calls tools "
@@ -239,6 +254,9 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     les pages sont appelées (et facturées) mais rien n'est écrit ; le reçu porte le
     remplissage par colonne (`fill`). `temoin` = le rapport d'épreuve de la version
     publiée : ses colonnes pleines sont surveillées (`mapping_drift`)."""
+    if corps.get("mode") == "push":
+        return await _executer_pousser(corps, params, fastmcp=fastmcp, sub=sub,
+                                       datastore=datastore, ecrire=ecrire, budget_s=budget_s)
     if corps.get("mode") == "per_row":
         return await _executer_par_ligne(corps, params, fastmcp=fastmcp, sub=sub,
                                          datastore=datastore, reprise=reprise,
@@ -418,7 +436,7 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
     page, une exécution neuve du début (les lignes déjà écrites sont reconnues par leur
     clé). Une série d'échecs identiques (`DISJONCTEUR`) arrête tout sans la marquer."""
     quota = quota or fe["max_parents"]
-    recu[compte] = {"done": 0, vide: 0, "failed": 0}
+    recu.setdefault(compte, {"done": 0, vide: 0, "failed": 0})
     vues: set = set()
     premiere = etat.get("r")
     serie: list[str] = []          # les lignes de la série d'échecs en cours, à marquer
@@ -493,8 +511,8 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
                     return
                 await _solder()
                 etat["r"] = None
-                statut = "done" if pris else vide
-                recu[compte][statut] += 1
+                statut = pris if isinstance(pris, str) else ("done" if pris else vide)
+                recu[compte][statut] = recu[compte].get(statut, 0) + 1
                 await _marquer(rid, statut)
                 if not ecrire and recu["rows_built"]:
                     return
@@ -534,7 +552,9 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
     if datastore is None:
         raise RecetteRefusee("missing_datastore", "`datastore` (the number of the table "
                                                   "whose rows are enriched) is required.")
-    outil = await _outil(fastmcp, corps["tool"])
+    asyn = corps.get("async")
+    outil = await _outil(fastmcp, corps["tool"], "submit" if asyn else "read")
+    collecteur = await _outil(fastmcp, asyn["collect"]["tool"], "collect") if asyn else None
     rows = corps["rows"]
     mappees = list(corps["map"])
     remplissage = {c: 0 for c in mappees}
@@ -542,7 +562,7 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
         lignes = await run_in_threadpool(
             ecriture.ouvrir_parents, datastore, rows["status_column"], ecrire=ecrire,
             filtre=rows.get("filter"), requises=requises(corps, rows),
-            a_creer=mappees + list(corps["values"]))
+            a_creer=mappees + list(corps["values"]) + ([asyn["job_column"]] if asyn else []))
         ensembles = await run_in_threadpool(ecriture.charger_ensembles, corps["where"])
     except ecriture.TableauIndisponible as e:
         raise RecetteRefusee(e.code, str(e))
@@ -555,30 +575,38 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
     def _reprise() -> str:
         return _jeton({"p": None, "c": None, "u": recu["units"], "r": None})
 
-    async def _enrichir(row: dict, ligne: dict) -> tuple[Optional[str], int]:
-        if lim["max_units"] - recu["units"] <= 0:
-            _arreter(recu, "spend_cap")
-            return "spend_cap", 0
-        if recu["pages"] and time.monotonic() >= fin:
-            _arreter(recu, "time_budget", resume=_reprise())
-            return "time_budget", 0
-        args = co.sans_vides(co.rendre(corps.get("arguments") or {}, co._portees(params, row)))
+    async def _appel(nom_outil, tool, args: dict):
+        """Un appel ; rend `(issue, arrêt)` — `arrêt` déjà posé au reçu, ou un échec
+        `ligne:<code>` qui ne tient qu'à cette ligne."""
         try:
-            issue = await _appeler(outil, sub, corps["tool"], dict(args))
+            issue = await _appeler(tool, sub, nom_outil, dict(args))
         except McpError:
-            return "ligne:call_refused", 0
+            return None, "ligne:call_refused"
         if not issue.ok:
             if not issue.retryable and issue.code in ECHECS_DE_LIGNE:
-                return ("ligne:not_found" if issue.code == "not_found"
-                        else f"ligne:{issue.code}"), 0
+                return None, ("ligne:not_found" if issue.code == "not_found"
+                              else f"ligne:{issue.code}")
             _arreter(recu, issue.code or "tool_failed", error=issue.message,
                      retryable=issue.retryable, resume=_reprise())
-            return recu["stopped"], 0
+            return None, recu["stopped"]
         if issue.retenu:
             _arreter(recu, "redaction_withheld",
                      error="The org's redaction policy withheld this tool's output.")
-            return "redaction_withheld", 0
+            return None, "redaction_withheld"
         recu["pages"] += 1
+        return issue, None
+
+    def _hors_budget() -> Optional[str]:
+        if lim["max_units"] - recu["units"] <= 0:
+            _arreter(recu, "spend_cap")
+            return "spend_cap"
+        if recu["pages"] and time.monotonic() >= fin:
+            _arreter(recu, "time_budget", resume=_reprise())
+            return "time_budget"
+        return None
+
+    async def _ecrire_resultat(issue, row: dict, ligne: dict) -> tuple[Optional[str], Any]:
+        """Le résultat d'un appel (ou d'une collecte) écrit dans la ligne."""
         res, refus = _resultat(redaction.extract_payload(issue.result), corps)
         _compter(recu, corps, issue, [res] if res is not None else [])
         if refus:
@@ -622,6 +650,90 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
         recu["updated"] += 1
         return None, 1
 
+    async def _enrichir(row: dict, ligne: dict) -> tuple[Optional[str], Any]:
+        arret = _hors_budget()
+        if arret:
+            return arret, 0
+        args = co.sans_vides(co.rendre(corps.get("arguments") or {}, co._portees(params, row)))
+        issue, arret = await _appel(corps["tool"], outil, args)
+        if arret:
+            return arret, 0
+        return await _ecrire_resultat(issue, row, ligne)
+
+    def _travail(row: dict) -> Optional[dict]:
+        brut = row.get(asyn["job_column"])
+        try:
+            job = json.loads(brut) if isinstance(brut, str) else brut
+        except ValueError:
+            return None
+        return job if isinstance(job, dict) and job.get("id") else None
+
+    async def _collecter(row: dict, ligne: dict, job: dict) -> tuple[Optional[str], Any]:
+        """UNE collecte. Encore en cours : `GARDER` (la ligne reste `submitted`). Trop
+        vieux : `failed:timeout` — jamais resoumis, le fournisseur facturerait deux fois."""
+        if time.time() - float(job.get("at") or 0) > asyn["max_wait_seconds"]:
+            return "ligne:timeout", 0
+        arret = _hors_budget()
+        if arret:
+            return arret, 0
+        args = co.sans_vides(co.rendre(asyn["collect"]["arguments"],
+                                       {**co._portees(params, row), "job": job}))
+        issue, arret = await _appel(asyn["collect"]["tool"], collecteur, args)
+        if arret:
+            return arret, 0
+        if not co.lire(redaction.extract_payload(issue.result), asyn["ready"]):
+            recu["jobs"]["still_running"] += 1
+            return GARDER, 0
+        return await _ecrire_resultat(issue, row, ligne)
+
+    async def _soumettre(row: dict, ligne: dict) -> tuple[Optional[str], Any]:
+        """UNE soumission. Le travail est noté sur la ligne SANS garde de révision : une
+        soumission payée et non notée serait refaite, et repayée."""
+        arret = _hors_budget()
+        if arret:
+            return arret, 0
+        args = co.sans_vides(co.rendre(corps.get("arguments") or {}, co._portees(params, row)))
+        issue, arret = await _appel(corps["tool"], outil, args)
+        if arret:
+            return arret, 0
+        payload = redaction.extract_payload(issue.result)
+        _compter(recu, {**corps, "units": "calls"}, issue, [payload])
+        jid = co.lire(payload, asyn["id"])
+        if co._vide(jid):
+            return "ligne:no_job_id", 0
+        job = {"id": str(jid), "at": int(time.time()),
+               **{k: co.lire(payload, v) for k, v in (asyn.get("keep") or {}).items()}}
+        recu["jobs"]["submitted"] += 1
+        if not ecrire:
+            etat.update(j=job, r=str(row["_id"]))
+            return None, "submitted"
+        code = await run_in_threadpool(ecriture.ecrire_sans_garde, lignes, row["_id"],
+                                       {asyn["job_column"]: json.dumps(job)})
+        if code:
+            recu["failed"][code] = recu["failed"].get(code, 0) + 1
+            return "ligne:unknown_outcome", 0
+        return None, "submitted"
+
+    if asyn:
+        recu["jobs"] = {"submitted": 0, "collected": 0, "still_running": 0}
+        recu["rows"] = {"done": 0, "not_found": 0, "failed": 0}
+        try:
+            if not ecrire:
+                await _epreuve_asynchrone(recu, etat, lignes, _travail, _collecter,
+                                          _soumettre)
+            else:
+                if await _collecte(recu, lignes, rows, _travail, _collecter) is None:
+                    await _parcourir({"max_parents": rows["max_rows"]}, lignes, True, etat,
+                                     recu, _soumettre, compte="rows", vide="not_found")
+        finally:
+            if not ecrire:
+                n = recu["rows_built"] or 1
+                recu["fill"] = {c: round(v / n, 3) for c, v in remplissage.items()}
+        if recu["jobs"]["still_running"] or recu["jobs"]["submitted"]:
+            recu["next_step"] = ("Jobs are running at the provider: run again in about a "
+                                 "minute to collect them (nothing is submitted twice).")
+        return recu
+
     try:
         await _parcourir({"max_parents": rows["max_rows"]}, lignes, ecrire, etat, recu,
                          _enrichir, compte="rows", vide="not_found")
@@ -629,6 +741,231 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
         if not ecrire:
             n = recu["rows_built"] or 1
             recu["fill"] = {c: round(v / n, 3) for c, v in remplissage.items()}
+    return recu
+
+
+async def _collecte(recu: dict, lignes, rows: dict, travail, collecter) -> Optional[str]:
+    """`async`, d'abord : collecter les travaux soumis (état `submitted`). Rend l'arrêt
+    s'il y en a un — la soumission n'est alors pas tentée."""
+    soumises = await run_in_threadpool(ecriture.lignes_par_etat, lignes, "submitted",
+                                       limite=rows["max_rows"])
+    for ligne in soumises:
+        row = ecriture.portee_ligne(ligne)
+        job = travail(row)
+        if job is None:
+            arret, pris = "ligne:lost_job", 0
+        else:
+            arret, pris = await collecter(row, ligne, job)
+        if arret == GARDER:
+            continue
+        if arret is not None and not arret.startswith("ligne:"):
+            return arret
+        statut = f"failed:{arret.split(':', 1)[1]}" if arret else \
+            ("done" if pris else "not_found")
+        recu["jobs"]["collected"] += 1
+        cle = "failed" if statut.startswith("failed:") else statut
+        recu["rows"][cle] = recu["rows"].get(cle, 0) + 1
+        code = await run_in_threadpool(ecriture.marquer_parent, lignes, row["_id"], statut)
+        if code:
+            recu["failed"][code] = recu["failed"].get(code, 0) + 1
+    return None
+
+
+async def _epreuve_asynchrone(recu: dict, etat: dict, lignes, travail, collecter,
+                              soumettre) -> None:
+    """L'épreuve d'une recette `async` prouve sa correspondance sur UN vrai résultat :
+    sans `resume`, elle soumet UNE ligne (rien n'est écrit) et rend un jeton ; avec ce
+    jeton, elle collecte — encore en cours, elle rend le même jeton ; prêt, elle rend le
+    remplissage par colonne, qui autorise la publication."""
+    if etat.get("j") and etat.get("r"):
+        lot = await run_in_threadpool(ecriture.parents_en_attente, lignes, limite=1,
+                                      premiere=etat["r"], vues=set())
+        if not lot or str(lot[0]["_id"]) != etat["r"]:
+            raise RecetteRefusee("invalid_resume", "The row this test submitted is no "
+                                                   "longer pending: test again without "
+                                                   "`resume`.")
+        arret, _ = await collecter(ecriture.portee_ligne(lot[0]), lot[0], etat["j"])
+        if arret == GARDER:
+            _arreter(recu, "job_running", resume=_jeton(etat | {"u": recu["units"]}))
+        elif arret is not None and arret.startswith("ligne:"):
+            _arreter(recu, f"failed:{arret.split(':', 1)[1]}")
+        elif arret is None:
+            recu["jobs"]["collected"] += 1
+            recu["done"] = True
+        return
+    lot = await run_in_threadpool(ecriture.parents_en_attente, lignes, limite=1,
+                                  premiere=None, vues=set())
+    if not lot:
+        recu["done"] = True
+        return
+    arret, _ = await soumettre(ecriture.portee_ligne(lot[0]), lot[0])
+    if arret is None:
+        _arreter(recu, "job_submitted", resume=_jeton(etat | {"u": recu["units"]}))
+    elif arret.startswith("ligne:"):
+        _arreter(recu, f"failed:{arret.split(':', 1)[1]}")
+
+
+#: Ces échecs disent que RIEN n'a été fait chez le tiers (clé, crédits, débit, outil
+#: inconnu) : la ligne reste en attente. Tout autre échec d'une création (délai, panne)
+#: laisse son issue INCONNUE — la fiche existe peut-être : `failed:unknown_outcome`, jamais
+#: recréée d'office.
+RIEN_FAIT = frozenset({"quota_exhausted", "not_authorized", "rate_limited", "unknown_tool"})
+
+
+def _remplissage_arguments(args: Any, prefixe: str, out: dict) -> None:
+    """Pour la marche à blanc : chaque chemin d'argument, rempli ou non — des comptes,
+    jamais une valeur."""
+    if isinstance(args, dict):
+        for k, v in args.items():
+            _remplissage_arguments(v, f"{prefixe}.{k}" if prefixe else k, out)
+    elif isinstance(args, list) and args and isinstance(args[0], (dict, list)):
+        _remplissage_arguments(args[0], f"{prefixe}[0]", out)
+    else:
+        out[prefixe] = out.get(prefixe, 0) + (0 if co._vide(args) else 1)
+
+
+async def _executer_pousser(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
+                            datastore: Any, ecrire: bool, budget_s: float) -> dict:
+    """`push` : chaque ligne EN ATTENTE (colonne d'état vide, `filter`, `require`) crée
+    ou met à jour UNE fiche chez le tiers, et l'identifiant de la fiche revient dans la
+    ligne (`id.column`) — c'est lui qui fait qu'une exécution suivante met à jour au
+    lieu de créer deux fois.
+
+    - une ligne qui porte déjà un identifiant : `update` s'il est déclaré (`updated`),
+      sinon rien n'est appelé (`exists`) ;
+    - sinon `lookup` s'il est déclaré : une fiche trouvée est liée (`linked`, puis mise à
+      jour si `update`), plusieurs marquent la ligne `ambiguous` ;
+    - sinon création (`created`).
+
+    Un argument vide n'est jamais envoyé : une case vide ne vide pas un champ chez le
+    tiers. `test` et `publish` sont une MARCHE À BLANC : rien n'est appelé, le reçu dit
+    ce qui serait créé ou mis à jour et le remplissage de chaque argument."""
+    recu = _recu()
+    if datastore is None:
+        raise RecetteRefusee("missing_datastore", "`datastore` (the number of the table "
+                                                  "whose rows are pushed) is required.")
+    rows, ident = corps["rows"], corps["id"]
+    maj, rech = corps.get("update"), corps.get("lookup")
+    outil = await _outil(fastmcp, corps["tool"], "push")
+    outil_maj = await _outil(fastmcp, maj["tool"], "push") if maj else None
+    outil_rech = await _outil(fastmcp, rech["tool"], "lookup") if rech else None
+    try:
+        lignes = await run_in_threadpool(
+            ecriture.ouvrir_parents, datastore, rows["status_column"], ecrire=ecrire,
+            filtre=rows.get("filter"), requises=requises(corps, rows),
+            a_creer=[ident["column"]])
+    except ecriture.TableauIndisponible as e:
+        raise RecetteRefusee(e.code, str(e))
+    recu["created_columns"] = list(lignes.creees)
+    recu["rows"] = {"failed": 0}
+    lim = corps["limits"]
+    fin = time.monotonic() + budget_s
+    a_blanc = {"would_create": 0, "would_update": 0, "would_skip": 0, "arguments_fill": {}}
+
+    def _args(gabarit: dict, row: dict) -> dict:
+        args = co.sans_vides(co.rendre(gabarit or {}, co._portees(params, row)))
+        if "op" in (gabarit or {}):
+            args["op"] = gabarit["op"]  # l'op, littérale, n'est jamais retirée
+        return args
+
+    async def _appel(nom: str, tool, args: dict, *, cree: bool):
+        """Un appel au tiers ; rend `(charge, arrêt)`."""
+        op = args.get("op")
+        if nom in ou.POUSSEES and ou.POUSSEES[nom] is not None and not ou.op_permise(nom, op):
+            # Le contrat l'a vérifié ; revérifié sur ce qui part vraiment.
+            raise RecetteRefusee("recipe_tool_not_allowed", f"`{nom}` op `{op}` refused.")
+        if lim["max_units"] - recu["units"] <= 0:
+            _arreter(recu, "spend_cap")
+            return None, "spend_cap"
+        if recu["pages"] and time.monotonic() >= fin:
+            _arreter(recu, "time_budget")
+            return None, "time_budget"
+        try:
+            issue = await _appeler(tool, sub, nom, dict(args))
+        except McpError:
+            return None, "ligne:call_refused"
+        if not issue.ok:
+            if issue.code in RIEN_FAIT or (issue.retryable and not cree):
+                _arreter(recu, issue.code or "tool_failed", error=issue.message,
+                         retryable=issue.retryable)
+                return None, recu["stopped"]
+            if cree and (issue.retryable or issue.code not in ECHECS_DE_LIGNE):
+                return None, "ligne:unknown_outcome"
+            return None, f"ligne:{issue.code or 'tool_failed'}"
+        recu["pages"] += 1
+        _compter(recu, corps, issue, [None])
+        charge = redaction.extract_payload(issue.result)
+        if corps.get("errors") and not co._vide(co.lire(charge, corps["errors"])):
+            # Une réponse « réussie » qui porte des erreurs par élément (doublon, champ
+            # refusé) n'est pas un succès.
+            return None, "ligne:provider_error"
+        return charge, None
+
+    async def _noter_id(row: dict, valeur: Any) -> Optional[str]:
+        if not ecrire or co._vide(valeur):
+            return None
+        code = await run_in_threadpool(ecriture.ecrire_sans_garde, lignes, row["_id"],
+                                       {ident["column"]: str(valeur)})
+        if code:
+            recu["failed"][code] = recu["failed"].get(code, 0) + 1
+            return "ligne:id_not_written"
+        return None
+
+    async def _pousser(row: dict, ligne: dict) -> tuple[Optional[str], Any]:
+        existant = row.get(ident["column"])
+        if not ecrire:
+            cible = maj["arguments"] if (existant and maj) else (
+                None if existant else corps["arguments"])
+            cle = "would_update" if (existant and maj) else (
+                "would_skip" if existant else "would_create")
+            a_blanc[cle] += 1
+            if cible is not None:
+                _remplissage_arguments(_args(cible, row), "", a_blanc["arguments_fill"])
+            return None, "previewed"
+        if existant and not maj:
+            return None, "exists"
+        statut = "updated"
+        if not existant and rech:
+            charge, arret = await _appel(rech["tool"], outil_rech, _args(rech["arguments"], row),
+                                         cree=False)
+            if arret:
+                return arret, 0
+            trouves = co.lire(charge, rech.get("items") or "") if rech.get("items") else charge
+            trouves = trouves if isinstance(trouves, list) else ([trouves] if trouves else [])
+            if len(trouves) > 1:
+                return "ligne:ambiguous", 0
+            if trouves:
+                existant = co.lire(trouves[0], rech["id_path"])
+                arret = await _noter_id(row, existant)
+                if arret:
+                    return arret, 0
+                row = {**row, ident["column"]: existant}
+                if not maj:
+                    return None, "linked"
+                statut = "linked"
+        if existant:
+            charge, arret = await _appel(maj["tool"], outil_maj, _args(maj["arguments"], row),
+                                         cree=False)
+            return (arret, 0) if arret else (None, statut)
+        charge, arret = await _appel(corps["tool"], outil, _args(corps["arguments"], row),
+                                     cree=True)
+        if arret:
+            return arret, 0
+        nouvel = co.lire(charge, ident["path"])
+        if co._vide(nouvel):
+            recu["created_without_id"] = recu.get("created_without_id", 0) + 1
+        arret = await _noter_id(row, nouvel)
+        return (arret, 0) if arret else (None, "created")
+
+    await _parcourir({"max_parents": rows["max_rows"]}, lignes, ecrire, {"r": None}, recu,
+                     _pousser, compte="rows", vide="not_found")
+    recu["rows"].pop("not_found", None)
+    recu["rows"].pop("done", None)
+    if not ecrire:
+        # Compté APRÈS la boucle : l'épreuve s'arrête à la première ligne « construite »,
+        # la marche à blanc en montre jusqu'à trois.
+        recu["rows_built"] = recu["rows"].pop("previewed", 0)
+        recu["dry_run"] = a_blanc
     return recu
 
 
