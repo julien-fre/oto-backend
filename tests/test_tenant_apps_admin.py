@@ -1,6 +1,6 @@
 """L'app OAuth d'un tenant sur SA surface admin — scopée à son slug.
 
-Ce que Julien a demandé en clair (23/09/2026) : « my credentials should not be used by
+Ce que l'admin du tenant a demandé en clair (23/09/2026) : « my credentials should not be used by
 anyone else ». Deux faces à tenir pour que ce soit vrai :
 
 1. **L'usage** : `google_oauth.app_for` lit le slug SUR LE SUB — figé dans

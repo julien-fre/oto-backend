@@ -185,7 +185,7 @@ def test_dead_filter_department_is_refused():
     """Signal #694 (03/09) : `contact.department` est accepté et silencieusement
     ignoré, alors que la description l'annonçait comme supporté.
 
-    Différentiel strict, deux domaines : grasset.fr seul → 63 enregistrements ;
+    Différentiel strict, deux domaines : editeur-a.example seul → 63 enregistrements ;
     + `department: ["human_resources"]` → 63, LES MÊMES dans le MÊME ordre, dont
     aucun RH. Le piège est plus fin que pour `title` : `department.departments` EST
     présent sur chaque enregistrement rendu, donc on voit la donnée et on croit

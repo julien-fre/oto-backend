@@ -99,7 +99,7 @@ def test_la_surface_n_ajoute_aucune_cle(monkeypatch):
     clé posée là échapperait aux deux tests ci-dessus."""
     class _Store:
         def get_row(self, datastore, row_id, **_):
-            return {"societe": "DEXXON GROUPE"}
+            return {"societe": "ENTREPRISE TEMOIN"}
 
         def declared_key(self, datastore):
             return "societe"

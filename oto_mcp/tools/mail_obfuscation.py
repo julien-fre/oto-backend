@@ -6,12 +6,12 @@ and **zero addresses**, whereas the HTML carries one, readable to the naked eye.
 patterns, all taken from the source:
 
   - `<joomla-hidden-mail text="cHJlc2lkZW50ZUBsYXZvaXhkZXNsaXZyZXMuZnI=">`
-    (lavoixdeslivres.fr/index.php/l-association) — the address is base64 in
+    (an association's site) — the address is base64 in
     an ATTRIBUTE; a rendering that only keeps the text cannot show any of it;
   - `mailto:&#115;&#116;ran…&#064;&#103;&#109;ail&#046;com`
-    (stranumundueditions.wordpress.com) — decimal entities in the href;
+    (a publisher's WordPress.com blog) — decimal entities in the href;
   - `<span class="__cf_email__" data-cfemail="7f13100a…">`
-    (association.lourugby.fr/rugby-loisir) — Cloudflare, XOR on the 1st byte.
+    (a sports club's site) — Cloudflare, XOR on the 1st byte.
     That one is not silent, it LIES: the rendering shows the literal
     text `[email protected]`, which no address regex recognizes.
 

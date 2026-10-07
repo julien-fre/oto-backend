@@ -13,11 +13,11 @@ Trois motifs relevés à la source, tous reproduits ici avec le HTML RÉEL :
 
   - `<joomla-hidden-mail text="…">` — base64 dans un ATTRIBUT, donc rien à
     rendre pour un convertisseur qui ne garde que le texte
-    (lavoixdeslivres.fr/index.php/l-association) ;
-  - `mailto:` en entités HTML décimales (stranumundueditions.wordpress.com) ;
+    (site d'une association, page « l'association ») ;
+  - `mailto:` en entités HTML décimales (blog d'un éditeur hébergé chez WordPress.com) ;
   - `data-cfemail` de Cloudflare, qui n'est pas silencieux mais MENTEUR : le
     rendu affiche le texte littéral `[email protected]`, qu'aucune regex
-    d'adresse ne reconnaît (association.lourugby.fr/rugby-loisir).
+    d'adresse ne reconnaît (site d'un club sportif).
 
 Et le second volet du signal : sur les trois hébergeurs refusés par le
 fournisseur (deux Wix, un WordPress.com), une requête ordinaire portant un UA
@@ -36,16 +36,16 @@ from oto_mcp.tools import mail_obfuscation as M
 # ── HTML réel, capturé le 03/09/2026 ─────────────────────────────────────────
 HTML_JOOMLA = (
     '<p>Contact : <joomla-hidden-mail  is-link="1" is-email="1" '
-    'first="cHJlc2lkZW50ZQ==" last="bGF2b2l4ZGVzbGl2cmVzLmZy" '
-    'text="cHJlc2lkZW50ZUBsYXZvaXhkZXNsaXZyZXMuZnI=" base=""  '
+    'first="cHJlc2lkZW50ZQ==" last="YXNzby1sZWN0dXJlLmV4YW1wbGU=" '
+    'text="cHJlc2lkZW50ZUBhc3NvLWxlY3R1cmUuZXhhbXBsZQ==" base=""  '
     'target="_blank">présidente</joomla-hidden-mail></p>')
 HTML_ENTITES = (
-    '<a href="mailto:&#115;&#116;ran&#117;&#109;u&#110;&#100;ued&#105;t&#105;'
-    'ons&#064;&#103;&#109;ail&#046;com">Nous écrire</a>')
+    '<a href="mailto:&#101;d&#105;t&#105;ons&#046;t&#101;mo&#105;n'
+    '&#064;&#109;ail&#046;example">Nous écrire</a>')
 HTML_CLOUDFLARE = (
-    '<a href="/cdn-cgi/l/email-protection#ec8083998083859f859e9f9e998b8e95ac'
-    '8b818d8580c28f8381"><span class="__cf_email__" '
-    'data-cfemail="7f13100a1310160c160d0c0d0a181d063f18121e1613511c1012">'
+    '<a href="/cdn-cgi/l/email-protection#ec8083859f859e9fc29e998b8e95ac818d85'
+    '80c289948d819c8089"><span class="__cf_email__" '
+    'data-cfemail="7f1310160c160d0c510d0a181d063f121e1613511a071e120f131a">'
     '[email&#160;protected]</span></a>')
 
 
@@ -112,9 +112,9 @@ def _page_sans_contact(md: str = "# Association\n\nNous lisons pour les autres."
 
 # ── ① le décodage des trois motifs ───────────────────────────────────────────
 @pytest.mark.parametrize("html, attendue, motif", [
-    (HTML_JOOMLA, "presidente@lavoixdeslivres.fr", "joomla-hidden-mail"),
-    (HTML_ENTITES, "stranumundueditions@gmail.com", "mailto in HTML entities"),
-    (HTML_CLOUDFLARE, "louloisirsrugby@gmail.com", "cloudflare-email-protection"),
+    (HTML_JOOMLA, "presidente@asso-lecture.example", "joomla-hidden-mail"),
+    (HTML_ENTITES, "editions.temoin@mail.example", "mailto in HTML entities"),
+    (HTML_CLOUDFLARE, "loisirs.rugby@mail.example", "cloudflare-email-protection"),
 ])
 def test_adresse_invisible_au_rendu_est_rendue_et_collee_dans_la_page(
         monte, html, attendue, motif):
@@ -149,7 +149,7 @@ def test_cloudflare_ne_disparait_pas_il_ment(monte):
 
     res = fn("https://acme.test/rugby-loisir")
 
-    assert res["adresses_obfusquees"] == ["louloisirsrugby@gmail.com"]
+    assert res["adresses_obfusquees"] == ["loisirs.rugby@mail.example"]
 
 
 def test_motif_vu_mais_non_decodable_est_annonce(monte):
@@ -262,7 +262,7 @@ def test_html_brut_ne_passe_pas_par_le_scraper(monte):
     assert res["credits"] == 0
     assert res["html_caracteres"] == len(HTML_JOOMLA)
     assert res["html_tronque"] is False
-    assert res["adresses_obfusquees"] == ["presidente@lavoixdeslivres.fr"]
+    assert res["adresses_obfusquees"] == ["presidente@asso-lecture.example"]
 
 
 def test_html_brut_plafonne_mais_dit_le_total(monte):
@@ -327,7 +327,7 @@ def test_refus_du_fournisseur_declenche_une_lecture_directe(monte):
     assert "hosted scraper refused" in res["source"]
     assert res["format_servi"] == "text"
     assert "Gorge bleue" in res["text"]
-    assert res["adresses_obfusquees"] == ["stranumundueditions@gmail.com"]
+    assert res["adresses_obfusquees"] == ["editions.temoin@mail.example"]
 
 
 def test_repli_qui_echoue_aussi_nomme_les_deux_echecs(monte):

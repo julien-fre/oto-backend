@@ -71,7 +71,7 @@ def test_j3_l_ecriture_est_refusee_et_le_refus_nomme_le_geste():
 
 
 def test_j3_rien_ne_mord_sans_mot():
-    mdp.controler({"a": None, "b": dsl.VIDE_DELIBERE, "c": "contact@keepcool.fr"})
+    mdp.controler({"a": None, "b": dsl.VIDE_DELIBERE, "c": "contact@keepcalm.example"})
 
 
 # ── le texte servi : la règle au présent, sans date ──────────────────────────

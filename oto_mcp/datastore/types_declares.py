@@ -24,7 +24,7 @@ porte demande qu'on le respecte.
 ⚠️ **Ce que ça refusera, et ce n'est pas ce qu'on croit.** Sur les 118, cent douze
 n'ont même pas d'arobase dans une colonne `email` : ce sont des PHRASES écrites dans la
 case valeur — `"non trouvé"`, `"dropcontact: not found; lusha: not found"`,
-`"e.gonot@neovia-tp.fr — ATTENTION : déduit du pattern"`. Des agents qui écrivent
+`"j.dupont@chantiers.example — ATTENTION : déduit du pattern"`. Des agents qui écrivent
 l'absence comme une donnée, ou qui collent la valeur et son explication faute de se
 servir de la couche `comment`. Le refus ne détruit donc pas des données légitimes : il
 attrape des cases qui mélangent la donnée et ce qu'on en sait. **D'où la forme du

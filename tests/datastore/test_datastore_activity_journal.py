@@ -87,7 +87,7 @@ class _FakeStore:
     NAME = "leads-clients"
 
     def __init__(self):
-        self.row = {"_id": "row-1", "societe": "DEXXON GROUPE", "statut": "enrichi"}
+        self.row = {"_id": "row-1", "societe": "ENTREPRISE TEMOIN", "statut": "enrichi"}
         self.written = None
 
     def _fill(self, trace, prev_status=None):
@@ -280,7 +280,7 @@ def test_row_activity_covers_rest_and_mcp(monkeypatch):
     # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
     monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
 
-    out = usage.datastore_row_activity("row-1", "DEXXON GROUPE",
+    out = usage.datastore_row_activity("row-1", "ENTREPRISE TEMOIN",
                                        owner_type="org", owner_id="35")
 
     assert "l.kind IN ('mcp', 'rest')" in sink["sql"]   # le geste dashboard est visible
@@ -314,7 +314,7 @@ def test_row_activity_surface_labels_entries_with_the_title(monkeypatch):
     # certifie la divergence.
     from oto_mcp.maintenance import _JOURNAL_RETENTION_DAYS
     assert out["retention_days"] == _JOURNAL_RETENTION_DAYS and out["key"] == "societe"
-    assert out["activity"][0]["row_title"] == "DEXXON GROUPE"
+    assert out["activity"][0]["row_title"] == "ENTREPRISE TEMOIN"
 
 
 # --- 3. l'activité du tableau matche les deux façons de le nommer -----------
@@ -362,11 +362,11 @@ def test_row_activity_key_axis_is_bounded_to_the_owner(monkeypatch):
     # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
     monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
 
-    usage.datastore_row_activity("row-1", "DEXXON", owner_type="org", owner_id="35")
+    usage.datastore_row_activity("row-1", "TEMOIN", owner_type="org", owner_id="35")
     assert "l.args::text ILIKE %s AND l.org_id = %s" in sink["sql"]
 
     # propriétaire inconnu ⇒ l'axe flou disparaît, il ne reste que l'id
-    usage.datastore_row_activity("row-1", "DEXXON")
+    usage.datastore_row_activity("row-1", "TEMOIN")
     assert "ILIKE" not in sink["sql"]
     assert "l.args->>'id' = %s" in sink["sql"]
 
@@ -412,7 +412,7 @@ def test_datastore_activity_titles_resolved_in_one_batch(monkeypatch):
 
     def _by_ids(ns_id, row_ids):
         calls.append((ns_id, tuple(row_ids)))
-        return {"row-1": {"societe": "DEXXON GROUPE"}}
+        return {"row-1": {"societe": "ENTREPRISE TEMOIN"}}
 
     monkeypatch.setattr(datastore_journal.db, "datastore_rows_by_ids", _by_ids)
     entries = [{"row_id": "row-1", "row_title": None},
@@ -422,7 +422,7 @@ def test_datastore_activity_titles_resolved_in_one_batch(monkeypatch):
     datastore_journal.attach_titles(160, "societe", entries)
 
     assert len(calls) == 1 and calls[0] == (160, ("row-1", "row-9"))
-    assert entries[0]["row_title"] == "DEXXON GROUPE"
+    assert entries[0]["row_title"] == "ENTREPRISE TEMOIN"
     assert entries[1]["row_title"] is None and entries[2]["row_title"] is None
 
 

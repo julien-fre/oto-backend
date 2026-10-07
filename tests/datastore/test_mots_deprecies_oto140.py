@@ -30,10 +30,10 @@ def test_les_deux_mots_sont_vus_nus_en_couche_et_dans_une_liste():
 
 def test_ni_null_ni_empty_ni_une_sous_chaine_ne_declenchent_rien():
     """`null` et `@empty` sont LES deux gestes : les refuser enseignerait le contraire.
-    Le mot ne mord qu'entier — `contact@keepcool.fr` n'est pas un `@keep`."""
+    Le mot ne mord qu'entier — `contact@keepcalm.example` n'est pas un `@keep`."""
     assert mdp.mots_nommes({
         "a": None, "b": {"valeur": None}, "c": dsl.VIDE_DELIBERE,
-        "d": "contact@keepcool.fr", "e": "@keep ; vu au registre", "f": [],
+        "d": "contact@keepcalm.example", "e": "@keep ; vu au registre", "f": [],
     }) == {}
 
 

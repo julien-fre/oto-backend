@@ -549,7 +549,7 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
                      f"ADD COLUMN IF NOT EXISTS {_col} {_type}")
     # #917 : le client Pennylane d'une org est POSÉ À LA MAIN par un admin plateforme,
     # jamais rapproché ni créé par le code — le rapprochement par une référence
-    # frappée par oto a créé un second client chez le comptable (facture F-2026-09-7)
+    # frappée par oto a créé un second client chez le comptable (une facture réelle de septembre 2026)
     # dès que le client existait déjà, créé à la main. Additif et NULLABLE ; le code
     # servi en prod ne nomme pas cette colonne (il fait `SELECT *` et un `UPSERT` par
     # colonnes explicites), donc un retour au tag précédent la laisse en base sans

@@ -68,7 +68,7 @@ def test_option_sur_l_org_effective_de_l_appelant_l_effet_est_ici(sans_db):
 def test_option_pour_quelqu_un_d_autre_l_effet_est_ailleurs(sans_db):
     """Le bénéficiaire est un autre compte : aucune session ouverte n'est joignable
     d'ici. Le dire vaut mieux qu'un `ok: true` que l'admin va tester chez lui."""
-    assert _set(entity_type="user", entity_id="sub-julien",
+    assert _set(entity_type="user", entity_id="sub-autre-membre",
                 option="beta", on=True)["visible_next_session"] is True
 
 

@@ -44,7 +44,7 @@ def _controler_lespion(espion, monkeypatch) -> None:
     """L'instrument voit-il RÉELLEMENT les deux sorties qu'il surveille ?
 
     Le geste joué est celui qu'on a supprimé — `create_customer_invoice`, la
-    création de la pièce qui a fait le doublon F-2026-09-7 — sur le vrai client
+    création de la pièce qui a fait un doublon réel — sur le vrai client
     d'oto-core, plus un envoi réel par le relais transactionnel."""
     from oto.tools.common.field_filter import FieldFilter
     from oto.tools.pennylane import PennylaneClient
@@ -221,7 +221,7 @@ def test_un_document_deja_emis_nest_jamais_retouche(live, monkeypatch):
     billing_invoices.sweep()
 
     apres = db_invoices.get_billing_invoice(emis["id"])
-    assert apres["status"] == "issued" and apres["number"] == "F-2026-09-7"
+    assert apres["status"] == "issued" and apres["number"] == "F-2026-01-1"
     assert apres["has_pdf"] is True and apres["error_code"] is None
 
 

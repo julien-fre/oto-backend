@@ -555,7 +555,7 @@ ce qui a été retiré — pas débranché.
 
 **Pourquoi.** Trois faits, dans cet ordre :
 
-1. **le doublon.** La facture F-2026-09-7 (org 302) existait DÉJÀ chez Pennylane,
+1. **le doublon.** Une facture d'une org cliente existait DÉJÀ chez Pennylane,
    créée à la main ; l'émission automatique en a produit une seconde ;
 2. **les données de facturation peuvent être fausses** — identité du client,
    adresse. Rien ne les vérifie avant qu'elles soient gravées ;
@@ -633,7 +633,7 @@ côté store, la liste servie et la route PDF.
 
 ### Le client Pennylane se pose, il ne se devine pas (#917)
 
-Le doublon de F-2026-09-7 n'était pas un défaut d'heuristique : le seam retiré
+Ce doublon n'était pas un défaut d'heuristique : le seam retiré
 rapprochait le client par une **référence frappée par oto** (`oto-org-<id>`), qu'un
 client créé à la main chez le comptable ne porte pas — « introuvable », donc créé une
 seconde fois, mécaniquement, même TVA sur les deux fiches. Décision d'Alexis
@@ -757,7 +757,7 @@ son getter dédié, et la liste ne le voit jamais. Même famille de piège que l
 sert ce qu'elle a ; le client le télécharge depuis son espace facturation. Aucun destinataire n'est calculé, aucun envoi n'est tenté, aucun renvoi
 n'existe — `billing_invoices/mail.py` a été retiré, pas neutralisé.
 
-**Pourquoi.** La facture F-2026-09-7 est partie **une fois, au créateur de l'org, et
+**Pourquoi.** Une facture est partie **une fois, au créateur de l'org, et
 jamais au client** : `billing_identities.billing_email` valait la chaîne vide, donc
 fausse au sens de Python, et le repli prenait le premier `org_admin` par ancienneté
 — à l'onboarding, c'est Otomata, arrivé quatre minutes avant l'admin du client.

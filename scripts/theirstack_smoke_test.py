@@ -3,7 +3,7 @@
 Même astuce que les tests unitaires (register sur un FastMCP nu, appel du `fn` du tool),
 mais SANS mock : `resolve_api_key` est remplacé par la clé lue dans l'env, l'appel part
 vraiment chez TheirStack. UN seul appel de lecture : `theirstack_companies_search` sur
-« PUIG & FILS » (correspondance exacte, `limit=5` pour borner la dépense — au plus 3
+« DECATHLON » (correspondance exacte, `limit=5` pour borner la dépense — au plus 3
 crédits API par entreprise rendue). `data: []` est un résultat NORMAL (couverture
 partielle des PME), pas un échec.
 
@@ -35,9 +35,9 @@ def main() -> int:
     theirstack.register(m)
     tool = asyncio.run(m.get_tool("theirstack_companies_search"))
 
-    print("→ theirstack_companies_search(company_names=['PUIG & FILS'], limit=5)")
+    print("→ theirstack_companies_search(company_names=['DECATHLON'], limit=5)")
     with patch("oto_mcp.access.resolve_api_key", return_value=(key, False)):
-        out = tool.fn(company_names=["PUIG & FILS"], limit=5)
+        out = tool.fn(company_names=["DECATHLON"], limit=5)
 
     meta = out.get("metadata") or {}
     data = out.get("data") or []

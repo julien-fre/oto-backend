@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Confronte le contrat épinglé par un front consommateur au spec que NOUS servons.
 
-Pourquoi ici et pas seulement chez lui. Un consommateur (à l'origine le front de JB,
+Pourquoi ici et pas seulement chez lui. Un consommateur (à l'origine un front tiers,
 `oto-frontend`, décommissionné le 29/09/2026 ; aujourd'hui la liste de
 `.github/contrat-consommateurs.json`) épingle un extrait verbatim de notre OpenAPI et le
 compare au vivant à chaque passage : quand nous touchons l'une des opérations qu'il

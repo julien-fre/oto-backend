@@ -12,7 +12,7 @@ appel manquant.
 
 Trois faits l'ont décidée :
 
-- **le doublon.** La facture F-2026-09-7 (org 302) existait DÉJÀ chez Pennylane,
+- **le doublon.** Une facture d'une org cliente existait DÉJÀ chez Pennylane,
   créée à la main ; l'émission automatique en a produit une seconde ;
 - **les données de facturation peuvent être fausses** — identité du client,
   adresse. Personne ne les vérifie avant qu'elles soient gravées ;

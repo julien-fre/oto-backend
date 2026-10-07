@@ -28,10 +28,10 @@ def _tool(module, name: str):
 
 _GOOGLE = {
     "searchParameters": {"q": "editions"},
-    "knowledgeGraph": {"title": "Gallimard", "description": "maison d'édition"},
-    "peopleAlsoAsk": [{"question": "qui possède Gallimard ?"}],
-    "relatedSearches": [{"query": "gallimard jeunesse"}],
-    "organic": [{"title": "Gallimard", "link": "https://x.fr", "snippet": "…",
+    "knowledgeGraph": {"title": "Editeur Temoin", "description": "maison d'édition"},
+    "peopleAlsoAsk": [{"question": "qui possède Editeur Temoin ?"}],
+    "relatedSearches": [{"query": "editeur temoin jeunesse"}],
+    "organic": [{"title": "Editeur Temoin", "link": "https://x.fr", "snippet": "…",
                  "sitelinks": [{"title": "Contact"}], "attributes": {"a": 1},
                  "imageUrl": "https://img"}],
     "credits": 1,
@@ -56,7 +56,7 @@ def test_search_drops_the_unread_sections_by_default(serper):
                  "searchParameters"):
         assert gone not in out, f"{gone} devrait tomber par défaut"
     # ce qu'un agent lit reste, enveloppe comprise
-    assert out["organic"][0]["title"] == "Gallimard"
+    assert out["organic"][0]["title"] == "Editeur Temoin"
     assert out["organic"][0]["snippet"] == "…"
     assert out["credits"] == 1
     for gone in ("sitelinks", "attributes", "imageUrl"):
@@ -66,7 +66,7 @@ def test_search_drops_the_unread_sections_by_default(serper):
 def test_full_gives_the_whole_answer_back(serper):
     """L'échappatoire : c'est elle qui rend le défaut acceptable."""
     out = serper(query="editions", full=True)
-    assert out["knowledgeGraph"]["title"] == "Gallimard"
+    assert out["knowledgeGraph"]["title"] == "Editeur Temoin"
     assert out["organic"][0]["sitelinks"] == [{"title": "Contact"}]
     assert out["relatedSearches"] and out["searchParameters"]
 
@@ -74,7 +74,7 @@ def test_full_gives_the_whole_answer_back(serper):
 def test_fields_still_narrows_further_even_with_full(serper):
     out = serper(query="editions", full=True, fields=["title", "link"])
     assert set(out["organic"][0]) == {"title", "link"}
-    assert out["knowledgeGraph"]["title"] == "Gallimard"   # full garde l'enveloppe
+    assert out["knowledgeGraph"]["title"] == "Editeur Temoin"   # full garde l'enveloppe
 
 
 @pytest.fixture
@@ -82,8 +82,8 @@ def hunter(monkeypatch):
     from oto_mcp.tools import hunter as mod
 
     inst = MagicMock()
-    inst.domain_search.return_value = {"data": {"domain": "gallimard.fr", "emails": [
-        {"value": "a@gallimard.fr", "first_name": "A",
+    inst.domain_search.return_value = {"data": {"domain": "editeur-temoin.example", "emails": [
+        {"value": "a@editeur-temoin.example", "first_name": "A",
          "sources": [{"uri": "https://p1"}, {"uri": "https://p2"}],
          "verification": {"status": "valid", "date": "2026-08-01"}}]}}
     # Le module importe depuis `…hunter.client` (import au register) : patcher
@@ -95,13 +95,13 @@ def hunter(monkeypatch):
 
 
 def test_domain_search_drops_provenance_by_default(hunter):
-    mail = hunter(domain="gallimard.fr")["data"]["emails"][0]
-    assert mail["value"] == "a@gallimard.fr" and mail["first_name"] == "A"
+    mail = hunter(domain="editeur-temoin.example")["data"]["emails"][0]
+    assert mail["value"] == "a@editeur-temoin.example" and mail["first_name"] == "A"
     assert "sources" not in mail and "verification" not in mail
 
 
 def test_domain_search_full_keeps_provenance(hunter):
     """Le besoin RGPD « d'où vient cette adresse » reste servi, à la demande."""
-    mail = hunter(domain="gallimard.fr", full=True)["data"]["emails"][0]
+    mail = hunter(domain="editeur-temoin.example", full=True)["data"]["emails"][0]
     assert len(mail["sources"]) == 2
     assert mail["verification"]["status"] == "valid"

@@ -274,8 +274,8 @@ def register(mcp: FastMCP) -> None:
 
     def _ou(client: SlackClient, channel: str) -> dict:
         """WHERE the message landed, in clear. An ID says neither its name nor who
-        we are talking to: on 02/09, a reply meant for Tulina went to JB's
-        channel. `shared_externally` says a third party reads. The message has GONE OUT when
+        we are talking to: on 02/09, a reply meant for Tulina went to another
+        person's channel. `shared_externally` says a third party reads. The message has GONE OUT when
         we get here: a read failure is named, it cancels nothing."""
         try:
             info = client.channel_info(channel).get("channel") or {}

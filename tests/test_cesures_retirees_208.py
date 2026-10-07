@@ -19,18 +19,18 @@ import pytest
 
 from oto_mcp.tools import cesures, web
 
-NOM_COUPE = "Stra­nu­mun­du"
+NOM_COUPE = "Ka­ra­mel­lo"
 
 
 def test_le_lecteur_de_pages_retire_l_ENTITE_html():
     """La forme la plus courante chez un CMS : l'entité, que le parseur convertit."""
-    texte, _ = web.extract_text("<p>Stra&shy;nu&shy;mun&shy;du éditions</p>")
-    assert texte == "Stranumundu éditions"
+    texte, _ = web.extract_text("<p>Ka&shy;ra&shy;mel&shy;lo éditions</p>")
+    assert texte == "Karamello éditions"
 
 
 def test_le_lecteur_de_pages_retire_le_caractere_LITTERAL():
     texte, _ = web.extract_text(f"<p>{NOM_COUPE} éditions</p>")
-    assert "­" not in texte and "Stranumundu" in texte
+    assert "­" not in texte and "Karamello" in texte
 
 
 class _Reg:
@@ -67,7 +67,7 @@ def scrape(monkeypatch):
 def test_serper_scrape_ne_sert_plus_la_cesure(scrape):
     res = scrape(url="https://example.test/page", format="markdown")
     assert "­" not in res["markdown"]
-    assert "Stranumundu" in res["markdown"]
+    assert "Karamello" in res["markdown"]
 
 
 def test_le_format_both_nettoie_les_DEUX_representations(scrape):

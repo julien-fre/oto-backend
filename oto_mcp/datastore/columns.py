@@ -389,7 +389,7 @@ def refuser_les_mots_mal_places(schema: Optional[dict], user_data: Optional[dict
 # mais il est indiscernable, dans un payload, d'un `None` de sérialisation : une
 # variable non peuplée, un gabarit à demi rempli, un aller-retour de lecture.
 #
-# Vécu le 13/08/2026 (org 226, tableau `edition-essais`) : une session a écrit
+# Vécu le 13/08/2026 (un tableau client) : une session a écrit
 # `row={'moteur': None, 'siren': …}` ligne par ligne, a reçu des succès ordinaires,
 # et a découvert le champ vidé huit minutes plus tard — en l'imputant à l'écriture
 # d'enrichissement suivante, qui ne nommait pas `moteur` et ne l'avait pas touché

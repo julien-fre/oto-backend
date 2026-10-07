@@ -9,7 +9,7 @@ et **un seul module** — ici. `log_rest_call` y ajoute les gestes faits depuis 
 dashboard (`kind='rest'`), sous le MÊME vocabulaire de `tool` que la surface MCP
 (`data_write`…), pour qu'une lecture de journal voie l'agent ET l'humain.
 
-Historique : lib `otomata-calllog` (extraite d'ogic 2026-06-12), inlinée ici le
+Historique : lib `otomata-calllog` (extraite d'un projet client 2026-06-12), inlinée ici le
 2026-07-23 (otomata-calllog#1) — le backend était son dernier consommateur, et le
 **contrat canonique** (schéma de ligne `tool_calls`, dashboards comparables entre
 serveurs MCP) vit désormais dans le socle `otomata-mcp` (`logging.py`). Le schéma

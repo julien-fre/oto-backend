@@ -17,15 +17,15 @@ import pytest
 from oto_mcp.output_projection import project
 
 SERP = {
-    "searchParameters": {"q": "gallimard"},
-    "knowledgeGraph": {"title": "Gallimard", "description": "…"},
+    "searchParameters": {"q": "editeur temoin"},
+    "knowledgeGraph": {"title": "Editeur Temoin", "description": "…"},
     "organic": [
-        {"title": "Gallimard", "link": "https://gallimard.fr", "snippet": "…",
+        {"title": "Editeur Temoin", "link": "https://editeur-temoin.example", "snippet": "…",
          "sitelinks": [{"title": "Contact", "link": "…"}], "position": 1},
         {"title": "Wikipédia", "link": "https://fr.wikipedia.org/…", "snippet": "…",
          "position": 2},
     ],
-    "relatedSearches": [{"query": "gallimard catalogue"}],
+    "relatedSearches": [{"query": "editeur temoin catalogue"}],
     "credits": 1,
 }
 
@@ -44,12 +44,12 @@ def test_dropping_top_level_blocks():
 def test_dropping_a_key_inside_each_result():
     out = project(SERP, items_path="organic", item_drop=("sitelinks",))
     assert all("sitelinks" not in r for r in out["organic"])
-    assert out["organic"][0]["title"] == "Gallimard"
+    assert out["organic"][0]["title"] == "Editeur Temoin"
 
 
 def test_fields_keeps_only_what_was_asked():
     out = project(SERP, items_path="organic", fields=("title", "link"))
-    assert out["organic"][0] == {"title": "Gallimard", "link": "https://gallimard.fr"}
+    assert out["organic"][0] == {"title": "Editeur Temoin", "link": "https://editeur-temoin.example"}
 
 
 def test_the_envelope_survives_a_field_projection():

@@ -15,7 +15,7 @@ class _FakeUnipile:
     ACCOUNTS = [
         {"id": "A1", "name": "Jane Doe", "type": "LINKEDIN",
          "sources": [{"status": "OK"}]},
-        {"id": "A2", "name": "Laurent Guy", "type": "LINKEDIN", "sources": [{"status": "OK"}]},
+        {"id": "A2", "name": "Prénom Nom", "type": "LINKEDIN", "sources": [{"status": "OK"}]},
     ]
 
     def __init__(self, api_key=None, dsn=None, **k):
@@ -78,7 +78,7 @@ def test_unipile_list_byo(monkeypatch):
     ids = asyncio.run(connector_identities.list_identities("u1", "unipile"))
     assert {i["id"] for i in ids} == {"A1", "A2"}
     a2 = next(i for i in ids if i["id"] == "A2")
-    assert a2["is_default"] and a2["channel"] == "LINKEDIN" and a2["label"] == "Laurent Guy"
+    assert a2["is_default"] and a2["channel"] == "LINKEDIN" and a2["label"] == "Prénom Nom"
 
 
 def test_unipile_select_valid(monkeypatch):

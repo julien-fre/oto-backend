@@ -96,7 +96,7 @@ def test_vider_toute_la_case_par_le_mot_nu():
 
 @pytest.mark.parametrize("texte", [
     "vu au registre @empty",         # le mot noyé dans une phrase
-    "contact@emptyhouse.fr",         # ⚠️ une adresse parfaitement légitime
+    "contact@emptyhouse.example",         # ⚠️ une adresse parfaitement légitime
     "@emptyness",                    # un mot qui COMMENCE par la sentinelle
     "@EMPTY",                        # la casse compte
 ])
@@ -105,7 +105,7 @@ def test_une_sentinelle_ne_mord_JAMAIS_au_milieu(texte):
 
     Un motif plus large que ce qu'il prétend viser est le défaut qu'on a traqué toute
     la nuit — une campagne a compté 22 faux positifs sur un `502` qui vivait à
-    l'intérieur d'un autre nombre. Ici, `contact@emptyhouse.fr` est une adresse qu'une
+    l'intérieur d'un autre nombre. Ici, `contact@emptyhouse.example` est une adresse qu'une
     cliente peut réellement avoir : la vider détruirait sa donnée en silence."""
     out = _merge_column(_base(), texte)
 

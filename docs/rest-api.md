@@ -610,7 +610,7 @@ Seul le CONTENU d'un contrat peut rougir. Un secret déclaré mais absent rougit
 (défaut chez nous, #823) ; un dépôt illisible ou un fichier déplacé chez le consommateur
 avertit sans rougir (`scripts/lire-contrat-consommateur.sh`).
 
-Déclarés au 25/09/2026 : le front de JB (extrait des opérations qu'il appelle) et le
+Déclarés au 25/09/2026 : un front tiers (extrait des opérations qu'il appelle) et le
 dashboard (**l'instantané complet** de l'API : tout retrait ou changement de forme d'une
 opération servie le fait rougir, qu'il l'appelle ou non, jusqu'à ce qu'il ait rafraîchi son
 instantané). Déclarer un consommateur = ajouter une entrée, plus sa clé de déploiement en

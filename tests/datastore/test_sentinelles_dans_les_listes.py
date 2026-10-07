@@ -82,7 +82,7 @@ def test_un_element_qui_n_est_pas_une_fiche_traverse():
 # dire « garde ce qui est là ET ajoute ceci », et la chaîne est partie en base.
 #
 # ⚠️ La garde au mot entier est JUSTE et ne bouge pas : mordre au milieu d'une chaîne
-# effacerait une valeur sur la foi d'une sous-chaîne (`contact@keepcool.fr`). C'est le
+# effacerait une valeur sur la foi d'une sous-chaîne (`contact@keepcalm.example`). C'est le
 # TEXTE qui était en cause — il montrait la forme sans dire qu'elle doit être seule.
 # Un exemple servi sera produit ; s'il ne dit pas ses bornes, il sera produit hors
 # d'elles.

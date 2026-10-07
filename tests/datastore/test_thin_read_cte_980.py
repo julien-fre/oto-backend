@@ -4,7 +4,7 @@ pour être TOASTées (> 2 Ko).
 
 Mesuré en production (v1.309.0, vivier réel 8 910 lignes) :
 - tri `priorite` (enum), page de 50 : 924 468 blocs lus (3 861 sans tri) ;
-- filtres réels (`client_audiens:in` + `priorite:in`), page de 50, sans tri :
+- filtres réels (`client_x:in` + `priorite:in`), page de 50, sans tri :
   237 782 blocs pour la page, autant pour le `COUNT` — deux fois par appel.
 
 Cause : `field_read_sql` lit `data` 7 fois par évaluation ; `typed_order_sql`
@@ -217,7 +217,7 @@ def test_order_health_lit_beaucoup_moins_de_blocs_et_compte_pareil(vivier):
 
 def test_deux_filtres_combines_comptent_juste_par_la_cte_mince(vivier):
     """Le scénario mesuré en production par oto cd (17/09/2026, vivier réel) :
-    DEUX filtres combinés (`client_audiens:in` + `priorite:in`, 14 références
+    DEUX filtres combinés (`client_x:in` + `priorite:in`, 14 références
     cumulées de `data`), page ET `COUNT` — 712 ms / 237 782 blocs sans la CTE,
     300 ms / 82 344 blocs avec, ~2,4×.
 

@@ -269,7 +269,7 @@ jobs:
   # dépôt ce qu'il appelle et lit de notre OpenAPI. Les deux jobs de contrat ci-dessous
   # confrontent CHAQUE contrat épinglé à ce que nous servons : celui qui casse l'apprend
   # le premier, ici, et non le lendemain dans le travail de quelqu'un d'autre (mesuré le
-  # 31/08/2026 : deux blocages de livraison chez le front de JB dans la journée, pour
+  # 31/08/2026 : deux blocages de livraison chez un front tiers dans la journée, pour
   # des changements venus de nous).
   #
   # La liste vit dans `.github/contrat-consommateurs.json` : nom, dépôt, chemin du

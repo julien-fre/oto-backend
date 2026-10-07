@@ -126,7 +126,7 @@ def _paiement(org: int, *, ht: int = 1900, pays: str = "FR",
     return db_invoices.billing_payment_row(row_id)
 
 
-def _document_emis(org: int, *, numero: str = "F-2026-09-7",
+def _document_emis(org: int, *, numero: str = "F-2026-01-1",
                    pdf: bytes | None = b"%PDF-1.4 faux document",
                    paiement: dict | None = None) -> dict:
     """Un document ÉMIS — écrit directement par le store, et il n'y a plus d'autre

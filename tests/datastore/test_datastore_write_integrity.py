@@ -1,11 +1,11 @@
 """Ce qu'une écriture EFFACE, et ce qu'un lot refusé dit de la ligne fautive.
 
-Six signaux d'usage le 13/08/2026, tous sur `data_write`, org 226. Le banc les
+Six signaux d'usage le 13/08/2026, tous sur `data_write`, dans une org cliente. Le banc les
 sépare en trois familles, parce qu'ils ne disent pas tous la vérité :
 
 **① « Une écriture partielle a mis à null un champ qu'elle ne nommait pas »**
-(#407, #408, #409, trois signaux en 75 secondes, champ `moteur` du tableau
-`edition-essais`). **C'est une erreur d'attribution, et le journal des appels le
+(#407, #408, #409, trois signaux en 75 secondes, champ `moteur` d'un
+tableau client). **C'est une erreur d'attribution, et le journal des appels le
 prouve** : à 08:33 GMT la même session a écrit, ligne par ligne,
 `data_write(id=…, row={'moteur': None, 'siren': …})` — le champ était NOMMÉ, avec
 `null`. L'écriture d'enrichissement incriminée est arrivée huit minutes plus tard,
@@ -202,14 +202,14 @@ def test_le_lot_nomme_la_ligne_quil_refuse(table):
     with pytest.raises(RowValidationError) as exc:
         st.write_rows(ns, [
             {"siren": "111111111", "raison_sociale": "SAINE"},
-            {"siren": "552081317", "entreprise_email": "editions-galilee.com"},
+            {"siren": "552081317", "entreprise_email": "editeur-temoin.example"},
             {"siren": "333333333", "raison_sociale": "JAMAIS ATTEINTE"},
         ], key="siren")
 
     msg = str(exc.value)
     assert "ligne 2/3" in msg, "l'index dans le lot — la ligne se retrouve"
     assert "552081317" in msg, "et sa clé métier, qui la nomme dans le fichier"
-    assert "entreprise_email" in msg and "editions-galilee.com" in msg, \
+    assert "entreprise_email" in msg and "editeur-temoin.example" in msg, \
         "sans rien perdre de ce que le refus disait déjà"
 
 
@@ -224,7 +224,7 @@ def test_le_lot_refuse_dit_ce_quil_a_deja_ecrit(table):
     with pytest.raises(RowValidationError) as exc:
         st.write_rows(ns, [
             {"siren": "111111111", "raison_sociale": "SAINE"},
-            {"siren": "552081317", "entreprise_email": "editions-galilee.com"},
+            {"siren": "552081317", "entreprise_email": "editeur-temoin.example"},
         ], key="siren")
 
     assert _cardinal(ns_id) == 2, "le témoin + la première du lot : rien n'est annulé"

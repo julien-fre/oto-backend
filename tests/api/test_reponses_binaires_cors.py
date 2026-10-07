@@ -63,7 +63,7 @@ def liste_declaree(monkeypatch):
 
 # ── le PDF d'une facture ─────────────────────────────────────────────────────
 
-def _app_pdf(monkeypatch, *, pdf: bytes = b"%PDF-1.4 test", nom: str = "F-2026-09-7.pdf"):
+def _app_pdf(monkeypatch, *, pdf: bytes = b"%PDF-1.4 test", nom: str = "F-2026-01-1.pdf"):
     """La route RÉELLE d'`api/billing.py`, avec les vraies primitives de `base`."""
     from oto_mcp import roles
     from oto_mcp.api import base
@@ -72,8 +72,8 @@ def _app_pdf(monkeypatch, *, pdf: bytes = b"%PDF-1.4 test", nom: str = "F-2026-0
 
     monkeypatch.setenv("OTO_BILLING_ENABLED", "1")
     monkeypatch.setattr(db_invoices, "get_billing_invoice_pdf",
-                        lambda _id: {"id": _id, "org_id": 302, "kind": "invoice",
-                                     "number": "F-2026-09-7", "pdf": pdf,
+                        lambda _id: {"id": _id, "org_id": 42, "kind": "invoice",
+                                     "number": "F-2026-01-1", "pdf": pdf,
                                      "pdf_filename": nom})
     monkeypatch.setattr(roles, "is_org_member", lambda *a, **k: True)
 
@@ -97,7 +97,7 @@ def test_le_pdf_sort_avec_son_cors_sur_un_vrai_socket(monkeypatch, liste_declare
     assert "Origin" in rep.headers.get("vary", "")
     # Le nom de fichier ne sert à rien s'il n'est pas LISIBLE par `fetch` : un
     # en-tête de réponse non exposé n'existe pas pour le front.
-    assert "F-2026-09-7.pdf" in rep.headers["content-disposition"]
+    assert "F-2026-01-1.pdf" in rep.headers["content-disposition"]
     assert "Content-Disposition" in rep.headers.get("access-control-expose-headers", "")
 
 

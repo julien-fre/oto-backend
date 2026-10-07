@@ -94,7 +94,7 @@ def register(mcp: FastMCP) -> None:
         Cost: 1 Hunter credit per batch of 10 emails.
 
         Args:
-            domain: Company domain (e.g. "gallimard.fr").
+            domain: Company domain (e.g. "example.com").
             limit: Max emails to return (1 credit per 10).
             full: return the per-address PROVENANCE too — `sources` (every page where
                 the address was seen) and the `verification` detail. They dominate the

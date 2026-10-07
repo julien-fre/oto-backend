@@ -30,7 +30,7 @@ docs.json/mint.json/llms.txt all return 403, a constant WAF block, not
 a 404 of absence) — everything here first comes from reading doc pages.
 
 **Tested live on 2026-08-20** with a real Personal Access Token
-(folk.app workspace): 20 of the 21 methods worked first time —
+(a customer workspace): 20 of the 21 methods worked first time —
 list/get recordings, the 4 transcript formats, tag/untag, share/unshare
 user, update (rename), download (21 MB real), create_upload_url (a
 real pre-signed S3 URL — confirms the choice of NOT sending the Grain

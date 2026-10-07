@@ -14,7 +14,7 @@ actionnable.
 
 Config (env de process) : `FOD_BASE_URL` (VPC fod-0) + `FOD_API_TOKEN` (clé S2S) —
 le même service FOD unique sert SIRENE et le DILA (règlement/CCN/LOI/JURIS) ; on
-tape la box en VPC direct, plus la façade publique `data.oto.zone` (réservée à OGIC).
+tape la box en VPC direct, plus la façade publique `data.oto.zone` (réservée à un client).
 """
 from __future__ import annotations
 

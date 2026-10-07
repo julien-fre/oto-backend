@@ -103,9 +103,9 @@ def test_client_exposes_methods_called_by_tools():
 # --- payload + projection (client mocké) --------------------------------------
 
 _JOB = {"id": 1, "job_title": "Comptable", "url": "https://x/1", "date_posted": "2026-08-01",
-        "company": "PUIG & FILS", "location": "Perpignan", "description": "long…",
+        "company": "ENTREPRISE TEMOIN", "location": "Perpignan", "description": "long…",
         "salary_string": None, "technology_slugs": ["sap"], "company_object": {"id": "c1"}}
-_COMPANY = {"id": "c1", "name": "PUIG & FILS", "domain": "puig.fr", "employee_count": 40,
+_COMPANY = {"id": "c1", "name": "ENTREPRISE TEMOIN", "domain": "entreprise-temoin.example", "employee_count": 40,
             "industry": "wholesale", "technology_names": ["SAP"], "technology_slugs": ["sap"],
             "num_jobs": 3, "jobs_found": [], "linkedin_url": "https://linkedin.com/company/x"}
 
@@ -116,11 +116,11 @@ def test_jobs_search_builds_payload_and_projects():
         inst.search_jobs.return_value = {"metadata": {"total_results": 1, "truncated_results": 0},
                                          "data": [_JOB]}
         out = _tool("theirstack_jobs_search").fn(
-            company_names=["PUIG & FILS", "  "], job_country_code_or=["FR"], limit=10, page=2,
+            company_names=["ENTREPRISE TEMOIN", "  "], job_country_code_or=["FR"], limit=10, page=2,
             extra={"job_title_or": ["comptable"], "limit": 5})
 
     payload = inst.search_jobs.call_args.args[0]
-    assert payload["company_name_or"] == ["PUIG & FILS"]      # vides retirés
+    assert payload["company_name_or"] == ["ENTREPRISE TEMOIN"]      # vides retirés
     assert payload["posted_at_max_age_days"] == 90            # défaut : satisfait l'exigence API
     assert payload["job_country_code_or"] == ["FR"]
     assert payload["page"] == 2
@@ -128,7 +128,7 @@ def test_jobs_search_builds_payload_and_projects():
     assert payload["job_title_or"] == ["comptable"]
     # Projection : l'item est resserré, l'enveloppe reste.
     assert out["metadata"] == {"total_results": 1, "truncated_results": 0}
-    assert out["data"] == [{"company": "PUIG & FILS", "job_title": "Comptable",
+    assert out["data"] == [{"company": "ENTREPRISE TEMOIN", "job_title": "Comptable",
                             "date_posted": "2026-08-01", "url": "https://x/1",
                             "location": "Perpignan"}]
 
@@ -136,7 +136,7 @@ def test_jobs_search_builds_payload_and_projects():
 def test_jobs_search_full_returns_raw_records():
     with patch("oto.tools.theirstack.client.TheirStackClient") as cls:
         cls.return_value.search_jobs.return_value = {"metadata": {}, "data": [_JOB]}
-        out = _tool("theirstack_jobs_search").fn(company_names=["PUIG & FILS"], full=True)
+        out = _tool("theirstack_jobs_search").fn(company_names=["ENTREPRISE TEMOIN"], full=True)
     assert out["data"] == [_JOB]
 
 
@@ -146,16 +146,16 @@ def test_companies_search_builds_payload_and_projects():
         inst.search_companies.return_value = {
             "metadata": {"total_companies": 1, "truncated_companies": 0}, "data": [_COMPANY]}
         out = _tool("theirstack_companies_search").fn(
-            company_names=["PUIG & FILS"], company_country_code_or=["FR"],
+            company_names=["ENTREPRISE TEMOIN"], company_country_code_or=["FR"],
             extra={"company_technology_slug_or": ["sap"]})
 
     payload = inst.search_companies.call_args.args[0]
-    assert payload == {"page": 0, "limit": 25, "company_name_or": ["PUIG & FILS"],
+    assert payload == {"page": 0, "limit": 25, "company_name_or": ["ENTREPRISE TEMOIN"],
                        "company_country_code_or": ["FR"],
                        "company_technology_slug_or": ["sap"]}
     assert "posted_at_max_age_days" not in payload
     assert out["metadata"]["truncated_companies"] == 0
-    assert out["data"] == [{"name": "PUIG & FILS", "domain": "puig.fr", "employee_count": 40,
+    assert out["data"] == [{"name": "ENTREPRISE TEMOIN", "domain": "entreprise-temoin.example", "employee_count": 40,
                             "industry": "wholesale", "technology_names": ["SAP"]}]
 
 
@@ -177,7 +177,7 @@ def test_jobs_search_estime_un_credit_par_offre_rendue():
     `metadata` » — l'API n'en rend aucun. L'estimation suit le barème publié."""
     with patch("oto.tools.theirstack.client.TheirStackClient") as cls:
         cls.return_value.search_jobs.return_value = {"metadata": {}, "data": [_JOB] * 4}
-        out = _tool("theirstack_jobs_search").fn(company_names=["PUIG & FILS"])
+        out = _tool("theirstack_jobs_search").fn(company_names=["ENTREPRISE TEMOIN"])
     assert out["credits_estimes"] == 4
     assert "published rate card" in out["credits_estimes_source"]
     assert "credit-balance" in out["credits_estimes_source"]
@@ -205,7 +205,7 @@ def test_jobs_search_traces_the_returned_job_count():
          patch("oto.tools.theirstack.client.TheirStackClient") as cls:
         cls.return_value.search_jobs.return_value = {
             "metadata": {}, "data": [_JOB, _JOB, _JOB]}
-        _tool("theirstack_jobs_search").fn(company_names=["PUIG & FILS"])
+        _tool("theirstack_jobs_search").fn(company_names=["ENTREPRISE TEMOIN"])
     trace.assert_called_once_with(quantity=3)
 
 
@@ -213,7 +213,7 @@ def test_jobs_search_traces_by_returned_count_not_by_limit():
     with patch("oto_mcp.tools.theirstack.session_org.note_call_trace") as trace, \
          patch("oto.tools.theirstack.client.TheirStackClient") as cls:
         cls.return_value.search_jobs.return_value = {"metadata": {}, "data": [_JOB]}
-        _tool("theirstack_jobs_search").fn(company_names=["PUIG & FILS"], limit=25)
+        _tool("theirstack_jobs_search").fn(company_names=["ENTREPRISE TEMOIN"], limit=25)
     trace.assert_called_once_with(quantity=1)  # not 25 (`limit`), what was ACTUALLY returned
 
 
@@ -222,7 +222,7 @@ def test_companies_search_traces_the_returned_company_count():
          patch("oto.tools.theirstack.client.TheirStackClient") as cls:
         cls.return_value.search_companies.return_value = {
             "metadata": {}, "data": [_COMPANY, _COMPANY]}
-        _tool("theirstack_companies_search").fn(company_names=["PUIG & FILS"])
+        _tool("theirstack_companies_search").fn(company_names=["ENTREPRISE TEMOIN"])
     trace.assert_called_once_with(quantity=2)
 
 
@@ -242,7 +242,7 @@ def test_companies_search_traces_zero_on_an_empty_result():
 def test_invalid_args_never_hit_the_client():
     with patch("oto.tools.theirstack.client.TheirStackClient") as cls:
         with pytest.raises(McpError):
-            _tool("theirstack_jobs_search").fn(company_names="PUIG")       # pas une liste
+            _tool("theirstack_jobs_search").fn(company_names="TEMOIN")       # pas une liste
         with pytest.raises(McpError):
             _tool("theirstack_jobs_search").fn(extra=["not", "a", "dict"])
         with pytest.raises(McpError):

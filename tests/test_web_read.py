@@ -261,13 +261,13 @@ def test_le_cap_arrete_la_lecture_en_cours(monkeypatch):
 #      28/08 — depuis oto#115, le client Serper est UNE instance par clé
 #      (`serper.client_for`), pour que son limiteur de débit compte : elle ne
 #      porte que ce limiteur et la session HTTP, aucune donnée de réponse ;
-#   3. le cas cité (`www.calitex.fr` → `boutique.nydel-france.fr`) est une
+#   3. le cas cité (un site de marque → la boutique d'un autre domaine) est une
 #      **redirection 301 légitime**, revérifiée en direct le 28/08 — elle n'est
 #      d'ailleurs visible qu'avec notre User-Agent, curl nu reçoit un 403 ;
-#   4. le second cas cité (`solidarmonde.fr` → `artisansdumonde.org`) n'existe
+#   4. le second cas cité (un domaine associatif → un autre) n'existe
 #      pas au journal : le seul appel (`#357616`) a ÉCHOUÉ sur
 #      `Serper scrape 500`, et aucun appel de la plateforme n'a jamais porté
-#      `artisansdumonde` dans ses arguments.
+#      ce second domaine dans ses arguments.
 #
 # Reste un vrai défaut, et c'est celui qui a rendu l'accusation crédible : le
 # tool AFFIRMAIT une `final_url` qu'il ne connaissait pas. Sur le cran ②, serper
@@ -293,20 +293,20 @@ def test_le_cran_serper_n_invente_pas_l_url_finale(monkeypatch):
 
 
 def test_une_redirection_hors_domaine_est_annoncee(monkeypatch):
-    """Le cas `calitex.fr` → `boutique.nydel-france.fr` : redirection légitime,
+    """Le cas `ancien-site.example` → `boutique.nouvelle-marque.example` : redirection légitime,
     mais l'appelant doit l'apprendre DU TOOL, pas d'une comparaison qu'il pense
     à faire lui-même (#491)."""
     lire = _web_read(monkeypatch,
                      fetch={"ok": True, "status": 200, "html": _HTML_OK,
-                            "final_url": "https://boutique.nydel-france.fr/fr/",
+                            "final_url": "https://boutique.nouvelle-marque.example/fr/",
                             "verdict": "lu"})
-    out = lire(url="https://www.calitex.fr/")
-    assert out["final_url"] == "https://boutique.nydel-france.fr/fr/"
-    assert out["hote"] == {"demande": "www.calitex.fr",
-                           "servi": "boutique.nydel-france.fr",
+    out = lire(url="https://www.ancien-site.example/")
+    assert out["final_url"] == "https://boutique.nouvelle-marque.example/fr/"
+    assert out["hote"] == {"demande": "www.ancien-site.example",
+                           "servi": "boutique.nouvelle-marque.example",
                            "conforme": False}
-    assert "boutique.nydel-france.fr" in out["avertissement"]
-    assert "calitex.fr" in out["avertissement"]
+    assert "boutique.nouvelle-marque.example" in out["avertissement"]
+    assert "ancien-site.example" in out["avertissement"]
 
 
 def test_un_saut_vers_www_ou_un_sous_domaine_n_est_pas_un_ecart(monkeypatch):

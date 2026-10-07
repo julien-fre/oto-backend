@@ -1,4 +1,4 @@
-"""Une liste d'identités VIDE dit pourquoi (signal #504, org 244, 14/08/2026).
+"""Une liste d'identités VIDE dit pourquoi (signal #504, 14/08/2026).
 
 Ce que le signal affirmait : « `oto_identity(op=list, connector=unipile)` renvoie
 `identities:[]` alors que le compte LinkedIn est connecté et opérationnel ».
@@ -6,7 +6,7 @@ Ce que le signal affirmait : « `oto_identity(op=list, connector=unipile)` renvo
 Ce que la prod montre (vérifié le 28/08/2026) : les trois lectures `oto_identity`
 de ce compte datent du 14/08 à **14:00:44, 14:00:55 et 14:02:09** — le compte, lui,
 a été lié à **14:03:30**. Rejouée aujourd'hui sur le même sub, la liste rend bien le
-compte (`acc_01m008…`, « Rachel Hourlier »). Elle était vide parce qu'il n'y avait
+compte (son identifiant et son nom affiché). Elle était vide parce qu'il n'y avait
 rien à lister, et le listing des comptes hébergés existait déjà depuis le 08/07
 (feedback #132, commit 5b24a72).
 

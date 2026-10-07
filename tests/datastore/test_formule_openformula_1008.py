@@ -59,7 +59,7 @@ def test_bareme_defaut_true_rang_5():
     assert p == "cas par défaut"
 
 
-# ── SWITCH, provenance, et le bug préfixe 2 vs 3 chiffres (celui d'Audiens) ──
+# ── SWITCH, provenance, et le bug préfixe 2 vs 3 chiffres (celui d'un client) ──
 
 ZONES = """IFS(
   AND(LEN(code)=5; LEFT(code;2)="AA"); SWITCH(code; "AA001";"Alice"; "AA002";"Bob"; "");
@@ -315,7 +315,7 @@ def test_appliquer_formules_ne_touche_jamais_la_couche_origine():
 
 
 def test_ecrire_une_colonne_formule_nomme_le_calcul_pas_le_fichier_source():
-    """Bug remonté en test réel (audiens, 18/09) : le refus générique `readonly`
+    """Bug remonté en test réel (18/09) : le refus générique `readonly`
     disait « colonne du fichier source » et proposait `readonly_override`, faux
     sur les deux points pour une colonne CALCULÉE — un override n'a aucun sens
     puisque la valeur serait recalculée au prochain passage."""

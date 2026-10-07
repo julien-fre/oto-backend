@@ -36,7 +36,7 @@ déplacé le portefeuille de `/crm/flow_companies` vers `/portfolio/crm/flow_com
 `_verify_session` sondait CETTE route et faisait `return res == 200` : elle a reçu 404,
 rendu False, et `browser_session.finalize` est sorti AVANT `_persist()` — plus aucune
 cliente ne pouvait connecter sa GED, et le message accusait l'authentification. Une
-matinée perdue chez une cliente (cabinet Fidens) et chez son agent.
+matinée perdue chez une cliente (un cabinet comptable) et chez son agent.
 
 Deux faits mesurés le jour même sur `app.pennylane.com`, qui fondent le correctif :
 une route VIVANTE répond **401** à une session anonyme (`/portfolio/crm/flow_companies`

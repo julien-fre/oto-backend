@@ -9,7 +9,7 @@ impossible — et rien, dans la réponse, ne dit sous quel nom il est parti.
 Règle : un seul jeton → il sert ; les deux → l'appelant nomme l'auteur, sinon
 refus ; un auteur sans son jeton → refus, jamais un repli sur l'autre. Et la
 réponse dit qui a écrit et OÙ (nom du canal, partagé avec l'extérieur ou non) —
-le 02/09, une réponse destinée à Tulina est partie sur le canal de JB.
+le 02/09, une réponse destinée à Tulina est partie sur le canal d'une autre personne.
 """
 import asyncio
 from unittest.mock import patch

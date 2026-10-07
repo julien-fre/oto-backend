@@ -4,7 +4,7 @@ client Pennylane qu'elle désigne.
 Le client Pennylane d'une org n'est **jamais** rapproché ni créé par le code : il
 est posé ici, à la main, par qui tient la comptabilité. Le rapprochement par une
 référence frappée par oto (`oto-org-<id>`) a créé un second client chez le
-comptable dès que le client existait déjà, créé à la main (facture F-2026-09-7) ;
+comptable dès que le client existait déjà, créé à la main (une facture réelle de septembre 2026) ;
 une heuristique TVA/SIREN a été écartée — sur des pièces comptables, une fusion à
 tort est pire qu'un doublon visible. Un identifiant explicite est la seule chose
 qui relie les deux mondes de façon fiable.

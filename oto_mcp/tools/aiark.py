@@ -72,10 +72,10 @@ _DEAD_FILTERS: dict[str, dict[str, str]] = {
         "title": "seniority (+ location), then a CLIENT-SIDE sort of titles on the "
                  "returned pages — AI Ark does not index the job title",
         # Measured on 2026-09-03 (signal #694), two domains, strict differential:
-        # grasset.fr alone → 63; + `department: ["human_resources"]` → 63, the SAME
+        # publisher-a.example alone → 63; + `department: ["human_resources"]` → 63, the SAME
         # records in the SAME order (an author, a novelist, a publisher…),
         # none with `department.departments == ["human_resources"]`. Likewise
-        # dargaud.com + [human_resources, finance] → 68, of which zero HR and zero finance.
+        # publisher-b.example + [human_resources, finance] → 68, of which zero HR and zero finance.
         # ⚠️ The `department.departments` field EXISTS on the returned records:
         # the data is indexed, it is the INPUT filter that does not bite. The trap
         # is therefore subtler than for `title` — you see the data, you think you can

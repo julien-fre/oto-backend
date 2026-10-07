@@ -1,6 +1,6 @@
 """Le client Pennylane d'une org se POSE, il ne se devine pas (#917).
 
-La facture F-2026-09-7 est née en doublon chez le comptable : le code rapprochait
+Une facture réelle est née en doublon chez le comptable : le code rapprochait
 le client par une référence frappée par oto (`oto-org-<id>`), qu'un client créé
 à la main ne porte pas — « introuvable », donc créé une seconde fois. Décision
 d'Alexis (09/09/2026) : l'identifiant est posé À LA MAIN par un admin plateforme

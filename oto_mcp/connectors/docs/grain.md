@@ -27,7 +27,7 @@ grain gives access to meeting recordings, transcripts and organization data, thr
 
 ## note — verification & fixed bug
 
-- **tested live on 2026-08-20** with a real Personal Access Token (folk.app workspace): 20 of the client's 21 methods worked first time — list/get recordings, the 4 transcript formats, tag/untag, share/unshare user, update (rename), download (real file, 21 MB), create_upload_url (real pre-signed S3 URL), and the full webhook cycle (create against a real reachable URL, list, delete)
+- **tested live on 2026-08-20** with a real Personal Access Token (a customer workspace): 20 of the client's 21 methods worked first time — list/get recordings, the 4 transcript formats, tag/untag, share/unshare user, update (rename), download (real file, 21 MB), create_upload_url (real pre-signed S3 URL), and the full webhook cycle (create against a real reachable URL, list, delete)
 - **one real bug was found and fixed**: `share_with_team` expected `team_id` in the JSON body (like `share_with_user`), not in the URL path as the doc initially suggested — the documented form really returns 404. Fixed and locked in again by a test
 - no OpenAPI spec is accessible for this API (openapi.json/docs.json/mint.json/llms.txt all return 403 on developers.grain.com, a constant WAF block) — the initial build came from reading doc pages, now largely confirmed by the live test above
 - `grain_recording(op="get")` uses a POST on Grain's side (not GET) — confirmed by both the doc and the live test
