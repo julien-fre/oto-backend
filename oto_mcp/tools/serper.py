@@ -141,6 +141,27 @@ class SerperASec(RuntimeError):
     status_code = 402
 
 
+# Serper answers a refused key with **403** `Unauthorized`, never a 401 — measured on
+# signal #654 (`Serper search 403: Unauthorized` on every call of an org, three days) and
+# reproduced by the connection probe. THIS signature alone is a dead key; any other 403
+# is left unmarked (`error_taxonomy`: a 403 alone does not paint a key red).
+_CLE_REFUSEE = re.compile(r"Serper \w+ 403:\s*Unauthorized", re.I)
+
+
+class SerperCleRefusee(RuntimeError):
+    """Serper refused the KEY (403 `Unauthorized`). Same message, still a RuntimeError
+    (the callers that let a key problem propagate keep doing so); it carries the
+    status and declares `credential_rejected`, which marks the served key red
+    (`error_taxonomy.credential_rejected_in_chain`)."""
+    status_code = 403
+    credential_rejected = True
+
+
+def cle_refusee(erreur: BaseException) -> "SerperCleRefusee | None":
+    """`SerperCleRefusee` if `erreur` is Serper's refusal of the key, otherwise None."""
+    return SerperCleRefusee(str(erreur)) if _CLE_REFUSEE.search(str(erreur)) else None
+
+
 def a_sec(erreur: BaseException) -> "SerperASec | None":
     """`SerperASec` if `erreur` is Serper's "Not enough credits" refusal, otherwise
     None. PUBLIC: `web_read` (step ②) is the backend's second serper mouth."""
@@ -230,6 +251,9 @@ def register(mcp: FastMCP) -> None:
             m = _SERPER_STATUS.search(str(e))
             if m and int(m.group(1)) == 400:
                 raise McpError(ErrorData(code=INVALID_REQUEST, message=str(e))) from None
+            refusee = cle_refusee(e)
+            if refusee is not None:
+                raise refusee from e
             raise
         # Same separation as theirstack/aiark: METERING is unconditional
         # (`tool_calls.key_mode` says separately under which key the call was made, and

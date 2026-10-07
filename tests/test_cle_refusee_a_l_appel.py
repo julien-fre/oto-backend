@@ -229,3 +229,79 @@ def test_une_marque_de_sonde_efface_la_source_d_un_ancien_appel(live):
                          "unauthorized")
     assert credentials_store.clear_call_health("org", "7", "folk", "") is False
     assert _rouge("folk")
+
+
+# --- les connecteurs qui DÉCLARENT leur 403 ---------------------------------------
+#
+# Mesuré le 07/10/2026 : en 7 jours, 403 seuls ×35 sur serper et ×6 sur snitcher, que la
+# règle générique (un 403 seul ne marque pas) laissait au vert. Chacun déclare son 403
+# là où, et seulement là où, il ne peut vouloir dire que « clé refusée ».
+
+def _snitcher_workspace():
+    from unittest.mock import patch
+
+    from fastmcp import FastMCP
+    from oto_mcp.tools import snitcher
+
+    patcher = patch("oto.tools.snitcher.client.SnitcherClient")
+    cls = patcher.start()
+    m = FastMCP("t")
+    snitcher.register(m)
+    return asyncio.run(m.get_tool("snitcher_workspace")).fn, cls, patcher
+
+
+@pytest.fixture
+def _cle_servie(monkeypatch):
+    monkeypatch.setattr("oto_mcp.access.resolve_api_key",
+                        lambda provider, account=None: ("k", False))
+
+
+@pytest.mark.parametrize("op, methode", [("list", "list_workspaces"), ("me", "get_me")])
+def test_snitcher_403_sur_le_compte_du_jeton_est_un_refus_de_cle(_cle_servie, op, methode):
+    """`/me` et la liste des workspaces lisent le compte du JETON : un 403 « Access
+    denied » n'y vise aucune ressource, c'est le jeton refusé (signaux #1145, #1345)."""
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    fn, cls, patcher = _snitcher_workspace()
+    try:
+        getattr(cls.return_value, methode).side_effect = UpstreamHTTPError(
+            403, "{'success': False, 'message': 'Access denied'}", service="snitcher")
+        with pytest.raises(McpError) as exc:
+            fn(op=op)
+    finally:
+        patcher.stop()
+    assert error_taxonomy.credential_rejected_in_chain(exc.value) is True
+
+
+def test_snitcher_403_sur_une_ressource_ne_marque_pas(_cle_servie):
+    """Sur un workspace donné, Snitcher documente le 403 comme « insufficient
+    permissions » : une ressource hors de portée, pas forcément un jeton mort."""
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    fn, cls, patcher = _snitcher_workspace()
+    try:
+        cls.return_value.list_segments.side_effect = UpstreamHTTPError(
+            403, "{'success': False, 'message': 'Access denied'}", service="snitcher")
+        with pytest.raises(McpError) as exc:
+            fn(op="segments", workspace_uuid="ws_1")
+    finally:
+        patcher.stop()
+    assert error_taxonomy.credential_rejected_in_chain(exc.value) is False
+
+
+@pytest.mark.parametrize("message, refusee", [
+    ("Serper search 403: Unauthorized.", True),
+    ("Serper scrape 403: Unauthorized", True),
+    ("Serper search 403: Forbidden", False),      # un autre 403 : pas la signature
+    ("Serper search 500: Internal error", False),
+])
+def test_serper_declare_son_403_unauthorized_et_lui_seul(message, refusee):
+    from oto_mcp.tools import serper
+
+    trouve = serper.cle_refusee(RuntimeError(message))
+    assert (trouve is not None) is refusee
+    if refusee:
+        # Toujours une RuntimeError au même message : les appelants qui laissent
+        # remonter un problème de clé le font comme avant.
+        assert isinstance(trouve, RuntimeError) and str(trouve) == message
+        assert error_taxonomy.credential_rejected_in_chain(trouve) is True

@@ -90,13 +90,24 @@ def register(mcp: FastMCP) -> None:
         key, _ = access.resolve_api_key("snitcher")
         return SnitcherClient(api_key=key)
 
-    def _run(fn):
+    def _run(fn, account_level: bool = False):
+        """`account_level`: the call reads the TOKEN's own account (`/me`, the
+        workspace list) — no resource of which the token could lack the right. Snitcher
+        documents 403 as "insufficient permissions", which on a workspace or an
+        organisation can be a resource out of reach; on these two calls, a 403
+        ("Access denied") can only be the token itself refused — observed on every
+        call of a dead token, for weeks (signals #1145, #1168, #1345). There, the
+        refusal declares `credential_rejected`, which marks the served key red
+        (`error_taxonomy.credential_rejected_in_chain`)."""
         try:
             return fn()
         except ValueError as e:
             raise _bad(str(e))
         except UpstreamHTTPError as e:
-            raise _bad(_upstream_message(e))
+            err = _bad(_upstream_message(e))
+            if account_level and e.status_code == 403:
+                err.credential_rejected = True
+            raise err from e
 
     # ================================================================
     # Workspace — account-level admin & reference data
@@ -152,12 +163,13 @@ def register(mcp: FastMCP) -> None:
             _refuse_ignored(op, "op='list' only takes page/size",
                              workspace_uuid=workspace_uuid, url=url,
                              usage_limit=usage_limit, email=email, tag_name=tag_name)
-            return _run(lambda: client.list_workspaces(page=page, size=size))
+            return _run(lambda: client.list_workspaces(page=page, size=size),
+                        account_level=True)
         if op == "me":
             _refuse_ignored(op, "op='me' takes no argument",
                              workspace_uuid=workspace_uuid, url=url, usage_limit=usage_limit,
                              email=email, tag_name=tag_name, page=page, size=size)
-            return _run(client.get_me)
+            return _run(client.get_me, account_level=True)
         if op == "create":
             _refuse_ignored(op, "a new workspace has no uuid yet",
                              workspace_uuid=workspace_uuid, usage_limit=usage_limit,
