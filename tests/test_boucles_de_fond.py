@@ -10,6 +10,8 @@ import re
 
 import pytest
 
+from oto_mcp.recipes import programmes
+
 from oto_mcp import boucles_de_fond, config
 
 _INTERRUPTEURS = ("OTO_SCHEDULER_ENABLED", "OTO_EMBED_WORKER_ENABLED",
@@ -57,8 +59,19 @@ def test_la_production_compose_les_dix(env):
     env.setenv("OTO_ENV", _PROD)
     env.setenv("OTO_SENTRY_ENV", "production")
     composees = boucles_de_fond.composer()
-    assert len(composees) == len(boucles_de_fond.BOUCLES) == 10
-    assert set(composees) == _toutes()
+    # Les programmes de recettes sont ÉTEINTS par défaut, même en production.
+    assert len(boucles_de_fond.BOUCLES) == 11 and len(composees) == 10
+    assert set(composees) == _toutes() - {programmes.run_loop}
+
+
+def test_les_programmes_de_recettes_ne_tournent_qu_en_production_et_allumes(env):
+    env.setenv("OTO_RECIPE_SCHEDULER_ENABLED", "1")
+    env.setenv("OTO_ENV", _PROD)
+    env.setenv("OTO_SENTRY_ENV", "production")
+    assert programmes.run_loop in boucles_de_fond.composer()
+    env.setenv("OTO_ENV", "preprod")
+    env.setenv("OTO_SENTRY_ENV", "preprod")
+    assert programmes.run_loop not in boucles_de_fond.composer()
 
 
 @pytest.mark.parametrize("declare", [None, "", "staging", "mcp.oto.cx"],
@@ -123,7 +136,8 @@ def test_les_boucles_qui_touchent_un_tiers_le_declarent():
     assert len(noms) == len(set(noms))
     # Faits de code, pas de goût : l'une envoie des emails, l'autre prélève, la
     # troisième fige dans la page d'un client le lien de l'environnement qui l'a écrite.
-    assert {"scheduler", "billing_runner", "transcription_worker", "jev_jobs_worker"} <= {
+    assert {"scheduler", "billing_runner", "transcription_worker", "jev_jobs_worker",
+            "recipe_scheduler"} <= {
         b.nom for b in boucles_de_fond.BOUCLES if b.tiers}
 
 

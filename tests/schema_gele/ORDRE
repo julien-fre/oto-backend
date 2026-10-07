@@ -50,3 +50,4 @@ recipes.RECIPES
 procedures.PROCESS_SHARES
 usage.SIGNAL_OCCURRENCES
 jev.JEV_JOBS
+recipes.RECIPE_RUNS

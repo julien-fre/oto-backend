@@ -253,7 +253,8 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `recettes.md` — `oto_recipe` : un outil de connecteur vers un tableau sans modèle —
   recette versionnée, pages appelées par le corps d'`oto_call`, reçu en comptes, `for_each` sur
   les lignes d'un tableau, `per_row` qui enrichit les lignes d'un tableau (`async` : soumettre
-  puis collecter), `push` vers une autre app (liste fermée d'outils et d'ops), dérive surveillée,
+  puis collecter, par lots), `push` vers une autre app (liste fermée d'outils et d'ops), `start`
+  (Apify), un bail par tableau, exécutions programmées (boucle éteinte par défaut), dérive surveillée,
   refusée en agent hébergé
 - `datastore.md` — spine PG `data_*`, OAuth Google
 - `donnees-par-reference.md` — rien de personnel ni d'URL extérieure en argument :

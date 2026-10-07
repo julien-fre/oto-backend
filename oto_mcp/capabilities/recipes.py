@@ -40,7 +40,7 @@ _APPELANTES = ("sample", "test", "publish", "run")
 
 class RecipeInput(BaseModel):
     op: Literal["list", "get", "versions", "create", "propose", "sample", "test",
-                "publish", "run"]
+                "publish", "run", "schedule", "schedules", "set_schedule", "unschedule"]
     slug: Optional[str] = None
     scope: Optional[Literal["org", "user"]] = None
     org: Optional[int] = None
@@ -84,6 +84,48 @@ class RecipeInput(BaseModel):
         "sample: its arguments (ask for the smallest page: the call is billed)."))
     items: Optional[str] = Field(default=None, description=(
         "sample: path to the list of items in the result (empty = the result itself)."))
+    every_minutes: Optional[int] = Field(default=None, description=(
+        "schedule: run the published recipe every N minutes (at least 15), with `params` "
+        "and `datastore`, on your behalf."))
+    schedule_id: Optional[int] = Field(default=None, description=(
+        "set_schedule / unschedule: the schedule (from op=schedules)."))
+    enabled: Optional[bool] = Field(default=None, description=(
+        "set_schedule: false pauses it, true resumes it (and resets its failure count)."))
+
+
+def _programmer(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
+    """Les ops de programme — synchrones, hors boucle. Un programme agit SANS personne
+    devant l'écran, au nom de qui le pose : seule une personne en pose un (jamais un
+    agent hébergé), sur une version publiée."""
+    if current_token_axes().get("token_kind") == "delegation":
+        raise AuthzDenied(403, "schedules_not_in_hosted_agents",
+                          "A hosted agent can't schedule a recipe: a person does.")
+    fiche = _fiche(ctx, inp)
+    if inp.op == "schedules":
+        return {"recipe": fiche, "schedules": db_recipes.programmes_de(fiche["id"])}
+    if inp.op in ("set_schedule", "unschedule"):
+        sid = _besoin(inp.schedule_id, "missing_schedule_id", "`schedule_id` is required.")
+        if inp.op == "unschedule":
+            ok = db_recipes.supprimer_programme(sid, fiche["id"])
+        else:
+            ok = db_recipes.regler_programme(sid, fiche["id"], enabled=bool(
+                _besoin(inp.enabled, "missing_enabled", "`enabled` is required.")))
+        if not ok:
+            raise AuthzDenied(404, "unknown_schedule", f"No schedule {sid} on this recipe.")
+        return {"recipe": fiche, "schedules": db_recipes.programmes_de(fiche["id"])}
+    if not fiche["published_version"]:
+        raise AuthzDenied(409, "not_published", "Only a published recipe can be scheduled.")
+    minutes = _besoin(inp.every_minutes, "missing_every_minutes",
+                      "`every_minutes` (at least 15) is required.")
+    if minutes < 15:
+        raise AuthzDenied(400, "schedule_too_frequent", "`every_minutes` must be at least 15.")
+    datastore = _besoin(inp.datastore, "missing_datastore", "`datastore` is required.")
+    corps = db_recipes.get_version(fiche["id"], fiche["published_version"])["body"]
+    _params(corps, inp.params)  # refusés maintenant, pas au premier passage
+    db_recipes.creer_programme(recipe_id=fiche["id"], sub=ctx.sub, org_id=ctx.org_id,
+                               params=inp.params or {}, datastore=str(datastore),
+                               every_minutes=int(minutes))
+    return {"recipe": fiche, "schedules": db_recipes.programmes_de(fiche["id"])}
 
 
 class RecipeOut(BaseModel):
@@ -93,6 +135,7 @@ class RecipeOut(BaseModel):
     versions: Optional[list[dict]] = None
     receipt: Optional[dict] = None
     shape: Optional[dict] = None
+    schedules: Optional[list[dict]] = None
 
 
 def _besoin(valeur, code: str, message: str):
@@ -243,6 +286,8 @@ async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: 
 
 
 async def _recipe(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
+    if inp.op in ("schedule", "schedules", "set_schedule", "unschedule"):
+        return await run_in_threadpool(_programmer, ctx, inp)
     if inp.op in _APPELANTES and current_token_axes().get("token_kind") == "delegation":
         raise AuthzDenied(403, "hosted_runs_not_supported",
                           "Recipes don't run inside hosted agents yet: the agent's job "
@@ -319,7 +364,8 @@ CAPABILITIES += [
     Capability(
         key="me.recipe", handler=_recipe, Input=RecipeInput, Output=RecipeOut,
         authz=BY_OP({op: _PORTEE for op in ("list", "get", "versions", "create", "propose",
-                                            "sample", "test", "publish", "run")}),
+                                            "sample", "test", "publish", "run", "schedule",
+                                            "schedules", "set_schedule", "unschedule")}),
         description=(
             "RECIPES: move a connector tool's results into a table on the server, with no "
             "model reading or retyping the rows. Only connector tools DECLARED READ-ONLY can "
@@ -346,7 +392,10 @@ CAPABILITIES += [
             "and publish are a dry run that calls nothing. Neither push nor async runs "
             "inside a hosted agent. A run "
             "stops with `mapping_drift` when a column the published test filled comes back "
-            "empty on a whole page. "
+            "empty on a whole page. op=schedule (slug, every_minutes ≥ 15, params, "
+            "datastore) runs a PUBLISHED recipe on its own, on your behalf, in this org "
+            "(op=schedules lists them with their last receipt; set_schedule pauses or "
+            "resumes; unschedule removes; 3 failures in a row pause it). "
             "`limits.max_units` is required: a hard cap on what the tool BILLS (its own "
             "units; `units_basis` in the receipt says when it falls back on the recipe's "
             "count). Scope: your active org (default) or `scope='user'`. Refused inside a "

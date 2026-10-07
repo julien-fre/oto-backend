@@ -136,6 +136,16 @@ def _hang_watch() -> Fonction:
     return hang_watch.run_heartbeat_loop
 
 
+def _programmes_recettes_armee() -> bool:
+    from .recipes import programmes
+    return programmes.armee()
+
+
+def _programmes_recettes() -> Fonction:
+    from .recipes import programmes
+    return programmes.run_loop
+
+
 BOUCLES: tuple[Boucle, ...] = (
     # Envoie les emails programmés (Resend, Scaleway TEM, relais) à leurs destinataires.
     Boucle(nom="scheduler", tiers=True,
@@ -189,6 +199,11 @@ BOUCLES: tuple[Boucle, ...] = (
     # propre (`OTO_HANG_WATCH_ENABLED`, défaut actif) vit dans `hang_watch.py`.
     Boucle(nom="hang_watch", tiers=False,
            armee=_hang_watch_armee, fonction=_hang_watch),
+    # Exécutions programmées des recettes (`recipes/programmes.py`) : appellent des
+    # connecteurs payants et peuvent écrire dans un CRM, au nom de qui les a posées.
+    # Éteinte par défaut (`OTO_RECIPE_SCHEDULER_ENABLED=1` pour l'allumer).
+    Boucle(nom="recipe_scheduler", tiers=True,
+           armee=_programmes_recettes_armee, fonction=_programmes_recettes),
 )
 # (L'index BOAMP/ACCO est passé au service FOD, ADR 0028 B2b : plus de boucle ici.)
 

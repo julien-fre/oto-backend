@@ -481,11 +481,6 @@ def valider(corps: Any) -> dict:
         _par_ligne(probs, c)
     elif pousse:
         _pousse(probs, c)
-    if c.get("start") is not None:
-        if mode != "pull":
-            probs.append("`start` is for `pull` recipes only")
-        else:
-            _lancement(probs, c)
     elif not isinstance(cle, dict) or not _colonne_ok(cle.get("column")):
         probs.append("`key.column` (the column that identifies a row) is required")
     elif cle.get("template") is not None:
@@ -493,6 +488,11 @@ def valider(corps: Any) -> dict:
     elif cle["column"] not in (c.get("map") or {}):
         probs.append("`key`: without `key.template`, `key.column` must be one of the "
                      "`map` columns")
+    if c.get("start") is not None:
+        if mode != "pull":
+            probs.append("`start` is for `pull` recipes only")
+        else:
+            _lancement(probs, c)
     if not (par_ligne or pousse) and c.setdefault("on_existing", "skip") \
             not in ("skip", "update"):
         probs.append("`on_existing` must be `skip` or `update`")

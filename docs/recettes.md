@@ -289,6 +289,29 @@ jamais `delete`, `merge` ni les `bulk_*`), gardée par `tests/test_recettes_outi
   même quand la liste de son travail porterait l'outil : un agent hébergé lit du texte
   non sûr (webhook, e-mails, CRM), il ne pilote pas une écriture chez un tiers.
 
+## Les exécutions programmées
+
+`op=schedule` (slug, `every_minutes` ≥ 15, `params`, `datastore`) fait tourner une
+version PUBLIÉE toute seule, sans modèle et sans requête, au nom de qui l'a posée et dans
+son org (`recipe_schedules`). `schedules` les liste avec leur dernier reçu,
+`set_schedule` suspend ou reprend, `unschedule` retire.
+
+- **Une boucle de fond de PRODUCTION, éteinte par défaut** (`recipes/programmes.py`,
+  `boucles_de_fond.recipe_scheduler`, `tiers=True` — jamais en préprod — et
+  `OTO_RECIPE_SCHEDULER_ENABLED=1` pour l'allumer).
+- **L'identité est revérifiée à chaque passage** : compte existant, ni en pause ni coupé
+  avec son tenant, toujours membre de l'org, org non suspendue — sinon le programme est
+  suspendu aussitôt, la raison dans son dernier reçu. L'org est épinglée
+  explicitement : clé, facturation et journal suivent l'org du programme.
+- Un passage enchaîne les reprises (pages, parents, lignes) jusqu'à cinq minutes, sous le
+  bail du tableau ; son reçu (comptes et codes) est gardé. Trois échecs d'affilée le
+  suspendent. Deux processus (bleu/vert) ne prennent jamais le même passage
+  (`FOR UPDATE SKIP LOCKED`, échéance avancée dans la même écriture).
+- Seule une personne pose un programme, jamais un agent hébergé
+  (`schedules_not_in_hosted_agents`).
+- ⚠️ Pas de déclenchement par webhook : le corps d'un webhook est du texte non sûr, et il
+  ne pilote pas une recette qui peut écrire chez un tiers.
+
 ## Les garde-fous
 
 - **Seul un outil DÉCLARÉ EN LECTURE est appelable** (`@mcp.tool(annotations=LECTURE)`,
