@@ -72,13 +72,15 @@ def _facturer(job: dict, trace: dict, geste_id: str, debut: float,
     """The slice in the call ledger, as a `jev_rows` call: what billing reads.
     A slice that spent is `ok` even when it stopped: the spend is real."""
     from . import db
+    from .calllog import truncated_args
     quantite = trace.get("quantity")
     row = {
         "server": "oto", "kind": "mcp", "sub": job["sub"], "tool": "jev_rows",
         # `jev_job_id`, not `job_id`: the billing lens bills a job named under one of
         # its keys (`db/usage.py::BILLABLE_JOB_ARGS`) only ONCE, and each slice is a
         # spend of its own.
-        "args": {"jev_job_id": int(job["id"]), "background": True},
+        "args": truncated_args({"jev_job_id": int(job["id"]), "background": True},
+                               tool="jev_rows"),
         "ok": bool(quantite) or erreur is None,
         "error": (erreur or None) and erreur[:2000],
         "duration_ms": int((time.monotonic() - debut) * 1000),

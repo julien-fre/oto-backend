@@ -452,6 +452,10 @@ def register(mcp: FastMCP) -> None:
         if panne is not None:
             raise _refus_de_panne(panne, out["decided"])
         out.pop("_epuise", None)
+        if dry_run:
+            # `legend` dropped from each answer here, at the reply (it repeats the criteria).
+            out["rows"] = [{"_id": r["_id"], "answers": jr.answers_slim(r["answers"])}
+                           for r in out["rows"]]
         return out
 
     @mcp.tool()
@@ -730,7 +734,7 @@ def qualifier(plan: Plan, *, cursor: Optional[str], limite: int, fenetre_s: floa
                         continue
                     n["low_confidence"] += sum(1 for c in conf if c < jr.LOW_CONFIDENCE)
                     if dry_run:
-                        judged.append({"_id": rid, "answers": jr.answers_slim(answers)})
+                        judged.append({"_id": rid, "answers": answers})
                         fait[rid] = True
                         continue
                     code = _ecrire(rid, rev, patch)
