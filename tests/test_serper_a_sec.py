@@ -80,7 +80,7 @@ def coffre(monkeypatch):
         return True
 
     monkeypatch.setattr(credentials_store, "update_meta", _update_meta)
-    monkeypatch.setattr(credentials_store, "clear_health_if_verdict",
+    monkeypatch.setattr(credentials_store, "clear_call_health",
                         lambda *a, **k: True)
     yield rec
     health._SANS_MARQUE.clear()

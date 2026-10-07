@@ -81,6 +81,24 @@ def upstream_status_in_chain(exc) -> Optional[int]:
     return None
 
 
+def credential_rejected_in_chain(exc) -> bool:
+    """True if the upstream refused the KEY itself — what marks the served key red at
+    call time (`connectors.health.suivre_appel`).
+
+    A connector that knows says so on its exception (`credential_rejected: bool`), and
+    its verdict wins — same seam as `retryable`, the specifics stay inside the module.
+    Otherwise only a 401 anywhere in the chain counts, including under the curated
+    `McpError` a tool raises in its `except`: a 401 is the key failing to
+    authenticate. A 403 alone does NOT: it is as often a resource the key may not read
+    (a private file, a profile out of reach) or a provider's rate limit (Hunter) —
+    painting the key red for it would send people replacing a key that works."""
+    for e in _chain(exc):
+        v = getattr(e, "credential_rejected", None)
+        if isinstance(v, bool):
+            return v
+    return upstream_status_in_chain(exc) == 401
+
+
 def _is_managed_connector_error(exc) -> bool:
     """True if the chain carries an upstream client refusal (4xx) — a handled
     connector error, not a backend bug."""

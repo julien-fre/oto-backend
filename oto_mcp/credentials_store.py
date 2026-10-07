@@ -832,6 +832,12 @@ NO_QUOTA_VERDICT = "no_quota"
 #: c'est ce qui fait dire à la carte connecteur « recharge » et non « repose la clé »
 #: (`connectors/readiness`), sans changer la forme (une chaîne) que ses lecteurs lisent.
 NO_QUOTA_REASON_PREFIX = "crédits épuisés"
+#: Verdict « la clé n'authentifie pas » — même nom que celui de la sonde
+#: (`connectors.verify.UNAUTHORIZED`).
+UNAUTHORIZED_VERDICT = "unauthorized"
+#: `meta.health_source` d'une marque posée À L'APPEL. Une marque de la sonde n'en porte
+#: pas : seule une marque d'appel est levée par un appel réussi (`clear_call_health`).
+CALL_SOURCE = "call"
 
 
 def credential_health(entity_type: str, entity_id: str, connector: str,
@@ -864,20 +870,28 @@ def credential_health(entity_type: str, entity_id: str, connector: str,
     return why
 
 
-def clear_health_if_verdict(entity_type: str, entity_id: str, connector: str,
-                            account: str, *, verdict: str) -> bool:
-    """Lève la marque de santé de cette ligne SEULEMENT si son verdict est `verdict`
-    (UNE écriture conditionnelle, aucune si la ligne est saine ou porte un autre
-    rejet). True si une ligne a été démarquée. Même forme que le démarquage de la
-    sonde (`health_ko: false`, raison et verdict nuls)."""
+def clear_call_health(entity_type: str, entity_id: str, connector: str,
+                      account: str) -> bool:
+    """Lève une marque posée À L'APPEL, après un appel réussi sur cette clé : un compte
+    à sec (`no_quota`), ou une clé refusée vue par un appel (`unauthorized` +
+    `health_source = 'call'`). Un appel réussi prouve que la clé authentifie et paie.
+    Une marque de la SONDE (`unauthorized` sans source d'appel, `invalid_grant`…) n'est
+    levée que par la sonde ou en reposant la clé : la sonde teste ce que l'appel ne
+    teste pas (un scope manquant, par exemple).
+
+    UNE écriture conditionnelle, aucune si la ligne est saine ou porte une autre marque.
+    True si une ligne a été démarquée. Même forme que le démarquage de la sonde."""
     with _connect() as c:
         cur = c.execute(
             "UPDATE connector_credentials SET meta = meta || %s::jsonb "
             "WHERE entity_type=%s AND entity_id=%s AND connector=%s AND account=%s "
-            "AND meta->>'health_ko' = 'true' AND meta->>'health_verdict' = %s",
+            "AND meta->>'health_ko' = 'true' "
+            "AND (meta->>'health_verdict' = %s "
+            "     OR (meta->>'health_verdict' = %s AND meta->>'health_source' = %s))",
             (json.dumps({"health_ko": False, "health_reason": None,
-                         "health_verdict": None}),
-             entity_type, entity_id, connector, account, verdict))
+                         "health_verdict": None, "health_source": None}),
+             entity_type, entity_id, connector, account,
+             NO_QUOTA_VERDICT, UNAUTHORIZED_VERDICT, CALL_SOURCE))
         return (cur.rowcount or 0) > 0
 
 

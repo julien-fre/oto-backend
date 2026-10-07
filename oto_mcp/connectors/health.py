@@ -32,9 +32,11 @@ Two elements:
   (always `ok=False`): marking a real rejection is never a fallback that swallows the
   error, the caller ALWAYS RE-RAISES after calling it.
 
-- `suivre_appel(trace, quota_epuise)`: tracking AT CALL TIME — a `quota_exhausted`
-  refusal marks the served row `no_quota`, the first success clears it
-  (see the "Credits exhausted" section below).
+- `suivre_appel(trace, quota_epuise, rejet=None)`: tracking AT CALL TIME — a
+  `quota_exhausted` refusal marks the served row `no_quota`, an upstream refusal of
+  the KEY itself (`error_taxonomy.credential_rejected_in_chain`) marks it
+  `unauthorized` with `health_source = "call"`, and the first success clears either
+  (see the "Seen at call time" section below).
 
 Read by `connectors/readiness.py` (via `access.credential_rejection_for`, which reads
 `credentials_store.credential_health`) — never the other way around, this module does
@@ -55,10 +57,13 @@ FLAGGABLE_SCOPES = (credentials_store.USER, credentials_store.MEMBER,
 #: The verdict "the key authenticates, the account is dry" — same name as the probe's
 #: (`connectors.verify.NO_QUOTA`), defined in the vault that stores and re-reads it.
 NO_QUOTA = credentials_store.NO_QUOTA_VERDICT
+#: The verdict "the key does not authenticate" — same name as the probe's.
+UNAUTHORIZED = credentials_store.UNAUTHORIZED_VERDICT
 
 
 def record_health(provider: str, scope: "tuple | None", ok: bool,
-                  error: "str | None", verdict: "str | None" = None) -> None:
+                  error: "str | None", verdict: "str | None" = None,
+                  source: "str | None" = None) -> None:
     """Persists the health state of the tested credential (`meta.health_ko` + reason +
     `meta.health_verdict`) — read by `status_for` (sheet) and
     `access.credential_rejection_for`, hence by the connector card's `ready` verdict.
@@ -66,7 +71,10 @@ def record_health(provider: str, scope: "tuple | None", ok: bool,
     entity_id, account)` of the row ACTUALLY tested/served; `None` (key shared
     beyond the guard) → we don't flag. `verdict` = the failure's classification
     (`no_quota`, `unauthorized`…) when known: it is what makes the card say
-    "top up" rather than "set the key again".
+    "top up" rather than "set the key again". `source` = `CALL_SOURCE` for a mark seen
+    by a call (lifted by the next successful call), `None` for the probe's (lifted only
+    by the probe or by re-setting the key): writing it on every mark keeps an old call
+    source from outliving a newer probe verdict.
 
     ⚠️ The only function that UNMARKS (`ok=True` clears `health_ko`/`health_reason`/
     `health_verdict`) — `mark_rejected` below only calls it with `ok=False`."""
@@ -76,7 +84,8 @@ def record_health(provider: str, scope: "tuple | None", ok: bool,
         credentials_store.update_meta(
             scope[0], scope[1], provider, scope[2],
             {"health_ko": (not ok), "health_reason": (error if not ok else None),
-             "health_verdict": (verdict if not ok else None)})
+             "health_verdict": (verdict if not ok else None),
+             "health_source": (source if not ok else None)})
     # noqa: SILENT — declared debt: the unwritten health flag should be logged (#424, verdict C)
     except Exception:  # noqa: BLE001 — health is a bonus, never blocking
         pass
@@ -97,13 +106,20 @@ def mark_rejected(entity_type: Optional[str], entity_id: Optional[str],
                   verdict)
 
 
-# --- Credits exhausted, seen AT CALL TIME (option (a), 2026-09-25) ---------------
+# --- Seen AT CALL TIME: credits exhausted (option (a), 2026-09-25), key refused -----
 #
 # The `oto_instance op=verify` probe already classified a 402 as `no_quota` — but
 # nobody replays it before working. An agent would hit "credits exhausted" mid-work,
 # the connector's card stayed green, and nobody topped up: 13 signals (theirstack,
 # AI Ark…) before this lot. Now a CALL's refusal marks the key that served it, and the
 # first successful call on that same key clears the mark.
+#
+# The same holds for a key the upstream REFUSES (401, or a refusal its connector
+# declares as the key's): the probe painted it red only when someone replayed it, so
+# an agent hitting it every hour left the card green and the alert (`maintenance
+# alertes-credential`, which reads this mark) blind. Its mark carries
+# `health_source = "call"`, so that a later successful call lifts it — and a probe
+# mark (which may name a missing scope the call does not exercise) stays.
 #
 # Cost on the hot path: the call record already carries the served row
 # (`access.resolve` → `credential_row`); clearing writes only once per key and per
@@ -139,15 +155,26 @@ def marquer_quota_epuise(row, message: "str | None") -> None:
     _SANS_MARQUE.discard(ligne)
 
 
-def effacer_quota_epuise(row) -> None:
-    """Sync (DB): on a SUCCESSFUL call, lifts a `no_quota` mark from the served row
-    — a single conditional write per key and per process, never another
-    mark (an `unauthorized` rejection is only lifted by the probe or by re-setting)."""
+def marquer_rejet_a_l_appel(row, message: "str | None") -> None:
+    """Sync (DB): marks the served row `unauthorized`, source `call` — no-op outside
+    `FLAGGABLE_SCOPES` (a platform or tenant key is NEVER painted red for everyone)."""
+    ligne = _ligne(row)
+    if ligne is None:
+        return
+    record_health(ligne[2], (ligne[0], ligne[1], ligne[3]), False, message,
+                  UNAUTHORIZED, source=credentials_store.CALL_SOURCE)
+    _SANS_MARQUE.discard(ligne)
+
+
+def effacer_marque_d_appel(row) -> None:
+    """Sync (DB): on a SUCCESSFUL call, lifts a mark set AT CALL TIME from the served
+    row (`no_quota`, or `unauthorized` from a call) — a single conditional write per
+    key and per process. A probe mark is left alone (see `clear_call_health`)."""
     ligne = _ligne(row)
     if ligne is None or ligne in _SANS_MARQUE:
         return
     try:
-        credentials_store.clear_health_if_verdict(*ligne, verdict=NO_QUOTA)
+        credentials_store.clear_call_health(*ligne)
     # noqa: SILENT — declared debt: an unwritten clear leaves the card red until the probe (#424, verdict C)
     except Exception:  # noqa: BLE001 — health is a bonus, never blocking
         return
@@ -159,15 +186,19 @@ def _a_effacer(row) -> bool:
     return ligne is not None and ligne not in _SANS_MARQUE
 
 
-async def suivre_appel(trace: Optional[dict], quota_epuise: "str | None") -> None:
+async def suivre_appel(trace: Optional[dict], quota_epuise: "str | None",
+                       rejet: "str | None" = None) -> None:
     """After a tool call: `quota_epuise` = the message of the `quota_exhausted` refusal
-    (the served key is marked), `None` = success (a `no_quota` mark on the
-    served key is lifted). Outside the loop, best-effort: health tracking must
-    never change the result of the call it observes."""
+    (the served key is marked `no_quota`), `rejet` = the message of a refusal of the
+    KEY (marked `unauthorized`, source `call`), both `None` = success (a mark set at
+    call time on the served key is lifted). Outside the loop, best-effort: health
+    tracking must never change the result of the call it observes."""
     row = (trace or {}).get("credential_row")
     if row is None:
         return
     if quota_epuise is not None:
         await run_in_threadpool(marquer_quota_epuise, row, quota_epuise)
+    elif rejet is not None:
+        await run_in_threadpool(marquer_rejet_a_l_appel, row, rejet)
     elif _a_effacer(row):
-        await run_in_threadpool(effacer_quota_epuise, row)
+        await run_in_threadpool(effacer_marque_d_appel, row)

@@ -94,6 +94,11 @@ class ErrorEnvelopeMiddleware(Middleware):
                 if fournisseur:
                     hint = f"{hint} — chez `{fournisseur}`"
                 await connector_health.suivre_appel(trace, info.message)
+            # Clé refusée par l'amont (401, ou refus que son connecteur déclare comme
+            # celui de la clé) : même marque au rouge, verdict « repose la clé ».
+            elif error_taxonomy.credential_rejected_in_chain(e):
+                await connector_health.suivre_appel(
+                    session_org.current_call_trace(), None, rejet=info.message)
             if hint:
                 data["hint"] = hint
             raise McpError(ErrorData(

@@ -303,9 +303,9 @@ AI Ark…), recevait `invalid_input` (« corrige ton appel »), et la carte rest
   **plateforme ou tenant n'est jamais marquée** (l'agent reçoit quand même
   `quota_exhausted`) ;
 - **le premier appel réussi** sur cette clé lève la marque : une seule écriture
-  conditionnelle (`credentials_store.clear_health_if_verdict`) par clé et par process,
-  hors de la boucle — jamais une autre marque (`unauthorized` ne se lève qu'à la sonde
-  ou à la repose) ;
+  conditionnelle (`credentials_store.clear_call_health`) par clé et par process,
+  hors de la boucle — jamais une marque de la SONDE (son `unauthorized` ne se lève qu'à
+  la sonde ou à la repose) ;
 - **la carte** (`readiness`) lit le verdict : « à sec, recharge chez le fournisseur »
   plutôt que « repose la clé » (`credential_health` préfixe la raison par
   `NO_QUOTA_REASON_PREFIX`) ; la sonde `op=verify` persiste aussi son verdict classé.
@@ -314,6 +314,24 @@ Un 403 n'est **pas** lu comme un solde vide : c'est un rejet de clé, sauf chez 
 fournisseur qui le déclarerait (aucun à ce jour). Limite connue : AI Ark refuse par
 point d'accès, une clé peut donc être marquée « à sec » alors qu'un autre point d'accès
 répond encore.
+
+#### Clé refusée, vue à l'APPEL (07/10/2026)
+
+Même chemin pour une clé que l'amont **refuse** : sans lui, seule la sonde la peignait
+en rouge, et l'alerte des clés en panne (`maintenance alertes-credential`, qui lit cette
+marque) restait aveugle sur une clé morte qu'un agent programmé heurtait chaque heure.
+
+- `error_taxonomy.credential_rejected_in_chain` : un **401** n'importe où dans la chaîne,
+  y compris sous la `McpError` curée — ou le verdict que le connecteur DÉCLARE sur son
+  exception (`credential_rejected: bool`, même couture que `retryable`, et il l'emporte) ;
+- l'enveloppe et `oto_call` marquent alors la clé servie `unauthorized`, avec
+  `meta.health_source = "call"` (même garde de portée : ni plateforme ni tenant) ;
+- le premier appel réussi la lève (`clear_call_health`) ; une marque de la sonde, sans
+  source d'appel, reste — la sonde teste ce que l'appel ne teste pas, un scope manquant
+  par exemple ;
+- **un 403 seul ne marque pas** : c'est aussi souvent une ressource que la clé ne peut
+  pas lire, ou la limite de débit d'un fournisseur (Hunter). Un connecteur dont le 403
+  veut dire « clé morte » le déclare sur son exception.
 
 **Un fournisseur qui dit « à sec » autrement qu'en 402** se traduit DANS son module, vers
 une exception qui porte `status_code = 402` : la taxonomie et la sonde font le reste, sans

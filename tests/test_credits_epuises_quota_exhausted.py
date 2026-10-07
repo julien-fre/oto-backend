@@ -57,12 +57,12 @@ def coffre(monkeypatch):
         rec["meta"].append(((et, eid, connector, account), patch))
         return True
 
-    def _clear(et, eid, connector, account, *, verdict):
-        rec["effacements"].append(((et, eid, connector, account), verdict))
+    def _clear(et, eid, connector, account):
+        rec["effacements"].append((et, eid, connector, account))
         return True
 
     monkeypatch.setattr(credentials_store, "update_meta", _update_meta)
-    monkeypatch.setattr(credentials_store, "clear_health_if_verdict", _clear)
+    monkeypatch.setattr(credentials_store, "clear_call_health", _clear)
     yield rec
     health._SANS_MARQUE.clear()
 
@@ -144,7 +144,7 @@ def test_le_premier_succes_efface_la_marque_une_seule_fois(coffre):
         asyncio.run(_appel({"credential_row": BYO}, _echoue))
     assert asyncio.run(_appel({"credential_row": BYO}, _reussit)) == "ok"
     assert asyncio.run(_appel({"credential_row": BYO}, _reussit)) == "ok"
-    assert coffre["effacements"] == [(BYO, "no_quota")], \
+    assert coffre["effacements"] == [BYO], \
         "un succès doit lever la marque, et une seule écriture par clé et par process"
 
 

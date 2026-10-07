@@ -253,6 +253,8 @@ async def executer_cible(tool, sub: Optional[str], name: str, demande: str,
         # out-of-chain path does not cross: the key served to the TARGET is marked.
         if info.code == "quota_exhausted":
             await connector_health.suivre_appel(target_trace, message)
+        elif error_taxonomy.credential_rejected_in_chain(e):
+            await connector_health.suivre_appel(target_trace, None, rejet=message)
         return IssueCible(ok=False, message=message, code=info.code,
                           retryable=bool(getattr(info, "retryable", False)))
     finally:
