@@ -69,7 +69,7 @@ def connections_page(sub: "str | None", org_id: "int | None") -> "str | None":
     (`links.link_for`), or `None` if it declares none: never OUR path under its
     domain, nor our domain at all — that is a product it does not have.
 
-    ⚠️ Lived on 2026-09-03 then 2026-09-14 (tristan@koncile.ai, tenant tulina): the
+    ⚠️ Lived on 2026-09-03 then 2026-09-14 (a client of a hosted tenant): the
     "connect your account" refusal hardcoded `https://manage.oto.cx/console/connections`,
     and the end of the MCP side's wizard also sent people there. The person, who has
     no account with us, CREATED one (another sub) to get past the login

@@ -234,7 +234,7 @@ def test_le_lot_refuse_dit_ce_quil_a_deja_ecrit(table):
 
 # ══ ④ la chaîne vide d'un gabarit de lot : une ABSENCE, pas un effacement ════
 #
-# #608, remonté par un client le 28/08/2026 (org 270, tableau `koncile-accounts`).
+# #608, remonté par un client le 28/08/2026 (un tableau client).
 # Un lot de sourcing portait `best_signal: ""` dans son GABARIT de ligne — la forme
 # normale d'un lot : un gabarit écrit une fois, réutilisé sur toutes les lignes. Sur
 # la ligne appariée par la clé métier, la chaîne vide a effacé un signal de

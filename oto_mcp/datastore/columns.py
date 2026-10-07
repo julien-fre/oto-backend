@@ -401,7 +401,7 @@ def refuser_les_mots_mal_places(schema: Optional[dict], user_data: Optional[dict
 #
 # ══ #608 (28/08/2026) : LA CHAÎNE VIDE N'EST PAS UNE VALEUR ═══════════════════
 #
-# Annoncer une perte n'est pas l'éviter. Un client (org 270, `koncile-accounts`) a
+# Annoncer une perte n'est pas l'éviter. Un client (un tableau client) a
 # perdu un signal de recrutement daté parce que son lot de sourcing portait
 # `best_signal: ""` dans son GABARIT de ligne — la forme NORMALE d'un lot : un
 # gabarit écrit une fois, réutilisé sur toutes les lignes. Il a été rétabli grâce à
