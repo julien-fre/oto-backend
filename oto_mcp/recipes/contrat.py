@@ -208,9 +208,10 @@ def _pousse(probs: list, c: dict) -> None:
     if (c["source"].get("pagination") or {}).get("type", "none") != "none":
         probs.append("`source.pagination`: a `push` call is one call per row")
     _arguments_ecrivains(probs, "push", c.get("tool"), c.get("arguments"))
-    if c.get("tool") in ou.ENVOIENT and c.get("allow_sending") is not True:
-        probs.append(f"`{c.get('tool')}` can trigger a send (a lead added to a running "
-                     "campaign gets its sequence): `allow_sending: true` is required")
+    envoient = sorted(ou.outils(c) & ou.ENVOIENT)
+    if envoient and c.get("allow_sending") is not True:
+        probs.append(f"{envoient} can trigger a send (a lead added to a running campaign "
+                     "gets its sequence): `allow_sending: true` is required")
     ident = c.get("id")
     if not isinstance(ident, dict) or not _colonne_ok(ident.get("column")) \
             or not isinstance(ident.get("path"), str):
@@ -238,7 +239,10 @@ def _pousse(probs: list, c: dict) -> None:
                          PORTEES_ARGUMENTS | {PORTEE_LIGNE})
                 # Une recherche : l'op `search` d'un outil de poussée, ou un outil
                 # déclaré en lecture (vérifié à l'exécution, sur le catalogue servi).
-                if outil in ou.POUSSEES and ou.POUSSEES[outil] is not None:
+                if outil in ou.POUSSEES and ou.POUSSEES[outil] is None:
+                    probs.append(f"`lookup.tool`: `{outil}` has no search op — a lookup "
+                                 "is a search (a read-only tool, or a push tool's `search`)")
+                elif outil in ou.POUSSEES:
                     _arguments_ecrivains(probs, "lookup", outil, args, {"search"})
     if c.get("errors") is not None and not isinstance(c["errors"], str):
         probs.append("`errors` must be a path in the reply")

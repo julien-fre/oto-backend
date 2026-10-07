@@ -117,6 +117,9 @@ HORS_DISJONCTEUR = frozenset({"not_found", "ambiguous"})
 #: …sauf quand plusieurs lignes d'affilée échouent pareil : c'est alors systémique (une
 #: garde d'activation, un argument mal écrit). L'exécution s'arrête SANS marquer la série.
 DISJONCTEUR = 3
+#: Les échecs APRÈS un effet chez le tiers (fiche peut-être créée, travail soumis) :
+#: marqués quoi qu'il arrive — disjoncteur compris —, sinon la ligne serait refaite.
+EFFET_FAIT = frozenset({"unknown_outcome", "id_not_written", "no_job_id"})
 #: Le signal d'une ligne à laisser EN ATTENTE sans échec (changée pendant l'exécution).
 GARDER = "keep_pending"
 
@@ -499,8 +502,11 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
                     serie.append(rid)
                     recu[compte]["failed"] += 1
                     if len(serie) >= DISJONCTEUR:
-                        recu[compte]["failed"] -= len(serie)
-                        serie.clear()
+                        if code in EFFET_FAIT:
+                            await _solder()  # l'effet a peut-être eu lieu : on le note
+                        else:
+                            recu[compte]["failed"] -= len(serie)
+                            serie.clear()
                         _arreter(recu, "repeated_failure", error=(
                             f"{DISJONCTEUR} rows in a row failed with `{code}`: "
                             "that looks systemic (an argument, the connector), not a bad "
@@ -707,8 +713,10 @@ async def _executer_par_ligne(corps: dict, params: dict, *, fastmcp, sub: Option
         if not ecrire:
             etat.update(j=job, r=str(row["_id"]))
             return None, "submitted"
+        # Le travail ET l'état, d'une seule écriture : noté à moitié, il serait resoumis.
         code = await run_in_threadpool(ecriture.ecrire_sans_garde, lignes, row["_id"],
-                                       {asyn["job_column"]: json.dumps(job)})
+                                       {asyn["job_column"]: json.dumps(job),
+                                        rows["status_column"]: "submitted"})
         if code:
             recu["failed"][code] = recu["failed"].get(code, 0) + 1
             return "ligne:unknown_outcome", 0
@@ -920,7 +928,10 @@ async def _executer_pousser(corps: dict, params: dict, *, fastmcp, sub: Optional
                 "would_skip" if existant else "would_create")
             a_blanc[cle] += 1
             if cible is not None:
-                _remplissage_arguments(_args(cible, row), "", a_blanc["arguments_fill"])
+                # Rendu AVANT le retrait des vides : un `{{row.emial}}` mal tapé doit se
+                # voir à 0, pas disparaître du rapport.
+                _remplissage_arguments(co.rendre(cible, co._portees(params, row)), "",
+                                       a_blanc["arguments_fill"])
             return None, "previewed"
         if existant and not maj:
             return None, "exists"

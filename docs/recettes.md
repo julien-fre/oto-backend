@@ -126,8 +126,9 @@ CETTE ligne.
   dépense, budget d'horloge, dérive (sur dix lignes d'affilée).
 
 ⚠️ Deux exécutions simultanées sur le même tableau peuvent payer deux fois la même ligne
-(vrai aussi en `pull` et `for_each`) : rien ne réserve une ligne entre sa lecture et son
-état.
+(vrai aussi en `pull` et `for_each`) — et, en `push`, créer deux fois la même fiche chez le
+tiers : rien ne réserve une ligne entre sa lecture et son état. Ne lancez pas deux
+exécutions d'une même recette en même temps.
 
 ## Soumettre puis collecter (`async`, en `per_row`)
 
@@ -158,7 +159,10 @@ nommés, avec leur outil de collecte, dans une liste fermée (`oto_mcp/recipes/o
 - **Une exécution collecte d'abord** les lignes `submitted` (travail noté dans
   `async.job_column`, `<status_column>_job` par défaut) — encore en cours, elles
   attendent — **puis soumet** les lignes en attente. On la relance donc : le reçu dit
-  `next_step` tant que des travaux tournent. Rien n'est jamais soumis deux fois.
+  `next_step` tant que des travaux tournent. Une exécution ne soumet jamais deux fois la
+  même ligne (le travail et l'état `submitted` s'écrivent d'un seul geste). ⚠️ La ligne
+  soumise par l'épreuve de publication, elle, n'est rien noté : la première exécution la
+  soumet à nouveau (un crédit de plus).
 - **Le travail est noté sans garde de révision** : une soumission payée et non notée
   serait refaite, et repayée. Notée impossible : `failed:unknown_outcome`.
 - **Au-delà de `max_wait_seconds`** (30 min par défaut) : `failed:timeout`, jamais
@@ -192,7 +196,9 @@ jamais `delete`, `merge` ni les `bulk_*`), gardée par `tests/test_recettes_outi
                 "properties": {"email": "{{row.email}}", "firstname": "{{row.first_name}}"}},
   "rows": {"status_column": "hs_status", "require": ["email"], "filter": {"status": "validated"}},
   "id": {"column": "hubspot_id", "path": "id"},
-  "lookup": {"arguments": {"op": "search", "object_type": "contacts", "query": "{{row.email}}"},
+  "lookup": {"arguments": {"op": "search", "object_type": "contacts",
+                           "filters": [{"propertyName": "email", "operator": "EQ",
+                                        "value": "{{row.email}}"}]},
              "items": "results", "id_path": "id"},
   "update": {"arguments": {"op": "update", "object_type": "contacts",
                            "object_id": "{{row.hubspot_id}}",
@@ -203,15 +209,20 @@ jamais `delete`, `merge` ni les `bulk_*`), gardée par `tests/test_recettes_outi
 
 - **Tout se dit** : `side_effects: true` ; l'`op` est écrite en toutes lettres (jamais un
   gabarit) et revérifiée sur ce qui part ; un outil qui peut déclencher un envoi (une
-  piste ajoutée à une campagne lemlist) exige `allow_sending: true` ; `rows.require`
+  piste ajoutée à une campagne lemlist) exige `allow_sending: true`, où qu'il soit dans
+  la recette ; une recherche (`lookup`) est un outil en lecture ou l'op `search` d'un
+  outil de poussée ; `rows.require`
   est obligatoire.
 - **Jamais deux fois** : une ligne qui porte déjà son identifiant est mise à jour
   (`update` déclaré → `updated`) ou laissée (`exists`, aucun appel) ; sinon `lookup`,
   s'il est déclaré, cherche la fiche — trouvée, elle est liée (`linked`), plusieurs
-  marquent `failed:ambiguous` ; sinon création (`created`). L'identifiant est noté SANS
+  marquent `failed:ambiguous` ; sinon création (`created`). ⚠️ La recherche doit être
+  EXACTE (un filtre d'égalité, pas une recherche plein texte) : une seule fiche voisine
+  trouvée serait liée, puis mise à jour. L'identifiant est noté SANS
   garde de révision, aussitôt la fiche créée.
 - **Une création dont l'issue est inconnue** (délai, panne) marque
   `failed:unknown_outcome` et n'est jamais refaite d'office : la fiche existe peut-être.
+  Trois d'affilée arrêtent l'exécution — chacune déjà marquée.
   Un refus qui dit que rien n'a été fait (clé, crédits, débit) arrête l'exécution et
   laisse la ligne en attente.
 - **Jamais un champ vidé** : un argument dont la valeur est vide n'est pas envoyé.

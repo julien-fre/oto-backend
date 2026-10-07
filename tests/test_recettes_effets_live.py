@@ -228,6 +228,22 @@ def test_une_creation_a_l_issue_inconnue_n_est_jamais_refaite(serveur):
     assert [a[0] for a in etat["appels"]] == ["create"]
 
 
+def test_une_serie_de_creations_a_l_issue_inconnue_est_marquee_avant_l_arret(serveur):
+    """Le fournisseur est lent : chaque création expire. Le disjoncteur arrête, mais
+    chaque ligne est MARQUÉE — sinon l'exécution suivante recréerait les fiches."""
+    m, etat = serveur
+    etat["lent"] = True
+    ns = _tableau(CHAMPS, [{"email": f"{i}@acme.test"} for i in range(4)])
+    recu = _executer(m, _pousse(), ns)
+    assert recu["stopped"] == "repeated_failure"
+    marquees = [l["hs_status"] for l in _lignes(ns, "email").values()]
+    assert marquees.count("failed:unknown_outcome") == 3
+    avant = len(etat["appels"])
+    etat["lent"] = False
+    _executer(m, _pousse(), ns)
+    assert len(etat["appels"]) == avant + 1  # la 4e seule, jamais tentée
+
+
 def test_la_marche_a_blanc_n_appelle_rien(serveur):
     m, etat = serveur
     ns = _tableau(CHAMPS, [{"email": "a@acme.test"}, {"email": "b@acme.test", "hs_id": "x"},
@@ -236,6 +252,8 @@ def test_la_marche_a_blanc_n_appelle_rien(serveur):
     assert etat["appels"] == [] and recu["rows_built"] == 3
     assert recu["dry_run"]["would_create"] == 2 and recu["dry_run"]["would_skip"] == 1
     assert recu["dry_run"]["arguments_fill"]["properties.email"] == 2
+    # Une colonne vide (ou mal tapée) se voit à 0, elle ne disparaît pas du rapport.
+    assert recu["dry_run"]["arguments_fill"]["properties.phone"] == 1
     assert all(l.get("hs_status") is None for l in _lignes(ns, "email").values())
 
 
@@ -253,6 +271,16 @@ def test_le_contrat_de_push():
             _pousse(**surcharge)
         assert attendu in " ".join(e.value.problemes), (surcharge, e.value.problemes)
     _pousse(tool="lemlist_create_lead", arguments={"campaign_id": "c"}, allow_sending=True)
+    # Le garde-fou d'envoi vaut pour CHAQUE outil de la recette, recherche comprise.
+    for bloc in ("lookup", "update"):
+        with pytest.raises(contrat.RecetteInvalide) as e:
+            _pousse(**{bloc: {"tool": "lemlist_create_lead", "id_path": "id",
+                              "arguments": {"campaign_id": "c"}}})
+        assert "allow_sending" in " ".join(e.value.problemes), bloc
+    with pytest.raises(contrat.RecetteInvalide) as e:
+        _pousse(allow_sending=True, lookup={"tool": "lemlist_create_lead", "id_path": "id",
+                                            "arguments": {"campaign_id": "c"}})
+    assert "no search op" in " ".join(e.value.problemes)
 
 
 def test_un_agent_heberge_ne_pilote_ni_push_ni_async(serveur, monkeypatch):
