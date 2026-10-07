@@ -267,6 +267,12 @@ _REGLAGES: tuple[Variable, ...] = (
              "virgules). Absente = aucune exception : fail-closed, jamais un défaut "
              "qui ouvre la machine.",
              ("oto_mcp/egress.py:138",)),
+    Variable("OTO_EGRESS_IP", Classe.REGLAGE, "",
+             "Adresse IP sortante de l'instance, servie par le marqueur `{{egress_ip}}` "
+             "des docs connecteur (liste blanche d'IP chez le fournisseur, ex. "
+             "Salesforce). Absente = la doc dit « demandez-la au support », jamais "
+             "l'adresse d'une autre instance.",
+             ("oto_mcp/connectors/docs_reader.py:87",)),
     Variable("OTO_VERROU_ORG_DELEGATION", Classe.REGLAGE, None,
              "Verrou d'org des jetons de délégation (`verrou_org.py`) : `enforce` "
              "(défaut) refuse toute résolution du porteur hors de l'org de son travail, "

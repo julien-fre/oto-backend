@@ -16,7 +16,7 @@ Two models coexist. **Connected Apps are disabled on recent orgs** (Salesforce a
 
 **5. Allow server calls.** **Policies** tab → **IP Relaxation** → "**Relax IP restrictions**".
 
-⚠️ **The least intuitive trap.** You give your consent from your browser, but it is **our server** that then refreshes the token, from a different address. With restrictions applied, Salesforce refuses these calls with an `invalid_grant` whose wording is misleading ("expired token") even though the token is valid. If your policy forbids relaxing, allow the address `151.115.148.128` in your approved IP ranges instead.
+⚠️ **The least intuitive trap.** You give your consent from your browser, but it is **our server** that then refreshes the token, from a different address. With restrictions applied, Salesforce refuses these calls with an `invalid_grant` whose wording is misleading ("expired token") even though the token is valid. If your policy forbids relaxing, allow {{egress_ip}} in your approved IP ranges instead.
 
 ## setup — connect oto
 
