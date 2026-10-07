@@ -205,6 +205,24 @@ def portees_citees(gabarit: Any) -> set[str]:
             for m in _GABARIT.finditer(gabarit)}
 
 
+def colonnes_citees(gabarit: Any, portee: str) -> set[str]:
+    """Les colonnes qu'un gabarit lit dans une portée (`{{row.siren|digits}}` →
+    `siren`) — pour ne sélectionner que les lignes où elles sont remplies."""
+    if isinstance(gabarit, dict):
+        return set().union(*(colonnes_citees(v, portee) for v in gabarit.values()), set())
+    if isinstance(gabarit, list):
+        return set().union(*(colonnes_citees(v, portee) for v in gabarit), set())
+    if not isinstance(gabarit, str):
+        return set()
+    out = set()
+    for m in _GABARIT.finditer(gabarit):
+        tete = m.group(1).split("|")[0].strip()
+        nom, _, chemin = tete.partition(".")
+        if nom == portee and chemin:
+            out.add(_segments(chemin)[0])
+    return out
+
+
 def _plie(v: Any) -> str:
     return sans_accents(str(v)).casefold()
 

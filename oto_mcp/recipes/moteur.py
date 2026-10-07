@@ -90,6 +90,14 @@ ESSAI_PARENTS = 3
 SEUIL_SURVEILLEE = 0.8
 #: …et une page d'au moins tant de lignes où elle est vide partout arrête l'exécution.
 PAGE_TEMOIN = 10
+#: Les échecs qui tiennent à UNE ligne parente (son entrée) : elle est marquée
+#: `failed:<code>` et l'exécution passe à la suivante. Tout autre échec (clé, crédits,
+#: délai, limite de débit, panne) tient au compte ou au fournisseur : l'exécution s'arrête
+#: et la ligne reste en attente.
+ECHECS_DE_LIGNE = frozenset({"invalid_input", "not_found", "call_refused"})
+#: …sauf quand plusieurs lignes d'affilée échouent pareil : c'est alors systémique (une
+#: garde d'activation, un argument mal écrit). L'exécution s'arrête SANS marquer la série.
+DISJONCTEUR = 3
 
 
 async def _outil(fastmcp, outil: str):
@@ -222,8 +230,10 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
             raise RecetteRefusee("missing_datastore", "`datastore` (the table number) is "
                                                       "required to run a recipe.")
         if fe:
-            parents = await run_in_threadpool(ecriture.ouvrir_parents, fe["datastore"],
-                                              fe["status_column"], ecrire=ecrire)
+            parents = await run_in_threadpool(
+                ecriture.ouvrir_parents, fe["datastore"], fe["status_column"], ecrire=ecrire,
+                filtre=fe.get("filter"),
+                requises=co.colonnes_citees(corps.get("arguments"), "row"))
         ensembles = await run_in_threadpool(ecriture.charger_ensembles, corps["where"])
         if ecrire:
             recu["created_columns"] = await run_in_threadpool(
@@ -265,8 +275,13 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
             except McpError as e:
                 # Arguments refusés par le schéma de l'outil, garde d'activation : rien n'a
                 # été appelé pour cette page.
+                if fe:
+                    return "ligne:call_refused", pris
                 _arreter(recu, "call_refused", error=str(e.error.message)[:500])
                 return "call_refused", pris
+            if not issue.ok and fe and not issue.retryable \
+                    and issue.code in ECHECS_DE_LIGNE:
+                return f"ligne:{issue.code}", pris
             if not issue.ok:
                 _arreter(recu, issue.code or "tool_failed", error=issue.message,
                          retryable=issue.retryable, resume=_reprise())
@@ -354,48 +369,85 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
 
 async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
                      tirer) -> None:
-    """Les lignes parentes EN ATTENTE (colonne d'état vide), une à une : leur appel,
-    puis leur état (`done` : des éléments ; `empty` : aucun). Une ligne coupée par un
-    plafond reste en attente — le jeton `resume` la reprend à sa page, une exécution
-    neuve la reprend du début (les lignes déjà écrites sont reconnues par leur clé)."""
-    recu["parents"] = {"done": 0, "empty": 0}
+    """Les lignes parentes EN ATTENTE (colonne d'état vide, filtre, entrées remplies),
+    une à une : leur appel, puis leur état — `done` (des éléments), `empty` (aucun),
+    `failed:<code>` (son entrée refusée : `ECHECS_DE_LIGNE`). Une ligne coupée par un
+    plafond ou un échec du compte reste en attente — le jeton `resume` la reprend à sa
+    page, une exécution neuve du début (les lignes déjà écrites sont reconnues par leur
+    clé). Une série d'échecs identiques (`DISJONCTEUR`) arrête tout sans la marquer."""
+    recu["parents"] = {"done": 0, "empty": 0, "failed": 0}
     vues: set = set()
     premiere = etat.get("r")
-    while True:
-        faits = recu["parents"]["done"] + recu["parents"]["empty"]
-        place = ESSAI_PARENTS - faits if not ecrire else fe["max_parents"] - faits
-        if place <= 0:
-            if ecrire:
-                _arreter(recu, "max_parents",
-                         resume=_jeton({"p": None, "c": None, "u": recu["units"], "r": None}))
-            return
-        lot = await run_in_threadpool(ecriture.parents_en_attente, parents,
-                                      limite=place, premiere=premiere, vues=vues)
-        premiere = None
-        if not lot:
-            recu["done"] = True
-            return
-        for ligne in lot:
-            rid = str(ligne["_id"])
-            vues.add(rid)
-            if etat.get("r") != rid:
-                etat["p"] = etat["c"] = None
-            etat["r"] = rid
-            arret, pris = await tirer(ecriture.portee_ligne(ligne))
-            if arret is not None:
-                return
-            etat["r"] = None
-            statut = "done" if pris else "empty"
-            recu["parents"][statut] += 1
-            if ecrire:
-                code = await run_in_threadpool(ecriture.marquer_parent, parents, rid, statut)
-                if code:
-                    recu["failed"][code] = recu["failed"].get(code, 0) + 1
-            elif recu["rows_built"]:
-                return
+    serie: list[str] = []          # les lignes de la série d'échecs en cours, à marquer
+    code_serie: Optional[str] = None
+
+    async def _marquer(rid: str, statut: str) -> None:
         if not ecrire:
-            recu["done"] = True
             return
+        code = await run_in_threadpool(ecriture.marquer_parent, parents, rid, statut)
+        if code:
+            recu["failed"][code] = recu["failed"].get(code, 0) + 1
+
+    async def _solder() -> None:
+        nonlocal code_serie
+        for rid in serie:
+            await _marquer(rid, f"failed:{code_serie}")
+        serie.clear()
+        code_serie = None
+
+    try:
+        while True:
+            faits = sum(recu["parents"].values())
+            place = ESSAI_PARENTS - faits if not ecrire else fe["max_parents"] - faits
+            if place <= 0:
+                if ecrire:
+                    _arreter(recu, "max_parents", resume=_jeton(
+                        {"p": None, "c": None, "u": recu["units"], "r": None}))
+                return
+            lot = await run_in_threadpool(ecriture.parents_en_attente, parents,
+                                          limite=place, premiere=premiere, vues=vues)
+            premiere = None
+            if not lot:
+                recu["done"] = True
+                return
+            for ligne in lot:
+                rid = str(ligne["_id"])
+                vues.add(rid)
+                if etat.get("r") != rid:
+                    etat["p"] = etat["c"] = None
+                etat["r"] = rid
+                arret, pris = await tirer(ecriture.portee_ligne(ligne))
+                if arret is not None and arret.startswith("ligne:"):
+                    code = arret.split(":", 1)[1]
+                    etat.update(r=None, p=None, c=None)
+                    if code != code_serie:
+                        await _solder()
+                        code_serie = code
+                    serie.append(rid)
+                    recu["parents"]["failed"] += 1
+                    if len(serie) >= DISJONCTEUR:
+                        recu["parents"]["failed"] -= len(serie)
+                        serie.clear()
+                        _arreter(recu, "repeated_failure", error=(
+                            f"{DISJONCTEUR} parent rows in a row failed with `{code}`: "
+                            "that looks systemic (an argument, the connector), not a bad "
+                            "row. None of them was marked; fix the cause and run again."))
+                        return
+                    continue
+                if arret is not None:
+                    return
+                await _solder()
+                etat["r"] = None
+                statut = "done" if pris else "empty"
+                recu["parents"][statut] += 1
+                await _marquer(rid, statut)
+                if not ecrire and recu["rows_built"]:
+                    return
+            if not ecrire:
+                recu["done"] = True
+                return
+    finally:
+        await _solder()
 
 
 def _forme(obj: Any, prefixe: str, out: dict, profondeur: int) -> None:
