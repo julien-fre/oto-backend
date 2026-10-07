@@ -62,10 +62,9 @@ HOOK_SECRET_PREFIX = "otoh_"
 #: fausse, alors que l'erreur vécue en production est le bearer d'un AUTRE agent,
 #: réutilisé parce que rien ne disait qu'un bearer ne vaut que pour un agent.
 HOOK_INCONNU = (
-    "Invalid id or secret. Every agent has its OWN bearer token, valid for that "
-    "agent alone: a token from another agent will always return this error. Copy "
-    "it from the agent's page, and check that the id in the URL is the one shown "
-    "there."
+    "Invalid address or proof. Every agent has its OWN address and token (or "
+    "signing secret), valid for that agent alone: one from another agent will "
+    "always return this error. Copy them from the agent's page."
 )
 
 #: Le débit par défaut, par déclencheur et par heure. Ce n'est PAS un plafond de
@@ -188,15 +187,16 @@ class Prereglage:
       - `standard_webhooks` : la source SIGNE (`whsec_…`, en-têtes `webhook-*`) ;
       - `body_secret` : la source ne sait ni poser un en-tête ni signer ; elle
         RENVOIE dans son corps JSON un secret qu'on lui a donné (Lemlist). Ce
-        secret est NOTRE porteur `otoh_`, posé dans le champ `chemin_secret` ;
+        secret est NOTRE porteur `otoh_`, posé dans la clé de PREMIER niveau
+        `champ_secret` (pas un chemin : c'est elle qui est retirée du corps) ;
       - `none` : AUCUNE preuve, choix explicite du propriétaire. L'adresse privée
-        (`h_`, 128 bits) est alors le seul secret — voir `_sans_preuve`.
-    `chemin_id` : le champ du corps qui identifie la livraison, pour ne pas
+        (`h_`, 128 bits) est alors le seul secret — voir `_sans_signature`.
+    `chemin_id` : le CHEMIN (`a.b`) du corps qui identifie la livraison, pour ne pas
     rejouer une retentative (NON signé : seul qui détient le secret peut le poser).
     """
     nom: str
     schema: str
-    chemin_secret: Optional[str] = None
+    champ_secret: Optional[str] = None
     chemin_id: Optional[str] = None
 
     @property
@@ -211,7 +211,7 @@ PREREGLAGES: dict[str, Prereglage] = {p.nom: p for p in (
     # Lemlist (`POST /api/hooks` côté Lemlist) : « secret » est renvoyé tel quel
     # dans le corps de chaque appel ; `_id` est l'identifiant de l'activité.
     # https://developer.lemlist.com/api-reference/endpoints/webhooks/add-webhook
-    Prereglage("lemlist", BODY_SECRET, chemin_secret="secret", chemin_id="_id"),
+    Prereglage("lemlist", BODY_SECRET, champ_secret="secret", chemin_id="_id"),
     Prereglage(NONE, NONE),
 )}
 HOOK_AUTHS = tuple(PREREGLAGES)
@@ -233,7 +233,7 @@ def secret_du_corps(p: Prereglage, corps: Any) -> Optional[str]:
     ⚠️ Le préfixe est EXIGÉ, comme dans l'en-tête (`secret_du_porteur`)."""
     if p.schema != BODY_SECRET or not isinstance(corps, dict):
         return None
-    v = corps.get(p.chemin_secret or "")
+    v = corps.get(p.champ_secret or "")
     return v if isinstance(v, str) and v.startswith(HOOK_SECRET_PREFIX) else None
 
 
@@ -243,7 +243,7 @@ def corps_sans_secret(p: Prereglage, corps: Any) -> Any:
     dans son transcript, et dans `deliveries with_input`."""
     if p.schema != BODY_SECRET or not isinstance(corps, dict):
         return corps
-    return {k: v for k, v in corps.items() if k != p.chemin_secret}
+    return {k: v for k, v in corps.items() if k != p.champ_secret}
 
 #: Le préfixe du secret de signature que la SOURCE fournit. Exigé à la pose : un
 #: secret sans lui est presque toujours autre chose (le porteur `otoh_`, une clé
@@ -425,7 +425,9 @@ def instruction_augmentee(instruction: str, corps: Any, mode: str,
     désactiver.
     """
     if mode == IGNORE or corps is None:
-        return instruction
+        # Même sans donnée jointe, un agent SANS preuve doit savoir que n'importe
+        # qui a pu le lancer.
+        return f"{instruction}\n\n{_SANS_PREUVE}" if sans_preuve else instruction
     if mode == FIELDS:
         extraits = {nom: v for nom, chemin in (champs or {}).items()
                     if (v := _extraire(corps, str(chemin))) is not None}
@@ -502,6 +504,12 @@ def _adresse_admise(t: dict, par_adresse_privee: bool) -> bool:
     return par_adresse_privee or not t.get("hook_slug")
 
 
+def _exiger_l_adresse(t: dict, par_adresse_privee: bool) -> None:
+    """Le 404 commun si l'agent a une adresse privée et qu'on l'a appelé par son id."""
+    if not _adresse_admise(t, par_adresse_privee):
+        raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
+
+
 def _authentifier(trigger_id: int, secret: Optional[str],
                   signature: Optional[SignatureRecue],
                   source: Optional[str],
@@ -565,8 +573,7 @@ def _authentifier(trigger_id: int, secret: Optional[str],
                 f"{TOLERANCE_HORODATAGE_S} s away from our clock. A delivery "
                 "is only accepted within that window: it cannot be replayed "
                 "later.")
-        if not _adresse_admise(t, par_adresse_privee):
-            raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
+        _exiger_l_adresse(t, par_adresse_privee)
         # L'identifiant est SIGNÉ : un tiers ne peut pas le forger pour faire
         # passer une livraison pour le doublon d'une autre.
         return t, signature.msg_id[:_ID_MAX], corps
@@ -586,8 +593,7 @@ def _sans_signature(trigger_id: int, secret: Optional[str], corps: Any,
     if secret:
         t = db.trigger_par_secret(trigger_id, hacher(secret))
         if t:
-            if not _adresse_admise(t, par_adresse_privee):
-                raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
+            _exiger_l_adresse(t, par_adresse_privee)
             return t, None, corps
     for p in PREREGLAGES.values():
         dans_le_corps = secret_du_corps(p, corps)
@@ -595,8 +601,7 @@ def _sans_signature(trigger_id: int, secret: Optional[str], corps: Any,
             continue
         t = db.trigger_par_secret(trigger_id, hacher(dans_le_corps), p.nom)
         if t:
-            if not _adresse_admise(t, par_adresse_privee):
-                raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
+            _exiger_l_adresse(t, par_adresse_privee)
             externe = _extraire(corps, p.chemin_id) if p.chemin_id else None
             return t, (externe[:_ID_MAX] if externe else None), corps_sans_secret(p, corps)
     if par_adresse_privee:

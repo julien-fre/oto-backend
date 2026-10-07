@@ -94,7 +94,7 @@ def test_chaque_preregle_nomme_un_schema_CONNU():
     for p in runner_hook.PREREGLAGES.values():
         assert p.schema in connus, p
         if p.schema == runner_hook.BODY_SECRET:
-            assert p.chemin_secret, f"{p.nom} : un body_secret sans champ n'ouvre rien"
+            assert p.champ_secret, f"{p.nom} : un body_secret sans champ n'ouvre rien"
 
 
 def test_l_API_de_pose_sert_EXACTEMENT_le_registre():
@@ -280,12 +280,12 @@ def test_passer_en_lemlist_emet_un_porteur_NEUF_et_efface_la_signature(base):
     assert base["enc"] is None and out["trigger"]["hook_auth"] == "lemlist"
 
 
-def test_none_SANS_adresse_privee_est_refuse(base):
+def test_none_SANS_adresse_privee_en_RECOIT_une(base):
+    """Pas de pré-requis : la pose émet l'adresse, et l'id numérique cesse d'ouvrir."""
     base["ligne"]["hook_slug"] = None
-    with pytest.raises(AuthzDenied) as e:
-        _auth(hook_auth="none")
-    assert e.value.code == "private_address_required"
-    assert base["ligne"]["hook_auth"] == "bearer", "rien d'écrit sur un refus"
+    out = _auth(hook_auth="none")
+    assert base["ligne"]["hook_slug"].startswith(runner_hook.ADRESSE_PREFIX)
+    assert out["hook_url"].endswith(base["ligne"]["hook_slug"])
 
 
 def test_none_SANS_plafond_journalier_est_refuse(base):
@@ -377,3 +377,36 @@ def test_sentry_les_autres_routes_gardent_leur_requete():
     ev = {"request": {"url": "https://mcp.example/api/me", "data": {"x": 1}}}
     sentry_setup._before_send_transaction(ev, {})
     assert ev["request"] == {"url": "https://mcp.example/api/me", "data": {"x": 1}}
+
+
+# ── 7. `hook_slug` ne sort JAMAIS brut (un Output DÉCRIT, il ne filtre pas) ────
+
+def test_avec_hook_ne_sert_pas_HOOK_SLUG(base):
+    _auth(hook_auth="none")
+    servi = RT._avec_hook(ORG, dict(base["ligne"]))
+    assert "hook_slug" not in servi
+    assert base["ligne"]["hook_slug"] not in repr(servi)
+
+
+def test_ni_oto_trigger_ni_hook_auth_ne_servent_HOOK_SLUG(base, monkeypatch):
+    """Les SORTIES des deux capacités, quel que soit le chemin : même une réponse
+    qui ne passerait pas par `_avec_hook` ne laisse pas filer l'adresse."""
+    _auth(hook_auth="none")
+    slug = base["ligne"]["hook_slug"]
+    rep = RT._sans_adresse_brute({"trigger": dict(base["ligne"]),
+                                  "triggers": [dict(base["ligne"])]})
+    assert slug not in repr(rep)
+    out = _auth(hook_auth="none")   # sortie réelle de la capacité hook-auth
+    assert "hook_slug" not in out["trigger"]
+    nouvelle = base["ligne"]["hook_slug"]
+    assert out["trigger"]["hook_url"].endswith(RT.ADRESSE_MASQUEE)
+    assert out["hook_url"].endswith(nouvelle), "révélée une fois, ici seulement"
+    maj = _appel(op="update", trigger_id=5, max_per_day=30)   # sortie réelle d'oto_trigger
+    assert nouvelle not in repr(maj)
+
+
+def test_none_l_agent_est_AVERTI_meme_en_mode_ignore(porte):
+    porte["trigger"].update(hook_auth="none", max_per_day=50, payload_mode="ignore")
+    runner_hook.declencher(5, None, {"x": 1}, "src", par_adresse_privee=True)
+    entree = porte["enfile"]["payload"]["input"]
+    assert runner_hook._SANS_PREUVE in entree and '"x"' not in entree

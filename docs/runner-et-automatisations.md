@@ -1155,9 +1155,16 @@ change** et aucune colonne n'est ajoutée.
   devient l'entrée de l'agent, et le jeton finirait dans son transcript et dans
   `deliveries with_input`. L'identifiant (`_id`) n'est pas signé, mais seul qui
   détient le secret peut le poser : il sert à la déduplication, comme `webhook-id`.
-  ⚠️ C'est une preuve **plus faible** qu'une signature : pas d'horodatage, donc un
-  corps capturé se rejoue — la déduplication par `_id`, `max_per_day` et
-  l'adresse privée bornent ce rejeu.
+  ⚠️ C'est une preuve **plus faible** qu'une signature : un corps capturé CONTIENT
+  le porteur. Le rejeu exact est écarté par `_id` ; un corps modifié (autre `_id`,
+  autre contenu) passe, comme passerait un porteur d'en-tête fuité. `max_per_day`
+  le borne **s'il est posé** — il reste optionnel, comme pour `bearer` : à poser
+  sur tout agent `lemlist` dont le volume est connu. Un porteur fuité se coupe par
+  `rotate_secret`. Seule une livraison ACCEPTÉE compte comme
+  doublon : un corps capturé pendant une pause (409) se rejoue UNE fois après la
+  reprise — assumé, c'est la même règle que pour une signature.
+  `champ_secret` est une clé de premier niveau (c'est elle qu'on retire du
+  corps) ; `chemin_id` est un chemin (`a.b`).
 - **Chacun sa porte, en SQL.** `trigger_par_secret(…, hook_auth)` filtre le mode :
   le porteur montré par l'en-tête n'ouvre pas un agent `lemlist`, le même jeton dans
   le corps n'ouvre pas un agent `bearer`. L'ordre des essais (en-tête, corps, rien)
@@ -1170,8 +1177,8 @@ change** et aucune colonne n'est ajoutée.
   - **jamais par l'id numérique**, qui se parcourt : la route ne cherche un agent
     sans preuve que par l'adresse privée, et `trigger_sans_preuve` exige aussi
     `hook_slug IS NOT NULL` dans son WHERE ;
-  - **posé seulement avec une adresse privée ET un `max_per_day`**
-    (`private_address_required`, `daily_cap_required`), et ce plafond **ne se
+  - **posé seulement avec un `max_per_day`** (`daily_cap_required`) — l'adresse
+    privée, elle, est émise par la pose même —, et ce plafond **ne se
     retire pas** tant que l'agent est en `none` ; une ligne qui l'aurait perdu
     garde quand même `PLAFOND_SANS_PREUVE_DEFAUT` par jour ;
   - passer en `none` **efface** le porteur et le secret de signature — un
@@ -1188,7 +1195,12 @@ change** et aucune colonne n'est ajoutée.
     l'outil y est refusé (`no_auth_address`) : l'adresse neuve passerait par un
     transcript. Sentry ne reçoit ni le chemin ni le corps d'une requête
     `/api/hooks/*` (`sentry_setup._redact_hook_request` — le corps d'un agent
-    `lemlist` porte aussi son porteur).
+    `lemlist` porte aussi son porteur). Le journal d'accès d'uvicorn masque le
+    chemin (`parametres_secrets`) ; ⚠️ celui du **reverse proxy** (dépôt `infra`)
+    le garde entier — l'adresse d'un agent `none` y est un credential.
+  - `hook_slug` n'est **jamais servi brut**, par aucune capacité (`_avec_hook` et
+    `_sans_adresse_brute`, à la sortie d'`oto_trigger` et de `hook-auth`) : un
+    `Output` décrit la réponse, il ne la filtre pas.
 - **Pose** : la même capacité REST `runner.trigger.hook_auth`. Passer vers un
   préréglage qui s'ouvre avec le porteur (`bearer`, `lemlist`) **émet un porteur
   neuf**, rendu une fois — l'ancien n'a été montré qu'une fois et la source doit de
@@ -1203,8 +1215,12 @@ change** et aucune colonne n'est ajoutée.
   `lemlist` ni `none`. Il les traite en **fermé** — son porteur filtre `bearer`, sa
   signature filtre `standard_webhooks` : 404, rien n'enfile. Une ligne posée
   depuis la preprod reste donc fermée côté prod tant que la prod ne porte pas ce
-  lot. Seul trou : l'ancien `update max_per_day=0` ne connaît pas la garde — d'où
-  le plafond par défaut lu à la livraison.
+  lot. Deux trous, d'où l'**ordre** : l'ancien `update max_per_day=0` ne connaît
+  pas la garde (le plafond par défaut lu à la livraison le couvre) ; et l'ancien
+  `_avec_hook` sert l'adresse d'un agent `none` **en clair** à toute lecture
+  (`oto_trigger op=get`), son `rotate_address` la renouvelle par un outil. ⚠️ **Ne
+  poser aucun `none` avant que la prod porte ce lot**, et renouveler l'adresse
+  (`hook_auth=none` redemandé) de tout agent posé pendant la fenêtre.
 
 #### Deux protections réglées par l'utilisateur
 

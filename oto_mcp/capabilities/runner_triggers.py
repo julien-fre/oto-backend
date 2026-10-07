@@ -552,7 +552,11 @@ def _avec_hook(org_id: int, t: dict, compte: Optional[dict] = None,
     sans_preuve = runner_hook.prereglage(t.get("hook_auth")).schema == runner_hook.NONE
     adresse = (runner_hook.ADRESSE_PREFIX + ADRESSE_MASQUEE if sans_preuve
                else t.get("hook_slug") or t["id"])
-    return {**t,
+    # ⚠️ `hook_slug` ne se sert JAMAIS brut : un `Output` DÉCRIT, il ne filtre
+    # pas (`_types.py`) — laissé dans le dict, il partirait en clair à côté de
+    # l'URL masquée. `hook_url` et `private_address` en portent tout ce qu'il faut.
+    servi = {k: v for k, v in t.items() if k != "hook_slug"}
+    return {**servi,
             "hook_auth": t.get("hook_auth") or runner_hook.BEARER,
             "signing_secret_set": bool(t.get("signing_secret_set")),
             "private_address": bool(t.get("hook_slug")),
@@ -1305,8 +1309,9 @@ class HookAuthInput(BaseModel):
         "body, is checked, and is REMOVED before the agent sees the body; a retry "
         "of the same activity `_id` does not start a second run. `none`: NO proof "
         "at all — anyone who has the agent's private address can start it. Needs a "
-        "private address and a `max_per_day` cap; the agent is told its input is "
-        "unauthenticated."))
+        "`max_per_day` cap; mints a NEW private address, returned once as "
+        "`hook_url` (served masked everywhere else); the agent is told its input "
+        "is unauthenticated."))
     signing_secret: Optional[str] = Field(default=None, description=(
         "`standard_webhooks` only: the signing secret the SENDER generated "
         "(starts with `whsec_`). Required when switching to `standard_webhooks`; "
@@ -1361,14 +1366,8 @@ def _valide_l_authentification(inp: HookAuthInput, actuel: Optional[dict]) -> No
             "`whsec_` suivi de base64. Un jeton `otoh_` ou une clé d'API n'en sont "
             "pas.")
     if inp.hook_auth == runner_hook.NONE:
-        # ⚠️ SANS preuve, l'adresse est le seul secret : un id numérique se
-        # parcourt, il n'en est pas un.
-        if not actuel.get("hook_slug"):
-            raise AuthzDenied(
-                400, "private_address_required",
-                "`none` n'est permis qu'avec une adresse PRIVÉE (`h_…`) : sans "
-                "preuve, l'adresse est le seul secret. Passe d'abord l'agent en "
-                "`private_address=true`.")
+        # L'adresse privée n'est pas exigée ici : passer en `none` en ÉMET une
+        # neuve (`_hook_auth_sync`), l'id numérique cesse alors d'ouvrir.
         # Quiconque voit l'adresse déclenche : la dépense doit avoir un fond.
         if not actuel.get("max_per_day"):
             raise AuthzDenied(
@@ -1411,7 +1410,7 @@ def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
     mode_avant = actuel.get("hook_auth") or runner_hook.BEARER
     porteur = adresse_neuve = None
     vise = runner_hook.prereglage(inp.hook_auth)
-    if inp.hook_auth == runner_hook.STANDARD_WEBHOOKS:
+    if vise.schema == runner_hook.STANDARD_WEBHOOKS:
         enveloppe = (runner_hook.chiffrer_secret_de_signature(
                          inp.trigger_id, inp.signing_secret)
                      if inp.signing_secret else None)
@@ -1456,7 +1455,22 @@ def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
 
 
 async def _hook_auth(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
-    return await run_in_threadpool(_hook_auth_sync, ctx, inp)
+    return _sans_adresse_brute(await run_in_threadpool(_hook_auth_sync, ctx, inp))
+
+
+def _sans_adresse_brute(rep: dict) -> dict:
+    """La SORTIE des deux capacités qui servent un agent : aucun `hook_slug` n'en
+    sort, quel que soit le chemin qui a fabriqué la réponse. `_avec_hook` le
+    retire déjà ; ceci tient même pour une réponse qui ne passerait pas par lui
+    — sans preuve (`none`), l'adresse EST le credential."""
+    for cle in ("trigger", "triggers"):
+        v = rep.get(cle)
+        if isinstance(v, dict):
+            rep[cle] = {k: x for k, x in v.items() if k != "hook_slug"}
+        elif isinstance(v, list):
+            rep[cle] = [{k: x for k, x in t.items() if k != "hook_slug"}
+                        if isinstance(t, dict) else t for t in v]
+    return rep
 
 
 async def _ajouter_tool_warnings(ctx: ResolvedCtx, rep: dict) -> dict:
@@ -1494,7 +1508,7 @@ async def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     # d'écritures, dont la résolution des noms — est ICI hors de la
     # boucle (le serveur est mono-loop : `docs/event-loop-perf.md`).
     rep = await run_in_threadpool(_triggers_et_acces, ctx, inp)
-    return await _ajouter_tool_warnings(ctx, rep)
+    return _sans_adresse_brute(await _ajouter_tool_warnings(ctx, rep))
 
 
 CAPABILITIES += [
@@ -1660,8 +1674,6 @@ CAPABILITIES += [
                           "`signing_secret` avec `hook_auth=bearer` — il serait inerte"),
             DeclaredError(400, "missing_signing_secret",
                           "`standard_webhooks` sans secret, ni fourni ni déjà posé"),
-            DeclaredError(400, "private_address_required",
-                          "`none` sans adresse privée : l'id numérique se parcourt"),
             DeclaredError(400, "daily_cap_required",
                           "`none` sans plafond `max_per_day`"),
             DeclaredError(503, "encryption_unavailable",
@@ -1681,8 +1693,8 @@ CAPABILITIES += [
             "retries of an accepted `webhook-id` are deduplicated. `lemlist`: the "
             "`otoh_…` token travels as the `secret` field of the body (Lemlist "
             "cannot set headers) and is stripped before the agent sees it. `none`: "
-            "no proof, opt-in, only with a private address and a `max_per_day` "
-            "cap. Switching to `bearer` or `lemlist` erases the signing secret and "
+            "no proof, opt-in, only with a `max_per_day` cap; it mints a new "
+            "private address, returned once. Switching to `bearer` or `lemlist` erases the signing secret and "
             "returns a fresh `hook_secret`, once. REST only: a raw secret never goes through a "
             "tool call. Only the agent's owner or an org admin may change it: the "
             "agent runs as its owner."),
