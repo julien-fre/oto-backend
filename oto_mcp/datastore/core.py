@@ -118,11 +118,13 @@ from .ecriture_par_id import EcritureParIdMixin  # noqa: E402
 from .file_de_travail import FileDeTravailMixin  # noqa: E402
 from .lecture import LectureMixin  # noqa: E402
 from .lots import LotsMixin  # noqa: E402
+from .par_filtre import ParFiltreMixin  # noqa: E402
 from .registre import RegistreMixin  # noqa: E402
 
 
 class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
-                  EcritureParIdMixin, LotsMixin, FileDeTravailMixin, ControlesMixin):
+                  EcritureParIdMixin, ParFiltreMixin, LotsMixin, FileDeTravailMixin,
+                  ControlesMixin):
     """Store tabulaire adossé à PostgreSQL.
 
     State-less, instancié par requête. Normalement à partir du `sub` (l'acteur user) ;

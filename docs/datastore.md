@@ -3787,3 +3787,50 @@ qui n'est pas une chaîne, une chaîne vide, un rang ou un retrait sur un texte.
 colonne non déclarée et vide garde l'ajout d'élément de liste, comme avant.
 Le banc : `tests/datastore/test_ajout_texte_live.py` (store, REST, MCP ; patch, lot,
 création, concurrence).
+
+## Mettre à jour PAR FILTRE — `data_update_where` (07/10/2026)
+
+Une étiquette DÉRIVÉE (palier Hot / Tier 1-3 calculé sur plusieurs colonnes) devait
+passer par `data_write(rows=[…])` : chaque `_id` rapatrié dans le contexte du modèle
+puis renvoyé par lots — du temps, des jetons, et des lignes perdues au-delà de ~57 Ko
+de lot (29/09/2026). La règle restait sinon un filtre de LECTURE, réimplémenté par
+chaque consommateur, invisible dans le tableau, sans date.
+
+`data_update_where(datastore, set={col: val}, filter|filters, only_if_empty, dry_run,
+cursor)` — capacité `me.datastore.update_where`, REST
+`POST /api/datastores/{datastore}/rows/update_where` ; le travail vit dans le store
+(`datastore/par_filtre.py`).
+
+- **Sélection** : la grammaire de `data_rows`, par le même `_clauses`. Aucun filtre =
+  toutes les lignes (la règle « le reste »).
+- **`only_if_empty`** ajoute une clause `empty` par colonne visée : des règles
+  ordonnées jouent « la première qui gagne ». C'est le prédicat de `data_rows` : une
+  case `@empty` y compte comme VIDE, et la règle la remplit. Refusé quand `set` ne
+  pose que des couches (rien à attendre vide).
+- **Chaque ligne passe par `update_row`** — verrou, bail, `readonly`, champs réservés,
+  cycle de vie, formules — et donc par le journal des révisions (déclencheur). Pas
+  d'UPDATE en masse : il contournerait toutes ces gardes.
+- **Précondition de révision** : la `rev` lue à la sélection est passée à
+  `update_row` ; une ligne changée entre-temps est SAUTÉE (`conflicts`).
+- **Valeur déjà en place** : jugée au TYPE près (`couches.same_value`, valeur déballée
+  et couches), comptée `unchanged`, rien n'est écrit — une écriture sans effet
+  remettrait quand même à zéro l'état de file de la ligne. `updated` = la révision a
+  avancé, lue sur ce que rend `update_row`.
+- **Colonne manquante** : déclarée d'abord (`patch_schema`, type déduit : `bool`,
+  `number`, `json` pour une liste ou un objet, `text` sinon ; retirée si la règle est
+  ensuite refusée), seulement
+  si le tableau déclare déjà des colonnes — sur un tableau sans schéma, un premier
+  champ rendrait toutes les autres colonnes « non déclarées » d'un coup.
+- **Fautes de la RÈGLE, refusées avant toute ligne** : une valeur qui EFFACE (`null`,
+  `""`, `[]`, `{}`, `@empty`, une couche vide — effacer en masse sans `confirm`, c'est
+  `data_drop_column`), la clé métier, un rang de liste, la couche `origine`, une valeur
+  hors `options` déclarées, une colonne `readonly` hors `only_if_empty` (le verrou
+  laisse remplir une case vide). Ensuite, si les 3 premières lignes tentées sont
+  TOUTES refusées et rien n'est écrit, la règle est refusée entière ; un refus propre
+  à une ligne est compté dans `refused` et n'arrête pas les autres.
+- **Budget de temps** (`BUDGET_S` = 30 s, sous les 45 s de la face REST) : au-delà,
+  `next_cursor` = la dernière ligne traitée ; repasser l'appel avec `cursor=` continue.
+  Mesuré : ~9,5 ms par ligne sur base locale ⇒ ~2 000 lignes par appel.
+- **Réponse en comptes**, jamais en lignes : `matched` (après le curseur quand il est
+  passé), `updated/unchanged/conflicts/refused`, au plus 20 exemples de refus, de
+  conflits et de `valeurs_ecartees` (total dans `valeurs_ecartees_total`), et `ns_id`.
