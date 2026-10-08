@@ -230,6 +230,9 @@ _DECLARATIONS: tuple[str, ...] = (
     # Neighbour of `webflow` by trade (CMS): the two cards read together.
     "wordpress",
     "ahrefs",
+    # Neighbour of `ahrefs` by trade (SEO), but signed in like `sharepoint`: each
+    # person connects their own Ubersuggest account (OAuth, public client).
+    "ubersuggest",
     "granola",
     "grain",
     "linear",

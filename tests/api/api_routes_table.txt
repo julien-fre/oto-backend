@@ -60,6 +60,7 @@ GET,HEAD /api/salesforce/oauth/callback -> callback
 GET,HEAD /api/instagram_meta/oauth/callback -> callback
 GET,HEAD /api/meta_ads/oauth/callback -> callback
 GET,HEAD /api/microsoft/oauth/callback -> callback
+GET,HEAD /api/ubersuggest/oauth/callback -> callback
 GET,HEAD /api/wordpress/connect/callback -> callback
 POST /api/me/orgs -> _handler
 OPTIONS /api/me/orgs -> options_handler

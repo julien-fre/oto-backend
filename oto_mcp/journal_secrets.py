@@ -264,10 +264,12 @@ def route_and_secrets(path: str) -> tuple[str, Optional[dict[str, str]]]:
 
 def routes_a_requete_secrete() -> tuple[str, ...]:
     """Les routes qui REÇOIVENT un secret dans leur query — protocole d'un tiers,
-    pas un choix : le retour d'autorisation WordPress porte `password=`. Leur query
-    entière tombe, au journal d'accès (ici) comme dans Sentry (`sentry_setup`)."""
-    from .auth.wordpress import CALLBACK_PATH
-    return (CALLBACK_PATH,)
+    pas un choix : le retour d'autorisation WordPress porte `password=`, celui
+    d'Ubersuggest (client public) porte le code ET, dans le state, le vérificateur
+    PKCE, qui ensemble valent un jeton. Leur query entière tombe, au journal d'accès
+    (ici) comme dans Sentry (`sentry_setup`)."""
+    from .auth import ubersuggest, wordpress
+    return (wordpress.CALLBACK_PATH, ubersuggest.CALLBACK_PATH)
 
 
 def requete_secrete(chemin: str) -> bool:

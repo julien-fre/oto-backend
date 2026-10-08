@@ -35,6 +35,7 @@ from oto_mcp.auth import google as google_oauth  # noqa: F401,E402
 from oto_mcp.auth import instagram_meta as instagram_meta_oauth  # noqa: F401,E402
 from oto_mcp.auth import meta_ads as meta_ads_oauth  # noqa: F401,E402
 from oto_mcp.auth import microsoft as microsoft_oauth  # noqa: F401,E402
+from oto_mcp.auth import ubersuggest as ubersuggest_oauth  # noqa: F401,E402
 
 
 def _federated() -> set[str]:
@@ -65,8 +66,9 @@ def test_le_perimetre_est_celui_quon_croit():
     # `microsoft` (2026-10-08) : le porteur du compte, dont `sharepoint` devient un
     # service — chacun lit SON lien (les comptes qui ont autorisé le service).
     # `outlook`, `outlook_calendar`, `teams` (2026-10-08) : services suivants, même lecture.
+    # `ubersuggest` (2026-10-08) : connexion Ubersuggest par personne, même patron.
     assert _federated() == {"google", "instagram_meta", "meta_ads", "microsoft", "sharepoint",
-                            "outlook", "outlook_calendar", "teams",
+                            "outlook", "outlook_calendar", "teams", "ubersuggest",
                             "gmail", "drive", "sheets", "calendar", "tasks", "chat",
                             "bigquery"}
 

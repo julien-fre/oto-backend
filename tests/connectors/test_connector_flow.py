@@ -64,6 +64,9 @@ def test_les_connecteurs_a_flux_sont_ceux_quon_attend():
         # même retour, comme google et ses services. Outlook, Outlook Calendar et Teams
         # (2026-10-08) : les services suivants, même flux.
         "microsoft", "sharepoint", "outlook", "outlook_calendar", "teams",
+        # `ubersuggest` (2026-10-08) : connexion Ubersuggest de la personne (client
+        # OAuth public enregistré dynamiquement), même patron.
+        "ubersuggest",
         # Le compte `unipile` GARDE son flux multi-canal (code de production) ; le
         # split du 2026-08-28 ajoute un flux par canal, sans paramètre — le canal
         # est dérivé du connecteur au lieu d'être choisi dans une liste.
