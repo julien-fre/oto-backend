@@ -232,7 +232,8 @@ def register(mcp: FastMCP) -> None:
         footer={"unsubscribe_url": "https://…"} or {"unsubscribe_email": "…"})`,
         org_admin: its footer then replaces ours. Nothing removes it from this
         tool. A send under the platform address always keeps ours. The `footer`
-        field of the response says which one goes out (`org` | `platform`).
+        field of the response says which one goes out (`org` | `platform`). The
+        footer's language is the brand's declared language, not your body's.
 
         Header image: `image_url` (https) + `image_alt` REQUIRED; the public URL
         comes from `oto_upload_url(target="image")` (an upload, reusable).
@@ -307,7 +308,7 @@ def register(mcp: FastMCP) -> None:
         # ⚠️ Derived from the `sub` the route has just authenticated, NEVER from one more
         # auth call: that one would raise before the parameter refusals above and
         # invert the order of this tool's errors.
-        marque_expediteur = config.front_for(sub)[1] or "oto"
+        marque_expediteur = config.front_for(sub)[1]
         # The ORG's footer replaces ours on a send made with ITS key, and only there
         # (Alexis's decision of 12/09/2026, compliance): bringing one's own key
         # changed the transport and not the template, so a cold prospect read

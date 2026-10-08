@@ -230,7 +230,7 @@ def _notify_grant(sharer_sub: str, resource_type: str, rid: str, to_email: str,
         locale = dest_user.get("locale")
         base, marque = lien or config.front_for(dest_sub)
         app_url = base or config.dashboard_url()
-        brand = marque or "oto"
+        brand = marque
         sharer = _owner_label("user", sharer_sub)
         name = _resource_name(resource_type, rid)
         labels = ({**_TYPE_LABELS, **_TYPE_LABELS_EN_OVERRIDES} if locale == "en"

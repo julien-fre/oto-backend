@@ -401,24 +401,6 @@ def _cles_ko_par_org() -> dict[int, list[dict]]:
     return par_org
 
 
-def _paragraphe_cles_ko(cles: list[dict], esc) -> str:
-    """Le paragraphe des clés refusées ou à sec, pour un humain qui ne connaît pas le
-    vocabulaire de la plateforme : quelle clé, ce que dit le fournisseur, combien
-    d'agents butent dessus, et les deux gestes possibles."""
-    from .credentials_store import NO_QUOTA_VERDICT
-
-    items = []
-    for c in cles:
-        a_sec = c.get("verdict") == NO_QUOTA_VERDICT
-        etat = "n'a plus de crédits" if a_sec else "est refusée par le fournisseur"
-        raison = f" ({esc(c['raison'])})" if c.get("raison") else ""
-        items.append(f"<li>La clé {esc(c['connector'])} {etat}{raison} : "
-                     f"{len(c['agents'])} agent(s) programmé(s) actif(s) l'utilisent.</li>")
-    return ("<ul>" + "".join(items) + "</ul>"
-            "<p>Ces agents partent à l'heure et échouent en vol : rechargez ou reposez "
-            "la clé, ou coupez-les.</p>")
-
-
 def alertes_credential(*, dry_run: bool = False) -> dict:
     """Prévient le titulaire d'une org qu'une clé est partie, refusée ou à sec sous ses
     agents programmés.
@@ -437,8 +419,8 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
     qu'elle reste rouge. Redevenue verte, sa prochaine chute est un épisode neuf
     (`db.alertes_credential.clore_episodes_gueris`).
 
-    ⚠️ **Le courriel part par le courrier de PLATEFORME**, jamais par un connecteur de
-    l'org. C'est la seule propriété qui distingue cette alerte du registre qu'elle
+    ⚠️ **Le courriel part par le courrier de PLATEFORME** (le relais, sous l'expéditeur
+    de la marque de l'org), jamais par un connecteur de l'org. C'est la seule propriété qui distingue cette alerte du registre qu'elle
     remplace : le canal qui prévient ne doit pas pouvoir mourir avec ce dont il annonce
     la mort.
 
@@ -454,11 +436,10 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
     ⚠️ Le marquage vient APRÈS l'envoi. Marquer d'abord transformerait un envoi raté en
     silence définitif, c'est-à-dire en la panne même que ce travail supprime.
     """
-    # ⚠️ `import email as _email` puis `_email._send(...)`, jamais
-    # `from .email import _send` : la seconde forme capture la référence à l'import et
-    # rend le module intestable (un banc qui patche `email._send` ne toucherait rien).
-    # C'est la convention d'`email_templates`, écrite pour cette raison exacte.
-    from . import email as _email
+    # Le gabarit vit dans `email_templates` et part par son `_envoyer`, le seul point
+    # d'envoi d'un gabarit : cette alerte partait de ce module par `_email._send`, sous
+    # le nom et la langue de l'INSTANCE, et oubliait l'expéditeur du tenant de l'org.
+    from . import email_templates as _gabarits
     from .db import alertes_credential as db_alertes
     from .db import users as db_users
     from . import org_store
@@ -471,8 +452,9 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
         g, ko = retraits.get(org_id), cles_ko.get(org_id, [])
         admins = [m["sub"] for m in org_store.list_org_members(org_id)
                   if m.get("org_role") == "org_admin"]
-        adresses = [e for e in db_users.emails_by_subs(admins).values() if e]
-        if not adresses:
+        adresses = db_users.emails_by_subs(admins)
+        destinataire = next((s for s in admins if adresses.get(s)), None)
+        if destinataire is None:
             # On ne marque PAS : sans destinataire, la ligne reste à notifier. Le jour
             # où l'org gagne un admin, elle partira — la perdre ici serait la perdre
             # exactement quand elle devient délivrable.
@@ -480,24 +462,15 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
             continue
         if not actif or dry_run:
             continue
-        # Écrit pour un humain qui ne connaît pas le vocabulaire de la plateforme :
-        # ce qui est arrivé, ce que ça casse, et les deux gestes possibles.
-        corps = ""
-        if g:
-            connecteurs = ", ".join(g["connectors"] or [])
-            corps += (
-                f"<p>Une clé de connecteur a été retirée de votre organisation "
-                f"({_email._esc(connecteurs)}), alors que "
-                f"{int(g['agents_max'] or 0)} agent(s) programmé(s) actif(s) "
-                "l'utilisaient.</p>"
-                "<p>Ils continueront de partir à l'heure et échoueront en vol, sans que "
-                "personne d'autre en soit averti : coupez-les, ou reposez une clé.</p>")
-        if ko:
-            corps += _paragraphe_cles_ko(ko, _email._esc)
-        corps += "<p>Oto, pour Alexis</p>"
-        sujet = ("Une clé retirée sous vos agents programmés" if g and not ko else
-                 "Une clé en panne sous vos agents programmés")
-        if _email._send(to=adresses[0], subject=sujet, html=corps):
+        # La marque sous laquelle CETTE org nous connaît (`orgs.front_brand`, NULL ⟹
+        # l'instance) — son nom, son expéditeur, sa langue ; la préférence de l'admin
+        # (`users.locale`) prime sur la langue de la marque. Le gabarit vit dans
+        # `email_templates` et part par `_envoyer`, comme tous les autres.
+        _base, marque = org_store.org_front(org_id)
+        fiche = db_users.get_user(destinataire) or {}
+        if _gabarits.send_credential_alert_email(
+                adresses[destinataire], retrait=g, cles_ko=ko, brand=marque,
+                locale=fiche.get("locale")):
             envoyes += 1
             if g:
                 marques += db_alertes.marquer_notifie(list(g["ids"] or []))

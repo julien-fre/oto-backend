@@ -58,13 +58,13 @@ def _envoyer(m: _charte.Marque, to: str, subject: str, html: str) -> bool:
 
 
 def send_invite_email(to: str, target_name: str | None, invite_url: str,
-                      inviter: str | None = None, *, brand: str = "oto",
+                      inviter: str | None = None, *, brand: str | None = None,
                       locale: str | None = None) -> bool:
     """Email d'invitation à rejoindre `brand`. True si envoyé, False sinon.
 
     `target_name` = ce qu'on rejoint (nom d'org OU d'équipe) ; None = invitation
     plateforme (onboarding pur → « rejoindre {brand} »). `brand` = le produit sous
-    lequel l'org vit (`orgs.front_brand`, défaut oto) — il porte désormais le TEXTE
+    lequel l'org vit (`orgs.front_brand` ; None = la marque que l'instance déclare, `email_brand.marque_instance`) — il porte désormais le TEXTE
     **et** le dessin (`email_brand.marque`) **et** l'expéditeur, s'il en déclare un
     (`_envoyer`). `locale` = préférence du DESTINATAIRE (`users.locale`), à défaut la
     langue déclarée de la marque ; voix funnel dans les deux langues :
@@ -100,7 +100,7 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
 
 def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
                                permission: str, app_url: str,
-                               sharer: str | None = None, brand: str = "oto",
+                               sharer: str | None = None, brand: str | None = None,
                                locale: str | None = None) -> bool:
     """Email à un utilisateur avec qui on vient de PARTAGER une ressource (projet,
     datastore, guide). Best-effort (False si non envoyé) — un échec ne casse
@@ -137,7 +137,7 @@ def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
 
 def send_resource_transferred_email(to: str, *, type_label: str, name: str | None,
                                     app_url: str, sharer: str | None = None,
-                                    brand: str = "oto",
+                                    brand: str | None = None,
                                     locale: str | None = None) -> bool:
     """Email à un utilisateur à qui on vient de TRANSFÉRER la propriété d'une
     ressource (ADR 0030). Best-effort. `type_label` déjà dans la langue de
@@ -184,7 +184,7 @@ _VERDICT_EN = {
 }
 
 
-def send_signal_digest_email(to: str, *, items: list, brand: str = "oto",
+def send_signal_digest_email(to: str, *, items: list, brand: str | None = None,
                              locale: str | None = None,
                              unsubscribe_url: str | None = None) -> bool:
     """UN email pour TOUS les retours arbitrés d'une personne (#451). Best-effort.
@@ -315,7 +315,7 @@ def send_signal_digest_email(to: str, *, items: list, brand: str = "oto",
         desinscription=desinscription))
 
 
-def send_process_readers_digest_email(to: str, *, processes: list, brand: str = "oto",
+def send_process_readers_digest_email(to: str, *, processes: list, brand: str | None = None,
                                      locale: str | None = None,
                                      unsubscribe_url: str | None = None) -> bool:
     """UN email par propriétaire et par jour : qui a lu ses procédures partagées par
@@ -332,6 +332,7 @@ def send_process_readers_digest_email(to: str, *, processes: list, brand: str = 
     if not processes:
         return False
     m = _charte.marque(brand)
+    locale = locale or m.langue or None
     en = locale == "en"
     n = sum(len(p["readers"]) for p in processes)
     if len(processes) == 1:
@@ -382,7 +383,7 @@ _MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "aoû
 
 def send_unipile_fin_de_droit_email(to: str, *, org_name: str | None, canaux: list,
                                     supprime_le, app_url: str | None,
-                                    brand: str = "oto",
+                                    brand: str | None = None,
                                     locale: str | None = None) -> bool:
     """Préavis au propriétaire de comptes de messagerie hébergés sur la clé de la
     plateforme, quand son org n'a plus le droit `unipile` (oto-backend#806).
@@ -422,3 +423,75 @@ def send_unipile_fin_de_droit_email(to: str, *, org_name: str | None, canaux: li
     return _envoyer(m, to, subject, _charte.page(
         m, contenu, preheader=apercu,
         mention=_charte.mention_transactionnelle(m, locale), locale=locale))
+
+
+def send_credential_alert_email(to: str, *, retrait: dict | None, cles_ko: list,
+                                brand: str | None = None,
+                                locale: str | None = None) -> bool:
+    """L'alerte hors bande d'une org (oto#59) : une clé retirée, refusée ou à sec sous
+    ses agents programmés. UN message par org, écrit pour un humain qui ne connaît pas
+    le vocabulaire de la plateforme : ce qui est arrivé, ce que ça casse, et les deux
+    gestes possibles.
+
+    `brand` = `orgs.front_brand` de l'org (None = l'instance) : son nom, son expéditeur
+    et sa langue, comme ses invitations — l'alerte partait sous le nom et la langue de
+    l'INSTANCE, depuis l'expéditeur de l'instance. `locale` = la préférence de l'admin
+    destinataire (`users.locale`), à défaut la langue de la marque."""
+    m = _charte.marque(brand)
+    locale = locale or m.langue or None
+    en = locale == "en"
+    corps = ""
+    if retrait:
+        connecteurs = ", ".join(retrait.get("connectors") or [])
+        agents = int(retrait.get("agents_max") or 0)
+        corps += (
+            f'<p style="{_charte.PARA}">A connector key was removed from your '
+            f"organization ({_email._esc(connecteurs)}) while {agents} active "
+            "scheduled agent(s) were using it.</p>"
+            f'<p style="{_charte.PARA}">They will keep starting on schedule and fail '
+            "mid-run, and nobody else will be told: turn them off, or add a key "
+            "again.</p>") if en else (
+            f'<p style="{_charte.PARA}">Une clé de connecteur a été retirée de votre '
+            f"organisation ({_email._esc(connecteurs)}), alors que {agents} agent(s) "
+            "programmé(s) actif(s) l'utilisaient.</p>"
+            f'<p style="{_charte.PARA}">Ils continueront de partir à l\'heure et '
+            "échoueront en vol, sans que personne d'autre en soit averti : coupez-les, "
+            "ou reposez une clé.</p>")
+    if cles_ko:
+        corps += _paragraphe_cles_ko(cles_ko, _email._esc, en)
+    if en:
+        subject = ("A key was removed under your scheduled agents" if retrait and not cles_ko
+                   else "A key is failing under your scheduled agents")
+    else:
+        subject = ("Une clé retirée sous vos agents programmés" if retrait and not cles_ko
+                   else "Une clé en panne sous vos agents programmés")
+    return _envoyer(m, to, subject, _charte.page(
+        m, corps, preheader=subject,
+        mention=_charte.mention_transactionnelle(m, locale), locale=locale))
+
+
+def _paragraphe_cles_ko(cles: list[dict], esc, en: bool = False) -> str:
+    """Le paragraphe des clés refusées ou à sec, pour un humain qui ne connaît pas le
+    vocabulaire de la plateforme : quelle clé, ce que dit le fournisseur, combien
+    d'agents butent dessus, et les deux gestes possibles."""
+    from .credentials_store import NO_QUOTA_VERDICT
+
+    items = []
+    for c in cles:
+        a_sec = c.get("verdict") == NO_QUOTA_VERDICT
+        raison = f" ({esc(c['raison'])})" if c.get("raison") else ""
+        if en:
+            etat = "is out of credits" if a_sec else "is refused by the provider"
+            items.append(f"<li>The {esc(c['connector'])} key {etat}{raison}: "
+                         f"{len(c['agents'])} active scheduled agent(s) use it.</li>")
+            continue
+        etat = "n'a plus de crédits" if a_sec else "est refusée par le fournisseur"
+        items.append(f"<li>La clé {esc(c['connector'])} {etat}{raison} : "
+                     f"{len(c['agents'])} agent(s) programmé(s) actif(s) l'utilisent.</li>")
+    if en:
+        return ("<ul>" + "".join(items) + "</ul>"
+                "<p>These agents still start on schedule and fail mid-run: top up or "
+                "replace the key, or turn them off.</p>")
+    return ("<ul>" + "".join(items) + "</ul>"
+            "<p>Ces agents partent à l'heure et échouent en vol : rechargez ou reposez "
+            "la clé, ou coupez-les.</p>")

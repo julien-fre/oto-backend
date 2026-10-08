@@ -16,7 +16,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator
 
-from .. import config, db, email as mailer, org_store, outreach_optout
+from .. import config, db, email as mailer, org_store, outreach_optout, tenancy
 from ._authz import PLATFORM_ADMIN, SUB_ONLY
 from ._types import AuthzDenied, cap_limit, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -322,7 +322,7 @@ class ReporterDigest(BaseModel):
     sub: str
     email: Optional[str] = None
     name: Optional[str] = None
-    brand: str = "oto"
+    brand: str
     count: int
     signal_ids: list[int]
     resolved: int = 0
@@ -385,7 +385,7 @@ def _notify_reporters(ctx: ResolvedCtx, inp: NotifyReportersInput) -> dict:
             # La marque sous laquelle CE destinataire nous connaît : écrire « oto »
             # à l'utilisateur d'un partenaire est un faux, même si tout le reste est
             # juste.
-            "brand": marque or "oto",
+            "brand": marque or tenancy.primary_slug(),
             "count": len(g["items"]),
             "signal_ids": [int(i["id"]) for i in g["items"]],
             "resolved": g["resolved"], "declined": g["declined"],
