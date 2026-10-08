@@ -46,6 +46,9 @@ from oto_mcp.capabilities import tenant_keys as tk  # noqa: E402
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx  # noqa: E402
 from oto_mcp.connectors import health as connector_health  # noqa: E402
 
+# Ces bancs démarrent un consentement : la garde des connecteurs coupés lit la base.
+pytestmark = pytest.mark.usefixtures("connecteurs_tous_disponibles")
+
 CTX = ResolvedCtx(sub="operateur", role="super_admin")
 TULINA = tenancy.TenantIssuer(
     slug="tulina", issuer="https://auth.tulina.ai/oidc",

@@ -171,6 +171,7 @@ def test_named_account_crosses_missing_rung_but_never_changes_name(vault, monkey
         access.resolve_credential("serper", sub="u", account="missing", emit_on_failure=False)
 
 
+@pytest.mark.usefixtures("connecteurs_tous_disponibles")
 @pytest.mark.parametrize("authority", ["legacy", "chain"])
 def test_unipile_connect_uses_one_group_credential(vault, monkeypatch, authority):
     import asyncio
