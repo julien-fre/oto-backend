@@ -69,7 +69,7 @@ def register(mcp: FastMCP) -> None:
         try:
             return client.get(path, params)
         except ValueError as e:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
+            raise _value_error(e)
         except requests.HTTPError as e:
             raise _upstream_error(e)
 
@@ -95,7 +95,7 @@ def register(mcp: FastMCP) -> None:
         try:
             return client.post(path, json=body, params=params)
         except ValueError as e:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
+            raise _value_error(e)
         except requests.HTTPError as e:
             raise _upstream_error(e)
 
@@ -114,6 +114,8 @@ def register(mcp: FastMCP) -> None:
         doc_path = _require_doc_path(_resolve_fields())
         try:
             return client.get(doc_path)
+        except ValueError as e:
+            raise _value_error(e)
         except requests.HTTPError as e:
             raise _upstream_error(e)
 
@@ -206,6 +208,20 @@ def _excerpt(response) -> str:
     if len(text) > BODY_EXCERPT:
         text = text[:BODY_EXCERPT].rstrip() + "…"
     return text
+
+
+def _value_error(e: ValueError) -> McpError:
+    """A refusal raised by the client before or instead of a response. A redirect
+    (`RedirectRefused`, which carries `location`) is never followed — the injected
+    auth would leave with it — so say where the API pointed and how to go there."""
+    location = getattr(e, "location", None)
+    if location is not None:
+        return McpError(ErrorData(code=INVALID_PARAMS, message=(
+            f"The API redirected ({getattr(e, 'status', '3xx')}) to "
+            f"{location or 'an unnamed target'} — redirects are never followed, the "
+            "connector's auth would go with them. If that target is intended, call "
+            "its path directly.")))
+    return McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
 
 def _upstream_error(e: requests.HTTPError) -> McpError:
