@@ -696,13 +696,17 @@ def _no_account_message(sub: str, org_id: Optional[int], account: Optional[str])
     except Exception:
         pass
     dash = _reconnecter(sub)
+    # Accounts are connected PER ORG: an empty list in this org says nothing about
+    # the others. Name the org, and the two ways out.
+    ici = (f" in org #{org_id} — connect one there, or call from an org where one is "
+           "connected" if org_id is not None else "")
     if not account:
-        return (f"No Google account connected. Connect one at {dash}."
+        return (f"No Google account connected{ici}. Connect one at {dash}."
                 if not connectes else
                 "No default Google account. Pass `_account=` — connected accounts: "
                 f"{', '.join(connectes)}.")
     if not connectes:
-        return (f"No Google account connected (you asked for `{account}`). "
+        return (f"No Google account connected{ici} (you asked for `{account}`). "
                 f"Connect one at {dash}.")
     return (f"No Google account connected for `{account}` — no other account was used. "
             f"Connected accounts: {', '.join(connectes)} — `_account` expects the "

@@ -44,6 +44,10 @@ _SPREADSHEET_OPS_HINT = "op must be 'metadata', 'read', 'write' or 'clear'"
 # reading, never for overwriting or emptying.
 _READ_DEFAULT_RANGE = "A:ZZ"
 
+# A CSV written from `source`: bounded well below file_source's default, a sheet
+# being read and written cell by cell.
+_CSV_MAX_BYTES = 5 * 1024 * 1024
+
 
 def _client_for_user(account: Optional[str] = None):
     sub = access.current_user_sub_or_raise()
@@ -69,6 +73,25 @@ async def _client_for_user_async(account: Optional[str] = None):
     except asyncio.TimeoutError:
         raise _bad(f"Google did not respond within {_GOOGLE_CLIENT_TIMEOUT_S}s "
                    "(token refresh) — retry.")
+
+
+def _values_from_source(source: dict, allow_formulas: bool) -> list[list[Any]]:
+    """The rows of a CSV resolved server-side (`file_source`), typed by oto-core:
+    the model never copies the values. Off the event loop (HTTP read)."""
+    from .. import file_source
+    from oto.tools.google.sheets.lib.sheets_client import values_from_csv
+    try:
+        rf = file_source.resolve(source, max_bytes=_CSV_MAX_BYTES)
+    except file_source.FileSourceError as e:
+        raise _bad(str(e)) from None
+    try:
+        text = rf.data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise _bad("source: the CSV is not UTF-8 — have it served in UTF-8.") from None
+    rows = values_from_csv(text, formulas=allow_formulas)
+    if not rows:
+        raise _bad("source: the CSV has no rows — nothing written.")
+    return rows
 
 
 def _need(value, name: str, op: str):
@@ -103,6 +126,8 @@ def register(mcp: FastMCP) -> None:
         values: Optional[list[list[Any]]] = None,
         formatted: bool = True,
         append: bool = False,
+        source: Optional[dict] = None,
+        allow_formulas: bool = False,
         account: Optional[str] = None,
     ) -> dict:
         """An existing spreadsheet and the cells it holds — describe, read, write, clear.
@@ -115,6 +140,11 @@ def register(mcp: FastMCP) -> None:
         - **"write"**: write a 2-D array of values to a range (A1 notation required).
           `append`: False (default) OVERWRITES the range ; True appends rows after
           the existing data (no overwrite), starting at the range's FIRST column.
+          Instead of `values`, `source` writes a CSV oto fetches itself (e.g.
+          `{"kind": "http", "path": "/export.csv"}` through your `http` connector):
+          the values never go through you. A strict number goes as a number, a cell
+          starting with `'` stays text as is (long ids), a cell that would be a
+          formula is written as text unless `allow_formulas=True`.
         - **"clear"**: clear all values in a range (keeps formatting). Destructive —
           `range` is required, it has no default here.
 
@@ -123,7 +153,15 @@ def register(mcp: FastMCP) -> None:
             op: metadata (default) | read | write | clear.
             range: A1 notation, e.g. 'Sheet1!A1:D20' or 'A:ZZ'. op="read" — optional
                 ('A:ZZ' if omitted) ; op="write"/"clear" — REQUIRED.
-            values: op="write" — the 2-D array of values to write.
+            values: op="write" — the 2-D array of values to write. Exclusive with
+                `source`.
+            source: op="write" — a CSV fetched server-side instead of `values`:
+                `{"kind": "http", "path": "/…", "params": {…}}` (GET through your
+                `http` connector, auth injected), or any file reference
+                (drive, url, project_file). UTF-8, comma, RFC 4180 quotes.
+            allow_formulas: op="write" with `source` — False (default) writes a cell
+                starting with = + - @ as TEXT (a third party's CSV cannot plant a
+                formula in your sheet) ; True lets formulas through.
             formatted: op="read" — True = display strings (FORMATTED_VALUE) ;
                 False = raw values.
             append: op="write" — False (default) OVERWRITES the range ; True appends
@@ -145,7 +183,13 @@ def register(mcp: FastMCP) -> None:
             return {"rows": rows, "count": len(rows)}
         if op == "write":
             _need(range, "range", op)
-            _need(values, "values", op)
+            if (values is None) == (source is None):
+                raise _bad("op='write' takes `values` OR `source` — exactly one of them")
+            if allow_formulas and source is None:
+                raise _bad("`allow_formulas` only applies to a `source` CSV")
+            if source is not None:
+                values = await asyncio.to_thread(_values_from_source, source,
+                                                 allow_formulas)
             if append:
                 from oto.tools.google.sheets.lib.sheets_client import SheetsClientError
                 try:
