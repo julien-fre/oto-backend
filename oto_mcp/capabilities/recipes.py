@@ -13,10 +13,11 @@ appeler, et son plafond de dépense (`limits.max_units`) est obligatoire. **Publ
 remplissage par colonne est gardé avec la version. **Seule une version publiée
 écrit** : une recette passée en ligne ne sert qu'à `test`.
 
-⚠️ **Refusé dans un agent hébergé, pour l'instant.** Le jeton d'un travail du runner ne
-porte pas la liste d'outils de son déclencheur ; sans elle, une recette pourrait faire
-appeler à un agent un outil que sa liste ne lui donne pas. Le lien jeton → travail
-viendra dans un lot à part.
+**Un agent hébergé est un client comme un autre.** Sous le jeton de son travail, une
+recette se juge comme pour une personne : l'identité du porteur, son org (tenue par le
+verrou du jeton, `verrou_org.py`) et ses droits sur le tableau ; les refus du contrat
+valent pour tous (outils de la plateforme et outils à modèle exclus, outil déclaré en
+lecture seulement). Aucune règle propre aux agents.
 """
 from __future__ import annotations
 
@@ -26,7 +27,6 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .. import session_org, tool_alias, tool_registry
-from ..auth.hooks import current_token_axes
 from ..db import recipes as db_recipes
 from ..recipes import contrat, moteur
 from ._authz import BY_OP, ORG_MEMBER_OPT, SUB_ONLY
@@ -212,10 +212,6 @@ async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: 
 
 
 async def _recipe(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
-    if inp.op in _APPELANTES and current_token_axes().get("token_kind") == "delegation":
-        raise AuthzDenied(403, "hosted_runs_not_supported",
-                          "Recipes don't run inside hosted agents yet: the agent's job "
-                          "doesn't carry its trigger's tool list to the server.")
     if inp.op not in _APPELANTES:
         return await run_in_threadpool(_gerer, ctx, inp)
     if inp.op == "sample":
@@ -291,8 +287,10 @@ CAPABILITIES += [
             "key gets the recipe's key on the first run) · op=list · op=get · op=versions. "
             "`limits.max_units` is required: a hard cap on what the tool BILLS (its own "
             "units; `units_basis` in the receipt says when it falls back on the recipe's "
-            "count). Scope: your active org (default) or `scope='user'`. Refused inside a "
-            "hosted agent for now. PROVISIONAL surface."),
+            "count). op=run with a `datastore` WRITES rows into that table, with the "
+            "caller's own rights on it. Scope: your active org (default) or "
+            "`scope='user'`. A hosted agent runs recipes like any caller: its identity and "
+            "its job's org. PROVISIONAL surface."),
         mcp="oto_recipe",
     ),
 ]

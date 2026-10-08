@@ -6,7 +6,7 @@ description: >-
   d'un outil de connecteur arrivent dans un tableau — outil, arguments, pagination,
   correspondance champ → colonne, clé —, exécutée par le serveur sans qu'aucun modèle
   ne relise ni ne recopie les lignes. Ce que ce premier lot couvre (le mode `pull`),
-  ce qu'il refuse (les agents hébergés), et ce qui vient ensuite. À lire avant de
+  ce qu'il refuse à tout client, et ce qui vient ensuite. À lire avant de
   toucher `oto_mcp/recipes/`, `db/recipes.py` ou `capabilities/recipes.py`.
 ---
 
@@ -111,10 +111,13 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
   (`inline_recipe_cannot_write`).
 - **Le reçu ne porte que des comptes et des codes** : pages, éléments vus, unités,
   lignes écrites / mises à jour / laissées intactes / écartées, codes d'échec.
-- ⚠️ **Refusé dans un agent hébergé** (`hosted_runs_not_supported`), pour ce premier
-  lot : une recette lancée par un travail du runner devra rester dans la liste d'outils
-  de son déclencheur, ce que le serveur saura vérifier quand le jeton d'un travail
-  portera son travail — un lot à part.
+- **`run` avec un `datastore` écrit dans ce tableau**, avec les droits de l'appelant sur
+  lui : donner `oto_recipe` à un agent, c'est lui donner ce qu'il peut déjà écrire.
+- **Un agent hébergé est un client comme un autre.** Sous le jeton de son travail, une
+  recette se juge comme pour une personne : l'identité du porteur, l'org du travail
+  (tenue par le verrou du jeton, `verrou_org.py` : une recette pour une autre org du
+  porteur est refusée, `org_out_of_job`) et ses droits sur le tableau. Les refus du
+  contrat valent pour tous. Aucune règle propre aux agents, comme pour `oto_call`.
 
 ## Ce qui vient ensuite
 
