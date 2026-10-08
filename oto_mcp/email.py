@@ -341,6 +341,7 @@ def render_composed_email(
     # lien, « répondez pour ne plus en recevoir » est le seul refus possible et il
     # faut le dire ; avec lien, le laisser proposerait deux chemins dont un seul est
     # enregistré quelque part (une réponse humaine ne persiste aucun refus).
+    locale = locale or m.langue or None
     en = locale == "en"
     apercu = paras[0] if paras else m.nom
     if footer and org_footer:

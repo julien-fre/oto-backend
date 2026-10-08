@@ -332,6 +332,7 @@ def send_process_readers_digest_email(to: str, *, processes: list, brand: str | 
     if not processes:
         return False
     m = _charte.marque(brand)
+    locale = locale or m.langue or None
     en = locale == "en"
     n = sum(len(p["readers"]) for p in processes)
     if len(processes) == 1:

@@ -200,3 +200,26 @@ def test_ferme_par_defaut_la_cle_rouge_se_COMPTE_sans_partir(cles_rouges, monkey
     out = M.alertes_credential()
     assert envois == [] and annoncees == []
     assert out["cles_en_panne"] == 1 and out["orgs_a_prevenir"] == 1 and out["note"]
+
+
+# --- Langue de l'instance (08/10/2026) -----------------------------------------------
+
+
+def test_une_instance_anglophone_ecrit_l_alerte_en_anglais(cles_rouges, bureau, monkeypatch):
+    """Le texte était écrit en dur en français, quelle que soit l'instance."""
+    envois, _, _, _ = cles_rouges
+    monkeypatch.setenv(M._ENV_ALERTE, "1")
+    monkeypatch.setenv("OTO_BRAND_LANGUE", "en")
+    M.alertes_credential()
+    assert envois[0]["subject"] == "A key is failing under your scheduled agents"
+    assert "is refused by the provider" in envois[0]["html"]
+    assert "refusée" not in envois[0]["html"]
+
+
+def test_le_retrait_s_ecrit_aussi_en_anglais(bureau, monkeypatch):
+    envois, _ = bureau
+    monkeypatch.setenv(M._ENV_ALERTE, "1")
+    monkeypatch.setenv("OTO_BRAND_LANGUE", "en")
+    M.alertes_credential()
+    assert envois[0]["subject"] == "A key was removed under your scheduled agents"
+    assert "3 active scheduled agent(s)" in envois[0]["html"]

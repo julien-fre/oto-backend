@@ -275,3 +275,15 @@ def test_la_langue_de_l_instance_sert_l_invite_sans_preference(
                         sujets.append(subject) or True)
     assert email_templates.send_invite_email("x@y.test", "Org", "https://u", locale=locale)
     assert sujets == [attendu]
+
+
+def test_le_pied_d_un_email_compose_suit_la_langue_de_l_instance(monkeypatch):
+    from oto_mcp import email as E
+    monkeypatch.setenv("OTO_TENANT_PRIMAIRE_SLUG", "acme")
+    monkeypatch.setenv("OTO_BRAND_NAME", "Acme")
+    monkeypatch.setenv("OTO_BRAND_SITE", "acme.test")
+    monkeypatch.setenv("OTO_BRAND_LANGUE", "en")
+    anglais = E.render_composed_email("Hello")
+    monkeypatch.setenv("OTO_BRAND_LANGUE", "")
+    assert anglais != E.render_composed_email("Hello")
+    assert E.render_composed_email("Hello", locale="en") == anglais

@@ -401,7 +401,7 @@ def _cles_ko_par_org() -> dict[int, list[dict]]:
     return par_org
 
 
-def _paragraphe_cles_ko(cles: list[dict], esc) -> str:
+def _paragraphe_cles_ko(cles: list[dict], esc, en: bool = False) -> str:
     """Le paragraphe des clés refusées ou à sec, pour un humain qui ne connaît pas le
     vocabulaire de la plateforme : quelle clé, ce que dit le fournisseur, combien
     d'agents butent dessus, et les deux gestes possibles."""
@@ -410,10 +410,19 @@ def _paragraphe_cles_ko(cles: list[dict], esc) -> str:
     items = []
     for c in cles:
         a_sec = c.get("verdict") == NO_QUOTA_VERDICT
-        etat = "n'a plus de crédits" if a_sec else "est refusée par le fournisseur"
         raison = f" ({esc(c['raison'])})" if c.get("raison") else ""
+        if en:
+            etat = "is out of credits" if a_sec else "is refused by the provider"
+            items.append(f"<li>The {esc(c['connector'])} key {etat}{raison}: "
+                         f"{len(c['agents'])} active scheduled agent(s) use it.</li>")
+            continue
+        etat = "n'a plus de crédits" if a_sec else "est refusée par le fournisseur"
         items.append(f"<li>La clé {esc(c['connector'])} {etat}{raison} : "
                      f"{len(c['agents'])} agent(s) programmé(s) actif(s) l'utilisent.</li>")
+    if en:
+        return ("<ul>" + "".join(items) + "</ul>"
+                "<p>These agents still start on schedule and fail mid-run: top up or "
+                "replace the key, or turn them off.</p>")
     return ("<ul>" + "".join(items) + "</ul>"
             "<p>Ces agents partent à l'heure et échouent en vol : rechargez ou reposez "
             "la clé, ou coupez-les.</p>")
@@ -482,23 +491,36 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
             continue
         # Écrit pour un humain qui ne connaît pas le vocabulaire de la plateforme :
         # ce qui est arrivé, ce que ça casse, et les deux gestes possibles.
+        # Langue de l'instance (`OTO_BRAND_LANGUE`) : un admin d'org n'a pas d'autre
+        # préférence lue ici, et une instance anglophone ne doit pas écrire en FR.
+        en = _charte.langue_instance() == "en"
         corps = ""
         if g:
             connecteurs = ", ".join(g["connectors"] or [])
+            agents = int(g['agents_max'] or 0)
             corps += (
+                f"<p>A connector key was removed from your organization "
+                f"({_email._esc(connecteurs)}) while {agents} active scheduled "
+                "agent(s) were using it.</p>"
+                "<p>They will keep starting on schedule and fail mid-run, and nobody "
+                "else will be told: turn them off, or add a key again.</p>") if en else (
                 f"<p>Une clé de connecteur a été retirée de votre organisation "
                 f"({_email._esc(connecteurs)}), alors que "
-                f"{int(g['agents_max'] or 0)} agent(s) programmé(s) actif(s) "
+                f"{agents} agent(s) programmé(s) actif(s) "
                 "l'utilisaient.</p>"
                 "<p>Ils continueront de partir à l'heure et échoueront en vol, sans que "
                 "personne d'autre en soit averti : coupez-les, ou reposez une clé.</p>")
         if ko:
-            corps += _paragraphe_cles_ko(ko, _email._esc)
+            corps += _paragraphe_cles_ko(ko, _email._esc, en)
         # Signé du nom que l'instance DÉCLARE (`OTO_BRAND_NAME`) : une signature écrite
         # ici en dur partait sous ce nom depuis toutes les instances.
         corps += f"<p>{_email._esc(_charte.nom_instance())}</p>"
-        sujet = ("Une clé retirée sous vos agents programmés" if g and not ko else
-                 "Une clé en panne sous vos agents programmés")
+        if en:
+            sujet = ("A key was removed under your scheduled agents" if g and not ko else
+                     "A key is failing under your scheduled agents")
+        else:
+            sujet = ("Une clé retirée sous vos agents programmés" if g and not ko else
+                     "Une clé en panne sous vos agents programmés")
         if _email._send(to=adresses[0], subject=sujet, html=corps):
             envoyes += 1
             if g:
