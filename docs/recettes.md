@@ -61,14 +61,33 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
 
 - **Chemins** pointés avec index : `profile.title`, `emails[0].email`. Un chemin qui ne
   mène nulle part rend une case vide, jamais une erreur.
-- **Gabarits** `{{params.x}}`, `{{item.a.b}}`, filtres `slug`, `lower`, `upper`, `strip`,
-  `unaccent`. Un gabarit seul garde le type de sa valeur ; mêlé à du texte, il devient
-  du texte.
+- **Gabarits** `{{params.x}}`, `{{item.a.b}}`, `{{row.col}}` (sous `for_each`), filtres
+  `slug`, `lower`, `upper`, `strip`, `unaccent`, et les **normaliseurs** `domain`
+  (`https://www.Acme.com/x` et `jane@acme.com` → `acme.com`), `email` (sans `mailto:`,
+  vide si la valeur n'en a pas la forme : jamais une phrase d'erreur dans une colonne
+  `email`), `email_domain`, `linkedin_slug` (`…/in/Jane-Doe/?trk=…` → `jane-doe`, sur un
+  hôte LinkedIn seulement ; un domaine nu n'est pas un identifiant), `url` (écrite avec
+  son schéma ; comparée sans schéma ni `www.` : `http://acme.com` = `https://www.acme.com`),
+  `digits`. Un normaliseur qui reçoit une liste ou un objet REFUSE (`non_scalar_value`) :
+  le chemin pointe un élément (`emails[0]`), jamais la liste entière.
+  Un gabarit seul garde le type de sa valeur ; mêlé à du texte, il devient du texte.
 - ⚠️ **`slug` reproduit la forme des clés déjà écrites** par les procédures de sourcing :
   minuscules, accents retirés, chaque suite non alphanumérique réduite à `_`, aucun `_`
   aux bords. La changer dédoublerait chaque ligne au premier passage.
 - **`where`** : `eq`, `ne`, `in`, `not_in`, `contains_any`, `empty`, `not_empty`, sans
-  casse ni accents.
+  casse ni accents — ou par le normaliseur de la clause (`normalize: "domain"`).
+  `in_table` / `not_in_table` (`table`, `column`) comparent à la colonne d'un AUTRE
+  tableau (liste d'exclusion, clients existants) : ses valeurs sont lues une fois par
+  exécution (chaque valeur d'une case à plusieurs valeurs comptée), normalisées comme
+  l'élément, au plus 50 000 (`match_table_too_large`). Un
+  élément sans valeur n'est pas « dans » la liste : `not_in_table` le laisse passer.
+- **`for_each`** (`datastore`, `status_column`, `filter`, `max_parents`,
+  `max_items_per_row`) : chaque ligne d'un tableau PARENT dont la colonne d'état est vide
+  déclenche l'appel (les personnes d'une société, les offres d'un domaine), citée
+  `{{row.col}}` dans les arguments, la correspondance, les valeurs et la clé — et nulle
+  part ailleurs : `row` hors `for_each` est refusé à l'écriture. Ses pages repartent de
+  zéro à chaque parent ; `max_items_per_row` borne ce qu'un parent apporte, et réduit la
+  taille demandée au fournisseur (au curseur, et sur la première page au numéro).
 - Tout ce qui demande davantage (expression régulière, condition, calcul) ira dans une
   fonction (`oto_function`) — on ne fait pas grandir ce langage.
 
@@ -103,8 +122,52 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
   élément sans valeur de clé est écarté — un gabarit dont un morceau manque n'en
   produit pas.
 - **Les colonnes manquantes sont créées** (texte) ; les existantes jamais retouchées.
-- **Budget d'horloge de 30 s** et **`max_pages` par appel** : au-delà, reçu partiel et
+- **Une ligne parente faite reçoit son état** — `done` (des éléments), `empty` (aucun),
+  `failed:<code>` (l'outil a refusé SON entrée : `invalid_input`, `not_found`,
+  `call_refused`, `upstream_4xx` ; ou sa page est en dérive : `mapping_drift`) — dans
+  `status_column`, déclarée si elle manque : c'est lui qui fait
+  qu'une exécution suivante ne repaie pas une ligne faite. Un échec du compte ou du
+  fournisseur (clé, crédits, délai, limite de débit) arrête l'exécution et laisse la ligne
+  en attente. Trois lignes d'affilée qui échouent pareil arrêtent tout
+  (`repeated_failure`) : c'est systémique, pas trois mauvaises lignes. Elles sont marquées
+  `failed:<code>` et nommées au reçu (`failed_rows`) — pour qu'une exécution suivante ne
+  bute pas sur les mêmes sans qu'on sache lesquelles ; vider leur `status_column` les remet
+  en attente. `not_found` (une société inconnue du fournisseur) est marqué aussitôt, hors
+  disjoncteur. Un appel refusé par le fournisseur compte dans la dépense (sa `quantity`,
+  sinon une unité) et dans l'horloge.
+  Une entrée qui se normalise en rien (`n/a|digits`) n'appelle pas : `failed:invalid_input`.
+  Sous `for_each`, le reçu ne porte jamais le message du fournisseur (il peut citer une
+  valeur de la ligne), seulement son code.
+- **Ne sont sélectionnées que les lignes du `filter`** (la grammaire de `data_rows`,
+  éprouvée avant tout appel : `invalid_filter`) **dont chaque colonne citée dans les
+  `arguments` est remplie** : une ligne sans `siren` ne paie pas un appel pour rien, et
+  attend qu'on la remplisse. Le tableau parent doit être ÉCRIVABLE et
+  distinct de la cible (`for_each_same_table`), vérifié avant tout appel. Une ligne
+  coupée par un plafond (dépense, pages, horloge) ou un refus de l'outil reste en
+  attente : le jeton `resume` la reprend à sa page, une exécution neuve du début (les
+  lignes déjà écrites sont reconnues par leur clé ; les pages, elles, se repaient).
+  `max_parents` (25 par défaut, 200 au plus) borne les parents d'un appel (`max_parents`
+  au reçu, avec `resume`). Le reçu compte `parents: {done, empty, failed}`. Une exécution
+  NEUVE (sans `resume`) repart d'une dépense à 0 : au fil des exécutions, seuls les quotas
+  de l'org bornent le total.
+- **La dérive arrête l'exécution.** Les colonnes que l'épreuve de publication a remplies
+  sur au moins 80 % des lignes (`test_report.fill`) sont surveillées — si l'épreuve a
+  produit au moins 10 lignes : une colonne pleine sur une ligne ne prouve rien. Une page
+  d'au moins 10 lignes où l'une revient vide PARTOUT n'est pas écrite, et l'exécution
+  s'arrête (`mapping_drift`, `drifted_columns`) ; sous `for_each`, ce parent est marqué
+  `failed:mapping_drift` et l'exécution passe au suivant (le disjoncteur arrête une
+  série) — un fournisseur qui change la forme de sa réponse
+  remplirait sinon le tableau de lignes creuses. Une colonne clairsemée à la publication
+  (un `headline`, une ville) n'est pas surveillée.
+- **L'épreuve d'une recette `for_each`** essaie jusqu'à trois parents en attente, une page
+  chacun, et s'arrête au premier qui produit des lignes : le premier peut légitimement
+  ne rien rendre. Elle n'écrit ni la cible, ni l'état des parents.
+- **Budget d'horloge de 30 s**, qui court dès l'entrée (les lectures du tableau parent et
+  des listes de correspondance comptent, chacune bornée à 10 s : `table_read_timeout`) et
+  se vérifie après chaque appel, réussi ou non, et **`max_pages` par appel** : au-delà, reçu partiel et
   `resume`, que l'appel suivant passe pour continuer sans repayer les pages faites. Le
+  jeton porte l'empreinte de la recette (une autre recette, ou une autre version, le
+  refuse : `invalid_resume`) et jamais une dépense négative. Le
   plafond de dépense, lui, vaut pour toute la chaîne (le jeton porte la dépense faite).
 - **Seule une version PUBLIÉE écrit.** `publish` éprouve une page réelle sans écrire ;
   une recette passée en ligne (`recipe`) ne sert qu'à `test` — `run` la refuse
@@ -121,9 +184,9 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
 
 ## Ce qui vient ensuite
 
-`for_each` (une ligne qui déclenche un appel dont les éléments deviennent des lignes —
-les personnes d'une société), le bloc `async` (soumettre puis collecter : Dropcontact,
-FullEnrich, Apify), le mode par ligne et la poussée vers un CRM, les correspondances
-avec d'autres tableaux, les normaliseurs (`domain`, `linkedin_slug`, `phone_e164`), la
-détection de dérive contre le remplissage gardé à la publication, et les travaux de
-fond déclenchés par une planification ou un webhook.
+Le bloc `async` (soumettre puis collecter : Dropcontact, FullEnrich, Apify), le mode par
+ligne (`call` : remplir des cases d'une ligne existante) et la poussée vers un CRM
+(`push` — un effet chez le tiers : il lui faut une marche à blanc obligatoire et une
+liste des outils à effet, puisqu'une recette n'appelle aujourd'hui que des outils
+déclarés en lecture), puis les travaux de fond déclenchés par une planification ou un
+webhook (l'exécutant reste à choisir).
