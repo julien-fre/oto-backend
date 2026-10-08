@@ -41,7 +41,13 @@ def bureau(monkeypatch):
                         lambda org: [{"sub": "u-admin", "org_role": "org_admin"},
                                      {"sub": "u-membre", "org_role": "org_member"}])
     monkeypatch.setattr(U, "emails_by_subs", lambda subs: {"u-admin": "a@exemple.invalid"})
-    monkeypatch.setattr(E, "_send", lambda **kw: envois.append(kw) or True)
+    # Une org de la plateforme (`front_brand` NULL ⟹ la marque de l'instance), un admin
+    # sans préférence de langue.
+    monkeypatch.setattr(O, "org_front", lambda org: (None, None))
+    monkeypatch.setattr(U, "get_user", lambda sub: {"sub": sub, "locale": None})
+    # `_envoyer` passe `to, subject, html` en POSITION, comme `_send` le déclare.
+    monkeypatch.setattr(E, "_send", lambda to, subject, html, **kw: envois.append(
+        {"to": to, "subject": subject, "html": html, **kw}) or True)
     return envois, marques
 
 
@@ -223,3 +229,43 @@ def test_le_retrait_s_ecrit_aussi_en_anglais(bureau, monkeypatch):
     M.alertes_credential()
     assert envois[0]["subject"] == "A key was removed under your scheduled agents"
     assert "3 active scheduled agent(s)" in envois[0]["html"]
+
+
+# --- La marque de l'ORG, pas celle de l'instance (revue de #1182) ---------------------
+
+
+def test_l_alerte_part_sous_la_marque_l_expediteur_et_la_langue_du_tenant_de_l_org(
+        bureau, monkeypatch):
+    """Ses invitations partaient sous la marque de son tenant, l'alerte sous celle de
+    l'instance et depuis son expéditeur : la même org recevait deux produits."""
+    envois, _ = bureau
+    from oto_mcp import org_store as O
+    from oto_mcp import tenancy
+    avant = tenancy.current()
+    tenancy.install(tenancy.IssuerRegistry(tenancy.build(
+        "https://auth.oto.ninja/oidc",
+        tenants=[{"slug": "acme", "issuer": "https://auth.acme.test/oidc", "brand": {
+            "nom": "Acme", "site": "acme.test", "expediteur": "Acme <noreply@acme.test>",
+            "langue": "en", "fond": "#101014", "surface": "#18181d",
+            "encre": "#f5f5f7", "discret": "#a0a0ab", "filet": "#2a2a31",
+            "bouton_fond": "#f5f5f7", "bouton_encre": "#101014"}}])))
+    try:
+        monkeypatch.setattr(O, "org_front", lambda org: ("https://app.acme.test", "acme"))
+        monkeypatch.setenv(M._ENV_ALERTE, "1")
+        M.alertes_credential()
+    finally:
+        tenancy.install(avant)
+    (e,) = envois
+    assert e["from_email"] == "Acme <noreply@acme.test>"
+    assert e["subject"] == "A key was removed under your scheduled agents"
+    assert "Acme" in e["html"]
+
+
+def test_la_preference_de_l_admin_prime_sur_la_langue_de_l_instance(bureau, monkeypatch):
+    envois, _ = bureau
+    from oto_mcp.db import users as U
+    monkeypatch.setattr(U, "get_user", lambda sub: {"sub": sub, "locale": "en"})
+    monkeypatch.setenv(M._ENV_ALERTE, "1")
+    monkeypatch.setenv("OTO_BRAND_LANGUE", "")
+    M.alertes_credential()
+    assert envois[0]["subject"] == "A key was removed under your scheduled agents"

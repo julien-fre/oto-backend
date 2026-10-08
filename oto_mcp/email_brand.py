@@ -37,9 +37,8 @@ D'où ce qui suit, qui n'est pas un goût mais une contrainte de client :
 """
 from __future__ import annotations
 
-import os
-
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -126,10 +125,10 @@ def marque_instance() -> Marque:
 def langue_instance() -> str:
     """La langue d'un destinataire sans préférence connue (un invité sans compte),
     sous la marque de l'instance : `OTO_BRAND_LANGUE` (`fr`|`en`). Le primaire ne lit
-    pas `tenants.brand`, c'est donc ici qu'il la déclare. Vide ou inconnue ⟹ `""`,
-    les gabarits servent FR comme avant."""
-    langue = os.environ.get("OTO_BRAND_LANGUE", "").strip().lower()
-    return langue if langue in _LANGUES else ""
+    pas `tenants.brand`, c'est donc ici qu'il la déclare. Vide ⟹ `""`, les gabarits
+    servent FR comme avant ; toute autre valeur LÈVE (`LangueInconnue`) — une faute de
+    frappe servirait le français en silence à des invités qu'on croit servir en anglais."""
+    return _langue(os.environ.get("OTO_BRAND_LANGUE"), "OTO_BRAND_LANGUE")
 
 
 def nom_instance() -> str:
@@ -165,6 +164,24 @@ _EXPEDITEUR_RE = re.compile(
 _LANGUES = ("fr", "en")
 
 
+class LangueInconnue(ValueError):
+    """Une langue déclarée hors de `_LANGUES` : jamais ignorée, jamais repliée sur FR."""
+
+
+def _langue(val, source: str) -> str:
+    """`fr`|`en`, ou `""` si rien n'est déclaré. Une valeur qui n'est ni vide ni une
+    langue servie lève en nommant sa SOURCE : c'est la déclaration qui est fausse, et
+    c'est là qu'il faut aller la corriger."""
+    v = val.strip().lower() if isinstance(val, str) else ""
+    if not v:
+        return ""
+    if v not in _LANGUES:
+        raise LangueInconnue(
+            f"{source} vaut {val!r} : langue attendue parmi {', '.join(_LANGUES)} "
+            "(ou vide pour le français).")
+    return v
+
+
 def _expediteur(slug: str, val) -> str:
     v = val.strip() if isinstance(val, str) else ""
     if not v:
@@ -186,6 +203,10 @@ def _declaree(slug: str) -> Optional[Marque]:
     telle quelle dans un attribut `style` (une palette est du texte injecté dans du
     HTML — la valider est aussi ce qui l'empêche d'y écrire autre chose).
 
+    ⚠️ **Sauf la langue** : une langue qui n'est ni vide ni servie LÈVE (`_langue`).
+    Ignorée, elle servait le français en silence à ceux qu'on croyait servir en anglais
+    — le seul champ dont le défaut se voit à l'arrivée sans que personne le remarque.
+
     Une palette PARTIELLE est refusée entière plutôt que complétée par la nôtre :
     mélanger sept teintes venues de deux chartes produit un dessin que personne n'a
     dessiné, et le défaut ne se verrait qu'à l'arrivée, chez le destinataire.
@@ -206,10 +227,11 @@ def _declaree(slug: str) -> Optional[Marque]:
             return None
         teintes[champ] = val.strip()
     nom = str(declaree.get("nom") or slug)
-    langue = declaree.get("langue")
     return Marque(slug=slug, nom=nom, site=str(declaree.get("site") or ""),
                   expediteur=_expediteur(slug, declaree.get("expediteur")),
-                  langue=langue if langue in _LANGUES else "", **teintes)
+                  langue=_langue(declaree.get("langue"),
+                                 f"tenants.brand.langue du tenant {slug!r}"),
+                  **teintes)
 
 
 def marque(slug: Optional[str]) -> Marque:

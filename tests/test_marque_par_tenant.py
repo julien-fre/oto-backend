@@ -119,7 +119,7 @@ def test_expediteur_et_langue_declares_sont_servis(pose):
     "Acme <noreply@acme.test", "<a@b.test> <c@d.test>", 42,
     "Acme, Inc <noreply@acme.test>", "Acme; Bcc <noreply@acme.test>"])
 def test_un_expediteur_invalide_est_ignore_pas_la_palette(pose, val):
-    pose(acme={**PALETTE, "expediteur": val, "langue": "de"})
+    pose(acme={**PALETTE, "expediteur": val})
     m = email_brand.marque("acme")
     assert (m.expediteur, m.langue) == ("", "")
     assert m.fond == "#101014"
@@ -185,6 +185,25 @@ def test_chaque_gabarit_part_sous_l_expediteur_de_sa_marque_html_en_position(
     assert kw == {"from_email": "Acme <noreply@acme.test>"}
 
 
+@pytest.mark.parametrize("val", ["de", "english", "en-US", "FR "])
+def test_une_langue_d_instance_inconnue_leve_au_lieu_de_servir_le_francais(
+        monkeypatch, val):
+    """Ignorée, une faute de frappe servait le français en silence à ceux qu'on croyait
+    servir en anglais. `FR ` (casse, espace) reste une langue servie."""
+    monkeypatch.setenv("OTO_BRAND_LANGUE", val)
+    if val.strip().lower() in ("fr", "en"):
+        assert email_brand.langue_instance() == val.strip().lower()
+        return
+    with pytest.raises(email_brand.LangueInconnue, match="OTO_BRAND_LANGUE"):
+        email_brand.langue_instance()
+
+
+def test_une_langue_de_tenant_inconnue_leve_en_nommant_le_tenant(pose):
+    pose(acme={**PALETTE, "langue": "de"})
+    with pytest.raises(email_brand.LangueInconnue, match="acme"):
+        email_brand.marque("acme")
+
+
 def test_aucun_gabarit_n_appelle_le_relais_en_direct():
     """Le choke-point est `_envoyer` : un gabarit qui rappellerait `_email._send`
     lui-même oublierait l'expéditeur du tenant."""
@@ -192,6 +211,51 @@ def test_aucun_gabarit_n_appelle_le_relais_en_direct():
     from oto_mcp import email_templates as T
     code = inspect.getsource(T).replace(T.__doc__, "")
     assert code.count("_email._send(") == 1, "seul `_envoyer` appelle `_email._send`"
+
+
+# Les seuls modules hors `email_templates` qui appellent le relais en direct, et
+# pourquoi ce ne sont PAS des gabarits : leur texte n'est pas écrit par nous.
+_ENVOIS_HORS_GABARIT = {
+    "oto_mcp/scheduler.py": "un `email_send` programmé : HTML déjà rendu à la "
+                            "composition, sous l'expéditeur résolu alors",
+    "oto_mcp/activation.py": "la séquence d'activation d'un tenant : texte, expéditeur "
+                             "et relais DÉCLARÉS par le tenant (`OTO_ACTIVATION`)",
+}
+
+
+def test_aucun_module_n_envoie_un_gabarit_hors_de_email_templates():
+    """L'alerte de clé (`maintenance.py`) écrivait son propre courriel et l'envoyait
+    par `_email._send` : sous le nom et la langue de l'instance, sans l'expéditeur du
+    tenant de l'org. On vise l'AXE — un appel du relais (`<module email>._send(`) —
+    dans tout le paquet, pas un nom de fichier : un gabarit qui naîtrait ailleurs
+    demain serait vu ici."""
+    import ast
+    from pathlib import Path
+    racine = Path(__file__).resolve().parents[1]
+    fautifs = []
+    for f in sorted((racine / "oto_mcp").rglob("*.py")):
+        rel = f.relative_to(racine).as_posix()
+        if rel in ("oto_mcp/email.py", "oto_mcp/email_templates.py"):
+            continue
+        arbre = ast.parse(f.read_text(encoding="utf-8"))
+        # Les noms locaux liés au MODULE `oto_mcp.email` (`from . import email as x`,
+        # `from .. import email`, `import oto_mcp.email as x`).
+        alias = set()
+        for n in ast.walk(arbre):
+            if isinstance(n, ast.ImportFrom) and (n.module in (None, "oto_mcp")):
+                alias |= {a.asname or a.name for a in n.names if a.name == "email"}
+            elif isinstance(n, ast.Import):
+                alias |= {a.asname for a in n.names
+                          if a.name == "oto_mcp.email" and a.asname}
+        appels = [n.lineno for n in ast.walk(arbre)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                  and n.func.attr == "_send" and isinstance(n.func.value, ast.Name)
+                  and n.func.value.id in alias]
+        if appels and rel not in _ENVOIS_HORS_GABARIT:
+            fautifs.append(f"{rel}:{appels}")
+    assert not fautifs, (
+        "un email écrit par nous part de `email_templates` par `_envoyer` (marque, "
+        f"expéditeur, langue du destinataire) — envoi direct du relais : {fautifs}")
 
 
 def test_un_403_du_relais_est_une_erreur_signalee_pas_un_alea(monkeypatch, caplog):
@@ -260,7 +324,6 @@ def test_sans_marque_les_gabarits_portent_celle_de_l_instance(gabarit, monkeypat
     ("en", None, "invitation to join Org on Acme"),
     ("en", "fr", "invitation à rejoindre Org sur Acme"),   # le destinataire prime
     ("", None, "invitation à rejoindre Org sur Acme"),     # rien de déclaré : FR
-    ("de", None, "invitation à rejoindre Org sur Acme"),   # inconnue : ignorée
 ])
 def test_la_langue_de_l_instance_sert_l_invite_sans_preference(
         monkeypatch, declaree, locale, attendu):

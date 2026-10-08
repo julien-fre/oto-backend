@@ -245,12 +245,13 @@ def emit_invitation(ctx: ResolvedCtx, *, org_id: int | None, email: str | None,
     """Cœur partagé d'émission d'une invitation, commun aux 3 niveaux de la cascade
     (plateforme/org/équipe). Crée la ligne (scope dérivé des cibles), forge le lien
     `/invitation/<token>` et, si demandé, envoie le mail (`target_name` = ce qu'on
-    rejoint, None = plateforme → « rejoindre oto »).
+    rejoint, None = plateforme → « rejoindre <marque de l'instance> »).
 
     Le front destinataire (base du lien, marque du mail) est **dérivé de l'org cible**
     (`orgs.front_*`), jamais déclaré par l'appelant : une invitation ne peut pas
     prétendre venir d'un front auquel l'org n'appartient pas, et les 3 niveaux en
-    héritent sans rien porter. Sans org (invitation plateforme pure) = oto."""
+    héritent sans rien porter. Sans org (invitation plateforme pure) = la marque
+    que l'instance déclare (`email_brand.marque_instance`)."""
     email_addr = _norm_email(email, required=send_email)
     front_base, brand = org_store.org_front(org_id)
     _, token = org_store.create_invitation(
@@ -263,9 +264,9 @@ def emit_invitation(ctx: ResolvedCtx, *, org_id: int | None, email: str | None,
         # Locale du DESTINATAIRE, si connue (oto-backend#700) : un invité qui a
         # déjà un compte oto (ré-invitation, autre org) a peut-être déjà posé sa
         # préférence via `me.locale.set`. Une adresse jamais vue n'a pas encore
-        # de ligne `users` ⟹ locale=None ⟹ le gabarit sert FR (comportement
-        # d'avant) — la détection de langue pour un contact jamais loggé reste
-        # hors scope de ce lot.
+        # de ligne `users` ⟹ locale=None ⟹ le gabarit sert la langue que la marque
+        # déclare (`OTO_BRAND_LANGUE`, `tenants.brand.langue`), FR à défaut — la
+        # détection de langue pour un contact jamais loggé reste hors scope.
         locale = (db.get_user_by_email(email_addr) or {}).get("locale")
         emailed = email_mod.send_invite_email(
             email_addr, target_name, _nominal_url(token, email_addr, front_base=front_base),
