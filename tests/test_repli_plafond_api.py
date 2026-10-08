@@ -2,7 +2,7 @@
 
 Un travail d'abonnement dont le SEUL obstacle est un forfait ÉPUISÉ à échéance
 FUTURE peut rejouer sur la clé API de son org plutôt qu'attendre — si l'org l'a
-CHOISI (`repli_api`, fermé par défaut). Ce que ces bancs tiennent, contre une vraie
+ne l'a pas COUPÉ (`repli_api`, ouvert par défaut depuis le 08/10/2026). Ce que ces bancs tiennent, contre une vraie
 base :
 
 1. forfait épuisé (mode personnel) → repli, avec le stamp `_plateforme.repli` ;
@@ -58,9 +58,9 @@ def _personne(sub):
 
 
 def _org(nom, *membres, mode=None, repli=True, limite_pct=None):
-    """Une org, ses membres, son mode — et le repli OUVERT par défaut dans ces bancs
-    (`repli=False` pour le défaut de production, fermé) : la plupart des bancs
-    éprouvent ce qui se passe une fois que l'org l'a choisi."""
+    """Une org, ses membres, son mode — et le repli OUVERT explicitement dans ces
+    bancs (`repli=False` : aucun réglage, le défaut de production, ouvert lui aussi
+    depuis le 08/10/2026)."""
     from oto_mcp import org_store
     from oto_mcp.db import org_subscription_limits as L
     from oto_mcp.db import org_subscription_pool as P
@@ -312,10 +312,10 @@ def test_apres_repli_le_travail_n_est_plus_lu_comme_un_abonnement(live):
 
 # ── 10. l'interrupteur d'org : FERMÉ par défaut, ouvert par l'org ─────────
 
-def test_repli_ferme_par_defaut_meme_avec_une_cle(live):
-    """Décision du 28/09/2026 : aucune ligne de mode, le repli est FERMÉ — même pour
-    une org qui a déposé sa clé. Les clés déposées en prod l'ont été pour des agents
-    API ; les dépenser pour des travaux d'abonnement se CHOISIT."""
+def test_repli_ouvert_par_defaut_avec_une_cle(live):
+    """Décision du 08/10/2026 (renverse celle du 28/09) : aucune ligne de mode, le
+    repli est OUVERT — une org qui a déposé sa clé n'attend pas le forfait. Seule
+    une org qui l'a COUPÉ attend (bancs suivants)."""
     from oto_mcp.db import org_subscription_pool as P
 
     oid = _org("p10", "p10-dem", repli=False)
@@ -323,9 +323,20 @@ def test_repli_ferme_par_defaut_meme_avec_une_cle(live):
     jid = _travail(oid, "p10-dem")
     _cle_org(oid)
 
-    assert P.repli_api_actif(oid, "claude_subscription") is False
-    assert _repli(oid) is None, "fermé par défaut : le travail attend son forfait"
-    assert _etat(jid)["status"] == "pending"
+    assert P.repli_api_actif(oid, "claude_subscription") is True
+    row = _repli(oid)
+    assert row is not None and row["id"] == jid, "ouvert par défaut : la clé de l'org paie"
+
+
+def test_une_ligne_nee_du_mode_nait_avec_le_repli_ouvert(live):
+    """Régler le MODE fait naître la ligne : elle n'a rien choisi du repli, elle
+    naît donc ouverte — sinon passer en pool fermerait le repli par effet de bord."""
+    from oto_mcp.db import org_subscription_pool as P
+
+    oid = _org("p10b", "p10b-dem", mode="pool", repli=False)
+
+    assert P.get_mode(oid, "claude_subscription")["repli_api"] is True
+    assert P.repli_api_actif(oid, "claude_subscription") is True
 
 
 def test_l_org_qui_coupe_le_repli_attend_son_forfait(live):

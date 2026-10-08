@@ -60,16 +60,16 @@ def en_pool(org_id: Optional[int], famille: str) -> bool:
 
 
 def repli_api_actif(org_id: Optional[int], famille: str) -> bool:
-    """Cette org a-t-elle CHOISI qu'un travail d'abonnement épuisé rejoue sur SA clé
-    API plutôt que d'attendre la réinitialisation (OTO-130) ? FERMÉ par défaut —
-    sans ligne, le repli n'existe pas (décision du 28/09/2026).
+    """Un travail d'abonnement épuisé de cette org rejoue-t-il sur SA clé API plutôt
+    que d'attendre la réinitialisation (OTO-130) ? OUVERT par défaut depuis le
+    08/10/2026 (décision produit Tulina, qui renverse celle du 28/09) : sans ligne,
+    le repli vaut ; seule une org qui l'a COUPÉ (`set_repli_api(False)`) attend.
 
-    ⚠️ Une clé déposée ne vaut pas ce choix : les orgs qui en ont une l'ont posée pour
-    leurs agents API, et y déplacer des travaux d'abonnement serait les faire payer
-    pour une dépense qu'elles n'ont pas demandée. Ouvert, le repli exige EN PLUS
-    cette clé (`runner_jobs._cle_ok_pour_repli`). La réservation lit la colonne en
-    SQL (`runner_jobs.candidats_repli_abonnement`) ; cette lecture sert l'écran."""
-    return bool((get_mode(org_id, famille) or {}).get("repli_api"))
+    Le repli exige toujours la clé déposée PAR l'org (`runner_jobs._cle_ok_pour_repli`) :
+    sans clé, rien ne change. La réservation lit la même règle en SQL
+    (`runner_jobs.candidats_repli_abonnement`) ; cette lecture sert l'écran."""
+    ligne = get_mode(org_id, famille)
+    return True if ligne is None else bool(ligne.get("repli_api"))
 
 
 def set_repli_api(org_id: int, famille: str, actif: bool, par: Optional[str]) -> dict:
@@ -94,8 +94,11 @@ def poser_mode(org_id: int, famille: str, mode: str, par: str) -> dict:
         raise ValueError(f"mode hors contrat : {mode!r}")
     with _connect() as conn:
         row = conn.execute(
-            """INSERT INTO org_model_subscription_modes (org_id, famille, mode, updated_by)
-                    VALUES (%s, %s, %s, %s)
+            # Une ligne qui NAÎT ici n'a rien choisi du repli : elle naît ouverte,
+            # comme l'absence de ligne. Un réglage existant n'est pas touché.
+            """INSERT INTO org_model_subscription_modes
+                           (org_id, famille, mode, repli_api, updated_by)
+                    VALUES (%s, %s, %s, TRUE, %s)
                ON CONFLICT (org_id, famille) DO UPDATE
                        SET mode = EXCLUDED.mode, updated_by = EXCLUDED.updated_by,
                            updated_at = NOW()

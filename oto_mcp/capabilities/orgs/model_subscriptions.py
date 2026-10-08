@@ -61,11 +61,11 @@ class OrgPlafond(BaseModel):
         description=("How many members currently lend this org a usable (connected) "
                      "subscription. In `pool` mode, zero means the org's jobs wait."))
     api_fallback: bool = Field(
-        default=False,
-        description=("`true`: a job whose subscription (the requester's, or the whole "
-                     "pool) is EXHAUSTED replays on this org's own deposited API key, "
-                     "same tier, instead of waiting for the plan to reset. `false` "
-                     "(default): those jobs wait. It never spends anyone else's key."))
+        default=True,
+        description=("`true` (default): a job whose subscription (the requester's, or "
+                     "the whole pool) is EXHAUSTED replays on this org's own deposited "
+                     "API key, same tier, instead of waiting for the plan to reset. "
+                     "`false`: those jobs wait. It never spends anyone else's key."))
 
 
 class GetOrgPlafondInput(BaseModel):
@@ -97,7 +97,7 @@ class SetOrgRepliInput(BaseModel):
                      "for the plan to reset — at most one such run at a time per "
                      "subscription, each capped in tokens. Never spends anyone else's "
                      "key: with no key deposited by this org, the jobs wait either way. "
-                     "`false` (default): those jobs wait for the reset."))
+                     "On by default. `false`: those jobs wait for the reset."))
 
 
 def _exiger(org_id: int, famille: str) -> None:
@@ -217,7 +217,7 @@ CAPABILITIES += [
         description=("Allow or refuse, for this org, that a job whose model subscription "
                      "is EXHAUSTED — the requester's own, or every lender of the org's "
                      "pool — replays on the org's OWN deposited API key at the same tier "
-                     "instead of waiting for the plan to reset. Off by default. A pause "
+                     "instead of waiting for the plan to reset. On by default. A pause "
                      "set by another org's tighter cap never triggers it; one replayed "
                      "run at a time per subscription, capped in tokens. It never spends "
                      "another party's key: without a key deposited BY THIS ORG the job "

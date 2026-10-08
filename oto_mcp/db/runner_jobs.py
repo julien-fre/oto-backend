@@ -790,7 +790,9 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
 #: continue d'ATTENDRE — ce module ne touche à rien d'autre.
 #:
 #: Décisions du 28/09/2026 (revue de #1086) :
-#: - le repli se CHOISIT : `repli_api` est FERMÉ par défaut, l'org l'ouvre ;
+#: - le repli se COUPE : `repli_api` est OUVERT par défaut (08/10/2026, renverse le
+#:   « fermé par défaut » du 28/09), l'org peut le fermer — il exige toujours la clé
+#:   déposée par l'org ;
 #: - il ne part que d'un forfait RÉELLEMENT épuisé, ou dont le seuil de l'org du
 #:   TRAVAIL est dépassé (`_pause_pour_l_org`) — la pause est portée par la
 #:   personne, et le seuil plus serré d'une autre org ne fait pas payer celle-ci ;
@@ -1005,10 +1007,10 @@ def candidats_repli_abonnement(org_id: Optional[int], org_ids: Optional[list],
                AND rj.attempts < rj.max_attempts
                AND rj.payload->>'model_family' = ANY(%s)
                AND (perso.limit_reset_at IS NOT NULL OR pool.reset_at IS NOT NULL)
-               AND EXISTS (SELECT 1 FROM org_model_subscription_modes r
-                            WHERE r.org_id = rj.org_id
-                              AND r.famille = rj.payload->>'model_family'
-                              AND r.repli_api)
+               AND NOT EXISTS (SELECT 1 FROM org_model_subscription_modes r
+                                WHERE r.org_id = rj.org_id
+                                  AND r.famille = rj.payload->>'model_family'
+                                  AND NOT r.repli_api)
                AND EXISTS (SELECT 1 FROM connector_credentials c
                             WHERE c.entity_type = 'org'
                               AND c.entity_id = rj.org_id::text
