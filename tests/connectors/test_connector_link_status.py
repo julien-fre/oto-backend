@@ -64,9 +64,9 @@ def test_le_perimetre_est_celui_quon_croit():
     # `sharepoint` (2026-10-05) : connexion Microsoft par personne, même patron.
     # `microsoft` (2026-10-08) : le porteur du compte, dont `sharepoint` devient un
     # service — chacun lit SON lien (les comptes qui ont autorisé le service).
-    # `outlook`, `outlook_calendar` (2026-10-08) : services suivants, même lecture.
+    # `outlook`, `outlook_calendar`, `teams` (2026-10-08) : services suivants, même lecture.
     assert _federated() == {"google", "instagram_meta", "meta_ads", "microsoft", "sharepoint",
-                            "outlook", "outlook_calendar",
+                            "outlook", "outlook_calendar", "teams",
                             "gmail", "drive", "sheets", "calendar", "tasks", "chat",
                             "bigquery"}
 

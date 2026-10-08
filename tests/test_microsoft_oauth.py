@@ -251,10 +251,10 @@ def test_url_de_retour_derivee_de_l_environnement(env):
     for carte in (PORTEUR, SERVICE):
         assert connector_flow.supports(carte)
         assert connector_flow.callback_url(carte) == _RETOUR
-    for carte in ("outlook", "outlook_calendar"):
+    # Chaque service du porteur est déclaré : chacun a SON flux, même retour.
+    assert env.auth.declared_services() == list(env.auth.SERVICES)
+    for carte in env.auth.SERVICES:
         assert connector_flow.callback_url(carte) == _RETOUR
-    # Une carte de service PAS ENCORE déclarée au registre n'a pas de flux.
-    assert not connector_flow.supports("teams")
 
 
 def test_state_ne_vaut_que_pour_ce_flux(env):
@@ -599,6 +599,24 @@ def test_rotation_rangee_sur_le_bon_compte_puis_cache(env):
     assert env.coeur.auth.refresh.call_count == 1, "le second appel sert du cache"
 
 
+def test_renew_renouvelle_malgre_le_cache_et_relit_les_scopes(env):
+    """Une approbation d'administrateur donnée après l'émission du jeton en cache n'est
+    portée que par un jeton NEUF — et `meta.scopes` ne l'apprend qu'au renouvellement."""
+    env.coffre.poser("jane@contoso.example", "RT1",
+                     {"scopes": "Team.ReadBasic.All Chat.ReadWrite User.Read"})
+    env.coeur.auth.refresh.return_value = _grant("AT2", "RT1",
+                                                 scope="Team.ReadBasic.All Chat.ReadWrite")
+    assert env.auth.access_token_for(SUB, "teams") == "AT2"
+    env.coeur.auth.refresh.return_value = _grant(
+        "AT3", "RT1", scope="Team.ReadBasic.All Chat.ReadWrite ChannelMessage.Read.All")
+    assert env.auth.access_token_for(SUB, "teams") == "AT2", "le cache sert"
+    assert env.auth.access_token_for(SUB, "teams", renew=True) == "AT3"
+    assert env.coeur.auth.refresh.call_count == 2
+    assert env.auth.has_scopes(env.coffre.meta("jane@contoso.example"),
+                               env.coeur.scopes.TEAMS_ADMIN)
+    assert env.auth.access_token_for(SUB, "teams") == "AT3", "le jeton neuf est en cache"
+
+
 def test_le_cache_d_un_compte_ne_sert_pas_l_autre(env):
     _deux_comptes(env)
     assert env.auth.access_token_for(SUB, SERVICE) == "AT:RT-JANE"
@@ -663,6 +681,23 @@ def test_statut_des_fiches(env):
     assert hint_service(SUB, None, None, {}) is None
     env.coffre.meta("jane@contoso.example")["health_ko"] = True
     assert "reconnect" in hint_service(SUB, None, None, {})
+
+
+def test_la_fiche_teams_dit_le_palier_admin_qui_manque(env):
+    hint = env.auth._etape_manquante_for("teams")
+    sans = "Team.ReadBasic.All Chat.ReadWrite User.Read offline_access"
+    env.coffre.poser("jane@contoso.example", "RT1", {"scopes": sans})
+    assert hint(SUB, None, None, {}) == (
+        "Reading channel messages requires your Microsoft admin's approval")
+    env.coffre.poser("john@fabrikam.example", "RT2",
+                     {"scopes": sans + " ChannelMessage.Read.All"})
+    assert hint(SUB, None, None, {}) == (
+        "Reading channel messages requires your Microsoft admin's approval for "
+        "jane@contoso.example")
+    env.coffre.meta("jane@contoso.example")["scopes"] += " ChannelMessage.Read.All"
+    assert hint(SUB, None, None, {}) is None
+    # Un service sans palier admin n'en dit rien.
+    assert env.auth.admin_scopes("outlook") == ()
 
 
 # ── Approbation d'un administrateur ─────────────────────────────────────────
@@ -816,7 +851,8 @@ def test_l_axe_account_est_accepte_sur_les_outils(env):
     from oto_mcp import call_axes
 
     for outil in ("sharepoint_file", "sharepoint_site", "outlook_message",
-                  "outlook_compose", "outlook_calendar_calendars", "outlook_calendar_event"):
+                  "outlook_compose", "outlook_calendar_calendars", "outlook_calendar_event",
+                  "teams_spaces", "teams_message"):
         assert "_account" in {a.param for a in call_axes.axes_for_call(outil)}, outil
 
 

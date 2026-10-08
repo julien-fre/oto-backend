@@ -142,6 +142,7 @@ _DECLARATIONS: tuple[str, ...] = (
     "sharepoint",
     "outlook",
     "outlook_calendar",
+    "teams",
     "promptwatch",
     # --- per-user sessions (outside resolve_api_key, dedicated storage) ------
     "crunchbase",

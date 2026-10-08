@@ -1,5 +1,5 @@
 """The Microsoft 365 account — the carrier that each Microsoft service (SharePoint &
-OneDrive, Outlook, Outlook Calendar…) borrows.
+OneDrive, Outlook, Outlook Calendar, Teams) borrows.
 
 A single, read-only tool, the twin of `google_accounts`: `microsoft_accounts` — the
 linked accounts and, for each, the services it has AUTHORISED and the directory it

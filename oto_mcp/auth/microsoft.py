@@ -84,9 +84,8 @@ logger = logging.getLogger("oto_mcp.auth.microsoft")
 CONNECTOR = "microsoft"
 
 #: Each service → the name of its scopes in the lib (`oto.tools.microsoft.scopes`).
-#: A service whose card is not declared yet (`providers/`) has no flow, no link
-#: state, no identity backend: those are derived from the REGISTRY (`credential_of`),
-#: its scopes are ready here for the lot that declares it.
+#: Its flow, link state and identity backend are derived from the REGISTRY
+#: (`credential_of`): a service whose card is not declared (`providers/`) has none.
 SERVICE_SCOPES: dict[str, str] = {
     "sharepoint": "FILES",
     "outlook": "MAIL",
@@ -96,6 +95,12 @@ SERVICE_SCOPES: dict[str, str] = {
 SERVICES: tuple[str, ...] = tuple(SERVICE_SCOPES)
 SERVICE_LABELS = {"sharepoint": "SharePoint & OneDrive", "outlook": "Outlook",
                   "outlook_calendar": "Outlook Calendar", "teams": "Teams"}
+#: A service's ADMINISTRATOR tier: the lib's scopes that no card requests at connection
+#: (only a tenant administrator can grant them, `admin_consent_url`), what they open,
+#: checked at use by the service's tools (`has_scopes`). Teams: reading channel messages.
+SERVICE_ADMIN_TIER: dict[str, tuple[str, str]] = {
+    "teams": ("TEAMS_ADMIN", "reading channel messages"),
+}
 
 _AUD = "microsoft"
 #: The administrator's approval: its own audience — a person's state is never worth an
@@ -180,9 +185,18 @@ def services_granted(scopes) -> list[str]:
 
 def has_scopes(meta: dict, scopes: tuple[str, ...]) -> bool:
     """Does this account (its vault `meta`) hold ALL these scopes? For a permission
-    that no card requests at connection — `scopes.TEAMS_ADMIN`, granted by a tenant
-    administrator (`admin_consent_url`) and checked at use by the Teams lot."""
+    that no card requests at connection — a service's administrator tier
+    (`admin_scopes`), granted by a tenant administrator (`admin_consent_url`) and
+    checked at use by the service's tools."""
     return _scopes().short(tuple(scopes)) <= _normalises((meta or {}).get("scopes"))
+
+
+def admin_scopes(service: str) -> tuple[str, ...]:
+    """The lib's scopes of `service`'s administrator tier — none for a service that
+    has no such tier."""
+    if service not in SERVICE_ADMIN_TIER:
+        return ()
+    return tuple(getattr(_scopes(), SERVICE_ADMIN_TIER[service][0]))
 
 
 def _union(ancien, nouveau) -> str:
@@ -365,9 +379,9 @@ def build_auth_url(sub: str, return_app: str = "", connector: str = CONNECTOR,
 def admin_consent_url(sub: str, services: tuple[str, ...], tenant: Optional[str] = None,
                       return_app: str = "", connector: Optional[str] = None) -> str:
     """The link a client's ADMINISTRATOR opens to approve, for their whole directory,
-    the permissions of `services` (+ `TEAMS_ADMIN` when Teams is among them: reading
-    channel messages needs it). Nobody's token comes out of it: each person still
-    connects from the card afterwards. `tenant` (normalized): the client's directory;
+    the permissions of `services`, their administrator tier included (`admin_scopes`:
+    Teams' `TEAMS_ADMIN`, which reading channel messages needs). Nobody's token comes
+    out of it: each person still connects from the card afterwards. `tenant` (normalized): the client's directory;
     without it, the administrator's own. `connector`: the card the answer returns to
     (default: the first service). Valid seven days (`ADMIN_LINK_TTL`)."""
     services = tuple(dict.fromkeys(services))
@@ -379,12 +393,9 @@ def admin_consent_url(sub: str, services: tuple[str, ...], tenant: Optional[str]
     if connector not in _cartes():
         raise ValueError(f"\"{connector}\" is not a Microsoft card.")
     org_id = _ctx_org(sub)
-    lib = _scopes()
-    demandes = list(lib.IDENTITY)
+    demandes = list(_scopes().IDENTITY)
     for svc in services:
-        demandes += service_scopes(svc)
-    if "teams" in services:
-        demandes += list(lib.TEAMS_ADMIN)
+        demandes += service_scopes(svc) + admin_scopes(svc)
     state = oauth_flow.sign_state(_AUD_ADMIN, {
         "sub": sub, "org": org_id, "app": oauth_flow.resolve_return_app(return_app),
         "c": connector, "s": list(services)})
@@ -593,9 +604,15 @@ def resolve_account(sub: str, service: str, account: Optional[str] = None):
     return rc, meta
 
 
-def access_token_for(sub: str, service: str, account: Optional[str] = None) -> str:
+def access_token_for(sub: str, service: str, account: Optional[str] = None, *,
+                     renew: bool = False) -> str:
     """A valid access token for the person, on the account the call designates
     (`resolve_account`), renewed if it expires in less than a minute.
+
+    `renew=True` renews it whatever the cache holds: an administrator's approval given
+    after the cached token was issued is only carried by a new one (and `meta.scopes`
+    only learns it at a renewal). For a tool that has a reason to believe so — once per
+    call, never in a loop.
 
     Refuses BEFORE any network call an account that has not authorized `service`,
     naming the card to open. Raises a `McpError` (no account, unknown account,
@@ -614,7 +631,7 @@ def access_token_for(sub: str, service: str, account: Optional[str] = None) -> s
     refresh_token = rc.key
     with _VERROU:
         cached = _JETONS.get(_cle(ligne, refresh_token))
-    if cached and cached[1] > time.time() + 60:
+    if cached and cached[1] > time.time() + 60 and not renew:
         return cached[0]
 
     coeur = _coeur()
@@ -700,6 +717,14 @@ def _etape_manquante_for(service: Optional[str]):
         morts = _morts(comptes)
         if morts:
             return f"Sign-in expired for {', '.join(c['account'] for c in morts)} — reconnect"
+        if service in SERVICE_ADMIN_TIER:
+            tier = admin_scopes(service)
+            sans = [c["account"] for c in comptes
+                    if not has_scopes(c.get("meta") or {}, tier)]
+            if sans:
+                pour = f" for {', '.join(sans)}" if len(comptes) > 1 else ""
+                return (f"{SERVICE_ADMIN_TIER[service][1].capitalize()} requires your "
+                        f"Microsoft admin's approval{pour}")
         return None
     return hint
 

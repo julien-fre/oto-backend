@@ -5,10 +5,10 @@ Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
 describe it). See `providers/_model.py` for the `Connector` contract.
 
 Same shape as the Google account (`providers/google.py`): each Microsoft service
-(`auth/microsoft.SERVICE_SCOPES`: SharePoint & OneDrive, Outlook, Outlook Calendar…) is
-a connector in its own right (its card, its activation, its selection, ITS consent:
-its scopes only, added to the same Entra consent of the account) and borrows the
-account from here (`credential_of="microsoft"`, see `service` below).
+(`auth/microsoft.SERVICE_SCOPES`: SharePoint & OneDrive, Outlook, Outlook Calendar,
+Teams) is a connector in its own right (its card, its activation, its selection, ITS
+consent: its scopes only, added to the same Entra consent of the account) and borrows
+the account from here (`credential_of="microsoft"`, see `service` below).
 
 What the account keeps for itself: the vault (one row per linked Microsoft account,
 the refresh token, the directory it signs in to), the `/api/microsoft/oauth/callback`

@@ -1,5 +1,5 @@
 """What the Microsoft 365 SERVICE tools share — SharePoint & OneDrive, Outlook, Outlook
-Calendar (and the next ones): the caller's token for ONE service, Graph's 4xx turned
+Calendar, Teams: the caller's token for ONE service, Graph's 4xx turned
 into a named refusal, the argument checks, the markdown body.
 
 A helper, not a connector: no `register()` (`tests/test_capabilities_drift.py`). Each
@@ -12,7 +12,7 @@ account that has not authorized THIS service, naming its card — before any Gra
 """
 from __future__ import annotations
 
-from typing import Callable, Optional, TypeVar
+from typing import Callable, NoReturn, Optional, TypeVar
 
 from mcp.types import ErrorData, INVALID_PARAMS
 
@@ -47,14 +47,18 @@ def raw(objet: dict) -> dict:
     return objet
 
 
-def token(service: str) -> str:
-    """The caller's access token for `service`, on the account the call designates."""
+def token(service: str, *, renew: bool = False) -> str:
+    """The caller's access token for `service`, on the account the call designates.
+    `renew=True` asks Entra for a new one whatever the cache holds (a permission granted
+    since the cached token was issued — `access_token_for`)."""
     from oto.tools.microsoft import MicrosoftAuthError
 
     from ..auth import microsoft as ms_auth
 
     sub = access.current_user_sub_or_raise()
     try:
+        if renew:
+            return ms_auth.access_token_for(sub, service, renew=True)
         return ms_auth.access_token_for(sub, service)
     except (RuntimeError, MicrosoftAuthError) as e:
         raise bad(str(e))
@@ -79,18 +83,23 @@ def upstream_message(e, label: str, conflict: Optional[str] = None) -> str:
     return f"Microsoft Graph rejected the request (HTTP {status}): {detail}"
 
 
+def raise_refusal(e, label: str, conflict: Optional[str] = None) -> NoReturn:
+    """Raises what a Graph error becomes for the agent: a 4xx → named refusal; 429 and
+    5xx stay what they are — the error taxonomy classifies them as retryable."""
+    if 400 <= e.status_code < 500 and e.status_code != 429:
+        raise bad(upstream_message(e, label, conflict)) from e
+    raise e
+
+
 def run(fn: Callable[[], T], label: str, conflict: Optional[str] = None) -> T:
-    """Graph 4xx → named refusal; a `ValueError` of the lib (an argument it refuses
-    before any write) → its message. 429 and 5xx stay what they are: the error
-    taxonomy classifies them as retryable."""
+    """`fn()`, a Graph error turned into its `refusal`; a `ValueError` of the lib (an
+    argument it refuses before any write) → its message."""
     from oto.tools.common.errors import UpstreamHTTPError
 
     try:
         return fn()
     except UpstreamHTTPError as e:
-        if 400 <= e.status_code < 500 and e.status_code != 429:
-            raise bad(upstream_message(e, label, conflict))
-        raise
+        raise_refusal(e, label, conflict)
     except ValueError as e:
         raise bad(str(e))
 
