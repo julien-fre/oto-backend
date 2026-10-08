@@ -254,3 +254,24 @@ def test_sans_marque_les_gabarits_portent_celle_de_l_instance(gabarit, monkeypat
     assert _GABARITS[gabarit](_SansMarque())
     assert "Acme" in envois[0]
     assert ">oto<" not in envois[0] and " oto." not in envois[0]
+
+
+@pytest.mark.parametrize("declaree, locale, attendu", [
+    ("en", None, "invitation to join Org on Acme"),
+    ("en", "fr", "invitation à rejoindre Org sur Acme"),   # le destinataire prime
+    ("", None, "invitation à rejoindre Org sur Acme"),     # rien de déclaré : FR
+    ("de", None, "invitation à rejoindre Org sur Acme"),   # inconnue : ignorée
+])
+def test_la_langue_de_l_instance_sert_l_invite_sans_preference(
+        monkeypatch, declaree, locale, attendu):
+    from oto_mcp import email as E
+    from oto_mcp import email_templates
+    monkeypatch.setenv("OTO_TENANT_PRIMAIRE_SLUG", "acme")
+    monkeypatch.setenv("OTO_BRAND_NAME", "Acme")
+    monkeypatch.setenv("OTO_BRAND_SITE", "acme.test")
+    monkeypatch.setenv("OTO_BRAND_LANGUE", declaree)
+    sujets = []
+    monkeypatch.setattr(E, "_send", lambda to, subject, html, **k:
+                        sujets.append(subject) or True)
+    assert email_templates.send_invite_email("x@y.test", "Org", "https://u", locale=locale)
+    assert sujets == [attendu]

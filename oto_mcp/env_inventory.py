@@ -229,6 +229,10 @@ _IDENTITE: tuple[Variable, ...] = (
     Variable("OTO_BRAND_SITE", Classe.IDENTITE, None,
              "Site du tenant primaire, hôte nu (`exemple.tld`) : pied des emails, lien "
              "du pied des pages publiques.", ("oto_mcp/email_brand.py:122",)),
+    Variable("OTO_BRAND_LANGUE", Classe.REGLAGE, "",
+             "Langue (`fr`|`en`) des emails du tenant primaire pour un destinataire "
+             "sans préférence connue (un invité sans compte). Vide = FR.",
+             ("oto_mcp/email_brand.py:131",)),
     Variable("OTO_TENANT_PRIMAIRE_SLUG", Classe.IDENTITE, None,
              "Slug du tenant PRIMAIRE de l'instance (#969, ADR 0070 §7.2) : la ligne 1 "
              "de `tenants`, semée à la naissance de la base sous ce slug et le nom "

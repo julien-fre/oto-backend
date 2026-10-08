@@ -43,7 +43,8 @@ champ transport sur l'expéditeur).
   primaire que sur UNE instance ; ailleurs c'est un slug tiers, donc le gabarit neutre
   « oto » — toutes les invitations d'une autre instance sont parties ainsi.
   ⚠️ Le primaire ne lit pas `tenants.brand` : son expéditeur est `OTO_MAIL_FROM`
-  (forme `Nom <adresse>` acceptée), pas `expediteur`.
+  (forme `Nom <adresse>` acceptée), pas `expediteur` ; sa langue pour un destinataire
+  sans préférence (un invité sans compte) est `OTO_BRAND_LANGUE`, pas `langue`.
   ⚠️ Une palette **incomplète est refusée EN ENTIER**, jamais complétée par la nôtre :
   sept teintes venues de deux chartes donnent un dessin que personne n'a dessiné, et
   qui ne se voit qu'à l'arrivée, chez le destinataire. Les teintes sont validées à la

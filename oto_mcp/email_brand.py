@@ -37,6 +37,8 @@ D'où ce qui suit, qui n'est pas un goût mais une contrainte de client :
 """
 from __future__ import annotations
 
+import os
+
 import logging
 import re
 from dataclasses import dataclass
@@ -118,7 +120,16 @@ def marque_instance() -> Marque:
     `OTO_BRAND_SITE` est un hôte nu (`exemple.tld`) : il s'affiche en pied d'email et
     devient `https://<site>` dans le pied des pages publiques."""
     return Marque(slug=primary_slug(), nom=nom_instance(), site=site_instance(),
-                  **_TEINTES_PRIMAIRES)
+                  langue=langue_instance(), **_TEINTES_PRIMAIRES)
+
+
+def langue_instance() -> str:
+    """La langue d'un destinataire sans préférence connue (un invité sans compte),
+    sous la marque de l'instance : `OTO_BRAND_LANGUE` (`fr`|`en`). Le primaire ne lit
+    pas `tenants.brand`, c'est donc ici qu'il la déclare. Vide ou inconnue ⟹ `""`,
+    les gabarits servent FR comme avant."""
+    langue = os.environ.get("OTO_BRAND_LANGUE", "").strip().lower()
+    return langue if langue in _LANGUES else ""
 
 
 def nom_instance() -> str:
