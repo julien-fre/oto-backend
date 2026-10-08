@@ -175,6 +175,19 @@ def test_org_settings_routes(monkeypatch):
                                    service="folk", payload={"a": 1}))["called"] == "ff_preview"
 
 
+def test_field_filter_set_relays_unmask_and_documents(monkeypatch):
+    # Seule façon de lever un champ du plancher serveur : le NOMMER. La face MCP
+    # ne relayait ni `unmask` ni `documents` — un admin ne pouvait rien lever
+    # depuis un agent, et son `rules: []` était refusé sans issue.
+    monkeypatch.setattr(orgs_field_filters, "_set_field_filter", _tag("ff_set"))
+    out = oc._org_settings(CTX, oc.OrgSettingsInput(
+        op="set", domain="field_filters", org_id=1, service="payfit", rules=[],
+        unmask=["iban", "absence_type"], documents=True))
+    assert out["inp"].unmask == ["iban", "absence_type"]
+    assert out["inp"].documents is True
+    assert out["inp"].rules == []
+
+
 def test_org_settings_guards():
     S = oc.OrgSettingsInput
     with pytest.raises(AuthzDenied) as e:

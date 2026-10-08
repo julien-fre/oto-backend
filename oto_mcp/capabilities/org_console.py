@@ -98,6 +98,8 @@ class OrgSettingsInput(BaseModel):
     service: Optional[str] = None            # set/preview
     rules: Optional[list[dict]] = None       # set/preview (None efface au set)
     salt: Optional[str] = None               # set/preview
+    unmask: Optional[list[str]] = None       # set : champs du plancher laissés en clair
+    documents: Optional[bool] = None         # set : servir les documents du service
     payload: Any = None                      # preview : échantillon réel
     # model_subscriptions :
     family: Optional[str] = None             # get/set : claude_subscription
@@ -136,7 +138,8 @@ def _org_settings(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
     service = _need(inp.service, "missing_service", f"`service` requis pour {inp.op}.")
     if inp.op == "set":
         return ff._set_field_filter(ctx, ff.SetFieldFilterInput(
-            org_id=inp.org_id, service=service, rules=inp.rules, salt=inp.salt))
+            org_id=inp.org_id, service=service, rules=inp.rules, salt=inp.salt,
+            unmask=inp.unmask, documents=inp.documents))
     if inp.payload is None:
         raise AuthzDenied(400, "missing_payload",
                           "`payload` (échantillon de réponse réel) requis pour preview.")
@@ -285,6 +288,9 @@ CAPABILITIES += [
             "true|false — org-wide mandatory MFA) | field_filters (redaction policy ADR "
             "0015: get returns policies, include_schemas=true adds the observed field "
             "catalog; set takes `service` + `rules` (None clears) + optional `salt`; "
+            "a server-default (floor) field leaves masking only when NAMED in "
+            "`unmask` [field, …] — `rules: []` alone lifts nothing — and the service's "
+            "documents are served only with `documents: true`; "
             "op=preview dry-runs rules against a real `payload` sample) | model_subscriptions "
             "(the org's consumption cap on members' personal model subscriptions, `family` "
             "e.g. claude_subscription: get returns `limit_pct` + `default`; set takes "
