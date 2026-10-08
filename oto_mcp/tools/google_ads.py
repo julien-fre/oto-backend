@@ -27,7 +27,7 @@ import asyncio
 import base64
 import hashlib
 import json
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import requests
 from fastmcp import FastMCP
@@ -36,6 +36,9 @@ from mcp.types import INVALID_PARAMS, ErrorData
 from .. import access
 from ..auth import google as google_oauth
 from ..mcp_errors import McpError
+
+if TYPE_CHECKING:  # the annotation only — never evaluated at runtime
+    from oto.tools.google.ads import GoogleAdsClient
 
 _SERVICE = "google_ads"
 # Each Google call (connect, read): under the 45 s of a REST invocation, token included.
@@ -68,7 +71,7 @@ def _client_for_user(account: Optional[str] = None):
     return GoogleAdsClient(creds.token, timeout=_HTTP_TIMEOUT)
 
 
-async def _client(account: Optional[str] = None):
+async def _client(account: Optional[str] = None) -> GoogleAdsClient:
     """Off the event loop (vault read + possible refresh), with its own deadline."""
     try:
         return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
