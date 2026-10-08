@@ -4,8 +4,8 @@ of the credential for the Microsoft service connectors.
 Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
 describe it). See `providers/_model.py` for the `Connector` contract.
 
-Same shape as the Google account (`providers/google.py`): each Microsoft service —
-SharePoint & OneDrive today, Outlook, Outlook Calendar and Teams in the next lots — is
+Same shape as the Google account (`providers/google.py`): each Microsoft service
+(`auth/microsoft.SERVICE_SCOPES`: SharePoint & OneDrive, Outlook, Outlook Calendar…) is
 a connector in its own right (its card, its activation, its selection, ITS consent:
 its scopes only, added to the same Entra consent of the account) and borrows the
 account from here (`credential_of="microsoft"`, see `service` below).
@@ -32,7 +32,7 @@ CONNECTOR = _c(
     # (`auth/microsoft.persist_grant`). Same provider reason as google.
     cardinality="multi",
     label="Microsoft 365 account",
-    help="the Microsoft 365 account that SharePoint & OneDrive borrows — each service "
+    help="the Microsoft 365 account that the Microsoft services borrow — each service "
          "connects from its own card",
     href="https://learn.microsoft.com/graph/overview",
 )

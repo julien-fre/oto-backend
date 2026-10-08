@@ -65,11 +65,11 @@ La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à optio
 >
 > **Troisième porteur depuis le 2026-10-08 : `microsoft`** (le compte Microsoft 365,
 > OAuth délégué par personne). `sharepoint` en devient le premier service
-> (`credential_of="microsoft"`) ; `outlook`, `outlook_calendar`, `teams` ont leurs scopes
-> prêts (`auth/microsoft.SERVICE_SCOPES`) mais ne sont PAS encore déclarés : une carte
-> sans outil se présenterait comme un connecteur sans en avoir les effets (demander le
-> courrier pour n'en rien faire). Ils naîtront avec leurs outils — flux, lien, indice et
-> identités se DÉRIVENT du registre (`credential_of="microsoft"`). Entra cumule les consentements d'un compte : un seul refresh token,
+> (`credential_of="microsoft"`), `outlook` et `outlook_calendar` les suivants, nés avec
+> leurs outils ; `teams` a ses scopes prêts (`auth/microsoft.SERVICE_SCOPES`) mais n'est
+> PAS encore déclaré : une carte sans outil se présenterait comme un connecteur sans en
+> avoir les effets. Il naîtra avec ses outils — flux, lien, indice et identités se
+> DÉRIVENT du registre (`credential_of="microsoft"`). Entra cumule les consentements d'un compte : un seul refresh token,
 > `meta.scopes` = l'union normalisée, relue à chaque renouvellement (`.default`).
 > Le coffre et les coordonnées d'application posés sous `sharepoint` sont COPIÉS au
 > démarrage (`copier_depuis_sharepoint`, idempotent par marque `copied_to`) : la base est

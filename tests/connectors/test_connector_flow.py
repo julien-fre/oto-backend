@@ -61,8 +61,9 @@ def test_les_connecteurs_a_flux_sont_ceux_quon_attend():
         # `sharepoint` (2026-10-05) : connexion Microsoft de la personne, même patron.
         # Le porteur `microsoft` (2026-10-08) : le compte Microsoft 365 garde le flux
         # du compte, `sharepoint` devient son premier service — un flux par carte,
-        # même retour, comme google et ses services.
-        "microsoft", "sharepoint",
+        # même retour, comme google et ses services. Outlook et Outlook Calendar
+        # (2026-10-08) : deuxième et troisième services, même flux.
+        "microsoft", "sharepoint", "outlook", "outlook_calendar",
         # Le compte `unipile` GARDE son flux multi-canal (code de production) ; le
         # split du 2026-08-28 ajoute un flux par canal, sans paramètre — le canal
         # est dérivé du connecteur au lieu d'être choisi dans une liste.

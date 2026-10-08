@@ -140,6 +140,8 @@ _DECLARATIONS: tuple[str, ...] = (
     # selection, ITS consent — `providers/microsoft.service`.
     "microsoft",
     "sharepoint",
+    "outlook",
+    "outlook_calendar",
     "promptwatch",
     # --- per-user sessions (outside resolve_api_key, dedicated storage) ------
     "crunchbase",

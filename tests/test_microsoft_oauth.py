@@ -251,8 +251,10 @@ def test_url_de_retour_derivee_de_l_environnement(env):
     for carte in (PORTEUR, SERVICE):
         assert connector_flow.supports(carte)
         assert connector_flow.callback_url(carte) == _RETOUR
+    for carte in ("outlook", "outlook_calendar"):
+        assert connector_flow.callback_url(carte) == _RETOUR
     # Une carte de service PAS ENCORE déclarée au registre n'a pas de flux.
-    assert not connector_flow.supports("outlook")
+    assert not connector_flow.supports("teams")
 
 
 def test_state_ne_vaut_que_pour_ce_flux(env):
@@ -551,7 +553,11 @@ def test_un_compte_qui_n_a_pas_autorise_le_service_est_refuse_en_nommant_la_cart
         env.auth.access_token_for(SUB, SERVICE)
     assert "has not yet authorized SharePoint & OneDrive" in str(e.value)
     assert "jane@contoso.example" in str(e.value)
+    with pytest.raises(RuntimeError, match="has not yet authorized Outlook Calendar"):
+        env.auth.access_token_for(SUB, "outlook_calendar")
     env.coeur.auth.refresh.assert_not_called()
+    # Le même compte, pour le service qu'il a autorisé : servi.
+    assert env.auth.access_token_for(SUB, "outlook") == "AT2"
 
 
 # ── Renouvellement ──────────────────────────────────────────────────────────
@@ -809,7 +815,8 @@ def test_microsoft_accounts_dit_les_services_de_chaque_compte(env, monkeypatch):
 def test_l_axe_account_est_accepte_sur_les_outils(env):
     from oto_mcp import call_axes
 
-    for outil in ("sharepoint_file", "sharepoint_site"):
+    for outil in ("sharepoint_file", "sharepoint_site", "outlook_message",
+                  "outlook_compose", "outlook_calendar_calendars", "outlook_calendar_event"):
         assert "_account" in {a.param for a in call_axes.axes_for_call(outil)}, outil
 
 

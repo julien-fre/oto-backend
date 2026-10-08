@@ -1,8 +1,8 @@
 """Microsoft 365 — a PERSON's connection (OAuth 2.0, delegated permissions).
 
 The ACCOUNT carrier `microsoft` (`providers/microsoft.py`) holds the vault, the
-callback and the application's coordinates; each SERVICE (`sharepoint` today,
-`outlook`, `outlook_calendar`, `teams` in the next lots) is a connector that borrows
+callback and the application's coordinates; each SERVICE (`SERVICE_SCOPES`: `sharepoint`,
+`outlook`, `outlook_calendar`, `teams`) is a connector that borrows
 it (`credential_of="microsoft"`) and asks for ITS scopes only — the Google pattern
 (`auth/google.py`), written for Entra.
 

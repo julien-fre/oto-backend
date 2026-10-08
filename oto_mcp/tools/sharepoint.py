@@ -30,10 +30,11 @@ from typing import Literal, Optional, Union
 from urllib.parse import urlsplit
 
 from fastmcp import FastMCP
-from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
-from ..mcp_errors import McpError
+from ._microsoft_graph import bad as _bad, need as _need, raw as _brut
+from ._microsoft_graph import refuse_ignored as _refuse_ignored
+from ._microsoft_graph import run, token
 
 # Read as PDF by default: Graph converts them, and it is the PDF's text that the agent
 # reads (the raw Office binary can't be read). A spreadsheet stays raw: it renders
@@ -42,36 +43,11 @@ _CONVERTIS = {"doc", "docx", "dot", "dotx", "odt", "rtf", "ppt", "pptx", "pps",
               "ppsx", "odp"}
 #: The Microsoft service these tools call: its scopes, its card (`auth/microsoft`).
 _SERVICE = "sharepoint"
+_LABEL = "SharePoint & OneDrive"
+_CONFLIT = ("an item already has this name — `conflict=\"rename\"` or "
+            "`\"replace\"` to override")
 _DOWNLOAD_MAX = 50 * 1024 * 1024
 _UPLOAD_MAX = 25 * 1024 * 1024
-
-
-def _bad(msg: str) -> McpError:
-    return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
-
-
-def _upstream_message(e) -> str:
-    status = e.status_code
-    body = e.body if isinstance(e.body, dict) else {}
-    detail = str((body.get("error") or {}).get("message") or e.body or "")[:400]
-    if status == 401:
-        return (f"Microsoft Graph rejects the token (HTTP 401): reconnect from "
-                f"your connectors, \"SharePoint & OneDrive\". {detail}").strip()
-    if status == 403:
-        return (f"Microsoft Graph denies access (HTTP 403): this Microsoft account does "
-                f"not have rights on this item, or its organization blocks oto. "
-                f"{detail}").strip()
-    if status == 404:
-        return f"Microsoft Graph: not found (HTTP 404). {detail}".strip()
-    if status == 409:
-        return (f"Microsoft Graph: an item already has this name (HTTP 409) — "
-                f"`conflict=\"rename\"` or `\"replace\"` to override. {detail}").strip()
-    return f"Microsoft Graph rejected the request (HTTP {status}): {detail}"
-
-
-def _brut(objet: dict) -> dict:
-    """`full=True`: the Graph object as upstream delivers it."""
-    return objet
 
 
 def _site(s: dict) -> dict:
@@ -100,19 +76,6 @@ def _item(i: dict) -> dict:
     }
 
 
-def _refuse_ignored(op: str, **provided) -> None:
-    """An argument provided that THIS op does not use is an intent error."""
-    for name, value in provided.items():
-        if value is not None:
-            raise _bad(f"op='{op}' does not use `{name}`.")
-
-
-def _need(value, name: str, op: str):
-    if value is None or (isinstance(value, str) and not value.strip()):
-        raise _bad(f"op='{op}' requires `{name}`.")
-    return value
-
-
 def _contenu(content_base64: Optional[str], content_text: Optional[str]) -> bytes:
     if (content_base64 is None) == (content_text is None):
         raise _bad("op='upload' requires `content_base64` OR `content_text` (only one).")
@@ -133,33 +96,17 @@ def _contenu(content_base64: Optional[str], content_text: Optional[str]) -> byte
 
 
 def register(mcp: FastMCP) -> None:
-    from oto.tools.common.errors import UpstreamHTTPError
-    from oto.tools.microsoft import FilesClient, MicrosoftAuthError
+    from oto.tools.microsoft import FilesClient
 
     from .. import file_content
-    from ..auth import microsoft as ms_auth
 
     def _client() -> FilesClient:
         """The Graph client of THIS caller, with their current token (renewed
         by `auth/microsoft.py` if it expires)."""
-        try:
-            jeton = ms_auth.access_token_for(access.current_user_sub_or_raise(),
-                                             _SERVICE)
-        except (RuntimeError, MicrosoftAuthError) as e:
-            raise _bad(str(e))
-        return FilesClient(jeton)
+        return FilesClient(token(_SERVICE))
 
     def _run(fn):
-        """Graph 4xx → named refusal. 429 and 5xx stay what they are: the
-        error taxonomy classifies them as retryable."""
-        try:
-            return fn()
-        except UpstreamHTTPError as e:
-            if 400 <= e.status_code < 500 and e.status_code != 429:
-                raise _bad(_upstream_message(e))
-            raise
-        except ValueError as e:
-            raise _bad(str(e))
+        return run(fn, _LABEL, _CONFLIT)
 
     def _drive_id(client: FilesClient, drive_id: Optional[str], user: Optional[str]) -> str:
         """The target drive: a library (`drive_id`), a colleague's OneDrive
