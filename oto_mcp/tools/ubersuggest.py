@@ -222,7 +222,9 @@ def register(mcp: FastMCP) -> None:
         are, the error taxonomy classifies them as retryable."""
         try:
             jeton = ub_auth.access_token_for(access.current_user_sub_or_raise())
-        except RuntimeError as e:
+        except (RuntimeError, ValueError) as e:
+            # RuntimeError: dead grant, core missing. ValueError: the authorization
+            # server refused the renewal for another reason (UbersuggestAuthError).
             raise _bad(str(e))
         c = ub_auth._coeur().UbersuggestClient(jeton)
         try:

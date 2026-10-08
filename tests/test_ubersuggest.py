@@ -340,6 +340,13 @@ def test_refus_amont_nomme_et_401_dit_de_reconnecter(outils):
         outils.fn("ubersuggest_account")()
 
 
+def test_renouvellement_refuse_autrement_est_un_refus_nomme(env, outils):
+    env.coeur.auth.refresh.side_effect = env.coeur.UbersuggestAuthError("invalid_client")
+    with pytest.raises(McpError, match="invalid_client"):
+        outils.fn("ubersuggest_account")()
+    outils.client.call.assert_not_called()
+
+
 def test_5xx_reste_ce_qu_il_est(outils):
     outils.client.call.side_effect = _UpstreamHTTPError(503, "down")
     with pytest.raises(_UpstreamHTTPError):
