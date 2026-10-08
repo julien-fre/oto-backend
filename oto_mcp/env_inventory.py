@@ -263,7 +263,13 @@ _REGLAGES: tuple[Variable, ...] = (
              "de l'instance (`1`, `true`, `yes`, `on`). Absente, vide ou un non = "
              "seulement les porteurs de l'option `claude_subscription` ; toute autre "
              "valeur lève.",
-             ("oto_mcp/capabilities/_abonnement.py:213",)),
+             ("oto_mcp/capabilities/_abonnement.py:205",)),
+    Variable("OTO_REPLI_API_PAR_DEFAUT", Classe.REGLAGE, "",
+             "Repli d'un travail d'abonnement Claude épuisé sur la clé API DÉPOSÉE par "
+             "son org, pour une org qui ne l'a jamais réglé (`1`, `true`, `yes`, `on`). "
+             "Absente, vide ou un non = ces travaux attendent la réinitialisation ; "
+             "l'org peut toujours l'ouvrir ou le couper. Toute autre valeur lève.",
+             ("oto_mcp/db/org_subscription_pool.py:75",)),
     Variable("OTO_EQUIPE_PAR_DEFAUT_TENANTS", Classe.REGLAGE, "",
              "Slugs de tenants (virgules) dont les membres d'équipe ne sont jamais "
              "« sans équipe » : faute d'équipe désignée, l'équipe du sub dans l'org "

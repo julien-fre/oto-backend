@@ -199,7 +199,8 @@ class TestOption:
         """Fermer en silence ferait recevoir un 403 à tous sans que l'exploitation le
         sache : la déclaration fausse se dit, en la nommant."""
         monkeypatch.setenv(_abonnement.ENV_OUVERT_A_TOUS, valeur)
-        with pytest.raises(_abonnement.OuvertureIllisible, match=_abonnement.ENV_OUVERT_A_TOUS):
+        from oto_mcp.interrupteurs import InterrupteurIllisible
+        with pytest.raises(InterrupteurIllisible, match=_abonnement.ENV_OUVERT_A_TOUS):
             _abonnement.ouvert(_PORTEUR)
 
 

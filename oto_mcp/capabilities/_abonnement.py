@@ -34,7 +34,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from .. import access, runner_models
+from .. import access, interrupteurs, runner_models
 from ..db import org_subscription_limits, org_subscription_pool
 from ..db import runner_jobs as db_runner_jobs
 from ..db import user_subscriptions
@@ -197,28 +197,12 @@ def servable(sub: Optional[str], famille: str) -> tuple[bool, Optional[str], Opt
     return False, statut, sandbox
 
 
-class OuvertureIllisible(RuntimeError):
-    """`ENV_OUVERT_A_TOUS` porte une valeur qui n'est ni un oui ni un non."""
-
-
-_OUI = ("1", "true", "yes", "on")
-_NON = ("", "0", "false", "no", "off")
-
-
 def ouvert_a_toute_l_instance() -> bool:
     """L'instance ouvre-t-elle le chemin à TOUT compte (`ENV_OUVERT_A_TOUS`) ? Lu à
     chaque appel : l'ouvrir ne demande pas de redémarrer. Une valeur qui n'est ni un oui
     ni un non LÈVE : `yes` mal orthographié fermerait le chemin en silence, et chacun
     recevrait un 403 sans que l'exploitation en sache rien."""
-    brut = os.environ.get(ENV_OUVERT_A_TOUS, "").strip().lower()
-    if brut in _OUI:
-        return True
-    if brut in _NON:
-        return False
-    raise OuvertureIllisible(
-        f"{ENV_OUVERT_A_TOUS}={brut!r} n'est ni un oui ({', '.join(_OUI)}) ni un non "
-        f"(absente, vide, {', '.join(n for n in _NON if n)}) : corrige la déclaration "
-        "de l'instance.")
+    return interrupteurs.oui_non(ENV_OUVERT_A_TOUS, os.environ.get(ENV_OUVERT_A_TOUS))
 
 
 def ouvert(sub: str) -> bool:

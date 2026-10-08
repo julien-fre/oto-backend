@@ -1790,10 +1790,15 @@ modèle, au même palier, payé aux jetons sur la clé API de l'org. Le repli le
   la première version, corrigé avant mise en service). Le réglage répond à « qui peut
   tourner ? », cette fonction à « qui PAIE ? ». Sans clé d'org : le travail **attend**,
   comme avant — jamais un échec dur.
-- **L'org le CHOISIT** : colonne `org_model_subscription_modes.repli_api`, **fermée
-  par défaut** (décision du 28/09/2026). Les clés d'org déposées en prod l'ont été pour
-  des agents API ; y déplacer des travaux d'abonnement serait une dépense que personne
-  n'a demandée. `oto_org_settings domain=model_subscriptions api_fallback=true`, ou
+- **L'org le CHOISIT** : colonne `org_model_subscription_modes.repli_api`. Sans
+  réglage de l'org, c'est le **défaut de l'instance** : `OTO_REPLI_API_PAR_DEFAUT`
+  (décision du 08/10/2026), fermé si l'instance ne déclare rien — les clés d'org
+  déposées l'ont été pour des agents API, et y déplacer des travaux d'abonnement serait
+  une dépense que personne n'a demandée (décision du 28/09) —, ouvert sur une instance
+  qui le déclare. Une ligne que le réglage du MODE fait naître naît à ce même défaut ;
+  les lignes existantes gardent leur valeur. Le même défaut sert l'écran
+  (`repli_api_actif`) et la réservation (paramètre de `candidats_repli_abonnement`).
+  `oto_org_settings domain=model_subscriptions api_fallback=true|false`, ou
   `PUT /api/orgs/{id}/model-subscriptions/{family}/api-fallback`. L'ouvrir sur une org
   sans ligne la fait naître à `personnel` — son mode effectif d'avant, rien d'autre ne
   bouge. Révision Alembic `0025_repli_api`, à jouer avant la fusion.
