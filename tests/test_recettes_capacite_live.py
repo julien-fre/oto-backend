@@ -1,6 +1,6 @@
 """`oto_recipe` de bout en bout sur un vrai store : écrire, proposer, publier (une page
-d'épreuve), exécuter, et les refus nommés — dont l'agent hébergé, borné à la liste
-d'outils de son travail."""
+d'épreuve), exécuter, et les refus nommés. Un agent hébergé est un client comme un autre :
+son jeton de délégation lance une recette comme une personne, dans l'org de son travail."""
 from __future__ import annotations
 
 import asyncio
@@ -131,10 +131,11 @@ def _travail(outils) -> tuple[int, int]:
     return job["id"], org
 
 
-def _sous_le_travail(monkeypatch, job_id):
-    from oto_mcp.capabilities import recipes
-    monkeypatch.setattr(recipes, "current_token_axes", lambda: {"token_kind": "delegation"})
-    monkeypatch.setattr(recipes, "current_delegation_job", lambda: job_id)
+def _sous_le_travail(monkeypatch):
+    """Simule le jeton de délégation d'un travail : rien dans la capacité ne doit en
+    dépendre (aucune règle propre aux agents)."""
+    from oto_mcp.auth import hooks
+    monkeypatch.setattr(hooks, "current_token_axes", lambda: {"token_kind": "delegation"})
 
 
 def _appels(outil: str) -> int:
@@ -144,42 +145,28 @@ def _appels(outil: str) -> int:
                             (SUB, outil)).fetchone()["n"]
 
 
-def test_un_jeton_de_delegation_sans_travail_est_refuse(capa):
-    """Un jeton émis avant qu'il porte son travail : la liste est introuvable, refus."""
-    from oto_mcp.capabilities._types import AuthzDenied
+def test_un_agent_heberge_lance_une_recette_comme_tout_client(capa):
+    """Sous un jeton de délégation : sample, test, publish et run passent, sans liste
+    d'outils à consulter — l'identité et l'org suffisent, comme pour `oto_call`."""
     appeler, monkeypatch = capa
-    _sous_le_travail(monkeypatch, None)
-    for kw in ({"op": "test", "recipe": CORPS}, {"op": "sample", "tool": "acme_people"}):
-        with pytest.raises(AuthzDenied) as e:
-            appeler(**kw)
-        assert _code(e) == "hosted_runs_not_supported"
-    # Les ops de stockage restent ouvertes : elles n'appellent aucun outil.
-    assert "recipes" in appeler(op="list")
-
-
-def test_un_agent_heberge_execute_une_recette_de_sa_liste(capa):
-    appeler, monkeypatch = capa
-    job, _ = _travail(["oto_recipe", "acme_people"])
     slug = f"acme-{uuid.uuid4().hex[:6]}"
     appeler(op="create", slug=slug, title="Acme people", recipe=CORPS)
-    _sous_le_travail(monkeypatch, job)
+    _sous_le_travail(monkeypatch)
+    assert appeler(op="sample", tool="acme_people", items="content")["shape"]["items_found"]
+    assert "receipt" in appeler(op="test", recipe=CORPS)
     appeler(op="publish", slug=slug, version=1)
     assert appeler(op="run", slug=slug, datastore=_table())["receipt"]["written"] == 4
-    assert appeler(op="sample", tool="acme_people", items="content")["shape"]["items_found"]
 
 
-def test_un_outil_hors_de_la_liste_est_refuse_avant_tout_appel(capa):
-    """`oto_call` dans la liste n'ouvre rien : la recette n'élargit pas l'agent."""
+def test_un_agent_heberge_reste_soumis_au_contrat(capa):
+    """Les refus du contrat valent pour tout client : une étape sur un outil de la
+    plateforme (`oto_call`) est refusée avant tout appel, sous jeton de délégation aussi."""
     from oto_mcp.capabilities._types import AuthzDenied
     appeler, monkeypatch = capa
-    job, _ = _travail(["oto_recipe", "oto_call"])
-    _sous_le_travail(monkeypatch, job)
-    avant = _appels("acme_people")
-    for kw in ({"op": "test", "recipe": CORPS}, {"op": "sample", "tool": "acme_people"}):
-        with pytest.raises(AuthzDenied) as e:
-            appeler(**kw)
-        assert _code(e) == "recipe_tool_not_in_agent_tools"
-    assert _appels("acme_people") == avant
+    _sous_le_travail(monkeypatch)
+    with pytest.raises(AuthzDenied) as e:
+        appeler(op="test", recipe={**CORPS, "tool": "oto_call"})
+    assert _code(e) == "invalid_recipe"
 
 
 def test_un_agent_heberge_ne_sort_pas_de_l_org_de_son_travail(capa):
@@ -193,7 +180,7 @@ def test_un_agent_heberge_ne_sort_pas_de_l_org_de_son_travail(capa):
     job, org = _travail(["oto_recipe", "acme_people"])
     autre = org_store.create_org(f"Acme other {uuid.uuid4().hex[:4]}", created_by=SUB)
     org_store.add_org_member(autre, SUB)
-    _sous_le_travail(monkeypatch, job)
+    _sous_le_travail(monkeypatch)
     avant = _appels("acme_people")
     jeton = verrou_org.poser(verrou_org.Verrou(sub=SUB, org_id=org, job_id=job))
     try:

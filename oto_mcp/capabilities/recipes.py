@@ -13,14 +13,11 @@ appeler, et son plafond de dépense (`limits.max_units`) est obligatoire. **Publ
 remplissage par colonne est gardé avec la version. **Seule une version publiée
 écrit** : une recette passée en ligne ne sert qu'à `test`.
 
-**Dans un agent hébergé, la recette reste dans la liste d'outils de son travail.** Le
-jeton d'un travail du runner porte son travail (`user_api_tokens.job_id`) ; l'outil que
-la recette appelle doit figurer EN TOUTES LETTRES dans `payload.tools` de ce travail,
-sinon refus nommé avant tout appel (`recipe_tool_not_in_agent_tools`). `oto_call` dans
-la liste n'ouvre rien : une recette ne doit pas élargir ce qu'un agent peut appeler. Un
-jeton de délégation qui ne porte pas son travail reste refusé
-(`hosted_runs_not_supported`). L'org, elle, est tenue par le verrou du jeton
-(`verrou_org.py`) : `org=` ailleurs et l'épinglage de l'org de la recette refusent.
+**Un agent hébergé est un client comme un autre.** Sous le jeton de son travail, une
+recette se juge comme pour une personne : l'identité du porteur, son org (tenue par le
+verrou du jeton, `verrou_org.py`) et ses droits sur le tableau ; les refus du contrat
+valent pour tous (outils de la plateforme et outils à modèle exclus, outil déclaré en
+lecture seulement). Aucune règle propre aux agents.
 """
 from __future__ import annotations
 
@@ -29,8 +26,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from .. import db, deprecations, session_org, tool_alias, tool_registry
-from ..auth.hooks import current_delegation_job, current_token_axes
+from .. import session_org, tool_alias, tool_registry
 from ..db import recipes as db_recipes
 from ..recipes import contrat, moteur
 from ._authz import BY_OP, ORG_MEMBER_OPT, SUB_ONLY
@@ -202,7 +198,6 @@ def _epingler_org(ctx: ResolvedCtx):
 
 async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: bool,
                     pages_max: Optional[int] = None) -> dict:
-    await _garde_du_travail(ctx, corps["tool"])
     fastmcp = _instance()
     jeton = _epingler_org(ctx)
     try:
@@ -216,34 +211,12 @@ async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: 
             session_org.reset_call_org(jeton)
 
 
-async def _garde_du_travail(ctx: ResolvedCtx, outil: str) -> None:
-    """Sous un jeton de délégation, l'outil de la recette doit être dans la liste de SON
-    travail — jugé AVANT tout appel, donc avant toute dépense. Rien pour une personne."""
-    if current_token_axes().get("token_kind") != "delegation":
-        return
-    job = current_delegation_job()
-    if job is None:
-        raise AuthzDenied(403, "hosted_runs_not_supported",
-                          "This hosted agent's token doesn't name its job, so its tool "
-                          "list can't be checked: recipes are refused. A job started "
-                          "after this release carries it.")
-    outils = await run_in_threadpool(db.outils_du_travail, job)
-    permis = {deprecations.tool_canonique(o)
-              for o in tool_alias.canonical_names(outils or [], ctx.sub)}
-    if deprecations.tool_canonique(outil) not in permis:
-        raise AuthzDenied(403, "recipe_tool_not_in_agent_tools",
-                          f"`{outil}` is not in this agent's tools: a recipe only calls a "
-                          "tool its agent may call itself (`oto_call` in the list doesn't "
-                          "count). Add it to the trigger's `tools`. Nothing was called.")
-
-
 async def _recipe(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
     if inp.op not in _APPELANTES:
         return await run_in_threadpool(_gerer, ctx, inp)
     if inp.op == "sample":
         outil = tool_alias.canonical(_besoin(inp.tool, "missing_tool", "`tool` is required."),
                                      tool_alias.prefix_for(ctx.sub))
-        await _garde_du_travail(ctx, outil)
         fastmcp = _instance()
         jeton = _epingler_org(ctx)
         try:
@@ -314,9 +287,10 @@ CAPABILITIES += [
             "key gets the recipe's key on the first run) · op=list · op=get · op=versions. "
             "`limits.max_units` is required: a hard cap on what the tool BILLS (its own "
             "units; `units_basis` in the receipt says when it falls back on the recipe's "
-            "count). Scope: your active org (default) or `scope='user'`. Inside a hosted "
-            "agent, the recipe's tool must be in the agent's own `tools` list. "
-            "PROVISIONAL surface."),
+            "count). op=run with a `datastore` WRITES rows into that table, with the "
+            "caller's own rights on it. Scope: your active org (default) or "
+            "`scope='user'`. A hosted agent runs recipes like any caller: its identity and "
+            "its job's org. PROVISIONAL surface."),
         mcp="oto_recipe",
     ),
 ]

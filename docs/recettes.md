@@ -6,7 +6,7 @@ description: >-
   d'un outil de connecteur arrivent dans un tableau — outil, arguments, pagination,
   correspondance champ → colonne, clé —, exécutée par le serveur sans qu'aucun modèle
   ne relise ni ne recopie les lignes. Ce que ce premier lot couvre (le mode `pull`),
-  ce qu'il borne (un agent hébergé, à la liste d'outils de son travail), et ce qui vient ensuite. À lire avant de
+  ce qu'il refuse à tout client, et ce qui vient ensuite. À lire avant de
   toucher `oto_mcp/recipes/`, `db/recipes.py` ou `capabilities/recipes.py`.
 ---
 
@@ -111,16 +111,13 @@ du dépôt : ajouter un connecteur, c'est écrire une recette — ni PR ni versi
   (`inline_recipe_cannot_write`).
 - **Le reçu ne porte que des comptes et des codes** : pages, éléments vus, unités,
   lignes écrites / mises à jour / laissées intactes / écartées, codes d'échec.
-- **Dans un agent hébergé, l'outil de la recette doit être dans la liste du travail.**
-  Le jeton d'un travail du runner porte son travail (`user_api_tokens.job_id`) ; `sample`,
-  `test`, `publish` et `run` vérifient que l'outil appelé figure EN TOUTES LETTRES dans
-  `payload.tools` de ce travail (noms canoniques, alias dépréciés compris), avant tout
-  appel — sinon `recipe_tool_not_in_agent_tools`. ⚠️ `oto_call` dans la liste n'ouvre
-  rien : sinon une recette rendrait à l'agent tous les outils de son porteur. Le
-  déclencheur liste donc `oto_recipe` ET l'outil de la recette. Un jeton de délégation qui
-  ne porte pas son travail (émis avant) reste refusé (`hosted_runs_not_supported`). L'org
-  est tenue par le verrou du jeton (`verrou_org.py`) : une recette pour une autre org du
-  porteur est refusée (`org_out_of_job`).
+- **`run` avec un `datastore` écrit dans ce tableau**, avec les droits de l'appelant sur
+  lui : donner `oto_recipe` à un agent, c'est lui donner ce qu'il peut déjà écrire.
+- **Un agent hébergé est un client comme un autre.** Sous le jeton de son travail, une
+  recette se juge comme pour une personne : l'identité du porteur, l'org du travail
+  (tenue par le verrou du jeton, `verrou_org.py` : une recette pour une autre org du
+  porteur est refusée, `org_out_of_job`) et ses droits sur le tableau. Les refus du
+  contrat valent pour tous. Aucune règle propre aux agents, comme pour `oto_call`.
 
 ## Ce qui vient ensuite
 

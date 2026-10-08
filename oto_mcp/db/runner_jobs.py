@@ -1612,20 +1612,6 @@ def get_job(job_id: int, org_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def outils_du_travail(job_id: int) -> Optional[list]:
-    """`payload.tools` d'un travail — la liste que le worker sert à son agent —, `[]`
-    quand la charge n'en porte pas (le worker sert alors rien : fail-closed), None si
-    le travail n'existe plus. Lu par id seul : l'appelant tient l'id de SON jeton de
-    délégation (`user_api_tokens.job_id`), pas d'une saisie."""
-    with _connect() as conn:
-        row = conn.execute("SELECT payload->'tools' AS tools FROM runner_jobs WHERE id = %s",
-                           (job_id,)).fetchone()
-    if row is None:
-        return None
-    outils = dict(row)["tools"]
-    return [o for o in outils if isinstance(o, str)] if isinstance(outils, list) else []
-
-
 # ── Le runner est-il ARMÉ pour cette org ? ───────────────────────────────────
 # La fenêtre au-delà de laquelle un worker n'est plus tenu pour présent. Un worker
 # sonde en continu (le claim revient `None` sur file vide et il repart) : quinze
