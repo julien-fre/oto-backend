@@ -38,15 +38,31 @@ CONNECTOR_FIELD_SCHEMA: dict[str, list[dict]] = {
     # Silae (FR payroll). ⚠️ No server floor: unlike `payfit`, nothing
     # is masked here until the org sets its policy (see
     # `field_filter_defaults.SERVER_DEFAULTS`). These fields are what the UI OFFERS.
+    # Names are the REAL keys of the Silae API (OpenAPI « Partenaires » 2026-09-28):
+    # the filter matches a key exactly (case-insensitive), so an invented name
+    # (`numeroSecu`, `nom`) masks nothing.
     "silae": [
+        {"name": "numeroSecuriteSociale", "label": "social security no. (NIR)", "type": "string", "sensitive": True},
+        {"name": "nomUsuel", "label": "usual last name", "type": "string", "sensitive": True},
+        {"name": "nomNaissance", "label": "birth name", "type": "string", "sensitive": True},
+        {"name": "nomMarital", "label": "married name", "type": "string", "sensitive": True},
+        {"name": "nomAffiche", "label": "displayed name", "type": "string", "sensitive": True},
+        {"name": "nomSalarie", "label": "employee name", "type": "string", "sensitive": True},
+        {"name": "prenom", "label": "first name", "type": "string", "sensitive": True},
+        {"name": "dateNaissance", "label": "date of birth", "type": "date", "sensitive": True},
+        {"name": "communeNaissance", "label": "place of birth", "type": "string", "sensitive": True},
+        {"name": "nomVoie", "label": "street", "type": "string", "sensitive": True},
+        {"name": "complementAdresse", "label": "address complement", "type": "string", "sensitive": True},
+        {"name": "email", "label": "email", "type": "string", "sensitive": True},
+        {"name": "eMailPro", "label": "work email", "type": "string", "sensitive": True},
+        {"name": "telephonePortable", "label": "mobile phone", "type": "string", "sensitive": True},
+        {"name": "telephoneDomicile", "label": "home phone", "type": "string", "sensitive": True},
         {"name": "iban", "label": "IBAN", "type": "string", "sensitive": True},
+        {"name": "iban2", "label": "IBAN (2nd)", "type": "string", "sensitive": True},
+        {"name": "iban3", "label": "IBAN (3rd)", "type": "string", "sensitive": True},
         {"name": "bic", "label": "BIC", "type": "string", "sensitive": True},
         {"name": "rib", "label": "RIB", "type": "string", "sensitive": True},
-        {"name": "salaire", "label": "salary", "type": "number", "sensitive": True},
-        {"name": "numeroSecu", "label": "social security no.", "type": "string", "sensitive": True},
-        {"name": "dateNaissance", "label": "date of birth", "type": "date", "sensitive": True},
-        {"name": "nom", "label": "last name", "type": "string", "sensitive": True},
-        {"name": "prenom", "label": "first name", "type": "string", "sensitive": True},
+        {"name": "salaireDeBase", "label": "base salary", "type": "number", "sensitive": True},
     ],
     # Folk (Otomata CRM). Contacts: identity + contact details.
     "folk": [
