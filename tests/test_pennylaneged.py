@@ -526,3 +526,33 @@ def test_le_texte_servi_ne_promet_plus_une_cause_unique():
     assert "firm" in doc and "minimal=true" in doc, (
         "la docstring de l'outil doit porter la même nuance que le refus : c'est "
         "elle que l'agent lit AVANT d'appeler")
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_un_refus_hors_societe_declare_la_session_morte(substrat, status):
+    """Relevé le 07/10/2026 : sept 401 Pennylane sur une route qui ne vise aucune
+    société, servis « la session est en cause », sans que la session soit peinte en
+    rouge — le statut vient du fetch de la page, aucune exception ne le porte."""
+    from oto_mcp.error_taxonomy import credential_rejected_in_chain
+
+    async def _eval(ctx, app, js, arg):
+        return {"status": status, "data": None}
+
+    substrat.setattr(P.browserbase, "run_page_eval", _eval)
+    with pytest.raises(McpError) as e:
+        asyncio.run(_tool("pennylaneged_companies")(minimal=True))
+    assert credential_rejected_in_chain(e.value) is True
+
+
+def test_un_refus_sur_une_societe_ne_declare_pas_la_session_morte(substrat):
+    """Un refus qui vise une société accuse d'abord l'espace d'ids : la session n'est
+    pas peinte en rouge pour lui."""
+    from oto_mcp.error_taxonomy import credential_rejected_in_chain
+
+    async def _eval(ctx, app, js, arg):
+        return {"status": 401, "data": None}
+
+    substrat.setattr(P.browserbase, "run_page_eval", _eval)
+    with pytest.raises(McpError) as e:
+        asyncio.run(_tool("pennylaneged_tree")(company_id=239568))
+    assert credential_rejected_in_chain(e.value) is False

@@ -209,10 +209,16 @@ async def _call_raw(app: str, path: str, method: str = "GET",
                 "`pennylaneged_connect_start`. To decide between the three WITHOUT "
                 "reconnecting: call the same tool on ANOTHER company. If it answers, "
                 "your session is fine and the problem is the id.")
-        raise _err(
+        err = _err(
             f"Pennylane refused {method.upper()} {path} ({st}) — this call targets no "
             "company in particular, so the session is indeed at fault: rerun "
             "`pennylaneged_connect_start`.")
+        # The status comes from the page's fetch, not from an exception: nothing in
+        # the chain carries the 401. Declared here, it marks the served session red
+        # (`error_taxonomy.credential_rejected_in_chain`) — and only here: a refusal
+        # aimed at a company is far more often the wrong id space (above).
+        err.credential_rejected = True
+        raise err
     if st == 404:
         # ⚠️ This block asserted a SINGLE cause — "the route no longer exists" — until
         # 2026-09-10, when a 404 on `/portfolio/crm/flow_companies` was measured while
