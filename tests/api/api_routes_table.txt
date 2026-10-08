@@ -616,6 +616,8 @@ GET,HEAD /api/admin/capabilities -> _handler
 OPTIONS /api/admin/capabilities -> options_handler
 GET,HEAD /api/me/agent-context -> _handler
 OPTIONS /api/me/agent-context -> options_handler
+GET,HEAD /api/orgs/{id}/context/preview -> _handler
+OPTIONS /api/orgs/{id}/context/preview -> options_handler
 GET,HEAD /api/me/agent-toolbox -> _handler
 OPTIONS /api/me/agent-toolbox -> options_handler
 GET,HEAD /api/me/guides -> _handler

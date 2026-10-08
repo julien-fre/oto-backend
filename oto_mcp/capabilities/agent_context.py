@@ -14,22 +14,26 @@ neuf) :
 
 REST-only : l'agent n'a pas besoin de s'appeler lui-même (il a déjà ce contexte) ;
 la surface sert le dashboard. `SUB_ONLY` → chacun voit le sien.
+
+`GET /api/orgs/{id}/context/preview` (#1194) rend la même composition pour un MEMBRE
+TYPE d'une org/équipe, vue par qui la gouverne (org_admin ou opérateur).
 """
 from __future__ import annotations
 
 import logging
 import types
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from .. import instructions as _instructions
-from .. import session_visibility, tool_registry
+from .. import group_store, org_store, providers, session_visibility, tool_registry
+from ..connectors import activation as connector_activation
 from .orgs import instructions as orgs_instructions
-from ._authz import SUB_ONLY
-from ._types import Capability, ResolvedCtx, RestBinding
+from ._authz import ORG_ADMIN_OF_OR_OPERATOR, SUB_ONLY
+from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 logger = logging.getLogger(__name__)
@@ -200,5 +204,85 @@ CAPABILITIES += [
                     "org=/project=/group= here: the toolbox and credentials follow the "
                     "switch, this prose does not.",
         mcp="oto_context",
+    ),
+]
+
+
+# ── Aperçu d'un MEMBRE TYPE (#1194) — la page « Instructions de l'org » ─────────
+# Ce que reçoit l'agent d'un membre d'une équipe, vu par qui la gouverne. Même
+# composition que la session (`instructions.member_preview_layers`, même exposition que
+# la visibilité : `connector_activation.exposed_for`), le sub en moins — d'où l'exclusion
+# de ce qui ne vaut que pour une personne, dite dans la description.
+class ContextPreviewInput(BaseModel):
+    org_id: int
+    group_id: Optional[int] = None
+
+
+class PreviewLayer(BaseModel):
+    """Une couche d'instructions, dans l'ORDRE où l'agent la reçoit, variables
+    communes résolues. `platform` = le socle (celui du tenant qui héberge l'org s'il en
+    a écrit un) ; `updated_at` null = le socle par défaut du code, jamais édité."""
+    scope: Literal["platform", "org", "group"]
+    body_md: str
+    updated_at: Optional[str] = None
+
+
+class PreviewConnector(BaseModel):
+    connector: str
+    label: str
+    category: str
+
+
+class ContextPreview(BaseModel):
+    """Ce que reçoit l'agent d'un membre type de l'org (et de l'équipe `group_id`).
+    Une couche au corps vide est ABSENTE (l'agent ne la reçoit pas). `connectors` =
+    les connecteurs EXPOSÉS à ce membre (plafonds plateforme et tenant, override d'org,
+    coupures de l'équipe), dans l'ordre du registre — pas ceux qu'il a installés."""
+    org_id: int
+    group_id: Optional[int] = None
+    layers: list[PreviewLayer]
+    connectors: list[PreviewConnector]
+
+
+def _context_preview(ctx: ResolvedCtx, inp: ContextPreviewInput) -> dict:
+    org = org_store.get_org(inp.org_id)
+    if not org:
+        raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
+    group = None
+    if inp.group_id is not None:
+        group = group_store.get_group(inp.group_id)
+        # Absente ou d'une autre org : même refus — l'aperçu ne dit pas qu'une équipe
+        # existe ailleurs.
+        if not group or int(group["org_id"]) != inp.org_id:
+            raise AuthzDenied(404, "group_not_in_org",
+                              f"Aucune équipe #{inp.group_id} dans l'org #{inp.org_id}.")
+    exposed = connector_activation.exposed_for(inp.org_id, inp.group_id)
+    return {
+        "org_id": inp.org_id, "group_id": inp.group_id,
+        "layers": _instructions.member_preview_layers(org, group),
+        "connectors": [{"connector": name, "label": c.label, "category": c.category}
+                       for name, c in providers.REGISTRY.items() if name in exposed],
+    }
+
+
+CAPABILITIES += [
+    Capability(
+        key="org.context.preview", handler=_context_preview, Input=ContextPreviewInput,
+        authz=ORG_ADMIN_OF_OR_OPERATOR("org_id"), Output=ContextPreview,
+        errors=(DeclaredError(404, "unknown_org", "the org does not exist"),
+                DeclaredError(404, "group_not_in_org",
+                              "`group_id` is not a team of this org")),
+        description="What the agent of a TYPICAL member of the org (and of team "
+                    "`group_id`, if given) receives: the instruction layers in delivery "
+                    "order (platform base, org readme, team readme), shared variables "
+                    "resolved ({{org}}, {{équipe}}, {{date}}), and the connectors exposed "
+                    "to that member. Per-person parts are EXCLUDED: the 'your oto "
+                    "context' section (role, keys, projects, runs), the profile card, "
+                    "the personal note, the member's installed selection, and the "
+                    "personal variables ({{user}}, {{rôle}}, {{connecteurs_actifs}}, "
+                    "{{projets_récents}}), left as written. The namespace catalog is "
+                    "not an instruction layer and is not returned. Org admin of this "
+                    "org, or platform operator.",
+        rest=RestBinding("GET", "/api/orgs/{id}/context/preview", {"id": "org_id"}),
     ),
 ]

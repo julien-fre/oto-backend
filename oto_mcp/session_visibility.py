@@ -170,14 +170,10 @@ def _compute_couches(sub: str, active_org, prof_org, role_plateforme: str,
     # Les tools plateforme (oto/data/guide) n'ont pas de connecteur au
     # registre → jamais gatés.
     try:
-        exposed = connector_activation.exposed_connectors(active_org)
         # Tier ÉQUIPE (ADR 0012, restrict-only) : l'équipe active peut COUPER un
-        # connecteur pour ses membres — on retranche ses coupures de l'exposé (jamais
-        # d'ajout : invariant monotone). Même régime fail-open que l'org.
-        active_group = access.current_group(sub)
-        if active_group is not None:
-            exposed = connector_activation.effective_for_group(
-                exposed, connector_activation.group_cut_connectors(active_group))
+        # connecteur pour ses membres — `exposed_for` retranche ses coupures de l'exposé
+        # (jamais d'ajout : invariant monotone). Même régime fail-open que l'org.
+        exposed = connector_activation.exposed_for(active_org, access.current_group(sub))
         couches[COUCHE_ACTIVATION] = {
             n for n in all_names
             if (c := providers.connector_for_namespace(namespace_of(n))) is not None

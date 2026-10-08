@@ -165,6 +165,17 @@ def effective_for_group(exposed: set[str], group_cut: set[str]) -> set[str]:
     return exposed - group_cut
 
 
+def exposed_for(org_id: Optional[int], group_id: Optional[int] = None) -> set[str]:
+    """What a member of `org_id` may see — the org's exposure (platform and tenant
+    ceilings included) minus the cuts of their team `group_id`, if any. The single
+    source of the ACTIVATION layer of a session's visibility (`session_visibility`)
+    and of the member-type preview (`org.context.preview`, #1194)."""
+    exposed = exposed_connectors(org_id)
+    if group_id is None:
+        return exposed
+    return effective_for_group(exposed, group_cut_connectors(group_id))
+
+
 # --- reads (self-managing) --------------------------------------------------
 
 def tenant_of_org(org_id: Optional[int], conn=None) -> Optional[str]:

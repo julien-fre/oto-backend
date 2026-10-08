@@ -122,14 +122,27 @@ def _tenant_entry(sub: Optional[str]):
         return None
     try:
         from . import tenancy
-        registre = tenancy.current()
-        slug = registre.tenant_of(sub)
-        if not slug or slug == tenancy.primary_slug():
-            return None
-        return next((e for e in registre.entries() if e.slug == slug), None)
+        return _entry_of_tenant(tenancy.current().tenant_of(sub))
     except Exception:  # noqa: BLE001 — un nom d'outil ne casse jamais un appel
         logger.warning("résolution du tenant impossible (fail-open)", exc_info=True)
         return None
+
+
+def _entry_of_tenant(slug: Optional[str]):
+    """L'entrée de registre du tenant TIERS `slug`, ou None (tenant primaire, aucun).
+    Sans filet : chaque appelant décide du sien."""
+    from . import tenancy
+    if not slug or slug == tenancy.primary_slug():
+        return None
+    return next((e for e in tenancy.current().entries() if e.slug == slug), None)
+
+
+def declared_prefix_of_tenant(slug: Optional[str]) -> str:
+    """Le préfixe DÉCLARÉ par le tenant `slug`, ou `""` — sans compte : l'aperçu de ce
+    que reçoit un membre type d'une org hébergée par ce tenant (#1194). Un registre
+    illisible LÈVE : c'est une lecture d'écran, pas un handshake."""
+    entry = _entry_of_tenant(slug)
+    return normalize_prefix(getattr(entry, "tool_prefix", "")) if entry else ""
 
 
 def _sert_un_worker() -> bool:

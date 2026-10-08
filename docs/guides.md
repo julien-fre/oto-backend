@@ -411,7 +411,14 @@ tournaient dans l'event loop. `render()` reste la surface STATIQUE (boot / fallb
 Tout **fail-open** (pas de sub/org/guide/DB → surface statique). Édition des blocs A/B : capacité
 `oto_admin_platform_instructions` (+ REST `/api/admin/platform-instructions`, `PLATFORM_ADMIN`) →
 éditeur dashboard `/platform/instructions`. Transparence : `/api/me/agent-context` rend le même
-artefact composé. **Reste (#54)** : anticipation **pilotée** (message proactif amorcé par l'admin).
+artefact composé. **Aperçu d'un membre type (#1194)** : `GET /api/orgs/{id}/context/preview
+?group_id=` (org_admin de l'org ou opérateur) rend les couches socle → readme d'org → readme
+d'équipe avec les MÊMES primitives (`instructions.member_preview_layers` : `_choisir_socle` sur le
+tenant de l'org, `_render_readme`, préfixe d'outils du tenant) et l'exposition de la visibilité
+(`connector_activation.exposed_for`), sans sub : le contexte personnel, la fiche, la note et les
+variables d'une personne (`{{user}}`, `{{rôle}}`, `{{connecteurs_actifs}}`, `{{projets_récents}}`,
+laissées telles quelles) en sont exclus, et sa lecture est STRICTE (une base illisible lève).
+**Reste (#54)** : anticipation **pilotée** (message proactif amorcé par l'admin).
 
 **Slots de procédure (ADR 0035, B1–B3 déployés).** Une procédure déclare ses **entités
 à instance** (quel tableau, quel compte de connecteur, quelle page Documents) en **JSON propre** :

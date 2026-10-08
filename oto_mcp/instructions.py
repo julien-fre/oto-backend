@@ -101,8 +101,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
     ET la substitution de variables. Chaque champ best-effort (jamais bloquant)."""
     from . import access, db, org_store, roles
 
-    org = org_store.get_org(org_id) or {}
-    org_name = org.get("name") or f"#{org_id}"
+    org_name = _org_label(org_store.get_org(org_id) or {}, org_id)
 
     user_name = ""
     if sub:
@@ -192,22 +191,36 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
     }
 
 
-def _apply_vars(body: str, ctx: dict) -> str:
+def _org_label(org: dict, org_id: int) -> str:
+    """Le nom d'org tel que le contexte le rend (`{{org}}`, en-tête du readme d'org)."""
+    return org.get("name") or f"#{org_id}"
+
+
+def _apply_vars(body: str, ctx: dict, *, personnel: bool = True) -> str:
     """Substitue les variables d'auto-contexte dans le guide d'org. Les tokens
-    inconnus sont laissés tels quels (intention de l'auteur)."""
+    inconnus sont laissés tels quels (intention de l'auteur).
+
+    `personnel=False` (aperçu d'un MEMBRE TYPE, #1194) : seules les variables communes
+    à tous les membres sont résolues (`{{org}}`, `{{équipe}}`, `{{date}}`) ; celles
+    d'une personne (`{{user}}`, `{{rôle}}`, `{{connecteurs_actifs}}` — ses clés —,
+    `{{projets_récents}}` — ses projets perso) restent telles quelles : chaque membre
+    reçoit les siennes, et aucune valeur ne vaudrait pour tous."""
     from datetime import date
-    projets = " · ".join(ctx.get("projects") or []) or "—"
-    role = ctx.get("role") or "—"
     repl = {
         "{{org}}": ctx["org_name"],
-        "{{user}}": ctx["user_name"] or "—",
         "{{équipe}}": ctx["group_name"] or "—",
         "{{equipe}}": ctx["group_name"] or "—",
-        "{{connecteurs_actifs}}": ", ".join(ctx["connectors"]) or "—",
-        "{{rôle}}": role, "{{role}}": role,          # rôle de l'user dans l'org (#6 C)
         "{{date}}": date.today().isoformat(),         # date du jour (session)
-        "{{projets_récents}}": projets, "{{projets_recents}}": projets,
     }
+    if personnel:
+        projets = " · ".join(ctx.get("projects") or []) or "—"
+        role = ctx.get("role") or "—"
+        repl.update({
+            "{{user}}": ctx["user_name"] or "—",
+            "{{connecteurs_actifs}}": ", ".join(ctx["connectors"]) or "—",
+            "{{rôle}}": role, "{{role}}": role,      # rôle de l'user dans l'org (#6 C)
+            "{{projets_récents}}": projets, "{{projets_recents}}": projets,
+        })
     for token, value in repl.items():
         if token in body:
             body = body.replace(token, value)
@@ -288,7 +301,7 @@ def _c_layers(sub: str | None, org_id: int | None) -> list[dict]:
         layers.append({"key": "profile", "label": "ta fiche", "body": profile_md})
     for key, label, part in (
         ("org", "readme de ton org",
-         _render_init_readme("org", org_id, f"{_README_ORG_HEADER} ({ctx['org_name']})", ctx)),
+         _render_init_readme("org", org_id, _org_readme_header(ctx), ctx)),
         ("group", "readme de ton équipe",
          _render_init_readme("group", ctx.get("group_id"), _group_readme_header(ctx), ctx)),
         ("user", "ta note",
@@ -305,6 +318,10 @@ def _block_c(sub: str | None, org_id: int | None) -> str:
     return "\n\n".join(l["body"] for l in _c_layers(sub, org_id))
 
 
+def _org_readme_header(ctx: dict) -> str:
+    return f"{_README_ORG_HEADER} ({ctx['org_name']})"
+
+
 def _group_readme_header(ctx: dict) -> str:
     """En-tête du readme d'équipe — suffixé du nom d'équipe s'il est connu."""
     name = f" ({ctx['group_name']})" if ctx.get("group_name") else ""
@@ -319,10 +336,16 @@ def _render_init_readme(scope: str, owner_id, header: str, ctx: dict) -> str:
     if not owner_id:
         return ""
     from . import guide_store
-    body = guide_store.init_guide_body(scope, owner_id)
+    return _render_readme(guide_store.init_guide_body(scope, owner_id), header, ctx)
+
+
+def _render_readme(body: str | None, header: str, ctx: dict, *, personnel: bool = True) -> str:
+    """Le rendu d'un readme « init » LU : `header` + corps, variables substituées ; ''
+    si corps vide. Partagé par la session (`_render_init_readme`, lecture fail-open)
+    et l'aperçu d'un membre type (`member_preview_layers`, lecture stricte)."""
     if not body:
         return ""
-    return f"{header}\n\n{_apply_vars(body, ctx)}"
+    return f"{header}\n\n{_apply_vars(body, ctx, personnel=personnel)}"
 
 
 def _org_readme_only(org_id: int) -> str:
@@ -361,25 +384,89 @@ def _socle_for(sub: str | None) -> tuple[str, str]:
     Fail-open à trois détentes, parce que ce chemin est celui du handshake : pas de
     tenant, pas de ligne, ou lecture en erreur ⟹ le socle plateforme, à l'octet près.
     """
-    plateforme = (_platform_block(KEY_SECRET_SAUCE, _SECRET_SAUCE), "socle oto")
-    if not sub:
-        return plateforme
-    try:
-        from . import guide_store, tenancy
-        registre = tenancy.current()
-        slug = registre.tenant_of(sub)
-        if not slug or slug == tenancy.primary_slug():
-            return plateforme
-        corps = guide_store.init_guide_body("tenant", slug)
-        if not corps:
-            return plateforme
-        nom = next((e.name for e in registre.entries()
-                    if e.slug == slug and e.name), slug)
-        return corps, f"socle {nom}"
-    except Exception:  # noqa: BLE001 — le handshake ne casse jamais là-dessus
-        logger.warning("socle de tenant illisible pour %s (fail-open)", sub,
-                       exc_info=True)
-        return plateforme
+    if sub:
+        try:
+            from . import tenancy
+            guide, label = _choisir_socle(tenancy.current().tenant_of(sub),
+                                          _lire_init_fail_open)
+            return guide["body_md"], label
+        except Exception:  # noqa: BLE001 — le handshake ne casse jamais là-dessus
+            logger.warning("socle de tenant illisible pour %s (fail-open)", sub,
+                           exc_info=True)
+    guide, label = _choisir_socle(None, _lire_init_fail_open)
+    return guide["body_md"], label
+
+
+def _choisir_socle(slug: str | None, lire) -> tuple[dict, str]:
+    """LE choix du socle servi aux comptes du tenant `slug` — `(guide, label)`, guide =
+    `{body_md, updated_at}` : celui du tenant TIERS s'il en a écrit un, sinon celui de
+    la plateforme (base, sinon le seed `_SECRET_SAUCE`, `updated_at` None).
+
+    `lire(scope, owner) -> {body_md, updated_at}` porte la politique de lecture : le
+    handshake lit fail-open (`_lire_init_fail_open`), l'aperçu d'un membre type
+    (`member_preview_layers`) lit strict et date chaque couche."""
+    from . import tenancy
+    if slug and slug != tenancy.primary_slug():
+        guide = lire("tenant", slug)
+        if guide["body_md"]:
+            nom = next((e.name for e in tenancy.current().entries()
+                        if e.slug == slug and e.name), slug)
+            return guide, f"socle {nom}"
+    guide = lire("platform", KEY_SECRET_SAUCE)
+    if not guide["body_md"]:
+        guide = {"body_md": _SECRET_SAUCE.strip(), "updated_at": None}
+    return guide, "socle oto"
+
+
+def _lire_init_fail_open(scope: str, owner) -> dict:
+    """Lecture du handshake : `guide_store.init_guide_body` (fail-open), sans date."""
+    from . import guide_store
+    return {"body_md": guide_store.init_guide_body(scope, owner) or "", "updated_at": None}
+
+
+def _lire_init_strict(scope: str, owner) -> dict:
+    """Lecture de l'aperçu : `guide_store.get_init_guide` — une base illisible LÈVE."""
+    from . import guide_store
+    guide = guide_store.get_init_guide(scope, owner)
+    return {"body_md": (guide["body_md"] or "").strip(), "updated_at": guide["updated_at"]}
+
+
+def member_preview_layers(org: dict, group: dict | None) -> list[dict]:
+    """Les couches d'instructions qu'un MEMBRE TYPE de l'org `org` (dans l'équipe
+    `group`, si donnée) reçoit, dans l'ORDRE d'injection — `[{scope, body_md,
+    updated_at}]`, `scope` ∈ platform | org | group, couches vides omises (#1194).
+
+    PAS une seconde composition : mêmes primitives que `session_layers` — choix du
+    socle (`_choisir_socle`, le tenant étant celui qui héberge l'org), en-têtes,
+    variables (`_render_readme`), noms d'outils du produit (`tool_alias`). Le sub en
+    moins, ce qui ne vaut que pour UNE personne est exclu : la section « Ton contexte
+    oto » (rôle, clés, projets, déroulés), la fiche, la note perso, et les variables
+    personnelles, laissées telles quelles (`_apply_vars(personnel=False)`). Le
+    catalogue des namespaces (dérivé du registre, identique pour tous) n'est pas une
+    couche d'instructions : il n'est pas rendu ici.
+
+    Lecture STRICTE : une base illisible lève — un aperçu muet passerait pour une
+    org sans instructions."""
+    from .connectors import activation as connector_activation
+    org_id = int(org["id"])
+    ctx = {"org_name": _org_label(org, org_id),
+           "group_name": ((group or {}).get("name") or "").strip()}
+    slug = connector_activation.tenant_of_org(org_id)
+    socle, _label = _choisir_socle(slug, _lire_init_strict)
+    couches = [{"scope": "platform", **socle}]
+    readmes = [("org", org_id, _org_readme_header(ctx))]
+    if group is not None:
+        readmes.append(("group", int(group["id"]), _group_readme_header(ctx)))
+    for scope, owner, header in readmes:
+        guide = _lire_init_strict(scope, owner)
+        body = _render_readme(guide["body_md"], header, ctx, personnel=False)
+        if body:
+            couches.append({"scope": scope, "body_md": body,
+                            "updated_at": guide["updated_at"]})
+    prefix = tool_alias.declared_prefix_of_tenant(slug)
+    if not prefix:
+        return couches
+    return [{**c, "body_md": tool_alias.rewrite_prose(c["body_md"], prefix)} for c in couches]
 
 
 def session_layers(sub: str | None, org_id: int | None) -> list[dict]:
