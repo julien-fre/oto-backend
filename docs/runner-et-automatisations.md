@@ -1716,6 +1716,21 @@ que le fournisseur rapporte, usage perso compris —, la même pour les deux fen
   franchie ; ce sont les travaux SUIVANTS qui attendent la réinitialisation, jamais une
   exécution coupée. Un réglage modifié vaut à partir du rapport suivant.
 
+**Un abonnement sert les orgs où il est OUVERT (08/10/2026).** La connexion (session,
+bac à sable) reste une par personne, mais en mode `personnel` elle ne sert que les orgs où
+la personne l'a ouverte, une à une : `PATCH /api/me/model-subscriptions/{family}`
+`{"used_in": [org_id, …]}` (l'ensemble, qui remplace ; membre de chaque org, sinon
+`403 not_org_member` ; porter l'option pour ouvrir), rendu par la liste (`used_in`). Table
+`user_model_subscription_orgs` (`sub, famille, org_id`). Ailleurs, la pose refuse
+(`subscription_not_used_here`) et la réservation fait ATTENDRE les travaux (`pending`,
+aucune tentative brûlée) — elle exige une ligne pour l'org du travail ET que la personne
+en soit toujours membre (une org quittée ne sert plus et ne se rend plus dans
+`used_in`). Seule la destruction du bac à sable (`?destroy=true`, `oublier`) referme
+toutes les orgs ; une simple déconnexion les garde ouvertes. Le pool ne
+passe pas par ici : un prêt est son propre consentement. Reprise de l'existant (révision
+`0046_abonnement_par_org`, à jouer AVANT le tag) : chaque abonnement est ouvert là où il
+servait déjà — un agent posé dessus, un travail en file, un prêt.
+
 **Le POOL d'org (25/09/2026).** Deux modes, réglés PAR ORG et par famille :
 `personnel` (défaut — tout ce qui précède, à l'octet près) et `pool` — les travaux de
 l'org tournent sur l'abonnement d'un membre qui l'a **prêté à cette org**.

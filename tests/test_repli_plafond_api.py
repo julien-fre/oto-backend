@@ -93,8 +93,20 @@ def _abonne(sub, *, statut="connected", reset=None, pret_a=(), epuise=True,
     return sub
 
 
-def _travail(org, sub, model="sub:sonnet", famille=_F):
+def _ouvrir(sub, org, famille=_F):
+    """L'abonnement personnel de `sub` OUVERT dans `org` (08/10/2026)."""
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        conn.execute("INSERT INTO user_model_subscription_orgs (sub, famille, org_id) "
+                     "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (sub, famille, org))
+
+
+def _travail(org, sub, model="sub:sonnet", famille=_F, ouvert=True):
+    """Un travail de `sub` dans `org` — son abonnement y est ouvert, sauf
+    `ouvert=False` (alors il ATTEND, et ne se replie pas)."""
     from oto_mcp import db
+    if ouvert:
+        _ouvrir(sub, org, famille)
     return db.enqueue_job(org, "start", sub=sub,
                           payload={"procedure": "p", "model": model,
                                    "model_family": famille})["id"]
@@ -151,6 +163,27 @@ def test_repli_personnel_plafond_futur(live):
     assert repli["reason"] == "paused_limit"
     assert repli["reset_at"] is not None
     assert _etat(jid)["status"] == "claimed"
+
+
+def test_pas_de_repli_dans_une_org_ou_l_abonnement_n_est_pas_ouvert(live):
+    """Revue du 08/10/2026 : ouvert dans A seulement, plafond atteint (par son usage
+    dans A), un travail qui ATTEND dans B parce que l'abonnement n'y est pas ouvert
+    ne part pas en repli sur la clé de B — il n'est pas bloqué par un plafond, il
+    attend une ouverture. Dans A, le même plafond se replie."""
+    oid_a = _org("p1o-a", "p1o-dem")
+    oid_b = _org("p1o-b", "p1o-dem")
+    _abonne("p1o-dem", statut="paused_limit", reset=_futur())
+    _ouvrir("p1o-dem", oid_a)
+    jid_b = _travail(oid_b, "p1o-dem", ouvert=False)
+    _cle_org(oid_b)
+
+    assert _repli(oid_b) is None, "B : l'abonnement n'y est pas ouvert, pas de repli"
+    assert _etat(jid_b)["status"] == "pending"
+
+    jid_a = _travail(oid_a, "p1o-dem")
+    _cle_org(oid_a)
+    row = _repli(oid_a)
+    assert row is not None and row["id"] == jid_a, "A : ouvert, le plafond se replie"
 
 
 def test_repli_personnel_plafond_ECHU_ne_replie_pas(live):
@@ -715,6 +748,7 @@ def test_le_plafond_declare_par_l_agent_l_emporte(live):
 
     oid = _org("p27", "p27-dem")
     _abonne("p27-dem", statut="paused_limit", reset=_futur())
+    _ouvrir("p27-dem", oid)
     jid = db.enqueue_job(oid, "start", sub="p27-dem",
                          payload={"procedure": "p", "model": "sub:sonnet",
                                   "model_family": _F, "max_tokens": 2_000_000})["id"]

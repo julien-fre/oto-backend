@@ -108,6 +108,12 @@ class PlafondInput(BaseModel):
                            "usable right now — never your tier or your usage. "
                            "Removing an org applies from its next job; a running one "
                            "is never cut. Omitted leaves it unchanged."))
+    used_in: Optional[list[int]] = Field(
+        None, description=("The orgs where this subscription runs YOUR agents (the org's "
+                           "personal mode) — the whole set, replacing the previous one. "
+                           "Connecting doesn't open it everywhere: each org is opened "
+                           "on its own, by you, and only orgs you are a member of. "
+                           "Omitted leaves it unchanged."))
 
 
 class Abonnement(BaseModel):
@@ -133,6 +139,10 @@ class Abonnement(BaseModel):
         default_factory=list,
         description=("The orgs whose pool you lend this subscription to. Each lender's "
                      "own cap still applies to their account."))
+    used_in: list[int] = Field(
+        default_factory=list,
+        description=("The orgs where this subscription runs your agents. In any other "
+                     "org, agents on it can't be set up and their jobs wait."))
     waiting_jobs: int = Field(
         0, description=("How many of your jobs are queued on this subscription right "
                         "now. While you are signed out, need to reconnect, or wait on "
@@ -166,6 +176,7 @@ def _complet(sub: str, ligne: dict) -> dict:
     """Un abonnement tel que l'écran le montre : son état, ses prêts, sa file."""
     return {**_servi(ligne),
             "lent_to": db.org_subscription_pool.orgs_pretees(sub, ligne["famille"]),
+            "used_in": db.user_subscriptions.orgs_servies(sub, ligne["famille"]),
             "waiting_jobs": db.travaux_en_attente_d_abonnement(sub, ligne["famille"])}
 
 
@@ -256,14 +267,15 @@ def _retirer(ctx: ResolvedCtx, inp: AbonnementInput) -> dict:
 
 
 def _exiger_membre_de(sub: str, org_ids: list[int]) -> None:
-    """On ne prête qu'aux orgs dont on est membre — et le pool ne sert, de toute
-    façon, que tant qu'on l'est (`org_subscription_pool.PRET_VIVANT`)."""
+    """On ne prête son abonnement, et on ne l'ouvre, qu'aux orgs dont on est membre —
+    et il ne sert, de toute façon, que tant qu'on l'est
+    (`org_subscription_pool.PRET_VIVANT`, `runner_jobs._ABONNEMENT_OUVERT_ICI`)."""
     etrangeres = sorted({o for o in org_ids if not org_store.get_org_role(o, sub)})
     if etrangeres:
         raise AuthzDenied(
             403, "not_org_member",
             f"tu n'es pas membre de l'org {', '.join(f'#{o}' for o in etrangeres)} : "
-            "on ne prête son abonnement qu'au pool d'une org dont on est membre.")
+            "on ne prête ni n'ouvre son abonnement que dans une org dont on est membre.")
 
 
 def _plafonner(ctx: ResolvedCtx, inp: PlafondInput) -> dict:
@@ -273,9 +285,9 @@ def _plafonner(ctx: ResolvedCtx, inp: PlafondInput) -> dict:
     compte aussi quand il sert le pool d'une org."""
     _exiger_famille(inp.family)
     poser_plafond = "limit_pct" in inp.model_fields_set
-    if not poser_plafond and inp.lent_to is None:
+    if not poser_plafond and inp.lent_to is None and inp.used_in is None:
         raise AuthzDenied(400, "nothing_to_change",
-                          "rien à changer : envoie `limit_pct`, `lent_to`, ou les deux.")
+                          "rien à changer : envoie `limit_pct`, `lent_to` ou `used_in`.")
     if poser_plafond:
         _abonnement.exiger_limite_valide(inp.limit_pct)
     if inp.lent_to:
@@ -283,6 +295,9 @@ def _plafonner(ctx: ResolvedCtx, inp: PlafondInput) -> dict:
         # connecter, aux personnes qui portent l'option. Retirer ses prêts, jamais.
         _abonnement.exiger_ouvert(ctx.sub, inp.family)
         _exiger_membre_de(ctx.sub, inp.lent_to)
+    if inp.used_in:
+        _abonnement.exiger_ouvert(ctx.sub, inp.family)
+        _exiger_membre_de(ctx.sub, inp.used_in)
     ligne = db.user_subscriptions.get_subscription(ctx.sub, inp.family)
     if not ligne:
         raise AuthzDenied(404, "not_connected",
@@ -292,6 +307,8 @@ def _plafonner(ctx: ResolvedCtx, inp: PlafondInput) -> dict:
                                                    inp.limit_pct) or ligne
     if inp.lent_to is not None:
         db.org_subscription_pool.poser_prets(ctx.sub, inp.family, inp.lent_to)
+    if inp.used_in is not None:
+        db.user_subscriptions.poser_orgs_servies(ctx.sub, inp.family, inp.used_in)
     return _complet(ctx.sub, ligne)
 
 
@@ -314,9 +331,10 @@ never sees your credentials. Open to named people only."""
 _DOC_CODE = """Finish connecting a model subscription with the code the provider showed.
 
 The code is single-use and only works inside your sandbox. On success the
-subscription is `connected` and your jobs on it can run."""
+subscription is `connected`; your agents run on it in the orgs where you opened it
+(`used_in`)."""
 
-_DOC_PLAFOND = """Set YOUR own consumption cap on a model subscription, and/or the orgs you lend it to.
+_DOC_PLAFOND = """Set YOUR own consumption cap on a model subscription, the orgs where it runs your agents, and/or the orgs you lend it to.
 
 `limit_pct`: a share, in % (1..100), of your provider account's TOTAL usage — the
 5-hour and 7-day windows the provider reports, your personal use included (`null`
@@ -332,7 +350,12 @@ takes the least recently used free lender, so your subscription runs one job at 
 time, yours included. Your cap applies to those jobs too. Removing an org applies
 from its next job.
 
-Send at least one of the two; an omitted field is left unchanged."""
+`used_in`: the orgs where this subscription runs YOUR agents (an org in personal
+mode) — the whole set, replacing the previous one. Connecting opens it nowhere: each
+org is opened on its own, by you, and only orgs you are a member of; elsewhere your
+agents on it are refused at setup and their jobs wait. Leaving an org closes it there.
+
+Send at least one of the three; an omitted field is left unchanged."""
 
 _DOC_RETIRER = """Sign out of a model subscription, or destroy its sandbox.
 
@@ -372,11 +395,12 @@ CAPABILITIES += [
             DeclaredError(400, "unknown_family",
                           "une famille qui n'est pas servie par abonnement"),
             DeclaredError(400, "invalid_limit", "`limit_pct` hors de 1..100"),
-            DeclaredError(400, "nothing_to_change", "ni `limit_pct` ni `lent_to`"),
+            DeclaredError(400, "nothing_to_change", "ni `limit_pct`, ni `lent_to`, ni `used_in`"),
             DeclaredError(403, "subscription_not_enabled",
                           "prêter n'est pas ouvert à cette personne"),
             DeclaredError(403, "not_org_member",
-                          "`lent_to` nomme une org dont la personne n'est pas membre"),
+                          "`lent_to` ou `used_in` nomme une org dont la personne n'est "
+                          "pas membre"),
             DeclaredError(404, "not_connected",
                           "aucun abonnement de cette famille pour cette personne"),
         ),

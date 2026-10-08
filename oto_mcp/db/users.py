@@ -292,6 +292,8 @@ _PK_SUB_TABLES = (
     # Ses PRÊTS au pool de ses orgs le suivent aussi : un prêt est un consentement, il
     # ne se redemande pas parce que le compte a changé d'identifiant.
     ("user_model_subscription_loans", "sub", ("famille", "org_id")),
+    # Et les orgs où il sert : même raison, c'est un choix de la personne.
+    ("user_model_subscription_orgs", "sub", ("famille", "org_id")),
     ("connector_account_grants", "owner_sub", ("provider", "grantee_sub")),
     ("connector_account_grants", "grantee_sub", ("owner_sub", "provider")),
     # Le même prêt, cible GROUPE (oto#40) : `owner_sub` entre dans la PK
