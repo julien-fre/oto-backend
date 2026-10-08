@@ -22,6 +22,7 @@ the result goes back through field redaction (FieldRedactionMiddleware).
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 from fastmcp import FastMCP
@@ -218,10 +219,21 @@ def _value_error(e: ValueError) -> McpError:
     if location is not None:
         return McpError(ErrorData(code=INVALID_PARAMS, message=(
             f"The API redirected ({getattr(e, 'status', '3xx')}) to "
-            f"{location or 'an unnamed target'} — redirects are never followed, the "
-            "connector's auth would go with them. If that target is intended, call "
-            "its path directly.")))
+            f"{_cible_sure(location) or 'an unnamed target'} — redirects are never "
+            "followed, the connector's auth would go with them. If that target is "
+            "intended, call its path directly.")))
     return McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
+
+
+def _cible_sure(location: str) -> str:
+    """Scheme://host[:port]/path only: a 3xx often keeps the original query, so the
+    key this connector injects as a parameter (or a userinfo) would otherwise reach
+    the agent and `tool_calls.error`. A relative target keeps its path alone."""
+    p = urlsplit(location or "")
+    host = p.hostname or ""
+    if host and p.port:
+        host = f"{host}:{p.port}"
+    return urlunsplit((p.scheme, host, p.path, "", ""))
 
 
 def _upstream_error(e: requests.HTTPError) -> McpError:

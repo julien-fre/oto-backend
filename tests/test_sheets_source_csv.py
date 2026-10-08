@@ -164,7 +164,7 @@ def test_le_plafond_de_taille(connecteur_http, feuille, monkeypatch):
 
 def test_une_redirection_est_refusee(connecteur_http, feuille):
     connecteur_http["reponses"][:] = [_Rep(302, headers={"Location": "https://ailleurs.test/"})]
-    with pytest.raises(McpError, match="redirect refused"):
+    with pytest.raises(McpError, match="redirected"):
         _ecrire(range="A1", source=SOURCE)
     feuille.write.assert_not_called()
 
@@ -187,3 +187,15 @@ def test_un_csv_pas_en_utf8_est_refuse(connecteur_http, feuille):
 def test_un_chemin_absolu_est_refuse(feuille):
     with pytest.raises(McpError, match="path"):
         _ecrire(range="A1", source={"kind": "http", "path": "https://ailleurs.test/x"})
+
+
+def test_une_redirection_ne_rend_pas_la_cle_de_sa_requete(connecteur_http, feuille):
+    """Un 3xx garde souvent la requête d'origine : la Location rendue ne doit porter
+    ni la clé injectée en paramètre ni une userinfo."""
+    connecteur_http["reponses"][:] = [_Rep(302, headers={
+        "Location": "https://u:pw@ailleurs.test/x?api_key=SECRET"})]
+    with pytest.raises(McpError) as e:
+        _ecrire(range="A1", source=SOURCE)
+    msg = str(e.value)
+    assert "SECRET" not in msg and "pw" not in msg and "ailleurs.test/x" in msg
+    feuille.write.assert_not_called()

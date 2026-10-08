@@ -110,3 +110,17 @@ def test_une_autre_erreur_de_valeur_reste_telle_quelle():
 
     assert _value_error(ValueError("path must start with /")).error.message == \
         "path must start with /"
+
+
+def test_une_redirection_refusee_ne_rend_ni_la_requete_ni_les_identifiants():
+    """Un 3xx garde souvent la requête d'origine, où le connecteur injecte sa clé :
+    le message rendu à l'agent (et journalisé) ne doit jamais la porter."""
+    from oto_mcp.tools import http
+
+    err = http._value_error(_Redirige(
+        302, "https://u:pw@other.test:8443/v2/x?api_key=SECRET#f"))
+    msg = err.error.message
+    assert "SECRET" not in msg and "pw" not in msg
+    assert "https://other.test:8443/v2/x" in msg
+    rel = http._value_error(_Redirige(301, "/v2/y?api_key=SECRET")).error.message
+    assert "SECRET" not in rel and "/v2/y" in rel

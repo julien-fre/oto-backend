@@ -240,7 +240,10 @@ def _from_http(src: dict, max_bytes: int) -> ResolvedFile:
     try:
         data, ctype = client.get_raw(path, params, max_bytes=max_bytes)
     except ValueError as e:
-        raise FileSourceError(f"source http : {e}") from None
+        # Même traduction que `http_get` : une redirection refusée ne rend que
+        # schéma://hôte/chemin, jamais la requête qui peut porter la clé.
+        raise FileSourceError(
+            f"source http : {connecteur_http._value_error(e).error.message}") from None
     except requests.HTTPError as e:
         raise FileSourceError(
             f"source http : {connecteur_http._upstream_error(e).error.message}") from None
