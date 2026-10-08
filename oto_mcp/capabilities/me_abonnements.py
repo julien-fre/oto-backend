@@ -103,9 +103,11 @@ class PlafondInput(BaseModel):
         None, description=("The orgs whose POOL you lend this subscription to — the "
                            "whole set, replacing the previous one (`[]` lends to none). "
                            "Opt-in, per org: it serves an org's jobs only while that "
-                           "org runs in `pool` mode and you are a member. Removing an "
-                           "org applies from its next job; a running one is never cut. "
-                           "Omitted leaves it unchanged."))
+                           "org runs in `pool` mode and you are a member. Its members "
+                           "then see THAT you lend and whether your subscription is "
+                           "usable right now — never your tier or your usage. "
+                           "Removing an org applies from its next job; a running one "
+                           "is never cut. Omitted leaves it unchanged."))
 
 
 class Abonnement(BaseModel):

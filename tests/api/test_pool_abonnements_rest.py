@@ -126,6 +126,59 @@ def test_un_admin_passe_l_org_en_pool_et_un_membre_le_lit(client, org, abonne, o
     assert lu["limit_pct"] == 80, "le plafond n'a pas bougé : un geste par réglage"
 
 
+def test_la_lecture_dit_QUI_prete_et_dans_quel_etat(client, org, abonne, option):
+    """Une ligne par prêteur, en tout mode : qui partage, et s'il est utilisable
+    maintenant — jamais son palier, son état ni son usage (décision du 08/10/2026)."""
+    from oto_mcp.db import org_subscription_pool as P
+    from oto_mcp.db import user_subscriptions as US
+    o = org
+    P.poser_mode(o["id"], _F, "personnel", o["admin"])
+    option.add(o["membre"])
+    client.patch(f"{_ME}/{_F}", json={"lent_to": [o["id"]]}, headers=_h(o["membre"]))
+
+    lu = client.get(o["route"], headers=_h(o["admin"])).json()
+    assert lu["lenders"] == [{"sub": o["membre"], "usable_now": True}]
+    assert lu["pool_size"] == 1
+    # même forme pour un membre que pour l'admin : personne ne lit l'abonnement d'autrui
+    assert client.get(o["route"], headers=_h(o["membre"])).json()["lenders"] == \
+        lu["lenders"]
+
+    US.marquer_statut(o["membre"], _F, US.DECONNECTE)
+    lu = client.get(o["route"], headers=_h(o["membre"])).json()
+    assert lu["lenders"] == [{"sub": o["membre"], "usable_now": False}], \
+        "un prêteur inutilisable reste une ligne, sans dire pourquoi"
+    assert lu["pool_size"] == 0, "pool_size = le compte des utilisables"
+
+    client.patch(f"{_ME}/{_F}", json={"lent_to": []}, headers=_h(o["membre"]))
+    assert client.get(o["route"], headers=_h(o["admin"])).json()["lenders"] == []
+
+
+def test_au_plafond_l_echeance_decide_sans_etre_servie(client, org, abonne, option):
+    """« Au plafond jusqu'à … » dirait à toute l'org l'usage TOTAL d'un compte : le
+    plafond décide de `usable_now`, son échéance n'est jamais servie."""
+    from datetime import datetime, timedelta, timezone
+
+    from oto_mcp.db import user_subscriptions as US
+    o = org
+    option.add(o["membre"])
+    client.patch(f"{_ME}/{_F}", json={"lent_to": [o["id"]]}, headers=_h(o["membre"]))
+    try:
+        demain = datetime.now(timezone.utc) + timedelta(days=1)
+        US.marquer_statut(o["membre"], _F, US.PLAFOND, limit_reset_at=demain)
+        lu = client.get(o["route"], headers=_h(o["membre"])).json()
+        assert lu["lenders"] == [{"sub": o["membre"], "usable_now": False}]
+        assert lu["pool_size"] == 0
+        assert str(demain.year) not in str(lu["lenders"]), "l'échéance ne sort pas"
+
+        hier = datetime.now(timezone.utc) - timedelta(hours=1)
+        US.marquer_statut(o["membre"], _F, US.PLAFOND, limit_reset_at=hier)
+        lu = client.get(o["route"], headers=_h(o["admin"])).json()
+        assert lu["lenders"] == [{"sub": o["membre"], "usable_now": True}]
+        assert lu["pool_size"] == 1
+    finally:
+        client.patch(f"{_ME}/{_F}", json={"lent_to": []}, headers=_h(o["membre"]))
+
+
 def test_un_MEMBRE_ne_change_pas_le_mode(client, org):
     from oto_mcp.db import org_subscription_pool as P
     P.poser_mode(org["id"], _F, "personnel", org["admin"])
