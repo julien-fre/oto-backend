@@ -322,7 +322,7 @@ class ReporterDigest(BaseModel):
     sub: str
     email: Optional[str] = None
     name: Optional[str] = None
-    brand: Optional[str] = None
+    brand: str
     count: int
     signal_ids: list[int]
     resolved: int = 0

@@ -5,13 +5,15 @@ teintes d'un partenaire vivaient dans `email_brand.MARQUES`, accueillir le suiva
 demandait d'éditer ce fichier et de redéployer pour lui — un partenaire qui attend
 notre calendrier de livraison pour avoir sa couleur.
 
-Trois choses sont éprouvées ici, et la deuxième est celle qui compte :
+Quatre choses sont éprouvées ici, et la deuxième est celle qui compte :
 
 1. une palette déclarée est SERVIE, sans passer par notre code ;
 2. une palette **incomplète est refusée EN ENTIER**, jamais complétée par la nôtre —
    sinon on fabrique un dessin que personne n'a dessiné, et le défaut ne se voit
    qu'à l'arrivée, chez le destinataire ;
 3. le tenant primaire ne se surcharge pas : une ligne en base ne repeint pas oto.
+4. sans marque, un gabarit porte celle de l'INSTANCE — jamais le littéral « oto »,
+   qui n'est le primaire que sur une instance.
 """
 from __future__ import annotations
 
