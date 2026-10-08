@@ -141,10 +141,15 @@ def test_seuls_les_depots_de_cle_se_declarent_MONO_et_on_sait_pourquoi():
     `jev` (28/09/2026) is mono for the `transcription` reason: it consumes the TENANT
     key on its rung, never an account the agent names (`jev_ask` has no `_account`).
     The `api_key` derivation would make it multi and offer a second key on the same
-    rung that resolution would never pick."""
+    rung that resolution would never pick.
+
+    `pennylane_firm` (08/10/2026) est mono parce qu'un jeton de cabinet atteint déjà
+    tout le portefeuille, et que le relais d'upload rejoue l'org scellée sans aucun axe
+    `_account` (l'URL est appelée par un `curl` anonyme). Deux jetons dans une org
+    seraient deux cabinets que rien ne départagerait."""
     assert sorted(c.name for c in providers._REGISTRY_LIST
                   if c.cardinality == "mono") == ["anthropic", "jev", "mistral",
-                                                  "transcription"]
+                                                  "pennylane_firm", "transcription"]
 
 
 def test_un_compte_nomme_sur_un_depot_de_cle_est_refuse(monkeypatch):

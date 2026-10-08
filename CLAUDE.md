@@ -264,6 +264,7 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `onboarding-et-profil.md` — Découverte, `me.profile`
 - `unipile.md` — split compte/canaux, DSN, identités
 - `browser-automation.md` — Browserbase, cookie-bound
+- `pennylane-firm.md` — Pennylane cabinet : un jeton pour tout le portefeuille, relais d'upload `/api/relay/{token}` (transit disque assumé, cache anti-doublon)
 - `email.md` — envoi per-org, quiet hours
 - `relance-comptes.md` — relancer qui n'a jamais rien fait : le comptage, l'exclusion partenaire, l'absence de signal de langue
 - `activation.md` — les emails d'activation qu'un TENANT déclare pour ses comptes : étapes, réglage, verrous

@@ -19,6 +19,7 @@ D'où deux épreuves de nature différente :
 import ast
 import asyncio
 import pathlib
+import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -30,10 +31,19 @@ _TOOLS = pathlib.Path(__file__).resolve().parents[1] / "oto_mcp" / "tools"
 # connecteur est découpé (`Connector.modules`) et le sera encore. Un tripwire qui
 # ne lirait qu'un fichier deviendrait aveugle au prochain module, c'est-à-dire
 # exactement là où l'oubli est le plus probable.
-# `pennylaneged*` est un AUTRE connecteur (session navigateur, pas clé API) : le
-# motif `pennylane_*` ne l'attrape pas, et c'est voulu.
+# Un module du connecteur = son SOCLE, et tout module qui s'y adosse (il en importe
+# `_client`/`_ecrit`) : c'est ce qui le lie au connecteur, pas son nom de fichier.
+# `pennylaneged*` (session navigateur) et `pennylane_firm*` (API cabinet, dont le
+# client LÈVE sur tout refus et dont le socle traduit) sont d'AUTRES connecteurs :
+# aucun ne s'adosse à ce socle, et c'est voulu.
+_ADOSSE = re.compile(r"^from \.pennylane_socle import|^from \. import .*\bpennylane_socle\b",
+                     re.M)
+
+
 def _modules_du_connecteur() -> list[pathlib.Path]:
-    trouves = sorted([_TOOLS / "pennylane.py", *_TOOLS.glob("pennylane_*.py")])
+    socle = _TOOLS / "pennylane_socle.py"
+    trouves = sorted([socle, *(f for f in _TOOLS.glob("pennylane*.py")
+                               if f != socle and _ADOSSE.search(f.read_text()))])
     assert len(trouves) >= 2, (
         "Aucun module frère trouvé : le motif de découverte ne correspond plus "
         f"au découpage du connecteur — {[f.name for f in trouves]}")

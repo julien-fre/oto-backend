@@ -181,6 +181,10 @@ _KNOWN: dict[str, str] = {
     # foi (sub/org/cible, TTL, usage unique). Appelée par un `curl` d'agent (PUT) ou
     # le formulaire humain (POST/GET) — un tiers, hors session dashboard.
     "/api/upload/{token}": NATURE,
+    # Sa SŒUR, le relais d'upload vers la GED Pennylane (cabinet) : même nature (jeton
+    # `typ="relay"` dans l'URL, aucun JWT, corps multipart d'un `curl -F`), et un
+    # corps qui ne passe pas en mémoire — c'est la raison d'être d'une route à part.
+    "/api/relay/{token}": NATURE,
     # Icône de marque servie au NAVIGATEUR (l'endpoint MCP n'a pas de page racine) :
     # du SVG, pas du JSON, pas d'autz à tenir. Ce n'est pas une opération d'API.
     "/favicon.svg": NATURE,

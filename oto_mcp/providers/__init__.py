@@ -84,6 +84,9 @@ _DECLARATIONS: tuple[str, ...] = (
     "mailpool",
     "kaspr",
     "pennylane",
+    # The firm side of the same publisher (one token, every company of the firm):
+    # next to the company side, so the two cards read as a pair.
+    "pennylane_firm",
     # Neighbour of `pennylane`: same Finance category, and the order governs
     # the catalog display.
     "finkare",

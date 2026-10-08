@@ -365,6 +365,15 @@ _REGLAGES: tuple[Variable, ...] = (
              "Plafond dur (octets) d'un contenu poussé par jeton de téléversement — "
              "25 Mo, distinct du plafond image S3.",
              ("oto_mcp/upload_tokens.py:67", "oto_mcp/upload_tokens.py:49")),
+    Variable("OTO_PENNYLANE_FIRM_UPLOAD_MAX_BYTES", Classe.REGLAGE, "104857600",
+             "Plafond (octets) d'un fichier relayé vers la GED Pennylane (cabinet) — "
+             "100 Mo, PROVISOIRE : à relever après mesure de la limite de Pennylane. "
+             "Distinct de OTO_MCP_UPLOAD_MAX_BYTES.",
+             ("oto_mcp/tools/pennylane_firm_relais.py:50",)),
+    Variable("OTO_PENNYLANE_FIRM_RELAY_CONCURRENCY", Classe.REGLAGE, "4",
+             "Relais d'upload Pennylane (cabinet) simultanés par processus ; au-delà, "
+             "503 `relay_busy` réessayable.",
+             ("oto_mcp/tools/pennylane_firm_relais.py:55",)),
     Variable("MIN_TOKEN_IAT", Classe.REGLAGE, "0",
              "Horodatage Unix plancher : un jeton émis avant est refusé (révocation "
              "globale par date).",

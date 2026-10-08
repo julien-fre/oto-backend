@@ -23,6 +23,7 @@ OPTIONS /api/public/docs/{token} -> options_handler
 POST,PUT /api/upload/{token} -> upload_receive
 GET,HEAD /api/upload/{token} -> upload_form
 OPTIONS /api/upload/{token} -> options_handler
+POST /api/relay/{token} -> relay_receive
 GET,HEAD /p/d/{token} -> public_doc_view
 GET,HEAD,POST /o/u/{token} -> outreach_unsubscribe
 GET,HEAD,POST /o/d/{token} -> digest_unsubscribe

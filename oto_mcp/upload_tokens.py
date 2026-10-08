@@ -94,19 +94,22 @@ def _b64url_decode(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-def sign(sub: str, org_id: Optional[int], target: dict, *, ttl: int = _TTL) -> tuple[str, int]:
-    """Signe un jeton d'upload scellant (sub, org, cible). Renvoie (token, exp_epoch)."""
+def sign(sub: str, org_id: Optional[int], target: dict, *, ttl: int = _TTL,
+         typ: str = "upload") -> tuple[str, int]:
+    """Signe un jeton d'upload scellant (sub, org, cible). Renvoie (token, exp_epoch).
+    `typ` sépare les familles de jetons (`relay` : le relais Pennylane cabinet) — un
+    jeton d'une famille ne s'ouvre jamais sur la route d'une autre."""
     exp = int(time.time()) + ttl
     payload = json.dumps(
-        {"typ": "upload", "jti": secrets.token_urlsafe(12), "sub": sub,
+        {"typ": typ, "jti": secrets.token_urlsafe(12), "sub": sub,
          "org": org_id, "target": target, "exp": exp},
         separators=(",", ":"), sort_keys=True).encode()
     sig = hmac.new(_secret(), payload, hashlib.sha256).digest()
     return f"{_b64url(payload)}.{_b64url(sig)}", exp
 
 
-def verify(token: str) -> Optional[dict]:
-    """Renvoie le payload si signature valide, typ==upload et non expiré ; None sinon.
+def verify(token: str, typ: str = "upload") -> Optional[dict]:
+    """Renvoie le payload si signature valide, `typ` attendu et non expiré ; None sinon.
     NE consomme PAS le jeton (l'usage unique est appliqué à la matérialisation)."""
     if not token or "." not in token:
         return None
@@ -125,7 +128,7 @@ def verify(token: str) -> Optional[dict]:
     # noqa: SILENT — fail-closed : toute erreur de vérification ⇒ jeton refusé
     except Exception:
         return None
-    if data.get("typ") != "upload":
+    if data.get("typ") != typ:
         return None
     if int(data.get("exp", 0)) < int(time.time()):
         return None
