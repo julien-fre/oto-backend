@@ -33,6 +33,9 @@ from oto_mcp.capabilities.orgs import core as orgs, reads as orgs_reads, update 
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 from oto_mcp.db import _conn as _conn_mod, _init, _schema, tenants as db_tenants, users as db_users
 
+# `_view` lit les partages vivants du projet (#1367) : aucun ici, sans base.
+pytestmark = pytest.mark.usefixtures("projets_sans_partages")
+
 # Identités synthétiques : le défaut se reproduit avec n'importe quel compte.
 SUB = "sub-test-1"
 AUTRE = "sub-test-2"

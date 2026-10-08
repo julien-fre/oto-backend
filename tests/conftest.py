@@ -621,3 +621,13 @@ def connecteurs_tous_disponibles(monkeypatch):
     couverte par `test_connexion_connecteur_coupe.py`."""
     from oto_mcp.connectors import activation_gate
     monkeypatch.setattr(activation_gate, "exiger_connectable", lambda *a, **k: None)
+
+
+@pytest.fixture
+def projets_sans_partages(monkeypatch):
+    """Aucun partage de projet, sans lire la base : pour les bancs SANS base qui
+    rendent la vue d'un projet. `visible_to` y lit les bénéficiaires vivants
+    (`resource_grants`, signal #1367) ; ces bancs testent autre chose. Le libellé
+    lui-même est couvert par `test_projects.py`."""
+    from oto_mcp import ownership
+    monkeypatch.setattr(ownership, "list_grants", lambda rtype, rid: [])

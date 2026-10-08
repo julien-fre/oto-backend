@@ -13,6 +13,9 @@ import pytest
 from oto_mcp.capabilities import projects as P
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
+# `_view` lit les partages vivants du projet (#1367) : aucun ici, sans base.
+pytestmark = pytest.mark.usefixtures("projets_sans_partages")
+
 CTX = ResolvedCtx(sub="u1", org_id=99)
 ROW = {"id": 7, "owner_type": "org", "owner_id": "99", "name": "Campagne", "brief_md": "b",
        "created_by": "u1", "archived_at": None, "created_at": "2026-08-29",

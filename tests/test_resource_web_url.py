@@ -33,6 +33,9 @@ from oto_mcp.capabilities import projects as P
 from oto_mcp.capabilities._types import ResolvedCtx
 from oto_mcp.capabilities.docs import core as D
 
+# `_view` lit les partages vivants du projet (#1367) : aucun ici, sans base.
+pytestmark = pytest.mark.usefixtures("projets_sans_partages")
+
 CTX = ResolvedCtx(sub="u1", org_id=1)
 
 PAGE = {"id": 662, "project_id": 153, "parent_id": None, "title": "Point commercial",

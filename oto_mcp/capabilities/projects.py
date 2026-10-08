@@ -181,7 +181,8 @@ def _project_web_url(sub: Optional[str], project_id) -> Optional[str]:
     return links.link_for("project", sub=sub, id=project_id)
 
 
-def _visible_to(row: dict) -> str:
+def _visible_to(row: dict, partages: Optional[list[str]] = None,
+                nb_partages: int = 0) -> str:
     """QUI voit ce projet, en une phrase — le fait que la réponse taisait.
 
     Vécu le 04/09/2026 : une DG demande à un agent de travailler sa base de
@@ -212,7 +213,13 @@ def _visible_to(row: dict) -> str:
        retirés (oto#191) : plus aucun e-mail ne porte le corps d'une page proposée.
        La réserve que cette phrase avait dû porter quelques heures est
        retirée : un texte servi qui inquiète pour rien ment autant qu'un texte qui
-       rassure à tort."""
+       rassure à tort.
+
+    ⚠️ **Le partage élargit aussi** (signal #1367, 06/10/2026) : un projet perso
+    partagé en lecture à une org et en édition à une personne s'annonçait « toi seul »
+    — c'est sur cette phrase qu'on décide de ce qui est confidentiel. `partages` = les
+    bénéficiaires vivants, nommés (op=get) ; `nb_partages` = leur nombre seul, quand la
+    liste ne les a pas lus un par un."""
     otype = str(row.get("owner_type") or "user")
     org = row.get("context_org_id")
     # La publication PRIME sur la propriété : dite en tête, avant tout le reste.
@@ -229,6 +236,24 @@ def _visible_to(row: dict) -> str:
                   + ". Au-delà de ça : ")
     elif pub == "org":
         prefix = "publié en accès MCP pour les membres de l'org. Au-delà de ça : "
+    if partages:
+        partage = "partagé avec " + ", ".join(partages)
+    elif nb_partages:
+        partage = (f"partagé avec {nb_partages} bénéficiaire(s) — le détail : op=get "
+                   "ou oto_resource")
+    else:
+        partage = ""
+    if otype == "user" and partage:
+        return (prefix + f"son propriétaire, et les bénéficiaires du partage — {partage} "
+                "(un partage à une org ou une équipe vaut pour tous ses membres) ; "
+                "personne d'autre ne le voit, ni en liste, ni par recherche, ni en "
+                "l'ouvrant par son id"
+                + (f" ; il est rangé dans le contexte de l'org {org} : l'administrateur "
+                   "de ton org peut le consulter, en lecture seule et de façon tracée "
+                   "(« voir en tant que », oto#270)" if org is not None else "")
+                + ". Seul un opérateur de la plateforme en voit le NOM, jamais le "
+                  "contenu.")
+    suite = f" ; aussi {partage}" if partage else ""
     if otype == "user":
         # Vérifié sur les CINQ chemins le 04/09 : liste (`mes_objets_ici` : le seul
         # appelant, dans l'org de création du projet — 29/09 et 07/10), recherche
@@ -251,14 +276,46 @@ def _visible_to(row: dict) -> str:
                   "contenu.")
     if otype == "org":
         return (prefix + f"TOUS les membres de l'org {row.get('owner_id')} — ce projet "
-                "n'est pas privé")
+                "n'est pas privé" + suite)
     if otype == "group":
         return (prefix + f"les membres de l'équipe {row.get('owner_id')}, et les "
-                "administrateurs de l'org")
+                "administrateurs de l'org" + suite)
     return prefix + "tout le monde sur la plateforme (projet bibliothèque)"
 
 
-def _view(row: dict, sub: Optional[str] = None) -> dict:
+_ROLES = {"viewer": "lecture", "editor": "édition", "manager": "gestion"}
+
+
+def _beneficiaire(g: dict) -> str:
+    """Un bénéficiaire vivant, nommé : l'adresse d'une personne, le nom d'une org ou
+    d'une équipe (l'id si le nom manque), avec son rôle."""
+    ptype, pid = str(g.get("principal_type") or ""), str(g.get("principal_id") or "")
+    if ptype == "user":
+        nom = g.get("email") or "une personne"
+    elif ptype == "org":
+        o = org_store.get_org(int(pid)) if pid.isdigit() else None
+        nom = f"l'org {o['name'] if o else pid}"
+    elif ptype == "group":
+        gr = group_store.get_group(int(pid)) if pid.isdigit() else None
+        nom = f"l'équipe {gr['name'] if gr else pid}"
+    else:
+        nom = f"{ptype} {pid}"
+    role = _ROLES.get(g.get("role") or "") or (
+        "édition" if g.get("permission") == "write" else "lecture")
+    return f"{nom} ({role})"
+
+
+def _partages_vivants(project_id) -> list[str]:
+    """Les bénéficiaires vivants du projet (`resource_grants`, échus exclus — ils ne
+    donnent plus accès), nommés : la même source que `oto_resource op=get`."""
+    return [_beneficiaire(g) for g in ownership.list_grants(RTYPE, str(project_id))
+            if not g.get("expired")]
+
+
+def _view(row: dict, sub: Optional[str] = None, nb_partages: Optional[int] = None) -> dict:
+    """`nb_partages` : le nombre de partages vivants, quand une LISTE l'a lu en une
+    requête (`db.project_grant_counts`) — sinon le projet lit ses bénéficiaires, nommés."""
+    partages = None if nb_partages is not None else _partages_vivants(row["id"])
     return {
         "id": row["id"], "name": row["name"], "icon": row.get("icon"),
         # L'adresse web du projet, à côté de son id (#599).
@@ -267,7 +324,7 @@ def _view(row: dict, sub: Optional[str] = None) -> dict:
         "owner_type": row["owner_type"], "owner_id": row["owner_id"],
         # Qui voit ce projet, en clair. `owner_type` seul oblige à dériver, et personne
         # ne dérive — surtout pas sur une question de confidentialité (04/09).
-        "visible_to": _visible_to(row),
+        "visible_to": _visible_to(row, partages, nb_partages or 0),
         # Org de CONTEXTE d'un projet perso (ADR 0030 amendé) — « moi, org ». NULL sinon.
         "context_org_id": (str(row["context_org_id"])
                            if row.get("context_org_id") is not None else None),
@@ -658,7 +715,8 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
             aud = project_audit.audit_project(r["id"], links, light=True)
             has_audit = bool(aud.get("dead_links") or aud.get("unbound_slots")
                              or aud.get("inert_procedures"))
-            return {**_view(r, sub), "entity_count": len(links), "has_audit": has_audit,
+            return {**_view(r, sub, grant_counts.get(r["id"], 0)), "entity_count": len(links),
+                    "has_audit": has_audit,
                     "shared": shared or grant_counts.get(r["id"], 0) > 0,
                     # `can_write` sur la LISTE (pastille « lecture ») — même source que op=get :
                     # un projet partagé en lecture seule remonte false. Own = accès effectif.
@@ -669,6 +727,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
             recus = ownership.borner_a_la_vue(sub, RTYPE,
                                               db.list_projects_granted_to(principals),
                                               rid=lambda r: r["id"])
+            grant_counts.update(db.project_grant_counts([r["id"] for r in recus]))
             return [{**_enrich(r, True), "permission": r.get("permission")}
                     for r in recus if r["id"] not in seen]
 
@@ -713,7 +772,9 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         # modèle d'une autre org se voit depuis cette org-là.
         rows = ownership.projets_possedes_ici(
             sub, ctx.org_id, extra=[("platform", "platform")], templates_only=True)
-        return _projected([_view(r, sub) for r in rows], inp.fields)
+        comptes = db.project_grant_counts([r["id"] for r in rows])
+        return _projected([_view(r, sub, comptes.get(r["id"], 0)) for r in rows],
+                          inp.fields)
 
     if inp.op == "runs" and inp.project_id is None:
         # « Fermer un déroulé dont on a perdu l'identifiant » (#473). `run_finish`
@@ -1275,7 +1336,9 @@ def _archived_in_org(ctx: ResolvedCtx) -> list[dict]:
     _require(bool(ownership.project_list_owners(sub, ctx.org_id)), "no_active_org",
              "Aucune org active.", 400)
     rows = ownership.projets_possedes_ici(sub, ctx.org_id, include_archived=True)
-    return [_view(r, sub) for r in rows if r.get("archived_at") is not None]
+    rows = [r for r in rows if r.get("archived_at") is not None]
+    comptes = db.project_grant_counts([r["id"] for r in rows])
+    return [_view(r, sub, comptes.get(r["id"], 0)) for r in rows]
 
 
 # ── Procédures liées, servies sur demande (#313) ─────────────────────────────

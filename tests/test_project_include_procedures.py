@@ -22,6 +22,9 @@ import pytest
 
 from oto_mcp.capabilities import projects as cap
 
+# `_view` lit les partages vivants du projet (#1367) : aucun ici, sans base.
+pytestmark = pytest.mark.usefixtures("projets_sans_partages")
+
 
 class _Ctx:
     def __init__(self, sub="sub-lecteur", org_id=1):

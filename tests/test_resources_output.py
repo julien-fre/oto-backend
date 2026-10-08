@@ -31,6 +31,9 @@ from oto_mcp.capabilities import resources as R
 from oto_mcp.capabilities import resources_contract as C
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
+# `_view` lit les partages vivants du projet (#1367) : aucun ici, sans base.
+pytestmark = pytest.mark.usefixtures("projets_sans_partages")
+
 CTX = ResolvedCtx(sub="u1", org_id=None)
 
 _NS_ROW = {"id": 3, "datastore": "clients", "owner_type": "user", "owner_id": "u1",

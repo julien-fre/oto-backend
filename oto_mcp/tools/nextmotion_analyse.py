@@ -71,14 +71,29 @@ def _texte(valeur: Any) -> str:
     return texte or _INCONNU
 
 
+def _en_france(patient: dict) -> bool:
+    """An empty country counts as France: the clinic is there, and Nextmotion does
+    not always fill in the field."""
+    return str(patient.get("country") or "").strip().upper() in _FRANCE
+
+
+def _code_postal(patient: dict) -> str:
+    """The zip code as counted. A French zip code stored as a number loses its
+    leading zero (« 6400 » for 06400): 4 digits in France get it back, so that both
+    spellings fall in ONE cell — before the masking threshold, which would otherwise
+    hide each half."""
+    cp = str(patient.get("zip_code") or "").strip()
+    if _en_france(patient) and re.fullmatch(r"\d{4}", cp):
+        return "0" + cp
+    return cp
+
+
 def _departement(patient: dict) -> str:
     """The department of a French zip code (Corsica 2A/2B, overseas on 3
-    digits); « étranger » if the country is not France. An empty country counts as
-    France: the clinic is there, and Nextmotion does not always fill in the field."""
-    pays = str(patient.get("country") or "").strip().upper()
-    if pays not in _FRANCE:
+    digits); « étranger » if the country is not France."""
+    if not _en_france(patient):
         return "étranger"
-    cp = str(patient.get("zip_code") or "").strip()
+    cp = _code_postal(patient)
     if not re.fullmatch(r"\d{5}", cp):
         return _INCONNU
     if cp.startswith("20"):
@@ -116,7 +131,7 @@ def _tranche(patient: dict, aujourd_hui: date) -> str:
 
 def _cle(patient: dict, dimensions: list, aujourd_hui: date) -> tuple:
     lire = {
-        "zip_code": lambda p: _texte(p.get("zip_code")),
+        "zip_code": lambda p: _texte(_code_postal(p)),
         "department": _departement,
         "city": lambda p: _texte(p.get("city")),
         "country": lambda p: _texte(p.get("country")),
@@ -268,7 +283,8 @@ def register(mcp: FastMCP) -> None:
         a while. Gender: femme | homme | autre | inconnu. Age bands: 0-17, 18-24,
         25-34, 35-44, 45-54, 55-64, 65+, inconnu (from the birth date, today).
         Department: from a French zip code (2A/2B, 3 digits overseas), « étranger »
-        when the country is not France.
+        when the country is not France. A 4-digit French zip code (leading zero lost
+        upstream, « 6400 ») is counted as its 5-digit form (06400).
 
         Args:
             clinic_id: the clinic.

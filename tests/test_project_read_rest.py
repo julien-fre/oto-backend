@@ -16,6 +16,9 @@ from oto_mcp.capabilities import projects as P
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 from oto_mcp.capabilities.registry import CAPABILITIES
 
+# `_view` lit les partages vivants du projet (#1367) : aucun ici, sans base.
+pytestmark = pytest.mark.usefixtures("projets_sans_partages")
+
 CTX = ResolvedCtx(sub="oto", org_id=1)
 
 ROW = {"id": 12, "name": "Vivier accords dormants", "icon": "📇",

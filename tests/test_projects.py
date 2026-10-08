@@ -9,6 +9,10 @@ import pytest
 from oto_mcp.capabilities import projects as P
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
+
+# `_view` lit les partages vivants du projet (#1367) : aucun, sauf banc qui le remplace.
+pytestmark = pytest.mark.usefixtures("projets_sans_partages")
+
 # Contexte par défaut = org active 99, propriétaire du projet ROW (modèle post-perso :
 # un projet est TOUJOURS org-owned, et n'est lisible que DANS le contexte de son org,
 # ADR 0023). `CTX_NOORG` sert les cas « pas d'org active » (create/list/copy rejetés).
@@ -1033,3 +1037,55 @@ def test_un_projet_perso_ne_porte_PLUS_la_reserve_des_propositions():
     dit = P._visible_to({"owner_type": "user", "context_org_id": "35"})
     assert "administrateur de ton org" in dit, "le cas nominal tient toujours"
     assert "PROPOSÉE" not in dit and "e-mail" not in dit
+
+
+# --- #1367 : le partage élargit aussi ----------------------------------------------
+# Constaté le 06/10/2026 : un projet perso partagé en lecture à une org et en
+# édition à une personne s'annonçait « toi seul ». C'est sur cette phrase qu'on
+# décide de ce qui est confidentiel.
+
+def test_un_projet_perso_partage_ne_dit_pas_toi_seul_et_nomme_ses_beneficiaires():
+    dit = P._visible_to({"owner_type": "user", "context_org_id": "35"},
+                        ["l'org Exemple (lecture)", "b@exemple.test (édition)"])
+    assert "toi seul" not in dit
+    assert "l'org Exemple (lecture)" in dit and "b@exemple.test (édition)" in dit
+    assert "tous ses membres" in dit
+
+
+def test_la_liste_qui_ne_connait_que_le_nombre_ne_dit_pas_toi_seul():
+    dit = P._visible_to({"owner_type": "user"}, None, 2)
+    assert "toi seul" not in dit and "2 bénéficiaire" in dit
+
+
+def test_un_projet_d_org_partage_le_dit_aussi():
+    dit = P._visible_to({"owner_type": "org", "owner_id": "35"}, ["l'org Autre (lecture)"])
+    assert "TOUS les membres" in dit and "l'org Autre (lecture)" in dit
+
+
+def test_view_lit_les_partages_vivants_nommes(monkeypatch):
+    grants = [
+        {"principal_type": "org", "principal_id": "168", "role": "viewer",
+         "permission": "read", "expired": False},
+        {"principal_type": "user", "principal_id": "u-b", "email": "b@exemple.test",
+         "role": "editor", "permission": "write", "expired": False},
+        {"principal_type": "user", "principal_id": "u-c", "email": "c@exemple.test",
+         "role": "viewer", "permission": "read", "expired": True},
+    ]
+    monkeypatch.setattr(P.ownership, "list_grants", lambda rtype, rid: grants)
+    monkeypatch.setattr(P.org_store, "get_org", lambda oid: {"name": "Exemple"})
+    monkeypatch.setattr(P, "_project_web_url", lambda sub, pid: None)
+    v = P._view({"id": 7, "name": "p", "owner_type": "user", "owner_id": "u-a",
+                 "context_org_id": "35"}, "u-a")
+    assert "toi seul" not in v["visible_to"]
+    assert "l'org Exemple (lecture)" in v["visible_to"]
+    assert "b@exemple.test (édition)" in v["visible_to"]
+    assert "c@exemple.test" not in v["visible_to"], "un partage échu ne donne plus accès"
+
+
+def test_view_d_une_liste_ne_relit_pas_les_partages_un_par_un(monkeypatch):
+    def interdit(*a):
+        raise AssertionError("la liste passe le nombre lu en une requête")
+    monkeypatch.setattr(P.ownership, "list_grants", interdit)
+    monkeypatch.setattr(P, "_project_web_url", lambda sub, pid: None)
+    v = P._view({"id": 7, "name": "p", "owner_type": "user", "owner_id": "u-a"}, "u-a", 0)
+    assert "toi seul" in v["visible_to"]

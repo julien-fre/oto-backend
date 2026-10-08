@@ -87,10 +87,24 @@ def test_les_archives_ne_sont_comptees_que_sur_demande(client):
     ({"zip_code": "97400", "country": "fr"}, "974"),
     ({"zip_code": "10115", "country": "DE"}, "étranger"),
     ({"zip_code": "750"}, "inconnu"),
+    ({"zip_code": "6400"}, "06"),
+    ({"zip_code": "6400", "country": "BE"}, "étranger"),
     ({}, "inconnu"),
 ])
 def test_departement(patient, attendu):
     assert analyse._departement(patient) == attendu
+
+
+def test_un_code_a_4_chiffres_rejoint_sa_forme_a_5_avant_le_masquage(client):
+    """Relevé le 07/10/2026 : « 6400 » (zéro initial perdu) formait une cellule à part
+    et tombait en département inconnu, à côté de « 06400 »."""
+    lignes = ([_patient(i, zip_code="06400") for i in range(6)]
+              + [_patient(100 + i, zip_code="6400") for i in range(5)])
+    client.list_patients.side_effect = lambda cid, **kw: _pages(lignes)(kw["offset"])
+    out = _tool("nextmotion_patient_demographics")(clinic_id=C, by=["zip_code"])
+    assert out["cellules"] == [{"zip_code": "06400", "patients": 11}]
+    dep = _tool("nextmotion_patient_demographics")(clinic_id=C, by=["department"])
+    assert dep["cellules"] == [{"department": "06", "patients": 11}]
 
 
 @pytest.mark.parametrize("naissance,attendu", [
