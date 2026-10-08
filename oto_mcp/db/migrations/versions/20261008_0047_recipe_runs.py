@@ -18,8 +18,8 @@ sur la tête du moment et renuméroter si besoin.
 Retour arrière : retire les trois tables — les programmes et les travaux en attente sont
 perdus (un lancement Apify en cours reste chez Apify, payé).
 
-Révision : 0046_recipe_runs
-Précédente : 0045_jetons_emetteurs
+Révision : 0047_recipe_runs
+Précédente : 0046_abonnement_par_org
 """
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ from alembic import op
 
 from oto_mcp.db.schema.recipes import RECIPE_RUNS
 
-revision = "0046_recipe_runs"
-down_revision = "0045_jetons_emetteurs"
+revision = "0047_recipe_runs"
+down_revision = "0046_abonnement_par_org"
 branch_labels = None
 depends_on = None
 
