@@ -1,5 +1,5 @@
 """Welcome to the Jungle — the recruiters' ATS (ex-Welcome Kit): jobs and their
-stages, candidates, comments, history of moves.
+stages, candidates, comments, emails, history of moves.
 
 Wraps `oto.tools.wttj_ats.WttjAtsClient` (Bearer token). Key resolved per call
 via `access.resolve_api_key("wttj")` — byo (user key or the org's shared
@@ -13,11 +13,11 @@ job and addressed by their integer `id`; a **candidate** belongs to a job.
 No global list of candidates: the API requires the job.
 
 **Consolidated surface (ADR 0047 §Amendment)**: one tool per business OBJECT, the verb
-in `op` — `wttj_job` (list/get), `wttj_candidate` (list/get/create/update). Three
+in `op` — `wttj_job` (list/get), `wttj_candidate` (list/get/create/update). Four
 tools stand alone, their parameters do not overlap those of a neighbor:
 `wttj_organization` (the token's organizations, no parameters), `wttj_comment`
-(a write, no read exists upstream) and `wttj_moves` (a job's pipeline
-history).
+(a write, no read exists upstream), `wttj_emails` (a candidate's emails, read
+only) and `wttj_moves` (a job's pipeline history).
 
 ⚠️ An organization's detail (`GET /organizations/{ref}`) requires a partner scope
 (`su_organizations_r`) that a client account does not get: it is not served, the
@@ -26,8 +26,8 @@ token's list of organizations already carries their name and reference.
 ⚠️ This module WRITES into the client's ATS: `wttj_candidate` op="create"/"update"
 (update MOVES a candidate by `job_stage_id` or archives them) and `wttj_comment`.
 The default `op` is always a read, and a missing required argument
-raises an error naming the op and the argument. Emails (which go out to real
-people) and job publication are not served.
+raises an error naming the op and the argument. Sending emails (they go out to
+real people) and job publication are not served; reading a candidate's emails is.
 """
 from __future__ import annotations
 
@@ -50,6 +50,7 @@ _CANDIDATE_OPS = ("list", "get", "create", "update")
 #: Body columns rendered as `<field>_length` in a list (sorting view).
 _JOB_BODIES = ("description", "profile", "company_description", "recruitment_process")
 _CANDIDATE_BODIES = ("cover_letter",)
+_EMAIL_BODIES = ("body",)
 
 
 def _bad(msg: str) -> McpError:
@@ -314,6 +315,26 @@ def register(mcp: FastMCP) -> None:
         API cannot list comments back — this is write-only."""
         return {"comment": _run(lambda: _client().create_comment(
             candidate_reference, content))}
+
+    # --- Emails ---------------------------------------------------------
+
+    @mcp.tool()
+    def wttj_emails(
+        candidate_reference: str,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
+        fields: Optional[list[str]] = None,
+    ) -> dict:
+        """The emails exchanged with one candidate (read only — nothing is
+        sent): each `{subject, from_email, from_name, to, created_at, origin,
+        attachments}`. Sorting view: `body` comes back as `body_length`;
+        `fields=["*"]` returns full emails, `fields=[…]` picks keys. Needs the
+        `emails_r` scope on the token."""
+        rows = _run(lambda: _client().list_emails(
+            candidate_reference, page=page, per_page=per_page))
+        return _listed("emails", rows, bodies=_EMAIL_BODIES,
+                       always=("subject", "created_at"), fields=fields,
+                       page=page, per_page=per_page)
 
     # --- Pipeline history ---------------------------------------------
 

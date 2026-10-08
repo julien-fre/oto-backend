@@ -150,6 +150,23 @@ def test_comment(client):
     client.create_comment.assert_called_once_with("C1", "appel ok")
 
 
+def test_emails_d_un_candidat_projette_le_corps(client):
+    client.list_emails.return_value = [
+        {"subject": "Entretien", "created_at": "2026-10-01", "body": "x" * 12}]
+    out = _tool("wttj_emails")(candidate_reference="C1", per_page=5)
+    client.list_emails.assert_called_once_with("C1", page=None, per_page=5)
+    row = out["emails"][0]
+    assert "body" not in row and row["body_length"] == 12
+    assert out["projection"]["omitted"] == ["body"]
+    _no_write(client)
+
+
+def test_emails_bruts_sur_demande(client):
+    client.list_emails.return_value = [{"subject": "s", "body": "corps"}]
+    out = _tool("wttj_emails")(candidate_reference="C1", fields=["*"])
+    assert out["emails"][0]["body"] == "corps" and "projection" not in out
+
+
 def test_moves(client):
     out = _tool("wttj_moves")(organization_reference="org", job_reference="J1")
     client.list_moves.assert_called_once_with("org", job_reference="J1", page=None,
