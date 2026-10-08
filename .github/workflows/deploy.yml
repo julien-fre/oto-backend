@@ -78,56 +78,77 @@ jobs:
       - name: Compiler sous le Python le plus ancien supporté
         run: python -m compileall -q oto_mcp
 
-  # La suite complète, le même job que `test` de `deploy-canari.yml` avant le 08/10, sur
-  # l'arbre DU TAG. Nommé exactement `test` : c'est le verdict que la prod attend.
-  test:
+  # Le format du tag est validé AVANT qu'il serve de `ref:` (anti-injection : le ref/input
+  # atterrit dans un `ref:` de checkout et une commande shell). Un job à part parce que
+  # `suite`, appelé par `uses:`, ne peut pas porter d'étape : il reçoit la ref validée.
+  tag:
+    name: Valider le tag
     runs-on: ubuntu-latest
-    timeout-minutes: 20  # max observé en préproduction 9 min 58 s
+    timeout-minutes: 5
+    outputs:
+      ref: ${{ steps.valider.outputs.ref }}
     env:
       DEPLOY_REF: ${{ inputs.tag || github.ref_name }}
+      REF: ${{ inputs.tag || github.ref }}
     steps:
-      # Comme `deploy` : le format du tag est validé AVANT qu'il serve de `ref:`.
-      - name: Validate tag format
+      - id: valider
+        name: Validate tag format
         run: |
           case "$DEPLOY_REF" in
             v[0-9]*) echo "tag ok: $DEPLOY_REF" ;;
             *) echo "tag invalide (attendu vX.Y.Z): $DEPLOY_REF" >&2; exit 1 ;;
           esac
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 2  # le parent, pour le constat ci-dessous
-      - name: Install (deps + dev, par le verrou)
-        uses: ./.github/actions/installer-par-le-verrou
-        with:
-          python-version: "3.12"
-          extra: dev
-      - name: Le verrou suit le manifeste
-        run: |
-          uv lock --check || {
-            echo "::error title=uv.lock en retard sur pyproject.toml::Le manifeste a changé sans que le verrou soit régénéré. Lancer « uv lock » et versionner uv.lock dans le même commit (docs/verrou-dependances.md)."
-            exit 1
-          }
-      - name: Bac à sable des fonctions (ADR 0073)
-        run: |
-          python scripts/installer_bac_a_sable.py "$RUNNER_TEMP/bac-a-sable"
-          echo "OTO_FUNCTIONS_SANDBOX_DIR=$RUNNER_TEMP/bac-a-sable" >> "$GITHUB_ENV"
-      - name: Suite complète
-        # Mêmes réglages que la préproduction : `-n 4` mesuré par `empreinte-collecte`,
-        # `OTO_TEST_PG_PLACES=4` (conteneur isolé), `--dist loadgroup` (#963).
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+  # La suite complète, sur l'arbre DU TAG, répartie en parts parallèles comme en
+  # préproduction (`suite-tests.yml`, #1111) : cible vide.
+  suite:
+    needs: [tag]
+    uses: ./.github/workflows/suite-tests.yml
+    with:
+      ref: ${{ needs.tag.outputs.ref }}
+
+  # Nommé exactement `test` : c'est le verdict que la prod attend (`deploy` le `needs`). Il
+  # ne conclut `success` que si la suite entière a conclu `success` ; `always()` le fait
+  # tourner aussi quand elle rougit, pour le dire — et pour le constat ci-dessous.
+  test:
+    needs: [tag, suite]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: La suite complète a conclu « success »
         env:
-          OTO_TEST_PG_PLACES: "4"
-        run: pytest -q -n 4 --dist loadgroup --durations=25 --junitxml="$RUNNER_TEMP/junit.xml" -o junit_family=xunit1
+          RESULTAT: ${{ needs.suite.result }}
+        run: |
+          if [ "$RESULTAT" != success ]; then
+            echo "::error title=Suite complète : $RESULTAT::suite-tests.yml conclut « $RESULTAT » sur l'arbre du tag — le détail est dans ses jobs (suite / …)."
+            exit 1
+          fi
+          echo "suite-tests.yml : success"
       # La mesure demandée par #1185 : un rouge vu ICI aurait-il été vu au push ? La
       # sélection est recalculée parent → sha (le push réel a pu porter d'autres commits :
       # c'est une approximation, dite comme telle dans le résumé). Un constat, pas une
-      # garde : il ne change pas le verdict du job.
+      # garde : il ne change pas le verdict du job. Le rapport JUnit est celui de toutes
+      # les parts, fusionné par l'agrégateur de `suite-tests.yml` (artefact `junit-suite`).
+      - if: failure() && needs.tag.result == 'success'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.tag.outputs.ref }}
+          fetch-depth: 2  # le parent, pour le constat
+      - if: failure() && needs.tag.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: junit-suite
+          path: ${{ runner.temp }}/junit-suite
       - name: Constat — ce rouge aurait-il filé avec la sélection ?
-        if: failure()
+        if: failure() && needs.tag.result == 'success'
         continue-on-error: true
         run: |
           python3 scripts/selection_tests.py --base "$(git rev-parse HEAD^)" --tete HEAD \
-            --constat "$RUNNER_TEMP/junit.xml"
+            --constat "$RUNNER_TEMP/junit-suite/junit.xml"
 
   deploy:
     needs: [syntaxe-plancher, test]

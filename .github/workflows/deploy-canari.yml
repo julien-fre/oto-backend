@@ -143,64 +143,38 @@ jobs:
           TETE: ${{ github.sha }}
         run: python3 scripts/selection_tests.py --base "$BASE" --tete "$TETE"
 
-  test:
+  # LA SÉLECTION DU PUSH, RÉPARTIE EN PARTS PARALLÈLES (#1111) : `suite-tests.yml`. La
+  # répartition par durée mesurée, le `-n` dérivé de la mémoire de CHAQUE machine (leçon de
+  # l'OOM du 07/09), `OTO_TEST_PG_PLACES`, `--dist loadgroup` (#963) et l'agrégateur qui
+  # refuse un test perdu y vivent, avec leur histoire. `cible` vide = la suite complète.
+  suite:
     needs: [selection]
+    uses: ./.github/workflows/suite-tests.yml
+    with:
+      cible: ${{ needs.selection.outputs.cible }}
+
+  # LE NOM `test` EST UN CONTRAT. La garde de mise en production
+  # (`scripts/garde_preprod_verte.py`) exige un job nommé EXACTEMENT `test` qui conclut
+  # `success` ; or un job appelé par `uses:` s'affiche « suite / <job interne> », jamais
+  # `test`. Ce job porte donc le nom, et ne conclut `success` que si la suite entière a
+  # conclu `success`. `always()` : il tourne aussi quand la suite a rougi ou a été sautée,
+  # pour le DIRE en rouge au lieu d'apparaître `skipped` — un job sauté ne rend pas un run
+  # rouge, c'est exactement le trou que la garde ferme.
+  test:
+    needs: [suite]
+    if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 20  # max observé 9 min 58 s — le plus long de la chaîne
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install (deps + dev, par le verrou)
-        uses: ./.github/actions/installer-par-le-verrou
-        with:
-          python-version: "3.12"
-          extra: dev
-      # Le verrou versionné suit le manifeste : un `pyproject.toml` modifié sans
-      # `uv lock` (un pin oto-core bumpé, une dépendance ajoutée) ferait installer par
-      # `--frozen` un jeu qui ne correspond plus à ce que le code déclare. Rouge ici,
-      # avec la commande à lancer — pas en production.
-      - name: Le verrou suit le manifeste
-        run: |
-          uv lock --check || {
-            echo "::error title=uv.lock en retard sur pyproject.toml::Le manifeste a changé sans que le verrou soit régénéré. Lancer « uv lock » et versionner uv.lock dans le même commit (docs/verrou-dependances.md)."
-            exit 1
-          }
-      - name: Bac à sable des fonctions (ADR 0073)
-        # Deno, Pyodide et les roues de la liste blanche, épinglés et vérifiés par
-        # empreinte. Sans lui, les bancs de l'exécuteur ÉCHOUENT en CI (ils ne se taisent
-        # que sur un poste qui n'en a pas posé) : un banc de sécurité muet en CI serait
-        # le pire des verts.
-        run: |
-          python scripts/installer_bac_a_sable.py "$RUNNER_TEMP/bac-a-sable"
-          echo "OTO_FUNCTIONS_SANDBOX_DIR=$RUNNER_TEMP/bac-a-sable" >> "$GITHUB_ENV"
-      - name: Tests
-        # `--durations=25` n'ajoute qu'un tableau en fin de sortie : aucune sélection,
-        # aucun comportement changé, aucune seconde de plus. Il est là parce que
-        # personne ne sait OÙ passent les ~9 min de cette étape. On a discuté de la
-        # paralléliser sans jamais regarder si elle est lente partout ou lente à
-        # quelques endroits — et la seule tentative, calibrée sur un chiffre deviné, a
-        # gelé le tronc six heures. Ce tableau est le préalable gratuit à cette
-        # décision. (Les attentes fixes de la suite ne pèsent que quelques secondes :
-        # ce qu'on cherche ici, ce sont les fixtures et les sous-processus.)
-        #
-        # `-n 4` (14/09/2026) : le nombre vient du job `empreinte-collecte` ci-dessous,
-        # PAS d'un chiffre recopié — c'est la leçon du gel de 6 h inscrite juste au-dessus.
-        # `OTO_TEST_PG_PLACES=4` (docs/commands.md §Suite parallèle en CI) : la garde de
-        # `_jeton_de_suite.py` (2 places) protège le poste de DEV partagé entre sessions
-        # concurrentes ; ce job tourne seul dans un conteneur CI isolé, où elle ne fait que
-        # bloquer/chronométrer à vide 2 des 4 workers sur leur propre fixture — vérifié
-        # localement (`-n 4` nu : 921 s et 414 erreurs en cascade, contre 668 s en série).
-        # `--dist loadgroup` (#963) : un module à fixture `scope="module"` (une base Postgres
-        # jetable) reste sur UN worker — `load` le scindait test par test et le second test ne
-        # voyait pas ce que le premier avait écrit (tronc rouge sur un test sans rapport, puis
-        # vert au run suivant). Le groupement est posé par `tests/_groupes_xdist.py` ; sans ce
-        # drapeau, il est inerte (`tests/test_groupes_xdist_963.py` refuse un `-n` sans lui).
+      - name: La suite a conclu « success »
         env:
-          OTO_TEST_PG_PLACES: "4"
-          CIBLE: ${{ needs.selection.outputs.cible }}
-        # `$CIBLE` sans guillemets : une liste de chemins à découper (vide = suite complète).
+          RESULTAT: ${{ needs.suite.result }}
         run: |
-          # shellcheck disable=SC2086
-          pytest -q -n 4 --dist loadgroup --durations=25 $CIBLE
+          if [ "$RESULTAT" != success ]; then
+            echo "::error title=Suite de tests : $RESULTAT::suite-tests.yml conclut « $RESULTAT » — le détail est dans ses jobs (suite / …)."
+            exit 1
+          fi
+          echo "suite-tests.yml : success"
 
   # ─────────────────────────────────────────────────────────────────────────────
   # CE QUE PÈSE UNE COLLECTE, SUR LA MACHINE QUI L'EXÉCUTE.

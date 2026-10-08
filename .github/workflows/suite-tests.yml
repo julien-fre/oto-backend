@@ -1,0 +1,275 @@
+name: Suite de tests
+
+# LA SUITE, RÉPARTIE SUR PLUSIEURS RUNNERS (#1111).
+#
+# Jusqu'au 08/10/2026, le job `test` de deploy-canari.yml jouait toute la suite sur UN runner
+# (`pytest -n 4`) : ~9 min le 01/10, ~14 min le 08/10 (21 500 cas), payées par chaque
+# correctif d'une ligne. Ce workflow joue la MÊME couverture répartie en N parts, une par
+# runner, chacune avec un `-n` dérivé de SA machine :
+#
+#   plan ──► part 0 … part N-1 ─┐
+#   reference ──────────────────┴─► verdict
+#
+# - `plan` calcule N et la répartition depuis les durées MESURÉES par fichier
+#   (`scripts/durees_suite.json`) — pas depuis un nombre de fichiers ni de tests.
+# - chaque `part` collecte ses fichiers, en mesure l'empreinte, en dérive son `-n`, joue.
+# - `reference` collecte, en parallèle, ce que l'ancien job jouait (`pytest` sans chemin).
+# - `verdict` exige : union des collectes des parts = référence, aucun doublon. Un test
+#   perdu entre deux parts ne rend pas la CI verte et aveugle : il la rend ROUGE.
+#
+# Appelé par `uses:` — l'appelant voit ses jobs sous « <job appelant> / <job d'ici> ». La
+# garde de mise en production (`scripts/garde_preprod_verte.py`) lit un job nommé
+# EXACTEMENT `test` : c'est l'appelant qui le porte (cf. deploy-canari.yml), pas ce fichier.
+#
+# Entrée `ref` : ce qu'on teste, vide = le commit de l'événement. Au tag (deploy.yml), le
+# tag, validé par l'appelant AVANT de servir de `ref:` de checkout.
+#
+# Entrée `cible` : des chemins de fichiers ou de dossiers de tests, séparés par des espaces.
+# Vide = la suite complète. Les parts répartissent CE sous-ensemble, et la référence le
+# collecte lui aussi (`pytest --collect-only <cible>`).
+on:
+  workflow_call:
+    inputs:
+      cible:
+        description: "Chemins de tests (espaces), vide = suite complète."
+        type: string
+        required: false
+        default: ""
+      ref:
+        description: "Ref à tester (le tag au déploiement), DÉJÀ validée par l'appelant ; vide = le commit de l'événement."
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Répartir
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.plan.outputs.parts }}
+      nombre: ${{ steps.plan.outputs.nombre }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      # Bibliothèque standard seulement : pas d'installation, le plan rend la main en
+      # quelques secondes. Même classe de runner que les parts : ses cœurs dimensionnent N.
+      - id: plan
+        name: Combien de parts, lesquelles
+        env:
+          CIBLE: ${{ inputs.cible }}
+        # La cible passe par l'environnement, jamais interpolée dans le script : elle
+        # vient d'un autre job.
+        run: python3 scripts/repartir_suite.py plan --cible "$CIBLE" --resume "$GITHUB_STEP_SUMMARY" >> "$GITHUB_OUTPUT"
+
+  part:
+    name: Part ${{ matrix.part }}
+    needs: [plan]
+    runs-on: ubuntu-latest
+    # max observé de l'ancien job unique : 14 min 39 s (08/10). Une part en porte ~1/N.
+    timeout-minutes: 20
+    strategy:
+      # Chaque part rend SON verdict : un rouge ici ne doit pas masquer celui d'à côté.
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Install (deps + dev, par le verrou)
+        uses: ./.github/actions/installer-par-le-verrou
+        with:
+          python-version: "3.12"
+          extra: dev
+      - name: Bac à sable des fonctions (ADR 0073)
+        # Deno, Pyodide et les roues de la liste blanche, épinglés et vérifiés par
+        # empreinte. Sans lui, les bancs de l'exécuteur ÉCHOUENT en CI (ils ne se taisent
+        # que sur un poste qui n'en a pas posé) : un banc de sécurité muet en CI serait
+        # le pire des verts. Posé dans CHAQUE part : la répartition ne sait pas, et n'a pas
+        # à savoir, où tombent ces bancs.
+        run: |
+          python scripts/installer_bac_a_sable.py "$RUNNER_TEMP/bac-a-sable"
+          echo "OTO_FUNCTIONS_SANDBOX_DIR=$RUNNER_TEMP/bac-a-sable" >> "$GITHUB_ENV"
+      - name: Fichiers de cette part, sa collecte, son nombre de workers
+        # LE NOMBRE DE WORKERS SE DÉRIVE DE CETTE MACHINE. Le 07/09, quatre workers
+        # calibrés sur un poste à 28 cœurs ont fait tuer `pytest` par l'OOM killer sept fois
+        # de suite sur un runner 4 vCPU / 16 Go (exit 137, toujours PENDANT la collecte) :
+        # tronc rouge six heures. La leçon : un nombre de workers se dérive de la MÉMOIRE de
+        # la machine qui exécute, jamais d'un chiffre recopié. Le script mesure ici le pic
+        # de la collecte de CETTE part (ce que chaque worker paiera), lit la mémoire
+        # disponible de CE runner, et applique la règle de `scripts/empreinte_collecte.py`
+        # (marge 20 %, un process pour le contrôleur, borné par les cœurs).
+        #
+        # Il écrit aussi `OTO_TEST_PG_PLACES` = ce nombre (docs/commands.md §Suite
+        # parallèle en CI) : la garde de `_jeton_de_suite.py` (2 places) protège le poste de
+        # DEV partagé entre sessions concurrentes ; ce job tourne seul dans un conteneur CI
+        # isolé, où elle ne ferait que bloquer à vide une partie des workers sur leur propre
+        # fixture — vérifié localement (`-n 4` nu : 921 s et 414 erreurs en cascade, contre
+        # 668 s en série).
+        env:
+          CIBLE: ${{ inputs.cible }}
+          NOMBRE: ${{ needs.plan.outputs.nombre }}
+          PART: ${{ matrix.part }}
+        run: |
+          SORTIE="$RUNNER_TEMP/suite-part-$PART"
+          echo "SORTIE=$SORTIE" >> "$GITHUB_ENV"
+          python scripts/repartir_suite.py part --cible "$CIBLE" --parts "$NOMBRE" --part "$PART" --sortie "$SORTIE" >> "$GITHUB_ENV"
+      - name: Tests
+        # `--dist loadgroup` (#963) : un module à fixture `scope="module"` (une base Postgres
+        # jetable) reste sur UN worker — `load` le scindait test par test et le second test ne
+        # voyait pas ce que le premier avait écrit (tronc rouge sur un test sans rapport, puis
+        # vert au run suivant). Le groupement est posé par `tests/_groupes_xdist.py` ; sans ce
+        # drapeau, il est inerte (`tests/test_groupes_xdist_963.py` refuse un `-n` sans lui).
+        # Les groupes sont nommés d'après leur fichier, et la répartition se fait par
+        # fichier (un `xdist_group` écrit à la main réunit ses fichiers) : un groupe ne se
+        # scinde jamais entre deux parts.
+        #
+        # `--durations=25` : le tableau des plus lents de CETTE part, sans aucune sélection ni
+        # seconde de plus. Il a été posé quand personne ne savait OÙ passaient les minutes de
+        # la suite — préalable gratuit à toute parallélisation, après un gel de six heures
+        # dû à un chiffre deviné. `--junitxml` va plus loin : la durée de CHAQUE cas, d'où
+        # `verdict` régénère `scripts/durees_suite.json`, sur quoi se fait la répartition.
+        run: |
+          mapfile -t FICHIERS < "$SORTIE/fichiers.txt"
+          pytest -q -n "$OTO_SUITE_WORKERS" --dist loadgroup --durations=25 --junitxml="$RUNNER_TEMP/junit-shard-$PART/junit.xml" "${FICHIERS[@]}"
+        env:
+          PART: ${{ matrix.part }}
+      - name: Publier le rapport JUnit de cette part
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-shard-${{ matrix.part }}
+          path: ${{ runner.temp }}/junit-shard-${{ matrix.part }}
+          retention-days: 14
+          overwrite: true
+      - name: Publier les fichiers et la collecte de cette part
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: suite-part-${{ matrix.part }}
+          path: ${{ runner.temp }}/suite-part-${{ matrix.part }}
+          retention-days: 14
+          # Une relance du job republie sous le même nom.
+          overwrite: true
+
+  reference:
+    name: Collecte de référence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Install (deps + dev, par le verrou)
+        uses: ./.github/actions/installer-par-le-verrou
+        with:
+          python-version: "3.12"
+          extra: dev
+      # Le verrou versionné suit le manifeste : un `pyproject.toml` modifié sans
+      # `uv lock` (un pin oto-core bumpé, une dépendance ajoutée) ferait installer par
+      # `--frozen` un jeu qui ne correspond plus à ce que le code déclare. Rouge ici,
+      # avec la commande à lancer — pas en production.
+      - name: Le verrou suit le manifeste
+        run: |
+          uv lock --check || {
+            echo "::error title=uv.lock en retard sur pyproject.toml::Le manifeste a changé sans que le verrou soit régénéré. Lancer « uv lock » et versionner uv.lock dans le même commit (docs/verrou-dependances.md)."
+            exit 1
+          }
+      # Le même environnement que les parts : un module qui se saute à l'import faute de
+      # bac à sable compterait 0 ici et N là-bas — un faux écart.
+      - name: Bac à sable des fonctions (ADR 0073)
+        run: |
+          python scripts/installer_bac_a_sable.py "$RUNNER_TEMP/bac-a-sable"
+          echo "OTO_FUNCTIONS_SANDBOX_DIR=$RUNNER_TEMP/bac-a-sable" >> "$GITHUB_ENV"
+      - name: Collecter ce que l'ancien job jouait
+        env:
+          CIBLE: ${{ inputs.cible }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/suite-reference"
+          python scripts/repartir_suite.py reference --cible "$CIBLE" --sortie "$RUNNER_TEMP/suite-reference/reference.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: suite-reference
+          path: ${{ runner.temp }}/suite-reference
+          retention-days: 14
+          overwrite: true
+
+  # L'AGRÉGATEUR. Il ne rejoue rien : il juge que rien n'a été perdu, puis il rend le
+  # verdict de l'ensemble. `always()` : il compte les collectes même quand une part a
+  # rougi (un trou ne se cache pas derrière un autre rouge), mais il ne conclut `success`
+  # que si TOUT a conclu `success`.
+  verdict:
+    name: Aucun test perdu
+    needs: [plan, part, reference]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Récupérer les collectes
+        if: always() && needs.plan.result == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: suite-*
+          path: ${{ runner.temp }}/suite
+      - name: Récupérer les rapports JUnit
+        if: always() && needs.plan.result == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: junit-shard-*
+          path: ${{ runner.temp }}/junit
+      # UN rapport pour toute la suite, publié MÊME (surtout) quand une part a rougi : le
+      # constat de `deploy.yml` (#1185) y lit les fichiers rouges.
+      - name: Fusionner les rapports JUnit
+        if: always() && needs.plan.result == 'success'
+        run: |
+          mkdir -p "$RUNNER_TEMP/junit-suite"
+          python3 scripts/repartir_suite.py fusionner "$RUNNER_TEMP"/junit/junit-shard-*/junit.xml --sortie "$RUNNER_TEMP/junit-suite/junit.xml"
+      - if: always() && needs.plan.result == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-suite
+          path: ${{ runner.temp }}/junit-suite
+          retention-days: 14
+          overwrite: true
+      - name: Somme des collectés par part = collecte de référence
+        if: always() && needs.plan.result == 'success'
+        env:
+          NOMBRE: ${{ needs.plan.outputs.nombre }}
+        run: python3 scripts/repartir_suite.py verifier --dossier "$RUNNER_TEMP/suite" --reference suite-reference/reference.txt --parts "$NOMBRE" --resume "$GITHUB_STEP_SUMMARY"
+      # Les durées mesurées de CE run, publiées pour régénérer `scripts/durees_suite.json`
+      # (`gh run download <run_id> -n suite-durees`). Seulement sur la suite complète, verte
+      # et sans test perdu : une suite partielle ou rouge mesure autre chose que ce qu'on
+      # répartit.
+      - name: Durées mesurées par fichier
+        if: success() && inputs.cible == '' && needs.part.result == 'success'
+        run: |
+          mkdir -p "$RUNNER_TEMP/suite-durees"
+          SOURCE="CI, run $GITHUB_RUN_ID, sha $(git rev-parse HEAD)"
+          python3 scripts/repartir_suite.py mesurer "$RUNNER_TEMP"/junit/junit-shard-*/junit.xml --source "$SOURCE" --sortie "$RUNNER_TEMP/suite-durees/durees_suite.json" --resume "$GITHUB_STEP_SUMMARY"
+      - if: success() && inputs.cible == '' && needs.part.result == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: suite-durees
+          path: ${{ runner.temp }}/suite-durees
+          retention-days: 30
+          overwrite: true
+      - name: Toutes les parts ont conclu « success »
+        if: always()
+        env:
+          PLAN: ${{ needs.plan.result }}
+          PARTS: ${{ needs.part.result }}
+          REFERENCE: ${{ needs.reference.result }}
+        run: |
+          echo "plan : $PLAN — parts : $PARTS — référence : $REFERENCE"
+          if [ "$PLAN" != success ] || [ "$PARTS" != success ] || [ "$REFERENCE" != success ]; then
+            echo "::error title=Suite de tests rouge::plan « $PLAN », parts « $PARTS », référence « $REFERENCE » — le détail est dans le job concerné."
+            exit 1
+          fi
