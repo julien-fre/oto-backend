@@ -129,18 +129,23 @@ def test_le_compte_se_restreint_aux_services_que_linstance_declare(monkeypatch):
         G.SERVICE_SCOPES["tasks"])
 
 
-@pytest.mark.parametrize("valeur", ["none", "", "  NONE "])
+@pytest.mark.parametrize("valeur", ["none", "  NONE "])
 def test_none_ramene_le_compte_a_lidentite_seule(monkeypatch, valeur):
     monkeypatch.setenv("GOOGLE_ACCOUNT_SERVICES", valeur)
     assert G.scopes_for("google", _app("env")) == list(G.IDENTITY_SCOPES)
 
 
-def test_sans_reglage_le_compte_demande_les_six(monkeypatch):
-    monkeypatch.delenv("GOOGLE_ACCOUNT_SERVICES", raising=False)
+@pytest.mark.parametrize("valeur", [None, "", "   "])
+def test_sans_reglage_le_compte_demande_les_six(monkeypatch, valeur):
+    """Absente ou vide : l'état d'avant le réglage — jamais un rétrécissement muet."""
+    if valeur is None:
+        monkeypatch.delenv("GOOGLE_ACCOUNT_SERVICES", raising=False)
+    else:
+        monkeypatch.setenv("GOOGLE_ACCOUNT_SERVICES", valeur)
     assert set(G.scopes_for("google", _app("env"))) == set(G.IDENTITY_SCOPES) | set(G.SCOPES)
 
 
-@pytest.mark.parametrize("valeur", ["gmail,bigquery", "gmail,hunter"])
+@pytest.mark.parametrize("valeur", ["gmail,bigquery", "gmail,hunter", ",,", "gmail;drive"])
 def test_un_service_que_le_compte_ne_porte_pas_est_refuse(monkeypatch, valeur):
     """bigquery ne s'autorise que depuis sa carte ; un nom inconnu n'est jamais deviné."""
     monkeypatch.setenv("GOOGLE_ACCOUNT_SERVICES", valeur)

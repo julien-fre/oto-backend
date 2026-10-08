@@ -135,6 +135,13 @@ _REQUISES: tuple[Variable, ...] = (
              "`oto_mcp/auth/relay.py`), séparés par des virgules. Absente : aucun "
              "relais actif, comportement d'origine — un opt-in par host, pas un "
              "défaut qui pointerait chez nous.", ("oto_mcp/auth/relay.py:73",)),
+    Variable("GOOGLE_ACCOUNT_SERVICES", Classe.REGLAGE, "",
+             "Services Google que demande la carte du COMPTE sous notre app, sur cette "
+             "instance : sous-ensemble séparé par des virgules de sheets, drive, gmail, "
+             "tasks, calendar, chat, ou `none` (l'identité seule). Absente ou vide = les "
+             "six. Pour une instance dont le projet Google n'est vérifié que pour "
+             "certains scopes ; un service inconnu lève.",
+             ("oto_mcp/auth/google.py:140",)),
     Variable("GOOGLE_WORKSPACE_CLIENT_ID", Classe.REQUISE, None,
              "Client OAuth Google Workspace — NOTRE app, servie à tout compte dont le "
              "tenant n'a pas posé la sienne en app d'éditeur (`google_oauth.app_for`). "
