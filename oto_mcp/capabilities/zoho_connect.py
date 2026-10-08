@@ -65,6 +65,10 @@ def start_for(ctx: ResolvedCtx, connector: str, data_center: str,
     Shared with the generic flow (`connector_flow`, declared in tools/zoho.py): there
     must be only ONE way to start a Zoho consent, otherwise the two
     surfaces diverge — exactly what the convergence seeks to avoid."""
+    # The TARGET connector (zoho, zohodesk, zohoanalytics) — the MCP face is named
+    # under `zoho`, so the call guard alone does not see which one is asked.
+    from ..connectors.activation_gate import exiger_connectable_capacite
+    exiger_connectable_capacite(connector, ctx.sub)
     try:
         dc = (data_center or "").lower()
         url = zoho_oauth.build_auth_url(

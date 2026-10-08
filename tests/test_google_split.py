@@ -34,6 +34,8 @@ from oto_mcp.connectors import flow as connector_flow  # noqa: E402
 from oto_mcp.connectors import identities  # noqa: E402
 from oto_mcp.connectors import link as connector_link  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("connecteurs_tous_disponibles")
+
 # Les six du split (2026-09-26) — ceux que le fan-out du boot a déménagés.
 SPLIT = ("gmail", "drive", "sheets", "calendar", "tasks", "chat")
 # Les services ajoutés DEPUIS : connecteurs neufs, jamais déménagés.

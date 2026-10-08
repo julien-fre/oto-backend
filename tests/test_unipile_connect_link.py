@@ -11,6 +11,8 @@ import pytest
 from oto_mcp import access, unipile_connect
 from oto_mcp.unipile_connect import ConnectRefused, hosted_auth_url
 
+pytestmark = pytest.mark.usefixtures("connecteurs_tous_disponibles")
+
 
 class _FakeClient:
     def __init__(self, api_key=None, dsn=None, **k):

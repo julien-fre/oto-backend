@@ -109,6 +109,9 @@ def _session_connector(name: str):
 
 async def _start(ctx: ResolvedCtx, inp: SessionStartInput) -> dict:
     browser_session = _session_connector(inp.name)
+    # A cut connector opens no Live View: refused before the session is created.
+    from ..connectors.activation_gate import exiger_connectable_capacite
+    await asyncio.to_thread(exiger_connectable_capacite, inp.name, ctx.sub)
     from .. import browserbase
     url = (inp.url or "").strip() or None
     viewport = browserbase.clamp_viewport(inp.width, inp.height)

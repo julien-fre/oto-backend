@@ -148,6 +148,12 @@ async def start(connector: str, ctx, values: dict) -> FlowStart:
     lived only in a comment that two flows could diverge without anything
     protesting. A flow that returns anything else breaks on the first call, not on
     the first front that relies on it."""
+    # A connector CUT for the caller (`connector_availability`, any tier) opens no
+    # consent: refused here, before the flow builds anything — one guard for every
+    # declared flow, the same reading of the cut as the call guard.
+    from .activation_gate import exiger_connectable_capacite
+    await asyncio.to_thread(exiger_connectable_capacite, connector,
+                            getattr(ctx, "sub", None))
     fabrique = _FLOWS[connector].start
     if inspect.iscoroutinefunction(fabrique):
         # A flow can be ASYNCHRONOUS — that of a hosted messaging service queries the

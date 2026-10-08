@@ -81,6 +81,14 @@ La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à optio
   et **à l'appel** (`connectors/activation_gate.py`, fail-closed) : direct comme par `oto_call`,
   un outil d'un connecteur coupé pour l'org — ou l'équipe — sous laquelle l'appel résout est
   refusé `connector_disabled`, cran et geste de réouverture nommés (#1064).
+- **Et au démarrage d'une connexion** (`activation_gate.exiger_connectable`, même lecture de la
+  coupure) : un connecteur coupé n'ouvre ni consentement ni session, refus `connector_disabled`
+  avant toute URL ou écriture. Points fermés : le flux commun (`connectors/flow.start`, donc
+  `POST /api/me/connectors/{name}/connect` pour tous les flux déclarés), `auth/google.build_auth_url`
+  (le compte, chaque service, et `GET /api/google/oauth/start`), le connecteur CIBLE de
+  `zoho_connect`, le canal de `unipile_connect.hosted_auth_url` (trois chemins) et la Live View
+  (`.../session/start`). Une clé BYOK posée sur un connecteur coupé n'ouvre aucun consentement :
+  elle reste posable, et la garde d'appel la rend inerte.
 - Surfaces : `/platform/connectors` (master + clé plateforme, super_admin) ; `/org/connectors`
   (override org).
 - **Plus de restriction « vers le bas » (retirée le 24/09/2026, ADR 0053 D1).** Réserver un

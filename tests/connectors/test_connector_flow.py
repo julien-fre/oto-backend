@@ -17,6 +17,8 @@ from oto_mcp import providers, status_hints
 from oto_mcp.connectors import flow as connector_flow
 from oto_mcp.tools import register_all
 
+pytestmark = pytest.mark.usefixtures("connecteurs_tous_disponibles")
+
 
 @pytest.fixture(scope="module", autouse=True)
 def _declarations():

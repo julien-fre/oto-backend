@@ -58,17 +58,11 @@ def _refus_outil_plateforme(tool_name: str) -> Optional[ErrorData]:
     return _refus_suspendue(access.current_org(sub), tool=tool_name)
 
 
-def _refus(connector: str) -> Optional[ErrorData]:
-    """Sync (threadpool): the error to return if `connector` is disabled for the org and
-    team under which the call resolves, otherwise `None`. The identity is read here, not
-    in the loop: canonicalizing it may touch the database (alias drain)."""
-    sub = call_axes.current_user_sub_from_token()
-    if not sub:
-        return None
-    org = access.current_org(sub)
-    if (suspendue := _refus_suspendue(org, connector=connector)) is not None:
-        return suspendue
-    group = access.current_group(sub)
+def _coupure(connector: str, org: Optional[int],
+             group: Optional[int]) -> Optional[tuple[str, str, str]]:
+    """`(tier, why, who reopens)` if `connector` is cut for (org, team), otherwise
+    `None`. The ONE reading of the cut, shared by the call guard and the connection
+    guard (`exiger_connectable`): two readings would drift at the first new tier."""
     cran = activation.cran_qui_coupe(connector, org, group)
     if cran is None:
         return None
@@ -89,6 +83,24 @@ def _refus(connector: str) -> Optional[ErrorData]:
         pourquoi = f"disabled by the platform for {ou}"
         geste = ("only a platform admin can open it: an organization cannot, "
                  "the platform ceiling is never relaxed.")
+    return cran, pourquoi, geste
+
+
+def _refus(connector: str) -> Optional[ErrorData]:
+    """Sync (threadpool): the error to return if `connector` is disabled for the org and
+    team under which the call resolves, otherwise `None`. The identity is read here, not
+    in the loop: canonicalizing it may touch the database (alias drain)."""
+    sub = call_axes.current_user_sub_from_token()
+    if not sub:
+        return None
+    org = access.current_org(sub)
+    if (suspendue := _refus_suspendue(org, connector=connector)) is not None:
+        return suspendue
+    group = access.current_group(sub)
+    coupure = _coupure(connector, org, group)
+    if coupure is None:
+        return None
+    cran, pourquoi, geste = coupure
     return ErrorData(
         code=INVALID_PARAMS,
         message=(f"Refusal `{CODE}`: the connector `{connector}` is {pourquoi}. The call "
@@ -96,6 +108,54 @@ def _refus(connector: str) -> Optional[ErrorData]:
         data={"code": CODE, "retryable": False, "connector": connector,
               "org_id": org, "group_id": group, "scope": cran},
     )
+
+
+class ConnecteurCoupe(Exception):
+    """A connection was asked for a connector cut for the caller (`connector_disabled`).
+
+    Raised BEFORE any consent URL is built and before anything is written: a cut
+    connector must not be connectable either — through the API, a card or its own
+    OAuth start. Without this, the call guard refused to SERVE the connector while its
+    connection flow still opened a consent: on an instance whose OAuth app is verified
+    for a closed list of services, that consent asked for scopes outside the list.
+    Each entry point translates it into its own refusal type, with the same code."""
+
+    def __init__(self, connector: str, message: str, details: dict):
+        super().__init__(message)
+        self.connector = connector
+        self.code = CODE
+        self.message = message
+        self.details = details
+
+
+def exiger_connectable(connector: str, sub: Optional[str]) -> None:
+    """Sync: raises `ConnecteurCoupe` if `connector` is cut for the org and team under
+    which `sub` acts — the SAME resolution as the call guard (`access.current_org` /
+    `current_group`, view and call axes included). Without a sub, nothing is guarded."""
+    if not sub:
+        return
+    org = access.current_org(sub)
+    group = access.current_group(sub)
+    coupure = _coupure(connector, org, group)
+    if coupure is None:
+        return
+    cran, pourquoi, geste = coupure
+    raise ConnecteurCoupe(
+        connector,
+        (f"Refusal `{CODE}`: the connector `{connector}` is {pourquoi}, so no connection "
+         f"to it can be started — neither a consent nor a session. To enable it, {geste}"),
+        {"connector": connector, "org_id": org, "group_id": group, "scope": cran},
+    )
+
+
+def exiger_connectable_capacite(connector: str, sub: Optional[str]) -> None:
+    """`exiger_connectable` for a capability handler: the refusal is an `AuthzDenied`
+    403 with the same code, its structure in `details`."""
+    from ..capabilities._types import AuthzDenied
+    try:
+        exiger_connectable(connector, sub)
+    except ConnecteurCoupe as e:
+        raise AuthzDenied(403, CODE, e.message, details=e.details) from None
 
 
 async def require_active(tool_name: str) -> None:

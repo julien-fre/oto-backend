@@ -32,6 +32,8 @@ from oto_mcp.connectors import flow as connector_flow  # noqa: E402
 from oto_mcp.connectors import identities  # noqa: E402
 from oto_mcp.connectors import link as connector_link  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("connecteurs_tous_disponibles")
+
 ORG, GROUP = 7, 9
 ALL = " ".join(G.SCOPES)
 

@@ -23,6 +23,8 @@ from oto_mcp.auth import google as google_oauth
 from oto_mcp.connectors import flow as connector_flow
 from oto_mcp.capabilities._types import AuthzDenied
 
+pytestmark = pytest.mark.usefixtures("connecteurs_tous_disponibles")
+
 
 class _Ctx:
     sub = "user-1"

@@ -14,6 +14,8 @@ from oto_mcp import access, providers, db, unipile_connect as uc
 from oto_mcp.connectors import identities as ci
 from oto_mcp.tools import unipile
 
+pytestmark = pytest.mark.usefixtures("connecteurs_tous_disponibles")
+
 SEAT = {"provider": "LINKEDIN", "account_id": "acc_seat", "account_name": "Moi",
         "org_id": 35, "platform_seat": True, "connected_at": "2026-07-17 10:00"}
 

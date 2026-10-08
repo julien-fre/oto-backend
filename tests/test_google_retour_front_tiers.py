@@ -30,6 +30,8 @@ from oto_mcp.api import datastore as datastore_routes
 from oto_mcp.auth import flow as oauth_flow
 from oto_mcp.auth import google as google_oauth
 
+pytestmark = pytest.mark.usefixtures("connecteurs_tous_disponibles")
+
 
 @pytest.fixture(autouse=True)
 def _secret_d_instance(monkeypatch):

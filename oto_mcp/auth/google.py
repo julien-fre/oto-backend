@@ -394,8 +394,13 @@ def build_auth_url(sub: str, return_app: str = "", connector: str = "google",
     client value (no open redirect)."""
     from urllib.parse import urlencode
 
+    from ..connectors.activation_gate import exiger_connectable_capacite
     from . import flow as oauth_flow
 
+    # The account and each service card start here — including the historical
+    # `GET /api/google/oauth/start`, which does not go through `connector_flow.start`.
+    # A cut connector asks Google for nothing.
+    exiger_connectable_capacite(connector, sub)
     org_id = _ctx_org(sub)
     group_id: Optional[int] = None
     if scope != "member":

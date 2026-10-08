@@ -610,3 +610,14 @@ def live(pg_module_dsn):
             os.environ.pop("DATABASE_URL", None)
         else:
             os.environ["DATABASE_URL"] = url_avant
+
+
+@pytest.fixture
+def connecteurs_tous_disponibles(monkeypatch):
+    """Aucun connecteur coupé, sans lire la base : pour les bancs SANS base qui
+    démarrent une connexion (flux commun, Google, messagerie hébergée, session
+    navigateur). Le démarrage lit la coupure (`connector_availability`) avant tout
+    consentement ; ces bancs testent ce qui vient après. La coupure elle-même est
+    couverte par `test_connexion_connecteur_coupe.py`."""
+    from oto_mcp.connectors import activation_gate
+    monkeypatch.setattr(activation_gate, "exiger_connectable", lambda *a, **k: None)

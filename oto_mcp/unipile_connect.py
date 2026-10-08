@@ -162,6 +162,16 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
     # namespace, unchanged.
     from . import providers as _providers
     canal_con = _providers.connector_for_hosted_channel(provider)
+    # A channel CUT for the caller (`connector_availability`) opens no wizard — the
+    # three paths (generic flow, `unipile_connect_start`, the old REST route) pass
+    # here, and the `unipile_connect_start` tool is gated by the call guard on
+    # `unipile`, not on the channel it is asked to connect.
+    if canal_con is not None:
+        from .connectors import activation_gate
+        try:
+            await asyncio.to_thread(activation_gate.exiger_connectable, canal_con.name, sub)
+        except activation_gate.ConnecteurCoupe as e:
+            raise ConnectRefused(403, e.code, e.message) from None
     # The channel carries its rights; the resolver follows its delegation to the unipile
     # key. Key, mode and DSN come from THE SAME instance, account included.
     try:

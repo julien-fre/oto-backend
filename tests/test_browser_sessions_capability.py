@@ -25,6 +25,8 @@ from _datastore_rest import call, stub_authz
 from oto_mcp import browser_session
 from oto_mcp.capabilities import browser_sessions as bs
 
+pytestmark = pytest.mark.usefixtures("connecteurs_tous_disponibles")
+
 
 @pytest.fixture()
 def socle(monkeypatch):
