@@ -246,6 +246,12 @@ def reuse_connection() -> Iterator[None]:
         emprunt.fermer()
 
 
+# Une portée de LECTURES bornées (`lecture_bornee.lectures_bornees`) : chaque connexion
+# empruntée au pool dedans pose `SET LOCAL statement_timeout` dans sa transaction —
+# `LOCAL`, donc rendu avec elle, jamais laissé sur une connexion qui repart au pool.
+_duree_bornee_ms: ContextVar[Optional[int]] = ContextVar("_duree_bornee_ms", default=None)
+
+
 @contextmanager
 def _connect() -> Iterator[psycopg.Connection]:
     # Avant TOUT (y compris le prêt partagé de `reuse_connection`) : chaque requête
@@ -257,7 +263,13 @@ def _connect() -> Iterator[psycopg.Connection]:
         return
     pool = _get_pool()
     with pool.connection() as conn:
-        yield conn
+        duree = _duree_bornee_ms.get()
+        if duree is None:
+            yield conn
+            return
+        with conn.transaction():
+            conn.execute(f"SET LOCAL statement_timeout = {int(duree)}")
+            yield conn
 
 
 @contextmanager

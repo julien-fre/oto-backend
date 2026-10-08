@@ -17,12 +17,17 @@ from typing import Any, Optional
 
 from ..datastore import par_reference as pr
 from ..datastore.core import DatastoreReadOnly
+from ..db import lecture_bornee
 
 logger = logging.getLogger(__name__)
 
 #: Lignes par écriture groupée (`par_reference.MAX_LIGNES`). Un lot n'est pas atomique
 #: et s'arrête à la première ligne refusée : au-delà de l'échec, on rejoue ligne à ligne.
 LOT = pr.MAX_LIGNES
+#: Borne d'une lecture de tableau d'une recette (parents en attente, listes de
+#: correspondance) : celle des lectures d'agrégat — au-delà, la lecture tient une
+#: connexion d'une réserve partagée pour une réponse que personne n'attend plus.
+DUREE_LECTURE_MS = lecture_bornee.DUREE_MAX_MS
 
 
 class TableauIndisponible(Exception):
@@ -221,22 +226,46 @@ def _ouvrir_tableau(datastore: Any, *, ecrire: bool) -> tuple[Any, str, dict]:
                                   "Nothing was called.")
 
 
+def meme_tableau(cible: Any, parent: Any) -> bool:
+    """La cible et le tableau parent sont-ils le MÊME tableau, une fois résolus ? Un
+    numéro et un nom désignent le même : comparer les chaînes laisserait passer l'un
+    sous l'autre. Rien n'est écrit."""
+    store, a, _ = _ouvrir_tableau(cible, ecrire=False)
+    _, b, _ = _ouvrir_tableau(parent, ecrire=False)
+    # L'adresse est l'écho de ce qu'on a passé (nom ou numéro) : on compare le NUMÉRO.
+    return store._resolve(a) == store._resolve(b)
+
+
+def _lu_borne(objet: str, lire):
+    """Une lecture de tableau sous `statement_timeout` : dépassée, refus NOMMÉ plutôt
+    qu'une connexion tenue des minutes."""
+    try:
+        with lecture_bornee.lectures_bornees(objet, DUREE_LECTURE_MS):
+            return lire()
+    except lecture_bornee.LectureTropLongue as e:
+        raise TableauIndisponible("table_read_timeout", str(e))
+
+
 def ouvrir_parents(datastore: Any, colonne_etat: str, *, ecrire: bool,
                    filtre: Optional[dict] = None, requises=()) -> Parents:
     """Le tableau parent, le droit d'y ÉCRIRE vérifié avant tout appel quand on écrit :
     l'état de chaque ligne y est écrit en retour, et c'est lui qui fait qu'une exécution
-    suivante ne repaie pas une ligne faite. Sa colonne d'état est déclarée si elle
-    manque. Le filtre est éprouvé ici : refusé, il l'est avant tout appel."""
+    suivante ne repaie pas une ligne faite. Le filtre est éprouvé ici, AVANT que la
+    colonne d'état ne soit déclarée (si elle manque) : refusé, rien n'a changé."""
     store, adresse, schema = _ouvrir_tableau(datastore, ecrire=ecrire)
     colonnes = {f["key"] for f in (schema.get("fields") or []) if f.get("key")}
     p = Parents(store, adresse, colonne_etat, filtre or None, tuple(sorted(requises)))
-    if ecrire and colonne_etat not in colonnes:
-        store.patch_schema(adresse, fields=[{"key": colonne_etat, "type": "text"}])
+    # Éprouvé sans la clause d'état : sa colonne n'est peut-être pas encore déclarée.
+    clauses = [c for c in p.clauses() if c["field"] != colonne_etat]
     try:
-        store.cursor_rows(adresse, filter=p.filtre, filters=p.clauses(), limit=1)
+        _lu_borne("lignes parentes d'une recette",
+                  lambda: store.cursor_rows(adresse, filter=p.filtre, filters=clauses,
+                                            limit=1))
     except ValueError as e:
         raise TableauIndisponible("invalid_filter", f"`for_each.filter`: {e} Nothing was "
                                                     "called.")
+    if ecrire and colonne_etat not in colonnes:
+        store.patch_schema(adresse, fields=[{"key": colonne_etat, "type": "text"}])
     return p
 
 
@@ -247,12 +276,13 @@ def parents_en_attente(p: Parents, *, limite: int, premiere: Optional[str],
     rendue deux fois (son état n'a pas pu s'écrire) : sans cela, la boucle tournerait."""
     out: list[dict] = []
     if premiere:
-        page = p.store.cursor_rows(p.adresse, filter={**(p.filtre or {}),
-                                                      "_id": {"in": [premiere]}},
-                                   filters=p.clauses(), limit=1)
+        page = _lu_borne("lignes parentes d'une recette", lambda: p.store.cursor_rows(
+            p.adresse, filter={**(p.filtre or {}), "_id": {"in": [premiere]}},
+            filters=p.clauses(), limit=1))
         out += page.get("rows") or []
-    page = p.store.cursor_rows(p.adresse, filter=p.filtre, filters=p.clauses(),
-                               limit=min(MAX_LUES, LOT_PARENTS + len(vues) + len(out)))
+    page = _lu_borne("lignes parentes d'une recette", lambda: p.store.cursor_rows(
+        p.adresse, filter=p.filtre, filters=p.clauses(),
+        limit=min(MAX_LUES, LOT_PARENTS + len(vues) + len(out))))
     for r in page.get("rows") or []:
         if len(out) >= limite:
             break
@@ -283,7 +313,8 @@ _PAGE_TABLE = 1_000
 
 def charger_ensembles(clauses: list[dict]) -> dict[int, set]:
     """Pour chaque clause `in_table` / `not_in_table`, les valeurs NORMALISÉES de sa
-    colonne — lues une fois par exécution, jamais une requête par élément."""
+    colonne — lues une fois par exécution, jamais une requête par élément, chaque page
+    sous `statement_timeout`. Une case à plusieurs valeurs (liste) compte chacune."""
     from . import correspondance as co
     out: dict[int, set] = {}
     for i, c in enumerate(clauses or []):
@@ -293,10 +324,12 @@ def charger_ensembles(clauses: list[dict]) -> dict[int, set]:
         valeurs: set = set()
         curseur, lues = None, 0
         while True:
-            page = store.cursor_rows(adresse, fields=[c["column"]], limit=_PAGE_TABLE,
-                                     cursor=curseur,
-                                     filters=[{"field": c["column"], "op": "not_empty",
-                                               "value": True}])
+            page = _lu_borne(f"liste de correspondance `{c['table']}`",
+                             lambda: store.cursor_rows(
+                                 adresse, fields=[c["column"]], limit=_PAGE_TABLE,
+                                 cursor=curseur,
+                                 filters=[{"field": c["column"], "op": "not_empty",
+                                           "value": True}]))
             lignes = page.get("rows") or []
             lues += len(lignes)
             if lues > MAX_VALEURS_TABLE:
@@ -305,9 +338,17 @@ def charger_ensembles(clauses: list[dict]) -> dict[int, set]:
                     f"Table `{c['table']}` holds more than {MAX_VALEURS_TABLE} values in "
                     f"`{c['column']}`: too many to match against. Nothing was called.")
             for r in lignes:
-                v = co.normaliser(pr.valeur(r, c["column"]), c.get("normalize"))
-                if v is not None:
-                    valeurs.add(v)
+                brute = pr.valeur(r, c["column"])
+                for x in (brute if isinstance(brute, list) else [brute]):
+                    try:
+                        v = co.normaliser(x, c.get("normalize"))
+                    except co.ValeurNonScalaire as e:
+                        raise TableauIndisponible(
+                            co.ValeurNonScalaire.code,
+                            f"Table `{c['table']}`, column `{c['column']}`: {e} Nothing "
+                            "was called.")
+                    if v is not None:
+                        valeurs.add(v)
             curseur = page.get("next_cursor")
             if not curseur:
                 break

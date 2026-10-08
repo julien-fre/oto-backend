@@ -158,3 +158,30 @@ def test_une_clause_normalisee_compare_les_formes():
     # Un élément sans valeur n'est pas dans la liste d'exclusion : il passe.
     assert co.garde({}, [{"path": "site", "op": "not_in_table", "normalize": "domain"}],
                     {}, ensembles={0: {"acme.test"}})
+
+
+@pytest.mark.parametrize("filtre,brut,attendu", [
+    ("email", "mailto:Jane@Acme.test", "jane@acme.test"),
+    ("linkedin_slug", "https://evil.test/in/x", None),
+    ("linkedin_slug", "acme.test", None),
+    ("linkedin_slug", "linkedin.com/in/Jane-Doe", "jane-doe"),
+])
+def test_les_normaliseurs_refusent_ce_qui_n_a_pas_la_forme(filtre, brut, attendu):
+    assert co.normaliser(brut, filtre) == attendu
+
+
+def test_url_comparee_sans_schema_ni_www_ecrite_avec():
+    assert co.normaliser("http://acme.test", "url") == co.normaliser(
+        "https://www.acme.test/", "url") == "acme.test"
+    # Écrite dans une colonne, elle garde son schéma.
+    assert co.rendre("{{params.v|url}}", {"params": {"v": "acme.test"}}) == "https://acme.test"
+
+
+@pytest.mark.parametrize("filtre", ["email", "domain", "url", "linkedin_slug", None])
+def test_un_normaliseur_refuse_une_liste(filtre):
+    with pytest.raises(co.ValeurNonScalaire):
+        co.normaliser(["jane@acme.test"], filtre)
+    with pytest.raises(co.ValeurNonScalaire):
+        co.garde({"e": ["jane@acme.test"]},
+                 [{"path": "e", "op": "not_in_table", "normalize": filtre}], {},
+                 ensembles={0: set()})

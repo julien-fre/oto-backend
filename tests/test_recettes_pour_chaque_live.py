@@ -11,8 +11,8 @@ import pytest
 SUB = "sub-recettes-fe"
 # Trois sociétés : Acme a 5 personnes, Globex aucune, Initech 2.
 PERSONNES = {
-    "acme": [{"id": f"a{i}", "name": f"A {i}", "site": "https://www.acme.test/team"}
-             for i in range(5)],
+    "acme": [{"id": f"a{i}", "name": f"A {i}", "site": "https://www.acme.test/team",
+              "emails": [f"a{i}@acme.test"]} for i in range(5)],
     "globex": [],
     "initech": [{"id": f"i{i}", "name": f"I {i}", "site": "initech.test"} for i in range(2)],
 }
@@ -62,6 +62,15 @@ def serveur(compte, monkeypatch):
                 "last": (page + 1) * size >= len(tous)}
 
     @m.tool(annotations=LECTURE)
+    def acme_shape(company: str = "", page: int = 0, size: int = 20) -> dict:
+        # Douze personnes par société ; chez Acme, sans `name` : la forme a changé.
+        appels.append({"company": company, "page": page})
+        base = [{"id": f"{company}{i}"} for i in range(12)]
+        if company != "acme":
+            base = [{**p, "name": f"N {p['id']}"} for p in base]
+        return {"content": base, "last": True}
+
+    @m.tool(annotations=LECTURE)
     def acme_flat(page: int = 0, size: int = 12) -> dict:
         # Douze éléments sans `name` : la forme a changé.
         appels.append({"company": None, "page": page})
@@ -69,10 +78,10 @@ def serveur(compte, monkeypatch):
     return m, appels
 
 
-def _tableau(schema: dict, lignes: list[dict] = ()) -> int:
+def _tableau(schema: dict, lignes: list[dict] = (), nom: str = "") -> int:
     from oto_mcp import db
     from oto_mcp.datastore.core import make_store
-    nom = f"fe-{uuid.uuid4().hex[:6]}"
+    nom = nom or f"fe-{uuid.uuid4().hex[:6]}"
     ns_id = db.create_datastore("user", SUB, nom)
     store = make_store(SUB)
     store.set_schema(nom, schema)
@@ -200,11 +209,11 @@ def test_une_colonne_pleine_a_la_publication_qui_revient_vide_arrete_l_execution
                              "map": {"name": "name"},
                              "key": {"column": "person_key", "template": "{{item.id}}"},
                              "limits": {"max_units": 100}})
-    recu = _executer(m, corps, cible, temoin={"fill": {"name": 1.0}})
+    recu = _executer(m, corps, cible, temoin={"fill": {"name": 1.0}, "rows_built": 10})
     assert recu["stopped"] == "mapping_drift" and recu["drifted_columns"] == ["name"]
     assert _lignes(cible) == []
     # Une colonne clairsemée à la publication n'est pas surveillée.
-    recu = _executer(m, corps, cible, temoin={"fill": {"name": 0.4}})
+    recu = _executer(m, corps, cible, temoin={"fill": {"name": 0.4}, "rows_built": 10})
     assert recu["done"] and recu["written"] == 12
 
 
@@ -273,13 +282,19 @@ def test_une_ligne_que_l_outil_refuse_est_marquee_et_l_execution_continue(serveu
                                "initech": "done"}
 
 
-def test_une_serie_d_echecs_identiques_arrete_sans_rien_marquer(serveur):
+def test_une_serie_d_echecs_identiques_arrete_en_marquant_et_nommant_la_serie(serveur):
     m, appels = serveur
     parents = _parents([(f"x{i}", "a") for i in range(5)])
     cible = _tableau(CIBLE)
     recu = _executer(m, _corps(parents, tool="acme_picky"), cible)
     assert recu["stopped"] == "repeated_failure" and len(appels) == 3
-    assert set(_etats(parents).values()) == {None}
+    etats = {l["_id"]: l.get("people_status") for l in _lignes(parents)}
+    marques = {i for i, e in etats.items() if e == "failed:invalid_input"}
+    assert len(marques) == 3 and set(map(str, recu["failed_rows"])) == set(map(str, marques))
+    # Une exécution suivante ne bute plus sur les mêmes.
+    avant = len(appels)
+    _executer(m, _corps(parents, tool="acme_picky"), cible)
+    assert {a["company"] for a in appels[avant:]} <= {"x3", "x4"}
 
 
 def test_des_societes_inconnues_d_affilee_sont_marquees_sans_arreter(serveur, monkeypatch):
@@ -324,3 +339,121 @@ def test_un_jeton_d_une_autre_recette_ou_fabrique_est_refuse(serveur):
     etat["u"] = -10_000
     forge = base64.urlsafe_b64encode(json.dumps(etat).encode()).decode()
     assert moteur.lire_reprise(forge, corps)["u"] == 0
+
+
+def _lents_et_introuvables(monkeypatch, secondes: float):
+    import time
+
+    from oto_mcp.recipes import moteur
+    from oto_mcp.tools.meta import IssueCible
+    vus: list = []
+
+    async def lent(outil, sub, nom, args):
+        vus.append(args)
+        time.sleep(secondes)
+        return IssueCible(ok=False, code="not_found", message="no such company")
+    monkeypatch.setattr(moteur, "_appeler", lent)
+    return vus
+
+
+def test_des_appels_rates_comptent_dans_l_horloge(serveur, monkeypatch):
+    """Dix parents qui échouent vite, aucune page réussie : le budget d'horloge
+    s'applique quand même, et la reprise est rendue."""
+    m, _ = serveur
+    vus = _lents_et_introuvables(monkeypatch, 0.3)
+    parents = _parents([(f"x{i}", "a") for i in range(10)])
+    recu = _executer(m, _corps(parents), _tableau(CIBLE), budget_s=0.5)
+    assert recu["stopped"] == "time_budget" and recu["resume"]
+    assert len(vus) < 10
+
+
+def test_des_appels_rates_comptent_dans_la_depense(serveur, monkeypatch):
+    m, _ = serveur
+    vus = _lents_et_introuvables(monkeypatch, 0)
+    parents = _parents([(f"x{i}", "a") for i in range(10)])
+    corps = _corps(parents, units="calls", limits={"max_units": 2})
+    recu = _executer(m, corps, _tableau(CIBLE))
+    assert recu["stopped"] == "spend_cap" and len(vus) == 2 and recu["units"] == 2
+
+
+def test_le_parent_ne_peut_pas_etre_la_cible_meme_par_son_nom(serveur):
+    from oto_mcp.recipes import moteur
+    m, appels = serveur
+    nom = f"fe-{uuid.uuid4().hex[:6]}"
+    parents = _tableau({"key": "slug", "fields": [{"key": "slug", "type": "text"}]},
+                       [{"slug": "acme"}], nom=nom)
+    with pytest.raises(moteur.RecetteRefusee) as e:
+        _executer(m, _corps(parents), nom)
+    assert e.value.code == "for_each_same_table" and appels == []
+
+
+def test_une_epreuve_courte_ne_surveille_rien():
+    from oto_mcp.recipes import moteur
+    assert moteur.surveillees({"fill": {"name": 1.0}, "rows_built": 1}) == []
+    assert moteur.surveillees({"fill": {"name": 1.0}, "rows_built": 10}) == ["name"]
+
+
+def test_la_derive_d_un_parent_le_marque_et_les_suivants_passent(serveur):
+    m, _ = serveur
+    parents = _parents([("acme", "a"), ("initech", "a"), ("globex", "a")])
+    corps = _corps(parents, tool="acme_shape",
+                   source={"items": "content", "pagination": {"type": "none"}})
+    recu = _executer(m, corps, _tableau(CIBLE), temoin={"fill": {"name": 1.0},
+                                                       "rows_built": 12})
+    assert recu["done"] and recu["drifted_columns"] == ["name"]
+    assert _etats(parents) == {"acme": "failed:mapping_drift", "initech": "done",
+                               "globex": "done"}
+
+
+def test_une_liste_la_ou_la_recette_attend_une_valeur_arrete_nommee(serveur):
+    m, _ = serveur
+    parents, cible = _societes(), _tableau(CIBLE)
+    corps = _corps(parents, where=[{"path": "emails", "op": "eq", "value": "x",
+                                    "normalize": "email"}])
+    recu = _executer(m, corps, cible)
+    assert recu["stopped"] == "non_scalar_value" and _lignes(cible) == []
+
+
+def test_un_filtre_refuse_ne_declare_pas_la_colonne_d_etat(serveur):
+    from oto_mcp.datastore.core import make_store
+    from oto_mcp.recipes import moteur
+    m, appels = serveur
+    nom = f"fe-{uuid.uuid4().hex[:6]}"
+    parents = _tableau({"key": "slug", "fields": [{"key": "slug", "type": "text"}]},
+                       [{"slug": "acme"}], nom=nom)
+    corps = _corps(parents, for_each={"datastore": parents, "status_column": "people_status",
+                                      "filter": {"slug": {"regex": "a.*"}}})
+    with pytest.raises(moteur.RecetteRefusee) as e:
+        _executer(m, corps, _tableau(CIBLE))
+    assert e.value.code == "invalid_filter" and appels == []
+    cles = {f["key"] for f in make_store(SUB).get_schema(nom).get("fields") or []}
+    assert "people_status" not in cles
+
+
+def test_max_items_per_row_reduit_la_taille_demandee(serveur, monkeypatch):
+    from oto_mcp.recipes import moteur
+    m, _ = serveur
+    vrai, tailles = moteur._appeler, []
+
+    async def note(outil, sub, nom, args):
+        tailles.append(args.get("size"))
+        return await vrai(outil, sub, nom, args)
+    monkeypatch.setattr(moteur, "_appeler", note)
+    parents = _parents([("acme", "a")])
+    corps = _corps(parents, for_each={"datastore": parents, "status_column": "people_status",
+                                      "max_items_per_row": 1})
+    recu = _executer(m, corps, _tableau(CIBLE))
+    assert recu["written"] == 1 and tailles == [1]
+
+
+def test_une_lecture_bornee_est_coupee_et_nommee(live):
+    from oto_mcp.db import lecture_bornee
+    from oto_mcp.db._conn import _connect
+    with pytest.raises(lecture_bornee.LectureTropLongue):
+        with lecture_bornee.lectures_bornees("banc", 50):
+            with _connect() as c:
+                c.execute("SELECT pg_sleep(1)")
+    # Hors de la portée, rien ne reste posé sur la connexion rendue au pool.
+    with _connect() as c:
+        assert c.execute("SHOW statement_timeout").fetchone()["statement_timeout"] in ("0",
+                                                                                        "0ms")

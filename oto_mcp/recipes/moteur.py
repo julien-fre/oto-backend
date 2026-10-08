@@ -108,12 +108,14 @@ PAGE_TEMOIN = 10
 #: délai, limite de débit, panne) tient au compte ou au fournisseur : l'exécution s'arrête
 #: et la ligne reste en attente.
 ECHECS_DE_LIGNE = frozenset({"invalid_input", "not_found", "call_refused", "upstream_4xx"})
-#: …dont ces deux-là ne disent RIEN de systémique (« ce SIREN n'existe pas », « plusieurs
-#: candidats ») : la ligne est marquée aussitôt, hors disjoncteur — sinon trois sociétés
-#: inconnues d'affilée arrêteraient chaque exécution sur les mêmes trois lignes.
-HORS_DISJONCTEUR = frozenset({"not_found", "ambiguous"})
+#: …dont celui-là ne dit RIEN de systémique (« ce SIREN n'existe pas ») : la ligne est
+#: marquée aussitôt, hors disjoncteur — sinon trois sociétés inconnues d'affilée
+#: arrêteraient chaque exécution sur les mêmes trois lignes.
+HORS_DISJONCTEUR = frozenset({"not_found"})
 #: …sauf quand plusieurs lignes d'affilée échouent pareil : c'est alors systémique (une
-#: garde d'activation, un argument mal écrit). L'exécution s'arrête SANS marquer la série.
+#: garde d'activation, un argument mal écrit). L'exécution s'arrête ; les lignes de la
+#: série sont marquées `failed:<code>` et NOMMÉES au reçu (`failed_rows`) — sans quoi
+#: chaque exécution buterait sur les mêmes, sans qu'on sache lesquelles.
 DISJONCTEUR = 3
 
 
@@ -144,7 +146,7 @@ async def _appeler(tool, sub: Optional[str], outil: str, args: dict):
 
 
 def _arguments(corps: dict, params: dict, etat: dict, restant: int,
-               row: Optional[dict] = None) -> dict:
+               row: Optional[dict] = None, reste_ligne: Optional[int] = None) -> dict:
     args = co.rendre(corps.get("arguments") or {}, co._portees(params, row))
     if row is not None:
         # Sous `for_each`, une case vide de la ligne n'envoie rien (jamais `null`).
@@ -161,6 +163,10 @@ def _arguments(corps: dict, params: dict, etat: dict, restant: int,
         # 1 = l'élément 1, déjà lu) — la boucle s'arrête plutôt avant la page.
         if corps["units"] == "items" and pag["type"] == "cursor":
             taille = max(1, min(taille, restant))
+        # `max_items_per_row` : ne pas payer une page entière pour n'en garder qu'une
+        # partie. Même règle de fenêtre : au numéro, seule la PREMIÈRE page se réduit.
+        if reste_ligne is not None and (pag["type"] == "cursor" or etat["p"] is None):
+            taille = max(1, min(taille, reste_ligne))
         args[pag["size_param"]] = taille
     return args
 
@@ -180,6 +186,18 @@ def _compter(recu: dict, corps: dict, issue, elements: list) -> None:
         cout, base = issue.quantity, "billed"
     else:
         cout, base = (len(elements) if corps["units"] == "items" else 1), "declared"
+    recu["units"] += cout
+    recu["units_basis"] = base if recu["units_basis"] in (None, base) else "mixed"
+
+
+def _compter_echec(recu: dict, issue) -> None:
+    """Un appel REFUSÉ par le fournisseur compte dans la dépense : ce qu'il a facturé
+    s'il le dit (`quantity`), sinon l'appel lui-même — un fournisseur qui facture la
+    recherche ratée n'est pas plafonné autrement."""
+    if issue.quantity is not None:
+        cout, base = issue.quantity, "billed"
+    else:
+        cout, base = 1, "declared"
     recu["units"] += cout
     recu["units_basis"] = base if recu["units_basis"] in (None, base) else "mixed"
 
@@ -210,7 +228,12 @@ def surveillees(temoin: Optional[dict]) -> list[str]:
     """Les colonnes que la publication a vues remplies (`test_report.fill`) : celles-là
     ne doivent pas revenir vides sur toute une page — un fournisseur qui change la forme
     de sa réponse remplirait sinon le tableau de lignes creuses, sans rien dire."""
-    fill = (temoin or {}).get("fill") or {}
+    temoin = temoin or {}
+    # Une épreuve trop courte ne prouve rien : une colonne remplie sur 1 ligne sur 1
+    # n'est pas « pleine », et la surveiller bloquerait le premier parent qui en manque.
+    if int(temoin.get("rows_built") or 0) < PAGE_TEMOIN:
+        return []
+    fill = temoin.get("fill") or {}
     return sorted(c for c, v in fill.items()
                   if isinstance(v, (int, float)) and v >= SEUIL_SURVEILLEE)
 
@@ -238,23 +261,31 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     remplissage = {c: 0 for c in mappees}
     fe = corps.get("for_each")
     tableau = parents = None
-    if fe and datastore is not None and str(fe["datastore"]) == str(datastore):
-        raise RecetteRefusee("for_each_same_table", "`for_each.datastore` is the table the "
-                                                    "recipe writes into: the parent rows must "
-                                                    "live in another table. Nothing was called.")
+    # L'horloge court dès l'entrée : les lectures préalables (parents, listes de
+    # correspondance) comptent dans le budget de l'appel.
+    fin = time.monotonic() + budget_s
     try:
+        # Comparées RÉSOLUES : un numéro et un nom désignent le même tableau.
+        if fe and datastore is not None and await run_in_threadpool(
+                ecriture.meme_tableau, datastore, fe["datastore"]):
+            raise RecetteRefusee("for_each_same_table",
+                                 "`for_each.datastore` is the table the recipe writes into: "
+                                 "the parent rows must live in another table. Nothing was "
+                                 "called.")
         if datastore is not None:
             tableau = await run_in_threadpool(ecriture.ouvrir, datastore, col_cle,
                                               ecrire=ecrire)
         elif ecrire:
             raise RecetteRefusee("missing_datastore", "`datastore` (the table number) is "
                                                       "required to run a recipe.")
+        # Les listes de correspondance AVANT le tableau parent : `match_table_too_large`
+        # tombe avant que la colonne d'état ne soit déclarée.
+        ensembles = await run_in_threadpool(ecriture.charger_ensembles, corps["where"])
         if fe:
             parents = await run_in_threadpool(
                 ecriture.ouvrir_parents, fe["datastore"], fe["status_column"], ecrire=ecrire,
                 filtre=fe.get("filter"),
                 requises=co.colonnes_citees(corps.get("arguments"), "row"))
-        ensembles = await run_in_threadpool(ecriture.charger_ensembles, corps["where"])
         if ecrire:
             recu["created_columns"] = await run_in_threadpool(
                 ecriture.creer_colonnes, tableau, mappees + list(corps["values"]) + [col_cle])
@@ -268,7 +299,9 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     pages_max = min(pages_max or lim["max_pages"], lim["max_pages"])
     if fe and not ecrire:
         pages_max = max(pages_max, ESSAI_PARENTS)
-    fin = time.monotonic() + budget_s
+    # Les appels faits dans CET appel, réussis ou non : l'horloge se vérifie après le
+    # premier, quel qu'il soit — dix parents refusés en 0,3 s chacun restent bornés.
+    appels = {"n": 0}
 
     def _reprise() -> str:
         return _jeton({**etat, "u": recu["units"]})
@@ -287,13 +320,15 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
             if recu["pages"] >= pages_max:
                 _arreter(recu, "max_pages", resume=_reprise())
                 return "max_pages", pris
-            if recu["pages"] and time.monotonic() >= fin:
+            if appels["n"] and time.monotonic() >= fin:
                 _arreter(recu, "time_budget", resume=_reprise())
                 return "time_budget", pris
             if row is not None and co.exigees_vides(corps.get("arguments"),
                                                     co._portees(params, row), exigees):
                 return "ligne:invalid_input", pris
-            args = _arguments(corps, params, etat, restant, row)
+            args = _arguments(corps, params, etat, restant, row,
+                              reste_ligne=None if cap is None else cap - pris)
+            appels["n"] += 1
             try:
                 issue = await _appeler(outil, sub, corps["tool"], dict(args))
             except McpError as e:
@@ -303,6 +338,8 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                     return "ligne:call_refused", pris
                 _arreter(recu, "call_refused", error=str(e.error.message)[:500])
                 return "call_refused", pris
+            if not issue.ok:
+                _compter_echec(recu, issue)
             if not issue.ok and fe and not issue.retryable \
                     and issue.code in ECHECS_DE_LIGNE:
                 return f"ligne:{issue.code}", pris
@@ -337,21 +374,35 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                 elements, plein = elements[:cap - pris], True
             pris += len(elements)
             lignes: dict[str, dict] = {}
-            for el in elements:
-                if not co.garde(el, corps["where"], params, row=row, ensembles=ensembles):
-                    recu["skipped_where"] += 1
-                    continue
-                rangee = co.ligne(el, corps["map"], corps["values"], params, row=row)
-                cle = co.cle(el, corps["key"], rangee, params, row=row)
-                if cle is None:
-                    recu["skipped_no_key"] += 1
-                    continue
-                rangee[col_cle] = cle
-                if cle in lignes:
-                    recu["duplicates_in_call"] += 1
-                    continue
-                lignes[cle] = rangee
+            try:
+                for el in elements:
+                    if not co.garde(el, corps["where"], params, row=row,
+                                    ensembles=ensembles):
+                        recu["skipped_where"] += 1
+                        continue
+                    rangee = co.ligne(el, corps["map"], corps["values"], params, row=row)
+                    cle = co.cle(el, corps["key"], rangee, params, row=row)
+                    if cle is None:
+                        recu["skipped_no_key"] += 1
+                        continue
+                    rangee[col_cle] = cle
+                    if cle in lignes:
+                        recu["duplicates_in_call"] += 1
+                        continue
+                    lignes[cle] = rangee
+            except co.ValeurNonScalaire as e:
+                # La recette pointe une liste là où elle attend une valeur : à corriger
+                # dans la recette, pas ligne par ligne. Rien de la page n'est écrit.
+                _arreter(recu, co.ValeurNonScalaire.code, error=str(e))
+                return co.ValeurNonScalaire.code, pris
             derive = _derive(lignes, a_surveiller)
+            if derive and fe:
+                # Sous `for_each`, la dérive d'UN parent le marque (`failed:mapping_drift`)
+                # et l'exécution passe au suivant ; une série d'affilée relève du
+                # disjoncteur (systémique : la forme a changé pour tous).
+                recu["drifted_columns"] = sorted(set(recu.get("drifted_columns") or [])
+                                                 | set(derive))
+                return "ligne:mapping_drift", pris
             if derive:
                 # La page n'est PAS écrite : des lignes creuses ne valent pas mieux
                 # qu'aucune, et la recette est à reprendre, pas l'appel.
@@ -386,7 +437,7 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
             arret, _ = await _tirer(None)
             recu["done"] = arret is None
             return recu
-        await _parcourir(fe, parents, ecrire, etat, recu, _tirer)
+        await _parcourir(fe, parents, ecrire, etat, recu, _tirer, fin=fin, appels=appels)
     finally:
         if not ecrire:
             n = recu["rows_built"] or 1
@@ -395,13 +446,14 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
 
 
 async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
-                     tirer) -> None:
+                     tirer, *, fin: float, appels: dict) -> None:
     """Les lignes parentes EN ATTENTE (colonne d'état vide, filtre, entrées remplies),
     une à une : leur appel, puis leur état — `done` (des éléments), `empty` (aucun),
-    `failed:<code>` (son entrée refusée : `ECHECS_DE_LIGNE`). Une ligne coupée par un
+    `failed:<code>` (son entrée refusée : `ECHECS_DE_LIGNE`, ou sa page en dérive). Une ligne coupée par un
     plafond ou un échec du compte reste en attente — le jeton `resume` la reprend à sa
     page, une exécution neuve du début (les lignes déjà écrites sont reconnues par leur
-    clé). Une série d'échecs identiques (`DISJONCTEUR`) arrête tout sans la marquer."""
+    clé). Une série d'échecs identiques (`DISJONCTEUR`) arrête tout : ses lignes sont
+    marquées et nommées au reçu (`failed_rows`)."""
     recu["parents"] = {"done": 0, "empty": 0, "failed": 0}
     vues: set = set()
     premiere = etat.get("r")
@@ -432,8 +484,17 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
                         {"p": None, "c": None, "u": recu["units"], "r": None,
                          "h": etat.get("h")}))
                 return
-            lot = await run_in_threadpool(ecriture.parents_en_attente, parents,
-                                          limite=place, premiere=premiere, vues=vues)
+            if appels["n"] and time.monotonic() >= fin:
+                _arreter(recu, "time_budget", resume=_jeton(
+                    {"p": None, "c": None, "u": recu["units"], "r": None,
+                     "h": etat.get("h")}))
+                return
+            try:
+                lot = await run_in_threadpool(ecriture.parents_en_attente, parents,
+                                              limite=place, premiere=premiere, vues=vues)
+            except ecriture.TableauIndisponible as e:
+                _arreter(recu, e.code, error=str(e))
+                return
             premiere = None
             if not lot:
                 recu["done"] = True
@@ -461,12 +522,14 @@ async def _parcourir(fe: dict, parents, ecrire: bool, etat: dict, recu: dict,
                     serie.append(rid)
                     recu["parents"]["failed"] += 1
                     if len(serie) >= DISJONCTEUR:
-                        recu["parents"]["failed"] -= len(serie)
-                        serie.clear()
+                        recu["failed_rows"] = list(serie)
                         _arreter(recu, "repeated_failure", error=(
                             f"{DISJONCTEUR} parent rows in a row failed with `{code}`: "
                             "that looks systemic (an argument, the connector), not a bad "
-                            "row. None of them was marked; fix the cause and run again."))
+                            f"row. They are marked `failed:{code}` and listed in "
+                            "`failed_rows`; fix the cause, clear their status column, and "
+                            "run again."))
+                        await _solder()
                         return
                     continue
                 if arret is not None:

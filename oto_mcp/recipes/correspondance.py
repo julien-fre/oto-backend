@@ -33,6 +33,14 @@ class GabaritInvalide(ValueError):
     """Un gabarit cite une portée ou un filtre inconnus."""
 
 
+class ValeurNonScalaire(ValueError):
+    """Un normaliseur reçoit une liste ou un objet : il ne la convertit pas en texte
+    (`"['a@b.co']"` dans une colonne `email`), il refuse — le chemin de la recette
+    pointe trop haut (`emails` au lieu de `emails[0]`)."""
+
+    code = "non_scalar_value"
+
+
 def _segments(chemin: str) -> list:
     out: list = []
     for nom, index in _SEGMENT.findall(chemin or ""):
@@ -90,24 +98,37 @@ def domaine(texte: Any) -> Optional[str]:
 
 
 def email(texte: Any) -> Optional[str]:
-    """Un e-mail en minuscules, ou None s'il n'en a pas la forme — jamais une phrase
-    d'erreur recopiée dans une colonne `email`."""
+    """Un e-mail en minuscules, sans `mailto:`, ou None s'il n'en a pas la forme —
+    jamais une phrase d'erreur recopiée dans une colonne `email`."""
     t = str(texte).strip().lower() if texte is not None else ""
+    t = t.removeprefix("mailto:").strip()
     return t if _EMAIL.match(t) else None
 
 
+def _hote_linkedin(hote: str) -> bool:
+    return hote == "linkedin.com" or hote.endswith(".linkedin.com")
+
+
 def linkedin_slug(texte: Any) -> Optional[str]:
-    """L'identifiant d'un profil ou d'une page LinkedIn, quelle que soit l'URL :
-    `https://fr.linkedin.com/in/Jane-Doe/?x=1` → `jane-doe`. Un identifiant nu passe."""
+    """L'identifiant d'un profil ou d'une page LinkedIn, quelle que soit l'URL LinkedIn :
+    `https://fr.linkedin.com/in/Jane-Doe/?x=1` → `jane-doe`. Un identifiant nu passe ;
+    une URL d'un autre hôte, ou un nom de domaine, ne sont pas un identifiant."""
     t = unquote(str(texte or "")).strip()
-    m = _LINKEDIN.search(t)
-    if m:
-        return m.group(2).lower()
-    return t.lower() if t and "/" not in t and " " not in t else None
+    if not t or " " in t:
+        return None
+    if "/" in t:
+        morceaux = urlsplit(t if "://" in t else f"//{t}")
+        if not _hote_linkedin((morceaux.hostname or "").lower()):
+            return None
+        m = _LINKEDIN.search(morceaux.path)
+        return m.group(2).lower() if m else None
+    # Un identifiant nu n'a pas de point : `acme.com` est un domaine, pas un profil.
+    return t.lower() if "." not in t else None
 
 
 def url(texte: Any) -> Optional[str]:
-    """Une adresse web avec son schéma, l'hôte en minuscules, sans `/` final."""
+    """Une adresse web avec son schéma, l'hôte en minuscules, sans `/` final — la forme
+    qu'on ÉCRIT dans une colonne."""
     t = str(texte or "").strip()
     if not t or " " in t:
         return None
@@ -118,9 +139,23 @@ def url(texte: Any) -> Optional[str]:
     return base + (f"?{morceaux.query}" if morceaux.query else "")
 
 
+def url_comparable(texte: Any) -> Optional[str]:
+    """Une adresse web pour la COMPARER : sans schéma ni `www.` — `http://acme.com` et
+    `https://www.acme.com/` sont la même adresse."""
+    t = url(texte)
+    if t is None:
+        return None
+    reste = t.split("://", 1)[1]
+    return reste.removeprefix("www.")
+
+
 def _filtrer(valeur: Any, filtre: str) -> Any:
     if valeur is None:
         return None
+    if isinstance(valeur, (list, dict, tuple, set)):
+        raise ValeurNonScalaire(
+            f"filter `{filtre}` got a {type(valeur).__name__}, not a single value: point "
+            "the path at one element (`emails[0]`), not the whole list.")
     if filtre == "slug":
         return slug(valeur)
     if filtre == "domain":
@@ -153,8 +188,16 @@ def normaliser(valeur: Any, filtre: Optional[str]) -> Any:
     accents des comparaisons de texte."""
     if valeur is None:
         return None
+    if filtre == "url":
+        if isinstance(valeur, (list, dict, tuple, set)):
+            _filtrer(valeur, filtre)  # lève `ValeurNonScalaire`
+        return url_comparable(valeur)
     if filtre:
         return _filtrer(valeur, filtre)
+    if isinstance(valeur, (list, dict, tuple, set)):
+        raise ValeurNonScalaire(
+            f"a {type(valeur).__name__} cannot be compared as one value: point the path at "
+            "one element (`emails[0]`), not the whole list.")
     return _plie(valeur)
 
 
