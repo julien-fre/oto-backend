@@ -582,3 +582,18 @@ async def test_host_dispatch_canonical_passthrough(monkeypatch):
     scope = {"type": "http", "headers": [(b"host", b"mcp.oto.ninja")]}
     await disp(scope, None, None)
     assert seen["app"] == "authed"
+
+
+def test_anon_refus_dit_qui_doit_agir(monkeypatch):
+    """Relevé le 08/10/2026 : à la fermeture d'une clé plateforme payante, des appels
+    anonymes (projet publié sans login) recevaient « configure an org key » — un
+    conseil qu'un visiteur sans compte ne peut pas suivre."""
+    from oto_mcp.mcp_errors import McpError
+    _sans_arete_tenant(monkeypatch)
+    monkeypatch.setattr(org_store, "get_org_secret", lambda o, p: None)
+    monkeypatch.setattr(access.credentials_store, "list_accounts", lambda *a: [])
+    monkeypatch.setattr(access.credentials_store, "list_platform_instances", lambda p: [])
+    with pytest.raises(McpError) as e:
+        access._resolve_credential_anon("fullenrich", "auto", 99)
+    msg = e.value.error.message
+    assert "project owner" in msg and "visitor" in msg, msg

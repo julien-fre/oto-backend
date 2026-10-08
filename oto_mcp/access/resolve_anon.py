@@ -80,10 +80,15 @@ def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int],
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
                 message=f"No `{provider}` credential configured for this project's org."))
+        # Read by a visitor WITHOUT an account (a published project): telling them to
+        # set a key is advice they cannot follow. Say who must act, and that the
+        # visitor has nothing to do.
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"The anonymous endpoint cannot resolve `{provider}`: configure "
-                     f"an org key, or grant a platform key to the project's org.")))
+            message=(f"This published project cannot use `{provider}`: its owner's org "
+                     f"has no `{provider}` key and no access to a shared one. Nothing "
+                     f"to do on the visitor's side — the project owner must set an org "
+                     f"key, or ask oto's admins to grant their org access.")))
     if win.mode == "org":
         return ResolvedCredential(provider, win.payload, False, "org", "org",
                                   str(org_id), account=win.account)
