@@ -122,6 +122,9 @@ CLASSEMENT: dict[str, Table] = {
     "orgs": possedee(ParOrg("id"), hors_base=("logo_url",)),
     "org_members": possedee(ParOrg()),
     "org_member_events": possedee(ParOrg(), comptes=("sub",)),
+    "org_service_accounts": exclue(ParOrg(), "le compte de service de l'org et ses clés "
+                                   "(#1188) : un secret émis ne voyage pas, la cible en "
+                                   "émet de nouvelles"),
     "org_invitations": possedee(ParOrg()),
     "org_groups": possedee(ParOrg()),
     "org_group_members": indirecte(Via("org_groups", ("group_id",))),

@@ -173,6 +173,7 @@ def socle(monkeypatch):
                         lambda sub, **kw: vus.append(("list", sub, kw)) or [])
     monkeypatch.setattr(at.db, "revoke_api_token",
                         lambda sub, tid, **kw: vus.append(("revoke", sub, tid, kw)) or True)
+    monkeypatch.setattr(at.org_store, "org_du_compte_de_service", lambda sub: None)
 
     class _Store:
         def list_datastores(self):

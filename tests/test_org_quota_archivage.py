@@ -51,7 +51,10 @@ AUTRE = "sub-test-2"
 _TABLES = ("tenants", "tenant_admins", "users", "orgs", "org_members", "org_groups",
            "org_group_members", "option_comps", "org_subscriptions", "sub_aliases",
            # Le journal des membres (oto#145) : chaque ajout/retrait l'écrit.
-           "org_member_events")
+           "org_member_events",
+           # Les clés d'org (#1188) : les lectures d'appartenance lisent le compte de
+           # service, l'archivage révoque ses jetons.
+           "user_api_tokens", "org_service_accounts")
 
 
 def _real_ddl(table: str) -> str:

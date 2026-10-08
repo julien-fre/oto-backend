@@ -100,6 +100,7 @@ import oto_mcp.capabilities.connectors.oauth_status  # noqa: F401 — me.connect
 # routes de jetons portent `RestBinding.allow_api_token=False` : un jeton ne fabrique
 # pas de jeton. C'est ce cran, absent de l'adaptateur jusqu'ici, qui les y retenait.
 from . import api_tokens  # noqa: F401 — me.token.*, platform.token.*, platform.key.{list,create,delete}
+from . import org_api_keys  # noqa: F401 — org.api_key.{list,create,delete}
 # Ce qui reste de forme JSON dans les images et les fichiers de projet (#121). Leurs
 # voisines multipart et l'export ZIP sont hors du moule par CONSTRUCTION et restent
 # écrites à la main, reclassées NATURE.

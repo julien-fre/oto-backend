@@ -198,3 +198,20 @@ ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS resource_role TEXT;
 ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS resource_ttl_days INTEGER;
 ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS resource_name TEXT;
 """
+
+# le COMPTE DE SERVICE d'une org, porteur de ses clés d'API (oto-backend#1188)
+ORG_SERVICE_ACCOUNTS = """
+-- Le compte qui porte les CLÉS D'API d'une org (`docs/cles-d-org.md`) : une ligne
+-- `users` par org, créée à la première clé (`org_store.service_accounts`), jamais une
+-- personne. Il n'a AUCUNE ligne `org_members` : son rôle `org_member` dans son org est
+-- DÉRIVÉ de cette table par les lectures d'appartenance (`org_store.members`). Une
+-- requête qui joint `org_members` pour décider d'un accès ne le voit donc pas — il est
+-- refusé (fail-closed) au lieu d'apparaître dans les listes de membres, les sièges et la
+-- facturation. `created_by` = l'admin qui a émis la première clé.
+CREATE TABLE IF NOT EXISTS org_service_accounts (
+    org_id BIGINT PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
+    sub TEXT NOT NULL UNIQUE REFERENCES users(sub) ON DELETE CASCADE,
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""

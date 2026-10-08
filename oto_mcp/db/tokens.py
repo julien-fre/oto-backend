@@ -56,7 +56,8 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
                      kind: str = "user", *, job_id: Optional[int] = None,
                      verrou_org: bool = False,
                      verrou_org_id: Optional[int] = None,
-                     parent_id: Optional[int] = None) -> str:
+                     parent_id: Optional[int] = None,
+                     created_by: Optional[str] = None) -> str:
     """Génère un token, persiste son hash, renvoie le plaintext une seule fois.
 
     `ttl_days` : si fourni (>0), le token expire après ce délai et est rejeté
@@ -75,6 +76,9 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
     `parent_id` : le jeton ÉMETTEUR qui a émis celui-ci (`token_scopes.ISSUE`). Un
     enfant ne fonctionne que tant que son parent fonctionne (`verify_api_token`), et
     la révocation du parent le révoque (`revoke_api_token`).
+
+    `created_by` : qui a émis le jeton quand ce n'est pas son porteur — l'admin d'une
+    clé d'org (`kind='org'`, porteur = le compte de service de l'org).
     """
     # ⚠️ `upsert_user` CRÉE le compte s'il n'existe pas. Pour un jeton émis au nom
     # d'un tiers (délégation d'un travail programmé), l'existence du compte se
@@ -95,12 +99,12 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
     with _connect() as conn:
         conn.execute(
             f"INSERT INTO user_api_tokens (sub, label, token_hash, expires_at, "
-            f"scopes, kind, job_id, verrou_org, verrou_org_id, parent_id) "
-            f"VALUES (%s, %s, %s, {expires}, %s, %s, %s, %s, %s, %s)",
+            f"scopes, kind, job_id, verrou_org, verrou_org_id, parent_id, created_by) "
+            f"VALUES (%s, %s, %s, {expires}, %s, %s, %s, %s, %s, %s, %s)",
             (sub, label, _hash_token(token),
              json.dumps(scopes) if scopes is not None else None, kind,
              job_id, True if verrou_org else None,
-             verrou_org_id if verrou_org else None, parent_id),
+             verrou_org_id if verrou_org else None, parent_id, created_by),
         )
     return token
 
@@ -170,24 +174,28 @@ def _as_scopes(raw: object) -> Optional[dict]:
 
 
 def list_api_tokens(sub: str, include_revoked: bool = False,
-                    parent_id: Optional[int] = None) -> list[dict]:
+                    parent_id: Optional[int] = None,
+                    kinds: tuple[str, ...] = ("user",)) -> list[dict]:
     """Les jetons de l'utilisateur. Les RÉVOQUÉS n'y sont que sur demande
     (`include_revoked`) : la liste sert d'abord à décider quoi couper, et un jeton
     déjà coupé n'y a rien à faire ; il reste lisible pour l'enquête (#523).
-    `parent_id` borne la liste aux enfants de ce jeton émetteur."""
+    `parent_id` borne la liste aux enfants de ce jeton émetteur. `kinds` : les
+    natures listées — la liste d'une org (`("org", "user")`) montre ses clés ET ce
+    que ses clés émettrices ont émis."""
     revoques = "" if include_revoked else "AND revoked_at IS NULL "
     enfants = "AND parent_id = %s " if parent_id is not None else ""
-    params = (sub, parent_id) if parent_id is not None else (sub,)
+    params = ((sub, list(kinds), parent_id) if parent_id is not None
+              else (sub, list(kinds)))
     with _connect() as conn:
         rows = conn.execute(
-            # ⚠️ `kind = 'user'` : cet écran annonce des jetons de CLI et
+            # ⚠️ `kinds` vaut `('user',)` par défaut : cet écran annonce des jetons de CLI et
             # d'intégration continue. Les jetons de délégation — 12 minutes,
             # émis automatiquement, un par travail — n'y ont pas leur place :
             # ils feraient mentir l'écran, et son bouton « révoquer » porterait
             # sur un accès en cours d'usage.
             "SELECT id, label, created_at, last_used_at, expires_at, scopes, "
-            "revoked_at, revoked_by, revoked_reason, parent_id "
-            f"FROM user_api_tokens WHERE sub = %s AND kind = 'user' {revoques}"
+            "revoked_at, revoked_by, revoked_reason, parent_id, created_by "
+            f"FROM user_api_tokens WHERE sub = %s AND kind = ANY(%s) {revoques}"
             f"{enfants}ORDER BY created_at DESC",
             params,
         ).fetchall()

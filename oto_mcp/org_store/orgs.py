@@ -302,6 +302,10 @@ def archive_org(org_id: int) -> bool:
             )
             if (cur.rowcount or 0) == 0:
                 return False
+            conn.execute(  # ses clés d'API meurent avec elle (`docs/cles-d-org.md`)
+                "UPDATE user_api_tokens SET revoked_at = now(), revoked_reason = 'org "
+                "archivée' WHERE revoked_at IS NULL AND sub = (SELECT sub FROM "
+                "org_service_accounts WHERE org_id = %s)", (org_id,))
             # Une org archivée est invisible à `get_personal_org` (filtre
             # `archived_at IS NULL`) : elle doit AUSSI libérer le slot perso
             # (`uq_orgs_personal_of`, partiel `personal_of IS NOT NULL` mais PAS

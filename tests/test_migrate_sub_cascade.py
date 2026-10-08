@@ -26,6 +26,9 @@ _ABANDON_DELIBERE = {
     # L'AAD du coffre dérive de l'entité : repointer sans rechiffrer fabrique une
     # ligne indéchiffrable. L'utilisateur repose sa clé (cf. test_migrate_sub_vault).
     ("connector_credentials", "entity_id"),
+    # Le COMPTE DE SERVICE d'une org (clés d'org, #1188) n'est pas une identité Logto :
+    # aucune bascule de tenant ni fusion de comptes ne le vise, il n'a rien à suivre.
+    ("org_service_accounts", "sub"),
 }
 
 

@@ -103,7 +103,7 @@ def socle(monkeypatch):
                         vus.append(("list", sub, include_revoked)) or list(_JETONS))
     monkeypatch.setattr(at.db, "create_api_token",
                         lambda sub, label=None, ttl_days=None, scopes=None,
-                        parent_id=None:
+                        parent_id=None, verrou_org=False, verrou_org_id=None:
                         vus.append(("create", sub, label, ttl_days, scopes)) or "oto_SECRET")
     monkeypatch.setattr(at.db, "revoke_api_token",
                         lambda sub, tid, revoked_by, reason, parent_id=None:

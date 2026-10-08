@@ -76,6 +76,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.procedures.PROCESS_SHARES,  # partage d'une procédure par lien, et ses lecteurs
     schema.usage.SIGNAL_OCCURRENCES,  # occurrences rattachées à un signal d'usage en attente
     schema.jev.JEV_JOBS,             # `jev_rows` en tâche de fond : la file des travaux
+    schema.orgs.ORG_SERVICE_ACCOUNTS,  # le compte de service d'une org, porteur de ses clés
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

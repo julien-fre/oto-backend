@@ -326,7 +326,13 @@ def run_pour_en_tete(run_id: str, sub: str) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute(
             f"""
-            SELECT r.sub, r.org_id, m.org_role, u.role,
+            SELECT r.sub, r.org_id, u.role,
+                   -- Le compte de service d'une org est `org_member` de la sienne sans
+                   -- ligne de membre (`org_store.members`, même dérivation).
+                   COALESCE(m.org_role, CASE WHEN EXISTS (
+                       SELECT 1 FROM org_service_accounts sa
+                        WHERE sa.org_id = r.org_id AND sa.sub = %s)
+                       THEN 'org_member' END) AS org_role,
                    (f.created_at IS NOT NULL) AS clos
               FROM runs r
               LEFT JOIN org_members m ON m.org_id = r.org_id AND m.sub = %s
@@ -340,7 +346,7 @@ def run_pour_en_tete(run_id: str, sub: str) -> Optional[dict]:
               ) s ON TRUE{_run_closure("s")}
              WHERE r.run_id = %s
             """,
-            (sub, sub, run_id),
+            (sub, sub, sub, run_id),
         ).fetchone()
     return dict(row) if row else None
 

@@ -61,7 +61,12 @@ CREATE TABLE IF NOT EXISTS user_api_tokens (
     -- la révocation du parent le révoque. Pas de FK : une ligne de jeton ne se
     -- supprime qu'avec son compte, enfants compris. Base existante : révision
     -- Alembic `0045_jetons_emetteurs`, jamais le démarrage.
-    parent_id BIGINT
+    parent_id BIGINT,
+    -- QUI a émis ce jeton, quand ce n'est pas son porteur : l'admin qui a émis une clé
+    -- d'org (`kind='org'`, porteur = le compte de service de l'org). NULL ailleurs. Pas
+    -- de FK : la trace survit au compte. Base existante : révision Alembic
+    -- `0047_cles_d_org`, jamais le démarrage.
+    created_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_user_api_tokens_sub ON user_api_tokens(sub);
 

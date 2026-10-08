@@ -987,6 +987,17 @@ déploiement : **`docs/version-servie.md`**.
     « émetteur N révoqué ». Colonne `user_api_tokens.parent_id`, révision Alembic
     `0045_jetons_emetteurs` ;
   - chaque émission est journalisée comme tout appel REST par jeton, sous l'id du parent.
+- **Clés d'API d'ORG** (#1188, `docs/cles-d-org.md`) — `GET|POST /api/orgs/{id}/api-keys`
+  et `DELETE …/{token_id}`, réservées aux **admins de l'org**, session interactive seule
+  (`allow_api_token=False`), création refusée sur une org archivée. Une clé d'org agit au
+  nom du **compte de service** de l'org (`org-<id>`, `<tenant>:org-<id>` pour une org de
+  tenant), membre simple de son org et de nulle autre : elle voit ce que l'org possède et
+  ce qu'on lui partage, jamais les objets personnels des membres, et survit aux départs.
+  `scopes` est **requis** (`400 scopes_required`), sans `runner` ; un plafond `issue` en
+  fait une clé émettrice, qui gère ses enfants par `/api/me/tokens`. Chaque clé et chaque
+  enfant porte le verrou d'org. `kind='org'`, `created_by` = l'admin émetteur (révision
+  Alembic `0047_cles_d_org`) ; la liste rend aussi les enfants (`parent_id`). L'archivage
+  de l'org révoque ses clés ; la désactivation de son tenant aussi, par le préfixe du sub.
 - **Portée opt-in** (`auth/token_scopes.py`, colonne `user_api_tokens.scopes` JSONB) : à la
   création, `POST /api/me/tokens {"label":"scout", "scopes":{"datastores":{"leads":"read"}}}`
   rend un jeton **porté** — deny-by-default, il n'ouvre QUE les tableaux nommés, en `read`

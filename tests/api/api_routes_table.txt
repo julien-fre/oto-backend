@@ -490,6 +490,12 @@ POST /api/admin/platform-keys -> _handler
 OPTIONS /api/admin/platform-keys -> options_handler
 DELETE /api/admin/platform-keys/{provider}/{label} -> _handler
 OPTIONS /api/admin/platform-keys/{provider}/{label} -> options_handler
+GET,HEAD /api/orgs/{id}/api-keys -> _handler
+OPTIONS /api/orgs/{id}/api-keys -> options_handler
+POST /api/orgs/{id}/api-keys -> _handler
+OPTIONS /api/orgs/{id}/api-keys -> options_handler
+DELETE /api/orgs/{id}/api-keys/{token_id} -> _handler
+OPTIONS /api/orgs/{id}/api-keys/{token_id} -> options_handler
 DELETE /api/me/avatar -> _handler
 OPTIONS /api/me/avatar -> options_handler
 DELETE /api/orgs/{id}/logo -> _handler

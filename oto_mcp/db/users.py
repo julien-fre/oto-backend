@@ -402,8 +402,10 @@ _SUB_COLUMNS = [
     # désignerait un compte disparu.
     ("org_member_events", "sub"), ("org_member_events", "actor_sub"),
     ("user_api_tokens", "sub"), ("unipile_accounts", "sub"), ("unipile_pending", "sub"),
-    # Qui a RÉVOQUÉ un jeton (#523) : la trace suit le compte qui a coupé.
-    ("user_api_tokens", "revoked_by"),
+    # Qui a RÉVOQUÉ un jeton (#523) : la trace suit le compte qui a coupé. Qui a ÉMIS
+    # une clé d'org, et le compte de service de l'org (#1188) : idem.
+    ("user_api_tokens", "revoked_by"), ("user_api_tokens", "created_by"),
+    ("org_service_accounts", "created_by"),
     # Le PROPRIÉTAIRE d'un canal opéré : hors PK `(sub, provider)`, donc UPDATE nu
     # (le TITULAIRE, lui, est en PK → `_PK_SUB_TABLES`).
     ("unipile_operated_accounts", "owner_sub"),

@@ -126,6 +126,9 @@ def test_migrate_sub_sub_bearing_columns_are_triaged():
         # et la table disparaît avec le préavis. C'est le seul endroit où cet argument
         # vaut : ailleurs, une ligne abandonnée est une donnée perdue.
         ("origine_ecritures", "sub"),
+        # Le COMPTE DE SERVICE d'une org (clés d'org, #1188) n'est pas une identité Logto :
+        # aucune bascule de tenant ni fusion de comptes ne le vise, il n'a rien à suivre.
+        ("org_service_accounts", "sub"),
         # L'ENTITÉ du coffre entre dans l'AAD : jamais d'UPDATE nu (la ligne serait
         # indéchiffrable). Elle SUIT pourtant la personne depuis #439 — rechiffrée,
         # pas repointée : `credentials_store.rekey_personal_credentials`, appelé par

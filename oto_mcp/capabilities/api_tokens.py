@@ -59,7 +59,8 @@ from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field
 
-from .. import access, credentials_store, db, org_origin, ownership, providers, roles
+from .. import (access, credentials_store, db, org_origin, org_store, ownership,
+                providers, roles)
 from ..auth import token_scopes
 from ._authz import SUB_ONLY, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -461,8 +462,11 @@ def _my_create(ctx: ResolvedCtx, inp: TokenCreateInput) -> dict:
     else:
         _echeance_d_emetteur(scopes, ttl_days)
         _orgs_du_plafond(ctx.sub, scopes)
+    # Ce qu'émet une clé d'org reste enfermé dans son org, comme elle (`org_api_keys`).
+    org = org_store.org_du_compte_de_service(ctx.sub) if em else None
     token = db.create_api_token(ctx.sub, label=label, ttl_days=ttl_days, scopes=scopes,
-                                parent_id=em[0] if em else None)
+                                parent_id=em[0] if em else None,
+                                verrou_org=org is not None, verrou_org_id=org)
     return {"token": token, "label": label, "scopes": scopes, "ttl_days": ttl_days}
 
 

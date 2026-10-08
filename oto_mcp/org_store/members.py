@@ -32,10 +32,74 @@ def get_active_org(sub: str) -> Optional[int]:
     """
     with _connect() as conn:
         row = conn.execute(
-            "SELECT org_id FROM org_members WHERE sub = %s AND is_active LIMIT 1",
-            (sub,),
+            "SELECT org_id FROM org_members WHERE sub = %s AND is_active "
+            # Le compte de service d'une org n'a qu'une org, la sienne (`_COMPTE_…`).
+            "UNION ALL SELECT org_id FROM org_service_accounts WHERE sub = %s LIMIT 1",
+            (sub, sub),
         ).fetchone()
         return int(row["org_id"]) if row else None
+
+
+# --- le COMPTE DE SERVICE d'une org, porteur de ses clés d'API (#1188) ------
+#
+# Une ligne `users` par org, jamais une personne (`docs/cles-d-org.md`). Il n'a AUCUNE
+# ligne `org_members` : son rôle `org_member` dans son org est DÉRIVÉ ici, par les trois
+# lectures d'appartenance (`get_active_org`, `list_orgs_for_user`, `get_org_role`) — et
+# par elles seules. Une requête qui joint `org_members` pour décider d'un accès ne le
+# voit pas : il y est refusé (fail-closed) plutôt que de paraître dans les listes de
+# membres, les sièges et la facturation. `org_member` et non `org_admin` : un admin voit
+# toutes les équipes de l'org, le compte d'org ne voit que ce qu'on lui partage.
+
+_PREFIXE_COMPTE = "org-"
+
+
+def org_du_compte_de_service(sub: str) -> Optional[int]:
+    """L'org dont `sub` est le compte de service, None pour toute personne."""
+    with _connect() as conn:
+        row = conn.execute("SELECT org_id FROM org_service_accounts WHERE sub = %s",
+                           (sub,)).fetchone()
+        return int(row["org_id"]) if row else None
+
+
+def compte_de_service_de(org_id: int) -> Optional[str]:
+    """Le sub du compte de service de l'org, None si elle n'a jamais eu de clé."""
+    with _connect() as conn:
+        row = conn.execute("SELECT sub FROM org_service_accounts WHERE org_id = %s",
+                           (org_id,)).fetchone()
+        return row["sub"] if row else None
+
+
+def assurer_compte_de_service(org_id: int, by: str) -> str:
+    """Le sub du compte de service de l'org, créé au premier appel. Idempotent.
+
+    ⚠️ Sa ligne `users` naît ICI, jamais par `upsert_user` : une naissance par
+    `upsert_user` lui créerait une org perso. Son sub porte le préfixe du TENANT de
+    l'org (`<slug>:org-<id>`) : c'est ce préfixe qui fait couper ses jetons par la
+    désactivation du tenant (`db.tenants`), sans code de plus."""
+    from .. import tenancy  # paresseux : feuilles du package
+    from ..db.tenants import org_tenant_slug
+    with _connect() as conn:
+        with conn.transaction():
+            row = conn.execute(
+                "SELECT o.id, o.name, s.sub FROM orgs o "
+                "LEFT JOIN org_service_accounts s ON s.org_id = o.id "
+                "WHERE o.id = %s AND o.archived_at IS NULL FOR NO KEY UPDATE OF o",
+                (org_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"org #{org_id} inconnue ou archivée")
+            if row["sub"]:
+                return row["sub"]
+            tenant = org_tenant_slug(org_id, conn=conn)
+            # Le tenant primaire ne préfixe pas ses comptes.
+            prefixe = "" if tenant == tenancy.primary_slug() else f"{tenant}:"
+            sub = f"{prefixe}{_PREFIXE_COMPTE}{org_id}"
+            conn.execute(
+                "INSERT INTO users (sub, name) VALUES (%s, %s) ON CONFLICT (sub) DO NOTHING",
+                (sub, f"Clés d'API — {row['name']}"))
+            conn.execute(
+                "INSERT INTO org_service_accounts (org_id, sub, created_by) "
+                "VALUES (%s, %s, %s)", (org_id, sub, by))
+            return sub
 
 
 def _sync_mfa_mirror(org_id: int) -> None:
@@ -244,9 +308,14 @@ def list_orgs_for_user(sub: str) -> list[dict]:
             """
             SELECT m.org_id, o.name, o.logo_url, o.domain, m.org_role, m.is_active, m.joined_at
               FROM org_members m JOIN orgs o ON o.id = m.org_id
-             WHERE m.sub = %s AND o.archived_at IS NULL ORDER BY m.joined_at ASC
+             WHERE m.sub = %s AND o.archived_at IS NULL
+            UNION ALL
+            SELECT s.org_id, o.name, o.logo_url, o.domain, 'org_member', TRUE, s.created_at
+              FROM org_service_accounts s JOIN orgs o ON o.id = s.org_id
+             WHERE s.sub = %s AND o.archived_at IS NULL
+             ORDER BY joined_at ASC
             """,
-            (sub,),
+            (sub, sub),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -323,7 +392,9 @@ def get_org_member_by_email(org_id: int, email: str) -> Optional[dict]:
 def get_org_role(org_id: int, sub: str) -> Optional[str]:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT org_role FROM org_members WHERE org_id = %s AND sub = %s",
-            (org_id, sub),
+            "SELECT org_role FROM org_members WHERE org_id = %s AND sub = %s "
+            "UNION ALL SELECT 'org_member' FROM org_service_accounts "
+            "WHERE org_id = %s AND sub = %s LIMIT 1",
+            (org_id, sub, org_id, sub),
         ).fetchone()
         return row["org_role"] if row else None

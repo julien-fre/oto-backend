@@ -85,7 +85,7 @@ PAR_LOTS: dict[str, tuple[str, ...]] = {
     "usage_signals": ("sub", "resolved_by"),
     "usage_signal_occurrences": ("sub",),
     "org_member_events": ("sub", "actor_sub"),
-    "user_api_tokens": ("revoked_by",),
+    "user_api_tokens": ("revoked_by", "created_by"),
     "user_datastores": ("owner_id",),
     "projects": ("owner_id", "created_by"),
     "functions": ("owner_id", "created_by"),
@@ -116,6 +116,8 @@ _REGLAGES = ("réglage par org, équipe, connecteur ou famille : borné par le n
              "d'orgs et de connecteurs, pas par l'activité")
 _UNE_PAR_COMPTE = "au plus quelques lignes par compte, jamais par appel"
 BORNEES: dict[tuple[str, str], str] = {
+    ("org_service_accounts", "created_by"): "une ligne par org au plus (clé `org_id`) : "
+                                            "bornée par le nombre d'orgs",
     ("connector_settings", "set_by"): _REGLAGES,
     ("org_disabled_tools", "disabled_by"): _REGLAGES,
     ("group_disabled_tools", "disabled_by"): _REGLAGES,

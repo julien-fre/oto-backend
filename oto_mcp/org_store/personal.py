@@ -109,6 +109,10 @@ _A_RATTRAPER = """
      WHERE NOT EXISTS (SELECT 1 FROM orgs o
                         WHERE o.personal_of = u.sub AND o.archived_at IS NULL)
         OR NOT EXISTS (SELECT 1 FROM org_members m WHERE m.sub = u.sub AND m.is_active)
+    -- Le compte de service d'une org (`members.assurer_compte_de_service`) n'a ni org
+    -- perso ni ligne de membre, et ne doit pas en recevoir.
+    EXCEPT SELECT u.sub, u.email, u.name FROM users u
+      JOIN org_service_accounts s ON s.sub = u.sub
 """
 
 
