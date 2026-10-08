@@ -61,6 +61,7 @@ from . import (accords as api_routes_accords,
                instagram_meta as api_routes_instagram_meta,
                meta_ads as api_routes_meta_ads,
                microsoft as api_routes_microsoft,
+               ubersuggest as api_routes_ubersuggest,
                receveurs as api_routes_receveurs,
                salesforce as api_routes_salesforce,
                sirene as api_routes_sirene,
@@ -792,6 +793,15 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         options_handler=options_handler,
     )
 
+    # Retour de connexion Ubersuggest (client OAuth public, PKCE) — même forme.
+    ubersuggest_routes = api_routes_ubersuggest.make_routes(
+        verifier=verifier,
+        authenticate=_authenticate,
+        json_response=_json,
+        json_error=_json_error,
+        options_handler=options_handler,
+    )
+
     # Retour de l'écran d'autorisation WordPress (mot de passe d'application) — le
     # `/start` passe par le seam commun (`connectors/flow`), seul le retour est une route.
     wordpress_routes = api_routes_wordpress.make_routes(
@@ -903,6 +913,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         *instagram_meta_routes,
         *meta_ads_routes,
         *microsoft_routes,
+        *ubersuggest_routes,
         *wordpress_routes,
         *capability_routes,
         *billing_webhook_routes,
