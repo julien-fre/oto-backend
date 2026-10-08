@@ -158,8 +158,10 @@ def _kb(ctx: ResolvedCtx, inp: KbInput) -> dict:
             "Deux verbes désormais, chacun dit ce qu'il fait : `op=get` lit l'ancre "
             "et ne crée rien (`project_id: null` si l'org n'a pas de base) ; "
             "`op=create` crée la base de connaissance de l'ORG, visible de TOUS ses "
-            "membres. Pour un espace à toi seul, invisible même des administrateurs, "
-            "ce n'est ni l'un ni l'autre : `oto_project op=create` (owner_type='user').")
+            "membres. Pour un espace à toi (aucun autre membre ne le voit ; "
+            "l'administrateur de l'org où il est rangé peut le consulter, en lecture "
+            "seule et de façon tracée), ce n'est ni l'un ni l'autre : "
+            "`oto_project op=create` (owner_type='user').")
     pid, kb = _anchored_kb(org)
     cree = False
     if kb is None:

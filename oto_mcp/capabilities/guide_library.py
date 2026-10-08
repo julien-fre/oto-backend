@@ -462,7 +462,7 @@ CAPABILITIES += [
         key="library.fork", handler=_fork, Input=ForkInput, authz=ORG_MEMBER,
         description="Fork (copy) a public-library guide as a new versioned procedure. Open "
                     "to any member of your active org: an org_admin gets an org procedure, a "
-                    "member a personal one (yours alone) — `scope` user|org overrides, org "
+                    "member a personal one — `scope` user|org overrides, org "
                     "needs org_admin. slug = the public entry ; new_slug optional (defaults "
                     "to source slug, de-duplicated) ; project_id optional (links the copy "
                     "to that project, which you must be able to edit).",

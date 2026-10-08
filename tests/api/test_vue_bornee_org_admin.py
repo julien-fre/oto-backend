@@ -78,7 +78,12 @@ def monde(live):
                       granted_by=DEHORS)
     ds = {
         "tab_o": db.create_datastore("org", str(o), "tab_o"),
+        # Sans org de création (legacy) : sa maison est l'org perso du membre.
         "tab_perso": db.create_datastore("user", MEMBRE, "tab_perso"),
+        "tab_perso_o": db.create_datastore("user", MEMBRE, "tab_perso_o",
+                                           context_org_id=o),
+        "tab_perso_p": db.create_datastore("user", MEMBRE, f"{MARQUE_P}_tab_perso_p",
+                                           context_org_id=p),
         "tab_p": db.create_datastore("org", str(p), f"{MARQUE_P}_tab_p"),
         "tab_p_partage": db.create_datastore("org", str(p), f"{MARQUE_P}_tab_partage"),
     }
@@ -151,7 +156,7 @@ def test_la_vue_montre_ce_que_le_membre_voit_dans_o(client, monde):
 
     tableaux = client.get("/api/datastores", headers=h)
     assert tableaux.status_code == 200, tableaux.text
-    assert {t["datastore"] for t in tableaux.json()["datastores"]} == {"tab_o"}
+    assert {t["datastore"] for t in tableaux.json()["datastores"]} == {"tab_o", "tab_perso_o"}
 
     cle = client.get("/api/settings/api-keys/hunter", headers=h)
     assert cle.status_code == 200, cle.text
@@ -166,9 +171,67 @@ def test_un_projet_hors_de_o_est_introuvable_dans_la_vue(client, monde, cle):
     assert MARQUE_P not in r.text
 
 
-@pytest.mark.parametrize("cle", ["tab_p", "tab_p_partage"])
-def test_un_tableau_hors_de_o_est_introuvable_dans_la_vue(client, monde, cle):
-    r = client.get(f"/api/datastores/{monde['ds'][cle]}/rows", headers=_vue(monde))
+@pytest.mark.parametrize("cle", ["tab_p", "tab_p_partage", "tab_perso_p", "tab_perso"])
+@pytest.mark.parametrize("suffixe", ["rows", "rows/export.csv"])
+def test_un_tableau_hors_de_o_est_introuvable_dans_la_vue(client, monde, cle, suffixe):
+    """Un tableau PERSO du membre se range dans l'org où il l'a créé (ou, sans org de
+    création, dans son org perso) : créé dans P, il ne se lit pas par son numéro dans
+    une vue bornée à O — ni ses lignes, ni son export."""
+    r = client.get(f"/api/datastores/{monde['ds'][cle]}/{suffixe}", headers=_vue(monde))
+    assert r.status_code == 404, r.text
+    assert MARQUE_P not in r.text
+
+
+@pytest.mark.parametrize("suffixe", ["rows", "rows/export.csv"])
+def test_un_tableau_perso_cree_dans_o_se_lit_dans_la_vue(client, monde, suffixe):
+    r = client.get(f"/api/datastores/{monde['ds']['tab_perso_o']}/{suffixe}",
+                   headers=_vue(monde))
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.parametrize("cle", ["tab_perso", "tab_perso_o", "tab_perso_p"])
+def test_hors_vue_le_membre_lit_tous_ses_tableaux_perso(client, monde, cle):
+    r = client.get(f"/api/datastores/{monde['ds'][cle]}/rows",
+                   headers=_soi(MEMBRE, monde["o"]))
+    assert r.status_code == 200, r.text
+
+
+@pytest.fixture
+def noeuds(client, monde):
+    """Deux nœuds NÉS ICI, perso du membre, hors de tout projet : une page et un tableau
+    à une ligne. Sans org de création, leur maison est l'org perso du membre."""
+    h = _soi(MEMBRE, monde["o"])
+    def creer(corps):
+        r = client.post("/api/me/nodes/edit", json={"op": "create", **corps}, headers=h)
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
+    page = creer({"kind": "page", "title": f"{MARQUE_P} page perso", "body_md": "secret"})
+    tableau = creer({"kind": "tableau", "title": f"{MARQUE_P} tableau perso"})
+    creer({"kind": "ligne", "parent_id": tableau, "data": {"x": f"{MARQUE_P} cellule"}})
+    return {"page": page, "tableau": tableau}
+
+
+def test_un_noeud_perso_hors_projet_ne_sort_pas_dans_la_vue(client, monde, noeuds):
+    for chemin in (f"/api/me/nodes/{noeuds['page']}", f"/api/me/nodes/{noeuds['tableau']}",
+                   f"/api/me/nodes/{noeuds['tableau']}/rows"):
+        r = client.get(chemin, headers=_vue(monde))
+        assert r.status_code == 404, (chemin, r.text)
+        assert MARQUE_P not in r.text
+
+
+def test_hors_vue_le_membre_lit_ses_noeuds_perso(client, monde, noeuds):
+    h = _soi(MEMBRE, monde["o"])
+    for chemin in (f"/api/me/nodes/{noeuds['page']}",
+                   f"/api/me/nodes/{noeuds['tableau']}/rows"):
+        r = client.get(chemin, headers=h)
+        assert r.status_code == 200, (chemin, r.text)
+
+
+def test_les_lignes_d_un_tableau_ne_ici_ne_se_lisent_pas_sans_droit(client, monde, noeuds):
+    """Un tableau né ici n'a pas de store pour garder ses lignes : leur lecture passe
+    par la garde de sa fiche. Un autre membre de O ne les lit pas par leur identifiant."""
+    r = client.get(f"/api/me/nodes/{noeuds['tableau']}/rows",
+                   headers=_soi(SIMPLE, monde["o"]))
     assert r.status_code == 404, r.text
     assert MARQUE_P not in r.text
 
@@ -287,8 +350,9 @@ def test_hors_vue_le_membre_lit_comme_avant(client, monde):
     assert (r.status_code, r.json()["error"]) == (403, "wrong_org_context")
     tableaux = {t["datastore"] for t in
                 client.get("/api/datastores", headers=h).json()["datastores"]}
-    # Le partage reçu en propre et le tableau perso ne se listent que dans l'org perso.
-    assert tableaux == {"tab_o"}
+    # Le partage reçu en propre et le tableau perso sans org de création ne se listent
+    # que dans l'org perso ; le perso créé dans O se liste dans O.
+    assert tableaux == {"tab_o", "tab_perso_o"}
     assert client.get("/api/me/tokens", headers=h).status_code == 200
 
 
@@ -313,9 +377,17 @@ def test_le_seam_est_identique_hors_vue_et_borne_en_vue(monde):
             lambda: ow.visible_in_org(MEMBRE, o, "project", str(pr["partage_p"])), True, False),
         "visible perso rangé dans O": (
             lambda: ow.visible_in_org(MEMBRE, o, "project", str(pr["perso_o"])), True, True),
-        "visible tableau perso": (
+        # Un tableau perso se range comme un projet perso : dans l'org où il a été
+        # créé, sinon dans l'org perso du membre (ce n'est pas O).
+        "visible tableau perso sans org de création": (
             lambda: ow.visible_in_org(MEMBRE, o, ow.TYPE_RESSOURCE_DATASTORE,
-                                      str(ds["tab_perso"])), True, True),
+                                      str(ds["tab_perso"])), True, False),
+        "visible tableau perso créé dans O": (
+            lambda: ow.visible_in_org(MEMBRE, o, ow.TYPE_RESSOURCE_DATASTORE,
+                                      str(ds["tab_perso_o"])), True, True),
+        "visible tableau perso créé dans P": (
+            lambda: ow.visible_in_org(MEMBRE, o, ow.TYPE_RESSOURCE_DATASTORE,
+                                      str(ds["tab_perso_p"])), True, False),
         "visible dans P": (
             lambda: ow.visible_in_org(MEMBRE, p, "project", str(pr["org_p"])), True, False),
         "contenu projet de P": (

@@ -300,8 +300,10 @@ def visible_in_org(sub: str, org_id: Optional[int],
     - le contexte est O, et rien d'autre ;
     - une ressource PERSO du membre n'est visible que si elle DESCEND dans O : son
       kind la range dans une org (`context_org`, directement ou par son parent) et
-      c'est O ; un kind qui ne range pas ses ressources perso (tableau, procédure
-      personnelle) les fait suivre la personne partout, O compris ;
+      c'est O. Le projet et le tableau rangent (org de création ; un tableau sans
+      org de création se range dans l'org perso de son propriétaire) ; un kind qui ne
+      range pas ses ressources perso (procédure personnelle) les fait suivre la
+      personne partout, O compris ;
     - un partage PERSONNEL reçu (`principal = user`) ne compte pas : il n'appartient à
       aucune org, c'est l'espace du membre, pas celui de O."""
     borne = vue_bornee(sub)
@@ -738,9 +740,26 @@ def _datastore_reparent(rid: str, new_owner_type: str, new_owner_id: str) -> Non
     db.reparent_datastore(int(rid), new_owner_type, new_owner_id)
 
 
+def _datastore_context_org(rid: str) -> Optional[int]:
+    """Org de RANGEMENT d'un tableau perso : celle où il a été créé (`context_org_id`,
+    oto#160). Sans org de création (legacy), sa maison est l'org perso de son
+    propriétaire — le critère même de la liste (`mes_tableaux_ici`). Sans ce rangement,
+    un tableau perso « suivait la personne partout » : en vue bornée à O, un tableau
+    créé dans une autre org se lisait par son numéro."""
+    row = db.get_datastore_by_id(int(rid))
+    if row is None:
+        return None
+    if row.get("context_org_id"):
+        return int(row["context_org_id"])
+    if row.get("owner_type") == "user" and row.get("owner_id"):
+        return org_store.get_personal_org(str(row["owner_id"]))
+    return None
+
+
 register_kind(
     TYPE_RESSOURCE_DATASTORE,
-    ResourceKind(owner_getter=_datastore_owner, reparent=_datastore_reparent),
+    ResourceKind(owner_getter=_datastore_owner, reparent=_datastore_reparent,
+                 context_org=_datastore_context_org),
 )
 
 

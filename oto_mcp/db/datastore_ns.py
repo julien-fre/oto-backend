@@ -91,8 +91,8 @@ def get_datastore(owner_type: str, owner_id: str, namespace: str) -> Optional[di
 def get_datastore_by_id(ns_id: int) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, owner_type, owner_id, namespace AS datastore, schema, created_at "
-            "FROM user_datastores WHERE id = %s",
+            "SELECT id, owner_type, owner_id, namespace AS datastore, schema, created_at, "
+            "context_org_id FROM user_datastores WHERE id = %s",
             (ns_id,),
         ).fetchone()
         return dict(row) if row else None

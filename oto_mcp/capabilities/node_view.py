@@ -260,6 +260,61 @@ def _lisible(ctx: ResolvedCtx, fiche: dict, partages: set) -> bool:
     return fiche["public_id"] in partages
 
 
+def exiger_lisible(ctx: ResolvedCtx, fiche: dict) -> Optional[list[dict]]:
+    """LA garde de lecture d'un nœud de `nodes` (hors projet ou page lus dans leurs
+    tables) : à portée (`_lisible`), puis, en vue bornée, rangé dans O
+    (`_hors_de_la_vue`). Lève le 404 indistinct. Rend le fil quand la vue l'a lu
+    (`None` sinon), pour ne pas le relire. Sert la fiche et les lignes d'un tableau né
+    ici (`node_rows`) : deux lectures, une garde."""
+    partages: set = set()
+    if not ownership.owner_in_scope(ctx.sub, ctx.org_id,
+                                    (fiche["owner_type"], str(fiche["owner_id"]))):
+        # Le second chemin ne se paie QUE s'il sert : la voie du propriétaire couvre
+        # la quasi-totalité des ouvertures, et lire tous les grants d'une personne
+        # pour confirmer ce qu'on sait déjà serait une requête par ouverture de page.
+        par_id, _ = db_shell.resolve_grant_nodes(
+            ownership.partages_dans_la_vue(ctx.sub, db_shell.direct_grants(ctx.sub)))
+        partages = set(par_id)
+    if not _lisible(ctx, fiche, partages):
+        raise _introuvable()
+    borne = ownership.vue_bornee(ctx.sub)
+    if borne is None or (str(fiche["owner_type"]), str(fiche["owner_id"])) != (
+            "user", ctx.sub):
+        return None
+    chaine = db_node.ancestors_of(fiche["id"], max_depth=_PROFONDEUR_FIL)
+    if _hors_de_la_vue(ctx.sub, borne, fiche, chaine):
+        raise _introuvable()
+    return chaine
+
+
+def _hors_de_la_vue(sub: str, borne: int, fiche: dict, chaine: list[dict]) -> bool:
+    """Un nœud PERSO de `sub` qui ne descend pas dans l'org O d'une vue bornée (oto#270,
+    ou jeton de délégation d'une org).
+
+    Son rangement est celui de ce qui le porte, lu sur le fil, du plus proche au plus
+    loin : un projet, puis un tableau recopié — chacun jugé par
+    `ownership.visible_in_org`, la règle des surfaces qui les servent. Les couches de
+    contexte (guide) et les procédures perso suivent la personne, comme
+    `/api/me/guides` en vue. Un nœud né ici hors de tout projet n'a pas d'org de
+    création : sa maison est l'org perso de son propriétaire (`perso_de_la_liste`), il
+    ne sort donc dans une vue que si O est cette org. Un fil tronqué
+    (`_PROFONDEUR_FIL`) qui perd son projet retombe sur cette règle : fermé, jamais
+    ouvert."""
+    props = fiche.get("props") or {}
+    if "delivery" in props or props.get("legacy") == "prc":
+        return False
+    _, project_id = _source(props, chaine)
+    if project_id is not None:
+        return not ownership.visible_in_org(sub, borne, "project", str(project_id))
+    for maillon in reversed(chaine):
+        p = maillon.get("props") or {}
+        ds_id = datastore_de(p.get("legacy"), p.get("legacy_id"))
+        if ds_id is not None:
+            return not ownership.visible_in_org(
+                sub, borne, ownership.TYPE_RESSOURCE_DATASTORE, str(ds_id))
+    return not ownership.org_perso_de(sub, borne)
+
+
 def _source(props: dict, chaine: list[dict]) -> tuple[Optional[int], Optional[int]]:
     """`(doc_id, project_id)` — la clé legacy du nœud, rendue aux surfaces qui la
     prennent en entrée (cf. `NodeOut`).
@@ -355,21 +410,19 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
     if not fiche:
         raise _introuvable()
 
+    chaine_lue: Optional[list[dict]] = None
     if lu is not None:
-        if not ownership.can_access(ctx.sub, "project", str(lu["project_id"])):
+        pid = str(lu["project_id"])
+        borne = ownership.vue_bornee(ctx.sub)
+        # En vue bornée, la règle des projets lus par id (`visible_in_org`) : un projet
+        # perso rangé dans une AUTRE org ne s'ouvre pas, pas plus par sa page que par
+        # `/api/me/projects/{id}`.
+        if not ownership.can_access(ctx.sub, "project", pid) or (
+                borne is not None
+                and not ownership.visible_in_org(ctx.sub, borne, "project", pid)):
             raise _introuvable()
     else:
-        partages: set = set()
-        if not ownership.owner_in_scope(ctx.sub, ctx.org_id,
-                                        (fiche["owner_type"], str(fiche["owner_id"]))):
-            # Le second chemin ne se paie QUE s'il sert : la voie du propriétaire couvre
-            # la quasi-totalité des ouvertures, et lire tous les grants d'une personne
-            # pour confirmer ce qu'on sait déjà serait une requête par ouverture de page.
-            par_id, _ = db_shell.resolve_grant_nodes(
-                ownership.partages_dans_la_vue(ctx.sub, db_shell.direct_grants(ctx.sub)))
-            partages = set(par_id)
-        if not _lisible(ctx, fiche, partages):
-            raise _introuvable()
+        chaine_lue = exiger_lisible(ctx, fiche)
 
     props = fiche.get("props") or {}
     # APRÈS la garde de lecture : un nœud incohérent reste un 404 pour qui ne le lit pas.
@@ -381,7 +434,8 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
         raise _incoherent(fiche["public_id"], cause) from None
     nature = _type_of(fiche["kind"], props)
     ref = procedure_ref_of(nature, fiche.get("owner_type"), props)
-    chaine = lu["chaine"] if lu else db_node.ancestors_of(fiche["id"], max_depth=_PROFONDEUR_FIL)
+    chaine = (lu["chaine"] if lu else chaine_lue if chaine_lue is not None
+              else db_node.ancestors_of(fiche["id"], max_depth=_PROFONDEUR_FIL))
     doc_id, project_id = _source(props, chaine)
     corps: dict = {
         "id": fiche["public_id"],

@@ -58,6 +58,7 @@ from ..db import node_tables as db_node_tables
 from ..db import node_view as db_node
 from ._authz import ORG_MEMBER
 from .node_keys import datastore_de
+from .node_view import exiger_lisible
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding,
                      cap_limit)
 from .registry import CAPABILITIES
@@ -242,6 +243,10 @@ def _compose(ctx: ResolvedCtx, inp: NodeRowsInput) -> dict:
     # recopie ; celui-ci reste.
     namespace = datastore_de(props.get("legacy"), props.get("legacy_id"))
     if namespace is None:
+        # Un tableau né ici n'a pas de store pour garder sa lecture : la garde est
+        # celle de sa fiche (`node_view.exiger_lisible`), portée et vue bornée comprises.
+        # Sans elle, ses lignes se lisaient par leur seul identifiant.
+        exiger_lisible(ctx, fiche)
         return _natif(inp, fiche, props)
     store = ds.make_store(ctx.sub)
     try:
