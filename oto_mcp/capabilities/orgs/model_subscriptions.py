@@ -64,8 +64,9 @@ class OrgPlafond(BaseModel):
         default=False,
         description=("`true`: a job whose subscription (the requester's, or the whole "
                      "pool) is EXHAUSTED replays on this org's own deposited API key, "
-                     "same tier, instead of waiting for the plan to reset. `false` "
-                     "(default): those jobs wait. It never spends anyone else's key."))
+                     "same tier, instead of waiting for the plan to reset. `false`: those "
+                     "jobs wait. Without a setting of the org, the instance's default "
+                     "applies. It never spends anyone else's key."))
 
 
 class GetOrgPlafondInput(BaseModel):
@@ -97,7 +98,8 @@ class SetOrgRepliInput(BaseModel):
                      "for the plan to reset — at most one such run at a time per "
                      "subscription, each capped in tokens. Never spends anyone else's "
                      "key: with no key deposited by this org, the jobs wait either way. "
-                     "`false` (default): those jobs wait for the reset."))
+                     "`false`: those jobs wait for the reset. Unset, the instance's "
+                     "default applies."))
 
 
 def _exiger(org_id: int, famille: str) -> None:
@@ -217,7 +219,7 @@ CAPABILITIES += [
         description=("Allow or refuse, for this org, that a job whose model subscription "
                      "is EXHAUSTED — the requester's own, or every lender of the org's "
                      "pool — replays on the org's OWN deposited API key at the same tier "
-                     "instead of waiting for the plan to reset. Off by default. A pause "
+                     "instead of waiting for the plan to reset. The default depends on the instance; the org can turn it on or off. A pause "
                      "set by another org's tighter cap never triggers it; one replayed "
                      "run at a time per subscription, capped in tokens. It never spends "
                      "another party's key: without a key deposited BY THIS ORG the job "

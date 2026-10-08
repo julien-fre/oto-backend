@@ -17,8 +17,10 @@ QUEL sandbox peut servir, jamais comment s'y connecter.
 """
 from __future__ import annotations
 
+import os
 from typing import Iterable, Optional
 
+from .. import interrupteurs
 from ._conn import _connect
 
 PERSONNEL = "personnel"
@@ -59,17 +61,31 @@ def en_pool(org_id: Optional[int], famille: str) -> bool:
     return ((get_mode(org_id, famille) or {}).get("mode")) == POOL
 
 
-def repli_api_actif(org_id: Optional[int], famille: str) -> bool:
-    """Cette org a-t-elle CHOISI qu'un travail d'abonnement épuisé rejoue sur SA clé
-    API plutôt que d'attendre la réinitialisation (OTO-130) ? FERMÉ par défaut —
-    sans ligne, le repli n'existe pas (décision du 28/09/2026).
+ENV_REPLI_PAR_DEFAUT = "OTO_REPLI_API_PAR_DEFAUT"
 
-    ⚠️ Une clé déposée ne vaut pas ce choix : les orgs qui en ont une l'ont posée pour
-    leurs agents API, et y déplacer des travaux d'abonnement serait les faire payer
-    pour une dépense qu'elles n'ont pas demandée. Ouvert, le repli exige EN PLUS
-    cette clé (`runner_jobs._cle_ok_pour_repli`). La réservation lit la colonne en
-    SQL (`runner_jobs.candidats_repli_abonnement`) ; cette lecture sert l'écran."""
-    return bool((get_mode(org_id, famille) or {}).get("repli_api"))
+
+def repli_api_par_defaut() -> bool:
+    """Le repli d'une org qui ne l'a jamais réglé : un choix de l'INSTANCE
+    (`ENV_REPLI_PAR_DEFAUT`, décision du 08/10/2026). Fermé si elle ne déclare rien —
+    les clés d'org déposées l'ont été pour des agents API, et y déplacer des travaux
+    d'abonnement serait une dépense que personne n'a demandée (décision du 28/09) ;
+    ouvert sur une instance qui le déclare. Lu à chaque appel, sans redémarrage ; une
+    valeur illisible lève (`interrupteurs`)."""
+    return interrupteurs.oui_non(ENV_REPLI_PAR_DEFAUT,
+                                 os.environ.get("OTO_REPLI_API_PAR_DEFAUT"))
+
+
+def repli_api_actif(org_id: Optional[int], famille: str) -> bool:
+    """Un travail d'abonnement épuisé de cette org rejoue-t-il sur SA clé API plutôt
+    que d'attendre la réinitialisation (OTO-130) ? Le réglage de l'org s'il existe,
+    sinon le défaut de l'instance (`repli_api_par_defaut`).
+
+    Le repli exige toujours la clé déposée PAR l'org (`runner_jobs._cle_ok_pour_repli`) :
+    sans clé, rien ne change. La réservation lit la même règle en SQL, avec le MÊME
+    défaut passé en paramètre (`runner_jobs.candidats_repli_abonnement`) ; cette
+    lecture sert l'écran."""
+    ligne = get_mode(org_id, famille)
+    return repli_api_par_defaut() if ligne is None else bool(ligne["repli_api"])
 
 
 def set_repli_api(org_id: int, famille: str, actif: bool, par: Optional[str]) -> dict:
@@ -94,13 +110,16 @@ def poser_mode(org_id: int, famille: str, mode: str, par: str) -> dict:
         raise ValueError(f"mode hors contrat : {mode!r}")
     with _connect() as conn:
         row = conn.execute(
-            """INSERT INTO org_model_subscription_modes (org_id, famille, mode, updated_by)
-                    VALUES (%s, %s, %s, %s)
+            # Une ligne qui NAÎT ici n'a rien choisi du repli : elle naît au défaut de
+            # l'instance, comme l'absence de ligne. Un réglage existant n'est pas touché.
+            """INSERT INTO org_model_subscription_modes
+                           (org_id, famille, mode, repli_api, updated_by)
+                    VALUES (%s, %s, %s, %s, %s)
                ON CONFLICT (org_id, famille) DO UPDATE
                        SET mode = EXCLUDED.mode, updated_by = EXCLUDED.updated_by,
                            updated_at = NOW()
             RETURNING org_id, famille, mode, updated_at, updated_by""",
-            (org_id, famille, mode, par)).fetchone()
+            (org_id, famille, mode, repli_api_par_defaut(), par)).fetchone()
     return dict(row)
 
 

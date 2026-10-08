@@ -2,7 +2,7 @@
 
 Un travail d'abonnement dont le SEUL obstacle est un forfait ÉPUISÉ à échéance
 FUTURE peut rejouer sur la clé API de son org plutôt qu'attendre — si l'org l'a
-CHOISI (`repli_api`, fermé par défaut). Ce que ces bancs tiennent, contre une vraie
+ne l'a pas COUPÉ (`repli_api`, ouvert par défaut depuis le 08/10/2026). Ce que ces bancs tiennent, contre une vraie
 base :
 
 1. forfait épuisé (mode personnel) → repli, avec le stamp `_plateforme.repli` ;
@@ -58,9 +58,8 @@ def _personne(sub):
 
 
 def _org(nom, *membres, mode=None, repli=True, limite_pct=None):
-    """Une org, ses membres, son mode — et le repli OUVERT par défaut dans ces bancs
-    (`repli=False` pour le défaut de production, fermé) : la plupart des bancs
-    éprouvent ce qui se passe une fois que l'org l'a choisi."""
+    """Une org, ses membres, son mode — et le repli OUVERT explicitement dans ces
+    bancs (`repli=False` : aucun réglage, le défaut de l'INSTANCE s'applique)."""
     from oto_mcp import org_store
     from oto_mcp.db import org_subscription_limits as L
     from oto_mcp.db import org_subscription_pool as P
@@ -310,38 +309,94 @@ def test_apres_repli_le_travail_n_est_plus_lu_comme_un_abonnement(live):
     assert not _abonnement.est_abonnement(conclu["model_family"])
 
 
-# ── 10. l'interrupteur d'org : FERMÉ par défaut, ouvert par l'org ─────────
+# ── 10. l'interrupteur d'org, et le défaut de l'INSTANCE ────────────────────
 
-def test_repli_ferme_par_defaut_meme_avec_une_cle(live):
-    """Décision du 28/09/2026 : aucune ligne de mode, le repli est FERMÉ — même pour
-    une org qui a déposé sa clé. Les clés déposées en prod l'ont été pour des agents
-    API ; les dépenser pour des travaux d'abonnement se CHOISIT."""
+@pytest.fixture
+def defaut_instance(monkeypatch):
+    """Pose (ou retire) `OTO_REPLI_API_PAR_DEFAUT` pour un banc."""
+    def poser(valeur):
+        if valeur is None:
+            monkeypatch.delenv("OTO_REPLI_API_PAR_DEFAUT", raising=False)
+        else:
+            monkeypatch.setenv("OTO_REPLI_API_PAR_DEFAUT", valeur)
+    return poser
+
+
+def test_sans_declaration_d_instance_une_org_sans_reglage_attend(live, defaut_instance):
+    """Décision du 08/10/2026 : le défaut est un choix de l'instance. Rien de déclaré,
+    aucune ligne de mode : le repli est FERMÉ — une clé déposée pour des agents API ne
+    paie pas des travaux d'abonnement sans qu'on l'ait demandé."""
     from oto_mcp.db import org_subscription_pool as P
+    defaut_instance(None)
 
     oid = _org("p10", "p10-dem", repli=False)
     _abonne("p10-dem", statut="paused_limit", reset=_futur())
-    jid = _travail(oid, "p10-dem")
+    _travail(oid, "p10-dem")
     _cle_org(oid)
 
     assert P.repli_api_actif(oid, "claude_subscription") is False
-    assert _repli(oid) is None, "fermé par défaut : le travail attend son forfait"
-    assert _etat(jid)["status"] == "pending"
+    assert _repli(oid) is None, "défaut d'instance fermé : on attend le forfait"
 
 
-def test_l_org_qui_coupe_le_repli_attend_son_forfait(live):
-    """L'org a une clé, et refuse quand même qu'on la dépense : ses travaux
-    plafonnés ATTENDENT la réinitialisation. C'est la seule surface qui porte
-    cette décision — la clé dit « je peux payer », pas « je veux payer ici »."""
+def test_une_instance_qui_le_declare_ouvre_le_repli_sans_reglage(live, defaut_instance):
+    """Sur une instance qui le déclare, une org sans réglage replie sur sa clé — la
+    même règle pour l'écran et pour la réservation."""
     from oto_mcp.db import org_subscription_pool as P
+    defaut_instance("yes")
 
-    oid = _org("p11", "p11-dem")
-    _abonne("p11-dem", statut="paused_limit", reset=_futur())
-    _travail(oid, "p11-dem")
+    oid = _org("p10o", "p10o-dem", repli=False)
+    _abonne("p10o-dem", statut="paused_limit", reset=_futur())
+    jid = _travail(oid, "p10o-dem")
     _cle_org(oid)
-    P.set_repli_api(oid, "claude_subscription", False, "p11-dem")
+
+    assert P.repli_api_actif(oid, "claude_subscription") is True
+    row = _repli(oid)
+    assert row is not None and row["id"] == jid, "ouvert par l'instance : la clé de l'org paie"
+
+
+@pytest.mark.parametrize("declare", [None, "1"])
+def test_une_ligne_nee_du_mode_suit_le_defaut_de_l_instance(live, defaut_instance, declare):
+    """Régler le MODE fait naître la ligne : elle n'a rien choisi du repli, elle naît
+    donc au défaut de l'instance — passer en pool ne doit ni ouvrir ni fermer le repli
+    par effet de bord."""
+    from oto_mcp.db import org_subscription_pool as P
+    defaut_instance(declare)
+
+    oid = _org(f"p10b{declare}", f"p10b{declare}-dem", mode="pool", repli=False)
+
+    attendu = declare is not None
+    assert P.get_mode(oid, "claude_subscription")["repli_api"] is attendu
+    assert P.repli_api_actif(oid, "claude_subscription") is attendu
+
+
+@pytest.mark.parametrize("declare", [None, "on"])
+def test_l_org_qui_coupe_le_repli_attend_son_forfait(live, defaut_instance, declare):
+    """L'org a une clé, et refuse quand même qu'on la dépense : ses travaux
+    plafonnés ATTENDENT la réinitialisation, quel que soit le défaut de l'instance.
+    La clé dit « je peux payer », pas « je veux payer ici »."""
+    from oto_mcp.db import org_subscription_pool as P
+    defaut_instance(declare)
+
+    oid = _org(f"p11{declare}", f"p11{declare}-dem")
+    _abonne(f"p11{declare}-dem", statut="paused_limit", reset=_futur())
+    _travail(oid, f"p11{declare}-dem")
+    _cle_org(oid)
+    P.set_repli_api(oid, "claude_subscription", False, f"p11{declare}-dem")
 
     assert P.repli_api_actif(oid, "claude_subscription") is False
     assert _repli(oid) is None, "repli coupé : on attend le forfait, on ne dépense pas"
+
+
+@pytest.mark.parametrize("illisible", ["oui", "2", "enabled"])
+def test_un_defaut_d_instance_illisible_leve(defaut_instance, illisible):
+    """Un `yes` mal écrit ne tranche pas en silence : il lève, en nommant la
+    variable."""
+    from oto_mcp.db import org_subscription_pool as P
+    from oto_mcp.interrupteurs import InterrupteurIllisible
+    defaut_instance(illisible)
+
+    with pytest.raises(InterrupteurIllisible, match="OTO_REPLI_API_PAR_DEFAUT"):
+        P.repli_api_par_defaut()
 
 
 def test_couper_le_repli_ne_change_pas_le_mode(live):

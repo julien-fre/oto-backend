@@ -103,7 +103,7 @@ class OrgSettingsInput(BaseModel):
     family: Optional[str] = None             # get/set : claude_subscription
     limit_pct: Optional[int] = None          # set : 1..100, null (EXPLICITE) = défaut
     mode: Optional[str] = None               # set : personnel | pool (seul, sans limit_pct)
-    api_fallback: Optional[bool] = None      # set : repli clé de l'org (seul), défaut false
+    api_fallback: Optional[bool] = None      # set : repli clé de l'org (seul) ; défaut d'instance
 
 
 def _org_settings(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
@@ -295,7 +295,7 @@ CAPABILITIES += [
             "org's jobs, fleets included, on subscriptions members explicitly lent to the "
             "org, least recently used first; OR, in a separate call, `api_fallback` "
             "true|false — true lets a job whose subscription is exhausted replay on the "
-            "org's OWN deposited API key, same tier, instead of waiting (off by default); "
+            "org's OWN deposited API key, same tier, instead of waiting (the default depends on the instance); "
             "get also returns `mode`, `pool_size` and `api_fallback`). "
             "op=get is member, set is org admin."),
         mcp="oto_org_settings",
