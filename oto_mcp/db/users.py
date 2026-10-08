@@ -452,6 +452,10 @@ _SUB_COLUMNS = [
     # Hors PK (`id`), aucune FK : non repointé, un travail en cours s'arrêterait
     # (« plus membre ») pour un compte qui a seulement changé de nom.
     ("jev_jobs", "sub"),
+    # Même raison : le compte au nom duquel `recipe_scheduler` rejoue un programme
+    # (`recipe_schedules`). Hors PK (`id`), aucune FK : non repointé, le programme
+    # serait refusé (« plus membre ») pour un compte qui a seulement changé de nom.
+    ("recipe_schedules", "sub"),
     # Qui a commandé un reveal de téléphone Apollo (`apollo_receiver.py`). Hors PK
     # (`token_hash`), sans FK ni unicité sur `sub` : UPDATE nu. Non repointée, une
     # commande en attente appartiendrait à un compte disparu pendant ses trente jours.

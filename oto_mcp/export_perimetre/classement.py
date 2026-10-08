@@ -171,6 +171,12 @@ CLASSEMENT: dict[str, Table] = {
     "function_versions": indirecte(Via("functions", ("function_id",))),
     "recipes": possedee(ParEntite()),
     "recipe_versions": indirecte(Via("recipes", ("recipe_id",))),
+    "recipe_schedules": indirecte(Via("recipes", ("recipe_id",)), comptes=("sub",)),
+    "recipe_pending_jobs": exclue(Via("recipes", ("recipe_id",)),
+                                  "lancement asynchrone en cours : un état éphémère, qui ne "
+                                  "survit pas à une bascule"),
+    "recipe_leases": instance("bail d'exécution par tableau : un verrou éphémère de "
+                              "l'instance"),
     "resource_grants": indirecte(
         Ou((Via("user_datastores", ("resource_id",), fk=False, texte=True,
                 quand=("resource_type", TYPE_RESSOURCE_DATASTORE)),

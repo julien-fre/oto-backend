@@ -344,10 +344,12 @@ def test_la_garde_centrale_est_traversee_par_les_quatre_portes():
     `/api/relay/{token}` : son jeton scelle un compte, rejoué à la réception) — et le
     worker de `jev_rows(background=true)`,
     qui rejoue chaque tranche sous l'identité de l'appelant SANS requête : la garde y
-    est relue avant chaque tranche. Une porte d'identité neuve doit s'ajouter ICI —
+    est relue avant chaque tranche ; de même `recipe_scheduler` (`recipes/programmes.py`),
+    qui rejoue un programme au nom de qui l'a posé. Une porte d'identité neuve doit s'ajouter ICI —
     c'est l'endroit où elle se déclare."""
     assert _appels("garde_identite", "refus") == {
         "api/base.py", "middleware/account_suspended.py", "api/uploads.py",
-        "api/pennylane_firm.py", "jev_jobs_worker.py"}
+        "api/pennylane_firm.py", "jev_jobs_worker.py",
+        "recipes/programmes.py"}
     base_src = (RACINE / "api" / "base.py").read_text()
     assert base_src.count("garde_identite.refus") == 2
