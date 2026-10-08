@@ -127,12 +127,12 @@ def test_credentials_for_rafraichit_et_instancie_avec_l_app_du_tenant(
     _coffre(monkeypatch, {("google", "tenant:tulina"): APP_TULINA})
     # Un jeton ÉMIS par l'app du tenant (le client noté à la pose) : sans cette note,
     # il serait réputé émis par la nôtre et refusé (« reconnecte »).
-    row = {"google_email": "a@b.com", "refresh_token": "RT", "access_token": None,
-           "expires_at": None, "scopes": "s1", "client_id": "cid-tulina"}
-    monkeypatch.setattr(google_oauth.db, "get_google_oauth",
-                        lambda sub, org, account=None: row)
-    monkeypatch.setattr(google_oauth.db, "update_google_access_token",
-                        lambda *a, **k: None)
+    from _coffre_google import installer
+
+    env = installer(monkeypatch, org=7, sub="tulina:abc")
+    env.coffre.poser("a@b.com", "RT", defaut=True, scopes="s1", access_token=None,
+                     expires_at=None, client_id="cid-tulina")
+    _coffre(monkeypatch, {("google", "tenant:tulina"): APP_TULINA})
     from oto_mcp.connectors import health as connector_health
     monkeypatch.setattr(connector_health, "record_health", lambda *a, **k: None)
     envois: list[dict] = []

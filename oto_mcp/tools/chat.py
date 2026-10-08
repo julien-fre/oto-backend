@@ -119,7 +119,7 @@ def register(mcp: FastMCP) -> None:
         Args:
             space_type: optional filter — "SPACE" (rooms) or "DIRECT_MESSAGE" (DMs).
             max_results: cap on spaces returned.
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         client = await _client_for_user_async(account)
         filter_ = f'spaceType = "{space_type}"' if space_type else None
@@ -156,7 +156,7 @@ def register(mcp: FastMCP) -> None:
                 a user create a brand-new DM space through the API — open the
                 conversation once in Chat, then retry.
             max_results: op="list" — cap on messages returned.
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         client = await _client_for_user_async(account)
 

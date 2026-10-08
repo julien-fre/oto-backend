@@ -194,7 +194,7 @@ def register(mcp: FastMCP) -> None:
                 0-based index (see `sheet_names`). Omit for all sheets.
             max_rows: op="download" of an .xlsx — rows per sheet (default 200,
                 max 5000).
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         if (sheet is not None or max_rows is not None) and op != "download":
             raise _bad(f"`sheet`/`max_rows` only apply to op='download' of an "
@@ -297,7 +297,7 @@ def register(mcp: FastMCP) -> None:
             role: "reader", "commenter" or "writer" (when granting).
             remove: True + `email` → revoke that person's access.
             notify: send Google's notification email (when granting).
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         client = await _client_for_user_async(account)
         if not email:

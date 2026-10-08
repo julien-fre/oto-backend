@@ -37,9 +37,13 @@ class ResolvedFile:
 
 def _google_creds(account: Optional[str], service: str):
     """`service` : le service Google que la source lit — vérifié comme un appel
-    d'outil (un compte qui ne l'a pas autorisé reçoit le refus nommé, pas un 403 muet)."""
+    d'outil (un compte qui ne l'a pas autorisé reçoit le refus nommé, pas un 403 muet).
+    `account` est le compte de la SOURCE : il peut différer du `_account=` de l'appel
+    (envoyer depuis une boîte un fichier du Drive d'un autre compte) ; omis, c'est le
+    compte de l'appel qui lit (oto-backend#1160)."""
     sub = access.current_user_sub_or_raise()
-    return google_oauth.credentials_for(sub, account=account, service=service)
+    return google_oauth.credentials_for(sub, account=account, service=service,
+                                        source_account=True)
 
 
 def _from_drive(src: dict) -> ResolvedFile:

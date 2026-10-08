@@ -68,40 +68,42 @@ def test_fail_soft_on_error(wire, monkeypatch):
 
 
 # ── Câblage : google_oauth.credentials_for honore le projet actif (incrément B) ──
+# Depuis oto-backend#1160, le compte Google se choisit par la résolution commune
+# (`access.resolve_credential`) : le pin y est lu sur le service appelé, puis sur le
+# compte Google qui le porte. Ces trois bancs le jouent contre le vrai chemin, sur un
+# faux coffre ; le reste (axe `_account=`, conflits, chaque service) :
+# `tests/test_google_account_axis.py`.
+
+def _deux_comptes(monkeypatch):
+    from _coffre_google import installer
+
+    env = installer(monkeypatch, org=39, sub="u1")
+    env.coffre.poser("defaut@x.co", "RT-DEFAUT", defaut=True)
+    env.coffre.poser("pinned@x.co", "RT-PIN")
+    env.coffre.poser("explicit@x.co", "RT-EXPLICIT")
+    return env
+
 
 def test_credentials_for_applies_project_pin(monkeypatch):
     from oto_mcp.auth import google as google_oauth
-    seen = {}
-    monkeypatch.setattr(access, "project_pinned_identity", lambda connector: "pinned@x.co")
-    monkeypatch.setattr(access, "current_org", lambda sub: 39)
-    monkeypatch.setattr(google_oauth.db, "get_google_oauth",
-                        lambda sub, org, account=None: seen.update(account=account) or None)
-    with pytest.raises(RuntimeError):              # pas de compte → erreur actionnable
-        google_oauth.credentials_for("u1")        # account non passé → pin du projet
-    assert seen["account"] == "pinned@x.co"        # le compte épinglé a bien été ciblé
+    env = _deux_comptes(monkeypatch)
+    env.epingles["google"] = "pinned@x.co"
+    # account non passé → pin du projet (posé sur la carte du compte Google)
+    assert google_oauth.credentials_for("u1", service="gmail").refresh_token == "RT-PIN"
+    assert google_oauth.credentials_for("u1").refresh_token == "RT-PIN"
 
 
 def test_credentials_for_explicit_account_wins(monkeypatch):
     from oto_mcp.auth import google as google_oauth
-    seen = {}
-    # Un compte explicite passé par l'appelant prime sur le pin du projet (jamais lu).
-    monkeypatch.setattr(access, "project_pinned_identity",
-                        lambda connector: (_ for _ in ()).throw(AssertionError("ne doit pas être lu")))
-    monkeypatch.setattr(access, "current_org", lambda sub: 39)
-    monkeypatch.setattr(google_oauth.db, "get_google_oauth",
-                        lambda sub, org, account=None: seen.update(account=account) or None)
-    with pytest.raises(RuntimeError):
-        google_oauth.credentials_for("u1", account="explicit@x.co")
-    assert seen["account"] == "explicit@x.co"
+    env = _deux_comptes(monkeypatch)
+    env.epingles["google"] = "pinned@x.co"
+    # Un compte explicite passé par l'appelant prime sur le pin du projet.
+    creds = google_oauth.credentials_for("u1", account="explicit@x.co", service="gmail")
+    assert creds.refresh_token == "RT-EXPLICIT"
 
 
 def test_credentials_for_no_project_keeps_default(monkeypatch):
     from oto_mcp.auth import google as google_oauth
-    seen = {}
-    monkeypatch.setattr(access, "project_pinned_identity", lambda connector: None)  # pas de projet/pin
-    monkeypatch.setattr(access, "current_org", lambda sub: 39)
-    monkeypatch.setattr(google_oauth.db, "get_google_oauth",
-                        lambda sub, org, account=None: seen.update(account=account) or None)
-    with pytest.raises(RuntimeError):
-        google_oauth.credentials_for("u1")
-    assert seen["account"] is None                 # repli sur le défaut user (is_default)
+    _deux_comptes(monkeypatch)                     # pas de projet/pin
+    creds = google_oauth.credentials_for("u1", service="gmail")
+    assert creds.refresh_token == "RT-DEFAUT"      # repli sur le défaut user (is_default)

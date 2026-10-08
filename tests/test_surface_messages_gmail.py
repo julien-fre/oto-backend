@@ -118,7 +118,7 @@ def test_un_alias_pris_pour_un_email_est_corrige_par_le_message(monkeypatch):
     assert "otomata" in msg
     assert "alexis@otomata.tech" in msg and "jane.doe@acme.test" in msg
     assert "EMAIL" in msg and "alias" in msg
-    assert "gmail_list_accounts" in msg
+    assert "google_accounts()" in msg and "_account" in msg
 
 
 def test_sans_aucun_compte_connecte_le_message_renvoie_au_dashboard(monkeypatch):

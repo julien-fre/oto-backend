@@ -29,8 +29,8 @@ def register(mcp: FastMCP) -> None:
         not been authorised on that account yet: connect it from its own connector
         card. `shared` is null for the user's own account, "group" or "org" for an
         account an admin shared with their team or the whole organization.
-        Use `email` as the `account` argument of the service tools — shared
-        accounts included; omit `account` to act on the default account.
+        Pass `email` as `_account` to the service tools — shared accounts
+        included; omitted, the project's pinned account, else the default one.
         """
         sub = access.current_user_sub_or_raise()
         return {

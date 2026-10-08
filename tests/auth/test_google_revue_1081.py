@@ -66,11 +66,11 @@ def test_le_refresh_envoie_les_scopes_enregistres(envoye):
 
 def test_credentials_for_borne_le_refresh_a_la_ligne(envoye, monkeypatch):
     """Le chemin réel : `credentials_for` passe les scopes DE LA LIGNE au refresh."""
-    monkeypatch.setattr(google_oauth, "_ctx_org", lambda sub: 7)
-    monkeypatch.setattr(google_oauth, "_resolve_row", lambda *a, **k: ({
-        "google_email": "a@b.com", "refresh_token": "rt", "access_token": None,
-        "expires_at": None, "scopes": ENREGISTRES, "client_id": "cid"}, ("member", None)))
-    monkeypatch.setattr(google_oauth.db, "update_google_access_token", lambda *a, **k: None)
+    from _coffre_google import installer
+
+    env = installer(monkeypatch, org=7, sub="sub")
+    env.coffre.poser("a@b.com", "rt", defaut=True, scopes=ENREGISTRES,
+                     access_token=None, expires_at=None, client_id="cid")
     monkeypatch.setattr(google_oauth.connector_health, "record_health", lambda *a, **k: None)
     google_oauth.credentials_for("sub", account="a@b.com", service="sheets")
     assert envoye["scope"] == ENREGISTRES
@@ -106,8 +106,8 @@ def test_une_reponse_sans_scope_est_refusee_et_rien_n_est_ecrit(monkeypatch):
 def test_une_piece_jointe_google_verifie_son_service(monkeypatch, kind, service):
     vu = {}
 
-    def _creds(sub, account=None, service=None):
-        vu["service"] = service
+    def _creds(sub, account=None, service=None, source_account=False):
+        vu["service"], vu["source_account"] = service, source_account
         raise RuntimeError(f"Le compte Google n'a pas encore autorisé {service}")
 
     monkeypatch.setattr(fs.access, "current_user_sub_or_raise", lambda: "sub")
@@ -117,3 +117,5 @@ def test_une_piece_jointe_google_verifie_son_service(monkeypatch, kind, service)
     with pytest.raises(RuntimeError, match="pas encore autorisé"):
         lire[kind]()
     assert vu["service"] == service
+    # Le compte d'une SOURCE peut différer du `_account=` de l'appel (#1160).
+    assert vu["source_account"] is True

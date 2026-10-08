@@ -2,8 +2,9 @@
 
 Each user connects one or more Google accounts on
 `https://manage.oto.cx/` (Google section) through the unified OAuth flow (scope
-`gmail.modify`). The `gmail_*` tools act on the default account, or on the
-account targeted by the `account` parameter (the email address).
+`gmail.modify`). The `gmail_*` tools act on the account the call names
+(`_account=`, or the `account` parameter — the email address), otherwise the one
+the project pins, otherwise the default: `auth/google.credentials_for`.
 
 No platform key: access is strictly per-user via OAuth (like the
 datastore and WhatsApp), so no `resolve_api_key` here.
@@ -158,10 +159,10 @@ def register(mcp: FastMCP) -> None:
         mailboxes an admin shared with their team or the whole organization.
 
         Returns {accounts: [{email, is_default, shared}]}. `shared` is null for
-        the user's own account, "group" or "org" for a shared mailbox. Use an
-        `email` value as the `account` argument of the other gmail_* tools to
-        act on a specific mailbox — shared ones included; omit `account` to use
-        the default (`is_default`).
+        the user's own account, "group" or "org" for a shared mailbox. Pass an
+        `email` as `_account` to the other gmail_* tools to act on that mailbox —
+        shared ones included; omitted, the project's pinned account, else the
+        default (`is_default`). An unknown email is refused, never replaced.
         """
         sub = access.current_user_sub_or_raise()
         accounts = google_oauth.reachable_accounts(sub, service="gmail")
@@ -244,7 +245,7 @@ def register(mcp: FastMCP) -> None:
                 0-based index (see `sheet_names`). Omit for all sheets.
             max_rows: op="attachment" of an .xlsx — rows per sheet (default 200,
                 max 5000).
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         # Refusal BEFORE any credential resolution: an unknown op never reaches
         # the client — hence never, by a derived path, a write.
@@ -375,7 +376,7 @@ def register(mcp: FastMCP) -> None:
             html: explicit HTML body (bypasses markdown rendering).
             from_name: optional display name for the From header.
             markdown: render `body` from markdown when `html` is absent (default True).
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
             sign: append the account's Gmail signature (default True); False sends
                 the body alone.
             attachments: files to attach, as `source` refs oto resolves server-side

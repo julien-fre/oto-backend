@@ -178,15 +178,18 @@ def test_une_cle_de_region_n_est_jamais_lue_comme_un_slug(registre, monkeypatch)
 @pytest.fixture()
 def cablage(registre, monkeypatch):
     """`credentials_for` sans base ni réseau : la ligne du coffre, les marques."""
-    row = {"google_email": "a@b.com", "refresh_token": "RT", "access_token": "at-valide",
-           "expires_at": "2999-01-01T00:00:00+00:00", "scopes": "s1"}
-    monkeypatch.setattr(google_oauth.db, "get_google_oauth",
-                        lambda sub, org, account=None: row)
+    from _coffre_google import installer
+
+    # Le même compte, sous les deux sujets que ces bancs emploient.
+    env = installer(monkeypatch, org=7, sub="tulina:abc")
+    env.coffre.poser("a@b.com", "RT", defaut=True, scopes="s1", access_token="at-valide")
+    row = env.coffre.meta("a@b.com")
+    env.coffre.lignes[("member", "7:nu-sub", "a@b.com")] = env.coffre.lignes[
+        ("member", "7:tulina:abc", "a@b.com")]
     appels = {"mark": [], "post": []}
     monkeypatch.setattr(connector_health, "mark_rejected",
                         lambda et, eid, prov, acct, err: appels["mark"].append(acct))
     monkeypatch.setattr(connector_health, "record_health", lambda *a, **k: None)
-    monkeypatch.setattr(google_oauth.db, "update_google_access_token", lambda *a, **k: None)
     import requests
     monkeypatch.setattr(requests, "post",
                         lambda *a, **k: appels["post"].append(k) or pytest.fail("réseau"))

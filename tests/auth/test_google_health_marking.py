@@ -1,9 +1,10 @@
 """Google entre dans l'aide partagée « marquer plutôt que purger » (oto#25 lot
 b2) — un lot séparé, après que le WIP concurrent sur `auth/google.py` a été
 poussé et tagué (#877). Même garde de portée qu'atlassian/folk/salesforce/zoho,
-mais un chemin différent : google passe par `db.get_google_oauth` /
-`db.update_google_access_token` (scope MEMBRE `(org, sub)`, account=email),
-jamais directement par `credentials_store` — donc un fichier à part plutôt
+mais un chemin différent : google choisit sa ligne par la résolution commune
+(`access.resolve_credential`, oto-backend#1160) puis renouvelle sur CETTE ligne
+(`credentials_store.update_meta`, scope MEMBRE `(org, sub)`, account=email) — donc
+un fichier à part plutôt
 qu'un cas de plus dans `test_oauth_dead_grant_marks_rejected.py` (taillé pour
 la forme legacy `("user", sub)` d'atlassian/folk).
 
@@ -21,7 +22,8 @@ import pytest
 os.environ.setdefault("GOOGLE_WORKSPACE_CLIENT_ID", "cid-test")
 os.environ.setdefault("GOOGLE_WORKSPACE_CLIENT_SECRET", "secret-test")
 
-from oto_mcp import access, credentials_store  # noqa: E402
+from _coffre_google import installer  # noqa: E402
+from oto_mcp import credentials_store  # noqa: E402
 from oto_mcp.auth import google as google_oauth  # noqa: E402
 
 
@@ -55,14 +57,14 @@ class _RespOK:
 
 @pytest.fixture()
 def wiring(monkeypatch):
-    row = {"google_email": "a@b.com", "refresh_token": "REFRESH-1",
-           "access_token": None, "expires_at": None, "scopes": "s1 s2"}
-    monkeypatch.setattr(access, "current_org", lambda sub: 7)
-    monkeypatch.setattr(google_oauth.db, "get_google_oauth", lambda sub, org, account=None: row)
+    env = installer(monkeypatch, org=7, sub="sub-1")
+    env.coffre.poser("a@b.com", "REFRESH-1", defaut=True, scopes="s1 s2",
+                     access_token=None, expires_at=None)
+    row = env.coffre.meta("a@b.com")
     calls = {"update": [], "mark": [], "record": []}
-    monkeypatch.setattr(google_oauth.db, "update_google_access_token",
-                        lambda sub, org, email, token, exp: calls["update"].append(
-                            (sub, org, email, token, exp)))
+    monkeypatch.setattr(credentials_store, "update_meta",
+                        lambda et, eid, prov, email, patch, conn=None: calls["update"].append(
+                            (et, eid, prov, email, patch["access_token"])))
     from oto_mcp.connectors import health as connector_health
     monkeypatch.setattr(connector_health, "mark_rejected",
                         lambda et, eid, prov, acct, err: calls["mark"].append(
@@ -131,7 +133,7 @@ def test_les_six_outils_google_rendent_le_refus_pas_une_erreur_interne(
 
 
 def test_un_refresh_reussi_demarque(monkeypatch, wiring):
-    """`update_google_access_token` MERGE le meta (contrairement à atlassian/folk
+    """Le renouvellement MERGE le meta (contrairement à atlassian/folk
     qui le REMPLACENT) : sans cet appel explicite, un `health_ko` posé plus tôt
     survivrait à un refresh qui a pourtant réussi."""
     row, calls = wiring
@@ -147,7 +149,8 @@ def test_un_refresh_reussi_demarque(monkeypatch, wiring):
     prov, scope, ok, err = calls["record"][0]
     assert prov == "google" and ok is True and err is None
     assert scope == (credentials_store.MEMBER, credentials_store.member_id(7, "sub-1"), "a@b.com")
-    assert calls["update"] == [("sub-1", 7, "a@b.com", "AT-NEW", calls["update"][0][4])]
+    assert calls["update"] == [(credentials_store.MEMBER, credentials_store.member_id(7, "sub-1"),
+                                "google", "a@b.com", "AT-NEW")]
 
 
 def test_une_erreur_de_config_ne_marque_rien(monkeypatch, wiring):

@@ -286,7 +286,7 @@ def register(mcp: FastMCP) -> None:
             project: project id (e.g. "my-company-dwh").
             dataset: dataset id inside `project`.
             page_token: `next_page_token` of a previous call.
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         if dataset and not project:
             raise _bad("`dataset` requires `project`.")
@@ -322,7 +322,7 @@ def register(mcp: FastMCP) -> None:
             table: `project.dataset.table` (or `dataset.table` with `project`).
             preview_rows: rows to preview (0 = none, max 100).
             project: default project when `table` is `dataset.table`.
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         from oto.tools.google.bigquery.lib.bigquery_client import (
             flatten_schema, split_table_ref)
@@ -410,7 +410,7 @@ def register(mcp: FastMCP) -> None:
             dry_run: validate and estimate only, run nothing.
             location: job location for datasets outside the US/EU multi-regions
                 (e.g. "europe-west1").
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         if not sql or not sql.strip():
             raise _bad("sql is empty.")
@@ -469,7 +469,7 @@ def register(mcp: FastMCP) -> None:
             location: `location` returned by `bigquery_query` (required outside US/EU).
             page_token: `page_token` of the previous page.
             max_rows: rows in this page (default 100, max 1000).
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         rows = _rows_cap(max_rows)
         job_id = _ident(job_id, "job_id", segment=True)

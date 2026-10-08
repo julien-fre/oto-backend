@@ -309,7 +309,7 @@ Tables `orgs`/`org_members`(index partiel `org_members_one_active`)/`org_entitle
 ## Folds des secrets de session (cible : coffre unique)
 
 - **LinkedIn / Crunchbase** : cookie chiffré dans `secret_enc`, UA dans `meta` ; `db.set/get/clear_linkedin_cookie`/`crunchbase_session` sur le coffre ; statut /api/me via `credential_status` (sans déchiffrer).
-- **Google OAuth multi-compte** : `connector='google'`, `account=email` ; refresh_token chiffré, access_token/expires_at/scopes/is_default/granted_at dans `meta`. Les 6 fns db (`set/get/list/set_default/delete_google_oauth`, `update_google_access_token`) sur le coffre ; `update_google_access_token` = `update_meta` (merge, sans re-chiffrer). Flow OAuth `auth/google.py` inchangé (seule la couche stockage change). ⚠️ access_token reste en **clair dans `meta`** (bearer ~1h, dérivé) ; seul le refresh_token (`secret_enc`) est chiffré.
+- **Google OAuth multi-compte** : `connector='google'`, `account=email` ; refresh_token chiffré, access_token/expires_at/scopes/is_default/granted_at dans `meta`. Les fns db (`set/get/list/set_default/delete_google_oauth`) sur le coffre ; le refresh écrit par `credentials_store.update_meta` sur la ligne du compte résolu (merge, sans re-chiffrer), quelle que soit son entité (membre, équipe, org). Le compte d'un appel se choisit par la résolution commune `access.resolve_credential` (`account`/`_account=` > épinglage projet > compte unique > défaut, oto-backend#1160). Flow OAuth `auth/google.py` inchangé (seule la couche stockage change). ⚠️ access_token reste en **clair dans `meta`** (bearer ~1h, dérivé) ; seul le refresh_token (`secret_enc`) est chiffré.
 
 ## Connecteurs remote — bridges (ADR 0003, pilote : un bridge back-office client)
 
@@ -742,8 +742,8 @@ sur `invalid_grant` (`GoogleReauthRequired`, même règle `oauth_flow.grant_is_d
 puis **relève toujours** — contrairement à atlassian/folk (alors encore au catalogue,
 retirés le 2026-09-09, ADR 0069), `credentials_for` n'a
 jamais rendu de `None` muet et ce lot ne change pas ce contrat. Démarque
-explicitement au refresh réussi : `update_google_access_token` MERGE le meta
-(`update_meta`, JSONB `||`), donc un `health_ko` posé plus tôt n'aurait jamais
+explicitement au refresh réussi : le refresh MERGE le meta
+(`credentials_store.update_meta`, JSONB `||`), donc un `health_ko` posé plus tôt n'aurait jamais
 disparu tout seul (même raison que le point 3 ci-dessous pour Salesforce —
 contrairement à atlassian/folk, dont le remplacement total du meta démarquait déjà
 par accident). Bancs : `tests/auth/test_google_health_marking.py`.

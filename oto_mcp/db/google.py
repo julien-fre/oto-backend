@@ -100,20 +100,6 @@ def set_google_oauth(
                 meta=meta, account=account, conn=conn)
 
 
-def update_google_access_token(
-    sub: str, org_id: int, google_email: Optional[str], access_token: str, expires_at: str
-) -> None:
-    """Met à jour SEULEMENT l'access_token + expiry (sur refresh) — merge meta dans
-    le coffre, SANS re-chiffrer le refresh_token. `google_email` None = compte mono
-    (account='')."""
-    from .. import credentials_store
-    et, eid = _ent(sub, org_id)
-    account = google_email or ""
-    credentials_store.update_meta(
-        et, eid, GOOGLE, account,
-        {"access_token": access_token, "expires_at": expires_at})
-
-
 def get_google_oauth(sub: str, org_id: Optional[int], account: Optional[str] = None) -> Optional[dict]:
     """Renvoie un compte Google du user depuis le COFFRE (déchiffre le
     refresh_token). `account` (email) cible un compte ; None = le défaut
@@ -270,14 +256,6 @@ def list_shared_google_accounts(scope: str, target_id: int) -> list[dict]:
     } for a in credentials_store.list_accounts(et, eid, GOOGLE)]
     out.sort(key=lambda r: (not r["is_default"], r["granted_at"] or ""))
     return out
-
-
-def update_shared_google_access_token(scope: str, target_id: int, google_email: Optional[str],
-                                      access_token: str, expires_at: str) -> None:
-    from .. import credentials_store
-    et, eid = _shared_ent(scope, target_id)
-    credentials_store.update_meta(et, eid, GOOGLE, google_email or "",
-                                  {"access_token": access_token, "expires_at": expires_at})
 
 
 def set_default_shared_google_account(scope: str, target_id: int, account: str) -> bool:

@@ -138,7 +138,7 @@ _SURFACE = """
     sweep_grace_expired sweep_period_end_cancellations tenants time timezone
     tokens tool_call_stats unipile
     unipile_account_owners update_account_profile update_billing_payment
-    update_doc update_google_access_token update_project
+    update_doc update_project
     update_project_link_ref upload_tokens upsert_aux_embedding
     upsert_connector_schema upsert_doc_embedding upsert_org_subscription
     upsert_row_embedding upsert_user usage users verify_api_token visibility

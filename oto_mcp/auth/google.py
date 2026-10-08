@@ -8,9 +8,10 @@ Flow:
 3. We verify the state, exchange the code for a refresh+access token,
    persist it in the encrypted vault (`connector_credentials`, connector='google').
 
-To use the credentials (datastore tools side): `credentials_for(sub)`
-loads from SQLite, transparently refreshes if expired, returns a valid
-`google.oauth2.credentials.Credentials`.
+To use the credentials (tools side): `credentials_for(sub, account, service)`
+chooses the account by the common resolution (`access.resolve_credential`:
+`account`/`_account=` > project pin > single > default), transparently refreshes
+if expired, returns a valid `google.oauth2.credentials.Credentials`.
 
 Setup ops:
 - Env `GOOGLE_WORKSPACE_CLIENT_ID` + `GOOGLE_WORKSPACE_CLIENT_SECRET` —
@@ -692,14 +693,15 @@ def _no_account_message(sub: str, org_id: Optional[int], account: Optional[str])
     if not account:
         return (f"No Google account connected. Connect one at {dash}."
                 if not connectes else
-                "No default Google account. Pass `account` — connected accounts: "
+                "No default Google account. Pass `_account=` — connected accounts: "
                 f"{', '.join(connectes)}.")
     if not connectes:
         return (f"No Google account connected (you asked for `{account}`). "
                 f"Connect one at {dash}.")
-    return (f"No Google account connected for `{account}`. Connected accounts: "
-            f"{', '.join(connectes)} — `account` expects the account's EMAIL, not an alias "
-            "or an organization name. The full list: gmail_list_accounts().")
+    return (f"No Google account connected for `{account}` — no other account was used. "
+            f"Connected accounts: {', '.join(connectes)} — `_account` expects the "
+            "account's EMAIL, not an alias or an organization name. The full list: "
+            "google_accounts().")
 
 
 # --- SHARED accounts (org / team, 2026-09-27) ---------------------------------
@@ -758,27 +760,6 @@ def scope_target(sub: str, scope: str) -> tuple:
     raise ValueError(f"invalid scope: {scope!r} (expected 'member', 'org' or 'group')")
 
 
-def _resolve_row(sub: str, org_id: int, account: Optional[str]):
-    """`(row, where)` — `where` = `("member", None)`, `("group", id)` or `("org", id)`.
-    The member first, then the shared accounts from nearest to broadest."""
-    row = db.get_google_oauth(sub, org_id, account=account)
-    if row:
-        return row, ("member", None)
-    for scope, target in _shared_targets(sub, org_id):
-        shared = db.get_shared_google_oauth(scope, target, account=account)
-        if shared:
-            return shared, (scope, target)
-    return None, None
-
-
-def _health_entity(sub: str, org_id: int, where) -> tuple:
-    """The vault entity that carries the resolved row — health is written there."""
-    scope, target = where
-    if scope == "member":
-        return credentials_store.MEMBER, credentials_store.member_id(org_id, sub)
-    return scope, str(target)
-
-
 def list_shared_accounts(sub: str) -> list[dict]:
     """The shared Google accounts reachable by this member (active team, org)."""
     from .. import access
@@ -793,9 +774,9 @@ def list_shared_accounts(sub: str) -> list[dict]:
 
 def reachable_accounts(sub: str, service: Optional[str] = None) -> list[dict]:
     """Everything a call can name in `account`: the member's accounts, then the reachable
-    SHARED accounts, from the nearest holder to the broadest — the order of
-    `_resolve_row`. An address present at two levels appears only once, at the
-    level that resolves it.
+    SHARED accounts, from the nearest holder to the broadest — the order of the
+    key cascade (`access.walk_cascade`) that `credentials_for` walks. An address
+    present at two levels appears only once, at the level that resolves it.
 
     `shared` is `None` on a member account, `"group"`/`"org"` on a shared one.
     `is_default` says what a call WITHOUT `account` resolves: the member's default if they have an
@@ -828,31 +809,82 @@ def set_default_shared(sub: str, account: str, scope: str) -> bool:
     return db.set_default_shared_google_account(scope, target, account)
 
 
+def _refuse_two_names(account: Optional[str]) -> None:
+    """The tool's `account` parameter and the call axis `_account=` name ONE choice.
+    Both given, with two different addresses: a named refusal — serving either one
+    would act from a mailbox the agent did not mean (oto-backend#1160)."""
+    from .. import session_org
+    from ..mcp_errors import McpError
+    from mcp.types import ErrorData, INVALID_PARAMS
+    axe = session_org.current_call_account()
+    if account and axe and account.strip().casefold() != axe.strip().casefold():
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(f"`account=\"{account}\"` and `_account=\"{axe}\"` name two different "
+                     "Google accounts: pass only one (`_account=`, the call's account). "
+                     "Nothing was done."),
+            data={"code": "account_conflict", "retryable": False}))
+
+
+def _resolved_row(rc) -> Optional[dict]:
+    """The vault row that the resolution designated, in the shape the refresh reads:
+    the secret is the refresh token, the satellites live in its meta (no second
+    decryption — `list_accounts` returns no secret)."""
+    meta = next((a.get("meta") or {} for a in credentials_store.list_accounts(
+        rc.entity_type, rc.entity_id, "google") if a["account"] == (rc.account or "")), None)
+    if meta is None:
+        return None
+    return {"google_email": rc.account or None, "refresh_token": rc.key,
+            "access_token": meta.get("access_token"), "expires_at": meta.get("expires_at"),
+            "scopes": meta.get("scopes"), "client_id": meta.get("client_id")}
+
+
 def credentials_for(sub: str, account: Optional[str] = None,
-                    service: Optional[str] = None):
+                    service: Optional[str] = None, *, source_account: bool = False):
     """Return a valid `google.oauth2.credentials.Credentials` for this sub.
 
-    `account` (email) targets a specific account; None = default account. If no
-    account is explicitly requested, an **active project** (session wristband,
-    ADR 0032 §4) can pin the account to use (pre-made override of the connector
-    link); otherwise fall back to the vault's `is_default`.
-    Loads from the DB, transparent refresh if access_token is missing or expired.
-    Raises an actionable RuntimeError if no account is connected.
+    The account is chosen by the COMMON resolution of multi-account connectors
+    (`access.resolve_credential`, oto-backend#1160), under the SERVICE called
+    (`gmail`, `drive`…; the Google account itself when `service` is None): `account`
+    (the tool's parameter, an email) or the call axis `_account=` — one choice, two
+    different names refused (`_refuse_two_names`) —, otherwise the account pinned by
+    the project (on the service's card, otherwise on the Google account's), otherwise
+    the single account, otherwise the default one, otherwise a refusal that names the
+    accounts. The member's account first, then the reachable SHARED ones (active
+    team, org) — the key cascade. An unknown account is refused, never replaced by
+    another. The account that served is noted on the call: the `_account` echo of
+    the response names it.
+
+    `source_account=True`: `account` names the account of a FILE SOURCE inside the
+    call (an attachment, `file_source`) — it may differ from the call's `_account=`
+    (send from one mailbox a file of another account's Drive).
+
+    Transparent refresh if access_token is missing or expired. Raises an actionable
+    RuntimeError (no account, unknown account, service not authorized) or a
+    McpError (ambiguity, conflicting names, refused instance).
     """
-    if account is None:
-        from .. import access  # lazy: avoids any import cycle at boot
-        account = access.project_pinned_identity("google")
+    from .. import access  # lazy: avoids any import cycle at boot
+    account = account or None
+    if not source_account:
+        _refuse_two_names(account)
     org_id = _ctx_org(sub)
-    row, where = _resolve_row(sub, org_id, account)
-    if not row:
-        raise RuntimeError(_no_account_message(sub, org_id, account))
+    try:
+        rc = access.resolve_credential(service or "google", want="byo", sub=sub,
+                                       account=account)
+    except access.CompteIntrouvable as e:
+        raise RuntimeError(_no_account_message(sub, org_id, e.account)) from None
+    except access.CredentialUnavailable:
+        raise RuntimeError(_no_account_message(sub, org_id, None)) from None
+    row = _resolved_row(rc)
+    if row is None:   # removed between the resolution and this read
+        raise RuntimeError(_no_account_message(sub, org_id, rc.account))
     if service and service not in services_granted(row.get("scopes")):
         # The account exists but has not authorized THIS service (split of 2026-09-26):
         # name the card to open, not "reconnect" — the Google API, for its part,
         # would answer a 403 `insufficientPermissions` without saying which.
         label = SERVICE_LABELS.get(service, service)
         raise RuntimeError(
-            f"The Google account {row.get('google_email') or account or ''} has not "
+            f"The Google account {row.get('google_email') or ''} has not "
             f"yet authorized {label}: connect {label} from its card at "
             f"{config_dashboard(sub)}. Nothing was done.")
 
@@ -874,7 +906,9 @@ def credentials_for(sub: str, account: Optional[str] = None,
     # ONE read of the app per call (vault + decryption for a tenant account):
     # it serves the issuer check, the refresh and the returned object.
     app = app_for(sub)
-    et, eid = _health_entity(sub, org_id, where)
+    # The vault entity that carries the resolved row (member, team, org…): the
+    # refresh and the health are written there, on THIS account's row.
+    et, eid = rc.entity_type, rc.entity_id
     email = row.get("google_email") or ""
     if _emis_par_un_autre_client(row, app):
         # The served app has changed since the connection (set, changed or removed): this
@@ -919,12 +953,9 @@ def credentials_for(sub: str, account: Optional[str] = None,
         access_token = resp["access_token"]
         expires_in = int(resp.get("expires_in", 0) or 0)
         new_exp = datetime.fromtimestamp(time.time() + expires_in, tz=timezone.utc).isoformat()
-        if where[0] == "member":
-            db.update_google_access_token(sub, org_id, row.get("google_email"), access_token, new_exp)
-        else:
-            db.update_shared_google_access_token(where[0], where[1], row.get("google_email"),
-                                                 access_token, new_exp)
-        # `update_google_access_token` MERGES the meta (`update_meta`, JSONB ||):
+        credentials_store.update_meta(et, eid, "google", email,
+                                      {"access_token": access_token, "expires_at": new_exp})
+        # `update_meta` MERGES the meta (JSONB ||):
         # a `health_ko` set by an earlier dead refresh would never be
         # cleared by this path without this explicit call (oto#25 lot b3, same
         # reason as the Salesforce rotation — unlike atlassian/folk, whose
@@ -954,7 +985,7 @@ def _link_state(sub: str) -> connector_link.LinkState:
     address (`account = email`), with its satellites in `meta`. A generic loop
     looking for "the" member row would find none."""
     # An account SHARED by the org or team also links the card: the tools
-    # resolve it (`_resolve_row`), the card must not say "to connect".
+    # resolve it (`credentials_for`), the card must not say "to connect".
     accounts = list_accounts(sub) + list_shared_accounts(sub)
     return connector_link.LinkState(
         linked=bool(accounts), accounts=len(accounts),

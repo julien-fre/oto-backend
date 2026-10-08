@@ -67,6 +67,17 @@ class CompteAmbigu(McpError):
     of a bare 500 — recognized by its class, never by its text."""
 
 
+class CompteIntrouvable(McpError):
+    """The account NAMED by the call (param, `_account=`, project pin) exists at no
+    reachable tier. Typed, carrying the name, so that a connector words the refusal in
+    its own vocabulary (Google lists the connected addresses) without reading the text
+    (oto-backend#1160) — never a fallback to another account."""
+
+    def __init__(self, error: ErrorData, account: str):
+        super().__init__(error)
+        self.account = account
+
+
 def _shared_auto_account(entity_type: str, entity_id: str, provider: str,
                          where: str, scope: Optional[str] = None) -> str:
     """AUTOMATIC account of a multi-account tier, when the caller named none:

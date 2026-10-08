@@ -90,7 +90,7 @@ def register(mcp: FastMCP) -> None:
         main calendar ('primary').
 
         Args:
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         client = await _client_for_user_async(account)
         calendars = await asyncio.to_thread(client.list_calendars)
@@ -166,7 +166,7 @@ def register(mcp: FastMCP) -> None:
             send_updates: op="create"/"update"/"rm" — whether attendees get an email.
                 Default **"none"**: fixing a typo must not mail twelve people, and
                 cancelling silently is the lesser surprise. Pass "all" deliberately.
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         client = await _client_for_user_async(account)
 

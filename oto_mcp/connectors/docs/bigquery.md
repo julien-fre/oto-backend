@@ -4,7 +4,7 @@ from this card, click **connect**: Google asks you to authorize **Google BigQuer
 - queries see exactly what **your BigQuery rights** see: "BigQuery Data Viewer" role on the datasets to read, "BigQuery Job User" on the project that runs (and pays for) the queries
 - **read-only**: every query is dry-run validated first, anything that is not a SELECT is refused before execution
 - **bounded cost**: at most 10 GB read per query by default (can be raised up to 1 TB per query), refused with the estimate beyond that
-- several Google accounts: each tool acts on the default account, or on the one you target with `account=<email>`; `google_accounts` tells which ones have authorized Google BigQuery
+- several Google accounts: each tool acts on the one the call names with `_account=<email>` (the tools' `account=<email>` is the same choice — two different addresses are refused), otherwise the one the project pins, otherwise the default; an unknown address is refused, never replaced by another, and the response names the account that served (`_account`); `google_accounts` tells which ones have authorized Google BigQuery
 
 ## usage — explore and query the warehouse
 

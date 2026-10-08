@@ -78,9 +78,16 @@ n'est prêté. Détail : `docs/ownership.md`.
 > l'identifiant de `_account`, donc c'est la ligne du coffre qui change
 > (`rename_account`), et un nom déjà pris est refusé (l'upsert écraserait l'autre clé). Invariant : un compte NOMMÉ introuvable à un palier **passe
 > la main** au suivant ; s'il n'existe à aucun palier à clé, la résolution **lève
-> « introuvable »** après la marche — jamais un repli plateforme silencieux. La
+> « introuvable »** après la marche (`CompteIntrouvable`, typé et porteur du nom) —
+> jamais un repli plateforme silencieux. La
 > résolution **anonyme** (`<slug>.mcp.oto.cx`) sélectionne le compte d'org comme le
 > chemin réel (unique/défaut), jamais `''` en dur.
+> **Connecteur délégué** (`credential_of`) : l'épinglage projet se lit sur le
+> connecteur appelé, puis sur son **porteur** — un lien posé sur la carte du compte
+> Google épingle le compte de tous ses services, celui de la carte du service l'emporte.
+> Les services Google (`gmail`, `drive`…) passent par cette sélection depuis
+> oto-backend#1160 (`auth/google.credentials_for`) : leur paramètre `account` et l'axe
+> `_account=` sont un seul choix (deux adresses différentes : refus `account_conflict`).
 
 > **Le nombre de champs ne dit rien de la cardinalité — et un compte nommé refusé vaut
 > mieux qu'un compte nommé ignoré (#409, 27/08).** Deux acquis d'un même défaut.

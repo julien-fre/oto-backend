@@ -165,29 +165,37 @@ def _row(email, scopes=ALL, token="AT"):
             "expires_at": "2999-01-01T00:00:00+00:00", "scopes": scopes, "client_id": None}
 
 
-def _coffre(monkeypatch, membre=None, groupe=None, org=None):
-    def membre_get(sub, org_id, account=None):
-        return membre if membre and account in (None, membre["google_email"]) else None
+def _coffre(monkeypatch, membre=None, groupe=None, org=None, token="AT"):
+    """Le faux coffre sous la VRAIE résolution commune (oto-backend#1160) : chaque
+    palier porte au plus un compte, défaut de son palier. Rend le coffre."""
+    from _coffre_google import installer
 
-    def partage_get(scope, target, account=None):
-        row = {"group": groupe, "org": org}[scope]
-        return row if row and account in (None, row["google_email"]) else None
-    monkeypatch.setattr(G.db, "get_google_oauth", membre_get)
-    monkeypatch.setattr(G.db, "get_shared_google_oauth", partage_get)
+    env = installer(monkeypatch, org=ORG, sub="u",
+                    group=access.current_group("u"))
+    for entite, email in ((None, membre), (("group", str(GROUP)), groupe),
+                          (("org", str(ORG)), org)):
+        if email:
+            env.coffre.poser(email, f"RT-{email}", entite=entite, defaut=True,
+                             access_token=token)
+    return env.coffre
+
+
+def _sert(**k) -> str:
+    """Le compte qui sert un appel Gmail (son refresh token le désigne)."""
+    return G.credentials_for("u", service="gmail", **k).refresh_token.removeprefix("RT-")
 
 
 def test_le_membre_dabord_puis_lequipe_puis_lorg(monkeypatch):
-    _coffre(monkeypatch, membre=_row("moi@x.test"), groupe=_row("team@x.test"),
-            org=_row("hello@x.test"))
+    _coffre(monkeypatch, membre="moi@x.test", groupe="team@x.test", org="hello@x.test")
     assert G.credentials_for("u").token == "AT"
-    assert G._resolve_row("u", ORG, None)[1] == ("member", None)
-    _coffre(monkeypatch, groupe=_row("team@x.test"), org=_row("hello@x.test"))
-    assert G._resolve_row("u", ORG, None) == (_row("team@x.test"), ("group", GROUP))
-    _coffre(monkeypatch, org=_row("hello@x.test"))
-    assert G._resolve_row("u", ORG, None)[1] == ("org", ORG)
+    assert _sert() == "moi@x.test"
+    _coffre(monkeypatch, groupe="team@x.test", org="hello@x.test")
+    assert _sert() == "team@x.test"
+    _coffre(monkeypatch, org="hello@x.test")
+    assert _sert() == "hello@x.test"
     # Un compte NOMMÉ se trouve où il vit.
-    _coffre(monkeypatch, membre=_row("moi@x.test"), org=_row("hello@x.test"))
-    assert G._resolve_row("u", ORG, "hello@x.test")[1] == ("org", ORG)
+    _coffre(monkeypatch, membre="moi@x.test", org="hello@x.test")
+    assert _sert(account="hello@x.test") == "hello@x.test"
 
 
 @pytest.fixture
@@ -197,6 +205,8 @@ def _beneficiaire(monkeypatch):
     from oto_mcp import session_org
     from oto_mcp.access import heritage
     monkeypatch.setattr(access, "current_group", lambda sub: None)
+    # Ses propres clés posées dans une autre org : aucune ici.
+    monkeypatch.setattr(access, "personal_instance_org", lambda *a, **k: None)
     jetons = []
 
     def poser(org_heritee=False, groupe_herite=None):
@@ -212,31 +222,33 @@ def test_un_beneficiaire_hors_org_natteint_pas_le_compte_partage(monkeypatch, _b
     """Revue de #1081 (B1) : le barreau org des comptes partagés suit la cascade des
     clés — un simple bénéficiaire d'un projet ne lit ni n'envoie depuis la boîte de
     l'org, ni à l'usage, ni dans la liste."""
+    from oto_mcp.access import heritage
+
     _beneficiaire()
-    _coffre(monkeypatch, org=_row("hello@x.test"))
+    _coffre(monkeypatch, org="hello@x.test")
     _partages(monkeypatch)
+    # Les indices du refus générique lisent la base : hors sujet ici.
+    for indice in ("_revoked_hint", "_reachable_hint", "_poser_ou_accorder"):
+        monkeypatch.setattr(access, indice, lambda *a, **k: "")
+    monkeypatch.setattr(heritage, "indice_refus", lambda *a, **k: "")
     assert G._shared_targets("u", ORG) == []
-    assert G._resolve_row("u", ORG, None) == (None, None)
-    assert G._resolve_row("u", ORG, "hello@x.test") == (None, None)
     assert G.list_shared_accounts("u") == []
     with pytest.raises(RuntimeError):
         G.credentials_for("u", service="gmail")
+    with pytest.raises(RuntimeError, match="hello@x.test"):
+        G.credentials_for("u", account="hello@x.test", service="gmail")
 
 
 def test_un_partage_qui_prete_les_cles_prete_aussi_le_compte(monkeypatch, _beneficiaire):
     _beneficiaire(org_heritee=True, groupe_herite=GROUP)
     assert G._shared_targets("u", ORG) == [("group", GROUP), ("org", ORG)]
-    _coffre(monkeypatch, org=_row("hello@x.test"))
-    assert G._resolve_row("u", ORG, None)[1] == ("org", ORG)
+    _coffre(monkeypatch, org="hello@x.test")
+    assert _sert() == "hello@x.test"
 
 
 def test_le_refresh_et_la_sante_secrivent_sur_lentite_partagee(monkeypatch):
-    _coffre(monkeypatch, org=_row("hello@x.test", token=None))
-    maj, sante = [], []
-    monkeypatch.setattr(G.db, "update_shared_google_access_token",
-                        lambda scope, target, email, tok, exp: maj.append((scope, target, email, tok)))
-    monkeypatch.setattr(G.db, "update_google_access_token",
-                        lambda *a, **k: pytest.fail("pas la ligne d'un membre"))
+    coffre = _coffre(monkeypatch, org="hello@x.test", token=None)
+    sante = []
     from oto_mcp.connectors import health
     monkeypatch.setattr(health, "record_health", lambda prov, scope, ok, err: sante.append(scope))
 
@@ -252,7 +264,7 @@ def test_le_refresh_et_la_sante_secrivent_sur_lentite_partagee(monkeypatch):
     monkeypatch.setattr(requests, "post", lambda *a, **k: _OK())
     creds = G.credentials_for("u", service="gmail")
     assert creds.token == "AT-NEUF"
-    assert maj == [("org", ORG, "hello@x.test", "AT-NEUF")]
+    assert coffre.meta("hello@x.test", ("org", str(ORG)))["access_token"] == "AT-NEUF"
     assert sante == [("org", str(ORG), "hello@x.test")]
 
 
@@ -346,7 +358,7 @@ def test_le_compte_google_accepte_le_palier_org_et_ses_services_non():
 
 # ─── 5. les outils nomment les comptes partagés ───────────────────────────────
 #
-# Un compte partagé se résout par son adresse (`_resolve_row`) — mais les listes que
+# Un compte partagé se résout par son adresse (`credentials_for`) — mais les listes que
 # l'agent lit pour choisir l'adresse (`gmail_list_accounts`, `google_accounts`, le
 # message « aucun compte ») ne montraient que les comptes du membre. Un agent ne
 # pouvait donc pas découvrir la boîte qu'il avait le droit d'employer.

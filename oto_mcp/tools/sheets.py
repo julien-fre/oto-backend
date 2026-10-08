@@ -90,7 +90,7 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             title: the new spreadsheet's title.
-            account: Google account (email) to act as — default account if omitted.
+            account: Google account (email) to act as — same choice as `_account`.
         """
         client = await _client_for_user_async(account)
         return await asyncio.to_thread(client.create, title)
@@ -129,7 +129,7 @@ def register(mcp: FastMCP) -> None:
             append: op="write" — False (default) OVERWRITES the range ; True appends
                 rows after the existing data (no overwrite), from the range's first
                 column.
-            account: Google account (email) to act as — default account if omitted.
+            account: Google account (email) to act as — same choice as `_account`.
         """
         if op not in _SPREADSHEET_OPS:
             raise _bad(_SPREADSHEET_OPS_HINT)

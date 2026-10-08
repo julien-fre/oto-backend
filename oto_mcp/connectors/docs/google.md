@@ -1,12 +1,12 @@
 ## prerequisite — the Google account the services borrow
 
 this connector is the **account**: the Google address, its token, its default account. since the 2026-09-26 split, each service — Gmail, Drive, Sheets, Calendar, Tasks, Chat, BigQuery — is a connector in its own right, with **its own** consent (its scopes only): authorise them from their card, one by one, on the same account.
-- you can connect **several** Google accounts; each service tool acts on the default account or on the one you target with `account=<email>`
+- you can connect **several** Google accounts; each service tool acts on the one the call names with `_account=<email>` (the tools' `account=<email>` is the same choice), otherwise the one the project pins — on the service's card, otherwise on this one —, otherwise the default. an unknown address is refused, never replaced by another; the response names the account that served (`_account`)
 - "linking an account" here requests the six services under the platform's app, and only the identity under a partner's app — its services then add theirs
 
 ## note — an account shared by the organization or team
 
-an organization admin (**Org** tab) or a team lead (**Team** tab) can connect ONE Google account on behalf of everyone — a shared mailbox, a team calendar. tools take your own account first, then your active team's, then the organization's; `account=<email>` targets a specific account wherever it lives. nobody reaches another person's personal account: only what an admin has set up as shared is shared.
+an organization admin (**Org** tab) or a team lead (**Team** tab) can connect ONE Google account on behalf of everyone — a shared mailbox, a team calendar. tools take your own account first, then your active team's, then the organization's; `_account=<email>` targets a specific account wherever it lives. nobody reaches another person's personal account: only what an admin has set up as shared is shared.
 
 ## usage — which accounts, with which rights
 

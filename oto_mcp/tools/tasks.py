@@ -98,7 +98,7 @@ def register(mcp: FastMCP) -> None:
         Args:
             create: if given (a title), CREATE a new task list and return it
                 instead of listing.
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         client = await _client_for_user_async(account)
         if create:
@@ -145,7 +145,7 @@ def register(mcp: FastMCP) -> None:
                 needsAction).
             completed: op="list" — include completed tasks (default false).
             max_results: op="list" — max tasks to return (default 100).
-            account: email of the Google account to use (default if omitted).
+            account: email of the Google account to use — same choice as `_account`.
         """
         # Refuse BEFORE any credential resolution: an unknown op must be told
         # which ones are valid, not "no Google account connected".

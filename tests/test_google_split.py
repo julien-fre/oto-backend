@@ -223,14 +223,16 @@ async def test_le_flux_dun_service_demande_ses_scopes_et_revient_sur_sa_carte(mo
 
 # ─── 4. le coffre ─────────────────────────────────────────────────────────────
 
-def _row(scopes):
-    return {"google_email": "a@b.com", "refresh_token": "RT", "access_token": "AT",
-            "expires_at": "2999-01-01T00:00:00+00:00", "scopes": scopes, "client_id": None}
+def _compte(monkeypatch, scopes):
+    """Un compte, `a@b.com`, sous le faux coffre et la vraie résolution commune."""
+    from _coffre_google import installer
+
+    env = installer(monkeypatch, org=7, sub="nu-sub")
+    env.coffre.poser("a@b.com", "RT", defaut=True, scopes=scopes)
 
 
 def test_un_compte_sans_le_scope_du_service_est_refuse_en_nommant_la_carte(monkeypatch):
-    monkeypatch.setattr(G.db, "get_google_oauth",
-                        lambda sub, org, account=None: _row("https://www.googleapis.com/auth/gmail.modify"))
+    _compte(monkeypatch, "https://www.googleapis.com/auth/gmail.modify")
     monkeypatch.setattr(G, "config_dashboard", lambda sub: "https://app.exemple.test")
     with pytest.raises(RuntimeError) as e:
         G.credentials_for("nu-sub", account="a@b.com", service="drive")
@@ -239,9 +241,7 @@ def test_un_compte_sans_le_scope_du_service_est_refuse_en_nommant_la_carte(monke
 
 
 def test_un_compte_qui_a_le_scope_passe_sans_rafraichir(monkeypatch):
-    monkeypatch.setattr(credentials_store, "get_editor_app", lambda c, k: None)
-    monkeypatch.setattr(G.db, "get_google_oauth",
-                        lambda sub, org, account=None: _row(" ".join(G.SCOPES)))
+    _compte(monkeypatch, " ".join(G.SCOPES))
     creds = G.credentials_for("nu-sub", account="a@b.com", service="drive")
     assert creds.token == "AT"
     # Sans `service` (un appelant d'avant le split), rien n'est vérifié : l'API

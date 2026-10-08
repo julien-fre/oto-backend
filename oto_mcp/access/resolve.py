@@ -192,11 +192,15 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # it serves every tier (`_pick_account`) AND the post-walk guard (a
     # named account not found anywhere RAISES, never a fallback — review #399 F2).
     # None = nothing named (automatic selection per tier).
+    # Pin read on the called connector, then on its CARRIER: a link on the Google
+    # ACCOUNT card pins every service that borrows it (#1160).
     named_account = None
     if cascade._is_multi_account(provider, active_org):
         named_account = (account if account is not None
                          else session_org.current_call_account()
-                         or scope.project_pinned_identity(provider))
+                         or scope.project_pinned_identity(provider)
+                         or (scope.project_pinned_identity(porteur)
+                             if porteur != provider else None))
 
     def _pick_account(entity_type: str, entity_id: str, mprov: str, where: str,
                       scope: Optional[str] = None) -> tuple:
@@ -214,13 +218,13 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
 
     def _not_found(eff: str, mprov: str) -> McpError:
         noun = cascade.account_noun(mprov).capitalize()
-        return McpError(ErrorData(
+        return cascade.CompteIntrouvable(ErrorData(
             code=INVALID_PARAMS,
             message=(
                 f"{noun} `{eff}` not found for `{mprov}` — check with "
                 f"oto_identity(op='list'), or set it"
                 f"{links.ou_poser_la_cle(sub, org=active_org)}."
-            )))
+            )), eff)
 
     def _member_fetch(msub: str, morg: int, mprov: str) -> Optional[tuple]:
         """MEMBER fetch probe: account selection in multi-account ("2 Zoho"),
