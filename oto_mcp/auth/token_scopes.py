@@ -56,6 +56,10 @@ _IMPLIES = {READ: frozenset({READ}), WRITE: frozenset({READ, WRITE})}
 # FILTRER leur réponse (la liste des tableaux) plutôt que la refuser en bloc.
 _CURRENT: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
     "oto_token_scope", default=None)
+# L'id du jeton de la requête courante, posé avec sa portée : un jeton ÉMETTEUR se
+# nomme parent de ce qu'il émet, et ne voit que ses propres enfants.
+_JETON: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar(
+    "oto_token_id", default=None)
 
 # ⚠️ **Ces deux valeurs sont PERSISTÉES dans les jetons déjà émis.** Ce ne sont pas
 # des mots de vocabulaire : `"namespaces"` a survécu au renommage de `namespace` en
@@ -79,6 +83,27 @@ NAMESPACES, PROJECTS = "namespaces", "projects"
 # et la console de supervision — non parce qu'on l'avait voulu, mais parce que
 # RIEN NE LES FERMAIT. Un jeton porté `{"runner": true}` ne les atteint plus.
 RUNNER = "runner"
+
+# La portée d'ÉMISSION — le jeton qui fabrique des jetons, sans humain à chaque clé
+# (décision d'Alexis, 08/10/2026, qui renverse « émettre un jeton reste un acte
+# humain »). Sa valeur est un PLAFOND : une portée `namespaces`/`projects`, et rien
+# d'autre, que chaque jeton émis doit tenir (`inclus`).
+#
+#     {"issue": {"namespaces": {"204": "write"}}}
+#
+# Le motif de l'ancienne règle — une fuite qui s'auto-entretient — est tenu par ce
+# que l'émetteur NE PEUT PAS faire : émettre un jeton non porté, un jeton émetteur, un
+# jeton runner, un jeton hors de son plafond ou sans échéance ; et par ce que sa
+# révocation emporte : tous ses enfants (`db.tokens`). Lui-même ne naît que d'une
+# session humaine, et jamais sans échéance (`capabilities/api_tokens`).
+ISSUE = "issue"
+
+# Ce qu'ouvre `issue` : SES jetons — émettre, lister ses enfants, révoquer un enfant.
+# Le handler borne la liste et la révocation aux enfants de l'émetteur (`emetteur`).
+_ALLOWED_EMISSION: tuple[tuple[re.Pattern, frozenset], ...] = (
+    (re.compile(r"^/api/me/tokens$"), frozenset({"GET", "POST"})),
+    (re.compile(r"^/api/me/tokens/[^/]+$"), frozenset({"DELETE"})),
+)
 
 # Les trois routes sans lesquelles un worker cesse de fonctionner — relevées dans
 # son client HTTP, pas supposées : la file (réserver, prolonger, conclure, lier),
@@ -217,12 +242,14 @@ def parse(raw: object) -> Optional[dict]:
         return None
     if not isinstance(raw, dict):
         raise ScopeError("scopes doit être un objet {\"namespaces\": {…}, \"projects\": {…}}")
-    unknown = set(raw) - {NAMESPACES, PROJECTS, RUNNER}
+    unknown = set(raw) - {NAMESPACES, PROJECTS, RUNNER, ISSUE}
     if unknown:
         raise ScopeError(f"clé(s) de portée inconnue(s) : {sorted(unknown)}")
-    if not (raw.get(NAMESPACES) or raw.get(PROJECTS) or raw.get(RUNNER)):
+    if not (raw.get(NAMESPACES) or raw.get(PROJECTS) or raw.get(RUNNER)
+            or raw.get(ISSUE)):
         raise ScopeError(
-            "scopes doit nommer au moins un tableau, un projet, ou le runner")
+            "scopes doit nommer au moins un tableau, un projet, le runner, ou un "
+            "plafond d'émission")
 
     out: dict[str, dict[str, str]] = {}
     if raw.get(NAMESPACES) is not None:
@@ -235,7 +262,40 @@ def parse(raw: object) -> Optional[dict]:
         if raw.get(RUNNER) is not True:
             raise ScopeError("scopes.runner vaut `true`, ou rien — pas de degré")
         out[RUNNER] = True
+    if raw.get(ISSUE) is not None:
+        out[ISSUE] = _parse_plafond(raw.get(ISSUE))
     return out
+
+
+def _parse_plafond(brut: object) -> dict:
+    """Le plafond d'un jeton émetteur : des tableaux et des projets, rien d'autre —
+    ni `runner`, ni `issue` (un émetteur n'émet pas d'émetteur)."""
+    if not isinstance(brut, dict):
+        raise ScopeError("scopes.issue doit être un objet {\"namespaces\": {…}, "
+                         "\"projects\": {…}}")
+    hors = set(brut) - {NAMESPACES, PROJECTS}
+    if hors:
+        raise ScopeError(f"scopes.issue ne porte que namespaces et projects, pas "
+                         f"{sorted(hors)}")
+    plafond = parse(brut)
+    if not plafond:
+        raise ScopeError("scopes.issue doit nommer au moins un tableau ou un projet")
+    return plafond
+
+
+def inclus(portee: Optional[dict], plafond: dict) -> bool:
+    """`portee` tient-elle dans `plafond` ? Chaque tableau et projet qu'elle nomme y
+    figure, avec un droit que celui du plafond contient (`write` contient `read`).
+    Une portée nulle (pleins pouvoirs) ou qui porte autre chose que des tableaux et
+    des projets n'y tient jamais."""
+    if not portee or set(portee) - {NAMESPACES, PROJECTS}:
+        return False
+    for famille in (NAMESPACES, PROJECTS):
+        accorde = plafond.get(famille) or {}
+        for cle, droit in (portee.get(famille) or {}).items():
+            if cle not in accorde or droit not in _IMPLIES[accorde[cle]]:
+                return False
+    return True
 
 
 def namespaces(scopes: Optional[dict]) -> frozenset:
@@ -274,6 +334,12 @@ def authorize(scopes: Optional[dict], method: str, path: str,
         # Pas de `return False` ici : un jeton peut porter `runner` ET des
         # tableaux (un ordonnanceur compte des lignes). La boucle ci-dessous
         # tranche le reste, et ce qui n'y figure pas reste refusé.
+    if scopes.get(ISSUE):
+        for motif, methodes in _ALLOWED_EMISSION:
+            if method in methodes and motif.match(path):
+                # Fail-closed : sans l'id du jeton, l'émetteur ne se distinguerait plus
+                # d'une session humaine dans les handlers (`emetteur()`).
+                return _JETON.get() is not None
     for motif, methodes in _ALLOWED_CYCLE_DU_RUN:
         if method in methodes and motif.match(path):
             return _ecrit_un_tableau(scopes)
@@ -336,14 +402,31 @@ def motif_du_refus(scopes: Optional[dict], method: str, path: str) -> tuple[str,
 
 # ── Portée de la requête courante ────────────────────────────────────────────
 
-def set_current(scopes: Optional[dict]) -> None:
+def set_current(scopes: Optional[dict], token_id: Optional[int] = None) -> None:
     """Posée à chaque authentification REST — y compris à None (JWT, jeton non
-    porté), pour qu'aucune portée ne survive à sa requête."""
+    porté), pour qu'aucune portée ne survive à sa requête.
+
+    ⚠️ Une portée `issue` exige `token_id` : sans lui, `emetteur()` rendrait None et
+    le handler prendrait le jeton émetteur pour une session humaine."""
+    if scopes and scopes.get(ISSUE) and token_id is None:
+        _CURRENT.set(None)
+        _JETON.set(None)
+        raise ValueError("portée `issue` posée sans l'id de son jeton")
     _CURRENT.set(scopes)
+    _JETON.set(token_id)
 
 
 def current() -> Optional[dict]:
     return _CURRENT.get()
+
+
+def emetteur() -> Optional[tuple[int, dict]]:
+    """`(id, plafond)` quand la requête vient d'un jeton ÉMETTEUR, None sinon (session
+    humaine, jeton sans portée d'émission)."""
+    scopes, jeton = _CURRENT.get(), _JETON.get()
+    if not scopes or not scopes.get(ISSUE) or jeton is None:
+        return None
+    return jeton, scopes[ISSUE]
 
 
 def filter_datastores(rows: list) -> list:

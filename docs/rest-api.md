@@ -399,6 +399,8 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   absent de l'adaptateur jusque-là, qui retenait ces routes en écriture manuelle ; il
   vit désormais sur le binding, et un test le vérifie en JOUANT les six routes (pas en
   relisant le descripteur : c'est son application qui est la garde).
+  Exception : le **jeton émetteur** (portée `issue`) franchit les trois routes membre
+  (`RestBinding.allow_issuer_token`), jamais les trois admin — § Jetons API ci-dessous.
   ⚠️ **Le secret d'un jeton n'est rendu QU'À LA CRÉATION** — il n'est stocké que haché.
   `scopes: null` = jeton non porté (pleins pouvoirs du sub) ; sinon il est borné à des
   tableaux/projets nommés (`auth.token_scopes`). **Trois asymétries membre/admin conservées** :
@@ -960,6 +962,25 @@ déploiement : **`docs/version-servie.md`**.
   Sinon une fuite est **auto-entretenue** — l'attaquant s'émet un second jeton (non-expirant)
   avant qu'on révoque le premier, et peut révoquer les jetons légitimes. Émettre un jeton
   redevient un acte humain, ce qui borne la gravité réelle d'une fuite à la portée du jeton.
+- **Exception : le jeton ÉMETTEUR** (décision d'Alexis du 08/10/2026 — que les agents
+  n'aient plus besoin d'un humain à chaque clé, modèle du jeton Cloudflare « API Tokens:
+  Edit »). `POST /api/me/tokens {"scopes": {"issue": {"namespaces": {"204": "write"}}},
+  "ttl_days": 180}` rend un jeton qui émet à son tour, sans session, des jetons bornés par
+  son **plafond** (`issue`, tableaux et projets seulement, rangés par identifiant). Ce qui
+  tient le motif de la règle ci-dessus :
+  - il ne naît que d'une session humaine, et jamais sans échéance
+    (`400 issuer_ttl_required`, aux deux paliers) ;
+  - il ne franchit que les trois routes MEMBRE (`allow_issuer_token`), jamais l'admin ;
+    tout autre jeton y reste refusé, porté ou non (`403 api_token_forbidden`) ;
+  - ce qu'il émet est **toujours porté**, inclus dans son plafond, ni émetteur ni runner
+    (`403 scope_exceeds_issuer`), et échéancé au plus 90 jours (`400 issued_token_ttl`) ;
+  - il ne liste et ne révoque que **ses** enfants ; chacun le nomme (`parent_id`, rendu
+    par la liste) ;
+  - un enfant **meurt avec son parent**, révoqué ou échu (`verify_api_token` le vérifie à
+    chaque requête), et révoquer le parent révoque ses enfants actifs, motif
+    « émetteur N révoqué ». Colonne `user_api_tokens.parent_id`, révision Alembic
+    `0045_jetons_emetteurs` ;
+  - chaque émission est journalisée comme tout appel REST par jeton, sous l'id du parent.
 - **Portée opt-in** (`auth/token_scopes.py`, colonne `user_api_tokens.scopes` JSONB) : à la
   création, `POST /api/me/tokens {"label":"scout", "scopes":{"datastores":{"leads":"read"}}}`
   rend un jeton **porté** — deny-by-default, il n'ouvre QUE les tableaux nommés, en `read`

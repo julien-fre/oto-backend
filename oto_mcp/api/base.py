@@ -170,6 +170,7 @@ async def _authenticate(
     allow_query_token: bool = False,
     apply_view_as: bool = True,
     allow_api_token: bool = True,
+    allow_issuer_token: bool = False,
     allow_service: bool = False,
 ) -> tuple[str | None, JSONResponse | None]:
     """Résout l'appelant (JWT Logto **ou** jeton API `oto_`) et **garde la portée**.
@@ -178,6 +179,10 @@ async def _authenticate(
     porteur de jeton y est refusé. Réservé à la gestion des jetons eux-mêmes — un
     jeton qui peut en créer d'autres rend sa fuite auto-entretenue (révoquer le
     jeton fuité ne suffit plus, l'attaquant s'en est fait un second, non-expirant).
+
+    `allow_issuer_token=True` = sur une telle route, le jeton ÉMETTEUR (portée
+    `issue`, `token_scopes.ISSUE`) passe quand même, et lui seul : ses enfants sont
+    bornés, échéancés et révoqués avec lui (`capabilities/api_tokens`).
 
     `allow_service=True` = la route accepte une identité de SERVICE
     (`auth.service_identity`). Faux par défaut : seule une capacité dont la règle
@@ -221,12 +226,13 @@ async def _authenticate(
     # Pas de upsert_user ici : la FK CASCADE garantit que si la row user a
     # été supprimée, le token a été supprimé avec.
     if token.startswith("oto_"):
-        if not allow_api_token:
+        interdit = (
+            "La gestion des jetons demande une session interactive (JWT) ou un jeton "
+            "émetteur (portée `issue`) — un autre jeton API ne peut ni lister, ni "
+            "créer, ni révoquer de jeton.")
+        if not allow_api_token and not allow_issuer_token:
             token_scopes.set_current(None)
-            return None, _json_error(
-                request, 403, "api_token_forbidden",
-                "La gestion des jetons demande une session interactive (JWT) — "
-                "un jeton API ne peut ni lister, ni créer, ni révoquer de jeton.")
+            return None, _json_error(request, 403, "api_token_forbidden", interdit)
         # DB HORS de la loop (threadpool) : un blip DB ne doit jamais geler le
         # serveur mono-loop entier (vécu 2026-07-02, py-spy : getconn wait ici).
         row = await run_in_threadpool(db.verify_api_token, token)
@@ -236,7 +242,10 @@ async def _authenticate(
         # Portée du jeton (`token_scopes`) : posée à CHAQUE requête (None comprise),
         # puis gate deny-by-default. Un jeton non porté (`scopes` NULL) est inchangé.
         scopes = row.get("scopes")
-        token_scopes.set_current(scopes)
+        if not allow_api_token and not (scopes or {}).get(token_scopes.ISSUE):
+            token_scopes.set_current(None)
+            return None, _json_error(request, 403, "api_token_forbidden", interdit)
+        token_scopes.set_current(scopes, row.get("token_id"))
         # Une portée émise avant qu'elle ne nomme les tableaux par identifiant n'ouvre
         # plus rien, et le DIT : la juger sur des noms rouvrirait ce qu'un renommage
         # déplace (oto#158). Elle se migre, elle ne se devine pas.

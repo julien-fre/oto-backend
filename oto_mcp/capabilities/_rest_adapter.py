@@ -81,6 +81,8 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
     kwargs_auth: dict = {}
     if not binding.allow_api_token:
         kwargs_auth["allow_api_token"] = False
+    if binding.allow_issuer_token:
+        kwargs_auth["allow_issuer_token"] = True
     if accepts_service(cap.authz):
         kwargs_auth["allow_service"] = True
 

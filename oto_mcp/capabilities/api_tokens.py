@@ -12,9 +12,20 @@ mêmes chemins, mêmes codes, même corps sur le fil :
 laquelle elles étaient restées écrites à la main** : `_rest_adapter` ne savait pas
 exprimer ce cran. Un jeton `oto_` ne peut ni lister, ni créer, ni révoquer de jeton —
 sinon une fuite s'auto-entretient : révoquer le jeton fuité ne suffit plus, l'attaquant
-s'en est fait un second, non expirant. Émettre un jeton reste un acte humain. Le cran
-est désormais un champ du BINDING (`RestBinding.allow_api_token`), donc déclaré au même
-endroit que le chemin, et vérifié par test sur les six.
+s'en est fait un second, non expirant. Le cran est un champ du BINDING
+(`RestBinding.allow_api_token`), donc déclaré au même endroit que le chemin, et vérifié
+par test sur les six.
+
+**Une exception, le jeton ÉMETTEUR** (décision d'Alexis du 08/10/2026 : que les agents
+n'aient plus besoin d'un humain à chaque clé, comme le jeton Cloudflare « API Tokens:
+Edit »). Un jeton porté `{"issue": <plafond>}` atteint les trois routes de SES jetons
+(`allow_issuer_token`), jamais celles du palier admin. Ce qui tient le motif ci-dessus :
+- il ne naît que d'une session humaine, et jamais sans échéance (`issuer_ttl_required`) ;
+- il n'émet que des jetons À PORTÉE, inclus dans son plafond, ni émetteurs ni runner,
+  échéancés au plus `_TTL_MAX_ENFANT` jours ;
+- il ne liste et ne révoque que ses propres enfants ;
+- un enfant meurt avec son parent, révoqué ou échu (`db.tokens`), et chaque enfant
+  nomme son parent (`parent_id`), lisible dans la liste.
 
 **Aucune face MCP** (`mcp=None`) sur les neuf. Pour les jetons : la garde ci-dessus
 n'aurait aucun sens si un outil pouvait faire le même geste. Pour les clés plateforme :
@@ -64,6 +75,9 @@ _LABEL_MAX = 32
 # Le motif d'une révocation (#523) : du texte libre, même régime que le libellé —
 # une borne PUBLIÉE et un dépassement REFUSÉ, jamais raboté.
 _REASON_MAX = 500
+
+# L'échéance la plus longue qu'un jeton ÉMETTEUR peut donner à ce qu'il émet.
+_TTL_MAX_ENFANT = 90
 
 _ME = "/api/me/tokens"
 _ADMIN = "/api/admin/users/{sub}/tokens"
@@ -174,6 +188,8 @@ class ApiToken(BaseModel):
     revoked_at: Optional[Any] = None
     revoked_by: Optional[str] = None
     revoked_reason: Optional[str] = None
+    # Le jeton ÉMETTEUR qui a émis celui-ci ; `null` = émis par une session humaine.
+    parent_id: Optional[int] = None
 
 
 class ApiTokenList(BaseModel):
@@ -301,8 +317,47 @@ def _motif(brut: Optional[str]) -> Optional[str]:
 
 # --- Handlers : MES jetons --------------------------------------------------
 
+def _emetteur() -> Optional[tuple[int, dict]]:
+    """`(id, plafond)` si la requête vient d'un jeton ÉMETTEUR, None si elle vient
+    d'une session humaine. Tout autre jeton porté est refusé — fail-closed, même si
+    l'authentification l'a déjà écarté : ici, le prendre pour un humain lui donnerait
+    tous les jetons du compte."""
+    em = token_scopes.emetteur()
+    if em is None and token_scopes.current() is not None:
+        raise AuthzDenied(403, "api_token_forbidden",
+                          "Seul un jeton émetteur (portée `issue`) gère des jetons.")
+    return em
+
+
+def _echeance_d_emetteur(scopes: Optional[dict], ttl_days: Optional[int]) -> None:
+    """Un jeton émetteur ne naît jamais sans échéance : c'est lui qui borne la durée
+    de tous ses enfants."""
+    if scopes and scopes.get(token_scopes.ISSUE) and not ttl_days:
+        raise AuthzDenied(400, "issuer_ttl_required",
+                          "Un jeton émetteur (portée `issue`) exige `ttl_days`.")
+
+
+def _borne_enfant(scopes: Optional[dict], ttl_days: Optional[int],
+                  plafond: dict) -> None:
+    """Ce qu'un jeton émetteur peut émettre : une portée incluse dans son plafond
+    (donc ni pleins pouvoirs, ni émetteur, ni runner), échéancée au plus
+    `_TTL_MAX_ENFANT` jours."""
+    if not token_scopes.inclus(scopes, plafond):
+        raise AuthzDenied(
+            403, "scope_exceeds_issuer",
+            f"Un jeton émetteur n'émet qu'une portée incluse dans son plafond "
+            f"({plafond}) : tableaux et projets seulement, droit au plus égal.")
+    if not ttl_days or ttl_days > _TTL_MAX_ENFANT:
+        raise AuthzDenied(
+            400, "issued_token_ttl",
+            f"Un jeton émis par un jeton émetteur exige `ttl_days`, au plus "
+            f"{_TTL_MAX_ENFANT}.")
+
+
 def _my_list(ctx: ResolvedCtx, inp: TokenListInput) -> dict:
-    return {"tokens": db.list_api_tokens(ctx.sub, include_revoked=inp.include_revoked)}
+    em = _emetteur()
+    return {"tokens": db.list_api_tokens(ctx.sub, include_revoked=inp.include_revoked,
+                                         parent_id=em[0] if em else None)}
 
 
 def _par_identifiant(sub: str, scopes: Optional[dict]) -> Optional[dict]:
@@ -317,6 +372,10 @@ def _par_identifiant(sub: str, scopes: Optional[dict]) -> Optional[dict]:
     voit pas : le jeton ne peut de toute façon pas dépasser ses droits, mais une faute
     de frappe produirait un jeton muet qu'on croirait branché. Un nom que portent
     plusieurs tableaux visibles est refusé, jamais tranché."""
+    if (scopes or {}).get(token_scopes.ISSUE):
+        # Le plafond d'un émetteur se range comme une portée : par identifiant.
+        scopes = {**scopes, token_scopes.ISSUE: _par_identifiant(
+            sub, scopes[token_scopes.ISSUE])}
     vises = (scopes or {}).get("namespaces") or {}
     if not vises:
         return scopes
@@ -348,16 +407,24 @@ def _par_identifiant(sub: str, scopes: Optional[dict]) -> Optional[dict]:
 
 
 def _my_create(ctx: ResolvedCtx, inp: TokenCreateInput) -> dict:
+    em = _emetteur()
     label = _libelle(inp.label)
     scopes = _par_identifiant(ctx.sub, _portee(inp.scopes))
     ttl_days = _jours(inp.ttl_days)
-    token = db.create_api_token(ctx.sub, label=label, ttl_days=ttl_days, scopes=scopes)
+    if em:
+        _borne_enfant(scopes, ttl_days, em[1])
+    else:
+        _echeance_d_emetteur(scopes, ttl_days)
+    token = db.create_api_token(ctx.sub, label=label, ttl_days=ttl_days, scopes=scopes,
+                                parent_id=em[0] if em else None)
     return {"token": token, "label": label, "scopes": scopes, "ttl_days": ttl_days}
 
 
 def _my_delete(ctx: ResolvedCtx, inp: TokenDeleteInput) -> dict:
+    em = _emetteur()
     if not db.revoke_api_token(ctx.sub, _entier(inp.token_id), revoked_by=ctx.sub,
-                               reason=_motif(inp.reason)):
+                               reason=_motif(inp.reason),
+                               parent_id=em[0] if em else None):
         raise AuthzDenied(404, "unknown_token")
     return {"ok": True}
 
@@ -376,6 +443,7 @@ def _admin_create(ctx: ResolvedCtx, inp: AdminTokenCreateInput) -> dict:
     # Rangée dans ce que voit le PORTEUR du jeton, pas l'émetteur : c'est pour lui
     # que l'identifiant doit désigner le tableau.
     scopes = _par_identifiant(cible, _portee(inp.scopes))
+    _echeance_d_emetteur(scopes, ttl_days)
     token = db.create_api_token(cible, label=label, ttl_days=ttl_days,
                                 scopes=scopes)
     return {"token": token, "label": label, "ttl_days": ttl_days, "scopes": scopes}
@@ -434,18 +502,24 @@ def _keys_delete(ctx: ResolvedCtx, inp: PlatformKeyDeleteInput) -> dict:
 _D_LIST = ("Mes jetons API, sans leur secret — il n'est rendu qu'à la création et n'est "
            "stocké que haché. `scopes: null` = jeton non porté (pleins pouvoirs de mon "
            "compte). Les jetons révoqués n'y sont qu'avec `include_revoked`. Réservé à "
-           "une session interactive : un jeton ne peut pas lister les jetons.")
+           "une session interactive, ou à un jeton émetteur (portée `issue`) qui n'y "
+           "voit que ses propres enfants (`parent_id`).")
 _D_CREATE = ("Émet un jeton API. ⚠️ Le secret n'est rendu QU'UNE FOIS. `scopes` le BORNE "
              "à des tableaux (par IDENTIFIANT) ou projets nommés — la forme à confier à "
              "une intégration tierce ; absent, le jeton a tous mes droits. Un nom de "
              "tableau est rangé sous son identifiant, que la réponse rend. Un tableau que "
              "je ne vois pas est refusé (`unknown_namespace`) : sinon le jeton serait "
-             "muet et on le croirait branché. Réservé à une session interactive.")
+             "muet et on le croirait branché. `{\"issue\": <plafond>}` fait un jeton "
+             "ÉMETTEUR, qui émet à son tour sans session : `ttl_days` y est requis, et ce "
+             "qu'il émet est une portée incluse dans le plafond (tableaux et projets), "
+             "au plus 90 jours, révoquée avec lui. Réservé à une session interactive, "
+             "ou à un jeton émetteur.")
 _D_DELETE = ("Révoque un de mes jetons : il cesse de fonctionner, et la révocation est "
              "GARDÉE (qui, quand, `reason` facultatif) — la liste la montre avec "
-             "`include_revoked`. Un jeton déjà révoqué rend 404 `unknown_token`. Réservé "
-             "à une session interactive — un jeton ne peut pas en révoquer, sinon un "
-             "attaquant couperait les jetons légitimes.")
+             "`include_revoked`. Un jeton déjà révoqué rend 404 `unknown_token`. Révoquer "
+             "un jeton émetteur révoque ses enfants. Réservé à une session interactive, "
+             "ou à un jeton émetteur pour ses seuls enfants — un autre jeton ne peut pas "
+             "en révoquer, sinon un attaquant couperait les jetons légitimes.")
 _D_A_LIST = ("Les jetons émis pour un compte TIERS ; les révoqués avec "
              "`include_revoked`. Réservé à une session interactive.")
 _D_A_CREATE = ("Émet un jeton POUR UN COMPTE TIERS. ⚠️ Le secret n'est rendu qu'une "
@@ -466,20 +540,21 @@ CAPABILITIES += [
     Capability(
         key="me.token.list", handler=_my_list, Input=TokenListInput, authz=SUB_ONLY,
         Output=ApiTokenList, description=_D_LIST, mcp=None,
-        rest=RestBinding("GET", _ME, allow_api_token=False),
+        rest=RestBinding("GET", _ME, allow_api_token=False, allow_issuer_token=True),
     ),
     Capability(
         key="me.token.create", handler=_my_create, Input=TokenCreateInput,
         authz=SUB_ONLY, Output=ApiTokenCreated, description=_D_CREATE, mcp=None,
         # 201 : forme historique de CE palier — l'admin, lui, rend 200.
-        rest=RestBinding("POST", _ME, status=201, allow_api_token=False),
+        rest=RestBinding("POST", _ME, status=201, allow_api_token=False,
+                         allow_issuer_token=True),
     ),
     Capability(
         key="me.token.delete", handler=_my_delete, Input=TokenDeleteInput,
         authz=SUB_ONLY, Output=TokenDeleted, description=_D_DELETE, mcp=None,
         # `reads_body` : le motif (`{reason}`) voyage dans le corps du DELETE.
         rest=RestBinding("DELETE", _ME + "/{token_id}", allow_api_token=False,
-                         reads_body=True),
+                         allow_issuer_token=True, reads_body=True),
     ),
     Capability(
         key="platform.token.list", handler=_admin_list, Input=AdminTokenListInput,

@@ -205,6 +205,10 @@ class RestBinding:
     # Sans lui, migrer ces six routes aurait été une régression de sécurité — c'est pour
     # ça qu'elles étaient restées écrites à la main.
     allow_api_token: bool = True
+    # Sur une route `allow_api_token=False`, laisse passer le jeton ÉMETTEUR (portée
+    # `issue`) et lui seul. Posé sur les trois routes de MES jetons, jamais sur celles
+    # du palier admin.
+    allow_issuer_token: bool = False
     # Surface DÉCLARÉE PROVISOIRE : forme attendue, pas contrat figé. Publié tel quel
     # dans l'OpenAPI (`x-oto-provisoire: true`), la convention que le front a proposée
     # et qu'on a prise. Dire « provisoire » DANS le document est ce qui autorise à

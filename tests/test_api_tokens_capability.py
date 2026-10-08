@@ -32,7 +32,7 @@ from oto_mcp.capabilities import _rest_adapter, api_tokens as at
 
 _JETONS = [{"id": 7, "label": "cli", "created_at": "2026-08-01", "last_used_at": None,
             "expires_at": None, "scopes": None, "revoked_at": None,
-            "revoked_by": None, "revoked_reason": None}]
+            "revoked_by": None, "revoked_reason": None, "parent_id": None}]
 _PORTEE = {"namespaces": {"clients": "read"}}
 
 
@@ -49,7 +49,12 @@ def test_les_six_routes_de_jetons_refusent_un_porteur_de_jeton(cle):
     `authenticate`. Un test qui relit `binding.allow_api_token` prouverait que le champ
     est posé, pas qu'il est APPLIQUÉ — or c'est l'application qui est la garde."""
     recu = _jouer_et_capturer_auth(cle)
-    assert recu == {"allow_api_token": False}, (
+    attendu = {"allow_api_token": False}
+    if cle.startswith("me."):
+        # Le jeton ÉMETTEUR, et lui seul, franchit les routes de SES jetons
+        # (`test_jeton_emetteur.py`) — jamais celles du palier admin.
+        attendu["allow_issuer_token"] = True
+    assert recu == attendu, (
         f"{cle} n'interdit plus le porteur de jeton : reçu {recu}. Un jeton qui peut "
         "en créer d'autres rend sa fuite auto-entretenue.")
 
@@ -94,13 +99,14 @@ def socle(monkeypatch):
     vus: list = []
     monkeypatch.setattr(at.db, "get_user", lambda sub: {"sub": sub})
     monkeypatch.setattr(at.db, "list_api_tokens",
-                        lambda sub, include_revoked=False:
+                        lambda sub, include_revoked=False, parent_id=None:
                         vus.append(("list", sub, include_revoked)) or list(_JETONS))
     monkeypatch.setattr(at.db, "create_api_token",
-                        lambda sub, label=None, ttl_days=None, scopes=None:
+                        lambda sub, label=None, ttl_days=None, scopes=None,
+                        parent_id=None:
                         vus.append(("create", sub, label, ttl_days, scopes)) or "oto_SECRET")
     monkeypatch.setattr(at.db, "revoke_api_token",
-                        lambda sub, tid, revoked_by, reason:
+                        lambda sub, tid, revoked_by, reason, parent_id=None:
                         vus.append(("revoke", sub, tid, revoked_by, reason)) or True)
     monkeypatch.setattr(at.db, "KEY_PROVIDERS", {"serper", "apollo"})
     monkeypatch.setattr(credentials_store, "list_platform_credentials",

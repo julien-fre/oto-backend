@@ -55,7 +55,8 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
                      ttl_seconds: Optional[int] = None,
                      kind: str = "user", *, job_id: Optional[int] = None,
                      verrou_org: bool = False,
-                     verrou_org_id: Optional[int] = None) -> str:
+                     verrou_org_id: Optional[int] = None,
+                     parent_id: Optional[int] = None) -> str:
     """Génère un token, persiste son hash, renvoie le plaintext une seule fois.
 
     `ttl_days` : si fourni (>0), le token expire après ce délai et est rejeté
@@ -70,6 +71,10 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
     Non None = deny-by-default, seul ce que la portée nomme passe — la forme d'un
     jeton confié à une intégration tierce. Validé par `token_scopes.parse` AVANT
     d'arriver ici (le document est stocké tel quel).
+
+    `parent_id` : le jeton ÉMETTEUR qui a émis celui-ci (`token_scopes.ISSUE`). Un
+    enfant ne fonctionne que tant que son parent fonctionne (`verify_api_token`), et
+    la révocation du parent le révoque (`revoke_api_token`).
     """
     # ⚠️ `upsert_user` CRÉE le compte s'il n'existe pas. Pour un jeton émis au nom
     # d'un tiers (délégation d'un travail programmé), l'existence du compte se
@@ -90,12 +95,12 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
     with _connect() as conn:
         conn.execute(
             f"INSERT INTO user_api_tokens (sub, label, token_hash, expires_at, "
-            f"scopes, kind, job_id, verrou_org, verrou_org_id) "
-            f"VALUES (%s, %s, %s, {expires}, %s, %s, %s, %s, %s)",
+            f"scopes, kind, job_id, verrou_org, verrou_org_id, parent_id) "
+            f"VALUES (%s, %s, %s, {expires}, %s, %s, %s, %s, %s, %s)",
             (sub, label, _hash_token(token),
              json.dumps(scopes) if scopes is not None else None, kind,
              job_id, True if verrou_org else None,
-             verrou_org_id if verrou_org else None),
+             verrou_org_id if verrou_org else None, parent_id),
         )
     return token
 
@@ -114,16 +119,24 @@ def verify_api_token(token: str) -> Optional[dict]:
     (Sentry, 5 événements côté boot + 2 côté requête, dernier 2026-07-30). Un seul
     statement prend son lock d'un coup : plus d'escalade intra-transaction, plus de
     cycle possible avec le DDL.
+
+    Un jeton émis par un jeton ÉMETTEUR (`parent_id`) meurt avec lui : révoqué ou
+    échu, le parent emporte ses enfants, sans écriture sur eux.
     """
     if not token or not token.startswith(_TOKEN_PREFIX):
         return None
     h = _hash_token(token)
     with _connect() as conn:
         row = conn.execute(
-            "UPDATE user_api_tokens SET last_used_at = NOW() "
-            "WHERE token_hash = %s AND revoked_at IS NULL "
-            "AND (expires_at IS NULL OR expires_at > NOW()) "
-            "RETURNING id, sub, scopes, kind, job_id, verrou_org, verrou_org_id",
+            "UPDATE user_api_tokens t SET last_used_at = NOW() "
+            "WHERE t.token_hash = %s AND t.revoked_at IS NULL "
+            "AND (t.expires_at IS NULL OR t.expires_at > NOW()) "
+            "AND (t.parent_id IS NULL OR EXISTS ("
+            "  SELECT 1 FROM user_api_tokens p WHERE p.id = t.parent_id "
+            "  AND p.revoked_at IS NULL "
+            "  AND (p.expires_at IS NULL OR p.expires_at > NOW()))) "
+            "RETURNING t.id, t.sub, t.scopes, t.kind, t.job_id, t.verrou_org, "
+            "t.verrou_org_id",
             (h,),
         ).fetchone()
         if not row:
@@ -156,11 +169,15 @@ def _as_scopes(raw: object) -> Optional[dict]:
     return {}
 
 
-def list_api_tokens(sub: str, include_revoked: bool = False) -> list[dict]:
+def list_api_tokens(sub: str, include_revoked: bool = False,
+                    parent_id: Optional[int] = None) -> list[dict]:
     """Les jetons de l'utilisateur. Les RÉVOQUÉS n'y sont que sur demande
     (`include_revoked`) : la liste sert d'abord à décider quoi couper, et un jeton
-    déjà coupé n'y a rien à faire ; il reste lisible pour l'enquête (#523)."""
+    déjà coupé n'y a rien à faire ; il reste lisible pour l'enquête (#523).
+    `parent_id` borne la liste aux enfants de ce jeton émetteur."""
     revoques = "" if include_revoked else "AND revoked_at IS NULL "
+    enfants = "AND parent_id = %s " if parent_id is not None else ""
+    params = (sub, parent_id) if parent_id is not None else (sub,)
     with _connect() as conn:
         rows = conn.execute(
             # ⚠️ `kind = 'user'` : cet écran annonce des jetons de CLI et
@@ -169,16 +186,16 @@ def list_api_tokens(sub: str, include_revoked: bool = False) -> list[dict]:
             # ils feraient mentir l'écran, et son bouton « révoquer » porterait
             # sur un accès en cours d'usage.
             "SELECT id, label, created_at, last_used_at, expires_at, scopes, "
-            "revoked_at, revoked_by, revoked_reason "
+            "revoked_at, revoked_by, revoked_reason, parent_id "
             f"FROM user_api_tokens WHERE sub = %s AND kind = 'user' {revoques}"
-            "ORDER BY created_at DESC",
-            (sub,),
+            f"{enfants}ORDER BY created_at DESC",
+            params,
         ).fetchall()
         return [dict(r) for r in rows]
 
 
 def revoke_api_token(sub: str, token_id: int, revoked_by: str,
-                     reason: Optional[str]) -> bool:
+                     reason: Optional[str], parent_id: Optional[int] = None) -> bool:
     """Révoque un jeton : il cesse de fonctionner, sa ligne RESTE (#523).
 
     ⚠️ Jusqu'au 23/09/2026, révoquer était un `DELETE` : après coup, on ne savait
@@ -187,12 +204,26 @@ def revoke_api_token(sub: str, token_id: int, revoked_by: str,
     et les instances de connecteur gardaient déjà leur date de révocation.
 
     False si le jeton n'existe pas pour ce sub OU s'il est déjà révoqué : une seconde
-    révocation n'écrase pas la trace de la première."""
+    révocation n'écrase pas la trace de la première.
+
+    `parent_id` borne la révocation aux enfants de ce jeton émetteur. Révoquer un
+    émetteur révoque ses enfants encore actifs, dans la même transaction : ils
+    cessaient déjà de fonctionner (`verify_api_token`), la liste le DIT."""
+    enfant = "AND parent_id = %s " if parent_id is not None else ""
+    params = ((revoked_by, reason, sub, token_id, parent_id) if parent_id is not None
+              else (revoked_by, reason, sub, token_id))
     with _connect() as conn:
         cur = conn.execute(
             "UPDATE user_api_tokens SET revoked_at = NOW(), revoked_by = %s, "
             "revoked_reason = %s "
-            "WHERE sub = %s AND id = %s AND revoked_at IS NULL",
-            (revoked_by, reason, sub, token_id),
+            f"WHERE sub = %s AND id = %s AND revoked_at IS NULL {enfant}",
+            params,
         )
-        return cur.rowcount > 0
+        if cur.rowcount == 0:
+            return False
+        conn.execute(
+            "UPDATE user_api_tokens SET revoked_at = NOW(), revoked_by = %s, "
+            "revoked_reason = %s WHERE parent_id = %s AND revoked_at IS NULL",
+            (revoked_by, f"émetteur {token_id} révoqué", token_id),
+        )
+        return True

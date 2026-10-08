@@ -55,7 +55,13 @@ CREATE TABLE IF NOT EXISTS user_api_tokens (
     -- existante : révision Alembic `0033_verrou_org_delegation`, jamais le démarrage.
     job_id BIGINT,
     verrou_org BOOLEAN,
-    verrou_org_id BIGINT
+    verrou_org_id BIGINT,
+    -- Le jeton ÉMETTEUR (portée `issue`) qui a émis celui-ci ; NULL = émis par une
+    -- session humaine. L'enfant ne fonctionne que tant que son parent fonctionne, et
+    -- la révocation du parent le révoque. Pas de FK : une ligne de jeton ne se
+    -- supprime qu'avec son compte, enfants compris. Base existante : révision
+    -- Alembic `0045_jetons_emetteurs`, jamais le démarrage.
+    parent_id BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_user_api_tokens_sub ON user_api_tokens(sub);
 
