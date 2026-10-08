@@ -188,8 +188,6 @@ def _page(data: dict, query: str, google_token: Optional[str], offset: int,
             break
         rows.append(line)
     out: dict = {"columns": columns, "rows": rows, "row_count": len(rows)}
-    if data.get("totalResultsCount") is not None:
-        out["total_rows"] = int(data["totalResultsCount"])
     nxt = offset + len(rows)
     if nxt < len(table):
         out["page_token"] = _encode_cursor(google_token, nxt, query)
@@ -264,7 +262,7 @@ def register(mcp: FastMCP) -> None:
         oto_guide op=read slug="google-ads-gaql".
 
         Returns {columns (the selected fields), rows (lists, in column order),
-        row_count, total_rows, page_token?, hint?} — at most `max_rows` rows per
+        row_count, page_token?, hint?} — at most `max_rows` rows per
         call; more → call again with the SAME query and `page_token`.
 
         Args:

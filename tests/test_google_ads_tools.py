@@ -132,6 +132,9 @@ def test_le_jeton_part_en_entete_sans_developer_token(google):
     assert "login-customer-id" not in req.headers
     assert "ya29" not in str(req.url)
     assert str(req.url) == f"{API}/customers/1234567890/googleAds:search"
+    # Le corps EXACT : v25 refuse tout champ inconnu — `returnTotalResultsCount`
+    # faisait échouer chaque requête en prod (« Invalid JSON payload »).
+    assert google.bodies() == [{"query": Q}]
 
 
 def test_login_customer_id_part_en_entete_normalise(google):
@@ -183,11 +186,11 @@ def test_un_compte_qui_na_pas_autorise_google_ads_est_un_refus_nomme(monkeypatch
 
 def test_les_colonnes_suivent_le_field_mask_et_les_lignes_leur_ordre(google):
     google.replies = [{"results": [{"campaign": {"id": "7", "name": "Marque"}}],
-                       "fieldMask": MASK, "totalResultsCount": "1"}]
+                       "fieldMask": MASK}]
     out = _tool("google_ads_search")(customer_id="1234567890", query=Q)
     assert out["columns"] == ["campaign.id", "campaign.name", "metrics.costMicros"]
     assert out["rows"] == [["7", "Marque", None]]
-    assert out["total_rows"] == 1 and "page_token" not in out
+    assert "total_rows" not in out and "page_token" not in out
 
 
 def test_notre_curseur_tranche_la_page_google_sans_rien_perdre(google):
