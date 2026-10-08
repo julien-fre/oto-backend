@@ -94,22 +94,55 @@ uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 # `_connector_blocked`/seams) + les gardes de capacité par stub ; le chemin SQL est vérifié
 # au déploiement (le job `test` du CI tourne le vrai suite avec toutes les deps).
 
-# ── Suite parallèle en CI (`-n 4`, pytest-xdist) ──────────────────────────────
-# Mesuré le 14/09/2026 sur le job `test` : 668,31 s / 13245 tests, `--durations=25`
-# montre une charge DIFFUSE (le plus lent item à 16,91 s, aucun fichier ni fixture
-# dominant) — pas un point chaud à corriger, un candidat légitime à la parallélisation.
-# Le nombre de workers N'EST PAS deviné : `empreinte-collecte` (ce même workflow) mesure
-# ce que pèse une collecte SUR LA MACHINE qui exécute et dérive un nombre — 4, borné par
-# les cœurs du runner (4 vCPU), la mémoire n'étant pas le facteur limitant. C'est la leçon
-# du 07/09 (quatre workers calibrés sur un poste à 28 cœurs → OOM killer, tronc rouge 6 h)
-# appliquée : ne pas recopier un chiffre d'ailleurs, le lire sur CETTE machine.
+# ── Suite parallèle en CI : des PARTS sur plusieurs runners (#1111) ─────────
+# La suite ne tourne plus sur UN runner (`-n 4`, ~14 min le 08/10) mais répartie en N
+# parts, une par runner : `.github/workflows/suite-tests.yml` (réutilisable, `workflow_call`,
+# entrées `cible` — chemins de tests, vide = suite complète — et `ref`). Appelé au push par
+# deploy-canari.yml (cible = la sélection #1185) et au tag par deploy.yml (cible vide, ref
+# du tag validée par le job `tag`). Jobs :
+#   `plan`      → N et la répartition, depuis les DURÉES mesurées par fichier
+#                 (`scripts/durees_suite.json`, LPT, déterministe ; ~120 s de cas par
+#                 worker, plafond 8 → 7 parts pour la suite complète sur 4 cœurs) ;
+#   `part`      → la matrice : ses fichiers RECALCULÉS DEPUIS LE DISQUE (un fichier absent
+#                 des durées tombe quand même dans une part, à la médiane), sa collecte
+#                 mesurée, son `-n` dérivé, `pytest -n … --dist loadgroup --junitxml` ;
+#   `reference` → la collecte de toujours (`pytest` sans chemin, ou la cible) + `uv lock --check` ;
+#   `verdict`   → l'AGRÉGATEUR : union des collectes des parts = référence, sans doublon,
+#                 sinon ROUGE (un test perdu ne laisse pas la CI verte et aveugle) ; fusionne
+#                 les `junit-shard-<i>` en `junit-suite` (même sur un rouge : le constat
+#                 #1185 de deploy.yml le lit) ; publie `suite-durees` sur une suite complète verte.
+# Côté appelant, `test` n'est plus qu'un job simple (`needs: [suite]`, `if: always()`) qui
+# rougit sauf si la suite a conclu `success` : un job appelé par `uses:` s'affiche
+# « suite / … », or la garde de mise en prod et le script de bascule lisent un job nommé
+# EXACTEMENT `test`. Le script : `scripts/repartir_suite.py` (`plan`, `part`, `reference`,
+# `verifier`, `mesurer`, `fusionner`), bancs `tests/test_repartir_suite_1111.py`.
+#
+# Régénérer les durées (après un run COMPLET et vert — tag, ou push à sélection complète) :
+#   gh run download <run_id> --repo otomata-tech/oto-backend -n suite-durees -D /tmp/durees
+#   cp /tmp/durees/durees_suite.json scripts/durees_suite.json   # puis commit
+# Le résumé du job `verdict` dit de combien les durées ont dérivé du fichier versionné.
+# Le fichier du 08/10 est une AMORCE (mesure locale × 2,65, calée sur un run CI).
+#
+# ⚠️ Artefacts à nom fixe (`suite-part-<i>`, `junit-shard-<i>`, `suite-reference`,
+# `junit-suite`, `suite-durees`) : un MÊME run qui appellerait deux fois `suite-tests.yml`
+# les ferait entrer en collision (`overwrite: true` : le second écraserait le premier, et
+# le verdict jugerait un mélange). Un seul appel par run, ou préfixer les noms par une entrée.
+#
+# Le nombre de workers N'EST PAS deviné, ni recopié : chaque part mesure le pic de SA
+# collecte et lit `MemAvailable` de SA machine, puis applique la règle d'`empreinte-collecte`
+# (marge 20 %, un process pour le contrôleur, borné par les cœurs — 4 sur un runner 4 vCPU,
+# la mémoire n'étant pas le facteur limitant). C'est la leçon du 07/09 (quatre workers
+# calibrés sur un poste à 28 cœurs → OOM killer, tronc rouge 6 h) appliquée : ne pas
+# recopier un chiffre d'ailleurs, le lire sur CETTE machine.
 #
 # **`--dist loadgroup` est obligatoire avec `-n`** (#963) : un module à fixture module-scopée
 # (`pg_module_dsn`, `live`) reste sur UN worker (`tests/_groupes_xdist.py`, marqueur
 # `xdist_group` posé sur ~2 000 tests de ~230 fichiers, le plus gros groupe = 124 tests) ; les
 # autres restent répartis test par test. Avec `load` (le défaut), deux tests d'un module
 # atterrissaient sur deux workers, donc sur DEUX bases jetables : rouge intermittent sur un
-# test sans rapport avec le changement. Un run série n'est pas concerné.
+# test sans rapport avec le changement. Un run série n'est pas concerné. Entre PARTS, l'unité
+# est le fichier (les groupes portent le nom de leur fichier) ; un `xdist_group("…")` écrit à
+# la main réunit ses fichiers dans la même part : un groupe ne se scinde jamais.
 #
 # ⚠️ **`-n 4` nu casse la suite — vérifié, pas supposé.** `pg_box` (fixture `pg_dsn`,
 # session-scopée) passe par `_jeton_de_suite.py`, qui borne à `OTO_TEST_PG_PLACES=2`
@@ -122,13 +155,13 @@ uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 # jetable : 921 s (PLUS LENT que la suite série) et 414 erreurs en cascade (toute
 # collecte de tests à base qui suit, dans le worker bloqué, échoue à la même fixture).
 #
-# Le job CI **relève `OTO_TEST_PG_PLACES=4`** pour l'étape `Tests` seule (`env:` du step,
-# pas une variable globale du workflow). C'est sûr ICI et nulle part ailleurs : un job CI
-# est un conteneur ISOLÉ — mes 4 workers sont les SEULS acteurs sur cette base jetable,
-# il n'y a pas de voisine à protéger. Relever la même valeur sur le poste de dev partagé
-# serait faux : là, la garde protège contre une VRAIE contention inter-sessions que la
-# capacité de la machine ne change pas (cf. `_jeton_de_suite.py`). **Ne jamais relever
-# `OTO_TEST_PG_PLACES` par défaut, seulement dans le `env:` de ce step CI.**
+# Chaque part CI **relève `OTO_TEST_PG_PLACES` au nombre de ses workers** (écrit dans
+# `$GITHUB_ENV` par `repartir_suite.py part`, pour cette part seule). C'est sûr ICI et nulle
+# part ailleurs : un job CI est un conteneur ISOLÉ — ses workers sont les SEULS acteurs sur
+# leurs bases jetables, il n'y a pas de voisine à protéger. Relever la même valeur sur le
+# poste de dev partagé serait faux : là, la garde protège contre une VRAIE contention
+# inter-sessions que la capacité de la machine ne change pas (cf. `_jeton_de_suite.py`).
+# **Ne jamais relever `OTO_TEST_PG_PLACES` par défaut, seulement dans une part CI.**
 
 # ── AVANT DE POUSSER : l'arbre du COMMIT s'importe-t-il ? ────────────────────
 # Une référence poussée SANS SON OBJET (`from . import x` commité, `x.py` jamais
@@ -156,10 +189,11 @@ uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 #                  14/09/2026 : un `$1` absent y défaillait vers la pointe du
 #                  tronc au moment de l'exécution, pas le sha que LE RUN venait de
 #                  tester. Script sans repli depuis, comme oto-backend.sh)
-#   tag  `v*`    → PROD    (« Deploy prod », deploy.yml : suite complète (`test`),
-#                  puis script serveur oto-backend.sh <tag> : git reset --hard
-#                  <tag> → prod. La suite complète ne tourne QU'ICI depuis #1185 ;
-#                  le push ne joue que volets touchés + socle)
+#   tag  `v*`    → PROD    (« Deploy prod », deploy.yml : suite complète en parts
+#                  parallèles (`suite-tests.yml`, agrégée par `test`), puis script
+#                  serveur oto-backend.sh <tag> : git reset --hard <tag> → prod. La
+#                  suite complète ne tourne QU'ICI depuis #1185 ; le push ne joue que
+#                  volets touchés + socle, répartis de la même façon)
 # Le deploy (les deux) = SSH box dédiée via runner self-hosted : reset au ref +
 # **`uv sync --frozen`** (le jeu exact de `uv.lock` ; un ref sans verrou est refusé,
 # docs/verrou-dependances.md) + restart + **smoke HTTP**

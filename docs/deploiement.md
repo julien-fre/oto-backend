@@ -37,12 +37,27 @@ Code (web) ciblaient la branche de prod par défaut et se faisaient refuser par 
   (ruleset GitHub : un tag de release ne se re-pointe pas). Côté backend, le tag est passé
   au script serveur (`oto-backend.sh <tag>` : `git reset --hard <tag>`). Côté dashboard :
   artefact seul, build au tag.
-- **La suite complète tourne au tag, une seule fois** (#1185, 08/10/2026) : le job `test` de
-  « Deploy prod » la joue sur l'arbre du tag et `deploy` l'attend. La prod est donc servie
-  après la durée de la suite (~9-13 min), plus ~1 min 30 après le tag. Une relance « Re-run
-  failed jobs » ne rejoue pas un `test` déjà vert. Sur un rouge, le résumé du run dit si
-  chaque fichier rouge aurait été joué au push (constat demandé par #1185 ; sélection
-  recalculée parent → sha, donc approchée).
+- **La suite complète tourne au tag, une seule fois** (#1185, 08/10/2026), **répartie en
+  parts parallèles** (#1111) : « Deploy prod » valide le tag (job `tag`), appelle
+  `.github/workflows/suite-tests.yml` sur l'arbre du tag (job `suite`, cible vide), puis le
+  job simple `test` — l'agrégateur, qui rougit sauf si la suite a conclu `success` — et
+  `deploy` attend `test`. La prod est donc servie après ~3 min 30 à 4 min de suite (7 parts,
+  contre ~9-14 min sur un seul runner), plus ~1 min 30 de déploiement. Une relance « Re-run
+  failed jobs » ne rejoue pas une part déjà verte. Sur un rouge, le résumé du run dit si
+  chaque fichier rouge aurait été joué au push (constat demandé par #1185, lu dans
+  l'artefact `junit-suite` ; sélection recalculée parent → sha, donc approchée).
+- **Comment la suite se répartit** (`suite-tests.yml`, la même au push et au tag) : `plan`
+  calcule N parts depuis les durées mesurées par fichier (`scripts/durees_suite.json`) ;
+  chaque `part` recalcule ses fichiers depuis le disque (un fichier neuf, absent des durées,
+  tombe quand même dans une part), dérive son `-n` de la mémoire de SA machine et joue
+  `--dist loadgroup` ; `reference` collecte ce que jouait l'ancien job ; le **verdict**
+  rougit si l'union des collectes des parts n'est pas exactement la référence (trou ou
+  doublon). Au push, `test` de « Deploy preprod » est le même agrégateur, sur la sélection.
+  Régénérer les durées après un run complet et vert :
+  `gh run download <run_id> -n suite-durees` puis copier `durees_suite.json` dans
+  `scripts/` et commiter. ⚠️ Les artefacts ont des noms fixes (`junit-suite`, `suite-durees`,
+  `suite-part-<i>`…) : un même run ne doit appeler `suite-tests.yml` qu'une fois, sinon ils
+  entrent en collision. Détail : `docs/commands.md` §Suite parallèle en CI.
 - **La prod exige aussi une préprod verte** : un run de préprod vert sur le sha exact du tag
   (`scripts/garde_preprod_verte.py`), refusé sinon, en nommant le run lu et sa conclusion.
   Ce vert dit « déployé en préprod, sélection et socle verts », **pas** « suite complète ». Donc : taguer un commit **déjà poussé sur

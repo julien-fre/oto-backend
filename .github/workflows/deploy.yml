@@ -15,9 +15,14 @@ name: Deploy prod
 # socle de gardes (`scripts/selection_tests.py`, `tests/volets.toml`) ; la passe COMPLÈTE
 # est celle-ci, au tag, et `deploy` l'attend. Le vert de préproduction reste exigé par la
 # garde (déployée, sélection et socle verts), mais il ne vaut plus « suite complète ».
-# Conséquence : la prod est servie après la durée de la suite (~9-13 min), non plus ~1 min 30
-# après le tag. « Une seule fois » : une relance « Re-run failed jobs » ne rejoue pas un
-# `test` déjà vert, et `sans_garde_preprod` ne contourne QUE la garde, jamais cette suite.
+# Conséquence : la prod est servie après la durée de la suite, non plus ~1 min 30 après le
+# tag. Cette suite est RÉPARTIE en parts parallèles (#1111, `suite-tests.yml` : plan par
+# durées mesurées, parts à `-n` dérivé de leur machine, verdict qui rougit sur un test
+# perdu) : ~3 min 30 à 4 min au lieu de ~9-14 min sur un seul runner. `test` n'est plus que
+# l'agrégateur (le nom que `deploy` attend). « Une seule fois » : une relance « Re-run
+# failed jobs » ne rejoue pas une part déjà verte, et `sans_garde_preprod` ne contourne QUE
+# la garde, jamais cette suite. Les durées se régénèrent depuis l'artefact `suite-durees`
+# d'un run complet vert (docs/commands.md §Suite parallèle en CI).
 on:
   push:
     tags: ["v*"]
