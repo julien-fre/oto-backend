@@ -1,9 +1,9 @@
 """Tools `sharepoint_*` du connecteur.
 
 Ce que ce fichier verrouille :
-- la SURFACE (2 tools) et le routage vers la bonne méthode de `GraphClient` ;
-- le jeton : celui de la personne appelante (`auth/microsoft.access_token_for`),
-  seul passé au client ; pas de compte connecté → refus qui dit le geste, avant de
+- la SURFACE (2 tools) et le routage vers la bonne méthode de `FilesClient` ;
+- le jeton : celui de la personne appelante pour le service `sharepoint`
+  (`auth/microsoft.access_token_for`), seul passé au client ; pas de compte connecté → refus qui dit le geste, avant de
   construire le client ;
 - le drive : le OneDrive de la personne par défaut, une bibliothèque par
   `drive_id`, le OneDrive d'un collaborateur par `user`, jamais les deux ;
@@ -15,6 +15,8 @@ Ce que ce fichier verrouille :
 """
 import asyncio
 import base64
+import sys
+import types
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,8 +25,11 @@ from oto_mcp.mcp_errors import McpError
 
 @pytest.fixture
 def construits(monkeypatch):
-    """Les arguments de chaque construction de `GraphClient`, et le faux client.
-    La personne appelante a un compte connecté (jeton « AT-sub-1 »)."""
+    """Les arguments de chaque construction de `FilesClient`, et le faux client.
+    La personne appelante a un compte qui a autorisé SharePoint (jeton « AT-sub-1 »).
+
+    Le cœur est MOQUÉ à sa frontière (`oto.tools.microsoft` posé dans `sys.modules`) :
+    ce banc vérifie l'adaptateur, pas la lib."""
     inst, calls = MagicMock(), []
 
     def fabrique(*args, **kw):
@@ -32,10 +37,21 @@ def construits(monkeypatch):
         calls.append(args)
         return inst
 
-    monkeypatch.setattr("oto.tools.microsoft.GraphClient", fabrique)
+    coeur = types.ModuleType("oto.tools.microsoft")
+    coeur.FilesClient = fabrique
+
+    class MicrosoftAuthError(ValueError):
+        status_code = 401
+
+    coeur.MicrosoftAuthError = MicrosoftAuthError
+    monkeypatch.setitem(sys.modules, "oto.tools.microsoft", coeur)
     monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
-    monkeypatch.setattr("oto_mcp.auth.microsoft.access_token_for",
-                        lambda sub: f"AT-{sub}")
+
+    def jeton(sub, service):
+        assert service == "sharepoint", "le jeton se demande pour CE service"
+        return f"AT-{sub}"
+
+    monkeypatch.setattr("oto_mcp.auth.microsoft.access_token_for", jeton)
     return inst, calls
 
 
@@ -85,7 +101,7 @@ def test_le_client_porte_le_jeton_de_l_appelant(construits):
 
 
 def test_pas_de_compte_connecte_refus_qui_dit_le_geste(construits, monkeypatch):
-    def refus(sub):
+    def refus(sub, service):
         raise RuntimeError("No Microsoft account connected. Sign in from your "
                            "connectors page")
 
@@ -98,7 +114,7 @@ def test_pas_de_compte_connecte_refus_qui_dit_le_geste(construits, monkeypatch):
 def test_autorisation_morte_refus_qui_dit_le_geste(construits, monkeypatch):
     from oto_mcp.auth.microsoft import MicrosoftReauthRequired
 
-    def morte(sub):
+    def morte(sub, service):
         raise MicrosoftReauthRequired("Microsoft no longer accepts this sign-in. "
                                       "Reconnect")
 

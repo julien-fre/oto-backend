@@ -66,6 +66,26 @@ def set_connector_setting(scope_type: str, scope_id: str, connector: str, key: s
             (scope_type, str(scope_id), connector, key, value, set_by))
 
 
+def copy_platform_settings(old: str, new: str, keys: tuple[str, ...]) -> int:
+    """Copies the PLATFORM settings `keys` of connector `old` to connector `new` — when a
+    card hands its application's coordinates over to a carrier (`sharepoint` →
+    `microsoft`). Additive: `old`'s stay for the code still served on the shared base.
+
+    Only to a `new` that has NONE of these keys: once the operator manages them under
+    `new` (sets, changes, clears one), a boot never rewrites them from `old`. Returns
+    the number of rows copied."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO connector_settings (scope_type, scope_id, connector, key, value, set_by) "
+            "SELECT scope_type, scope_id, %s, key, value, set_by FROM connector_settings "
+            "WHERE scope_type = 'platform' AND connector = %s AND key = ANY(%s) "
+            "AND NOT EXISTS (SELECT 1 FROM connector_settings t WHERE t.scope_type = 'platform' "
+            "                AND t.connector = %s AND t.key = ANY(%s)) "
+            "ON CONFLICT (scope_type, scope_id, connector, key) DO NOTHING",
+            (new, old, list(keys), new, list(keys)))
+        return cur.rowcount or 0
+
+
 def clear_connector_setting(scope_type: str, scope_id: str, connector: str,
                             key: str) -> bool:
     """Retire une surcharge — la propriété retombe sur le défaut du registre.

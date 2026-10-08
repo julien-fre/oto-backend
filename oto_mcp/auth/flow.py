@@ -223,6 +223,11 @@ def return_url(app: Optional[str], suffix: str, *, org: Optional[int] = None) ->
 # lieu d'une URL). La forme salesforce — `?connector=<nom>&connect=<etat>`,
 # `etat ∈ {connected, error, forbidden}` — devient LA convention, fabriquée ici
 # une fois plutôt que recopiée cinq fois.
+#
+# Le vocabulaire s'étend pour Microsoft (2026-10-08), lu par le dashboard sur la carte :
+# `admin_required` (l'organisation de la personne exige l'approbation d'un
+# administrateur), `admin_approved` / `admin_refused` (réponse d'un administrateur au
+# lien d'approbation, `auth/microsoft.admin_consent_url`).
 
 def connector_return_suffix(connector: str, etat: str) -> str:
     """`?connector=<connector>&connect=<etat>`.

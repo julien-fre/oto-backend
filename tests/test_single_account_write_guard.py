@@ -172,10 +172,12 @@ def test_seuls_deux_connecteurs_se_declarent_MULTI_et_on_sait_pourquoi():
     # bigquery (2026-10-02) : septième service, même forme.
     # sharepoint (2026-10-05, oto-backend#23) : OAuth comme google, une ligne par
     # compte Microsoft lié — même raison de fournisseur.
+    # microsoft (2026-10-08) : le porteur du compte Microsoft 365 reprend la raison ;
+    # sharepoint la garde, en service qui l'emprunte (comme les services Google).
     assert sorted(c.name for c in providers._REGISTRY_LIST
                   if c.cardinality == "multi") == [
-        "bigquery", "browser", "calendar", "chat", "drive", "gmail", "google", "sharepoint",
-        "sheets", "tasks"]
+        "bigquery", "browser", "calendar", "chat", "drive", "gmail", "google", "microsoft",
+        "sharepoint", "sheets", "tasks"]
     for nom in ("zoho", "folk"):
         con = providers.REGISTRY[nom]
         assert con.cardinality == "" and con.auth_multi_account is True, nom

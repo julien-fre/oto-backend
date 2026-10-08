@@ -1,20 +1,23 @@
-"""La connexion Microsoft du connecteur `sharepoint` — OAuth délégué, par personne,
-plusieurs comptes par personne (oto-backend#23).
+"""Le porteur Microsoft 365 (`microsoft`) et ses services — OAuth délégué, par
+personne, plusieurs comptes par personne (oto-backend#23), un consentement par carte.
 
 ⚠️ Le cœur est MOQUÉ à sa frontière (`oto.tools.microsoft` posé dans
-`sys.modules`) et le coffre est un faux en mémoire : aucun appel réel à Microsoft
-ni à la base n'est joué ici. La RÉSOLUTION du compte, elle, est la vraie
-(`access.resolve_credential`, celle de tout connecteur multi-compte). Vérifié : le
-registre, le flux hébergé (state, URL de retour, coordonnées de l'instance), le
-retour de connexion (un second compte s'AJOUTE, le même se remplace), le choix du
-compte à l'appel (`_account=`, défaut, ambiguïté), le renouvellement (cache,
-rotation du refresh token sur la ligne de CE compte) et l'autorisation morte,
-isolée à son compte.
+`sys.modules`, avec un faux `scopes` qui suit le contrat de la lib) et le coffre est un
+faux en mémoire : aucun appel réel à Microsoft ni à la base n'est joué ici. La
+RÉSOLUTION du compte, elle, est la vraie (`access.resolve_credential`, celle de tout
+connecteur multi-compte, sous le service appelé). Vérifié : le registre (porteur +
+service), les scopes par carte, le flux hébergé (state, carte de retour, annuaire du
+client), le retour de connexion (un second compte s'AJOUTE, le même se remplace, les
+scopes s'unissent), le refus d'un service non autorisé, le choix du compte à l'appel,
+le renouvellement (`.default` sur l'annuaire du compte, scopes relus, cache, rotation)
+et l'autorisation morte isolée à son compte, le lien d'approbation d'administrateur et
+son retour (aucune écriture).
 """
 from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import types
 from unittest.mock import MagicMock
 
@@ -23,7 +26,8 @@ import pytest
 from oto_mcp import providers
 from oto_mcp.mcp_errors import McpError
 
-CONNECTEUR = "sharepoint"
+PORTEUR = "microsoft"
+SERVICE = "sharepoint"
 ORG = 42
 SUB = "user-de-test"
 MEMBRE = f"{ORG}:{SUB}"
@@ -33,11 +37,41 @@ JANE = {"id": "id-jane", "displayName": "Jane Doe", "mail": "Jane@Contoso.exampl
         "userPrincipalName": "jane@contoso.example"}
 JOHN = {"id": "id-john", "displayName": "John Roe", "mail": None,
         "userPrincipalName": "john@fabrikam.example"}
+G = "https://graph.microsoft.com/"
+# Ce qu'Entra rendait aux connexions SharePoint d'avant le porteur (`meta.scopes` en prod).
+SCOPE_FICHIERS = ("Files.ReadWrite.All Sites.ReadWrite.All User.Read profile openid "
+                  "email offline_access")
+SCOPE_COURRIER = f"{G}Mail.ReadWrite {G}Mail.Send User.Read offline_access"
 
 
-def _grant(access="AT1", refresh="RT1", expires_in=3600):
+def _grant(access="AT1", refresh="RT1", expires_in=3600, scope=SCOPE_FICHIERS):
     return types.SimpleNamespace(access_token=access, refresh_token=refresh,
-                                 expires_in=expires_in, scope="Files.ReadWrite.All")
+                                 expires_in=expires_in, scope=scope)
+
+
+def _faux_scopes():
+    """Le module `scopes` de la lib, au contrat : tuples d'URI complètes, `normalize`
+    et `short` en noms COURTS (préfixe Graph retiré, casse canonique)."""
+    s = types.ModuleType("oto.tools.microsoft.scopes")
+    s.GRAPH = G
+    s.IDENTITY = ("offline_access", "User.Read")
+    s.FILES = (G + "Files.ReadWrite.All", G + "Sites.ReadWrite.All")
+    s.MAIL = (G + "Mail.ReadWrite", G + "Mail.Send")
+    s.CALENDAR = (G + "Calendars.ReadWrite",)
+    s.TEAMS = (G + "Team.ReadBasic.All", G + "Chat.ReadWrite")
+    s.TEAMS_ADMIN = (G + "ChannelMessage.Read.All",)
+    s.REFRESH = (G + ".default", "offline_access")
+    canon = {n.removeprefix(G).lower(): n.removeprefix(G)
+             for t in (s.IDENTITY, s.FILES, s.MAIL, s.CALENDAR, s.TEAMS, s.TEAMS_ADMIN)
+             for n in t}
+
+    def _court(n):
+        n = n[len(G):] if n.lower().startswith(G) else n
+        return canon.get(n.lower(), n)
+
+    s.short = lambda t: frozenset(_court(n) for n in t)
+    s.normalize = lambda chaine: frozenset(_court(n) for n in (chaine or "").split())
+    return s
 
 
 def _faux_coeur():
@@ -46,42 +80,46 @@ def _faux_coeur():
 
     class MicrosoftAuthError(ValueError):
         status_code = 401
-        code = None
+
+        def __init__(self, message="", code=None):
+            super().__init__(message)
+            self.code = code
 
     class MicrosoftGrantExpired(MicrosoftAuthError):
         pass
 
     auth.authorize_url = MagicMock(return_value="https://login.example/authorize?x=1")
+    auth.admin_consent_url = MagicMock(return_value="https://login.example/adminconsent?x=1")
     auth.exchange_code = MagicMock(return_value=_grant())
     auth.refresh = MagicMock(return_value=_grant("AT2", "RT2"))
-    auth.MicrosoftAuthError = MicrosoftAuthError
-    auth.MicrosoftGrantExpired = MicrosoftGrantExpired
     mod.auth = auth
+    mod.scopes = _faux_scopes()
     mod.MicrosoftAuthError = MicrosoftAuthError
     mod.MicrosoftGrantExpired = MicrosoftGrantExpired
-    client = MagicMock(name="GraphClient")
+    client = MagicMock(name="FilesClient")
     client.return_value.get_me.return_value = dict(JANE)
-    mod.GraphClient = client
+    mod.FilesClient = client
     return mod
 
 
 class _Coffre:
     """Le coffre, en mémoire : une ligne par (entité, compte), le secret à part du
-    meta — mêmes signatures que `credentials_store` pour ce que le connecteur lit."""
+    meta — mêmes signatures que `credentials_store` pour ce que le connecteur lit.
+    Tout passe sous le PORTEUR : une écriture sous le nom d'un service est un défaut."""
 
     def __init__(self):
         self.lignes: dict[tuple, dict] = {}
 
     def poser(self, account, secret, meta=None):
         self.lignes[("member", MEMBRE, account)] = {
-            "secret": secret, "meta": dict(meta or {}), "set_by": SUB,
-            "set_at": "2026-10-05T00:00:00Z"}
+            "secret": secret, "meta": {"scopes": SCOPE_FICHIERS, **(meta or {})},
+            "set_by": SUB, "set_at": "2026-10-05T00:00:00Z"}
 
     def meta(self, account):
         return self.lignes[("member", MEMBRE, account)]["meta"]
 
     def get_with_meta(self, entity_type, entity_id, connector, account=""):
-        assert connector == CONNECTEUR
+        assert connector == PORTEUR
         ligne = self.lignes.get((entity_type, entity_id, account))
         return {**ligne, "meta": dict(ligne["meta"])} if ligne else None
 
@@ -91,18 +129,19 @@ class _Coffre:
 
     def set(self, entity_type, entity_id, connector, secret, set_by=None,
             meta=None, conn=None, account="", expected_version=None):
-        assert connector == CONNECTEUR
+        assert connector == PORTEUR
         self.lignes[(entity_type, entity_id, account)] = {
             "secret": secret, "meta": dict(meta or {}), "set_by": set_by,
             "set_at": "2026-10-05T01:00:00Z"}
 
     def list_accounts(self, entity_type, entity_id, connector):
-        assert connector == CONNECTEUR
+        assert connector == PORTEUR
         return [{"account": a, "meta": dict(l["meta"]), "set_at": l["set_at"]}
                 for (et, eid, a), l in sorted(self.lignes.items())
                 if (et, eid) == (entity_type, entity_id)]
 
     def update_meta(self, entity_type, entity_id, connector, account, patch, conn=None):
+        assert connector == PORTEUR
         ligne = self.lignes.get((entity_type, entity_id, account))
         if ligne is None:
             return False
@@ -120,10 +159,11 @@ def env(monkeypatch):
     mod = _faux_coeur()
     monkeypatch.setitem(sys.modules, "oto.tools.microsoft", mod)
     monkeypatch.setitem(sys.modules, "oto.tools.microsoft.auth", mod.auth)
+    monkeypatch.setitem(sys.modules, "oto.tools.microsoft.scopes", mod.scopes)
     monkeypatch.setattr(store, "list_connector_settings",
                         lambda key=None, conn=None: [
                             {"scope_type": "platform", "scope_id": "platform",
-                             "connector": CONNECTEUR, "key": k, "value": v}
+                             "connector": PORTEUR, "key": k, "value": v}
                             for k, v in _COORDONNEES.items()])
     coffre = _Coffre()
     monkeypatch.setattr(credentials_store, "get_credential_with_meta", coffre.get_with_meta)
@@ -161,15 +201,46 @@ def env(monkeypatch):
 
 # ── Registre ────────────────────────────────────────────────────────────────
 
-def test_registre():
-    c = providers.REGISTRY[CONNECTEUR]
-    assert c.secret_kind == "oauth" and c.auth_modes == frozenset({"byo_user"})
-    # Multi-compte DÉCLARÉ (OAuth ⟹ la dérivation dirait mono) : c'est ce qui branche
-    # la mécanique commune — axe `_account=`, `oto_identity`, refus d'ambiguïté.
-    assert c.cardinality == "multi" and c.auth_multi_account
-    assert c.publisher_name == "Microsoft"
-    assert not c.credential_fields
-    assert c.doc_sections, "la fiche doit être servie depuis son markdown"
+def test_registre_porteur_et_service():
+    porteur, service = providers.REGISTRY[PORTEUR], providers.REGISTRY[SERVICE]
+    for c in (porteur, service):
+        assert c.secret_kind == "oauth" and c.auth_modes == frozenset({"byo_user"})
+        # Multi-compte DÉCLARÉ (OAuth ⟹ la dérivation dirait mono) : c'est ce qui branche
+        # la mécanique commune — axe `_account=`, `oto_identity`, refus d'ambiguïté.
+        assert c.cardinality == "multi" and c.auth_multi_account
+        assert c.publisher_name == "Microsoft"
+        assert not c.credential_fields
+        assert c.doc_sections, "la fiche doit être servie depuis son markdown"
+    assert porteur.credential_of is None and porteur.label == "Microsoft 365 account"
+    # Le service n'a AUCUN credential à lui : coffre et comptes sont ceux du porteur.
+    assert service.credential_of == PORTEUR
+    assert providers.credential_provider(SERVICE) == PORTEUR
+
+
+# ── Scopes par carte ────────────────────────────────────────────────────────
+
+def test_scopes_par_carte(env):
+    s = env.coeur.scopes
+    assert env.auth.scopes_for(PORTEUR) == s.IDENTITY, "le compte : l'identité seule"
+    assert env.auth.scopes_for("sharepoint") == s.IDENTITY + s.FILES
+    assert env.auth.scopes_for("outlook") == s.IDENTITY + s.MAIL
+    assert env.auth.scopes_for("outlook_calendar") == s.IDENTITY + s.CALENDAR
+    assert env.auth.scopes_for("teams") == s.IDENTITY + s.TEAMS
+    with pytest.raises(RuntimeError, match="not a known Microsoft service"):
+        env.auth.scopes_for("onenote")
+
+
+def test_les_scopes_d_avant_le_porteur_donnent_sharepoint_sans_reconnexion(env):
+    assert env.auth.services_granted(SCOPE_FICHIERS) == ["sharepoint"]
+    assert env.auth.services_granted("") == []
+    assert env.auth.services_granted(SCOPE_COURRIER) == ["outlook"]
+
+
+def test_teams_admin_se_lit_a_l_usage(env):
+    s = env.coeur.scopes
+    assert not env.auth.has_scopes({"scopes": "Team.ReadBasic.All"}, s.TEAMS_ADMIN)
+    assert env.auth.has_scopes({"scopes": "ChannelMessage.Read.All User.Read"},
+                               s.TEAMS_ADMIN)
 
 
 # ── Flux hébergé ────────────────────────────────────────────────────────────
@@ -177,17 +248,25 @@ def test_registre():
 def test_url_de_retour_derivee_de_l_environnement(env):
     from oto_mcp.connectors import flow as connector_flow
 
-    assert connector_flow.supports(CONNECTEUR)
-    assert connector_flow.callback_url(CONNECTEUR) == _RETOUR
+    for carte in (PORTEUR, SERVICE):
+        assert connector_flow.supports(carte)
+        assert connector_flow.callback_url(carte) == _RETOUR
+    # Une carte de service PAS ENCORE déclarée au registre n'a pas de flux.
+    assert not connector_flow.supports("outlook")
 
 
 def test_state_ne_vaut_que_pour_ce_flux(env):
     from oto_mcp.auth import flow as oauth_flow
 
-    etat = env.auth.make_state(SUB, ORG, "")
-    assert env.auth.verify_state(etat) == (SUB, ORG, "")
+    etat = env.auth.make_state(SUB, ORG, "", SERVICE, "contoso.onmicrosoft.com")
+    assert env.auth.verify_state(etat) == (SUB, ORG, "", SERVICE, "contoso.onmicrosoft.com")
     assert env.auth.verify_state(oauth_flow.sign_state(
-        "meta_ads", {"sub": SUB, "org": ORG})) is None
+        "meta_ads", {"sub": SUB, "org": ORG, "c": SERVICE})) is None
+    # Une carte inconnue n'est pas une carte de retour.
+    assert env.auth.verify_state(oauth_flow.sign_state(
+        "microsoft", {"sub": SUB, "org": ORG, "c": "gmail"})) is None
+    # Un state de personne ne vaut pas approbation, ni l'inverse.
+    assert env.auth.verify_admin_state(etat) is None
 
 
 def test_sans_reglages_le_refus_nomme_la_cle(env, monkeypatch):
@@ -199,14 +278,66 @@ def test_sans_reglages_le_refus_nomme_la_cle(env, monkeypatch):
     assert env.auth.app_disponible(SUB) is False
     with pytest.raises(RuntimeError) as e:
         env.auth.app()
-    assert "client_secret" in str(e.value) and "oto_admin_connector_setting" in str(e.value)
+    assert "client_secret" in str(e.value) and 'connector="microsoft"' in str(e.value)
 
 
-def test_le_dialogue_part_avec_l_application_de_l_instance(env):
-    env.auth.build_auth_url(SUB, "")
-    client_id, retour, etat = env.coeur.auth.authorize_url.call_args.args
+def test_le_dialogue_d_un_service_demande_ses_scopes(env):
+    env.auth.build_auth_url(SUB, "", SERVICE)
+    appel = env.coeur.auth.authorize_url.call_args
+    client_id, retour, etat = appel.args
     assert client_id == "app-id-fictif" and retour == _RETOUR
-    assert env.auth.verify_state(etat) == (SUB, ORG, "")
+    assert appel.kwargs == {"scopes": env.coeur.scopes.IDENTITY + env.coeur.scopes.FILES,
+                            "tenant": "organizations"}
+    assert env.auth.verify_state(etat) == (SUB, ORG, "", SERVICE, None)
+
+
+def test_le_flux_porte_l_annuaire_du_client(env):
+    from oto_mcp.connectors import flow as connector_flow
+
+    ctx = types.SimpleNamespace(sub=SUB)
+    start = connector_flow.entries()[SERVICE].start
+    start(ctx, {"tenant": "https://Contoso.sharepoint.com/sites/Ventes/Documents"})
+    appel = env.coeur.auth.authorize_url.call_args
+    assert appel.kwargs["tenant"] == "contoso.onmicrosoft.com"
+    assert env.auth.verify_state(appel.args[2]).tenant == "contoso.onmicrosoft.com"
+    # Le champ est déclaré sur la fiche, facultatif.
+    assert [p.name for p in connector_flow.entries()[SERVICE].params] == ["tenant"]
+    assert connector_flow.entries()[SERVICE].params[0].required is False
+
+
+def test_un_annuaire_illisible_est_refuse_avant_le_dialogue(env):
+    from oto_mcp.capabilities._types import AuthzDenied
+    from oto_mcp.connectors import flow as connector_flow
+
+    start = connector_flow.entries()[SERVICE].start
+    with pytest.raises(AuthzDenied) as e:
+        start(types.SimpleNamespace(sub=SUB), {"tenant": "consumers"})
+    assert e.value.status == 400 and e.value.code == "invalid_tenant"
+    env.coeur.auth.authorize_url.assert_not_called()
+
+
+@pytest.mark.parametrize("saisi,annuaire", [
+    ("", None), (None, None), ("organizations", None),
+    ("Contoso.onmicrosoft.com", "contoso.onmicrosoft.com"),
+    ("contoso.com", "contoso.com"),
+    ("72F988BF-86F1-41AF-91AB-2D7CD011DB47", "72f988bf-86f1-41af-91ab-2d7cd011db47"),
+    ("https://contoso.sharepoint.com/sites/Marketing", "contoso.onmicrosoft.com"),
+    ("https://contoso-my.sharepoint.com/personal/jane", "contoso.onmicrosoft.com"),
+    ("my-company.sharepoint.com", "my-company.onmicrosoft.com"),
+])
+def test_annuaire_saisi(saisi, annuaire):
+    from oto_mcp.auth import microsoft as ms_auth
+
+    assert ms_auth.normalize_tenant(saisi) == annuaire
+
+
+@pytest.mark.parametrize("saisi", ["common", "consumers", "https://exemple.test/x",
+                                   "pas un domaine", "contoso"])
+def test_annuaire_refuse(saisi):
+    from oto_mcp.auth import microsoft as ms_auth
+
+    with pytest.raises(ValueError, match="Client directory"):
+        ms_auth.normalize_tenant(saisi)
 
 
 def test_seul_client_secret_est_secret_et_suit_la_convention():
@@ -215,52 +346,97 @@ def test_seul_client_secret_est_secret_et_suit_la_convention():
 
     assert [k for k in ms_auth._REGLAGES if "secret" in k] == ["client_secret"]
     lignes = pc._sans_les_secrets([
-        {"connector": CONNECTEUR, "key": k, "value": v} for k, v in _COORDONNEES.items()])
+        {"connector": PORTEUR, "key": k, "value": v} for k, v in _COORDONNEES.items()])
     assert "secret-fictif" not in str(lignes)
 
 
 # ── Retour de connexion ─────────────────────────────────────────────────────
 
 def _callback(query: dict):
+    from urllib.parse import urlencode
+
     from starlette.requests import Request
 
     from oto_mcp.api import microsoft as api_ms
 
     route = api_ms.make_routes(None, None, None, None, None)[0]
-    qs = "&".join(f"{k}={v}" for k, v in query.items()).encode()
     req = Request({"type": "http", "method": "GET", "path": route.path,
-                   "query_string": qs, "headers": []})
+                   "query_string": urlencode(query).encode(), "headers": []})
     return asyncio.run(route.endpoint(req))
 
 
 def test_retour_echange_le_code_et_range_le_refresh_token(env):
-    etat = env.auth.make_state(SUB, ORG, "")
+    etat = env.auth.make_state(SUB, ORG, "", SERVICE)
     resp = _callback({"code": "le-code", "state": etat})
-    assert resp.status_code == 302 and "connected" in resp.headers["location"]
-    args = env.coeur.auth.exchange_code.call_args.args
-    assert args == ("app-id-fictif", "secret-fictif", "le-code", _RETOUR)
+    lieu = resp.headers["location"]
+    assert resp.status_code == 302 and "connect=connected" in lieu
+    assert "connector=sharepoint" in lieu, "le retour revient sur la carte qui a demandé"
+    appel = env.coeur.auth.exchange_code.call_args
+    assert appel.args == ("app-id-fictif", "secret-fictif", "le-code", _RETOUR)
+    assert appel.kwargs == {"scopes": env.coeur.scopes.IDENTITY + env.coeur.scopes.FILES,
+                            "tenant": "organizations"}
     ligne = env.coffre.lignes[("member", MEMBRE, "jane@contoso.example")]
     assert ligne["secret"] == "RT1"
     assert ligne["meta"]["email"] == "Jane@Contoso.example"
     assert ligne["meta"]["microsoft_id"] == "id-jane"
     assert ligne["meta"]["is_default"] is True, "le premier compte lié est le défaut"
+    assert "tenant" not in ligne["meta"]
+    assert env.auth.services_granted(ligne["meta"]["scopes"]) == ["sharepoint"]
     assert "AT1" not in str(ligne), "le jeton d'accès ne va jamais en base"
 
 
+def test_retour_sur_l_annuaire_d_un_client(env):
+    etat = env.auth.make_state(SUB, ORG, "", SERVICE, "contoso.onmicrosoft.com")
+    _callback({"code": "le-code", "state": etat})
+    assert env.coeur.auth.exchange_code.call_args.kwargs["tenant"] == "contoso.onmicrosoft.com"
+    compte = "jane@contoso.example (contoso.onmicrosoft.com)"
+    assert env.coffre.meta(compte)["tenant"] == "contoso.onmicrosoft.com"
+
+
 def test_retour_refuse_sans_state_ou_sur_refus(env):
-    assert "error" in _callback({"code": "c", "state": "faux"}).headers["location"]
-    etat = env.auth.make_state(SUB, ORG, "")
+    assert "connect=error" in _callback({"code": "c", "state": "faux"}).headers["location"]
+    etat = env.auth.make_state(SUB, ORG, "", SERVICE)
     resp = _callback({"error": "access_denied", "state": etat})
-    assert "forbidden" in resp.headers["location"]
+    assert "connect=forbidden" in resp.headers["location"]
     env.coeur.auth.exchange_code.assert_not_called()
     assert not env.coffre.lignes
 
 
-# ── Plusieurs comptes : se connecter AJOUTE ─────────────────────────────────
+def test_retour_quand_l_organisation_exige_un_administrateur(env):
+    etat = env.auth.make_state(SUB, ORG, "", SERVICE)
+    resp = _callback({"error": "access_denied", "state": etat,
+                      "error_description": "AADSTS90094: The grant requires admin "
+                                           "permission. Trace ID: x"})
+    assert resp.headers["location"].endswith("?connector=sharepoint&connect=admin_required")
+    assert not env.coffre.lignes
+    resp = _callback({"error": "access_denied", "state": etat,
+                      "error_description": "AADSTS65001: The user or administrator has "
+                                           "not consented to use the application."})
+    assert resp.headers["location"].endswith("connect=admin_required")
 
-def _connecter(env, me, refresh):
-    env.coeur.GraphClient.return_value.get_me.return_value = dict(me)
-    return env.auth.persist_grant(SUB, ORG, _grant("AT-" + refresh, refresh))
+
+def test_un_refus_d_entra_a_l_echange_qui_exige_un_admin(env):
+    env.coeur.auth.exchange_code.side_effect = env.coeur.MicrosoftAuthError(
+        "consent", code="AADSTS65001")
+    etat = env.auth.make_state(SUB, ORG, "", SERVICE)
+    resp = _callback({"code": "le-code", "state": etat})
+    assert resp.headers["location"].endswith("connect=admin_required")
+    assert not env.coffre.lignes
+
+
+def test_retour_quand_entra_refuse_l_annuaire(env):
+    etat = env.auth.make_state(SUB, ORG, "", SERVICE, "contoso.onmicrosoft.com")
+    resp = _callback({"error": "invalid_request", "state": etat,
+                      "error_description": "AADSTS90002: Tenant not found."})
+    assert resp.headers["location"].endswith("?connector=sharepoint&connect=error")
+
+
+# ── Plusieurs comptes, plusieurs services : se connecter AJOUTE ─────────────
+
+def _connecter(env, me, refresh, scope=SCOPE_FICHIERS, tenant=None):
+    env.coeur.FilesClient.return_value.get_me.return_value = dict(me)
+    return env.auth.persist_grant(SUB, ORG, _grant("AT-" + refresh, refresh, scope=scope),
+                                  tenant=tenant)
 
 
 def test_un_second_compte_s_ajoute_sans_toucher_au_premier(env):
@@ -272,6 +448,15 @@ def test_un_second_compte_s_ajoute_sans_toucher_au_premier(env):
     assert env.coffre.lignes[("member", MEMBRE, "jane@contoso.example")]["secret"] == "RT-JANE"
     assert env.coffre.meta("jane@contoso.example")["is_default"] is True
     assert env.coffre.meta("john@fabrikam.example")["is_default"] is False
+
+
+def test_un_second_service_s_unit_au_premier_sur_le_meme_compte(env):
+    _connecter(env, JANE, "RT-1")
+    _connecter(env, JANE, "RT-2", scope=SCOPE_COURRIER)
+    assert len(env.coffre.lignes) == 1, "un compte, une ligne"
+    meta = env.coffre.meta("jane@contoso.example")
+    assert env.auth.services_granted(meta["scopes"]) == ["sharepoint", "outlook"]
+    assert env.coffre.lignes[("member", MEMBRE, "jane@contoso.example")]["secret"] == "RT-2"
 
 
 def test_reconnecter_le_meme_compte_remplace_sa_ligne_meme_renommee(env):
@@ -303,34 +488,38 @@ def test_me_sans_identite_rien_n_est_range(env):
 
 # ── Choix du compte à l'appel ───────────────────────────────────────────────
 
+def _rafraichir(cid, cs, rt, **kw):
+    return _grant("AT:" + rt, rt)
+
+
 def _deux_comptes(env, defaut="jane@contoso.example"):
     for compte, rt in (("jane@contoso.example", "RT-JANE"),
                        ("john@fabrikam.example", "RT-JOHN")):
         env.coffre.poser(compte, rt, {"is_default": compte == defaut})
-    env.coeur.auth.refresh.side_effect = lambda cid, cs, rt: _grant("AT:" + rt, rt)
+    env.coeur.auth.refresh.side_effect = _rafraichir
 
 
 def test_account_choisit_le_compte(env):
     _deux_comptes(env)
-    jeton = env.sous_compte("john@fabrikam.example")(env.auth.access_token_for, SUB)
+    jeton = env.sous_compte("john@fabrikam.example")(env.auth.access_token_for, SUB, SERVICE)
     assert jeton == "AT:RT-JOHN"
 
 
 def test_sans_account_le_compte_par_defaut(env):
     _deux_comptes(env)
-    assert env.auth.access_token_for(SUB) == "AT:RT-JANE"
+    assert env.auth.access_token_for(SUB, SERVICE) == "AT:RT-JANE"
 
 
 def test_un_seul_compte_sert_sans_defaut(env):
     env.coffre.poser("john@fabrikam.example", "RT-JOHN")
-    env.coeur.auth.refresh.side_effect = lambda cid, cs, rt: _grant("AT:" + rt, rt)
-    assert env.auth.access_token_for(SUB) == "AT:RT-JOHN"
+    env.coeur.auth.refresh.side_effect = _rafraichir
+    assert env.auth.access_token_for(SUB, SERVICE) == "AT:RT-JOHN"
 
 
 def test_plusieurs_comptes_sans_defaut_refus_qui_les_nomme(env):
     _deux_comptes(env, defaut=None)
     with pytest.raises(McpError) as e:
-        env.auth.access_token_for(SUB)
+        env.auth.access_token_for(SUB, SERVICE)
     message = str(e.value)
     assert "jane@contoso.example" in message and "john@fabrikam.example" in message
     assert "_account" in message
@@ -340,7 +529,7 @@ def test_plusieurs_comptes_sans_defaut_refus_qui_les_nomme(env):
 def test_compte_inconnu_refuse_jamais_un_autre(env):
     _deux_comptes(env)
     with pytest.raises(McpError, match="not found"):
-        env.sous_compte("inconnu@exemple.test")(env.auth.access_token_for, SUB)
+        env.sous_compte("inconnu@exemple.test")(env.auth.access_token_for, SUB, SERVICE)
     env.coeur.auth.refresh.assert_not_called()
 
 
@@ -352,11 +541,40 @@ def test_sans_compte_le_refus_dit_le_geste(env, monkeypatch):
     for indice in ("_revoked_hint", "_reachable_hint"):
         monkeypatch.setattr(access, indice, lambda *a, **k: "")
     with pytest.raises(McpError, match="sharepoint"):
-        env.auth.access_token_for(SUB)
+        env.auth.access_token_for(SUB, SERVICE)
+    env.coeur.auth.refresh.assert_not_called()
+
+
+def test_un_compte_qui_n_a_pas_autorise_le_service_est_refuse_en_nommant_la_carte(env):
+    env.coffre.poser("jane@contoso.example", "RT-JANE", {"scopes": SCOPE_COURRIER})
+    with pytest.raises(RuntimeError) as e:
+        env.auth.access_token_for(SUB, SERVICE)
+    assert "has not yet authorized SharePoint & OneDrive" in str(e.value)
+    assert "jane@contoso.example" in str(e.value)
     env.coeur.auth.refresh.assert_not_called()
 
 
 # ── Renouvellement ──────────────────────────────────────────────────────────
+
+def test_le_renouvellement_demande_default_sur_l_annuaire_du_compte(env):
+    env.coffre.poser("jane@contoso.example", "RT1", {"tenant": "contoso.onmicrosoft.com"})
+    env.coffre.poser("john@fabrikam.example", "RT2", {"is_default": True})
+    env.auth.access_token_for(SUB, SERVICE)
+    env.sous_compte("jane@contoso.example")(env.auth.access_token_for, SUB, SERVICE)
+    vus = [c.kwargs for c in env.coeur.auth.refresh.call_args_list]
+    assert vus == [{"scopes": env.coeur.scopes.REFRESH, "tenant": "organizations"},
+                   {"scopes": env.coeur.scopes.REFRESH, "tenant": "contoso.onmicrosoft.com"}]
+
+
+def test_le_renouvellement_relit_les_scopes_consentis(env):
+    env.coffre.poser("jane@contoso.example", "RT1")
+    env.coeur.auth.refresh.return_value = _grant(
+        "AT2", "RT1", scope=SCOPE_FICHIERS + " ChannelMessage.Read.All")
+    env.auth.access_token_for(SUB, SERVICE)
+    meta = env.coffre.meta("jane@contoso.example")
+    assert env.auth.has_scopes(meta, env.coeur.scopes.TEAMS_ADMIN), \
+        "une approbation donnée depuis la connexion est vue sans reconnexion"
+
 
 def test_rotation_rangee_sur_le_bon_compte_puis_cache(env):
     _deux_comptes(env)
@@ -364,28 +582,28 @@ def test_rotation_rangee_sur_le_bon_compte_puis_cache(env):
     env.coeur.auth.refresh.side_effect = None
     env.coeur.auth.refresh.return_value = _grant("AT2", "RT-JOHN-TOURNE")
     appel = env.sous_compte("john@fabrikam.example")
-    assert appel(env.auth.access_token_for, SUB) == "AT2"
+    assert appel(env.auth.access_token_for, SUB, SERVICE) == "AT2"
     assert env.coffre.lignes[("member", MEMBRE, "john@fabrikam.example")]["secret"] \
         == "RT-JOHN-TOURNE"
     assert env.coffre.meta("john@fabrikam.example")["email"] == "john@fabrikam.example", \
         "l'identité du compte reste"
     assert env.coffre.lignes[("member", MEMBRE, "jane@contoso.example")]["secret"] \
         == "RT-JANE", "l'autre compte ne bouge pas"
-    assert appel(env.auth.access_token_for, SUB) == "AT2"
+    assert appel(env.auth.access_token_for, SUB, SERVICE) == "AT2"
     assert env.coeur.auth.refresh.call_count == 1, "le second appel sert du cache"
 
 
 def test_le_cache_d_un_compte_ne_sert_pas_l_autre(env):
     _deux_comptes(env)
-    assert env.auth.access_token_for(SUB) == "AT:RT-JANE"
-    jeton = env.sous_compte("john@fabrikam.example")(env.auth.access_token_for, SUB)
+    assert env.auth.access_token_for(SUB, SERVICE) == "AT:RT-JANE"
+    jeton = env.sous_compte("john@fabrikam.example")(env.auth.access_token_for, SUB, SERVICE)
     assert jeton == "AT:RT-JOHN"
 
 
 def test_un_renouvellement_reussi_demarque_le_compte(env):
     env.coffre.poser("jane@contoso.example", "RT1",
                      {"is_default": True, "health_ko": True, "health_reason": "expiré"})
-    assert env.auth.access_token_for(SUB) == "AT2"
+    assert env.auth.access_token_for(SUB, SERVICE) == "AT2"
     assert env.coffre.meta("jane@contoso.example")["health_ko"] is False
 
 
@@ -393,56 +611,199 @@ def test_autorisation_morte_marque_ce_compte_seulement(env):
     _deux_comptes(env)
     expire = env.coeur.MicrosoftGrantExpired("expiré")
 
-    def refresh(cid, cs, rt):
+    def refresh(cid, cs, rt, **kw):
         if rt == "RT-JOHN":
             raise expire
         return _grant("AT:" + rt, rt)
 
     env.coeur.auth.refresh.side_effect = refresh
     with pytest.raises(env.auth.MicrosoftReauthRequired, match="john@fabrikam.example"):
-        env.sous_compte("john@fabrikam.example")(env.auth.access_token_for, SUB)
+        env.sous_compte("john@fabrikam.example")(env.auth.access_token_for, SUB, SERVICE)
     assert env.coffre.meta("john@fabrikam.example")["health_ko"] is True
     assert not env.coffre.meta("jane@contoso.example").get("health_ko")
     assert env.coffre.lignes[("member", MEMBRE, "john@fabrikam.example")]["secret"] \
         == "RT-JOHN", "marquer n'efface rien"
     # L'autre compte continue de servir.
-    assert env.auth.access_token_for(SUB) == "AT:RT-JANE"
-    assert "john@fabrikam.example" in env.auth._etape_manquante(SUB, None, None, {})
-    etat = env.auth._link_state(SUB)
-    assert etat.linked and etat.accounts == 2 and etat.health_ko
-    assert "john@fabrikam.example" in etat.health_reason
-    assert "jane@contoso.example" not in etat.health_reason
+    assert env.auth.access_token_for(SUB, SERVICE) == "AT:RT-JANE"
+    indice = env.auth._etape_manquante_for(SERVICE)(SUB, None, None, {})
+    assert "john@fabrikam.example" in indice
+    for carte in (None, SERVICE):
+        etat = env.auth._link_state_for(carte)(SUB)
+        assert etat.linked and etat.accounts == 2 and etat.health_ko
+        assert "john@fabrikam.example" in etat.health_reason
+        assert "jane@contoso.example" not in etat.health_reason
 
 
 def test_secret_d_application_faux_ne_marque_pas_la_personne(env):
     env.coffre.poser("jane@contoso.example", "RT1")
     env.coeur.auth.refresh.side_effect = env.coeur.MicrosoftAuthError("invalid_client")
     with pytest.raises(env.coeur.MicrosoftAuthError):
-        env.auth.access_token_for(SUB)
+        env.auth.access_token_for(SUB, SERVICE)
     assert not env.coffre.meta("jane@contoso.example").get("health_ko")
 
 
-def test_statut_de_la_fiche(env):
-    assert env.auth._etape_manquante(SUB, None, None, {}) == "Sign in with Microsoft"
-    assert env.auth._link_state(SUB).linked is False
-    env.coffre.poser("jane@contoso.example", "RT1")
-    assert env.auth._etape_manquante(SUB, None, None, {}) is None
+def test_statut_des_fiches(env):
+    hint_service = env.auth._etape_manquante_for(SERVICE)
+    hint_porteur = env.auth._etape_manquante_for(None)
+    assert hint_service(SUB, None, None, {}) == "Sign in with Microsoft"
+    assert env.auth._link_state_for(SERVICE)(SUB).linked is False
+    # Un compte lié pour un AUTRE service : le compte est lié, pas SharePoint.
+    env.coffre.poser("jane@contoso.example", "RT1", {"scopes": SCOPE_COURRIER})
+    assert hint_porteur(SUB, None, None, {}) is None
+    assert env.auth._link_state_for(None)(SUB).linked is True
+    assert hint_service(SUB, None, None, {}) == "Authorize SharePoint & OneDrive"
+    assert env.auth._link_state_for(SERVICE)(SUB).linked is False
+    env.coffre.meta("jane@contoso.example")["scopes"] = SCOPE_FICHIERS
+    assert hint_service(SUB, None, None, {}) is None
     env.coffre.meta("jane@contoso.example")["health_ko"] = True
-    assert "reconnect" in env.auth._etape_manquante(SUB, None, None, {})
+    assert "reconnect" in hint_service(SUB, None, None, {})
+
+
+# ── Approbation d'un administrateur ─────────────────────────────────────────
+
+def test_lien_d_approbation_demande_l_union_des_services(env):
+    s = env.coeur.scopes
+    env.auth.admin_consent_url(SUB, ("sharepoint", "teams"), "contoso.onmicrosoft.com")
+    appel = env.coeur.auth.admin_consent_url.call_args
+    client_id, retour, etat = appel.args
+    assert client_id == "app-id-fictif" and retour == _RETOUR
+    assert appel.kwargs["tenant"] == "contoso.onmicrosoft.com"
+    assert set(appel.kwargs["scopes"]) == set(s.IDENTITY + s.FILES + s.TEAMS + s.TEAMS_ADMIN)
+    approbation = env.auth.verify_admin_state(etat)
+    assert approbation.services == ("sharepoint", "teams") and approbation.connector == SERVICE
+    assert env.auth.verify_state(etat) is None, "une approbation ne vaut pas connexion"
+    env.auth.admin_consent_url(SUB, ("outlook",))
+    appel = env.coeur.auth.admin_consent_url.call_args
+    assert appel.kwargs["tenant"] == "organizations"
+    assert not set(s.TEAMS_ADMIN) & set(appel.kwargs["scopes"]), "TEAMS_ADMIN pour Teams seul"
+    with pytest.raises(ValueError, match="Unknown Microsoft service"):
+        env.auth.admin_consent_url(SUB, ("onenote",))
+
+
+def test_le_lien_d_approbation_vit_sept_jours(env, monkeypatch):
+    env.auth.admin_consent_url(SUB, ("sharepoint",))
+    etat = env.coeur.auth.admin_consent_url.call_args.args[2]
+    maintenant = time.time()
+    monkeypatch.setattr(time, "time", lambda: maintenant + 6 * 24 * 3600)
+    assert env.auth.verify_admin_state(etat) is not None
+    monkeypatch.setattr(time, "time", lambda: maintenant + 8 * 24 * 3600)
+    assert env.auth.verify_admin_state(etat) is None
+
+
+def _etat_approbation(env):
+    env.auth.admin_consent_url(SUB, ("sharepoint",))
+    return env.coeur.auth.admin_consent_url.call_args.args[2]
+
+
+def test_retour_d_approbation_donnee_n_ecrit_rien(env):
+    resp = _callback({"admin_consent": "True", "tenant": "un-guid",
+                      "state": _etat_approbation(env)})
+    assert resp.headers["location"].endswith(
+        "/connectors?connector=sharepoint&connect=admin_approved")
+    env.coeur.auth.exchange_code.assert_not_called()
+    assert not env.coffre.lignes
+
+
+def test_retour_d_approbation_refusee_n_ecrit_rien(env):
+    resp = _callback({"error": "access_denied", "error_description": "AADSTS65004: declined",
+                      "state": _etat_approbation(env)})
+    assert resp.headers["location"].endswith("connect=admin_refused")
+    env.coeur.auth.exchange_code.assert_not_called()
+    assert not env.coffre.lignes
+
+
+def test_le_lien_d_approbation_servi_par_la_carte(env):
+    from oto_mcp.capabilities.registry import CAPABILITIES
+
+    cap = next(c for c in CAPABILITIES if c.key == "me.microsoft_admin_consent")
+    assert cap.mcp == "microsoft_admin_consent"
+    assert (cap.rest.verb, cap.rest.path) == ("POST",
+                                              "/api/me/connectors/microsoft/admin-consent")
+    ctx = types.SimpleNamespace(sub=SUB)
+    out = cap.handler(ctx, cap.Input())
+    assert out["url"] == "https://login.example/adminconsent?x=1"
+    assert out["services"] == ["sharepoint", "outlook", "outlook_calendar", "teams"]
+    assert out["tenant"] == "organizations"
+    assert out["expires_at"].endswith("Z")
+    etat = env.auth.verify_admin_state(env.coeur.auth.admin_consent_url.call_args.args[2])
+    assert etat.connector == "sharepoint", "la carte de retour par défaut"
+    out = cap.handler(ctx, cap.Input(services=["outlook"], connector="microsoft",
+                                     tenant="https://contoso.sharepoint.com/sites/x"))
+    assert out["services"] == ["outlook"] and out["tenant"] == "contoso.onmicrosoft.com"
+    etat = env.auth.verify_admin_state(env.coeur.auth.admin_consent_url.call_args.args[2])
+    assert etat.connector == "microsoft"
+
+
+@pytest.mark.parametrize("entree,motif", [
+    ({"services": ["onenote"]}, "Unknown Microsoft service"),
+    ({"connector": "gmail"}, "not a Microsoft card"),
+    ({"tenant": "consumers"}, "Client directory"),
+])
+def test_le_lien_d_approbation_refuse_en_nommant(env, entree, motif):
+    from oto_mcp.capabilities._types import AuthzDenied
+    from oto_mcp.capabilities.registry import CAPABILITIES
+
+    cap = next(c for c in CAPABILITIES if c.key == "me.microsoft_admin_consent")
+    with pytest.raises(AuthzDenied) as e:
+        cap.handler(types.SimpleNamespace(sub=SUB), cap.Input(**entree))
+    assert e.value.status == 400 and e.value.code == "invalid_admin_consent"
+    assert motif in e.value.message
+
+
+def test_le_lien_d_approbation_sans_application(env, monkeypatch):
+    from oto_mcp.capabilities._types import AuthzDenied
+    from oto_mcp.capabilities.registry import CAPABILITIES
+    from oto_mcp.db import connector_settings as store
+
+    monkeypatch.setattr(store, "list_connector_settings", lambda key=None, conn=None: [])
+    cap = next(c for c in CAPABILITIES if c.key == "me.microsoft_admin_consent")
+    with pytest.raises(AuthzDenied) as e:
+        cap.handler(types.SimpleNamespace(sub=SUB), cap.Input())
+    assert e.value.status == 503 and e.value.code == "oauth_misconfigured"
 
 
 # ── La mécanique commune, branchée ──────────────────────────────────────────
 
-def test_oto_identity_liste_et_fixe_le_defaut(env):
+def test_oto_identity_liste_par_service_et_fixe_le_defaut(env):
     from oto_mcp.connectors import identities
 
     _deux_comptes(env)
-    assert identities.supports(CONNECTEUR)
-    liste = identities.list_identities(SUB, CONNECTEUR)
+    env.coffre.meta("john@fabrikam.example")["scopes"] = SCOPE_FICHIERS + " Mail.ReadWrite"
+    env.coffre.poser("marc@exemple.test", "RT-MARC", {"scopes": SCOPE_COURRIER})
+    for carte in (PORTEUR, SERVICE):
+        assert identities.supports(carte)
+    tous = identities.list_identities(SUB, PORTEUR)
+    assert [i["id"] for i in tous] == [
+        "jane@contoso.example", "john@fabrikam.example", "marc@exemple.test"]
+    liste = identities.list_identities(SUB, SERVICE)
     assert [(i["id"], i["is_default"]) for i in liste] == [
-        ("jane@contoso.example", True), ("john@fabrikam.example", False)]
-    identities.select_identity(SUB, CONNECTEUR, "john@fabrikam.example")
-    assert env.auth.access_token_for(SUB) == "AT:RT-JOHN"
+        ("jane@contoso.example", True), ("john@fabrikam.example", False)], \
+        "un compte qui n'a pas autorisé SharePoint n'est pas proposé sur sa carte"
+    identities.select_identity(SUB, SERVICE, "john@fabrikam.example")
+    assert env.auth.access_token_for(SUB, SERVICE) == "AT:RT-JOHN"
+
+
+def test_microsoft_accounts_dit_les_services_de_chaque_compte(env, monkeypatch):
+    from fastmcp import FastMCP
+
+    from oto_mcp import access
+    from oto_mcp.tools import microsoft as outils
+
+    monkeypatch.setattr(access, "current_user_sub_or_raise", lambda: SUB)
+    env.coffre.poser("jane@contoso.example", "RT1",
+                     {"is_default": True, "email": "Jane@Contoso.example"})
+    env.coffre.poser("jane@contoso.example (contoso.onmicrosoft.com)", "RT2",
+                     {"scopes": SCOPE_COURRIER, "tenant": "contoso.onmicrosoft.com"})
+    m = FastMCP("t")
+    outils.register(m)
+    out = asyncio.run(m.get_tool("microsoft_accounts")).fn()
+    assert out == {"accounts": [
+        {"account": "jane@contoso.example", "email": "Jane@Contoso.example",
+         "is_default": True, "services": ["sharepoint"], "directory": None},
+        {"account": "jane@contoso.example (contoso.onmicrosoft.com)", "email": None,
+         "is_default": False, "services": ["outlook"],
+         "directory": "contoso.onmicrosoft.com"}]}
+    assert "RT1" not in str(out)
 
 
 def test_l_axe_account_est_accepte_sur_les_outils(env):
@@ -453,6 +814,7 @@ def test_l_axe_account_est_accepte_sur_les_outils(env):
 
 
 def test_la_fiche_dit_la_regle_des_comptes_par_connexion():
-    sections = providers.REGISTRY[CONNECTEUR].doc_sections
-    multi = next(s for s in sections if "multiple" in s.title)
-    assert "_account" in multi.body_md and "principal" not in multi.body_md
+    for carte in (PORTEUR, SERVICE):
+        sections = providers.REGISTRY[carte].doc_sections
+        multi = next(s for s in sections if "multiple" in s.title)
+        assert "_account" in multi.body_md and "principal" not in multi.body_md

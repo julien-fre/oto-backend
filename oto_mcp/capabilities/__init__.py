@@ -62,6 +62,7 @@ from . import guide_library  # noqa: F401 — library.{list,get,publish,fork,unp
 import oto_mcp.capabilities.connectors.selection  # noqa: F401 — connectors.{me,select,pause,unselect}
 import oto_mcp.capabilities.connectors.identities  # noqa: F401 — connectors.{identities,set_default_identity} (ADR 0024)
 import oto_mcp.capabilities.connectors.connect  # noqa: F401 — me.connector_connect (POST /api/me/connectors/{name}/connect, chemin FIXE)
+from . import microsoft_admin_consent  # noqa: F401 — me.microsoft_admin_consent (POST /api/me/connectors/microsoft/admin-consent ; outil microsoft_admin_consent)
 from . import salesforce_connect  # noqa: F401 — me.salesforce_connect (oto_salesforce_connect ; REST = le chemin fixe /connect)
 from . import zoho_connect  # noqa: F401 — me.zoho_connect (oto_zoho_connect + GET /api/zoho/oauth/{start,modes})
 import oto_mcp.capabilities.connectors.verify  # noqa: F401 — connectors.verify (sonde de credential — MCP via oto_instance op=verify)

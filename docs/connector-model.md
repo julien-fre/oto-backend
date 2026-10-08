@@ -63,6 +63,19 @@ La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à optio
 > le split apporte ici que unipile n'avait pas : un scope Google n'est demandé que par
 > la carte qui en a besoin — un tenant ne fait vérifier que ce qu'il offre.
 >
+> **Troisième porteur depuis le 2026-10-08 : `microsoft`** (le compte Microsoft 365,
+> OAuth délégué par personne). `sharepoint` en devient le premier service
+> (`credential_of="microsoft"`) ; `outlook`, `outlook_calendar`, `teams` ont leurs scopes
+> prêts (`auth/microsoft.SERVICE_SCOPES`) mais ne sont PAS encore déclarés : une carte
+> sans outil se présenterait comme un connecteur sans en avoir les effets (demander le
+> courrier pour n'en rien faire). Ils naîtront avec leurs outils — flux, lien, indice et
+> identités se DÉRIVENT du registre (`credential_of="microsoft"`). Entra cumule les consentements d'un compte : un seul refresh token,
+> `meta.scopes` = l'union normalisée, relue à chaque renouvellement (`.default`).
+> Le coffre et les coordonnées d'application posés sous `sharepoint` sont COPIÉS au
+> démarrage (`copier_depuis_sharepoint`, idempotent par marque `copied_to`) : la base est
+> partagée, le code servi d'avant lit encore `sharepoint` ; retirer ces lignes est un
+> lot ultérieur. Détail : `connectors/docs/microsoft.md`, docstring d'`auth/microsoft.py`.
+>
 > La normalisation vit dans **`walk_cascade`** — le seam que traversent la résolution,
 > le miroir de mode et le statut. La refaire ailleurs, c'est rouvrir la divergence du
 > 2026-07-07. Détail : `docs/unipile.md` §Le split.

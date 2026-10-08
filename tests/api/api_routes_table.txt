@@ -399,6 +399,8 @@ PATCH /api/connectors/{connector}/identities/{identity_id} -> _handler
 OPTIONS /api/connectors/{connector}/identities/{identity_id} -> options_handler
 POST /api/me/connectors/{name}/connect -> _handler
 OPTIONS /api/me/connectors/{name}/connect -> options_handler
+POST /api/me/connectors/microsoft/admin-consent -> _handler
+OPTIONS /api/me/connectors/microsoft/admin-consent -> options_handler
 GET,HEAD /api/me/connectors/zohoanalytics/orgs -> _handler
 OPTIONS /api/me/connectors/zohoanalytics/orgs -> options_handler
 POST /api/me/connectors/{provider}/verify -> _handler

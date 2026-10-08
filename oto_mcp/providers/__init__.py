@@ -135,7 +135,10 @@ _DECLARATIONS: tuple[str, ...] = (
     "meta_ads",
     "cognism",
     "lighton",
-    # --- sharepoint: the person's Microsoft connection (delegated OAuth), M365 files
+    # --- the Microsoft 365 ACCOUNT (delegated OAuth, per person) and its SERVICES ----
+    # The account carries the vault; each service has its card, its activation, its
+    # selection, ITS consent — `providers/microsoft.service`.
+    "microsoft",
     "sharepoint",
     "promptwatch",
     # --- per-user sessions (outside resolve_api_key, dedicated storage) ------

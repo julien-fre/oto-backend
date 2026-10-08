@@ -1,11 +1,11 @@
 ## prerequisite — connect with your Microsoft 365 account
 
-on the "SharePoint & OneDrive" card, click **Connect with Microsoft** and choose your work account. Nothing else to install or register.
+on the "SharePoint & OneDrive" card, click **Authorize SharePoint & OneDrive** and choose your work account. Nothing else to install or register. The account itself is the "Microsoft 365 account" connector: SharePoint & OneDrive borrows it and only adds its own permissions (files and sites).
 - the agent acts **with your rights**: it sees your OneDrive, the SharePoint sites and the files shared with you, no more, no less. Each person in the org connects their own account
-- work or school accounts only: a personal Microsoft account (outlook.com, hotmail) does not have SharePoint
-- ⚠️ **many organizations require a Microsoft 365 administrator to authorize oto a first time.** If Microsoft shows "admin approval required", this is that case: your admin connects once in the same way and ticks "consent on behalf of your organization", then everyone can connect
+- work or school accounts only: a personal Microsoft account (outlook.com, hotmail) has no SharePoint of its own — unless a client invited it into THEIR Microsoft 365: then fill in **Client directory** at connection (the client's domain, or the address of one of its SharePoint sites; see the "Microsoft 365 account" connector)
+- ⚠️ **many organizations require a Microsoft 365 administrator to authorize oto a first time.** If Microsoft shows "admin approval required", the card comes back with that reason: an administrator approves oto once for the whole organization (see the "Microsoft 365 account" connector), then everyone can connect
 - the connection lasts over time; it drops if the password changes, if the organization revokes it or after a long inactivity: the card then says which account is "to reconnect", the others keep working
-- **several Microsoft accounts** (yours, the one a client gives you): connect them one after the other, Microsoft lets you choose the account each time. Each one is added to the others, named by its address; reconnecting with the same account only replaces its own. To remove one, remove its row on the card: the others stay
+- **several Microsoft accounts** (yours, the one a client gives you): connect them one after the other, Microsoft lets you choose the account each time. Each one is added to the others, named by its address; reconnecting with the same account only replaces its own. An account linked for another Microsoft service only needs to authorize this one. To remove one, remove its row on the "Microsoft 365 account" card: the others stay
 
 ## usage — find, read, drop a document
 

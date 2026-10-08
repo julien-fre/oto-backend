@@ -1486,6 +1486,57 @@ def rekey_personal_credentials(conn, old_sub: str, new_sub: str) -> dict:
         logger.info("rekey clés personnelles %s → %s : %s", old_sub, new_sub, bilan)
     return bilan
 
+def copy_connector_rows(old: str, new: str) -> dict:
+    """COPIES every vault row of connector `old` to connector `new` — when a card hands
+    its credential over to a carrier (`sharepoint` → `microsoft`).
+
+    A copy and not a move: the base is SHARED by prod and preprod, and the code still
+    served on one of them reads `old` until its tag — moving would cut it off. Removing
+    the `old` rows is a later gesture, once no served code reads them.
+
+    The AAD binds the ciphertext to its connector: decrypt with `old`'s, re-encrypt with
+    `new`'s (`_upsert`, the single INSERT funnel — the instance is born with the row).
+    `meta`, `set_by` follow as they are.
+
+    Idempotent BY A MARK, not by the target's presence: each source row handled gets
+    `meta.copied_to = new` (also when `new` already has a row for that account). A
+    predicate on the target alone would RESURRECT an account the person removed under
+    `new` at the next boot. The code that still writes `old` passes its meta back
+    (rotation, reconnection): the mark survives, so a reconnected account is not copied
+    twice; an account added there after the copy has no mark, and is copied at the next
+    boot. An undecryptable row stays unmarked, counted and logged — never copied.
+    Never logs a secret."""
+    bilan = {"copied": 0, "present": 0, "unreadable": 0}
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT entity_type, entity_id, account, secret_enc, meta, set_by "
+            "FROM connector_credentials WHERE connector = %s "
+            "AND meta->>'copied_to' IS NULL "
+            "ORDER BY entity_type, entity_id, account FOR UPDATE", (old,)).fetchall()
+        for r in rows:
+            etype, eid, account = r["entity_type"], r["entity_id"], r["account"]
+            present = conn.execute(
+                "SELECT 1 FROM connector_credentials WHERE entity_type = %s "
+                "AND entity_id = %s AND connector = %s AND account = %s",
+                (etype, eid, new, account)).fetchone()
+            if present:
+                update_meta(etype, eid, old, account, {"copied_to": new}, conn=conn)
+                bilan["present"] += 1
+                continue
+            try:
+                secret = crypto.decrypt(r["secret_enc"], _aad(etype, eid, old, account))
+            except Exception:
+                logger.warning("copy %s → %s: %s/%s (account %r) undecryptable — not copied",
+                               old, new, etype, eid, account, exc_info=True)
+                bilan["unreadable"] += 1
+                continue
+            meta = r["meta"] if isinstance(r["meta"], dict) else json.loads(r["meta"] or "{}")
+            _upsert(conn, etype, eid, new, account, secret, r["set_by"], meta)
+            update_meta(etype, eid, old, account, {"copied_to": new}, conn=conn)
+            bilan["copied"] += 1
+    return bilan
+
+
 def backfill_member_scope() -> dict:
     """One-shot idempotent (boot, ADR 0033) : chaque credential per-user hors famille
     oauth passe du scope `('user', sub)` au scope `('member', '{home_org}:{sub}')`.

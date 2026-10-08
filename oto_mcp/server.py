@@ -577,6 +577,17 @@ def _prepare_database() -> None:
             credentials_store.backfill_member_scope()
     except Exception as e:
         logger.warning("backfill_member_scope at boot failed: %s", e)
+    # Le porteur `microsoft` reprend le coffre et les coordonnées d'application de la
+    # carte `sharepoint` (devenue un service qui l'emprunte) : COPIE re-chiffrée,
+    # additive — la base est partagée, le code servi d'avant lit encore `sharepoint`.
+    # Idempotente par marque (`credentials_store.copy_connector_rows`), après
+    # backfill_member_scope (lignes au scope membre).
+    try:
+        from .auth import microsoft as ms_auth
+        with _timed("microsoft_copy_from_sharepoint"):
+            ms_auth.copier_depuis_sharepoint()
+    except Exception as e:
+        logger.warning("microsoft_copy_from_sharepoint at boot failed: %s", e)
     # (Le backfill ADR 0044 §F R2 — clés plateforme legacy → instances scope PLATFORM —
     # a été RETIRÉ le 2026-07-28 : la fenêtre R2→R4 est close, `platform_keys` est droppée
     # par les migrations (`db/_init.py`) et les lectures passent par le coffre unifié. Il

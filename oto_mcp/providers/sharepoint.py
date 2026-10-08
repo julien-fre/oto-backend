@@ -1,29 +1,21 @@
-"""Registry declaration of the `sharepoint` connector.
+"""Registry declaration of the `sharepoint` connector — SharePoint & OneDrive, on the
+Microsoft 365 account.
 
-Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
-describe it). See `providers/_model.py` for the `Connector` contract.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it. The shape common to
+the Microsoft services lives with the account carrier (`providers/microsoft.service`) —
+here, what distinguishes THIS one.
 """
 from __future__ import annotations
 
-from ._model import _c
+from .microsoft import service
 
-# sharepoint: Microsoft 365 files (SharePoint sites, document libraries,
-# OneDrive) via Microsoft Graph, ON BEHALF OF THE PERSON: each one
-# connects with their Microsoft 365 account (OAuth, delegated permissions) and the agent
-# sees exactly what they see — several accounts possible, chosen by
-# `_account=` at call time. The application is oto's own, multi-tenant,
-# whose credentials are set at the platform tier (`auth/microsoft.py`); the
-# client registers no application. The Graph host is fixed: no egress
-# guard to set.
-CONNECTOR = _c(
-    "sharepoint", ["sharepoint"],
-    auth_modes={"byo_user"},
-    # Consent comes from the person's Microsoft account, not from their org.
-    personal_session=True, secret_kind="oauth",
-    # OAuth ⟹ the derivation would say single; yet a person links several Microsoft
-    # accounts (their directory, a client's) and the vault holds one row per
-    # account (`auth/microsoft.persist_grant`). Same provider reason as google.
-    cardinality="multi",
+# sharepoint: Microsoft 365 files (SharePoint sites, document libraries, OneDrive) via
+# Microsoft Graph, ON BEHALF OF THE PERSON: they authorize THIS service on their
+# Microsoft account, from this card, with only its permissions — the account (the vault
+# row, the refresh token) is that of the `microsoft` connector. The agent sees exactly
+# what the person sees; several accounts possible, chosen by `_account=` at call time.
+CONNECTOR = service(
+    "sharepoint",
     label="SharePoint & OneDrive",
     help="your Microsoft 365 files: sites, libraries, OneDrive — search, read, "
          "upload, with your rights",
@@ -31,7 +23,6 @@ CONNECTOR = _c(
 )
 
 CATEGORY = "Knowledge"
-PUBLISHER = "Microsoft"
 LOGO_DOMAIN = "microsoft.com"
 
 DESCRIPTION = (

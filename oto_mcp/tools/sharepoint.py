@@ -1,8 +1,8 @@
 """SharePoint & OneDrive — a person's Microsoft 365 files, via Microsoft Graph.
 
-Credential = the PERSON's Microsoft connection (OAuth, delegated permissions),
-acquired and renewed by `auth/microsoft.py`: the agent sees exactly what they
-see in Microsoft 365. A 403 says "no access for you", never
+Credential = the PERSON's Microsoft 365 account (carrier `microsoft`, OAuth,
+delegated permissions) that has authorized THIS service, acquired and renewed by
+`auth/microsoft.py`: the agent sees exactly what they see in Microsoft 365. A 403 says "no access for you", never
 "doesn't exist". Several linked accounts: the call picks its own through the
 generic `_account=` axis (no parameter specific to the tools), resolved by
 `access.resolve_credential` like for any multi-account connector.
@@ -40,6 +40,8 @@ from ..mcp_errors import McpError
 # as CSV. `as_pdf` forces one or the other.
 _CONVERTIS = {"doc", "docx", "dot", "dotx", "odt", "rtf", "ppt", "pptx", "pps",
               "ppsx", "odp"}
+#: The Microsoft service these tools call: its scopes, its card (`auth/microsoft`).
+_SERVICE = "sharepoint"
 _DOWNLOAD_MAX = 50 * 1024 * 1024
 _UPLOAD_MAX = 25 * 1024 * 1024
 
@@ -132,19 +134,20 @@ def _contenu(content_base64: Optional[str], content_text: Optional[str]) -> byte
 
 def register(mcp: FastMCP) -> None:
     from oto.tools.common.errors import UpstreamHTTPError
-    from oto.tools.microsoft import GraphClient, MicrosoftAuthError
+    from oto.tools.microsoft import FilesClient, MicrosoftAuthError
 
     from .. import file_content
     from ..auth import microsoft as ms_auth
 
-    def _client() -> GraphClient:
+    def _client() -> FilesClient:
         """The Graph client of THIS caller, with their current token (renewed
         by `auth/microsoft.py` if it expires)."""
         try:
-            jeton = ms_auth.access_token_for(access.current_user_sub_or_raise())
+            jeton = ms_auth.access_token_for(access.current_user_sub_or_raise(),
+                                             _SERVICE)
         except (RuntimeError, MicrosoftAuthError) as e:
             raise _bad(str(e))
-        return GraphClient(jeton)
+        return FilesClient(jeton)
 
     def _run(fn):
         """Graph 4xx → named refusal. 429 and 5xx stay what they are: the
@@ -158,7 +161,7 @@ def register(mcp: FastMCP) -> None:
         except ValueError as e:
             raise _bad(str(e))
 
-    def _drive_id(client: GraphClient, drive_id: Optional[str], user: Optional[str]) -> str:
+    def _drive_id(client: FilesClient, drive_id: Optional[str], user: Optional[str]) -> str:
         """The target drive: a library (`drive_id`), a colleague's OneDrive
         (`user`), otherwise the connected person's OneDrive."""
         if drive_id and user:

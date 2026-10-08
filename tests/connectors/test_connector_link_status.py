@@ -62,7 +62,9 @@ def test_le_perimetre_est_celui_quon_croit():
     # `meta_ads` (2026-10-02) : même patron qu'`instagram_meta` ; `bigquery`
     # (2026-10-02) : septième service Google, il lit SON lien.
     # `sharepoint` (2026-10-05) : connexion Microsoft par personne, même patron.
-    assert _federated() == {"google", "instagram_meta", "meta_ads", "sharepoint",
+    # `microsoft` (2026-10-08) : le porteur du compte, dont `sharepoint` devient un
+    # service — chacun lit SON lien (les comptes qui ont autorisé le service).
+    assert _federated() == {"google", "instagram_meta", "meta_ads", "microsoft", "sharepoint",
                             "gmail", "drive", "sheets", "calendar", "tasks", "chat",
                             "bigquery"}
 

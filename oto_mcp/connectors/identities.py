@@ -645,6 +645,36 @@ def _register_google_services() -> None:
         _SELECTORS[con.name] = _google_select
 
 
+def _microsoft_list(sub: str, service: str) -> list[dict]:
+    """The member's Microsoft accounts that AUTHORIZED `service` — same shape as the
+    generic keyed backend, filtered like a Google service: `oto_identity(
+    connector='sharepoint')` must not offer an account that `sharepoint_file` will refuse."""
+    from ..auth import microsoft as ms_auth
+    return [{"id": c["account"],
+             "label": (c.get("meta") or {}).get("label") or c["account"],
+             "status": "ok", "is_default": bool((c.get("meta") or {}).get("is_default")),
+             "channel": None}
+            for c in ms_auth.accounts_for(sub, service)]
+
+
+def _register_microsoft_services() -> None:
+    """One identity backend per Microsoft SERVICE: the accounts of the `microsoft`
+    carrier that authorized it; the default is the carrier's (one default per person,
+    shared by the services, as for Google). Registered BEFORE the generic keyed backend —
+    which would otherwise take these multi-account connectors for vault keys under their
+    name (no row lives there). The carrier itself goes through the generic backend
+    (list, default, rename). Population derived from the registry."""
+    from .. import providers
+    for con in providers._REGISTRY_LIST:
+        if con.credential_of != "microsoft":
+            continue
+        _LISTERS[con.name] = (
+            lambda sub, scope="member", _s=con.name: _microsoft_list(sub, _s))
+        _SELECTORS[con.name] = (
+            lambda sub, iid, scope="member": _keyed_select(sub, "microsoft", iid))
+
+
 _register_google_services()
+_register_microsoft_services()
 _register_keyed_multi_account()
 _register_hosted_channels()
