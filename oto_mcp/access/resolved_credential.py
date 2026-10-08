@@ -48,7 +48,11 @@ class ResolvedCredential:
 
     @property
     def fields(self) -> dict:
-        return credentials_store.unpack_secret(providers.credential_provider(self.provider), self.secret)
+        porteur = providers.credential_provider(self.provider)
+        if self.is_platform:
+            # A platform key is posted as ONE raw value (`credentials_store.platform_fields`).
+            return credentials_store.platform_fields(porteur, self.secret)
+        return credentials_store.unpack_secret(porteur, self.secret)
 
     @property
     def config(self) -> dict:

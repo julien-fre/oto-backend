@@ -14,13 +14,29 @@ from unittest.mock import MagicMock
 
 import pytest
 from oto_mcp.mcp_errors import McpError
+
+
+class _Rc:
+    """Stand-in for `ResolvedCredential`: the two attributes `_client` reads."""
+
+    def __init__(self, is_platform: bool):
+        self.is_platform = is_platform
+        self.fields = {"api_key": "fg-test-key", "account_id": None}
+
+
 @pytest.fixture
-def client(monkeypatch):
+def key_mode():
+    """Which key the cascade hands over: the customer's own (default) or ours."""
+    return {"platform": False}
+
+
+@pytest.fixture
+def client(monkeypatch, key_mode):
     inst = MagicMock()
     monkeypatch.setattr("oto.tools.forager.ForagerClient", lambda **kw: inst)
     monkeypatch.setattr(
-        "oto_mcp.access.resolve_credential_fields",
-        lambda provider: {"api_key": "fg-test-key", "account_id": None},
+        "oto_mcp.access.resolve_credential",
+        lambda provider, want="auto", **kw: _Rc(key_mode["platform"]),
     )
     return inst
 
@@ -298,8 +314,8 @@ def test_multi_account_refusal_surfaces_as_invalid_params(monkeypatch):
     )
     monkeypatch.setattr("oto.tools.forager.ForagerClient", lambda **kw: inst)
     monkeypatch.setattr(
-        "oto_mcp.access.resolve_credential_fields",
-        lambda provider: {"api_key": "fg-test-key", "account_id": None},
+        "oto_mcp.access.resolve_credential",
+        lambda provider, want="auto", **kw: _Rc(False),
     )
     with pytest.raises(McpError, match="multiple accounts"):
         _tool("forager_job_post")()
@@ -319,3 +335,81 @@ def test_no_api_key_management_tool_exists(client):
     F.register(m)
     names = {t.name for t in asyncio.run(m.list_tools())}
     assert not any("api_key" in n for n in names)
+
+
+# --- the platform key: phone lookups only, metered -------------------------
+
+@pytest.fixture
+def trace(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr("oto_mcp.session_org.note_call_trace", lambda **kw: seen.update(kw))
+    return seen
+
+
+@pytest.fixture
+def platform_usage(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr("oto_mcp.access.record_platform_usage",
+                        lambda provider, *a, **kw: calls.append(provider))
+    return calls
+
+
+@pytest.mark.parametrize("tool, kwargs", [
+    ("forager_job_post", {}),
+    ("forager_organization", {}),
+    ("forager_person", {"op": "detail", "person_id": 1}),
+    ("forager_person", {"op": "work_emails", "person_id": 1}),
+    ("forager_autocomplete", {"op": "locations", "q": "Paris"}),
+    ("forager_account", {}),
+    ("forager_feedback", {"op": "phone_number", "contact_status": "connected",
+                          "is_correct_person": True, "phone_number": "+33100000000"}),
+])
+def test_platform_key_refuses_everything_but_phone_numbers(client, key_mode, tool, kwargs):
+    key_mode["platform"] = True
+    with pytest.raises(McpError, match="needs your own Forager key"):
+        _tool(tool)(**kwargs)
+    assert not client.method_calls, "a refused op must not reach Forager (no credit spent)"
+
+
+def test_platform_key_runs_phone_numbers_and_meters_it(client, key_mode, trace, platform_usage):
+    key_mode["platform"] = True
+    client.lookup_person_phone_numbers.return_value = [{"phone_number": "+33100000000"}]
+    out = _tool("forager_person")(op="phone_numbers", person_id=7)
+    assert out == [{"phone_number": "+33100000000"}]
+    assert trace == {"found_work_emails": 0, "found_personal_emails": 0,
+                     "found_phones": 1, "quantity": 1}
+    assert platform_usage == ["forager"]
+
+
+def test_a_miss_traces_zero_phones(client, trace, platform_usage):
+    client.lookup_person_phone_numbers.return_value = []
+    _tool("forager_person")(op="phone_numbers", linkedin_public_identifier="someone")
+    assert trace == {"found_work_emails": 0, "found_personal_emails": 0,
+                     "found_phones": 0, "quantity": 0}
+    assert platform_usage == [], "own key: nothing debited on the platform counters"
+
+
+def test_a_miss_on_the_platform_key_traces_zero_and_bills_nothing(
+        client, key_mode, trace, platform_usage):
+    """A miss on OUR key: `quantity=0`, so the aggregated view (NULL reads 1) does not
+    count it as a billed lookup."""
+    key_mode["platform"] = True
+    client.lookup_person_phone_numbers.return_value = []
+    _tool("forager_person")(op="phone_numbers", person_id=7)
+    assert trace["found_phones"] == 0 and trace["quantity"] == 0
+
+
+def test_the_billing_lens_reads_the_trace_as_found_phones(client, trace, platform_usage):
+    """The trace goes through the lens as the billing consumer reads it: `_found_from_row`
+    is ALL OR NOTHING over the three `found_*` (a lone `found_phones` read `None`)."""
+    from oto_mcp.db.usage import BILLABLE_FOUND_ARGS, _found_from_row
+
+    client.lookup_person_phone_numbers.return_value = [{"phone_number": "+33100000000"}]
+    _tool("forager_person")(op="phone_numbers", person_id=7)
+    ligne = {arg: str(trace[arg]) for arg in BILLABLE_FOUND_ARGS.values()}
+    assert _found_from_row(ligne) == {"work_emails": 0, "personal_emails": 0, "phones": 1}
+
+
+def test_own_key_still_runs_every_op(client):
+    _tool("forager_person")(op="detail", person_id=1)
+    client.lookup_person_detail.assert_called_once()

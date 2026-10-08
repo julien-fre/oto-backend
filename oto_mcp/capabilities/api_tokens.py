@@ -415,8 +415,7 @@ def _keys_create(ctx: ResolvedCtx, inp: PlatformKeyCreateInput) -> dict:
     if not label or not api_key:
         raise AuthzDenied(400, "missing_fields")
     try:
-        credentials_store.set_credential(credentials_store.PLATFORM, label, provider,
-                                         api_key, set_by=ctx.sub)
+        credentials_store.set_platform_key(label, provider, api_key, set_by=ctx.sub)
     except ValueError as e:
         raise AuthzDenied(400, "invalid_platform_provider", str(e))
     return {"provider": provider, "label": label}

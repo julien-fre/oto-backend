@@ -527,6 +527,22 @@ class SecretUnpackError(RuntimeError):
     2026-08-27, site B6)."""
 
 
+def platform_fields(connector: str, secret: str) -> dict:
+    """The fields of a PLATFORM key. `/api/admin/platform-keys` posts ONE raw value
+    (`api_key`), even for a multi-field connector: a blob that does not unpack is that
+    value, and fills the connector's first SECRET field. Without it, `unpack_secret`
+    refused every raw platform key of a multi-field connector (`forager`,
+    `transcription`), and the "Test the connection" probe answered a 500 for a key
+    that works. A JSON blob posted by other means still unpacks as such."""
+    try:
+        return unpack_secret(connector, secret)
+    except SecretUnpackError:
+        c = providers.REGISTRY.get(connector)
+        champ = next((f.name for f in (c.vault_fields if c is not None else ())
+                      if f.secret), "key")
+        return {champ: secret}
+
+
 def unpack_secret(connector: str, secret: str) -> dict:
     """Inverse de `pack_secret` : reconstruit le dict des champs depuis la string
     stockée. Pour l'affichage (champs non-secrets) ET la résolution in-process
@@ -1108,6 +1124,28 @@ def set_credential(
         with _connect() as c:
             _upsert(c, entity_type, entity_id, connector, account, secret, set_by, meta,
                     expected_version=expected_version)
+
+
+def set_platform_key(label: str, connector: str, secret: str,
+                     set_by: Optional[str] = None) -> None:
+    """Pose une clé PLATEFORME (console admin). Un connecteur sans palier gratuit
+    (`platform_key_open=False`) la reçoit FERMÉE : elle ne sert que les orgs accordées
+    (`grant_platform`). Sans ça, la ligne naissait `share_mode='open'` (défaut de la
+    colonne) avec un `share_down` vide, que `access.platform_grant` lit « ouvert à
+    tous » : entre la pose et le premier accord, n'importe quel compte sans clé à lui
+    consommait la clé payante d'oto, sans plafond (`default_quota=0`). Une rotation
+    sur une clé déjà accordée la laisse fermée ; un connecteur à palier gratuit garde
+    sa clé ouverte."""
+    c = providers.REGISTRY.get(connector)
+    ouverte = bool(c and getattr(c, "platform_key_open", False))
+    with _connect() as conn:
+        set_credential(PLATFORM, label, connector, secret, set_by=set_by, conn=conn)
+        if not ouverte:
+            conn.execute(
+                "UPDATE connector_credentials SET share_mode = 'closed' "
+                "WHERE entity_type = %s AND entity_id = %s AND connector = %s "
+                "AND account = ''",
+                (PLATFORM, label, connector))
 
 
 def clear_credential(entity_type: str, entity_id: str, connector: str, conn=None,
