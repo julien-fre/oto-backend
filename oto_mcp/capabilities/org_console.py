@@ -296,7 +296,8 @@ CAPABILITIES += [
             "org, least recently used first; OR, in a separate call, `api_fallback` "
             "true|false — true lets a job whose subscription is exhausted replay on the "
             "org's OWN deposited API key, same tier, instead of waiting (off by default); "
-            "get also returns `mode`, `pool_size` and `api_fallback`). "
+            "get also returns `mode`, `pool_size`, `lenders` (who lends, and whether each is "
+            "usable now — never their tier or usage) and `api_fallback`). "
             "op=get is member, set is org admin."),
         mcp="oto_org_settings",
     ),

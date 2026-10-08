@@ -157,16 +157,14 @@ def taille_totale_du_pool(org_id: int, famille: str) -> int:
 
 
 def preteurs(org_id: int, famille: str) -> list[dict]:
-    """QUI prête un abonnement au pool de cette org, et dans quel état — ce que
-    l'écran montre, une ligne par prêteur. Les prêts VIVANTS seulement (abonnement
-    existant, auteur toujours membre), servables ou non : un prêteur au plafond
-    reste une ligne, avec son échéance. Ni session ni secret : le palier, l'état,
-    l'échéance, le plafond perso (la part qu'il garde pour lui), et `servable` —
-    la même clause que la réservation (`PRETEUR_SERVABLE`)."""
+    """QUI prête un abonnement au pool de cette org — une ligne par prêteur, et
+    `servable` : la même clause que la réservation (`PRETEUR_SERVABLE`). Les prêts
+    VIVANTS seulement (abonnement existant, auteur toujours membre), servables ou
+    non. Rien d'autre n'est LU : ni palier, ni état, ni échéance, ni plafond perso —
+    un abonnement appartient à qui le paie, prêter n'en partage que la capacité."""
     with _connect() as conn:
         rows = conn.execute(
-            f"SELECT l.sub, ab.plan, ab.statut, ab.limit_reset_at, ab.limite_pct, "
-            f"       ({PRETEUR_SERVABLE}) AS servable "
+            f"SELECT l.sub, ({PRETEUR_SERVABLE}) AS servable "
             f"FROM user_model_subscription_loans l {PRET_VIVANT} "
             f"WHERE l.org_id = %s AND l.famille = %s ORDER BY l.sub",
             (org_id, famille)).fetchall()

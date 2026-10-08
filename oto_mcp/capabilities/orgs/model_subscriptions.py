@@ -40,21 +40,19 @@ _PATH_REPLI = "/api/orgs/{id}/model-subscriptions/{family}/api-fallback"
 
 
 class Preteur(BaseModel):
-    """Un membre qui prête son abonnement au pool de l'org."""
+    """Un membre qui prête son abonnement au pool de l'org — et RIEN de plus.
+
+    ⚠️ Ni palier, ni état de connexion, ni échéance, ni plafond perso : un abonnement
+    appartient à qui le paie (`capabilities/me_abonnements.py`), et prêter partage sa
+    CAPACITÉ, pas son état. « Au plafond jusqu'à … » dirait à toute l'org l'usage
+    TOTAL d'un compte, usage personnel compris. Même forme pour un admin d'org
+    (décision d'Alexis, 08/10/2026)."""
     sub: str
-    plan: Optional[str] = Field(
-        default=None, description="The plan tier the provider reported (`max`, `pro`…).")
-    status: str = Field(
-        description="`connected` | `needs_login` | `paused_limit` | `disconnected`.")
-    limit_reset_at: Optional[str] = Field(
-        default=None, description="When the plan's limit lifts, while `paused_limit`.")
-    limit_pct: Optional[int] = Field(
-        default=None,
-        description=("The member's own cap, in %, if they set one lower than the org's "
-                     "(the lower one wins). `null` = the org's cap."))
-    has_room: bool = Field(
-        description=("Whether the pool can run a job on it right now — the same rule as "
-                     "the job queue (connected, or at a cap that has already lifted)."))
+    usable_now: bool = Field(
+        description=("Whether this subscription is usable right now (connected, or at a "
+                     "cap that has already lifted). It does not promise the job queue "
+                     "will pick it: one job in flight per lender, and only while the "
+                     "org runs in `pool` mode."))
 
 
 class OrgPlafond(BaseModel):
@@ -76,13 +74,14 @@ class OrgPlafond(BaseModel):
                      "(`PATCH /api/me/model-subscriptions/{family}` `lent_to`), the "
                      "least recently used free one first."))
     pool_size: int = Field(
-        description=("How many members currently lend this org a usable (connected) "
-                     "subscription. In `pool` mode, zero means the org's jobs wait."))
+        description=("How many members currently lend this org a usable subscription "
+                     "(the `lenders` with `usable_now`). In `pool` mode, zero means the "
+                     "org's jobs wait."))
     lenders: list[Preteur] = Field(
         default_factory=list,
         description=("One entry per member who lends this org their subscription, in "
-                     "either mode, usable right now or not (`has_room`). No session, no "
-                     "secret: tier, state, reset time and their own cap."))
+                     "either mode: who (`sub`) and whether it is usable right now "
+                     "(`usable_now`) — never their tier, state, reset time or usage."))
     api_fallback: bool = Field(
         default=False,
         description=("`true`: a job whose subscription (the requester's, or the whole "
@@ -133,23 +132,16 @@ def _exiger(org_id: int, famille: str) -> None:
             f"({', '.join(sorted(_abonnement.FAMILLES))}).")
 
 
-def _iso(v):
-    return v.isoformat() if hasattr(v, "isoformat") else v
-
-
-def _preteurs(org_id: int, famille: str) -> list[dict]:
-    return [{"sub": p["sub"], "plan": p.get("plan"), "status": p["statut"],
-             "limit_reset_at": _iso(p.get("limit_reset_at")),
-             "limit_pct": p.get("limite_pct"), "has_room": bool(p["servable"])}
-            for p in org_subscription_pool.preteurs(org_id, famille)]
-
-
 def _servi(org_id: int, famille: str) -> dict:
     repli = {"api_fallback": org_subscription_pool.repli_api_actif(org_id, famille)}
+    preteurs = [{"sub": p["sub"], "usable_now": bool(p["servable"])}
+                for p in org_subscription_pool.preteurs(org_id, famille)]
+    # `pool_size` se DÉDUIT de `lenders` : une seule lecture, aucun écart possible
+    # entre le compte et la liste montrés sur le même écran.
     pool = {"mode": ((org_subscription_pool.get_mode(org_id, famille) or {}).get("mode")
                      or org_subscription_pool.PERSONNEL),
-            "pool_size": org_subscription_pool.taille_du_pool(org_id, famille),
-            "lenders": _preteurs(org_id, famille)}
+            "pool_size": sum(p["usable_now"] for p in preteurs),
+            "lenders": preteurs}
     ligne = org_subscription_limits.get_limite(org_id, famille)
     if not ligne:
         return {"org_id": org_id, "family": famille,
@@ -216,8 +208,10 @@ CAPABILITIES += [
                      "windows) the org's jobs may reach before the next ones wait for "
                      "the reset. `default: true` = not set, platform default (80). A "
                      "member may set a LOWER cap for themselves; the lower one applies. "
-                     "Also returns the org's `mode` (`personnel` | `pool`) and its "
-                     "`pool_size` (members lending a usable subscription)."),
+                     "Also returns the org's `mode` (`personnel` | `pool`), its "
+                     "`pool_size` (members lending a usable subscription) and "
+                     "`lenders` (who lends, and whether each is usable right now — "
+                     "never their tier, state or usage)."),
         rest=RestBinding("GET", _PATH, _ID),
     ),
     Capability(
