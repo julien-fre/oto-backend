@@ -21,7 +21,10 @@ description: >-
 # crée un env éphémère SANS les deps projet (piège, ModuleNotFoundError). Recette :
 uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 .venv/bin/python -m pytest -q
-# La CI lance la MÊME commande, sans chemin (`pytest -q -n 4`). Globber (`tests/*.py tests/*/`)
+# La CI lance la MÊME commande : au tag, sans chemin (`pytest -q -n 4`, suite complète) ;
+# au push sur `main`, suivie des fichiers que retient `scripts/selection_tests.py` (volets
+# touchés + socle, `tests/volets.toml`, #1185) — le même script se lance à la main :
+# `python3 scripts/selection_tests.py --base origin/main --tete HEAD`. Globber (`tests/*.py tests/*/`)
 # reste permis (#508) : `tests/conftest.py` passé en argument est remplacé par un nœud vide
 # (`pytest_collect_file`, tests/conftest.py) — sans lui, `import file mismatch` (trois
 # `conftest.py` partagent le basename) interrompait toute la collecte.
@@ -153,8 +156,10 @@ uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 #                  14/09/2026 : un `$1` absent y défaillait vers la pointe du
 #                  tronc au moment de l'exécution, pas le sha que LE RUN venait de
 #                  tester. Script sans repli depuis, comme oto-backend.sh)
-#   tag  `v*`    → PROD    (« Deploy prod », deploy.yml, script serveur
-#                  oto-backend.sh <tag> : git reset --hard <tag> → prod)
+#   tag  `v*`    → PROD    (« Deploy prod », deploy.yml : suite complète (`test`),
+#                  puis script serveur oto-backend.sh <tag> : git reset --hard
+#                  <tag> → prod. La suite complète ne tourne QU'ICI depuis #1185 ;
+#                  le push ne joue que volets touchés + socle)
 # Le deploy (les deux) = SSH box dédiée via runner self-hosted : reset au ref +
 # **`uv sync --frozen`** (le jeu exact de `uv.lock` ; un ref sans verrou est refusé,
 # docs/verrou-dependances.md) + restart + **smoke HTTP**

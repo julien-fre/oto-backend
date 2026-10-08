@@ -1,0 +1,642 @@
+# Table « fichier → volet » de la sélection au push (#1185, décision du 08/10/2026).
+#
+# Au push sur `main`, la CI ne joue que les volets touchés par le diff, PLUS le socle de
+# gardes transverses ; la suite complète tourne une seule fois, au tag, avant la prod.
+# Lue par `scripts/selection_tests.py`, vérifiée par `tests/test_selection_tests.py`.
+#
+# Ce qu'un fichier modifié déclenche, dans l'ordre :
+#   1. il tombe dans `[complete]`            → suite complète ;
+#   2. c'est un fichier de test               → il est joué ;
+#   3. il tombe dans un volet (ou la famille) → les tests du volet, PLUS tous les tests qui
+#      importent directement un module du volet ;
+#   4. toujours, en plus : les tests qui importent directement le module modifié, et ceux
+#      dont le texte cite son nom de fichier (`http.py`, `api_routes_table.txt`…) ;
+#   5. il ne tombe nulle part                 → suite complète (jamais de trou silencieux).
+#
+# Globs : `*` ne franchit pas `/`, `**` franchit tout. `{nom}` (famille) = un connecteur.
+# Un fichier d'`oto_mcp/` absent de cette table fait rougir `test_selection_tests.py` :
+# le ranger dans un volet, ou dans `[complete]` s'il est transverse. Dans le doute,
+# `[complete]` : un volet faux laisse filer un rouge jusqu'au tag.
+
+# Au-delà de cette part des fichiers de tests, la sélection ne fait plus gagner assez :
+# suite complète.
+seuil_part = 0.5
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LE SOCLE : joué à CHAQUE push, quel que soit le diff. Ce sont les gardes transverses
+# dont un rouge naît loin du fichier modifié (constat du 01/10, #1111) : sortie déclarée
+# des capacités, façade d'erreur MCP, contrat servi aux consommateurs (OpenAPI, table de
+# routes), concordance carte/client, gardes de portée, inventaire d'env, doc_lint,
+# silences, SQL hors de la boucle, surfaces figées. ~30 s sur 4 workers, sans base.
+[socle]
+tests = [
+  "tests/test_capability_outputs.py",
+  "tests/test_sorties_listes_projetees.py",
+  "tests/test_mcp_errors_facade.py",
+  "tests/test_attempt_errors_traverse_le_contrat.py",
+  "tests/test_openapi.py",
+  "tests/test_openapi_sections_330.py",
+  "tests/test_contrat_front.py",
+  "tests/test_contrat_consommateurs_966.py",
+  "tests/api/test_api_routes_table_frozen.py",
+  "tests/auth/test_facade_routes_table_frozen.py",
+  "tests/test_tenant_defini_dans_le_contrat_775.py",
+  "tests/api/test_routes_lourdes_declarees_1145.py",
+  "tests/test_tools_client_methods_exist.py",
+  "tests/test_card_client_required_agree.py",
+  "tests/test_portee_une_seule_definition.py",
+  "tests/test_owner_scope_tripwire.py",
+  "tests/test_search_scope_tripwire.py",
+  "tests/test_env_inventory_complet.py",
+  "tests/test_doc_lint.py",
+  "tests/test_no_silent_except.py",
+  "tests/test_db_hors_boucle.py",
+  "tests/test_lot1_sql_hors_boucle.py",
+  "tests/test_capacites_hors_boucle.py",
+  "tests/test_db_surface_frozen.py",
+  "tests/test_schema_assembly_frozen.py",
+  "tests/test_access_surface_frozen.py",
+  "tests/test_org_store_surface_frozen.py",
+  "tests/test_tenant_ne_s_etend_plus.py",
+  "tests/test_selection_tests.py",
+]
+
+[complete]
+raison = "transverse : la sélection par volets ne saurait pas borner son effet"
+chemins = [
+  # Ce qui installe ou configure la suite elle-même.
+  "pyproject.toml",
+  "uv.lock",
+  "alembic.ini",
+  ".github/**",
+  "tests/conftest.py",
+  "tests/*/conftest.py",
+  "tests/_*.py",
+  "scripts/installer_bac_a_sable.py",
+  "scripts/arbre-importable.py",
+  # Le cœur du serveur : montage, configuration, contexte d'appel, erreurs.
+  "oto_mcp/__init__.py",
+  "oto_mcp/server.py",
+  "oto_mcp/config.py",
+  "oto_mcp/cli.py",
+  "oto_mcp/call_axes.py",
+  "oto_mcp/calllog.py",
+  "oto_mcp/client_disconnect_guard.py",
+  "oto_mcp/client_trace.py",
+  "oto_mcp/deprecations.py",
+  "oto_mcp/discovery.py",
+  "oto_mcp/error_taxonomy.py",
+  "oto_mcp/mcp_errors.py",
+  "oto_mcp/mcp_accueil.py",
+  "oto_mcp/json_body.py",
+  "oto_mcp/response_charset.py",
+  "oto_mcp/transport_refusals.py",
+  "oto_mcp/status_hints.py",
+  "oto_mcp/output_projection.py",
+  "oto_mcp/field_filter_defaults.py",
+  "oto_mcp/redaction.py",
+  "oto_mcp/refus_journal.py",
+  "oto_mcp/texte_tiers.py",
+  "oto_mcp/links.py",
+  "oto_mcp/slots.py",
+  "oto_mcp/spine_catalog.py",
+  "oto_mcp/version.py",
+  "oto_mcp/version_header.py",
+  "oto_mcp/sentry_setup.py",
+  "oto_mcp/hang_watch.py",
+  "oto_mcp/loop_watch.py",
+  "oto_mcp/boucles_de_fond.py",
+  "oto_mcp/maintenance.py",
+  "oto_mcp/migrer.py",
+  "oto_mcp/ferme.py",
+  "oto_mcp/scheduler.py",
+  "oto_mcp/interrupteurs.py",
+  "oto_mcp/handshake_log.py",
+  "oto_mcp/empreinte_deps.py",
+  "oto_mcp/entetes_securite.py",
+  "oto_mcp/egress.py",
+  "oto_mcp/crypto.py",
+  "oto_mcp/env_inventory.py",
+  "oto_mcp/env_secrets.py",
+  "oto_mcp/openapi.py",
+  "oto_mcp/brand.py",
+  "oto_mcp/geste.py",
+  "oto_mcp/rappel_contexte.py",
+  "oto_mcp/instructions.py",
+  "oto_mcp/outils_retires.py",
+  # Identité, organisations, droits, visibilité : partout.
+  "oto_mcp/access/**",
+  "oto_mcp/auth/__init__.py",
+  "oto_mcp/auth/anon.py",
+  "oto_mcp/auth/authorize_consent.py",
+  "oto_mcp/auth/facade.py",
+  "oto_mcp/auth/flow.py",
+  "oto_mcp/auth/hooks.py",
+  "oto_mcp/auth/pkce.py",
+  "oto_mcp/auth/platform_worker.py",
+  "oto_mcp/auth/relay*.py",
+  "oto_mcp/auth/service_identity.py",
+  "oto_mcp/auth/token_scopes.py",
+  "oto_mcp/middleware/**",
+  "oto_mcp/org_store/**",
+  "oto_mcp/credentials_store.py",
+  "oto_mcp/tenancy.py",
+  "oto_mcp/session_org.py",
+  "oto_mcp/session_visibility.py",
+  "oto_mcp/subdomain_org.py",
+  "oto_mcp/subdomain_project.py",
+  "oto_mcp/identite_instance.py",
+  "oto_mcp/instance_refs.py",
+  "oto_mcp/garde_identite.py",
+  "oto_mcp/grants_chain.py",
+  "oto_mcp/group_store.py",
+  "oto_mcp/roles.py",
+  "oto_mcp/ownership.py",
+  "oto_mcp/verrou_org.py",
+  "oto_mcp/url_perimeter.py",
+  "oto_mcp/anon_visibility.py",
+  "oto_mcp/activation.py",
+  "oto_mcp/detenteurs.py",
+  "oto_mcp/digest_lecteurs.py",
+  "oto_mcp/entitlements_catalogue.py",
+  "oto_mcp/org_origin.py",
+  "oto_mcp/account_suspension.py",
+  "oto_mcp/org_suspension.py",
+  "oto_mcp/project_exposure.py",
+  "oto_mcp/mfa_mirror.py",
+  "oto_mcp/tool_alias.py",
+  "oto_mcp/tool_registry.py",
+  "oto_mcp/tool_visibility.py",
+  # Le registre des capacités et ses adaptateurs MCP/REST.
+  "oto_mcp/capabilities/__init__.py",
+  "oto_mcp/capabilities/_*.py",
+  "oto_mcp/capabilities/registry.py",
+  "oto_mcp/capabilities/capabilities_catalog.py",
+  "oto_mcp/capabilities/orgs/**",
+  "oto_mcp/capabilities/groups/**",
+  "oto_mcp/capabilities/connectors/**",
+  "oto_mcp/capabilities/access_shadow_admin.py",
+  "oto_mcp/capabilities/account_suspension.py",
+  "oto_mcp/capabilities/admin_console.py",
+  "oto_mcp/capabilities/agent_context.py",
+  "oto_mcp/capabilities/agent_toolbox.py",
+  "oto_mcp/capabilities/api_tokens.py",
+  "oto_mcp/capabilities/editor_apps.py",
+  "oto_mcp/capabilities/federated_oauth.py",
+  "oto_mcp/capabilities/instance_health.py",
+  "oto_mcp/capabilities/me_account.py",
+  "oto_mcp/capabilities/me_credentials.py",
+  "oto_mcp/capabilities/microsoft_admin_consent.py",
+  "oto_mcp/capabilities/org_api_keys.py",
+  "oto_mcp/capabilities/org_console.py",
+  "oto_mcp/capabilities/org_suspension.py",
+  "oto_mcp/capabilities/platform_connectors.py",
+  "oto_mcp/capabilities/platform_instructions.py",
+  "oto_mcp/capabilities/platform_invites.py",
+  "oto_mcp/capabilities/profile.py",
+  "oto_mcp/capabilities/resources.py",
+  "oto_mcp/capabilities/resources_contract.py",
+  "oto_mcp/capabilities/resources_v2.py",
+  "oto_mcp/capabilities/tools_me.py",
+  "oto_mcp/capabilities/tools_visibility.py",
+  "oto_mcp/capabilities/user_locale.py",
+  "oto_mcp/capabilities/users_admin.py",
+  "oto_mcp/capabilities/vault_health.py",
+  # La machinerie commune des connecteurs (le propre d'un connecteur est dans la famille).
+  "oto_mcp/connectors/*.py",
+  "oto_mcp/providers/__init__.py",
+  "oto_mcp/providers/_model.py",
+  "oto_mcp/tools/__init__.py",
+  "oto_mcp/tools/_*.py",
+  "oto_mcp/tools/catalogue.py",
+  "oto_mcp/tools/cesures.py",
+  "oto_mcp/tools/ecriture_non_cablee.py",
+  "oto_mcp/tools/meta.py",
+  "oto_mcp/tools/whoami.py",
+  # L'API REST commune.
+  "oto_mcp/api/__init__.py",
+  "oto_mcp/api/accords.py",
+  "oto_mcp/api/alias_routes.py",
+  "oto_mcp/api/base.py",
+  "oto_mcp/api/erreur_interne.py",
+  "oto_mcp/api/hooks.py",
+  "oto_mcp/api/projects.py",
+  "oto_mcp/api/public.py",
+  "oto_mcp/api/receveurs.py",
+  "oto_mcp/api/routes.py",
+  "oto_mcp/api/routes_lourdes.py",
+  # La base : connexion, schéma assemblé, migrations, tables partagées.
+  "oto_mcp/db/__init__.py",
+  "oto_mcp/db/_*.py",
+  "oto_mcp/db/migrations/**",
+  "oto_mcp/db/schema/__init__.py",
+  "oto_mcp/db/schema/alertes.py",
+  "oto_mcp/db/schema/connectors.py",
+  "oto_mcp/db/schema/entitlements.py",
+  "oto_mcp/db/schema/grants.py",
+  "oto_mcp/db/schema/nodes.py",
+  "oto_mcp/db/schema/orgs.py",
+  "oto_mcp/db/schema/portee.py",
+  "oto_mcp/db/schema/tokens.py",
+  "oto_mcp/db/schema/users.py",
+  "oto_mcp/db/schema/visibility.py",
+  "oto_mcp/db/access_shadow.py",
+  "oto_mcp/db/activation.py",
+  "oto_mcp/db/alertes_credential.py",
+  "oto_mcp/db/backlinks.py",
+  "oto_mcp/db/blocks.py",
+  "oto_mcp/db/connector_grants.py",
+  "oto_mcp/db/connector_instances.py",
+  "oto_mcp/db/connector_settings.py",
+  "oto_mcp/db/doc_grants.py",
+  "oto_mcp/db/entitlements.py",
+  "oto_mcp/db/estampille.py",
+  "oto_mcp/db/google.py",
+  "oto_mcp/db/grants.py",
+  "oto_mcp/db/historique.py",
+  "oto_mcp/db/index_concurrent.py",
+  "oto_mcp/db/index_releve.py",
+  "oto_mcp/db/invitations_ressource.py",
+  "oto_mcp/db/keys.py",
+  "oto_mcp/db/lecture_bornee.py",
+  "oto_mcp/db/node_tables.py",
+  "oto_mcp/db/node_view.py",
+  "oto_mcp/db/nodes.py",
+  "oto_mcp/db/paths.py",
+  "oto_mcp/db/platform_instructions.py",
+  "oto_mcp/db/portee.py",
+  "oto_mcp/db/query.py",
+  "oto_mcp/db/revision.py",
+  "oto_mcp/db/sub_aliases.py",
+  "oto_mcp/db/tokens.py",
+  "oto_mcp/db/users.py",
+  "oto_mcp/db/visibility.py",
+  # Les nœuds (docs, projets, procédures, guides) partagent une seule épine.
+  "oto_mcp/capabilities/kb.py",
+  "oto_mcp/capabilities/node_edit.py",
+  "oto_mcp/capabilities/node_keys.py",
+  "oto_mcp/capabilities/node_rows.py",
+  "oto_mcp/capabilities/node_view.py",
+  "oto_mcp/capabilities/recent_changes.py",
+  "oto_mcp/db/recent_changes.py",
+  "oto_mcp/partage_en_attente.py",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fichiers sans effet sur le code servi : la mention de leur nom par un test suffit à le
+# jouer (étape 4), le socle tourne toujours.
+[[volet]]
+nom = "documentation"
+sources = [
+  "docs/**",
+  "*.md",
+  "LICENSE",
+  ".gitignore",
+  ".dockerignore",
+  ".env.example",
+  "Dockerfile",
+]
+tests = ["tests/test_docs.py", "tests/test_readme_droit_declare.py"]
+
+[[volet]]
+nom = "scripts d'exploitation"
+# Un script est joué par les tests qui le citent (étape 4).
+sources = ["scripts/**"]
+tests = []
+
+[[volet]]
+nom = "déploiement"
+sources = ["deploy/**", "tests/deploy/**"]
+tests = ["tests/deploy/test_*.py"]
+
+[[volet]]
+nom = "contrats figés"
+sources = [
+  "tests/schema_gele/**",
+  "tests/*.txt",
+  "tests/*.json",
+  "tests/api/*.txt",
+  "tests/canari/**",
+  "tests/fixtures/**",
+]
+tests = ["tests/test_schema_assembly_frozen.py", "tests/test_db_surface_frozen.py"]
+
+[[volet]]
+nom = "sélection des tests"
+sources = ["scripts/selection_tests.py", "tests/volets.toml"]
+tests = ["tests/test_selection_tests.py"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LES CONNECTEURS. `{nom}` parcourt les fournisseurs (`oto_mcp/providers/*.py`) et les
+# fiches (`oto_mcp/connectors/docs/*.md`).
+[[famille]]
+nom = "connecteur"
+noms = ["oto_mcp/providers/*.py", "oto_mcp/connectors/docs/*.md"]
+sources = [
+  "oto_mcp/tools/{nom}.py",
+  "oto_mcp/tools/{nom}_*.py",
+  "oto_mcp/providers/{nom}.py",
+  "oto_mcp/providers/{nom}_*.py",
+  "oto_mcp/connectors/docs/{nom}.md",
+  "oto_mcp/auth/{nom}.py",
+  "oto_mcp/api/{nom}.py",
+  "oto_mcp/api/{nom}_*.py",
+  "oto_mcp/capabilities/{nom}_connect.py",
+  "oto_mcp/fod/{nom}.py",
+]
+tests = [
+  "tests/**/test_{nom}.py",
+  "tests/**/test_{nom}_*.py",
+  "tests/**/test_sonde_{nom}.py",
+  # Le registre et les fiches se jugent ensemble.
+  "tests/connectors/test_*.py",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LES DOMAINES.
+[[volet]]
+nom = "datastore"
+sources = [
+  "oto_mcp/datastore/**",
+  "oto_mcp/capabilities/datastore/**",
+  "oto_mcp/db/datastore*.py",
+  "oto_mcp/db/schema/datastore.py",
+  "oto_mcp/db/row*.py",
+  "oto_mcp/tools/datastore*.py",
+  "oto_mcp/api/datastore*.py",
+]
+tests = [
+  "tests/datastore/test_*.py",
+  "tests/**/test_datastore*.py",
+  "tests/**/test_claim*.py",
+  "tests/**/test_row*.py",
+]
+
+[[volet]]
+nom = "facturation"
+sources = [
+  "oto_mcp/billing*.py",
+  "oto_mcp/billing_invoices/**",
+  "oto_mcp/mollie_client.py",
+  "oto_mcp/capabilities/billing*.py",
+  "oto_mcp/capabilities/service_commerce.py",
+  "oto_mcp/db/billing*.py",
+  "oto_mcp/db/schema/billing.py",
+  "oto_mcp/api/billing.py",
+]
+tests = ["tests/**/test_billing*.py", "tests/**/test_*factur*.py"]
+
+[[volet]]
+nom = "runner et automatisations"
+sources = [
+  "oto_mcp/runner_*.py",
+  "oto_mcp/run_*.py",
+  "oto_mcp/routine_fire.py",
+  "oto_mcp/capabilities/runner_*.py",
+  "oto_mcp/capabilities/run_thread.py",
+  "oto_mcp/capabilities/automation.py",
+  "oto_mcp/capabilities/me_abonnements.py",
+  "oto_mcp/db/runner_*.py",
+  "oto_mcp/db/run_thread.py",
+  "oto_mcp/db/user_subscriptions.py",
+  "oto_mcp/db/org_subscription_*.py",
+  "oto_mcp/db/schema/runs.py",
+]
+tests = [
+  "tests/**/test_runner*.py",
+  "tests/**/test_run_*.py",
+  "tests/**/test_routine*.py",
+  "tests/**/test_*abonnement*.py",
+  "tests/**/test_declencheur*.py",
+  "tests/**/test_portee_runner.py",
+  "tests/**/test_trigger*.py",
+]
+
+[[volet]]
+nom = "recettes"
+sources = [
+  "oto_mcp/recipes/**",
+  "oto_mcp/capabilities/recipes.py",
+  "oto_mcp/db/recipes.py",
+  "oto_mcp/db/schema/recipes.py",
+]
+tests = ["tests/**/test_recettes*.py"]
+
+[[volet]]
+nom = "transcription"
+sources = [
+  "oto_mcp/transcript.py",
+  "oto_mcp/transcription_worker.py",
+  "oto_mcp/capabilities/transcription.py",
+  "oto_mcp/db/transcription.py",
+  "oto_mcp/db/schema/transcription.py",
+]
+tests = ["tests/**/test_transcri*.py"]
+
+[[volet]]
+nom = "export de périmètre"
+sources = ["oto_mcp/export_perimetre/**", "oto_mcp/tenant_migration.py"]
+tests = ["tests/export_perimetre/test_*.py", "tests/**/test_export*.py", "tests/**/test_migrate*.py"]
+
+[[volet]]
+nom = "données publiques (fod)"
+sources = ["oto_mcp/fod/**", "oto_mcp/tools/fr.py", "oto_mcp/tools/fr_*.py", "oto_mcp/fr_registre.py", "oto_mcp/dpe_match.py", "oto_mcp/logodev.py"]
+tests = ["tests/fod/test_*.py", "tests/**/test_fod*.py", "tests/**/test_fr_*.py", "tests/**/test_foncier*.py"]
+
+[[volet]]
+nom = "fonctions"
+sources = [
+  "oto_mcp/functions/**",
+  "oto_mcp/capabilities/functions.py",
+  "oto_mcp/db/functions.py",
+  "oto_mcp/db/schema/functions.py",
+]
+tests = ["tests/**/test_function*.py"]
+
+[[volet]]
+nom = "unipile"
+sources = [
+  "oto_mcp/unipile_*.py",
+  "oto_mcp/capabilities/unipile_*.py",
+  "oto_mcp/db/unipile*.py",
+  "oto_mcp/db/schema/unipile.py",
+]
+tests = ["tests/**/test_unipile*.py"]
+
+[[volet]]
+nom = "tenants"
+sources = [
+  "oto_mcp/tenant_desactive.py",
+  "oto_mcp/tenant_vault.py",
+  "oto_mcp/capabilities/tenant*.py",
+  "oto_mcp/db/tenants.py",
+  "oto_mcp/db/schema/tenants.py",
+]
+tests = ["tests/**/test_tenant*.py"]
+
+[[volet]]
+nom = "docs et partage"
+sources = [
+  "oto_mcp/capabilities/docs/**",
+  "oto_mcp/capabilities/media_and_files.py",
+  "oto_mcp/doc_export.py",
+  "oto_mcp/doc_patch.py",
+  "oto_mcp/doc_lint.py",
+  "oto_mcp/public_doc_page.py",
+  "oto_mcp/share_ui.py",
+  "oto_mcp/tools/docs_app.py",
+  "oto_mcp/db/journal_revisions.py",
+  "oto_mcp/db/retention_revisions.py",
+]
+tests = [
+  "tests/**/test_doc_*.py",
+  "tests/**/test_docs*.py",
+  "tests/**/test_kb*.py",
+  "tests/**/test_node*.py",
+  "tests/**/test_partage*.py",
+  "tests/**/test_share_ui*.py",
+  "tests/**/test_public_doc*.py",
+  "tests/**/test_publication*.py",
+  "tests/**/test_media*.py",
+]
+
+[[volet]]
+nom = "guides"
+sources = [
+  "oto_mcp/guide_*.py",
+  "oto_mcp/guides/**",
+  "oto_mcp/capabilities/guide*.py",
+  "oto_mcp/db/guides.py",
+  "oto_mcp/db/schema/guides.py",
+  "oto_mcp/tools/guide_run.py",
+]
+tests = ["tests/**/test_guide*.py"]
+
+[[volet]]
+nom = "procédures"
+sources = [
+  "oto_mcp/procedure_*.py",
+  "oto_mcp/capabilities/procedure_console.py",
+  "oto_mcp/capabilities/partages_procedure.py",
+  "oto_mcp/capabilities/node_procedure_ref.py",
+  "oto_mcp/db/partages_procedure.py",
+  "oto_mcp/db/schema/procedures.py",
+]
+tests = ["tests/**/test_procedure*.py", "tests/**/test_partages_procedure*.py", "tests/**/test_node_procedure_ref.py"]
+
+[[volet]]
+nom = "projets"
+sources = [
+  "oto_mcp/capabilities/projects.py",
+  "oto_mcp/capabilities/project_files.py",
+  "oto_mcp/project_audit.py",
+  "oto_mcp/db/projects.py",
+  "oto_mcp/db/project_nodes.py",
+  "oto_mcp/db/schema/projects.py",
+]
+tests = ["tests/**/test_project*.py", "tests/**/test_shared_project*.py"]
+
+[[volet]]
+nom = "emails et campagnes"
+sources = [
+  "oto_mcp/email*.py",
+  "oto_mcp/outreach_optout.py",
+  "oto_mcp/capabilities/outreach.py",
+  "oto_mcp/capabilities/scheduled_emails.py",
+  "oto_mcp/db/emails.py",
+  "oto_mcp/db/outreach.py",
+  "oto_mcp/db/schema/emails.py",
+  "oto_mcp/db/schema/outreach.py",
+  "oto_mcp/tools/email.py",
+  "oto_mcp/tools/mail_obfuscation.py",
+]
+tests = ["tests/**/test_email*.py", "tests/**/test_outreach*.py", "tests/**/test_mail*.py"]
+
+[[volet]]
+nom = "fichiers"
+sources = [
+  "oto_mcp/file_*.py",
+  "oto_mcp/csv_*.py",
+  "oto_mcp/media_store.py",
+  "oto_mcp/upload_tokens.py",
+  "oto_mcp/capabilities/uploads.py",
+  "oto_mcp/api/uploads.py",
+  "oto_mcp/api/media.py",
+  "oto_mcp/db/upload_tokens.py",
+  "oto_mcp/tools/lecture.py",
+  "oto_mcp/tools/images_base64.py",
+  "oto_mcp/formula_backfill_worker.py",
+]
+tests = ["tests/**/test_file*.py", "tests/**/test_upload*.py", "tests/**/test_csv*.py", "tests/**/test_media*.py"]
+
+[[volet]]
+nom = "recherche"
+sources = [
+  "oto_mcp/search.py",
+  "oto_mcp/embeddings.py",
+  "oto_mcp/embed_worker.py",
+  "oto_mcp/rank_backfill_worker.py",
+  "oto_mcp/capabilities/search.py",
+  "oto_mcp/db/search.py",
+  "oto_mcp/db/aux_embed.py",
+  "oto_mcp/db/schema/embeddings.py",
+]
+tests = ["tests/**/test_search*.py", "tests/**/test_recherche*.py", "tests/**/test_rank*.py"]
+
+[[volet]]
+nom = "journal et suivi"
+sources = [
+  "oto_mcp/journal_secrets.py",
+  "oto_mcp/capabilities/monitoring.py",
+  "oto_mcp/capabilities/org_monitoring.py",
+  "oto_mcp/capabilities/audit_log.py",
+  "oto_mcp/capabilities/usage.py",
+  "oto_mcp/db/journal_calls.py",
+  "oto_mcp/db/journal_purge.py",
+  "oto_mcp/db/usage.py",
+  "oto_mcp/db/schema/usage.py",
+]
+tests = [
+  "tests/**/test_journal*.py",
+  "tests/**/test_monitoring*.py",
+  "tests/**/test_org_monitoring*.py",
+  "tests/**/test_usage*.py",
+  "tests/**/test_audit*.py",
+  "tests/**/test_calllog*.py",
+]
+
+[[volet]]
+nom = "documents légaux"
+sources = [
+  "oto_mcp/legal_docs.py",
+  "oto_mcp/capabilities/legal_proof.py",
+  "oto_mcp/capabilities/me_legal.py",
+  "oto_mcp/db/legal.py",
+  "oto_mcp/db/schema/legal.py",
+]
+tests = ["tests/**/test_legal*.py"]
+
+[[volet]]
+nom = "jobs jev"
+sources = ["oto_mcp/jev_jobs_worker.py", "oto_mcp/db/jev_jobs.py", "oto_mcp/db/schema/jev.py"]
+tests = ["tests/**/test_jev*.py"]
+
+[[volet]]
+nom = "shell"
+sources = ["oto_mcp/capabilities/shell.py", "oto_mcp/db/shell.py"]
+tests = ["tests/**/test_shell*.py"]
+
+[[volet]]
+nom = "navigateur"
+sources = ["oto_mcp/browser_session.py", "oto_mcp/browserbase.py", "oto_mcp/capabilities/browser_sessions.py"]
+tests = ["tests/**/test_browser*.py", "tests/**/test_substrat_navigateur*.py"]
+
+[[volet]]
+nom = "apollo (révélations)"
+sources = ["oto_mcp/apollo_receiver.py", "oto_mcp/db/apollo_reveals.py"]
+tests = ["tests/**/test_apollo*.py"]
+
+[[volet]]
+nom = "procédure de diagramme"
+sources = ["oto_mcp/procedure_diagram.py"]
+tests = ["tests/**/test_procedure_diagram*.py"]

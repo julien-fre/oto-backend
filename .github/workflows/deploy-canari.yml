@@ -109,7 +109,42 @@ jobs:
       - name: Importer l'arbre du commit, extrait de git
         run: python scripts/arbre-importable.py
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CE QUE CE PUSH JOUE (#1185, décision du 08/10/2026).
+  #
+  # La suite complète (~20 000 tests, 9 à 13 min) ne tourne plus qu'au TAG, une seule fois,
+  # avant la prod (`deploy.yml`). Ici, `test` ne joue que les volets touchés par le diff,
+  # PLUS le socle de gardes transverses — c'est lui qui couvre les rouges nés loin du fichier
+  # modifié (constat de #1111). Table et règles : `tests/volets.toml` ; le script dit dans le
+  # résumé du run ce qu'il a retenu et pourquoi.
+  #
+  # Base du diff : `before` au push (un push peut porter plusieurs commits ; le parent seul
+  # n'en verrait qu'un), la base de la PR sur une PR. Base inconnue (nouvelle branche,
+  # poussée forcée), fichier hors volet, relance manuelle : `cible` est VIDE, donc suite
+  # complète. Jamais l'inverse : un script qui échoue fait échouer le job, et `test` avec.
+  selection:
+    name: Ce que ce push joue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cible: ${{ steps.selection.outputs.cible }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # la base du diff doit être dans l'historique
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - id: selection
+        name: Volets touchés + socle
+        env:
+          # Passés par l'environnement, jamais interpolés dans le script.
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before || '') }}
+          TETE: ${{ github.sha }}
+        run: python3 scripts/selection_tests.py --base "$BASE" --tete "$TETE"
+
   test:
+    needs: [selection]
     runs-on: ubuntu-latest
     timeout-minutes: 20  # max observé 9 min 58 s — le plus long de la chaîne
     steps:
@@ -161,7 +196,11 @@ jobs:
         # drapeau, il est inerte (`tests/test_groupes_xdist_963.py` refuse un `-n` sans lui).
         env:
           OTO_TEST_PG_PLACES: "4"
-        run: pytest -q -n 4 --dist loadgroup --durations=25
+          CIBLE: ${{ needs.selection.outputs.cible }}
+        # `$CIBLE` sans guillemets : une liste de chemins à découper (vide = suite complète).
+        run: |
+          # shellcheck disable=SC2086
+          pytest -q -n 4 --dist loadgroup --durations=25 $CIBLE
 
   # ─────────────────────────────────────────────────────────────────────────────
   # CE QUE PÈSE UNE COLLECTE, SUR LA MACHINE QUI L'EXÉCUTE.

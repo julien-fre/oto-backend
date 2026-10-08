@@ -24,7 +24,12 @@ Code (web) ciblaient la branche de prod par défaut et se faisaient refuser par 
 - **`main` = tronc = PREPROD.** On travaille directement dans le checkout du dépôt :
   `git pull --rebase` avant de bosser, commit, puis `git pull --rebase && git push` →
   **déploiement preprod automatique** (`mcp.oto.ninja` / `manage.oto.ninja`, porte
-  `needs: test`). On ne commite sur `main` que du shippable en preprod. Les PR ouvertes par
+  `needs: test`). Depuis le 08/10/2026 (#1185), ce `test` ne joue que les **volets touchés**
+  par le diff (base = `before` du push) **plus le socle** de gardes transverses (sortie
+  déclarée des capacités, façade d'erreur MCP, contrat servi, concordance carte/client,
+  portée, inventaire d'env, silences, SQL hors boucle, surfaces figées) : table
+  `tests/volets.toml`, script `scripts/selection_tests.py`, le résumé du run dit ce qui a été
+  retenu et pourquoi. Base inconnue, fichier transverse ou hors volet : suite complète. On ne commite sur `main` que du shippable en preprod. Les PR ouvertes par
   Claude Code (web) ciblent `main` : elles déploient la preprod **au merge**.
 - **tag `vX.Y.Z` = PROD.** La mise en prod est un **acte explicite** : poser le tag sur un
   commit de `main` et le pousser déclenche « Deploy prod » (garde → déploiement → healthcheck
@@ -32,12 +37,19 @@ Code (web) ciblaient la branche de prod par défaut et se faisaient refuser par 
   (ruleset GitHub : un tag de release ne se re-pointe pas). Côté backend, le tag est passé
   au script serveur (`oto-backend.sh <tag>` : `git reset --hard <tag>`). Côté dashboard :
   artefact seul, build au tag.
-- **La prod n'a plus à rejouer la suite** (depuis le 08/09/2026) : elle **exige qu'un run de
-  préprod vert existe sur le sha exact du tag** (`scripts/garde_preprod_verte.py`) et refuse
-  sinon, en nommant le run lu et sa conclusion. Donc : taguer un commit **déjà poussé sur
+- **La suite complète tourne au tag, une seule fois** (#1185, 08/10/2026) : le job `test` de
+  « Deploy prod » la joue sur l'arbre du tag et `deploy` l'attend. La prod est donc servie
+  après la durée de la suite (~9-13 min), plus ~1 min 30 après le tag. Une relance « Re-run
+  failed jobs » ne rejoue pas un `test` déjà vert. Sur un rouge, le résumé du run dit si
+  chaque fichier rouge aurait été joué au push (constat demandé par #1185 ; sélection
+  recalculée parent → sha, donc approchée).
+- **La prod exige aussi une préprod verte** : un run de préprod vert sur le sha exact du tag
+  (`scripts/garde_preprod_verte.py`), refusé sinon, en nommant le run lu et sa conclusion.
+  Ce vert dit « déployé en préprod, sélection et socle verts », **pas** « suite complète ». Donc : taguer un commit **déjà poussé sur
   `main`** et dont le run « Deploy preprod » est vert. Porte de secours (run purgé, incident
   GitHub) : « Deploy prod » en `workflow_dispatch` avec `sans_garde_preprod: true` —
-  délibéré, tracé, hors d'atteinte d'une simple poussée de tag.
+  délibéré, tracé, hors d'atteinte d'une simple poussée de tag. Il ne contourne que la
+  garde : la suite complète du tag tourne toujours.
 - ⚠️ **La fenêtre du healthcheck serveur est finie** (120 s à ce jour, ~60 s constatés à
   l'origine) : un lot qui ajoute un travail one-shot au boot (re-projection, migration au
   démarrage) la vérifie — et l'élargit — **avant** le tag, sinon rollback automatique sur un

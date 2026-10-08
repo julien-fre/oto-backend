@@ -108,7 +108,8 @@ jobs:
     needs: tag
     if: ${{ !inputs.dry_run }}
     # Appel EXPLICITE : le tag posé ci-dessus ne déclenchera pas `Deploy prod`
-    # tout seul (garde anti-récursion du GITHUB_TOKEN).
+    # tout seul (garde anti-récursion du GITHUB_TOKEN). Ce chemin passe, lui aussi,
+    # par la suite complète (job `test` de `deploy.yml`, #1185) avant de déployer.
     uses: ./.github/workflows/deploy.yml
     with:
       tag: ${{ needs.tag.outputs.version }}

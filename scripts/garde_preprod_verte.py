@@ -15,6 +15,14 @@ Ce script remplace ce rejeu. Il ne relâche rien : il **durcit**. Ce qui était 
 main avant chaque tag — « un run de préproduction `completed/success` existe sur ce sha
 exact » — devient mécanique, et refuse au lieu d'être oublié.
 
+⚠️ DEPUIS LE 08/10/2026 (#1185), CE VERT NE VAUT PLUS « SUITE COMPLÈTE ». Au push sur
+`main`, le job `test` de la préproduction ne joue plus que les volets touchés par le diff
+et le socle de gardes transverses (`scripts/selection_tests.py`). La suite complète tourne
+de nouveau au tag, une seule fois, dans le job `test` de `deploy.yml`, que `deploy` attend.
+Cette garde garde son rôle : refuser de mettre en production un arbre que la préproduction
+n'a pas servi et jugé vert (déploiement fait, sélection et socle verts). Elle ne prétend
+plus, à elle seule, que la suite entière est passée.
+
 CE QU'IL EXIGE, ET POURQUOI CHAQUE FILTRE EST LÀ.
 
 1. `event=push` ET `head_branch=main`. Sur un événement `pull_request`, le `head_sha` d'un
@@ -65,7 +73,8 @@ import urllib.request
 
 # Le workflow de préproduction, par son CHEMIN (cf. §2 du préambule).
 WORKFLOW_PREPROD = ".github/workflows/deploy-canari.yml"
-# Le job dont la conclusion fait foi. C'est celui qui joue `pytest -q`.
+# Le job dont la conclusion fait foi. En préproduction, il joue la SÉLECTION du push
+# (volets touchés + socle), pas la suite complète, qui tourne au tag (#1185).
 JOB_EXIGE = "test"
 
 CODE_ACCEPTE = 0
@@ -134,14 +143,14 @@ def _run_en_vol(rid, cree, jobs: list) -> str:
         # rouge. Ce qui est vrai dans les deux cas, c'est qu'aucun verdict vert sur la
         # suite ne sortira de CE run — donc que patienter ne sert à rien.
         return (
-            "{} et son job « {} » conclut DÉJÀ « {} » — aucun verdict vert sur la suite "
+            "{} et son job « {} » conclut DÉJÀ « {} » — aucun verdict vert de préproduction "
             "ne sortira de ce run, inutile d'attendre.".format(
                 tete, JOB_EXIGE, vise[0].get("conclusion")
             )
         )
     return (
-        "{} et la suite tourne ENCORE (job « {} » : {}). Compter ~9 min depuis le début "
-        "du run.".format(
+        "{} et la sélection de préproduction tourne ENCORE (job « {} » : {}). Compter la "
+        "durée de la sélection, au plus celle de la suite complète (~9 min).".format(
             tete,
             JOB_EXIGE,
             (vise[0].get("status") if vise else "pas encore démarré"),
@@ -224,7 +233,7 @@ def juger(tag: str, sha: str, runs: list, jobs_de) -> Verdict:
         return Verdict(
             True,
             "Verdict réutilisé : le run {} du {} a éprouvé l'arbre {} en préproduction "
-            "(job « {} » : success). La suite n'est pas rejouée.".format(
+            "(job « {} » : success). La suite complète se joue au tag, avant le déploiement.".format(
                 rid, cree, sha, JOB_EXIGE
             ),
         )
