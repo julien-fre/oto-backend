@@ -14,6 +14,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from oto_mcp.mcp_errors import McpError
+
+
 class _Rc:
     """Stand-in for `ResolvedCredential`: the two attributes `_client` reads."""
 
@@ -359,6 +361,8 @@ def platform_usage(monkeypatch):
     ("forager_person", {"op": "work_emails", "person_id": 1}),
     ("forager_autocomplete", {"op": "locations", "q": "Paris"}),
     ("forager_account", {}),
+    ("forager_feedback", {"op": "phone_number", "contact_status": "connected",
+                          "is_correct_person": True, "phone_number": "+33100000000"}),
 ])
 def test_platform_key_refuses_everything_but_phone_numbers(client, key_mode, tool, kwargs):
     key_mode["platform"] = True
@@ -372,15 +376,38 @@ def test_platform_key_runs_phone_numbers_and_meters_it(client, key_mode, trace, 
     client.lookup_person_phone_numbers.return_value = [{"phone_number": "+33100000000"}]
     out = _tool("forager_person")(op="phone_numbers", person_id=7)
     assert out == [{"phone_number": "+33100000000"}]
-    assert trace == {"found_phones": 1}
+    assert trace == {"found_work_emails": 0, "found_personal_emails": 0,
+                     "found_phones": 1, "quantity": 1}
     assert platform_usage == ["forager"]
 
 
 def test_a_miss_traces_zero_phones(client, trace, platform_usage):
     client.lookup_person_phone_numbers.return_value = []
     _tool("forager_person")(op="phone_numbers", linkedin_public_identifier="someone")
-    assert trace == {"found_phones": 0}
+    assert trace == {"found_work_emails": 0, "found_personal_emails": 0,
+                     "found_phones": 0, "quantity": 0}
     assert platform_usage == [], "own key: nothing debited on the platform counters"
+
+
+def test_a_miss_on_the_platform_key_traces_zero_and_bills_nothing(
+        client, key_mode, trace, platform_usage):
+    """A miss on OUR key: `quantity=0`, so the aggregated view (NULL reads 1) does not
+    count it as a billed lookup."""
+    key_mode["platform"] = True
+    client.lookup_person_phone_numbers.return_value = []
+    _tool("forager_person")(op="phone_numbers", person_id=7)
+    assert trace["found_phones"] == 0 and trace["quantity"] == 0
+
+
+def test_the_billing_lens_reads_the_trace_as_found_phones(client, trace, platform_usage):
+    """The trace goes through the lens as the billing consumer reads it: `_found_from_row`
+    is ALL OR NOTHING over the three `found_*` (a lone `found_phones` read `None`)."""
+    from oto_mcp.db.usage import BILLABLE_FOUND_ARGS, _found_from_row
+
+    client.lookup_person_phone_numbers.return_value = [{"phone_number": "+33100000000"}]
+    _tool("forager_person")(op="phone_numbers", person_id=7)
+    ligne = {arg: str(trace[arg]) for arg in BILLABLE_FOUND_ARGS.values()}
+    assert _found_from_row(ligne) == {"work_emails": 0, "personal_emails": 0, "phones": 1}
 
 
 def test_own_key_still_runs_every_op(client):

@@ -1126,6 +1126,28 @@ def set_credential(
                     expected_version=expected_version)
 
 
+def set_platform_key(label: str, connector: str, secret: str,
+                     set_by: Optional[str] = None) -> None:
+    """Pose une clé PLATEFORME (console admin). Un connecteur sans palier gratuit
+    (`platform_key_open=False`) la reçoit FERMÉE : elle ne sert que les orgs accordées
+    (`grant_platform`). Sans ça, la ligne naissait `share_mode='open'` (défaut de la
+    colonne) avec un `share_down` vide, que `access.platform_grant` lit « ouvert à
+    tous » : entre la pose et le premier accord, n'importe quel compte sans clé à lui
+    consommait la clé payante d'oto, sans plafond (`default_quota=0`). Une rotation
+    sur une clé déjà accordée la laisse fermée ; un connecteur à palier gratuit garde
+    sa clé ouverte."""
+    c = providers.REGISTRY.get(connector)
+    ouverte = bool(c and getattr(c, "platform_key_open", False))
+    with _connect() as conn:
+        set_credential(PLATFORM, label, connector, secret, set_by=set_by, conn=conn)
+        if not ouverte:
+            conn.execute(
+                "UPDATE connector_credentials SET share_mode = 'closed' "
+                "WHERE entity_type = %s AND entity_id = %s AND connector = %s "
+                "AND account = ''",
+                (PLATFORM, label, connector))
+
+
 def clear_credential(entity_type: str, entity_id: str, connector: str, conn=None,
                      account: str = "") -> bool:
     """Supprime le credential (ce `account` ; '' = mono-compte). `conn` fourni →

@@ -111,6 +111,9 @@ def socle(monkeypatch):
                         vus.append(("set", et, eid, conn, set_by)))
     monkeypatch.setattr(credentials_store, "clear_credential",
                         lambda et, eid, conn, **kw: vus.append(("clear", et, eid, conn)) or True)
+    monkeypatch.setattr(credentials_store, "set_platform_key",
+                        lambda label, conn, secret, set_by=None:
+                        vus.append(("set", credentials_store.PLATFORM, label, conn, set_by)))
 
     class _Store:
         def list_datastores(self):
@@ -314,7 +317,7 @@ def test_un_coffre_qui_refuse_le_provider_est_nomme(monkeypatch, socle, super_ad
     def _boum(*a, **kw):
         raise ValueError("serper n'accepte pas de clé plateforme")
 
-    monkeypatch.setattr(credentials_store, "set_credential", _boum)
+    monkeypatch.setattr(credentials_store, "set_platform_key", _boum)
     code, out = call("platform.key.create",
                      body={"provider": "serper", "label": "p", "api_key": "K"})
     assert code == 400 and out["error"] == "invalid_platform_provider"

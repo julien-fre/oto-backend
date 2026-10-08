@@ -23,3 +23,21 @@ def test_a_json_blob_still_unpacks_whole():
 def test_a_single_field_connector_is_unchanged():
     assert credentials_store.platform_fields("serper", "sk-1") == \
         credentials_store.unpack_secret("serper", "sk-1")
+
+
+def test_a_resolved_platform_credential_reads_its_fields_through_platform_fields():
+    """`ResolvedCredential.fields` on the platform key takes the raw-value path; a BYO
+    key still unpacks strictly."""
+    from oto_mcp.access.resolved_credential import ResolvedCredential
+
+    def rc(is_platform: bool):
+        r = ResolvedCredential.__new__(ResolvedCredential)
+        object.__setattr__(r, "provider", "forager")
+        object.__setattr__(r, "secret", "fg-raw-key")
+        object.__setattr__(r, "is_platform", is_platform)
+        return r
+
+    assert rc(True).fields == {"api_key": "fg-raw-key"}
+    import pytest
+    with pytest.raises(credentials_store.SecretUnpackError):
+        rc(False).fields

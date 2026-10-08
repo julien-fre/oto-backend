@@ -11,7 +11,10 @@ are strings; cast to `int` before using them in a search `filters` dict.
 
 Credential = `X-API-KEY` header + an optional `account_id` (generic
 multi-field model, ADR 0011 — resolved via
-`access.resolve_credential_fields("forager")`, not `resolve_api_key`).
+`access.resolve_credential("forager").fields`, not `resolve_api_key`).
+The SHARED (platform) key, granted per org, serves ONE lookup only:
+`forager_person op="phone_numbers"` (`PLATFORM_OPS`); every other op needs the
+customer's own key.
 `account_id` scopes every datastorage/subscriptions call and is normally
 resolved automatically from `GET /api/users/current/` (`ForagerClient`,
 oto-core) — it only needs to be entered explicitly if the key has access to
@@ -90,10 +93,14 @@ def register(mcp: FastMCP) -> None:
         credit is spent."""
         rc = access.resolve_credential("forager", want="auto")
         if rc.is_platform and (tool, op) not in PLATFORM_OPS:
+            from ..auth.hooks import current_user_sub_from_token
+            from .. import links
+            sub = current_user_sub_from_token()
             raise _bad(
                 f"{tool}{f' op={op!r}' if op else ''} needs your own Forager key: the "
                 "shared key only covers phone lookups (forager_person "
-                "op='phone_numbers'). Set your key on the Forager connector.")
+                "op='phone_numbers'). Set your own key"
+                f"{links.ou_poser_la_cle(sub, org=access.current_org(sub), connecteur='forager')}.")
         creds = rc.fields
         return (ForagerClient(api_key=creds.get("api_key"),
                               account_id=creds.get("account_id")), rc.is_platform)
@@ -146,7 +153,7 @@ def register(mcp: FastMCP) -> None:
         - locations / locations_exclude ([int] IDs — resolve via
           `forager_autocomplete(op="locations", q=...)`)
         """
-        client, _ = _client("forager_job_post")
+        client, _ = _client("forager_job_post", op)
         f = filters or {}
         try:
             if op == "search":
@@ -186,7 +193,7 @@ def register(mcp: FastMCP) -> None:
         `op="website"`: bills a credit — pass exactly ONE of `domain`,
         `organization_id`, `organization_linkedin_public_identifier`.
         """
-        client, _ = _client("forager_organization")
+        client, _ = _client("forager_organization", op)
         try:
             if op in ("search", "totals"):
                 _refuse_ignored(
@@ -230,7 +237,9 @@ def register(mcp: FastMCP) -> None:
     ) -> object:
         """A person's profile, contact details, or a role-based search across people.
 
-        Each op below bills a credit.
+        Each op below bills a credit. On the SHARED key (granted by oto, no key of
+        your own), only `op="phone_numbers"` runs; every other op asks for your own
+        Forager key.
 
         `op="detail"`/`"work_emails"`/`"personal_emails"`/`"phone_numbers"`:
         pass exactly ONE of `person_id` / `linkedin_public_identifier`.
@@ -294,7 +303,13 @@ def register(mcp: FastMCP) -> None:
                 # consumer filters on `key_mode`. `found_phones` = how many PEOPLE came
                 # back with at least one number (0 or 1 here: a miss is `[]`, and
                 # Forager does not bill it). A fact, no rate: the price is the partner's.
-                session_org.note_call_trace(found_phones=1 if phones else 0)
+                # The billing lens reads the three `found_*` ALL OR NOTHING
+                # (`db/usage._found_from_row`): the two email counts are traced at 0.
+                # `quantity` = the same 0/1, so the aggregated view (NULL reads 1)
+                # does not count a miss as a billed lookup.
+                trouve = 1 if phones else 0
+                session_org.note_call_trace(found_work_emails=0, found_personal_emails=0,
+                                            found_phones=trouve, quantity=trouve)
                 if is_platform:
                     access.record_platform_usage("forager")
                 return phones
@@ -356,7 +371,7 @@ def register(mcp: FastMCP) -> None:
         (the live-call outcome). Requires `phone_number`.
         `name`/`person_id` are optional context, not required for either.
         """
-        client, _ = _client("forager_feedback")
+        client, _ = _client("forager_feedback", op)
         try:
             if op in ("personal_email", "work_email"):
                 _refuse_ignored(op, "use op='phone_number' for a phone number", phone_number=phone_number)
@@ -392,7 +407,7 @@ def register(mcp: FastMCP) -> None:
         as a STRING (confirmed live) — cast to `int` before putting it in a
         `filters` dict, whose fields are typed as integer arrays.
         """
-        client, _ = _client("forager_autocomplete")
+        client, _ = _client("forager_autocomplete", op)
         try:
             return getattr(client, f"autocomplete_{op}")(q, page=page)
         except ValueError as e:
@@ -420,7 +435,7 @@ def register(mcp: FastMCP) -> None:
         `op="balance_totals"`: total credits spent in
         `[date_created_start, date_created_end]` — no `page`.
         """
-        client, _ = _client("forager_account")
+        client, _ = _client("forager_account", op)
         try:
             if op == "me":
                 _refuse_ignored(
