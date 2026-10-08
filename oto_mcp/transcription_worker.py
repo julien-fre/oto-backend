@@ -37,11 +37,19 @@ from .crypto import decrypt as _decrypt
 
 logger = logging.getLogger(__name__)
 
-# Un seul travail à la fois : chacun peut tenir un thread du pool jusqu'à 300 s
-# (le délai du client Mistral), un lot plus large tiendrait juste la file plus
-# longtemps pour rien. Poll court : contrairement à l'extraction de fichiers,
-# une transcription est un travail que l'agent ATTEND (il relit le statut).
+# Poll court : contrairement à l'extraction de fichiers, une transcription est un
+# travail que l'agent ATTEND (il relit le statut).
 _POLL_S = 5
+# Travaux menés DE FRONT. À 1 (jusqu'au 08/10/2026), la file était sérialisée : un
+# dépôt de 20 fichiers par un agent attendait 20 appels Mistral bout à bout (30 s à
+# 5 min chacun), et les lots suivants dépassaient la patience de l'agent (signal
+# #1370 : 22 lots abandonnés). Chaque travail tient un thread du pool jusqu'à 300 s :
+# 3 en garde largement assez au reste du serveur. Borné aussi pour Mistral, qui
+# limite le débit par clé (un 429 échoue le travail, il ne se retente pas).
+CONCURRENCE = 3
+# Le ménage des travaux orphelins (processus arrêté en plein appel) : une fois par
+# minute suffit, ils sont rares et leur délai se compte en minutes.
+_MENAGE_S = 60
 
 
 def _aad(audio_key: str) -> str:
@@ -175,13 +183,36 @@ def _transcribe_batch() -> int:
     return 1
 
 
-async def run_transcription_loop(interval: int = _POLL_S) -> None:
-    logger.info("transcription_worker: démarré (poll %ss).", interval)
+async def _ouvrier(numero: int, interval: int) -> None:
+    """Une voie de la file. Les voies réclament chacune leur travail (`FOR UPDATE
+    SKIP LOCKED`) : jamais deux sur la même ligne. Une voie qui vient de finir un
+    travail repasse AUSSITÔT — elle ne dort que quand la file est vide."""
     while True:
+        traites = 0
         try:
             traites = await run_in_threadpool(_transcribe_batch)
             if traites:
-                logger.info("transcription_worker: %d travail(aux) traité(s).", traites)
-        except Exception as e:  # noqa: BLE001 — un tour raté ne tue pas la boucle
-            logger.warning("transcription_worker: tour en échec : %s", e)
+                logger.info("transcription_worker[%d]: %d travail traité.", numero, traites)
+        except Exception as e:  # noqa: BLE001 — un tour raté ne tue pas la voie
+            logger.warning("transcription_worker[%d]: tour en échec : %s", numero, e)
+        if not traites:
+            await asyncio.sleep(interval)
+
+
+async def _menage(interval: int = _MENAGE_S) -> None:
+    """Clôt les travaux `running` qu'aucun tour ne porte plus (cf.
+    `db.fail_orphaned_transcription_jobs`)."""
+    while True:
+        try:
+            n = await run_in_threadpool(db.fail_orphaned_transcription_jobs)
+            if n:
+                logger.warning("transcription_worker: %d travail(aux) orphelin(s) clos.", n)
+        except Exception as e:  # noqa: BLE001 — le ménage raté ne tue pas la file
+            logger.warning("transcription_worker: ménage en échec : %s", e)
         await asyncio.sleep(interval)
+
+
+async def run_transcription_loop(interval: int = _POLL_S) -> None:
+    logger.info("transcription_worker: démarré (%d voies, poll %ss).", CONCURRENCE, interval)
+    await asyncio.gather(_menage(),
+                         *(_ouvrier(i, interval) for i in range(CONCURRENCE)))

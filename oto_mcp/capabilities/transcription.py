@@ -21,6 +21,9 @@ portée sur le travail — aucune colonne plaintext.
 """
 from __future__ import annotations
 
+import math
+import statistics
+from datetime import datetime
 from typing import Callable, Literal, Optional
 
 from pydantic import BaseModel
@@ -35,7 +38,7 @@ from .registry import CAPABILITIES
 # Plafond d'un AUDIO à transcrire, plus large que celui d'un fichier de projet (25 Mo) :
 # une réunion de 2 h pèse ~45 Mo en mono 48 kbps. Mistral accepte 500 Mo et 3 h par
 # requête ; la borne est la nôtre — le fichier tient en RAM au dépôt comme au worker,
-# qui n'en traite qu'un à la fois. 100 Mo = 3 h en mono 64 kbps.
+# qui en mène `CONCURRENCE` de front (3 × 100 Mo au pire). 100 Mo = 3 h en mono 64 kbps.
 MAX_AUDIO_BYTES = 100 * 1024 * 1024
 
 # `language` vide = cette langue ; `auto` = détection par le fournisseur (aucune langue
@@ -128,6 +131,39 @@ def relire(sub: str, job_id: int, *, transcript: bool) -> dict:
             out["transcript"] = job.get("transcript")
     elif job["status"] == "failed":
         out["error"] = job["error"]
+    elif job["status"] == "pending":
+        out.update(position_en_file(db.transcription_queue(int(job["id"]))))
+    elif job["status"] == "running":
+        out["retry_after_s"] = _RELIRE_S
+        out["note"] = ("Being transcribed now (up to 5 min for a long recording). "
+                       f"Re-read in {_RELIRE_S} s; do not resubmit.")
+    return out
+
+
+# Relire un travail en cours ou en file : assez souvent pour suivre, pas assez pour
+# saturer (un appel Mistral dure de 30 s à 5 min).
+_RELIRE_S = 30
+
+
+def position_en_file(file: dict) -> dict:
+    """La place d'un travail `pending` et une ESTIMATION d'attente, tirée du débit réel
+    de la file : l'écart médian entre les dernières fins (`finishes`, plus récente
+    d'abord). Ce débit compte déjà la concurrence du worker. Sans assez de fins récentes
+    pour le mesurer, pas d'estimation (`null`) plutôt qu'un chiffre inventé."""
+    ahead = int(file["ahead"])
+    fins: list[datetime] = list(file["finishes"])
+    ecarts = [(a - b).total_seconds() for a, b in zip(fins, fins[1:])]
+    estimation = None
+    if ecarts:
+        par_travail = max(statistics.median(ecarts), 1.0)
+        estimation = int(math.ceil((ahead + 1) * par_travail))
+    out = {"queue_position": ahead, "estimated_wait_s": estimation,
+           "retry_after_s": _RELIRE_S}
+    attente = (f"about {estimation} s (estimate from the queue's recent pace)"
+               if estimation is not None else "unknown (no recent pace to measure)")
+    out["note"] = (f"Queued: {ahead} job(s) ahead, wait {attente}. The job stays "
+                   f"queued until it runs — re-read every {_RELIRE_S} s, do not resubmit "
+                   "(a second job only lengthens the queue).")
     return out
 
 
@@ -188,6 +224,13 @@ class TranscriptionJob(BaseModel):
     vocabulary_terms: Optional[int] = None
     vocabulary_dropped: Optional[list[str]] = None
     transcript: Optional[list[TranscriptionTurn]] = None
+    # `pending` : la place en file (travaux plus anciens devant) et une ESTIMATION
+    # d'attente en secondes (`null` sans débit récent mesurable). `pending`/`running` :
+    # quand relire, et une note pour l'agent.
+    queue_position: Optional[int] = None
+    estimated_wait_s: Optional[int] = None
+    retry_after_s: Optional[int] = None
+    note: Optional[str] = None
 
 
 def _projet_ecrivable(ctx: ResolvedCtx, pid: int) -> None:
@@ -237,7 +280,9 @@ CAPABILITIES += [
         key="me.transcription.read", handler=_read, Input=TranscriptionReadInput,
         authz=SUB_ONLY, Output=TranscriptionJob,
         description=(
-            "A transcription job: `status` pending|running|done|failed. On `done`, the "
+            "A transcription job: `status` pending|running|done|failed. On `pending`, "
+            "`queue_position` (jobs ahead) and `estimated_wait_s` (an estimate, `null` "
+            "when unknown); on `pending`/`running`, `retry_after_s`. On `done`, the "
             "page `{id, project_id, title, url}`, words, duration_s, speakers, and "
             "`transcript` — the speaker turns `[{speaker, start, end, text}]` (seconds). "
             "On `failed`, `error`."

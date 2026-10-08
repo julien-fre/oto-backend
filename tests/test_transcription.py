@@ -240,6 +240,8 @@ def monde(monkeypatch):
     monkeypatch.setattr(db, "get_transcription_job", _get_job)
     monkeypatch.setattr(db, "mark_transcription_job_done", _mark_done)
     monkeypatch.setattr(db, "mark_transcription_job_failed", _mark_failed)
+    monkeypatch.setattr(db, "transcription_queue",
+                        lambda jid: etat.get("file", {"ahead": 0, "finishes": []}))
 
     def _post(url, headers=None, data=None, files=None, timeout=None, json=None):
         etat["envois"].append({"url": url, "headers": headers, "data": data,
@@ -568,3 +570,65 @@ def test_un_credential_qui_ne_resout_pas(all_tools, rest, monde, monkeypatch):
     with pytest.raises(McpError, match="non activé"):
         _appeler(all_tools, source=_pf())
     assert monde["jobs"] == {}
+
+
+# --- la file : place, estimation, voies (signal #1370) ------------------------------
+
+def test_un_travail_en_file_dit_sa_place_et_quand_relire(all_tools, monde):
+    from datetime import datetime, timedelta
+    t0 = datetime(2026, 10, 8, 12, 0, 0)
+    monde["file"] = {"ahead": 4, "finishes": [t0, t0 - timedelta(seconds=30),
+                                              t0 - timedelta(seconds=60)]}
+    ref = _appeler(all_tools, source=_pf())
+    out = _statut(all_tools, ref["job_id"])
+    assert out["status"] == "pending" and out["queue_position"] == 4
+    # 5 travaux à passer (4 devant + lui) au rythme mesuré d'un toutes les 30 s.
+    assert out["estimated_wait_s"] == 150 and out["retry_after_s"] == 30
+    assert "estimate" in out["note"] and "do not resubmit" in out["note"]
+
+
+def test_sans_debit_recent_l_attente_est_inconnue_jamais_inventee(all_tools, monde):
+    ref = _appeler(all_tools, source=_pf())
+    out = _statut(all_tools, ref["job_id"])
+    assert out["queue_position"] == 0 and out["estimated_wait_s"] is None
+    assert "unknown" in out["note"]
+
+
+def test_un_travail_en_cours_dit_quand_relire(all_tools, monde):
+    ref = _appeler(all_tools, source=_pf())
+    monde["jobs"][ref["job_id"]]["status"] = "running"
+    out = _statut(all_tools, ref["job_id"])
+    assert out["retry_after_s"] == 30 and "do not resubmit" in out["note"]
+    assert "queue_position" not in out
+
+
+def test_la_file_est_servie_par_plusieurs_voies(monkeypatch):
+    """À une seule voie, 20 fichiers déposés passaient bout à bout (signal #1370)."""
+    import threading
+    import time
+
+    from oto_mcp import transcription_worker as w
+
+    etat = {"en_cours": 0, "max": 0}
+    verrou = threading.Lock()
+
+    def _lot():
+        with verrou:
+            etat["en_cours"] += 1
+            etat["max"] = max(etat["max"], etat["en_cours"])
+        time.sleep(0.2)
+        with verrou:
+            etat["en_cours"] -= 1
+        return 1
+
+    monkeypatch.setattr(w, "_transcribe_batch", _lot)
+    monkeypatch.setattr(w.db, "fail_orphaned_transcription_jobs", lambda: 0)
+
+    async def _tourner():
+        try:
+            await asyncio.wait_for(w.run_transcription_loop(interval=5), timeout=0.6)
+        except asyncio.TimeoutError:
+            pass
+
+    asyncio.run(_tourner())
+    assert w.CONCURRENCE > 1 and etat["max"] == w.CONCURRENCE

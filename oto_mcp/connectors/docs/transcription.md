@@ -18,6 +18,7 @@ one instance = one key × one language × one vocabulary; a project attaches to 
 - `vocabulary` (optional) supplements, for this recording, the instance's vocabulary (proper names, site materials); `vocabulary_replace=true` uses it alone. 100 words at most in total, the instance takes precedence
 - the file is read server-side, never carried through the conversation (100 MB at most, up to 3 h of audio; a project file remains limited to 25 MB at upload)
 - **the call does not block**: it immediately returns `{job_id, status:"pending"}` — a 30 min recording takes 20 s to 5 min to transcribe, as a background task
+- while `pending`, the status gives the place in the queue (`queue_position`, jobs ahead) and an ESTIMATED wait (`estimated_wait_s`, from the queue's recent pace — `null` when unknown); the queue runs several jobs at once, a queued job is never lost: re-read after `retry_after_s`, never resubmit
 - re-read `transcription_status(job_id)` until `status:"done"` (or `"failed"` with `error`): that is where the page "Transcription — <file> — <date>" comes back (id, title, link), one paragraph per speaker turn with the speaker and the moment at the head ("Locuteur 1 [03:12]"…), the word count, the duration and the speakers — never the text, which is then read like any project page
 
 ## usage — from a program (REST API, `oto_…` token)

@@ -81,8 +81,11 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def transcription_status(job_id: int) -> dict:
         """Read a transcription job started by `transcription_create`. Returns
-        `{status: pending|running|done|failed, ...}` — on `done`, the page
-        `{id, title, url}` plus words/duration/speakers; on `failed`, `error`."""
+        `{status: pending|running|done|failed, ...}` — on `pending`, its place in the
+        queue (`queue_position`) and an ESTIMATED wait (`estimated_wait_s`); on
+        `pending`/`running`, `retry_after_s`: re-read then, a queued job is never lost,
+        do not resubmit it. On `done`, the page `{id, title, url}` plus
+        words/duration/speakers; on `failed`, `error`."""
         sub = access.current_user_sub_or_raise()
         try:
             return _transcription.relire(sub, int(job_id), transcript=False)
