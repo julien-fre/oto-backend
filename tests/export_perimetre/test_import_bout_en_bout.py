@@ -751,10 +751,6 @@ def anciens(pg_dsn):
                       "(%s, %s, 'serper', 'ancien')", (alice, o, JUMEAU, o, JUMEAU, o))
             c.execute("INSERT INTO unipile_accounts (sub, org_id, provider, account_id) "
                       "VALUES (%s, %s, 'LINKEDIN', 'u-ancien')", (JUMEAU, o))  # FK → users
-            # Une clé unique sur EXPRESSION (`COALESCE(sub, '')`, ns_id, colonne).
-            c.execute("INSERT INTO origine_ecritures (sub, org_id, ns_id, colonne) VALUES "
-                      "(%s, %s, 1, 'nom'), (%s, %s, 1, 'nom'), (%s, %s, 1, 'autre')",
-                      (alice, o, JUMEAU, o, JUMEAU, o))
             for ancien in (JUMEAU, ORPHELIN):
                 c.execute("INSERT INTO runs (run_id, sub, org_id, label) "
                           "VALUES (%s, %s, %s, 'ancien')", (f"run-{ancien}", ancien, o))
@@ -799,7 +795,6 @@ def test_le_manifeste_compte_les_lignes_rattachees_et_omises(export_anciens):
             "connector_selection_seeded": {"omises_doublon": 1},
             "user_selected_connectors": {"rattachees": 1, "omises_doublon": 1},
             "unipile_accounts": {"rattachees": 1},
-            "origine_ecritures": {"rattachees": 1, "omises_doublon": 1},
             "runs": {"rattachees": 1, "omises_sans_jumeau": 1},
             "run_messages": {"omises_avec_leur_parent": 1},
             "org_member_events": {"rattachees": 1, "omises_sans_jumeau": 1},
@@ -839,9 +834,6 @@ def test_l_import_passe_et_rattache_les_lignes_au_compte_nu_du_jumeau(
             [{"connector": "apollo", "origin": "jumeau"},
              {"connector": "serper", "origin": "ancien"}]
         assert c.execute("SELECT sub FROM unipile_accounts").fetchall() == [{"sub": JUMEAU}]
-        assert c.execute("SELECT sub, colonne FROM origine_ecritures ORDER BY colonne"
-                         ).fetchall() == [{"sub": JUMEAU, "colonne": "autre"},
-                                          {"sub": JUMEAU, "colonne": "nom"}]
         assert [r["run_id"] for r in c.execute(
             "SELECT run_id FROM runs WHERE sub = %s ORDER BY run_id", (JUMEAU,))] == \
             [f"run-{A}", f"run-{JUMEAU}"]

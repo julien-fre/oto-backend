@@ -9,10 +9,9 @@ qui l'annonçait (01/10/2026) est retiré : le refus est la règle, sans date ni
 Ce qui tient la règle :
 
 - **le paramètre**, sur les deux faces, absent par défaut — et jamais ignoré : déclaré,
-  l'écriture passe et se trace comme déclarée ;
+  l'écriture passe ;
 - **le refus qui nomme les deux gestes** (écrire la valeur seule, ou déclarer) et la
-  couche qui accueille la provenance (`comment`, oto#79) ;
-- **la trace des écritures déclarées** (`origine_ecritures`).
+  couche qui accueille la provenance (`comment`, oto#79).
 """
 from __future__ import annotations
 
@@ -234,16 +233,6 @@ def _table(schema=SCHEMA):
     return st, ns, ns_id
 
 
-def _trace(ns_id: int) -> list[dict]:
-    from oto_mcp.db._conn import _connect
-    with _connect() as conn:
-        return list(conn.execute(
-            "SELECT colonne, ecritures, ecritures_declarees, derniere_declaree_at "
-            "FROM origine_ecritures WHERE ns_id=%s ORDER BY colonne", (ns_id,)).fetchall())
-
-
-
-
 def test_l_ecriture_SILENCIEUSE_est_refusee(live):
     st, ns, ns_id = _table()
     with pytest.raises(ValueError) as e:
@@ -255,14 +244,13 @@ def test_l_ecriture_SILENCIEUSE_est_refusee(live):
 def test_la_MEME_ecriture_DECLAREE_passe_sans_avertissement(live):
     """⚠️ Le fond de la décision : ce n'est pas l'écriture qu'on refuse. Un import qui
     doit vraiment poser l'origine le peut, sans rien demander à personne — et le
-    paramètre n'est jamais ignoré : l'écriture déclarée se trace comme telle, et aucun
-    avertissement de préavis ne la suit."""
+    paramètre n'est jamais ignoré : l'écriture déclarée passe, et aucun avertissement
+    de préavis ne la suit."""
     st, ns, ns_id = _table()
     row = st.append_row(ns, {"ref": "c", "prio": {"valeur": "B", "origine": "A"}},
                         origine_override=True, versions=("current", "origine"))
     assert (row["prio"], row["prio.origine"]) == ("B", "A")
     assert "origine_warning" not in st.off_schema_report()
-    assert [t["ecritures_declarees"] for t in _trace(ns_id)] == [1]
 
 
 def test_ecrire_la_valeur_seule_n_a_jamais_besoin_du_paramètre(live):
@@ -270,7 +258,6 @@ def test_ecrire_la_valeur_seule_n_a_jamais_besoin_du_paramètre(live):
     changer."""
     st, ns, ns_id = _table()
     assert st.append_row(ns, {"ref": "d", "prio": "B"})["prio"] == "B"
-    assert _trace(ns_id) == []
 
 
 def test_le_patch_par_id_est_gardé_COMME_LES_AUTRES(live):
@@ -285,19 +272,7 @@ def test_le_patch_par_id_est_gardé_COMME_LES_AUTRES(live):
     assert dsv2.PARAMETRE_ORIGINE in str(e.value)
     st.update_row(ns, row["_id"], {"prio": {"valeur": "C", "origine": "forgée"}},
                   origine_override=True)
-    assert [t["ecritures_declarees"] for t in _trace(ns_id)] == [1]
-
-
-
-
-def test_un_appel_REFUSÉ_ne_gonfle_pas_la_population(live):
-    """Un refus n'est pas une écriture. Le compter ferait grossir la population de gens
-    qui, précisément, n'ont pas réussi à écrire — et c'est sur ce nombre-là qu'on
-    décidera s'il faut prévenir quelqu'un."""
-    st, ns, ns_id = _table()
-    with pytest.raises(ValueError):
-        st.append_row(ns, {"ref": "i", "prio": {"valeur": "B", "origine": "A"}})
-    assert _trace(ns_id) == []
+    assert st.get_row(ns, row["_id"], versions=("current", "origine"))["prio.origine"] == "forgée"
 
 
 # --- oto#79 : le texte nomme la couche qui accueille l'intention -----------------

@@ -43,7 +43,7 @@ from .columns import (
     sans_les_objets_vides,
     vides_assumes_perdus,
 )
-from .controles import _relever_origine_module
+from .controles import _refuser_origine_non_declaree
 from . import donnees_d_origine as ddo
 from . import layers as dsl
 from . import versions as dsver
@@ -178,12 +178,11 @@ class EcritureParIdMixin:
             refuser_champs_reserves(schema, pose, avant=avant,
                                     forcage=forcage, agent=aga.appel_d_agent())
             # ⚠️ Ce chemin a déjà été oublié deux fois sur l'origine (sa survie, puis
-            # son relevé) parce qu'il a son propre corps : les deux sont branchés ici.
+            # son refus) parce qu'il a son propre corps : les deux sont branchés ici.
             # MÊME retrait que la fusion : l'origine posée par le paramètre est déclarée.
-            _relever_origine_module(
-                self, ns_id,
+            _refuser_origine_non_declaree(
                 ddo.sans_les_origines_posees(pose, releve) if releve else pose,
-                avant, schema=schema, declare=origine_override)
+                avant, declare=origine_override)
             # Validation sur le RÉSULTAT mergé (un patch partiel ne doit pas échouer
             # sur un requis déjà présent) + transition de cycle de vie (ADR 0046 B/C).
             # Seule la borne de longueur se limite aux clés du patch (#383).

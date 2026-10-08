@@ -547,42 +547,14 @@ class ControlesMixin:
             self.off_notices.add(self._TERMINAL_RELEASE_RETIRED)
 
 
-def _relever_origine_module(store, ns_id, payload, avant=None,
-                            schema=None, declare: bool = False) -> None:
-    """Relève les colonnes dont CET appel pose la couche `origine`, et REFUSE l'appel
-    qui ne les déclare pas (oto#70 lot 2).
+def _refuser_origine_non_declaree(payload, avant=None, declare: bool = False) -> None:
+    """REFUSE l'appel qui pose la couche `origine` d'une cellule sans la déclarer
+    (oto#70 lot 2).
 
     ⚠️ **Ce qui est refusé n'est pas l'écriture, c'est le SILENCE.** `declare` porte le
-    paramètre de l'appelant (`origine_override`) : avec, l'écriture passe et laisse une
-    trace distincte ; sans, elle est refusée par un message qui nomme les deux gestes.
-
-    ⚠️ **La trace distingue les deux populations** (`declare`), et c'est elle qui dit
-    si un écrivain s'est ADAPTÉ ou a DISPARU. Deux faits que le même
-    compteur confondrait : dans les deux cas les écritures non déclarées tombent à zéro.
-
-    ⚠️ **`face` reste NULL** : le store ne connaît pas le canal d'appel — il voit un
-    `sub` et une org. `ResolvedCtx.channel` vit à l'adaptateur, deux couches plus haut.
-    Le DDL l'accepte, et une face inconnue vaut mieux qu'une face devinée.
+    paramètre de l'appelant (`origine_override`) : avec, l'écriture passe ; sans, elle
+    est refusée par un message qui nomme les deux gestes.
     """
-    from ..db import origine_ecritures as db_origine
-
     colonnes = dsv2.origine_posee(payload, avant)
-    if not colonnes:
-        return
-    if not declare:
-        # Rien n'est relevé : rien n'a été écrit. Un refus n'est pas une écriture, et
-        # le compter gonflerait la population de gens qui, précisément, n'ont pas
-        # réussi à écrire.
+    if colonnes and not declare:
         raise ValueError(dsv2.refus_origine(colonnes))
-    # ⚠️ Les deux populations sont relevées SÉPARÉMENT. Sur une colonne qui ne déclare
-    # pas le format, la plateforme ne pose JAMAIS d'origine : celle-ci vient donc
-    # forcément de l'écrivain — c'est le cas que la définition interdit, et le seul
-    # qu'on cherche. Les fondre dans un total ferait disparaître la population visée
-    # dans celle qui l'entoure (mesuré : 64 cellules contre 15 688).
-    declarees = dsv2.system_origin_fields(schema)
-    for format_declare, lot in ((False, [c for c in colonnes if c not in declarees]),
-                                (True, [c for c in colonnes if c in declarees])):
-        db_origine.relever(sub=getattr(store, "sub", None),
-                          org_id=getattr(store, "acting_org", None),
-                          ns_id=ns_id, colonnes=lot,
-                          format_declare=format_declare, declare=declare)

@@ -112,7 +112,7 @@ from .outils import (  # noqa: E402,F401
     _refus_de_creation,
     indice_de_liberation,
 )
-from .controles import ControlesMixin, _relever_origine_module  # noqa: E402,F401
+from .controles import ControlesMixin  # noqa: E402
 from .ecriture import EcritureMixin  # noqa: E402
 from .ecriture_par_id import EcritureParIdMixin  # noqa: E402
 from .file_de_travail import FileDeTravailMixin  # noqa: E402

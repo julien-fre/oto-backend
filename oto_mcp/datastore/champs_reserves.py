@@ -277,7 +277,7 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
       du terrain : `{"valeur": <identique>, "origine": <la même>}`).
       ⚠️ Ce refus ne dépend PLUS d'un cran de schéma : `origine: "system"` est supprimé
       depuis le 08/09/2026, la règle vaut pour toute colonne, levable par
-      `origine_override` (jugée par `controles._relever_origine_module`) ;
+      `origine_override` (jugée par `controles._refuser_origine_non_declaree`) ;
     - `readonly: true` — le payload NOMME la valeur (nue, `null`, ou `{"valeur": …}`)
       d'une case qui a une VALEUR POSÉE (`valeur_posee`) ET elle CHANGE → refus.
       `readonly` veut dire « ne se modifie plus une fois posé », pas « ne s'écrit plus

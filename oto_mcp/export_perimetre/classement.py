@@ -255,7 +255,6 @@ CLASSEMENT: dict[str, Table] = {
     "usage_signal_occurrences": indirecte(Via("usage_signals", ("signal_id",)),
                                           comptes=("sub",)),
     "access_shadow_l7": possedee(ParOrg()),
-    "origine_ecritures": possedee(_ORG_OU_COMPTE),
     "portee_elargissements": possedee(Ou((ParOrg(), ParSubSansOrg("acteur_sub")))),
     "signal_digest_optouts": possedee(ParSub()),
     # Partage d'une procédure par lien : le lien est à l'org de la procédure, ses

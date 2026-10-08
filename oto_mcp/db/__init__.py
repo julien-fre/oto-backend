@@ -72,7 +72,6 @@ from . import (
     outreach,
     portee,
     alertes_credential,
-    origine_ecritures,
     transcription,
     # NON aplati : `ouvrir`/`lire`/`purger` sont trop communs pour la surface plate.
     # Les appelants écrivent `from ..db import apollo_reveals as db_apollo`.

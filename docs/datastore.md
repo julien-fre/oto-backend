@@ -1205,11 +1205,10 @@ de fin de passage détectait après coup.
   c'est tout (décision d'Alexis, 05/09/2026 : « c'est notre modèle d'agent experience »).
   Le préavis daté (`origine_warning`, réglage de date) est retiré le 06/10/2026 : le
   refus est la règle, sans date. Pour un import, `donnees_d_origine=true` pose l'origine
-  sans que l'appelant l'écrive, et le refus le nomme. **Un relevé** (`origine_ecritures`, une ligne
-  par écrivain × tableau × colonne) compte les deux populations séparément : le journal
-  d'appels ne peut pas dire qui écrit une COUCHE (il ne garde que les clés de premier
-  niveau et tronque les arguments), et les compteurs déclaré/non-déclaré sont ce qui
-  distingue l'écrivain qui s'est adapté de celui qui a disparu.
+  sans que l'appelant l'écrive, et le refus le nomme. Le relevé qui comptait les
+  écrivains de la couche pendant le préavis (`origine_ecritures`) est retiré le
+  08/10/2026 (révision `0048_origine_ecritures_retiree`, oto-backend#1109) : zéro refus
+  en production sur les quatorze jours précédents.
   **La manœuvre « lever le format, écrire, remettre » ne rouvre rien** : la garde
   regarde ce que l'appelant écrit, pas ce que la colonne déclare (mesuré). En revanche
   `data_drop_column` et `data_delete_row` **emportent** l'origine — rien n'y écrit une
@@ -1367,7 +1366,7 @@ de fin de passage détectait après coup.
   ré-import la pose donc. La réponse le DIT, dans `notices`, cumulé sur le geste :
   origines posées par colonne (nombre de lignes), et sautées par raison — `déjà
   posée`, `valeur vide`, `écrite par l'appelant`. Les origines posées par le paramètre
-  n'entrent pas dans le relevé des origines écrites sans le dire (oto#70) : sur une
+  n'entrent pas dans le refus des origines écrites sans le dire (oto#70) : sur une
   ligne existante, un ré-import aurait été averti, puis refusé à la date, pour avoir
   fait ce qu'il déclarait. Branché sur les QUATRE chemins d'écriture — ⚠️ j'en avais câblé trois,
   et c'est le banc qui a trouvé le quatrième, celui qui ressemblait le plus aux autres.
@@ -2862,8 +2861,7 @@ avant d'y brancher quoi que ce soit. La lecture arrive en M3 (plus bas).
   déclencheur, valeurs ENTIÈRES (couches comprises). Un côté absent n'a pas sa clé :
   `{"apres": 1}` = ajouté, `{"avant": 1}` = retiré, `{"avant": null, "apres": 2}` = une
   valeur `null` remplacée. Une insertion porte tous ses champs en `apres`. Une écriture
-  sans effet n'écrit rien. Les **valeurs sont stockées** : la règle « noms de colonnes
-  seuls » (`origine_ecritures`) ne vaut pas ici, par décision d'oto#273.
+  sans effet n'écrit rien. Les **valeurs sont stockées**, par décision d'oto#273.
 - **Ce qui reste, ce qui part** : pas de FK vers la ligne, donc les révisions d'une ligne
   supprimée RESTENT, et la suppression en ajoute une (plus bas). FK `ON DELETE CASCADE`
   vers `user_datastores` : un tableau supprimé emporte son historique, quel que soit le

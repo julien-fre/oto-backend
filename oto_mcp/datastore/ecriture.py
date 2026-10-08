@@ -34,7 +34,7 @@ from .columns import (
     vides_assumes_perdus,
 )
 from .cle_metier import ligne_de_la_course_perdue, refuser_cle_metier_vide
-from .controles import _relever_origine_module
+from .controles import _refuser_origine_non_declaree
 from .errors import RowNotFound, RowValidationError
 from . import mots_deprecies as mdp
 from . import jetons
@@ -154,8 +154,7 @@ class EcritureMixin:
         forcage = self._forcage_readonly(
             ns_id, schema, readonly_override or bool(force), force)
         refuser_champs_reserves(schema, user_data, agent=aga.appel_d_agent())
-        _relever_origine_module(self, ns_id, user_data, schema=schema,
-                                declare=origine_override)
+        _refuser_origine_non_declaree(user_data, declare=origine_override)
         self._trace(trace, ns_id, ns)
         # La clé métier sort du MÊME schéma que ci-dessus (`declared_key` re-résolvait
         # le datastore et relisait la ligne pour le même résultat).
@@ -373,10 +372,9 @@ class EcritureMixin:
                                     forcage=forcage, agent=aga.appel_d_agent())
             # Les origines que `donnees_d_origine` vient de poser sont déclarées par
             # le paramètre : elles ne sont pas « écrites sans le dire » (oto#70).
-            _relever_origine_module(
-                self, ns_id,
+            _refuser_origine_non_declaree(
                 ddo.sans_les_origines_posees(pose, releve) if releve else pose,
-                current or {}, schema=schema, declare=origine_override)
+                current or {}, declare=origine_override)
             # ⚠️ `written` reste l'ensemble des clés que l'appelant a NOMMÉES, pas
             # celles qu'on a retenues : une borne de longueur ou un motif ne doit pas
             # se réarmer sur une colonne préservée, dont la valeur n'a pas bougé.

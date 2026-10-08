@@ -553,6 +553,7 @@ gestes, le démarrage le dit en erreur et continue.
 |---|---|---|
 | `0041_recherche_valeurs_servies` | **référence** — vide, sans précédente | rien : elle documente « schéma = celui du démarrage au 06/10/2026 ». Y monter lève, en descendre lève |
 | `0042_orgs_suspension_par_tenant` | vivante | `orgs.suspended_tenant_id BIGINT`, nullable sans défaut ni index (écriture de catalogue ; `AccessExclusiveLock` bref sur `orgs`, attente bornée par `lock_timeout` 5 s). NULL = suspension posée sur l'org ; sinon le tenant dont la désactivation l'a posée, et que sa réactivation lève. **Avant la fusion** (oto-backend#1165). Retour arrière : retire la colonne |
+| `0048_origine_ecritures_retiree` | vivante | `DROP TABLE IF EXISTS origine_ecritures` (le relevé du préavis d'oto#70, sans lecteur ni écrivain), seulement si la table existe (`to_regclass`, sans verrou) ; là où elle existe, `AccessExclusiveLock` bref sur elle seule, attente bornée par `lock_timeout` 5 s. **Après le tag** : l'ancien code l'écrit et son démarrage la recrée (oto-backend#1109). Retour arrière : lève (irréversible) |
 
 Les bases vivantes ce jour-là : la base partagée prod/préprod, en `0042`, et une instance
 dédiée (prod et préprod), en `0041`. `0042` vit tant que cette instance ne l'a pas reçue.

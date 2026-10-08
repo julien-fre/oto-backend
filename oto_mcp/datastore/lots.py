@@ -27,7 +27,7 @@ from .columns import (
     sans_les_objets_vides,
 )
 from .cle_metier import ligne_de_la_course_perdue, refuser_cle_metier_vide
-from .controles import _relever_origine_module
+from .controles import _refuser_origine_non_declaree
 from .errors import (BusinessKeyExists, BusinessKeyRequired, RowLocked,
                      RowValidationError)
 from .outils import _new_id, _refus_de_creation
@@ -223,8 +223,7 @@ class LotsMixin:
                         {**user_data, **rangs.appliquer({}, schema, creation=True)})
                 refuser_champs_reserves(schema, cree,
                                         agent=aga.appel_d_agent())
-                _relever_origine_module(self, ns_id, cree, schema=schema,
-                                        declare=origine_override)
+                _refuser_origine_non_declaree(cree, declare=origine_override)
                 # CRÉATION : pas de ligne en base, donc rien à préserver — mais la
                 # règle « une origine déjà posée ne se réécrit pas » vaut quand même,
                 # car l'appelant peut avoir écrit `origine` lui-même (chemin déclaré).
