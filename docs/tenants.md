@@ -2,7 +2,8 @@
 title: Tenants (ADR 0052)
 type: reference
 description: >-
-  L'étage d'identité entre plateforme et org : émetteur dédié, hosts, préfixe d'outils, écra
+  Convention du 08/10/2026 : on n'étend plus le tenant (rien de neuf par tenant, gel
+  mécanique). L'étage d'identité entre plateforme et org : émetteur dédié, hosts, préfixe d'outils, écra
   n de suivi, et les pièges d'une bascule de compte (clés personnelles abandonnées, marque d
   'espace personnel, colonnes à sub triagées).
 ---
@@ -12,6 +13,27 @@ description: >-
 > Extrait de `CLAUDE.md` le 2026-08-27 — le contenu n'a pas changé, seule sa place a bougé.
 > La carte garde le résumé + le pointeur ; le détail (schémas, incidents datés et leurs
 > leçons) vit ici.
+
+## Convention (08/10/2026) : on n'étend plus le tenant
+
+Décision d'Alexis, le 08/10/2026. L'épic oto-backend#1167 (« un tenant réduit au strict
+nécessaire ») est fermée sans être réalisée : rien n'est retiré d'office, mais rien de
+nouveau ne s'ajoute.
+
+- **Le tenant existant est conservé tel quel.** Ce qui est servi aujourd'hui continue de
+  l'être.
+- **On n'ajoute AUCUNE** nouvelle capacité, route, colonne, table, rang de cascade, marque
+  ou réglage **par tenant**.
+- **Un besoin qui semble appeler « par tenant » se traite par instance** (une instance
+  dédiée, un réglage d'instance) **ou par org**.
+- **Retirer du tenant reste permis à tout moment.** L'inventaire de ce qui pourrait partir,
+  et le noyau légitime (annuaire tiers + ses orgs), est dans oto-backend#1167.
+
+Garde mécanique : `tests/test_tenant_ne_s_etend_plus.py` relève les surfaces « tenant »
+(capacités du registre et leurs opérations, valeurs d'énumération, routes REST, champs
+de `tenancy.TenantIssuer`, tables, colonnes et domaines du schéma, variables
+d'environnement) et échoue sur toute entrée absente de `tests/tenant_inventaire_gele.txt`.
+Le gel ne fait que rétrécir : un retrait passe, et retire sa ligne dans le même commit.
 
 ## Le tenant primaire est une DÉCLARATION de l'instance (28/09/2026, oto-backend#969)
 

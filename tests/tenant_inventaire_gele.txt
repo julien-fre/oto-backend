@@ -1,0 +1,120 @@
+# Inventaire GELÉ des surfaces « tenant » au 08/10/2026 — `tests/test_tenant_ne_s_etend_plus.py`.
+# Convention : on n'étend plus le tenant (docs/tenants.md, §Convention ; oto-backend#1167).
+# Ce fichier ne fait que RÉTRÉCIR : un retrait retire sa ligne dans le même commit ;
+# aucune ligne ne s'y ajoute sans que la convention ait d'abord changé dans docs/tenants.md.
+capacite admin.account
+capacite admin.legal_docs.delete
+capacite admin.legal_docs.list
+capacite admin.legal_docs.set
+capacite admin.tenant
+capacite admin.tenant_admin_add
+capacite admin.tenant_admin_remove
+capacite admin.tenant_admins
+capacite admin.tenant_app_clear
+capacite admin.tenant_app_set
+capacite admin.tenant_apps
+capacite admin.tenant_connector_clear
+capacite admin.tenant_connector_set
+capacite admin.tenant_connectors
+capacite admin.tenant_console
+capacite admin.tenant_disablement
+capacite admin.tenant_key_clear
+capacite admin.tenant_key_set
+capacite admin.tenant_keys
+capacite admin.tenant_org_grant
+capacite admin.tenant_org_grants
+capacite admin.tenant_org_revoke
+capacite admin.tenants
+capacite admin.tenants_reload
+colonne orgs.suspended_tenant_id
+colonne orgs.tenant_id
+colonne tenant_admins.granted_at
+colonne tenant_admins.granted_by
+colonne tenant_admins.slug
+colonne tenant_admins.sub
+colonne tenant_legal_docs.doc_slug
+colonne tenant_legal_docs.label
+colonne tenant_legal_docs.tenant_slug
+colonne tenant_legal_docs.updated_at
+colonne tenant_legal_docs.url
+colonne tenant_legal_docs.version
+colonne tenants.brand
+colonne tenants.created_at
+colonne tenants.dashboard_url
+colonne tenants.disabled_at
+colonne tenants.disabled_by
+colonne tenants.disabled_reason
+colonne tenants.hosts
+colonne tenants.id
+colonne tenants.issuer
+colonne tenants.jwks_uri
+colonne tenants.link_paths
+colonne tenants.logto_mgmt
+colonne tenants.name
+colonne tenants.oauth_client_id
+colonne tenants.slug
+colonne tenants.tool_prefix
+declaration brand
+declaration dashboard_url
+declaration dcr_redirects
+declaration disabled
+declaration hosts
+declaration issuer
+declaration jwks_uri
+declaration link_paths
+declaration logto_mgmt
+declaration name
+declaration oauth_client_id
+declaration refresh_tokens
+declaration slug
+declaration tool_prefix
+domaine connector_availability.scope_type
+domaine connector_instances.owner_type
+domaine grants.grantee_kind
+domaine grants.grantor_kind
+env OTO_EQUIPE_PAR_DEFAUT_TENANTS
+env OTO_MCP_TENANT_MIGRATION_ISS
+env OTO_TENANT_PRIMAIRE_SLUG
+niveau connectors.instances.list.level=tenant
+op admin.account resume
+op admin.account suspend
+op admin.tenant_console admin_add
+op admin.tenant_console admin_remove
+op admin.tenant_console admins
+op admin.tenant_console disable
+op admin.tenant_console enable
+op admin.tenant_console get
+op admin.tenant_console key_clear
+op admin.tenant_console keys
+op admin.tenant_console list
+op admin.tenant_console org_grant
+op admin.tenant_console org_grants
+op admin.tenant_console org_revoke
+op admin.tenant_console reload
+op admin.tenant_disablement disable
+op admin.tenant_disablement enable
+route DELETE /api/admin/tenants/{slug}/admins/{sub}
+route DELETE /api/admin/tenants/{slug}/apps/{connector}
+route DELETE /api/admin/tenants/{slug}/connectors/activation/{name}
+route DELETE /api/admin/tenants/{slug}/keys/{provider}
+route DELETE /api/admin/tenants/{slug}/keys/{provider}/grants/{org_id}
+route DELETE /api/admin/tenants/{tenant}/legal-docs/{slug}
+route GET /api/admin/tenants
+route GET /api/admin/tenants/{slug}
+route GET /api/admin/tenants/{slug}/admins
+route GET /api/admin/tenants/{slug}/apps
+route GET /api/admin/tenants/{slug}/connectors/activation
+route GET /api/admin/tenants/{slug}/keys
+route GET /api/admin/tenants/{slug}/keys/{provider}/grants
+route GET /api/admin/tenants/{tenant}/legal-docs
+route POST /api/admin/tenants/reload
+route POST /api/admin/tenants/{slug}/admins
+route POST /api/admin/tenants/{slug}/disablement
+route PUT /api/admin/tenants/{slug}/apps/{connector}
+route PUT /api/admin/tenants/{slug}/connectors/activation/{name}
+route PUT /api/admin/tenants/{slug}/keys/{provider}
+route PUT /api/admin/tenants/{slug}/keys/{provider}/grants/{org_id}
+route PUT /api/admin/tenants/{tenant}/legal-docs/{slug}
+table tenant_admins
+table tenant_legal_docs
+table tenants
