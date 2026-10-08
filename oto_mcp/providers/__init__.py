@@ -161,6 +161,8 @@ _DECLARATIONS: tuple[str, ...] = (
     "chat",
     # seventh service (2026-10-02) — same shape, `bigquery` consent only.
     "bigquery",
+    # eighth service (2026-10-08) — same shape, `adwords` consent only, read-only tools.
+    "google_ads",
     # --- open-data / no credential ------------------------------------------
     # Unrelated public sources → distinct connectors (formerly `fr_open`, which
     # merged them: an incoherent "open data" bag, activating one activated the other).

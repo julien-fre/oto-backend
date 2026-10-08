@@ -39,7 +39,7 @@ pytestmark = pytest.mark.usefixtures("connecteurs_tous_disponibles")
 # Les six du split (2026-09-26) — ceux que le fan-out du boot a déménagés.
 SPLIT = ("gmail", "drive", "sheets", "calendar", "tasks", "chat")
 # Les services ajoutés DEPUIS : connecteurs neufs, jamais déménagés.
-POST_SPLIT = ("bigquery",)
+POST_SPLIT = ("bigquery", "google_ads")
 SERVICES = SPLIT + POST_SPLIT
 EMAIL = "https://www.googleapis.com/auth/userinfo.email"
 
@@ -165,6 +165,17 @@ def test_un_service_post_split_ne_rejoint_pas_le_consentement_du_compte():
     assert G.scopes_for("bigquery", _app("tenant:exemple")) == list(G.IDENTITY_SCOPES) + [bq]
     assert bq in G.KNOWN_SCOPES
     assert G.services_granted(f"{bq} {EMAIL}") == ["bigquery"]
+
+
+def test_google_ads_demande_adwords_seul_depuis_sa_carte():
+    """google_ads (2026-10-08) : même règle que bigquery — `adwords` seul, depuis sa
+    carte, jamais ajouté au consentement du compte ; le coffre le connaît."""
+    ads = "https://www.googleapis.com/auth/adwords"
+    assert ads not in G.scopes_for("google", _app("env"))
+    assert G.scopes_for("google_ads", _app("env")) == list(G.IDENTITY_SCOPES) + [ads]
+    assert ads in G.KNOWN_SCOPES
+    assert G.services_granted(f"{ads} {EMAIL}") == ["google_ads"]
+    assert G.SERVICE_LABELS["google_ads"] == "Google Ads"
 
 
 def test_un_connecteur_inconnu_nobtient_aucun_scope():

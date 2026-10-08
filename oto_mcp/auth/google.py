@@ -110,15 +110,21 @@ SERVICE_SCOPES: dict[str, tuple[str, ...]] = {
     # rev. 20260811). The scope would allow writing: read-only is enforced by
     # the tools (dry run → `statementType` SELECT required, `tools/bigquery.py`).
     "bigquery": ("https://www.googleapis.com/auth/bigquery",),
+    # Google Ads (SENSITIVE). Google publishes NO read-only scope: `adwords` would
+    # allow mutating campaigns. Read-only is enforced by the oto-core client, which
+    # calls only `listAccessibleCustomers`, `googleAds:search` and `googleAdsFields:search`
+    # (`oto.tools.google.ads`) — no mutate endpoint is ever built.
+    "google_ads": ("https://www.googleapis.com/auth/adwords",),
 }
 SERVICES: tuple[str, ...] = tuple(SERVICE_SCOPES)
 SERVICE_LABELS = {"gmail": "Gmail", "drive": "Google Drive", "sheets": "Google Sheets",
                   "calendar": "Google Calendar", "tasks": "Google Tasks",
-                  "chat": "Google Chat", "bigquery": "Google BigQuery"}
+                  "chat": "Google Chat", "bigquery": "Google BigQuery",
+                  "google_ads": "Google Ads"}
 
 # What the ACCOUNT (`google`) requests under our app: the six services from before the
 # split, for a dashboard with a single Google card. FROZEN at these six — a service
-# added since (bigquery, 2026-10-02) is authorized ONLY from its own card, it is not
+# added since (bigquery 2026-10-02, google_ads 2026-10-08) is authorized ONLY from its own card, it is not
 # silently added to the account's consent.
 _CARRIER_SERVICES = ("sheets", "drive", "gmail", "tasks", "calendar", "chat")
 SCOPES = [scope for svc in _CARRIER_SERVICES for scope in SERVICE_SCOPES[svc]]

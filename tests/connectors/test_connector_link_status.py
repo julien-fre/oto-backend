@@ -70,7 +70,7 @@ def test_le_perimetre_est_celui_quon_croit():
     assert _federated() == {"google", "instagram_meta", "meta_ads", "microsoft", "sharepoint",
                             "outlook", "outlook_calendar", "teams", "ubersuggest",
                             "gmail", "drive", "sheets", "calendar", "tasks", "chat",
-                            "bigquery"}
+                            "bigquery", "google_ads"}
 
 
 # --- la forme émise, contrat lu par le dashboard -------------------------------
