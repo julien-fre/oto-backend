@@ -2467,7 +2467,8 @@ def _ds_activity_entry(r: dict) -> dict:
 
 
 def datastore_row_activity(row_id: str, key_value: Optional[str] = None,
-                           *, owner_type: Optional[str] = None,
+                           *, ns_id: int,
+                           owner_type: Optional[str] = None,
                            owner_id: Optional[str] = None,
                            limit: int = 50) -> list[dict]:
     """Parcours d'UNE row du datastore (ADR 0046 b4) : les gestes `data_*` du calllog
@@ -2482,10 +2483,21 @@ def datastore_row_activity(row_id: str, key_value: Optional[str] = None,
     seulement : cet axe est une recherche de SOUS-CHAÎNE, il est donc borné au
     propriétaire du tableau (même raison qu'en dessous — sans borne, une clé métier
     banale ferait remonter les gestes d'une autre org). L'axe `id`, lui, reste nu :
-    c'est un uuid4 non devinable et l'appelant a déjà prouvé son accès à CETTE row."""
+    c'est un uuid4 non devinable et l'appelant a déjà prouvé son accès à CETTE row.
+
+    ⚠️ **Toujours bornée au TABLEAU de la ligne** (`ns_id` résolu serveur, journalisé
+    sur les deux faces depuis le 31/07/2026). Incident du 08/10/2026 : sans cette
+    borne, aucun des deux axes ne tombait sur un index — `args->>'id'` n'en a pas, la
+    sous-chaîne non plus —, et `ORDER BY created_at DESC LIMIT` parcourait le journal
+    entier (~12 M lignes) jusqu'à trouver de quoi remplir la page : jusqu'à 302 s par
+    appel, douze connexions sur vingt-six prises, la prod MCP par terre. Le `ns_id`
+    passe par `idx_tool_calls_ns` (partiel, `data_*` seulement) : on ne lit plus que
+    les appels de CE tableau. Prix assumé : un geste antérieur à la journalisation du
+    `ns_id` n'y figure plus — il sort de toute façon de la rétention.
+    La lecture est en plus bornée en durée (`_agregat`, #1145)."""
     limit = max(1, min(int(limit), 200))
-    clauses = [_DS_ACTIVITY_KINDS, "l.tool LIKE 'data\\_%%'"]
-    params: list[Any] = []
+    clauses = [_DS_ACTIVITY_KINDS, "l.tool LIKE 'data\\_%%'", "l.args->>'ns_id' = %s"]
+    params: list[Any] = [str(int(ns_id))]
     match = ["l.args->>'id' = %s"]
     params.append(str(row_id))
     key_bound = _owner_clause(owner_type, owner_id)
@@ -2495,7 +2507,7 @@ def datastore_row_activity(row_id: str, key_value: Optional[str] = None,
         params += [f"%{str(key_value).strip()}%", bound]
     clauses.append("(" + " OR ".join(match) + ")")
     params.append(limit)
-    with _connect() as conn:
+    with _agregat("parcours d'une ligne") as conn:
         rows = conn.execute(
             f"""{_DS_ACTIVITY_SELECT}
             WHERE {' AND '.join(clauses)}
@@ -2556,7 +2568,7 @@ def datastore_activity(ns_id: int, namespace: Optional[str] = None,
             f"AND {sql})")
         params += [names, bound]
     params.append(limit)
-    with _connect() as conn:
+    with _agregat("activité d'un tableau") as conn:
         rows = conn.execute(
             f"""{_DS_ACTIVITY_SELECT}
             WHERE {_DS_ACTIVITY_KINDS} AND l.tool LIKE 'data\\_%%'

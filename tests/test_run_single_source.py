@@ -57,6 +57,9 @@ def conn(pg_module_dsn, monkeypatch):
             yield c
 
         monkeypatch.setattr(usage, "_connect", _connect_test)
+        # Les lectures d'agrégat (`_agregat`, #1145) prennent la même connexion : la
+        # borne de durée se juge dans `test_lecture_bornee`, ici le SQL réel.
+        monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: _connect_test())
         yield c
 
 
@@ -162,7 +165,7 @@ def test_lactivite_dun_tableau_sert_le_journal(divergent):
 
 def test_lactivite_dune_ligne_sert_le_journal(divergent):
     _fact(divergent, "r1", "data_write", {"ns_id": 160, "id": "row-1"}, ago=6.0)
-    (entry,) = usage.datastore_row_activity("row-1")
+    (entry,) = usage.datastore_row_activity("row-1", ns_id=160)
     assert entry["outcome"] == "failed" and entry["run_label"] == "prospection été"
 
 

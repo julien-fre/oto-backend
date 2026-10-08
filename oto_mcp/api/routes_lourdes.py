@@ -129,6 +129,19 @@ ROUTES_LOURDES: tuple[RouteLourde, ...] = (
                   "(get, runs, inventory, activity) : le débit est large pour ne pas "
                   "couper une édition, la concurrence garde le pool.")),
     RouteLourde(
+        "GET", "/api/datastores/{datastore}/rows/{row_id}/activity", par_minute=60,
+        concurrence=3,
+        pourquoi=("Parcours d'une ligne : une lecture du journal des appels. Le "
+                  "08/10/2026, non bornée au tableau, elle parcourait tout le journal "
+                  "(jusqu'à 302 s) ; seize appels en vingt minutes ont pris douze des "
+                  "vingt-six connexions et mis la prod par terre. Bornée depuis au "
+                  "tableau et à 10 s ; le cockpit l'ouvre une ligne à la fois.")),
+    RouteLourde(
+        "GET", "/api/datastores/{datastore}/activity", par_minute=60, concurrence=3,
+        pourquoi=("Activité d'un tableau entier : une lecture du journal des appels "
+                  "sur sa rétention, même famille que le parcours d'une ligne. Le "
+                  "cockpit l'ouvre une fois par tableau.")),
+    RouteLourde(
         "GET", "/api/admin/monitoring/summary", par_minute=30, concurrence=2,
         pourquoi=("Résumé d'appels de la supervision plateforme : sans périmètre, il "
                   "lit le journal de toute la plateforme (452 s pour un jour sous "

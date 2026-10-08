@@ -104,6 +104,9 @@ def test_la_surface_n_ajoute_aucune_cle(monkeypatch):
         def declared_key(self, datastore):
             return "societe"
 
+        def resolve_ns_id(self, datastore):
+            return 160
+
     monkeypatch.setattr(dsa, "make_store", lambda sub: _Store())
     monkeypatch.setattr(dsa.datastore_journal, "context",
                         lambda store, ns, **kw: type("C", (), {

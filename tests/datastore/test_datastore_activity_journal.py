@@ -280,7 +280,7 @@ def test_row_activity_covers_rest_and_mcp(monkeypatch):
     # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
     monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
 
-    out = usage.datastore_row_activity("row-1", "ENTREPRISE TEMOIN",
+    out = usage.datastore_row_activity("row-1", "ENTREPRISE TEMOIN", ns_id=160,
                                        owner_type="org", owner_id="35")
 
     assert "l.kind IN ('mcp', 'rest')" in sink["sql"]   # le geste dashboard est visible
@@ -362,11 +362,12 @@ def test_row_activity_key_axis_is_bounded_to_the_owner(monkeypatch):
     # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
     monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
 
-    usage.datastore_row_activity("row-1", "TEMOIN", owner_type="org", owner_id="35")
+    usage.datastore_row_activity("row-1", "TEMOIN", ns_id=160, owner_type="org",
+                                 owner_id="35")
     assert "l.args::text ILIKE %s AND l.org_id = %s" in sink["sql"]
 
     # propriétaire inconnu ⇒ l'axe flou disparaît, il ne reste que l'id
-    usage.datastore_row_activity("row-1", "TEMOIN")
+    usage.datastore_row_activity("row-1", "TEMOIN", ns_id=160)
     assert "ILIKE" not in sink["sql"]
     assert "l.args->>'id' = %s" in sink["sql"]
 
@@ -592,3 +593,53 @@ def test_datastore_lens_correlates_on_the_id_without_a_tenant_bound(monkeypatch)
     assert "org_id" not in id_axis                      # l'id ne se borne pas
     assert ("COALESCE(l.args->>'datastore', l.args->>'namespace') = ANY(%s) "
             "AND l.org_id = %s") in sql   # le nom, si
+
+
+def test_row_activity_est_bornee_au_tableau(monkeypatch):
+    """Incident du 08/10/2026 : le parcours d'une ligne n'avait AUCUN axe indexé
+    (`args->>'id'` et la sous-chaîne de clé), et `ORDER BY created_at DESC LIMIT`
+    parcourait tout le journal — jusqu'à 302 s, la prod par terre. Le `ns_id` résolu
+    est désormais une borne obligatoire, posée HORS du OU des axes : c'est elle qui
+    tombe sur `idx_tool_calls_ns`."""
+    sink: dict = {}
+    monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, []))
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
+    usage.datastore_row_activity("row-1", "TEMOIN", ns_id=160, owner_type="org",
+                                 owner_id="35")
+    sql = sink["sql"]
+    assert "AND l.args->>'ns_id' = %s AND (" in sql, sql
+    assert sink["params"][0] == "160"
+    with pytest.raises(TypeError):
+        usage.datastore_row_activity("row-1")   # la borne n'est jamais facultative
+
+
+def test_les_lectures_d_activite_passent_par_la_lecture_bornee(monkeypatch):
+    """Durée bornée (`_agregat`, #1145) sur les deux lectures, et une sortie en
+    refus nommé (`bornee`) plutôt qu'en 500."""
+    objets: list = []
+    sink: dict = {}
+
+    def _agregat(objet, **kw):
+        objets.append(objet)
+        return usage._connect()
+
+    monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, []))
+    monkeypatch.setattr(usage, "_agregat", _agregat)
+    usage.datastore_row_activity("row-1", ns_id=160)
+    usage.datastore_activity(160, "leads-clients")
+    assert objets == ["parcours d'une ligne", "activité d'un tableau"]
+    from oto_mcp.capabilities.registry import CAPABILITIES
+    par_cle = {c.key: c for c in CAPABILITIES}
+    for cle in ("me.datastore.row_activity", "me.datastore.activity"):
+        assert par_cle[cle].handler.__wrapped__ is not None, cle
+
+
+def test_les_routes_d_activite_sont_des_routes_lourdes():
+    """Seize appels en vingt minutes ont pris douze des vingt-six connexions : la
+    concurrence de ces routes est bornée par processus (#1145)."""
+    from oto_mcp.api.routes_lourdes import ROUTES_LOURDES
+    lourdes = {(r.methode, r.gabarit): r for r in ROUTES_LOURDES}
+    for gabarit in ("/api/datastores/{datastore}/rows/{row_id}/activity",
+                    "/api/datastores/{datastore}/activity"):
+        r = lourdes[("GET", gabarit)]
+        assert 0 < r.concurrence <= 3

@@ -38,6 +38,7 @@ from ...datastore import schema as dsv2
 from ...datastore.core import DatastoreNotFound, RowNotFound, make_store
 from ...db import historique
 from .._authz import SUB_ONLY
+from .._lecture_bornee import bornee
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 from .common import EntreeDatastore, HORODATAGE
@@ -150,19 +151,23 @@ def _row_activity(ctx: ResolvedCtx, inp: RowActivityInput) -> dict:
     store = _store(ctx.sub)
     try:
         row = store.get_row(inp.datastore, inp.row_id)
+        # Résolu ICI, et pas laissé au contexte de journal (best-effort, qui rendrait
+        # `None` en silence) : c'est la borne qui rend la lecture du journal indexable.
+        ns_id = store.resolve_ns_id(inp.datastore)
     except DatastoreNotFound:
         raise AuthzDenied(404, "datastore_not_found")
     except RowNotFound:
         raise AuthzDenied(404, "row_not_found")
     key = store.declared_key(inp.datastore)
     key_value = row.get(key) if key else None
-    nsctx = datastore_journal.context(store, inp.datastore)
+    nsctx = datastore_journal.context(store, inp.datastore, ns_id=ns_id)
     # Le PROPRIÉTAIRE part avec la requête : l'axe « clé métier » est une recherche de
     # sous-chaîne dans les args, il doit être borné au tenant (sinon une clé banale
     # remonterait les gestes d'une autre org).
     activity = db.datastore_row_activity(
         inp.row_id, str(key_value) if key_value is not None else None,
-        owner_type=nsctx.owner_type, owner_id=nsctx.owner_id, limit=LIMITE_PARCOURS)
+        ns_id=ns_id, owner_type=nsctx.owner_type, owner_id=nsctx.owner_id,
+        limit=LIMITE_PARCOURS)
     activity = _joindre_les_revisions(activity, nsctx.ns_id, inp.row_id,
                                       nsctx.status_key, LIMITE_PARCOURS)
     # Toutes ces entrées parlent de CETTE ligne (c'est le critère de la requête) → son
@@ -296,7 +301,7 @@ class RowActivity(BaseModel):
 CAPABILITIES += [
     Capability(
         key="me.datastore.row_activity",
-        handler=_row_activity,
+        handler=bornee(_row_activity),
         Input=RowActivityInput,
         Output=RowActivity,
         authz=SUB_ONLY,
@@ -309,7 +314,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="me.datastore.activity",
-        handler=_activity,
+        handler=bornee(_activity),
         Input=DatastoreActivityInput,
         Output=DatastoreActivity,
         authz=SUB_ONLY,
