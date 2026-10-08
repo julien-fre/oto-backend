@@ -284,8 +284,8 @@ def exiger_a_la_pose(sub: str, proprietaire: Optional[str], famille: Optional[st
         raise AuthzDenied(
             400, "subscription_not_used_here",
             f"ton abonnement `{famille}` est connecté, mais pas ouvert dans cette "
-            "organisation : il ne sert que les orgs où tu l'as ouvert. Ouvre-le ici "
-            "(`PATCH /api/me/model-subscriptions/{family}` `used_in`), puis pose "
+            "organisation : il ne sert que les orgs où tu l'as ouvert. Ouvre-le pour "
+            "cette organisation dans Réglages › Fournisseurs de modèles, puis pose "
             "l'agent.")
 
 

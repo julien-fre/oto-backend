@@ -235,6 +235,7 @@ CLASSEMENT: dict[str, Table] = {
     "user_model_subscriptions": possedee(ParSub(), "`sandbox_id` désigne un bac à sable "
                                          "hors base"),
     "user_model_subscription_loans": possedee(ParOrg(), comptes=("sub",)),
+    "user_model_subscription_orgs": possedee(ParOrg(), comptes=("sub",)),
     "org_model_subscription_limits": possedee(ParOrg()),
     "org_model_subscription_modes": possedee(ParOrg()),
     "transcription_jobs": indirecte(_PROJETS, secrets=("api_key_enc",),

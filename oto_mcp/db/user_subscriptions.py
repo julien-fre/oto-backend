@@ -178,11 +178,16 @@ def oublier(sub: str, famille: str) -> Optional[str]:
 
 # ── où l'abonnement sert (`user_model_subscription_orgs`) ───────────────────
 def orgs_servies(sub: str, famille: str) -> list[int]:
-    """Les orgs où l'abonnement personnel de `sub` sert ses agents (mode personnel)."""
+    """Les orgs où l'abonnement personnel de `sub` sert ses agents (mode personnel).
+
+    Seulement celles dont `sub` est TOUJOURS membre — la même règle que la
+    réservation (`runner_jobs._ABONNEMENT_OUVERT_ICI`) : une org quittée ne sert plus,
+    ne se rend plus, et ne bloque donc pas le PATCH qui renvoie l'ensemble."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT org_id FROM user_model_subscription_orgs "
-            "WHERE sub = %s AND famille = %s ORDER BY org_id",
+            "SELECT u.org_id FROM user_model_subscription_orgs u "
+            "JOIN org_members om ON om.org_id = u.org_id AND om.sub = u.sub "
+            "WHERE u.sub = %s AND u.famille = %s ORDER BY u.org_id",
             (sub, famille)).fetchall()
     return [r["org_id"] for r in rows]
 

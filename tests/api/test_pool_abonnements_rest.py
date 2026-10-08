@@ -226,6 +226,30 @@ def test_j_ouvre_mon_abonnement_dans_MON_org_seulement(client, abonne, option):
     assert r.status_code == 200 and r.json()["used_in"] == [], r.text
 
 
+def test_une_org_quittee_sort_de_used_in_et_ne_bloque_pas_le_patch(client, abonne, option):
+    """Revue du 08/10/2026 : ouvert dans A et B, puis sorti de B — `used_in` ne rend
+    plus B (elle ne sert plus), et le front qui renvoie l'ensemble plus une org C
+    dont la personne est membre n'est pas refusé à cause de B."""
+    from oto_mcp import org_store
+    o = abonne
+    option.add(o["membre"])
+    b = org_store.create_org("Org B quittée", created_by=o["admin"])
+    c = org_store.create_org("Org C", created_by=o["admin"])
+    org_store.add_org_member(b, o["membre"], "org_member")
+    org_store.add_org_member(c, o["membre"], "org_member")
+    r = client.patch(f"{_ME}/{_F}", json={"used_in": [o["id"], b]}, headers=_h(o["membre"]))
+    assert r.status_code == 200 and r.json()["used_in"] == sorted([o["id"], b]), r.text
+
+    org_store.remove_org_member(b, o["membre"])
+    (mien,) = client.get(_ME, headers=_h(o["membre"])).json()["subscriptions"]
+    assert mien["used_in"] == [o["id"]], "une org quittée ne sert plus, ne se rend plus"
+
+    envoye = mien["used_in"] + [c]
+    r = client.patch(f"{_ME}/{_F}", json={"used_in": envoye}, headers=_h(o["membre"]))
+    assert r.status_code == 200 and r.json()["used_in"] == sorted(envoye), r.text
+    client.patch(f"{_ME}/{_F}", json={"used_in": []}, headers=_h(o["membre"]))
+
+
 def test_rien_n_est_prete_par_defaut(client, abonne):
     (mien,) = client.get(_ME, headers=_h(abonne["membre"])).json()["subscriptions"]
     assert mien["lent_to"] == []

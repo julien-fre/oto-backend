@@ -1724,9 +1724,11 @@ la personne l'a ouverte, une à une : `PATCH /api/me/model-subscriptions/{family
 `user_model_subscription_orgs` (`sub, famille, org_id`). Ailleurs, la pose refuse
 (`subscription_not_used_here`) et la réservation fait ATTENDRE les travaux (`pending`,
 aucune tentative brûlée) — elle exige une ligne pour l'org du travail ET que la personne
-en soit toujours membre. Se déconnecter (`oublier`) referme toutes les orgs. Le pool ne
+en soit toujours membre (une org quittée ne sert plus et ne se rend plus dans
+`used_in`). Seule la destruction du bac à sable (`?destroy=true`, `oublier`) referme
+toutes les orgs ; une simple déconnexion les garde ouvertes. Le pool ne
 passe pas par ici : un prêt est son propre consentement. Reprise de l'existant (révision
-`0045_abonnement_par_org`, à jouer AVANT le tag) : chaque abonnement est ouvert là où il
+`0046_abonnement_par_org`, à jouer AVANT le tag) : chaque abonnement est ouvert là où il
 servait déjà — un agent posé dessus, un travail en file, un prêt.
 
 **Le POOL d'org (25/09/2026).** Deux modes, réglés PAR ORG et par famille :

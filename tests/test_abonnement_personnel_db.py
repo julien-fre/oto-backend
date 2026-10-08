@@ -336,14 +336,14 @@ def test_se_deconnecter_referme_toutes_les_orgs(live):
 
 
 def test_la_reprise_garde_l_abonnement_LA_OU_IL_SERT(live):
-    """La révision 0045 ouvre chaque abonnement existant là où il sert déjà (un agent
+    """La révision 0046 ouvre chaque abonnement existant là où il sert déjà (un agent
     posé dessus, un prêt), et nulle part ailleurs — rien de ce qui tourne ne s'arrête."""
     import importlib
 
     from oto_mcp.db import user_subscriptions as US
     from oto_mcp.db._conn import _connect
     rev = importlib.import_module(
-        "oto_mcp.db.migrations.versions.20261008_0045_abonnement_par_org")
+        "oto_mcp.db.migrations.versions.20261008_0046_abonnement_par_org")
     p = _personne("abo-reprise")
     US.upsert_sandbox(p, _FAMILLE, "sandbox-reprise")
     with _connect() as conn:

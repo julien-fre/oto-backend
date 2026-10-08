@@ -1,9 +1,9 @@
 """abonnement_par_org : un abonnement personnel ne sert que les orgs où il est ouvert.
 
 Une connexion Claude (la session, le bac à sable) reste une par personne, mais ce
-qu'elle sert se décide désormais par org (`user_model_subscription_orgs`) : se
-connecter dans une org l'y ouvre, une autre org ne la voit pas tant que la personne
-ne l'y a pas ouverte aussi. La pose refuse (`subscription_not_used_here`) et la
+qu'elle sert se décide désormais par org (`user_model_subscription_orgs`) : la
+personne l'ouvre org par org (`used_in`, posé par le front — se connecter ne l'ouvre
+nulle part), une autre org ne la voit pas tant qu'elle ne l'y a pas ouverte aussi. La pose refuse (`subscription_not_used_here`) et la
 réservation fait ATTENDRE les travaux d'une org où l'abonnement n'est pas ouvert.
 
 **Reprise de l'existant — « garder où il sert »** : chaque abonnement existant est
@@ -23,8 +23,8 @@ la révision. L'ancien code ignore la table : la révision seule ne change rien.
 
 Retour arrière : retire la table — l'ancien code sert partout, comme avant.
 
-Révision : 0045_abonnement_par_org (⚠️ numéro provisoire : d'autres PR ouvertes en tiennent)
-Précédente : 0044_jev_jobs
+Révision : 0046_abonnement_par_org
+Précédente : 0045_jetons_emetteurs
 """
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ from alembic import op
 
 from oto_mcp.db.schema.runs import MODEL_SUBSCRIPTION_ORGS
 
-revision = "0045_abonnement_par_org"
-down_revision = "0044_jev_jobs"
+revision = "0046_abonnement_par_org"
+down_revision = "0045_jetons_emetteurs"
 branch_labels = None
 depends_on = None
 

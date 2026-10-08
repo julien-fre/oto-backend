@@ -110,6 +110,19 @@ _CHARGE_PRISE = f"CASE WHEN clos.a IS NULL THEN j.payload ELSE {_TRACE_RUN_CLOS}
 #: La famille du travail examiné par la réservation.
 _FAMILLE_RJ = "rj.payload->>'model_family'"
 
+#: L'abonnement personnel du demandeur `rj.sub` SERT l'org du travail (08/10/2026) :
+#: ouvert dans cette org (`user_model_subscription_orgs`) ET la personne en est
+#: toujours membre. Une seule écriture, lue par la réservation (sinon le travail
+#: ATTEND) et par le repli (sinon il ne replie pas : un travail qui attend parce que
+#: l'abonnement n'est pas ouvert ici n'est pas un travail bloqué par un plafond).
+_ABONNEMENT_OUVERT_ICI = f"""(rj.org_id IS NULL OR EXISTS (
+                                 SELECT 1 FROM user_model_subscription_orgs u
+                                   JOIN org_members om
+                                     ON om.org_id = u.org_id AND om.sub = u.sub
+                                  WHERE u.sub = rj.sub
+                                    AND u.famille = {_FAMILLE_RJ}
+                                    AND u.org_id = rj.org_id))"""
+
 
 def _fragments_abonnement(abonnement: bool) -> dict:
     """Ce que la réservation ajoute pour un dépôt d'ABONNEMENT (OTO-130) — et RIEN
@@ -173,13 +186,7 @@ def _fragments_abonnement(abonnement: bool) -> dict:
                         ELSE NOT {_en_vol("rj.sub", _FAMILLE_RJ)}
                              -- L'abonnement du demandeur sert CETTE org (08/10/2026) :
                              -- ouvert par org, une à une ; sinon le travail ATTEND.
-                             AND (rj.org_id IS NULL OR EXISTS (
-                                 SELECT 1 FROM user_model_subscription_orgs u
-                                   JOIN org_members om
-                                     ON om.org_id = u.org_id AND om.sub = u.sub
-                                  WHERE u.sub = rj.sub
-                                    AND u.famille = {_FAMILLE_RJ}
-                                    AND u.org_id = rj.org_id))
+                             AND {_ABONNEMENT_OUVERT_ICI}
                              AND NOT EXISTS (
                                  SELECT 1 FROM user_model_subscriptions ab
                                   WHERE ab.sub = rj.sub
@@ -855,7 +862,8 @@ def _forfait_de_repli(rj: str, modep: str) -> str:
 
 def _jointures_de_repli(seuil_defaut_pct: int) -> str:
     """Les trois lectures qui décident si un travail `rj` est repliable : le mode de
-    son org, la pause de son demandeur (mode personnel), et celle de TOUS les
+    son org, la pause de son demandeur (mode personnel, et seulement dans une org où
+    son abonnement est ouvert : `_ABONNEMENT_OUVERT_ICI`), et celle de TOUS les
     prêteurs vivants de son pool (mode pool) — la même dans la liste des candidats et
     dans la prise, qui la revérifie."""
     from .org_subscription_pool import PRET_VIVANT
@@ -870,6 +878,7 @@ def _jointures_de_repli(seuil_defaut_pct: int) -> str:
                FROM user_model_subscriptions ab
               WHERE NOT modep.actif AND ab.sub = rj.sub
                 AND ab.famille = rj.payload->>'model_family'
+                AND {_ABONNEMENT_OUVERT_ICI}
                 AND {_pause_pour_l_org("ab", "rj.org_id", seuil_defaut_pct)}
             ) perso ON TRUE
       LEFT JOIN LATERAL (
