@@ -108,6 +108,12 @@ class PlafondInput(BaseModel):
                            "usable right now — never your tier or your usage. "
                            "Removing an org applies from its next job; a running one "
                            "is never cut. Omitted leaves it unchanged."))
+    used_in: Optional[list[int]] = Field(
+        None, description=("The orgs where this subscription runs YOUR agents (the org's "
+                           "personal mode) — the whole set, replacing the previous one. "
+                           "Connecting doesn't open it everywhere: each org is opened "
+                           "on its own, by you, and only orgs you are a member of. "
+                           "Omitted leaves it unchanged."))
 
 
 class Abonnement(BaseModel):
@@ -133,6 +139,10 @@ class Abonnement(BaseModel):
         default_factory=list,
         description=("The orgs whose pool you lend this subscription to. Each lender's "
                      "own cap still applies to their account."))
+    used_in: list[int] = Field(
+        default_factory=list,
+        description=("The orgs where this subscription runs your agents. In any other "
+                     "org, agents on it can't be set up and their jobs wait."))
     waiting_jobs: int = Field(
         0, description=("How many of your jobs are queued on this subscription right "
                         "now. While you are signed out, need to reconnect, or wait on "
@@ -166,6 +176,7 @@ def _complet(sub: str, ligne: dict) -> dict:
     """Un abonnement tel que l'écran le montre : son état, ses prêts, sa file."""
     return {**_servi(ligne),
             "lent_to": db.org_subscription_pool.orgs_pretees(sub, ligne["famille"]),
+            "used_in": db.user_subscriptions.orgs_servies(sub, ligne["famille"]),
             "waiting_jobs": db.travaux_en_attente_d_abonnement(sub, ligne["famille"])}
 
 
@@ -273,9 +284,9 @@ def _plafonner(ctx: ResolvedCtx, inp: PlafondInput) -> dict:
     compte aussi quand il sert le pool d'une org."""
     _exiger_famille(inp.family)
     poser_plafond = "limit_pct" in inp.model_fields_set
-    if not poser_plafond and inp.lent_to is None:
+    if not poser_plafond and inp.lent_to is None and inp.used_in is None:
         raise AuthzDenied(400, "nothing_to_change",
-                          "rien à changer : envoie `limit_pct`, `lent_to`, ou les deux.")
+                          "rien à changer : envoie `limit_pct`, `lent_to` ou `used_in`.")
     if poser_plafond:
         _abonnement.exiger_limite_valide(inp.limit_pct)
     if inp.lent_to:
@@ -283,6 +294,9 @@ def _plafonner(ctx: ResolvedCtx, inp: PlafondInput) -> dict:
         # connecter, aux personnes qui portent l'option. Retirer ses prêts, jamais.
         _abonnement.exiger_ouvert(ctx.sub, inp.family)
         _exiger_membre_de(ctx.sub, inp.lent_to)
+    if inp.used_in:
+        _abonnement.exiger_ouvert(ctx.sub, inp.family)
+        _exiger_membre_de(ctx.sub, inp.used_in)
     ligne = db.user_subscriptions.get_subscription(ctx.sub, inp.family)
     if not ligne:
         raise AuthzDenied(404, "not_connected",
@@ -292,6 +306,8 @@ def _plafonner(ctx: ResolvedCtx, inp: PlafondInput) -> dict:
                                                    inp.limit_pct) or ligne
     if inp.lent_to is not None:
         db.org_subscription_pool.poser_prets(ctx.sub, inp.family, inp.lent_to)
+    if inp.used_in is not None:
+        db.user_subscriptions.poser_orgs_servies(ctx.sub, inp.family, inp.used_in)
     return _complet(ctx.sub, ligne)
 
 

@@ -170,4 +170,48 @@ def oublier(sub: str, famille: str) -> Optional[str]:
         # Ses PRÊTS aux pools d'org partent avec lui, dans la même transaction : un
         # abonnement reconnecté plus tard ne reprête rien sans un nouveau geste.
         oublier_prets(sub, famille, conn=conn)
+        # Et les orgs où il servait : se reconnecter les rouvre une à une.
+        conn.execute("DELETE FROM user_model_subscription_orgs "
+                     "WHERE sub = %s AND famille = %s", (sub, famille))
     return (dict(row).get("sandbox_id") if row else None)
+
+
+# ── où l'abonnement sert (`user_model_subscription_orgs`) ───────────────────
+def orgs_servies(sub: str, famille: str) -> list[int]:
+    """Les orgs où l'abonnement personnel de `sub` sert ses agents (mode personnel)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT org_id FROM user_model_subscription_orgs "
+            "WHERE sub = %s AND famille = %s ORDER BY org_id",
+            (sub, famille)).fetchall()
+    return [r["org_id"] for r in rows]
+
+
+def sert_dans(sub: str, famille: str, org_id: Optional[int]) -> bool:
+    """L'abonnement de `sub` sert-il dans `org_id` ? Un travail sans org (aucun
+    aujourd'hui pour un agent hébergé) n'est pas borné ici."""
+    if org_id is None:
+        return True
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM user_model_subscription_orgs "
+            "WHERE sub = %s AND famille = %s AND org_id = %s",
+            (sub, famille, org_id)).fetchone()
+    return row is not None
+
+
+def poser_orgs_servies(sub: str, famille: str, org_ids) -> list[int]:
+    """Remplace l'ensemble des orgs où l'abonnement sert. Une org retirée vaut pour
+    le travail SUIVANT : le run en cours finit."""
+    voulus = sorted({int(o) for o in org_ids})
+    with _connect() as conn:
+        conn.execute(
+            "DELETE FROM user_model_subscription_orgs "
+            "WHERE sub = %s AND famille = %s AND NOT (org_id = ANY(%s))",
+            (sub, famille, voulus))
+        for org_id in voulus:
+            conn.execute(
+                "INSERT INTO user_model_subscription_orgs (sub, famille, org_id) "
+                "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                (sub, famille, org_id))
+    return voulus

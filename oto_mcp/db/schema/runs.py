@@ -653,3 +653,25 @@ ALTER TABLE user_model_subscriptions
 ALTER TABLE user_model_subscriptions
     ADD COLUMN IF NOT EXISTS limit_utilisation DOUBLE PRECISION;
 """
+
+# OÙ l'abonnement personnel d'une personne peut servir (08/10/2026)
+MODEL_SUBSCRIPTION_ORGS = """
+-- Les orgs où l'abonnement PERSONNEL d'une personne sert les agents en mode
+-- `personnel`. Une connexion (la session, le bac à sable) reste une par personne ;
+-- ce qu'elle PEUT servir se décide par org : se connecter dans une org l'y ouvre, une
+-- autre org ne la voit pas tant que la personne ne l'y a pas ouverte aussi. Sans
+-- ligne pour (personne, famille, org) : ses agents de cette famille, dans cette org,
+-- ne se posent pas (`subscription_not_used_here`) et leurs travaux ATTENDENT.
+--
+-- Le POOL ne passe pas par ici : un prêt (`user_model_subscription_loans`) est son
+-- propre consentement, par org. Sans FK vers `user_model_subscriptions`, pour la
+-- même raison que les prêts : `migrate_sub` repointe chaque table de son côté, et
+-- `oublier` (le sandbox effacé) retire ces lignes dans la même transaction.
+CREATE TABLE IF NOT EXISTS user_model_subscription_orgs (
+    sub TEXT NOT NULL,
+    famille TEXT NOT NULL,
+    org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (sub, famille, org_id)
+);
+"""

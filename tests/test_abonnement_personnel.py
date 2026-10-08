@@ -53,6 +53,15 @@ def _mode_personnel(monkeypatch):
     monkeypatch.setattr(org_subscription_pool, "get_mode", lambda org_id, famille: None)
 
 
+@pytest.fixture(autouse=True)
+def _ouvert_ici(monkeypatch):
+    """L'abonnement de ces bancs est ouvert dans leur org (08/10/2026 : il ne sert
+    que là où il l'est) — sauf les bancs qui jugent justement ce refus."""
+    ouvert = {"oui": True}
+    monkeypatch.setattr(US, "sert_dans", lambda sub, famille, org_id: ouvert["oui"])
+    return ouvert
+
+
 @pytest.fixture
 def _abonnements(monkeypatch):
     """L'état des abonnements, en mémoire — et la TRACE des lectures du coffre.
@@ -255,6 +264,16 @@ class TestPose:
         _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.CONNECTE,
                                               "sandbox_id": _BAC}
         _abonnement.exiger_a_la_pose(_PORTEUR, _PORTEUR, _FAMILLE)
+
+    def test_connecte_mais_pas_ouvert_dans_cette_org_refuse(self, _abonnements, _ouvert_ici):
+        """Une connexion ne sert pas toutes les orgs de la personne : celle où
+        l'agent se pose doit l'avoir ouverte (08/10/2026)."""
+        _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.CONNECTE,
+                                              "sandbox_id": _BAC}
+        _ouvert_ici["oui"] = False
+        with pytest.raises(Exception) as e:
+            _abonnement.exiger_a_la_pose(_PORTEUR, _PORTEUR, _FAMILLE, org_id=2)
+        assert e.value.code == "subscription_not_used_here"
 
     def test_un_modele_ordinaire_ne_passe_pas_par_cette_garde(self, _abonnements):
         """Aucune lecture, aucun refus : une famille qui n'est pas un abonnement
