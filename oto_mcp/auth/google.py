@@ -121,6 +121,39 @@ SERVICE_LABELS = {"gmail": "Gmail", "drive": "Google Drive", "sheets": "Google S
 # silently added to the account's consent.
 _CARRIER_SERVICES = ("sheets", "drive", "gmail", "tasks", "calendar", "chat")
 SCOPES = [scope for svc in _CARRIER_SERVICES for scope in SERVICE_SCOPES[svc]]
+
+
+def account_services() -> tuple[str, ...]:
+    """The services the ACCOUNT (`google`) requests under our app, on THIS instance.
+
+    `GOOGLE_ACCOUNT_SERVICES` narrows `_CARRIER_SERVICES`: a comma-separated subset
+    (`gmail,drive,sheets,calendar`), or `none` for the identity alone — the account
+    card then behaves as under a tenant's app, each service adding its scopes from its
+    own card. Unset or empty = the six, the state before this setting.
+
+    Why an instance setting: Google verifies an OAuth project for a declared list of
+    scopes, and refuses an app that requests scopes outside it. An instance whose
+    project is verified for fewer services than the six must not request the others
+    through the account card — hiding their cards (`connector_availability`) is not
+    enough, the account card would still ask for them. A value naming a service the
+    account cannot carry is a configuration error: refused, never guessed."""
+    raw = (os.environ.get("GOOGLE_ACCOUNT_SERVICES") or "").strip().lower()
+    if not raw:
+        return _CARRIER_SERVICES
+    if raw == "none":
+        return ()
+    wanted = {s.strip() for s in raw.split(",") if s.strip()}
+    if not wanted:
+        raise RuntimeError(
+            f"GOOGLE_ACCOUNT_SERVICES is set to {raw!r}, which names no service: "
+            f"expected a comma-separated subset of {', '.join(_CARRIER_SERVICES)}, "
+            "or none.")
+    unknown = sorted(wanted - set(_CARRIER_SERVICES))
+    if unknown:
+        raise RuntimeError(
+            f"GOOGLE_ACCOUNT_SERVICES names {', '.join(unknown)}: expected a subset of "
+            f"{', '.join(_CARRIER_SERVICES)}, or none.")
+    return tuple(s for s in _CARRIER_SERVICES if s in wanted)
 # What a vault row can carry: nothing else gets in (`persist_token`),
 # even if a partner's client has other scopes granted elsewhere.
 KNOWN_SCOPES = (frozenset(IDENTITY_SCOPES)
@@ -139,13 +172,15 @@ def scopes_for(connector: str, app: "OAuthApp") -> list[str]:
 
     - a service: its own, and nothing else;
     - the account (`google`): under OUR app, the six services from before the split
-      (`_CARRIER_SERVICES`, for a single-card dashboard); under a TENANT's app,
+      (`_CARRIER_SERVICES`, for a single-card dashboard), narrowed by the instance's
+      `GOOGLE_ACCOUNT_SERVICES` (`account_services`); under a TENANT's app,
       nothing more than the identity — a partner never requests a scope that
       their Google project does not declare, their services add them one by one.
 
     An unknown connector is refused: nothing here guesses a scope."""
     if connector == "google":
-        base = list(SCOPES) if app.origin == "env" else []
+        base = ([sc for svc in account_services() for sc in SERVICE_SCOPES[svc]]
+                if app.origin == "env" else [])
     elif connector in SERVICE_SCOPES:
         base = list(SERVICE_SCOPES[connector])
     else:
