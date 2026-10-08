@@ -249,6 +249,99 @@ def test_un_emetteur_ne_nait_pas_sans_echeance(monkeypatch, socle, cle, pp):
     assert socle[-1][2].get("parent_id") is None
 
 
+# --- 3 bis. Le plafond « toute une org » ----------------------------------------
+
+_PLAFOND_ORG = {"orgs": {"2": "write"}}
+
+
+def test_le_plafond_d_org_se_parse_et_se_rend_tel_quel():
+    assert token_scopes.parse({"issue": {"orgs": {2: "write"}}}) == {
+        "issue": {"orgs": {"2": "write"}}}
+    mixte = {"issue": {"orgs": {"2": "read"}, "namespaces": {"12": "write"}}}
+    assert token_scopes.parse(mixte) == mixte
+
+
+@pytest.mark.parametrize("brut", [
+    {"issue": {"orgs": {}}}, {"issue": {"orgs": {"2": "admin"}}},
+    {"issue": {"orgs": {"deux": "read"}}}, {"issue": {"orgs": ["2"]}},
+    {"orgs": {"2": "write"}}])
+def test_une_org_ne_se_nomme_que_dans_un_plafond_et_avec_un_droit(brut):
+    with pytest.raises(token_scopes.ScopeError):
+        token_scopes.parse(brut)
+
+
+@pytest.mark.parametrize("portee,orgs_des,dedans", [
+    ({"namespaces": {"12": "write"}}, {"namespaces": {"12": 2}}, True),
+    ({"projects": {"5": "read"}}, {"projects": {"5": 2}}, True),
+    ({"namespaces": {"12": "write"}}, {"namespaces": {"12": 3}}, False),
+    ({"namespaces": {"12": "write"}}, {"namespaces": {"12": None}}, False),
+    ({"namespaces": {"12": "write"}}, None, False),
+    ({"namespaces": {"12": "read"}, "runner": True}, {"namespaces": {"12": 2}}, False),
+])
+def test_sous_un_plafond_d_org_la_ressource_doit_vivre_dans_l_org(portee, orgs_des,
+                                                                 dedans):
+    assert token_scopes.inclus(portee, _PLAFOND_ORG, orgs_des) is dedans
+
+
+def test_le_plafond_d_org_borne_le_droit():
+    assert not token_scopes.inclus({"namespaces": {"12": "write"}},
+                                   {"orgs": {"2": "read"}}, {"namespaces": {"12": 2}})
+
+
+def test_plafond_nomme_et_plafond_d_org_s_additionnent():
+    plafond = {"orgs": {"2": "read"}, "namespaces": {"12": "write"}}
+    assert token_scopes.inclus({"namespaces": {"12": "write", "13": "read"}}, plafond,
+                               {"namespaces": {"12": None, "13": 2}})
+
+
+@pytest.fixture
+def plafond_d_org(socle, monkeypatch):
+    """12 est à l'org 2, 14 à l'équipe 7 de l'org 2, 13 est PERSONNEL — rangé dans
+    l'org 2, il n'en fait pas partie pour autant."""
+    proprios = {"12": ("org", "2"), "13": ("user", "u-1"), "14": ("group", "7")}
+    monkeypatch.setattr(at.ownership, "owner_of",
+                        lambda rtype, cle: proprios.get(cle) if rtype ==
+                        at.ownership.TYPE_RESSOURCE_DATASTORE else None)
+    monkeypatch.setattr(at.org_origin, "group_orgs", lambda owners: {7: 2})
+
+    class _Store:
+        def list_datastores(self):
+            return [{"id": int(i), "datastore": f"t{i}"} for i in proprios]
+
+    monkeypatch.setattr(datastore, "make_store", lambda sub: _Store())
+    token_scopes.set_current({"issue": _PLAFOND_ORG}, 41)
+    return socle
+
+
+@pytest.mark.parametrize("ns", ["12", "14"])
+def test_l_emetteur_d_org_emet_sur_un_tableau_de_l_org(plafond_d_org, ns):
+    code, out = call("me.token.create",
+                     body={"scopes": {"namespaces": {ns: "write"}}, "ttl_days": 30})
+    assert code == 201, out
+    assert plafond_d_org[-1][2]["parent_id"] == 41
+
+
+@pytest.mark.parametrize("scopes", [
+    {"namespaces": {"13": "read"}}, {"projects": {"5": "read"}},
+    {"namespaces": {"12": "write", "13": "read"}}])
+def test_l_emetteur_d_org_n_atteint_ni_le_personnel_ni_l_inconnu(plafond_d_org, scopes):
+    code, out = call("me.token.create", body={"scopes": scopes, "ttl_days": 30})
+    assert code == 403 and out["error"] == "scope_exceeds_issuer", out
+    assert plafond_d_org == []
+
+
+@pytest.mark.parametrize("membre,attendu", [(True, 201), (False, 400)])
+def test_un_plafond_d_org_exige_d_en_etre_membre(socle, monkeypatch, membre, attendu):
+    monkeypatch.setattr(at.roles, "is_org_member", lambda sub, org: membre)
+    code, out = call("me.token.create",
+                     body={"scopes": {"issue": _PLAFOND_ORG}, "ttl_days": 180})
+    assert code == attendu, out
+    if not membre:
+        assert out["error"] == "unknown_org" and socle == []
+    else:
+        assert out["scopes"] == {"issue": _PLAFOND_ORG}
+
+
 # --- 4. La base : un enfant meurt avec son parent -----------------------------
 
 @pytest.fixture()

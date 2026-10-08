@@ -86,8 +86,8 @@ RUNNER = "runner"
 
 # La portée d'ÉMISSION — le jeton qui fabrique des jetons, sans humain à chaque clé
 # (décision d'Alexis, 08/10/2026, qui renverse « émettre un jeton reste un acte
-# humain »). Sa valeur est un PLAFOND : une portée `namespaces`/`projects`, et rien
-# d'autre, que chaque jeton émis doit tenir (`inclus`).
+# humain »). Sa valeur est un PLAFOND : une portée `namespaces`/`projects`, ou des
+# orgs entières (`ORGS`), et rien d'autre, que chaque jeton émis doit tenir (`inclus`).
 #
 #     {"issue": {"namespaces": {"204": "write"}}}
 #
@@ -97,6 +97,17 @@ RUNNER = "runner"
 # révocation emporte : tous ses enfants (`db.tokens`). Lui-même ne naît que d'une
 # session humaine, et jamais sans échéance (`capabilities/api_tokens`).
 ISSUE = "issue"
+
+# Le plafond « TOUTE UNE ORG » (décision d'Alexis, 08/10/2026 : choisir les tableaux un
+# par un pour un émetteur était le geste même qu'il voulait supprimer). Il ne vaut QUE
+# dans un plafond, jamais dans une portée : l'enfant nomme toujours ses tableaux et ses
+# projets, et chacun doit VIVRE dans l'org — appartenir à l'org ou à l'une de ses
+# équipes. Un objet personnel n'y est jamais, même rangé dans l'org : l'émetteur d'org
+# n'atteint pas les objets personnels de son propriétaire. L'org où vit chaque objet se
+# lit en base, par l'appelant (`inclus(…, orgs_des=…)`) ; ce module reste pur.
+#
+#     {"issue": {"orgs": {"2": "write"}}}
+ORGS = "orgs"
 
 # Ce qu'ouvre `issue` : SES jetons — émettre, lister ses enfants, révoquer un enfant.
 # Le handler borne la liste et la révocation aux enfants de l'émetteur (`emetteur`).
@@ -267,33 +278,63 @@ def parse(raw: object) -> Optional[dict]:
     return out
 
 
+def _parse_orgs(brut: object) -> dict[str, str]:
+    if not isinstance(brut, dict) or not brut:
+        raise ScopeError("scopes.issue.orgs doit être un objet non vide {id: read|write}")
+    out: dict[str, str] = {}
+    for oid, perm in brut.items():
+        try:
+            cle = str(int(str(oid).strip()))
+        except (TypeError, ValueError):
+            raise ScopeError(f"« {oid} » n'est pas un id d'org") from None
+        if perm not in (READ, WRITE):
+            raise ScopeError(f"permission « {perm} » sur l'org {cle} : attendu read|write")
+        out[cle] = perm
+    return out
+
+
 def _parse_plafond(brut: object) -> dict:
-    """Le plafond d'un jeton émetteur : des tableaux et des projets, rien d'autre —
-    ni `runner`, ni `issue` (un émetteur n'émet pas d'émetteur)."""
+    """Le plafond d'un jeton émetteur : des tableaux, des projets, des orgs entières
+    (`ORGS`), rien d'autre — ni `runner`, ni `issue` (un émetteur n'émet pas
+    d'émetteur)."""
     if not isinstance(brut, dict):
-        raise ScopeError("scopes.issue doit être un objet {\"namespaces\": {…}, "
-                         "\"projects\": {…}}")
-    hors = set(brut) - {NAMESPACES, PROJECTS}
+        raise ScopeError("scopes.issue doit être un objet {\"orgs\": {…}, "
+                         "\"namespaces\": {…}, \"projects\": {…}}")
+    hors = set(brut) - {NAMESPACES, PROJECTS, ORGS}
     if hors:
-        raise ScopeError(f"scopes.issue ne porte que namespaces et projects, pas "
+        raise ScopeError(f"scopes.issue ne porte que orgs, namespaces et projects, pas "
                          f"{sorted(hors)}")
-    plafond = parse(brut)
+    reste = {k: v for k, v in brut.items() if k != ORGS}
+    plafond = parse(reste) if reste else {}
+    if brut.get(ORGS) is not None:
+        plafond[ORGS] = _parse_orgs(brut[ORGS])
     if not plafond:
-        raise ScopeError("scopes.issue doit nommer au moins un tableau ou un projet")
+        raise ScopeError("scopes.issue doit nommer au moins une org, un tableau ou un "
+                         "projet")
     return plafond
 
 
-def inclus(portee: Optional[dict], plafond: dict) -> bool:
+def inclus(portee: Optional[dict], plafond: dict,
+           orgs_des: Optional[dict] = None) -> bool:
     """`portee` tient-elle dans `plafond` ? Chaque tableau et projet qu'elle nomme y
-    figure, avec un droit que celui du plafond contient (`write` contient `read`).
-    Une portée nulle (pleins pouvoirs) ou qui porte autre chose que des tableaux et
-    des projets n'y tient jamais."""
+    figure — nommément, ou par l'org où il vit (`ORGS`) — avec un droit que celui du
+    plafond contient (`write` contient `read`). Une portée nulle (pleins pouvoirs) ou
+    qui porte autre chose que des tableaux et des projets n'y tient jamais.
+
+    `orgs_des` = `{famille: {clé: id d'org | None}}`, l'org où vit chaque ressource
+    nommée, lue par l'appelant. Absente, ou `None` pour une ressource : celle-ci ne
+    tient que par le plafond nommé."""
     if not portee or set(portee) - {NAMESPACES, PROJECTS}:
         return False
+    par_org = plafond.get(ORGS) or {}
     for famille in (NAMESPACES, PROJECTS):
         accorde = plafond.get(famille) or {}
+        lieux = (orgs_des or {}).get(famille) or {}
         for cle, droit in (portee.get(famille) or {}).items():
-            if cle not in accorde or droit not in _IMPLIES[accorde[cle]]:
+            org = lieux.get(cle)
+            plafonds = (accorde.get(cle),
+                        par_org.get(str(org)) if org is not None else None)
+            if not any(p and droit in _IMPLIES[p] for p in plafonds):
                 return False
     return True
 

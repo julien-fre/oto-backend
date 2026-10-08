@@ -966,8 +966,14 @@ déploiement : **`docs/version-servie.md`**.
   n'aient plus besoin d'un humain à chaque clé, modèle du jeton Cloudflare « API Tokens:
   Edit »). `POST /api/me/tokens {"scopes": {"issue": {"namespaces": {"204": "write"}}},
   "ttl_days": 180}` rend un jeton qui émet à son tour, sans session, des jetons bornés par
-  son **plafond** (`issue`, tableaux et projets seulement, rangés par identifiant). Ce qui
-  tient le motif de la règle ci-dessus :
+  son **plafond** (`issue`, tableaux et projets seulement, rangés par identifiant). Le
+  plafond peut aussi nommer une **org entière** (même jour, choisir les tableaux un par
+  un était le geste à supprimer) : `{"issue": {"orgs": {"2": "write"}}}`. L'enfant nomme
+  toujours ses tableaux et projets par identifiant, et chacun doit **appartenir** à l'org
+  ou à l'une de ses équipes — jamais un objet personnel, même rangé dans l'org. Le porteur
+  doit être membre de l'org nommée (`400 unknown_org`). L'émetteur envoie `X-Oto-Org` :
+  c'est dans l'org active que se résolvent les tableaux de l'enfant. Ce qui tient le
+  motif de la règle ci-dessus :
   - il ne naît que d'une session humaine, et jamais sans échéance
     (`400 issuer_ttl_required`, aux deux paliers) ;
   - il ne franchit que les trois routes MEMBRE (`allow_issuer_token`), jamais l'admin ;

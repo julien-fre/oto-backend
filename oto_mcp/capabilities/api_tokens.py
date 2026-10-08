@@ -19,7 +19,10 @@ par test sur les six.
 **Une exception, le jeton ÉMETTEUR** (décision d'Alexis du 08/10/2026 : que les agents
 n'aient plus besoin d'un humain à chaque clé, comme le jeton Cloudflare « API Tokens:
 Edit »). Un jeton porté `{"issue": <plafond>}` atteint les trois routes de SES jetons
-(`allow_issuer_token`), jamais celles du palier admin. Ce qui tient le motif ci-dessus :
+(`allow_issuer_token`), jamais celles du palier admin. Le plafond nomme des tableaux et
+des projets, ou des orgs entières (`{"orgs": {"2": "write"}}`, même jour) : l'enfant
+nomme alors ses tableaux et projets, qui doivent appartenir à l'org ou à l'une de ses
+équipes. Ce qui tient le motif ci-dessus :
 - il ne naît que d'une session humaine, et jamais sans échéance (`issuer_ttl_required`) ;
 - il n'émet que des jetons À PORTÉE, inclus dans son plafond, ni émetteurs ni runner,
   échéancés au plus `_TTL_MAX_ENFANT` jours ;
@@ -56,7 +59,7 @@ from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field
 
-from .. import access, credentials_store, db, providers
+from .. import access, credentials_store, db, org_origin, ownership, providers, roles
 from ..auth import token_scopes
 from ._authz import SUB_ONLY, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -337,16 +340,58 @@ def _echeance_d_emetteur(scopes: Optional[dict], ttl_days: Optional[int]) -> Non
                           "Un jeton émetteur (portée `issue`) exige `ttl_days`.")
 
 
+def _orgs_du_plafond(sub: str, scopes: Optional[dict]) -> None:
+    """Un plafond d'org ne nomme qu'une org dont le porteur est membre : sinon il ne
+    couvrirait rien, et l'émetteur paraîtrait branché sans pouvoir rien émettre."""
+    orgs = ((scopes or {}).get(token_scopes.ISSUE) or {}).get(token_scopes.ORGS) or {}
+    hors = sorted(o for o in orgs if not roles.is_org_member(sub, int(o)))
+    if hors:
+        raise AuthzDenied(400, "unknown_org",
+                          f"Le porteur du jeton n'est pas membre de ces orgs : {hors}")
+
+
+def _org_proprietaire(proprio: Optional[tuple], groupes: dict) -> Optional[int]:
+    """L'org où vit un objet AU SENS DU PLAFOND D'ORG : celle qui le possède, ou l'org
+    parente de l'équipe qui le possède. Un objet personnel n'en a aucune, même rangé
+    dans une org (`context_org_id`) — décision d'Alexis du 08/10/2026 : un plafond
+    d'org n'atteint jamais les objets personnels."""
+    if proprio is None:
+        return None
+    if proprio[0] == "org":
+        return int(proprio[1])
+    if proprio[0] == "group":
+        return groupes.get(int(proprio[1]))
+    return None
+
+
+def _orgs_des(scopes: dict) -> dict:
+    """`{famille: {clé: org}}` pour `token_scopes.inclus`, lu sur le propriétaire de
+    chaque tableau et projet que la portée nomme."""
+    familles = {token_scopes.NAMESPACES: ownership.TYPE_RESSOURCE_DATASTORE,
+                token_scopes.PROJECTS: "project"}
+    proprios = {f: {cle: ownership.owner_of(rtype, cle) for cle in (scopes.get(f) or {})}
+                for f, rtype in familles.items()}
+    groupes = org_origin.group_orgs(
+        [p for par_cle in proprios.values() for p in par_cle.values() if p])
+    return {f: {cle: _org_proprietaire(p, groupes) for cle, p in par_cle.items()}
+            for f, par_cle in proprios.items()}
+
+
 def _borne_enfant(scopes: Optional[dict], ttl_days: Optional[int],
                   plafond: dict) -> None:
     """Ce qu'un jeton émetteur peut émettre : une portée incluse dans son plafond
     (donc ni pleins pouvoirs, ni émetteur, ni runner), échéancée au plus
-    `_TTL_MAX_ENFANT` jours."""
-    if not token_scopes.inclus(scopes, plafond):
+    `_TTL_MAX_ENFANT` jours. L'org de chaque ressource ne se lit que si le plafond
+    nomme des orgs."""
+    orgs_des = (_orgs_des(scopes) if scopes and plafond.get(token_scopes.ORGS)
+                else None)
+    if not token_scopes.inclus(scopes, plafond, orgs_des):
         raise AuthzDenied(
             403, "scope_exceeds_issuer",
             f"Un jeton émetteur n'émet qu'une portée incluse dans son plafond "
-            f"({plafond}) : tableaux et projets seulement, droit au plus égal.")
+            f"({plafond}) : tableaux et projets seulement, nommés par identifiant, "
+            f"droit au plus égal. Sous un plafond d'org, chacun doit appartenir à "
+            f"l'org ou à l'une de ses équipes — jamais un objet personnel.")
     if not ttl_days or ttl_days > _TTL_MAX_ENFANT:
         raise AuthzDenied(
             400, "issued_token_ttl",
@@ -415,6 +460,7 @@ def _my_create(ctx: ResolvedCtx, inp: TokenCreateInput) -> dict:
         _borne_enfant(scopes, ttl_days, em[1])
     else:
         _echeance_d_emetteur(scopes, ttl_days)
+        _orgs_du_plafond(ctx.sub, scopes)
     token = db.create_api_token(ctx.sub, label=label, ttl_days=ttl_days, scopes=scopes,
                                 parent_id=em[0] if em else None)
     return {"token": token, "label": label, "scopes": scopes, "ttl_days": ttl_days}
@@ -444,6 +490,7 @@ def _admin_create(ctx: ResolvedCtx, inp: AdminTokenCreateInput) -> dict:
     # que l'identifiant doit désigner le tableau.
     scopes = _par_identifiant(cible, _portee(inp.scopes))
     _echeance_d_emetteur(scopes, ttl_days)
+    _orgs_du_plafond(cible, scopes)
     token = db.create_api_token(cible, label=label, ttl_days=ttl_days,
                                 scopes=scopes)
     return {"token": token, "label": label, "ttl_days": ttl_days, "scopes": scopes}
