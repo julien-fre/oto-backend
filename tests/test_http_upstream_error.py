@@ -84,3 +84,29 @@ def test_sans_reponse_le_statut_retombe_sur_502():
     err = _upstream_error(requests.HTTPError("boom")).error
     assert "HTTP 502" in err.message
     assert _excerpt(None) == ""
+
+
+# ── Redirection refusée par le client (oto-core `RedirectRefused`) ─────────────
+
+class _Redirige(ValueError):
+    """Même forme que `oto.tools.http.RedirectRefused` : statut et `Location`."""
+
+    def __init__(self, status, location):
+        self.status, self.location = status, location
+        super().__init__(f"redirect refused ({status} to {location})")
+
+
+def test_une_redirection_refusee_dit_ou_elle_menait_et_quoi_faire():
+    from oto_mcp.tools.http import _value_error
+
+    err = _value_error(_Redirige(302, "https://api.example.test/v2/x")).error
+    assert "https://api.example.test/v2/x" in err.message
+    assert "302" in err.message and "never followed" in err.message
+    assert "call its path directly" in err.message
+
+
+def test_une_autre_erreur_de_valeur_reste_telle_quelle():
+    from oto_mcp.tools.http import _value_error
+
+    assert _value_error(ValueError("path must start with /")).error.message == \
+        "path must start with /"
