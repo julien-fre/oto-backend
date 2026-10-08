@@ -243,3 +243,15 @@ def test_project_file_exige_deux_ids_entiers(projet, source):
 def test_le_kind_inconnu_nomme_project_file():
     with pytest.raises(fs.FileSourceError, match="project_file"):
         fs.resolve({"kind": "ftp"})
+
+
+def test_le_type_http_est_annonce():
+    with pytest.raises(fs.FileSourceError, match="http"):
+        fs.resolve({"kind": "ftp", "path": "x"})
+
+
+def test_http_exige_un_chemin_relatif():
+    with pytest.raises(fs.FileSourceError, match="path"):
+        fs.resolve({"kind": "http", "path": "x.csv"})
+    with pytest.raises(fs.FileSourceError, match="params"):
+        fs.resolve({"kind": "http", "path": "/x.csv", "params": "a=1"})
