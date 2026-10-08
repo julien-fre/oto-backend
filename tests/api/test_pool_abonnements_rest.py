@@ -156,6 +156,23 @@ def test_je_prete_a_MON_org_et_la_liste_le_rend(client, abonne, option):
     assert mien["lent_to"] == [o["id"]]
 
 
+def test_j_ouvre_mon_abonnement_dans_MON_org_seulement(client, abonne, option):
+    """08/10/2026 : `used_in` dit où l'abonnement sert mes agents. Une org dont je
+    ne suis pas membre est refusée ; la liste se remplace, et se vide."""
+    o = abonne
+    option.add(o["membre"])
+    r = client.patch(f"{_ME}/{_F}", json={"used_in": [o["id"]]}, headers=_h(o["membre"]))
+    assert r.status_code == 200 and r.json()["used_in"] == [o["id"]], r.text
+    (mien,) = client.get(_ME, headers=_h(o["membre"])).json()["subscriptions"]
+    assert mien["used_in"] == [o["id"]]
+
+    r = client.patch(f"{_ME}/{_F}", json={"used_in": [o["autre"]]}, headers=_h(o["membre"]))
+    assert r.status_code == 403 and r.json()["error"] == "not_org_member", r.text
+
+    r = client.patch(f"{_ME}/{_F}", json={"used_in": []}, headers=_h(o["membre"]))
+    assert r.status_code == 200 and r.json()["used_in"] == [], r.text
+
+
 def test_rien_n_est_prete_par_defaut(client, abonne):
     (mien,) = client.get(_ME, headers=_h(abonne["membre"])).json()["subscriptions"]
     assert mien["lent_to"] == []

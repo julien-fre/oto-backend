@@ -278,6 +278,15 @@ def exiger_a_la_pose(sub: str, proprietaire: Optional[str], famille: Optional[st
             f"aucune connexion `{famille}` ouverte pour toi ({etat}). Ouvre-la dans "
             "Réglages › Fournisseurs de modèles, puis pose l'agent : un agent posé "
             "sans connexion resterait programmé sans jamais tourner.")
+    # Connectée, mais pas OUVERTE dans cette org (08/10/2026) : un abonnement sert
+    # les orgs où la personne l'a ouvert, une à une, jamais toutes par défaut.
+    if not user_subscriptions.sert_dans(sub, famille, org_id):
+        raise AuthzDenied(
+            400, "subscription_not_used_here",
+            f"ton abonnement `{famille}` est connecté, mais pas ouvert dans cette "
+            "organisation : il ne sert que les orgs où tu l'as ouvert. Ouvre-le ici "
+            "(`PATCH /api/me/model-subscriptions/{family}` `used_in`), puis pose "
+            "l'agent.")
 
 
 def exiger_limite_valide(limite_pct: Optional[int]) -> None:

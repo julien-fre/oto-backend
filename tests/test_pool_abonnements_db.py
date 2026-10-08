@@ -88,8 +88,22 @@ def _abonne(sub, *, statut="connected", reset=None, pret_a=()):
     return sub
 
 
+def _ouvert_ici(org, sub, famille):
+    """Depuis le 08/10/2026 un abonnement ne sert que les orgs où la personne l'a
+    ouvert, membre : ces bancs jugent la file, ils ouvrent donc l'org du travail."""
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        conn.execute("INSERT INTO orgs (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+                     (org, f"Org {org}"))
+        conn.execute("INSERT INTO org_members (org_id, sub) VALUES (%s, %s) "
+                     "ON CONFLICT DO NOTHING", (org, sub))
+        conn.execute("INSERT INTO user_model_subscription_orgs (sub, famille, org_id) "
+                     "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (sub, famille, org))
+
+
 def _travail(org, sub, famille=_F):
     from oto_mcp import db
+    _ouvert_ici(org, sub, famille)
     return db.enqueue_job(org, "start", sub=sub,
                           payload={"procedure": "p", "model": "sub:sonnet",
                                    "model_family": famille})["id"]

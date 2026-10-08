@@ -59,8 +59,22 @@ def _personne(sub):
     return sub
 
 
+def _ouvert_ici(org, sub, famille):
+    """Depuis le 08/10/2026 un abonnement ne sert que les orgs où la personne l'a
+    ouvert, membre : ces bancs jugent la file, ils ouvrent donc l'org du travail."""
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        conn.execute("INSERT INTO orgs (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+                     (org, f"Org {org}"))
+        conn.execute("INSERT INTO org_members (org_id, sub) VALUES (%s, %s) "
+                     "ON CONFLICT DO NOTHING", (org, sub))
+        conn.execute("INSERT INTO user_model_subscription_orgs (sub, famille, org_id) "
+                     "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (sub, famille, org))
+
+
 def _travail(org, sub, famille=_FAMILLE):
     from oto_mcp import db
+    _ouvert_ici(org, sub, famille)
     return db.enqueue_job(org, "start", sub=sub,
                           payload={"procedure": "p", "model": "sub:sonnet",
                                    "model_family": famille})["id"]
@@ -287,3 +301,61 @@ def test_une_prise_rendue_a_la_file_ne_coute_AUCUNE_tentative(live):
     assert "reconnexion" in ligne["last_error"], "un travail qui attend dit pourquoi"
     # Un autre worker ne peut pas rendre la prise de quelqu'un d'autre.
     assert db.rendre_a_la_file(travail, "un-autre", "x") is False
+
+
+def test_un_abonnement_NON_OUVERT_dans_l_org_fait_attendre_puis_part_a_l_ouverture(live):
+    """08/10/2026 : une connexion ne sert que les orgs où la personne l'a ouverte. Ses
+    travaux d'une autre org ATTENDENT (aucune tentative brûlée) et partent dès
+    qu'elle l'y ouvre."""
+    from oto_mcp import db
+    from oto_mcp.db import user_subscriptions as US
+    p = _personne("abo-org-p")
+    US.upsert_sandbox(p, _FAMILLE, "sandbox-org-p")
+    US.marquer_statut(p, _FAMILLE, US.CONNECTE, ok=True)
+    _ouvert_ici(9481, p, _FAMILLE)          # ouverte ici…
+    _ouvert_ici(9482, p, "autre_famille")   # …et l'org 9482 existe, sans l'ouvrir
+    jid = db.enqueue_job(9482, "start", sub=p,
+                         payload={"procedure": "p", "model": "sub:sonnet",
+                                  "model_family": _FAMILLE})["id"]
+
+    assert _claim(9482) is None, "pas ouvert dans cette org : le travail attend"
+    assert US.sert_dans(p, _FAMILLE, 9481) and not US.sert_dans(p, _FAMILLE, 9482)
+
+    US.poser_orgs_servies(p, _FAMILLE, [9481, 9482])
+    assert _claim(9482)["id"] == jid, "ouvert : il part"
+
+
+def test_se_deconnecter_referme_toutes_les_orgs(live):
+    from oto_mcp.db import user_subscriptions as US
+    p = _personne("abo-org-q")
+    US.upsert_sandbox(p, _FAMILLE, "sandbox-org-q")
+    _ouvert_ici(9483, p, _FAMILLE)
+    assert US.orgs_servies(p, _FAMILLE) == [9483]
+    US.oublier(p, _FAMILLE)
+    assert US.orgs_servies(p, _FAMILLE) == []
+
+
+def test_la_reprise_garde_l_abonnement_LA_OU_IL_SERT(live):
+    """La révision 0045 ouvre chaque abonnement existant là où il sert déjà (un agent
+    posé dessus, un prêt), et nulle part ailleurs — rien de ce qui tourne ne s'arrête."""
+    import importlib
+
+    from oto_mcp.db import user_subscriptions as US
+    from oto_mcp.db._conn import _connect
+    rev = importlib.import_module(
+        "oto_mcp.db.migrations.versions.20261008_0045_abonnement_par_org")
+    p = _personne("abo-reprise")
+    US.upsert_sandbox(p, _FAMILLE, "sandbox-reprise")
+    with _connect() as conn:
+        for org in (9491, 9492, 9493):
+            conn.execute("INSERT INTO orgs (id, name) VALUES (%s, %s) "
+                         "ON CONFLICT (id) DO NOTHING", (org, f"Org {org}"))
+            conn.execute("INSERT INTO org_members (org_id, sub) VALUES (%s, %s) "
+                         "ON CONFLICT DO NOTHING", (org, p))
+        conn.execute("INSERT INTO runner_triggers (org_id, sub, procedure, tools, cron, tz, model) "
+                     "VALUES (9491, %s, 'p', '[]', '0 8 * * 1', 'Europe/Paris', 'sub:sonnet')", (p,))
+        conn.execute("INSERT INTO user_model_subscription_loans (sub, famille, org_id) "
+                     "VALUES (%s, %s, 9492)", (p, _FAMILLE))
+        conn.execute(rev._REPRISE)
+
+    assert US.orgs_servies(p, _FAMILLE) == [9491, 9492], "9493 : rien n'y sert, rien d'ouvert"

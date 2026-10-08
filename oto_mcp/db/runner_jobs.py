@@ -171,6 +171,15 @@ def _fragments_abonnement(abonnement: bool) -> dict:
         "clause_abonnement": f"""AND CASE WHEN {en_pool}
                         THEN pret.sub IS NOT NULL
                         ELSE NOT {_en_vol("rj.sub", _FAMILLE_RJ)}
+                             -- L'abonnement du demandeur sert CETTE org (08/10/2026) :
+                             -- ouvert par org, une à une ; sinon le travail ATTEND.
+                             AND (rj.org_id IS NULL OR EXISTS (
+                                 SELECT 1 FROM user_model_subscription_orgs u
+                                   JOIN org_members om
+                                     ON om.org_id = u.org_id AND om.sub = u.sub
+                                  WHERE u.sub = rj.sub
+                                    AND u.famille = {_FAMILLE_RJ}
+                                    AND u.org_id = rj.org_id))
                              AND NOT EXISTS (
                                  SELECT 1 FROM user_model_subscriptions ab
                                   WHERE ab.sub = rj.sub
