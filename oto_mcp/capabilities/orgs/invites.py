@@ -269,7 +269,7 @@ def emit_invitation(ctx: ResolvedCtx, *, org_id: int | None, email: str | None,
         locale = (db.get_user_by_email(email_addr) or {}).get("locale")
         emailed = email_mod.send_invite_email(
             email_addr, target_name, _nominal_url(token, email_addr, front_base=front_base),
-            inviter, brand=brand or "oto", locale=locale)
+            inviter, brand=brand, locale=locale)
     return {"ok": True, "email": email_addr, "role": group_role or role,
             "invite_url": share_url, "emailed": emailed}
 

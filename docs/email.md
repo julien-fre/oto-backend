@@ -38,6 +38,12 @@ champ transport sur l'expéditeur).
   ses teintes sont dans le code, son **nom et son site se déclarent**
   (`OTO_BRAND_NAME`, `OTO_BRAND_SITE`, #968) — le site était écrit en dur, donc toute
   autre instance signait ses emails de notre adresse.
+  ⚠️ **Sans marque, on passe `None`, jamais `"oto"`** : `None` (une org sans
+  `front_brand`) résout vers la marque de l'instance. Le littéral `"oto"` n'est le
+  primaire que sur UNE instance ; ailleurs c'est un slug tiers, donc le gabarit neutre
+  « oto » — toutes les invitations d'une autre instance sont parties ainsi.
+  ⚠️ Le primaire ne lit pas `tenants.brand` : son expéditeur est `OTO_MAIL_FROM`
+  (forme `Nom <adresse>` acceptée), pas `expediteur`.
   ⚠️ Une palette **incomplète est refusée EN ENTIER**, jamais complétée par la nôtre :
   sept teintes venues de deux chartes donnent un dessin que personne n'a dessiné, et
   qui ne se voit qu'à l'arrivée, chez le destinataire. Les teintes sont validées à la

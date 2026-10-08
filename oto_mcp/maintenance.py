@@ -458,7 +458,7 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
     # `from .email import _send` : la seconde forme capture la référence à l'import et
     # rend le module intestable (un banc qui patche `email._send` ne toucherait rien).
     # C'est la convention d'`email_templates`, écrite pour cette raison exacte.
-    from . import email as _email
+    from . import email as _email, email_brand as _charte
     from .db import alertes_credential as db_alertes
     from .db import users as db_users
     from . import org_store
@@ -494,7 +494,9 @@ def alertes_credential(*, dry_run: bool = False) -> dict:
                 "personne d'autre en soit averti : coupez-les, ou reposez une clé.</p>")
         if ko:
             corps += _paragraphe_cles_ko(ko, _email._esc)
-        corps += "<p>Oto, pour Alexis</p>"
+        # Signé du nom que l'instance DÉCLARE (`OTO_BRAND_NAME`) : une signature écrite
+        # ici en dur partait sous ce nom depuis toutes les instances.
+        corps += f"<p>{_email._esc(_charte.nom_instance())}</p>"
         sujet = ("Une clé retirée sous vos agents programmés" if g and not ko else
                  "Une clé en panne sous vos agents programmés")
         if _email._send(to=adresses[0], subject=sujet, html=corps):

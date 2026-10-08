@@ -209,7 +209,7 @@ def send_via_scaleway_tem(to: str, subject: str, html: str, *, secret_key: str,
 from . import email_brand as _charte  # noqa: E402
 
 
-def _bouton(app_url: str | None, libelle: str, brand: str = "oto") -> str:
+def _bouton(app_url: str | None, libelle: str, brand: str | None = None) -> str:
     """Le bouton d'ouverture à la marque du DESTINATAIRE, ou RIEN.
 
     Le lien d'un projet dépend d'un patron déclaré par le tenant : le produit du
@@ -303,7 +303,7 @@ def render_composed_email(
     footer: bool = True,
     image_url: str | None = None,
     image_alt: str | None = None,
-    brand: str = "oto",
+    brand: str | None = None,
     locale: str | None = None,
     unsubscribe_url: str | None = None,
     org_footer: dict | None = None,
@@ -394,7 +394,7 @@ def send_composed_email(
     from_name: str | None = None,
     image_url: str | None = None,
     image_alt: str | None = None,
-    brand: str = "oto",
+    brand: str | None = None,
     locale: str | None = None,
     unsubscribe_url: str | None = None,
     cc: list[str] | None = None,

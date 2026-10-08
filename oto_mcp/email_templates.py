@@ -58,13 +58,13 @@ def _envoyer(m: _charte.Marque, to: str, subject: str, html: str) -> bool:
 
 
 def send_invite_email(to: str, target_name: str | None, invite_url: str,
-                      inviter: str | None = None, *, brand: str = "oto",
+                      inviter: str | None = None, *, brand: str | None = None,
                       locale: str | None = None) -> bool:
     """Email d'invitation à rejoindre `brand`. True si envoyé, False sinon.
 
     `target_name` = ce qu'on rejoint (nom d'org OU d'équipe) ; None = invitation
     plateforme (onboarding pur → « rejoindre {brand} »). `brand` = le produit sous
-    lequel l'org vit (`orgs.front_brand`, défaut oto) — il porte désormais le TEXTE
+    lequel l'org vit (`orgs.front_brand` ; None = la marque que l'instance déclare, `email_brand.marque_instance`) — il porte désormais le TEXTE
     **et** le dessin (`email_brand.marque`) **et** l'expéditeur, s'il en déclare un
     (`_envoyer`). `locale` = préférence du DESTINATAIRE (`users.locale`), à défaut la
     langue déclarée de la marque ; voix funnel dans les deux langues :
@@ -100,7 +100,7 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
 
 def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
                                permission: str, app_url: str,
-                               sharer: str | None = None, brand: str = "oto",
+                               sharer: str | None = None, brand: str | None = None,
                                locale: str | None = None) -> bool:
     """Email à un utilisateur avec qui on vient de PARTAGER une ressource (projet,
     datastore, guide). Best-effort (False si non envoyé) — un échec ne casse
@@ -137,7 +137,7 @@ def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
 
 def send_resource_transferred_email(to: str, *, type_label: str, name: str | None,
                                     app_url: str, sharer: str | None = None,
-                                    brand: str = "oto",
+                                    brand: str | None = None,
                                     locale: str | None = None) -> bool:
     """Email à un utilisateur à qui on vient de TRANSFÉRER la propriété d'une
     ressource (ADR 0030). Best-effort. `type_label` déjà dans la langue de
@@ -184,7 +184,7 @@ _VERDICT_EN = {
 }
 
 
-def send_signal_digest_email(to: str, *, items: list, brand: str = "oto",
+def send_signal_digest_email(to: str, *, items: list, brand: str | None = None,
                              locale: str | None = None,
                              unsubscribe_url: str | None = None) -> bool:
     """UN email pour TOUS les retours arbitrés d'une personne (#451). Best-effort.
@@ -315,7 +315,7 @@ def send_signal_digest_email(to: str, *, items: list, brand: str = "oto",
         desinscription=desinscription))
 
 
-def send_process_readers_digest_email(to: str, *, processes: list, brand: str = "oto",
+def send_process_readers_digest_email(to: str, *, processes: list, brand: str | None = None,
                                      locale: str | None = None,
                                      unsubscribe_url: str | None = None) -> bool:
     """UN email par propriétaire et par jour : qui a lu ses procédures partagées par
@@ -382,7 +382,7 @@ _MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "aoû
 
 def send_unipile_fin_de_droit_email(to: str, *, org_name: str | None, canaux: list,
                                     supprime_le, app_url: str | None,
-                                    brand: str = "oto",
+                                    brand: str | None = None,
                                     locale: str | None = None) -> bool:
     """Préavis au propriétaire de comptes de messagerie hébergés sur la clé de la
     plateforme, quand son org n'a plus le droit `unipile` (oto-backend#806).

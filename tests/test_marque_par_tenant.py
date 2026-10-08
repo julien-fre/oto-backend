@@ -226,3 +226,29 @@ def test_un_403_du_relais_est_une_erreur_signalee_pas_un_alea(monkeypatch, caplo
     assert ("oto.mailer", "expediteur_refuse") in signaux
     assert any(niveau == "error" and "noreply@acme.test" in msg for niveau, msg in signaux
                if niveau == "error")
+
+
+# --- sans marque, celle de l'INSTANCE (08/10/2026) ---------------------------
+# Les gabarits et leurs appelants repliaient sur le littéral `"oto"`. Sur une instance
+# dont le primaire est un autre slug, `"oto"` est un tiers inconnu : chaque invitation
+# d'une org sans `front_brand` partait au gabarit neutre « oto ».
+
+@pytest.mark.parametrize("gabarit", sorted(_GABARITS))
+def test_sans_marque_les_gabarits_portent_celle_de_l_instance(gabarit, monkeypatch):
+    from oto_mcp import email as E
+    from oto_mcp import email_templates
+    monkeypatch.setenv("OTO_TENANT_PRIMAIRE_SLUG", "acme")
+    monkeypatch.setenv("OTO_BRAND_NAME", "Acme")
+    monkeypatch.setenv("OTO_BRAND_SITE", "acme.test")
+    envois = []
+    monkeypatch.setattr(E, "_send", lambda to, subject, html, **k:
+                        envois.append(subject + html) or True)
+
+    class _SansMarque:
+        def __getattr__(self, nom):
+            f = getattr(email_templates, nom)
+            return lambda *a, **k: f(*a, **{c: v for c, v in k.items() if c != "brand"})
+
+    assert _GABARITS[gabarit](_SansMarque())
+    assert "Acme" in envois[0]
+    assert ">oto<" not in envois[0] and " oto." not in envois[0]

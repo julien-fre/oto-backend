@@ -307,7 +307,7 @@ def register(mcp: FastMCP) -> None:
         # ⚠️ Derived from the `sub` the route has just authenticated, NEVER from one more
         # auth call: that one would raise before the parameter refusals above and
         # invert the order of this tool's errors.
-        marque_expediteur = config.front_for(sub)[1] or "oto"
+        marque_expediteur = config.front_for(sub)[1]
         # The ORG's footer replaces ours on a send made with ITS key, and only there
         # (Alexis's decision of 12/09/2026, compliance): bringing one's own key
         # changed the transport and not the template, so a cold prospect read

@@ -102,7 +102,7 @@ def balayer(*, dry_run: bool = False) -> dict:
             continue
         _base, marque = org_store.org_front(rows[0]["org_id"])
         ok = mailer.send_process_readers_digest_email(
-            proprio["email"], processes=list(procedures.values()), brand=marque or "oto",
+            proprio["email"], processes=list(procedures.values()), brand=marque,
             locale=proprio.get("locale"),
             unsubscribe_url=outreach_optout.lien_lecteurs(sub, base_refus))
         if ok:

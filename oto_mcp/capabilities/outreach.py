@@ -244,7 +244,7 @@ def _rendu(contenu: dict, lg: str, sub: Optional[str]) -> str:
     c = contenu[lg]
     return mailer.render_composed_email(
         c["body"], cta_text=c.get("cta_label"), cta_url=c.get("cta_url"),
-        locale=lg, brand="oto",
+        locale=lg, brand=None,
         unsubscribe_url=outreach_optout.lien(sub) if sub else None)
 
 
@@ -295,7 +295,7 @@ def _op_test(ctx: ResolvedCtx, inp: OutreachInput) -> dict:
         c = contenu[lg]
         ok = mailer.send_composed_email(
             adresse, c["subject"], c["body"], cta_text=c.get("cta_label"),
-            cta_url=c.get("cta_url"), locale=lg, brand="oto",
+            cta_url=c.get("cta_url"), locale=lg, brand=None,
             unsubscribe_url=outreach_optout.lien(ctx.sub))
         if ok:
             envois += 1
@@ -365,7 +365,7 @@ def _op_send(ctx: ResolvedCtx, inp: OutreachInput) -> dict:
             continue
         ok = mailer.send_composed_email(
             f["email"], c["subject"], c["body"], cta_text=c.get("cta_label"),
-            cta_url=c.get("cta_url"), locale=lg, brand="oto",
+            cta_url=c.get("cta_url"), locale=lg, brand=None,
             unsubscribe_url=outreach_optout.lien(f["sub"]))
         f["sent"] = bool(ok)
         if ok:
