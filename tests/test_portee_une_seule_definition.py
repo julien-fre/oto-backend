@@ -103,10 +103,15 @@ def test_les_deux_mondes_appellent_la_MEME_regle():
     à une liste de principals, l'écart de #682 revient : `active_org_principals` ne
     connaît ni le cran plateforme ni l'escalade d'équipe."""
     from oto_mcp.capabilities import node_view
-    for fonction in (ownership.visible_in_org, node_view._lisible, node_view._compose):
+    for fonction in (ownership.visible_in_org, node_view._lisible,
+                     node_view.exiger_lisible):
         src = _code_seul(fonction)
         assert "owner_in_scope" in src, (
             f"{fonction.__name__} ne passe plus par la règle commune")
+    # La fiche d'un nœud ne juge plus sa portée elle-même : elle délègue à LA garde de
+    # lecture, que les lignes d'un tableau né ici partagent (`node_rows`).
+    assert "exiger_lisible" in _code_seul(node_view._compose), (
+        "_compose ne passe plus par la garde de lecture commune")
 
     assert "active_org_principals" not in _code_seul(node_view._lisible), (
         "`_lisible` compare de nouveau à une liste de principals — c'est la seconde "
