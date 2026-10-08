@@ -29,7 +29,7 @@ from typing import Any, Literal, Optional
 
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
-from mcp.types import ErrorData, INVALID_PARAMS
+from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS
 
 from .. import access
 from ..auth import google as google_oauth
@@ -114,7 +114,7 @@ def register(mcp: FastMCP) -> None:
           or 'A:ZZ'). `range` omitted = 'A:ZZ'. Returns {rows: [[...], ...], count}.
         - **"write"**: write a 2-D array of values to a range (A1 notation required).
           `append`: False (default) OVERWRITES the range ; True appends rows after
-          the existing data (no overwrite).
+          the existing data (no overwrite), starting at the range's FIRST column.
         - **"clear"**: clear all values in a range (keeps formatting). Destructive —
           `range` is required, it has no default here.
 
@@ -127,7 +127,8 @@ def register(mcp: FastMCP) -> None:
             formatted: op="read" — True = display strings (FORMATTED_VALUE) ;
                 False = raw values.
             append: op="write" — False (default) OVERWRITES the range ; True appends
-                rows after the existing data (no overwrite).
+                rows after the existing data (no overwrite), from the range's first
+                column.
             account: Google account (email) to act as — default account if omitted.
         """
         if op not in _SPREADSHEET_OPS:
@@ -146,8 +147,14 @@ def register(mcp: FastMCP) -> None:
             _need(range, "range", op)
             _need(values, "values", op)
             if append:
-                return await asyncio.to_thread(
-                    client.append, spreadsheet_id, range, values)
+                from oto.tools.google.sheets.lib.sheets_client import SheetsClientError
+                try:
+                    return await asyncio.to_thread(
+                        client.append, spreadsheet_id, range, values)
+                except SheetsClientError as e:
+                    # The row landed outside the requested columns: say where, the
+                    # taxonomy would otherwise serve a bare "internal error".
+                    raise McpError(ErrorData(code=INTERNAL_ERROR, message=str(e))) from e
             return await asyncio.to_thread(client.write, spreadsheet_id, range, values)
         if op == "clear":
             return await asyncio.to_thread(

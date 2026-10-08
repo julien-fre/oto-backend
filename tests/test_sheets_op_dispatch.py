@@ -159,6 +159,19 @@ def test_write_append_never_overwrites_nor_clears(client):
     client.clear.assert_not_called()
 
 
+def test_append_mal_place_est_dit_a_l_agent(client):
+    """Signal oto #1365 : une ligne ajoutée en R…AI au lieu de A…R. Le client lève
+    `SheetsClientError` en nommant la plage écrite ; sans traduction, la taxonomie
+    servirait un « internal error » nu."""
+    from oto.tools.google.sheets.lib.sheets_client import SheetsClientError
+
+    client.append.side_effect = SheetsClientError(
+        "append landed at 'Feuille'!R118:AI118, not in column A as requested")
+    msg = _raises("sheets_spreadsheet", spreadsheet_id="sid", op="write",
+                  range="Feuille!A:R", values=[["x"]], append=True)
+    assert "R118:AI118" in msg and "column A" in msg, msg
+
+
 @pytest.mark.parametrize("kwargs,missing", [
     ({"values": [["x"]]}, "range"),
     ({"range": "Sheet1!A1"}, "values"),
