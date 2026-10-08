@@ -181,6 +181,8 @@ _DECLARATIONS: tuple[str, ...] = (
     # --- third-party API connectors (oto-core clients already written, wired 2026-06-19) ---
     "hubspot",
     "brevo",
+    # Neighbour of `brevo` by trade (emailing & customer data) — wired 2026-10-08.
+    "klaviyo",
     "apollo",
     "zerobounce",
     "hithorizons",

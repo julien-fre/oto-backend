@@ -97,9 +97,11 @@ def parametres_secrets(*noms: str):
 # traverser dès lors que le nom de la clé est déclaré. Sans cette ligne ils
 # partaient EN CLAIR dans `tool_calls`, table lue par les surfaces de supervision.
 # `lemlist_webhook` : `secret` signe les callbacks — qui l'a peut les forger.
+# `typeform_webhooks` : idem, `secret` signe (HMAC) les réponses envoyées au webhook.
 SECRET_TOOL_ARGS: dict[str, frozenset] = {
     "lemlist_mailbox": frozenset({"smtp_password", "imap_password"}),
     "lemlist_webhook": frozenset({"secret"}),
+    "typeform_webhooks": frozenset({"secret"}),
     # A signed download link carries its credential in the query string.
     "oto_import": frozenset({"url"}),
 }

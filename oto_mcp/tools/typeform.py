@@ -1,15 +1,16 @@
-"""Typeform — online forms, READ ONLY: workspaces,
-forms (and their questions), responses.
+"""Typeform — online forms: workspaces, forms, responses, webhooks.
 
 Wraps `oto.tools.typeform.TypeformClient` (personal token as Bearer).
 Credential resolved per call via `access.resolve_credential_fields("typeform")`
 (byo user OR org, no platform key): `key` (secret) and `region` (us by
 default, eu, eu2), which chooses the data center host.
 
-Three tools, one per object:
-- `typeform_workspaces` — the token's workspaces;
-- `typeform_forms` (op list|get) — the forms, a form's definition;
-- `typeform_responses` — a form's responses, filtered and paginated.
+Three modules for ONE connector, by object (the 500-line cap):
+- here — the shared base (client, refusals, data center) and the responses:
+  `typeform_workspaces`, `typeform_responses`, `typeform_responses_summary`,
+  `typeform_delete_responses`;
+- `typeform_formulaires` — `typeform_forms` (read, create, patch, replace, delete);
+- `typeform_webhooks` — `typeform_webhooks`.
 
 **What the tool layer adds to the transport**:
 1. Tightened views by default (ADR 0047, `full=True` returns the raw payload): a
@@ -22,10 +23,14 @@ Three tools, one per object:
    value}`; two questions with the same title are told apart by their id,
    never overwritten.
 3. **The data center trap, closed.** Read outside the account's region, the
-   responses come back EMPTY without error. The form definition carries
-   the host of its responses (`_links.responses`): if it does not match the
-   configured region, the tool REFUSES, naming the right region, instead of returning
-   a credible zero.
+   responses come back EMPTY without error — and a deletion there is a silent
+   no-op. The form definition carries the host of its responses
+   (`_links.responses`): if it does not match the configured region, the tool
+   REFUSES, naming the right region, instead of returning a credible zero.
+4. **Two steps for what cannot be undone** (claap pattern): replacing or deleting
+   a form, deleting responses, creating or deleting a webhook first return a
+   preview (`dry_run: true`, read from Typeform, not echoed); only `confirm=True`
+   writes.
 
 **No argument is silently dropped**: an argument that an `op` does not use
 is refused (`_refuse_ignored`, tally/claap pattern).
@@ -33,8 +38,8 @@ is refused (`_refuse_ignored`, tally/claap pattern).
 Client calls are written in plain sight (`_client().list_forms(…)`) for the
 version probe (`test_tools_client_methods_exist`).
 
-Checked against the public reference (Create API, Responses API, "EU
-Responses Data Center" page); **not tested live** — no Typeform token
+Checked against the public reference (Create API, Responses API, Webhooks API,
+"EU Responses Data Center" page); **not tested live** — no Typeform token
 available at writing time.
 """
 from __future__ import annotations
@@ -48,6 +53,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
+from .lecture import LECTURE
 
 if TYPE_CHECKING:  # for `_client()`'s annotation only — never evaluated
     from oto.tools.typeform import TypeformClient
@@ -61,9 +67,12 @@ WHERE_TO_CREATE = "Typeform → Account → Personal tokens"
 RESPONSES_MAX_PAGE = 200
 RESPONSES_DEFAULT_PAGE = 25
 
-#: What a form's tightened view removes (returned with `full=True`).
-FORM_OMITTED = ("welcome_screens", "thankyou_screens", "logic", "theme",
-                "settings", "attachments/layouts")
+#: Most response ids one deletion takes (the upstream bound).
+DELETE_MAX_IDS = 1000
+
+#: Every kind of response, so that a preview finds a partial one too.
+ALL_RESPONSE_TYPES = ["completed", "partial", "started"]
+
 #: What a response's tightened view removes.
 RESPONSE_OMITTED = ("metadata", "landing_id", "token", "answers[].field.type")
 
@@ -75,10 +84,17 @@ def _bad(msg: str) -> McpError:
 def _refuse_ignored(op: str, hint: str, **provided: Any) -> None:
     """A provided argument that THIS op does not use is an error of intent —
     otherwise `op="get"` with `search=` would return a form while letting
-    one believe the search filtered."""
+    one believe the search filtered. A `bool` flag is passed as `flag or None`:
+    left at False, it was not provided."""
     for name, value in provided.items():
         if value is not None:
             raise _bad(f"op={op!r} does not use `{name}` — {hint}")
+
+
+def _preview(would: str, what: Dict[str, Any], note: str) -> dict:
+    """The first step of an irreversible write: what it would do, nothing sent."""
+    return {"dry_run": True, would: what,
+            "note": f"{note} Nothing was written: call again with confirm=True."}
 
 
 def _region(value: Any) -> str:
@@ -104,7 +120,7 @@ def upstream_message(e: Any, what: str = "") -> str:
                 f"belongs to another data center — tokens of « eu2 » "
                 f"(api.typeform.eu) are distinct. Create one in {WHERE_TO_CREATE}.")
     if status == 403:
-        return (f"Typeform refused this read (403): the token lacks the scope it "
+        return (f"Typeform refused this call (403): the token lacks the scope it "
                 f"needs ({what or 'forms:read, responses:read, workspaces:read'}) "
                 f"— generate a token with it in {WHERE_TO_CREATE}. {detail}")
     if status == 404:
@@ -159,50 +175,6 @@ def _slim_workspace(ws: dict) -> dict:
     out = {"id": ws.get("id"), "name": ws.get("name"), "shared": ws.get("shared"),
            "forms_count": (forms or {}).get("count") if isinstance(forms, dict) else None,
            "account_id": ws.get("account_id")}
-    return {k: v for k, v in out.items() if v is not None}
-
-
-def _slim_form_row(f: dict) -> dict:
-    out = {"id": f.get("id"), "title": f.get("title"),
-           "last_updated_at": f.get("last_updated_at"),
-           "created_at": f.get("created_at"),
-           "is_public": (f.get("settings") or {}).get("is_public"),
-           "url": (f.get("_links") or {}).get("display")}
-    return {k: v for k, v in out.items() if v is not None}
-
-
-def _slim_field(field: dict) -> dict:
-    """A question: enough to recognize it in a response (id, ref) and
-    interpret it (type, title, choices). Groups keep their sub-questions."""
-    props = field.get("properties") or {}
-    out: Dict[str, Any] = {"id": field.get("id"), "ref": field.get("ref"),
-                           "type": field.get("type"), "title": field.get("title")}
-    if props.get("description"):
-        out["description"] = props["description"]
-    if (field.get("validations") or {}).get("required"):
-        out["required"] = True
-    choices = props.get("choices")
-    if isinstance(choices, list) and choices:
-        out["choices"] = [ch.get("label") for ch in choices if isinstance(ch, dict)]
-        if props.get("allow_multiple_selection"):
-            out["multiple"] = True
-        if props.get("allow_other_choice"):
-            out["other_allowed"] = True
-    sub = props.get("fields")
-    if isinstance(sub, list) and sub:
-        out["fields"] = [_slim_field(s) for s in sub if isinstance(s, dict)]
-    return {k: v for k, v in out.items() if v is not None}
-
-
-def _slim_form(form: dict) -> dict:
-    links = form.get("_links") or {}
-    out = {"id": form.get("id"), "title": form.get("title"),
-           "language": form.get("language") or (form.get("settings") or {}).get("language"),
-           "url": links.get("display"),
-           "fields": [_slim_field(f) for f in form.get("fields") or [] if isinstance(f, dict)],
-           "hidden": form.get("hidden") or None,
-           "variables": form.get("variables") or None,
-           "omitted": list(FORM_OMITTED)}
     return {k: v for k, v in out.items() if v is not None}
 
 
@@ -286,28 +258,33 @@ def _host(url: Any) -> Optional[str]:
     return urlsplit(url).hostname if isinstance(url, str) and url else None
 
 
-def _check_region(form: dict, client: Any) -> None:
+def region_mismatch(form: dict, client: Any) -> Optional[str]:
     """The definition says where the responses live (`_links.responses`). A different
-    host than the client's = responses that would come back empty: refuse."""
+    host than the client's = responses that would come back empty, a deletion
+    that would do nothing: the reason, or None when the hosts agree."""
     from oto.tools.typeform import REGIONS
 
     expected = _host((form.get("_links") or {}).get("responses"))
     current = _host(getattr(client, "BASE_URL", None))
     if not expected or not current or expected == current:
-        return
-    by_host = {_host(u): r for r, u in REGIONS.items()}
-    right = by_host.get(expected)
-    raise _bad(
-        f"Typeform: this form's responses are stored on {expected}, but the "
-        f"connector reads {current} — its responses would come back EMPTY. "
-        + (f"Set the Typeform connector's data center to « {right} »."
-           if right else "This data center is not one the connector knows."))
+        return None
+    right = {_host(u): r for r, u in REGIONS.items()}.get(expected)
+    return (f"Typeform: this form's responses are stored on {expected}, but the "
+            f"connector reads {current} — its responses would come back EMPTY. "
+            + (f"Set the Typeform connector's data center to « {right} »."
+               if right else "This data center is not one the connector knows."))
+
+
+def _check_region(form: dict, client: Any) -> None:
+    reason = region_mismatch(form, client)
+    if reason:
+        raise _bad(reason)
 
 
 def register(mcp: FastMCP) -> None:
     connector_verify.register("typeform", _verify)
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def typeform_workspaces(
         search: Optional[str] = None,
         page: Optional[int] = None,
@@ -336,66 +313,7 @@ def register(mcp: FastMCP) -> None:
                 "workspaces": [_slim_workspace(w) for w in res.get("items") or []
                                if isinstance(w, dict)]}
 
-    @mcp.tool()
-    def typeform_forms(
-        op: Literal["list", "get"] = "list",
-        form_id: Optional[str] = None,
-        search: Optional[str] = None,
-        workspace_id: Optional[str] = None,
-        sort_by: Optional[Literal["created_at", "last_updated_at"]] = None,
-        order_by: Optional[Literal["asc", "desc"]] = None,
-        page: Optional[int] = None,
-        page_size: Optional[int] = None,
-        full: bool = False,
-    ) -> dict:
-        """Typeform forms (read only): list them, or read one form's questions.
-
-        `op`:
-        - `list` — forms of the account, public and private: `{total_items,
-          page_count, page, forms: [{id, title, last_updated_at, created_at,
-          is_public, url}]}`.
-        - `get` — one form (`form_id`): its questions `fields: [{id, ref, type,
-          title, description?, required?, choices?, multiple?, fields? (group)}]`,
-          `hidden` field names and `variables` — what you need to read its
-          responses. Screens, logic, theme and settings are left out
-          (`omitted`); `full=True` returns the whole definition.
-
-        Args:
-            op: list | get.
-            form_id: get — the form id (last segment of its URL, e.g. `u6nXL7`
-                in `…typeform.com/to/u6nXL7`).
-            search: list — only forms containing this text.
-            workspace_id: list — only this workspace's forms
-                (`typeform_workspaces`).
-            sort_by: list — created_at | last_updated_at.
-            order_by: list — asc | desc.
-            page: list — 1-based page number (default 1).
-            page_size: list — 1-200, default 10.
-            full: raw payload.
-        """
-        if op == "list":
-            _refuse_ignored(op, "use op='get' to read one form", form_id=form_id)
-            res = _run(lambda: _client().list_forms(
-                search=search, page=page, page_size=page_size,
-                workspace_id=workspace_id, sort_by=sort_by, order_by=order_by),
-                "forms:read")
-            if full:
-                return res
-            return {"total_items": res.get("total_items"),
-                    "page_count": res.get("page_count"), "page": page or 1,
-                    "forms": [_slim_form_row(f) for f in res.get("items") or []
-                              if isinstance(f, dict)]}
-        if op == "get":
-            if not form_id:
-                raise _bad("op='get': `form_id` is required.")
-            _refuse_ignored(op, "it only applies to op='list'", search=search,
-                            workspace_id=workspace_id, sort_by=sort_by,
-                            order_by=order_by, page=page, page_size=page_size)
-            form = _run(lambda: _client().get_form(form_id), "forms:read")
-            return form if full else _slim_form(form)
-        raise _bad(f"invalid `op`: {op!r} (expected: list | get).")
-
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def typeform_responses(
         form_id: str,
         page_size: Optional[int] = None,
@@ -481,3 +399,86 @@ def register(mcp: FastMCP) -> None:
         if items and len(items) == size and not after and not sort:
             out["next_before"] = items[-1].get("token")
         return out
+
+    @mcp.tool(annotations=LECTURE)
+    def typeform_responses_summary(
+        form_id: str,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        response_type: Optional[List[Literal["completed", "partial", "started"]]] = None,
+        max_pages: int = 10,
+    ) -> dict:
+        """Statistics of a Typeform form's responses, computed by oto from the
+        form and its responses (no model; no text answer is read, only counted).
+
+        Returns `{form_id, form_title, filters, total_items, responses_analyzed,
+        pages_read, max_pages, truncated, note?, responses_per_day: [{date,
+        count}], score?, fields: [{id, ref, title, type, answered, answer_rate,
+        choices?: [{label, count, share}], ranking?, numbers?: {count, mean,
+        min, max}, distribution?, nps?: {promoters, passives, detractors,
+        score}, booleans?}]}`. Reads up to `max_pages` pages of 1000 responses,
+        newest first: `truncated: true` means the oldest ones were not counted
+        — narrow `since`/`until` or raise `max_pages`. Scopes forms:read and
+        responses:read.
+
+        Args:
+            form_id: the form id (`typeform_forms`).
+            since: on or after — ISO 8601 UTC to the second or Unix seconds.
+            until: on or before, same formats.
+            response_type: completed (default) | partial | started; also picks
+                the timestamp the dates filter on.
+            max_pages: pages of 1000 read at most, 1-50 (default 10).
+        """
+        client = _client()
+        form = _run(lambda: client.get_form(form_id), "forms:read")
+        _check_region(form, client)
+        return _run(lambda: client.summarize_responses(
+            form_id, since=since, until=until, response_type=response_type,
+            max_pages=max_pages), "forms:read, responses:read")
+
+    @mcp.tool()
+    def typeform_delete_responses(
+        form_id: str,
+        response_ids: List[str],
+        confirm: bool = False,
+    ) -> dict:
+        """⚠️ Delete responses of a Typeform form, IRREVERSIBLY (up to 1000).
+
+        Two steps. Without `confirm=True`, nothing is deleted: returns `{dry_run,
+        would_delete: {form_id, form_title, found: [{response_id, submitted_at,
+        landed_at}], not_found: [ids]}, note}` — Typeform silently ignores an
+        id that matches no response. With `confirm=True`: `{deletion_registered,
+        form_id, response_ids, note}`; the deletion is asynchronous (registered,
+        not done yet): check later with `typeform_responses(included_response_ids=…)`.
+        Refused when the form's responses live in another data center (the
+        deletion would do nothing). Scopes responses:write, plus forms:read and
+        responses:read for the preview.
+
+        Args:
+            form_id: the form id.
+            response_ids: `response_id` of each response to delete (1-1000).
+            confirm: True to delete, after reading the preview.
+        """
+        ids = list(dict.fromkeys(response_ids or []))
+        if not 1 <= len(ids) <= DELETE_MAX_IDS:
+            raise _bad(f"`response_ids` takes 1 to {DELETE_MAX_IDS} ids (got {len(ids)}).")
+        client = _client()
+        form = _run(lambda: client.get_form(form_id), "forms:read")
+        _check_region(form, client)
+        if not confirm:
+            page = _run(lambda: client.list_responses(
+                form_id, page_size=len(ids), included_response_ids=ids,
+                response_type=ALL_RESPONSE_TYPES), "responses:read")
+            found = [{"response_id": i.get("response_id"),
+                      "submitted_at": i.get("submitted_at"),
+                      "landed_at": i.get("landed_at")}
+                     for i in page.get("items") or [] if isinstance(i, dict)]
+            seen = {f["response_id"] for f in found}
+            return _preview("would_delete", {
+                "form_id": form_id, "form_title": form.get("title"), "found": found,
+                "not_found": [i for i in ids if i not in seen]},
+                "Deleted responses cannot be recovered.")
+        _run(lambda: client.delete_responses(form_id, ids), "responses:write")
+        return {"deletion_registered": True, "form_id": form_id, "response_ids": ids,
+                "note": "Asynchronous: Typeform registered the deletion; it may take "
+                        "a moment. Ids matching no response were ignored."}

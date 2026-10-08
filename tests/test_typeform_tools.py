@@ -1,9 +1,10 @@
-"""Connecteur Typeform, en lecture seule — les trois outils `typeform_*`.
+"""Connecteur Typeform, les LECTURES — `typeform_workspaces`, `typeform_forms`
+op list|get, `typeform_responses` (les écritures : `test_typeform_ecritures.py`).
 
 Les tripwires génériques couvrent le registre, l'éditeur, le logo, la prose
 servie et la jointure au client oto-core. Ce fichier verrouille ce qui est
 PROPRE à ce module, par le VRAI chemin FastMCP (`mcp.call_tool`), le client
-remplacé par un double en mémoire :
+remplacé par un double en mémoire (`_typeform_banc.py`) :
 
 - la région du credential choisit l'hôte, une région inconnue est refusée ;
 - les vues resserrées (`full=True` rend le brut) et ce qu'elles nomment retiré ;
@@ -17,146 +18,30 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from fastmcp import FastMCP
-from mcp.types import INVALID_PARAMS
 
-from oto_mcp import access
-from oto_mcp.mcp_errors import McpError
+from _typeform_banc import EU, FORM, RESPONSE, appeler as _appeler, banc, refus as _refus  # noqa: F401
 from oto_mcp.tools import typeform as T
 
-US = "https://api.typeform.com"
-EU = "https://api.eu.typeform.com"
 
-FORM = {
-    "id": "f1", "title": "Satisfaction", "language": "fr",
-    "_links": {"display": "https://acme.typeform.com/to/f1",
-               "responses": f"{US}/forms/f1/responses"},
-    "fields": [
-        {"id": "q1", "ref": "nom", "type": "short_text", "title": "Votre nom ?",
-         "validations": {"required": True}},
-        {"id": "q2", "ref": "ville", "type": "multiple_choice", "title": "Ville ?",
-         "properties": {"choices": [{"id": "c1", "label": "Lyon"},
-                                    {"id": "c2", "label": "Paris"}],
-                        "allow_multiple_selection": True}},
-        {"id": "g1", "ref": "grp", "type": "group", "title": "Détails",
-         "properties": {"fields": [
-             {"id": "q3", "ref": "note", "type": "rating", "title": "Commentaire"},
-             {"id": "q4", "ref": "autre", "type": "long_text", "title": "Commentaire"},
-         ]}},
-    ],
-    "hidden": ["utm_source"],
-    "logic": [{"type": "field"}], "settings": {"is_public": True},
-    "welcome_screens": [{"title": "Bonjour"}],
-}
-
-RESPONSE = {
-    "response_id": "r1", "token": "r1", "landing_id": "r1",
-    "landed_at": "2026-09-30T10:00:00Z", "submitted_at": "2026-09-30T10:02:00Z",
-    "metadata": {"user_agent": "Mozilla/5.0", "referer": "https://acme.test"},
-    "hidden": {"utm_source": "newsletter"},
-    "calculated": {"score": 0},
-    "variables": [{"key": "score", "type": "number", "number": 4}],
-    "answers": [
-        {"field": {"id": "q1", "type": "short_text", "ref": "nom"},
-         "type": "text", "text": "Jane Doe"},
-        {"field": {"id": "q2", "type": "multiple_choice", "ref": "ville"},
-         "type": "choices", "choices": {"labels": ["Lyon", "Paris"]}},
-        {"field": {"id": "q3", "type": "rating", "ref": "note"},
-         "type": "number", "number": 5},
-        {"field": {"id": "q4", "type": "long_text", "ref": "autre"},
-         "type": "text", "text": "RAS"},
-    ],
-}
-
-
-class _FauxClient:
-    """Double en mémoire du client oto-core : rend des pages, note les appels."""
-
-    def __init__(self, access_token, region="us"):
-        from oto.tools.typeform import REGIONS
-        self.access_token = access_token
-        self.region = region
-        self.BASE_URL = REGIONS[region]
-        self.appels = []
-        self.form = dict(FORM)
-        self.page = {"total_items": 1, "page_count": 1, "items": [RESPONSE]}
-        self.leve = None
-
-    def _note(self, nom, *args, **kw):
-        self.appels.append((nom, args, kw))
-        if self.leve:
-            raise self.leve
-
-    def list_workspaces(self, **kw):
-        self._note("list_workspaces", **kw)
-        return {"total_items": 1, "page_count": 1, "items": [
-            {"id": "w1", "name": "Ventes", "account_id": "a1", "shared": False,
-             "forms": {"count": 3, "href": f"{US}/workspaces/w1/forms"},
-             "self": {"href": f"{US}/workspaces/w1"}}]}
-
-    def list_forms(self, **kw):
-        self._note("list_forms", **kw)
-        return {"total_items": 1, "page_count": 1, "items": [
-            {"id": "f1", "title": "Satisfaction", "created_at": "2026-01-01T00:00:00Z",
-             "last_updated_at": "2026-09-01T00:00:00Z", "settings": {"is_public": True},
-             "self": {"href": f"{US}/forms/f1"}, "theme": {"href": f"{US}/themes/t"},
-             "_links": {"display": "https://acme.typeform.com/to/f1",
-                        "responses": f"{US}/forms/f1/responses"}}]}
-
-    def get_form(self, form_id):
-        self._note("get_form", form_id)
-        return self.form
-
-    def list_responses(self, form_id, **kw):
-        self._note("list_responses", form_id, **kw)
-        return self.page
-
-
-class _Banc:
-    """Le serveur monté, les clients construits, les champs du credential, et
-    `prepare(client)` — appliqué à chaque client construit."""
-    prepare = None
-
-
-@pytest.fixture
-def banc(monkeypatch):
-    b = _Banc()
-    b.champs = {"key": "tfp_test"}
-    b.construits = []
-    monkeypatch.setattr(access, "resolve_credential_fields",
-                        lambda provider, account=None: dict(b.champs))
-    import oto.tools.typeform as pkg
-
-    def _construire(**kw):
-        c = _FauxClient(**kw)
-        if b.prepare:
-            b.prepare(c)
-        b.construits.append(c)
-        return c
-
-    monkeypatch.setattr(pkg, "TypeformClient", _construire)
-    b.mcp = FastMCP("banc-typeform")
-    T.register(b.mcp)
-    return b
-
-
-def _appeler(b, outil, **arguments):
-    return asyncio.run(b.mcp.call_tool(outil, arguments)).structured_content
-
-
-def _refus(b, outil, **arguments) -> McpError:
-    """Le refus, lu sur la fonction de l'outil : à travers `call_tool`, fastmcp
-    l'enveloppe en `ToolError` et son code ne se lit plus."""
-    fn = {t.name: t for t in asyncio.run(b.mcp._list_tools())}[outil].fn
-    with pytest.raises(McpError) as e:
-        fn(**arguments)
-    assert e.value.error.code == INVALID_PARAMS
-    return e.value
-
-
-def test_trois_outils_en_lecture_seule(banc):
+def test_les_outils_du_connecteur(banc):
+    """Les trois modules montés : lectures historiques inchangées, écritures à côté."""
     noms = {t.name for t in asyncio.run(banc.mcp.list_tools(run_middleware=False))}
-    assert noms == {"typeform_workspaces", "typeform_forms", "typeform_responses"}
+    assert noms == {"typeform_workspaces", "typeform_forms", "typeform_responses",
+                    "typeform_responses_summary", "typeform_delete_responses",
+                    "typeform_webhooks"}
+
+
+def test_les_outils_qui_ne_font_que_lire_le_declarent(banc):
+    from oto_mcp.tools.lecture import en_lecture
+    outils = {t.name: t for t in asyncio.run(banc.mcp.list_tools(run_middleware=False))}
+    lecteurs = {n for n, t in outils.items() if en_lecture(t)}
+    assert lecteurs == {"typeform_workspaces", "typeform_responses",
+                        "typeform_responses_summary"}
+
+
+def test_forms_garde_list_par_defaut(banc):
+    _appeler(banc, "typeform_forms")
+    assert banc.construits[0].noms() == ["list_forms"]
 
 
 # --- région -----------------------------------------------------------------
