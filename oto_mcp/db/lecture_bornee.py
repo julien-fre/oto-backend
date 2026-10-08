@@ -14,6 +14,10 @@ connexion qui repart au pool. Une lecture qui dépasse lève `LectureTropLongue`
 jamais un résultat partiel, jamais un repli silencieux. La face (REST ou MCP) en fait
 un refus explicite (`capabilities/_lecture_bornee.py`).
 
+`lectures_bornees()` borne de même une portée de lectures ORDINAIRES (le store d'un
+tableau, `cursor_rows`) qu'on ne peut pas réécrire en une requête : chaque connexion
+empruntée dedans reçoit le même `SET LOCAL statement_timeout`.
+
 Ce qu'elle ne fait pas : borner l'ATTENTE d'une connexion (c'est le pool, 5 s) ni
 limiter le nombre de lectures simultanées (c'est le budget des routes lourdes).
 """
@@ -24,6 +28,7 @@ from typing import Iterator, Optional
 
 import psycopg
 
+from . import _conn
 from ._conn import _connect
 
 #: La durée maximale d'une lecture d'agrégat. Dix secondes : au-delà, la lecture tient
@@ -62,3 +67,20 @@ def lecture_d_agregat(objet: str, *, isolation: Optional[str] = None
             yield conn
         except psycopg.errors.QueryCanceled as e:
             raise LectureTropLongue(objet, duree) from e
+
+
+@contextmanager
+def lectures_bornees(objet: str, duree_ms: int = DUREE_MAX_MS) -> Iterator[None]:
+    """Une portée où chaque requête du pool est bornée à `duree_ms` : les lectures d'un
+    tableau par le store (`cursor_rows`), qu'aucune requête unique ne remplace.
+
+    ⚠️ LECTURES seulement : chaque `_connect()` dedans ouvre une transaction explicite
+    (le `SET LOCAL` l'exige) ; un chemin qui y validerait lui-même (`commit()`)
+    serait refusé par psycopg. Une requête annulée lève `LectureTropLongue`, nommée."""
+    jeton = _conn._duree_bornee_ms.set(int(duree_ms))
+    try:
+        yield
+    except psycopg.errors.QueryCanceled as e:
+        raise LectureTropLongue(objet, duree_ms) from e
+    finally:
+        _conn._duree_bornee_ms.reset(jeton)

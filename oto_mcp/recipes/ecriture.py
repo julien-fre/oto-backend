@@ -17,12 +17,17 @@ from typing import Any, Optional
 
 from ..datastore import par_reference as pr
 from ..datastore.core import DatastoreReadOnly
+from ..db import lecture_bornee
 
 logger = logging.getLogger(__name__)
 
 #: Lignes par écriture groupée (`par_reference.MAX_LIGNES`). Un lot n'est pas atomique
 #: et s'arrête à la première ligne refusée : au-delà de l'échec, on rejoue ligne à ligne.
 LOT = pr.MAX_LIGNES
+#: Borne d'une lecture de tableau d'une recette (parents en attente, listes de
+#: correspondance) : celle des lectures d'agrégat — au-delà, la lecture tient une
+#: connexion d'une réserve partagée pour une réponse que personne n'attend plus.
+DUREE_LECTURE_MS = lecture_bornee.DUREE_MAX_MS
 
 
 class TableauIndisponible(Exception):
@@ -48,23 +53,10 @@ def ouvrir(datastore: Any, colonne_cle: str, *, ecrire: bool) -> Tableau:
 
     Une clé métier DÉCLARÉE différente de celle de la recette est refusée : l'écriture
     groupée dédoublonne sur la clé déclarée, et deux clés diraient deux choses."""
-    from ..datastore import jetons
-    from ..datastore.core import DatastoreNotFound
     # Un agent passe le NUMÉRO en entier (`284`) : la résolution attend du texte.
     datastore = str(datastore)
-    try:
-        store, adresse = pr.tableau(datastore, ecrire=ecrire)
-        schema = store.get_schema(adresse) or {}
-        declaree = store.declared_key(adresse)
-    except jetons.JetonMalPlace as e:
-        raise TableauIndisponible("invalid_datastore", str(e))
-    except DatastoreNotFound:
-        raise TableauIndisponible("datastore_not_found",
-                                  f"Table `{datastore}` not found. Nothing was called.")
-    except DatastoreReadOnly:
-        raise TableauIndisponible("datastore_read_only",
-                                  f"Table `{datastore}` is shared with you read-only. "
-                                  "Nothing was called.")
+    store, adresse, schema = _ouvrir_tableau(datastore, ecrire=ecrire)
+    declaree = store.declared_key(adresse)
     if declaree and declaree != colonne_cle:
         raise TableauIndisponible(
             "key_mismatch",
@@ -186,3 +178,179 @@ def _une(t: Tableau, ligne: dict) -> Optional[str]:
     except Exception as e:  # journalisé sans le message ; le code va au reçu
         logger.warning("recette : ligne refusée sur %s : %s", t.adresse, type(e).__name__)
         return _code(e)
+
+
+# ── `for_each` : les lignes PARENTES qui déclenchent les appels ─────────────────
+#: Lignes parentes lues par requête : la boucle relit les EN ATTENTE après chaque lot,
+#: leur état écrit les en retire.
+LOT_PARENTS = 50
+#: Au plus tant de lignes lues par requête : les lignes déjà vues dans l'appel (état non
+#: écrit) s'y ajoutent, sans quoi la sélection rendrait vide et l'exécution se dirait
+#: finie, des lignes encore en attente.
+MAX_LUES = 1_000
+
+
+@dataclass
+class Parents:
+    store: Any
+    adresse: str
+    etat: str
+    filtre: Optional[dict] = None
+    #: Les colonnes que les arguments citent : une ligne où l'une est vide n'est pas
+    #: sélectionnée — l'appel serait payé pour rien, et la ligne reviendrait en tête de
+    #: chaque exécution. Elle reste en attente jusqu'à ce qu'on la remplisse.
+    requises: tuple = ()
+
+    def clauses(self) -> list[dict]:
+        return [{"field": self.etat, "op": "empty", "value": True}] + [
+            {"field": c, "op": "not_empty", "value": True} for c in self.requises]
+
+
+def _ouvrir_tableau(datastore: Any, *, ecrire: bool) -> tuple[Any, str, dict]:
+    """Le store, l'adresse et le schéma d'un tableau, le droit vérifié (écrire ou lire)
+    AVANT tout appel au connecteur ; chaque refus nommé."""
+    from ..datastore import jetons
+    from ..datastore.core import DatastoreNotFound
+    datastore = str(datastore)
+    try:
+        store, adresse = pr.tableau(datastore, ecrire=ecrire)
+        return store, adresse, store.get_schema(adresse) or {}
+    except jetons.JetonMalPlace as e:
+        raise TableauIndisponible("invalid_datastore", str(e))
+    except DatastoreNotFound:
+        raise TableauIndisponible("datastore_not_found",
+                                  f"Table `{datastore}` not found. Nothing was called.")
+    except DatastoreReadOnly:
+        raise TableauIndisponible("datastore_read_only",
+                                  f"Table `{datastore}` is shared with you read-only. "
+                                  "Nothing was called.")
+
+
+def meme_tableau(cible: Any, parent: Any) -> bool:
+    """La cible et le tableau parent sont-ils le MÊME tableau, une fois résolus ? Un
+    numéro et un nom désignent le même : comparer les chaînes laisserait passer l'un
+    sous l'autre. Rien n'est écrit."""
+    store, a, _ = _ouvrir_tableau(cible, ecrire=False)
+    _, b, _ = _ouvrir_tableau(parent, ecrire=False)
+    # L'adresse est l'écho de ce qu'on a passé (nom ou numéro) : on compare le NUMÉRO.
+    return store._resolve(a) == store._resolve(b)
+
+
+def _lu_borne(objet: str, lire):
+    """Une lecture de tableau sous `statement_timeout` : dépassée, refus NOMMÉ plutôt
+    qu'une connexion tenue des minutes."""
+    try:
+        with lecture_bornee.lectures_bornees(objet, DUREE_LECTURE_MS):
+            return lire()
+    except lecture_bornee.LectureTropLongue as e:
+        raise TableauIndisponible("table_read_timeout", str(e))
+
+
+def ouvrir_parents(datastore: Any, colonne_etat: str, *, ecrire: bool,
+                   filtre: Optional[dict] = None, requises=()) -> Parents:
+    """Le tableau parent, le droit d'y ÉCRIRE vérifié avant tout appel quand on écrit :
+    l'état de chaque ligne y est écrit en retour, et c'est lui qui fait qu'une exécution
+    suivante ne repaie pas une ligne faite. Le filtre est éprouvé ici, AVANT que la
+    colonne d'état ne soit déclarée (si elle manque) : refusé, rien n'a changé."""
+    store, adresse, schema = _ouvrir_tableau(datastore, ecrire=ecrire)
+    colonnes = {f["key"] for f in (schema.get("fields") or []) if f.get("key")}
+    p = Parents(store, adresse, colonne_etat, filtre or None, tuple(sorted(requises)))
+    # Éprouvé sans la clause d'état : sa colonne n'est peut-être pas encore déclarée.
+    clauses = [c for c in p.clauses() if c["field"] != colonne_etat]
+    try:
+        _lu_borne("lignes parentes d'une recette",
+                  lambda: store.cursor_rows(adresse, filter=p.filtre, filters=clauses,
+                                            limit=1))
+    except ValueError as e:
+        raise TableauIndisponible("invalid_filter", f"`for_each.filter`: {e} Nothing was "
+                                                    "called.")
+    if ecrire and colonne_etat not in colonnes:
+        store.patch_schema(adresse, fields=[{"key": colonne_etat, "type": "text"}])
+    return p
+
+
+def parents_en_attente(p: Parents, *, limite: int, premiere: Optional[str],
+                       vues: set) -> list[dict]:
+    """Les prochaines lignes parentes dont l'état est vide — `premiere` (la ligne d'une
+    reprise) d'abord, si elle attend encore. Une ligne déjà vue dans cet appel n'est pas
+    rendue deux fois (son état n'a pas pu s'écrire) : sans cela, la boucle tournerait."""
+    out: list[dict] = []
+    if premiere:
+        page = _lu_borne("lignes parentes d'une recette", lambda: p.store.cursor_rows(
+            p.adresse, filter={**(p.filtre or {}), "_id": {"in": [premiere]}},
+            filters=p.clauses(), limit=1))
+        out += page.get("rows") or []
+    page = _lu_borne("lignes parentes d'une recette", lambda: p.store.cursor_rows(
+        p.adresse, filter=p.filtre, filters=p.clauses(),
+        limit=min(MAX_LUES, LOT_PARENTS + len(vues) + len(out))))
+    for r in page.get("rows") or []:
+        if len(out) >= limite:
+            break
+        rid = str(r["_id"])
+        if rid not in vues and all(str(o["_id"]) != rid for o in out):
+            out.append(r)
+    return out[:limite]
+
+
+def portee_ligne(ligne: dict) -> dict:
+    """La portée `row` d'une ligne parente : ses valeurs nues (couches retirées), et
+    son `_id`."""
+    out = {k: pr.valeur(ligne, k) for k in ligne if not str(k).startswith("_")}
+    out["_id"] = str(ligne["_id"])
+    return out
+
+
+def marquer_parent(p: Parents, row_id: str, statut: str) -> Optional[str]:
+    """Écrit l'état d'une ligne parente. Rend None ou le code du refus."""
+    return pr.ecrire_ligne(p.store, p.adresse, row_id, {p.etat: statut})
+
+
+# ── `where … in_table / not_in_table` ────────────────────────────────────────
+#: Au-delà, ce n'est plus une liste d'exclusion qu'on charge en mémoire.
+MAX_VALEURS_TABLE = 50_000
+_PAGE_TABLE = 1_000
+
+
+def charger_ensembles(clauses: list[dict]) -> dict[int, set]:
+    """Pour chaque clause `in_table` / `not_in_table`, les valeurs NORMALISÉES de sa
+    colonne — lues une fois par exécution, jamais une requête par élément, chaque page
+    sous `statement_timeout`. Une case à plusieurs valeurs (liste) compte chacune."""
+    from . import correspondance as co
+    out: dict[int, set] = {}
+    for i, c in enumerate(clauses or []):
+        if c.get("op") not in ("in_table", "not_in_table"):
+            continue
+        store, adresse, _ = _ouvrir_tableau(c["table"], ecrire=False)
+        valeurs: set = set()
+        curseur, lues = None, 0
+        while True:
+            page = _lu_borne(f"liste de correspondance `{c['table']}`",
+                             lambda: store.cursor_rows(
+                                 adresse, fields=[c["column"]], limit=_PAGE_TABLE,
+                                 cursor=curseur,
+                                 filters=[{"field": c["column"], "op": "not_empty",
+                                           "value": True}]))
+            lignes = page.get("rows") or []
+            lues += len(lignes)
+            if lues > MAX_VALEURS_TABLE:
+                raise TableauIndisponible(
+                    "match_table_too_large",
+                    f"Table `{c['table']}` holds more than {MAX_VALEURS_TABLE} values in "
+                    f"`{c['column']}`: too many to match against. Nothing was called.")
+            for r in lignes:
+                brute = pr.valeur(r, c["column"])
+                for x in (brute if isinstance(brute, list) else [brute]):
+                    try:
+                        v = co.normaliser(x, c.get("normalize"))
+                    except co.ValeurNonScalaire as e:
+                        raise TableauIndisponible(
+                            co.ValeurNonScalaire.code,
+                            f"Table `{c['table']}`, column `{c['column']}`: {e} Nothing "
+                            "was called.")
+                    if v is not None:
+                        valeurs.add(v)
+            curseur = page.get("next_cursor")
+            if not curseur:
+                break
+        out[i] = valeurs
+    return out
