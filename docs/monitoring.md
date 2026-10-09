@@ -108,6 +108,23 @@ lien public des pages et révoque les invitations en attente émises avant la ba
 Les jetons courts (upload, 15 min) ont expiré d'eux-mêmes ; ceux de désinscription
 n'ouvrent qu'une désinscription et ne se révoquent qu'en changeant le secret d'instance.
 
+**La query, sur toute route** : la valeur d'une clé secrète par son NOM devient `***`
+au journal d'accès — `code`, `state`, `session_state`, `id_token`, `access_token`,
+`refresh_token`, `client_secret`, `token`, `key`, `apikey`, `api_key`, `access_key`, et
+toute clé contenant `secret`, `token` ou `password`
+(`journal_secrets.CLES_DE_REQUETE_SECRETES`). Jusqu'au 09/10/2026, le retour de chaque
+fournisseur OAuth (`/api/<fournisseur>/oauth/callback?code=…&state=…`) écrivait le code
+d'autorisation en clair dans journald ; seul `/oauth/callback` (relais) était masqué.
+
+**Les requêtes SORTANTES** suivent la même règle : la ligne INFO d'httpx (`HTTP Request:
+POST https://…?key=…`) écrivait la clé d'API d'un connecteur en clair.
+`MasqueRequeteSortante` masque la query sur `httpx`, les loggers d'`httpcore` et
+`urllib3.connectionpool` (ces deux derniers n'écrivent qu'en DEBUG) — masquer plutôt que
+remonter en WARNING : la trace des appels sortants reste.
+`journal_secrets.installer_masques_du_journal` (appelé par `server.main` avant
+`uvicorn.run`) pose les deux filtres ; `tests/test_journal_acces_masque.py` garde leur
+branchement.
+
 Une route qui **reçoit un secret dans sa query** (protocole d'un tiers : le retour
 d'autorisation WordPress porte `password=`) se déclare dans
 `journal_secrets.routes_a_requete_secrete` : le même filtre remplace sa query par
