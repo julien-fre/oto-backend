@@ -124,11 +124,12 @@ def _google_list(sub: str, service: "str | None" = None) -> list[dict]:
              "is_default": a["is_default"], "channel": None}
             for a in google_oauth.list_accounts(sub) if ok(a)]
     # Accounts SHARED by the team or org (2026-09-27): reachable via
-    # `_account=`, labeled as such — never the member's default (it stays their own).
+    # `_account=`, marked `shared` with their tier in `shared_scope` (the label stays
+    # the address: the screen says "shared" itself) — never the member's default.
     vus = {i["id"] for i in mine}
-    partages = [{"id": a["google_email"],
-                 "label": f"{a['google_email']} (shared: {'team' if a.get('scope') == 'group' else 'org'})",
-                 "status": "ok", "is_default": False, "channel": None, "shared": True}
+    partages = [{"id": a["google_email"], "label": a["google_email"],
+                 "status": "ok", "is_default": False, "channel": None, "shared": True,
+                 "shared_scope": "team" if a.get("scope") == "group" else "org"}
                 for a in google_oauth.list_shared_accounts(sub)
                 if ok(a) and a["google_email"] not in vus]
     return mine + partages

@@ -340,8 +340,10 @@ def test_les_identites_proposent_les_comptes_partages_etiquetes(monkeypatch):
     _partages(monkeypatch)
     ids = identities.list_identities("u", "gmail")
     assert [i["id"] for i in ids] == ["group@x.test", "org@x.test"]
-    assert all(i["is_default"] is False and "shared" in i["label"] for i in ids)
-    assert all(i["shared"] is True for i in ids)
+    assert all(i["is_default"] is False and i["shared"] is True for i in ids)
+    # Le libellé reste l'adresse (l'écran dit « partagé » lui-même) ; le palier est servi.
+    assert [(i["label"], i["shared_scope"]) for i in ids] == [
+        ("group@x.test", "team"), ("org@x.test", "org")]
 
 
 def test_le_contrat_sert_shared_pour_que_le_front_masque_revoquer(monkeypatch):
@@ -355,8 +357,9 @@ def test_le_contrat_sert_shared_pour_que_le_front_masque_revoquer(monkeypatch):
     servi = ConnectorIdentities(connector="gmail", supported=True,
                                 identities=identities.list_identities("u", "gmail")
                                 ).model_dump(mode="json")
-    assert {i["id"]: i["shared"] for i in servi["identities"]} == {
-        "moi@x.test": False, "group@x.test": True, "org@x.test": True}
+    assert {i["id"]: (i["shared"], i["shared_scope"]) for i in servi["identities"]} == {
+        "moi@x.test": (False, None), "group@x.test": (True, "team"),
+        "org@x.test": (True, "org")}
 
 
 def test_le_compte_google_accepte_le_palier_org_et_ses_services_non():
@@ -485,5 +488,6 @@ def test_un_coffre_illisible_ne_fait_pas_revoquer(monkeypatch):
 def test_le_descriptif_openapi_decrit_shared():
     from oto_mcp import openapi
 
-    champ = openapi.build()["components"]["schemas"]["Identity"]["properties"]["shared"]
-    assert champ["type"] == "boolean" and champ["default"] is False
+    proprietes = openapi.build()["components"]["schemas"]["Identity"]["properties"]
+    assert proprietes["shared"]["type"] == "boolean" and proprietes["shared"]["default"] is False
+    assert {"type": "string", "enum": ["team", "org"]} in proprietes["shared_scope"]["anyOf"]

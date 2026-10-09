@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
@@ -82,6 +82,8 @@ class Identity(BaseModel):
     # org admin does, from the shared tier). Always served, `false` by default — every
     # other backend (Microsoft included) lists the member's own accounts.
     shared: bool = False
+    # The tier that shares it — `team` | `org` — present with `shared`, `null` otherwise.
+    shared_scope: Optional[Literal["team", "org"]] = None
 
 
 class ConnectorIdentities(BaseModel):
