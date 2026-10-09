@@ -38,6 +38,7 @@ import pytest
 
 from _oto_core_pin import (MARQUEUR, categorie_non_concluante, ecart,
                            lignes_de_banniere, skips_autorises)
+import _etat_global
 import _groupes_xdist
 import _jeton_de_suite as jeton
 from _pg_hygiene import Guard, docker_available, run_args, sweep_orphans
@@ -80,6 +81,30 @@ def _connexion_gardee(self: socket.socket, address):
 
 _SOCKET_CONNECT_ORIGINAL = socket.socket.connect
 socket.socket.connect = _connexion_gardee
+
+
+# ── L'état GLOBAL du processus, rendu tel qu'il était après chaque test (#1111) ──────
+# Un réglage de la stdlib (`csv.field_size_limit`, récursion, délai des sockets,
+# `logging.disable`, répertoire courant, umask, locale, `decimal`, fuseau, `sys.path`) vaut
+# pour tout le worker : changé sans être rendu, il change le résultat des tests joués APRÈS
+# — et de ceux-là seulement, selon la part et l'ordre. Le 09/10/2026, une limite CSV
+# relevée par un script d'archive a désarmé la garde de `csv_tolerant` dans une seule part
+# (détail : `tests/_etat_global.py`). ⚠️ Le nom commence par `_0` exprès : pytest range
+# les fixtures autouse d'un même fichier par ORDRE ALPHABÉTIQUE (`dir()`), pas par ordre de
+# définition. Première installée, elle est démontée la dernière — après les remises de
+# `monkeypatch` (chdir, syspath_prepend…), qu'elle ne doit pas prendre pour des fuites.
+# Un écart est une erreur qui nomme le test ; l'état est remis.
+@pytest.fixture(autouse=True)
+def _0_etat_global_rendu(request: pytest.FixtureRequest) -> Iterator[None]:
+    avant, decimal_avant = _etat_global.releve(), _etat_global.contexte_decimal()
+    yield
+    ecarts = _etat_global.ecarts_et_remise(avant, decimal_avant)
+    if ecarts:
+        pytest.fail(
+            f"{request.node.nodeid} a changé l'état GLOBAL du processus sans le rendre — "
+            f"les tests joués après lui dans ce worker le subiraient (#1111). Rendre "
+            f"l'état (try/finally, `monkeypatch`) dans le test ou dans le code appelé :\n  "
+            + "\n  ".join(ecarts), pytrace=False)
 
 
 # ── L'adresse publique de l'instance, gréée pour toute la suite ──────────────
