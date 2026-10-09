@@ -318,6 +318,26 @@ async def test_la_cloture_est_stampee_sous_son_run(monkeypatch):
     assert out["ok"] and session_org.current_call_run() == "r1"
 
 
+def test_une_liste_de_runs_choisit_sa_page_avant_de_reconstruire(conn):
+    """infra#9 : la liste des déroulés (admin, org) et le bloc C du handshake prennent
+    leurs N dernières ouvertures dans le journal AVANT de reconstruire — même résultat
+    qu'avant : les plus récentes, le compte d'appels de chacune, la portée tenue, et un
+    run sans ligne d'index toujours listé (aucune ligne `runs` ici)."""
+    for i, run in enumerate(["vieux", "moyen", "neuf"]):
+        _journal_open(conn, run, label=run, org_id=35, ago=600 - i)
+        for _ in range(i + 1):
+            _fact(conn, run, "outil", {}, org_id=35, ago=590 - i)
+    _journal_open(conn, "ailleurs", label="ailleurs", org_id=36, ago=1)
+
+    # Le compte d'appels inclut l'ouverture, qui porte le run (comme avant).
+    assert [(r["run_id"], r["n_calls"]) for r in usage.list_runs(2, org_id=35)] == [
+        ("neuf", 4), ("moyen", 3)]
+    assert [r["run_id"] for r in usage.list_runs(2)] == ["ailleurs", "neuf"]
+    assert [r["run_id"] for r in usage.recent_runs("u1", 35, limit=2)] == ["neuf", "moyen"]
+    assert [r["run_id"] for r in usage.recent_runs("u1", 36)] == ["ailleurs"]
+    assert usage.recent_runs("u2", 35) == []
+
+
 def test_les_lectures_d_un_projet_ne_reconstruisent_que_ses_runs_recents(conn, monkeypatch):
     """#1145 : le plus gros projet porte ~86 000 runs, et chaque ouverture les
     reconstruisait tous depuis le journal. Les trois lectures se bornent aux

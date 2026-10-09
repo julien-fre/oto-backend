@@ -275,13 +275,16 @@ def test_la_fenetre_est_gelee_quand_la_borne_haute_est_omise(journal):
 
 def test_la_page_et_le_total_se_lisent_dans_UNE_transaction_au_snapshot_fige(journal):
     """La cohérence n'est pas une intention : elle tient à ce que les deux lectures
-    partagent une transaction en REPEATABLE READ. Retirer le `SET` rend ce test rouge.
-    """
+    partagent une transaction en REPEATABLE READ. Retirer l'isolation rend ce test rouge.
+
+    Depuis infra#9 l'export est une lecture BORNÉE (`usage._agregat`), qui pose
+    l'isolation en tête de SA transaction : l'espion lit donc l'isolation EFFECTIVE de
+    la connexion qu'il reçoit, plutôt que d'attendre le `SET` parmi les requêtes."""
     from oto_mcp import db
     from oto_mcp.db import usage as u
 
     vu: list[str] = []
-    vrai = u._connect
+    vrai = u._agregat
 
     class Espion:
         def __init__(self, conn):
@@ -297,15 +300,17 @@ def test_la_page_et_le_total_se_lisent_dans_UNE_transaction_au_snapshot_fige(jou
     import contextlib
 
     @contextlib.contextmanager
-    def espionne():
-        with vrai() as conn:
+    def espionne(objet, **kw):
+        with vrai(objet, **kw) as conn:
+            vu.append("isolation=" + conn.execute(
+                "SHOW transaction_isolation").fetchone()["transaction_isolation"])
             yield Espion(conn)
 
-    u._connect = espionne
+    u._agregat = espionne
     try:
         db.export_tool_calls_for_org(journal["org"], since=journal["since"], limit=2)
     finally:
-        u._connect = vrai
+        u._agregat = vrai
 
-    assert vu[0].startswith("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"), vu
+    assert vu[0] == "isolation=repeatable read", vu
     assert sum("count(*)" in s for s in vu) == 1, vu

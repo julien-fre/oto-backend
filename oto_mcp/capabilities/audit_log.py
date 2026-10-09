@@ -52,6 +52,7 @@ from ..tool_visibility import namespace_of
 from ._authz import ORG_ADMIN_OF
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding,
                      cap_limit)
+from ._lecture_bornee import bornee
 from .registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
@@ -249,7 +250,7 @@ def _export(ctx: ResolvedCtx, inp: AuditExportInput) -> dict:
 
 CAPABILITIES += [
     Capability(
-        key="org.audit_log.export", handler=_export, Input=AuditExportInput,
+        key="org.audit_log.export", handler=bornee(_export), Input=AuditExportInput,
         authz=ORG_ADMIN_OF("org_id"), Output=AuditExport,
         # Deux refus en propre, deux gestes différents derrière le même statut :
         # `invalid_cursor` se corrige en repartant du début, `window_with_cursor` en

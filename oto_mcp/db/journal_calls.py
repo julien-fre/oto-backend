@@ -27,6 +27,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from ._conn import _connect
+from .lecture_bornee import lecture_d_agregat
 
 # Les CLÉS des arguments d'un appel, triées — jamais leur contenu (#634, 30/08/2026).
 #
@@ -149,7 +150,8 @@ def count_calls_of_org_runs_elsewhere(org_id: int, *, since: datetime,
     clauses = ["l.kind = 'mcp'", "r.org_id = %s", "l.org_id IS DISTINCT FROM %s",
                "l.created_at >= %s", *clauses]
     params = [int(org_id), int(org_id), since, *params]
-    with _connect() as conn:
+    # Bornée comme la page qu'il complète (infra#9) : le même journal, la même fenêtre.
+    with lecture_d_agregat("appels des runs de l'org résolus ailleurs") as conn:
         row = conn.execute(
             f"""
             SELECT count(*) AS n

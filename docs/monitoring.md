@@ -557,11 +557,29 @@ périmètre »), sur les deux faces — jamais un résultat partiel, jamais un 5
 
 Lectures bornées : `list_billable_calls_for_org`, `billable_usage_by_tool_for_org`,
 `instruction_usage`, `tool_call_stats`, `rest_call_stats`, `connector_failure_stats`,
-`activation_funnel`, `list_tenants_overview`, `get_tenant_overview`. Capacités
-enveloppées : `org.usage.{calls,tools}`, `org.instruction.usage`, `me.activity_summary`,
-`org.monitoring.{summary,console,connectors}`, `monitoring.{summary,rest,connectors,funnel}`,
-`admin.monitoring`, `admin.{tenants,tenant,tenant_console}` (`tests/test_lecture_bornee.py`
-tient la liste).
+`activation_funnel`, `list_tenants_overview`, `get_tenant_overview` ; depuis le 08/10
+(infra#9, « plus de route lourde ») aussi `list_runs`, `list_tool_calls`,
+`count_calls_of_org_runs_elsewhere`, `list_rest_calls`, `list_view_as_writes`,
+`transport_refusal_stats`, `org_adoption`, `export_tool_calls_for_org`. Capacités
+enveloppées : `org.usage.{calls,tools}`, `org.instruction.usage`, `me.{activity_summary,calls}`,
+`org.monitoring.{summary,console,connectors,calls,runs,adoption,view_as_writes}`,
+`monitoring.{summary,rest,connectors,funnel,calls,rest_calls,transport}`, `usage.runs`,
+`org.audit_log.export`, `admin.monitoring`, `admin.{tenants,tenant,tenant_console}`
+(`tests/test_lecture_bornee.py` tient la liste). La borne est un FILET : ce qui rend une
+lecture légère, c'est sa forme (fenêtre, page, index) — ci-dessous.
+
+**Une liste de runs choisit sa page AVANT de reconstruire** (infra#9) : `list_runs`
+(`/api/admin/usage/runs`, `/api/orgs/{id}/monitoring/runs`, `op=runs` des deux consoles)
+et `recent_runs` (bloc C du handshake) prennent leurs N dernières ouvertures `run_start`
+dans le journal (`_derniers_runs`), puis ne reconstruisent qu'elles. Avant, la liste
+groupait TOUT le journal par run pour compter les appels, et reconstruisait tous les runs
+de sa portée — les ouvertures n'étant jamais archivées, le coût suivait l'historique
+entier, pas la page. Le compte d'appels d'un run est un LATERAL servi par
+`idx_tool_calls_run`.
+
+**L'entonnoir lit une seule fenêtre** : « REST seul » (`rest_only`) compte les comptes
+venus en REST SANS appel d'outil sur la fenêtre `days`, comme `active` et `blocked` —
+il lisait jusqu'au 08/10 le journal entier, deux fois, et sortait coupé à 10 s.
 
 **Le résumé plateforme SANS périmètre est borné à 7 jours** (`monitoring.summary`, et
 `oto_admin_monitoring op=summary` sans `org_id` ni `sub`) : il lit le journal de toute

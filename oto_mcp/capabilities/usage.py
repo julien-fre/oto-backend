@@ -18,6 +18,7 @@ from pydantic import BaseModel, field_validator
 
 from .. import config, db, email as mailer, org_store, outreach_optout, tenancy
 from ._authz import PLATFORM_ADMIN, SUB_ONLY
+from ._lecture_bornee import bornee
 from ._types import AuthzDenied, cap_limit, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
@@ -435,7 +436,7 @@ CAPABILITIES += [
         mcp="feedback", rest=RestBinding("POST", "/api/me/usage/feedback"),
     ),
     # --- projections de lecture (opérateur plateforme) ---------------------
-    Capability(key="usage.runs", handler=_runs, Input=RunsInput, authz=PLATFORM_ADMIN,
+    Capability(key="usage.runs", handler=bornee(_runs), Input=RunsInput, authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/usage/runs")),
     Capability(key="usage.run", handler=_run, Input=RunInput, authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/usage/runs/{run_id}")),

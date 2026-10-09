@@ -1003,7 +1003,7 @@ CAPABILITIES += [
     Capability(key="org.monitoring.summary", handler=bornee(_summary), Input=OrgSummaryInput,
                authz=_ADMIN_OF, mcp=None, Output=OrgMonitoringSummary,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/summary", _ID)),
-    Capability(key="org.monitoring.calls", handler=_calls, Input=OrgCallsInput,
+    Capability(key="org.monitoring.calls", handler=bornee(_calls), Input=OrgCallsInput,
                authz=_ADMIN_OF, mcp=None, Output=OrgCalls,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/calls", _ID)),
     # Lentille MEMBRE, volontairement distincte de celle du dessus (voir le bloc
@@ -1037,7 +1037,7 @@ CAPABILITIES += [
                            "just the count. Filters: `signal` (tool_feedback|gap), "
                            "`tool` (target), `status`. Org admin only.",
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/signals", _ID)),
-    Capability(key="org.monitoring.view_as_writes", handler=_view_as_writes,
+    Capability(key="org.monitoring.view_as_writes", handler=bornee(_view_as_writes),
                Input=OrgViewAsWritesInput, authz=_ADMIN_OF, mcp=None,
                Output=OrgViewAsWrites,
                description="Writes made ON BEHALF of a member of this org by a platform "
@@ -1048,10 +1048,10 @@ CAPABILITIES += [
     Capability(key="org.monitoring.connectors", handler=bornee(_connectors), Input=OrgWindowInput,
                authz=_ADMIN_OF, mcp=None, Output=OrgConnectorHealth,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/connectors", _ID)),
-    Capability(key="org.monitoring.adoption", handler=_adoption, Input=OrgDaysInput,
+    Capability(key="org.monitoring.adoption", handler=bornee(_adoption), Input=OrgDaysInput,
                authz=_ADMIN_OF, mcp=None, Output=OrgAdoption,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/adoption", _ID)),
-    Capability(key="org.monitoring.runs", handler=_runs, Input=OrgRunsInput,
+    Capability(key="org.monitoring.runs", handler=bornee(_runs), Input=OrgRunsInput,
                authz=_ADMIN_OF, mcp=None, Output=OrgRuns,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/runs", _ID)),
     Capability(key="org.monitoring.run", handler=_run, Input=OrgRunInput,

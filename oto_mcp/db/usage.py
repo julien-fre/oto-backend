@@ -227,6 +227,26 @@ def _runs_from_journal(extra: str = "") -> str:
              WHERE s.tool = 'run_start' AND s.run_id IS NOT NULL{extra}"""
 
 
+def _derniers_runs(portee: str = "") -> str:
+    """Prédicat d'ouverture (`extra` de `_runs_from_journal`) qui ne garde que les `%s`
+    DERNIÈRES ouvertures de la portée, choisies AVANT toute reconstruction (infra#9).
+
+    Sans lui, une liste « les N derniers runs » reconstruisait TOUS les runs de sa
+    portée — la clôture et le dernier signe de vie de chacun, deux LATERAL par run —
+    puis n'en gardait que N : le `LIMIT` du SELECT extérieur ne descend pas sous les
+    LATERAL. Le coût suivait l'historique de la portée (les ouvertures ne sont jamais
+    archivées), pas la page demandée. Ici, la page se choisit dans le journal, sur les
+    seules lignes `run_start`, et seules ces N-là se reconstruisent : même résultat
+    (même prédicat d'ouverture, même ordre), sans repli sur la table `runs` — un run
+    sans ligne d'index reste listé.
+
+    `portee` = prédicats sur l'alias `d` (l'ouverture candidate), TOUJOURS des
+    littéraux de ce module ; ses `%s` précèdent celui du `LIMIT`."""
+    return ("\n               AND s.id IN (SELECT d.id FROM tool_calls d"
+            " WHERE d.tool = 'run_start' AND d.run_id IS NOT NULL" + portee +
+            " ORDER BY d.created_at DESC, d.id DESC LIMIT %s)")
+
+
 def insert_run(
     run_id: str, *, sub: Optional[str], org_id: Optional[int], label: str,
     guide: Optional[str] = None, project_id: Optional[int] = None,
@@ -357,18 +377,21 @@ def recent_runs(sub: str, org_id: Optional[int], limit: int = 5) -> list[dict]:
 
     Lus du JOURNAL (le run est ses faits) ; la table n'est jointe que pour `project_id`,
     le seul champ qu'elle sait. Conséquence assumée : un run dont l'ouverture n'a pas
-    été journalisée n'apparaît plus au handshake — mieux qu'une étiquette sans déroulé."""
+    été journalisée n'apparaît plus au handshake — mieux qu'une étiquette sans déroulé.
+
+    Seules les `limit` dernières ouvertures se reconstruisent (`_derniers_runs`,
+    infra#9) : lu à chaque session, ce bloc reconstruisait tous les runs du compte."""
     with _connect() as conn:
         rows = conn.execute(
             f"""
-            WITH j AS ({_runs_from_journal(
-                " AND s.sub = %s AND s.org_id IS NOT DISTINCT FROM %s")})
+            WITH j AS ({_runs_from_journal(_derniers_runs(
+                " AND d.sub = %s AND d.org_id IS NOT DISTINCT FROM %s"))})
             SELECT j.run_id, j.label, j.doctrine, j.outcome, x.project_id,
                    j.started_at, j.finished_at, j.last_seen_at
               FROM j LEFT JOIN runs x ON x.run_id = j.run_id
              ORDER BY j.started_at DESC LIMIT %s
             """,
-            (sub, org_id, limit),
+            (sub, org_id, limit, limit),
         ).fetchall()
     return list(rows)
 
@@ -906,26 +929,32 @@ def list_runs(limit: int = 100, *, org_id: Optional[int] = None) -> list[dict]:
 
     `org_id` (si fourni) borne aux déroulés OUVERTS sous cette org (`tool_calls.org_id`
     de la ligne `run_start`, seam `current_org`) — scope de la lentille org (org_admin),
-    même règle exacte que le journal d'audit. Sans lui : plateforme-wide (défaut admin)."""
+    même règle exacte que le journal d'audit. Sans lui : plateforme-wide (défaut admin).
+
+    **Légère par construction** (infra#9) : les `limit` dernières ouvertures d'abord
+    (`_derniers_runs`), puis, pour elles seules, la reconstruction et le compte des
+    appels (un LATERAL par run, servi par `idx_tool_calls_run`). L'ancienne forme
+    groupait TOUT le journal par run (`GROUP BY run_id` sur chaque ligne qui en porte
+    un, toutes orgs confondues) et reconstruisait tous les runs de la portée, à chaque
+    affichage de la liste. Lecture bornée (`_agregat`, 10 s) en filet."""
     limit = max(1, min(int(limit), 500))
-    org_clause = " AND s.org_id = %s" if org_id is not None else ""
-    params: list[Any] = ([int(org_id)] if org_id is not None else []) + [limit]
-    with _connect() as conn:
+    portee = " AND d.org_id = %s" if org_id is not None else ""
+    params: list[Any] = ([int(org_id)] if org_id is not None else []) + [limit, limit]
+    with _agregat("liste des déroulés") as conn:
         return [dict(r) for r in conn.execute(
             f"""
-            WITH j AS ({_runs_from_journal(org_clause)})
+            WITH j AS ({_runs_from_journal(_derniers_runs(portee))})
             SELECT j.run_id,
                    COALESCE(j.doctrine, j.label) AS slug,
                    j.label, j.doctrine, j.doctrine_version,
                    j.sub, u.email, u.name,
                    j.started_at, j.finished_at, j.outcome, j.last_seen_at,
-                   COALESCE(c.n_calls, 0) AS n_calls
+                   c.n_calls
               FROM j
               LEFT JOIN users u ON u.sub = j.sub
-              LEFT JOIN (
-                  SELECT run_id, count(*) AS n_calls FROM tool_calls
-                   WHERE run_id IS NOT NULL GROUP BY run_id
-              ) c ON c.run_id = j.run_id
+              LEFT JOIN LATERAL (
+                  SELECT count(*) AS n_calls FROM tool_calls t WHERE t.run_id = j.run_id
+              ) c ON TRUE
              ORDER BY j.started_at DESC LIMIT %s
             """,
             tuple(params),
@@ -1158,7 +1187,9 @@ def list_tool_calls(
         params.append(int(org_id))
     where = " WHERE " + " AND ".join(clauses)
     params.append(limit)
-    with _connect() as conn:
+    # Bornée (`_agregat`, infra#9) : un filtre sélectif (`error_contains`, `sub`…) sans
+    # `days` parcourt la portée entière à rebours en quête de `limit` lignes.
+    with _agregat("journal des appels") as conn:
         # Alias tool_name/called_at : compat avec l'UI admin existante.
         rows = conn.execute(
             f"""
@@ -1277,11 +1308,10 @@ def export_tool_calls_for_org(
     alors en compter moins. C'est le seul écart possible, et il retire des lignes,
     il n'en invente pas."""
     limit = max(1, min(int(limit), 5000))
-    with _connect() as conn:
-        # PREMIÈRE commande de la transaction — `SET TRANSACTION` est refusé après
-        # une requête. Sa portée est cette transaction seule : la connexion revient
-        # au pool en `read committed` (vérifié sur un PostgreSQL réel, 2026-09-01).
-        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+    # REPEATABLE READ posé en TÊTE de la transaction par `_agregat` (`SET TRANSACTION` est
+    # refusé après une requête), avec la borne de durée des lectures d'agrégat
+    # (infra#9) : sans `since`, le compte parcourt toute la rétention de l'org.
+    with _agregat("export du journal d'une org", isolation="REPEATABLE READ") as conn:
         if not until:
             # `now()` = l'instant d'ouverture de la transaction, donc cohérent avec
             # le snapshot que les deux lectures partagent.
@@ -1963,7 +1993,7 @@ def list_rest_calls(
         clauses.append("l.tool LIKE %s"); params.append(f"{route}%")
     where = " WHERE " + " AND ".join(clauses)
     params.append(limit)
-    with _connect() as conn:
+    with _agregat("journal des appels REST") as conn:
         rows = conn.execute(
             f"""
             SELECT l.id, l.sub, COALESCE(u.email, l.email) AS email, l.tool AS route,
@@ -1993,7 +2023,7 @@ def list_view_as_writes(org_id: int, days: Optional[int] = None,
     `days` défaut 30, plafonné à 365 ; `limit` plafonné à 200."""
     limit = max(1, min(int(limit), 200))
     since_days = max(1, min(int(days or 30), 365))
-    with _connect() as conn:
+    with _agregat("écritures en « voir en tant que »") as conn:
         rows = conn.execute(
             f"""
             SELECT l.id, l.created_at AS called_at, l.tool AS route, l.ok, l.error,
@@ -2062,7 +2092,7 @@ def transport_refusal_stats(since_days: int = 7) -> dict:
     sans toucher au JSON. Aucune ligne ne porte de `sub` : à cette couche il n'y a pas
     encore d'identité."""
     since_days = max(1, min(int(since_days), 365))
-    with _connect() as conn:
+    with _agregat("refus du transport") as conn:
         par_cause = conn.execute(
             """
             SELECT COALESCE(l.args->>'env', 'inconnu') AS env,
@@ -2105,7 +2135,8 @@ def transport_refusal_stats(since_days: int = 7) -> dict:
 def activation_funnel(active_window_days: int = 30) -> dict:
     """Funnel d'activation (ADR 0017) : distingue COMPTE de USAGE. Un compte avec 0
     appel d'outil n'a jamais rien déclenché (idle, ou handshake OAuth jamais réussi) —
-    invisible au monitoring d'outils, détecté ici. `active_window_days` borne « actif »."""
+    invisible au monitoring d'outils, détecté ici. `active_window_days` borne « actif »,
+    « REST seul » et « bloqué » : les trois comptes portent sur la même fenêtre."""
     active_window_days = max(1, min(int(active_window_days), 365))
     with _agregat("entonnoir d'activation") as conn:
         total = int((conn.execute("SELECT COUNT(*) AS n FROM users").fetchone() or {}).get("n") or 0)
@@ -2116,17 +2147,22 @@ def activation_funnel(active_window_days: int = 30) -> dict:
             "AND created_at >= NOW() - make_interval(days => %s)",
             (active_window_days,),
         ).fetchone() or {}).get("n") or 0)
-        # Comptes ayant touché la plateforme (REST) mais SANS aucun appel d'outil :
-        # connectés-mais-idle (ont ouvert le dashboard, jamais invoqué Claude).
+        # Comptes ayant touché la plateforme (REST) mais SANS aucun appel d'outil, sur
+        # la MÊME fenêtre que `active` : connectés-mais-idle (ont ouvert le dashboard,
+        # jamais invoqué Claude). ⚠️ Sans fenêtre (jusqu'au 08/10/2026, infra#9), les
+        # deux branches lisaient le journal ENTIER par `kind` — la lecture la plus
+        # lourde de l'entonnoir, coupée à 10 s en production.
         rest_only = int((conn.execute(
             """
             SELECT COUNT(*) AS n FROM (
                 SELECT sub FROM tool_calls WHERE kind = 'rest' AND sub IS NOT NULL
-                GROUP BY sub
+                   AND created_at >= NOW() - make_interval(days => %s)
                 EXCEPT
                 SELECT sub FROM tool_calls WHERE kind = 'mcp' AND sub IS NOT NULL
+                   AND created_at >= NOW() - make_interval(days => %s)
             ) q
-            """
+            """,
+            (active_window_days, active_window_days),
         ).fetchone() or {}).get("n") or 0)
         # Comptes ayant subi ≥1 échec de connecteur dans la fenêtre = bloqués/à débloquer.
         blocked = int((conn.execute(
@@ -2214,7 +2250,7 @@ def org_adoption(org_id: int, active_window_days: int = 30) -> dict:
     (`truncated` le dit) ; les compteurs, eux, couvrent toute la population.
     """
     days = max(1, min(int(active_window_days), 365))
-    with _connect() as conn:
+    with _agregat("adoption d'une org") as conn:
         rows = [dict(r) for r in conn.execute(
             """
             SELECT m.sub, u.email, u.name, m.org_role,

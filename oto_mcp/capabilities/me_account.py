@@ -422,7 +422,7 @@ CAPABILITIES += [
         rest=RestBinding("GET", "/api/me"),
     ),
     Capability(
-        key="me.calls", handler=_my_calls, Input=MyCallsInput, authz=SUB_ONLY,
+        key="me.calls", handler=bornee(_my_calls), Input=MyCallsInput, authz=SUB_ONLY,
         Output=MyCallsView, description=_DOC_CALLS,
         mcp=None,
         rest=RestBinding("GET", "/api/me/calls"),

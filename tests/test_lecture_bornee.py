@@ -23,6 +23,11 @@ BORNEES = {
     # La supervision plateforme et la fiche des tenants (#1145, lot E).
     "monitoring.rest", "monitoring.connectors", "monitoring.funnel",
     "org.monitoring.connectors", "admin.tenants", "admin.tenant", "admin.tenant_console",
+    # Les lectures du journal qui n'avaient pas de borne de durée (infra#9) : listes de
+    # runs, journaux ligne à ligne, adoption, refus du transport, export d'audit.
+    "usage.runs", "org.monitoring.runs", "monitoring.calls", "org.monitoring.calls",
+    "me.calls", "monitoring.rest_calls", "monitoring.transport",
+    "org.monitoring.adoption", "org.monitoring.view_as_writes", "org.audit_log.export",
 }
 
 

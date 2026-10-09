@@ -80,11 +80,27 @@ def test_connector_failure_stats_scope(monkeypatch):
 def test_list_runs_scope(monkeypatch):
     sink = _wire(monkeypatch)
     usage.list_runs(100)
-    assert "s.org_id = %s" not in sink["sql"]
+    assert "d.org_id = %s" not in sink["sql"]
+    assert tuple(sink["params"]) == (100, 100)
     usage.list_runs(100, org_id=35)
-    assert "s.org_id = %s" in sink["sql"]
-    # org_id AVANT limit (ordre d'append) — une inversion ferait un LIMIT 35.
-    assert tuple(sink["params"]) == (35, 100)
+    assert "d.org_id = %s" in sink["sql"]
+    # org_id AVANT les deux limit (le choix de la page, puis le SELECT) — une
+    # inversion ferait un LIMIT 35.
+    assert tuple(sink["params"]) == (35, 100, 100)
+
+
+def test_list_runs_ne_groupe_plus_tout_le_journal(monkeypatch):
+    """infra#9 : la page se choisit parmi les OUVERTURES avant toute reconstruction, et
+    le compte d'appels est un LATERAL par run de la page — plus un `GROUP BY run_id` de
+    tout le journal, toutes orgs confondues, à chaque affichage de la liste."""
+    sink = _wire(monkeypatch)
+    usage.list_runs(50, org_id=35)
+    sql = " ".join(sink["sql"].split())
+    assert "GROUP BY" not in sql
+    assert ("s.id IN (SELECT d.id FROM tool_calls d WHERE d.tool = 'run_start' "
+            "AND d.run_id IS NOT NULL AND d.org_id = %s "
+            "ORDER BY d.created_at DESC, d.id DESC LIMIT %s)") in sql
+    assert "WHERE t.run_id = j.run_id" in sql
 
 
 def test_get_run_scope(monkeypatch):
