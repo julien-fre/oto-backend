@@ -136,7 +136,7 @@ jobs:
         # `verdict` régénère `scripts/durees_suite.json`, sur quoi se fait la répartition.
         run: |
           mapfile -t FICHIERS < "$SORTIE/fichiers.txt"
-          pytest -q -n "$OTO_SUITE_WORKERS" --dist loadgroup --durations=25 --junitxml="$RUNNER_TEMP/junit-shard-$PART/junit.xml" "${FICHIERS[@]}"
+          pytest -q -n "$OTO_SUITE_WORKERS" --dist loadgroup --durations=25 --junitxml="$RUNNER_TEMP/junit-shard-$PART/junit-shard-$PART.xml" "${FICHIERS[@]}"
         env:
           PART: ${{ matrix.part }}
       - name: Publier le rapport JUnit de cette part
@@ -225,13 +225,17 @@ jobs:
         with:
           pattern: junit-shard-*
           path: ${{ runner.temp }}/junit
+          # À plat, un fichier nommé par part : sans `merge-multiple`, UN seul artefact
+          # trouvé (un push sélectif à une part, le cas courant) est déballé à la racine
+          # de `path` et non dans `junit-shard-0/` — run 37902049836, fusion rouge.
+          merge-multiple: true
       # UN rapport pour toute la suite, publié MÊME (surtout) quand une part a rougi : le
       # constat de `deploy.yml` (#1185) y lit les fichiers rouges.
       - name: Fusionner les rapports JUnit
         if: always() && needs.plan.result == 'success'
         run: |
           mkdir -p "$RUNNER_TEMP/junit-suite"
-          python3 scripts/repartir_suite.py fusionner "$RUNNER_TEMP"/junit/junit-shard-*/junit.xml --sortie "$RUNNER_TEMP/junit-suite/junit.xml"
+          python3 scripts/repartir_suite.py fusionner "$RUNNER_TEMP"/junit/junit-shard-*.xml --sortie "$RUNNER_TEMP/junit-suite/junit.xml"
       - if: always() && needs.plan.result == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -253,7 +257,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/suite-durees"
           SOURCE="CI, run $GITHUB_RUN_ID, sha $(git rev-parse HEAD)"
-          python3 scripts/repartir_suite.py mesurer "$RUNNER_TEMP"/junit/junit-shard-*/junit.xml --source "$SOURCE" --sortie "$RUNNER_TEMP/suite-durees/durees_suite.json" --resume "$GITHUB_STEP_SUMMARY"
+          python3 scripts/repartir_suite.py mesurer "$RUNNER_TEMP"/junit/junit-shard-*.xml --source "$SOURCE" --sortie "$RUNNER_TEMP/suite-durees/durees_suite.json" --resume "$GITHUB_STEP_SUMMARY"
       - if: success() && inputs.cible == '' && needs.part.result == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

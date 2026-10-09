@@ -288,3 +288,20 @@ def test_la_fusion_junit_reunit_les_parts_et_refuse_un_rapport_absent(tmp_path):
     assert rs.fusionner_junit([tmp_path / "j0.xml", tmp_path / "j1.xml"], sortie) == 2
     with pytest.raises(rs.Refus, match="absent"):
         rs.fusionner_junit([tmp_path / "j0.xml", tmp_path / "manque.xml"], sortie)
+
+
+def test_les_rapports_junit_se_recuperent_a_plat_meme_pour_une_seule_part():
+    """Un push sélectif tourne souvent en UNE part. `download-artifact` déballe alors
+    l'unique artefact trouvé à la racine de `path`, pas dans `junit-shard-0/` : un motif
+    `junit-shard-*/junit.xml` n'y trouve rien et la fusion rougit (run 37902049836).
+    D'où des fichiers nommés par part, récupérés à plat (`merge-multiple`), lus à plat."""
+    wf = _workflow("suite-tests.yml")
+    pytest_part = next(s["run"] for s in wf["jobs"]["part"]["steps"] if "--junitxml" in s.get("run", ""))
+    assert 'junit-shard-$PART/junit-shard-$PART.xml' in pytest_part
+    verdict = wf["jobs"]["verdict"]["steps"]
+    recup = next(s for s in verdict if s.get("with", {}).get("pattern") == "junit-shard-*")
+    assert recup["with"].get("merge-multiple") is True
+    lecteurs = [s["run"] for s in verdict if "fusionner" in s.get("run", "") or "mesurer" in s.get("run", "")]
+    assert len(lecteurs) == 2
+    for run in lecteurs:
+        assert '"$RUNNER_TEMP"/junit/junit-shard-*.xml' in run and "junit-shard-*/" not in run
