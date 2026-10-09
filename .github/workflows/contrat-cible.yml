@@ -1,0 +1,151 @@
+name: Contrat d'une cible
+
+# Juger UN tag du tronc contre le consommateur d'une instance cible, SANS RIEN MONTER
+# (#1195, docs/instance-cible.md §Juger un tag sans le monter).
+#
+# Une cible qui suit le tronc décide seule de monter un tag ; avant, son propriétaire veut
+# savoir si ce tag casserait le front qui consomme son API. Ce contrôle-là est celui que fait
+# la montée d'une cible avant de rien toucher : même script (`scripts/contrat-cible.sh`, sa
+# source unique), mêmes secrets d'environnement, même verdict. Seul le geste diffère : ici,
+# rien n'est déployé, aucune machine n'est contactée.
+#
+# Appelé (`workflow_call`) depuis le dépôt privé du propriétaire, épinglé sur un tag ou un
+# SHA de ce dépôt : `github.repository` et `environment:` sont alors ceux du dépôt APPELANT
+# — c'est l'environnement de la cible qui porte `CIBLE_DECLARATION`, `CIBLE_CONSOMMATEUR`
+# et `CIBLE_CONSOMMATEUR_CLE`. Le code exécuté vient TOUJOURS du tronc (`TRONC`) au tag
+# demandé, jamais du dépôt appelant.
+#
+# Le runner se choisit (`runner`, en JSON) : un runner hébergé par GitHub par défaut, ou
+# le runner auto-hébergé du propriétaire (`["self-hosted", "<son label>"]`), qui doit alors
+# porter bash, git et jq ; Python et uv s'y installent par le verrou du tag.
+#
+# Rien ici ne désigne une cible : comme pour sa montée, tout ce qui la désigne est un
+# SECRET de son environnement, masqué avant tout geste ; les messages parlent de « la
+# cible » et de son consommateur, nommé par sa seule entrée masquée.
+
+on:
+  workflow_call:
+    inputs:
+      cible:
+        description: "Environnement GitHub de la cible, dans le dépôt appelant"
+        required: true
+        type: string
+      tag:
+        description: "Tag du tronc à juger (vX.Y.Z)"
+        required: true
+        type: string
+      runner:
+        description: 'Runner, en JSON : "ubuntu-latest" (défaut) ou ["self-hosted", "<label>"]'
+        required: false
+        type: string
+        default: '"ubuntu-latest"'
+    secrets:
+      CIBLE_DECLARATION:
+        description: "Déclaration de la cible (JSON, une ligne) : elle dit si la facturation est servie"
+        required: false
+      CIBLE_CONSOMMATEUR:
+        description: "Consommateur de son API (JSON, une ligne) ; absent = rien à juger"
+        required: false
+      CIBLE_CONSOMMATEUR_CLE:
+        description: "Clé de lecture seule du dépôt du consommateur, si cle"
+        required: false
+  workflow_dispatch:
+    inputs:
+      cible:
+        description: "Environnement GitHub de la cible"
+        required: true
+      tag:
+        description: "Tag du tronc à juger (vX.Y.Z)"
+        required: true
+      runner:
+        description: 'Runner, en JSON : "ubuntu-latest" ou ["self-hosted", "<label>"]'
+        required: false
+        default: '"ubuntu-latest"'
+
+permissions:
+  contents: read
+
+env:
+  # Le dépôt dont vient TOUT le code exécuté, quel que soit le dépôt qui appelle.
+  TRONC: otomata-tech/oto-backend
+  CIBLE: ${{ inputs.cible }}
+  TAG: ${{ inputs.tag }}
+
+jobs:
+  juger:
+    name: Le tag face au consommateur de la cible
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    # Ses secrets sont ceux de l'environnement de la cible : un environnement qui exige un
+    # relecteur fait donc attendre ce contrôle aussi (docs/instance-cible.md).
+    environment: ${{ inputs.cible }}
+    timeout-minutes: 15
+    env:
+      CIBLE_DECLARATION: ${{ secrets.CIBLE_DECLARATION }}
+      CONSOMMATEUR: ${{ secrets.CIBLE_CONSOMMATEUR }}
+    steps:
+      # Avant tout geste : la cible, chaque ligne brute de ses secrets, son consommateur et
+      # son dépôt, et ce que la déclaration désigne (instance, hôtes publics, valeurs d'env).
+      - name: Masquer la cible
+        env:
+          APPELANT: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          masques=$(jq -nr --arg cible "$CIBLE" --arg decl "$CIBLE_DECLARATION" --arg conso "$CONSOMMATEUR" '
+            def lignes: split("\n")[] | gsub("^[[:space:]]+|[[:space:]]+$"; "") | select(length > 0);
+            def lu: try fromjson catch null;
+            ($decl | lu) as $d | ($conso | lu) as $c
+            | [ ($cible, $decl, $conso | lignes),
+                ($c | objects | .nom, .depot, (.depot | strings | split("/")[]), .chemin),
+                ($d | objects | .instance, (.roles | objects | .[] | objects
+                   | .hote_public, (.env | objects | to_entries[] | select(.key != "OTO_ENV") | .value))) ]
+            | map(strings | lignes)
+            | map(select((test("[[:alpha:]]") or length >= 8)
+                  and (IN("true", "false", "null", "preprod", "prod") | not)))
+            | unique[]' 2>/dev/null) \
+            || { echo "::error title=Masquage impossible::les valeurs de la cible n'ont pas pu être masquées — rien n'est jugé."; exit 1; }
+          while IFS= read -r masque; do
+            if [ -n "$masque" ]; then printf '::add-mask::%s\n' "$masque"; fi
+          done <<< "$masques"
+          if [ "$APPELANT" != "$TRONC" ]; then
+            printf '::add-mask::%s\n' "$APPELANT" "${APPELANT%%/*}" "${APPELANT#*/}"
+          fi
+
+      # Les entrées atterrissent dans un `ref:` et des commandes : validées AVANT tout usage,
+      # et jamais interpolées dans un script (passées par `env`).
+      - name: Valider les entrées
+        run: |
+          set -euo pipefail
+          [[ "$CIBLE" =~ ^[a-z][a-z0-9-]{1,38}$ ]] || { echo "::error::cible invalide (attendu ^[a-z][a-z0-9-]{1,38}$)"; exit 1; }
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag invalide (vX.Y.Z) : « $TAG »"; exit 1; }
+          [ -n "$CIBLE_DECLARATION" ] || { echo "::error title=Déclaration absente::CIBLE_DECLARATION manque — sans elle, on ne sait pas quel contrat la cible servirait ; rien n'est jugé."; exit 1; }
+          echo "### Contrat de $TAG pour la cible" >> "$GITHUB_STEP_SUMMARY"
+
+      # Le TRONC au tag, jamais le dépôt appelant ; son jeton n'y reste pas.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TRONC }}
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Un consommateur est-il déclaré ?
+        id: declare
+        run: |
+          set -euo pipefail
+          printf '%s' "$CIBLE_DECLARATION" > "$RUNNER_TEMP/declaration.json"
+          scripts/contrat-cible.sh consommateur
+
+      - name: Install (dépendances de runtime, par le verrou)
+        if: steps.declare.outputs.juger == 'oui'
+        uses: ./.github/actions/installer-par-le-verrou
+        with:
+          python-version: "3.12"
+
+      - name: Confronter le contrat du tag au consommateur
+        if: steps.declare.outputs.juger == 'oui'
+        env:
+          CLE_LECTURE: ${{ secrets.CIBLE_CONSOMMATEUR_CLE }}
+          NOM: ${{ steps.declare.outputs.nom }}
+          DEPOT: ${{ steps.declare.outputs.depot }}
+          CHEMIN: ${{ steps.declare.outputs.chemin }}
+          SECRET: ${{ steps.declare.outputs.secret }}
+        run: scripts/contrat-cible.sh juger "$RUNNER_TEMP/declaration.json"

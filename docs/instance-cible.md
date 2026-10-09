@@ -549,6 +549,46 @@ source (`from=`, pare-feu) n'est pas tenable : c'est un état d'attente, pas une
    nom de `CIBLE_SSH_KNOWN_HOSTS`. Un appel resté en `ssh` échouerait désormais,
    bruyamment : il n'y a pas de repli.
 
+## Juger un tag sans le monter (#1195)
+
+Le contrôle inverse du contrat (le contrat que **ce tag** servirait chez la cible, confronté
+à celui qu'épingle son consommateur, `CIBLE_CONSOMMATEUR`) se lance aussi **seul**, pour un
+tag, sans rien monter ni contacter la machine : `.github/workflows/contrat-cible.yml`. Un
+déclencheur du propriétaire juge ainsi un tag avant de décider de le monter, ou un front
+garde sa branche contre le prochain tag du tronc.
+
+- **Même verdict que la montée** : les deux passent par `scripts/contrat-cible.sh`, la
+  source unique du contrôle (`consommateur` puis, le jeu du verrou du tag installé,
+  `juger <declaration.json>`). Compatible → vert ; une rupture d'appel ou de lecture, un
+  contrat illisible ou non lu → rouge, nommé. Sans consommateur déclaré : vert, et dit.
+- **Mêmes secrets**, ceux de l'environnement de la cible : `CIBLE_DECLARATION` (exigé : elle
+  dit si la facturation est servie, donc quel contrat), `CIBLE_CONSOMMATEUR`,
+  `CIBLE_CONSOMMATEUR_CLE`. Le job nomme l'environnement : s'il exige un relecteur, ce
+  contrôle attend l'approbation lui aussi.
+- **Le runner se choisit** (`runner`, en JSON) : hébergé par GitHub par défaut, ou le runner
+  auto-hébergé du propriétaire (`'["self-hosted", "<label>"]'`), qui doit porter bash, git
+  et jq ; Python et uv s'installent par le verrou du tag.
+
+Dans le dépôt privé, à côté du workflow de montée :
+
+```yaml
+jobs:
+  contrat:
+    permissions:
+      contents: read
+    uses: otomata-tech/oto-backend/.github/workflows/contrat-cible.yml@<SHA de 40 caractères> # vX.Y.Z
+    with:
+      cible: <environnement>
+      tag: ${{ inputs.tag }}
+      runner: '["self-hosted", "<label>"]'   # facultatif ; défaut : "ubuntu-latest"
+```
+
+Comme pour la montée : la référence épinglée est le SHA d'un tag du tronc, **aucun
+`secrets:`** dans l'appel (le job qui nomme l'environnement les reçoit), et le code exécuté
+vient du tronc au tag jugé. Le tag est validé avant de servir de référence. Hors de GitHub
+Actions, le script se lance pareil depuis l'arbre du tag, ses entrées en variables
+d'environnement (en-tête de `scripts/contrat-cible.sh`).
+
 ## Hors de ce dépôt : les workers runner
 
 Les workers `oto-runner` vivent dans leur propre dépôt et y suivent `main`. Pour une

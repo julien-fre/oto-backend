@@ -301,6 +301,9 @@ jobs:
       # cle: bool}). Seule une rupture d'appel ou de lecture bloque
       # (`scripts/contrat-front.py`) ; un contrat illisible bloque aussi : on ne monte
       # pas sans verdict. Sans consommateur déclaré, le job le DIT et ne juge rien.
+      # La logique vit dans `scripts/contrat-cible.sh` — sa source unique (#1195), que le
+      # propriétaire de la cible lance aussi SEUL, pour un tag, sans rien monter
+      # (`contrat-cible.yml`) : même verdict ici et là.
       - name: Un consommateur est-il déclaré ?
         id: declare
         run: |
@@ -309,64 +312,20 @@ jobs:
             echo "Retour arrière : aucune version nouvelle, rien à confronter." >> "$GITHUB_STEP_SUMMARY"
             echo "juger=non" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if [ -z "$CONSOMMATEUR" ]; then
-            echo "::notice title=Aucun consommateur déclaré::la cible ne déclare pas de consommateur (CIBLE_CONSOMMATEUR) — aucun contrat n'a été confronté."
-            echo "juger=non" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          if ! jq -e '(keys - ["cle","chemin","depot","nom"]) == [] and
-                 (.nom | test("^[A-Za-z0-9._-]+$")) and
-                 (.depot | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")) and
-                 (.chemin | test("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")) and
-                 (.cle | type == "boolean")' <<< "$CONSOMMATEUR" > /dev/null; then
-            echo "::error title=Consommateur mal déclaré::CIBLE_CONSOMMATEUR doit être {nom, depot owner/repo, chemin relatif, cle: bool} — rien n'a été jugé."
-            exit 1
-          fi
-          {
-            echo "juger=oui"
-            echo "nom=$(jq -r .nom <<< "$CONSOMMATEUR")"
-            echo "depot=$(jq -r .depot <<< "$CONSOMMATEUR")"
-            echo "chemin=$(jq -r .chemin <<< "$CONSOMMATEUR")"
-            echo "secret=$(jq -r 'if .cle then "CIBLE_CONSOMMATEUR_CLE" else "" end' <<< "$CONSOMMATEUR")"
-          } >> "$GITHUB_OUTPUT"
+          scripts/contrat-cible.sh consommateur
 
       # Le contrat se dérive du jeu que la cible installera : celui du verrou du tag
-      # (oto-backend#932), comme `bg_install` sur la machine. Un tag sans `uv.lock` y est
-      # refusé : on le refuse ici, nommément, avant d'avoir rien installé.
-      - name: Le tag porte son verrou
-        if: steps.declare.outputs.juger == 'oui'
-        run: |
-          [ -f uv.lock ] || { echo "::error title=Tag sans verrou::$TAG ne porte pas de uv.lock (tag antérieur à #932) — la cible le refuserait, rien n'est jugé."; exit 1; }
+      # (oto-backend#932), comme `bg_install` sur la machine — le script l'a exigé.
       - name: Install (dépendances de runtime, par le verrou)
         if: steps.declare.outputs.juger == 'oui'
         uses: ./.github/actions/installer-par-le-verrou
         with:
           python-version: "3.12"
 
-      # Le contrat que CE tag servirait CHEZ LA CIBLE : la facturation n'y est exposée
-      # que si sa déclaration l'allume (sinon le défaut de l'inventaire, qui l'éteint).
-      - name: Dériver le contrat du tag
-        if: steps.declare.outputs.juger == 'oui'
-        run: |
-          set -euo pipefail
-          python - "$RUNNER_TEMP/declaration.json" <<'PY' > "$RUNNER_TEMP/facturation"
-          import json, sys
-          from oto_mcp import env_inventory as inv
-          roles = json.load(open(sys.argv[1]))["roles"]
-          valeurs = {r["env"].get("OTO_BILLING_ENABLED", inv.par_nom()["OTO_BILLING_ENABLED"].defaut)
-                     for r in roles.values()}
-          if len(valeurs) != 1:
-              sys.exit("les rôles de la cible divergent sur OTO_BILLING_ENABLED — contrat ambigu")
-          print(valeurs.pop())
-          PY
-          OTO_BILLING_ENABLED="$(cat "$RUNNER_TEMP/facturation")" python - <<'PY' > "$RUNNER_TEMP/openapi-du-tag.json"
-          import json
-          from oto_mcp import openapi, server
-          print(json.dumps(openapi.build(server.routes_rest(object()))))
-          PY
-          echo "contrat du tag : $(wc -c < "$RUNNER_TEMP/openapi-du-tag.json") octets"
-
-      - name: Lire le contrat épinglé
-        id: contrat
+      # Dériver le contrat du tag (facturation selon la déclaration), lire le contrat
+      # épinglé, confronter ; la clé de lecture est effacée en sortant, quelle que soit
+      # l'issue.
+      - name: Confronter le contrat du tag au consommateur
         if: steps.declare.outputs.juger == 'oui'
         env:
           CLE_LECTURE: ${{ secrets.CIBLE_CONSOMMATEUR_CLE }}
@@ -374,34 +333,7 @@ jobs:
           DEPOT: ${{ steps.declare.outputs.depot }}
           CHEMIN: ${{ steps.declare.outputs.chemin }}
           SECRET: ${{ steps.declare.outputs.secret }}
-        run: scripts/lire-contrat-consommateur.sh "$NOM" "$DEPOT" "$CHEMIN" "$SECRET"
-
-      - name: Confronter
-        if: steps.declare.outputs.juger == 'oui'
-        env:
-          NOM: ${{ steps.declare.outputs.nom }}
-          LU: ${{ steps.contrat.outputs.lu }}
-          CONTRAT: ${{ steps.contrat.outputs.contrat }}
-        run: |
-          set -uo pipefail
-          if [ "$LU" != oui ]; then
-            echo "::error title=Contrat de $NOM non jugé::le contrat épinglé n'a pas pu être lu — la montée de version ne part pas sans verdict."
-            exit 1
-          fi
-          code=0
-          python3 scripts/contrat-front.py --consommateur "$NOM" "$CONTRAT" "$RUNNER_TEMP/openapi-du-tag.json" || code=$?
-          if [ "$code" = "2" ]; then
-            echo "::error title=Contrat de $NOM — confrontation impossible::document illisible, rien n'a été jugé."; exit 1
-          fi
-          if [ "$code" != "0" ]; then
-            echo "::error title=$TAG casserait $NOM::une opération qu'il épingle disparaît, change d'entrée, ou ne rend plus ce qu'il lit. Ne pas monter la cible à ce tag avant que $NOM ait suivi."; exit 1
-          fi
-
-      - name: Effacer la clé de lecture
-        if: always()
-        env:
-          TRAVAIL: ${{ steps.contrat.outputs.travail }}
-        run: '[ -z "$TRAVAIL" ] || rm -rf "$TRAVAIL"'
+        run: scripts/contrat-cible.sh juger "$RUNNER_TEMP/declaration.json"
 
       # ── PRÉPROD, PUIS PROD ──────────────────────────────────────────────────────────
       # `appeler.sh` suit l'accès choisi (`ACCES`) : en `tunnel`, il exige le jeton

@@ -46,10 +46,23 @@ _AUTRE_CHAINE = re.compile(
     r"oto\.cx|oto\.ninja|oto-mcp-canari|active-(prod|canari)")
 
 
+_REFERENCE_DE_SCRIPT = re.compile(r"(?:deploy/cible|scripts)/[\w.-]+\.(?:sh|py)")
+
+
 def _scripts_executes() -> list[pathlib.Path]:
-    chemins = set(re.findall(r"(?:deploy/cible|scripts)/[\w.-]+\.(?:sh|py)", _TEXTE))
+    chemins = set(_REFERENCE_DE_SCRIPT.findall(_TEXTE))
     # la porte et le déploiement, que `appeler.sh` fait exécuter sur la machine
     chemins |= {"deploy/cible/porte.sh", "deploy/cible/deployer.sh"}
+    # et, de proche en proche, ce que ces scripts exécutent à leur tour (#1195 : le
+    # contrôle du contrat vit dans `scripts/contrat-cible.sh`, qui appelle les outils
+    # communs de lecture et de confrontation)
+    a_lire = list(chemins)
+    while a_lire:
+        script = _RACINE / a_lire.pop()
+        for c in _REFERENCE_DE_SCRIPT.findall(_code(script)):
+            if c not in chemins:
+                chemins.add(c)
+                a_lire.append(c)
     return sorted(_RACINE / c for c in chemins)
 
 
@@ -241,7 +254,7 @@ def test_l_ordre_de_la_montee():
     decision = rang("protection.sh declencheurs")
     tronc = rang("git merge-base --is-ancestor")
     declaration = rang("declaration.py verifier")
-    contrat = rang("scripts/contrat-front.py")
+    contrat = rang("scripts/contrat-cible.sh juger")
     preprod = rang('appeler.sh "$ACTION" preprod "$TAG"')
     constat_preprod = rang('constater.sh "$RUNNER_TEMP/declaration.json" preprod "$TAG"')
     prod = rang('appeler.sh "$ACTION" prod "$TAG"')
