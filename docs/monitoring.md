@@ -555,7 +555,8 @@ dépassement lève `LectureTropLongue`, que l'enveloppe `capabilities._lecture_b
 rend en **`503 aggregate_timeout`**, message compris (« resserrer la fenêtre ou le
 périmètre »), sur les deux faces — jamais un résultat partiel, jamais un 500 anonyme.
 
-Lectures bornées : `list_billable_calls_for_org`, `billable_usage_by_tool_for_org`,
+Lectures bornées (celles qui passent par les totaux par jour depuis #1147 comprises) :
+`list_billable_calls_for_org`, `billable_usage_by_tool_for_org`,
 `instruction_usage`, `tool_call_stats`, `rest_call_stats`, `connector_failure_stats`,
 `activation_funnel`, `list_tenants_overview`, `get_tenant_overview` ; depuis le 08/10
 (infra#9, « plus de route lourde ») aussi `list_runs`, `list_tool_calls`,
@@ -591,15 +592,15 @@ il lisait jusqu'au 08/10 le journal entier, deux fois, et sortait coupé à 10 s
 `oto_admin_monitoring op=summary` sans `org_id` ni `sub`) : il lit le journal de toute
 la plateforme — 452 s pour un jour sous contention le 04/10, un parcours séquentiel
 d'environ 1,35 M lignes pour 60 jours. Au-delà, `400 days_too_large`, qui dit de passer
-`org_id` ou `sub` (fenêtre jusqu'à 90 jours). Les fenêtres longues de la vue plateforme
-demanderaient un pré-agrégat journalier, non construit.
+`org_id` ou `sub` (fenêtre jusqu'à 90 jours). Les totaux par jour (#1147, ci-dessous) servent
+désormais cette lecture ; la borne reste, la vue plateforme partant vers Grafana.
 
 **La fiche d'un tenant part de SES comptes**, primaire compris
 (`tenants._overview_par_comptes`) : ses subs d'abord, puis le journal en UNE passe
 groupée par sub — là où la passe générique classait chaque utilisateur par
 sous-requête corrélée et lisait la fenêtre deux fois. Pour le primaire, dont les comptes
-sont presque tous ceux de la plateforme, cette passe reste une lecture de toute la
-fenêtre : bornée à 10 s, elle peut sortir en `503 aggregate_timeout`.
+sont presque tous ceux de la plateforme, cette passe lit toute la fenêtre — sur les
+totaux par jour depuis #1147, plus le journal direct pour la veille et le jour courant.
 
 Ce que la borne ne fait pas : limiter le nombre de lectures simultanées par route ni
 le débit par jeton — c'est le budget des routes lourdes, posé à part.
@@ -642,6 +643,42 @@ dans l'ordre qui garde la couverture contiguë (après le dernier consolidé en 
 puis avant le premier en reculant), reprise idempotente, arrêt au premier jour qui
 dépasse sa borne. Sur une base neuve (instance cible, `perimetre`), il se rejoue une
 fois le journal versé.
+
+**Les lecteurs** (`journal_jour.source`) découpent leur fenêtre en trois morceaux
+disjoints : le journal direct jusqu'au premier jour entier consolidé, les TOTAUX des
+jours entiers que le registre porte, le journal direct après le dernier (la veille tant
+que la maintenance n'est pas passée, le jour courant, le bout d'un jour qu'une borne
+coupe). Les morceaux directs passent par la MÊME projection que la consolidation, en
+plages simples de `created_at` (jamais un `OR`). Le lecteur agrège par-dessus (somme,
+max, `count(DISTINCT sub)`, `percentile_cont` sur les valeurs) et rend le MÊME contrat
+qu'avant — `tests/db/test_journal_jour_lecteurs.py` compare, lecteur par lecteur, sa
+réponse à l'ancienne lecture du journal, recopiée dans le banc.
+
+| lecteur | surfaces | sur les totaux |
+|---|---|---|
+| `billable_usage_by_tool_for_org` | `GET /api/orgs/{id}/usage/tools` (`org.usage.tools`) | oui — jobs distincts par la table des clés |
+| `org_usage_by_person` | `service.org.usage` (commerce) | oui — bornes `[since, until)` |
+| `tool_call_stats` | `monitoring.summary`, `org.monitoring.summary`, `me.activity_summary`, consoles `op=summary` | oui — p95 sur les valeurs |
+| `connector_failure_stats` | `monitoring.connectors`, `org.monitoring.connectors`, `op=connectors` | oui |
+| `org_adoption` | `org.monitoring.adoption`, `op=adoption` | oui — le dernier appel sur tout l'historique consolidé |
+| `list_tenants_overview`, `get_tenant_overview` | `admin.tenants`, `admin.tenant`, console de tenant | oui |
+| `list_billable_calls_for_org`, `list_tool_calls`, `list_runs`, `export_tool_calls_for_org`, activité d'un tableau | `usage/calls`, `calls`, `runs`, `export`… | non — des LISTES, ligne à ligne |
+| `rest_call_stats`, `list_rest_calls`, `transport_refusal_stats`, `activation_funnel` | `monitoring.{rest,rest_calls,transport,funnel}` | non — le REST n'est pas agrégé (vues plateforme, vers Grafana) |
+| `instruction_usage`, `instructions_usage_by_slug` | `org.instruction.usage`, `me/instructions-usage` | non — la procédure vient d'`args`, servie par l'index partiel `(org_id, tool) WHERE ok` sur deux verbes |
+| `org_members_by_seniority` | `service.org.members` | non — un dernier appel par membre, pas une période |
+
+**Refus nommé, jamais le journal en silence** : un jour clos de la fenêtre que le
+registre n'a pas lève `AgregatIncomplet` — trou dans le registre, retard (un jour clos
+depuis plus d'un jour après le dernier consolidé : la maintenance n'est pas passée), ou
+historique non rattrapé (le journal a des lignes dans un jour entier de la fenêtre avant
+le premier consolidé). Les capacités enveloppées par `bornee` le rendent en **`503
+aggregate_incomplete`**, motif et geste compris, et le journalisent en erreur ;
+`service.org.usage` le laisse en 500. La veille non encore consolidée se lit en direct.
+
+**Fenêtres inchangées** : 92 j pour `usage/tools` (elle est partagée avec `usage/calls`,
+qui lit le journal ; l'élargir romprait l'égalité « somme des `calls` = `total` de
+`usage/calls` » au-delà de la rétention), 7 j pour le résumé plateforme sans périmètre
+(la vue part vers Grafana), 90 j pour un résumé d'org ou de compte.
 
 Ce qui n'est pas suivi : la purge d'archive (`deploy/archive_tool_calls.py`) retire des
 mois du journal, pas leurs totaux — une fenêtre plus longue que la rétention lit donc

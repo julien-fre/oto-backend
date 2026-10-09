@@ -1,4 +1,5 @@
-"""Les totaux du journal d'appels par jour UTC (oto-backend#1147) : consolider un jour.
+"""Les totaux du journal d'appels par jour UTC (oto-backend#1147) : consolider un jour,
+et lire une fenêtre sur les jours consolidés plus le journal direct (`source`).
 
 Le journal (`tool_calls`, ~12 M lignes) est la source de vérité des exécutions ; les
 écrans de consommation et de monitoring n'ont pas à le relire en entier à chaque vue
@@ -37,7 +38,7 @@ mémoire — la base est une nano de 4 Go, partagée, qui a déjà manqué de m�
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, NamedTuple, Optional
 
 from . import journal_calls
 from ._conn import _connect
@@ -273,3 +274,240 @@ def maintenance(*, dry_run: bool = False) -> dict:
 def _lendemain(jour: str) -> str:
     from datetime import date, timedelta
     return (date.fromisoformat(jour) + timedelta(days=1)).isoformat()
+
+
+# ── La LECTURE : les jours consolidés, plus le journal direct pour le reste ─────────
+#
+# Une fenêtre `[s, u]` se découpe en trois morceaux disjoints, sans trou ni double
+# compte par construction :
+#
+#   [s, début(a0))          le journal direct (le morceau d'un jour qu'une fenêtre
+#                           glissante coupe, ou rien) ;
+#   [début(a0), début(a1+1)) les TOTAUX des jours consolidés a0..a1 — les jours ENTIERS
+#                           de la fenêtre que le registre porte ;
+#   [début(a1+1), u]        le journal direct (le jour courant, la veille tant que la
+#                           maintenance ne l'a pas consolidée, le morceau final).
+#
+# Les deux morceaux directs passent par la MÊME projection que la consolidation
+# (`_projection`) : un jour lu en direct et le même jour consolidé rendent les mêmes
+# lignes. Chaque morceau est une plage simple de `created_at` (jamais un `OR`, que
+# l'index ne sert pas).
+#
+# Ce qui est REFUSÉ, nommé (`AgregatIncomplet`) — jamais lu en direct à la place :
+#   - un trou : un jour du registre manque entre deux jours consolidés de la fenêtre ;
+#   - un retard : un jour entier de la fenêtre, clos depuis plus d'un jour (avant-hier
+#     ou plus ancien), après le dernier consolidé — la maintenance n'est pas passée ;
+#   - un historique non rattrapé : le journal a des lignes dans un jour entier de la
+#     fenêtre ANTÉRIEUR au premier jour consolidé.
+# La veille non encore consolidée, elle, est lue en direct : la maintenance passe la nuit.
+
+
+class AgregatIncomplet(RuntimeError):
+    """Une lecture couvre des jours clos que les totaux ne portent pas. Refus NOMMÉ :
+    lire ces jours au journal à la place rendrait le chiffre juste en masquant que
+    l'alimentation est cassée, et reporterait sur la base le coût que les totaux évitent."""
+
+    def __init__(self, objet: str, motif: str, remede: str) -> None:
+        super().__init__(f"{objet} : {motif} — {remede}")
+        self.objet = objet
+        self.motif = motif
+
+
+_REMEDE_MAINTENANCE = "la maintenance `journal-jour` doit consolider ces jours"
+_REMEDE_RATTRAPAGE = "rattraper l'historique (scripts/rattraper_journal_jour.py)"
+
+
+class Decoupe(NamedTuple):
+    """Le découpage d'une fenêtre : les jours servis par les totaux (`a0..a1`, `None`
+    quand aucun) et les bornes de la fenêtre, en SQL (`s_sql`, `u_sql`, `None` = sans
+    borne) avec leurs paramètres nommés."""
+    a0: Optional[str]
+    a1: Optional[str]
+    s_sql: Optional[str]
+    u_sql: Optional[str]
+    haute_incluse: bool
+    params: dict
+
+
+def decouper(conn, objet: str, *, prefixe: str, jours: Optional[int] = None,
+             depuis: Any = None, jusqu_a: Any = None,
+             haute_incluse: bool = False) -> Decoupe:
+    """Découpe la fenêtre d'une lecture, sur la connexion (et donc la transaction, et
+    donc le `now()`) de la lecture. La borne basse est `now() - jours` (fenêtre
+    glissante, celle des lentilles de monitoring) ou `depuis` ; aucune des deux = sans
+    borne. La borne haute est `jusqu_a`, incluse ou non ; absente = sans borne.
+
+    Lève `AgregatIncomplet` (cf. ci-dessus)."""
+    if jours is not None and depuis is not None:
+        raise ValueError("decouper : `jours` ou `depuis`, pas les deux")
+    p = {f"{prefixe}_jours": jours, f"{prefixe}_depuis": depuis,
+         f"{prefixe}_jusqu": jusqu_a}
+    if jours is not None:
+        s_sql = f"(now() - make_interval(days => %({prefixe}_jours)s))"
+    elif depuis is not None:
+        s_sql = f"%({prefixe}_depuis)s::timestamptz"
+    else:
+        s_sql = None
+    u_sql = f"%({prefixe}_jusqu)s::timestamptz" if jusqu_a is not None else None
+    r = conn.execute(
+        f"""
+        WITH b AS (SELECT {s_sql or 'NULL::timestamptz'} AS s,
+                          {u_sql or 'NULL::timestamptz'} AS u,
+                          (now() AT TIME ZONE 'UTC')::date AS auj),
+             r AS (SELECT min(jour) AS c0, max(jour) AS c1 FROM journal_jours_consolides)
+        SELECT to_char(CASE WHEN b.s IS NULL THEN NULL
+                            WHEN b.s = ((b.s AT TIME ZONE 'UTC')::date::timestamp
+                                        AT TIME ZONE 'UTC')
+                            THEN (b.s AT TIME ZONE 'UTC')::date
+                            ELSE (b.s AT TIME ZONE 'UTC')::date + 1 END,
+                       'YYYY-MM-DD') AS pp,
+               to_char(COALESCE((b.u AT TIME ZONE 'UTC')::date, b.auj) - 1,
+                       'YYYY-MM-DD') AS dp,
+               to_char(COALESCE(r.c0, b.auj - 1), 'YYYY-MM-DD') AS c0,
+               to_char(COALESCE(r.c1, b.auj - 2), 'YYYY-MM-DD') AS c1,
+               r.c0 IS NULL AS registre_vide,
+               to_char(b.auj - 2, 'YYYY-MM-DD') AS clos_depuis
+          FROM b, r
+        """, p).fetchone()
+    pp, dp, c0, c1 = r["pp"], r["dp"], r["c0"], r["c1"]
+
+    # Historique non rattrapé : un jour entier de la fenêtre avant le premier consolidé
+    # où le journal a encore des lignes.
+    if pp is None or pp < c0:
+        avant = conn.execute(
+            f"""SELECT EXISTS (SELECT 1 FROM tool_calls
+                                WHERE created_at < {DEBUT_DU_JOUR.replace('%s', '%(c0)s')}
+                                  {'' if pp is None else
+                                   'AND created_at >= ' + DEBUT_DU_JOUR.replace('%s', '%(pp)s')}
+                              ) AS x""", {"c0": c0, "pp": pp}).fetchone()["x"]
+        if avant:
+            raise AgregatIncomplet(
+                objet, "le journal a des lignes et aucun jour n'est consolidé"
+                if r["registre_vide"] else
+                f"le journal a des lignes avant le premier jour consolidé ({c0})",
+                _REMEDE_RATTRAPAGE)
+    # Retard : les jours entiers de la fenêtre après le dernier consolidé, clos depuis
+    # plus d'un jour.
+    lo = max(_lendemain(c1), pp) if pp is not None else _lendemain(c1)
+    hi = min(dp, r["clos_depuis"])
+    if lo <= hi:
+        raise AgregatIncomplet(
+            objet, f"jours non consolidés du {lo} au {hi}", _REMEDE_MAINTENANCE)
+
+    a0 = max(pp, c0) if pp is not None else c0
+    a1 = min(dp, c1)
+    if a0 > a1:
+        return Decoupe(None, None, s_sql, u_sql, haute_incluse, p)
+    trous = [t["jour"] for t in conn.execute(
+        """SELECT to_char(g.d, 'YYYY-MM-DD') AS jour
+             FROM generate_series(%(a0)s::date, %(a1)s::date, interval '1 day') AS g(d)
+            WHERE NOT EXISTS (SELECT 1 FROM journal_jours_consolides c
+                               WHERE c.jour = g.d::date)
+            ORDER BY g.d LIMIT 5""", {"a0": a0, "a1": a1}).fetchall()]
+    if trous:
+        raise AgregatIncomplet(objet, "jours absents du registre : " + ", ".join(trous),
+                               _REMEDE_RATTRAPAGE)
+    p.update({f"{prefixe}_a0": a0, f"{prefixe}_a1": a1})
+    return Decoupe(a0, a1, s_sql, u_sql, haute_incluse, p)
+
+
+def _segments(d: Decoupe, prefixe: str) -> list[str]:
+    """Les plages de `created_at` lues au journal direct (alias `l`)."""
+    haute = None
+    if d.u_sql is not None:
+        haute = f"l.created_at {'<=' if d.haute_incluse else '<'} {d.u_sql}"
+    basse = f"l.created_at >= {d.s_sql}" if d.s_sql is not None else None
+    if d.a0 is None:
+        return [" AND ".join(c for c in (basse, haute) if c) or "TRUE"]
+    debut_a0 = f"(%({prefixe}_a0)s::date::timestamp AT TIME ZONE 'UTC')"
+    fin_a1 = f"((%({prefixe}_a1)s::date + 1)::timestamp AT TIME ZONE 'UTC')"
+    avant = " AND ".join(c for c in (basse, f"l.created_at < {debut_a0}") if c)
+    apres = " AND ".join(c for c in (f"l.created_at >= {fin_a1}", haute) if c)
+    return [avant, apres]
+
+
+#: Les filtres qu'une lecture pose sur les deux faces (totaux, alias `t`, et journal,
+#: alias `l`) — les colonnes portent le même nom des deux côtés. Fermé : une clé
+#: inconnue lève.
+_FILTRES: dict[str, str] = {
+    "org_id": "{a}.org_id = %({p}_org_id)s",
+    "sub": "{a}.sub = %({p}_sub)s",
+    "subs": "{a}.sub = ANY(%({p}_subs)s)",
+    "ok": "{a}.ok = %({p}_ok)s",
+    "tools": "{a}.tool = ANY(%({p}_tools)s)",
+    "sub_non_nul": "{a}.sub IS NOT NULL",
+}
+
+
+def _clauses(alias: str, prefixe: str, filtres: dict) -> tuple[list[str], dict]:
+    clauses, params = [], {}
+    for cle, valeur in filtres.items():
+        if cle not in _FILTRES:
+            raise ValueError(f"filtre de totaux inconnu : {cle!r}")
+        if valeur is None or valeur is False and cle == "sub_non_nul":
+            continue
+        clauses.append(_FILTRES[cle].format(a=alias, p=prefixe))
+        if cle != "sub_non_nul":
+            params[f"{prefixe}_{cle}"] = valeur
+    return clauses, params
+
+
+def source(conn, objet: str, *, prefixe: str = "jj", kinds: tuple[str, ...] = ("mcp",),
+           mesures: tuple[str, ...] = ("appels",), filtres: Optional[dict] = None,
+           **fenetre) -> tuple[str, dict]:
+    """La SOURCE d'une lecture : une sous-requête qui rend, pour la fenêtre (`fenetre` :
+    les arguments de `decouper`) et les filtres, des lignes `jour, kind, org_id, sub,
+    tool, ok, key_mode, client_name` + `mesures` — les totaux des jours consolidés et
+    les mêmes totaux calculés sur le journal direct pour le reste. Le lecteur agrège
+    par-dessus (somme, max, distinct, percentile). Rend `(sql, params)`, paramètres
+    NOMMÉS sous `prefixe` (deux sources dans une requête : deux préfixes)."""
+    for k in kinds:
+        if k not in KINDS:
+            raise ValueError(f"nature non agrégée : {k!r} (agrégées : {KINDS})")
+    inconnues = set(mesures) - set(MESURES)
+    if inconnues:
+        raise ValueError(f"mesures inconnues : {sorted(inconnues)}")
+    d = decouper(conn, objet, prefixe=prefixe, **fenetre)
+    params = dict(d.params)
+    params[f"{prefixe}_kinds"] = list(kinds)
+    filtres = filtres or {}
+    morceaux = []
+    if d.a0 is not None:
+        cl, pa = _clauses("t", prefixe, filtres)
+        params.update(pa)
+        where = " AND ".join([f"t.jour BETWEEN %({prefixe}_a0)s::date AND %({prefixe}_a1)s::date",
+                              f"t.kind = ANY(%({prefixe}_kinds)s)"] + cl)
+        morceaux.append(f"SELECT {', '.join('t.' + c for c in list(DIMENSIONS) + list(mesures))} "
+                        f"FROM journal_totaux_jour t WHERE {where}")
+    cl, pa = _clauses("l", prefixe, filtres)
+    params.update(pa)
+    for seg in _segments(d, prefixe):
+        predicat = " AND ".join([seg, f"l.kind = ANY(%({prefixe}_kinds)s)"] + cl)
+        morceaux.append(_projection(predicat, mesures=mesures))
+    return "\nUNION ALL\n".join(f"({m})" for m in morceaux), params
+
+
+def source_jobs(conn, objet: str, *, prefixe: str = "jb", filtres: dict,
+                **fenetre) -> tuple[str, dict]:
+    """Les jobs facturables DISTINCTS de la fenêtre, `(tool, key_mode, job_id)` : les
+    clés des jours consolidés, plus celles du journal direct pour le reste — en
+    `UNION` (distinct), à compter par-dessus. Filtres : `org_id` (requis), `tools`."""
+    if set(filtres) - {"org_id", "tools"} or filtres.get("org_id") is None:
+        raise ValueError("source_jobs : filtres `org_id` (requis) et `tools` seulement")
+    d = decouper(conn, objet, prefixe=prefixe, **fenetre)
+    params = dict(d.params)
+    morceaux = []
+    if d.a0 is not None:
+        cl, pa = _clauses("t", prefixe, filtres)
+        params.update(pa)
+        where = " AND ".join(
+            [f"t.jour BETWEEN %({prefixe}_a0)s::date AND %({prefixe}_a1)s::date"] + cl)
+        morceaux.append(f"SELECT t.tool, t.key_mode, t.job_id FROM journal_jobs_jour t "
+                        f"WHERE {where}")
+    cl, pa = _clauses("l", prefixe, filtres)
+    params.update(pa)
+    for seg in _segments(d, prefixe):
+        where = " AND ".join([seg, predicat_jobs()] + cl)
+        morceaux.append(f"SELECT l.tool, l.key_mode, {_expr_job()} AS job_id "
+                        f"FROM tool_calls l WHERE {where}")
+    return "\nUNION\n".join(f"({m})" for m in morceaux), params
