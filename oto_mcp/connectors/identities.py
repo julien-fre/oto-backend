@@ -128,7 +128,7 @@ def _google_list(sub: str, service: "str | None" = None) -> list[dict]:
     vus = {i["id"] for i in mine}
     partages = [{"id": a["google_email"],
                  "label": f"{a['google_email']} (shared: {'team' if a.get('scope') == 'group' else 'org'})",
-                 "status": "ok", "is_default": False, "channel": None, "shared": a.get("scope")}
+                 "status": "ok", "is_default": False, "channel": None, "shared": True}
                 for a in google_oauth.list_shared_accounts(sub)
                 if ok(a) and a["google_email"] not in vus]
     return mine + partages

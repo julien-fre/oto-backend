@@ -77,6 +77,11 @@ class Identity(BaseModel):
     channel: Optional[str] = None
     granted: Optional[bool] = None          # present (true) if the account is GRANTED (#55)
     owner: Optional[IdentityOwner] = None   # the lender, present with `granted`
+    # `true` = an account SHARED by the caller's team or org (Google, 2026-09-27),
+    # reachable via `_account=` but not theirs: the member cannot revoke it (a team or
+    # org admin does, from the shared tier). Always served, `false` by default — every
+    # other backend (Microsoft included) lists the member's own accounts.
+    shared: bool = False
 
 
 class ConnectorIdentities(BaseModel):
