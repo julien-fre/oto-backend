@@ -523,18 +523,41 @@ def _keyed_list(sub: str, connector: str, scope: str = "member") -> list[dict]:
     ent = keyed_entity(sub, scope)
     if ent is None:
         return []
+    from .. import group_store
+    rows = (group_store.list_group_accounts(int(ent[1]), connector) if ent[0] == "group"
+            else credentials_store.list_accounts(ent[0], ent[1], connector))
     out = []
-    for row in credentials_store.list_accounts(ent[0], ent[1], connector):
+    for row in rows:
         acct = row["account"]
         meta = row.get("meta") or {}
-        out.append({
+        entry = {
             "id": acct,
             "label": meta.get("label") or acct or "(default)",
             "status": "ok",
             "is_default": bool(meta.get("is_default")),
             "channel": None,
-        })
+        }
+        if meta.get("lent_by"):
+            # A member's instance lent to the team: same shape as a granted account.
+            entry.update(granted=True, owner={"sub": meta["lent_by"]})
+        out.append(entry)
     return out
+
+
+def _refuse_lent(sub: str, connector: str, identity_id: str, scope: str, action: str) -> None:
+    """An account LENT to the team stays its lender's: the team neither renames it nor
+    makes it its default (the default lives on the team's own vault rows)."""
+    if scope != "group":
+        return
+    from .. import group_store
+    ent = keyed_entity(sub, scope)
+    if ent is None:
+        return
+    for i in group_store.lent_instances(int(ent[1]), connector):
+        if i["account"] == identity_id:
+            raise ValueError(
+                f"`{identity_id}` is a member's instance lent to the team: the team "
+                f"cannot {action} it. Only its lender manages it.")
 
 
 def _keyed_select(sub: str, connector: str, identity_id: str, scope: str = "member") -> dict:
@@ -542,6 +565,7 @@ def _keyed_select(sub: str, connector: str, identity_id: str, scope: str = "memb
     ent = keyed_entity(sub, scope)
     if ent is None:
         raise ValueError("No context org/team — unable to choose an account.")
+    _refuse_lent(sub, connector, identity_id, scope, "set as default")
     accounts = [r["account"] for r in credentials_store.list_accounts(ent[0], ent[1], connector)]
     if identity_id not in accounts:
         raise ValueError(f"Unknown account `{identity_id}` for {connector}.")
@@ -565,6 +589,7 @@ def rename_identity(sub: str, connector: str, identity_id: str, new_name: str,
     new_name = (new_name or "").strip()
     if not new_name:
         raise ValueError("The new name is empty.")
+    _refuse_lent(sub, connector, identity_id, scope, "rename")
     ent = keyed_entity(sub, scope)
     if ent is None:
         raise ValueError("No context org/team — unable to rename an account.")

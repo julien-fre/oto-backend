@@ -215,6 +215,19 @@ def _org_active_sans_base(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(org_store, "get_org_suspension", lambda org_id: None)
 
 
+@pytest.fixture(autouse=True)
+def _aucun_pret_sans_base(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sans base, aucune instance n'est prêtée. Le palier équipe lit les instances
+    prêtées à l'équipe (`group_store.lent_instances` → `list_shared_with`) à chaque
+    lecture de clé d'équipe ; un banc qui double le coffre d'équipe sans base n'a rien
+    à y lire. Un banc sur base réelle lit la vraie colonne ; un banc qui teste le prêt
+    double lui-même `list_shared_with`."""
+    if os.environ.get("DATABASE_URL"):
+        return
+    from oto_mcp import credentials_store
+    monkeypatch.setattr(credentials_store, "list_shared_with", lambda scopes: [])
+
+
 @pytest.fixture
 def sans_droit_declare(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sans base : aucune ligne de droit déclaré posée — `value_for` rend le défaut

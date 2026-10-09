@@ -128,6 +128,7 @@ class InstanceInput(BaseModel):
     # list: filter member|group|org|platform · verify: auto (effective credential) | org
     level: Optional[str] = None
     to: Optional[str] = None                   # lend: peer's email (org member) or sub
+    to_group: Optional[int] = None             # lend: team id (instead of `to`)
     account: str = ""                          # lend
     revoke: bool = False                       # lend: True = take the loan back
 
@@ -141,10 +142,12 @@ async def _instance(ctx: ResolvedCtx, inp: InstanceInput) -> dict:
             ctx, connectors_instances.ListInstancesInput(connector=inp.connector, level=inp.level))
     connector = _need(inp.connector, "missing_connector", f"`connector` is required for {inp.op}.")
     if inp.op == "lend":
+        if inp.to is None and inp.to_group is None:
+            raise AuthzDenied(400, "missing_to", "`to` (the email or the sub of a member of "
+                                                 "your organization) or `to_group` (a team "
+                                                 "id) is required for lend.")
         return connectors_sharing._lend_instance(ctx, connectors_sharing.LendInstanceInput(
-            connector=connector,
-            to=_need(inp.to, "missing_to", "`to` is required for lend: the email or the "
-                     "sub of a member of your organization."),
+            connector=connector, to=inp.to, to_group=inp.to_group,
             account=inp.account, revoke=inp.revoke))
     if inp.level not in (None, "auto", "org"):
         raise AuthzDenied(400, "invalid_level", "op=verify: `level` ∈ auto|org.")
@@ -255,8 +258,10 @@ CAPABILITIES += [
             "identifier — may be missing, and `ref` stays the pin handle for instance=; "
             "`visible_to` = the scopes that can DISCOVER it, derived from the access chain — "
             "descriptive, it does not filter this list) "
-            "/ lend (lend YOUR instance of `connector` to a peer: `to` = the email or the sub "
-            "of a member of your organization; revoke=true takes it back — ADR 0044 "
+            "/ lend (lend YOUR instance of `connector` to a peer — `to` = the email or the "
+            "sub of a member of your organization, who pins it — or to a team of your org — "
+            "`to_group` = its id, whose members then resolve it by account name like a team "
+            "key; revoke=true takes it back — ADR 0044 "
             "share_side) / verify (side-effect-free credential probe of "
             "`connector` → {ok, error}; level=auto tests the credential that resolves for "
             "you, level=org the org shared key). Contrast with oto_identity (operable "

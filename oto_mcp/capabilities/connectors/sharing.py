@@ -1,7 +1,9 @@
 """Instance SHARING capability (ADR 0044) — WRITE surface of `share_side`.
 
 `share_side` = EXTENSION: a member lends THEIR instance (their key in the current org)
-to a named peer. The beneficiary then uses it by pinning the instance (`_instance=`); the
+to a named peer, or to a team of that org. A peer uses it by pinning the instance
+(`_instance=`); a team's members resolve it like a team key, by account name
+(`group_store.lent_instances` feeds the team tier). For a peer, the
 guard `access.guard_instance_access` authorizes the beneficiary (borrows the key, keeps
 their OWN org context — cross-org OK, the named loan is the consent).
 Owner-scoped: `SUB_ONLY`, the handler touches ONLY the caller's vault row
@@ -16,7 +18,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from ... import access, credentials_store, db, org_store, providers
+from ... import access, credentials_store, db, group_store, org_store, providers
 from .._authz import SUB_ONLY
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
@@ -25,9 +27,14 @@ from ..registry import CAPABILITIES
 class LendInstanceInput(BaseModel):
     connector: str = Field(description="the connector — a service card (`outlook`, "
                                        "`gmail`…) lends the account it borrows")
-    to: str = Field(description="the email or the sub of the peer to lend to (or to "
-                                "revoke the loan from) — an email must be a member of "
-                                "your current organization")
+    to: Optional[str] = Field(None, description="the email or the sub of the peer to "
+                                                "lend to (or to revoke the loan from) — an "
+                                                "email must be a member of your current "
+                                                "organization")
+    to_group: Optional[int] = Field(None, description="id of a team of your current org "
+                                                      "to lend to (or to revoke the loan "
+                                                      "from) — its members resolve the key "
+                                                      "like a team key, by account name")
     account: str = Field("", description="which of your accounts — optional when you "
                                          "have only one")
     revoke: bool = False
@@ -44,13 +51,10 @@ class LendInstanceResult(BaseModel):
     # lends every service that account authorized — said, never implied.
     note: Optional[str] = None
     revoked: bool                           # echo of the intent (`revoke` from the input)
-    # ⚠️ The COMPLETE list of borrowers afterwards, not just the targeted peer: a
-    # `revoke` therefore returns a non-empty list if other loans remained. And it
-    # carries ONLY the named `user:` entries — a `share_side` targeting a
-    # TEAM exists in the vault but doesn't appear here (this surface only lends
-    # to people). An empty `lent_to` doesn't prove the instance isn't
-    # shared with anyone.
-    lent_to: list[str]                      # borrowers' subs
+    # ⚠️ The COMPLETE lists of borrowers afterwards, not just the targeted one: a
+    # `revoke` therefore returns non-empty lists if other loans remained.
+    lent_to: list[str]                      # borrowers' subs (`user:` entries)
+    lent_to_groups: list[int] = []          # borrowing teams (`group:` entries)
 
 
 _ACCEPTED_TO = "`to` = the email or the sub of a member of your organization"
@@ -115,20 +119,32 @@ def _reach_note(named: str, carrier: str, account: str) -> Optional[str]:
 def _lend_instance(ctx: ResolvedCtx, inp: LendInstanceInput) -> dict:
     if providers.connector_for_provider(inp.connector) is None:
         raise AuthzDenied(400, "unknown_connector", f"Unknown connector `{inp.connector}`.")
+    if (inp.to is None) == (inp.to_group is None):
+        raise AuthzDenied(400, "one_borrower",
+                          "Name exactly one borrower: `to` (a member's email or sub) or "
+                          "`to_group` (a team of your current org).")
     # A service card owns no vault row: the loan is the carrier's (`credential_of`).
     connector = providers.credential_provider(inp.connector)
     org = access.current_org(ctx.sub)
     if org is None:
         raise AuthzDenied(400, "no_active_org",
                           "No active org — unable to lend an instance.")
-    to = _borrower_sub(org, inp.to)
-    if to == ctx.sub:
-        raise AuthzDenied(400, "self_lend", "Lending to yourself makes no sense.")
+    if inp.to is not None:
+        to = _borrower_sub(org, inp.to)
+        if to == ctx.sub:
+            raise AuthzDenied(400, "self_lend", "Lending to yourself makes no sense.")
+        entry = f"user:{to}"
+    else:
+        # A loan to a team never crosses orgs: the team must belong to the key's org.
+        g = group_store.get_group(inp.to_group)
+        if g is None or int(g["org_id"]) != int(org):
+            raise AuthzDenied(404, "unknown_group",
+                              f"No team #{inp.to_group} in your current org.")
+        entry = f"group:{inp.to_group}"
     eid = credentials_store.member_id(org, ctx.sub)
     account = _lent_account(eid, connector, inp.account)
     _, side = credentials_store.get_instance_sharing(
         credentials_store.MEMBER, eid, connector, account)
-    entry = f"user:{to}"
     side = list(side or [])
     if inp.revoke:
         side = [s for s in side if s != entry]
@@ -143,7 +159,9 @@ def _lend_instance(ctx: ResolvedCtx, inp: LendInstanceInput) -> dict:
     return {"ok": True, "connector": connector, "account": account,
             "note": _reach_note(inp.connector, connector, account),
             "revoked": inp.revoke,
-            "lent_to": [s[len("user:"):] for s in side if s.startswith("user:")]}
+            "lent_to": [s[len("user:"):] for s in side if s.startswith("user:")],
+            "lent_to_groups": [int(s[len("group:"):]) for s in side
+                               if s.startswith("group:") and s[len("group:"):].isdigit()]}
 
 
 CAPABILITIES += [
@@ -151,10 +169,12 @@ CAPABILITIES += [
         key="connectors.lend_instance", handler=_lend_instance, Input=LendInstanceInput,
         authz=SUB_ONLY, Output=LendInstanceResult,
         description=("Lend YOUR connector instance (your key in your current org) to a "
-                     "peer so they can use it by pinning it (instance=). `to` = the email "
-                     "or the sub of a member of your organization; `account` is optional "
-                     "when you have only one. A service card (`outlook`, `gmail`…) lends "
-                     "the account it borrows — with every service that account authorized; "
+                     "peer, who uses it by pinning it (instance=) — `to` = the email or the "
+                     "sub of a member of your organization — or to a team of your org — "
+                     "`to_group` = its id; its members then resolve it by account name like "
+                     "a team key, no pin. `account` is optional when you have only one. A "
+                     "service card (`outlook`, `gmail`…) lends the account it borrows — "
+                     "with every service that account authorized; "
                      "`revoke=true` takes it back. You only ever share your OWN key; the "
                      "borrower operates under THEIR own org context (ADR 0044 share_side)."),
         rest=RestBinding("POST", "/api/me/connectors/{connector}/lend", {"connector": "connector"}),
