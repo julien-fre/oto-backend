@@ -649,12 +649,26 @@ def _microsoft_list(sub: str, service: str) -> list[dict]:
     """The member's Microsoft accounts that AUTHORIZED `service` — same shape as the
     generic keyed backend, filtered like a Google service: `oto_identity(
     connector='sharepoint')` must not offer an account that `sharepoint_file` will refuse."""
+    from .. import db
     from ..auth import microsoft as ms_auth
-    return [{"id": c["account"],
-             "label": (c.get("meta") or {}).get("label") or c["account"],
-             "status": "ok", "is_default": bool((c.get("meta") or {}).get("is_default")),
-             "channel": None}
-            for c in ms_auth.accounts_for(sub, service)]
+    comptes = ms_auth.accounts_for(sub, service)
+    # An account LENT by a peer (`oto_instance op=lend`) is operable through `_account=`
+    # and marked `granted` + `owner`, like a granted Unipile account: not the borrower's
+    # to revoke nor to make their default.
+    preteurs = sorted({c["lent_by"] for c in comptes if c.get("lent_by")})
+    emails = db.emails_by_subs(preteurs) if preteurs else {}
+    out = []
+    for c in comptes:
+        meta = c.get("meta") or {}
+        ident = {"id": c["account"], "label": meta.get("label") or c["account"],
+                 "status": "ok", "is_default": bool(meta.get("is_default")),
+                 "channel": None}
+        if c.get("lent_by"):
+            ident.update(granted=True, is_default=False,
+                         owner={"sub": c["lent_by"], "email": emails.get(c["lent_by"]),
+                                "org": c.get("lender_org")})
+        out.append(ident)
+    return out
 
 
 def _register_microsoft_services() -> None:

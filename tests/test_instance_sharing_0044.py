@@ -95,9 +95,11 @@ def test_guard_member_owner_still_works(monkeypatch):
 
 
 # ── oto_lend_instance : write path de share_side ──────────────────────────────
-def _lend_wiring(monkeypatch, *, existing_side=None, write_ok=True):
+def _lend_wiring(monkeypatch, *, existing_side=None, write_ok=True, accounts=("",)):
     captured = {}
     monkeypatch.setattr(providers, "connector_for_provider", lambda c: object())
+    monkeypatch.setattr(credentials_store, "list_accounts",
+                        lambda et, eid, conn: [{"account": a, "meta": {}} for a in accounts])
     monkeypatch.setattr(access, "current_org", lambda sub: 35)
     monkeypatch.setattr(db, "get_user", lambda sub: {"sub": sub})
     monkeypatch.setattr(credentials_store, "get_instance_sharing",
@@ -105,6 +107,7 @@ def _lend_wiring(monkeypatch, *, existing_side=None, write_ok=True):
     def _set(et, eid, conn, acct="", *, share_down=None, share_side=None):
         captured["share_side"] = share_side
         captured["eid"] = eid
+        captured["row"] = (conn, acct)
         return write_ok
     monkeypatch.setattr(credentials_store, "set_instance_sharing", _set)
     return captured
@@ -204,3 +207,52 @@ def test_le_texte_servi_dit_qu_un_email_est_accepte():
     from oto_mcp.capabilities.registry import CAPABILITIES
     instance = next(c for c in CAPABILITIES if c.mcp == "oto_instance")
     assert "the email or the sub of a member of your organization" in instance.description
+
+
+# ── le compte prêté sur un connecteur multi-compte, et la carte d'un service ────────
+# Mesuré en prod : `lend connector=microsoft` sans `account` répondait « No instance »
+# à une personne qui en avait une ; `connector=outlook` aussi (la carte n'a pas de ligne).
+def test_lend_sans_account_prend_le_seul_compte(monkeypatch):
+    cap = _lend_wiring(monkeypatch, accounts=("jane@contoso.example",))
+    out = connectors_sharing._lend_instance(
+        _ctx("alice"), connectors_sharing.LendInstanceInput(connector="zoho", to="bob"))
+    assert cap["row"] == ("zoho", "jane@contoso.example")
+    assert out["account"] == "jane@contoso.example" and out["lent_to"] == ["bob"]
+
+
+def test_lend_sans_account_sur_plusieurs_comptes_les_nomme(monkeypatch):
+    cap = _lend_wiring(monkeypatch, accounts=("a@x.test", "b@x.test"))
+    with pytest.raises(AuthzDenied) as e:
+        connectors_sharing._lend_instance(
+            _ctx("alice"), connectors_sharing.LendInstanceInput(connector="zoho", to="bob"))
+    assert e.value.code == "account_required"
+    assert "pass `account=`: one of `a@x.test`, `b@x.test`" in e.value.message
+    assert "No `" not in e.value.message and "share_side" not in cap
+
+
+def test_lend_d_un_compte_qui_n_est_pas_le_sien_les_nomme(monkeypatch):
+    _lend_wiring(monkeypatch, accounts=("a@x.test",))
+    with pytest.raises(AuthzDenied) as e:
+        connectors_sharing._lend_instance(_ctx("alice"), connectors_sharing.LendInstanceInput(
+            connector="zoho", to="bob", account="z@x.test"))
+    assert e.value.code == "unknown_account" and "`a@x.test`" in e.value.message
+
+
+def test_lend_sans_aucune_ligne_dit_no_instance(monkeypatch):
+    cap = _lend_wiring(monkeypatch, accounts=())
+    with pytest.raises(AuthzDenied, match="nothing to lend") as e:
+        connectors_sharing._lend_instance(
+            _ctx("alice"), connectors_sharing.LendInstanceInput(connector="zoho", to="bob"))
+    assert e.value.code == "no_instance" and "share_side" not in cap
+
+
+@pytest.mark.parametrize("carte", ["outlook", "microsoft"])
+def test_lend_d_une_carte_service_prete_le_porteur_et_le_dit(monkeypatch, carte):
+    cap = _lend_wiring(monkeypatch, accounts=("jane@contoso.example",))
+    out = connectors_sharing._lend_instance(
+        _ctx("alice"), connectors_sharing.LendInstanceInput(connector=carte, to="bob"))
+    assert cap["row"] == ("microsoft", "jane@contoso.example"), "la ligne du PORTEUR"
+    assert out["connector"] == "microsoft"
+    assert "jane@contoso.example" in out["note"] and "every service it authorized" in out["note"]
+    assert "outlook_calendar" in out["note"] and "sharepoint" in out["note"]
+    assert ("has no instance of its own" in out["note"]) is (carte == "outlook")
