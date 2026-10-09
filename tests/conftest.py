@@ -108,6 +108,31 @@ def _adresse_publique_de_l_instance(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OTO_MCP_PUBLIC_URL", _ADRESSE_DE_GREEMENT)
 
 
+# ── La MÊME base d'environnement, posée aussi pour la SESSION (#1111) ──────────────────
+# Les deux fixtures ci-dessus et ci-dessous sont de portée FONCTION : pytest les installe
+# APRÈS toute fixture de portée module. Un module qui monte son application dans une
+# fixture `scope="module"` (`tests/api/test_runner_fleets_rest.py` : base, client, flotte)
+# lisait donc la variable avant qu'elle soit posée — et ne passait que parce qu'un AUTRE
+# fichier l'écrivait par `os.environ.setdefault` à son IMPORT, donc dès la collecte, pour
+# tout le processus. Sur un runner unique, chaque worker collectait toute la suite : le
+# voisin était toujours là. Dans une part qui ne contient pas ce voisin, 17 erreurs
+# `Missing env var 'OTO_MCP_PUBLIC_URL'`. Une fixture de SESSION s'installe avant toutes
+# les autres ; les fixtures de fonction gardent leur rôle : remettre la base à chaque
+# test, quoi qu'un test précédent ait fait.
+_BASE_D_ENVIRONNEMENT = {
+    "OTO_MCP_PUBLIC_URL": _ADRESSE_DE_GREEMENT,
+    "OTO_PROJECT_DOMAIN": "oto.cx",
+}
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _base_d_environnement_de_la_session() -> Iterator[None]:
+    with pytest.MonkeyPatch.context() as mp:
+        for nom, valeur in _BASE_D_ENVIRONNEMENT.items():
+            mp.setenv(nom, valeur)
+        yield
+
+
 # ── Le domaine des endpoints de projet, gréé lui aussi (`config.project_domain()`,
 # devenue `require_env` le 15/09/2026) ──────────────────────────────────────────────
 #
@@ -120,7 +145,7 @@ def _adresse_publique_de_l_instance(monkeypatch: pytest.MonkeyPatch) -> None:
 # déclaration continue de le poser lui-même via `monkeypatch`.
 @pytest.fixture(autouse=True)
 def _domaine_des_projets(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OTO_PROJECT_DOMAIN", "oto.cx")
+    monkeypatch.setenv("OTO_PROJECT_DOMAIN", _BASE_D_ENVIRONNEMENT["OTO_PROJECT_DOMAIN"])
 
 
 # ── L'adresse du tableau de bord (`config.dashboard_url()`, devenue `require_env`-
