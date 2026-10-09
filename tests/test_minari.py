@@ -186,7 +186,10 @@ def test_les_avertissements_atteignent_vraiment_le_modele(all_tools, name, atten
 
 # --- sonde « tester la connexion » ----------------------------------------------
 
-def test_la_sonde_est_enregistree():
+def test_la_sonde_est_enregistree(all_tools):
+    # La sonde s'enregistre dans `register(mcp)` — au boot, `_build_mcp` → `register_all`.
+    # `all_tools` rejoue ce chemin : sans lui, ce test ne passait que si un AUTRE test du
+    # même processus l'avait déjà fait (rouge isolé, révélé par la suite en parts, #1111).
     assert connector_verify.supports("minari")
 
 

@@ -187,6 +187,9 @@ def test_le_namespace_derive_bien_du_nom_de_chaque_outil(module, attendus):
 
 @pytest.mark.parametrize("module", sorted(EXPECTED))
 def test_chacun_enregistre_une_sonde_de_connexion(module):
+    # La sonde s'enregistre dans `register(mcp)` (au boot : `register_all`) : on fait ce
+    # geste ici, sans quoi le test dépendait d'un autre test du même processus (#1111).
+    _tools(module)
     assert connector_verify.supports(module)
 
 

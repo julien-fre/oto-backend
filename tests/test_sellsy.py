@@ -76,7 +76,10 @@ def test_sellsy_tools_register_under_namespace(all_tools):
                for t in all_tools if t.startswith("sellsy_"))
 
 
-def test_verify_probe_registered():
+def test_verify_probe_registered(all_tools):
+    # La sonde s'enregistre dans `register(mcp)` — au boot, `_build_mcp` → `register_all`.
+    # `all_tools` rejoue ce chemin : sans lui, ce test ne passait que si un AUTRE test du
+    # même processus l'avait déjà fait (rouge isolé, révélé par la suite en parts, #1111).
     assert connector_verify.supports("sellsy")
 
 
