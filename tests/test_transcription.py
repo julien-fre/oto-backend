@@ -575,10 +575,8 @@ def test_un_credential_qui_ne_resout_pas(all_tools, rest, monde, monkeypatch):
 # --- la file : place, estimation, voies (signal #1370) ------------------------------
 
 def test_un_travail_en_file_dit_sa_place_et_quand_relire(all_tools, monde):
-    from datetime import datetime, timedelta
-    t0 = datetime(2026, 10, 8, 12, 0, 0)
-    monde["file"] = {"ahead": 4, "finishes": [t0, t0 - timedelta(seconds=30),
-                                              t0 - timedelta(seconds=60)]}
+    t0 = 1_791_460_800.0                     # secondes Unix, comme les rend la base
+    monde["file"] = {"ahead": 4, "finishes": [t0, t0 - 30, t0 - 60]}
     ref = _appeler(all_tools, source=_pf())
     out = _statut(all_tools, ref["job_id"])
     assert out["status"] == "pending" and out["queue_position"] == 4

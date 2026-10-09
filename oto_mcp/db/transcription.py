@@ -122,8 +122,10 @@ _FINS_MESUREES = 20
 def transcription_queue(job_id: int) -> dict:
     """Où en est un travail `pending` dans la file : `ahead` = travaux `pending` plus
     anciens (la file est servie dans l'ordre de dépôt, toutes orgs confondues), et
-    `finishes` = les dernières fins (`done`/`failed`) de la dernière heure, plus
-    récente d'abord — le débit RÉEL de la file, concurrence du worker comprise.
+    `finishes` = les dernières fins (`done`/`failed`) de la dernière heure, en secondes
+    Unix, plus récente d'abord — le débit RÉEL de la file, concurrence du worker comprise.
+    Des nombres, pas des dates : la fabrique de lignes (`_str_dict_row`) rend toute date
+    en texte, et une soustraction de deux textes a cassé `transcription_status` en prod.
 
     `ahead` lit l'index partiel des `pending` ; les fins se lisent à rebours de la
     clé primaire (borné, jamais un parcours de la table)."""
@@ -135,11 +137,11 @@ def transcription_queue(job_id: int) -> dict:
             (job_id,),
         ).fetchone()["n"]
         fins = conn.execute(
-            "SELECT updated_at FROM ("
+            "SELECT EXTRACT(EPOCH FROM r.updated_at)::float8 AS fin FROM ("
             "  SELECT status, updated_at FROM transcription_jobs ORDER BY id DESC LIMIT 200"
             ") r WHERE r.status IN ('done', 'failed') "
             "   AND r.updated_at > NOW() - interval '1 hour' "
             " ORDER BY r.updated_at DESC LIMIT %s",
             (_FINS_MESUREES,),
         ).fetchall()
-    return {"ahead": int(ahead), "finishes": [r["updated_at"] for r in fins]}
+    return {"ahead": int(ahead), "finishes": [r["fin"] for r in fins]}

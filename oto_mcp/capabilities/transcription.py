@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import math
 import statistics
-from datetime import datetime
 from typing import Callable, Literal, Optional
 
 from pydantic import BaseModel
@@ -148,11 +147,12 @@ _RELIRE_S = 30
 def position_en_file(file: dict) -> dict:
     """La place d'un travail `pending` et une ESTIMATION d'attente, tirée du débit réel
     de la file : l'écart médian entre les dernières fins (`finishes`, plus récente
-    d'abord). Ce débit compte déjà la concurrence du worker. Sans assez de fins récentes
-    pour le mesurer, pas d'estimation (`null`) plutôt qu'un chiffre inventé."""
+    d'abord, en secondes Unix). Ce débit compte déjà la concurrence du worker. Sans assez
+    de fins récentes pour le mesurer, pas d'estimation (`null`) plutôt qu'un chiffre
+    inventé."""
     ahead = int(file["ahead"])
-    fins: list[datetime] = list(file["finishes"])
-    ecarts = [(a - b).total_seconds() for a, b in zip(fins, fins[1:])]
+    fins: list[float] = [float(f) for f in file["finishes"]]
+    ecarts = [a - b for a, b in zip(fins, fins[1:])]
     estimation = None
     if ecarts:
         par_travail = max(statistics.median(ecarts), 1.0)

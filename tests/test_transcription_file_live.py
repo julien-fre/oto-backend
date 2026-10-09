@@ -86,9 +86,17 @@ def test_les_fins_recentes_mesurent_le_debit_plus_recente_d_abord(projet):
     _travail(projet, status="failed", age_s=600, fin_il_y_a_s=220)
     _travail(projet, status="done", age_s=9000, fin_il_y_a_s=7200)   # hors de l'heure
     moi = _travail(projet)
-    fins = db.transcription_queue(moi)["finishes"]
+    file = db.transcription_queue(moi)
+    fins = file["finishes"]
     assert len(fins) == 4
     assert fins == sorted(fins, reverse=True)
+    # Le chemin servi, de la base à l'estimation : des dates rendues en texte par la
+    # fabrique de lignes faisaient lever « str - str » ici (signal #1381).
+    from oto_mcp.capabilities.transcription import position_en_file
+    out = position_en_file(file)
+    assert out["queue_position"] == 0
+    # 4 fins espacées de 60 s : un travail toutes les ~60 s, lui seul à passer.
+    assert 55 <= out["estimated_wait_s"] <= 65
 
 
 def test_un_travail_running_orphelin_est_clos_et_le_dit(projet):
