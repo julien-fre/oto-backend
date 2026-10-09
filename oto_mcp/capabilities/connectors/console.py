@@ -127,7 +127,7 @@ class InstanceInput(BaseModel):
     connector: Optional[str] = None
     # list: filter member|group|org|platform · verify: auto (effective credential) | org
     level: Optional[str] = None
-    to: Optional[str] = None                   # lend: peer's sub
+    to: Optional[str] = None                   # lend: peer's email (org member) or sub
     account: str = ""                          # lend
     revoke: bool = False                       # lend: True = take the loan back
 
@@ -143,7 +143,8 @@ async def _instance(ctx: ResolvedCtx, inp: InstanceInput) -> dict:
     if inp.op == "lend":
         return connectors_sharing._lend_instance(ctx, connectors_sharing.LendInstanceInput(
             connector=connector,
-            to=_need(inp.to, "missing_to", "`to` (peer's sub) is required for lend."),
+            to=_need(inp.to, "missing_to", "`to` is required for lend: the email or the "
+                     "sub of a member of your organization."),
             account=inp.account, revoke=inp.revoke))
     if inp.level not in (None, "auto", "org"):
         raise AuthzDenied(400, "invalid_level", "op=verify: `level` ∈ auto|org.")
@@ -254,8 +255,9 @@ CAPABILITIES += [
             "identifier — may be missing, and `ref` stays the pin handle for instance=; "
             "`visible_to` = the scopes that can DISCOVER it, derived from the access chain — "
             "descriptive, it does not filter this list) "
-            "/ lend (lend YOUR instance of `connector` to a peer `to`=sub, revoke=true takes "
-            "it back — ADR 0044 share_side) / verify (side-effect-free credential probe of "
+            "/ lend (lend YOUR instance of `connector` to a peer: `to` = the email or the sub "
+            "of a member of your organization; revoke=true takes it back — ADR 0044 "
+            "share_side) / verify (side-effect-free credential probe of "
             "`connector` → {ok, error}; level=auto tests the credential that resolves for "
             "you, level=org the org shared key). Contrast with oto_identity (operable "
             "accounts of ONE connector) and oto_connector op=list (catalog of TYPES)."),
