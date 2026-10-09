@@ -610,8 +610,10 @@ Le journal n'avait **aucune** rétention : 47 % de la base, et une croissance pa
 9 600 à ~90 000 lignes/jour en deux semaines sous la charge d'une campagne de runner.
 Décidé par Alexis le 27/08 : **90 jours consultables**, au-delà chaque mois clos part en
 CSV compressé sur l'Object Storage (`journal/tool_calls/YYYY-MM.csv.gz`, objet **privé**)
-avant d'être effacé de la base. Travail mensuel `oto-journal-archive.timer` (le 3 à
-04:45 UTC), script versionné `deploy/archive_tool_calls.py`.
+avant d'être effacé de la base. Travail **quotidien** `oto-journal-archive.timer` (04:45
+UTC ; mensuel, le 3, jusqu'au correctif de #1197), script versionné
+`deploy/archive_tool_calls.py`. Un passage sans mois éligible ne fait rien ; un mois
+devient éligible le jour où il sort entièrement de la fenêtre (fin du mois + 90 jours).
 
 **Ce n'est pas une purge de logs, et c'est le point à comprendre avant d'y toucher.**
 Cette table est à double emploi : journal d'observabilité, ET **source de vérité des
@@ -637,12 +639,68 @@ le … » (registre `journal_archives`, #665 — cf. plus haut).
   `args` et `error` en contiennent. Mesuré ici — 12 830 « lignes » annoncées pour 12 459
   enregistrements réels. Le seul compte juste est celui de la base.
 
+**Un passage interrompu se reprend, et une archive ne se réécrit jamais** (#1197). Avant
+le correctif, un passage tué pendant la suppression (délai de 3 h du service, crash)
+laissait un reste ; le passage suivant RÉÉCRIVAIT l'objet du mois avec ce seul reste, et
+l'inscription avec son compte — les lignes déjà supprimées n'étaient plus nulle part (le
+versionnage du bucket est suspendu, il ne rattrape rien). Désormais l'état du mois se
+LIT avant d'agir :
+
+| registre `journal_archives` | objet S3 | ce que fait le passage |
+| --- | --- | --- |
+| absent | absent | nominal : export, relecture, inscription, suppression |
+| présent | présent | **reprise** : relit l'objet, exige son compte = l'inscription et CHAQUE ligne restante présente par son `id`, puis finit la suppression — sans réexporter |
+| absent | présent | passage coupé entre dépôt et inscription, ou `--export-only` : l'objet est **adopté** (inscrit, pas réécrit) s'il porte exactement les lignes en base — même compte, aucun doublon, chaque `id` couvert |
+| présent | absent | erreur |
+
+Tout écart lève `ArchiveIncoherente`, dont le message dit quoi vérifier, et rien n'est
+supprimé : objet relu à un autre compte que l'inscription (remplacé ou tronqué), objet
+sans inscription qui n'est pas l'export de ce qui reste, ligne entrée dans le mois après
+l'export, inscription qui désigne un autre objet, objet inscrit introuvable — ce dernier
+cas est le plus grave : ne PAS retirer l'inscription pour réexporter, retrouver l'objet.
+L'export lui-même refuse d'écrire sur un objet existant, et un refus d'accès au `HEAD`
+n'est jamais pris pour une absence. Une inscription ne se réécrit plus (elle se posait
+en `ON CONFLICT DO UPDATE`). Bancs : `tests/deploy/test_archive_journal_reprise_1197.py`.
+
+**La suppression avance par l'index** (#1197). Son prédicat
+`to_char(date_trunc('month', created_at), 'YYYY-MM') = mois` ne servait aucun index :
+chaque lot de 20 000 relisait la table depuis son début (ou toute la table, selon le plan)
+— 53 s pour un mois d'un million de lignes à l'étude, plus de 3 h estimées pour
+septembre 2026 (8 à 9 M lignes sur ~12 M). Elle filtre maintenant sur la PLAGE
+`created_at >= début AND created_at < fin` (bornes calculées par la base dans le fuseau
+de la session, le même que celui du `date_trunc` qui compte les mois), sert
+`idx_tool_calls_created_at`, et chaque lot repart de la date de la dernière ligne
+supprimée : il ne relit ni la table ni ce qui est déjà purgé. L'export lit la même plage,
+sans `ORDER BY` (les lignes sortent dans l'ordre de lecture, chacune porte son `id`).
+Mesuré sur une base jetable de 6 M lignes, DDL et 13 index réels, mois de 1,94 M lignes :
+
+| | avant | après |
+| --- | --- | --- |
+| plan d'un lot | parcours de la clé primaire, filtre : 1,2 M lignes rejetées dès le 1er lot | `Index Scan Backward using idx_tool_calls_created_at`, `Index Cond` sur la plage |
+| durée d'un lot | 0,62 s médian, 2 s au dernier (il parcourt tout le reste de la table) | 0,06 s médian, 0,09 s max, constant |
+| suppression du mois (sans pause) | 63 s | 5,9 s |
+| WAL | 818 Mo (442 o/ligne) | 636 Mo (344 o/ligne), 6,6 Mo par lot |
+
+Le WAL d'une suppression est surtout fait de pages entières : la prod checkpointe toutes
+les 30 s (`max_wal_size` 1 Go), et chaque page de tas touchée pour la première fois après
+un checkpoint s'y écrit en entier — ~une page par ~44 lignes en prod (183 o/ligne de
+tas), d'où **~245 o/ligne estimés en prod**, soit **~2,1 Go pour 9 M lignes**, plus ~1 Go
+pour l'autovacuum qui suit (mesuré au banc à ~130 o/ligne). D'où la **pause entre deux
+lots, réglable** (`--pause S`, 1 s par défaut) : ~4,7 Mo de WAL par lot en prod, soit
+~130 Mo par fenêtre de checkpoint — loin du `max_wal_size` qui forcerait des
+checkpoints. Sans pause, ~60 Mo/s atteindraient ce plafond en une vingtaine de secondes.
+Septembre avec la pause : ~450 lots, une dizaine de minutes de suppression, loin du
+`TimeoutStartSec=3h`.
+
 **Où il tourne** : sur la box, en travail planifié, jamais dans le processus MCP —
 mono-boucle, et c'est ce même journal qui l'a gelé le 27/08. Un verrou consultatif PG
 protège de deux exécutions simultanées (prod et preprod partagent la base). Options :
 `--dry-run` (dit ce qui partirait), `--export-only` (dépose et vérifie sans supprimer —
-c'est ce qui permet d'éprouver le chemin réel sans engager la moitié irréversible),
-`--retention-days N` (ou `OTO_JOURNAL_RETENTION_DAYS`).
+c'est ce qui permet d'éprouver le chemin réel sans engager la moitié irréversible ; le
+passage suivant adopte l'objet déposé, cf. plus haut), `--retention-days N` (ou
+`OTO_JOURNAL_RETENTION_DAYS`), `--pause S` (entre deux lots de suppression).
+⚠️ Le timer n'est pas posé par le déploiement : passer au quotidien demande d'installer
+`deploy/oto-journal-archive.timer` sur la box et de recharger systemd.
 
 ⚠️ **La rétention à 90 jours n'effacera rien avant fin octobre 2026** : à sa mise en
 place, le journal ne remontait qu'au 28/07. Un premier passage qui ne supprime rien est
