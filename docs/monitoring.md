@@ -604,6 +604,50 @@ fenêtre : bornée à 10 s, elle peut sortir en `503 aggregate_timeout`.
 Ce que la borne ne fait pas : limiter le nombre de lectures simultanées par route ni
 le débit par jeton — c'est le budget des routes lourdes, posé à part.
 
+## Les totaux du journal par jour UTC (#1147, 09/10)
+
+Les écrans de consommation et de monitoring n'ont pas à relire `tool_calls` (~12 M
+lignes, `args` compris) pour chaque fenêtre de 30 ou 90 jours. Trois tables
+(`db/schema/usage.py::JOURNAL_JOUR`, révision 0050) portent les jours CLOS, et
+`db/journal_jour.py` les tient :
+
+| table | ce qu'elle porte |
+|---|---|
+| `journal_jours_consolides` | le registre : un jour y figure = ses totaux sont COMPLETS (un jour sans appel y figure aussi) |
+| `journal_totaux_jour` | par jour × `kind` × `org_id` × `sub` × `tool` × `ok` × `key_mode` × émetteur : `appels`, `quantite` (NULL compté 1), durées et tailles (nombre, somme, et les VALEURS en `int[]`), `dernier_at` |
+| `journal_jobs_jour` | les jobs fournisseur distincts relevés par les appels facturables, par jour × org × outil × mode de clé |
+
+**Exact, pas approché.** Les dimensions sont celles que lisent les écrans, et rien de
+plus. Une somme s'additionne d'un jour à l'autre ; un DISTINCT non — d'où `sub` et
+`org_id` en dimensions (comptes actifs, membres), la table des jobs (jobs distincts du
+relevé), et les valeurs de durée et de taille gardées telles quelles : un p95
+(`percentile_cont`) recalculé sur leur union est celui du journal, là où un histogramme
+à seaux l'aurait approché (mesuré : ~20 octets par appel agrégé, en-têtes compris — de
+l'ordre de 250 Mo pour 12 M lignes, contre 5 Go de journal). Natures
+agrégées : `mcp` et `connector` ; le REST (le flux le plus gros), le protocole et le
+transport restent au journal — leurs lecteurs sont des vues de la plateforme.
+
+**Alimentation : la maintenance** (`oto-mcp maintenance journal-jour`, en tête de
+`all`, timer quotidien de 03:20, prod seulement) consolide la veille et les jours clos
+manqués depuis le dernier consolidé, au plus 7. Un jour se consolide en UNE transaction
+(`consolider_jour` : retrait du registre — totaux et jobs partent en cascade —,
+réinscription, `INSERT … SELECT`), sous `statement_timeout`, agrégation par tri
+(`enable_hashagg = off` : pas un tableau par groupe en mémoire sur une nano de 4 Go),
+verrou consultatif contre une consolidation concurrente du même jour. Idempotente ; le
+jour courant est refusé (`JourNonClos`).
+
+**Rattrapage : à la main**, une fois (`scripts/rattraper_journal_jour.py`, à blanc par
+défaut, `--appliquer` pour écrire) : un jour par transaction, une pause entre deux,
+dans l'ordre qui garde la couverture contiguë (après le dernier consolidé en avançant,
+puis avant le premier en reculant), reprise idempotente, arrêt au premier jour qui
+dépasse sa borne. Sur une base neuve (instance cible, `perimetre`), il se rejoue une
+fois le journal versé.
+
+Ce qui n'est pas suivi : la purge d'archive (`deploy/archive_tool_calls.py`) retire des
+mois du journal, pas leurs totaux — une fenêtre plus longue que la rétention lit donc
+au-delà de ce que le journal garde. `migrate_sub` repointe `journal_totaux_jour.sub`
+avec le journal.
+
 ## Rétention : 90 jours en ligne, le reste en froid (posé le 2026-08-27)
 
 Le journal n'avait **aucune** rétention : 47 % de la base, et une croissance passée de

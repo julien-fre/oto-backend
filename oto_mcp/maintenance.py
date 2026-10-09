@@ -33,6 +33,10 @@ Ils sont ici, chacun nommé, chacun jouable seul :
                                           partagée par lien, à son propriétaire —
                                           À BLANC tant que OTO_DIGEST_LECTEURS
                                           n'est pas posé
+    oto-mcp maintenance journal-jour  totaux du journal par jour UTC : consolide la
+                                          veille et les jours clos qui suivent le dernier
+                                          consolidé, au plus 7 (#1147) — l'historique se
+                                          rattrape à la main (scripts/rattraper_journal_jour.py)
     oto-mcp maintenance all           ceux du timer quotidien, dans l'ordre
 
     oto-mcp maintenance index-concurrents <révision>
@@ -571,7 +575,20 @@ def digest_lecteurs(*, dry_run: bool = False) -> dict:
     return dl.balayer(dry_run=dry_run)
 
 
+def journal_jour(*, dry_run: bool = False) -> dict:
+    """Les totaux du journal par jour UTC (oto-backend#1147) : la veille, et les jours
+    clos manqués depuis le dernier consolidé (`db/journal_jour.maintenance`).
+
+    Dans `_ALL`, EN TÊTE : les écrans de consommation et de monitoring lisent ces
+    totaux, et refusent une fenêtre qui couvre un jour clos depuis plus d'un jour sans
+    être consolidé. Un échec ici se voit donc le surlendemain, nommé — jamais comme un
+    chiffre faux."""
+    from .db import journal_jour as jj
+    return jj.maintenance(dry_run=dry_run)
+
+
 _TRAVAUX: dict[str, Callable[..., dict]] = {
+    "journal-jour": journal_jour,
     "retention": retention,
     "revisions": revisions,
     "blocks": blocks,
@@ -606,7 +623,9 @@ _ACTES = ("journal-tokens", "residu-projete", "oauth-relay-callbacks")
 # (`OTO_ACTIVATION` vide) il ne lit rien.
 # Elle lit `org_entitlements`, qu'oto-commerce tient seul (#1097) : aucun travail d'ici
 # ne le réaligne avant elle.
-_ALL = ("retention", "revisions", "blocks", "key-indexes", "alertes-credential",
+# ⚠️ `journal-jour` est EN TÊTE de `_ALL` : la veille doit être consolidée tôt, avant
+# qu'un travail plus long (re-projection, index) ne consomme la fenêtre du timer.
+_ALL = ("journal-jour", "retention", "revisions", "blocks", "key-indexes", "alertes-credential",
         "instagram-tokens", "unipile-fin-de-droit", "apollo-phones", "activation", "digest-lecteurs")
 
 
