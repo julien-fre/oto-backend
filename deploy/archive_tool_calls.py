@@ -299,21 +299,30 @@ def _relire_archive(s3, bucket: str, key: str, *, avec_ids: bool = False):
 
     Lu en flux : une archive pèse plusieurs centaines de Mo, la charger entière en
     mémoire sur la box la mettrait en difficulté."""
-    csv.field_size_limit(10_000_000)  # un `args` peut être gros ; le défaut coupe à 128 ko
-    body = s3.get_object(Bucket=bucket, Key=key)["Body"]
-    ids = _Ids() if avec_ids else None
-    with gzip.GzipFile(fileobj=body) as gz:
-        lecteur = csv.reader(io.TextIOWrapper(gz, encoding="utf-8"))
-        entete = next(lecteur, None)
-        if not entete:
-            raise SystemExit(f"archive {key} vide ou illisible — AUCUNE suppression effectuée")
-        if ids is None:
-            relus = sum(1 for _ in lecteur)
-        else:
-            col, relus = entete.index("id"), 0
-            for rec in lecteur:
-                ids.ajouter(int(rec[col]))
-                relus += 1
+    # Un `args` peut être gros ; le défaut de `csv` coupe à 128 ko. ⚠️ La limite est
+    # GLOBALE au processus : relevée sans être rendue, elle désarmait toute autre lecture
+    # CSV du même processus — vécu le 09/10/2026 (#1111) : relu par un banc, ce script
+    # laissait la limite à 10 Mo et la garde « cellule trop grosse » de
+    # `oto_mcp/csv_tolerant.py` ne se déclenchait plus. Relevée le temps de la relecture,
+    # rendue à la sortie, quoi qu'il arrive.
+    limite_avant = csv.field_size_limit(10_000_000)
+    try:
+        body = s3.get_object(Bucket=bucket, Key=key)["Body"]
+        ids = _Ids() if avec_ids else None
+        with gzip.GzipFile(fileobj=body) as gz:
+            lecteur = csv.reader(io.TextIOWrapper(gz, encoding="utf-8"))
+            entete = next(lecteur, None)
+            if not entete:
+                raise SystemExit(f"archive {key} vide ou illisible — AUCUNE suppression effectuée")
+            if ids is None:
+                relus = sum(1 for _ in lecteur)
+            else:
+                col, relus = entete.index("id"), 0
+                for rec in lecteur:
+                    ids.ajouter(int(rec[col]))
+                    relus += 1
+    finally:
+        csv.field_size_limit(limite_avant)
     return relus, len(entete), ids
 
 
