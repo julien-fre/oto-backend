@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 from .. import deprecations
 from . import journal_calls
 from ._conn import _connect
+from .index_releve import PREDICAT_OUVERTURE
 from .lecture_bornee import lecture_d_agregat
 
 
@@ -241,9 +242,13 @@ def _derniers_runs(portee: str = "") -> str:
     sans ligne d'index reste listé.
 
     `portee` = prédicats sur l'alias `d` (l'ouverture candidate), TOUJOURS des
-    littéraux de ce module ; ses `%s` précèdent celui du `LIMIT`."""
+    littéraux de ce module ; ses `%s` précèdent celui du `LIMIT`. ⚠️ Des ÉGALITÉS (ou
+    `IS NULL`), jamais `IS NOT DISTINCT FROM` : c'est ce qui laisse les index
+    `index_releve.OUVERTURES` (révision 0049) servir la page dans son ordre, par un
+    parcours d'index seul arrêté au `LIMIT`. Leur prédicat est `PREDICAT_OUVERTURE`."""
+    ouverture = " AND ".join(f"d.{c.strip()}" for c in PREDICAT_OUVERTURE.split(" AND "))
     return ("\n               AND s.id IN (SELECT d.id FROM tool_calls d"
-            " WHERE d.tool = 'run_start' AND d.run_id IS NOT NULL" + portee +
+            f" WHERE {ouverture}" + portee +
             " ORDER BY d.created_at DESC, d.id DESC LIMIT %s)")
 
 
@@ -381,17 +386,20 @@ def recent_runs(sub: str, org_id: Optional[int], limit: int = 5) -> list[dict]:
 
     Seules les `limit` dernières ouvertures se reconstruisent (`_derniers_runs`,
     infra#9) : lu à chaque session, ce bloc reconstruisait tous les runs du compte."""
+    if org_id is None:
+        portee, params = " AND d.sub = %s AND d.org_id IS NULL", (sub, limit, limit)
+    else:
+        portee, params = " AND d.sub = %s AND d.org_id = %s", (sub, org_id, limit, limit)
     with _connect() as conn:
         rows = conn.execute(
             f"""
-            WITH j AS ({_runs_from_journal(_derniers_runs(
-                " AND d.sub = %s AND d.org_id IS NOT DISTINCT FROM %s"))})
+            WITH j AS ({_runs_from_journal(_derniers_runs(portee))})
             SELECT j.run_id, j.label, j.doctrine, j.outcome, x.project_id,
                    j.started_at, j.finished_at, j.last_seen_at
               FROM j LEFT JOIN runs x ON x.run_id = j.run_id
              ORDER BY j.started_at DESC LIMIT %s
             """,
-            (sub, org_id, limit, limit),
+            params,
         ).fetchall()
     return list(rows)
 

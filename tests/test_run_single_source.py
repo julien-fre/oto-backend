@@ -336,6 +336,9 @@ def test_une_liste_de_runs_choisit_sa_page_avant_de_reconstruire(conn):
     assert [r["run_id"] for r in usage.recent_runs("u1", 35, limit=2)] == ["neuf", "moyen"]
     assert [r["run_id"] for r in usage.recent_runs("u1", 36)] == ["ailleurs"]
     assert usage.recent_runs("u2", 35) == []
+    # Hors org : la portée est `org_id IS NULL`, pas « toutes les orgs ».
+    _journal_open(conn, "sans-org", label="sans org", org_id=None, ago=2)
+    assert [r["run_id"] for r in usage.recent_runs("u1", None)] == ["sans-org"]
 
 
 def test_les_lectures_d_un_projet_ne_reconstruisent_que_ses_runs_recents(conn, monkeypatch):

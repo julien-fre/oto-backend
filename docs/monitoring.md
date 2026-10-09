@@ -576,6 +576,12 @@ groupait TOUT le journal par run pour compter les appels, et reconstruisait tous
 de sa portée — les ouvertures n'étant jamais archivées, le coût suivait l'historique
 entier, pas la page. Le compte d'appels d'un run est un LATERAL servi par
 `idx_tool_calls_run`.
+Le choix de page lui-même est servi par trois index partiels des ouvertures
+(`index_releve.OUVERTURES`, révision 0049 : plateforme, org, compte × org), rangés dans
+l'ordre de la page : sans eux, il parcourait le journal à rebours (5 s pour la page
+plateforme, plus de 15 s pour la plus grosse org, mesurés le 09/10). D'où des égalités
+dans la portée (`org_id = %s` ou `IS NULL`), jamais `IS NOT DISTINCT FROM`, que l'index
+ne sait pas servir dans l'ordre.
 
 **L'entonnoir lit une seule fenêtre** : « REST seul » (`rest_only`) compte les comptes
 venus en REST SANS appel d'outil sur la fenêtre `days`, comme `active` et `blocked` —

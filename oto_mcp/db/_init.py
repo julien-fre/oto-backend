@@ -1111,6 +1111,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # du journal au-delà de la fenêtre de démarrage. Index invalide ou table trop
     # grosse : le démarrage continue et le DIT, le geste est manuel (§5.1).
     index_concurrent.poser_au_demarrage(conn, index_releve.RELEVE)
+    # Le choix de page des listes de runs (infra#9) : mêmes régime et verdict, une base
+    # servie les reçoit de la révision 0049 ou à la main (§5.1).
+    for index in index_releve.OUVERTURES:
+        index_concurrent.poser_au_demarrage(conn, index)
     # Application OAuth cliente porteuse du grant (`azp` du JWT — claude.ai,
     # Claude Code, ChatGPT…) : axe de télémétrie par surface, extension OTO-LOCALE.
     conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS client_id TEXT")
