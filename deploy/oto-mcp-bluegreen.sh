@@ -60,8 +60,11 @@
 # Si le wrapper la définit, `bg_run` l'appelle après l'installation du tag dans la couleur
 # inactive et AVANT son démarrage ; un code non nul arrête tout — la couleur n'a pas
 # démarré, rien n'a basculé. Nos wrappers n'en définissent pas (leurs gestes sont figés par
-# tests/deploy/gestes_bleu_vert/) ; deploy/cible/deployer.sh y vérifie que la base du rôle
-# est à la tête des migrations du tag (oto-backend#1163).
+# tests/deploy/gestes_bleu_vert/) ; deploy/cible/deployer.sh y amène la base du rôle à la
+# tête des migrations du tag, ou refuse (oto-backend#1163, #1195).
+# Son pendant pour `--rollback` : `bg_garde_avant_retour <arbre>`, appelée AVANT de
+# redémarrer la couleur précédente ; même contrat (deploy/cible/deployer.sh y vérifie que
+# la base est à la tête que connaît ce code, #1195).
 # ============================================================================
 set -uo pipefail
 
@@ -360,6 +363,11 @@ bg_run() {
 
   if [ "$ref" = "--rollback" ]; then
     bg_log "ROLLBACK : on rebascule sur ${new}, qui porte la version précédente ($(git -C "$(bg_tree "$new")" rev-parse --short HEAD 2>/dev/null))"
+    if declare -F bg_garde_avant_retour >/dev/null \
+       && ! bg_garde_avant_retour "$(bg_tree "$new")"; then
+      bg_log "REFUS du retour : ${new} n'a PAS démarré — ${BG_ENV} reste servie par ${old}, rien n'a basculé"
+      exit 1
+    fi
   else
     if [ "$BG_LANCEUR" = propage ]; then
       bg_propagate_start "$old" "$new" || bg_abort "$new" "propagation du lanceur en échec"

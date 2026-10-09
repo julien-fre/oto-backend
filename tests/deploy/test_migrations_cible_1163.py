@@ -2,9 +2,10 @@
 
 Le défaut : une cible servait le code d'un tag dont la tête Alembic était 0037, sur une
 base restée en 0031 — la chaîne porte → `deployer.sh` → bleu/vert montait le code sans
-jouer les migrations, et rien ne le disait. Désormais, `deployer.sh` REFUSE de démarrer
-la couleur neuve tant que la base du rôle n'est pas à la tête des révisions DU TAG, en
-nommant l'écart et la commande qui migre ; il ne migre jamais lui-même.
+jouer les migrations, et rien ne le disait. Désormais, `deployer.sh` ne démarre la couleur
+neuve que sur une base à la tête des révisions DU TAG. Depuis #1195, une base en retard sur
+une chaîne linéaire est migrée par la montée elle-même (bancs de ce mode :
+`test_cible_suit_le_tronc_1195.py`) ; ici, le CONSTAT et les refus communs.
 
 Deux étages :
 - le script (`deploy/cible/migrations_a_jour.py`) : tête lue dans un VRAI registre Alembic
@@ -12,8 +13,8 @@ Deux étages :
   base antérieure à la référence du registre (squash, docs/migrations-versionnees.md
   §5.4)… ; plus, sur un PostgreSQL réel quand il y en a un, la lecture de la base
   elle-même, contre le registre du dépôt ;
-- la chaîne (`_banc_cible.py`, root simulé) : le refus arrive après l'installation dans la
-  couleur inactive et AVANT son démarrage — rien ne démarre, rien ne bascule.
+- la chaîne (`_banc_cible.py`, root simulé) : la garde passe après l'installation dans la
+  couleur inactive et AVANT son démarrage ; un refus — rien ne démarre, rien ne bascule.
 """
 from __future__ import annotations
 
@@ -235,6 +236,7 @@ def test_chaine_a_jour_monte(banc):
     assert fini.returncode == 0, fini.stdout + fini.stderr
     cmds = banc.commandes()
     appel, = _garde_appelee(cmds)
+    assert appel.endswith("--script deploy/cible/migrations_a_jour.py --migrer")
     # sous le lanceur DE L'ARBRE où le tag vient d'être installé, avec l'environnement du rôle
     assert "-p WorkingDirectory=/opt/exemple/prod-green " in appel
     assert "-p EnvironmentFile=/etc/exemple/prod/app.env" in appel
@@ -245,27 +247,18 @@ def test_chaine_a_jour_monte(banc):
         < cmds.index("systemctl start exemple-prod@green")
 
 
-def test_chaine_en_retard_refuse_avant_demarrage_et_nomme_la_commande(banc):
-    fini = banc.lancer("deployer.sh", "deployer", "prod", "v1.2.3", BANC_MIGRATIONS_CODE="3",
-                       BANC_MIGRATIONS_DIT="migrations : la base est en 0031, le tag attend 0037")
-    assert fini.returncode == 1
-    sortie = (fini.stdout + fini.stderr).replace(str(banc.racine), "")
-    assert "la base est en 0031, le tag attend 0037" in sortie
-    assert ("systemd-run --pipe --wait --quiet --collect -p WorkingDirectory=/opt/exemple/prod-green "
-            "-p EnvironmentFile=/etc/exemple/prod/app.env -p EnvironmentFile=/etc/exemple/prod/lanceur.env "
-            "-p LoadCredential=scw:/etc/exemple/scw.key /opt/exemple/prod-green/.venv/bin/python "
-            "/opt/exemple/prod-green/deploy/lanceur_secrets.py migrer upgrade head") in sortie
-    assert "rien n'a basculé" in sortie
-    _rien_n_a_demarre(banc)
-
-
-@pytest.mark.parametrize("code", ["1", "2", "127"])
-def test_chaine_etat_illisible_refuse_sans_proposer_de_migrer(banc, code):
+@pytest.mark.parametrize("code", ["1", "2", "3", "127"])
+def test_chaine_refus_de_la_garde_ne_demarre_rien_et_dit_comment_lire(banc, code):
     fini = banc.lancer("deployer.sh", "deployer", "prod", "v1.2.3", BANC_MIGRATIONS_CODE=code,
                        BANC_MIGRATIONS_DIT="migrations : REFUS — le registre du tag a 2 têtes")
     assert fini.returncode == 1
-    assert "le registre du tag a 2 têtes" in fini.stderr
-    assert "ne se conclut pas" in fini.stderr and "migrer current" in fini.stderr
+    sortie = (fini.stdout + fini.stderr).replace(str(banc.racine), "")
+    assert "le registre du tag a 2 têtes" in sortie
+    assert "ne peut pas porter v1.2.3" in sortie and "rien n'a basculé" in sortie
+    assert ("systemd-run --pipe --wait --quiet --collect -p WorkingDirectory=/opt/exemple/prod-green "
+            "-p EnvironmentFile=/etc/exemple/prod/app.env -p EnvironmentFile=/etc/exemple/prod/lanceur.env "
+            "-p LoadCredential=scw:/etc/exemple/scw.key /opt/exemple/prod-green/.venv/bin/python "
+            "/opt/exemple/prod-green/deploy/lanceur_secrets.py migrer current") in sortie
     assert "upgrade head" not in fini.stderr
     _rien_n_a_demarre(banc)
 
@@ -278,11 +271,3 @@ def _rien_n_a_demarre(banc):
     assert not [c for c in cmds if "lanceur_secrets.py migrer" in c]   # jamais migré
     assert banc.lire("/etc/exemple/prod/active") == "blue\n"
     assert not (banc.racine / "etc/systemd/system/exemple-prod-maintenance.service").exists()
-
-
-def test_le_retour_arriere_ne_consulte_pas_les_migrations(banc):
-    assert banc.lancer("deployer.sh", "deployer", "prod", "v1.2.3").returncode == 0
-    banc.trace.write_text("")
-    fini = banc.lancer("deployer.sh", "retour", "prod", "v1.2.3", BANC_MIGRATIONS_CODE="3")
-    assert fini.returncode == 0, fini.stderr
-    assert not _garde_appelee(banc.commandes())

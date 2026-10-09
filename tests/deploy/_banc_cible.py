@@ -60,11 +60,16 @@ case "$url" in
 esac''',
     "flock": "exit 0",
     "ss": "exit 0",
-    # La garde des migrations (#1163) passe par le lanceur, sous systemd-run : la doublure
-    # rend le verdict qu'on lui dicte (`BANC_MIGRATIONS_CODE`, `BANC_MIGRATIONS_DIT`) ;
-    # sans dictée, la base est à jour. Le verdict lui-même est jugé à part, sur le script.
+    # La garde des migrations (#1163, #1195) passe par le lanceur, sous systemd-run : la
+    # doublure rend le verdict qu'on lui dicte — à la montée (`--migrer` :
+    # `BANC_MIGRATIONS_CODE`, `BANC_MIGRATIONS_DIT`), au retour (`--retour` :
+    # `BANC_RETOUR_CODE`, `BANC_RETOUR_DIT`) ; sans dictée, la base est à jour. Le verdict
+    # lui-même, et la migration, sont jugés à part, sur le script.
     "systemd-run": r'''
 case " $* " in
+  *" --script deploy/cible/migrations_a_jour.py --retour "*)
+    [ -n "${BANC_RETOUR_DIT:-}" ] && echo "$BANC_RETOUR_DIT" >&2
+    exit "${BANC_RETOUR_CODE:-0}" ;;
   *" --script deploy/cible/migrations_a_jour.py "*)
     [ -n "${BANC_MIGRATIONS_DIT:-}" ] && echo "$BANC_MIGRATIONS_DIT" >&2
     exit "${BANC_MIGRATIONS_CODE:-0}" ;;

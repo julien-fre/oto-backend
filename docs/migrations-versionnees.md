@@ -479,19 +479,22 @@ démarrage** (§5.2).
 
 ### 5.1 Chaque révision suivante s'applique À LA MAIN, pas au déploiement (17/09/2026)
 
-**Rien n'appelle `alembic upgrade` automatiquement** : ni le pipeline de déploiement
-(`.github/`), ni le démarrage du serveur (`server.main`/`db._init`). C'est voulu — le
-chantier qui câblerait cet appel dans le déploiement **est en pause, sur décision
+**Rien n'appelle `alembic upgrade` automatiquement sur NOTRE box** : ni le pipeline de
+déploiement (`.github/`), ni le démarrage du serveur (`server.main`/`db._init`). C'est voulu
+— le chantier qui câblerait cet appel dans notre déploiement **est en pause, sur décision
 d'Alexis** ; le poser par la bande à l'occasion d'une migration de perf serait rouvrir
 ce chantier sans l'avoir décidé.
 
-**Une instance cible ne monte pas un tag en avance sur sa base** (oto-backend#1163) : son
-déploiement (`deploy/cible/deployer.sh`) refuse, avant de démarrer la couleur neuve, quand
-la base du rôle n'est pas à la tête du registre DU TAG — et nomme la commande qui migre,
-sans jamais la jouer (docs/instance-cible.md, § Les migrations, un geste explicite).
+**Une instance cible, elle, migre à la montée** (oto-backend#1163, puis #1195 sur décision
+d'Alexis du 09/10/2026, pour qu'une cible suive le tronc sans geste humain) : son déploiement
+(`deploy/cible/deployer.sh`) amène la base du rôle à la tête du registre DU TAG avant de
+démarrer la couleur neuve — `migrer upgrade head` depuis l'arbre du tag, sur une chaîne
+linéaire seulement — et refuse tout autre écart en le nommant (docs/instance-cible.md,
+§ Les migrations, jouées par la montée).
 
-Donc, une révision au-delà de la référence (ex. `0042_orgs_suspension_par_tenant`) ne
-prend effet qu'après un geste D'EXPLOITATION, manuel, joué par qui déploie — la même
+Donc, sur notre box, une révision au-delà de la référence (ex.
+`0042_orgs_suspension_par_tenant`) ne prend effet qu'après un geste D'EXPLOITATION, manuel,
+joué par qui déploie — la même
 procédure que `stamp head` ci-dessus : `oto-mcp migrer upgrade head` sur la box, par le
 lanceur (la ligne `systemd-run` du §5).
 
