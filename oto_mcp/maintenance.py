@@ -35,6 +35,11 @@ Ils sont ici, chacun nommé, chacun jouable seul :
                                           n'est pas posé
     oto-mcp maintenance all           ceux du timer quotidien, dans l'ordre
 
+    oto-mcp maintenance index-concurrents <révision>
+                                            pose à la main les index CONCURRENTLY
+                                            d'une révision que sa migration refuse de
+                                            construire (docs/migrations-versionnees.md
+                                            §5.1) — PAS un travail : voir plus bas
     oto-mcp maintenance key-index-rebuild   (#421 — voir plus bas, PAS dans `all`)
     oto-mcp maintenance journal-tokens      purge rétroactive des jetons écrits en
                                             clair dans le journal (#558) — À BLANC
@@ -628,7 +633,51 @@ def run(noms: list[str], *, dry_run: bool = False, strict: bool = False) -> int:
     return 1 if (echecs and strict) else 0
 
 
+# Codes de sortie d'`index-concurrents`. Ce n'est PAS un travail : un travail est
+# fail-open (sortie 0 même s'il casse) et ne prend pas d'argument, alors que ce geste
+# est joué par un exploitant, ou par la porte d'une cible, qui doit savoir s'il peut
+# lancer `migrer upgrade head` ensuite.
+INDEX_POSES = 0
+INDEX_REFUS = 1        # révision sans index, index INVALIDE (geste humain à faire)
+INDEX_ERREUR = 2       # base injoignable, construction en échec
+
+
+def index_concurrents(argv: list[str]) -> int:
+    """`oto-mcp maintenance index-concurrents <révision>` : le geste manuel du §5.1,
+    versionné. Construit un par un les index CONCURRENTLY de la révision, vérifie
+    chacun, et dit quoi lancer ensuite."""
+    p = argparse.ArgumentParser(
+        prog="oto-mcp maintenance index-concurrents",
+        description=("Pose à la main les index CONCURRENTLY d'une révision que sa "
+                     "migration refuse de construire (ConstructionManuelleRequise)."))
+    p.add_argument("revision", help="identifiant de la révision, ou son numéro (0049)")
+    args = p.parse_args(argv)
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    from .db import index_concurrent as ic
+    from .db._conn import _connect_autocommit
+    try:
+        ic.index_de_revision(args.revision)     # refus nommé avant toute connexion
+        with _connect_autocommit(bornee=False) as conn:
+            ic.poser_a_la_main(conn, args.revision, dire=print)
+    except (ic.RevisionSansIndex, ic.IndexInvalide) as e:
+        print(f"REFUS : {e}", file=sys.stderr)
+        return INDEX_REFUS
+    except Exception:
+        logger.error("index-concurrents %s : ERREUR — rien n'est à tenir pour posé ; "
+                     "relancer la commande une fois la cause levée", args.revision,
+                     exc_info=True)
+        return INDEX_ERREUR
+    print("Index posés. Lancer maintenant : oto-mcp migrer upgrade head "
+          "(la révision constatera ses index et ne construira rien).")
+    return INDEX_POSES
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "index-concurrents":
+        return index_concurrents(argv[1:])
     p = argparse.ArgumentParser(
         prog="oto-mcp maintenance",
         description="Les travaux de maintenance du backend (ADR 0065, lot 0).")
