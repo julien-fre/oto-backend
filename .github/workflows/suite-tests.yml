@@ -168,7 +168,19 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
             postgresql-17 postgresql-17-pgvector
 
-          echo "── réglages d'une base jetable, puis redémarrage du cluster 17/main"
+          echo "── le cluster 17/main, créé s'il manque"
+          # Sur les images runner, postgresql-common ne crée AUCUN cluster à l'installation
+          # (`create_main_cluster = false` dans /etc/postgresql-common/createcluster.conf) :
+          # /etc/postgresql/17/main n'existe pas, et le premier run (38030634106, 10/10) est
+          # mort sur « conf.d/oto-tests.conf: No such file or directory ». Le cluster se crée
+          # donc explicitement, sans le démarrer : les réglages se posent d'abord.
+          if ! pg_lsclusters -h | awk '$1=="17" && $2=="main"' | grep -q .; then
+            sudo pg_createcluster 17 main
+          fi
+          pg_lsclusters
+
+          echo "── réglages d'une base jetable, puis (re)démarrage du cluster 17/main"
+          sudo install -d -o postgres -g postgres /etc/postgresql/17/main/conf.d
           sudo tee /etc/postgresql/17/main/conf.d/oto-tests.conf >/dev/null <<'CONF'
           fsync = off
           synchronous_commit = off
