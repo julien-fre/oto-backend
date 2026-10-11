@@ -119,6 +119,14 @@ ouverts à toute org. Sa porte n'était pas un contrat provisoire mais un coût 
 déroulés pouvaient tourner sur notre clé de modèle. Ce qui la remplace — modèle
 obligatoire, clé de modèle de l'org — vit dans `docs/runner-et-automatisations.md`.
 
+`oto_recipe` y était entrée avec son lot 1 (contrat provisoire, refusée dans un agent
+hébergé) ; elle en est SORTIE le 2026-10-11. Le refus côté agent hébergé était tombé avec
+856e98fd, et une épreuve en production — vingt-deux cas, de l'aperçu au `for_each` — a
+passé le contrat (les deux défauts trouvés sont corrigés par #1206). Ses gardes ne
+dépendaient pas de la bêta : outil déclaré en lecture seulement, plafond de dépense
+obligatoire, seule une version publiée écrit, droits de l'appelant sur le tableau
+(`docs/recettes.md`).
+
 ⚠️ **N'entrent dans `BETA_TOOLS` que des noms NEUFS.** Le bloc masque fail-closed : y
 poser le nom d'une surface vivante la retirerait d'un coup à tous les comptes sans
 l'option — la rupture de #756 en pire, parce que silencieuse. Cliquet :

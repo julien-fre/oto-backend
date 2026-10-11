@@ -121,11 +121,9 @@ BETA_TOOLS: frozenset[str] = frozenset({
     # part de VIDE et son contrat est PROVISOIRE — ce premier lot stocke et versionne,
     # il n'exécute pas encore. ⚠️ Nom NEUF : `oto_function` naît avec ce lot.
     "oto_function",
-    # La RECETTE (connecteur → tableau sans modèle, `docs/recettes.md`). Contrat
-    # PROVISOIRE, et refusée dans un agent hébergé tant que le jeton d'un travail ne
-    # porte pas la liste d'outils de son déclencheur. ⚠️ Nom NEUF, hors `data_*` : le
-    # namespace `data` est protégé, il aurait rendu la recette visible à tous.
-    "oto_recipe",
+    # `oto_recipe` en est SORTI le 11/10/2026 : éprouvée en production (épreuve,
+    # publication, exécution, reprise, for_each, refus du contrat), et un agent hébergé
+    # la lance comme tout client depuis 856e98fd — `docs/tool-visibility.md`.
 })
 
 # L'option qui ouvre `BETA_TOOLS`. Posée par un admin sur un UTILISATEUR ou sur
