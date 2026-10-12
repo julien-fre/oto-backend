@@ -749,6 +749,64 @@ def secret_from_input(
     return key
 
 
+def platform_secret_from_input(
+    connector: str, api_key: Optional[str] = None, fields: Optional[dict] = None,
+) -> str:
+    """String secret d'une clé PLATEFORME (`POST /api/admin/platform-keys`), packée
+    comme le lisent les lecteurs du coffre — SOURCE UNIQUE de `platform.key.create`.
+
+    - blob mono-valeur (≤1 champ au chiffré : serper & co) → `api_key` strippée,
+      INCHANGÉ : jamais relue comme du JSON ;
+    - blob multi-champs (`forager` : api_key + account_id ; `transcription`) → les champs
+      viennent de `fields`, et `api_key` remplit le premier champ SECRET déclaré (la
+      console n'envoie que lui). Une `api_key` qui est elle-même un objet JSON (le
+      contournement déjà posé à la main) est lue comme ces champs — jamais
+      ré-encodée en JSON d'une string JSON. Puis `validate_fields` (nettoyage, jeu
+      fermé, `required` non vides) et `pack_secret`.
+
+    Avant, la valeur brute était stockée telle quelle : le blob d'un connecteur
+    multi-champs n'était pas du JSON, et tout lecteur strict (`unpack_secret` : relevé
+    de solde, sonde) refusait « le blob multi-champs stocké n'est pas du JSON ».
+
+    Lève `CredentialFieldsInvalid` : `empty_api_key` (mono vide), `unknown_field` (champ
+    hors du chiffré déclaré — il serait écarté sans bruit), `conflicting_api_key` (deux
+    valeurs pour le champ secret), `missing_credentials`, `invalid_field_value`."""
+    c = providers.REGISTRY.get(connector)
+    vault = c.vault_fields if c is not None else ()
+    key = (api_key or "").strip()
+    if len(vault) < 2:
+        if not key:
+            raise CredentialFieldsInvalid("empty_api_key", "clé d'API vide.")
+        return key
+    provided = dict(fields or {})
+    if key.startswith("{"):
+        try:
+            depuis_la_cle = json.loads(key)
+        except ValueError:
+            depuis_la_cle = None
+        if isinstance(depuis_la_cle, dict):
+            provided = {**depuis_la_cle, **provided}
+            key = ""
+    noms = {f.name for f in vault}
+    inconnus = sorted(str(k) for k in provided if k not in noms)
+    if inconnus:
+        raise CredentialFieldsInvalid(
+            "unknown_field",
+            f"champ(s) inconnu(s) pour `{connector}` : {', '.join(inconnus)} "
+            f"(attendus : {', '.join(f.name for f in vault)}).")
+    if key:
+        champ = next((f for f in vault if f.secret), vault[0])
+        deja = str(provided.get(champ.name) or "").strip()
+        if deja and clean_field_value(champ, deja) != clean_field_value(champ, key):
+            raise CredentialFieldsInvalid(
+                "conflicting_api_key",
+                f"deux clés différentes : `api_key` et le champ `{champ.name}`.")
+        provided[champ.name] = key
+    provided = {k: (v if isinstance(v, str) or v is None else str(v))
+                for k, v in provided.items()}
+    return pack_secret(connector, validate_fields(connector, provided))
+
+
 def preparer_pose(entity_type: str, entity_id: str, connector: str, account: str,
                   api_key: Optional[str] = None,
                   fields: Optional[dict] = None) -> tuple[str, dict]:

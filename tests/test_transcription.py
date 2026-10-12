@@ -165,13 +165,15 @@ def monde(monkeypatch):
             return dict(etat["creds"])
 
     class _CredPlateforme:
-        """Le secret plateforme est la clé nue : `.fields` la relirait comme du JSON."""
+        """Le secret plateforme : la clé nue (posée avant le pack) ou le pack JSON —
+        `.fields` lit les deux, comme `ResolvedCredential.fields` (`platform_fields`)."""
         is_platform = True
         secret = "k-plateforme"
 
         @property
         def fields(self):
-            raise AssertionError("un secret plateforme ne se déballe pas en JSON")
+            from oto_mcp import credentials_store
+            return credentials_store.platform_fields("transcription", self.secret)
 
     def _resolve(provider, want="auto", **kw):
         etat["want"] = want

@@ -504,3 +504,51 @@ def test_les_revoques_ne_sont_listes_que_sur_demande(monkeypatch, socle, super_a
     call(cle, path_params=pp)
     call(cle, path_params=pp, query=b"include_revoked=true")
     assert [v[2] for v in socle if v[0] == "list"] == [False, True]
+
+
+# --- Clé plateforme multi-champs : packée comme une clé d'org ----------------
+
+def _secret_pose(monkeypatch) -> list:
+    poses: list = []
+    monkeypatch.setattr(credentials_store, "set_platform_key",
+                        lambda label, conn, secret, set_by=None:
+                        poses.append((conn, secret)))
+    return poses
+
+
+@pytest.mark.parametrize("corps,attendu", [
+    ({"api_key": " fg-key "}, {"api_key": "fg-key"}),
+    ({"api_key": '{"api_key": "fg-key"}'}, {"api_key": "fg-key"}),
+    ({"api_key": "fg-key", "fields": {"account_id": "12"}},
+     {"api_key": "fg-key", "account_id": "12"}),
+])
+def test_une_cle_forager_est_packee_en_champs(monkeypatch, socle, super_admin,
+                                              corps, attendu):
+    poses = _secret_pose(monkeypatch)
+    code, _ = call("platform.key.create",
+                   body={"provider": "forager", "label": "p", **corps})
+    assert code == 200
+    (conn, secret), = poses
+    assert conn == "forager" and json.loads(secret) == attendu
+
+
+@pytest.mark.parametrize("corps,erreur", [
+    ({"api_key": "  "}, "missing_fields"),
+    ({"api_key": '{"api_key": " "}'}, "missing_credentials"),
+    ({"api_key": "k", "fields": {"region": "eu"}}, "unknown_field"),
+    ({"api_key": "k", "fields": {"api_key": "autre"}}, "conflicting_api_key"),
+])
+def test_les_refus_d_une_cle_multi_champs_sont_nommes(monkeypatch, socle, super_admin,
+                                                      corps, erreur):
+    poses = _secret_pose(monkeypatch)
+    code, out = call("platform.key.create",
+                     body={"provider": "forager", "label": "p", **corps})
+    assert (code, out["error"]) == (400, erreur)
+    assert poses == []
+
+
+def test_une_cle_serper_reste_brute(monkeypatch, socle, super_admin):
+    poses = _secret_pose(monkeypatch)
+    code, _ = call("platform.key.create",
+                   body={"provider": "serper", "label": "p", "api_key": " sk-1 "})
+    assert code == 200 and poses == [("serper", "sk-1")]

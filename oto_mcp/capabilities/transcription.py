@@ -89,9 +89,10 @@ def deposer(sub: str, pid: int, lire: Callable[[], file_source.ResolvedFile], *,
     except McpError as e:
         # `from e` : la face MCP rend l'erreur d'origine, déjà actionnable.
         raise AuthzDenied(400, "credential_unavailable", e.error.message) from e
-    # Un secret plateforme est la clé SEULE (la langue et le vocabulaire sont ceux de
-    # l'appel) ; celui d'une instance d'org est le pack JSON des trois champs.
-    creds = {"api_key": rc.secret} if rc.is_platform else rc.fields
+    # `.fields` lit les deux formes d'un secret plateforme (`platform_fields`) : la clé
+    # SEULE posée avant que la console ne packe les champs, ou le pack JSON des trois
+    # champs comme une instance d'org. Lire `rc.secret` brut enverrait ce JSON à Mistral.
+    creds = rc.fields
     api_key = creds.get("api_key")
     if not api_key:
         raise AuthzDenied(400, "credential_unavailable",

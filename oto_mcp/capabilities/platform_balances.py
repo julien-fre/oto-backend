@@ -95,7 +95,10 @@ async def _probe_one(provider: str, label: str) -> dict:
         if not row:
             raise RuntimeError("the platform row no longer resolves (removed, or undecryptable "
                                "— see `oto_admin_vault_health`).")
-        fields = credentials_store.unpack_secret(provider, row["secret"])
+        # `platform_fields`, not the strict `unpack_secret`: a multi-field key posted
+        # before the console packed it is ONE raw value, and was refused here as
+        # "the stored multi-field blob is not JSON".
+        fields = credentials_store.platform_fields(provider, row["secret"])
         mesures = await connector_verify.executer(
             probe, fields, credentials_store.public_meta(row.get("meta")),
             instance=(credentials_store.PLATFORM, label, ""))

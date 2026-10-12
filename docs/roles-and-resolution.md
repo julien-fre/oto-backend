@@ -260,7 +260,11 @@ ou `_QUOTA_DEFAULTS` dans `access/quotas.py`. User key bypass quota.
 bootstrap SOPS/env au boot, oto-mcp#12). Poser/roter une clé = surface admin :
 REST `POST /api/admin/platform-keys` ou meta-tool `oto_admin_set_platform_key`
 (rotation = re-poser même provider+label ; label historique servi par
-`resolve_api_key` = `env`). Poser ≠ granter : l'admin accorde l'accès au cas
+`resolve_api_key` = `env`). Le blob d'un connecteur **multi-champs** (`forager`,
+`transcription`) se packe comme une clé d'org (`credentials_store.platform_secret_from_input`) :
+`api_key` remplit son champ secret, `fields` porte les autres, un champ non déclaré est
+refusé (`unknown_field`) ; une ancienne clé posée brute se relit par
+`credentials_store.platform_fields`. Poser ≠ granter : l'admin accorde l'accès au cas
 par cas. Modèle : clé membre (sub, org de contexte — ADR 0033, prio, no quota) OU platform key + grant + quota OU
 erreur. **Seuls les providers `platform`-éligibles au registre (`auth_modes`
 inclut `platform` : `serper/hunter/sirene/kaspr`) peuvent avoir une clé

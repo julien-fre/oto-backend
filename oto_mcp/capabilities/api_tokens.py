@@ -169,6 +169,10 @@ class PlatformKeyCreateInput(BaseModel):
     # ⚠️ Le seul secret en CLAIR de ce module. Il est chiffré au coffre et ne ressort
     # jamais : la réponse ne porte que l'identité de la clé.
     api_key: str = ""
+    # Les champs d'un connecteur MULTI-CHAMPS (`forager` : `account_id` ; `transcription`
+    # : `language`, `vocabulary`), par nom — secret en clair lui aussi. `api_key` reste
+    # la forme courte de son champ secret ; un connecteur mono-clé n'en lit rien.
+    fields: Optional[dict[str, str]] = None
 
 
 class PlatformKeyDeleteInput(BaseModel):
@@ -531,10 +535,16 @@ def _keys_create(ctx: ResolvedCtx, inp: PlatformKeyCreateInput) -> dict:
     api_key = (inp.api_key or "").strip()
     if provider not in db.KEY_PROVIDERS and not _porte_une_cle_plateforme(provider):
         raise AuthzDenied(400, "invalid_provider")
-    if not label or not api_key:
+    if not label or not (api_key or inp.fields):
         raise AuthzDenied(400, "missing_fields")
+    # Le blob se packe comme le lisent les lecteurs du coffre : la valeur brute d'un
+    # connecteur multi-champs n'était pas du JSON, et le relevé de solde la refusait.
     try:
-        credentials_store.set_platform_key(label, provider, api_key, set_by=ctx.sub)
+        secret = credentials_store.platform_secret_from_input(provider, api_key, inp.fields)
+    except credentials_store.CredentialFieldsInvalid as e:
+        raise AuthzDenied(400, e.code, e.message)
+    try:
+        credentials_store.set_platform_key(label, provider, secret, set_by=ctx.sub)
     except ValueError as e:
         raise AuthzDenied(400, "invalid_platform_provider", str(e))
     return {"provider": provider, "label": label}
@@ -582,8 +592,14 @@ _D_A_DELETE = ("Révoque un jeton d'un compte tiers, en gardant la trace (qui, q
 _D_K_LIST = ("Les clés PLATEFORME posées, sans leur secret : provider, libellé, date de "
              "pose. Le secret n'est ni déchiffré ni rendu par cette surface.")
 _D_K_CREATE = ("Pose une clé plateforme. Elle est chiffrée au coffre et ne ressort "
-               "jamais. Refus nommés : `invalid_provider` (hors registre), "
-               "`missing_fields`, `invalid_platform_provider`.")
+               "jamais. Connecteur multi-champs (`forager`, `transcription`) : `api_key` "
+               "remplit son champ secret, `fields` porte les autres par nom (ou tous) ; "
+               "le blob est packé comme pour une clé d'org. Refus nommés : "
+               "`invalid_provider` (hors registre), `missing_fields` (libellé ou clé "
+               "absents), `empty_api_key`, `missing_credentials` (champ requis vide), "
+               "`unknown_field` (champ que le connecteur ne déclare pas), "
+               "`conflicting_api_key` (`api_key` et le champ secret diffèrent), "
+               "`invalid_field_value`, `invalid_platform_provider`.")
 _D_K_DELETE = ("Retire une clé plateforme. Ses grants vivent sur sa ligne : ils partent "
                "avec elle, sans orphelin.")
 
