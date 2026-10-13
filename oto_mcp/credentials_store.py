@@ -1150,28 +1150,24 @@ def set_credential(
 
 def set_platform_key(label: str, connector: str, secret: str,
                      set_by: Optional[str] = None, meta: Optional[dict] = None) -> None:
-    """Pose une clé PLATEFORME (console admin). Un connecteur sans palier gratuit
-    (`platform_key_open=False`) la reçoit FERMÉE : elle ne sert que les orgs accordées
-    (`grant_platform`). Sans ça, la ligne naissait `share_mode='open'` (défaut de la
-    colonne) avec un `share_down` vide, que `access.platform_grant` lit « ouvert à
-    tous » : entre la pose et le premier accord, n'importe quel compte sans clé à lui
-    consommait la clé payante d'oto, sans plafond (`default_quota=0`). Une rotation
-    sur une clé déjà accordée la laisse fermée ; un connecteur à palier gratuit garde
-    sa clé ouverte.
+    """Pose une clé PLATEFORME (console admin). La clé naît OUVERTE à toutes les orgs,
+    palier gratuit ou non : poser une clé plateforme, c'est la partager — c'est la
+    facturation de l'instance qui fait payer l'usage, pas la fermeture de la ligne.
+    Restreindre reste un geste explicite : un accord (`platform_grant`) ferme la ligne
+    sur ses bénéficiaires. Une rotation ne touche pas aux accords existants ; une
+    ligne fermée SANS accord (posée fermée par le passé) se rouvre à la pose.
 
     `secret` est déjà à la forme du coffre : la pose passe par `preparer_pose`, comme
     les paliers org, équipe et tenant (`capabilities/api_tokens._keys_create`)."""
-    c = providers.REGISTRY.get(connector)
-    ouverte = bool(c and getattr(c, "platform_key_open", False))
     with _connect() as conn:
         set_credential(PLATFORM, label, connector, secret, set_by=set_by, meta=meta,
                        conn=conn)
-        if not ouverte:
-            conn.execute(
-                "UPDATE connector_credentials SET share_mode = 'closed' "
-                "WHERE entity_type = %s AND entity_id = %s AND connector = %s "
-                "AND account = ''",
-                (PLATFORM, label, connector))
+        conn.execute(
+            "UPDATE connector_credentials SET share_mode = 'open' "
+            "WHERE entity_type = %s AND entity_id = %s AND connector = %s "
+            "AND account = '' AND share_mode = 'closed' "
+            "AND share_down = '[]'::jsonb",
+            (PLATFORM, label, connector))
 
 
 def clear_credential(entity_type: str, entity_id: str, connector: str, conn=None,
