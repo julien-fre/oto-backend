@@ -40,10 +40,10 @@ def _avertissement_de_portee(ns_id: int, owner_type: str, *,
     toujours ne se lit plus.
 
     ⚠️ **Le remède dépend de la FACE, parce que les deux faces n'ont pas le même
-    geste.** `owner` est un paramètre de la route REST ; le tool MCP ne l'a pas.
-    Prescrire `owner` à un agent, c'est lui faire dépenser un appel pour un refus —
-    le défaut même que cette phrase répare, retourné. Ce qu'un agent PEUT faire, lui,
-    c'est transférer après coup (`oto_resource op=transfer`).
+    geste.** `owner` est un paramètre de la route REST ; le tool MCP l'écrit
+    `owner_type`/`owner_id`. Prescrire `owner` à un agent, c'est lui faire dépenser
+    un appel pour un refus. Pour le tableau DÉJÀ créé, l'agent transfère
+    (`oto_resource op=transfer`) ; pour le suivant, il nomme le propriétaire.
     """
     if explicite or owner_type != "user":
         return None
@@ -62,7 +62,9 @@ def _avertissement_de_portee(ns_id: int, owner_type: str, *,
     if aga.appel_d_agent():
         return (f"{tete} Pour qu'il appartienne à l'organisation : "
                 f"`oto_resource(op='transfer', resource_id='{ns_id}', "
-                f"new_owner_org={demandee})`.")
+                f"new_owner_org={demandee})`. La prochaine fois, crée-le directement "
+                f"chez elle : `data_create_datastore(…, owner_type='org', "
+                f"owner_id={demandee})`.")
     return (f"{tete} Pour qu'il appartienne à l'organisation : "
             f"`owner: {{\"type\": \"org\", \"id\": {demandee}}}` à la création.")
 

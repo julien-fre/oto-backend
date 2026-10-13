@@ -19,7 +19,7 @@ from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, db, ownership
+from .. import access, db, ownership, roles
 from ..datastore import claimable, couches, identite, jetons, mots_deprecies, vide_remplace
 from ..datastore import charge_a_renvoyer
 from ..datastore import forcage as fcg
@@ -487,6 +487,46 @@ def _destinataire(email: str, recipient_sub: str) -> dict:
     return porteurs[0]
 
 
+def _proprietaire_demande(sub: str, owner_type: Optional[str],
+                          owner_id: Optional[int]) -> tuple[Optional[str], Optional[str]]:
+    """Le propriétaire NOMMÉ par l'agent (ADR 0068, régime ② : org / équipe explicite,
+    ouvert à un agent) — mêmes gardes d'appartenance que la route REST
+    (`capabilities/datastore/datastores._create_datastore`). `(None, None)` = rien de
+    nommé : le store applique son défaut, la personne.
+
+    `owner_type="org"` sans `owner_id` vise l'org de l'APPEL (`_org=`), jamais l'org
+    active : celle-ci retombe sur la maison, et « l'org » deviendrait l'org perso sans
+    que personne l'ait dit."""
+    t = (owner_type or "").strip().lower() or None
+    if t is None or t == "user":
+        if owner_id is not None:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+                "`owner_id` sans `owner_type` : passe `owner_type=\"org\"` ou "
+                "`\"group\"`, ou omets les deux pour un tableau personnel.")))
+        return None, None
+    if t == "org":
+        from .. import session_org
+        oid = owner_id if owner_id is not None else session_org.current_call_org()
+        if oid is None:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+                "`owner_type=\"org\"` : précise `owner_id` (ou passe `_org=`).")))
+        if not roles.is_org_member(sub, int(oid)):
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+                f"tu n'es pas membre de l'org {oid} : impossible de lui créer un tableau.")))
+        return "org", str(int(oid))
+    if t == "group":
+        if owner_id is None:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+                "`owner_type=\"group\"` : précise `owner_id` (l'id de l'équipe).")))
+        if not roles.can_read_group(sub, int(owner_id)):
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+                f"tu n'es pas membre de l'équipe {owner_id} : impossible de lui créer "
+                f"un tableau.")))
+        return "group", str(int(owner_id))
+    raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+        f"`owner_type` inconnu : `{owner_type}` (attendu : org, group).")))
+
+
 def register(mcp: FastMCP) -> None:
 
     # ⚠️ Le docstring nomme `ns_id` DÉLIBÉRÉMENT (oto#176). Ce catalogue ne rendait
@@ -522,7 +562,8 @@ def register(mcp: FastMCP) -> None:
     # puis exige que le texte servi nomme ce défaut-là — jamais l'inverse. C'est lui qui
     # a refusé de virer au vert quand le défaut a changé, avant que ce texte ne bouge.
     @mcp.tool()
-    def data_create_datastore(datastore: Adresse) -> dict:
+    def data_create_datastore(datastore: Adresse, owner_type: Optional[str] = None,
+                              owner_id: Optional[int] = None) -> dict:
         """Create a new datastore (PG-backed, schema-free).
 
         The table is PRIVATE: it belongs to you, and no one else can read it — not
@@ -530,9 +571,11 @@ def register(mcp: FastMCP) -> None:
         never implicit (ADR 0068).
 
         ⚠️ It used to be owned by your ACTIVE ORG, readable by every member. To share
-        a table with your org or a team, say so: the REST route takes
-        `owner: {type: "org"|"group", id: N}`. Tables created before 2026-09-04 keep
-        the owner they have.
+        a table with your org or a team, say so: pass `owner_type="org"` (or
+        `"group"`) with `owner_id` — the REST route takes the same as
+        `owner: {type: "org"|"group", id: N}`. Working FOR an org (its data, its
+        pipeline, a table its members will open)? Name the org. Tables created
+        before 2026-09-04 keep the owner they have.
 
         ⚠️ **`_org=` does NOT change the owner.** It decides which org you read and
         write under — never who owns what you create. Create a table under `_org=N`
@@ -547,6 +590,10 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             datastore: kebab-case identifier, unique per owner (e.g. `timetrack`).
+            owner_type: omit for a personal table; `"org"` or `"group"` to create it
+                owned by an org / a team you are a member of.
+            owner_id: the org or team id. With `owner_type="org"`, defaults to the
+                `_org` of this call.
         """
         sub = access.current_user_sub_or_raise()
         if not datastore or not datastore.strip():
@@ -559,7 +606,9 @@ def register(mcp: FastMCP) -> None:
                          "(`oto_project op=link target_type=tableau … slot='<name>'`).")))
         store = _store_for(sub)
         try:
-            return store.create_datastore(datastore.strip())
+            proprio, pid = _proprietaire_demande(sub, owner_type, owner_id)
+            return store.create_datastore(datastore.strip(), owner_type=proprio,
+                                          owner_id=pid)
         except DatastoreExists:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,

@@ -198,3 +198,108 @@ def test_la_face_rest_rend_exactement_ce_que_le_store_rend(monkeypatch):
     assert code == 201
     for cle, valeur in rendu.items():
         assert body[cle] == valeur
+
+
+# ── Le propriétaire NOMMÉ sur la face agent (ADR 0068, régime ②) ────────────
+#
+# La description disait « la route REST prend `owner` » à un lecteur qui n'a pas la
+# route REST. Un agent qui travaillait POUR une org ne pouvait que créer du personnel
+# puis transférer — et la plupart s'arrêtaient à la première moitié (3Dnatives, 30/09 :
+# le to-do de l'équipe, invisible de l'équipe).
+
+
+def _tool_monte(monkeypatch, membre_org=True, membre_equipe=True):
+    import asyncio
+
+    from fastmcp import FastMCP
+
+    from oto_mcp import access, roles
+    from oto_mcp.tools import datastore as surface
+
+    vus = []
+
+    def _create(ot, oid, ns, *, context_org_id):
+        vus.append((ot, oid))
+        return 42
+
+    monkeypatch.setattr(registre.db, "create_datastore", _create)
+    monkeypatch.setattr(registre, "_ns_url", lambda ns_id, sub, org=None: f"https://d/data/{ns_id}")
+    monkeypatch.setattr(DatastorePg, "_org_de_l_appel", lambda self: None)
+    monkeypatch.setattr(access, "current_user_sub_or_raise", lambda: "u-1")
+    monkeypatch.setattr(surface, "_store_for", lambda sub: DatastorePg("u-1"))
+    monkeypatch.setattr(roles, "is_org_member", lambda sub, org_id: membre_org)
+    monkeypatch.setattr(roles, "can_read_group", lambda sub, gid: membre_equipe)
+
+    mcp = FastMCP("sonde")
+    surface.register(mcp)
+    return asyncio.run(mcp.get_tool("data_create_datastore")).fn, vus
+
+
+def test_l_agent_cree_un_tableau_d_ORG_en_le_nommant(monkeypatch):
+    fn, vus = _tool_monte(monkeypatch)
+    out = fn(datastore="to-do", owner_type="org", owner_id=368)
+    assert vus == [("org", "368")]
+    assert out["is_personal"] is False and "avertissement" not in out
+
+
+def test_owner_type_org_sans_id_vise_l_org_de_l_APPEL(monkeypatch, org_demandee):
+    fn, vus = _tool_monte(monkeypatch)
+    fn(datastore="to-do", owner_type="org")
+    assert vus == [("org", "35")]
+
+
+def test_owner_type_org_sans_id_ni_org_d_appel_est_refuse(monkeypatch):
+    """Jamais l'org ACTIVE : elle retombe sur la maison, souvent l'org perso."""
+    from oto_mcp.mcp_errors import McpError
+
+    fn, vus = _tool_monte(monkeypatch)
+    with pytest.raises(McpError):
+        fn(datastore="to-do", owner_type="org")
+    assert vus == []
+
+
+def test_une_org_dont_on_n_est_pas_membre_est_refusee(monkeypatch):
+    from oto_mcp.mcp_errors import McpError
+
+    fn, vus = _tool_monte(monkeypatch, membre_org=False)
+    with pytest.raises(McpError):
+        fn(datastore="to-do", owner_type="org", owner_id=999)
+    assert vus == []
+
+
+def test_une_equipe_exige_son_id_et_l_appartenance(monkeypatch):
+    from oto_mcp.mcp_errors import McpError
+
+    fn, vus = _tool_monte(monkeypatch)
+    with pytest.raises(McpError):
+        fn(datastore="to-do", owner_type="group")
+    fn(datastore="to-do", owner_type="group", owner_id=9)
+    assert vus == [("group", "9")]
+
+    fn2, vus2 = _tool_monte(monkeypatch, membre_equipe=False)
+    with pytest.raises(McpError):
+        fn2(datastore="to-do", owner_type="group", owner_id=9)
+    assert vus2 == []
+
+
+def test_un_owner_id_sans_owner_type_est_refuse(monkeypatch):
+    """Un id seul ne dit pas QUOI : le deviner, c'est choisir une portée à sa place."""
+    from oto_mcp.mcp_errors import McpError
+
+    fn, vus = _tool_monte(monkeypatch)
+    with pytest.raises(McpError):
+        fn(datastore="to-do", owner_id=368)
+    assert vus == []
+
+
+def test_sans_owner_le_defaut_reste_la_PERSONNE(monkeypatch):
+    """ADR 0068 intact : exposer le paramètre ne change pas le défaut."""
+    fn, vus = _tool_monte(monkeypatch)
+    out = fn(datastore="to-do")
+    assert vus == [("user", "u-1")] and out["is_personal"] is True
+
+
+def test_l_avertissement_d_agent_nomme_aussi_le_geste_de_CREATION(
+        store, org_demandee, face_agent):
+    message = store.create_datastore("vivier")["avertissement"]
+    assert "owner_type='org'" in message and "owner_id=35" in message

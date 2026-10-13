@@ -181,3 +181,9 @@ def test_oto_trigger_dit_d_entree_qu_il_n_est_pas_la_routine_de_l_assistant():
     assert "procedure-en-routine" in ouverture, "le bon chemin doit être nommé"
     assert "the product's /schedule" not in d, (
         "« the product's /schedule » refait d'oto_trigger le chemin par défaut du planifié")
+
+
+def test_la_face_agent_nomme_SON_parametre_de_proprietaire():
+    """Le texte nommait la route REST à un lecteur qui n'a que le tool."""
+    d = _descriptions_servies()["data_create_datastore"]
+    assert 'owner_type="org"' in d and "owner_id" in d
