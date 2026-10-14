@@ -226,3 +226,44 @@ def test_enum_a_cote_d_options_est_refusee_vers_options():
                                               "options": ["a"], "enum": ["a"]}]})
     assert len(errs) == 1 and errs[0].startswith("fields.s : `enum`"), errs
     assert "voulais-tu `options` ?" in errs[0]
+
+
+# ── une clé admise rangée dans `meta` (table 966, 14/10/2026) ────────────────
+
+def test_options_dans_meta_est_REFUSEE_et_renvoyee_a_cote():
+    """Trois colonnes `enum` portaient leur liste en `meta.options` : acceptée sans un
+    mot, elle ne contraignait rien et le Kanban ne la voyait pas."""
+    errs = S.validate_schema_def({"fields": [{"key": "s", "type": "enum",
+                                              "meta": {"options": ["a", "b"]}}]})
+    assert len(errs) == 1 and errs[0].startswith("fields.s.meta.options"), errs
+    assert "SANS EFFET" in errs[0]
+
+
+def test_une_cle_admise_a_un_AUTRE_niveau_reste_libre_dans_meta():
+    """Seules les clés que CE niveau admet font ombre : `new_rows` est un réglage de
+    tête, une colonne peut le citer dans son `meta` sans rien prétendre."""
+    assert S.validate_schema_def({"fields": [{"key": "s", "type": "text",
+                                              "meta": {"new_rows": "x"}}]}) == []
+
+
+def test_une_annotation_a_soi_dans_meta_passe_toujours():
+    assert S.validate_schema_def({"fields": [{"key": "s", "type": "enum",
+                                              "options": ["a"],
+                                              "meta": {"depends_on": "t"}}]}) == []
+
+
+def test_meta_options_DEJA_STOCKEE_passe_tant_qu_on_n_y_touche_pas():
+    """Même parti que les clés inconnues : le patch d'une AUTRE colonne repasse le
+    schéma entier, et ne doit pas devenir impossible sur un tableau non rangé."""
+    from oto_mcp.datastore import cles_inconnues as CI
+    ancien = {"fields": [{"key": "s", "type": "enum", "meta": {"options": ["a"]}}]}
+    # Inchangé : passe.
+    assert CI.refus(ancien, ancien) == []
+    # `meta` modifié à côté, l'ombre gardée telle quelle : passe.
+    touche = {"fields": [{"key": "s", "type": "enum",
+                          "meta": {"options": ["a"], "note": "x"}}]}
+    assert CI.refus(touche, ancien) == []
+    # L'ombre elle-même modifiée : c'est un geste, refusé.
+    change = {"fields": [{"key": "s", "type": "enum", "meta": {"options": ["a", "b"]}}]}
+    errs = CI.refus(change, ancien)
+    assert len(errs) == 1 and "meta.options" in errs[0], errs

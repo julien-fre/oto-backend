@@ -751,10 +751,15 @@ def register(mcp: FastMCP) -> None:
         A typed datastore renders as readable cards/records instead of a flat table.
         `schema` = {"fields": [{"key": str, "label"?: str, "type"?: "text|number|date|
         datetime|bool|json|object|list|url|email|phone|enum",
-        "display"?: "title", "role"?: "status|metric|note|qualif",
+        "options"?: [str], "display"?: "title", "role"?: "status|metric|note|qualif",
         "description"?: str, "meta"?: {…}}],
         "key"?: str, "new_rows"?: "create|reject", "description"?: str,
         "meta"?: {…}}.
+        An `enum` column's allowed values go in `options`, ON the field
+        (`{"key": "status", "type": "enum", "options": ["kept", "rejected"]}`) —
+        that is what constrains the values and what a board groups on. Never in
+        `meta`: a key the field admits is REFUSED there (stored, it would do
+        nothing).
         ⚠️ **The vocabulary is CLOSED: a key its level does not admit is REFUSED** —
         at the head, on a field, on a sub-field, in `of`, in `lifecycle`. The refusal
         names the path, the key and the closest known one (`read_only` → `readonly`),
