@@ -427,3 +427,23 @@ def test_ombre_DIFFERENTE_de_la_cle_posee_est_inmigrable():
                           "meta": {"options": ["b"]}}]}
     with pytest.raises(M.Inmigrable, match="meta.options"):
         M.durcir(schema)
+
+
+def test_une_GARDE_dans_meta_reste_et_est_listee():
+    """Sortir `readonly` verrouillerait la colonne, `new_rows` fermerait le tableau :
+    ce n'est pas au rangement de le décider."""
+    schema = {"meta": {"new_rows": "reject"},
+              "fields": [{"key": "s", "type": "enum",
+                          "meta": {"options": ["a"], "readonly": True, "label": "S"}}]}
+    plan = M.durcir(schema)
+    f = plan.schema["fields"][0]
+    assert f["options"] == ["a"] and f["label"] == "S"
+    assert f["meta"] == {"readonly": True}, "la garde reste dans meta"
+    assert plan.schema["meta"] == {"new_rows": "reject"}
+    assert plan.a_arbitrer == [("", ["new_rows"]), ("fields.s", ["readonly"])]
+
+
+def test_des_gardes_seules_ne_rendent_pas_le_plan_non_vide():
+    plan = M.durcir({"fields": [{"key": "s", "type": "text",
+                                 "meta": {"required": True}}]})
+    assert plan.vide and plan.a_arbitrer == [("fields.s", ["required"])]

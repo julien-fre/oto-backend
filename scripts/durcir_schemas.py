@@ -52,10 +52,14 @@ limitent chacune la sienne, et les autres ne sont alors pas parcourues.
 - **`semantic_search` en tête** — SUPPRIMÉE : c'est un paramètre d'appel, déjà
   appliqué ailleurs (colonne `user_datastores.semantic_search`) ;
 - **une clé ADMISE rangée dans `meta`** (table 966, 14/10/2026 : `meta.options` sur
-  des colonnes `enum`) — SORTIE de `meta`, posée à côté, au même niveau : c'était
-  l'intention, et c'est désormais refusé dans `meta`. Déjà posée à côté avec la même
-  valeur : la copie de `meta` est retirée ; avec une AUTRE valeur : inmigrable, listé.
-  ⚠️ Sortir `options` ARME la liste, comme le renommage d'`enum` ci-dessus ;
+  des colonnes `enum`) — `options` et les clés de PRÉSENTATION (`label`,
+  `description`, `hidden`, `width`, `role`…) sont SORTIES de `meta`, posées à côté,
+  au même niveau. Déjà posée à côté avec la même valeur : la copie de `meta` est
+  retirée ; avec une AUTRE valeur : inmigrable, listé. ⚠️ Sortir `options` ARME la
+  liste, comme le renommage d'`enum` ci-dessus. Une clé de GARDE (`readonly`,
+  `required`, `new_rows`, `agent_access`, `type`…) reste dans `meta` et est
+  seulement LISTÉE, « à arbitrer » : la sortir changerait ce que le tableau
+  accepte ou montre, et ce n'est pas au rangement de le décider ;
 - **toute autre clé inconnue** — DÉPLACÉE dans `meta` au même niveau, telle quelle.
   Jamais convertie en clé active : un `read_only` reste inerte dans `meta`, il ne
   devient pas un `readonly`. Le script range, il ne devine pas une intention.
@@ -137,6 +141,9 @@ class Plan:
     supprimees: list = field(default_factory=list)  # (chemin, clé, motif)
     enum: list = field(default_factory=list)        # (chemin, cas)
     sorties: list = field(default_factory=list)     # (chemin, [clés sorties de meta])
+    #: (chemin, [clés de garde laissées dans meta]) — listées, jamais écrites : ne
+    #: rendent pas le plan non vide à elles seules.
+    a_arbitrer: list = field(default_factory=list)
 
     @property
     def vide(self) -> bool:
@@ -190,6 +197,15 @@ def _sortir_de_meta(noeud: dict, niveau: str, chemin: str, plan: Plan) -> None:
     if not isinstance(meta, dict):
         return
     ombres = [k for k in meta if k in sk.ADMISES[niveau] and k != sk.META]
+    # ⚠️ Seules `options` et les clés de PRÉSENTATION sortent d'office. Une clé que le
+    # validateur lit (`readonly`, `required`, `new_rows`, `agent_access`, `type`…)
+    # changerait le comportement du tableau en sortant — verrouiller une colonne,
+    # fermer le tableau, la cacher aux agents. Le script range, il ne devine pas une
+    # intention : celles-là restent dans `meta` et sont LISTÉES, à arbitrer.
+    gardes = [k for k in ombres if k != "options" and k in sk.CONTRAINTES[niveau]]
+    if gardes:
+        plan.a_arbitrer.append((chemin, gardes))
+    ombres = [k for k in ombres if k not in gardes]
     if not ombres:
         return
     meta = dict(meta)
@@ -451,6 +467,9 @@ def _lignes(plan: Plan) -> list[str]:
     if plan.sorties:
         out.append("  sorties de meta : " + " ; ".join(
             f"{_nom(c)} ({', '.join(k)})" for c, k in plan.sorties))
+    if plan.a_arbitrer:
+        out.append("  ⚠️ gardes dans meta, à arbitrer (non écrit) : " + " ; ".join(
+            f"{_nom(c)} ({', '.join(k)})" for c, k in plan.a_arbitrer))
     return out
 
 
@@ -482,7 +501,8 @@ def executer(*, appliquer: bool = False, tableaux: Optional[list[int]] = None,
              "procedures_ecrites": 0, "procedures_bougees": [],
              "procedures_refusees": [], "procedures_retirees": [],
              "entrees_a_slots": len(biblio), "entrees_a_durcir": 0,
-             "entrees_ecrites": 0, "entrees_bougees": [], "entrees_refusees": []}
+             "entrees_ecrites": 0, "entrees_bougees": [], "entrees_refusees": [],
+             "gardes_a_arbitrer": []}
     for t in parc:
         try:
             plan = durcir(t["schema"])
@@ -490,7 +510,14 @@ def executer(*, appliquer: bool = False, tableaux: Optional[list[int]] = None,
             bilan["inmigrables"].append((t["id"], str(e)))
             sortie(f"ns {t['id']} « {t['namespace']} » — À ARBITRER, non écrit : {e}")
             continue
+        if plan.a_arbitrer:
+            bilan["gardes_a_arbitrer"].append(
+                (t["id"], [f"{_nom(c)} ({', '.join(k)})" for c, k in plan.a_arbitrer]))
         if plan.vide:
+            if plan.a_arbitrer:
+                sortie(f"ns {t['id']} « {t['namespace']} » — rien à ranger")
+                for ligne in _lignes(plan):
+                    sortie(ligne)
             continue
         bilan["a_durcir"] += 1
         _compter(bilan, plan)
@@ -594,6 +621,8 @@ def executer(*, appliquer: bool = False, tableaux: Optional[list[int]] = None,
     sortie(f"  clés supprimées : {_compte(bilan['supprimees'])}")
     sortie(f"  enum : {_compte(bilan['enum'])}")
     sortie(f"  clés sorties de meta : {_compte(bilan['sorties'])}")
+    sortie(f"  tableaux à gardes dans meta, à arbitrer : "
+           f"{len(bilan['gardes_a_arbitrer'])}")
     if bilan["inmigrables"]:
         sortie(f"  à arbitrer (non écrits) : {len(bilan['inmigrables'])}")
     if appliquer:

@@ -231,7 +231,7 @@ def residus_warning(schema: Any) -> Optional[str]:
     vocabulaire, donc toléré tant qu'on n'y touche pas. Dit au lecteur comme à
     l'auteur : le lecteur doit savoir laquelle de deux clés fait foi (`options`, pas
     l'`enum` d'à côté), l'auteur que la modifier sera refusé."""
-    trouvees, font_foi = [], set()
+    trouvees, font_foi, ombres = [], set(), []
     # oto#124 : `unknown_columns` stocké a sa propre phrase — il est encore LU jusqu'au
     # 21/10/2026 et la plateforme le retire elle-même (`scripts/retirer_unknown_columns`).
     retire = (isinstance(schema, dict) and reglages.UNKNOWN_COLUMNS in schema)
@@ -244,9 +244,21 @@ def residus_warning(schema: Any) -> Optional[str]:
             # Ce qui fait foi : la cousine admise, quand elle est posée À CÔTÉ.
             if sk.FAUTES_CONNUES.get(cle) in noeud:
                 font_foi.add(sk.FAUTES_CONNUES[cle])
+        # Table 966 : une clé ADMISE rangée dans `meta` a l'air posée et ne l'est pas.
+        meta = noeud.get(sk.META)
+        if isinstance(meta, dict):
+            ombres.extend(f"`{nom_du_chemin(chemin)}.meta.{c}`" if chemin
+                          else f"`meta.{c}` (tête)"
+                          for c in sorted(set(meta) & (sk.ADMISES[niveau] - {sk.META})))
+    phrase_ombres = (
+        f"ce schéma range dans `meta` des clés que leur niveau admet : "
+        f"{', '.join(ombres[:8])}{', …' if len(ombres) > 8 else ''}. Dans `meta`, "
+        f"elles sont SANS EFFET (personne ne le lit) — une `options` ainsi rangée ne "
+        f"contraint rien. Pose-les à côté de `meta`." if ombres else None)
     if not trouvees:
-        return (reglages.residu_unknown_columns(schema[reglages.UNKNOWN_COLUMNS]) + "."
-                if retire else None)
+        fin = (reglages.residu_unknown_columns(schema[reglages.UNKNOWN_COLUMNS]) + "."
+               if retire else None)
+        return " ".join(p for p in (phrase_ombres, fin) if p) or None
     anciens = [k for k in reglages.ANCIENS if isinstance(schema, dict) and k in schema]
     msg = (f"ce schéma porte des clés qu'aucun niveau n'admet, posées avant la "
            f"fermeture du vocabulaire (01/10/2026) : {', '.join(trouvees[:8])}"
@@ -261,4 +273,6 @@ def residus_warning(schema: Any) -> Optional[str]:
         msg += f" Pour {', '.join(f'`{k}`' for k in anciens)} : {reglages.residu(schema)}."
     if retire:
         msg += " " + reglages.residu_unknown_columns(schema[reglages.UNKNOWN_COLUMNS]) + "."
+    if phrase_ombres:
+        msg += " " + phrase_ombres
     return msg

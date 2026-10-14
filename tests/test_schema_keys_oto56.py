@@ -267,3 +267,13 @@ def test_meta_options_DEJA_STOCKEE_passe_tant_qu_on_n_y_touche_pas():
     change = {"fields": [{"key": "s", "type": "enum", "meta": {"options": ["a", "b"]}}]}
     errs = CI.refus(change, ancien)
     assert len(errs) == 1 and "meta.options" in errs[0], errs
+
+
+def test_une_ombre_STOCKEE_est_dite_a_la_lecture():
+    """Sans quoi la table 966 n'aurait rien dit à `data_get_schema` avant migration."""
+    from oto_mcp.datastore import cles_inconnues as CI
+    w = CI.residus_warning({"fields": [{"key": "s", "type": "enum",
+                                        "meta": {"options": ["a"]}}]})
+    assert w and "`fields.s.meta.options`" in w and "SANS EFFET" in w
+    assert CI.residus_warning({"fields": [{"key": "s", "type": "enum",
+                                           "meta": {"depends_on": "x"}}]}) is None
