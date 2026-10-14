@@ -394,3 +394,36 @@ def test_le_refus_de_slots_ne_parle_qu_APRES_l_appartenance(live):
         org_store.publish_guide(
             slug=e["slug"], body_md="x", author_kind="org", author_org_id=1,
             slots=copy.deepcopy(SLOTS_ANCIENS))
+
+
+# ── une clé admise rangée dans `meta` (table 966, 14/10/2026) ────────────────
+
+def test_options_dans_meta_est_SORTIE_a_cote():
+    """Le cas de la table 966 : la liste d'une colonne `enum` rangée dans `meta`."""
+    schema = {"fields": [{"key": "status", "type": "enum", "role": "status",
+                          "meta": {"options": ["kept", "rejected"]}},
+                         {"key": "tier", "type": "enum",
+                          "meta": {"options": ["a"], "depends_on": "x"}}]}
+    plan = M.durcir(schema)
+    t = plan.schema
+    assert t["fields"][0] == {"key": "status", "type": "enum", "role": "status",
+                              "options": ["kept", "rejected"]}, "meta vidé est retiré"
+    assert t["fields"][1]["options"] == ["a"]
+    assert t["fields"][1]["meta"] == {"depends_on": "x"}, "l'annotation reste"
+    assert plan.sorties == [("fields.status", ["options"]), ("fields.tier", ["options"])]
+    assert validate_schema_def(t) == []
+    assert M.durcir(t).vide, "idempotent"
+
+
+def test_ombre_IDENTIQUE_a_la_cle_posee_est_retiree_de_meta():
+    schema = {"fields": [{"key": "s", "type": "enum", "options": ["a"],
+                          "meta": {"options": ["a"]}}]}
+    t = M.durcir(schema).schema
+    assert t["fields"][0] == {"key": "s", "type": "enum", "options": ["a"]}
+
+
+def test_ombre_DIFFERENTE_de_la_cle_posee_est_inmigrable():
+    schema = {"fields": [{"key": "s", "type": "enum", "options": ["a"],
+                          "meta": {"options": ["b"]}}]}
+    with pytest.raises(M.Inmigrable, match="meta.options"):
+        M.durcir(schema)
