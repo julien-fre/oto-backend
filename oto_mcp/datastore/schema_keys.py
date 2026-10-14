@@ -395,3 +395,50 @@ def servie() -> dict:
             "levels": {NIVEAUX_SERVIS[n]: [_entree(c) for c in cles]
                        for n, cles in NIVEAUX.items()},
             "meta_max_bytes": META_MAX_OCTETS}
+
+
+# ── La FORME servie aux clients MCP (table 966, 14/10/2026) ──────────────────
+#
+# `data_set_schema(schema: dict)` ne disait sa grammaire qu'en prose : un agent qui
+# déclarait un `enum` n'y trouvait pas `options`, lisait « tes annotations vont dans
+# `meta` », et y rangeait sa liste — stockée, sans effet. Le paramètre porte
+# désormais la FORME : chaque clé admise est une propriété NOMMÉE, que le client
+# passe au modèle. DÉRIVÉE de `NIVEAUX`, jamais écrite à part : une clé ajoutée au
+# vocabulaire y entre avec sa déclaration.
+#
+# Trois partis, chacun payé ailleurs :
+# - **ouverte** (`additionalProperties` non posé) : un client strict refuserait
+#   `read_only` avant le serveur, et l'agent perdrait « voulais-tu `readonly` ? ».
+#   La forme enseigne, le refus corrige ;
+# - **sans types ni descriptions par clé**, sauf `options` et les structures : la
+#   forme part avec l'outil à chaque tour de chaque agent (`test_call_axes_budget`),
+#   et ce qu'il manquait au modèle était le NOM de la case, pas un contrat ;
+# - **sans `$ref`** : beaucoup de clients ne les résolvent pas. `of` est déroulé
+#   d'un niveau (une multisélection y porte ses `options`), les sous-records
+#   (`fields` d'une colonne) et `lifecycle` restent des objets.
+
+_STRUCTURE: dict[str, dict] = {
+    "options": {"type": "array", "items": {"type": "string"},
+                "description": "allowed values of a `type: \"enum\"` column"},
+    "meta": {"type": "object", "description": "your own notes, never read"},
+    "fields": {"type": "array", "items": {"type": "object"}},
+    "lifecycle": {"type": "object"},
+}
+
+
+def _proprietes(niveau: str, **deroules: dict) -> dict:
+    return {c.nom: deroules.get(c.nom, _STRUCTURE.get(c.nom, {}))
+            for c in NIVEAUX[niveau]}
+
+
+def forme_colonne() -> dict:
+    """Une colonne de `fields`, telle que la voit un client MCP."""
+    element = {"type": "object", "properties": _proprietes("element")}
+    return {"type": "object", "properties": _proprietes("champ", of=element),
+            "required": ["key"]}
+
+
+def forme_schema() -> dict:
+    """Le schéma entier (`data_set_schema`, `data_create_datastore`)."""
+    return {"type": "object", "properties": _proprietes(
+        "tete", fields={"type": "array", "items": forme_colonne()})}

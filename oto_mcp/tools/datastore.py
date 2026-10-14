@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Optional
+from typing import Annotated, Optional
+
+from pydantic import WithJsonSchema
 
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
@@ -29,6 +31,7 @@ from ..datastore import forcage as fcg
 from ..datastore import layers as dsl
 from ..datastore import versions as dsver
 from ..datastore.identite import AdresseJson as Adresse
+from ..datastore.schema_keys import forme_schema
 from ..datastore.outils import _current_run, adresse_servie
 from ..datastore import schema as dsv2
 from ..datastore.errors import RevisionConflict
@@ -57,6 +60,11 @@ _MARQUE_CLE_METIER = "<<cle_metier>>"
 _MARQUE_COLONNES = "<<colonnes_non_declarees>>"
 _MARQUE_Q = "<<recherche_q>>"
 _MARQUE_Q_SCOPE = "<<recherche_q_scope>>"
+
+#: Le paramètre `schema` porte sa FORME (table 966) : le client passe au modèle les
+#: clés admises nommées — `options` sur une colonne, jamais dans `meta`. Décrit, pas
+#: analysé : le handler reçoit le même `dict`, `validate_schema_def` reste le seul juge.
+_SchemaDeclare = Annotated[dict, WithJsonSchema(forme_schema())]
 
 
 def _inserer(fn, phrases: dict):
@@ -639,7 +647,8 @@ def register(mcp: FastMCP) -> None:
     # refused to turn green when the default changed, before this text moved.
     @mcp.tool()
     @_avec_la_creation
-    def data_create_datastore(datastore: Adresse, schema: Optional[dict] = None) -> dict:
+    def data_create_datastore(datastore: Adresse,
+                              schema: Optional[_SchemaDeclare] = None) -> dict:
         """Create a new datastore (PG-backed), optionally WITH its typed schema.
 
         <<colonnes_non_declarees>>
@@ -744,7 +753,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     @_avec_la_regle_de_cle
-    def data_set_schema(datastore: Adresse, schema: Optional[dict] = None,
+    def data_set_schema(datastore: Adresse, schema: Optional[_SchemaDeclare] = None,
                         semantic_search: Optional[bool] = None) -> dict:
         """Declare (or clear with schema=null) a datastore's TYPED schema (ADR 0032 §6).
 

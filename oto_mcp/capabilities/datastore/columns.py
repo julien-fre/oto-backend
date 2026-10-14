@@ -38,15 +38,16 @@ ownership) — un tableau hors périmètre répond 404, comme partout dans le da
 from __future__ import annotations
 
 from ...datastore.identite import Adresse
+from ...datastore.schema_keys import forme_colonne
 from ...datastore import colonnes_non_declarees as cnd
 from ...datastore import validation_complete as dsvc
 from ...datastore import reglages
 from ...datastore import upsert_implicite as upi
 from ...datastore.schema_keys import META_MAX_OCTETS as _META_MAX
 
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema
 
 from ... import access
 from ...datastore.core import DatastoreNotFound, DatastoreReadOnly, make_store
@@ -109,7 +110,9 @@ class PatchSchemaInput(EntreeDatastore):
     # Ce que le préambule autorise se répète ICI depuis le 2026-09-01 (#627) : jusque
     # là `apply_flat_signature` ne recopiait qu'annotation et défaut, et une
     # `description` posée sur un champ d'`Input` était acceptée-INERTE.
-    fields: Optional[list] = Field(default=None, description=(
+    # La FORME d'une colonne (table 966) : `options` nommée, à côté de `meta`.
+    fields: Optional[Annotated[list, WithJsonSchema(
+        {"type": "array", "items": forme_colonne()})]] = Field(default=None, description=(
         "Merges BY `key`: the properties you list overwrite, the ones you omit are "
         "PRESERVED, an unknown key is appended. Send only what changes."))
     # Le pendant obligé de la fusion : sans retrait explicite, plus de nettoyage.
