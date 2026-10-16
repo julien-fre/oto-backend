@@ -363,7 +363,7 @@ Détail et ordre : `docs/migrations-versionnees.md` §5.1, et l'en-tête de chaq
 **L'essai n'est pas un droit déclaré** (décision du 16/10/2026). Il appartient
 entièrement au service commerce : à la fin de l'essai, c'est lui qui suspend l'org
 (`service.org.suspension`, motif `trial_ended`) et qui libère les comptes Unipile de
-son côté (`TULINA_USAGE_ENFORCE_UNIPILE_RELEASE`). Il pousse la date de fin d'essai
+son côté, par son propre réglage. Il pousse la date de fin d'essai
 de chaque org (`service.org.trial`, `orgs.trial_ends_at`), pour qu'on puisse la lire —
 pas pour que le cœur agisse dessus. L'étiquette `trial` reste acceptée par l'API de
 service, aucun producteur ne la pose.
