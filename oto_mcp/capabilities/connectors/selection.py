@@ -30,6 +30,7 @@ from ... import access, db, links, org_store, providers, session_org, tool_regis
 from ...connectors import activation as connector_activation
 from ...connectors import cardinality as connector_cardinality
 from ...connectors import credential_presence
+from ...connectors import http_operations
 from ...connectors.credential_presence import CredentialPresence
 from ...connectors import readiness as connector_readiness
 from ...connectors import selection as connector_selection
@@ -273,6 +274,11 @@ class MyConnectors(BaseModel):
     credentials: str = "computed"
     name_match: Optional[NameMatch] = None
     toolbox_scope: Optional[ToolboxScope] = None
+    # A `name=` that is no catalog connector but the label (or account) of one of the
+    # org's CUSTOM connectors (`http`, "Custom API"): that connector — `{connector,
+    # account, label, description, logo_domain, actions_count, how_to_call}` — and
+    # `connectors` is empty.
+    custom_connector: Optional[dict] = None
 
 
 class ConnectorSelectionState(BaseModel):
@@ -581,6 +587,12 @@ def _me_projection(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
             # Not exposed for the active org, restricted by the org RBAC, or unknown name
             # — indistinguishable on the member side (same verdict as `_require_exposed`). But
             # the refusal OFFERS suggestions: a curt "unknown" was read as "not connected" (#1112).
+            perso = (http_operations.match_org_connector(ctx.org_id, inp.name)
+                     if any(c["name"] == "http" for c in catalog) else None)
+            if perso is not None:
+                return {"connectors": [], "verbose": inp.verbose,
+                        "include": inp.include or [], "credentials": "computed",
+                        "readiness": "not_computed", "custom_connector": perso}
             raise _refus_nom_inconnu(catalog, inp.name, ctx)
         if [c["name"] for c in trouves] != [inp.name]:
             name_match = {

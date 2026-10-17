@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from ... import credentials_store, custom_ops
+from ... import credentials_store, custom_ops, providers
 from ...connectors import http_operations as store
 from .._authz import ORG_ADMIN_OF, ORG_MEMBER_OF
 from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
@@ -24,6 +24,7 @@ from ..registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
 _PATH = "/api/orgs/{id}/connectors/http/operations"
+_DEF_PATH = "/api/orgs/{id}/connectors/http/definition"
 _DOC_ACCOUNT = ("Custom API account of the org (`\"\"` = the single account). "
                 "404 `http_credential_not_found` when the org has no such account.")
 
@@ -129,6 +130,89 @@ def _import(ctx: ResolvedCtx, inp: ImportInput) -> dict:
     return {"account": account, "operations": cands, "skipped": skipped}
 
 
+# The card's NON-secret fields a definition export carries — those that let another
+# org rebuild the same connector. Filtered AGAIN by the registry's `secret` flag at
+# export: a field turned secret tomorrow leaves the export by itself.
+_CARD_FIELDS = ("label", "base_url", "auth_mode", "header_name", "query_param",
+                "doc_path", "token_url", "scope")
+
+
+class HttpDefinition(BaseModel):
+    """A custom connector's definition, NEVER a secret: the card's non-secret fields
+    (`label`, `base_url`, `auth_mode`, `header_name`, `query_param`, `doc_path`,
+    `token_url`, `scope` — present when set) and the saved definition
+    (`description`, `logo_domain`, `headers`, `variables` with their values,
+    `operations`). Export it from one org, `PUT` its definition part in another."""
+    model_config = ConfigDict(extra="allow")
+    account: str
+    label: Optional[str] = None
+    description: Optional[str] = None
+    logo_domain: Optional[str] = None
+    headers: dict
+    variables: dict
+    operations: list[dict]
+
+
+class DefinitionSetInput(BaseModel):
+    org_id: int
+    account: str = Field(default="", description=_DOC_ACCOUNT)
+    label: Optional[str] = None
+    description: Optional[str] = None
+    logo_domain: Optional[str] = None
+    headers: Optional[dict] = None
+    variables: Optional[dict] = None
+    operations: Optional[list[Any]] = Field(default=None, description=(
+        "When given, REPLACES the action list. Parts not given stay as they are."))
+
+
+def _card(org_id: int, account: str) -> dict:
+    """The card's non-secret fields — decrypted in-process, secret ones dropped."""
+    row = credentials_store.get_credential_with_meta(
+        credentials_store.ORG, str(org_id), store.CONNECTOR, account)
+    if not row:
+        return {}
+    fields = {**credentials_store.unpack_secret(store.CONNECTOR, row["secret"]),
+              **credentials_store.public_meta(row.get("meta"))}
+    secrets = {f.name for f in providers.REGISTRY[store.CONNECTOR].secret_fields if f.secret}
+    return {k: fields[k] for k in _CARD_FIELDS
+            if k not in secrets and fields.get(k) not in (None, "")}
+
+
+def _definition_out(org_id: int, account: str) -> dict:
+    try:
+        d = store.load_definition(credentials_store.ORG, str(org_id), account)
+    except store.InstanceMissing:
+        d = store.definition_of({})
+    card = _card(org_id, account)
+    return {"account": account, **card, **{k: v for k, v in d.items()
+                                           if v is not None or k not in card}}
+
+
+def _get_definition(ctx: ResolvedCtx, inp: GetInput) -> dict:
+    return _definition_out(inp.org_id, _row(inp.org_id, inp.account))
+
+
+def _set_definition(ctx: ResolvedCtx, inp: DefinitionSetInput) -> dict:
+    account = _row(inp.org_id, inp.account)
+    given = {k: getattr(inp, k) for k in ("label", "description", "logo_domain",
+                                          "headers", "variables", "operations")
+             if getattr(inp, k) is not None}
+    card = _card(inp.org_id, account)
+    auth_header = card.get("header_name") if card.get("auth_mode") == "header" else None
+    try:
+        store.save_definition(credentials_store.ORG, str(inp.org_id), account, given,
+                              auth_header=auth_header)
+    except custom_ops.OperationsInvalid as e:
+        raise AuthzDenied(400, "invalid_definition",
+                          f"{len(e.errors)} problem(s) in the definition: {e}",
+                          details={"errors": e.errors})
+    except store.InstanceMissing:
+        raise AuthzDenied(409, "http_instance_missing", (
+            "The account's credential has no live instance to carry its definition — "
+            "set the key again on the Custom API card, then retry."))
+    return _definition_out(inp.org_id, account)
+
+
 _NOT_FOUND = DeclaredError(404, "http_credential_not_found",
                            "the org has no Custom API (`http`) credential for this account")
 
@@ -162,5 +246,27 @@ CAPABILITIES += [
                               "the source cannot be read as an OpenAPI/Swagger JSON "
                               "document (unreachable, refused address, too large, not JSON)")),
         rest=RestBinding("POST", _PATH + "/import", _ID),
+    ),
+    Capability(
+        key="custom_api.definition.get", handler=_get_definition, Input=GetInput,
+        authz=ORG_MEMBER_OF("org_id"), Output=HttpDefinition,
+        description=("Export the definition of an org's Custom API connector — the "
+                     "card's non-secret fields and the saved definition, never a secret."),
+        errors=(_NOT_FOUND,),
+        rest=RestBinding("GET", _DEF_PATH, _ID),
+    ),
+    Capability(
+        key="custom_api.definition.set", handler=_set_definition,
+        Input=DefinitionSetInput, authz=ORG_ADMIN_OF("org_id"), Output=HttpDefinition,
+        description=("Save the definition of an org's Custom API connector (label, "
+                     "description, logo domain, constant headers, variables, actions; "
+                     "only the parts given; org admin)."),
+        errors=(_NOT_FOUND,
+                DeclaredError(400, "invalid_definition",
+                              "the definition breaks the format — `details.errors` names "
+                              "each problem"),
+                DeclaredError(409, "http_instance_missing",
+                              "the credential has no live instance to carry the definition")),
+        rest=RestBinding("PUT", _DEF_PATH, _ID),
     ),
 ]

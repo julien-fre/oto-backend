@@ -626,13 +626,27 @@ ligne du coffre — désignée par le quadruplet, jamais autrement
 `tests/test_connector_instances_l6.py`). Conséquences assumées : une **rotation** de la clé
 garde la liste (l'instance survit à l'`_upsert`), un **renommage** de compte la fait
 suivre (`move_instance_to_account`), un **retrait** de la clé l'archive avec l'instance.
-Écriture = **une clé** de `config` remplacée (`set_instance_config_key`), jamais le document
-entier. Droits : ceux de la pose de la clé (`ORG_ADMIN_OF` pour un compte d'org, chef
+Écriture = les **clés données** de `config` remplacées (`merge_instance_config`),
+jamais le document entier. Droits : ceux de la pose de la clé (`ORG_ADMIN_OF` pour un compte d'org, chef
 d'équipe pour un compte d'équipe) ; la lecture est ouverte aux membres. Faces : REST
 `/api/orgs/{id}/connectors/http/operations` (+ `/import`, conversion OpenAPI sans
-écriture), MCP `http_operations` / `http_set_operations` / `http_call`, et
+écriture), MCP `http_operations` / `http_set_definition` / `http_call` / `http_request`, et
 `http_setup_link` — le lien de la carte pré-remplie **sans** secret, la clé se saisit
 dans le formulaire, jamais dans une conversation.
+
+**Configuré une fois, servi à tous** : la `config` porte aussi la **définition** du
+connecteur personnalisé (`oto_mcp/custom_ops_definition.py`) — `label`, `description`,
+`logo_domain`, `headers` constants NON secrets (un en-tête qui authentifie ou route est
+refusé, celui de la carte compris), `variables` (valeurs non secrètes qui remplissent un
+argument d'action du même nom). Les en-têtes constants passent par la session du client
+oto-core après sa préparation (`with_constant_headers`, accroché à `_ready` — suite
+attendue : un paramètre `headers=` côté oto-core). Le nom affiché de la carte
+(`label`) vit en clair dans `meta` (`in_meta`, 17/10/2026) : la liste des connecteurs
+personnalisés de l'org (`connectors/http_operations.org_connectors`), le refus
+`oto_connector(name=…)` (qui rend le connecteur au lieu de « inconnu »), le contexte
+de l'agent (une ligne par connecteur) et le roster `/api/me/connector-instances`
+(`custom_api`) le lisent sans déchiffrer. Export/pose : `GET|PUT
+/api/orgs/{id}/connectors/http/definition` — l'export ne porte aucun champ `secret`.
 
 ### `inst:{id}` — la forme de fil
 

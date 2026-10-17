@@ -12,12 +12,14 @@ the Custom API connector connects a tool that has **no card of its own** in the 
 - several APIs, or several accounts of the same one: each is a named account of the card, chosen on every call with `_account`
 - an internal address (loopback, private network) is refused until the platform operator declares it as a named exception
 
-## usage — call the API
+## usage — configure it once, every member uses it
 
-- by path: `http_get(path="/organizations")`, `http_post(path="/search", body={…})`; `http_doc()` reads the configured documentation route
-- by name, once operations are described: `http_operations()` lists them (name, description, method, path, input), `http_call(operation="list_collaborators", args={"organizationId": "…", "page": 1})` calls one — arguments are checked against its input, path parameters are encoded segment by segment, and `dry_run=true` shows the request without sending it
-- **describe the operations** on this page (org admin), or via the agent: `http_operations(op="import", source="doc_path"|"url"|"inline")` converts an OpenAPI/Swagger JSON document into candidates without saving them; `http_set_operations(operations=[…])` saves the list (it replaces the previous one, 100 operations max)
-- an operation: `name` (snake_case), `description` (what the agent reads to choose it), `method` (GET, POST, PUT, PATCH, DELETE), `path` relative to the base URL with `{param}` placeholders, `input` (a JSON schema of the arguments), and optionally `in` to send an argument to `path`, `query` or `body` — by default a placeholder goes in the path, the rest in the query for GET/DELETE and in the body otherwise
+- the org admin configures the tool **once**: the card (base URL, auth, key), then its **definition** on this page or via the agent with `http_set_definition` — a display name, a `description` of what the tool holds (read by every member's agent), a logo domain, constant non-secret `headers` (e.g. an API version), saved `variables` (e.g. your organization id, filled into any action argument of the same name) and its **actions**
+- an action: `name` (snake_case), `description` (what the agent reads to choose it), `method` (GET, POST, PUT, PATCH, DELETE), `path` relative to the base URL with `{param}` placeholders, `input` (a JSON schema of the arguments), and optionally `in` to send an argument to `path`, `query` or `body` — by default a placeholder goes in the path, the rest in the query for GET/DELETE and in the body otherwise
+- import actions instead of typing them: `http_operations(op="import", source="doc_path"|"url"|"inline")` converts an OpenAPI/Swagger JSON document into candidates without saving them
+- every member's agent then finds it by name (`oto_connector(name="Acme Payroll")`), lists the org's custom connectors with `http_operations()`, and calls an action with `http_call(operation="list_collaborators", args={"page": 1})` — `_account` is only needed when two custom connectors share an action name; `dry_run=true` shows the request without sending it
+- for anything no action describes: `http_request(method="PATCH", path="/…", body={…})`, or `http_get`/`http_post`; `http_doc()` reads the configured documentation route
+- reuse a definition in another org: export it from this page (never a secret), connect the tool there with its own key, then import the definition
 
 ## note — what the connector does and does not do
 

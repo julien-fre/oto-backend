@@ -98,3 +98,27 @@ def test_le_retrait_de_la_cle_archive_l_instance_et_ses_operations(live):
         store.load("org", str(ORG), "retrait")
     with pytest.raises(store.InstanceMissing):
         store.save("org", str(ORG), "retrait", [OP])
+
+
+def test_la_definition_et_la_liste_de_l_org_sans_dechiffrer(live):
+    """Le nom affiché vit en clair dans `meta` (`in_meta`) : la liste des connecteurs
+    personnalisés de l'org le lit sans déchiffrer ; une pose partielle de la définition
+    garde le reste."""
+    from oto_mcp import credentials_store as cs
+    from oto_mcp.connectors import http_operations as store
+    from oto_mcp.db import connector_instances as ci
+    secret, meta = cs.preparer_pose("org", str(ORG), "http", "malibou", fields={
+        "base_url": "https://api.acme.test", "auth_mode": "bearer", "token": "T",
+        "label": "Acme Payroll"})
+    assert meta == {"label": "Acme Payroll"} and "Acme Payroll" not in secret
+    cs.set_credential("org", str(ORG), "http", secret, set_by=SUB, account="malibou",
+                      meta=meta)
+    store.save_definition("org", str(ORG), "malibou", {"operations": [OP]})
+    d = store.save_definition("org", str(ORG), "malibou",
+                              {"description": "Payroll.", "headers": {"X-V": "2"}})
+    assert d["operations"] == [OP] and d["headers"] == {"X-V": "2"}
+    [c] = [c for c in store.org_connectors(ORG) if c["account"] == "malibou"]
+    assert (c["label"], c["description"], c["actions_count"]) == \
+        ("Acme Payroll", "Payroll.", 1)
+    iid = ci.live_instance_config("org", str(ORG), "http", "malibou")["id"]
+    assert ci.configs_for_instance_ids([iid])[iid]["description"] == "Payroll."

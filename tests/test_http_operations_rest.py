@@ -16,6 +16,8 @@ from oto_mcp.capabilities import _authz
 from oto_mcp.db import connector_instances as ci
 
 ORG = 35
+CARTE = {"base_url": "https://payroll.example.test/v1", "auth_mode": "header",
+         "header_name": "X-Key", "token": "SECRET-TOKEN", "doc_path": "/openapi.json"}
 OP = {"name": "list_teams", "description": "List the teams.", "method": "GET",
       "path": "/teams", "input": {"type": "object", "properties": {}}}
 
@@ -38,10 +40,16 @@ def org(monkeypatch):
                         lambda ot, oid, con, acc="": {"id": 4, "config": etat["config"]}
                         if acc == "paie" else None)
 
-    def _set(iid, key, value):
-        etat["ecrit"].append((iid, key, value))
+    def _merge(iid, patch):
+        etat["ecrit"].append((iid, patch))
+        etat["config"] = {**etat["config"], **patch}
         return True
-    monkeypatch.setattr(ci, "set_instance_config_key", _set)
+    monkeypatch.setattr(ci, "merge_instance_config", _merge)
+    # La carte de l'org (déchiffrée en mémoire) : clé, mode, et un nom affiché.
+    monkeypatch.setattr(credentials_store, "get_credential_with_meta",
+                        lambda et, eid, con, acc="": {
+                            "secret": credentials_store.pack_secret("http", CARTE),
+                            "meta": {"label": "Acme Payroll"}})
     return etat
 
 
@@ -79,7 +87,7 @@ def test_seul_l_admin_ecrit(org):
     assert code == 403 and org["ecrit"] == []
     code, out = _put("u-admin", [OP])
     assert code == 200 and out == {"account": "paie", "operations": [OP]}
-    assert org["ecrit"] == [(4, "operations", [OP])]
+    assert org["ecrit"] == [(4, {"operations": [OP]})]
 
 
 def test_liste_invalide_400_avec_chaque_probleme(org):
@@ -136,3 +144,51 @@ def test_import_doc_path_lu_avec_l_auth_du_compte(org, monkeypatch):
     path, = cls.return_value.get_raw.call_args.args
     assert path == "/openapi.json"
     assert cls.return_value.get_raw.call_args.kwargs["max_bytes"] == 2 * 1024 * 1024
+
+
+# ── la définition : export sans secret, pose par l'admin ─────────────────────
+
+def _def_get(sub):
+    return call("custom_api.definition.get", path_params={"id": str(ORG)},
+                query=b"account=paie", sub=sub)
+
+
+def _def_put(sub, body):
+    return call("custom_api.definition.set", path_params={"id": str(ORG)},
+                query=b"account=paie", body=body, sub=sub)
+
+
+def test_l_export_ne_porte_aucun_champ_secret(org):
+    from oto_mcp import providers
+    code, out = _def_get("u-membre")
+    assert code == 200
+    secrets = {f.name for f in providers.REGISTRY["http"].secret_fields if f.secret}
+    assert secrets and not secrets & set(out)
+    assert "SECRET-TOKEN" not in str(out)
+    assert out["base_url"] == CARTE["base_url"] and out["header_name"] == "X-Key"
+    assert out["label"] == "Acme Payroll" and out["operations"] == [OP]
+    assert out["headers"] == {} and out["variables"] == {}
+
+
+def test_poser_la_definition_partielle_par_l_admin(org):
+    assert _def_put("u-membre", {"description": "x"})[0] == 403
+    code, out = _def_put("u-admin", {
+        "description": "The payroll tool.", "logo_domain": "Acme.test",
+        "headers": {"X-Api-Version": "2"},
+        "variables": {"organizationId": {"value": "org_9", "description": "ours"}}})
+    assert code == 200
+    assert out["logo_domain"] == "acme.test" and out["operations"] == [OP]
+    assert out["variables"]["organizationId"]["value"] == "org_9"
+    assert set(org["ecrit"][0][1]) == {"description", "logo_domain", "headers", "variables"}
+
+
+def test_une_definition_invalide_400(org):
+    code, out = _def_put("u-admin", {"headers": {"x-key": "abc", "Cookie": "a=b"}})
+    assert code == 400 and out["error"] == "invalid_definition"
+    assert len(out["details"]["errors"]) == 2 and org["ecrit"] == []
+
+
+def test_un_champ_de_carte_ne_se_pose_pas_par_la_definition(org):
+    """La carte (et sa clé) se pose par la route des secrets, jamais par ici."""
+    code, out = _def_put("u-admin", {"token": "abc"})
+    assert code == 400 and org["ecrit"] == []

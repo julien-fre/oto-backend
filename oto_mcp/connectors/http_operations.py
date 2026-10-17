@@ -19,7 +19,7 @@ from typing import Any, Optional
 
 import requests
 
-from .. import custom_ops, custom_ops_openapi, egress
+from .. import credentials_store, custom_ops, custom_ops_definition, custom_ops_openapi, egress
 from ..db import connector_instances
 
 logger = logging.getLogger(__name__)
@@ -50,15 +50,123 @@ def load(owner_type: str, owner_id: str, account: str = "") -> list[dict]:
     return ops if isinstance(ops, list) else []
 
 
+def _instance(owner_type: str, owner_id: str, account: str) -> dict:
+    inst = connector_instances.live_instance_config(owner_type, owner_id, CONNECTOR,
+                                                    account)
+    if inst is None:
+        raise InstanceMissing(f"no live `http` instance for account `{account}`")
+    return inst
+
+
+def _write(owner_type: str, owner_id: str, account: str, patch: dict) -> None:
+    inst = _instance(owner_type, owner_id, account)
+    if not connector_instances.merge_instance_config(inst["id"], patch):
+        raise InstanceMissing(f"no live `http` instance for account `{account}`")
+
+
 def save(owner_type: str, owner_id: str, account: str, ops: Any) -> list[dict]:
     """Validate (`custom_ops.OperationsInvalid` on refusal), then REPLACE the list."""
     clean = custom_ops.validate_operations(ops)
-    inst = connector_instances.live_instance_config(owner_type, owner_id, CONNECTOR,
-                                                    account)
-    if inst is None or not connector_instances.set_instance_config_key(
-            inst["id"], CONFIG_KEY, clean):
-        raise InstanceMissing(f"no live `http` instance for account `{account}`")
+    _write(owner_type, owner_id, account, {CONFIG_KEY: clean})
     return clean
+
+
+def definition_of(config: dict) -> dict:
+    """The saved definition read from an instance's config, every key present."""
+    config = config or {}
+    ops = config.get(CONFIG_KEY)
+    return {"label": config.get("label"), "description": config.get("description"),
+            "logo_domain": config.get("logo_domain"),
+            "headers": config.get("headers") or {},
+            "variables": config.get("variables") or {},
+            "operations": ops if isinstance(ops, list) else []}
+
+
+def load_definition(owner_type: str, owner_id: str, account: str = "") -> dict:
+    return definition_of(_instance(owner_type, owner_id, account)["config"])
+
+
+def save_definition(owner_type: str, owner_id: str, account: str, definition: Any, *,
+                    auth_header: Optional[str] = None) -> dict:
+    """Validate the keys given (`custom_ops.OperationsInvalid`), write them — the
+    keys NOT given stay as they are — and return the whole definition."""
+    patch = custom_ops_definition.validate_definition(definition, auth_header=auth_header)
+    if patch:
+        _write(owner_type, owner_id, account, patch)
+    return load_definition(owner_type, owner_id, account)
+
+
+def _summary(account: str, config: dict, meta_label: Optional[str] = None) -> dict:
+    d = definition_of(config)
+    return {"account": account,
+            "label": d["label"] or meta_label or account or "Custom API",
+            "description": d["description"], "logo_domain": d["logo_domain"],
+            "actions_count": len(d["operations"])}
+
+
+def org_connectors(org_id: int) -> list[dict]:
+    """The org's custom connectors, one per `http` account: `{account, label,
+    description, logo_domain, actions_count}` — and `operations` (the full list), for
+    the caller that resolves an action by name. Two queries, no decryption: the
+    label is the definition's, else the card's (`meta.label`), else the account."""
+    metas = {r["account"]: (r.get("meta") or {}).get("label") for r in
+             credentials_store.list_accounts(credentials_store.ORG, str(org_id), CONNECTOR)}
+    out = []
+    for inst in connector_instances.live_instance_configs(
+            credentials_store.ORG, str(org_id), CONNECTOR):
+        if inst["account"] not in metas:
+            continue
+        row = _summary(inst["account"], inst["config"], metas[inst["account"]])
+        row["operations"] = definition_of(inst["config"])["operations"]
+        out.append(row)
+    return out
+
+
+def match_org_connector(org_id: int, name: str) -> Optional[dict]:
+    """The org's custom connector whose label (or account) IS `name`, case and
+    surrounding spaces ignored — what `oto_connector(name=…)` returns for a tool
+    configured through Custom API instead of "unknown connector"."""
+    q = " ".join((name or "").lower().split())
+    if not q or not org_id:
+        return None
+    for c in org_connectors(org_id):
+        if q in {" ".join(str(c["label"]).lower().split()), c["account"].lower()}:
+            return {"connector": CONNECTOR, "account": c["account"], "label": c["label"],
+                    "description": c["description"], "logo_domain": c["logo_domain"],
+                    "actions_count": c["actions_count"],
+                    "how_to_call": (f"http_operations(_account=\"{c['account']}\") lists "
+                                    "its actions; http_call(operation=…, args={…}) "
+                                    "calls one.")}
+    return None
+
+
+def summaries_for_instances(ids: list[int]) -> dict[int, dict]:
+    """`{instance id: {label, description, logo_domain, actions_count}}` — what the
+    front's instance roster shows per custom connector. One query."""
+    return {iid: {k: v for k, v in _summary("", cfg).items() if k != "account"}
+            for iid, cfg in connector_instances.configs_for_instance_ids(ids).items()}
+
+
+def with_constant_headers(client, headers: Optional[dict]):
+    """Apply the definition's constant headers to an oto-core client.
+
+    oto-core's `HttpConnectorClient` takes no `headers=` (follow-up: add that
+    parameter in oto-core, then drop this). Until then the headers go on the
+    client's session when it is first prepared — AFTER the auth configured it, and
+    a definition can never name an authenticating header (`custom_ops_definition`),
+    so the auth always wins. Coupled to one private hook, `_ready`, wrapped rather
+    than replaced."""
+    if not headers:
+        return client
+    ready = client._ready
+
+    def _ready_with_headers():
+        session = ready()
+        for name, value in headers.items():
+            session.headers.setdefault(name, value)
+        return session
+    client._ready = _ready_with_headers
+    return client
 
 
 def client_for(fields: dict):

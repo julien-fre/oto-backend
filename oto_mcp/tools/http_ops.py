@@ -6,14 +6,14 @@ module adds what makes the connector usable for a tool we do not ship:
 - `http_setup_link` — the link a person opens to connect the API THEMSELVES, the key
   typed in the form. A raw secret is never an MCP argument (CLAUDE.md): the tool has
   no parameter that could carry one.
-- `http_operations` / `http_set_operations` — the operations an org DESCRIBES in data
-  (`custom_ops`), stored on the credential's instance (`connectors/http_operations`).
-- `http_call` — call one of them by name: arguments checked, path parameters encoded
-  segment by segment, then the same client as `http_get` (vault, egress guard,
-  redirect refusal, upstream-error translation).
+- `http_operations` / `http_set_definition` — the org's custom connectors and the
+  definition each one SAVES once for every member (`custom_ops_definition`: label,
+  description, constant headers, variables, actions), stored on the credential's
+  instance (`connectors/http_operations`).
+- the calls (`http_call` by action name, `http_request` raw) live in `http_calls.py`.
 
-The row whose operations are read or written is the one the cascade RESOLVES for the
-call (`_account`, team, org) — the same key `http_call` will use.
+The row whose definition is read or written is the one the cascade RESOLVES for the
+call (`_account`, team, org) — the same key the calls use.
 """
 from __future__ import annotations
 
@@ -21,16 +21,14 @@ import re
 from typing import Literal, Optional
 from urllib.parse import urlsplit
 
-import requests
 from fastmcp import FastMCP
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, custom_ops, egress, links, roles
+from .. import access, custom_ops, egress, links, roles, session_org
 from ..auth.hooks import current_user_sub_from_token
 from ..connectors import http_operations as store
 from ..mcp_errors import McpError
 from ..providers.http import AUTH_MODES
-from . import http as http_tool
 from .lecture import LECTURE
 
 _HEADER_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
@@ -94,20 +92,32 @@ def _sub() -> str:
     return sub
 
 
-def _resolved():
-    """The vault row the cascade serves for this call — `_account`, team, org."""
-    rc = access.resolve_credential("http", want="byo")
+def _resolved(account: Optional[str] = None):
+    """The vault row the cascade serves for this call — `account` when given (an
+    action resolved by name), else `_account`, team, org."""
+    rc = access.resolve_credential("http", want="byo", account=account)
     if rc.entity_type is None:
         raise _bad("http connector: no Custom API account of yours, your team's or your "
                    "org's resolves — connect one first (`http_setup_link`).")
     return rc
 
 
-def _load(rc) -> list[dict]:
+def _definition(rc) -> dict:
     try:
-        return store.load(rc.entity_type, str(rc.entity_id), rc.account)
+        return store.load_definition(rc.entity_type, str(rc.entity_id), rc.account)
     except store.InstanceMissing as e:
         raise _bad(f"http connector: {e}.")
+
+
+def _org_connectors(sub: str) -> list[dict]:
+    """The custom connectors of the caller's org — empty without an org."""
+    org = access.current_org(sub)
+    return store.org_connectors(org) if org else []
+
+
+def _auth_header(rc) -> Optional[str]:
+    f = rc.fields
+    return f.get("header_name") if (f.get("auth_mode") or "") == "header" else None
 
 
 def _require_admin(sub: str, rc) -> None:
@@ -164,11 +174,13 @@ def register(mcp: FastMCP) -> None:
                         source: Optional[Literal["doc_path", "url", "inline"]] = None,
                         url: Optional[str] = None,
                         document: Optional[dict] = None) -> dict:
-        """Operations described for the Custom API account of this call (`_account`
-        when there are several). `op="list"` returns them (name, description, method,
-        path, input schema) — call one with `http_call`. `op="import"` (admin) turns
-        an OpenAPI/Swagger JSON document into candidates WITHOUT saving them; review,
-        then save with `http_set_operations`.
+        """The org's custom connectors (tools connected through Custom API, configured
+        once for every member) and their actions. Without `_account`: every custom
+        connector (account, label, description, action names) — start here. With
+        `_account`: that connector's definition, actions with their input schema.
+        Call an action with `http_call`. `op="import"` (admin) turns an
+        OpenAPI/Swagger JSON document into candidate actions WITHOUT saving them;
+        review, then save with `http_set_definition`.
 
         Args:
             op: list (default) | import.
@@ -178,11 +190,20 @@ def register(mcp: FastMCP) -> None:
             document: source=inline only — the OpenAPI JSON document.
         """
         sub = _sub()
+        if op == "list" and session_org.current_call_account() is None:
+            conns = _org_connectors(sub)
+            if conns:
+                return {"connectors": [
+                    {**{k: v for k, v in c.items() if k != "operations"},
+                     "actions": [o["name"] for o in c["operations"]]} for c in conns],
+                    "next": "http_operations(_account=<account>) for an action's input; "
+                            "http_call(operation=<action>, args={…}) to call it."}
         rc = _resolved()
         if op == "list":
-            ops = _load(rc)
-            return {"account": rc.account, "operations": [custom_ops.summary(o)
-                                                          for o in ops]}
+            d = _definition(rc)
+            return {"account": rc.account, "label": d["label"],
+                    "description": d["description"], "variables": d["variables"],
+                    "operations": [custom_ops.summary(o) for o in d["operations"]]}
         _require_admin(sub, rc)
         try:
             cands, skipped = store.import_candidates(
@@ -193,62 +214,42 @@ def register(mcp: FastMCP) -> None:
         return {"account": rc.account, "operations": cands, "skipped": skipped,
                 "saved": False}
 
-    @mcp.tool(name="http_set_operations")
-    def http_set_operations(operations: list[dict]) -> dict:
-        """Save (REPLACE) the operations of the Custom API account of this call
-        (admin). Each: `name` (snake_case), `description` (what the agent reads),
-        `method` GET|POST|PUT|PATCH|DELETE, `path` relative with `{param}`, `input`
-        (JSON schema object: properties, required), optional `in` {arg: path|query|body}
-        — default: path if in the template, else query for GET/DELETE, body otherwise.
-        At most 100. An invalid list is refused whole, every problem named.
+    @mcp.tool(name="http_set_definition")
+    def http_set_definition(operations: Optional[list[dict]] = None,
+                            label: Optional[str] = None,
+                            description: Optional[str] = None,
+                            logo_domain: Optional[str] = None,
+                            headers: Optional[dict] = None,
+                            variables: Optional[dict] = None) -> dict:
+        """Save the definition of the custom connector of this call (`_account`;
+        admin), reused by every member and session. Only the parts given change.
+        `operations` REPLACES the action list: each `name` (snake_case),
+        `description`, `method` GET|POST|PUT|PATCH|DELETE, `path` relative with
+        `{param}`, `input` (JSON schema object), optional `in` {arg: path|query|body}.
+        Never a secret here: the key stays on the card.
 
         Args:
-            operations: the full list; [] clears it.
+            operations: the full action list (100 max); [] clears it.
+            label: display name of the connector (e.g. "Acme Payroll").
+            description: what the tool is and what it holds, for the agent.
+            logo_domain: brand domain for the logo (e.g. acme.test).
+            headers: constant NON-secret headers (e.g. an API version).
+            variables: saved values {name: {value, description}} that fill an action
+                argument of the same name when the call omits it.
         """
         sub = _sub()
         rc = _resolved()
         _require_admin(sub, rc)
+        given = {k: v for k, v in (("operations", operations), ("label", label),
+                                   ("description", description),
+                                   ("logo_domain", logo_domain), ("headers", headers),
+                                   ("variables", variables)) if v is not None}
         try:
-            saved = store.save(rc.entity_type, str(rc.entity_id), rc.account, operations)
+            d = store.save_definition(rc.entity_type, str(rc.entity_id), rc.account,
+                                      given, auth_header=_auth_header(rc))
         except custom_ops.OperationsInvalid as e:
-            raise _bad("operations refused: " + " | ".join(e.errors[:20]))
+            raise _bad("definition refused: " + " | ".join(e.errors[:20]))
         except store.InstanceMissing as e:
             raise _bad(f"http connector: {e}.")
-        return {"account": rc.account, "saved": len(saved),
-                "names": [o["name"] for o in saved]}
-
-    @mcp.tool(name="http_call")
-    def http_call(operation: str, args: Optional[dict] = None,
-                  dry_run: bool = False) -> dict:
-        """Call a described operation of the Custom API account of this call, by
-        name (list them with `http_operations`). Arguments are checked against its
-        input schema, then sent where it declares (path, query or body), with the
-        account's auth. `dry_run=true` returns the request without sending it.
-
-        Args:
-            operation: name of the operation.
-            args: its arguments, by name.
-            dry_run: validate and return {method, path, query, body} without calling.
-        """
-        _sub()
-        rc = _resolved()
-        ops = _load(rc)
-        found = custom_ops.find(ops, operation)
-        if found is None:
-            names = ", ".join(o["name"] for o in ops[:30]) or "none described yet"
-            raise _bad(f"no operation `{operation}` on this Custom API account — "
-                       f"available: {names}.")
-        try:
-            plan = custom_ops.plan_call(found, args)
-        except custom_ops.CallRefused as e:
-            raise _bad(str(e))
-        if dry_run:
-            return {"dry_run": True, **plan}
-        client = http_tool.client_from_fields(rc.fields)
-        try:
-            return client.request(plan["method"], plan["path"], params=plan["query"] or None,
-                                  json=plan["body"])
-        except ValueError as e:
-            raise http_tool._value_error(e)
-        except requests.HTTPError as e:
-            raise http_tool._upstream_error(e)
+        return {"account": rc.account, "saved": sorted(given),
+                "label": d["label"], "actions": [o["name"] for o in d["operations"]]}

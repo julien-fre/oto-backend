@@ -36,9 +36,10 @@ CONNECTOR = _c(
     # use (a payroll or ERP SaaS…) is not in the catalogue. The NAME stays `http` —
     # tool names, vault rows and instance refs all carry it.
     label="Custom API",
-    # `tools/http_ops.py` carries the setup link and the described operations
-    # (500-line ceiling: `tools/http.py` keeps the raw-path tools).
-    modules=("http", "http_ops"),
+    # `tools/http_ops.py`: setup link and saved definition; `tools/http_calls.py`:
+    # calls by action name and raw (500-line ceiling: `tools/http.py` keeps the
+    # raw-path tools).
+    modules=("http", "http_ops", "http_calls"),
     # `auth_mode` SELECTS the other fields (oto-backend#449): a `bearer` form
     # need not show the six oauth2 and basic fields, and the write
     # refuses an inconsistent mode instead of accepting it then failing on the 1st call.
@@ -61,7 +62,12 @@ CONNECTOR = _c(
                         choices=AUTH_MODES,
                         help="what the API expects to authenticate you — it decides the "
                              "fields to fill in next"),
-        CredentialField("label", "Display name", secret=False,
+        # `in_meta` (17/10/2026): the display name is what every member's agent and
+        # the roster show for this custom connector — read in clear from `meta`,
+        # without decrypting the card. A card set before keeps it in the blob until
+        # its next save (`preparer_pose` merges, then moves it); meanwhile the
+        # account name stands in.
+        CredentialField("label", "Display name", secret=False, in_meta=True,
                         required=False, help="e.g. \"Acme API\" — visible to your org only"),
         CredentialField("doc_path", "Doc route", secret=False,
                         required=False,

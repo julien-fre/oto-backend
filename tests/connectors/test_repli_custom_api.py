@@ -65,3 +65,66 @@ def test_le_connecteur_se_presente_en_custom_api():
 def test_le_libelle_trouve_le_connecteur(cherche):
     assert [c["name"] for c in CS._resoudre_nom([_ligne("http"), _ligne("folk")],
                                                  cherche)] == ["http"]
+
+
+# ── un connecteur PERSONNALISÉ de l'org se trouve par son nom ─────────────────
+
+@pytest.fixture()
+def org_paie(monkeypatch):
+    """L'org #7 a configuré une fois son outil de paie par le Custom API (compte `paie`,
+    nom affiché « Acme Payroll » sur la carte, deux actions)."""
+    from oto_mcp import credentials_store
+    from oto_mcp.db import connector_instances as ci
+    monkeypatch.setattr(credentials_store, "list_accounts", lambda et, eid, con:
+                        [{"account": "paie", "meta": {"label": "Acme Payroll"}}]
+                        if (et, eid, con) == ("org", "7", "http") else [])
+    monkeypatch.setattr(ci, "live_instance_configs", lambda ot, oid, con, account=None: [
+        {"id": 3, "account": "paie", "config": {
+            "description": "Payroll SaaS.", "logo_domain": "acme.test",
+            "operations": [{"name": "a"}, {"name": "b"}]}}])
+
+
+def test_le_nom_d_un_connecteur_personnalise_le_rend_au_lieu_du_refus(monkeypatch, org_paie):
+    monkeypatch.setattr(CS, "_visible_catalog", lambda ctx: [_ligne("http"), _ligne("folk")])
+    monkeypatch.setattr(CS.connector_selection, "list_selection_detail", lambda s, o: {})
+    monkeypatch.setattr(CS.connector_selection, "list_removed", lambda s, o: {})
+    monkeypatch.setattr(CS.org_store, "get_org_default_connectors", lambda o: [])
+    monkeypatch.setattr(CS, "_guide_refs_by_ns", lambda o: {})
+    monkeypatch.setattr(CS.access, "reachable_instances_map", lambda s, o: {})
+    out = CS._me_projection(_CTX, CS.MyConnectorsInput(name="  acme PAYROLL "))
+    assert out["connectors"] == []
+    c = out["custom_connector"]
+    assert (c["connector"], c["account"], c["label"], c["actions_count"]) == \
+        ("http", "paie", "Acme Payroll", 2)
+    assert 'http_operations(_account="paie")' in c["how_to_call"]
+    # Un autre nom reste refusé — avec l'issue Custom API.
+    monkeypatch.setattr(links, "link_for", lambda *a, **k: None)
+    with pytest.raises(AuthzDenied):
+        CS._me_projection(_CTX, CS.MyConnectorsInput(name="Acme ERP"))
+
+
+def test_le_contexte_de_l_agent_nomme_les_connecteurs_personnalises(org_paie):
+    from oto_mcp import instructions
+    ctx = {"org_name": "Org", "role": "", "group_name": "", "connectors": ["http"],
+           "custom_connectors": [{"label": "Acme Payroll", "account": "paie"}],
+           "projects": [], "runs": []}
+    texte = instructions._format_context(ctx)
+    assert '- Connecteur personnalisé : Acme Payroll — `http_operations(_account="paie")`' \
+        in texte
+
+
+def test_le_roster_des_instances_porte_la_carte_du_connecteur(monkeypatch):
+    from oto_mcp.capabilities.connectors import instances
+    from oto_mcp.db import connector_instances as ci
+    monkeypatch.setattr(ci, "configs_for_instance_ids", lambda ids: {
+        3: {"label": "Acme Payroll", "logo_domain": "acme.test",
+            "operations": [{"name": "a"}]}, 4: {}})
+    out = [{"name": "x"}, {"name": "Custom API · rh"}, {"name": "folk"}]
+    cles = [("org", "7", "http", "paie"), ("org", "7", "http", "rh"),
+            ("org", "7", "folk", "")]
+    connues = {cles[0]: {"id": 3}, cles[1]: {"id": 4}, cles[2]: {"id": 5}}
+    instances._stamp_custom_api(out, connues, cles)
+    assert out[0]["custom_api"] == {"label": "Acme Payroll", "description": None,
+                                    "logo_domain": "acme.test", "actions_count": 1}
+    assert out[1]["custom_api"]["label"] == "Custom API · rh"
+    assert "custom_api" not in out[2]

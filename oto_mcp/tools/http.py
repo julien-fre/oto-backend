@@ -31,6 +31,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from oto.tools.http import HttpConnectorClient
 
 from .. import access, egress
+from ..connectors import http_operations
 from ..texte_tiers import cloture
 from ..auth.hooks import current_user_sub_from_token
 
@@ -168,7 +169,7 @@ def _client() -> HttpConnectorClient:
     return client_from_fields(_resolve_fields())
 
 
-def client_from_fields(f: dict) -> HttpConnectorClient:
+def client_from_fields(f: dict, headers: dict | None = None) -> HttpConnectorClient:
     """The client for these credential fields, refusals translated into actionable
     McpErrors — `_client()` for the call's credential, `http_call` for the row it
     resolved. The TWO destinations the card carries are guarded: the called base,
@@ -176,7 +177,8 @@ def client_from_fields(f: dict) -> HttpConnectorClient:
     from oto-core without passing through `base_url`. Guarding only the first would
     leave an entire outbound path outside the guard. (The REST import of a
     `doc_path` builds its client in `connectors/http_operations.client_for`, same
-    guard.)"""
+    guard.) `headers` = the saved definition's constant headers (`http_call`,
+    `http_request`)."""
     base_url = (f.get("base_url") or "").strip()
     mode = (f.get("auth_mode") or "").strip()
     if not base_url or not mode:
@@ -195,9 +197,10 @@ def client_from_fields(f: dict) -> HttpConnectorClient:
     except egress.EgressRefused as e:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
     try:
-        return HttpConnectorClient(base_url, mode, f, timeout=TIMEOUT)
+        client = HttpConnectorClient(base_url, mode, f, timeout=TIMEOUT)
     except ValueError as e:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=f"http connector: {e}"))
+    return http_operations.with_constant_headers(client, headers)
 
 
 def _excerpt(response) -> str:

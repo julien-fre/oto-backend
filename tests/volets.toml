@@ -219,6 +219,7 @@ chemins = [
   # conversion OpenAPI : lus par la machinerie ci-dessus, les outils et les capacités.
   "oto_mcp/custom_ops.py",
   "oto_mcp/custom_ops_openapi.py",
+  "oto_mcp/custom_ops_definition.py",
   "oto_mcp/providers/__init__.py",
   "oto_mcp/providers/_model.py",
   "oto_mcp/tools/__init__.py",

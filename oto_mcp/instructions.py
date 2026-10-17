@@ -144,6 +144,17 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
         except Exception:
             pass
 
+    # Les connecteurs PERSONNALISÉS de l'org (connecteur `http`, « Custom API ») : un
+    # outil configuré une fois par l'org, que l'agent ne trouverait pas au catalogue.
+    custom: list[dict] = []
+    if "http" in connectors and org_id:
+        try:
+            from .connectors import http_operations
+            custom = http_operations.org_connectors(org_id)[:10]
+        except Exception:
+            logger.warning("contexte : connecteurs personnalisés illisibles (omis)",
+                           exc_info=True)
+
     projects: list[str] = []
     try:
         # L'org et mes projets PERSONNELS créés dans cette org (décision du 29/09/2026,
@@ -187,7 +198,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
     return {
         "org_name": org_name, "user_name": user_name, "role": role,
         "group_name": group_name, "group_id": group_id, "connectors": connectors,
-        "projects": projects, "runs": runs, "profile": profile,
+        "custom_connectors": custom, "projects": projects, "runs": runs, "profile": profile,
     }
 
 
@@ -237,6 +248,9 @@ def _format_context(ctx: dict) -> str:
         lines.append(f"- Équipe active : {ctx['group_name']}")
     if ctx["connectors"]:
         lines.append(f"- Connecteurs actifs : {', '.join(ctx['connectors'])}")
+    for c in ctx.get("custom_connectors") or []:
+        lines.append(f"- Connecteur personnalisé : {c['label']} — "
+                     f"`http_operations(_account=\"{c['account']}\")`")
     if ctx["projects"]:
         lines.append(f"- Projets récents : {' · '.join(ctx['projects'])}")
     if ctx["runs"]:

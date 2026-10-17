@@ -589,6 +589,10 @@ PUT /api/orgs/{id}/connectors/http/operations -> _handler
 OPTIONS /api/orgs/{id}/connectors/http/operations -> options_handler
 POST /api/orgs/{id}/connectors/http/operations/import -> _handler
 OPTIONS /api/orgs/{id}/connectors/http/operations/import -> options_handler
+GET,HEAD /api/orgs/{id}/connectors/http/definition -> _handler
+OPTIONS /api/orgs/{id}/connectors/http/definition -> options_handler
+PUT /api/orgs/{id}/connectors/http/definition -> _handler
+OPTIONS /api/orgs/{id}/connectors/http/definition -> options_handler
 GET,HEAD /api/me/instructions/{slug}/share -> _handler
 OPTIONS /api/me/instructions/{slug}/share -> options_handler
 POST /api/me/instructions/{slug}/share -> _handler

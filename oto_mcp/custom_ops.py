@@ -81,6 +81,9 @@ def _path_errors(where: str, path: Any) -> list[str]:
     return errs
 
 
+path_errors = _path_errors     # the raw call (`http_request`) checks a path the same way
+
+
 def _type_errors(where: str, schema: Any) -> list[str]:
     if not isinstance(schema, dict):
         return [f"{where}: must be an object (a JSON schema)"]
@@ -243,13 +246,36 @@ def _path_value(arg: str, value: Any) -> str:
     return quote(raw, safe="")
 
 
-def plan_call(op: dict, args: Optional[dict]) -> dict:
+def _variable_value(value: str, schema: dict) -> Any:
+    """A saved variable is text; an argument typed integer/number/boolean takes it
+    converted — when it converts, otherwise as is (the type check then names it)."""
+    t = (schema or {}).get("type")
+    try:
+        if t == "integer":
+            return int(value)
+        if t == "number":
+            return float(value)
+    except (TypeError, ValueError):
+        return value
+    if t == "boolean" and str(value).lower() in ("true", "false"):
+        return str(value).lower() == "true"
+    return value
+
+
+def plan_call(op: dict, args: Optional[dict],
+              variables: Optional[dict] = None) -> dict:
     """`{method, path, query, body}` for this operation and these arguments, after
     checking them against `input` (unknown, missing required, basic JSON types).
-    `None` = argument omitted."""
+    `None` = argument omitted. `variables` = the connector's saved non-secret values
+    (`{name: {"value", "description"}}`): an argument of the same name that the
+    caller does not pass takes it."""
     args = {k: v for k, v in (args or {}).items() if v is not None}
     inp = op.get("input") or {}
     props = inp.get("properties") or {}
+    for name, var in (variables or {}).items():
+        if name in props and name not in args and isinstance(var, dict) \
+                and var.get("value") not in (None, ""):
+            args[name] = _variable_value(var["value"], props[name])
     unknown = sorted(a for a in args if a not in props)
     if unknown:
         raise CallRefused(f"unknown argument(s) {', '.join(unknown)} for `{op['name']}` "
