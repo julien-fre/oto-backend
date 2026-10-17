@@ -23,10 +23,6 @@ from . import http as http_tool
 from .http_ops import _bad, _definition, _org_connectors, _resolved, _sub
 
 
-# A non-JSON success body, returned as text up to this size.
-_TEXTE_MAX = 2000
-
-
 def _account_for(sub: str, operation: str) -> Optional[str]:
     """The account whose definition carries `operation`, when `_account` is not
     given — None to fall back on the call's default resolution."""
@@ -47,12 +43,7 @@ def _send(rc, headers: dict, plan: dict):
         return client.request(plan["method"], plan["path"], params=plan["query"] or None,
                               json=plan["body"])
     except requests.JSONDecodeError as e:
-        # A 2xx whose body is not JSON (`"Pet deleted"` under a JSON content type,
-        # seen live): the call SUCCEEDED upstream — said as such, never as a
-        # failure, or the agent retries a write that already went through.
-        texte = e.doc or ""
-        return {"ok": True, "non_json_body": texte[:_TEXTE_MAX],
-                "truncated": len(texte) > _TEXTE_MAX}
+        return http_tool.non_json_success(e)
     except ValueError as e:
         raise http_tool._value_error(e)
     except requests.HTTPError as e:

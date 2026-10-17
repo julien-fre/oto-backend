@@ -70,6 +70,8 @@ def register(mcp: FastMCP) -> None:
         client = _client()
         try:
             return client.get(path, params)
+        except requests.JSONDecodeError as e:
+            return non_json_success(e)
         except ValueError as e:
             raise _value_error(e)
         except requests.HTTPError as e:
@@ -96,6 +98,8 @@ def register(mcp: FastMCP) -> None:
         client = _client()
         try:
             return client.post(path, json=body, params=params)
+        except requests.JSONDecodeError as e:
+            return non_json_success(e)
         except ValueError as e:
             raise _value_error(e)
         except requests.HTTPError as e:
@@ -116,6 +120,8 @@ def register(mcp: FastMCP) -> None:
         doc_path = _require_doc_path(_resolve_fields())
         try:
             return client.get(doc_path)
+        except requests.JSONDecodeError as e:
+            return non_json_success(e)
         except ValueError as e:
             raise _value_error(e)
         except requests.HTTPError as e:
@@ -201,6 +207,20 @@ def client_from_fields(f: dict, headers: dict | None = None) -> HttpConnectorCli
     except ValueError as e:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=f"http connector: {e}"))
     return http_operations.with_constant_headers(client, headers)
+
+
+# A non-JSON success body, returned as text up to this size.
+NON_JSON_MAX = 2000
+
+
+def non_json_success(e: "requests.JSONDecodeError") -> dict:
+    """A 2xx whose body is not JSON (e.g. `"Pet deleted"` under a JSON content type,
+    seen live on a public API): the call SUCCEEDED upstream — said as such, never as a
+    failure, or the agent retries a write that already went through. A JSON body keeps
+    its shape untouched; only this case returns `{ok, non_json_body, truncated}`."""
+    texte = e.doc or ""
+    return {"ok": True, "non_json_body": texte[:NON_JSON_MAX],
+            "truncated": len(texte) > NON_JSON_MAX}
 
 
 def _excerpt(response) -> str:
