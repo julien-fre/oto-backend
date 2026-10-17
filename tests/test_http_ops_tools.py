@@ -340,3 +340,14 @@ def test_un_nom_d_en_tete_avec_soulignement_est_un_nom_valide(monkeypatch, compt
     assert out["prefilled"]["header_name"] == "api_key"
     assert _tool("http_set_definition").fn(headers={"x_source": "e2e"})["saved"] == \
         ["headers"]
+
+
+def test_un_succes_au_corps_non_json_est_un_succes(compte):
+    """Vu en vrai : un DELETE rend 200 et « Pet deleted » sous un type JSON. L'appel a
+    RÉUSSI chez le tiers — le dire en échec ferait rejouer une écriture."""
+    import requests
+    with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
+        cls.return_value.request.side_effect = requests.JSONDecodeError(
+            "Expecting value", "Pet deleted", 0)
+        out = _tool("http_request").fn(method="DELETE", path="/pet/1")
+    assert out == {"ok": True, "non_json_body": "Pet deleted", "truncated": False}
