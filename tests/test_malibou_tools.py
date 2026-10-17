@@ -237,3 +237,37 @@ def test_what_the_customer_comes_for_stays_readable(org_sans_politique):
 def test_the_floor_names_every_masked_field():
     assert set(field_filter_defaults.champs_du_plancher("malibou")) == {
         "ssn", "socialSecurityNumber", "iban", "bic", "absence_type"}
+
+
+# --- vue par défaut des listes ------------------------------------------------
+
+_ROW = {"id": "c1", "lastName": NOM, "ssn": NIR, "address": {"city": "Ville"},
+        "bankAccount": {"iban": IBAN, "bic": BIC}, "birthDate": "1990-01-01",
+        "currentContract": {"id": "k1", "natureContrat": "permanent"}}
+
+
+def test_collaborators_default_view_drops_personal_details(client):
+    client.return_value.list_collaborators.return_value = {
+        "data": [dict(_ROW)], "total": 1, "page": 1, "limit": 20}
+    out = _fn()(op="collaborators")
+    assert out["data"] == [{"id": "c1", "lastName": NOM,
+                            "currentContract": {"id": "k1", "natureContrat": "permanent"}}]
+    assert (out["total"], out["page"], out["limit"]) == (1, 1, 20)
+
+
+def test_full_returns_raw_rows(client):
+    raw = {"data": [dict(_ROW)], "total": 1, "page": 1, "limit": 20}
+    client.return_value.list_collaborators.return_value = raw
+    assert _fn()(op="collaborators", full=True) == raw
+
+
+def test_records_default_view_drops_created_at(client):
+    client.return_value.list_work_locations.return_value = {
+        "data": [{"id": "w1", "isRemoteWork": True, "createdAt": "2026-10-01T08:00:00Z"}]}
+    out = _fn()(op="work_locations", start_date="2026-10-01", end_date="2026-10-31")
+    assert out["data"] == [{"id": "w1", "isRemoteWork": True}]
+
+
+def test_full_is_refused_on_a_single_record(client):
+    with pytest.raises(McpError, match="full"):
+        _fn()(op="collaborator", collaborator_id="c1", full=True)

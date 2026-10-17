@@ -24,7 +24,7 @@ from typing import Any, Literal, Optional
 from fastmcp import FastMCP
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, output_projection
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 from .lecture import LECTURE
@@ -72,6 +72,22 @@ def _upstream_message(e) -> str:
     if status in (500, 502, 503, 504):
         return f"Malibou is temporarily unavailable (HTTP {status}) — retry later."
     return f"Malibou refused the request (HTTP {status}): {detail}"
+
+
+#: What the default (non-`full`) list view drops from each row: personal details and
+#: bookkeeping nobody reads at triage. `full=True` returns the raw rows.
+_COLLABORATOR_ROW_DROP = ("address", "bankAccount", "ssn", "birthName", "birthDate",
+                          "birthCity", "nationality", "secondaryEmail", "phoneNumber",
+                          "isProfileComplete")
+_RECORD_ROW_DROP = ("createdAt",)
+
+
+def _view(result: Any, full: bool, drop: tuple) -> Any:
+    """The default list view: each row of `data` without `drop`; envelope (`total`,
+    `page`, `limit`) kept. `full=True` returns the response untouched."""
+    if full:
+        return result
+    return output_projection.project(result, items_path="data", item_drop=drop)
 
 
 def _absence_type(result: Any) -> Any:
@@ -132,6 +148,7 @@ def register(mcp: FastMCP) -> None:
         establishment_id: Optional[str] = None,
         page: Optional[int] = None,
         limit: Optional[int] = None,
+        full: bool = False,
     ) -> Any:
         """Malibou payroll and HR, read-only: the organization's employees and their
         contracts, absences, and declared work locations (remote or on site).
@@ -154,7 +171,9 @@ def register(mcp: FastMCP) -> None:
         holds fewer than `limit` items. Which fields come out depends on the scopes
         of the key: without the details scope, no NIR, address, phone or bank
         account. NIR, IBAN/BIC and `absence_type` are masked by default until an
-        org admin lifts the rule. No payslips, payroll variables or company data:
+        org admin lifts the rule. Lists drop by default each employee's personal
+        details (address, bank account, NIR, birth, nationality, phone, secondary
+        email) and each record's `createdAt`; `full=true` returns raw rows. No payslips, payroll variables or company data:
         the self-serve API does not serve them.
 
         Args:
@@ -167,27 +186,29 @@ def register(mcp: FastMCP) -> None:
             establishment_id: only this establishment.
             page: page number, from 1 (lists).
             limit: items per page (lists).
+            full: lists — raw rows instead of the trimmed view.
         """
         if op == "collaborator":
             _need(collaborator_id, "collaborator_id", op)
             _refuse_ignored(op, start_date=start_date, end_date=end_date, status=status,
-                            contract_status=contract_status, page=page, limit=limit)
+                            contract_status=contract_status, page=page, limit=limit,
+                            full=full or None)
             return _run(lambda: _client().get_collaborator(
                 collaborator_id, establishment_id=establishment_id))
         if op == "collaborators":
             _refuse_ignored(op, collaborator_id=collaborator_id, start_date=start_date,
                             end_date=end_date, status=status)
-            return _run(lambda: _client().list_collaborators(
+            return _view(_run(lambda: _client().list_collaborators(
                 establishment_id=establishment_id, contract_status=contract_status,
-                page=page, limit=limit))
+                page=page, limit=limit)), full, _COLLABORATOR_ROW_DROP)
         _need(start_date, "start_date", op)
         _need(end_date, "end_date", op)
         _refuse_ignored(op, collaborator_id=collaborator_id,
                         contract_status=contract_status)
         if op == "absences":
-            return _absence_type(_run(lambda: _client().list_absences(
+            return _view(_absence_type(_run(lambda: _client().list_absences(
                 start_date, end_date, status=status, establishment_id=establishment_id,
-                page=page, limit=limit)))
-        return _run(lambda: _client().list_work_locations(
+                page=page, limit=limit))), full, _RECORD_ROW_DROP)
+        return _view(_run(lambda: _client().list_work_locations(
             start_date, end_date, status=status, establishment_id=establishment_id,
-            page=page, limit=limit))
+            page=page, limit=limit)), full, _RECORD_ROW_DROP)
