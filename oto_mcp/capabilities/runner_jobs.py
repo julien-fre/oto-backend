@@ -272,7 +272,7 @@ class SummaryFailure(BaseModel):
 
 class TimeSavedResult(BaseModel):
     """Un type de résultat d'un agent sur la fenêtre : combien, et ce que ça vaut."""
-    kind: Literal["enrichment", "action", "record", "research"]
+    kind: Literal["report", "enrichment", "action", "record", "research"]
     label: str
     count: int
     minutes_each: float
@@ -1074,18 +1074,22 @@ def _resume(ctx: ResolvedCtx, jours: int) -> dict:
     # Le temps gagné : les runs conclus `done` de chaque agent vu, leurs appels
     # rangés par type de résultat (`time_saved.py`), aux minutes de l'org.
     minutes = time_saved.standards(db.minutes_gagnees_de_l_org(ctx.org_id))
+    conclus = [r for r in db.outils_des_runs_conclus(ctx.org_id, jours)
+               if int(r["trigger_id"]) in par_agent]
+    # Les appels du journal, run par run ; un run sans journal retombe sur ses
+    # `tool_counts` (ni op, ni succès, ni enregistrement : moins précis).
+    par_run: dict[str, list] = {}
+    for c in db.appels_des_runs([r["run_id"] for r in conclus if r.get("run_id")]):
+        par_run.setdefault(c["run_id"], []).append(time_saved.Call(
+            tool=c["tool"], op=c["op"], ok=bool(c["ok"]), key=c["cle"], day=c["jour"]))
+    runs_par_agent: dict[int, list] = {}
+    for r in conclus:
+        appels = par_run.get(r.get("run_id") or "") or time_saved.calls_from_counts(r.get("tool_counts") or {})
+        runs_par_agent.setdefault(int(r["trigger_id"]), []).append(appels)
     tallies: dict[int, dict] = {}
-    for r in db.outils_des_runs_conclus(ctx.org_id, jours):
-        tid = int(r["trigger_id"])
-        if tid not in par_agent:
-            continue
-        gagne, comptes = time_saved.for_run(r["tool_counts"] or {}, minutes)
-        par_agent[tid]["time_saved_minutes"] = par_agent[tid].get("time_saved_minutes", 0.0) + gagne
-        for k, n in comptes.items():
-            t = tallies.setdefault(tid, {}).setdefault(k, {"count": 0, "minutes": 0.0})
-            t["count"] += n
-            m = n * minutes[k]
-            t["minutes"] += min(m, time_saved.RESEARCH_CAP_PER_RUN) if k == "research" else m
+    for tid, runs in runs_par_agent.items():
+        gagne, tallies[tid] = time_saved.for_agent(runs, minutes)
+        par_agent[tid]["time_saved_minutes"] = gagne
     for tid, a in par_agent.items():
         tally = tallies.get(tid, {})
         a["time_saved_minutes"] = round(a.get("time_saved_minutes", 0.0), 1)

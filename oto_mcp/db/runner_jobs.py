@@ -1783,19 +1783,49 @@ def poser_minutes_gagnees(org_id: int, minutes: Optional[dict]) -> bool:
 
 
 def outils_des_runs_conclus(org_id: int, jours: int) -> list[dict]:
-    """Les `tool_counts` des runs d'agents CONCLUS `done` sur la fenêtre — la matière
-    du temps gagné. Une ligne par run : `{trigger_id, tool_counts}`."""
+    """Les runs d'agents CONCLUS `done` sur la fenêtre — la matière du temps gagné,
+    dans l'ordre où ils sont tombés dus. Une ligne par run : `{trigger_id, run_id,
+    tool_counts}` (`run_id` mène à ses appels dans le journal, `tool_counts` est le
+    repli quand il n'y en a pas)."""
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT (payload->>'trigger_id')::bigint AS trigger_id,
-                   result->'tool_counts' AS tool_counts
+            SELECT (payload->>'trigger_id')::bigint AS trigger_id, run_id,
+                   CASE WHEN jsonb_typeof(result->'tool_counts') = 'object'
+                        THEN result->'tool_counts' END AS tool_counts
               FROM runner_jobs
              WHERE org_id = %s AND status = 'done'
                AND due_at >= NOW() - make_interval(days => %s)
                AND payload->>'trigger_id' ~ '^[0-9]+$'
-               AND jsonb_typeof(result->'tool_counts') = 'object'
+             ORDER BY due_at
             """,
             (org_id, int(jours)),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+#: Les arguments qui NOMMENT l'enregistrement touché, dans l'ordre où on les essaie —
+#: pour « un même enregistrement compte une fois par jour ».
+CLES_D_ENREGISTREMENT = ("id", "record_id", "person_id", "contact_id", "company_id",
+                         "lead_id", "issue_id", "row_id", "email", "linkedin_url", "url")
+
+
+def appels_des_runs(run_ids: list[str]) -> list[dict]:
+    """Les appels d'outils MCP de ces runs, dans l'ordre (`tool_calls`, par
+    `idx_tool_calls_run`) : outil, `op`, réussite, l'enregistrement nommé et le jour.
+    Rien d'autre des arguments n'est lu — ni corps, ni lignes, ni contenu."""
+    if not run_ids:
+        return []
+    cle = "COALESCE(" + ", ".join(f"args->>'{k}'" for k in CLES_D_ENREGISTREMENT) + ")"
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT run_id, tool, args->>'op' AS op, ok, {cle} AS cle,
+                   to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS jour
+              FROM tool_calls
+             WHERE run_id = ANY(%s) AND kind = 'mcp'
+             ORDER BY run_id, created_at
+            """,
+            (list(run_ids),),
         ).fetchall()
     return [dict(r) for r in rows]

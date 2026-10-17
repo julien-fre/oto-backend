@@ -366,8 +366,8 @@ CAPABILITIES += [
             "org's OWN deposited API key, same tier, instead of waiting (the default depends on the instance); "
             "get also returns `mode`, `pool_size`, `lenders` (who lends, and whether each is "
             "usable now — never their tier or usage) and `api_fallback`) | time_saved "
-            "(minutes per result type behind the agents' time saved — enrichment, action, "
-            "record, research; get returns each kind's default and applied minutes; set takes "
+            "(minutes per result type behind the agents' time saved — report, enrichment, "
+            "action, record, research; get returns each kind's default and applied minutes; set takes "
             "`minutes` {kind: 0..240 | null} — null restores that kind's default, `{}` all). "
             "op=get is member, set is org admin."),
         mcp="oto_org_settings",

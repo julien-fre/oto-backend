@@ -2215,15 +2215,23 @@ premier run réussi, chez toute org, pour tout connecteur — y compris celui aj
 **La forme.** Temps gagné d'un run = Σ résultats × minutes par type. Le TYPE se déduit de
 ce que l'outil déclare déjà (`tools/lecture.py`, mis en cache au boot par
 `tool_registry.effet_de`) : `LECTURE` → recherche, `ENVOI` → message ou action, le reste →
-écriture ; un nom qui contient `enrich` → enrichissement. Défauts : enrichissement 3 min,
-message/action 4, écriture 1,5, recherche 2 — **plafonnée à 10 min par run**. La matière :
-`result.tool_counts` des runs conclus `done` (`db.outils_des_runs_conclus`). Servi par
-`runner.jobs op=summary` (`time_saved_minutes`, `time_saved` par type, `time_standards`).
+écriture ; un nom qui contient `enrich` → enrichissement ; une `op` qui LIT (`get`,
+`list`, `search`…, `time_saved.READ_OPS`) → recherche, même sur un outil écrivain.
+Défauts : rapport 15 min, enrichissement 3, message/action 4, écriture 1,5, recherche 2 —
+**plafonnée à 10 min par run**. Servi par `runner.jobs op=summary` (`time_saved_minutes`,
+`time_saved` par type, `time_standards`).
 
-**Ce qui ne compte pas.** Un run en échec ; la tenue de la plateforme (`oto_*`,
-`run_start`/`run_finish`, `feedback`, les `data_*` qui lisent ou réservent — seuls
-`data_write`/`data_update_where` comptent) ; un outil absent du registre (on ne devine
-pas). ⚠️ `tool_counts` compte les APPELS, réussis ou non, dans un run `done`.
+**La matière : le journal.** Les appels des runs conclus `done` (`tool_calls` par
+`run_id`, `db.appels_des_runs`) : l'`op`, la réussite, et l'enregistrement nommé
+(`CLES_D_ENREGISTREMENT` : id, email, url… — rien d'autre des arguments n'est lu). Un
+run sans journal retombe sur ses `tool_counts` (ni op, ni réussite, ni enregistrement).
+
+**Revu sur des agents réels (17/10/2026)**, qui surcomptaient :
+- un balayage qui ne PRODUIT rien de neuf ne gagne rien — sa recherche ne compte que
+  dans un run productif (un horaire qui regarde et ne trouve rien comptait 10 min) ;
+- un même enregistrement compte UNE fois par jour et par agent ;
+- un appel refusé ne compte pas ;
+- chercher puis seulement POSTER (un résumé, une alerte) est UN rapport par run.
 
 **Surcharge d'org.** `oto_org_settings domain=time_saved` : `get` (membre) rend défauts et
 minutes appliquées ; `set` (admin) prend `minutes` `{type: 0..240 | null}` — null rend le

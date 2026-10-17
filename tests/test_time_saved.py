@@ -112,3 +112,47 @@ def test_set_refuse_avant_toute_ecriture(stockage, minutes, code):
     with pytest.raises(AuthzDenied) as e:
         _reglage(op="set", minutes=minutes)
     assert e.value.code == code and stockage["v"] == {}
+
+
+# ── les règles revues sur des agents réels (balayages, multiplexés, rapports) ──
+
+C = time_saved.Call
+M = time_saved.standards(None)
+
+
+def test_un_balayage_qui_ne_produit_rien_ne_gagne_rien():
+    """Un run horaire qui regarde et ne trouve rien : sa recherche ne compte pas."""
+    gagne, tally = time_saved.for_agent([[C("serper_search")] * 6, [C("serper_search")]], M)
+    assert gagne == 0 and tally == {}
+
+
+def test_une_op_qui_lit_sur_un_outil_ecrivain_est_une_recherche():
+    """`folk_update op=get` lit : un outil multiplexé ne compte que ses écritures."""
+    assert time_saved.kind_of("folk_update", "get") == "research"
+    assert time_saved.kind_of("folk_update", "update") == "record"
+
+
+def test_un_meme_enregistrement_compte_une_fois_par_jour():
+    runs = [[C("folk_update", "update", key="p1", day="2026-10-01"), C("serper_search")],
+            [C("folk_update", "update", key="p1", day="2026-10-01")],     # même jour : rien de neuf
+            [C("folk_update", "update", key="p1", day="2026-10-02")]]     # lendemain : compte
+    gagne, tally = time_saved.for_agent(runs, M)
+    assert tally["record"]["count"] == 2
+    assert tally["research"]["count"] == 1      # seul le premier run a produit
+
+
+def test_un_appel_refuse_ne_compte_pas():
+    gagne, tally = time_saved.for_agent([[C("folk_update", ok=False), C("folk_update")]], M)
+    assert tally["record"]["count"] == 1
+
+
+def test_chercher_puis_poster_est_un_rapport_une_fois_par_run():
+    gagne, tally = time_saved.for_agent(
+        [[C("serper_search"), C("serper_search"), C("email_send")]], M)
+    assert tally == {"report": {"count": 1, "minutes": M["report"]}}
+    assert gagne == M["report"]
+
+
+def test_des_envois_sans_recherche_restent_des_envois():
+    gagne, tally = time_saved.for_agent([[C("email_send")] * 3], M)
+    assert tally["action"]["count"] == 3 and "report" not in tally

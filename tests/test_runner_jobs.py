@@ -692,3 +692,27 @@ def test_summary_rend_le_temps_gagne_de_chaque_agent_vu(monkeypatch):
     assert [(r["kind"], r["count"], r["minutes_each"]) for r in a["time_saved"]] == [
         ("enrichment", 3, 5.0), ("record", 3, time_saved.KINDS["record"]["minutes"])]
     assert rep["time_standards"]["enrichment"] == 5.0
+
+
+def test_summary_lit_les_appels_du_journal_quand_le_run_en_a(monkeypatch):
+    """Un run lié au journal compte ses appels (op, réussite, enregistrement) ; ses
+    `tool_counts` ne servent qu'au run qui n'en a pas."""
+    import datetime as dt
+    from oto_mcp import tool_registry
+    monkeypatch.setattr(tool_registry, "_EFFETS", {"folk_record": "write"})
+    h = dt.datetime(2026, 10, 1, 8, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(RJ.db, "resume_des_declencheurs", lambda org, jours: (
+        [{"trigger_id": 5, "heure": h, "status": "done", "n": 1}], []))
+    monkeypatch.setattr(RJ.db, "list_triggers", lambda org: [{"id": 5, "sub": "u"}])
+    monkeypatch.setattr(RJ._acces_agent, "niveaux", lambda sub, org, agents: {5: "owner"})
+    monkeypatch.setattr(RJ.db, "minutes_gagnees_de_l_org", lambda org: {})
+    monkeypatch.setattr(RJ.db, "outils_des_runs_conclus", lambda org, jours: [
+        {"trigger_id": 5, "run_id": "r1", "tool_counts": {"folk_record": 50}}])
+    monkeypatch.setattr(RJ.db, "appels_des_runs", lambda ids: [
+        {"run_id": "r1", "tool": "folk_record", "op": "search", "ok": True, "cle": None, "jour": "2026-10-01"},
+        {"run_id": "r1", "tool": "folk_record", "op": "update", "ok": True, "cle": "p1", "jour": "2026-10-01"},
+        {"run_id": "r1", "tool": "folk_record", "op": "update", "ok": False, "cle": "p2", "jour": "2026-10-01"},
+    ])
+    (a,) = _appel(_ctx(sub="u"), op="summary", days=7)["summary"]
+    # une écriture réussie (pas 50 appels), et la recherche de ce run productif
+    assert [(r["kind"], r["count"]) for r in a["time_saved"]] == [("record", 1), ("research", 1)]
