@@ -194,8 +194,10 @@ def register(mcp: FastMCP) -> None:
                     f"this org has no credits left for {len(contacts)} contacts "
                     f"(up to {engaged} FullEnrich credits with the fields asked; "
                     f"{e.remaining} left to commit, about {e.remaining // per_contact} "
-                    "contacts). Submit fewer contacts, ask only the fields you need, "
-                    "or have an admin of the org add credits to its plan.",
+                    "contacts). Jobs already submitted count at their worst case until "
+                    "read: read them with fullenrich_result first, which frees what they "
+                    "did not find. Then submit fewer contacts, ask only the fields you "
+                    "need, or have an admin of the org add credits to its plan.",
                     requested=engaged, remaining=e.remaining)
         try:
             enrichment_id = client.submit(contacts, enrich_fields=enrich_fields)

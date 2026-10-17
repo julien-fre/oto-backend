@@ -95,6 +95,7 @@ def test_un_lot_que_l_org_ne_peut_pas_payer_est_refuse_AVANT_l_envoi():
     assert out.error.data["code"] == spend_cap.CODE
     assert out.error.data["remaining"] == 22 and out.error.data["requested"] == 110
     assert "about 2 contacts" in out.error.message
+    assert "fullenrich_result" in out.error.message     # what frees the open jobs
     submit.assert_not_called()
     trace.assert_not_called()
     lib.assert_not_called()
