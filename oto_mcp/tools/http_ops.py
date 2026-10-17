@@ -31,7 +31,8 @@ from ..mcp_errors import McpError
 from ..providers.http import AUTH_MODES
 from .lecture import LECTURE
 
-_HEADER_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+# A header name is an RFC 9110 token — `api_key` (underscore) is one, and real APIs use it.
+_HEADER_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$")
 _PARAM_RE = re.compile(r"^[A-Za-z0-9_.\-\[\]]{1,64}$")
 
 INSTRUCTIONS = (

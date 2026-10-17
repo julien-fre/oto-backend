@@ -330,3 +330,13 @@ def test_les_en_tetes_constants_s_ajoutent_sans_toucher_l_auth():
     session = client._ready()
     assert session.headers["X-Api-Version"] == "2"
     assert session.headers["Authorization"] == "Bearer T"
+
+
+def test_un_nom_d_en_tete_avec_soulignement_est_un_nom_valide(monkeypatch, compte):
+    """`api_key` est un jeton HTTP (RFC 9110) — une vraie API l'attend tel quel."""
+    monkeypatch.setattr(links, "link_for", lambda kind, sub=None, **p: "https://x.test/c")
+    out = _tool("http_setup_link").fn(label="Pets", auth_mode="header",
+                                      header_name="api_key")
+    assert out["prefilled"]["header_name"] == "api_key"
+    assert _tool("http_set_definition").fn(headers={"x_source": "e2e"})["saved"] == \
+        ["headers"]

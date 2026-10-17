@@ -27,7 +27,8 @@ MAX_LABEL = 80
 MAX_DESCRIPTION = 2000
 MAX_HEADERS = 20
 MAX_VARIABLES = 50
-_HEADER_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+# A header name is an RFC 9110 token — `api_key` (underscore) is one, and real APIs use it.
+_HEADER_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$")
 _DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 # Headers that carry identity or routing: never a constant of a definition.
 _FORBIDDEN_HEADERS = {"authorization", "cookie", "set-cookie", "host",
@@ -43,7 +44,7 @@ def _header_errors(headers: Any, auth_header: Optional[str]) -> list[str]:
     for name, value in headers.items():
         low = str(name).lower()
         if not isinstance(name, str) or not _HEADER_RE.match(name):
-            errs.append(f"header `{name}`: invalid name (letters, digits, `-`)")
+            errs.append(f"header `{name}`: invalid name (an HTTP token: letters, digits, `-_.`…)")
         elif low in _FORBIDDEN_HEADERS or low.startswith("proxy-") or (
                 auth_header and low == auth_header.lower()):
             errs.append(f"header `{name}` authenticates or routes the call — the key "
