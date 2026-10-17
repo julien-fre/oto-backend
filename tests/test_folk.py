@@ -4,7 +4,8 @@ en `op=` (ADR 0047 §Amendement), solo OU bulk selon le param passé (`item`/`id
 `folk_record(op="create")`, ex-`folk_*_webhook` → `folk_webhook(op=…)`) : le
 comportement verrouillé ici est le même qu'avant. Verrouille :
 la validation "exactement un des deux" (ni les deux, ni aucun), le for-loop
-server-side en mode bulk (pas de batch natif Folk), le reçu allégé (compte +
+server-side en mode bulk quand le client n'a pas les endpoints batch natifs
+(`_sans_lot` ; le chemin batch est verrouillé dans `test_folk_batch.py`), le reçu allégé (compte +
 erreurs par item, IDs pour create), l'abandon immédiat du lot sur erreur
 d'auth/connexion (vs. continuer sur une erreur par item), le cap de taille,
 l'entity allow-list élargie (note/reminder acceptés en solo comme en bulk),
@@ -43,6 +44,16 @@ def _instance(client_cls):
     return client_cls.return_value
 
 
+def _sans_lot(inst):
+    """Un client épinglé AVANT les endpoints batch de Folk : le lot reste une
+    boucle de `_bulk_run` sur les méthodes unitaires (le chemin que ces tests
+    verrouillent)."""
+    from oto_mcp.tools.folk import _LOT
+    for noms in _LOT.values():
+        for nom in noms:
+            delattr(inst, nom)
+
+
 # --- folk_record op="create" -------------------------------------------------------------
 
 def test_create_solo_returns_record_directly(client_cls):
@@ -67,6 +78,7 @@ def test_create_bulk_success_returns_ids(client_cls):
     # plus garanti suivre l'ordre des items — seul l'`index` porté par chaque
     # tuple de résultat l'est (vérifié ci-dessous).
     inst = _instance(client_cls)
+    _sans_lot(inst)
     inst.create_person.side_effect = lambda **fields: {"id": f"per_{fields['first_name']}"}
     r = _register_and_call(
         "folk_record", op="create", entity="person",
@@ -80,6 +92,7 @@ def test_create_bulk_success_returns_ids(client_cls):
 def test_create_bulk_partial_failure_continues_batch(client_cls):
     from oto.tools.common.errors import UpstreamHTTPError
     inst = _instance(client_cls)
+    _sans_lot(inst)
 
     def _side_effect(**fields):
         if fields["first_name"] == "B":
@@ -101,6 +114,7 @@ def test_create_bulk_auth_error_aborts_whole_batch(client_cls):
     from oto.tools.common.errors import UpstreamHTTPError
     from oto_mcp.tools.folk import _BULK_CONCURRENCY
     inst = _instance(client_cls)
+    _sans_lot(inst)
     inst.create_person.side_effect = UpstreamHTTPError(401, {"message": "bad key"}, service="folk")
     with pytest.raises(UpstreamHTTPError):
         _register_and_call(
@@ -167,6 +181,7 @@ def test_create_item_key_colliding_with_a_param_is_a_clean_refusal(client_cls, c
 def test_create_bulk_item_key_collision_is_a_per_item_failure(client_cls):
     """Même garantie en lot : l'item fautif échoue seul, le reste passe."""
     inst = _instance(client_cls)
+    _sans_lot(inst)
     inst.create_person.return_value = {"id": "p1"}
     out = _register_and_call("folk_record", op="create", entity="person", items=[
         {"first_name": "Ada"},
@@ -258,6 +273,7 @@ def test_update_solo_now_accepts_note_and_reminder(client_cls):
 
 def test_update_bulk_success(client_cls):
     inst = _instance(client_cls)
+    _sans_lot(inst)
     inst.update_person.side_effect = [{"id": "per_1"}, {"id": "per_2"}]
     r = _register_and_call(
         "folk_record", op="update", entity="person",
@@ -269,6 +285,7 @@ def test_update_bulk_success(client_cls):
 def test_update_bulk_partial_failure_reports_id(client_cls):
     from oto.tools.common.errors import UpstreamHTTPError
     inst = _instance(client_cls)
+    _sans_lot(inst)
 
     def _side_effect(id, **fields):
         if id == "per_404":
@@ -287,6 +304,7 @@ def test_update_bulk_partial_failure_reports_id(client_cls):
 
 def test_update_bulk_missing_id_is_per_item_failure_not_abort(client_cls):
     inst = _instance(client_cls)
+    _sans_lot(inst)
     inst.update_person.side_effect = [{"id": "per_2"}]
     r = _register_and_call(
         "folk_record", op="update", entity="person",
@@ -438,6 +456,7 @@ def test_add_to_group_solo_preserves_existing_groups(client_cls):
 
 def test_add_to_group_bulk_preserves_existing_groups(client_cls):
     inst = _instance(client_cls)
+    _sans_lot(inst)
     inst.get_person.return_value = {"groups": [{"id": "g1"}]}
     inst.update_person.return_value = {"id": "per_1"}
     r = _register_and_call(
@@ -448,6 +467,7 @@ def test_add_to_group_bulk_preserves_existing_groups(client_cls):
 
 def test_add_to_group_already_member_is_noop_success(client_cls):
     inst = _instance(client_cls)
+    _sans_lot(inst)
     inst.get_person.return_value = {"groups": [{"id": "g1"}]}
     inst.update_person.return_value = {"id": "per_1"}
     r = _register_and_call(

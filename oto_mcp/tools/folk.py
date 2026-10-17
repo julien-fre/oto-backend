@@ -50,10 +50,14 @@ Surface: read/write **per entity** (`op="search"`/`"get"` take
 create), and are **solo OR bulk depending on the param passed**: a singular
 (`item`/`id`) for ONE record → direct result; a plural (`items`/`ids`, ≤50)
 for several → lightweight receipt (count + per-item errors, never N full
-response bodies). Folk has no batch endpoint anywhere — bulk mode loops over
-the single-record methods, in PARALLEL and at a capped rate (`_bulk_run`),
-not sequentially with a fixed pause (per-call network latency dominated total
-time, not Folk's rate limit).
+response bodies). For person, company and deal, `create`/`update` in bulk go
+through Folk's native batch endpoints (`/…/batch/create|update`, shipped
+October 2026): ONE request for the whole batch, one result per record
+(`_creer_par_lot`, `_maj_par_lot`). The other entities, `delete`,
+`add_to_group`, `dry_run`, and a client that predates the batch methods loop
+over the single-record methods, in PARALLEL and at a capped rate
+(`_bulk_run`) — the cap counts HTTP REQUESTS, not records (an update that
+re-reads its record makes two).
 
 ⚠️ **Two different field vocabularies coexist**: `op="create"` takes
 Python snake_case keys (`first_name`, `company_id`...); `op="update"` takes
@@ -305,9 +309,14 @@ _ENTITY_ID_REQUIRED = ("interaction",)
 # is also testable against a mocked `FolkClient` (signature introspection
 # does not work on a Mock without `autospec`).
 _CREATE_FIELDS = {
+    # `group_ids` → `groups`, `custom_fields` → `customFieldValues` (keyed by
+    # group id; each group is added to `groups`, which Folk requires): see
+    # `_vers_client`. Folk's create takes them in the same request.
     "person": {"first_name", "last_name", "emails", "phones", "job_title",
-               "company_name", "company_id", "group_ids", "urls", "description"},
-    "company": {"name", "emails", "industry"},
+               "company_name", "company_id", "group_ids", "urls", "description",
+               "custom_fields"},
+    "company": {"name", "emails", "industry", "description", "phones", "urls",
+                "group_ids", "custom_fields"},
     "deal": {"name", "people_ids", "company_ids", "custom_fields"},
     "note": {"entity_id", "content", "visibility"},
     "interaction": {"entity_id", "type", "title", "content", "date_time"},
@@ -383,6 +392,49 @@ def _get_one(c, entity: str, id: str, group_id: Optional[str] = None,
     return None
 
 
+def _valider_creation(entity: str, fields: Optional[dict],
+                      group_id: Optional[str]) -> dict:
+    """The caller's item, checked against `_CREATE_FIELDS` — shared by the solo
+    path and both bulk paths, so a batch refuses exactly what a single call does."""
+    fields = dict(fields or {})
+    if entity == "deal" and not group_id:
+        raise _bad("group_id required for entity='deal'.")
+    unknown = set(fields) - _CREATE_FIELDS.get(entity, set())
+    if unknown:
+        raise _bad(
+            f"unknown field(s) for entity='{entity}': {sorted(unknown)}. "
+            f"Accepted fields: {sorted(_CREATE_FIELDS.get(entity, set()))}. "
+            f"Reminder: op='create' uses Python snake_case keys "
+            f"(first_name, company_id...) — NOT the camelCase Folk API field "
+            f"names (jobTitle, customFieldValues...) used by op='update'.")
+    return fields
+
+
+def _vers_client(entity: str, fields: dict) -> dict:
+    """The validated item, in the keyword arguments of the client's `create_*`
+    / `*_body` — which pass the keys they do not name RAW to Folk.
+
+    `custom_fields` becomes `customFieldValues` (person, company), and each of
+    its groups joins `group_ids`: Folk refuses a custom value whose group is not
+    in `groups`, with a 422 that names neither. A company's `group_ids` becomes
+    `groups` (`company_body` has no `group_ids` of its own; `person_body`
+    does). A deal keeps `custom_fields`, which `deal_body` names."""
+    if entity not in ("person", "company"):
+        return fields
+    out = dict(fields)
+    valeurs = out.pop("custom_fields", None)
+    if valeurs is not None:
+        if not isinstance(valeurs, dict) or not all(
+                isinstance(v, dict) for v in valeurs.values()):
+            raise _bad("`custom_fields` is {group_id: {field name: value}}.")
+        groupes = list(out.get("group_ids") or [])
+        out["group_ids"] = groupes + [g for g in valeurs if g not in groupes]
+        out["customFieldValues"] = valeurs
+    if entity == "company" and "group_ids" in out:
+        out["groups"] = [{"id": g} for g in out.pop("group_ids") or []]
+    return out
+
+
 def _create_one(c, entity: str, fields: Optional[dict] = None,
                  group_id: Optional[str] = None,
                  object_type: str = "deals", dry_run: bool = False):
@@ -398,22 +450,13 @@ def _create_one(c, entity: str, fields: Optional[dict] = None,
     context tokens: a business argument eaten by a same-named parameter.
     Passing the dict closes the collision by construction, for any future key.
     """
-    fields = dict(fields or {})
-    if entity == "deal" and not group_id:
-        raise _bad("group_id required for entity='deal'.")
-    unknown = set(fields) - _CREATE_FIELDS.get(entity, set())
-    if unknown:
-        raise _bad(
-            f"unknown field(s) for entity='{entity}': {sorted(unknown)}. "
-            f"Accepted fields: {sorted(_CREATE_FIELDS.get(entity, set()))}. "
-            f"Reminder: op='create' uses Python snake_case keys "
-            f"(first_name, company_id...) — NOT the camelCase Folk API field "
-            f"names (jobTitle, customFieldValues...) used by op='update'.")
+    fields = _valider_creation(entity, fields, group_id)
     if dry_run:
         preview = {"would_create": fields}
         if entity == "deal":
             preview.update(group_id=group_id, object_type=object_type)
         return preview
+    fields = _vers_client(entity, fields)
     if entity == "person":
         return c.create_person(**fields)
     if entity == "company":
@@ -436,6 +479,45 @@ def _update_one(c, entity: str, id: str, fields: Optional[dict] = None,
                  add_to_groups: Optional[list[str]] = None,
                  remove_from_groups: Optional[list[str]] = None,
                  dry_run: bool = False, entity_id: Optional[str] = None):
+    fields, current = _preparer_maj(
+        c, entity, id, fields, group_id=group_id, object_type=object_type,
+        add_to_groups=add_to_groups, remove_from_groups=remove_from_groups,
+        dry_run=dry_run, entity_id=entity_id)
+    if dry_run:
+        if current is not None:
+            return {"id": id, "changes": {k: {"from": current.get(k), "to": v}
+                                          for k, v in fields.items()}}
+        return {"id": id, "fields": fields, "current_available": False}
+    if entity == "person":
+        return c.update_person(id, **fields)
+    if entity == "company":
+        return c.update_company(id, **fields)
+    if entity == "deal":
+        if not group_id:
+            raise _bad("group_id required for entity='deal'.")
+        return c.update_deal(group_id, id, object_type=object_type, **fields)
+    if entity == "note":
+        return c.update_note(id, **fields)
+    if entity == "interaction":
+        return c.update_interaction(
+            id, _need(entity_id, "entity_id", "update (entity='interaction')"),
+            **fields)
+    if entity == "task":
+        return c.update_task(id, **fields)
+    if entity == "reminder":
+        return c.update_reminder(id, **fields)
+    raise _bad(f"entity must be one of {_UPDATE_ENTITIES}.")
+
+
+def _preparer_maj(c, entity: str, id: str, fields: Optional[dict] = None,
+                  group_id: Optional[str] = None, object_type: str = "deals",
+                  add_to_groups: Optional[list[str]] = None,
+                  remove_from_groups: Optional[list[str]] = None,
+                  dry_run: bool = False,
+                  entity_id: Optional[str] = None) -> tuple[dict, Optional[dict]]:
+    """The fields an update WRITES, and the current record when it had to be
+    read — shared by the solo PATCH and the batch update, so that both merge
+    `customFieldValues` and `groups` the same way (Folk REPLACES both)."""
     fields = dict(fields or {})
     _reject_forbidden_update_fields(entity, fields)
     current = None
@@ -471,30 +553,7 @@ def _update_one(c, entity: str, id: str, fields: Optional[dict] = None,
     if not fields:
         raise _bad("Nothing to update: provide `fields` and/or "
                    "add_to_groups/remove_from_groups.")
-    if dry_run:
-        if current is not None:
-            return {"id": id, "changes": {k: {"from": current.get(k), "to": v}
-                                          for k, v in fields.items()}}
-        return {"id": id, "fields": fields, "current_available": False}
-    if entity == "person":
-        return c.update_person(id, **fields)
-    if entity == "company":
-        return c.update_company(id, **fields)
-    if entity == "deal":
-        if not group_id:
-            raise _bad("group_id required for entity='deal'.")
-        return c.update_deal(group_id, id, object_type=object_type, **fields)
-    if entity == "note":
-        return c.update_note(id, **fields)
-    if entity == "interaction":
-        return c.update_interaction(
-            id, _need(entity_id, "entity_id", "update (entity='interaction')"),
-            **fields)
-    if entity == "task":
-        return c.update_task(id, **fields)
-    if entity == "reminder":
-        return c.update_reminder(id, **fields)
-    raise _bad(f"entity must be one of {_UPDATE_ENTITIES}.")
+    return fields, current
 
 
 def _delete_one(c, entity: str, id: str, group_id: Optional[str] = None,
@@ -555,7 +614,10 @@ _BULK_MAX_ITEMS = 50
 # at ~8 req/s, under the documented 10 req/s with margin for the
 # concurrent traffic of other calls on the same key. `_request` already handles 429s
 # (retry on Retry-After): the limiter aims to stay under the limit in
-# normal use, not to replace it.
+# normal use, not to replace it. ⚠️ It paces the client's REQUESTS
+# (`_bulk_run(client=…)` wraps its `_request`), not the items: an update
+# that re-reads its record is a GET + a PATCH, and pacing items let such a
+# batch send ~16 req/s — over Folk's burst policy (20 requests / 2 s).
 _BULK_CONCURRENCY = 6
 _BULK_MIN_INTERVAL_S = 0.125  # ~8 req/s
 
@@ -592,7 +654,7 @@ def _bulk_fatal(exc: Exception) -> bool:
     return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
 
 
-def _bulk_run(items: list, fn) -> list[tuple[int, bool, object]]:
+def _bulk_run(items: list, fn, client=None) -> list[tuple[int, bool, object]]:
     """Runs `fn(item)` for each item IN PARALLEL (up to
     `_BULK_CONCURRENCY` in-flight HTTP calls, combined rate capped by
     `_RateLimiter`) rather than sequentially with a fixed pause after each
@@ -605,17 +667,34 @@ def _bulk_run(items: list, fn) -> list[tuple[int, bool, object]]:
     (verified at the 4 call sites). A FATAL error (auth/connection) cancels the
     calls not yet started and re-raises the exception — same contract as before
     (the whole batch is lost, no partial receipt), just detected
-    earlier thanks to the parallelism."""
+    earlier thanks to the parallelism.
+
+    `client` = the `FolkClient` that `fn` calls: the limiter then paces each of
+    its HTTP requests (retries included) instead of each item. Without it,
+    each item is paced as before."""
     if len(items) > _BULK_MAX_ITEMS:
         raise _bad(f"too many items ({len(items)}) — max {_BULK_MAX_ITEMS} per call, "
                    f"split into several calls.")
+    if not items:
+        return []
     limiter = _RateLimiter(_BULK_MIN_INTERVAL_S)
     results: list[Optional[tuple[int, bool, object]]] = [None] * len(items)
+    requete = getattr(client, "_request", None) if client is not None else None
+    propre = requete is not None and "_request" in vars(client)
 
     def _run_one(item):
-        limiter.wait()
+        if requete is None:
+            limiter.wait()
         return fn(item)
 
+    if requete is not None:
+        # The instance attribute shadows the method for the client's own
+        # `self._request(...)` calls; `c = _client()` is one instance per tool
+        # call, and what was there before is put back below.
+        def _requete_cadencee(*args, **kwargs):
+            limiter.wait()
+            return requete(*args, **kwargs)
+        client._request = _requete_cadencee
     pool = ThreadPoolExecutor(max_workers=min(_BULK_CONCURRENCY, len(items)))
     futures = {pool.submit(_run_one, item): i for i, item in enumerate(items)}
     try:
@@ -630,7 +709,131 @@ def _bulk_run(items: list, fn) -> list[tuple[int, bool, object]]:
                 results[i] = (i, False, str(e))
     finally:
         pool.shutdown(wait=True)
+        if propre:
+            client._request = requete
+        elif requete is not None:
+            del client._request
     return [r for r in results if r is not None]
+
+
+# --- Folk's native batch endpoints (person, company, deal) ----------------------
+#
+# ONE request for the whole batch (≤ 100 records at Folk, ≤ `_BULK_MAX_ITEMS`
+# here), answered 200 with one result per SENT record, in order. Each item is
+# validated here first, exactly as the solo path does: an item refused here is
+# a per-item `failed` and is not sent, so the results are mapped back to the
+# ORIGINAL indices. Used only when the client has the batch methods (a client
+# pinned before them keeps the loop) and never for `dry_run` (a preview sends
+# nothing, the loop already does that).
+
+_LOT = {
+    # entity: (record builder, batch create, batch update)
+    "person": ("person_body", "create_people_batch", "update_people_batch"),
+    "company": ("company_body", "create_companies_batch", "update_companies_batch"),
+    "deal": ("deal_body", "create_deals_batch", "update_deals_batch"),
+}
+
+
+def _lot_disponible(c, entity: str) -> bool:
+    noms = _LOT.get(entity)
+    return bool(noms) and all(callable(getattr(c, n, None)) for n in noms)
+
+
+def _envoyer_lot(appel, prets: list[tuple[int, dict]], failed: list,
+                 erreur_extra) -> list[tuple[int, dict]]:
+    """Sends the prepared records in ONE request; returns `(index, result)` per
+    SUCCEEDED record and appends the others to `failed`. A whole-request refusal
+    that is not fatal (a 422 on the batch itself) fails every sent record with
+    its message; an auth/connection error re-raises, as `_bulk_run` does."""
+    if not prets:
+        return []
+    try:
+        resultats = appel([r for _, r in prets])
+    except Exception as e:
+        if _bulk_fatal(e):
+            raise
+        failed.extend({"index": i, **erreur_extra(i), "error": str(e)} for i, _ in prets)
+        return []
+    reussis = []
+    for k, (i, _) in enumerate(prets):
+        res = resultats[k] if k < len(resultats) else None
+        if isinstance(res, dict) and res.get("status") == "succeeded":
+            reussis.append((i, res))
+        else:
+            err = (res or {}).get("error") if isinstance(res, dict) else None
+            message = (err or {}).get("message") if isinstance(err, dict) else None
+            failed.append({"index": i, **erreur_extra(i),
+                           "error": message or str(err or "no result for this record")})
+    return reussis
+
+
+def _creer_par_lot(c, entity: str, items: list, group_id: Optional[str],
+                   object_type: str) -> dict:
+    """`op="create"` in bulk through `…/batch/create`. A company named exactly
+    like an existing one is UPDATED by Folk (as its single create does): the
+    receipt says so with `operation: "updated"` on that entry."""
+    if len(items) > _BULK_MAX_ITEMS:
+        raise _bad(f"too many items ({len(items)}) — max {_BULK_MAX_ITEMS} per call, "
+                   f"split into several calls.")
+    corps, creer, _ = _LOT[entity]
+    failed: list = []
+    prets = []
+    for i, it in enumerate(items):
+        try:
+            kw = _vers_client(entity, _valider_creation(entity, it, group_id))
+            prets.append((i, getattr(c, corps)(**kw)))
+        except McpError as e:
+            failed.append({"index": i, "error": str(e)})
+    if entity == "deal":
+        appel = lambda recs: getattr(c, creer)(group_id, recs, object_type=object_type)
+    else:
+        appel = getattr(c, creer)
+    created = []
+    for i, res in _envoyer_lot(appel, prets, failed, lambda i: {}):
+        entree = {"index": i, "id": (res.get("data") or {}).get("id")}
+        if res.get("operation") and res["operation"] != "created":
+            entree["operation"] = res["operation"]
+        if res.get("warnings"):
+            entree["warnings"] = res["warnings"]
+        created.append(entree)
+    failed.sort(key=lambda f: f["index"])
+    return {"total": len(items), "succeeded": len(created),
+            "created": created, "failed": failed}
+
+
+def _maj_par_lot(c, entity: str, items: list, group_id: Optional[str],
+                 object_type: str, entity_id: Optional[str]) -> dict:
+    """`op="update"` in bulk through `…/batch/update`. The records that touch
+    `customFieldValues` or groups are first RE-READ (in parallel, paced) and
+    merged, exactly as the solo PATCH does — Folk's batch update replaces
+    `groups` like the PATCH, and nothing in its documentation says it keeps the
+    custom fields a record leaves out. Then ONE request writes them all."""
+    _, _, maj = _LOT[entity]
+
+    def _prep(it):
+        if "id" not in it:
+            raise _bad("each item must contain 'id'.")
+        champs, _ = _preparer_maj(
+            c, entity, it["id"], it.get("fields"), group_id=group_id,
+            object_type=object_type, add_to_groups=it.get("add_to_groups"),
+            remove_from_groups=it.get("remove_from_groups"),
+            entity_id=it.get("entity_id", entity_id))
+        return {"id": it["id"], **champs}
+
+    failed: list = []
+    prets = []
+    for i, ok, val in sorted(_bulk_run(items, _prep, client=c)):
+        if ok:
+            prets.append((i, val))
+        else:
+            failed.append({"index": i, "id": items[i].get("id"), "error": val})
+    if entity == "deal":
+        appel = lambda recs: getattr(c, maj)(group_id, recs, object_type=object_type)
+    else:
+        appel = getattr(c, maj)
+    reussis = _envoyer_lot(appel, prets, failed, lambda i: {"id": items[i].get("id")})
+    failed.sort(key=lambda f: f["index"])
+    return {"total": len(items), "succeeded": len(reussis), "failed": failed}
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
@@ -700,11 +903,11 @@ def register(mcp: FastMCP) -> None:
     # reachable without naming it. The four mutating ops
     # (create/update/delete/add_to_group) take a pair of mutually
     # exclusive params: the singular (a single record, result/preview
-    # returned directly) OR the plural (up to 50, bulk receipt). Folk has
-    # no batch endpoint anywhere (verified on this connector, Folk's official
-    # MCP, and a third-party MCP) — the plural loops over the
-    # single-record methods, in parallel at a capped rate (`_bulk_run`) and returns
-    # a lightweight receipt, never N full response bodies.
+    # returned directly) OR the plural (up to 50, bulk receipt). For person,
+    # company and deal, bulk create/update/add_to_group go through Folk's
+    # native batch endpoints (one request, October 2026); everything else
+    # loops over the single-record methods, in parallel at a capped rate
+    # (`_bulk_run`). Either way: a lightweight receipt, never N full bodies.
 
     @mcp.tool()
     def folk_record(
@@ -822,13 +1025,20 @@ def register(mcp: FastMCP) -> None:
         Per-entity field shape for op="create" (same for `item` and each entry
         of `items`, `*` = required, snake_case — see the warning above):
             person: {first_name*, last_name, emails, phones, job_title,
-                company_name, company_id, group_ids, urls, description}
+                company_name, company_id, group_ids, urls, description,
+                custom_fields}
                 — ⚠️ Folk ALSO links, on its own, a company matched on the
                 person's primary email domain, even when `company_id` is
                 passed, and may create one for it — a duplicate of the company
                 you named. Read back the person's `companies` after the create
                 to see what Folk added.
-            company: {name*, emails, industry}
+            company: {name*, emails, industry, description, phones, urls,
+                group_ids, custom_fields}
+                — `custom_fields` = {group_id: {field name: value}}, set in
+                the SAME request (each of its groups is joined too). In
+                bulk, a company named EXACTLY like an existing one is updated
+                by Folk instead of created: its `created` entry then carries
+                `operation: "updated"`.
             deal: {name*, people_ids, company_ids, custom_fields}
             note: {entity_id*, content*, visibility}
             interaction: {entity_id*, type*, title*, content, date_time}
@@ -1192,10 +1402,12 @@ def register(mcp: FastMCP) -> None:
                 result = _create_one(c, entity, item, group_id=group_id,
                                      object_type=object_type, dry_run=dry_run)
                 return {"dry_run": True, **result} if dry_run else result
+            if not dry_run and _lot_disponible(c, entity):
+                return _creer_par_lot(c, entity, items, group_id, object_type)
             results = _bulk_run(
                 items, lambda it: _create_one(c, entity, it, group_id=group_id,
                                               object_type=object_type,
-                                              dry_run=dry_run))
+                                              dry_run=dry_run), client=c)
             failed = [{"index": i, "error": val} for i, ok, val in results if not ok]
             if dry_run:
                 would_create = [{"index": i, **val} for i, ok, val in results if ok]
@@ -1228,6 +1440,9 @@ def register(mcp: FastMCP) -> None:
                     remove_from_groups=remove_from_groups, dry_run=dry_run,
                     entity_id=entity_id)
                 return {"dry_run": True, **result} if dry_run else result
+            if not dry_run and _lot_disponible(c, entity):
+                return _maj_par_lot(c, entity, items, group_id, object_type,
+                                    entity_id)
 
             def _one(it):
                 if "id" not in it:
@@ -1239,7 +1454,7 @@ def register(mcp: FastMCP) -> None:
                     remove_from_groups=it.get("remove_from_groups"),
                     dry_run=dry_run, entity_id=it.get("entity_id", entity_id))
 
-            results = _bulk_run(items, _one)
+            results = _bulk_run(items, _one, client=c)
             failed = [{"index": i, "id": items[i].get("id"), "error": val}
                       for i, ok, val in results if not ok]
             if dry_run:
@@ -1272,7 +1487,7 @@ def register(mcp: FastMCP) -> None:
                 ids, lambda rid: _delete_one(c, entity, rid, group_id=group_id,
                                              object_type=object_type,
                                              dry_run=dry_run,
-                                             entity_id=entity_id))
+                                             entity_id=entity_id), client=c)
             failed = [{"index": i, "id": ids[i], "error": val}
                       for i, ok, val in results if not ok]
             if dry_run:
@@ -1309,7 +1524,7 @@ def register(mcp: FastMCP) -> None:
             results = _bulk_run(
                 ids, lambda tid: _mark_one(c, tid, done,
                                            completed_at=completed_at,
-                                           dry_run=dry_run))
+                                           dry_run=dry_run), client=c)
             failed = [{"index": i, "id": ids[i], "error": val}
                       for i, ok, val in results if not ok]
             if dry_run:
@@ -1337,9 +1552,14 @@ def register(mcp: FastMCP) -> None:
                 result = _update_one(c, entity, id, add_to_groups=[group_id],
                                      dry_run=dry_run)
                 return {"dry_run": True, **result} if dry_run else result
+            if not dry_run and _lot_disponible(c, entity):
+                # Re-read each record (paced), union its groups, ONE batch update.
+                return _maj_par_lot(c, entity,
+                                    [{"id": rid, "add_to_groups": [group_id]}
+                                     for rid in ids], None, object_type, None)
             results = _bulk_run(
                 ids, lambda rid: _update_one(c, entity, rid, add_to_groups=[group_id],
-                                             dry_run=dry_run))
+                                             dry_run=dry_run), client=c)
             failed = [{"index": i, "id": ids[i], "error": val}
                       for i, ok, val in results if not ok]
             if dry_run:
