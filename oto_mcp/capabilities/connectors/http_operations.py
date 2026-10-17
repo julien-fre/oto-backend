@@ -134,14 +134,14 @@ _NOT_FOUND = DeclaredError(404, "http_credential_not_found",
 
 CAPABILITIES += [
     Capability(
-        key="connectors.http_operations.get", handler=_get, Input=GetInput,
+        key="custom_api.operations.get", handler=_get, Input=GetInput,
         authz=ORG_MEMBER_OF("org_id"), Output=HttpOperations,
         description="Read the described operations of an org's Custom API account.",
         errors=(_NOT_FOUND,),
         rest=RestBinding("GET", _PATH, _ID),
     ),
     Capability(
-        key="connectors.http_operations.set", handler=_set, Input=SetInput,
+        key="custom_api.operations.set", handler=_set, Input=SetInput,
         authz=ORG_ADMIN_OF("org_id"), Output=HttpOperations,
         description=("Replace the described operations of an org's Custom API account "
                      "(validated whole; org admin)."),
@@ -153,7 +153,7 @@ CAPABILITIES += [
         rest=RestBinding("PUT", _PATH, _ID),
     ),
     Capability(
-        key="connectors.http_operations.import", handler=_import, Input=ImportInput,
+        key="custom_api.operations.import", handler=_import, Input=ImportInput,
         authz=ORG_ADMIN_OF("org_id"), Output=HttpOperationsImport,
         description=("Convert an OpenAPI/Swagger JSON document into candidate operations "
                      "for an org's Custom API account, without saving (org admin)."),

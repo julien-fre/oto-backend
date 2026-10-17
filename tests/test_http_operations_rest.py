@@ -46,17 +46,17 @@ def org(monkeypatch):
 
 
 def _get(sub, account=b"paie"):
-    return call("connectors.http_operations.get", path_params={"id": str(ORG)},
+    return call("custom_api.operations.get", path_params={"id": str(ORG)},
                 query=b"account=" + account, sub=sub)
 
 
 def _put(sub, ops):
-    return call("connectors.http_operations.set", path_params={"id": str(ORG)},
+    return call("custom_api.operations.set", path_params={"id": str(ORG)},
                 query=b"account=paie", body={"operations": ops}, sub=sub)
 
 
 def _import(sub, body):
-    return call("connectors.http_operations.import", path_params={"id": str(ORG)},
+    return call("custom_api.operations.import", path_params={"id": str(ORG)},
                 query=b"account=paie", body=body, sub=sub)
 
 

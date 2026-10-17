@@ -171,7 +171,7 @@ def test_importer_une_url_interne_est_refuse(compte):
 # ── appel par nom ─────────────────────────────────────────────────────────────
 
 def test_dry_run_rend_la_requete_sans_appeler(compte):
-    with patch("oto.tools.http.HttpConnectorClient") as cls:
+    with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
         out = _tool("http_call").fn(operation="list_collaborators",
                                     args={"organizationId": "o 1", "page": 2},
                                     dry_run=True)
@@ -182,7 +182,7 @@ def test_dry_run_rend_la_requete_sans_appeler(compte):
 
 
 def test_l_appel_passe_par_le_client_du_connecteur(compte):
-    with patch("oto.tools.http.HttpConnectorClient") as cls:
+    with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
         cls.return_value.request.return_value = {"id": "abs_1"}
         out = _tool("http_call").fn(operation="create_absence",
                                     args={"start": "2026-10-01"})
@@ -194,7 +194,7 @@ def test_l_appel_passe_par_le_client_du_connecteur(compte):
 
 
 def test_une_traversee_est_refusee_avant_tout_appel(compte):
-    with patch("oto.tools.http.HttpConnectorClient") as cls:
+    with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
         with pytest.raises(McpError, match="single segment"):
             _tool("http_call").fn(operation="list_collaborators",
                                   args={"organizationId": "../admin"})
@@ -210,7 +210,7 @@ def test_l_erreur_amont_est_traduite_comme_http_get(compte):
     import requests
     rep = requests.Response()
     rep.status_code, rep._content = 429, b"slow down"
-    with patch("oto.tools.http.HttpConnectorClient") as cls:
+    with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
         cls.return_value.request.side_effect = requests.HTTPError(response=rep)
         with pytest.raises(McpError, match="HTTP 429"):
             _tool("http_call").fn(operation="create_absence", args={"start": "x"})
