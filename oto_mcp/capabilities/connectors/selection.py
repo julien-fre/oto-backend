@@ -26,7 +26,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from ... import access, db, org_store, providers, session_org, tool_registry
+from ... import access, db, links, org_store, providers, session_org, tool_registry
 from ...connectors import activation as connector_activation
 from ...connectors import cardinality as connector_cardinality
 from ...connectors import credential_presence
@@ -478,8 +478,26 @@ def _suggestions(catalog: list[dict], demande: str, n: int = 5) -> list[str]:
     return list(dict.fromkeys(proches))[:n]
 
 
-def _refus_nom_inconnu(catalog: list[dict], demande: str) -> AuthzDenied:
-    """The refusal of a name that designates nothing — NAMED and offering suggestions (#1112)."""
+def _repli_api_perso(catalog: list[dict], demande: str,
+                     ctx: Optional[ResolvedCtx]) -> tuple[str, Optional[str]]:
+    """The way out when the tool has no card: the Custom API connector (`http`), IF the
+    org can reach it. Its setup link carries the searched name, never a secret — the
+    key is typed in the form. `("", None)` when `http` is not open to the org."""
+    if not any(c["name"] == "http" for c in catalog):
+        return "", None
+    url = links.connector_setup_link("http", sub=ctx.sub if ctx else None,
+                                     org=ctx.org_id if ctx else None, label=demande)
+    where = f" at {url}" if url else " (`http_setup_link` gives the link)"
+    return (f" There is no dedicated connector, but a tool with an API key can be "
+            f"connected through the Custom API connector (`http`){where}. Send the "
+            f"link to whoever holds the key: they paste it in that form — never ask "
+            f"for the key in the chat."), url
+
+
+def _refus_nom_inconnu(catalog: list[dict], demande: str,
+                       ctx: Optional[ResolvedCtx] = None) -> AuthzDenied:
+    """The refusal of a name that designates nothing — NAMED and offering suggestions
+    (#1112), and the Custom API way out when the org can reach it."""
     proches = _suggestions(catalog, demande)
     if proches:
         suite = (f" Close names: {', '.join(f'`{n}`' for n in proches)} — retry with "
@@ -487,12 +505,16 @@ def _refus_nom_inconnu(catalog: list[dict], demande: str) -> AuthzDenied:
     else:
         suite = (" No close name: `oto_connector(op='list')` without `name` returns the "
                  "compact catalog with the exact names.")
+    repli, setup_url = _repli_api_perso(catalog, demande, ctx)
+    details: dict = {"query": demande, "suggestions": proches}
+    if repli:
+        details["custom_api"] = {"connector": "http", "setup_url": setup_url}
     return AuthzDenied(
         404, "unknown_connector",
         f"No connector available to your active org is named `{demande}` or carries "
-        f"this label (or it is not open to your org).{suite} This refusal says "
+        f"this label (or it is not open to your org).{suite}{repli} This refusal says "
         f"NOTHING about your connections: it concerns the name.",
-        details={"query": demande, "suggestions": proches})
+        details=details)
 
 
 def _with_readiness(ctx: ResolvedCtx, row: dict) -> dict:
@@ -559,7 +581,7 @@ def _me_projection(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
             # Not exposed for the active org, restricted by the org RBAC, or unknown name
             # — indistinguishable on the member side (same verdict as `_require_exposed`). But
             # the refusal OFFERS suggestions: a curt "unknown" was read as "not connected" (#1112).
-            raise _refus_nom_inconnu(catalog, inp.name)
+            raise _refus_nom_inconnu(catalog, inp.name, ctx)
         if [c["name"] for c in trouves] != [inp.name]:
             name_match = {
                 "query": inp.name,
@@ -686,7 +708,7 @@ def _require_exposed(ctx: ResolvedCtx, name: str) -> None:
     if name not in connector_activation.exposed_connectors(ctx.org_id):
         # A gesture is NOT resolved by label (it writes): it requires the exact name, but
         # its refusal offers the close names, like the read (#1112).
-        raise _refus_nom_inconnu(_visible_catalog(ctx), name)
+        raise _refus_nom_inconnu(_visible_catalog(ctx), name, ctx)
 
 
 # Post-activation guidance (oto-backend#111). An MCP session's tool registry is

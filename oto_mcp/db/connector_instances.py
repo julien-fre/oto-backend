@@ -448,3 +448,34 @@ def name_vault_rows_as_instances(conn, batch: int = BACKFILL_BATCH) -> int:
             "(hors du vocabulaire de propriétaire %s) — les inventer serait décider "
             "à la place du modèle", r["n"], r["entity_type"], list(OWNER_KINDS))
     return total
+
+
+# ── La config possédée : une clé à la fois ─────────────────────────────────────
+#
+# `config` naît VIDE (cf. le DDL). Premier écrivain : les opérations décrites du
+# connecteur `http` (`connectors/http_operations.py`). Une CLÉ est remplacée, jamais le
+# document entier — deux usages de `config` ne s'écrasent pas l'un l'autre. Aucune
+# résolution n'en dépend : la clé du coffre reste désignée par son quadruplet.
+
+
+def live_instance_config(owner_type: str, owner_id: str, connector: str,
+                         account: str = "") -> Optional[dict]:
+    """`{id, config}` de l'instance VIVANTE de cette ligne de coffre, ou None."""
+    with _connect() as c:
+        row = c.execute(
+            "SELECT id, config FROM connector_instances WHERE owner_type = %s "
+            "AND owner_id = %s AND connector = %s AND account = %s AND revoked_at IS NULL",
+            (owner_type, str(owner_id), connector, account or "")).fetchone()
+    return {"id": row["id"], "config": row["config"] or {}} if row else None
+
+
+def set_instance_config_key(instance_id: int, key: str, value) -> bool:
+    """Pose `config[key] = value` sur une instance vivante. False si elle n'existe
+    pas ou est archivée."""
+    from psycopg.types.json import Jsonb
+    with _connect() as c:
+        row = c.execute(
+            "UPDATE connector_instances SET config = config || jsonb_build_object("
+            "%s::text, %s::jsonb) WHERE id = %s AND revoked_at IS NULL RETURNING id",
+            (key, Jsonb(value), instance_id)).fetchone()
+    return row is not None

@@ -32,15 +32,22 @@ AUTH_MODES = ("bearer", "header", "query", "basic", "oauth2", "none")
 
 CONNECTOR = _c(
     "http", ["http"], auth_modes={"byo_org"}, secret_kind="fields",
-    label="HTTP",
+    # Presented as "Custom API": the connector a person looks for when the tool they
+    # use (a payroll or ERP SaaS…) is not in the catalogue. The NAME stays `http` —
+    # tool names, vault rows and instance refs all carry it.
+    label="Custom API",
+    # `tools/http_ops.py` carries the setup link and the described operations
+    # (500-line ceiling: `tools/http.py` keeps the raw-path tools).
+    modules=("http", "http_ops"),
     # `auth_mode` SELECTS the other fields (oto-backend#449): a `bearer` form
     # need not show the six oauth2 and basic fields, and the write
     # refuses an inconsistent mode instead of accepting it then failing on the 1st call.
     field_discriminator="auth_mode",
-    help="connect any HTTP API to oto: fill in the base URL, "
-         "the auth mode (bearer / key in header or query / basic / oauth2) and "
-         "the matching secret. oto stores the secret (encrypted vault) and calls "
-         "the API directly, for reads (GET) as well as writes (POST).",
+    help="connect any tool that has an API key but no connector in the catalogue "
+         "(e.g. a payroll or ERP tool): fill in the API's base URL, the auth mode "
+         "(bearer / key in header or query / basic / oauth2) and paste the key here — "
+         "never in a chat. oto stores it encrypted and calls the API directly; the "
+         "operations you describe (or import from its OpenAPI) become callable by name.",
     # `when=` = the modes that make the field RELEVANT; `required` then applies
     # WITHIN those modes. The three fields without `when` apply whatever the mode.
     credential_fields=(
@@ -91,13 +98,14 @@ CONNECTOR = _c(
 # at the registry level, and nothing passes itself off as something else. DECLARED, not derived
 # from a default: since 2026-09-02 there is none (`Connector.publisher_name`).
 PUBLISHER = "Otomata"
+# Its own shelf: what a person browses when their tool has no card of its own.
+CATEGORY = "Custom"
 SANS_LOGO_DE_MARQUE = True
 
 DESCRIPTION = (
-    "Connect any HTTP API to oto by entrusting its secret to the vault "
-    ": fill in the base URL, choose the authentication mode (bearer, "
-    "header, query, basic, OAuth2 or none), and the agent calls it via GET or "
-    "POST. Useful for an internal API or a third-party service without a dedicated connector "
-    "— the key stays with oto, unlike a bridge where the third party keeps "
-    "its own."
+    "Connect any tool that has an API key but no dedicated connector — a payroll, "
+    "an ERP, an internal service: fill in the base URL, choose the authentication "
+    "mode (bearer, header, query, basic, OAuth2 or none) and paste the key in the "
+    "form, where the vault encrypts it. The agent calls the API by path, or by name "
+    "through the operations you describe or import from its OpenAPI document."
 )

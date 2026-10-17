@@ -31,6 +31,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from oto.tools.http import HttpConnectorClient
 
 from .. import access, egress
+from ..connectors import http_operations
 from ..texte_tiers import cloture
 from ..auth.hooks import current_user_sub_from_token
 
@@ -165,31 +166,28 @@ def _client() -> HttpConnectorClient:
             code=INVALID_PARAMS,
             message="http connector unavailable in local stdio (org credential required).",
         ))
-    f = _resolve_fields()
-    base_url = (f.get("base_url") or "").strip()
-    mode = (f.get("auth_mode") or "").strip()
-    if not base_url or not mode:
-        raise McpError(ErrorData(
-            code=INVALID_PARAMS,
-            message=(
-                "http connector not configured for your org: set `base_url` + "
-                "`auth_mode` (+ the mode's secret) on the dashboard's HTTP card."
-            ),
-        ))
-    # The TWO destinations the card carries: the called base, and — in oauth2
-    # mode — the token server, which goes out via `requests.post` from oto-core
-    # without passing through `base_url`. Guarding only the first would leave an
-    # entire outbound path outside the guard.
+    return client_from_fields(_resolve_fields())
+
+
+def client_from_fields(f: dict) -> HttpConnectorClient:
+    """The client for these credential fields, refusals translated into actionable
+    McpErrors. The guard itself (both destinations a card carries: `base_url`, and
+    `token_url` in oauth2 mode, which goes out via `requests.post` from oto-core
+    without passing through `base_url`) lives in `connectors/http_operations.client_for`,
+    shared with the REST import of an API's `doc_path`."""
     try:
-        egress.check_url(base_url, connector="http", field="base_url")
-        token_url = (f.get("token_url") or "").strip()
-        if mode.lower() == "oauth2" and token_url:
-            egress.check_url(token_url, connector="http", field="token_url")
+        return http_operations.client_for(f)
     except egress.EgressRefused as e:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
-    try:
-        return HttpConnectorClient(base_url, mode, f, timeout=TIMEOUT)
     except ValueError as e:
+        if not (f.get("base_url") or "").strip() or not (f.get("auth_mode") or "").strip():
+            raise McpError(ErrorData(
+                code=INVALID_PARAMS,
+                message=(
+                    "http connector not configured for your org: set `base_url` + "
+                    "`auth_mode` (+ the mode's secret) on the dashboard's Custom API card."
+                ),
+            ))
         raise McpError(ErrorData(code=INVALID_PARAMS, message=f"http connector: {e}"))
 
 

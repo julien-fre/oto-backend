@@ -215,6 +215,10 @@ chemins = [
   "oto_mcp/capabilities/vault_health.py",
   # La machinerie commune des connecteurs (le propre d'un connecteur est dans la famille).
   "oto_mcp/connectors/*.py",
+  # Le format des opérations décrites du connecteur `http` (Custom API) et sa
+  # conversion OpenAPI : lus par la machinerie ci-dessus, les outils et les capacités.
+  "oto_mcp/custom_ops.py",
+  "oto_mcp/custom_ops_openapi.py",
   "oto_mcp/providers/__init__.py",
   "oto_mcp/providers/_model.py",
   "oto_mcp/tools/__init__.py",

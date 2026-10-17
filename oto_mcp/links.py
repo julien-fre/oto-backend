@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any, Optional
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 from . import config
 
@@ -141,6 +142,22 @@ def ou_poser_la_cle(sub: Optional[str], *, org: Any = None,
         return ""
     return f" at {url}" + (f" (connector {connecteur.capitalize()})" if connecteur else "")
 
+
+
+def connector_setup_link(connector: str, *, sub: Optional[str] = None, org: Any = None,
+                         **params: Any) -> Optional[str]:
+    """`<connectors page>/<connector>?<params>` — the page where a person fills in a
+    connector's card themselves, pre-filled with NON-secret values only (the key is
+    typed in the form, never carried by a link). Built on the account's own
+    `connectors` pattern, so it lands in ITS product; `None` when that product
+    declares no connectors page (cf. `link_for`). Empty params are dropped."""
+    base = link_for("connectors", sub=sub, org=org)
+    if not base:
+        return None
+    p = urlsplit(base)
+    query = urlencode({k: v for k, v in params.items() if v not in (None, "")})
+    return urlunsplit((p.scheme, p.netloc, f"{p.path.rstrip('/')}/{quote(connector)}",
+                       query, ""))
 
 # The NAME of the object, to tell a human what has no address.
 _NOMS = {"table": "table", "doc": "page", "project": "project",

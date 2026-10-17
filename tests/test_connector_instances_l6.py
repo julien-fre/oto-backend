@@ -98,6 +98,11 @@ _LECTEURS_ADMIS = {
     # nomment un connecteur absent du catalogue (lecture seule, admin plateforme). Il ne
     # résout rien : aucune cascade, aucun coffre, aucune autorisation ne passe par lui.
     "connectors/orphelins.py",
+    # Les opérations décrites du connecteur `http` (« Custom API ») vivent dans la
+    # `config` de l'instance. Ce module lit et écrit CETTE clé de config, en désignant
+    # l'instance par le quadruplet du coffre que l'appelant lui donne — il ne résout
+    # rien : la clé servie reste choisie par la cascade, sans lui.
+    "connectors/http_operations.py",
 }
 
 # Dans le coffre, les SEULES fonctions admises à nommer une instance. Ce sont les

@@ -480,6 +480,7 @@ d'URL. Le cliquet `test_every_covered_module_calls_the_seam` fige la liste des c
 | `kaspr_enrich_linkedin`, `fullenrich_enrich_linkedin`, `apollo_match_person`, `cognism_enrich_*`, `lemlist_enrich`, `forager_organization` | — | non couvert : l'URL est un IDENTIFIANT passé à un fournisseur de données, pas une page lue |
 | `apify_run*` | — | non couvert : `run_input` opaque d'un acteur tiers ; cran = activation |
 | `http_get/post` | — | non couvert : chemin relatif à une `base_url` configurée par l'org (client d'API) |
+| `http_call`, `http_operations(op="import", source="url")` | — | non couvert : chemin relatif à la `base_url` de l'org ; l'import lit un document de description d'API (garde d'egress sans exception nommée), pas une page |
 | `browser_connect_start` | — | non couvert : page de login ouverte à l'humain, pas une lecture |
 | `email_send(cta_url, image_url)`, `brevo_import_contacts(file_url)`, `fireflies_transcript(url)`, webhooks (`folk`/`linear`/`grain`/`granola`/`webflow`), `ahrefs_*`, `promptwatch_*`, `snitcher_*` | — | non couvert : URL écrite, importée par le fournisseur, ou de configuration — rien n'est lu par nous. (`apollo_reveal_phone`/`apollo_bulk_match` ne prennent plus d'URL depuis le 28/09/2026 : la réception est la nôtre, `docs/donnees-par-reference.md`.) |
 

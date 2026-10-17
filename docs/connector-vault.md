@@ -613,6 +613,27 @@ l'intérieur du coffre, un relevé AST par FONCTION qui n'admet que les cinq pri
 d'écriture. Un lecteur de credential qui se mettrait à lire les instances ferait dépendre
 la désignation d'une clé d'autre chose que du quadruplet ; c'est le lot L7, avec sa revue.
 
+### La `config` d'une instance — premier écrivain : les opérations d'un « Custom API » (17/10/2026)
+
+Le connecteur `http` se présente comme **« Custom API »** (catégorie `Custom`) : c'est la
+carte qu'on cherche quand l'outil d'un client (une paie, un ERP) n'a pas de connecteur.
+Une org y **décrit en données** les opérations qu'elle appelle (nom, description, méthode,
+gabarit de chemin, schéma d'entrée — format de `oto_mcp/custom_ops.py`, sous-ensemble à plat
+de `connector.schema.json` d'oto-core), et l'agent les appelle par leur nom (`http_call`).
+La liste vit dans **`connector_instances.config["operations"]`** de l'instance qui nomme la
+ligne du coffre — désignée par le quadruplet, jamais autrement
+(`connectors/http_operations.py`, seul module admis à cette clé, cf. l'allowlist de
+`tests/test_connector_instances_l6.py`). Conséquences assumées : une **rotation** de la clé
+garde la liste (l'instance survit à l'`_upsert`), un **renommage** de compte la fait
+suivre (`move_instance_to_account`), un **retrait** de la clé l'archive avec l'instance.
+Écriture = **une clé** de `config` remplacée (`set_instance_config_key`), jamais le document
+entier. Droits : ceux de la pose de la clé (`ORG_ADMIN_OF` pour un compte d'org, chef
+d'équipe pour un compte d'équipe) ; la lecture est ouverte aux membres. Faces : REST
+`/api/orgs/{id}/connectors/http/operations` (+ `/import`, conversion OpenAPI sans
+écriture), MCP `http_operations` / `http_set_operations` / `http_call`, et
+`http_setup_link` — le lien de la carte pré-remplie **sans** secret, la clé se saisit
+dans le formulaire, jamais dans une conversation.
+
 ### `inst:{id}` — la forme de fil
 
 `instance_refs.make_instance_ref(id)` rend `inst:{id}`, et `parse_ref` accepte désormais
