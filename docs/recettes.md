@@ -127,7 +127,9 @@ en Python. Une recette-code se range comme les autres (mêmes tables, même cycl
   comptes, pas des données (`receipt_too_large`). L'épreuve rend en plus le `journal`.
 - **Écrire chez un tiers** (lot 3) : un CRM, par une liste FERMÉE d'outils
   (`recipes/ecritures.py`) — créer, mettre à jour, ajouter à un groupe ; jamais
-  supprimer, fusionner ni écrire en masse. Chaque écriture se DÉCLARE dans le corps,
+  supprimer ni fusionner. Une op permise peut s'appeler EN LOT (`items` / `ids` de
+  l'outil, 50 fiches au plus) : c'est ce qui rend une poussée de quelques milliers de
+  fiches faisable (≈50 appels au lieu de ≈2 000). Chaque écriture se DÉCLARE dans le corps,
   `writes: ["folk_record:create", "folk_record:update"]` : c'est ce que la plateforme relit
   avant de publier, et le pont refuse toute autre (`write_not_declared`). Les ops qui
   lisent de ces outils (`search`, `get`) passent sans déclaration ; un outil multiplexé
@@ -135,7 +137,9 @@ en Python. Une recette-code se range comme les autres (mêmes tables, même cycl
   jouée en épreuve (`write_in_test`), se fait dans l'org du run (`_org`, `_group`,
   `_project` refusés : `write_outside_run_org` ; `_account` choisit le compte), avec le
   compte de connecteur de qui exécute, et compte dans `limits.max_writes` (50 par défaut
-  dès qu'une écriture est déclarée, 1 000 au plus), compté à la TENTATIVE — atteint,
+  dès qu'une écriture est déclarée, 1 000 au plus), compté à la TENTATIVE et PAR FICHE
+  (un lot de 50 = 50 écritures) ; un lot qui ne tient pas dans ce qui reste n'est pas
+  joué du tout (`budget_exhausted`, le message dit combien il reste) — atteint,
   `stopped: "max_writes"`. Le reçu compte les écritures par nom (`writes`). Un outil qui
   peut déclencher un envoi (`lemlist_create_lead`) exige `allow_sending: true`. Pas de
   reprise ici non plus : une recette qui écrit cherche avant de créer, pour qu'une relance
