@@ -1753,3 +1753,49 @@ def resume_des_declencheurs(org_id: int, jours: int) -> tuple[list[dict], list[d
             (org_id, int(jours)),
         ).fetchall()
     return [dict(r) for r in cases], [dict(r) for r in pannes]
+
+
+# --- Le temps gagné des agents : les surcharges d'une org (`time_saved.py`) -----
+# Posée par la révision `0064_orgs_time_saved_minutes` ET par le démarrage, sous
+# garde de catalogue — même DDL.
+COLONNE_TEMPS_GAGNE = "time_saved_minutes"
+DDL_COLONNE_TEMPS_GAGNE = f"ALTER TABLE orgs ADD COLUMN IF NOT EXISTS {COLONNE_TEMPS_GAGNE} JSONB"
+
+
+def minutes_gagnees_de_l_org(org_id: int) -> dict:
+    """Les surcharges de l'org, `{}` quand elle n'en pose aucune (ou est inconnue)."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"SELECT {COLONNE_TEMPS_GAGNE} AS v FROM orgs WHERE id = %s", (org_id,)
+        ).fetchone()
+    v = row["v"] if row else None
+    return v if isinstance(v, dict) else {}
+
+
+def poser_minutes_gagnees(org_id: int, minutes: Optional[dict]) -> bool:
+    """Pose (ou retire, `None`/`{}`) les surcharges de l'org. False si l'org est absente."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"UPDATE orgs SET {COLONNE_TEMPS_GAGNE} = %s::jsonb WHERE id = %s RETURNING id",
+            (json.dumps(minutes) if minutes else None, org_id),
+        ).fetchone()
+    return row is not None
+
+
+def outils_des_runs_conclus(org_id: int, jours: int) -> list[dict]:
+    """Les `tool_counts` des runs d'agents CONCLUS `done` sur la fenêtre — la matière
+    du temps gagné. Une ligne par run : `{trigger_id, tool_counts}`."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT (payload->>'trigger_id')::bigint AS trigger_id,
+                   result->'tool_counts' AS tool_counts
+              FROM runner_jobs
+             WHERE org_id = %s AND status = 'done'
+               AND due_at >= NOW() - make_interval(days => %s)
+               AND payload->>'trigger_id' ~ '^[0-9]+$'
+               AND jsonb_typeof(result->'tool_counts') = 'object'
+            """,
+            (org_id, int(jours)),
+        ).fetchall()
+    return [dict(r) for r in rows]

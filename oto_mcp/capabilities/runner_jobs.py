@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import (_abonnement, _acces_agent, _cle_exigee, _limites_du_run,
                _lignes_reservables, _modele, _ordre_de_service)
-from .. import db, outils_du_travail, runner_consigne, runner_models, tool_alias
+from .. import db, outils_du_travail, runner_consigne, runner_models, time_saved, tool_alias
 from ._authz import WORKER_OR_ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding, cap_limit)
@@ -270,13 +270,28 @@ class SummaryFailure(BaseModel):
     error: Optional[str] = None
 
 
+class TimeSavedResult(BaseModel):
+    """Un type de résultat d'un agent sur la fenêtre : combien, et ce que ça vaut."""
+    kind: Literal["enrichment", "action", "record", "research"]
+    label: str
+    count: int
+    minutes_each: float
+    #: Ce que ce type a fait gagner — la recherche plafonnée run par run.
+    minutes: float
+
+
 class TriggerSummary(BaseModel):
-    """Un agent, résumé sur la fenêtre : ses heures non vides, son total, et sa
-    dernière panne. Seuls les agents que l'appelant voit sont rendus."""
+    """Un agent, résumé sur la fenêtre : ses heures non vides, son total, sa
+    dernière panne, et le temps qu'il a fait gagner. Seuls les agents que
+    l'appelant voit sont rendus."""
     trigger_id: int
     total: int
     hours: list[SummaryHour]
     last_failure: Optional[SummaryFailure] = None
+    #: Minutes gagnées par ses runs conclus `done` (`time_saved.py`). `0` est un vrai
+    #: zéro : il a tourné sans rien produire qui compte.
+    time_saved_minutes: float = 0.0
+    time_saved: list[TimeSavedResult] = []
 
 
 class JobsOut(BaseModel):
@@ -284,6 +299,9 @@ class JobsOut(BaseModel):
     summary: Optional[list[TriggerSummary]] = None
     #: summary — le début de la fenêtre comptée.
     since: Optional[str] = None
+    #: summary — les minutes par type de résultat appliquées (défauts, ou surcharges
+    #: de l'org), pour que l'écran dise sur quoi repose le chiffre.
+    time_standards: Optional[dict[str, float]] = None
     # enqueue → id/status/due_at ; claim → job (ou null, file vide) ;
     # list → jobs + total + next_cursor ;
     # complete → ok/status + run_id/rows_released/release ; les autres → ok.
@@ -1052,8 +1070,34 @@ def _resume(ctx: ResolvedCtx, jours: int) -> dict:
                                               "error": r["last_error"]}
     for a in par_agent.values():
         a["hours"].sort(key=lambda h: h["hour"])
+
+    # Le temps gagné : les runs conclus `done` de chaque agent vu, leurs appels
+    # rangés par type de résultat (`time_saved.py`), aux minutes de l'org.
+    minutes = time_saved.standards(db.minutes_gagnees_de_l_org(ctx.org_id))
+    tallies: dict[int, dict] = {}
+    for r in db.outils_des_runs_conclus(ctx.org_id, jours):
+        tid = int(r["trigger_id"])
+        if tid not in par_agent:
+            continue
+        gagne, comptes = time_saved.for_run(r["tool_counts"] or {}, minutes)
+        par_agent[tid]["time_saved_minutes"] = par_agent[tid].get("time_saved_minutes", 0.0) + gagne
+        for k, n in comptes.items():
+            t = tallies.setdefault(tid, {}).setdefault(k, {"count": 0, "minutes": 0.0})
+            t["count"] += n
+            m = n * minutes[k]
+            t["minutes"] += min(m, time_saved.RESEARCH_CAP_PER_RUN) if k == "research" else m
+    for tid, a in par_agent.items():
+        tally = tallies.get(tid, {})
+        a["time_saved_minutes"] = round(a.get("time_saved_minutes", 0.0), 1)
+        a["time_saved"] = [
+            {"kind": k, "label": time_saved.KINDS[k]["label" if tally[k]["count"] == 1 else "plural"],
+             "count": tally[k]["count"], "minutes_each": minutes[k],
+             "minutes": round(tally[k]["minutes"], 1)}
+            for k in time_saved.KINDS if k in tally
+        ]
     depuis = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - jours * 86400))
-    return {"summary": sorted(par_agent.values(), key=lambda a: a["trigger_id"]), "since": depuis}
+    return {"summary": sorted(par_agent.values(), key=lambda a: a["trigger_id"]), "since": depuis,
+            "time_standards": minutes}
 
 
 def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
@@ -1313,7 +1357,8 @@ CAPABILITIES += [
             "IS the resume) / bind_run / extend (heartbeat) / complete (ok=false "
             "backs off, then marks `failed` VISIBLY at the attempts cap — never "
             "loops) / get / summary (per visible agent: jobs per hour and status over "
-            "`days`, the total and the latest failure — what the Agents page draws, "
+            "`days`, the total, the latest failure and the time it saved — minutes per "
+            "result type, from its `done` runs' tool calls — what the Agents page draws, "
             "in one call). All claim-side verbs are scoped to the claimant. An org "
             "member (API token) claims only the jobs it carries itself (`sub`); only "
             "a platform worker takes any job."
