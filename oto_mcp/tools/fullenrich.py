@@ -9,7 +9,11 @@ up to 100 contacts) and `fullenrich_result` reads the status/the result —
 polling is the agent's job.
 
 Metering (partner billing): distinct facts, no price. The submission traces the
-contacts SUBMITTED. Reading a finished job traces:
+contacts SUBMITTED, the job's `enrichment_id` and `engaged_credits` — its WORST case in
+FullEnrich credits (FullEnrich's own per-field rate card, a bound, not a price) — and
+reserves that worst case against the org's spend cap on the platform key
+(`access/spend_cap.py`): a batch the org cannot pay is refused before it is sent.
+Reading a finished job traces:
 - as `quantity`, the credits FullEnrich DEDUCTED (`cost.credits`, returned by
   oto-core as `cost_credits`) — the figure to reconcile with upstream;
 - `found_work_emails` / `found_personal_emails` / `found_phones`, the number of
@@ -30,6 +34,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, session_org
+from ..access import spend_cap
 from ..connectors import verify as connector_verify
 
 _CREDITS_URL = "https://app.fullenrich.com/api/v1/account/credits"
@@ -46,6 +51,22 @@ _TERMINAUX = {
     "NOT_FOUND": ("fullenrich_job_not_found",
                   "FullEnrich does not know (or no longer knows) this job — wrong id or expired job."),
 }
+
+
+# FullEnrich's OWN rate card, in its credits, per data point found (the tool docstring
+# below says the same to the agent). Not a price: it bounds what one contact can cost
+# at most, so a submission reserves its WORST case against the org's spend cap
+# (`access/spend_cap.py`) before anything is sent. An unknown field counts as the
+# dearest — a bound that guesses low lets a batch through that cannot be paid.
+_CREDITS_PER_FIELD = {"contact.work_emails": 1, "contact.personal_emails": 3,
+                      "contact.phones": 10}
+_DEFAULT_FIELDS = ("contact.work_emails", "contact.phones")
+
+
+def _worst_case_credits(n_contacts: int, enrich_fields: Optional[list[str]]) -> int:
+    fields = set(enrich_fields or _DEFAULT_FIELDS)
+    dearest = max(_CREDITS_PER_FIELD.values())
+    return n_contacts * sum(_CREDITS_PER_FIELD.get(f, dearest) for f in fields)
 
 
 def _refus(code: str, message: str, **data) -> McpError:
@@ -159,10 +180,31 @@ def register(mcp: FastMCP) -> None:
             raise FullenrichASec(
                 "FullEnrich: the account of the key used is empty (0 credits left). "
                 "The call was correct: do not fix it and do not retry it.")
+        engaged = _worst_case_credits(len(contacts), enrich_fields)
+        reservation = None
+        if is_platform:
+            # The org's spend cap, BEFORE sending: the job is billed when its result is
+            # read, so a batch the org cannot pay is refused here or not at all.
+            try:
+                reservation = spend_cap.reserver("fullenrich", engaged)
+            except spend_cap.SpendCapExceeded as e:
+                per_contact = max(1, engaged // len(contacts))
+                raise _refus(
+                    spend_cap.CODE,
+                    f"this org has no credits left for {len(contacts)} contacts "
+                    f"(up to {engaged} FullEnrich credits with the fields asked; "
+                    f"{e.remaining} left to commit, about {e.remaining // per_contact} "
+                    "contacts). Submit fewer contacts, ask only the fields you need, "
+                    "or have an admin of the org add credits to its plan.",
+                    requested=engaged, remaining=e.remaining)
         try:
             enrichment_id = client.submit(contacts, enrich_fields=enrich_fields)
         except ValueError as e:
+            spend_cap.liberer(reservation)
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
+        except Exception:
+            spend_cap.liberer(reservation)
+            raise
         if is_platform:
             # One job = one contact billed per contact: consumption is the
             # NUMBER of contacts, counted in a single operation (the old loop made
@@ -178,7 +220,11 @@ def register(mcp: FastMCP) -> None:
         # key mode. Counts the contacts SUBMITTED, not those actually
         # enriched/found — that figure only exists after the fact, in
         # `fullenrich_result` (async job), a SEPARATE log line.
-        session_org.note_call_trace(quantity=len(contacts))
+        # `enrichment_id` names the job on the SUBMIT row too (the lens serves it as
+        # `job_id`), and `engaged_credits` its worst case: together they let the
+        # commerce count a job submitted but not yet read as already spent.
+        session_org.note_call_trace(quantity=len(contacts), enrichment_id=enrichment_id,
+                                    engaged_credits=engaged)
         return {
             "enrichment_id": enrichment_id,
             "submitted": len(contacts),

@@ -709,6 +709,11 @@ class BillableCallRow(BaseModel):
     # liste fermée `db.usage.BILLABLE_FOUND_ARGS`. `None` = rien de tel n'a été tracé
     # (autre outil, job non terminé, ligne antérieure).
     found: Optional[dict[str, int]] = None
+    # Ce qu'une SOUMISSION de job a engagé au PIRE, en crédits du fournisseur
+    # (FullEnrich : son barème par champ demandé × contacts). Lu dans les args
+    # journalisés pour le seul nom `db.usage.BILLABLE_ENGAGED_ARG`. `None` = l'outil
+    # n'engage rien d'avance (autre outil, ligne antérieure).
+    engaged: Optional[int] = None
     # Le run (`run_start`) dont l'appel relève, quand il en porte un. Un agent hébergé
     # le pose sur CHAQUE appel (`_run_id`, oto-runner) — c'est ce qui permet de dire ce
     # qu'UN run a consommé. Un identifiant de travail, pas une personne. `None` =
@@ -837,7 +842,7 @@ def _billable_calls(ctx: ResolvedCtx, inp: OrgBillableCallsInput) -> dict:
         "calls": [{"call_id": r["id"], "tool": r["tool"], "created_at": r["created_at"],
                    "quantity": r.get("quantity"), "key_mode": r.get("key_mode"),
                    "job_id": r.get("job_id"), "found": r.get("found"),
-                   "run_id": r.get("run_id")}
+                   "engaged": r.get("engaged"), "run_id": r.get("run_id")}
                   for r in page["calls"]],
         "total": page["total"],
         "since_effectif": page["since_effectif"],

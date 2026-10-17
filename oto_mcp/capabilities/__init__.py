@@ -21,6 +21,7 @@ from . import platform_invites  # noqa: F401 — platform.invite.{create,list,re
 from . import users_admin  # noqa: F401 — platform.user.{list,get,set_role}, platform.{key,org}.{grant,revoke}_key, platform.option.set
 from . import account_suspension  # noqa: F401 — admin.account (pause d'un compte : neutraliser sans rien détruire)
 from . import org_suspension  # noqa: F401 — admin.org_suspension (suspendre une org : essai fini, impayé)
+from . import org_spend_cap  # noqa: F401 — service.org.spend_cap (ce qu'une org peut encore engager, poussé par le commerce)
 from . import outreach  # noqa: F401 — admin.outreach (relance des comptes jamais actifs)
 from . import instance_health  # noqa: F401 — admin.instance_health (session d'un tiers vivante ?, #863)
 from . import vault_health  # noqa: F401 — admin.vault_health (scan credentials indéchiffrables, #72)

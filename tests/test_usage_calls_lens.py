@@ -57,7 +57,7 @@ def test_la_lentille_ne_rend_QUE_ce_qu_un_metrage_somme(monkeypatch):
     assert out["calls"] == [{"call_id": 9, "tool": "linkedin_aiark_search",
                              "created_at": "2026-09-01T09:00:00.000000Z",
                              "quantity": 47, "key_mode": "platform", "job_id": None,
-                             "found": None, "run_id": None}]
+                             "found": None, "engaged": None, "run_id": None}]
     assert not {"sub", "email", "error"} & set(out["calls"][0])
 
 
@@ -75,7 +75,7 @@ def test_la_lentille_rend_le_job_d_un_releve_et_rien_d_autre_des_args(monkeypatc
     assert out["calls"] == [{"call_id": 11, "tool": "fullenrich_result",
                              "created_at": "2026-09-01T09:05:00.000000Z",
                              "quantity": 14, "key_mode": "platform", "job_id": "enr-0001",
-                             "found": trouve, "run_id": None}]
+                             "found": trouve, "engaged": None, "run_id": None}]
     assert not {"args", "contacts", "found_phones"} & set(out["calls"][0])
 
 

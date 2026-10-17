@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS org_spend_caps (
+org_id BIGINT NOT NULL,
+connector TEXT NOT NULL,
+units_left BIGINT NOT NULL,
+as_of TIMESTAMPTZ NOT NULL,
+engaged BIGINT NOT NULL DEFAULT 0,
+set_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+PRIMARY KEY (org_id, connector)
+);

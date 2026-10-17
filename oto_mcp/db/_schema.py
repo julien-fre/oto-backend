@@ -79,6 +79,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.usage.PLATFORM_KEY_RATE,  # débit d'une org sur une clé plateforme partagée (F-051)
     schema.usage.LIMITE_REFUS_JOUR,  # palmarès quotidien des refus des limiteurs (#1232)
     schema.connectors.LOAN_EVENTS,   # journal des prêts de compte (pose et retrait)
+    schema.usage.ORG_SPEND_CAPS,     # plafond d'engagement d'une org, poussé par le commerce
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

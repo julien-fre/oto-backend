@@ -1402,6 +1402,12 @@ BILLABLE_FOUND_ARGS: dict[str, str] = {
 _BILLABLE_FOUND_SQL = ", ".join(
     f"l.args->>'{arg}' AS {arg}" for arg in BILLABLE_FOUND_ARGS.values())
 
+# Ce qu'une SOUMISSION a engagé au pire (crédits du fournisseur), posé par l'outil via
+# `note_call_trace` (FullEnrich : `engaged_credits`). Servi `engaged` par la lentille :
+# le commerce compte un job soumis et pas encore relevé comme déjà dépensé.
+BILLABLE_ENGAGED_ARG = "engaged_credits"
+_BILLABLE_ENGAGED_SQL = f"l.args->>'{BILLABLE_ENGAGED_ARG}' AS {BILLABLE_ENGAGED_ARG}"
+
 
 def _found_from_row(row: dict) -> Optional[dict]:
     """Retire de la ligne les trois colonnes `found_*` et rend `found` : un dict des
@@ -1532,6 +1538,7 @@ def list_billable_calls_for_org(
             SELECT l.id, l.tool, l.quantity, l.key_mode, l.run_id,
                    {_BILLABLE_JOB_ID_SQL} AS job_id,
                    {_BILLABLE_FOUND_SQL},
+                   {_BILLABLE_ENGAGED_SQL},
                    {_AUDIT_KEYSET_AT} AS created_at
             FROM tool_calls l
             WHERE {' AND '.join(page_clauses)}
@@ -1558,6 +1565,8 @@ def list_billable_calls_for_org(
     rows = [dict(r) for r in rows[:limit]]
     for r in rows:
         r["found"] = _found_from_row(r)
+        brut = r.pop(BILLABLE_ENGAGED_ARG, None)
+        r["engaged"] = int(brut) if isinstance(brut, str) and brut.isdigit() else None
     return {"since_effectif": since, "until_effectif": until, "total": total, "calls": rows,
             "next": (rows[-1]["created_at"], rows[-1]["id"]) if encore and rows else None,
             "unknown_run_ids": inconnus}

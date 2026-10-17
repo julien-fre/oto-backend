@@ -366,6 +366,25 @@ elle est servie dans la fiche d'org ; le cœur n'agit pas dessus. Ce que le comm
 accorde pendant un essai, et ce qu'il fait à sa fin, relèvent du commerce. L'étiquette
 de source `trial` reste acceptée par l'API de service.
 
+**Le plafond d'engagement** (`service.org.spend_cap`, table `org_spend_caps`). Un job
+facturé au RELEVÉ (FullEnrich : la soumission est gratuite, le relevé facture ce que le
+job a trouvé) laissait une org soumettre bien au-delà de son solde : le commerce ne
+coupe qu'après avoir vu la facture. Le commerce pousse donc, par org et par connecteur,
+ce qui reste ENGAGEABLE en unités du fournisseur (`units_left`, lu jusqu'à `as_of`) ;
+chaque soumission sur la clé plateforme réserve son coût au pire, calculé par l'outil
+sur le barème du fournisseur (`access/spend_cap.py`), et ce qui ne tient pas est refusé
+AVANT l'envoi (`spend_cap_exceeded`). Le cœur ne connaît aucun prix ni aucun solde.
+- **Pas de ligne, pas de plafond** — une org que le commerce ne plafonne pas n'est
+  jamais touchée ; sa propre clé non plus.
+- **Une poussée ne remet pas `engaged` à zéro** : elle le recompte du journal
+  (`engaged_credits` des soumissions APRÈS `as_of`), sans quoi ce qui a été soumis
+  entre la lecture du commerce et sa poussée redeviendrait engageable.
+- **Fail-open, bruyamment** : un compteur en panne sert l'appel ; le commerce coupe
+  toujours après coup.
+- La soumission trace son job (`enrichment_id`) et son coût au pire
+  (`engaged_credits`) : la lentille `org.usage.calls` les sert (`job_id`, `engaged`),
+  pour que le commerce compte un job soumis et pas encore relevé comme déjà dépensé.
+
 ## Ce qu'on ne fait pas
 
 - **Pas de clé libre** : un producteur ne pose que ce que le catalogue connaît.

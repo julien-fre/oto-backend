@@ -596,7 +596,8 @@ def test_trace_only_yields_a_closed_set_of_keys():
     assert server._TRACED_ARGS == ("ns_id", "doctrine_version", "instance",
                                    "readonly_forced", "readonly_forced_bilan",
                                    "found_work_emails", "found_personal_emails",
-                                   "found_phones", "apify_run_id", "guide_scope")
+                                   "found_phones", "apify_run_id", "guide_scope",
+                                   "enrichment_id", "engaged_credits")
 
 
 def test_datastore_lens_correlates_on_the_id_without_a_tenant_bound(monkeypatch):

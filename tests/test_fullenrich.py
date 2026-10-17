@@ -81,11 +81,12 @@ def test_enrich_linkedin_traces_the_submitted_contact_count(is_platform):
          patch("oto_mcp.tools.fullenrich.session_org.note_call_trace") as trace, \
          patch("oto.tools.fullenrich.client.FullenrichClient") as client_cls:
         client_cls.return_value.submit.return_value = "enr_123"
-        _tool("fullenrich_enrich_linkedin").fn(contacts=_contacts(7))
+        with patch("oto_mcp.access.spend_cap.reserver", return_value=None):
+            _tool("fullenrich_enrich_linkedin").fn(contacts=_contacts(7))
 
     # Unconditional — fires the SAME on a platform key and a BYO key, unlike
     # access.record_platform_usage (platform-only, a different mechanism/purpose).
-    trace.assert_called_once_with(quantity=7)
+    trace.assert_called_once_with(quantity=7, enrichment_id="enr_123", engaged_credits=77)
 
 
 def test_enrich_linkedin_traces_the_batch_size_not_a_fixed_value():
@@ -95,7 +96,8 @@ def test_enrich_linkedin_traces_the_batch_size_not_a_fixed_value():
         client_cls.return_value.submit.return_value = "enr_456"
         _tool("fullenrich_enrich_linkedin").fn(contacts=_contacts(100))
 
-    trace.assert_called_once_with(quantity=100)
+    trace.assert_called_once_with(quantity=100, enrichment_id="enr_456",
+                                  engaged_credits=1100)
 
 
 def test_enrich_linkedin_does_not_trace_on_a_rejected_submission():

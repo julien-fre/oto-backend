@@ -263,6 +263,8 @@ CLASSEMENT: dict[str, Table] = {
                                   "l'instance (F-051) : éphémère, une minute"),
     "limite_refus_jour": instance("palmarès des refus des limiteurs de l'instance "
                                   "(#1232) : empreintes, trente jours"),
+    "org_spend_caps": instance("plafond d'engagement des orgs, poussé par le commerce "
+                               "qui le recalcule à chaque passage"),
     "usage": possedee(ParSub(), "compteurs par compte, sans org"),
     "usage_signals": possedee(_ORG_OU_COMPTE),
     "usage_signal_occurrences": indirecte(Via("usage_signals", ("signal_id",)),

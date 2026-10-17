@@ -353,6 +353,27 @@ CREATE TABLE IF NOT EXISTS platform_key_rate (
 );
 """
 
+# Le PLAFOND D'ENGAGEMENT d'une org sur une clé plateforme payée par le commerce
+# (`access/spend_cap.py`) : ce qu'elle peut encore SOUMETTRE à un job asynchrone
+# facturé au relevé (FullEnrich). Une ligne par (org, connecteur), réécrite à chaque
+# poussée du commerce : la table ne grandit qu'avec les orgs qu'il plafonne.
+ORG_SPEND_CAPS = """
+-- Ce qu'une org peut encore ENGAGER sur une clé plateforme, en unités du fournisseur
+-- (crédits FullEnrich). Poussé par le commerce (`service.org.spend_cap`) : il connaît
+-- le solde, le cœur ne connaît aucun prix. `units_left` = ce qui restait engageable à
+-- `as_of` ; `engaged` = ce que l'org a engagé DEPUIS, réservé ici à chaque soumission
+-- (recalculé du journal à chaque poussée). Pas de ligne = pas de plafond.
+CREATE TABLE IF NOT EXISTS org_spend_caps (
+    org_id BIGINT NOT NULL,
+    connector TEXT NOT NULL,
+    units_left BIGINT NOT NULL,
+    as_of TIMESTAMPTZ NOT NULL,
+    engaged BIGINT NOT NULL DEFAULT 0,
+    set_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, connector)
+);
+"""
+
 # #1232 (lot 1) : le palmarès quotidien des refus des limiteurs
 # (`limite_refus_top.py`). Bornée par la purge du fil d'écriture
 # (`limite_refus_top.RETENTION_JOURS`).

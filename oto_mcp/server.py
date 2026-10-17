@@ -515,9 +515,17 @@ _SERVER_INSTRUCTIONS = instructions.render()
 # (`user`|`org`|`group`), posé par `run_start` à côté de sa version. Deux paliers
 # portent le même slug : sans lui, la version ne disait pas de quelle copie elle était,
 # et l'empreinte lisait l'org quand le run exécutait la copie perso qui la masquait.
+#
+# `enrichment_id` + `engaged_credits` (17/10/2026, plafond d'engagement) — sur la
+# SOUMISSION FullEnrich, le job qu'elle ouvre (sa réponse, pas son argument) et son coût
+# au pire en crédits FullEnrich. La lentille sert le premier comme `job_id`, le second
+# comme `engaged` : le commerce compte ainsi un job soumis et pas encore relevé comme
+# déjà dépensé, et le cœur recalcule de `engaged_credits` ce qu'une org a engagé depuis
+# la dernière poussée de son plafond (`db/spend_cap.poser`). Ils facturent : gardés
+# sur la ligne CIBLE par `tools/meta._BILLING_TRACE_KEYS`.
 _TRACED_ARGS = ("ns_id", "doctrine_version", "instance", "readonly_forced",
                 "readonly_forced_bilan", "found_work_emails", "found_personal_emails", "found_phones",
-                "apify_run_id", "guide_scope")
+                "apify_run_id", "guide_scope", "enrichment_id", "engaged_credits")
 
 
 _PREPARED = False
