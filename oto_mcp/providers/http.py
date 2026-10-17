@@ -67,8 +67,10 @@ CONNECTOR = _c(
         # without decrypting the card. A card set before keeps it in the blob until
         # its next save (`preparer_pose` merges, then moves it); meanwhile the
         # account name stands in.
+        # A NAME, not a key: "Acme Payroll" must not come back as "AcmePayroll".
         CredentialField("label", "Display name", secret=False, in_meta=True,
-                        required=False, help="e.g. \"Acme API\" — visible to your org only"),
+                        required=False, whitespace_significant=True,
+                        help="e.g. \"Acme API\" — visible to your org only"),
         CredentialField("doc_path", "Doc route", secret=False,
                         required=False,
                         help="path relative to base_url that returns the API's "
