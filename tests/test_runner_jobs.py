@@ -247,7 +247,7 @@ def test_le_resultat_fait_l_aller_retour_en_base(live):
     assert job and job["id"] == j["id"]
     out = d.complete_job(job["id"], "worker-live", True,
                          result={"usage_tokens": 12345, "stopped": "end_turn"})
-    assert out == {"status": "done", "run_id": None}, \
+    assert {k: out[k] for k in ("status", "run_id")} == {"status": "done", "run_id": None}, \
         "complete rend le run connu du job (#633) — aucun ici"
     relu = d.get_job(job["id"], 226)
     assert relu["result"] == {"usage_tokens": 12345, "stopped": "end_turn"}

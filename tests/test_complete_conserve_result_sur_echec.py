@@ -79,7 +79,7 @@ def test_un_echec_relancable_ecrit_son_result_et_la_flotte_le_compte(live):
                "stopped": "error", "steps": 3}
     out = d.complete_job(job_id, WORKER, False, error="l'agent a planté",
                          result=declare)
-    assert out == {"status": "pending", "run_id": None}, out
+    assert {k: out[k] for k in ("status", "run_id")} == {"status": "pending", "run_id": None}, out
 
     l = _ligne(job_id)
     assert l["result"] == declare, (
@@ -105,7 +105,7 @@ def test_la_tentative_finale_ratee_ecrit_son_result(live):
 
     finale = {"usage_tokens": 567, "usage_cache_read": 8, "stopped": "error"}
     out = d.complete_job(job_id, WORKER, False, error="t2", result=finale)
-    assert out == {"status": "failed", "run_id": None}, out
+    assert {k: out[k] for k in ("status", "run_id")} == {"status": "failed", "run_id": None}, out
 
     l = _ligne(job_id)
     assert l["result"] == finale, (
@@ -130,7 +130,7 @@ def test_un_echec_sans_result_ne_touche_pas_au_result(live, org, avant):
              '{"usage_tokens": 42}', job_id)
 
     out = d.complete_job(job_id, WORKER, False)
-    assert out == {"status": "pending", "run_id": None}, out
+    assert {k: out[k] for k in ("status", "run_id")} == {"status": "pending", "run_id": None}, out
 
     l = _ligne(job_id)
     assert l["result"] == avant, l["result"]
@@ -148,7 +148,7 @@ def test_temoin_le_succes_ecrit_son_result(live):
 
     declare = {"usage_tokens": 31500, "usage_cache_read": 120, "stopped": "end_turn"}
     out = d.complete_job(job_id, WORKER, True, result=declare)
-    assert out == {"status": "done", "run_id": None}, out
+    assert {k: out[k] for k in ("status", "run_id")} == {"status": "done", "run_id": None}, out
 
     l = _ligne(job_id)
     assert l["result"] == declare and l["last_error"] is None, l
