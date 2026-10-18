@@ -3,8 +3,8 @@
 
 `backfill_personal_orgs` appelait `ensure_personal_org` pour chaque user — deux
 allers-retours par compte, 1,4 s mesurés au boot de préproduction, croissant avec la
-base. Il ne retient désormais que les comptes à rattraper, par une requête qui porte le
-prédicat même d'`ensure_personal_org` : sans org perso VIVANTE, ou sans org ACTIVE.
+base. Il ne retient désormais que les comptes à rattraper, par une seule requête : ceux
+sans org active VIVANTE. Un membre d'org sans org perso n'en est plus un.
 
 Banc : un PostgreSQL réel, sur le DDL et les migrations réels de
 `test_org_quota_archivage` — le correctif est un prédicat SQL, un stub ne mesurerait
@@ -47,16 +47,18 @@ def test_sont_retenus_les_comptes_que_ensure_personal_org_reparerait(store, conn
     conn.execute("UPDATE orgs SET archived_at = now() WHERE id = %s", (archivee,))
     conn.execute("INSERT INTO users (sub) VALUES (%s), (%s)", (TROISIEME, QUATRIEME))
     # aucune org du tout → à rattraper
-    _perso(store, QUATRIEME)                                # perso, mais AUCUNE active
+    quatrieme = _perso(store, QUATRIEME)                    # perso, mais AUCUNE active
     conn.execute("UPDATE org_members SET is_active = FALSE WHERE sub = %s", (QUATRIEME,))
     vus, compte = rattrapes()
-    assert vus == sorted([AUTRE, TROISIEME, QUATRIEME])
+    # QUATRIÈME a une org vivante : elle redevient maison, sans `ensure_personal_org`.
+    assert vus == sorted([AUTRE, TROISIEME])
     assert compte == {"users": 3}
+    assert store.get_active_org(QUATRIEME) == quatrieme
 
 
-def test_une_org_creee_sans_etiquette_ne_vaut_pas_espace_perso(store, rattrapes):
-    """Membre actif d'une org qui n'est pas marquée `personal_of` : `ensure_personal_org`
-    l'aurait réclamée — le compte reste donc retenu."""
+def test_un_membre_sans_org_perso_n_est_pas_retenu(store, rattrapes):
+    """Membre actif d'une org qui n'est pas son espace perso — l'invité type : il a
+    sa maison, le boot ne lui fabrique pas d'org perso à côté."""
     _perso(store, SUB)
     _espace(store, AUTRE, "Équipe")
-    assert rattrapes() == ([AUTRE], {"users": 1})
+    assert rattrapes() == ([], {"users": 0})

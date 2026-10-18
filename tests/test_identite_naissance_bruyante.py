@@ -180,6 +180,7 @@ def signup(monkeypatch):
                         lambda sub, email: faits.append("invitation"))
     monkeypatch.setattr(org_store, "ensure_personal_org",
                         lambda sub, email=None, name=None: faits.append("org_maison"))
+    monkeypatch.setattr(org_store, "list_orgs_for_user", lambda sub: [])
     from oto_mcp import partage_en_attente
     monkeypatch.setattr(partage_en_attente, "honorer_au_signup",
                         lambda sub, email: faits.append("partages"))
@@ -189,6 +190,15 @@ def signup(monkeypatch):
 def test_signup_nominal_ne_leve_pas(signup):
     db_users.upsert_user("u-1", email="a@b.c", name="A")
     assert signup == ["invitation", "partages", "org_maison"]
+
+
+def test_un_invite_deja_membre_ne_recoit_pas_d_org_perso(signup, monkeypatch):
+    """La réconciliation l'a fait entrer dans l'org de son invitation : une org perso
+    à côté n'était qu'un second espace qu'il n'a pas demandé."""
+    from oto_mcp import org_store
+    monkeypatch.setattr(org_store, "list_orgs_for_user", lambda sub: [{"org_id": 7}])
+    db_users.upsert_user("u-1", email="a@b.c", name="A")
+    assert signup == ["invitation", "partages"]
 
 
 def test_partages_en_attente_non_honores_est_une_erreur_nommee(signup, monkeypatch):

@@ -139,8 +139,17 @@ def org_perso_de(sub: str, org_id: Optional[int]) -> bool:
     comme une autre ; l'étiquette ne sert plus qu'à désigner la MAISON de ce qui n'a pas
     d'org de création (`perso_de_la_liste`, le `sans_org` de `mes_objets_ici`) et à
     interdire à son propriétaire de la quitter. Même source que
-    `me.active_org_is_personal` (`org_store`)."""
-    return org_id is not None and org_store.get_personal_org(sub) == int(org_id)
+    `me.active_org_is_personal` (`org_store`).
+
+    Un compte SANS org perso (l'invité, qui n'en reçoit pas à l'inscription) a pour
+    maison de ces objets son org MAISON : sans ce repli, ses partages nominatifs et ses
+    objets sans org de création ne sortiraient dans aucune liste."""
+    if org_id is None:
+        return False
+    perso = org_store.get_personal_org(sub)
+    if perso is not None:
+        return perso == int(org_id)
+    return org_store.get_active_org(sub) == int(org_id)
 
 
 def perso_de_la_liste(sub: str, org_id: Optional[int]) -> list[tuple[str, str]]:

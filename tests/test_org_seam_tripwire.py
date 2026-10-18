@@ -36,6 +36,10 @@ ALLOWED = {
     # call-site, même raison, troisième fichier : c'est un AFFICHAGE, pas une résolution.
     "capabilities/me_account.py": "exposition `home_org` de /api/me (« ton défaut », "
                                   "distinct d'active_org — affichage, pas résolution).",
+    "ownership.py": "`org_perso_de` d'un compte SANS org perso (l'invité) : la maison "
+                    "de ses objets sans org de création est son org MAISON persistée — "
+                    "un rangement de LISTE comparé à l'org consultée, jamais une "
+                    "résolution d'accès (`visible_in_org` n'en dépend pas).",
     "credentials_store.py": "backfill_member_scope (migration ADR 0033) : la "
                             "destination du re-chiffrement est la maison, by design.",
     "db/unipile.py": "backfill_unipile_member_scope (migration ADR 0033 B4), idem.",

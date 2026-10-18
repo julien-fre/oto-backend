@@ -17,6 +17,7 @@ rejoindre n'avait aucun moyen de le dire, et son invitation restait en attente.
 """
 from __future__ import annotations
 
+import logging
 import os
 
 from typing import Literal, Optional
@@ -29,6 +30,8 @@ from ... import email as email_mod  # alias : le param `email` d'emit_invitation
 from .._authz import ORG_ADMIN_OF, SUB_ONLY
 from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
+
+logger = logging.getLogger(__name__)
 
 _ID = {"id": "org_id"}
 _INVITE_TTL_DAYS = int(os.environ.get("OTO_MCP_INVITE_TTL_DAYS", "7"))
@@ -349,6 +352,14 @@ def _invite_accept(ctx: ResolvedCtx, inp: InviteAcceptInput) -> dict:
                 "name": res.get("resource_name"),
                 "active_org": org_store.get_active_org(ctx.sub)}
     org = org_store.get_org(res["org_id"]) if res.get("org_id") else None
+    if res.get("org_id"):
+        # L'invité par lien a reçu une org perso au premier appel, avant que le jeton
+        # n'arrive : vierge, elle est relâchée (une org rejointe suffit de maison).
+        try:
+            org_store.liberer_perso_vierge(ctx.sub, int(res["org_id"]))
+        except Exception:
+            logger.warning("invite.accept: org perso vierge non relâchée (sub=%s)",
+                           ctx.sub, exc_info=True)
     return {"ok": True, "org_id": res.get("org_id"), "org_role": res.get("org_role"),
             "group_id": res.get("group_id"), "group_role": res.get("group_role"),
             "active_org": org_store.get_active_org(ctx.sub),

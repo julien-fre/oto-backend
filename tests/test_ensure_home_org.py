@@ -124,6 +124,7 @@ def test_backfill_ne_touche_plus_aux_ressources(monkeypatch):
     l'org de travail et « disparaissait » de la liste de l'utilisateur."""
     monkeypatch.setattr(org_store, "_connect", lambda: _Users([{"sub": "u1", "email": "a@x.co", "name": "A"}]))
     monkeypatch.setattr(org_store, "ensure_personal_org", lambda sub, e, n: 42)
+    monkeypatch.setattr(org_store, "list_orgs_for_user", lambda sub: [])
     rep = []
     monkeypatch.setattr(db, "list_datastores_for_owners", lambda owners: [{"id": 1}])
     monkeypatch.setattr(db, "reparent_datastore", lambda *a, **k: rep.append(a))

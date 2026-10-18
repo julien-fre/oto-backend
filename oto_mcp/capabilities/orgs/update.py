@@ -140,8 +140,8 @@ def _archive_org(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
     **Espace personnel.** Depuis le 29/09/2026, une org perso est une org comme une
     autre (« perso » n'est qu'une étiquette) : elle s'archive par la même règle, celle
     de `ORG_ADMIN_OF`. Si l'archivage retire à quelqu'un sa dernière org, il retrouve
-    un espace neuf (ci-dessous) ; et son propriétaire, s'il est encore membre ailleurs,
-    reçoit une nouvelle org perso au prochain boot (`backfill_personal_orgs`) ; un
+    un espace neuf (ci-dessous) ; son propriétaire, s'il est encore membre ailleurs, n'en
+    reçoit plus d'autre (une org perso n'est créée qu'à qui n'a aucune org) ; un
     membre que cet archivage laisse SANS AUCUNE org retrouve un espace tout de suite,
     que ce soit l'appelant ou un autre (l'invariant ne dépend pas de qui archive).
 

@@ -1,8 +1,12 @@
 """L'org PERSONNELLE (`orgs.personal_of`) et le rattrapage de boot.
 
 Depuis la suppression du « perso » org-less (ADR 0030 §8), tout user est toujours
-dans une org : `ensure_personal_org` garantit son espace privé mono-membre et
-qu'il a une org maison. `backfill_personal_orgs` le rejoue au boot, idempotent.
+dans une org. L'org perso n'est créée d'office que pour qui n'en a AUCUNE autre :
+un invité qui rejoint une org à l'inscription n'en reçoit pas, et celle qu'un invité
+par lien a reçue avant d'accepter est relâchée tant qu'elle est vierge
+(`liberer_perso_vierge`). `ensure_personal_org` reste le geste de qui a BESOIN d'un
+espace perso (création à la demande). `backfill_personal_orgs` rejoue au boot la
+garantie d'une org maison, idempotent.
 
 Étage 1 du package : consomme `orgs` (création) et `members` (adhésion, maison).
 """
@@ -91,8 +95,9 @@ def _reclaim_or_create_personal(sub: str, email: Optional[str], name: Optional[s
 
 
 def ensure_personal_org(sub: str, email: Optional[str] = None, name: Optional[str] = None) -> int:
-    """Garantit l'**org perso** de `sub` (suppression du perso `org_id=0`) ET qu'il a une
-    org active (la perso si aucune autre). Idempotent."""
+    """Garantit l'**org perso** de `sub` ET qu'il a une org active (la perso si aucune
+    autre). Idempotent. Ne s'appelle plus d'office pour un compte déjà membre d'une
+    org : seulement pour qui n'en a aucune, ou qui a besoin d'un espace perso."""
     pid = get_personal_org(sub)
     if pid is None:
         pid = _reclaim_or_create_personal(sub, email, name)
@@ -101,14 +106,13 @@ def ensure_personal_org(sub: str, email: Optional[str] = None, name: Optional[st
     return pid
 
 
-# Les seuls comptes que `ensure_personal_org` aurait à toucher : sans org perso vivante
-# (`get_personal_org`) OU sans org active (`get_active_org`). Pour tout autre compte,
-# `ensure_personal_org` ne fait que ces deux lectures — et le boot les payait, par compte.
+# Les seuls comptes à rattraper : sans org active VIVANTE. Un compte membre d'une org
+# n'a pas besoin d'org perso — le rattrapage ne lui en fabrique plus (il annulerait à
+# chaque boot ce que l'inscription d'un invité s'est gardée de créer).
 _A_RATTRAPER = """
     SELECT u.sub, u.email, u.name FROM users u
-     WHERE NOT EXISTS (SELECT 1 FROM orgs o
-                        WHERE o.personal_of = u.sub AND o.archived_at IS NULL)
-        OR NOT EXISTS (SELECT 1 FROM org_members m WHERE m.sub = u.sub AND m.is_active)
+     WHERE NOT EXISTS (SELECT 1 FROM org_members m JOIN orgs o ON o.id = m.org_id
+                        WHERE m.sub = u.sub AND m.is_active AND o.archived_at IS NULL)
     -- Le compte de service d'une org (`members.assurer_compte_de_service`) n'a ni org
     -- perso ni ligne de membre, et ne doit pas en recevoir.
     EXCEPT SELECT u.sub, u.email, u.name FROM users u
@@ -117,13 +121,16 @@ _A_RATTRAPER = """
 
 
 def backfill_personal_orgs() -> dict:
-    """Idempotent (boot) : chaque user a une **org perso** marquée, et une org active
-    (la perso si aucune autre). Rend `{"users": <comptes rattrapés>}`.
+    """Idempotent (boot) : chaque user a une org active. Membre d'orgs vivantes dont
+    aucune n'est active → la plus ancienne redevient maison ; membre d'aucune → son org
+    perso (créée au besoin). Rend `{"users": <comptes rattrapés>}`.
 
     **Garde « déjà fait », par compte** (oto-backend#534) : une seule requête retient les
     comptes à rattraper — le prédicat même d'`ensure_personal_org` — au lieu de lire
     TOUS les users et de faire deux allers-retours par compte à chaque boot (1,4 s
-    mesurés en préproduction, croissant avec la base d'utilisateurs). Le filet reste
+    mesurés en préproduction, croissant avec la base d'utilisateurs). Un compte sans
+    org perso mais membre d'une org n'est PAS retenu : c'est l'état voulu d'un invité
+    (le retenir recréait au boot l'espace que son inscription n'avait pas créé). Le filet reste
     entier : un compte laissé sans espace (naissance incomplète, archivage) est
     toujours réparé au boot suivant (`db/users.py`, `capabilities/orgs/update.py`).
 
@@ -140,9 +147,52 @@ def backfill_personal_orgs() -> dict:
     for u in users:
         sub = u["sub"]
         try:
-            ensure_personal_org(sub, u.get("email"), u.get("name"))
+            vivantes = members.list_orgs_for_user(sub)
+            if vivantes:
+                members.set_active_org(sub, int(vivantes[0]["org_id"]))
+            else:
+                ensure_personal_org(sub, u.get("email"), u.get("name"))
         except Exception:
             _log.warning("backfill_personal_orgs: ensure échoué %s", sub, exc_info=True)
             continue
         counts["users"] += 1
     return counts
+
+
+# L'org perso qu'un invité PAR LIEN reçoit avant d'accepter (`upsert_user` tourne au
+# premier appel authentifié, avant que le front ne présente le jeton) : née il y a
+# moins d'une heure, seul membre, et rien dedans hormis le projet « Découverte » semé
+# à sa création. Au-delà, ce n'est plus un artefact d'inscription : on n'y touche pas.
+_PERSO_VIERGE = """
+    SELECT o.id FROM orgs o
+     WHERE o.personal_of = %(sub)s AND o.archived_at IS NULL AND o.id <> %(rejointe)s
+       AND o.created_at > now() - interval '1 hour'
+       AND NOT EXISTS (SELECT 1 FROM org_members m
+                        WHERE m.org_id = o.id AND m.sub <> %(sub)s)
+       AND NOT EXISTS (SELECT 1 FROM projects p
+                        WHERE ((p.owner_type = 'org' AND p.owner_id = o.id::text)
+                               OR p.context_org_id = o.id)
+                          AND p.name <> %(decouverte)s)
+       AND NOT EXISTS (SELECT 1 FROM user_datastores d
+                        WHERE (d.owner_type = 'org' AND d.owner_id = o.id::text)
+                           OR d.context_org_id = o.id)
+"""
+
+
+def liberer_perso_vierge(sub: str, org_rejointe: int) -> Optional[int]:
+    """Archive l'org perso VIERGE de `sub` une fois qu'il a rejoint `org_rejointe`
+    (acceptation d'invitation). Rend l'id archivé, ou None si rien à relâcher. Sa
+    maison ne bouge pas : `add_org_member` a déjà promu l'org rejointe devant la perso,
+    et `archive_org` rebascule de toute façon qui l'avait pour active."""
+    from .. import discovery
+    with _connect() as conn:
+        row = conn.execute(_PERSO_VIERGE, {"sub": sub, "rejointe": int(org_rejointe),
+                                           "decouverte": discovery.PROJECT_NAME}).fetchone()
+    if not row:
+        return None
+    oid = int(row["id"])
+    if not orgs.archive_org(oid):
+        return None
+    _log.info("liberer_perso_vierge: org perso vierge #%s de %s archivée (a rejoint #%s)",
+              oid, sub, org_rejointe)
+    return oid
