@@ -198,8 +198,8 @@ def test_la_boucle_entiere_un_rapport_met_en_attente_et_la_file_SAUTE(live):
 @pytest.mark.parametrize("org_pct, perso_pct, en_pause", [
     (80, None, True),     # 0.81 franchit le plafond de l'org
     (90, None, False),    # l'org laisse de la marge, personne ne resserre
-    (90, 75, True),       # la personne resserre pour elle-même : le min s'applique
-    (70, 95, True),       # un perso plus haut ne relâche rien
+    (90, 75, True),       # la personne resserre pour elle-même : son plafond s'applique
+    (70, 95, False),      # un perso plus haut relève le seuil : il remplace celui de l'org
     (None, None, True),   # rien de réglé : le défaut, 80
 ])
 def test_le_plafond_de_L_ORG_DU_TRAVAIL_se_lit_en_base(live, org_pct, perso_pct, en_pause):

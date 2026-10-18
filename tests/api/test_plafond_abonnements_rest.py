@@ -178,6 +178,12 @@ def test_je_pose_MON_plafond_et_la_liste_le_rend(client, abonne):
         "la ligne d'un autre n'a pas bougé")
 
 
+def test_je_pose_un_plafond_PLUS_HAUT_que_l_org_jusqu_a_95(client, abonne):
+    moi = abonne["membre"]
+    r = client.patch(f"{_ME}/{_FAMILLE}", json={"limit_pct": 95}, headers=_h(moi))
+    assert r.status_code == 200 and r.json()["limit_pct"] == 95, r.text
+
+
 def test_je_retire_mon_plafond_avec_null(client, abonne):
     moi = abonne["membre"]
     client.patch(f"{_ME}/{_FAMILLE}", json={"limit_pct": 40}, headers=_h(moi))
@@ -185,7 +191,7 @@ def test_je_retire_mon_plafond_avec_null(client, abonne):
     assert r.status_code == 200 and r.json()["limit_pct"] is None, r.text
 
 
-@pytest.mark.parametrize("pct", [0, 101])
+@pytest.mark.parametrize("pct", [0, 96, 101])
 def test_mon_plafond_hors_bornes_400(client, abonne, pct):
     r = client.patch(f"{_ME}/{_FAMILLE}", json={"limit_pct": pct},
                      headers=_h(abonne["membre"]))

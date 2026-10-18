@@ -23,6 +23,7 @@ import logging
 from typing import Any, Optional
 
 from .. import runner_models
+from . import user_subscriptions
 from ._conn import _connect
 
 logger = logging.getLogger(__name__)
@@ -850,19 +851,21 @@ _CHARGE_DU_MODELE = ("model", "model_family", "effort", "max_output_tokens",
 def _pause_pour_l_org(ab: str, org: str, seuil_defaut_pct: int) -> str:
     """SQL : l'abonnement `ab` est-il en pause POUR l'org `org` — plafond à échéance
     future, et forfait épuisé (refus du fournisseur) ou usage au-delà du seuil de
-    CETTE org (`_abonnement.seuil`, relu ici : le plafond de l'org, sinon le défaut,
-    resserré par le plafond perso) ? Toujours vrai ou faux, jamais NULL : un
+    CETTE org (`_abonnement.seuil`, relu ici : le plafond perso borné à
+    `LIMITE_PERSO_MAX`, sinon celui de l'org, sinon le défaut) ? Toujours vrai ou faux, jamais NULL : un
     `bool_and` lirait un NULL comme un « oui » (une échéance ou une cause absentes).
 
     Une pause sans cause (écrite avant la révision `0025`) n'ouvre rien."""
     return f"""COALESCE(
         {ab}.statut = 'paused_limit' AND {ab}.limit_reset_at > NOW()
         AND ({ab}.limit_epuise
-             OR {ab}.limit_utilisation >= LEAST(
-                    COALESCE((SELECT lim.limite_pct FROM org_model_subscription_limits lim
-                               WHERE lim.org_id = {org} AND lim.famille = {ab}.famille),
-                             {int(seuil_defaut_pct)}),
-                    COALESCE({ab}.limite_pct, 100)) / 100.0),
+             OR {ab}.limit_utilisation >= (CASE
+                    WHEN {ab}.limite_pct IS NOT NULL
+                    THEN LEAST({ab}.limite_pct, {int(user_subscriptions.LIMITE_PERSO_MAX)})
+                    ELSE COALESCE((SELECT lim.limite_pct FROM org_model_subscription_limits lim
+                                    WHERE lim.org_id = {org} AND lim.famille = {ab}.famille),
+                                  {int(seuil_defaut_pct)})
+                    END) / 100.0),
         false)"""
 
 
