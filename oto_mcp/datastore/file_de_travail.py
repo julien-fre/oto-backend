@@ -160,7 +160,7 @@ class FileDeTravailMixin:
         déclaration ni paramètre, la garde ne s'arme pas."""
         worker = (worker or "").strip()
         if not worker:
-            raise ValueError("worker requis (libellé stable rejoué sur release)")
+            raise ValueError("worker required (stable label replayed on release)")
         ns_id = self._resolve(datastore, write=True)
         ns = self._ns_of(ns_id)
         schema = ns.get("schema")
@@ -198,7 +198,7 @@ class FileDeTravailMixin:
         surface doit dire à l'utilisateur, un `None` commun ne le peut pas."""
         worker = (worker or "").strip()
         if not worker:
-            raise ValueError("worker requis (libellé stable rejoué sur release)")
+            raise ValueError("worker required (stable label replayed on release)")
         ns_id = self._resolve(datastore, write=True)
         ns = self._ns_of(ns_id)
         schema = ns.get("schema")
@@ -298,10 +298,10 @@ class FileDeTravailMixin:
         if not ici and not ailleurs:
             return None
         if ici:
-            return (f"ton travail tient {_backquote(ici)} dans `{datastore}` — "
-                    "c'est l'identifiant à passer dans `id`, sans le recopier de mémoire")
-        return (f"ton travail ne tient rien dans `{datastore}`, mais tient une ligne "
-                f"dans {_backquote(ailleurs)} — c'est peut-être le tableau que tu visais")
+            return (f"your job holds {_backquote(ici)} in `{datastore}` — "
+                    "that is the identifier to pass in `id`, without copying it from memory")
+        return (f"your job holds nothing in `{datastore}`, but holds a row "
+                f"in {_backquote(ailleurs)} — that may be the table you meant")
 
     def _baux_du_run(self, datastore: str):
         """Ce que le travail courant tient : ici, et ailleurs — source unique de la piste

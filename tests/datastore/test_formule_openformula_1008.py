@@ -324,7 +324,7 @@ def test_ecrire_une_colonne_formule_nomme_le_calcul_pas_le_fichier_source():
     msgs, details = dsv2.reserved_refusals(
         schema, {"zone": "Bob"}, avant)
     assert msgs
-    assert "CALCULÉE" in msgs[0] or "calculée" in msgs[0].lower()
+    assert "COMPUTED" in msgs[0] or "calculée" in msgs[0].lower()
     assert "fichier source" not in msgs[0]
     # Le message peut NOMMER `readonly_override` pour dire qu'il ne sert à
     # rien ici — ce qu'il ne doit plus faire, c'est le PROPOSER comme solution.

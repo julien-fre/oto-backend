@@ -107,7 +107,7 @@ def rapport(ecartes: list) -> dict:
     return {
         "valeurs_ecartees": ecartes,
         "valeurs_ecartees_hint": (
-            f"{len(ecartes)} valeur(s) refusée(s) ont été ÉCARTÉES — le motif de "
-            "chacune est donné ; le reste de la ligne est écrit. Corrige-les et "
-            "réécris CE champ seul — il est inutile de refaire la ligne."),
+            f"{len(ecartes)} refused value(s) were SET ASIDE — the reason for "
+            "each is given; the rest of the row is written. Fix them and "
+            "write THIS field alone again — there is no need to redo the row."),
     }

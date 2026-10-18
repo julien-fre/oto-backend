@@ -29,12 +29,12 @@ def _preavis(schema, row, **kw):
 def test_a_value_outside_the_options_passes_with_a_dated_notice():
     errs, preavis = _preavis({"fields": [ENUM]}, {"priorite": "Moyenne"})
     assert errs == []
-    assert preavis == ["priorite: valeur 'Moyenne' hors options (haute, basse)"]
+    assert preavis == ["priorite: value 'Moyenne' not among the options (haute, basse)"]
 
 
 def test_after_the_date_the_same_value_is_refused(validation_complete_partout):
     errs, preavis = _preavis({"fields": [ENUM]}, {"priorite": "Moyenne"})
-    assert errs and "hors options (haute, basse)" in errs[0]
+    assert errs and "not among the options (haute, basse)" in errs[0]
     assert preavis == [], "plus de préavis : la règle est en vigueur"
 
 
@@ -174,7 +174,7 @@ def test_the_real_write_path_carries_the_notice(live):
 
     assert "hors_options" not in out, "relevé retiré : le préavis le dit"
     notice = " ".join(out.get("notices") or [])
-    assert "'Moyenne' hors options (haute, basse)" in notice
+    assert "'Moyenne' not among the options (haute, basse)" in notice
     assert "21 octobre 2026" in notice and "data_patch_schema" in notice
     ns_id = st.resolve_ns_id_for_write(ns)
     assert [l["data"]["priorite"] for l in db.datastore_list_rows(ns_id)] == ["Moyenne"]

@@ -1,66 +1,66 @@
 ---
-title: "Trop de lignes pour une conversation : arme un fleet"
-description: quand une file dépasse ce qu'une conversation peut boucler, arme un `oto_fleet` plutôt que de dérouler `data_claim_next` jusqu'au plafond de tours
+title: "Too many rows for one conversation: set up a fleet"
+description: when a queue exceeds what one conversation can loop through, set up an `oto_fleet` rather than running `data_claim_next` up to the turn ceiling
 ---
 
-# Trop de lignes pour une conversation
+# Too many rows for one conversation
 
-À lire **avant** de boucler le patron du guide `work-queue` sur un vivier de plusieurs
-dizaines de lignes : enrichir 200 entreprises, pousser un lot de comptes vers un CRM,
-tout traitement identique répété ligne à ligne. `work-queue` reste juste — mais une
-conversation a un plafond de TOURS (24 par défaut, 64 au maximum, jamais de reprise
-automatique), et un run qui le heurte s'arrête `blocked`, pas `done`. Boucler 200 lignes
-dans une seule conversation, c'est parier sur ce plafond avant même d'avoir vu la file.
+Read this **before** looping the pattern of the guide `work-queue` over a pool of several
+dozen rows: enriching 200 companies, pushing a batch of accounts to a CRM,
+any identical processing repeated row by row. `work-queue` remains correct — but a
+conversation has a TURN ceiling (24 by default, 64 at most, never an automatic
+resume), and a run that hits it stops `blocked`, not `done`. Looping 200 rows
+in a single conversation means betting on that ceiling before you have even seen the queue.
 
-## Le principe : oto produit le travail, pas toi
+## The principle: oto produces the work, not you
 
-`oto_fleet` n'est **pas** un second bouclage à écrire. `op=create` déclare (procédure +
-allowlist + cible), `op=launch` ARME — et c'est tout ce que tu as à faire. Aucun
-ordonnanceur à démarrer : dès qu'un worker interroge la file de l'org et n'a rien de
-prêt, oto lui **fabrique** le prochain travail du fleet armé, un par un, jusqu'à
-`max_rows` ou un arrêt. Chaque ligne devient un travail **séparé**, avec son propre
-budget de tours — donc le plafond d'une conversation ne s'applique plus à la file
-entière, seulement à chaque ligne.
+`oto_fleet` is **not** a second loop to write. `op=create` declares (procedure +
+allowlist + target), `op=launch` ARMS — and that is all you have to do. No
+scheduler to start: as soon as a worker polls the org's queue and has nothing
+ready, oto **builds** the next job of the armed fleet for it, one by one, up to
+`max_rows` or a stop. Each row becomes a **separate** job, with its own
+turn budget — so the ceiling of a conversation no longer applies to the whole
+queue, only to each row.
 
-⚠️ **Un passage tourne sur la clé de modèle de son org.** `create` exige un `model` du
-catalogue (`model_required` sinon). Si `launch` répond `model_key_required`, l'org doit
-déposer sa clé pour ce fournisseur : ne réessaie pas, dis-le à l'utilisateur, et
-reviens au patron du guide `work-queue` en attendant — en découpant le travail en
-plusieurs conversations si le volume dépasse ce qu'une seule peut boucler.
+⚠️ **A pass runs on its org's model key.** `create` requires a `model` from the
+catalog (`model_required` otherwise). If `launch` responds `model_key_required`, the org must
+deposit its key for that provider: do not retry, tell the user, and
+fall back to the pattern of the guide `work-queue` in the meantime — splitting the work into
+several conversations if the volume exceeds what a single one can loop through.
 
-## La procédure fait toujours autorité
+## The procedure always takes precedence
 
-Avant `oto_fleet op=create`, cherche une procédure existante (`oto_procedure op=list`)
-qui couvre déjà ce traitement. N'en écris une ad hoc que si rien ne correspond — et dans
-ce cas, comme pour un run normal, écris-la comme si elle allait être relue. `create` exige `label` + `procedure` +
-`tools` + `model` ; il n'existe pas de raccourci en texte libre qui contournerait la procédure.
+Before `oto_fleet op=create`, look for an existing procedure (`oto_procedure op=list`)
+that already covers this processing. Only write an ad hoc one if nothing matches — and in
+that case, as for a normal run, write it as if it were going to be reread. `create` requires `label` + `procedure` +
+`tools` + `model`; there is no free-text shortcut that would bypass the procedure.
 
-## Ne jamais armer sans un accord explicite, en clair
+## Never arm without an explicit agreement, in plain words
 
-Armer un fleet dépense réellement — sur la clé de modèle déposée par l'org, ou sur la
-clé de la plateforme si l'org n'en a déposé aucune — et écrit dans un vrai tableau, sans
-qu'aucun humain ne le valide ailleurs.
-Avant `op=launch`, dis en une phrase ce qui va se passer : le nombre de lignes visées
-(compte réel via `data_rows` sur le `row_filter`, jamais une estimation), la procédure,
-les outils déclarés — et attends un oui. Ce n'est pas une formalité : c'est le seul
-endroit où un humain voit la dépense avant qu'elle parte.
+Arming a fleet really spends — on the model key deposited by the org, or on the
+platform key if the org has deposited none — and writes into a real table, without
+any human validating it elsewhere.
+Before `op=launch`, say in one sentence what is going to happen: the number of targeted rows
+(real count via `data_rows` on the `row_filter`, never an estimate), the procedure,
+the declared tools — and wait for a yes. This is not a formality: it is the only
+place where a human sees the spending before it goes out.
 
-## Borner, toujours
+## Bound it, always
 
-- `max_rows` = le compte RÉEL de lignes éligibles, jamais laissé vide.
-- `max_tokens_per_row` et `max_consecutive_failures` : pose-les à chaque fois — sans le
-  premier, seul le plafond de tours borne une ligne qui dérape ; sans le second, une
-  file entière peut tourner à vide sur un même défaut avant qu'on s'en aperçoive.
-- `tools` = exactement l'allowlist que la procédure déclare, jamais plus large que ce
-  qu'un run à une ligne exigerait.
+- `max_rows` = the REAL count of eligible rows, never left empty.
+- `max_tokens_per_row` and `max_consecutive_failures`: set them every time — without the
+  first, only the turn ceiling bounds a row that goes astray; without the second, a
+  whole queue can spin idly on the same defect before anyone notices.
+- `tools` = exactly the allowlist the procedure declares, never wider than what
+  a one-row run would require.
 
-## Suivre et rendre compte
+## Follow up and report
 
-`op=state` rend la progression agrégée (`pending`/`claimed`/`done`/`failed`,
-`reservable_rows`) — interroge-le pour répondre si on te demande où ça en est, dans la
-même conversation, sans renvoyer vers un écran. `op=stop` DEMANDE l'arrêt (`stopping`) :
-le fleet finit ce qui est engagé avant de devenir `stopped`, il ne s'interrompt pas net.
+`op=state` returns the aggregated progress (`pending`/`claimed`/`done`/`failed`,
+`reservable_rows`) — query it to answer if you are asked how far along it is, in the
+same conversation, without pointing to a screen. `op=stop` REQUESTS the stop (`stopping`):
+the fleet finishes what is under way before becoming `stopped`, it does not stop dead.
 
-Voir aussi le guide `work-queue` (le même patron pour un volume qu'une conversation peut
-boucler elle-même) et le guide `bulk-load` (garder les gros payloads hors contexte,
-question orthogonale à celle-ci).
+See also the guide `work-queue` (the same pattern for a volume a conversation can
+loop through itself) and the guide `bulk-load` (keeping large payloads out of context,
+a question orthogonal to this one).

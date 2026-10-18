@@ -25,11 +25,14 @@ from datetime import datetime, timezone
 from typing import Any, Optional, Union
 from zoneinfo import ZoneInfo
 
-_BILAN = ("conclus par un bilan bref de ce que tu as fait et de ce qui t'a "
-          "manqué.")
+# ⚠️ En anglais, comme tout ce que lit un agent hébergé : une instruction composée en
+# français faisait rendre le compte rendu en français, quelle que soit la langue de
+# la personne (le cadre du runner suit la langue de l'instruction).
+_BILAN = ("finish with a brief report of what you did and what you were "
+          "missing.")
 
 
-_JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+_JOURS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
 def horodatee(instruction: str, echeance: Union[datetime, str], tz: str) -> str:
@@ -54,15 +57,15 @@ def horodatee(instruction: str, echeance: Union[datetime, str], tz: str) -> str:
         echeance = echeance.replace(tzinfo=timezone.utc)
     locale = echeance.astimezone(ZoneInfo(tz))
     utc = echeance.astimezone(timezone.utc)
-    return (f"{instruction}\n\nCette exécution est l'occurrence du "
-            f"{_JOURS[locale.weekday()]} {locale:%d/%m/%Y à %H:%M} ({tz}), "
-            f"soit {utc:%Y-%m-%dT%H:%M:%SZ}.")
+    return (f"{instruction}\n\nThis run is the occurrence of "
+            f"{_JOURS[locale.weekday()]} {locale:%Y-%m-%d at %H:%M} ({tz}), "
+            f"i.e. {utc:%Y-%m-%dT%H:%M:%SZ}.")
 
 
 def derivee(slug: str) -> str:
     """L'instruction MINIMALE : « lis l'objet, applique-le »."""
-    return (f"Lis la procédure `{slug}` et applique-la. Elle fait autorité : "
-            f"n'invente rien qu'elle ne dise, et {_BILAN}")
+    return (f"Read the procedure `{slug}` and apply it. It is authoritative: "
+            f"invent nothing it does not say, and {_BILAN}")
 
 
 def de_file(slug: str, namespace: Optional[str],
@@ -90,18 +93,18 @@ def de_file(slug: str, namespace: Optional[str],
     """
     if not namespace:
         return derivee(slug)
-    filtre = (f", filtre `{json.dumps(row_filter, ensure_ascii=False)}`"
+    filtre = (f", filter `{json.dumps(row_filter, ensure_ascii=False)}`"
               if row_filter else "")
     return (
-        f"Lis la procédure `{slug}` et applique-la : elle fait autorité, "
-        "n'invente rien qu'elle ne dise.\n"
-        f"Ta file de travail est le tableau `{namespace}`{filtre}. Réserve UNE "
-        "SEULE ligne avec `data_claim_next` — jamais une deuxième, un autre "
-        "agent prendra la suivante. Si la réservation ne rend rien, la file est "
-        "vide : conclus et arrête-toi.\n"
-        "La réservation te rend `ns_id`, le NUMÉRO du tableau : adresse-le par ce "
-        "numéro dans tous tes appels suivants (`namespace: 174`). Un nom marche "
-        "encore, il est en cours de retrait.\n"
-        "Écris ton résultat en un seul appel sur la ligne que tu as réservée : "
-        "`data_claim_next` t'a rendu son `_id`, passe-le dans `id`. Relis-la, puis "
+        f"Read the procedure `{slug}` and apply it: it is authoritative, "
+        "invent nothing it does not say.\n"
+        f"Your work queue is the datastore `{namespace}`{filtre}. Claim ONE "
+        "SINGLE row with `data_claim_next` — never a second one, another "
+        "agent will take the next. If the claim returns nothing, the queue is "
+        "empty: conclude and stop.\n"
+        "The claim returns `ns_id`, the datastore's NUMBER: address it by that "
+        "number in all your following calls (`namespace: 174`). A name still "
+        "works, it is being phased out.\n"
+        "Write your result in a single call on the row you claimed: "
+        "`data_claim_next` returned its `_id`, pass it as `id`. Re-read it, then "
         f"{_BILAN}")

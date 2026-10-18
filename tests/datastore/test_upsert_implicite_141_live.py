@@ -116,12 +116,12 @@ def test_juger_le_lot_nomme_les_doublons_et_les_lignes_en_place():
                          chercher=lambda kv: en_base.get(str(kv)), decalage=10,
                          textes=lambda vs: [str(v) for v in vs])
     msg = str(e.value)
-    assert "rien n'a été écrit" in msg
-    assert "Lignes 11 et 12 : même siren '111'." in msg
-    assert "Lignes 15 et 16 : même siren '333'." in msg
-    assert "Ligne 13 : siren '222' désigne déjà la ligne `r7`." in msg
+    assert "nothing was written" in msg
+    assert "Rows 11 and 12: same siren '111'." in msg
+    assert "Rows 15 and 16: same siren '333'." in msg
+    assert "Row 13: siren '222' already designates row `r7`." in msg
     assert "`upsert=true`" in msg and "`key='siren'`" in msg
-    assert "un doublon se retire du lot" in msg.lower()
+    assert "a duplicate is removed from the batch" in msg.lower()
     assert e.value.details == {
         "key": "siren",
         "doublons": [{"rangs": [11, 12], "valeur": "111"},
@@ -141,7 +141,7 @@ def test_un_lot_qui_designe_n_est_juge_que_sur_ses_doublons():
     with pytest.raises(upi.BusinessKeyExists) as e:
         upi.juger_le_lot([{"siren": "1"}, {"siren": "1"}], key="siren", datastore="t",
                          designation=True, chercher=_jamais, textes=texte)
-    assert "on ne désigne pas deux fois la même ligne" in str(e.value)
+    assert "the same row is not designated twice" in str(e.value)
     assert e.value.details["existantes"] == []
 
 
@@ -303,7 +303,7 @@ def test_la_ligne_seule_qui_designe_par_key_modifie_sans_upsert(
     neuve = _ligne(client, ns, {"siren": "777"}, "?key=siren")
     assert neuve.status_code == 201 and neuve.json()["_id"] != ids["222"]
     autre = _ligne(client, ns, {"siren": "888", "nom": "x"}, "?key=nom")
-    assert autre.status_code == 400 and "n'a aucun effet" in autre.json()["detail"]
+    assert autre.status_code == 400 and "has no effect" in autre.json()["detail"]
     base = _base(ns_id)
     assert sorted(base) == ["222", "777"] and base["222"]["nom"] == "R"
 
@@ -402,7 +402,7 @@ def test_apres_la_ligne_seule_est_refusee_et_nomme_la_ligne_en_place(
     for texte in (msg, corps["detail"]):
         assert f"désigne déjà la ligne `{ids['222']}`" in texte
         assert f"`id={ids['222']}`" in texte and "`upsert=true`" in texte
-        assert "rien n'a été écrit" in texte
+        assert "nothing was written" in texte
     assert _base(ns_id)["222"]["nom"] == "B"
 
 
@@ -422,7 +422,7 @@ def test_apres_upsert_true_fusionne_et_une_cle_neuve_se_cree(client, data_write,
     ([{"siren": "111"}, {"siren": "111"}, {"siren": "333"}], None,
      "Lignes 1 et 2 : même siren '111'."),
     ([{"siren": "111"}, {"siren": "111"}, {"siren": "333"}], "siren",
-     "on ne désigne pas deux fois la même ligne"),
+     "the same row is not designated twice"),
     ([{"siren": "333"}, {"siren": "222"}], None,
      "Ligne 2 : siren '222' désigne déjà la ligne"),
 ], ids=["doublon interne, ajout", "doublon interne, designation", "clé en base, ajout"])
@@ -435,7 +435,7 @@ def test_apres_le_lot_est_refuse_entier_avant_sa_premiere_ligne(
     corps = r.json()
     assert corps["error"] == "business_key_exists"
     for texte in (msg, corps["detail"]):
-        assert texte.startswith("lot refusé ENTIER, rien n'a été écrit") and attendu in texte
+        assert texte.startswith("lot refusé ENTIER, nothing was written") and attendu in texte
     assert set(corps["details"]) == {"key", "doublons", "existantes"}
     # Ni la ligne neuve `333`, ni aucune autre : le lot n'a pas commencé.
     assert sorted(_base(ns_id)) == ["222"]

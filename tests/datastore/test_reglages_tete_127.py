@@ -24,6 +24,8 @@ CHAMPS = [{"key": "siren", "type": "text"},
           {"key": "statut", "type": "enum", "options": ["a", "b"]}]
 
 PLUS_AUCUN = "plus aucun réglage : les colonnes et les valeurs sont toujours vérifiées"
+#: La même phrase servie en anglais par l'avertissement de lecture (`residus_warning`).
+PLUS_AUCUN_EN = "no setting any more: columns and values are always checked"
 
 
 # ── ce que la plateforme lit ─────────────────────────────────────────────────
@@ -64,7 +66,7 @@ def test_apres_la_date_le_reglage_stocke_n_est_plus_lu(mode, validation_complete
 def test_unknown_columns_pose_est_refuse_avec_son_explication(valeur):
     errs = S.validate_schema_def({"unknown_columns": valeur, "fields": CHAMPS})
     assert len(errs) == 1, errs
-    assert "`unknown_columns`" in errs[0] and PLUS_AUCUN in errs[0], errs[0]
+    assert "`unknown_columns`" in errs[0] and PLUS_AUCUN_EN in errs[0], errs[0]
 
 
 def test_unknown_columns_STOCKE_et_inchange_passe_et_se_dit_a_la_lecture():
@@ -74,7 +76,7 @@ def test_unknown_columns_STOCKE_et_inchange_passe_et_se_dit_a_la_lecture():
     assert S.validate_schema_def({**patche, "unknown_columns": "reject"}, ancien), \
         "le MODIFIER est un geste : refusé"
     msg = cles_inconnues.residus_warning(ancien)
-    assert "`unknown_columns: 'report'`" in msg and PLUS_AUCUN in msg, msg
+    assert "`unknown_columns: 'report'`" in msg and PLUS_AUCUN_EN in msg, msg
     assert "fermeture du vocabulaire" not in msg, "sa phrase propre, pas celle des résidus"
 
 

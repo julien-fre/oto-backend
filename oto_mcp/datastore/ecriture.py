@@ -102,10 +102,10 @@ class EcritureMixin:
                                        layers=layers, versions=versions, empties=empties)
             except RowNotFound:
                 raise ValueError(
-                    f"`_id` ({cible!r}) ne correspond à aucune ligne de "
-                    f"`{datastore}` — rien n'est créé. L'identifiant est peut-être "
-                    "tronqué ou la ligne purgée : relis-la (data_rows, "
-                    "data_claim_next) et réécris avec son `_id` exact.")
+                    f"`_id` ({cible!r}) matches no row of "
+                    f"`{datastore}` — nothing is created. The identifier may be "
+                    "truncated or the row purged: read it again (data_rows, "
+                    "data_claim_next) and write again with its exact `_id`.")
         ns_id = self._resolve(datastore, write=True)
         user_data = {k: v for k, v in data.items() if k not in _META_COLS}
         ns = self._ns_of(ns_id)
@@ -210,10 +210,10 @@ class EcritureMixin:
             # servi dix fois en une soirée. Ce n'est pas un relevé de routine, c'est
             # une réserve qui contredit le succès annoncé juste à côté.
             self.off_non_rapprochables[str(key)] = (
-                f"ligne créée SANS `{key}`, la clé métier de ce tableau : elle ne "
-                f"sera rapprochée par personne — ni une réécriture, ni un lot qui "
-                f"dédouble sur cette clé. Si elle visait une ligne existante, c'est "
-                f"data_write(id=…) ; sinon renseigne `{key}`.")
+                f"row created WITHOUT `{key}`, the business key of this table: it will "
+                f"be matched by nobody — neither a rewrite, nor a batch that "
+                f"deduplicates on this key. If it was meant for an existing row, use "
+                f"data_write(id=…); otherwise fill in `{key}`.")
         # ⚠️ QUATRIÈME chemin, et celui que j'avais oublié — trouvé par le banc, pas
         # par relecture. Les trois autres (lot, fusion, patch par `id`) étaient
         # branchés ; la création unitaire, non. C'est exactement le défaut que ce

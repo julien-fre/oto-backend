@@ -108,7 +108,7 @@ def test_MCP_les_deux_indices_ne_disent_PAS_la_meme_chose(monkeypatch):
     benin = _appel(monkeypatch, libere=False, bail=None)["hint"]
     grave = _appel(monkeypatch, libere=False, bail=AUTRE)["hint"]
     assert benin != grave, "deux situations opposées ne peuvent pas partager un indice"
-    assert "rien à rendre" in benin
+    assert "nothing to release" in benin
     assert "w-9" in grave, "l'indice du cas grave doit dire QUI tient la ligne"
 
 

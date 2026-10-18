@@ -44,9 +44,9 @@ def test_le_refus_dit_le_remplacement_de_chaque_mot_sans_date():
         mdp.controler({"a": dsl.EFFACEMENT, "b": {"comment": dsl.GARDE}})
     t = str(e.value)
     assert "`@clear` (`a`)" in t and "`null`" in t
-    assert "`@keep` (`b`)" in t and "omets le sous-champ" in t
-    assert "`@empty`" in t and "cherché, rien" in t
-    assert "octobre" not in t and "déprécié" not in t
+    assert "`@keep` (`b`)" in t and "leave the sub-field out" in t
+    assert "`@empty`" in t and "searched, nothing" in t
+    assert "octobre" not in t and "déprécié" not in t and "October" not in t and "deprecated" not in t
 
 
 def test_la_description_de_data_write_porte_la_regle():
@@ -60,7 +60,7 @@ def test_la_description_de_data_write_porte_la_regle():
 
 def test_le_guide_dit_le_refus_au_present():
     guide = pathlib.Path(__file__).parents[2] / "oto_mcp/guides/datastore-semantics.md"
-    assert "`@keep` et `@clear` ne sont pas acceptés" in guide.read_text()
+    assert "`@keep` and `@clear` are not accepted" in guide.read_text()
 
 
 def test_le_texte_servi_ne_prescrit_plus_les_mots_deprecies_dans_les_refus():

@@ -150,7 +150,7 @@ def test_delete_declare_le_nombre_de_pages_emportees(seams):
     assert (out["deleted"], out["descendants"]) == (True, 4)
     # La perte se dit au moment où elle a lieu (même posture que `removed_subsections`
     # sur op=patch), sinon elle ne se découvre qu'à l'usage.
-    assert "4 sous-page(s)" in out["warning"]
+    assert "4 sub-page(s)" in out["warning"]
 
 
 def test_dry_run_ne_supprime_rien_et_rend_le_meme_compte(seams):
@@ -165,7 +165,7 @@ def test_dry_run_dit_que_revert_ne_defait_pas_une_suppression(seams):
     page. Un front qui confondrait les deux proposerait une annulation qui n'existe
     pas — le seul moment où on peut le dire est AVANT."""
     out = D._doc(CTX, D.DocInput(op="delete", doc_id=3, dry_run=True))
-    assert "op=revert" in out["hint"] and "SANS RETOUR" in out["hint"]
+    assert "op=revert" in out["hint"] and "CANNOT be undone" in out["hint"]
 
 
 def test_dry_run_exige_l_ecriture_comme_la_suppression(seams, monkeypatch):

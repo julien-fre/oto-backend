@@ -405,9 +405,16 @@ relit ni ne se corrige depuis le produit : elle se découvre dans le résultat.
 
 ```
 capabilities/_instruction.py   domicile UNIQUE de la composition
-  derivee(slug)                « lis la procédure X et applique-la »
+  derivee(slug)                « read the procedure X and apply it »
   de_file(slug, ns, filtre)    + la mécanique de réservation, qui est À NOUS
 ```
+
+⚠️ **La composition est en ANGLAIS** (18/10/2026), comme tout ce que lit un agent
+hébergé : le compte rendu de l'agent suit la langue de ce qu'il lit, et une
+instruction composée en français le faisait conclure en français quelle que soit la
+personne (`docs/conventions.md`). La composition étant ÉCRITE à la déclaration, les
+agents déclarés avant gardaient la française : `scripts/instructions_en_anglais.py`
+(à blanc par défaut) réécrit celles que la plateforme avait composées, et elles seules.
 
 ⚠️ **La mécanique de file n'est pas du métier.** « Réserve une ligne, une seule,
 rends-la » appartient à la flotte, pas à la procédure : c'est la plateforme qui

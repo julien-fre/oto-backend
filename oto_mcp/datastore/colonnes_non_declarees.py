@@ -85,9 +85,8 @@ def refus_arme(aujourdhui: Optional[_date] = None) -> bool:
 
 
 def _quand() -> str:
-    from .champs_reserves import _en_francais
-
-    return _en_francais(date_du_refus())
+    # Date ISO : le texte servi est en anglais (décision du 03/09/2026).
+    return date_du_refus().isoformat()
 
 
 # ── le prédicat ──────────────────────────────────────────────────────────────
@@ -153,15 +152,15 @@ def non_declarees_du_lot(schema: Optional[dict], rows: Iterable[Any]) -> list[st
 def _noms(colonnes: list[str]) -> str:
     cite = ", ".join(f"`{c}`" for c in colonnes[:_CITEES])
     reste = len(colonnes) - _CITEES
-    return cite + (f" (+{reste} autres)" if reste > 0 else "")
+    return cite + (f" (+{reste} more)" if reste > 0 else "")
 
 
 def _geste(colonnes: list[str]) -> str:
     champs = ", ".join(f'{{"key": "{c}"}}' for c in colonnes[:3])
-    return (f"déclare-la d'abord au schéma — `data_patch_schema(datastore=…, "
-            f"fields=[{champs}])` (REST : `PATCH /api/datastores/{{datastore}}/schema`, "
-            f"corps `{{\"fields\": [{champs}]}}`), avec son `type` si tu le connais —, "
-            f"puis écris")
+    return (f"declare it in the schema first — `data_patch_schema(datastore=…, "
+            f"fields=[{champs}])` (REST: `PATCH /api/datastores/{{datastore}}/schema`, "
+            f"body `{{\"fields\": [{champs}]}}`), with its `type` if you know it —, "
+            f"then write")
 
 
 def avertissement(colonnes: list[str]) -> Optional[str]:
@@ -169,12 +168,12 @@ def avertissement(colonnes: list[str]) -> Optional[str]:
     if not colonnes:
         return None
     pluriel = len(colonnes) > 1
-    return (f"{_noms(colonnes)} : colonne{'s' if pluriel else ''} non "
-            f"déclarée{'s' if pluriel else ''} au schéma de ce tableau — "
-            f"{'elles ont' if pluriel else 'elle a'} été "
-            f"créée{'s' if pluriel else ''}. À partir du {_quand()}, écrire dans une "
-            f"colonne non déclarée sera REFUSÉ (`unknown_column`), sur tous les "
-            f"tableaux, au lieu de la créer. Pour écrire dans une colonne nouvelle, "
+    return (f"{_noms(colonnes)}: column{'s' if pluriel else ''} not "
+            f"declared in this table's schema — "
+            f"{'they were' if pluriel else 'it was'} created. "
+            f"From {_quand()} on, writing to an "
+            f"undeclared column will be REFUSED (`unknown_column`), on every "
+            f"table, instead of creating it. To write to a new column, "
             f"{_geste(colonnes)}.")
 
 
@@ -196,28 +195,28 @@ def refus(schema: Optional[dict], colonnes: list[str], *,
         k, col, couche = couches[0]
         details["expected_column"] = f"{col}.{couche}"
         return ColonneNonDeclaree(
-            [f"{_noms(colonnes)} : rien n'a été écrit. ⚠️ Ce n'est pas une colonne "
-             f"inconnue, c'est une COUCHE dont le nom s'écrit avec un POINT — "
+            [f"{_noms(colonnes)}: nothing was written. ⚠️ This is not an unknown "
+             f"column, it is a LAYER whose name is written with a DOT — "
              + " ; ".join(f"`{a}` → `{b}.{c}`" for a, b, c in couches)
-             + f". `{{\"{col}\": {{\"{couche}\": …}}}}` écrit la même chose, et c'est "
-             f"la forme que `layers=\"nested\"` te rend à la lecture."],
+             + f". `{{\"{col}\": {{\"{couche}\": …}}}}` writes the same thing, and it is "
+             f"the form `layers=\"nested\"` returns to you on read."],
             details=details)
     if connues:
         cite = ", ".join(f"`{k}`" for k in connues[:_REFERENTIEL_CITE])
         if len(connues) > _REFERENTIEL_CITE:
-            cite += f" (+{len(connues) - _REFERENTIEL_CITE} autres, `data_get_schema`)"
-        referentiel = f"Colonnes du tableau : {cite}."
+            cite += f" (+{len(connues) - _REFERENTIEL_CITE} more, `data_get_schema`)"
+        referentiel = f"Table columns: {cite}."
     else:
-        referentiel = "Ce tableau ne déclare encore aucune colonne."
+        referentiel = "This table does not declare any column yet."
     pluriel = len(colonnes) > 1
-    portee = "ce lot est refusé ENTIER, " if lot else ""
+    portee = "this batch is refused ENTIRELY, " if lot else ""
     return ColonneNonDeclaree(
-        [f"{_noms(colonnes)} : colonne{'s' if pluriel else ''} non "
-         f"déclarée{'s' if pluriel else ''} — {portee}rien n'a été écrit. Depuis le "
-         f"{_quand()}, écrire dans une colonne ne la crée plus, sur aucun tableau. "
-         f"{referentiel} Écris sous un nom déclaré ; ou, si la colonne est voulue, "
-         f"{_geste(colonnes)}. ⚠️ Ne réessaie pas sous une variante du même nom : "
-         f"elle serait refusée pareil."],
+        [f"{_noms(colonnes)}: column{'s' if pluriel else ''} not "
+         f"declared — {portee}nothing was written. Since "
+         f"{_quand()}, writing to a column no longer creates it, on any table. "
+         f"{referentiel} Write under a declared name; or, if the column is intended, "
+         f"{_geste(colonnes)}. ⚠️ Do not retry under a variant of the same name: "
+         f"it would be refused the same way."],
         details=details)
 
 

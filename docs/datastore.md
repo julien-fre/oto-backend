@@ -509,7 +509,7 @@ reste une affaire de schéma.
 revenait en tête de la file indéfiniment (livelock reproduit trois fois sur trois). Le
 réglage d'instance `OTO_MCP_CLAIM_DEFAULT_MAX_CLAIMS` (3, la valeur que déclarent les
 tableaux à file) s'applique alors : la ligne est **mise de côté** par la seule colonne de
-plateforme (`abandon_reason`, motif suffixé « défaut de la plateforme »), **sans toucher
+plateforme (`abandon_reason`, motif suffixé « platform default »), **sans toucher
 à ses données** — aucun état ne lui est désigné, son statut reste ce qu'il était. Même
 sortie de file, même journalisation, même réparation par une écriture. Un réglage
 illisible (pas un entier ≥ 1) fait LEVER la réservation.
@@ -528,8 +528,8 @@ une base neuve). ⚠️ Aucun `order_by` n'est accepté par la réservation : le
 l'est, il passe DEVANT cette clé, qui reste le départage.
 
 Au-delà du plafond, le serveur verse la ligne dans `abandon_state`, pose le motif dans
-une colonne de plateforme (`abandon_reason`, rendue `_abandon` : « abandonnée après 3
-réservations sans écriture, plafond 3 » — le motif **cite ses chiffres**, le plafond
+une colonne de plateforme (`abandon_reason`, rendue `_abandon` : « abandoned after 3
+claims without a write, ceiling 3 » — le motif **cite ses chiffres**, le plafond
 ayant pu changer depuis), libère le bail, et **journalise** (tableau, ligne, compteur).
 Deux moments d'évaluation, et deux seulement :
 
@@ -544,24 +544,24 @@ encore, et lui retirer la ligne serait la course que le bail existe pour empêch
 **Le motif dit la CAUSE (oto-backend#491).** « 3 réservations sans écriture » réunissait
 quatre causes à quatre gestes différents : un redémarrage qui a coupé les sessions, un
 modèle qui dégénère, un outil en panne, une ligne impossible. Le motif finit donc par
-`— dernière tentative : <cause>`, et `abandon_run` (servi `_abandon_run`) garde le run de
+`— last attempt: <cause>`, et `abandon_run` (servi `_abandon_run`) garde le run de
 cette tentative. La cause, par ordre de préférence (`rowabandon._cause_de_l_abandon`) :
 
 | cause | d'où elle vient |
 | --- | --- |
-| `erreur du travail : <texte>` | l'erreur que le worker déclare en concluant le job en échec (`runner.jobs` op=complete), passée au relâchement qu'il déclenche |
-| ``run clos `failed` : <note>`` (ou `blocked`) | `runs.outcome`/`note`, posés par `run_finish` avant qu'il ne relâche |
-| `écriture refusée : <motif>` | la DERNIÈRE `data_write` du run sur cette ligne (ou sans ligne lisible au journal) a échoué — `tool_calls.ok`/`error` |
-| `appels en erreur : <outil>[, …]` | les outils en échec du run (cinq au plus, le plus récent d'abord ; `oto_call` nommé par sa cible) |
-| `bail expiré sans relâchement` | le filet du claim : la ligne portait encore un bail échu, personne ne l'a rendue |
-| `aucune écriture tentée` | un run connu, rien de ce qui précède |
-| `cause inconnue : réservée hors run` | aucun run : rien où lire |
+| `job error: <texte>` | l'erreur que le worker déclare en concluant le job en échec (`runner.jobs` op=complete), passée au relâchement qu'il déclenche |
+| ``run closed `failed`: <note>`` (ou `blocked`) | `runs.outcome`/`note`, posés par `run_finish` avant qu'il ne relâche |
+| `write refused: <motif>` (sauf un refus du schéma, déjà nommé « write refused by the schema: … », repris tel quel) | la DERNIÈRE `data_write` du run sur cette ligne (ou sans ligne lisible au journal) a échoué — `tool_calls.ok`/`error` |
+| `calls in error: <outil>[, …]` | les outils en échec du run (cinq au plus, le plus récent d'abord ; `oto_call` nommé par sa cible) |
+| `lease expired without a release` | le filet du claim : la ligne portait encore un bail échu, personne ne l'a rendue |
+| `no write attempted` | un run connu, rien de ce qui précède |
+| `unknown cause: claimed outside a run` | aucun run : rien où lire |
 
 Le journal des appels est lu **par le run et depuis la dernière prise** (`claimed_at`,
 comparé en base), par `idx_tool_calls_run (run_id, created_at)`, `LIMIT` à chaque
 lecture, sous un point de sauvegarde et un `statement_timeout` de 2 s : une lecture qui
 échoue n'empêche ni l'abandon ni la réservation qui le porte — le motif dit alors
-`cause inconnue : journal illisible`, et le journal applicatif l'écrit en erreur. Le
+`unknown cause: log unreadable`, et le journal applicatif l'écrit en erreur. Le
 journal des révisions (`datastore_row_revisions`) n'y sert pas : il n'écrit que ce qui a
 été écrit, jamais un refus.
 

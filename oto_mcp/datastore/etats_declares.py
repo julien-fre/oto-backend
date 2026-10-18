@@ -110,10 +110,10 @@ def etats_trahis(schema: Optional[dict], merged: dict, *,
         etats = {str(s) for s in (f["lifecycle"].get("states") or [])}
         if not etats or str(valeur) in etats:
             continue
-        refus = (f"{cle}: état inconnu {valeur!r} — cette colonne déclare ses états "
-                 f"(états: {sorted(etats)}). Elle n'est pas la file de travail du "
-                 f"tableau, mais elle dit ce qu'elle accepte, et c'est ce qui est "
-                 f"appliqué ici.")
+        refus = (f"{cle}: unknown state {valeur!r} — this column declares its states "
+                 f"(states: {sorted(etats)}). It is not the table's work "
+                 f"queue, but it says what it accepts, and that is what is "
+                 f"enforced here.")
         if written is None or cle in written:
             errors.append(refus)
         elif gelees is not None:

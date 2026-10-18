@@ -60,10 +60,10 @@ def check_empties(value: Any) -> str:
     if value in EMPTIES:
         return str(value)
     raise ValueError(
-        f"`empties` inconnu : `{value}` — attendu `{PLAIN}` (défaut : une case vidée "
-        f"délibérément est servie `\"\"`, comme un vide ordinaire) ou `{SENTINEL}` (servie "
-        f"`\"{dsc.VIDE_DELIBERE}\"`, le mot qui la réécrit : la forme à lire avant de "
-        f"renvoyer une liste).")
+        f"unknown `empties`: `{value}` — expected `{PLAIN}` (default: a cell emptied "
+        f"deliberately is served `\"\"`, like an ordinary empty) or `{SENTINEL}` (served "
+        f"`\"{dsc.VIDE_DELIBERE}\"`, the word that rewrites it: the form to read before "
+        f"sending a list back).")
 
 
 def relayer_empties(value: str) -> dict:
@@ -87,9 +87,9 @@ def check(value: Any) -> str:
     if value in FORMES:
         return str(value)
     raise ValueError(
-        f"`layers` inconnu : `{value}` — attendu `{FLAT}` (défaut : `champ` = la valeur, "
-        f"`champ.origine`/`.comment`/`.link` à plat à côté) ou `{NESTED}` "
-        f"(`champ` = {{\"valeur\", \"origine\", \"comment\", \"link\"}}, la forme écrite).")
+        f"unknown `layers`: `{value}` — expected `{FLAT}` (default: `field` = the value, "
+        f"`field.origine`/`.comment`/`.link` flat alongside) or `{NESTED}` "
+        f"(`field` = {{\"valeur\", \"origine\", \"comment\", \"link\"}}, the written form).")
 
 
 def nested_value(value: Any, *, origine: bool, sentinelle: bool = False) -> Any:

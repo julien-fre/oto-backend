@@ -80,7 +80,7 @@ def test_la_couche_orpheline_est_refusee_sous_strict_et_n_ecrit_rien(table):
 
     message = _refus(st, ns, rid, {"contacts": [{"nom.comment": "registre"}]})
 
-    assert "LITTÉRALEMENT" in message and "Rien n'a été écrit" in message
+    assert "LITERALLY" in message and "Nothing was written" in message
     assert _donnees(ns_id, rid)["contacts"] == [{"nom": "Ada"}], \
         "un refus ne touche à rien"
 
@@ -103,7 +103,7 @@ def test_les_deux_gestes_que_le_refus_prescrit_ecrivent_pour_de_bon(table):
     st, ns, ns_id, rid = table
 
     message = _refus(st, ns, rid, {"contacts": [{"nom.comment": "registre"}]})
-    assert 'dans le MÊME élément' in message and '{"nom": {"comment": …}}' in message
+    assert 'in the SAME item' in message and '{"nom": {"comment": …}}' in message
 
     # ① la base à côté, dans le même élément
     st.update_row(ns, rid, {"contacts": [{"nom": "Ada", "nom.comment": "registre"}]})
@@ -123,8 +123,8 @@ def test_l_autre_silence_de_la_meme_fonction_est_ferme_aussi(table):
     message = _refus(st, ns, rid, {"contacts": [
         {"nom": {"prenom": "Ada", "usage": "Lovelace"}, "nom.comment": "registre"}]})
 
-    assert "n'est pas fait de couches" in message
-    assert "Rien n'a été écrit" in message
+    assert "is not made of layers" in message
+    assert "Nothing was written" in message
 
 
 # ══ ce qui ne doit PAS bouger — le refus est étroit ═════════════════════════════

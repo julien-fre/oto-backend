@@ -52,10 +52,10 @@ def test_la_colonne_fautive_est_signalee_et_pas_tue():
     dsv2.validate_row(SCHEMA, merge, written={"notes"}, gelees=gelees)
 
     assert [g["champ"] for g in gelees] == ["linkedin_url"]
-    assert "attendu une URL" in gelees[0]["refus"]
+    assert "expected an http(s) URL" in gelees[0]["refus"]
 
     phrase = dsv2.types_geles_warning(gelees)
-    assert "ton écriture est passée" in phrase
+    assert "your write went through" in phrase
     assert "`linkedin_url`" in phrase
 
 
@@ -66,7 +66,7 @@ def test_ecrire_LA_colonne_fautive_refuse_toujours():
 
     errors = dsv2.validate_row(SCHEMA, merge, written={"linkedin_url"})
 
-    assert errors and "attendu une URL" in errors[0]
+    assert errors and "expected an http(s) URL" in errors[0]
 
 
 def test_une_creation_juge_TOUT_comme_avant():
@@ -74,7 +74,7 @@ def test_une_creation_juge_TOUT_comme_avant():
     « déjà en base » à épargner, et rien ne change."""
     errors = dsv2.validate_row(SCHEMA, EN_BASE, written=None)
 
-    assert errors and "attendu une URL" in errors[0]
+    assert errors and "expected an http(s) URL" in errors[0]
 
 
 def test_une_ligne_conforme_ne_signale_rien():
@@ -104,12 +104,12 @@ def test_la_borne_de_liste_suit_la_meme_regle():
     assert dsv2.validate_row(schema, {**en_base, "notes": "neuve"},
                              written={"notes"}, gelees=gelees) == []
     assert [g["champ"] for g in gelees] == ["contacts"]
-    assert "4 éléments, maximum 2" in gelees[0]["refus"]
+    assert "4 items, maximum 2" in gelees[0]["refus"]
 
     # écrire LA liste : refusé, comme avant
     errors = dsv2.validate_row(schema, {**en_base, "contacts": ["a", "b", "c"]},
                                written={"contacts"})
-    assert errors and "3 éléments, maximum 2" in errors[0]
+    assert errors and "3 items, maximum 2" in errors[0]
 
 
 def test_le_requis_continue_de_se_juger_sur_la_ligne_ENTIERE():
@@ -125,7 +125,7 @@ def test_le_requis_continue_de_se_juger_sur_la_ligne_ENTIERE():
 
     errors = dsv2.validate_row(schema, {"notes": "posée"}, written={"notes"})
 
-    assert errors and "champ requis manquant" in errors[0]
+    assert errors and "required field missing" in errors[0]
 
 
 def test_un_etat_devenu_invalide_ne_gele_plus_la_ligne():
@@ -155,12 +155,12 @@ def test_un_etat_devenu_invalide_ne_gele_plus_la_ligne():
                              prev_status="en_pause", written={"notes"},
                              gelees=gelees) == []
     assert [g["champ"] for g in gelees] == ["statut"]
-    assert "état inconnu" in gelees[0]["refus"]
+    assert "unknown state" in gelees[0]["refus"]
 
     # écrire un état invalide refuse toujours
     errs = dsv2.validate_row(schema, {**en_base, "statut": "n_importe_quoi"},
                              prev_status="en_pause", written={"statut"})
-    assert errs and "état inconnu" in errs[0]
+    assert errs and "unknown state" in errs[0]
 
     # et une transition interdite refuse toujours
     errs = dsv2.validate_row(schema, {"statut": "a_faire", "notes": "x"},

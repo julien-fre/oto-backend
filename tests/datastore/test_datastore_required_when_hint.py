@@ -53,7 +53,7 @@ def test_le_motif_ecrit_dans_l_ENUM_dit_ou_il_va(_=None):
     disait « hors options » et laissait deviner où mettre la phrase."""
     msg = _refus({"retraitement": "doublon de la ligne 412, même SIREN"})
     assert "retraitement_motif" in msg          # la colonne ATTENDUE est nommée
-    assert "pas dans `retraitement`" in msg     # et celle qui n'en veut pas
+    assert "not in `retraitement`" in msg     # et celle qui n'en veut pas
     assert "injoignable" in msg                 # ce que l'énuméré accepte
 
 
@@ -61,7 +61,7 @@ def test_le_pointeur_ne_remplace_pas_le_refus(_=None):
     """On AJOUTE au refus, on ne le remplace pas : la valeur vue et les options
     restent dites, c'est ce qui permet de corriger sans relire le schéma."""
     msg = _refus({"retraitement": "doublon de la ligne 412"})
-    assert "hors options" in msg and "'doublon de la ligne 412'" in msg
+    assert "not among the options" in msg and "'doublon de la ligne 412'" in msg
 
 
 def test_details_nomme_la_colonne_attendue(_=None):
@@ -78,7 +78,7 @@ def test_le_motif_MANQUANT_dit_la_forme_attendue(_=None):
     """L'énuméré est bien rempli, le motif manque : le refus nomme la colonne — il
     le faisait déjà — et dit désormais ce qu'elle ACCEPTE (sa forme)."""
     msg = _refus({"retraitement": "injoignable"})
-    assert "retraitement_motif" in msg and "requis" in msg
+    assert "retraitement_motif" in msg and "required" in msg
     assert "300" in msg                          # la borne, donc la forme
 
 
@@ -87,7 +87,7 @@ def test_le_motif_manquant_previent_le_mauvais_champ(_=None):
     motif dans l'énuméré, et paie un SECOND aller-retour — c'est exactement la
     séquence mesurée."""
     msg = _refus({"retraitement": "injoignable"})
-    assert "n'accepte que" in msg               # ce que l'aiguillage refusera
+    assert "only accepts" in msg               # ce que l'aiguillage refusera
     assert "hors_cible" in msg                  # ses options, dites une fois pour toutes
 
 
@@ -119,7 +119,7 @@ def test_un_enum_ORDINAIRE_n_invente_pas_de_pointeur(_=None):
         {"key": "autre", "type": "text"},
     ]}
     errs = S.validate_row(schema, {"statut": "zzz"})
-    assert errs and "hors options" in errs[0]
+    assert errs and "not among the options" in errs[0]
     assert "pas dans" not in errs[0] and "note" not in errs[0]
 
 
@@ -129,7 +129,7 @@ def test_le_CODE_de_refus_est_inchange(_=None):
     from oto_mcp.capabilities.datastore.rows import _write_refusal
     from oto_mcp.datastore.errors import RowValidationError
 
-    refus = _write_refusal(RowValidationError(["x: champ requis manquant"],
+    refus = _write_refusal(RowValidationError(["x: required field missing"],
                                               details={"expected_column": "y"}))
     assert refus.status == 400 and refus.code == "row_invalid"
     assert refus.details == {"expected_column": "y"}
@@ -158,7 +158,7 @@ def test_vider_le_champ_SANS_changer_l_aiguillage_le_dit(_=None):
                           written={"retraitement_motif"})
     assert errs, "le vidage seul doit rester refusé"
     msg = " ; ".join(errs)
-    assert "MÊME appel" in msg
+    assert "SAME call" in msg
     assert "change `retraitement`" in msg
 
 
@@ -180,7 +180,7 @@ def test_la_clause_est_muette_a_la_creation(_=None):
     quitter, donc pas de conseil de « revenir en arrière » — juste le refus
     ordinaire de champ manquant."""
     msg = _refus({"retraitement": "injoignable"})
-    assert "MÊME appel" not in msg
+    assert "SAME call" not in msg
 
 
 def test_la_clause_se_tait_quand_l_appel_ECRIT_l_aiguillage(_=None):
@@ -193,8 +193,8 @@ def test_la_clause_se_tait_quand_l_appel_ECRIT_l_aiguillage(_=None):
                           written={"retraitement", "retraitement_motif"})
     assert errs, "le motif manque : le refus reste"
     msg = " ; ".join(errs)
-    assert "MÊME appel" not in msg, msg
-    assert "retraitement_motif" in msg and "requis" in msg
+    assert "SAME call" not in msg, msg
+    assert "retraitement_motif" in msg and "required" in msg
 
 
 def test_en_DEUX_appels_changer_l_aiguillage_D_ABORD_passe(_=None):

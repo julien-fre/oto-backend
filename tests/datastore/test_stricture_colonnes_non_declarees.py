@@ -75,7 +75,7 @@ def test_le_refus_nomme_la_colonne_et_le_referentiel():
     msg = errors[0]
     assert "`_liberation`" in msg
     assert "siren" in msg and "adresse" in msg     # le référentiel est dit
-    assert "rien n'a été écrit" in msg.lower()
+    assert "nothing was written" in msg.lower()
     assert details == {}      # #678 : aucune destination inventée
 
 
@@ -84,7 +84,7 @@ def test_le_refus_dit_qu_aucune_destination_n_existe():
     Le refus doit DIRE qu'aucune colonne ne porte ce nom, pas pointer à côté."""
     errors, details = dsv2.off_schema_refusal(REJECT, {"_liberation": "x"})
     assert "expected_column" not in details
-    assert "aucune colonne déclarée" in errors[0].lower()
+    assert "no declared column" in errors[0].lower()
 
 
 def test_toutes_les_colonnes_inventees_d_un_coup():
@@ -110,7 +110,7 @@ def test_le_cran_ne_se_pose_plus():
     retrait (`scripts/retirer_unknown_columns.py`). Ce banc tient ce qu'il fait encore
     sur un schéma qui le porte ; le poser est refusé, avec son explication."""
     errs = dsv2.validate_schema_def(REJECT)
-    assert len(errs) == 1 and "plus aucun réglage" in errs[0], errs
+    assert len(errs) == 1 and "no setting any more" in errs[0], errs
 
 
 # ── le geste : les cinq portes d'écriture ────────────────────────────────────

@@ -26,7 +26,8 @@ def test_le_guide_dit_la_regle_au_present():
     guide = (pathlib.Path(__file__).parents[2]
              / "oto_mcp/guides/datastore-semantics.md").read_text()
     assert "6 octobre 2026" not in guide and "8 octobre 2026" not in guide
-    assert "ils REMPLACENT la valeur en place**" in guide
+    assert "6 October 2026" not in guide and "8 October 2026" not in guide
+    assert "they REPLACE the value in place**" in guide
 
 
 def test_le_module_du_preavis_est_retire():

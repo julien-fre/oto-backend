@@ -191,20 +191,20 @@ def _les_deux_gestes(colonnes: list) -> str:
     `donnees_d_origine=true` qui la pose, et le texte le nomme."""
     col = str(colonnes[0]) if colonnes else "<colonne>"
     return (
-        "Deux gestes, l'un ou l'autre : si vous n'avez pas besoin d'écrire l'origine, "
-        "écrivez la valeur seule (l'origine en place n'est pas touchée) — pour un "
-        "import, `donnees_d_origine: true` pose l'origine à votre place, copie de la "
-        "valeur remise, là où aucune n'est posée ; si votre import doit vraiment "
-        "l'écrire lui-même, "
-        f"ajoutez `{PARAMETRE_ORIGINE}: true` à cet appel — ou, si vous chargez un "
-        f"fichier par URL signée, à l'appel qui a CRÉÉ l'URL (`oto_upload_url`), le PUT "
-        "ne portant aucun paramètre. Rien à demander à personne : ce paramètre déclare "
-        "que vous savez ce que vous écrivez, et il suffit. "
-        f"⚠️ Et si votre intention était de dire D'OÙ VIENT cette valeur — sa source, "
-        f"qui vous l'a remise —, ce n'est pas `origine` : cela se pose en commentaire de "
-        f"la colonne (`{col}.comment`, soit `{{\"{col}\": {{\"comment\": …}}}}`), qui "
-        f"reste ouverte à l'écriture. `origine` ne dit qu'une chose : quelle était la "
-        f"valeur du DÉPART, à l'import.")
+        "Two options, one or the other: if you do not need to write the origin, "
+        "write the value alone (the origin in place is not touched) — for an "
+        "import, `donnees_d_origine: true` sets the origin for you, a copy of the "
+        "value provided, wherever none is set; if your import really must "
+        "write it itself, "
+        f"add `{PARAMETRE_ORIGINE}: true` to this call — or, if you load a "
+        f"file through a signed URL, to the call that CREATED the URL (`oto_upload_url`), the PUT "
+        "carrying no parameter. Nothing to ask anyone: this parameter declares "
+        "that you know what you are writing, and that is enough. "
+        f"⚠️ And if your intent was to say WHERE this value COMES FROM — its source, "
+        f"who gave it to you —, that is not `origine`: it goes in the comment of "
+        f"the column (`{col}.comment`, i.e. `{{\"{col}\": {{\"comment\": …}}}}`), which "
+        f"stays open for writing. `origine` says only one thing: what the "
+        f"STARTING value was, at import.")
 
 
 def refus_origine(colonnes: list) -> str:
@@ -216,9 +216,9 @@ def refus_origine(colonnes: list) -> str:
     l'autre verrou de la plateforme (#668), enverrait chercher une manœuvre."""
     quoi = ", ".join(f"`{c}`" for c in colonnes)
     return (
-        f"Cette écriture pose la couche `origine` de {quoi} sans la déclarer — rien n'a "
-        f"été écrit. L'origine est la valeur du départ, à l'import : la poser exige "
-        f"de le dire. Écrire l'origine reste possible. {_les_deux_gestes(colonnes)}")
+        f"This write sets the `origine` layer of {quoi} without declaring it — nothing "
+        f"was written. The origin is the starting value, at import: setting it requires "
+        f"saying so. Writing the origin remains possible. {_les_deux_gestes(colonnes)}")
 
 
 def origine_posee(payload: Optional[dict], avant: Optional[dict] = None) -> list[str]:

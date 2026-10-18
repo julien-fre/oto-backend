@@ -1121,8 +1121,8 @@ def _autres_paliers(ctx: ResolvedCtx, slug: str, servi: tuple[str, str]) -> list
 def _designe(entree: dict) -> str:
     date = (entree.get("updated_at") or "")[:10]
     return (f"v{entree['version']}, `guide_id` {entree['guide_id']}"
-            + (f", modifiée le {date}" if date else "")
-            + (", ARCHIVÉE" if entree.get("archived_at") else ""))
+            + (f", modified on {date}" if date else "")
+            + (", ARCHIVED" if entree.get("archived_at") else ""))
 
 
 def _masque(servi: str, servi_archive: bool, autres: list[dict],
@@ -1135,30 +1135,29 @@ def _masque(servi: str, servi_archive: bool, autres: list[dict],
     # ⚠️ Seule une copie perso EN SERVICE masque (décision du 14/10/2026) : la cascade
     # par nom saute une copie perso archivée. ARCHIVER lève donc le masque, et c'est le
     # geste proposé d'abord — réversible, il garde la copie et son historique.
-    retirer = ("Si ta copie perso n'a pas lieu d'être, archive-la "
-               "(`oto_procedure op=archive scope='user'`, réversible) : la cascade sert "
-               "alors celle de l'org. La supprimer (`op=delete scope='user'`) lève aussi "
-               "le masque, mais emporte son historique.")
+    retirer = ("If your personal copy should not exist, archive it "
+               "(`oto_procedure op=archive scope='user'`, reversible): the cascade then "
+               "serves the org's. Deleting it (`op=delete scope='user'`) also lifts the "
+               "shadow, but takes its history with it.")
     perso_en_service = "user" in par_palier and not par_palier["user"].get("archived_at")
     if servi == "user" and not servi_archive and "org" in par_palier:
         org = _designe(par_palier["org"])
         if geste == "lecture":
-            return ("Tu lis ta copie PERSONNELLE. L'org porte une procédure du même slug "
-                    f"({org}), que cette lecture a ÉCARTÉE : `op=get` sans `scope` sert "
-                    "la tienne d'abord, pour toi comme pour un agent qui tourne sous ton "
-                    "compte. Celle de l'org se lit avec `scope='org'`. " + retirer)
-        return ("Cette procédure PERSONNELLE porte le slug d'une procédure de l'ORG "
-                f"({org}) et la MASQUE : tant qu'elle est en service, `op=get` sans "
-                "`scope` sert "
-                "ta copie et écarte celle de l'org, pour toi comme pour un agent qui "
-                "tourne sous ton compte. Pour modifier celle de l'org, écris avec "
-                "`scope='org'` (admin de l'org). " + retirer)
+            return ("You are reading your PERSONAL copy. The org has a procedure with the "
+                    f"same slug ({org}), which this read SKIPPED: `op=get` without "
+                    "`scope` serves yours first, for you as for an agent running under "
+                    "your account. The org's is read with `scope='org'`. " + retirer)
+        return ("This PERSONAL procedure carries the slug of an ORG procedure "
+                f"({org}) and SHADOWS it: while it is in service, `op=get` without "
+                "`scope` serves your copy and skips the org's, for you as for an agent "
+                "running under your account. To change the org's, write with "
+                "`scope='org'` (org admin). " + retirer)
     if servi == "org" and perso_en_service:
         perso = _designe(par_palier["user"])
-        quoi = "Tu lis" if geste == "lecture" else "Tu viens d'écrire"
-        return (f"{quoi} la procédure de l'ORG, mais ta copie PERSONNELLE du même slug "
-                f"({perso}) la MASQUE : `op=get` sans `scope` sert ta copie, pas "
-                "celle-ci, pour toi comme pour un agent qui tourne sous ton compte. "
+        quoi = "You are reading" if geste == "lecture" else "You just wrote"
+        return (f"{quoi} the ORG procedure, but your PERSONAL copy with the same slug "
+                f"({perso}) SHADOWS it: `op=get` without `scope` serves your copy, not "
+                "this one, for you as for an agent running under your account. "
                 + retirer)
     return None
 
@@ -1195,9 +1194,9 @@ def _paliers_apres_retrait(ctx: ResolvedCtx, slug: str, retiree: tuple[str, str]
     org = next((a for a in autres if a["scope"] == "org"), None)
     leve = retiree[0] == "user" and retiree_archive_le is None and org is not None
     return {"other_scopes": autres, **({"shadow_lifted": (
-        "Ta copie PERSONNELLE masquait la procédure de l'ORG du même slug "
-        f"({_designe(org)}) : une lecture par nom (`op=get` sans `scope`) sert désormais "
-        "celle de l'org, pour toi comme pour un agent qui tourne sous ton compte.")}
+        "Your PERSONAL copy was shadowing the ORG procedure with the same slug "
+        f"({_designe(org)}): a read by name (`op=get` without `scope`) now serves "
+        "the org's, for you as for an agent running under your account.")}
         if leve else {})}
 
 
@@ -1229,7 +1228,7 @@ def _read_guide(ctx: ResolvedCtx, inp) -> tuple[dict, tuple[str, ...] | None]:
         # procédures existent dans les autres orgs.
         if not instr or not ownership.can_access(ctx.sub, "doctrine", str(guide_id),
                                                  "read"):
-            raise _inconnu(f"Aucun guide #{guide_id}.")
+            raise _inconnu(f"No guide #{guide_id}.")
         # Le scope se lit sur les colonnes qui le portent, pas sur `org_id` (l'org
         # PARENTE, identique pour une procédure d'équipe et pour celles de son org).
         # `scope` était écrit « org » en dur : vrai tant qu'aucune procédure d'équipe
@@ -1243,7 +1242,7 @@ def _read_guide(ctx: ResolvedCtx, inp) -> tuple[dict, tuple[str, ...] | None]:
             versioned = org_store.get_instruction(owner_type, owner_id, instr["slug"],
                                                   version)
             if not versioned:
-                raise _inconnu(f"Guide #{guide_id} : pas de version {version}.")
+                raise _inconnu(f"Guide #{guide_id}: no version {version}.")
             instr = {**versioned, "id": instr["id"]}
         # L'auteur ne se nomme que dans SON périmètre : un guide partagé par une AUTRE
         # org donne accès au texte, pas à l'identité de ses rédacteurs (#708).
@@ -1333,25 +1332,25 @@ def _read_guide(ctx: ResolvedCtx, inp) -> tuple[dict, tuple[str, ...] | None]:
         # palier ORG : la procédure écrite à soi devenait « introuvable » à la
         # relecture, sur un message qui nommait pourtant le bon scope.
         if ctx.sub is None:
-            raise AuthzDenied(401, "no_identity", "Identité requise.")
+            raise AuthzDenied(401, "no_identity", "Identity required.")
         owner: tuple[str, str] = ("user", str(ctx.sub))
         scope_ref: dict = {"user_id": str(ctx.sub)}
     elif scope == "group" and member_mode:
         group_id = _active_group(ctx)
         if group_id is None:
-            raise AuthzDenied(400, "no_active_group", "Pas de département actif — vois `oto_use_group`.")
+            raise AuthzDenied(400, "no_active_group", "No active team — see `oto_use_group`.")
         owner = ("group", str(group_id))
         scope_ref = {"group_id": group_id}
     else:
         if org_id is None:
-            raise AuthzDenied(400, "no_active_org", "Pas d'org active — vois `oto_use_org`.")
+            raise AuthzDenied(400, "no_active_org", "No active org — see `oto_use_org`.")
         owner = ("org", str(org_id))
         scope_ref = {"org_id": org_id}
     instr = org_store.get_instruction(*owner, slug, version)
     if not instr:
-        raise _inconnu(f"Aucun guide `{org_store.normalize_slug(slug)}` (scope {scope})"
-                       + (f" en version {version}" if version is not None else "")
-                       + ". Vois `oto_procedure(op='list')`.")
+        raise _inconnu(f"No guide `{org_store.normalize_slug(slug)}` (scope {scope})"
+                       + (f" at version {version}" if version is not None else "")
+                       + ". See `oto_procedure(op='list')`.")
     auteur = nommer_l_auteur(instr)
     # L'id STABLE, rendu aussi à la lecture par slug (issue `oto`#261) : c'est lui que
     # les liens de projet et les partages désignent, et lui qui survit à un renommage.

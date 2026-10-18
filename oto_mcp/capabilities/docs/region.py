@@ -29,16 +29,17 @@ POIGNEE_PREAMBULE = 'region="preamble"'
 
 @dataclass(frozen=True)
 class Objet:
-    """Comment les refus nomment ce qu'on patche — accord compris."""
-    ce: str        # sujet d'une phrase : « Cette page »
-    le: str        # complément : « la page »
-    pronom: str    # « la supprimer la viderait »
-    entier: str    # « la page ENTIÈRE »
+    """Comment les refus nomment ce qu'on patche (texte lu par l'agent : en anglais,
+    docs/conventions.md)."""
+    ce: str        # sujet d'une phrase : « This page »
+    le: str        # complément : « the page »
+    pronom: str    # « deleting it would empty it »
+    entier: str    # « the ENTIRE page »
     reecrire: str  # l'op qui réécrit le corps entier
 
 
-PAGE = Objet("Cette page", "la page", "la", "ENTIÈRE", "op=update")
-GUIDE = Objet("Ce guide", "le guide", "le", "ENTIER", "op=write")
+PAGE = Objet("This page", "the page", "it", "the ENTIRE page", "op=update")
+GUIDE = Objet("This guide", "the guide", "it", "the ENTIRE guide", "op=write")
 
 
 def refus_section_introuvable(heading: str, disponibles: list, corps: str,
@@ -50,12 +51,12 @@ def refus_section_introuvable(heading: str, disponibles: list, corps: str,
     proposaient `section="__preamble__"`) : cette forme-là ne devient JAMAIS un
     synonyme silencieux de la région — elle se heurte à ce refus, qui apprend la
     bonne poignée."""
-    dispo = ", ".join(disponibles) or "(aucune)"
-    msg = f"Section « {heading} » introuvable. Sections disponibles : {dispo}."
+    dispo = ", ".join(disponibles) or "(none)"
+    msg = f"Section “{heading}” not found. Available sections: {dispo}."
     if doc_patch.preamble(corps).strip():
-        msg += (f" {objet.ce} a aussi un PRÉAMBULE (ce qui précède le premier titre : "
-                f"bandeau de provenance, front-matter) : ce n'est pas une section, il "
-                f"s'adresse par {POIGNEE_PREAMBULE}.")
+        msg += (f" {objet.ce} also has a PREAMBLE (what precedes the first heading: "
+                f"provenance banner, front-matter): it is not a section, it is "
+                f"addressed with {POIGNEE_PREAMBULE}.")
     return msg
 
 
@@ -64,14 +65,14 @@ def refus_section_ambigue(heading: str, candidats: list, objet: Objet = PAGE) ->
     avec leur niveau et leur ligne, et la seule sortie qui existe aujourd'hui. Sans la
     liste, l'agent ne peut que réessayer à l'identique ; sans la sortie, il réécrit le
     corps entier — ce que le patch existe pour éviter."""
-    liste = " ; ".join(f"n°{k} `{'#' * niveau} {texte}` (ligne {ligne})"
-                       for k, (ligne, niveau, texte) in enumerate(candidats, 1))
-    return (f"Section « {heading} » ambiguë : {len(candidats)} titres y correspondent — "
-            f"{liste}. `section` compare le TEXTE du titre, sans son niveau ni sa casse : "
-            "aucun ne peut être visé seul, et RIEN n'a été modifié. Pour en viser un, "
-            "rends d'abord les titres uniques — `mode=replace` sur une section PARENTE au "
-            "titre unique qui les contient, en renommant l'un d'eux dans son `body_md`, "
-            f"ou `{objet.reecrire}` avec le corps complet.")
+    liste = "; ".join(f"#{k} `{'#' * niveau} {texte}` (line {ligne})"
+                      for k, (ligne, niveau, texte) in enumerate(candidats, 1))
+    return (f"Section “{heading}” is ambiguous: {len(candidats)} headings match it — "
+            f"{liste}. `section` compares the heading's TEXT, ignoring its level and "
+            "case: none of them can be targeted alone, and NOTHING was changed. To "
+            "target one, first make the headings unique — `mode=replace` on a PARENT "
+            "section with a unique heading that contains them, renaming one of them in "
+            f"its `body_md`, or `{objet.reecrire}` with the full body.")
 
 
 def valider(section: Optional[str], region: Optional[str], mode: str,
@@ -83,16 +84,16 @@ def valider(section: Optional[str], region: Optional[str], mode: str,
     if vise_section and region:
         raise AuthzDenied(
             400, "ambiguous_target",
-            "`section` et `region` désignent deux cibles différentes : n'en passe "
-            "qu'une. `section` = un titre markdown (la section court jusqu'au "
-            f"prochain titre de niveau ≤) ; {POIGNEE_PREAMBULE} = ce qui précède le "
-            "premier titre.")
+            "`section` and `region` designate two different targets: pass only "
+            "one. `section` = a markdown heading (the section runs until the next "
+            f"heading of level ≤); {POIGNEE_PREAMBULE} = what precedes the first "
+            "heading.")
     if not (vise_section or region):
         raise AuthzDenied(
             400, "missing_target",
-            "Cible requise : `section` (le titre markdown de la section à modifier) "
-            f"ou {POIGNEE_PREAMBULE} (ce qui précède le premier titre — bandeau de "
-            "provenance, front-matter, tout ce qui n'appartient à aucune section).")
+            "Target required: `section` (the markdown heading of the section to edit) "
+            f"or {POIGNEE_PREAMBULE} (what precedes the first heading — provenance "
+            "banner, front-matter, anything that belongs to no section).")
     # `mode=delete` retire la cible : il ne prend pas de contenu, et les trois autres
     # en exigent un. Refusé et NOMMÉ des deux côtés — un argument accepté-et-ignoré
     # coûte exactement ce qu'il prétendait économiser (leçon du signal #461).
@@ -100,11 +101,11 @@ def valider(section: Optional[str], region: Optional[str], mode: str,
         if body_md is not None:
             raise AuthzDenied(
                 400, "unexpected_body",
-                "`mode=delete` retire la cible : il ne prend pas de `body_md`. Pour "
-                "VIDER une section en gardant son titre, c'est `mode=replace` avec "
-                "`body_md` vide.")
+                "`mode=delete` removes the target: it takes no `body_md`. To EMPTY a "
+                "section while keeping its heading, use `mode=replace` with an empty "
+                "`body_md`.")
     elif body_md is None:
-        raise AuthzDenied(400, "missing_body", "`body_md` (nouveau contenu) requis.")
+        raise AuthzDenied(400, "missing_body", "`body_md` (the new content) is required.")
     return vise_section
 
 
@@ -146,20 +147,20 @@ def appliquer(corps: str, section: Optional[str], body_md: Optional[str], mode: 
     except doc_patch.HeadingInPreamble as e:
         raise AuthzDenied(
             400, "heading_in_preamble",
-            f"Le préambule est ce qui PRÉCÈDE le premier titre : y écrire un "
-            f"titre ({', '.join(e.found)}) le refermerait, et le patch suivant "
-            f"n'atteindrait plus ce bandeau. Retire le titre du `body_md`, ou "
-            f"vise cette section par `section`.") from None
+            f"The preamble is what PRECEDES the first heading: writing a "
+            f"heading into it ({', '.join(e.found)}) would close it, and the next "
+            f"patch could no longer reach this banner. Remove the heading from "
+            f"`body_md`, or target that section with `section`.") from None
     except doc_patch.PreambleAbsent:
         raise AuthzDenied(
             404, "empty_preamble",
-            f"{objet.ce} n'a pas de préambule : son premier titre ouvre le corps, "
-            "il n'y a rien à supprimer au-dessus.") from None
+            f"{objet.ce} has no preamble: its first heading opens the body, "
+            "there is nothing above it to delete.") from None
     except doc_patch.PreambleIsWholePage:
         raise AuthzDenied(
             400, "preamble_is_whole_page",
-            f"{objet.ce} n'a aucun titre : « ce qui précède le premier titre » y "
-            f"est {objet.le} {objet.entier}, et {objet.pronom} supprimer "
-            f"{objet.pronom} viderait. Si c'est ce que tu veux : {objet.reecrire} avec "
-            f"le nouveau corps, ou op=delete pour {objet.le}.") from None
+            f"{objet.ce} has no heading: “what precedes the first heading” is "
+            f"{objet.entier} here, and deleting {objet.pronom} would empty "
+            f"{objet.pronom}. If that is what you want: {objet.reecrire} with "
+            f"the new body, or op=delete for {objet.le}.") from None
     return Patche(nouveau, enfants, emporte)

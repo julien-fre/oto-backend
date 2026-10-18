@@ -65,21 +65,21 @@ def fautes_de_transitions(transitions: Any) -> list[str]:
     if transitions is None:
         return []
     if not isinstance(transitions, dict):
-        return [f"lifecycle.transitions doit être un objet "
-                f"{{\"état\": [\"états atteignables\"]}} — reçu "
-                f"{type(transitions).__name__}. Chaque clé est un état de départ, "
-                f"chaque valeur la liste de ceux qu'il peut atteindre."]
+        return [f"lifecycle.transitions must be an object "
+                f"{{\"state\": [\"reachable states\"]}} — got "
+                f"{type(transitions).__name__}. Each key is a starting state, "
+                f"each value the list of those it can reach."]
     fautes = []
     for etat, cibles in transitions.items():
         if isinstance(cibles, list):
             continue
         seule = cibles if isinstance(cibles, (str, int)) and not isinstance(cibles, bool) \
-            else "état atteignable"
+            else "reachable state"
         attendu = json.dumps({str(etat): [seule]}, ensure_ascii=False)
         fautes.append(
-            f"lifecycle.transitions[{str(etat)!r}] doit être une LISTE d'états — reçu "
+            f"lifecycle.transitions[{str(etat)!r}] must be a LIST of states — got "
             f"{type(cibles).__name__} {json.dumps(cibles, ensure_ascii=False)}. "
-            f"Forme attendue : {attendu}, même pour une seule destination.")
+            f"Expected form: {attendu}, even for a single destination.")
     return fautes
 
 
@@ -99,11 +99,11 @@ def fautes_de_terminal(terminal: Any) -> list[str]:
     if terminal is None or isinstance(terminal, list):
         return []
     seul = terminal if isinstance(terminal, (str, int)) and not isinstance(terminal, bool) \
-        else "état final"
+        else "final state"
     attendu = json.dumps({"terminal": [seul]}, ensure_ascii=False)
-    return [f"lifecycle.terminal doit être une LISTE d'états — reçu "
+    return [f"lifecycle.terminal must be a LIST of states — got "
             f"{type(terminal).__name__} {json.dumps(terminal, ensure_ascii=False)}. "
-            f"Forme attendue : {attendu[1:-1]}, même pour un seul état final."]
+            f"Expected form: {attendu[1:-1]}, even for a single final state."]
 
 
 def table_des_transitions(colonne: str, lc: dict) -> Optional[dict]:
@@ -118,10 +118,10 @@ def table_des_transitions(colonne: str, lc: dict) -> Optional[dict]:
     fautes = fautes_de_transitions(transitions)
     if fautes:
         raise ValueError(
-            f"{colonne}: cycle de vie stocké hors forme — {' ; '.join(fautes)} "
-            f"Corrige-le par `data_patch_schema(datastore=…, fields=[{{\"key\": "
-            f"\"{colonne}\", \"lifecycle\": {{\"transitions\": …}}}}])` avec la forme "
-            f"attendue : la fusion ne touche que les états nommés.")
+            f"{colonne}: lifecycle stored in an invalid form — {'; '.join(fautes)} "
+            f"Fix it with `data_patch_schema(datastore=…, fields=[{{\"key\": "
+            f"\"{colonne}\", \"lifecycle\": {{\"transitions\": …}}}}])` using the expected "
+            f"form: the merge only touches the named states.")
     if transitions is None:
         return None
     return {str(k): [str(t) for t in v] for k, v in transitions.items()}
@@ -135,21 +135,21 @@ def fautes_d_avance(advance: Any) -> list[str]:
     if advance is None:
         return []
     if not isinstance(advance, dict):
-        return [f"lifecycle.advance doit être un objet {{\"état\": \"état suivant\"}} — "
-                f"reçu {type(advance).__name__}. Chaque clé est l'état d'une passe, sa "
-                f"valeur l'état où la plateforme fait passer une ligne relâchée après "
-                f"une écriture."]
+        return [f"lifecycle.advance must be an object {{\"state\": \"next state\"}} — "
+                f"got {type(advance).__name__}. Each key is the state of a pass, its "
+                f"value the state the platform moves a row to when released after "
+                f"a write."]
     fautes = []
     for etat, suivant in advance.items():
         if isinstance(suivant, str) and suivant:
             continue
         seul = (suivant[0] if isinstance(suivant, list) and len(suivant) == 1
-                and isinstance(suivant[0], str) else "état suivant")
+                and isinstance(suivant[0], str) else "next state")
         attendu = json.dumps({str(etat): seul}, ensure_ascii=False)
         fautes.append(
-            f"lifecycle.advance[{str(etat)!r}] doit être UN état — reçu "
+            f"lifecycle.advance[{str(etat)!r}] must be ONE state — got "
             f"{type(suivant).__name__} {json.dumps(suivant, ensure_ascii=False)}. "
-            f"Forme attendue : {attendu} : une passe a une seule suite.")
+            f"Expected form: {attendu}: a pass has a single next step.")
     return fautes
 
 
@@ -161,10 +161,10 @@ def refus_d_avance(colonne: str, depuis: str, vers: str,
     cibles = list(autorisees) + [vers]
     patch = ('{"key": "%s", "lifecycle": {"transitions": {"%s": %s}}}'
              % (colonne, depuis, "[" + ", ".join(f'"{c}"' for c in cibles) + "]"))
-    return (f"lifecycle.advance : {depuis!r} → {vers!r} n'est pas une transition "
-            f"déclarée (autorisées depuis {depuis!r} : {list(autorisees)}). L'avance "
-            f"n'est qu'un pas que la plateforme fait À LA PLACE de l'agent : elle "
-            f"emprunte une transition permise, jamais une autre. Déclare-la : "
+    return (f"lifecycle.advance: {depuis!r} → {vers!r} is not a declared "
+            f"transition (allowed from {depuis!r}: {list(autorisees)}). The advance "
+            f"is only a step the platform takes IN PLACE of the agent: it "
+            f"follows an allowed transition, never another one. Declare it: "
             f"`data_patch_schema(datastore=…, fields=[{patch}])`.")
 
 
@@ -189,7 +189,7 @@ def terminal_states(schema: Optional[dict]) -> set:
         # le convertit).
         colonne = (status_field(schema) or {}).get("key") or "status"
         raise ValueError(
-            f"{colonne}: cycle de vie stocké hors forme — {fautes[0]} Corrige-le par "
+            f"{colonne}: lifecycle stored in an invalid form — {fautes[0]} Fix it with "
             f"`data_patch_schema(datastore=…, fields=[{{\"key\": \"{colonne}\", "
             f"\"lifecycle\": {{\"terminal\": [...]}}}}])`.")
     if explicit is not None:
@@ -224,7 +224,7 @@ def max_claims_of(schema: Optional[dict]) -> Optional[int]:
         return None
     v = lc.get("max_claims")
     if isinstance(v, bool) or not isinstance(v, int) or v < 1:
-        raise ValueError(f"lifecycle.max_claims doit être un entier >= 1 (déclaré : {v!r})")
+        raise ValueError(f"lifecycle.max_claims must be an integer >= 1 (declared: {v!r})")
     return v
 
 
@@ -244,7 +244,7 @@ def avance_of(schema: Optional[dict]) -> dict:
     advance = lc.get("advance")
     fautes = fautes_d_avance(advance)
     if fautes:
-        raise ValueError(f"cycle de vie stocké hors forme — {' ; '.join(fautes)}")
+        raise ValueError(f"lifecycle stored in an invalid form — {'; '.join(fautes)}")
     return {str(k): str(v) for k, v in (advance or {}).items()}
 
 
@@ -282,17 +282,17 @@ def refus_de_transition(colonne: str, depuis: str, vers: str,
     remplace : conseiller `{"recorded": ["pushed"]}` à qui a déjà `['drafted',
     'excluded']` lui ferait perdre les deux. Le défaut qu'on vient de fermer un cran
     plus haut se reformerait ici, dans le message écrit pour l'éviter."""
-    quoi = (f" (autorisées: {autorisees})" if autorisees else " (état terminal)")
+    quoi = (f" (allowed: {autorisees})" if autorisees else " (terminal state)")
     # Les sorties de CET état après le patch : celles qui existent + celle qu'on ajoute.
     cibles = list(autorisees) + [vers]
     patch = ('{"key": "%s", "lifecycle": {"transitions": {"%s": %s}}}'
              % (colonne, depuis,
                 "[" + ", ".join(f'"{c}"' for c in cibles) + "]"))
     return (
-        f"{colonne}: transition {depuis!r} → {vers!r} interdite{quoi}. Si cette "
-        f"transition est légitime, elle se DÉCLARE : "
-        f"`data_patch_schema(datastore=…, fields=[{patch}])` — la fusion ne touche que "
-        f"l'état nommé, le reste du cycle de vie ne bouge pas.")
+        f"{colonne}: transition {depuis!r} → {vers!r} forbidden{quoi}. If this "
+        f"transition is legitimate, it must be DECLARED: "
+        f"`data_patch_schema(datastore=…, fields=[{patch}])` — the merge only touches "
+        f"the named state, the rest of the lifecycle does not move.")
 
 
 def merge_transitions(current: dict, patch: dict) -> dict:
@@ -384,23 +384,23 @@ def queue_release_warning(schema: Optional[dict]) -> Optional[str]:
         if not candidates:
             return None
         noms = ", ".join(f"`{c}`" for c in candidates[:3])
-        return (f"aucune colonne ne porte de `lifecycle` : {noms} ressemble(nt) à un "
-                f"état (`options` déclarées) sans en être un — **c'est le bloc "
-                f"`lifecycle` qui fait l'état**. Aucune transition n'y est donc "
-                f"gardée, et ni plafond de reprises, ni état d'abandon, ni périmètre "
-                f"de réservation ne s'appliquent. La file (`data_claim_next`) "
-                f"fonctionne quand même, sans rien déclarer : filtre sur une colonne "
-                f"que ton traitement ÉCRIT, et rends chaque ligne (`data_release`, ou "
-                f"`run_finish`). Pour armer ces gardes, déclare `lifecycle: {{states: "
-                f"[...], terminal: [...]}}` sur la colonne qui porte l'avancement. "
-                f"Cf. guide `work-queue`.")
+        return (f"no column carries a `lifecycle`: {noms} look(s) like a "
+                f"state (declared `options`) without being one — **it is the "
+                f"`lifecycle` block that makes the state**. No transition is therefore "
+                f"guarded, and neither retry cap, nor abandon state, nor claim "
+                f"scope applies. The queue (`data_claim_next`) "
+                f"works anyway, without declaring anything: filter on a column "
+                f"that your processing WRITES, and release each row (`data_release`, or "
+                f"`run_finish`). To arm these guards, declare `lifecycle: {{states: "
+                f"[...], terminal: [...]}}` on the column that carries progress. "
+                f"See guide `work-queue`.")
     if terminal_states(schema):
         return None
     key = sf.get("key") or "status"
-    return (f"champ `{key}` : un `lifecycle` sans état terminal dérivable (tout état a "
-            "une transition sortante) → aucun `abandon_state` n'y est déclarable (il "
-            "doit être terminal), et le suivi d'une campagne ne peut rien compter comme "
-            f"conclu. Déclare `terminal: [...]` sur le `lifecycle` de `{key}`. Sans "
-            "effet sur les baux : écrire un verdict, terminal ou non, ne libère jamais "
-            "une ligne — `data_release` après chaque verdict, ou `run_finish`. "
-            "Cf. guide `work-queue`.")
+    return (f"field `{key}`: a `lifecycle` with no derivable terminal state (every state has "
+            "an outgoing transition) → no `abandon_state` can be declared on it (it "
+            "must be terminal), and campaign tracking cannot count anything as "
+            f"concluded. Declare `terminal: [...]` on the `lifecycle` of `{key}`. No "
+            "effect on leases: writing a verdict, terminal or not, never releases "
+            "a row — `data_release` after each verdict, or `run_finish`. "
+            "See guide `work-queue`.")

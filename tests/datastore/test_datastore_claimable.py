@@ -133,7 +133,7 @@ def test_un_filtre_contradictoire_n_elargit_pas_et_le_perimetre_est_nomme(live):
     assert "run_finish" in mcp and "invent no identifier" in mcp
     # Sans périmètre, les deux faces gardent leur phrase historique.
     assert T._hint_file_vide({}, None) == T._HINT_FILE_VIDE
-    assert "périmètre" not in C._hint_vide({}, None)
+    assert "scope" not in C._hint_vide({}, None)
 
 
 def test_le_perimetre_n_ouvre_pas_ce_que_l_abandon_a_ferme(live):
@@ -290,14 +290,14 @@ def test_avant_la_date_une_colonne_non_declaree_est_dite_a_la_pose():
 def test_apres_la_date_une_colonne_non_declaree_est_refusee(validation_complete_partout):
     from oto_mcp.datastore.definition import preavis_de_pose
     erreurs = _erreurs({"lot": "jalon-100"})
-    assert any("`lot`" in e and "fait contrat" in e for e in erreurs)
+    assert any("`lot`" in e and "is binding" in e for e in erreurs)
     assert preavis_de_pose(_schema({"lot": "jalon-100"})) == []
 
 
 @pytest.mark.parametrize("valeur", [{}, "jalon-100", ["jalon-100"], 3])
 def test_une_forme_qui_n_est_pas_un_filtre_est_refusee(valeur):
     erreurs = _erreurs(valeur)
-    assert len(erreurs) == 1 and "objet non vide" in erreurs[0]
+    assert len(erreurs) == 1 and "non-empty object" in erreurs[0]
 
 
 def test_une_clause_inerte_est_refusee():
@@ -363,8 +363,8 @@ def test_un_perimetre_illisible_accuse_le_SCHEMA_et_dit_de_ne_pas_reessayer():
     with pytest.raises(ValueError) as exc:
         claimable.clauses(["a_traiter"])
     msg = str(exc.value)
-    assert "SCHÉMA" in msg, "le refus doit nommer le coupable, pas la forme attendue"
-    assert "Ton appel n'y est pour rien" in msg, "sans ça, l'agent varie sa formulation"
+    assert "SCHEMA" in msg, "le refus doit nommer le coupable, pas la forme attendue"
+    assert "Your call has nothing to do with it" in msg, "sans ça, l'agent varie sa formulation"
     assert "data_patch_schema" in msg, "le refus doit dire par quel geste on corrige"
 
 
@@ -385,4 +385,4 @@ def test_la_pose_refuse_sur_le_tableau_reel(live):
     assert "lifecycle.claimable" in str(e.value) and "`regex`" in str(e.value)
     with pytest.raises(ValueError) as e:
         st.patch_schema(ns, fields=[{"key": "statut", "lifecycle": {"claimable": {}}}])
-    assert "objet non vide" in str(e.value)
+    assert "non-empty object" in str(e.value)

@@ -24,10 +24,10 @@ def test_chaque_type_arme_a_une_valeur_fautive():
 def test_le_refus_dit_empty_pour_rien_trouve_et_omettre_pour_ne_pas_toucher(ftype):
     schema = {"fields": [{"key": "c", "type": ftype}]}
     [refus] = types_trahis(schema, {"c": _FAUX[ftype]})
-    assert ("si rien n'a été trouvé, écris `@empty` avec la raison dans `c.comment` ; "
-            "pour ne pas toucher à la case, omets la colonne") in refus, refus
+    assert ("if nothing was found, write `@empty` with the reason in `c.comment`; "
+            "to leave the cell untouched, omit the column") in refus, refus
     # L'ancienne consigne envoyait omettre la colonne pour dire « rien trouvé ».
-    assert "OMETS" not in refus and "une absence ne s'écrit pas" not in refus, refus
+    assert "OMIT" not in refus and "an absence is not written" not in refus, refus
 
 
 @pytest.mark.parametrize("ftype", TYPES_ARMES)

@@ -79,9 +79,9 @@ def _vide(valeur: Any) -> bool:
 
 #: Pourquoi une colonne apportée n'a pas reçu d'origine (oto#164). Servi tel quel dans
 #: la réponse : c'est la raison qu'un appelant lit, pas un code à traduire.
-DEJA_POSEE = "déjà posée"
-VALEUR_VIDE = "valeur vide"
-ECRITE_PAR_L_APPELANT = "écrite par l'appelant"
+DEJA_POSEE = "already set"
+VALEUR_VIDE = "empty value"
+ECRITE_PAR_L_APPELANT = "written by the caller"
 
 
 def origine_vide(origine: Any) -> bool:
@@ -165,13 +165,13 @@ def relever(store: Any, releve: dict) -> None:
 
 
 _SUITE_DE_LA_RAISON = {
-    DEJA_POSEE: ("une origine posée ne se réécrit jamais : le ré-import a mis à jour "
-                 "la version courante et laissé l'origine. La corriger se déclare "
-                 "(`origine_override=true`, en écrivant `<champ>.origine`)."),
-    VALEUR_VIDE: ("rien n'a été remis dans ces cases : aucune origine n'y est posée, "
-                  "« rien remis » n'est pas « du vide remis »."),
-    ECRITE_PAR_L_APPELANT: ("l'appel écrit lui-même `<champ>.origine` : c'est elle "
-                            "qui est posée, pas une copie de la valeur."),
+    DEJA_POSEE: ("an origin once set is never rewritten: the re-import updated "
+                 "the current version and left the origin. Correcting it must be declared "
+                 "(`origine_override=true`, writing `<field>.origine`)."),
+    VALEUR_VIDE: ("nothing was handed over in these cells: no origin is set there, "
+                  "\"nothing handed over\" is not \"an empty value handed over\"."),
+    ECRITE_PAR_L_APPELANT: ("the call itself writes `<field>.origine`: that is what "
+                            "is set, not a copy of the value."),
 }
 
 
@@ -182,10 +182,10 @@ def _cite(par_colonne: dict) -> str:
 def _phrases(cumul: dict) -> list[str]:
     out = []
     if cumul["posees"]:
-        out.append(f"`{PARAMETRE}` : origine POSÉE sur {_cite(cumul['posees'])} — "
-                   f"nombre de lignes entre parenthèses.")
+        out.append(f"`{PARAMETRE}`: origin SET on {_cite(cumul['posees'])} — "
+                   f"number of rows in parentheses.")
     for raison, par_colonne in sorted(cumul["sautees"].items()):
-        out.append(f"`{PARAMETRE}` : origine NON posée, {raison}, sur "
+        out.append(f"`{PARAMETRE}`: origin NOT set, {raison}, on "
                    f"{_cite(par_colonne)} — {_SUITE_DE_LA_RAISON[raison]}")
     return out
 

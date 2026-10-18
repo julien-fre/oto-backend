@@ -24,10 +24,10 @@ def test_full_cumulates_scopes_in_order(monkeypatch):
     # Ordre : plateforme → catalogue → contexte → org → équipe → user.
     i_plat = out.index("SAUCE")
     i_cat = out.index("ns_a")
-    i_ctx = out.index("## Ton contexte oto")
-    i_org = out.index("## README de ton organisation (Acme)")
-    i_grp = out.index("## README de ton équipe (Sales)")
-    i_usr = out.index("## README de ton utilisateur")
+    i_ctx = out.index("## Your oto context")
+    i_org = out.index("## Your organization's README (Acme)")
+    i_grp = out.index("## Your team's README (Sales)")
+    i_usr = out.index("## Your user's README")
     assert i_plat < i_cat < i_ctx < i_org < i_grp < i_usr
     assert "ORG Acme" in out            # {{org}} substitué dans le corps org
 
@@ -36,23 +36,23 @@ def test_empty_scope_is_omitted(monkeypatch):
     # group/user sans corps → sections omises ; org présent.
     _wire(monkeypatch, {"platform": "SAUCE", "org": "ORG", "group": None, "user": None}, _CTX)
     out = I.compose_session("u1", 42)
-    assert "## README de ton organisation" in out
-    assert "## README de ton équipe" not in out
-    assert "## README de ton utilisateur" not in out
+    assert "## Your organization's README" in out
+    assert "## Your team's README" not in out
+    assert "## Your user's README" not in out
 
 
 def test_no_org_is_block_a_only(monkeypatch):
     _wire(monkeypatch, {"platform": "SAUCE"}, _CTX)
     out = I.compose_session("u1", None)
     assert "SAUCE" in out and "ns_a" in out
-    assert "## Ton contexte oto" not in out       # bloc C omis sans org
+    assert "## Your oto context" not in out       # bloc C omis sans org
 
 
 def test_group_header_without_name(monkeypatch):
     ctx = dict(_CTX, group_name="")               # équipe sans nom → en-tête nu
     _wire(monkeypatch, {"platform": "SAUCE", "org": "ORG", "group": "GRP", "user": None}, ctx)
     out = I.compose_session("u1", 42)
-    assert "## README de ton équipe\n\nGRP" in out  # pas de suffixe " (…)"
+    assert "## Your team's README\n\nGRP" in out  # pas de suffixe " (…)"
 
 
 def test_session_layers_reconstruct_compose(monkeypatch):
@@ -72,7 +72,7 @@ def test_session_layers_profile_between_context_and_readmes(monkeypatch):
     ctx = dict(_CTX, profile={"role": "DAF"})
     _wire(monkeypatch, {"platform": "SAUCE", "org": "ORG"}, ctx)
     out = I.compose_session("u1", 42)
-    i_ctx = out.index("## Ton contexte oto")
-    i_prof = out.index("### Ce que tu sais de l'utilisateur")
-    i_org = out.index("## README de ton organisation")
+    i_ctx = out.index("## Your oto context")
+    i_prof = out.index("### What you know about the user")
+    i_org = out.index("## Your organization's README")
     assert i_ctx < i_prof < i_org

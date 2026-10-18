@@ -102,7 +102,7 @@ def suivre(schema: Any, chemin: tuple) -> Optional[dict]:
 def nom_du_chemin(chemin: tuple) -> str:
     """`fields.contacts.of.fields.email` — la forme JSON du schéma, lisible telle quelle."""
     if not chemin:
-        return "tête"
+        return "top level"
     return ".".join(f"fields.{p[1] if p[1] is not None else '?'}"
                     if p[0] == "fields" else p[0] for p in chemin)
 
@@ -123,15 +123,15 @@ def erreurs_meta(chemin: tuple, valeur: Any, niveau: Optional[str] = None,
     la même valeur n'est pas posée par le geste, elle passe (même parti que `refus`)."""
     lieu = nom_du_chemin(chemin)
     if not isinstance(valeur, dict):
-        return [f"{lieu}.meta doit être un objet {{…}} — reçu {type(valeur).__name__}. "
-                f"C'est la zone libre du schéma : des clés à toi, transportées telles "
-                f"quelles, jamais lues"]
+        return [f"{lieu}.meta must be an object {{…}} — got {type(valeur).__name__}. "
+                f"It is the schema's free zone: keys of your own, carried as is, "
+                f"never read"]
     taille = sk.taille_json(valeur)
     if taille > sk.META_MAX_OCTETS:
-        return [f"{lieu}.meta fait {taille} octets en JSON, au plus "
-                f"{sk.META_MAX_OCTETS} — c'est une annotation du format, relue à chaque "
-                f"écriture de ligne ; ce qui est volumineux va dans les données ou dans "
-                f"un document"]
+        return [f"{lieu}.meta is {taille} bytes in JSON, at most "
+                f"{sk.META_MAX_OCTETS} — it is an annotation of the format, reread at every "
+                f"row write; anything bulky goes in the data or in "
+                f"a document"]
     # ⚠️ Le cas du 14/10/2026 : `meta: {"options": [...]}` sur trois
     # colonnes `enum`. Accepté sans un mot, puisque `meta` n'est pas lu — et c'est
     # bien le problème : la liste ne contraignait rien, le Kanban ne la voyait pas,
@@ -142,9 +142,9 @@ def erreurs_meta(chemin: tuple, valeur: Any, niveau: Optional[str] = None,
         return []
     ombres = [c for c in sorted(set(valeur) & (sk.ADMISES[niveau] - {sk.META}))
               if not _deja_stockee(ancien, c, valeur[c])]
-    return [f"{lieu}.meta.{c} : `{c}` est une clé admise {sk.NOMS_DE_NIVEAU[niveau]} — "
-            f"rangée dans `meta`, elle est stockée et SANS EFFET (personne ne lit "
-            f"`meta`). Pose-la à côté de `meta`, pas dedans"
+    return [f"{lieu}.meta.{c}: `{c}` is a key allowed {sk.NOMS_DE_NIVEAU[niveau]} — "
+            f"stored in `meta`, it is kept and has NO EFFECT (nobody reads "
+            f"`meta`). Set it next to `meta`, not inside it"
             for c in ombres]
 
 
@@ -182,48 +182,48 @@ def phrase(niveau: str, chemin: tuple, cle: str, valeur: Any = None) -> str:
     """Le refus d'UNE clé : où, laquelle, et où elle va."""
     admises = sk.ADMISES[niveau]
     lieu = nom_du_chemin(chemin)
-    debut = f"{lieu} : `{cle}` n'est pas admise {sk.NOMS_DE_NIVEAU[niveau]}"
+    debut = f"{lieu}: `{cle}` is not allowed {sk.NOMS_DE_NIVEAU[niveau]}"
     if cle in sk.TEXTES_D_AIDE and "description" in admises:
-        return (f"{debut} — un texte d'aide s'écrit dans `description`, le seul : "
-                f"{', '.join('`' + t + '`' for t in sk.TEXTES_D_AIDE)} y ont été "
-                f"repliés le 01/10/2026")
+        return (f"{debut} — a help text goes in `description`, the only one: "
+                f"{', '.join('`' + t + '`' for t in sk.TEXTES_D_AIDE)} were "
+                f"folded into it on 2026-10-01")
     if cle in sk.CLES_RETIREES:
         return f"{debut} — {sk.CLES_RETIREES[cle]}"
     if cle in sk.PARAMETRES_HORS_SCHEMA:
-        return (f"{debut} — c'est un PARAMÈTRE de l'appel (`data_set_schema("
-                f"{cle}=…)`), pas une clé de schéma : posé ici il serait stocké et sans "
-                f"effet. Passe-le à côté de `schema`")
+        return (f"{debut} — it is a PARAMETER of the call (`data_set_schema("
+                f"{cle}=…)`), not a schema key: set here it would be stored and have no "
+                f"effect. Pass it next to `schema`")
     ailleurs = _autres_niveaux(niveau, cle)
     if niveau == "element" and cle == "max_items":
         col = chemin[-2][1] if len(chemin) >= 2 and chemin[-2][0] == "fields" else "?"
-        return (f"{debut} — `max_items` borne le nombre d'éléments de la LISTE, pas un "
-                f"élément : posé dans `of`, personne ne le lit. Pose-le sur la colonne, "
-                f"à côté de son type : {{\"key\": \"{col}\", \"type\": \"list\", "
+        return (f"{debut} — `max_items` bounds the number of elements of the LIST, not an "
+                f"element: set in `of`, nobody reads it. Set it on the column, "
+                f"next to its type: {{\"key\": \"{col}\", \"type\": \"list\", "
                 f"\"max_items\": {valeur!r}, \"of\": {{...}}}}")
     if "cycle" in ailleurs:
-        return (f"{debut} — elle se pose DANS le bloc `lifecycle` de la colonne "
-                f"(`lifecycle.{cle}`) ; si elle ne décrit pas le cycle de vie, c'est "
-                f"une annotation : range-la dans `meta`")
+        return (f"{debut} — it goes INSIDE the column's `lifecycle` block "
+                f"(`lifecycle.{cle}`); if it does not describe the lifecycle, it is "
+                f"an annotation: put it in `meta`")
     if "tete" in ailleurs and niveau != "tete":
-        return f"{debut} — c'est un réglage de TÊTE du schéma, à côté de `fields`"
+        return f"{debut} — it is a TOP-LEVEL setting of the schema, next to `fields`"
     if niveau == "tete" and "champ" in ailleurs:
-        return (f"{debut} — c'est un attribut de COLONNE : pose-le dans le `fields` de "
-                f"la colonne qu'il vise")
+        return (f"{debut} — it is a COLUMN attribute: set it in the `fields` entry of "
+                f"the column it targets")
     if cle in sk.PREMIER_NIVEAU_SEULEMENT and niveau in ("sous_champ", "element"):
-        return (f"{debut} — `{cle}` ne se pose qu'au premier niveau, sur une colonne : "
-                f"sous un sous-record rien ne le lit, et une déclaration que rien ne lit "
-                f"n'est pas inerte, elle ment")
+        return (f"{debut} — `{cle}` is set only at the first level, on a column: "
+                f"under a sub-record nothing reads it, and a declaration that nothing reads "
+                f"is not inert, it lies")
     if niveau == "element" and "sous_champ" in ailleurs:
-        return (f"{debut} — l'élément d'une liste n'en lit que le type, les options et "
-                f"les sous-champs : pose-la sur un sous-champ (`of.fields`)")
+        return (f"{debut} — a list element reads only its type, its options and "
+                f"its sub-fields: set it on a sub-field (`of.fields`)")
     proche = sk.FAUTES_CONNUES.get(cle)
     if proche not in admises:
         proche = cle_la_plus_proche(cle, sorted(admises - {sk.META}))
     if proche:
-        return f"{debut} — voulais-tu `{proche}` ?"
-    return (f"{debut} — les clés admises ici sont "
-            f"{', '.join('`' + c + '`' for c in sorted(admises))} ; une annotation à "
-            f"toi va dans `meta` (transportée telle quelle, jamais lue)")
+        return f"{debut} — did you mean `{proche}`?"
+    return (f"{debut} — the keys allowed here are "
+            f"{', '.join('`' + c + '`' for c in sorted(admises))}; an annotation of "
+            f"your own goes in `meta` (carried as is, never read)")
 
 
 def residus_warning(schema: Any) -> Optional[str]:
@@ -240,7 +240,7 @@ def residus_warning(schema: Any) -> Optional[str]:
             if retire and not chemin and cle == reglages.UNKNOWN_COLUMNS:
                 continue
             trouvees.append(f"`{nom_du_chemin(chemin)}.{cle}`" if chemin
-                            else f"`{cle}` (tête)")
+                            else f"`{cle}` (top level)")
             # Ce qui fait foi : la cousine admise, quand elle est posée À CÔTÉ.
             if sk.FAUTES_CONNUES.get(cle) in noeud:
                 font_foi.add(sk.FAUTES_CONNUES[cle])
@@ -248,29 +248,29 @@ def residus_warning(schema: Any) -> Optional[str]:
         meta = noeud.get(sk.META)
         if isinstance(meta, dict):
             ombres.extend(f"`{nom_du_chemin(chemin)}.meta.{c}`" if chemin
-                          else f"`meta.{c}` (tête)"
+                          else f"`meta.{c}` (top level)"
                           for c in sorted(set(meta) & (sk.ADMISES[niveau] - {sk.META})))
     phrase_ombres = (
-        f"ce schéma range dans `meta` des clés que leur niveau admet : "
-        f"{', '.join(ombres[:8])}{', …' if len(ombres) > 8 else ''}. Dans `meta`, "
-        f"elles sont SANS EFFET (personne ne le lit) — une `options` ainsi rangée ne "
-        f"contraint rien. Pose-les à côté de `meta`." if ombres else None)
+        f"this schema stores in `meta` keys that their level allows: "
+        f"{', '.join(ombres[:8])}{', …' if len(ombres) > 8 else ''}. In `meta`, "
+        f"they have NO EFFECT (nobody reads it) — an `options` stored this way "
+        f"constrains nothing. Set them next to `meta`." if ombres else None)
     if not trouvees:
         fin = (reglages.residu_unknown_columns(schema[reglages.UNKNOWN_COLUMNS]) + "."
                if retire else None)
         return " ".join(p for p in (phrase_ombres, fin) if p) or None
     anciens = [k for k in reglages.ANCIENS if isinstance(schema, dict) and k in schema]
-    msg = (f"ce schéma porte des clés qu'aucun niveau n'admet, posées avant la "
-           f"fermeture du vocabulaire (01/10/2026) : {', '.join(trouvees[:8])}"
+    msg = (f"this schema carries keys that no level allows, set before the "
+           f"vocabulary was closed (2026-10-01): {', '.join(trouvees[:8])}"
            + (", …" if len(trouvees) > 8 else "")
-           + ". Oto ne les lit pas ; elles restent stockées tant qu'on n'y touche pas, "
-             "et les modifier est refusé. Un texte d'aide va dans `description`, une "
-             "annotation dans `meta`, le reste se retire.")
+           + ". Oto does not read them; they stay stored as long as nobody touches them, "
+             "and modifying them is refused. A help text goes in `description`, an "
+             "annotation in `meta`, the rest is removed.")
     if font_foi:
-        msg += (" Ce qui fait foi : " + ", ".join(f"`{k}`" for k in sorted(font_foi))
-                + " — la clé inconnue d'à côté est un résidu, quoi qu'elle dise.")
+        msg += (" What is authoritative: " + ", ".join(f"`{k}`" for k in sorted(font_foi))
+                + " — the unknown key next to it is a leftover, whatever it says.")
     if anciens:
-        msg += f" Pour {', '.join(f'`{k}`' for k in anciens)} : {reglages.residu(schema)}."
+        msg += f" For {', '.join(f'`{k}`' for k in anciens)}: {reglages.residu(schema)}."
     if retire:
         msg += " " + reglages.residu_unknown_columns(schema[reglages.UNKNOWN_COLUMNS]) + "."
     if phrase_ombres:

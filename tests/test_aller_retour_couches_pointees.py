@@ -185,7 +185,7 @@ def test_une_annotation_INCONNUE_est_refusee(table):
         st.append_row(ns, {"siren": "1", "site_web": "a.fr",
                            "site_web.inexistant": "x"})
     msg = str(e.value)
-    assert "n'est pas un nom de colonne" in msg
+    assert "is not a column name" in msg
     assert "`comment`" in msg and "`origine`" in msg and "`link`" in msg
     assert not any("." in c for c in _colonnes(ns_id))
 
@@ -199,7 +199,7 @@ def test_une_annotation_sur_une_colonne_INCONNUE_est_refusee(table):
     with pytest.raises(RowValidationError) as e:
         st.append_row(ns, {"siren": "1", "inconnu.comment": "x"})
     msg = str(e.value)
-    assert "`inconnu`" in msg and "n'est aucune colonne" in msg
+    assert "`inconnu`" in msg and "is no column" in msg
     assert '{"inconnu": {"comment"' in msg, "le refus nomme la forme attendue"
     assert not any("." in c for c in _colonnes(ns_id))
 
@@ -374,8 +374,8 @@ def test_annoter_un_OBJET_METIER_est_refuse_pour_LA_BONNE_RAISON(table):
         st.append_row(ns, {"siren": "1", "brut": {"a": 1, "b": 2},
                            "brut.comment": "x"})
     msg = str(e.value)
-    assert "n'est aucune colonne" not in msg, "la colonne existe : ne pas mentir"
-    assert "n'est pas fait de couches" in msg
+    assert "is no column" not in msg, "la colonne existe : ne pas mentir"
+    assert "is not made of layers" in msg
     assert '"brut": {"valeur"' in msg, "la forme qui marche est nommée"
 
     st.append_row(ns, {"siren": "1", "brut": {"valeur": {"a": 1}, "comment": "x"}})

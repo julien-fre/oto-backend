@@ -169,7 +169,7 @@ def test_un_champ_de_l_objet_qui_PORTE_le_nom_d_une_couche(table):
                            "entreprise_social": {"comment": "champ métier", "n": 1},
                            "entreprise_social.comment": "une autre valeur"})
     msg = str(e.value)
-    assert "n'est aucune colonne" not in msg, "la colonne existe : ne pas mentir"
+    assert "is no column" not in msg, "la colonne existe : ne pas mentir"
     assert "entreprise_social.comment" in msg and "`entreprise_social`" in msg, (
         "les DEUX formes sont nommées")
 
@@ -183,6 +183,6 @@ def test_une_colonne_ABSENTE_PARTOUT_garde_le_refus_a_TROIS_sources(table):
     st, ns, ns_id = table
     with pytest.raises(RowValidationError) as e:
         st.append_row(ns, {"siren": "1", "inconnu.comment": "x"})
-    assert ("ni dans cette écriture, ni sur la ligne visée, ni au schéma"
+    assert ("neither in this write, nor on the targeted row, nor in the schema"
             in str(e.value))
     assert not any("." in c for c in _colonnes(ns_id))

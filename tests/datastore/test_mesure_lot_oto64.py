@@ -93,7 +93,7 @@ def test_le_lot_s_ARRETE_a_la_ligne_refusee_il_ne_tombe_pas_en_entier(live):
         "perdu",                              # refusée : rien n'a bougé
         "neuf", "neuf",                       # jamais tentées
     ]
-    assert "transition 'perdu' → 'en_cours' interdite" in str(e.value)
+    assert "transition 'perdu' → 'en_cours' forbidden" in str(e.value)
 
 
 def test_le_refus_dit_OU_reprendre_pas_seulement_ce_qui_a_echoue(live):

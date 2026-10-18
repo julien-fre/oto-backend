@@ -304,8 +304,8 @@ def test_le_refus_SANS_parametre_dit_comment_forcer_et_a_qui_c_est_ouvert(banc):
     msg = str(exc.value)
     assert "`adresse`" in msg and "readonly" in msg
     assert "readonly_override=true" in msg              # le geste, nommé
-    assert "PROPRIÉTAIRE" in msg and "GOUVERNE" in msg  # à qui il est ouvert
-    assert "cet appel" in msg                           # et sa portée
+    assert "OWNER" in msg and "GOVERNS" in msg  # à qui il est ouvert
+    assert "this call" in msg                           # et sa portée
     assert "`adresse.comment`" in msg                   # où va la divergence
     assert exc.value.details == {"expected_column": "adresse.comment"}
 
@@ -327,10 +327,10 @@ def test_le_refus_du_TIERS_NE_NOMME_PLUS_le_parametre(banc):
                                        readonly_override=True)
     msg = str(exc.value)
     assert fcg.PARAMETRE not in msg                     # le geste, PAS nommé
-    assert "réservé à" not in msg                       # ni à qui il serait ouvert
+    assert "open to" not in msg                         # ni à qui il serait ouvert
     assert "`adresse.comment`" in msg                   # où va la divergence
-    assert "POSSÈDE le tableau" in msg                  # à qui demander la correction
-    assert "réessayer" in msg                           # et que rejouer ne sert à rien
+    assert "OWNS the table" in msg                  # à qui demander la correction
+    assert "retrying" in msg                           # et que rejouer ne sert à rien
 
 
 # ══ 4. La trace — ce qui atterrit VRAIMENT dans le journal ═══════════════════

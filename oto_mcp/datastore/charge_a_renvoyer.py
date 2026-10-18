@@ -140,12 +140,12 @@ def clause(details: Optional[dict]) -> str:
     charge = (details or {}).get("a_renvoyer")
     if not charge:
         return ""
-    texte = (" — À renvoyer, les gabarits `<…>` remplacés : "
+    texte = (" — To send back, with the `<…>` templates replaced: "
              + json.dumps(charge, ensure_ascii=False))
     elements = (details or {}).get("a_renvoyer_elements")
     if elements:
-        texte += (f" (élément visé : {', '.join(elements)}). Une liste se renvoie "
-                  "ENTIÈRE : cet élément corrigé à sa place, les autres tels quels — "
-                  "un élément omis est retiré ; ou, sans renvoyer la liste, écris "
-                  "chaque attribut à son RANG — `<liste>[<rang>].<attribut>`")
+        texte += (f" (targeted item: {', '.join(elements)}). A list is sent back "
+                  "WHOLE: this item corrected in its place, the others as they are — "
+                  "an omitted item is removed; or, without sending the list back, write "
+                  "each attribute at its POSITION — `<list>[<position>].<attribute>`")
     return texte + "."

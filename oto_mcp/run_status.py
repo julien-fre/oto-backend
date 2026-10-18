@@ -146,13 +146,14 @@ def describe(run: Mapping, *, now: Optional[datetime] = None) -> str:
     """Ce qu'on écrit à côté d'un run — la formule est la même partout.
 
     Un run clos porte son issue. Un run silencieux porte la DATE de son dernier signe
-    de vie, pas une durée : « sans nouvelles depuis le 3 août » se vérifie d'un coup
-    d'œil dans le journal, « depuis 10 jours » oblige à compter.
+    de vie, pas une durée : « silent since 2026-08-03 » se vérifie d'un coup d'œil
+    dans le journal, « depuis 10 jours » oblige à compter. Texte lu par l'agent (bloc
+    contexte, lecture d'un projet) : en anglais (docs/conventions.md).
     """
     outcome = run.get("outcome")
     if outcome:
         return f"→ {outcome}"
     seen = _as_aware(run.get("last_seen_at"))
     if seen is not None and is_stale(outcome, seen, now=now):
-        return f"(sans nouvelles depuis le {seen:%d/%m})"
-    return "(en cours)"
+        return f"(silent since {seen:%Y-%m-%d})"
+    return "(in progress)"

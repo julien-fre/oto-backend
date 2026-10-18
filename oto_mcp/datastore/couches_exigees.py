@@ -49,9 +49,9 @@ from .phrases_de_refus import gabarit
 
 #: Ce qu'une couche PORTE, en une clause — la moitié actionnable du refus.
 _A_QUOI_SERT_LA_COUCHE = {
-    "comment": "d'où vient la valeur, en clair",
-    "link": "l'URL de la source",
-    ORIGIN_LAYER: "ce qui tenait lieu de valeur avant",
+    "comment": "where the value comes from, in plain words",
+    "link": "the URL of the source",
+    ORIGIN_LAYER: "what stood as the value before",
 }
 
 
@@ -121,7 +121,7 @@ def _refus_de_couche(fpath: str, cle: str, manquantes: tuple,
     tour suivant emporterait la couche qu'on vient d'exiger (`_merge_column`)."""
     noms = ", ".join(f"`{c}`" for c in manquantes)
     couches = ", ".join(f'"{c}": "…"' for c in exigees)
-    detail = " ; ".join(f"`{c}` = {_A_QUOI_SERT_LA_COUCHE[c]}"
+    detail = "; ".join(f"`{c}` = {_A_QUOI_SERT_LA_COUCHE[c]}"
                         for c in exigees if c in _A_QUOI_SERT_LA_COUCHE)
     # oto#75, complément du 11/09/2026 : le refus finissait par « une couche posée
     # sans valeur ne déclenche rien » alors qu'il tombait sur une origine posée seule.
@@ -129,13 +129,13 @@ def _refus_de_couche(fpath: str, cle: str, manquantes: tuple,
     # clause dit désormais ce qu'elle garantit, et la forme qui complète une valeur
     # déjà en place sans la renvoyer.
     return (
-        f"{fpath}: valeur posée sans {noms} — cette colonne exige que la valeur "
-        f"arrive AVEC sa provenance. Écris-la en couches, dans le MÊME appel : "
-        f'`"{cle}": {{"valeur": <ta valeur>, {couches}}}` ({detail}). '
-        f"Poser la valeur seule au tour suivant emporterait la couche. Pour compléter "
-        f"une valeur déjà en place sans la réécrire, nomme les couches SANS `valeur` "
-        f'(`"{cle}": {{{couches}}}`) : un geste qui ne pose aucune valeur, ou une '
-        f"valeur vide, n'est jamais soumis à cette exigence.")
+        f"{fpath}: value set without {noms} — this column requires the value "
+        f"to arrive WITH its provenance. Write it as layers, in the SAME call: "
+        f'`"{cle}": {{"valeur": <your value>, {couches}}}` ({detail}). '
+        f"Setting the value alone on the next turn would drop the layer. To complete "
+        f"a value already in place without rewriting it, name the layers WITHOUT `valeur` "
+        f'(`"{cle}": {{{couches}}}`): a write that sets no value, or an '
+        f"empty value, is never subject to this requirement.")
 
 
 def _couches_exigees_errors(fields: list, data: dict, path: str,

@@ -19,7 +19,7 @@ def patch(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     # des régions différentes ne s'écrasent plus. On applique le patch puis on réécrit
     # via update_doc (révisions + backlinks + conflit optimiste conservés) : tout
     # nouveau chemin d'écriture passe par LÀ, jamais par un UPDATE de son cru.
-    require(common.can(sub, pid, "write"), "forbidden", "Écriture refusée.", 403)
+    require(common.can(sub, pid, "write"), "forbidden", "Write refused.", 403)
     corps = row.get("body_md") or ""
     mode = inp.mode or "replace"
     # Deux axes d'adressage (`section` / `region`), jamais un mot réservé, et un
@@ -34,7 +34,7 @@ def patch(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     fait = region.appliquer(corps, inp.section if vise_section else None, inp.body_md,
                             mode, region.PAGE)
     new_body, removed, emporte = fait.corps, fait.sous_sections, fait.emporte
-    cible = inp.section if vise_section else "(préambule)"
+    cible = inp.section if vise_section else "(preamble)"
     if inp.dry_run:
         # oto#171 : sans simulation, le seul moyen de savoir ce qu'un `replace` emporte
         # était de l'essayer sur une page jetable créée dans le projet du client.
@@ -43,18 +43,18 @@ def patch(sub: Optional[str], inp, row: dict, pid: int) -> dict:
         return {"ok": True, "id": inp.doc_id, "dry_run": True, "written": False,
                 "mode": mode, "target": cible, "removed": emporte,
                 "rev": db.doc_rev(row.get("title"), corps),
-                "hint": ("Rien n'a été écrit. `removed` = les lignes du corps ACTUEL que "
-                         "ce patch retirerait (null : ce mode ne retire rien). Repasse "
-                         "`rev` en `expected_rev` pour que le vrai patch porte sur cette "
-                         "même version.")}
+                "hint": ("Nothing was written. `removed` = the lines of the CURRENT body "
+                         "this patch would remove (null: this mode removes nothing). Pass "
+                         "`rev` back as `expected_rev` so the real patch applies to this "
+                         "same version.")}
     try:
         db.update_doc(int(inp.doc_id), body_md=new_body, edited_by=sub,
                       expected_rev=inp.expected_rev, face=common.face_de_l_appel(),
                       regroupable=True)
     except db.DocConflict as e:
         require(False, "conflict",
-                f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "
-                f"Relis-le (op=get) et refais ton patch sur la version à jour.", 409)
+                f"The doc changed in the meantime (current rev {e.current_rev}). "
+                f"Read it again (op=get) and redo your patch on the current version.", 409)
     db.log_project_activity(pid, sub, "doc.patch", f"{row.get('title')} § {cible}")
     # #530 : c'est le patch qui souffrait le plus — il existe précisément pour éditer
     # une page trop longue pour être lue entière, et il en rendait le corps complet.
@@ -64,13 +64,13 @@ def patch(sub: Optional[str], inp, row: dict, pid: int) -> dict:
         out["removed"] = emporte
     if removed:
         out["removed_subsections"] = removed
-        verbe = ("retiré la section ENTIÈRE, titre compris" if mode == "delete"
-                 else "remplacé la section ENTIÈRE")
-        issue = ("vise directement la sous-section" if mode == "delete"
-                 else "vise directement la sous-section, ou mode=append")
+        verbe = ("removed the ENTIRE section, heading included" if mode == "delete"
+                 else "replaced the ENTIRE section")
+        issue = ("target the sub-section directly" if mode == "delete"
+                 else "target the sub-section directly, or use mode=append")
         out["warning"] = (
-            f"`mode={mode}` sur « {inp.section} » a {verbe}, donc aussi "
-            f"{len(removed)} sous-section(s) : {', '.join(removed)}. "
-            f"Si tu ne voulais pas les perdre : op=revisions puis republie leur "
-            f"contenu (ou {issue}).")
+            f"`mode={mode}` on “{inp.section}” {verbe}, hence also "
+            f"{len(removed)} sub-section(s): {', '.join(removed)}. "
+            f"If you did not mean to lose them: op=revisions, then republish their "
+            f"content (or {issue}).")
     return out

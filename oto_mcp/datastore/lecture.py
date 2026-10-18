@@ -242,14 +242,14 @@ class LectureMixin:
                          and "[" not in k and k not in declarees]
             if inconnues:
                 raise ValueError(
-                    f"`count_by` : colonne(s) non déclarée(s) dans ce tableau : "
-                    f"{', '.join(inconnues)} — `data_get_schema` les liste")
+                    f"`count_by`: column(s) not declared in this table: "
+                    f"{', '.join(inconnues)} — `data_get_schema` lists them")
         if aga.appel_d_agent() and isinstance(champs, list):
             cachees = [k for k in champs if k in aga.masquees(sch)]
             if cachees:
                 raise ValueError(
-                    f"`count_by` : {', '.join(cachees)} n'est pas lisible par un "
-                    f"agent sur ce tableau (`agent_access: \"none\"`)")
+                    f"`count_by`: {', '.join(cachees)} is not readable by an "
+                    f"agent on this table (`agent_access: \"none\"`)")
         clauses = self._clauses(ns_id, filter, filters)
         return db.datastore_count_by(
             ns_id, champs, q=cherche, filters=clauses,
@@ -310,7 +310,7 @@ class LectureMixin:
         total exact, sans `total_capped` (contrat inchangé : le dashboard pagine et
         exporte sur ce total)."""
         if total_max is not None and total_max < 1:
-            raise ValueError(f"total_max={total_max} : un entier ≥ 1 est attendu.")
+            raise ValueError(f"total_max={total_max}: an integer ≥ 1 is expected.")
         cherche = valeurs_servies.resoudre(recherche(q, q_scope))
         ns_id = self._resolve(datastore)
         proj = None if not fields or "*" in fields else frozenset(fields)

@@ -141,8 +141,8 @@ def test_le_dernier_travail_echoue_sur_un_outil_le_motif_le_nomme(plafonne):
     ligne = _lue(st, ns, rid)
     assert ligne["statut"] == "echec"
     assert ligne["_abandon"] == (
-        "abandonnée après 3 réservations sans écriture, plafond 3 — dernière "
-        "tentative : appels en erreur : serper_search")
+        "abandoned after 3 claims without a write, ceiling 3 — last "
+        "attempt: calls in error: serper_search")
     assert ligne["_abandon_run"] == dernier
 
 
@@ -158,7 +158,7 @@ def test_oto_call_se_nomme_par_sa_cible(plafonne):
     _fin_du_travail(dernier)
 
     assert _lue(st, ns, rid)["_abandon"].endswith(
-        "dernière tentative : appels en erreur : pappers_company")
+        "last attempt: calls in error: pappers_company")
 
 
 # ══ les autres causes ═══════════════════════════════════════════════════════
@@ -184,9 +184,9 @@ def test_la_derniere_ecriture_refusee_par_le_schema_donne_son_motif(plafonne):
     ligne = _lue(st, ns, rid)
     texte = " ".join(str(refus.value).split())
     # Le refus du schéma se nomme lui-même : il n'est pas préfixé une seconde fois.
-    assert texte.startswith("écriture refusée par le schéma"), texte
+    assert texte.startswith("write refused by the schema"), texte
     assert ligne["_abandon"].endswith(
-        "dernière tentative : " + texte[:300] + ("…" if len(texte) > 300 else "")), \
+        "last attempt: " + texte[:300] + ("…" if len(texte) > 300 else "")), \
         ligne["_abandon"]
     assert ligne["_abandon_run"] == dernier
 
@@ -204,7 +204,7 @@ def test_une_ecriture_refusee_sur_une_autre_ligne_ne_lui_est_pas_imputee(plafonn
     _fin_du_travail(dernier)
 
     assert _lue(st, ns, rid)["_abandon"].endswith(
-        "dernière tentative : appels en erreur : data_write")
+        "last attempt: calls in error: data_write")
 
 
 def test_rien_tente_se_dit(plafonne):
@@ -220,8 +220,8 @@ def test_rien_tente_se_dit(plafonne):
 
     ligne = _lue(st, ns, rid)
     assert ligne["_abandon"] == (
-        "abandonnée après 3 réservations sans écriture, plafond 3 — dernière "
-        "tentative : aucune écriture tentée")
+        "abandoned after 3 claims without a write, ceiling 3 — last "
+        "attempt: no write attempted")
     assert ligne["_abandon_run"] == dernier
 
 
@@ -237,7 +237,7 @@ def test_l_erreur_du_travail_passe_devant_tout(plafonne):
     _fin_du_travail(dernier, erreur="délai mural dépassé\n(600 s)")
 
     assert _lue(st, ns, rid)["_abandon"].endswith(
-        "dernière tentative : erreur du travail : délai mural dépassé (600 s)")
+        "last attempt: job error: délai mural dépassé (600 s)")
 
 
 def test_un_run_clos_en_echec_donne_sa_note(plafonne):
@@ -254,7 +254,7 @@ def test_un_run_clos_en_echec_donne_sa_note(plafonne):
     _fin_du_travail(dernier)
 
     assert _lue(st, ns, rid)["_abandon"].endswith(
-        "dernière tentative : run clos `blocked` : site de la société introuvable")
+        "last attempt: run closed `blocked`: site de la société introuvable")
 
 
 def test_le_bail_expire_sans_relachement_se_dit_et_garde_son_run(plafonne):
@@ -272,7 +272,7 @@ def test_le_bail_expire_sans_relachement_se_dit_et_garde_son_run(plafonne):
     assert st.claim_next(ns, worker="agent-2") is None
 
     ligne = _lue(st, ns, rid)
-    assert ligne["_abandon"].endswith("dernière tentative : bail expiré sans relâchement")
+    assert ligne["_abandon"].endswith("last attempt: lease expired without a release")
     assert ligne["_abandon_run"] == dernier
 
 
@@ -283,7 +283,7 @@ def test_sans_run_la_cause_est_inconnue_et_le_dit(plafonne):
         st.release_claim(ns, row["_id"], worker="agent-1")
 
     ligne = _lue(st, ns, row["_id"])
-    assert ligne["_abandon"].endswith("dernière tentative : cause inconnue : réservée hors run")
+    assert ligne["_abandon"].endswith("last attempt: unknown cause: claimed outside a run")
     assert "_abandon_run" not in ligne
 
 
@@ -309,7 +309,7 @@ def test_journal_illisible_l_abandon_se_fait_quand_meme_avec_son_run(plafonne, m
 
     ligne = _lue(st, ns, rid)
     assert ligne["statut"] == "echec"
-    assert ligne["_abandon"].endswith("dernière tentative : cause inconnue : journal illisible")
+    assert ligne["_abandon"].endswith("last attempt: unknown cause: log unreadable")
     assert ligne["_abandon_run"] == dernier
     assert any("cause d'abandon illisible" in r.getMessage() for r in caplog.records)
 
@@ -323,8 +323,8 @@ def test_plafond_par_defaut_le_motif_porte_aussi_la_cause(live):
         _fin_du_travail(run)
 
     ligne = _lue(st, ns, rid)
-    assert "plafond 3 (défaut de la plateforme" in ligne["_abandon"]
-    assert ligne["_abandon"].endswith("dernière tentative : aucune écriture tentée")
+    assert "ceiling 3 (platform default" in ligne["_abandon"]
+    assert ligne["_abandon"].endswith("last attempt: no write attempted")
     assert ligne["_abandon_run"] == run
 
 

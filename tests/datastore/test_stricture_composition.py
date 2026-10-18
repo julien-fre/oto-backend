@@ -72,7 +72,7 @@ def test_les_deux_etages_sont_disjoints():
 @pytest.mark.parametrize("schema,attendu", [
     ({"key": "k", "fields": [{"key": "k", "readonly": True}]}, "clé métier"),
     ({"new_rows": "reject", "fields": [{"key": "k"}]}, "clé métier"),
-    ({"unknown_columns": "reject", "fields": [{"key": "k"}]}, "plus aucun réglage"),
+    ({"unknown_columns": "reject", "fields": [{"key": "k"}]}, "no setting any more"),
 ])
 def test_un_cran_qui_ne_pourrait_pas_s_appliquer_est_refuse(schema, attendu):
     """Un cran inerte est PIRE que son absence : on cesse de surveiller ce qu'on
@@ -145,7 +145,7 @@ def test_LE_GESTE_DOMINANT_traverse_les_trois(banc):
 
 @pytest.mark.parametrize("patch,attendu", [
     # étage 1 : la destination n'existe pas
-    ({"_liberation": "x"}, "aucune colonne déclarée"),
+    ({"_liberation": "x"}, "no declared column"),
     # étage 2 : elle existe, elle n'est pas à moi — deux façons
     ({"adresse": "2 rue B"}, "adresse.comment"),
 ])

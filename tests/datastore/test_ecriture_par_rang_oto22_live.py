@@ -201,18 +201,18 @@ def test_un_rang_hors_bornes_est_refuse_en_nommant_la_taille_et_l_ajout(table):
     avant = _stockee(ns_id, rid)
     e = _refus(lambda: st.update_row(ns, rid, {"contacts[5].email": "x@y.fr"}))
     texte = " ".join(e.errors)
-    assert "`contacts` a 2 éléments" in texte and "rang 5 inexistant" in texte
+    assert "`contacts` has 2 items" in texte and "index 5 does not exist" in texte
     assert "`contacts[+]`" in texte
     assert _stockee(ns_id, rid) == avant
 
 
 @pytest.mark.parametrize("geste, attendu", [
-    ({"contacts[0]": {"email": "x@y.fr"}}, "`contacts[0].<attribut>`"),
-    ({"contacts[].email": "x@y.fr"}, "TOUS les éléments"),
-    ({"contacts[+].email": "x@y.fr"}, "s'ajoute ENTIER"),
-    ({"contacts[role=RH].email": "x@y.fr"}, "son RANG"),
-    ({"contacts[0].email": "x@y.fr", "contacts": [BOB]}, "ENTIÈRE et par rang"),
-    ({"siren[0].x": "1"}, "seule une colonne-liste"),
+    ({"contacts[0]": {"email": "x@y.fr"}}, "`contacts[0].<attribute>`"),
+    ({"contacts[].email": "x@y.fr"}, "ALL the items"),
+    ({"contacts[+].email": "x@y.fr"}, "appended WHOLE"),
+    ({"contacts[role=RH].email": "x@y.fr"}, "its INDEX"),
+    ({"contacts[0].email": "x@y.fr", "contacts": [BOB]}, "WHOLE and by index"),
+    ({"siren[0].x": "1"}, "only a list column"),
 ])
 def test_les_formes_non_servies_sont_refusees_et_orientees(table, geste, attendu):
     st, ns, ns_id, rid = table
@@ -287,7 +287,7 @@ def test_une_ligne_creee_accepte_l_ajout_et_refuse_un_rang(table):
     assert _stockee(ns_id, cree["_id"])["contacts"] == [{"nom": "Cy"}]
     e = _refus(lambda: st.write_rows(ns, [{"siren": "356000000", "contacts[0].nom": "x"}],
                                      key="siren"))
-    assert "CRÉE la ligne" in " ".join(e.errors)
+    assert "CREATES the row" in " ".join(e.errors)
     assert db.datastore_find_row_id_by_key(ns_id, "siren", "356000000") is None
 
 
@@ -301,7 +301,7 @@ def test_la_face_REST_ecrit_par_rang_et_refuse_hors_bornes(client, table):
     assert _stockee(ns_id, rid)["contacts"][1]["email"] == "bob@rest.fr"
     r = client.patch(f"/api/datastores/{ns}/rows/{rid}", headers=_h(),
                      json={"contacts[9].email": "x@y.fr"})
-    assert r.status_code == 400 and "rang 9 inexistant" in r.text, r.text
+    assert r.status_code == 400 and "index 9 does not exist" in r.text, r.text
 
 
 def test_la_face_MCP_ecrit_par_rang(outils, acteur, table):

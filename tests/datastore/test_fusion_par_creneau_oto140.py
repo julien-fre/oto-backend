@@ -111,7 +111,7 @@ def test_une_identite_en_double_dans_la_liste_POSEE_refuse_en_la_NOMMANT():
 
     msg = str(e.value)
     assert "contact_rh" in msg, "le refus doit nommer la valeur en cause"
-    assert "liste posée" in msg
+    assert "list being set" in msg
 
 
 def test_un_doublon_DEJA_EN_PLACE_n_enferme_PAS_la_ligne():

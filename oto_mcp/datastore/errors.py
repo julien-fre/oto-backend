@@ -39,10 +39,10 @@ class RowValidationError(ValueError):
         self.errors = errors
         self.row = row
         self.details = details or None
-        tete = "écriture refusée par le schéma"
+        tete = "write refused by the schema"
         if row:
             tete += f" · {row}"
-        super().__init__(tete + " : " + " ; ".join(errors))
+        super().__init__(tete + ": " + "; ".join(errors))
 
 
 class ColonneNonDeclaree(RowValidationError):
@@ -119,7 +119,7 @@ class BusinessKeyRequired(ValueError):
         self.value = value
         self.row = row
         self.details = details
-        super().__init__(f"{row} : {message}" if row else message)
+        super().__init__(f"{row}: {message}" if row else message)
 
 
 class BusinessKeyExists(ValueError):
@@ -141,7 +141,7 @@ class BusinessKeyExists(ValueError):
         self.key = key
         self.details = details
         self.row = row
-        super().__init__(f"{row} : {message}" if row else message)
+        super().__init__(f"{row}: {message}" if row else message)
 
 
 class ColumnAbsent(ValueError):
@@ -193,10 +193,10 @@ class DatastoreAmbigu(DatastoreNotFound):
 
     def __init__(self, datastore: str, *, par_id: int, par_nom: int):
         super().__init__(datastore, indice=(
-            f"`{datastore}` désigne DEUX tableaux que tu vois : celui dont c'est "
-            f"l'identifiant ({par_id}), et un autre NOMMÉ « {datastore} » "
-            f"(identifiant {par_nom}). Rien n'est servi. Son propriétaire lève "
-            "l'ambiguïté en le renommant (`data_rename_datastore`)."))
+            f"`{datastore}` designates TWO tables you can see: the one whose "
+            f"identifier it is ({par_id}), and another one NAMED `{datastore}` "
+            f"(identifier {par_nom}). Nothing is served. Its owner removes "
+            "the ambiguity by renaming it (`data_rename_datastore`)."))
         self.par_id, self.par_nom = par_id, par_nom
 
 
@@ -266,13 +266,13 @@ class RowLocked(ValueError):
         # titulaires étaient strictement successifs. ⚠️ Jamais le run ni le libellé d'un
         # tiers : l'échéance suffit (`_run_id` n'autorise rien, il NOMME).
         motif = (
-            f"ligne « {row_id} » : écriture refusée. Si cette ligne est la tienne, ton "
-            f"appel ne porte pas de `_run_id` : ajoute-le — obligatoire sur ce chemin, "
-            f"c'est lui qui prouve ta réservation. Sinon, la ligne est tenue par un "
-            f"autre travail jusqu'à {claimed_until} : attends, ou libère-la "
-            f"(data_release) si tu sais ce travail abandonné.")
+            f"row `{row_id}`: write refused. If this row is yours, your "
+            f"call carries no `_run_id`: add it — mandatory on this path, "
+            f"it is what proves your claim. Otherwise, the row is held by "
+            f"another job until {claimed_until}: wait, or release it "
+            f"(data_release) if you know that job was abandoned.")
         self.motif = motif
-        super().__init__(f"{row} : {motif}" if row else motif)
+        super().__init__(f"{row}: {motif}" if row else motif)
 
 
 class RevisionConflict(ValueError):
@@ -298,10 +298,10 @@ class RevisionConflict(ValueError):
         # En CHAÎNE, comme `_revision` est servie : le client compare ce qu'il a lu.
         self.current_revision = str(current_revision)
         super().__init__(
-            f"revision_conflict : la ligne « {row_id} » a changé depuis ta lecture "
-            f"(révision lue {self.expected_revision}, révision actuelle "
-            f"{self.current_revision}) — rien n'est écrit. Relis la ligne, recalcule "
-            f"ce que tu écris à partir d'elle, puis réécris avec sa nouvelle "
+            f"revision_conflict: row `{row_id}` has changed since you read it "
+            f"(revision read {self.expected_revision}, current revision "
+            f"{self.current_revision}) — nothing is written. Read the row again, recompute "
+            f"what you write from it, then write again with its new "
             f"`_revision`.")
 
 
@@ -316,4 +316,4 @@ class RowClaimed(Exception):
         self.row_id = row_id
         self.claimed_by = claimed_by
         self.claimed_until = claimed_until
-        super().__init__(f"row {row_id} sous bail de {claimed_by!r} jusqu'à {claimed_until!r}")
+        super().__init__(f"row {row_id} under lease by {claimed_by!r} until {claimed_until!r}")

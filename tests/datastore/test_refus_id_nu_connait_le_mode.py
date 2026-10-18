@@ -28,7 +28,7 @@ from oto_mcp.datastore.controles import ControlesMixin
 
 SCHEMA = {"fields": [{"key": "siren", "type": "text"}], "key": "siren"}
 #: les deux gestes que le mode LOT refuse — aucun ne doit être conseillé là
-REFUSES_EN_LOT = ("tel que servi", "passe le paramètre id=")
+REFUSES_EN_LOT = ("as served", "pass the id= parameter")
 
 
 class _Store(ControlesMixin):
@@ -63,23 +63,23 @@ def test_en_LOT_il_nomme_les_DEUX_voies_qui_aboutissent():
     issue — il réessaiera, en consommant. Les deux voies réelles sont nommées : laisser
     la clé métier dédoublonner, ou sortir du lot pour cette ligne."""
     msg = _refus(lot=True)
-    assert "clé métier" in msg and "key=" in msg, "la voie du lot"
+    assert "business key" in msg and "key=" in msg, "la voie du lot"
     assert 'id="<_id>"' in msg, "la voie unitaire, pour cette ligne-là"
-    assert "aucune ligne par son identifiant" in msg, "la raison, pas seulement le geste"
+    assert "no row by its identifier" in msg, "la raison, pas seulement le geste"
 
 
 def test_en_UNITAIRE_le_conseil_d_origine_est_INTACT():
     """⚠️ La moitié qui garantit qu'on n'a pas cassé le cas courant : hors lot, ces
     deux gestes sont exactement les bons, et c'est la majorité du trafic."""
     msg = _refus()
-    assert "tel que servi" in msg and "passe le paramètre id=" in msg
+    assert "as served" in msg and "pass the id= parameter" in msg
 
 
 def test_les_deux_modes_gardent_la_CAUSE_et_la_sortie_par_le_schema():
     """Ce qui ne dépend pas du mode ne doit pas avoir bougé : pourquoi c'est refusé, et
     le cas où `id` est une vraie colonne des données de l'appelant."""
     for msg in (_refus(), _refus(lot=True)):
-        assert "ligne fantôme" in msg, "la conséquence concrète"
+        assert "ghost row" in msg, "la conséquence concrète"
         assert "data_set_schema" in msg, "la sortie si `id` est une vraie colonne"
 
 

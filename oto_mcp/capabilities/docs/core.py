@@ -78,17 +78,17 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         # Endpoint publié sans login : l'autz a déjà validé le contexte, on borne ici
         # les VERBES (lecture seule). `common.can(None, …)` borne le PÉRIMÈTRE au projet.
         require(inp.op in common.SHARED_READ_OPS, "forbidden",
-                "Lecture seule sur un projet partagé.", 403)
+                "Read-only on a shared project.", 403)
 
     # `fields` se valide UNE fois, pour toutes les ops — et APRÈS l'autz, pour qu'un
     # appelant anonyme se heurte au 403 plutôt qu'à un 400 qui lui décrirait la surface.
     if inp.fields is not None:
         require(inp.op in view.FIELDS_OPS, "unsupported_fields",
-                f"`fields` ne s'applique qu'aux ops {', '.join(sorted(view.FIELDS_OPS))} — "
-                f"op={inp.op} rend une forme fixe. Retire-le.")
+                f"`fields` only applies to ops {', '.join(sorted(view.FIELDS_OPS))} — "
+                f"op={inp.op} returns a fixed shape. Remove it.")
         require(bool(inp.fields), "empty_fields",
-                "`fields` est une liste vide : omets-le pour la vue par défaut, passe "
-                '`["*"]` pour la page entière, ou nomme les colonnes voulues.')
+                "`fields` is an empty list: omit it for the default view, pass "
+                '`["*"]` for the whole page, or name the columns you want.')
 
     # `revision_id` et `dry_run` n'ont de sens que sur UNE op chacun. Un argument
     # accepté-et-ignoré coûte exactement ce qu'il prétendait économiser, et rien ne le
@@ -97,16 +97,16 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
     # précisément ce que l'appelant croyait seulement simuler.
     if inp.revision_id is not None:
         require(inp.op == "revert", "unsupported_revision_id",
-                "`revision_id` ne s'applique qu'à op=revert (la version à restaurer). "
-                "Pour LIRE l'historique, c'est op=revisions, qui ne prend que `doc_id`.")
+                "`revision_id` only applies to op=revert (the version to restore). "
+                "To READ the history, use op=revisions, which takes only `doc_id`.")
     if inp.scope is not None:
         require(inp.op == "shared_with_me", "unsupported_scope_arg",
-                "`scope` ne s'applique qu'à op=shared_with_me (la portée des pages "
-                "reçues). Retire-le.")
+                "`scope` only applies to op=shared_with_me (the scope of the pages "
+                "received). Remove it.")
     if inp.dry_run is not None:
         require(inp.op in ("delete", "patch"), "unsupported_dry_run",
-                "`dry_run` ne s'applique qu'à op=delete et op=patch — les autres ops "
-                "n'ont pas de mode simulation et exécuteraient pour de bon. Retire-le.")
+                "`dry_run` only applies to op=delete and op=patch — the other ops "
+                "have no simulation mode and would run for real. Remove it.")
 
     if inp.op == "create":
         return writes.create(sub, inp)
@@ -135,7 +135,7 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         return partage.recus(sub, inp.scope, ctx.org_id)
 
     # ops par doc_id (résolvent le projet pour l'autz)
-    require(inp.doc_id is not None, "missing_doc", "`doc_id` requis.")
+    require(inp.doc_id is not None, "missing_doc", "`doc_id` is required.")
     row = db.get_doc_by_id(int(inp.doc_id))
     # F-016 : une page qu'on ne peut pas LIRE (ni par son projet, ni par un partage de
     # la page) n'existe pas pour l'appelant — même 404 qu'un id absent. Les ids sont
@@ -143,7 +143,7 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
     # confondues. Le 403 des ops d'écriture reste à qui lit la page sans pouvoir
     # l'écrire (il sait déjà qu'elle existe). Écrire implique lire (`can_access`).
     require(row is not None and common.acces_a_la_page(sub, row) is not None,
-            "unknown_doc", f"Doc #{inp.doc_id} inconnu.", 404)
+            "unknown_doc", f"Unknown doc #{inp.doc_id}.", 404)
     pid = row["project_id"]
 
     if inp.op == "get":
@@ -163,8 +163,8 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         # Seul `public=True` ouvre.
         if inp.public:
             _publication.refuser_si_agent(
-                ctx, "cette page",
-                "Elle se partage depuis le dashboard, sur la page elle-même.")
+                ctx, "this page",
+                "It is shared from the dashboard, on the page itself.")
         return writes.set_public(sub, inp, row, pid)
 
     if inp.op == "update":

@@ -129,7 +129,7 @@ def test_le_releve_nomme_le_rang_et_dit_le_geste_qui_sauve(table):
 
     assert all(r["ligne"] == rid for r in releve["couches_effacees"])
     hint = releve["couches_effacees_hint"]
-    assert "EN BLOC" in hint and "repose la liste entière" in hint
+    assert "AS A WHOLE" in hint and "set the whole list again" in hint
     assert "nom.comment" in hint, "la forme à réémettre, pas seulement le principe"
 
 

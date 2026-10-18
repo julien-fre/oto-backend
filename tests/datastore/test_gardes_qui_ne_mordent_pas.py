@@ -77,7 +77,7 @@ def test_le_releve_NOMME_les_motifs_sans_obligation():
 
     assert na.motif_sans_obligation(sch) == ["notes"]
     phrase = na.motif_sans_obligation_warning(["notes"])
-    assert "jamais le fait d'écrire" in phrase
+    assert "never the fact of writing" in phrase
     assert "required_when" in phrase, "la phrase doit porter le geste, pas le constat"
 
 
@@ -117,8 +117,8 @@ def test_le_releve_nomme_la_couche_sans_forme():
 
     assert na.couche_exigee_sans_forme(sch) == ["qualification.comment"]
     phrase = na.couche_exigee_sans_forme_warning(["qualification.comment"])
-    assert "jamais ce qu'elle contient" in phrase
-    assert '"key": "<colonne>.comment"' in phrase, (
+    assert "never what it contains" in phrase
+    assert '"key": "<column>.comment"' in phrase, (
         "la phrase doit montrer la FORME, pas seulement nommer le manque")
 
 
@@ -173,9 +173,9 @@ def test_l_avertissement_ne_dit_PAS_inerte_tout_court():
 
     # La réserve est dans le return, donc servie quelle que soit la branche — c'est
     # ce qui compte : elle ne doit pas dépendre de l'état du reste du schéma.
-    assert "lu par personne" in phrase, "le message doit nommer le consommateur en aval"
-    assert "Ne le retire pas sur la seule foi de ce message" in phrase
-    assert "demande à qui affiche ce tableau" in phrase
+    assert "read by nobody" in phrase, "le message doit nommer le consommateur en aval"
+    assert "Do not remove it on the sole basis of this message" in phrase
+    assert "ask whoever displays this table" in phrase
 
 
 def test_la_branche_sans_manque_ne_dit_pas_INERTE_tout_court():
@@ -187,5 +187,5 @@ def test_la_branche_sans_manque_ne_dit_pas_INERTE_tout_court():
     from oto_mcp.datastore import non_applique
 
     src = inspect.getsource(non_applique)
-    assert "n'a aucun effet POUR OTO" in src
-    assert "est simplement inerte" not in src
+    assert "has no effect FOR OTO" in src
+    assert "est simplement inerte" not in src and "simply inert" not in src

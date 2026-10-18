@@ -126,7 +126,7 @@ def test_sans_scope_les_routes_servent_lorg_comme_avant(client, org, masque):
     lu = lu.json()
     assert "scope" not in lu and "Étapes de l'org" in lu["body_md"]
     assert lu["id"] == masque["org"]["id"]
-    assert "MASQUE" in lu["shadow_warning"]                       # #1156 ex. 4, inchangé
+    assert "SHADOWS" in lu["shadow_warning"]                       # #1156 ex. 4, inchangé
 
     # Supprimer, archiver : toujours la garde org_admin sans `scope`.
     for verbe, chemin in (("DELETE", f"/api/me/instructions/{_SLUG}"),
@@ -150,7 +150,7 @@ def test_lister_son_palier_perso_dit_quelle_copie_masque_lorg(client, org, masqu
     assert perso["slug"] == _SLUG and perso["id"] == masque["perso"]["id"]
     [lorg] = perso["other_scopes"]
     assert lorg["scope"] == "org" and lorg["guide_id"] == masque["org"]["id"]
-    assert "Tu lis ta copie PERSONNELLE" in perso["shadow_warning"]
+    assert "You are reading your PERSONAL copy" in perso["shadow_warning"]
     assert corps["archived"] == []
     # Ce que CETTE face permet sur son palier : supprimer oui, écrire non (pas de
     # `scope` sur `PUT …/{slug}`) — même pour un simple membre.
@@ -166,8 +166,8 @@ def test_lire_sa_copie_perso_nomme_lorg_ecartee(client, org, masque):
     assert lu["scope"] == "user" and "Étapes perso" in lu["body_md"]
     assert lu["id"] == masque["perso"]["id"]
     assert lu["other_scopes"][0]["guide_id"] == masque["org"]["id"]
-    assert "Tu lis ta copie PERSONNELLE" in lu["shadow_warning"]
-    assert "ÉCARTÉE" in lu["shadow_warning"]
+    assert "You are reading your PERSONAL copy" in lu["shadow_warning"]
+    assert "SKIPPED" in lu["shadow_warning"]
 
 
 def test_le_palier_perso_ne_depend_pas_de_lorg_active(client, org, masque):
@@ -243,7 +243,7 @@ def test_archiver_sa_copie_perso_leve_le_masque_et_le_dit(client, org, masque):
     assert r.status_code == 200, r.text
     ack = r.json()
     assert ack["unarchived"] is True and ack["user_id"] == membre
-    assert "MASQUE" in ack["shadow_warning"]
+    assert "SHADOWS" in ack["shadow_warning"]
     from oto_mcp import org_store
     assert org_store.get_instruction("org", org["id"], _SLUG)["archived_at"] is None
 
@@ -256,7 +256,7 @@ def test_supprimer_sa_copie_perso_leve_le_masque_et_laisse_lorg(client, org, mas
     ack = r.json()
     assert ack["deleted"] is True and ack["scope"] == "user" and ack["user_id"] == membre
     assert [a["scope"] for a in ack["other_scopes"]] == ["org"]
-    assert "masquait la procédure de l'ORG" in ack["shadow_lifted"]
+    assert "was shadowing the ORG procedure" in ack["shadow_lifted"]
     assert f"`guide_id` {masque['org']['id']}" in ack["shadow_lifted"]
     # La copie perso n'est plus là, celle de l'org est intacte et ne se dit plus masquée.
     assert client.get(f"/api/me/instructions/{_SLUG}", params={"scope": "user"},

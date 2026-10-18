@@ -98,7 +98,7 @@ async def test_data_write_refuse_le_nom_vide_sur_ses_trois_gestes(table, monkeyp
     for geste in gestes:
         with pytest.raises(McpError) as e:
             data_write(datastore=ns, **geste)
-        assert "n'est pas un nom de colonne" in str(e.value), (geste, str(e.value))
+        assert "is not a column name" in str(e.value), (geste, str(e.value))
         assert repr(nom) in str(e.value), "le refus cite la clé fautive"
     _sans_nom_vide(ns_id)
 
@@ -118,7 +118,7 @@ def test_REST_refuse_le_nom_vide_par_un_refus_declare(client, table, nom):
         r = client.request(verbe, chemin, headers=_h(), json=corps)
         assert r.status_code == 400, (verbe, chemin, r.text)
         assert r.json().get("error") == "row_invalid", r.text
-        assert "n'est pas un nom de colonne" in r.json().get("detail", ""), r.text
+        assert "is not a column name" in r.json().get("detail", ""), r.text
     _sans_nom_vide(ns_id)
 
 
@@ -144,7 +144,7 @@ def test_le_depot_de_fichier_refuse_le_nom_vide(table, nom):
     with pytest.raises(UploadError) as e:
         import_rows(SUB, {"kind": "datastore", "ns_id": ns_id}, lignes,
                     deadline=time.monotonic() + 30)
-    assert e.value.code == "bad_row" and "n'est pas un nom de colonne" in str(e.value)
+    assert e.value.code == "bad_row" and "is not a column name" in str(e.value)
     _sans_nom_vide(ns_id)
 
 

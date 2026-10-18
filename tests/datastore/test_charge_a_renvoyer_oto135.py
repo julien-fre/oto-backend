@@ -51,7 +51,7 @@ def _refus(schema: dict, row: dict, **kw) -> tuple[list, dict]:
 def test_requis_de_colonne_gabarit_et_empty_en_alternative():
     _, d = _refus(_SCHEMA, {"effectif": 3})
     assert d["a_renvoyer"] == {
-        "siren": "<texte, ≤ 9 caractères, motif ^[0-9]{9}$> | @empty"}
+        "siren": "<text, ≤ 9 characters, pattern ^[0-9]{9}$> | @empty"}
     assert "a_renvoyer_elements" not in d
 
 
@@ -59,7 +59,7 @@ def test_requis_de_sous_champ_l_element_SEUL_designe_par_son_identite():
     _, d = _refus(_SCHEMA, {"siren": "123456789", "contacts": [
         {"role": "RH", "nom": "Alice Martin", "email": "alice@x.fr"},
         {"role": "DAF"}]})
-    assert d["a_renvoyer"] == {"contacts": [{"role": "DAF", "nom": "<texte> | @empty"}]}
+    assert d["a_renvoyer"] == {"contacts": [{"role": "DAF", "nom": "<text> | @empty"}]}
     assert d["a_renvoyer_elements"] == ["contacts[role=DAF]"]
     assert "Alice" not in json.dumps(d), "jamais la liste entière : pas de données recopiées"
 
@@ -68,38 +68,38 @@ def test_requis_sans_of_key_l_element_designe_par_son_RANG():
     schema = {"fields": [{"key": "contacts", "type": "list", "of": {"fields": [
         {"key": "nom", "type": "text", "required": True}]}}]}
     _, d = _refus(schema, {"contacts": [{"nom": "Alice"}, {"fonction": "DAF"}]})
-    assert d["a_renvoyer"] == {"contacts": [{"nom": "<texte> | @empty"}]}
+    assert d["a_renvoyer"] == {"contacts": [{"nom": "<text> | @empty"}]}
     assert d["a_renvoyer_elements"] == ["contacts[1]"]
 
 
 def test_l_identite_d_un_element_n_offre_pas_empty():
     """`@empty` est refusé sur l'identité (`of.key`) : l'offrir ferait rejouer un refus."""
     _, d = _refus(_SCHEMA, {"siren": "123456789", "contacts": [{"nom": "Bob"}]})
-    assert d["a_renvoyer"] == {"contacts": [{"role": "<texte>"}]}
+    assert d["a_renvoyer"] == {"contacts": [{"role": "<text>"}]}
 
 
 def test_un_sous_champ_d_objet_n_offre_pas_empty():
     """`@empty` est refusé dans un objet."""
     _, d = _refus(_SCHEMA, {"siren": "123456789", "siege": {"cp": "75001"}})
-    assert d["a_renvoyer"] == {"siege": {"ville": "<texte>"}}
+    assert d["a_renvoyer"] == {"siege": {"ville": "<text>"}}
 
 
 # ── type ou format ───────────────────────────────────────────────────────────
 
 def test_type_de_colonne():
     _, d = _refus(_SCHEMA, {"siren": "123456789", "effectif": "beaucoup"})
-    assert d["a_renvoyer"] == {"effectif": "<nombre>"}
+    assert d["a_renvoyer"] == {"effectif": "<number>"}
 
 
 def test_format_dans_un_element():
     _, d = _refus(_SCHEMA, {"siren": "123456789", "contacts": [
         {"role": "RH", "nom": "Alice", "email": "pas-un-mail"}]})
-    assert d["a_renvoyer"] == {"contacts": [{"role": "RH", "email": "<e-mail>"}]}
+    assert d["a_renvoyer"] == {"contacts": [{"role": "RH", "email": "<email>"}]}
 
 
 def test_motif_de_colonne():
     _, d = _refus(_SCHEMA, {"siren": "12345678X"})
-    assert d["a_renvoyer"] == {"siren": "<texte, ≤ 9 caractères, motif ^[0-9]{9}$>"}
+    assert d["a_renvoyer"] == {"siren": "<text, ≤ 9 characters, pattern ^[0-9]{9}$>"}
 
 
 def test_option_d_une_liste_de_valeurs_par_rang():
@@ -112,7 +112,7 @@ def test_type_sur_un_tableau_souple():
     """Le type s'arme seul, hors `validation_active` (`types_declares`) : même charge."""
     _, d = _refus({"fields": [{"key": "effectif", "type": "number"}]},
                   {"effectif": "beaucoup"})
-    assert d["a_renvoyer"] == {"effectif": "<nombre>"}
+    assert d["a_renvoyer"] == {"effectif": "<number>"}
 
 
 # ── sous-champ inconnu ───────────────────────────────────────────────────────
@@ -120,24 +120,24 @@ def test_type_sur_un_tableau_souple():
 def test_attribut_inconnu_la_cle_declaree_la_plus_proche():
     errs, d = _refus({**_SCHEMA, "unknown_columns": "report"}, {"siren": "123456789", "contacts": [
         {"role": "RH", "nom": "Alice", "emial": "alice@x.fr"}]})
-    assert "le plus proche : `email`" in errs[0], errs
-    assert d["a_renvoyer"] == {"contacts": [{"role": "RH", "email": "<e-mail>"}]}
+    assert "closest: `email`" in errs[0], errs
+    assert d["a_renvoyer"] == {"contacts": [{"role": "RH", "email": "<email>"}]}
     assert "alice@x.fr" not in json.dumps(d)
 
 
 def test_couche_inconnue_la_couche_la_plus_proche():
     errs, d = _refus(_SCHEMA, {"siren": "123456789",
                                "effectif": {"valeur": 3, "commentaire": "registre"}})
-    assert "le plus proche : `comment`" in errs[0], errs
-    assert d["a_renvoyer"] == {"effectif": {"comment": "<d'où vient la valeur, en clair>"}}
+    assert "closest: `comment`" in errs[0], errs
+    assert d["a_renvoyer"] == {"effectif": {"comment": "<where the value comes from, in plain words>"}}
 
 
 # ── couche exigée ────────────────────────────────────────────────────────────
 
 def test_couche_exigee_de_colonne():
     _, d = _refus(_SCHEMA, {"siren": "123456789", "qualif": "oui"})
-    assert d["a_renvoyer"] == {"qualif": {"valeur": "<texte>",
-                                          "comment": "<d'où vient la valeur, en clair>"}}
+    assert d["a_renvoyer"] == {"qualif": {"valeur": "<text>",
+                                          "comment": "<where the value comes from, in plain words>"}}
 
 
 def test_couche_exigee_dans_un_element():
@@ -146,7 +146,7 @@ def test_couche_exigee_dans_un_element():
         {"key": "email", "type": "text", "required_layers": ["link"]}]}}]}
     _, d = _refus(schema, {"contacts": [{"role": "RH", "email": "a@x.fr"}]})
     assert d["a_renvoyer"] == {"contacts": [
-        {"role": "RH", "email": {"valeur": "<texte>", "link": "<l'URL de la source>"}}]}
+        {"role": "RH", "email": {"valeur": "<text>", "link": "<the URL of the source>"}}]}
 
 
 # ── ce qui n'entre PAS dans la charge ────────────────────────────────────────
@@ -159,7 +159,7 @@ def test_un_element_non_ecrit_n_entre_pas_dans_la_charge():
     apres = {"siren": "123456789", "contacts": [
         {"role": "RH", "nom": "Alice", "email": "x"}, {"role": "DAF"}]}
     _, d = _refus(_SCHEMA, apres, written={"contacts"}, en_place=avant)
-    assert d["a_renvoyer"] == {"contacts": [{"role": "RH", "email": "<e-mail>"}]}
+    assert d["a_renvoyer"] == {"contacts": [{"role": "RH", "email": "<email>"}]}
 
 
 def test_une_colonne_gelee_n_entre_pas_dans_la_charge():
@@ -175,7 +175,7 @@ def test_la_clause_mcp_porte_la_charge_et_la_regle_de_la_liste():
     _, d = _refus(_SCHEMA, {"siren": "123456789", "contacts": [{"role": "DAF"}]})
     texte = car.clause(d)
     assert json.dumps(d["a_renvoyer"], ensure_ascii=False) in texte
-    assert "contacts[role=DAF]" in texte and "ENTIÈRE" in texte
+    assert "contacts[role=DAF]" in texte and "WHOLE" in texte
 
 
 def test_la_face_REST_rend_details_tel_quel():
@@ -183,7 +183,7 @@ def test_la_face_REST_rend_details_tel_quel():
     _, d = _refus(_SCHEMA, {"effectif": 3})
     refus = _write_refusal(RowValidationError(["x"], details=d))
     assert refus.details["a_renvoyer"] == {
-        "siren": "<texte, ≤ 9 caractères, motif ^[0-9]{9}$> | @empty"}
+        "siren": "<text, ≤ 9 characters, pattern ^[0-9]{9}$> | @empty"}
 
 
 def _table(schema: dict) -> str:
@@ -214,7 +214,7 @@ def test_la_face_MCP_finit_le_message_par_la_charge(live, monkeypatch):
     msg = str(e.value)
     assert "contacts[1].nom" in msg, msg
     assert ('À renvoyer, les gabarits `<…>` remplacés : '
-            '{"contacts": [{"role": "DAF", "nom": "<texte> | @empty"}]}') in msg, msg
+            '{"contacts": [{"role": "DAF", "nom": "<text> | @empty"}]}') in msg, msg
     assert "Alice" not in msg.split("À renvoyer")[1], "l'élément fautif seul"
 
 
@@ -227,4 +227,4 @@ def test_un_lot_garde_la_charge(live):
             {"siren": "1", "contacts": [{"role": "RH", "nom": "A"}]},
             {"siren": "2", "contacts": [{"role": "DAF"}]}], key="siren")
     assert e.value.details["a_renvoyer"] == {
-        "contacts": [{"role": "DAF", "nom": "<texte> | @empty"}]}
+        "contacts": [{"role": "DAF", "nom": "<text> | @empty"}]}

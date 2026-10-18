@@ -47,12 +47,12 @@ def test_le_refus_NOMME_le_renommage_et_rend_la_valeur():
     with pytest.raises(pydantic.ValidationError) as e:
         claim.ClaimNextInput(namespace="mon-tableau", worker="w")
     msg = str(e.value)
-    assert "renommé" in msg and "datastore" in msg
+    assert "renamed" in msg and "datastore" in msg
     # La valeur est REPRISE : l'agent recopie au lieu de reconstruire son appel.
     assert "'mon-tableau'" in msg
     # Et on coupe court à la mauvaise piste que l'ancien message ouvrait.
-    assert "Ne cherche pas un paramètre manquant" in msg
-    assert "rien n'a été écrit" in msg
+    assert "Do not hunt for another parameter" in msg
+    assert "nothing was written" in msg
 
 
 def test_TOUTES_les_entrees_qui_portent_le_parametre_sont_couvertes():
@@ -72,7 +72,7 @@ def test_TOUTES_les_entrees_qui_portent_le_parametre_sont_couvertes():
 def test_chaque_entree_refuse_en_nommant(nom, modele):
     with pytest.raises(pydantic.ValidationError) as e:
         modele(namespace="t")
-    assert "renommé" in str(e.value), nom
+    assert "renamed" in str(e.value), nom
 
 
 def test_les_SORTIES_ne_sont_PAS_touchees():

@@ -1212,8 +1212,8 @@ def datastore_count_by(ns_id: int, fields: list, *, q: Optional["Recherche"] = N
     du plus fréquent au moins fréquent, `truncated` vrai quand des valeurs distinctes
     restent au-delà de `values_limit` (la liste n'est alors pas complète, et le dit)."""
     if not isinstance(values_limit, int) or not 1 <= values_limit <= COUNT_BY_VALUES_MAX:
-        raise ValueError(f"`values_limit` : entier de 1 à {COUNT_BY_VALUES_MAX} "
-                         f"(reçu {values_limit!r})")
+        raise ValueError(f"`values_limit`: integer from 1 to {COUNT_BY_VALUES_MAX} "
+                         f"(got {values_limit!r})")
     sql, params, champs = _build_count_by(ns_id, fields, q, filters, values_limit)
     with _connect() as conn:
         rows = conn.execute(sql, tuple(params)).fetchall()

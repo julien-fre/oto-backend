@@ -145,9 +145,9 @@ def _get_schema(ctx: ResolvedCtx, inp: GetSchemaInput) -> dict:
         raise AuthzDenied(404, "datastore_not_found")
     except DatastoreForbidden:
         raise AuthzDenied(403, "forbidden", (
-            "le schéma tel qu'il est STOCKÉ se lit par qui possède ce tableau ou le "
-            "gouverne ; un accès partagé n'y suffit pas. `tel_que=servi` (le défaut) "
-            "rend ce qui t'est servi."))
+            "the schema as STORED can be read by whoever owns this table or "
+            "governs it; shared access is not enough. `tel_que=servi` (the default) "
+            "returns what is served to you."))
     # #389 : la liste des clés de validation que CETTE version exécute. Servie ICI
     # autant qu'à la pose — sans quoi il faudrait ÉCRIRE un schéma pour savoir ce que
     # le serveur applique, c'est-à-dire produire un effet de bord pour poser une

@@ -83,7 +83,7 @@ def test_une_adresse_indexee_hors_bornes_est_refusee_en_donnant_l_ajout(table):
     st, ns, _ns_id, rid = table
 
     msg = _refus(st, ns, rid, {"contacts[3].nom": "Ada"})
-    assert "rang 3 inexistant" in msg and "`contacts[+]`" in msg
+    assert "index 3 does not exist" in msg and "`contacts[+]`" in msg
 
 
 # ══ le seul geste qui écrit passe VRAIMENT ══════════════════════════════════════

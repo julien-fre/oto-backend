@@ -60,9 +60,9 @@ SEUIL_MILLISECONDES = 100_000_000_000
 
 #: Ce qu'un refus dit attendre — la même phrase pour l'écriture et pour un filtre.
 FORMES_ACCEPTEES = ("ISO (`2026-09-04T10:00:00Z`, `2026-09-04T12:00+02:00`, "
-                    "`2026-09-04 10:00`), une date à sa précision (`2026-09-04`, "
-                    "`2026-09`, `2026`), `04/09/2026` (jour d'abord, heure `10:30` "
-                    "permise) ou un horodatage Unix (secondes ou millisecondes)")
+                    "`2026-09-04 10:00`), a date at its precision (`2026-09-04`, "
+                    "`2026-09`, `2026`), `04/09/2026` (day first, time `10:30` "
+                    "allowed) or a Unix timestamp (seconds or milliseconds)")
 
 _ANNEE = re.compile(r"^(\d{4})$")
 _MOIS = re.compile(r"^(\d{4})-(\d{2})$")
@@ -194,15 +194,15 @@ def est_lisible(valeur: Any, ftype: str) -> bool:
 # --------------------------------------------------------------------------- #
 
 def _notice_utc(chemin: str) -> str:
-    return (f"`{chemin}` : un instant sans fuseau a été lu en UTC et stocké "
-            f"`AAAA-MM-JJTHH:MM:SSZ`. S'il était en heure locale, réécris-le avec son "
-            f"fuseau (`2026-09-04T10:00:00+02:00`).")
+    return (f"`{chemin}`: an instant without a time zone was read as UTC and stored as "
+            f"`YYYY-MM-DDTHH:MM:SSZ`. If it was in local time, write it again with its "
+            f"time zone (`2026-09-04T10:00:00+02:00`).")
 
 
 def _notice_illisible(chemin: str, ftype: str) -> str:
-    return (f"`{chemin}` est déclarée `{ftype}` et a reçu une valeur illisible comme "
-            f"date : elle est gardée telle quelle (tableau sans validation), mais elle "
-            f"ne se trie ni ne se filtre comme une date. Formes lues : "
+    return (f"`{chemin}` is declared `{ftype}` and received a value unreadable as a "
+            f"date: it is kept as is (table without validation), but it "
+            f"neither sorts nor filters as a date. Forms read: "
             f"{FORMES_ACCEPTEES}.")
 
 
@@ -354,8 +354,8 @@ def bornes_du_filtre(valeur: Any, champ: str) -> list:
     lue = lire(valeur, "datetime")
     if lue is None:
         raise ValueError(
-            f"filtre sur `{champ}` (colonne de dates) : {valeur!r} n'est pas une date "
-            f"lisible — attendu {FORMES_ACCEPTEES}.")
+            f"filter on `{champ}` (date column): {valeur!r} is not a readable "
+            f"date — expected {FORMES_ACCEPTEES}.")
     return [_iso_utc(lue.debut), _iso_utc(lue.fin)]
 
 

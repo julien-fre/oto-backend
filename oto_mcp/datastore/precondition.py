@@ -26,6 +26,6 @@ def revision_attendue(valeur: Any) -> Optional[int]:
     texte = str(valeur).strip()
     if isinstance(valeur, bool) or not (texte.isascii() and texte.isdigit()):
         raise ValueError(
-            f"`expected_revision` = la `_revision` servie avec la ligne que tu as lue "
-            f"(une chaîne de chiffres, ex. \"3\") — reçu {valeur!r}. Rien n'est écrit.")
+            f"`expected_revision` = the `_revision` served with the row you read "
+            f"(a string of digits, e.g. \"3\") — got {valeur!r}. Nothing is written.")
     return int(texte)

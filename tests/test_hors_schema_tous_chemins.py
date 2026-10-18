@@ -138,7 +138,7 @@ def test_une_cle_hors_schema_DANS_un_contact_est_REFUSEE(table):
     st, ns, ns_id, rid = table
     with pytest.raises(RowValidationError) as e:
         st.update_row(ns, rid, {"contacts": [{"nom": "Jo", "email_pro": "jo@x.fr"}]})
-    assert "email_pro" in str(e.value) and "Rien n'a été écrit" in str(e.value)
+    assert "email_pro" in str(e.value) and "Nothing was written" in str(e.value)
     assert "email_pro" not in str(_colonnes_en_base(ns_id, rid))
 
 
@@ -184,7 +184,7 @@ def test_une_cle_PLATE_POINTEE_ne_fabrique_JAMAIS_de_colonne(table):
 
     with pytest.raises(RowValidationError) as e:
         st.update_row(ns, rid, {f"{HORS}.comment": "site — pied de page"})
-    assert "n'est aucune colonne" in str(e.value)
+    assert "is no column" in str(e.value)
 
     st.update_row(ns, rid, {"raison_sociale.comment": "site — pied de page"})
 

@@ -48,7 +48,7 @@ def test_ce_qui_n_est_pas_un_numero_est_refuse_meme_sans_strict(brut):
     `strict`. Le refus dit où va ce qui n'est pas le numéro."""
     assert not S.validation_active(_TEL)
     errs = S.validate_row(_TEL, {"ref": "r", "tel": brut}, written={"tel"})
-    assert errs and "`tel` est déclarée `phone`" in errs[0], errs
+    assert errs and "`tel` is declared `phone`" in errs[0], errs
     assert ".comment" in errs[0]
 
 
@@ -59,7 +59,7 @@ def test_le_type_se_declare_et_se_dit():
          "of": {"type": "object", "fields": [{"key": "tel", "type": "phone"}]}}]}) == []
     champ = _TEL["fields"][1]
     assert "E.164" in _forme_attendue(champ)
-    assert gabarit(champ) == "<téléphone, +indicatif de préférence>"
+    assert gabarit(champ) == "<phone, +country code preferred>"
     assert "phone" in next(c.quoi for c in K.CLES if c.nom == "type")
 
 
@@ -81,7 +81,7 @@ def test_un_motif_seul_se_pose_arme_la_validation_et_mord():
     assert S.validation_active(_SIREN)
     assert S.validate_row(_SIREN, {"siren": "552100554"}, written={"siren"}) == []
     (err,) = S.validate_row(_SIREN, {"siren": "55210055"}, written={"siren"})
-    assert "ne suit pas le motif" in err
+    assert "does not match the pattern" in err
 
 
 def test_un_motif_seul_ne_juge_que_ce_que_le_geste_ecrit():
@@ -98,7 +98,7 @@ def test_au_dela_de_la_borne_par_defaut_la_valeur_est_refusee_sans_executer_le_m
     monkeypatch.setattr(V, "_pattern_re", _jamais)
     long = "5" * (PATTERN_MAX_SUBJECT + 1)
     (err,) = S.validate_row(_SIREN, {"siren": long}, written={"siren"})
-    assert f"{PATTERN_MAX_SUBJECT} caractères au plus" in err
+    assert f"{PATTERN_MAX_SUBJECT} characters at most" in err
 
 
 def test_une_borne_declaree_reste_la_borne_du_motif():

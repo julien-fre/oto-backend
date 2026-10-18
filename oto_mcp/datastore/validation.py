@@ -48,39 +48,39 @@ def _conformite_scalaire(value: Any, ftype: Optional[str], path: str) -> list[st
     `_hors_options` juge ensuite. `json` et l'absence de type n'ont pas de forme à
     tenir : ils rendent `[]`."""
     if ftype == "text":
-        return [] if isinstance(value, str) else [f"{path}: attendu text, reçu {type(value).__name__}"]
+        return [] if isinstance(value, str) else [f"{path}: expected text, got {type(value).__name__}"]
     if ftype == "number":
         if isinstance(value, bool):
-            return [f"{path}: attendu number, reçu bool"]
+            return [f"{path}: expected number, got bool"]
         if isinstance(value, (int, float)):
             return []
         if isinstance(value, str) and _NUM_RE.match(value.strip()):
             return []  # coercible — l'agent écrit souvent "42"
-        return [f"{path}: attendu number, reçu {value!r}"]
+        return [f"{path}: expected number, got {value!r}"]
     if ftype == "bool":
-        return [] if isinstance(value, bool) else [f"{path}: attendu bool, reçu {value!r}"]
+        return [] if isinstance(value, bool) else [f"{path}: expected bool, got {value!r}"]
     if ftype in ("date", "datetime"):
         # #859 : LE juge des dates est `dates.lire` — la même lecture que la
         # normalisation d'écriture, les filtres et le script de reprise.
         if dates.est_lisible(value, ftype):
             return []
-        return [f"{path}: attendu une date lisible ({ftype}) — {dates.FORMES_ACCEPTEES} "
-                f"—, reçu {value!r}"]
+        return [f"{path}: expected a readable date ({ftype}) — {dates.FORMES_ACCEPTEES} "
+                f"—, got {value!r}"]
     if ftype == "url":
         if isinstance(value, str) and value.startswith(("http://", "https://")):
             return []
-        return [f"{path}: attendu une URL http(s), reçu {value!r}"]
+        return [f"{path}: expected an http(s) URL, got {value!r}"]
     if ftype == "email":
         if isinstance(value, str) and "@" in value and " " not in value.strip():
             return []
-        return [f"{path}: attendu un e-mail, reçu {value!r}"]
+        return [f"{path}: expected an email, got {value!r}"]
     if ftype == "phone":
         # oto#103 : jugé sur la forme COMPACTE (`telephone.normaliser`) — la mise en
         # forme lisible passe, une phrase ou un identifiant ne passe pas.
         if telephone.est_un_numero(value):
             return []
-        return [f"{path}: attendu un numéro de téléphone (international `+` et "
-                f"indicatif, ou national en chiffres), reçu {value!r}"]
+        return [f"{path}: expected a phone number (international `+` and "
+                f"country code, or national digits), got {value!r}"]
     return []
 
 
@@ -102,7 +102,7 @@ def _hors_options(value: Any, options: Optional[list], path: str,
     allowed = [str(o) for o in options]
     if hors is not None:
         hors.append({"champ": path, "valeur": value, "options": allowed})
-    return [f"{path}: valeur {montrable(value)!r} hors options ({', '.join(allowed)})"]
+    return [f"{path}: value {montrable(value)!r} not among the options ({', '.join(allowed)})"]
 
 
 def elements_reecrits(apres: Any, en_place: Any, cle: Optional[str]) -> Optional[set]:
@@ -180,16 +180,16 @@ def _type_error(value: Any, ftype: Optional[str], path: str,
         # (oto-backend#412) : `5` est l'option `"5"`, comme pour `required_when`, le
         # filtre et le tri. Seul un composite n'en est pas une.
         if valeur_comparee(value) is None:
-            return _faute([f"{path}: attendu une valeur d'énumération, reçu {value!r}"])
+            return _faute([f"{path}: expected an enumeration value, got {value!r}"])
         return _faute(_hors_options(value, options, path, hors))
     if ftype == "object":
         if not isinstance(value, dict):
-            return _faute([f"{path}: attendu object, reçu {type(value).__name__}"])
+            return _faute([f"{path}: expected object, got {type(value).__name__}"])
         return _row_errors(fields or [], value, path, closed=closed, hors=hors,
                            charge=charge, chemin=chemin)
     if ftype == "list":
         if not isinstance(value, list):
-            return _faute([f"{path}: attendu list, reçu {type(value).__name__}"])
+            return _faute([f"{path}: expected list, got {type(value).__name__}"])
         errors: list[str] = []
         of = of or {}
         sub_fields = of.get("fields")
@@ -215,7 +215,7 @@ def _type_error(value: Any, ftype: Optional[str], path: str,
             icharge = charge if ecrit else None
             if isinstance(sub_fields, list):
                 if not isinstance(item, dict):
-                    cible.append(f"{ipath}: attendu object, reçu {type(item).__name__}")
+                    cible.append(f"{ipath}: expected object, got {type(item).__name__}")
                     car.noter(icharge, ichemin, gabarit({"type": "object",
                                                          "fields": sub_fields}))
                 else:
@@ -245,9 +245,9 @@ def _type_error(value: Any, ftype: Optional[str], path: str,
 #: le défaut du lot : une liste relue au défaut puis renvoyée rend `""` là où la lecture
 #: avait un vide assumé — le refus doit dire comment le relire, pas seulement quoi écrire.
 _CLAUSE_VIDE_ASSUME = (
-    f" — si aucune source ne donne cette valeur, écris `{VIDE_DELIBERE}` ; si tu renvoies "
-    f"une ligne lue, relis-la avec `empties=sentinel` : un vide déjà assumé y revient "
-    f"`{VIDE_DELIBERE}`, à renvoyer tel quel")
+    f" — if no source gives this value, write `{VIDE_DELIBERE}`; if you are sending back "
+    f"a row you read, read it again with `empties=sentinel`: an empty already assumed comes back as "
+    f"`{VIDE_DELIBERE}`, to send back as is")
 
 
 def _row_errors(fields: list, data: dict, path: str,
@@ -327,13 +327,13 @@ def _row_errors(fields: list, data: dict, path: str,
         inconnues = [k for k in unknown_layers(data.get(key)) if k not in CLES_INTERNES]
         if inconnues:
             proches = [cle_la_plus_proche(k, list(LAYER_KEYS)) for k in inconnues]
-            dites = [f"`{p}` pour {k!r}" for k, p in zip(inconnues, proches) if p]
+            dites = [f"`{p}` for {k!r}" for k, p in zip(inconnues, proches) if p]
             inconnue = (
-                f"{fpath}: sous-champ(s) inconnu(s) {', '.join(repr(k) for k in inconnues)}"
+                f"{fpath}: unknown sub-field(s) {', '.join(repr(k) for k in inconnues)}"
                 f" — disponibles : {', '.join(LAYER_KEYS)}"
-                + (f" (le plus proche : {', '.join(dites)})" if dites else "")
-                + ". Une couche stockée sans être lue donnerait l'illusion d'une "
-                "provenance renseignée.")
+                + (f" (closest: {', '.join(dites)})" if dites else "")
+                + ". A layer stored without being read would give the illusion of a "
+                "filled-in provenance.")
             # oto#124 : on juge ce que le geste ÉCRIT. Une couche inconnue déjà en
             # base sur une colonne que ce geste ne touche pas se DIT (`gelees`), elle
             # ne refuse pas l'écriture d'une autre colonne.
@@ -403,8 +403,8 @@ def _row_errors(fields: list, data: dict, path: str,
                 seul_appel = (written is not None and pose
                               and isinstance(rw, dict) and rw
                               and not (set(rw) & written))
-                errors.append(f"{fpath}: champ requis manquant{cause} — "
-                              f"elle attend {_forme_attendue(f)}"
+                errors.append(f"{fpath}: required field missing{cause} — "
+                              f"it expects {_forme_attendue(f)}"
                               + _clause_aiguillage(fields, rw)
                               + (_clause_un_seul_appel(rw) if seul_appel else "")
                               + _CLAUSE_VIDE_ASSUME)
@@ -448,8 +448,8 @@ def _row_errors(fields: list, data: dict, path: str,
                     and value not in [str(o) for o in (f.get("options") or [])]):
                 cible = gardees[0]
                 errs_type[-1] += (
-                    f" — cette valeur va dans `{cible.get('key')}` "
-                    f"({_forme_attendue(cible)}), pas dans `{key}`")
+                    f" — this value goes in `{cible.get('key')}` "
+                    f"({_forme_attendue(cible)}), not in `{key}`")
                 if details is not None:
                     details.setdefault("expected_column", str(cible.get("key")))
                 car.noter(fcharge, car.champ(chemin, str(cible.get("key"))),
@@ -485,7 +485,7 @@ def _row_errors(fields: list, data: dict, path: str,
             # liste déjà trop longue rendrait la ligne inécritable pour toujours, y
             # compris sur un champ sans rapport — le défaut que le type venait de
             # quitter, laissé sur son voisin immédiat.
-            trop = f"{fpath}: {len(value)} éléments, maximum {mi}"
+            trop = f"{fpath}: {len(value)} items, maximum {mi}"
             # Pas de charge : dire QUELS éléments retirer demanderait de recopier la
             # liste, et c'est à l'agent de choisir.
             if pose:
@@ -499,7 +499,7 @@ def _row_errors(fields: list, data: dict, path: str,
             if n > ml:
                 # La longueur CONSTATÉE autant que la borne : un refus qui ne dit
                 # pas de combien on dépasse fait deviner (signal #383).
-                errors.append(f"{fpath}: {n} caractères, maximum {ml}")
+                errors.append(f"{fpath}: {n} characters, maximum {ml}")
                 car.noter(fcharge, fchemin, gabarit(f))
                 trop_long = True
         # #387 : la FORME, là où la taille ne sépare rien. Restreint aux clés que le
@@ -519,15 +519,15 @@ def _row_errors(fields: list, data: dict, path: str,
             # exécuter le motif.
             if len(texte) > borne_du_motif(f):
                 errors.append(
-                    f"{fpath}: {len(texte)} caractères — une colonne à motif se lit sur "
-                    f"{borne_du_motif(f)} caractères au plus")
+                    f"{fpath}: {len(texte)} characters — a column with a pattern is read on "
+                    f"{borne_du_motif(f)} characters at most")
                 car.noter(fcharge, fchemin, gabarit(f))
             elif not _pattern_re(motif).search(texte):
                 # La valeur CONSTATÉE autant que le motif attendu : sans le motif, le
                 # refus ne laisse rien à corriger ; sans la valeur, il fait relire la
                 # ligne pour savoir ce qui coince.
                 errors.append(
-                    f"{fpath}: {texte!r} ne suit pas le motif `{motif}`")
+                    f"{fpath}: {texte!r} does not match the pattern `{motif}`")
                 car.noter(fcharge, fchemin, gabarit(f))
     return errors
 
@@ -669,7 +669,7 @@ def validate_row(schema: Optional[dict], merged: dict, *,
             # juge que si l'état change, donc que si le geste l'écrit.
             pose_etat = written is None or key in written
             if states and str(new) not in states:
-                inconnu = f"{key}: état inconnu {new!r} (états: {sorted(states)})"
+                inconnu = f"{key}: unknown state {new!r} (states: {sorted(states)})"
                 if pose_etat:
                     errors.append(inconnu)
                 elif gelees is not None:

@@ -139,10 +139,10 @@ def annonce_act_du_jour(aujourd_hui: Optional[datetime.date] = None) -> Optional
 def annonce_act() -> str:
     """La ligne servie aux agents : « ces outils ont changé », ancien → nouveau."""
     anciens = dict.fromkeys(r.ancien for r in RENOMMAGES_ACT)
-    return ("Outils changés le 17/10/2026 (sécurité : lire et agir sont deux outils) : "
+    return ("Tools changed on 2026-10-17 (security: reading and acting are two tools): "
             + " · ".join(f"`{a}` → {' + '.join(f'`{o}`' for o in remplacants(a))}"
                          for a in anciens)
-            + ". Les anciens noms refusent en nommant l'appel à faire.")
+            + ". The old names refuse, naming the call to make instead.")
 
 
 RETIRES: dict[str, Retrait] = {

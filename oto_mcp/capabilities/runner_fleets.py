@@ -236,7 +236,7 @@ class FleetCard(BaseModel):
 class AbandonReason(BaseModel):
     reason: Optional[str] = Field(None, description=(
         "The reason the platform recorded when it took the row out of the queue — it "
-        "ends with what the last attempt hit (« dernière tentative : … »), so rows "
+        "ends with what the last attempt hit (`— last attempt: …`), so rows "
         "group by cause. null: the row was put in the abandon state by a write, not "
         "by the platform."))
     rows: int

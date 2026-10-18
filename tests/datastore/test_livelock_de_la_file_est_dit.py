@@ -65,8 +65,8 @@ def test_le_GUIDE_porte_la_meme_condition():
     moment : la description au moment d'appeler, le guide au moment de concevoir la
     passe. Une seule des deux laisserait la moitié des agents dans le noir."""
     g = GUIDE.read_text()
-    assert "que ton traitement ÉCRIT" in g
-    assert "834 lignes fraîches" in g, "le fait mesuré, pas une mise en garde vague"
+    assert "that your processing WRITES" in g
+    assert "834 fresh rows" in g, "le fait mesuré, pas une mise en garde vague"
     assert "_claims" in g, "et la signature observable"
 
 
@@ -77,4 +77,4 @@ def test_le_cout_de_l_abandon_est_dit_sur_les_DEUX_surfaces():
     fautif. Le dire évite qu'on prenne le plafond pour une protection suffisante."""
     b, g = _bloc_claim_next(), GUIDE.read_text()
     assert "without being at fault" in b
-    assert "sans avoir rien de fautif" in g
+    assert "without being at fault" in g

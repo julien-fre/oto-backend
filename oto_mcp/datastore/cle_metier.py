@@ -41,11 +41,11 @@ def refuser_cle_metier_vide(schema: Optional[dict], user_data: dict) -> None:
     if posee is None or dsv2.unwrap(posee) != "":
         return
     raise ValueError(
-        f"`{key}` est la clé métier de ce tableau et ce geste l'écrit vide "
-        f"({user_data[key]!r}) : une clé métier vide ne désigne aucune entité — toutes "
-        f"les lignes « sans clé » porteraient la même, et se confondraient. Rien n'a été "
-        f"écrit. Écris la vraie valeur de `{key}` ; si elle est inconnue, omets la "
-        f"colonne (la ligne naît sans clé, non rapprochable).")
+        f"`{key}` is the business key of this table and this write sets it empty "
+        f"({user_data[key]!r}): an empty business key designates no entity — all "
+        f"\"keyless\" rows would carry the same one, and be confused. Nothing was "
+        f"written. Write the real value of `{key}`; if it is unknown, leave the "
+        f"column out (the row is created without a key, not matchable).")
 
 
 def cle_reecrite(schema: Optional[dict], avant: dict, pose: dict) -> Optional[tuple[str, Any, Any]]:
@@ -85,6 +85,6 @@ def ligne_de_la_course_perdue(ns_id: int, key: Optional[str], kv: Any,
     if gagnante is not None:
         return gagnante
     raise ValueError(
-        f"une autre ligne a pris la clé métier `{key}`={kv!r} pendant cette écriture, "
-        f"puis n'a plus été retrouvée (supprimée ou modifiée entre-temps). Rien n'a été "
-        f"écrit pour cette ligne : relis le tableau (data_rows) et rejoue-la.") from None
+        f"another row took the business key `{key}`={kv!r} during this write, "
+        f"then could no longer be found (deleted or modified in the meantime). Nothing was "
+        f"written for this row: read the table again (data_rows) and replay it.") from None

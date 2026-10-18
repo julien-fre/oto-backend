@@ -326,8 +326,8 @@ def _share_write(ctx: ResolvedCtx, inp: ShareWriteInput) -> dict:
                                  "version de procédure dont la forme est tirée.")
     if inp.op == "publish":
         _publication.refuser_si_agent(
-            ctx, "cette procédure",
-            "Elle se publie depuis l'application, bouton « Share » de la procédure.")
+            ctx, "this procedure",
+            "It is published from the app, with the procedure's “Share” button.")
         share, cree = db_partages.publier(
             instr["id"], ctx.org_id, ctx.sub,
             show_readers=True if inp.show_readers is None else inp.show_readers,

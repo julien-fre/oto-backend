@@ -66,8 +66,8 @@ def test_la_creation_ECARTE_et_le_dit(live):
     (ecart,) = rapport["valeurs_ecartees"]
     assert ecart["champ"] == "passe"
     assert ecart["valeur_rejetee"] == "A"
-    assert "hors options" in ecart["motif"]
-    assert "ÉCARTÉES" in rapport["valeurs_ecartees_hint"]
+    assert "not among the options" in ecart["motif"]
+    assert "SET ASIDE" in rapport["valeurs_ecartees_hint"]
 
 
 def test_le_RESTE_de_la_ligne_est_ecrit(live):
@@ -97,7 +97,7 @@ def test_la_modification_REFUSE(live):
     rid = st.append_row(ns, {"siren": "1", "passe": "1"})["_id"]
     with pytest.raises(RowValidationError) as e:
         st.update_row(ns, rid, {"passe": "A"})
-    assert "hors options" in str(e.value)
+    assert "not among the options" in str(e.value)
 
 
 def test_la_face_REST_DECLARE_le_releve():

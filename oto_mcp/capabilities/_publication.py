@@ -39,8 +39,9 @@ REFUS_HORS_ORG = DeclaredError(
 def refuser_si_agent(ctx: ResolvedCtx, quoi: str, ou_le_faire: str) -> None:
     """Refuse une ouverture SANS LOGIN demandée depuis une conversation d'agent.
 
-    `quoi` = ce qui deviendrait lisible, en clair et au concret (« cette page »,
-    « ce projet et les tableaux qui y sont liés ») — pas le nom de l'op.
+    `quoi` = ce qui deviendrait lisible, en clair et au concret (« this page »,
+    « this project and the tables linked to it ») — pas le nom de l'op. Texte lu par
+    l'agent seul (face MCP) : en anglais (docs/conventions.md).
     `ou_le_faire` = le geste humain équivalent. Un refus qui ne dit pas par où passer
     n'arrête pas la demande, il la déplace : l'agent réessaie autrement, et c'est là
     qu'on perd le contrôle qu'on croyait poser.
@@ -49,11 +50,11 @@ def refuser_si_agent(ctx: ResolvedCtx, quoi: str, ou_le_faire: str) -> None:
         return
     raise AuthzDenied(
         403, "publication_reservee_a_l_humain",
-        f"Un agent ne peut pas rendre {quoi} lisible SANS LOGIN. Ce qui est servi "
-        "sans compte est indexable et recopiable : le retirer n'efface pas ce qui a "
-        f"été lu, donc le geste demande une personne. {ou_le_faire} "
-        "Dis-le à qui te parle plutôt que de chercher un autre chemin — élargir à "
-        "l'org reste possible, c'est l'ouverture au web qui ne l'est pas.")
+        f"An agent cannot make {quoi} readable WITHOUT LOGIN. What is served "
+        "without an account can be indexed and copied: withdrawing it does not erase "
+        f"what was read, so the gesture needs a person. {ou_le_faire} "
+        "Tell whoever you are talking to rather than looking for another path — "
+        "widening to the org is still possible, opening to the web is not.")
 
 
 def exiger_appartenance(sub: str, project_id: int) -> None:

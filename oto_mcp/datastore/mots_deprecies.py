@@ -25,9 +25,9 @@ from .errors import RowValidationError
 
 #: Le mot retiré → le geste qui le remplace, tel qu'on le sert.
 REMPLACEMENTS = {
-    dsl.EFFACEMENT: "`null` (il efface la case)",
-    dsl.GARDE: ("omets le sous-champ ; s'il doit survivre à une valeur qui change "
-                "(un `comment`, un `link`), renvoie sa valeur telle quelle"),
+    dsl.EFFACEMENT: "`null` (it clears the cell)",
+    dsl.GARDE: ("leave the sub-field out; if it must survive a value that changes "
+                "(a `comment`, a `link`), send its value back as it is"),
 }
 
 #: La règle servie dans la description de `data_write`.
@@ -66,12 +66,12 @@ def _cite(cols: list[str]) -> str:
 
 def refus(trouves: dict[str, list[str]]) -> str:
     """Le refus nommé : chaque mot, ses colonnes, et le geste qui le remplace."""
-    phrases = [f"`{mot}` ({_cite(cols)}) : à la place, {REMPLACEMENTS[mot]}."
+    phrases = [f"`{mot}` ({_cite(cols)}): instead, {REMPLACEMENTS[mot]}."
                for mot, cols in trouves.items()]
-    return (f"écriture refusée : `{dsl.GARDE}` et `{dsl.EFFACEMENT}` ne sont pas "
-            "acceptés, et rien n'a été écrit. " + " ".join(phrases)
-            + f" Pour dire « cherché, rien », écris `{dsl.VIDE_DELIBERE}`, la raison "
-            "dans `comment`.")
+    return (f"write refused: `{dsl.GARDE}` and `{dsl.EFFACEMENT}` are not "
+            "accepted, and nothing was written. " + " ".join(phrases)
+            + f" To say \"searched, nothing\", write `{dsl.VIDE_DELIBERE}`, with the reason "
+            "in `comment`.")
 
 
 def controler(*corps: Optional[dict]) -> None:

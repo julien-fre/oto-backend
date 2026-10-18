@@ -71,7 +71,7 @@ def test_une_liste_VIDE_est_refusee_et_non_traitee_comme_un_defaut():
     défaut servirait exactement l'INVERSE de ce qu'il demande, et sans un mot."""
     with pytest.raises(ValueError) as e:
         dsver.check([])
-    assert "non vide" in str(e.value)
+    assert "non-empty" in str(e.value)
 
 
 def test_le_refus_NOMME_ce_qui_est_admis():

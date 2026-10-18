@@ -130,7 +130,7 @@ def test_normaliser_ligne_a_tous_les_niveaux_sans_toucher_les_couches():
 def test_un_sous_champ_illisible_est_garde_et_dit_seulement_sans_validation():
     souple, notices = dates.normaliser_ligne(SCHEMA, {"o": {"s": "bientôt"}})
     assert souple == {"o": {"s": "bientôt"}}
-    assert any("`o.s`" in n and "illisible" in n for n in notices)
+    assert any("`o.s`" in n and "unreadable" in n for n in notices)
     strict = {**SCHEMA, "unknown_columns": "report"}
     _, notices = dates.normaliser_ligne(strict, {"o": {"s": "bientôt"}})
     assert notices == set(), "sous validation, c'est le refus qui parle"
@@ -143,7 +143,7 @@ def test_les_bornes_d_un_filtre_couvrent_la_periode():
         "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z"]
     assert dates.bornes_du_filtre("2026-09-04T12:00+02:00", "d") == [
         "2026-09-04T10:00:00Z", "2026-09-04T10:00:00Z"]
-    with pytest.raises(ValueError, match="pas une date lisible"):
+    with pytest.raises(ValueError, match="not a readable"):
         dates.bornes_du_filtre("demain", "d")
 
 
@@ -297,7 +297,7 @@ def test_ne_et_in(table):
 
 
 def test_une_borne_illisible_est_refusee(table):
-    with pytest.raises(ValueError, match="pas une date lisible"):
+    with pytest.raises(ValueError, match="not a readable"):
         _noms(table, "lte", "demain")
 
 

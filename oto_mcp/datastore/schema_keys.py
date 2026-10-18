@@ -325,13 +325,13 @@ CONTRAINTES: dict[str, frozenset[str]] = {
     n: frozenset(c.nom for c in cles if "validateur" in c.lecteurs)
     for n, cles in NIVEAUX.items()}
 
-#: Où l'on est, dans une phrase de refus : « `x` n'est pas admise <ici> ».
+#: Où l'on est, dans une phrase de refus : « `x` is not allowed <ici> ».
 NOMS_DE_NIVEAU: dict[str, str] = {
-    "tete": "en tête du schéma",
-    "champ": "sur une colonne",
-    "sous_champ": "sur un sous-champ",
-    "element": "sur l'élément d'une liste (`of`)",
-    "cycle": "dans un bloc `lifecycle`",
+    "tete": "at the top level of the schema",
+    "champ": "on a column",
+    "sous_champ": "on a sub-field",
+    "element": "on a list element (`of`)",
+    "cycle": "in a `lifecycle` block",
 }
 
 #: Le nom d'un niveau sur le contrat REST (`GET /api/datastore/schema/keys`).
@@ -367,15 +367,15 @@ TEXTES_D_AIDE: tuple[str, ...] = ("note", "help", "hint", "placeholder")
 CLES_RETIREES: dict[str, str] = {
     # oto#124 : la phrase est celle de `reglages.refus_unknown_columns` (module pur,
     # recopiée ici pour ne pas lier le vocabulaire au réglage).
-    "unknown_columns": ("retiré le 05/10/2026 — plus aucun réglage : les colonnes et "
-                        "les valeurs sont toujours vérifiées (une colonne non déclarée "
-                        "est refusée, le format déclaré fait contrat sur tous les "
-                        "tableaux). Retire-le du schéma ; pour écrire une colonne "
-                        "nouvelle, déclare-la dans `fields`, pour accepter une valeur, "
-                        "étends ses `options`"),
-    "origine": ("retirée le 08/09/2026, elle n'est plus lue : l'origine d'une valeur "
-                "se déclare par l'appel qui APPORTE la donnée "
-                "(`data_write(donnees_d_origine=true)`), plus par le schéma"),
+    "unknown_columns": ("removed on 2026-10-05 — no setting any more: columns and "
+                        "values are always checked (an undeclared column "
+                        "is refused, the declared format is a contract on every "
+                        "table). Remove it from the schema; to write a new "
+                        "column, declare it in `fields`, to accept a value, "
+                        "extend its `options`"),
+    "origine": ("removed on 2026-09-08, it is no longer read: the origin of a value "
+                "is declared by the call that BRINGS the data "
+                "(`data_write(donnees_d_origine=true)`), no longer by the schema"),
 }
 
 

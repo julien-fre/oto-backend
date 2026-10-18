@@ -210,9 +210,9 @@ _DS_NOUVEAU = "/api/datastores"
 #: ⚠️ La date est celle du REFUS servi (09/09), pas celle de l'annonce des chemins
 #: (`ANNONCE_DATASTORE`, 08/09) : c'est la première que les agents lisent déjà.
 PARAMETRES_RENOMMES = {
-    "namespace": ("datastore", "09/09/2026",
-                  "**l'adresse ne change pas** (nom du tableau, numéro, forme "
-                  "`slot:<nom>`), c'est la clé qui bascule"),
+    "namespace": ("datastore", "2026-09-09",
+                  "**the address does not change** (table name, number, "
+                  "`slot:<name>` form), only the key switches"),
 }
 _DS_PARAMS = {ancien: v[0] for ancien, v in PARAMETRES_RENOMMES.items()}
 
@@ -228,12 +228,12 @@ def refus_parametre_renomme(ancien: str, valeur: Any = None,
     if ancien not in PARAMETRES_RENOMMES:
         return None
     nouveau, date, inchange = PARAMETRES_RENOMMES[ancien]
-    rejeu = (f"`{outil}` avec `{nouveau}={valeur!r}`" if outil
-             else f"le même appel avec `{nouveau}={valeur!r}`")
-    return (f"`{ancien}` a été renommé `{nouveau}` le {date} — le paramètre n'existe "
-            f"plus sous ce nom, et rien n'a été écrit. Rejoue {rejeu} : {inchange}. "
-            f"⚠️ Ne cherche pas un paramètre manquant : tu as fourni la bonne valeur "
-            f"sous un nom retiré.")
+    rejeu = (f"`{outil}` with `{nouveau}={valeur!r}`" if outil
+             else f"the same call with `{nouveau}={valeur!r}`")
+    return (f"`{ancien}` was renamed `{nouveau}` on {date} — the parameter no longer "
+            f"exists under that name, and nothing was written. Replay {rejeu}: {inchange}. "
+            f"⚠️ Do not hunt for another parameter: you provided the right value "
+            f"under a retired name.")
 
 
 def _alias_datastore() -> tuple:
@@ -360,8 +360,9 @@ RETRAIT_NOM_DE_TABLEAU = RETRAIT_DATASTORE
 
 
 def date_retrait_nom_de_tableau() -> str:
-    """Le jour où un nom de tableau sera refusé, tel qu'il est SERVI (JJ/MM/AAAA)."""
-    return RETRAIT_NOM_DE_TABLEAU.strftime("%d/%m/%Y")
+    """Le jour où un nom de tableau sera refusé, tel qu'il est SERVI à l'agent : ISO
+    (AAAA-MM-JJ). Servi en JJ/MM/AAAA dans des phrases anglaises, il se lisait le 11 août."""
+    return RETRAIT_NOM_DE_TABLEAU.isoformat()
 
 
 def adresse_par_nom(adresse: Any, ns_id: Any) -> bool:
@@ -374,10 +375,10 @@ def adresse_par_nom(adresse: Any, ns_id: Any) -> bool:
 
 def avis_nom_de_tableau(nom: str, ns_id: int) -> str:
     """L'avis servi à chaque réponse obtenue par un nom : l'identifiant et la date."""
-    return (f"⚠️ Le tableau « {nom} » a été adressé par son NOM : passe "
-            f"`datastore={ns_id}`. Un nom de tableau sera REFUSÉ à partir du "
-            f"{date_retrait_nom_de_tableau()} ; l'identifiant, lui, ne change jamais, "
-            f"même si le tableau est renommé.")
+    return (f"⚠️ Table `{nom}` was addressed by its NAME: pass "
+            f"`datastore={ns_id}`. A table name will be REFUSED from "
+            f"{RETRAIT_NOM_DE_TABLEAU.isoformat()} on; the identifier never changes, "
+            f"even if the table is renamed.")
 
 
 # ── Les ops d'envoi des lecteurs de messagerie (oto-backend#1189, 12/10/2026) ─

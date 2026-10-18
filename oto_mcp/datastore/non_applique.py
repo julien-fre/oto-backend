@@ -204,39 +204,38 @@ def lifecycle_hors_statut_warning(champs: list[str],
             return False
 
     manques = [nom for nom, present in (
-        ("état terminal", _terminaux_lisibles()),
-        ("plafond de reprises", max_claims_of(schema) is not None),
-        ("état d'abandon", abandon_state_of(schema) is not None),
-        ("périmètre de réservation", _perimetre_utilisable()),
+        ("terminal state", _terminaux_lisibles()),
+        ("retry cap", max_claims_of(schema) is not None),
+        ("abandon state", abandon_state_of(schema) is not None),
+        ("claim scope", _perimetre_utilisable()),
     ) if not present]
 
-    etat = (f"La colonne de FILE est `{cle}` — celle dont le bloc déclare "
-            "`claimable`, `max_claims` ou `abandon_state`, à défaut la première qui "
-            "porte un bloc —, et **son cycle de vie est le seul appliqué**.")
-    conseil = (f"Reporte sur `{cle}` ce que tu veux voir appliqué, ou déclare la "
-               f"file (`claimable`, `max_claims` + `abandon_state`) sur le bloc de "
-               f"{noms} si c'est lui qui décrit le vrai état de travail.")
+    etat = (f"The QUEUE column is `{cle}` — the one whose block declares "
+            "`claimable`, `max_claims` or `abandon_state`, failing that the first one that "
+            "carries a block —, and **its lifecycle is the only one enforced**.")
+    conseil = (f"Move to `{cle}` what you want enforced, or declare the "
+               f"queue (`claimable`, `max_claims` + `abandon_state`) on the block of "
+               f"{noms} if that is the one describing the real work state.")
 
     if manques:
         # « pas d'état », « pas de plafond » : l'élision se calcule, elle ne se
         # devine pas — une phrase servie à un agent est lue par un humain derrière.
-        liste = ", ".join(("pas d'" if m[0] in "aeiouéè" else "pas de ") + m
-                          for m in manques)
-        consequence = "Ce tableau n'a donc " + liste + " : "
-        consequence += ("une ligne réservée n'est pas relâchée quand elle se termine, "
-                        "et la file peut tourner à vide indéfiniment."
-                        if "état terminal" in manques
-                        else "la file ne s'arrête pas d'elle-même sur ces crans.")
+        liste = ", ".join("no " + m for m in manques)
+        consequence = "This table therefore has " + liste + ": "
+        consequence += ("a claimed row is not released when it finishes, "
+                        "and the queue can spin empty indefinitely."
+                        if "terminal state" in manques
+                        else "the queue does not stop by itself on these guards.")
     else:
-        consequence = ("Tous les crans de la file sont par ailleurs déclarés sur "
-                       f"`{cle}` : cette déclaration-ci n'a aucun effet POUR OTO.")
+        consequence = ("All the queue guards are otherwise declared on "
+                       f"`{cle}`: this declaration has no effect FOR OTO.")
 
-    return (f"cycle de vie NON LU : {noms} — oto ne valide les transitions que sur "
-            f"la colonne de file. {etat} {consequence} {conseil} "
-            "Jamais pendant qu'une vague tourne. ⚠️ « Non lu par oto » ne veut pas dire "
-            "« lu par personne » : un consommateur en aval peut parfaitement s'en "
-            "servir, et la plateforme ne sait pas qui lit quoi. Ne le retire pas sur "
-            "la seule foi de ce message — demande à qui affiche ce tableau.")
+    return (f"lifecycle NOT READ: {noms} — oto only validates transitions on "
+            f"the queue column. {etat} {consequence} {conseil} "
+            "Never while a wave is running. ⚠️ \"Not read by oto\" does not mean "
+            "\"read by nobody\": a downstream consumer may perfectly well use "
+            "it, and the platform does not know who reads what. Do not remove it on "
+            "the sole basis of this message — ask whoever displays this table.")
 
 
 # ── Deux gardes qui ont l'air de mordre, et qui ne mordent pas là (08/09/2026) ─
@@ -303,12 +302,12 @@ def motif_sans_obligation_warning(champs: list[str]) -> Optional[str]:
     if not champs:
         return None
     noms = ", ".join(f"`{c}`" for c in champs)
-    return (f"motif posé sans obligation de remplir : {noms} — un motif contraint ce "
-            "qui est ÉCRIT, jamais le fait d'écrire. Un champ absent, ou vide, passe "
-            "sans être vérifié. Si le motif sert de PREUVE (une source citée, un jeton "
-            "d'outil), ajoute `required_when: {<colonne>: [<valeur>]}` pour l'exiger à "
-            "l'étape où il compte — `required: true` l'exigerait aussi sur les lignes "
-            "qui n'y sont pas encore arrivées.")
+    return (f"pattern set without any obligation to fill: {noms} — a pattern constrains what "
+            "is WRITTEN, never the fact of writing. An absent, or empty, field passes "
+            "without being checked. If the pattern serves as PROOF (a cited source, a tool "
+            "token), add `required_when: {<column>: [<value>]}` to require it at "
+            "the stage where it matters — `required: true` would also require it on rows "
+            "that have not reached that stage yet.")
 
 
 def couche_exigee_sans_forme(schema: Optional[dict]) -> list[str]:
@@ -347,9 +346,9 @@ def couche_exigee_sans_forme_warning(champs: list[str]) -> Optional[str]:
     if not champs:
         return None
     noms = ", ".join(f"`{c}`" for c in champs)
-    return (f"couche exigée sans forme : {noms} — `required_layers` garde qu'une "
-            "couche EXISTE, jamais ce qu'elle contient : « vu quelque part » y passe "
-            "aussi bien qu'une référence de registre. Pour contraindre le contenu, "
-            "déclare la couche comme une colonne à part entière — "
-            '`{"key": "<colonne>.comment", "type": "text", "max_length": …, '
-            '"pattern": …}` — et le refus nommera alors le champ et la valeur.')
+    return (f"required layer without a form: {noms} — `required_layers` guards that a "
+            "layer EXISTS, never what it contains: \"seen somewhere\" passes "
+            "as well as a registry reference. To constrain the content, "
+            "declare the layer as a column in its own right — "
+            '`{"key": "<column>.comment", "type": "text", "max_length": …, '
+            '"pattern": …}` — and the refusal will then name the field and the value.')

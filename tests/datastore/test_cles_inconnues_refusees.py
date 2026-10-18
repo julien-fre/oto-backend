@@ -35,7 +35,7 @@ def _un_refus(schema, ancien=None) -> str:
 # ── ① par niveau : le refus, son chemin, et la clé proche ────────────────────
 
 @pytest.mark.parametrize("schema,chemin,cle,proche", [
-    ({"new_row": "reject", "fields": [{"key": "a"}]}, "tête", "new_row", "new_rows"),
+    ({"new_row": "reject", "fields": [{"key": "a"}]}, "top level", "new_row", "new_rows"),
     ({"fields": [{"key": "a", "read_only": True}]}, "fields.a", "read_only", "readonly"),
     ({"fields": [{"key": "o", "type": "object",
                   "fields": [{"key": "y", "requird": True}]}]},
@@ -47,38 +47,38 @@ def _un_refus(schema, ancien=None) -> str:
 ])
 def test_chaque_niveau_refuse_et_nomme_la_cle_proche(schema, chemin, cle, proche):
     msg = _un_refus(schema)
-    assert msg.startswith(f"{chemin} : `{cle}` n'est pas admise"), msg
-    assert f"voulais-tu `{proche}` ?" in msg, msg
+    assert msg.startswith(f"{chemin}: `{cle}` is not allowed"), msg
+    assert f"did you mean `{proche}`?" in msg, msg
 
 
 def test_une_cle_d_un_AUTRE_niveau_est_renvoyee_a_son_domicile():
     """« Inconnue » serait faux : elle existe, ailleurs. Le refus dit où."""
     assert "`lifecycle.states`" in _un_refus(
         {"fields": [{"key": "s", "states": ["a"]}]})
-    assert "réglage de TÊTE" in _un_refus(
+    assert "TOP-LEVEL setting" in _un_refus(
         {"fields": [{"key": "s", "new_rows": "reject"}]})
     # oto#124 : un réglage RETIRÉ dit pourquoi, à tout niveau.
-    assert "plus aucun réglage" in _un_refus(
+    assert "no setting any more" in _un_refus(
         {"fields": [{"key": "s", "unknown_columns": "report"}]})
-    assert "attribut de COLONNE" in _un_refus({"readonly": True})
+    assert "COLUMN attribute" in _un_refus({"readonly": True})
     msg = _un_refus({"fields": [{"key": "o", "type": "object",
                                  "fields": [{"key": "y", "readonly": True}]}]})
-    assert "ne se pose qu'au premier niveau" in msg and "`readonly`" in msg
+    assert "is set only at the first level" in msg and "`readonly`" in msg
 
 
 def test_un_PARAMETRE_d_appel_range_dans_le_schema_a_sa_phrase():
     msg = _un_refus({"semantic_search": True})
-    assert "PARAMÈTRE de l'appel" in msg and "data_set_schema(semantic_search=" in msg
+    assert "PARAMETER of the call" in msg and "data_set_schema(semantic_search=" in msg
 
 
 def test_origine_est_refusee_comme_cle_RETIREE():
     msg = _un_refus({"fields": [{"key": "a", "origine": "system"}]})
-    assert "retirée le 08/09/2026" in msg and "donnees_d_origine" in msg
+    assert "removed on 2026-09-08" in msg and "donnees_d_origine" in msg
 
 
 def test_sans_parente_le_refus_liste_le_niveau_et_ouvre_meta():
     msg = _un_refus({"fields": [{"key": "a", "explained_by": "b"}]})
-    assert "les clés admises ici sont" in msg and "`meta`" in msg
+    assert "the keys allowed here are" in msg and "`meta`" in msg
 
 
 @pytest.mark.parametrize("aide", K.TEXTES_D_AIDE)
@@ -122,10 +122,10 @@ def test_meta_est_admis_a_chaque_niveau_et_transporte_tel_quel():
 
 
 def test_meta_doit_etre_un_objet_borne():
-    assert "doit être un objet" in _un_refus({"fields": [{"key": "a", "meta": [1]}]})
+    assert "must be an object" in _un_refus({"fields": [{"key": "a", "meta": [1]}]})
     trop = {"x": "é" * K.META_MAX_OCTETS}
     msg = _un_refus({"meta": trop})
-    assert f"au plus {K.META_MAX_OCTETS}" in msg
+    assert f"at most {K.META_MAX_OCTETS}" in msg
     juste = {"x": "a" * (K.META_MAX_OCTETS - len('{"x":""}'))}
     assert K.taille_json(juste) == K.META_MAX_OCTETS
     assert validate_schema_def({"meta": juste}) == []
@@ -161,13 +161,13 @@ def test_la_meme_cle_ailleurs_est_un_geste():
     """Le chemin compte : `note` stockée sur `a` n'autorise pas `note` sur `b`."""
     nouveau = copy.deepcopy(ANCIEN)
     nouveau["fields"][1]["note"] = "aide d'avant"
-    assert _un_refus(nouveau, ANCIEN).startswith("fields.b : `note`")
+    assert _un_refus(nouveau, ANCIEN).startswith("fields.b: `note`")
 
 
 def test_le_residu_stocke_se_DIT():
     w = C.residus_warning({"fields": [{"key": "s", "type": "enum",
                                        "enum": ["a"], "options": ["a", "b"]}]})
-    assert "`fields.s.enum`" in w and "Ce qui fait foi : `options`" in w
+    assert "`fields.s.enum`" in w and "What is authoritative: `options`" in w
     assert C.residus_warning({"fields": [{"key": "s", "options": ["a"]}]}) is None
 
 
@@ -205,7 +205,7 @@ def test_le_patch_qui_POSE_une_cle_inconnue_est_refuse(live, monkeypatch):
     st = _store(monkeypatch, ns_id)
     with pytest.raises(SchemaDefinitionError, match="fields.b : `hint`"):
         st.patch_schema(str(ns_id), fields=[{"key": "b", "hint": "h"}])
-    with pytest.raises(SchemaDefinitionError, match="fields.a : `note`"):
+    with pytest.raises(SchemaDefinitionError, match="fields.a: `note`"):
         st.patch_schema(str(ns_id), fields=[{"key": "a", "note": "autre"}])
     assert db.get_datastore_by_id(ns_id)["schema"] == ANCIEN, "rien n'est écrit"
     # Le geste qui range : retirer l'attribut, poser `meta`.
@@ -224,11 +224,11 @@ def test_la_face_REST_rend_le_refus_en_400(live, monkeypatch):
     code, corps = call("me.datastore.set_schema", path_params={"datastore": str(ns_id)},
                        body={"schema": {"fields": [{"key": "a", "read_only": True}]}})
     assert code == 400 and corps["error"] == "invalid_schema", corps
-    assert "fields.a : `read_only`" in corps["detail"]
-    assert "voulais-tu `readonly` ?" in corps["detail"]
+    assert "fields.a: `read_only`" in corps["detail"]
+    assert "did you mean `readonly`?" in corps["detail"]
     code, corps = call("me.datastore.patch_schema", path_params={"datastore": str(ns_id)},
                        body={"fields": [{"key": "a", "editable": True}]})
-    assert code == 400 and "fields.a : `editable`" in corps["detail"], corps
+    assert code == 400 and "fields.a: `editable`" in corps["detail"], corps
 
 
 def test_la_route_des_cles_sert_les_CINQ_niveaux(monkeypatch):
@@ -253,7 +253,7 @@ SLOT_ANCIEN = [{"name": "vivier", "type": "tableau",
 
 def test_un_slot_neuf_porteur_d_une_cle_inconnue_est_refuse():
     from oto_mcp.slots import validate_slots
-    with pytest.raises(ValueError, match="fields.a : `note`"):
+    with pytest.raises(ValueError, match="fields.a: `note`"):
         validate_slots(copy.deepcopy(SLOT_ANCIEN))
 
 
@@ -266,7 +266,7 @@ def test_un_slot_deja_stocke_reste_enregistrable_tant_qu_on_n_y_touche_pas():
     assert validate_slots(repris, SLOT_ANCIEN)[0]["schema"] == repris[0]["schema"]
     change = copy.deepcopy(SLOT_ANCIEN)
     change[0]["schema"]["fields"][0]["note"] = "autre"
-    with pytest.raises(ValueError, match="fields.a : `note`"):
+    with pytest.raises(ValueError, match="fields.a: `note`"):
         validate_slots(change, SLOT_ANCIEN)
     autre_slot = [{**copy.deepcopy(SLOT_ANCIEN[0]), "name": "autre"}]
     with pytest.raises(ValueError, match="`note`"):

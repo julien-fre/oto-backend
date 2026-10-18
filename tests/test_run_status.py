@@ -93,18 +93,18 @@ def test_un_run_clos_porte_son_issue():
 
 def test_un_run_vivant_reste_en_cours():
     run = {"outcome": None, "last_seen_at": _il_y_a(hours=2)}
-    assert run_status.describe(run, now=MAINTENANT) == "(en cours)"
+    assert run_status.describe(run, now=MAINTENANT) == "(in progress)"
 
 
 def test_un_run_muet_porte_la_DATE_de_son_dernier_signe():
     """Une date, pas une durée : « depuis le 01/08 » se vérifie d'un coup d'œil dans le
     journal, « depuis 12 jours » oblige à compter."""
     run = {"outcome": None, "last_seen_at": datetime(2026, 8, 1, 9, 0, tzinfo=timezone.utc)}
-    assert run_status.describe(run, now=MAINTENANT) == "(sans nouvelles depuis le 01/08)"
+    assert run_status.describe(run, now=MAINTENANT) == "(silent since 2026-08-01)"
 
 
 def test_un_run_sans_dernier_signe_reste_en_cours():
-    assert run_status.describe({"outcome": None}, now=MAINTENANT) == "(en cours)"
+    assert run_status.describe({"outcome": None}, now=MAINTENANT) == "(in progress)"
 
 
 # --- le vocabulaire : une seule source, et c'est celle de l'ADR ----------------

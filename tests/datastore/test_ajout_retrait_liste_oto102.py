@@ -65,19 +65,19 @@ def test_l_egalite_est_celle_du_json():
 
 def test_une_valeur_absente_est_refusee_en_la_nommant():
     texte = _refus(lambda: _geste({"tags[-]": ["a", "zz"]}, {"tags": ["a"]}))
-    assert '`"zz"`' in texte and "1 élément en place" in texte
+    assert '`"zz"`' in texte and "1 item in place" in texte
     texte = _refus(lambda: _geste({"tags[-]": "a"}, {}, creation=True))
-    assert "CRÉE la ligne" in texte
+    assert "CREATES the row" in texte
 
 
 @pytest.mark.parametrize("row, attendu", [
     ({"tags[+]": None}, "`null`"),
-    ({"tags[+]": []}, "une liste vide"),
-    ({"tags[-]": ["a", None]}, "un `null` dans la liste"),
-    ({"contacts[-]": "A"}, "`\"contacts[<rang>]\": null`"),
-    ({"tags[-]": {"nom": "A"}}, "liste de VALEURS"),
-    ({"tags[-].x": "a"}, "liste de VALEURS"),
-    ({"tags[-]": "a", "tags": ["b"]}, "ENTIÈRE et par rang"),
+    ({"tags[+]": []}, "an empty list"),
+    ({"tags[-]": ["a", None]}, "a `null` in the list"),
+    ({"contacts[-]": "A"}, "`\"contacts[<index>]\": null`"),
+    ({"tags[-]": {"nom": "A"}}, "list of VALUES"),
+    ({"tags[-].x": "a"}, "list of VALUES"),
+    ({"tags[-]": "a", "tags": ["b"]}, "WHOLE and by index"),
 ])
 def test_les_formes_sans_objet_sont_refusees(row, attendu):
     assert attendu in _refus(lambda: sortir_les_rangs(SCHEMA, row))
@@ -90,7 +90,7 @@ def test_un_ajout_ne_peut_pas_fabriquer_une_identite_double():
     _reste, rangs = sortir_les_rangs(schema, {"contacts[+]": [{"role": "RH"},
                                                               {"role": "RH"}]})
     rangs.preparer(schema, lambda _s, d: d)
-    assert "en double" in _refus(lambda: rangs.appliquer({}, schema, creation=True))
+    assert "duplicated" in _refus(lambda: rangs.appliquer({}, schema, creation=True))
 
 
 def test_un_mot_reserve_dans_une_liste_de_valeurs_reste_refuse():

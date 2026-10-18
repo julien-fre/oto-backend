@@ -117,7 +117,7 @@ def adresse_servie(url: Optional[str], sub: Optional[str]) -> dict:
     from .. import access, links
     raison = links.raison_sans_lien("table", sub=sub, id=0, org=access.current_org(sub))
     return {"url": None,
-            "url_absente": raison or "aucune adresse n'a pu être construite pour ce tableau"}
+            "url_absente": raison or "no address could be built for this table"}
 
 
 
@@ -128,12 +128,12 @@ def indice_de_liberation(issue: dict) -> str:
     Écrite ICI plutôt que sur chaque face : les deux avaient chacune sa formule, et
     toutes deux mêlaient « rien à rendre » et « la ligne est à un autre »."""
     if issue["reason"] == "no_lease":
-        return ("aucun bail sur cette ligne — rien à rendre. Ce n'est pas un échec : "
-                "la ligne est libre, ton travail peut continuer.")
+        return ("no lease on this row — nothing to release. This is not a failure: "
+                "the row is free, your work can continue.")
     bail = issue.get("lease") or {}
     jusqu = str(bail.get("claimed_until") or "?")[:16]
-    return (f"bail tenu par `{bail.get('claimed_by')}` jusqu'à {jusqu} — la ligne ne "
-            "t'appartient pas. Réserve-en une autre avec `data_claim_next`.")
+    return (f"lease held by `{bail.get('claimed_by')}` until {jusqu} — the row does not "
+            "belong to you. Claim another one with `data_claim_next`.")
 
 
 def _backquote(noms) -> str:
@@ -195,36 +195,36 @@ def _refus_de_creation(datastore: str, key: str, value: Any = None, *,
     Le cran ne bouge pas pour autant : la sortie passe par le SCHÉMA, jamais par un
     paramètre « forcer » sur l'écriture (#516 — un bouton force devient un réflexe,
     et le cran redevient une étiquette)."""
-    ferme = ("ce tableau n'accepte que les écritures qui visent une ligne EXISTANTE "
-             "(`new_rows: \"reject\"`) — rien n'a été créé.")
-    sortie = ("Vise-la par son identifiant : data_write(id=…, row={…}) — son `_id` "
-              "est rendu par data_rows et data_claim_next.")
+    ferme = ("this table only accepts writes that target an EXISTING row "
+             "(`new_rows: \"reject\"`) — nothing was created.")
+    sortie = ("Target it by its identifier: data_write(id=…, row={…}) — its `_id` "
+              "is returned by data_rows and data_claim_next.")
     naissance = (
-        f"Si cette ligne doit VRAIMENT naître, c'est une décision de SCHÉMA et pas "
-        f"d'écriture — le cran a été posé sur ce tableau : "
-        f"data_patch_schema(datastore='{datastore}', new_rows=\"create\"), ton "
-        f"écriture, puis data_patch_schema(datastore='{datastore}', "
-        f"new_rows=\"reject\") pour refermer.")
+        f"If this row must REALLY be created, that is a SCHEMA decision, not a "
+        f"write decision — the lock was set on this table: "
+        f"data_patch_schema(datastore='{datastore}', new_rows=\"create\"), your "
+        f"write, then data_patch_schema(datastore='{datastore}', "
+        f"new_rows=\"reject\") to close it again.")
     portee = value is not None and str(value) != ""
     details: dict = {"key": key, "cle_portee": portee}
     if portee:
         details["valeur"] = value
         message = (
-            f"cette écriture porte `{key}` = {str(value)!r}, mais aucune ligne de "
-            f"`{datastore}` n'a cette valeur : {ferme} Vérifie la valeur (une clé "
-            f"inventée créerait une ligne que rien ne rapproche). {sortie} {naissance}")
+            f"this write carries `{key}` = {str(value)!r}, but no row of "
+            f"`{datastore}` has this value: {ferme} Check the value (a made-up "
+            f"key would create a row that nothing matches). {sortie} {naissance}")
     else:
-        message = (f"cette écriture ne porte pas `{key}`, la clé métier de "
-                   f"`{datastore}` : {ferme}")
+        message = (f"this write does not carry `{key}`, the business key of "
+                   f"`{datastore}`: {ferme}")
         if cle_du_lot and cle_du_lot != key and ligne.get(cle_du_lot) is not None:
             details["cle_du_lot"] = cle_du_lot
-            message += (f" Ce lot dédoublonne sur `{cle_du_lot}`, que la ligne porte ; "
-                        f"le cran, lui, se juge sur la clé DÉCLARÉE `{key}`.")
+            message += (f" This batch deduplicates on `{cle_du_lot}`, which the row carries; "
+                        f"the lock, however, is judged on the DECLARED key `{key}`.")
         elif key != "key" and isinstance(ligne.get("key"), str):
-            message += (f" `key` est lu comme une COLONNE de la ligne, pas comme le nom "
-                        f"de la clé : écris `{key}` lui-même, avec sa valeur.")
-        message += (f" {sortie} Sinon renseigne `{key}` avec la valeur que porte la "
-                    f"ligne visée. {naissance}")
+            message += (f" `key` is read as a COLUMN of the row, not as the name "
+                        f"of the key: write `{key}` itself, with its value.")
+        message += (f" {sortie} Otherwise fill in `{key}` with the value carried by the "
+                    f"targeted row. {naissance}")
     details.update(car.rendre({car.champ(car.RACINE, key):
                                gabarit(champ_declare(schema, key) or {})}))
     return BusinessKeyRequired(message, key=key, datastore=datastore,

@@ -89,7 +89,7 @@ def test_sans_cle_declaree_le_refus_le_dit(monkeypatch):
     monkeypatch.setattr(D, "_acting_store", lambda: s)
     with pytest.raises(McpError) as e:
         _tool()(datastore=NOM, key=CLE, row={CLE: "x"})
-    assert "ne déclare pas de clé métier" in e.value.error.message
+    assert "declares no business key" in e.value.error.message
     assert s.appends == []
 
 
@@ -98,7 +98,7 @@ def test_le_refus_nomme_la_cle_declaree_et_la_forme_en_lot():
     serait acceptée, et la même ligne enveloppée dans `rows=[…]`."""
     msg = jetons.refus_de_key_sans_lot("synthese", CLE)
     assert f"`{CLE}`" in msg
-    assert "même une seule ligne" in msg and "rows=[" in msg
+    assert "even a single row" in msg and "rows=[" in msg
 
 
 def test_la_regle_pure():

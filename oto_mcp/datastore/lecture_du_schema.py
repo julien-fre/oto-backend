@@ -78,7 +78,7 @@ def _garder(noeud: dict, niveau: str) -> dict:
 def _chemin(pas: tuple) -> str:
     """`contacts.of.email` — les clés de colonne, et `of`/`lifecycle` entre elles."""
     if not pas:
-        return "tête"
+        return "top level"
     return ".".join(str(p[1]) if p[0] == "fields" else p[0] for p in pas)
 
 
@@ -86,24 +86,24 @@ def _sans_effet(schema: Optional[dict]) -> list[dict]:
     out = [{"chemin": c, "cle": "agent_access", "raison": r}
            for c, r in aga.sans_effet(schema)]
     out += [{"chemin": c, "cle": "options",
-             "raison": f"appliquée à partir du {vc.date_de_bascule().isoformat()} "
-                       "(oto#124) : d'ici là, une valeur hors liste s'écrit, avec un "
-                       "préavis"}
+             "raison": f"enforced from {vc.date_de_bascule().isoformat()} on "
+                       "(oto#124): until then, an off-list value is written, with a "
+                       "notice"}
             for c in options_not_enforced(schema)]
     out += [{"chemin": c, "cle": "lifecycle",
-             "raison": "seule la colonne de file voit ses transitions validées"}
+             "raison": "only the queue column has its transitions validated"}
             for c in lifecycle_hors_statut(schema)]
     for niveau, pas, noeud in cles_inconnues.parcours(schema):
         out += [{"chemin": _chemin(pas), "cle": c,
                  "raison": (_RETIRE if not pas and c == "unknown_columns" else
-                            "aucun niveau ne l'admet : stockée, jamais lue")}
+                            "no level accepts it: stored, never read")}
                 for c in cles_inconnues.inconnues(niveau, noeud)]
     return out
 
 
 #: oto#124 : le réglage retiré, encore STOCKÉ, est lu jusqu'à la date — puis plus.
-_RETIRE = ("réglage retiré le 05/10/2026 (plus aucun réglage) : stocké, lu jusqu'à la "
-           "date où le format fait contrat partout, puis retiré par la plateforme")
+_RETIRE = ("setting removed on 2026-10-05 (no settings any more): stored, read until the "
+           "date the format becomes binding everywhere, then removed by the platform")
 
 
 def gardes(schema: Optional[dict]) -> dict:

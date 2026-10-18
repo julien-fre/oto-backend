@@ -229,9 +229,9 @@ def test_la_bonne_declaration_passe():
 
 
 @pytest.mark.parametrize("advance,attendu", [
-    ({"societe": ["dirigeant"]}, "doit être UN état"),
-    ({"societe": None}, "doit être UN état"),
-    ("dirigeant", "doit être un objet"),
+    ({"societe": ["dirigeant"]}, "must be ONE state"),
+    ({"societe": None}, "must be ONE state"),
+    ("dirigeant", "must be an object"),
     ({"societe": "inconnu"}, "état inconnu 'inconnu'"),
     ({"fait": "echec"}, "est un état terminal"),
     ({"echec": "a_traiter"}, "est un état terminal"),
@@ -262,7 +262,7 @@ def test_le_patch_fusionne_l_avance_etat_par_etat_et_garde_la_coherence(live):
     assert S.avance_of(st.get_schema(ns)) == {"dirigeant": "email"}
     # Retirer la transition qu'une avance emprunte est refusé : c'est le schéma
     # FUSIONNÉ qui est jugé.
-    with pytest.raises(ValueError, match="n'est pas une transition déclarée"):
+    with pytest.raises(ValueError, match="is not a declared transition"):
         st.patch_schema(ns, fields=[{"key": "statut", "lifecycle": {
             "transitions": {"dirigeant": ["echec"]}}}])
 
@@ -283,4 +283,4 @@ def test_le_texte_servi_dit_le_mecanisme():
     assert "advance" in fiche("data_claim_next")
     assert "advanced" in fiche("data_release")
     guide = guide_store.file_guide("datastore-semantics")["body_md"]
-    assert "`advance`" in guide and "ce sont deux FILES" in guide
+    assert "`advance`" in guide and "is two QUEUES" in guide

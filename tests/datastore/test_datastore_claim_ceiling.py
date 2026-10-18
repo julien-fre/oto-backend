@@ -164,8 +164,8 @@ def test_le_motif_cite_ses_chiffres(plafonne):
     rid = _tourner_a_vide(st, ns, 3)
 
     # Réservée hors run : rien où lire la cause, et le motif le dit (#491).
-    motif = ("abandonnée après 3 réservations sans écriture, plafond 3 — dernière "
-             "tentative : cause inconnue : réservée hors run")
+    motif = ("abandoned after 3 claims without a write, ceiling 3 — last "
+             "attempt: unknown cause: claimed outside a run")
     assert _brut(ns_id, rid)["abandon_reason"] == motif
     lue = st.get_row(ns, rid)
     assert lue["_abandon"] == motif
@@ -351,7 +351,7 @@ def test_sans_declaration_le_plafond_par_defaut_met_la_ligne_de_cote(live):
 
     assert st.claim_next(ns, worker="agent-1") is None
     brut = _brut(ns_id, rid)
-    assert "plafond 3 (défaut de la plateforme" in brut["abandon_reason"]
+    assert "ceiling 3 (platform default" in brut["abandon_reason"]
     assert brut["data"]["statut"] == "a_faire"
 
 

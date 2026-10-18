@@ -81,7 +81,7 @@ def test_sans_cible_declaree_aucune_file_n_est_inventee():
     désignerait une file imaginaire — l'instruction reste nue."""
     nue = _instruction.de_file("veille", None, None)
     assert "`veille`" in nue
-    assert "data_claim_next" not in nue and "tableau" not in nue
+    assert "data_claim_next" not in nue and "datastore" not in nue
 
 
 def test_un_declencheur_sans_instruction_pointe_sa_procedure(monkeypatch):
@@ -208,7 +208,7 @@ def test_une_instruction_ecrite_part_intacte(monkeypatch):
     tete, _, date = charge["input"].partition("\n\n")
     assert tete == "Ne regarde que les appels d'hier.", (
         "composer ne se substitue à personne : ce qui est écrit est servi")
-    assert date.startswith("Cette exécution est l'occurrence du "), (
+    assert date.startswith("This run is the occurrence of "), (
         "seule la date de l'occurrence la suit")
 
 
@@ -218,8 +218,8 @@ def test_l_occurrence_part_DATEE_dans_le_fuseau_du_declencheur(monkeypatch):
     L'échéance relue de la base est naïve et UTC (`TimeZone=UTC`)."""
     charge = _tick_avec(monkeypatch, next_due="2026-09-12 04:05:00")
     assert charge["input"].endswith(
-        "Cette exécution est l'occurrence du samedi 12/09/2026 à 06:05 "
-        "(Europe/Paris), soit 2026-09-12T04:05:00Z.")
+        "This run is the occurrence of Saturday 2026-09-12 at 06:05 "
+        "(Europe/Paris), i.e. 2026-09-12T04:05:00Z.")
 
 
 def test_un_fuseau_illisible_leve_au_lieu_d_inventer_une_heure():
@@ -232,7 +232,7 @@ def test_une_echeance_avec_fuseau_garde_son_instant():
     paris_ete = timezone(timedelta(hours=2))
     assert _instruction.horodatee(
         "x", datetime(2026, 10, 10, 8, 0, tzinfo=paris_ete), "Europe/Paris").endswith(
-        "samedi 10/10/2026 à 08:00 (Europe/Paris), soit 2026-10-10T06:00:00Z.")
+        "Saturday 2026-10-10 at 08:00 (Europe/Paris), i.e. 2026-10-10T06:00:00Z.")
 
 
 def test_une_invite_videe_depuis_le_produit_ne_casse_pas_l_agent(monkeypatch):
@@ -250,7 +250,8 @@ def test_aucune_autre_capacite_ne_redige_sa_propre_instruction():
     paquet = pathlib.Path(_instruction.__file__).parent
     coupables = [
         f.name for f in paquet.glob("*.py")
-        if f.name != "_instruction.py" and "Lis la procédure" in f.read_text()]
+        if f.name != "_instruction.py"
+        and any(m in f.read_text() for m in ("Lis la procédure", "Read the procedure"))]
     assert not coupables, (
         f"{coupables} rédige(nt) une instruction au lieu de la dériver de "
         "`_instruction`")

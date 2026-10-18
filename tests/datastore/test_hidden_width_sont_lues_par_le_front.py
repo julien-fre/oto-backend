@@ -59,9 +59,9 @@ def test_le_SIGNAL_survit_a_la_desaturation():
                      "enum": ["a", "b"], "options": ["a", "b", "c"],
                      "hidden": True, "width": "full"}]}
     errs = dsv2.validate_schema_def(S)
-    assert len(errs) == 1 and "voulais-tu `options` ?" in errs[0], errs
+    assert len(errs) == 1 and "did you mean `options`?" in errs[0], errs
     w = cles_inconnues.residus_warning(S)
-    assert w and "`fields.statut.enum`" in w and "Ce qui fait foi : `options`" in w
+    assert w and "`fields.statut.enum`" in w and "What is authoritative: `options`" in w
 
 
 def test_ce_qui_reste_denonce_ne_contient_PAS_les_prescrites():

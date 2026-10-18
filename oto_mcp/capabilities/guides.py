@@ -104,7 +104,7 @@ def _target_org(ctx: ResolvedCtx, owner_id: Optional[str]) -> int:
             raise refus_hors_vue(f"l'org #{owner_id}")
         return int(owner_id)
     if ctx.org_id is None:
-        raise AuthzDenied(400, "no_active_org", "Aucune org active — vois `oto_use_org`.")
+        raise AuthzDenied(400, "no_active_org", "No active org — see `oto_use_org`.")
     return int(ctx.org_id)
 
 
@@ -123,7 +123,7 @@ def _target_group(ctx: ResolvedCtx, owner_id: Optional[str]) -> int:
     gid = ctx.group_id if ctx.group_id is not None else access.current_group(ctx.sub)
     if gid is None:
         raise AuthzDenied(400, "no_active_group",
-                          "Aucune équipe active — vois `oto_use_group`.")
+                          "No active team — see `oto_use_group`.")
     return int(gid)
 
 
@@ -186,12 +186,12 @@ def _target_tenant(ctx: ResolvedCtx, owner_id: Optional[str]) -> str:
     slug = (owner_id or "").strip() or tenancy.current().tenant_of(ctx.sub)
     if not slug or slug == tenancy.primary_slug():
         raise AuthzDenied(400, "bad_owner",
-                          "Préciser le tenant visé (son slug) — `platform` a son "
-                          "propre scope.")
+                          "Name the target tenant (its slug) — `platform` has its "
+                          "own scope.")
     if not any(e.slug == slug for e in tenancy.current().entries()):
         raise AuthzDenied(404, "unknown_tenant",
-                          f"Aucun tenant `{slug}` au registre. Un tenant se déclare "
-                          "en base et le registre se construit au démarrage.")
+                          f"No tenant `{slug}` in the registry. A tenant is declared "
+                          "in the database and the registry is built at startup.")
     return slug
 
 
@@ -205,12 +205,12 @@ def _owner_for_read(ctx: ResolvedCtx, scope: str, owner_id: Optional[str] = None
     if scope == "org":
         oid = _target_org(ctx, owner_id)
         if owner_id and not roles.is_org_member(ctx.sub, oid):
-            raise AuthzDenied(403, "forbidden", "Réservé aux membres de l'org.")
+            raise AuthzDenied(403, "forbidden", "Reserved to members of the org.")
         return str(oid)
     if scope == "group":
         gid = _target_group(ctx, owner_id)
         if owner_id and not roles.can_read_group(ctx.sub, gid):
-            raise AuthzDenied(403, "forbidden", "Réservé aux membres de l'équipe.")
+            raise AuthzDenied(403, "forbidden", "Reserved to members of the team.")
         return str(gid)
     if scope == "platform":
         return guide_store.PLATFORM_OWNER
@@ -220,9 +220,9 @@ def _owner_for_read(ctx: ResolvedCtx, scope: str, owner_id: Optional[str] = None
         from .. import roles, tenancy
         sien = tenancy.current().tenant_of(ctx.sub)
         if owner_id and owner_id != sien and not roles.is_platform_admin(ctx.sub):
-            raise AuthzDenied(403, "forbidden", "Réservé à l'admin plateforme.")
+            raise AuthzDenied(403, "forbidden", "Reserved to the platform admin.")
         return _target_tenant(ctx, owner_id)
-    raise AuthzDenied(400, "bad_scope", "scope = platform | org | group | user.")
+    raise AuthzDenied(400, "bad_scope", "scope = platform | tenant | org | group | user.")
 
 
 def _init_ref(ctx: ResolvedCtx, scope: str, slug: str, *, write: bool,
@@ -310,7 +310,7 @@ def _get(ctx: ResolvedCtx, inp: GuideRefInput) -> dict:
                                 owner_id=inp.owner_id)
         return _init_view(inp.scope, slug, guide_store.get_init_guide(inp.scope, ident))
     if not inp.slug:
-        raise AuthzDenied(400, "missing_slug", "`slug` requis pour un guide on-demand.")
+        raise AuthzDenied(400, "missing_slug", "`slug` is required for an on-demand guide.")
     if inp.scope == "tenant" and inp.owner_id:
         # Un tenant NOMMÉ : son auteur relit ce qu'il vient d'écrire. La lecture en
         # cascade ne suit que le tenant de l'appelant, donc l'admin plateforme qui
@@ -329,7 +329,7 @@ def _get(ctx: ResolvedCtx, inp: GuideRefInput) -> dict:
     if g is None:
         where = f" (scope {inp.scope})" if inp.scope else ""
         raise AuthzDenied(404, "not_found",
-                          f"Guide `{inp.slug}`{where} introuvable — liste-les avec op=list.")
+                          f"Guide `{inp.slug}`{where} not found — list them with op=list.")
     # Les outils CITÉS dans le corps, au nom du produit de ce compte. Le socle le fait
     # depuis toujours (`instructions.session_layers`), les descriptions d'outils et les
     # messages d'erreur aussi — pas le texte d'un guide, alors que c'est le texte que le
@@ -378,7 +378,7 @@ def _set(ctx: ResolvedCtx, inp: GuideSetInput) -> dict:
         return _init_view(inp.scope, slug, state)
     owner_id = _owner_for_write(ctx, inp.scope, inp.owner_id, ondemand=True)
     if not inp.slug:
-        raise AuthzDenied(400, "missing_slug", "`slug` requis pour un guide on-demand.")
+        raise AuthzDenied(400, "missing_slug", "`slug` is required for an on-demand guide.")
     if not body.strip():
         raise AuthzDenied(400, "missing_body", "`body_md` requis.")
     try:
@@ -412,7 +412,7 @@ def _delete(ctx: ResolvedCtx, inp: GuideRefInput) -> dict:
         return {"scope": inp.scope, "slug": slug, "delivery": "init", "deleted": True}
     owner_id = _owner_for_write(ctx, inp.scope, inp.owner_id, ondemand=True)
     if not inp.slug:
-        raise AuthzDenied(400, "missing_slug", "`slug` requis pour un guide on-demand.")
+        raise AuthzDenied(400, "missing_slug", "`slug` is required for an on-demand guide.")
     deleted = guide_store.delete_guide(inp.scope, owner_id, inp.slug)
     if not deleted:
         raise AuthzDenied(404, "not_found", f"Guide `{inp.slug}` (scope {inp.scope}) absent.")
@@ -553,12 +553,12 @@ def _une_seule_consigne(ctx: ResolvedCtx, lu: dict) -> None:
     s, sc = lu["slug"], lu["scope"]
     raise AuthzDenied(
         409, "family_conflict",
-        f"`{s}` (scope {sc}) existe en DOUBLE : ce guide, et une PROCÉDURE "
-        f"(#{p['guide_id']}, v{p['version']}) du même slug dans la même portée. Deux "
-        "textes, dont un seul est tenu à "
-        "jour — le guide n'est pas servi. La consigne est la procédure : "
-        f"`oto_procedure(op='get', slug='{s}', scope='{sc}')`. Pour retirer le "
-        f"doublon : `oto_guide(op='delete', slug='{s}', scope='{sc}')`.", p)
+        f"`{s}` (scope {sc}) exists TWICE: this guide, and a PROCEDURE "
+        f"(#{p['guide_id']}, v{p['version']}) with the same slug in the same scope. Two "
+        "texts, only one of which is kept up to date — the guide is not served. The "
+        "instruction is the procedure: "
+        f"`oto_procedure(op='get', slug='{s}', scope='{sc}')`. To remove the "
+        f"duplicate: `oto_guide(op='delete', slug='{s}', scope='{sc}')`.", p)
 
 
 def _guide_op(ctx: ResolvedCtx, inp: GuideOpInput) -> dict:
@@ -575,7 +575,7 @@ def _guide_op(ctx: ResolvedCtx, inp: GuideOpInput) -> dict:
     init = inp.delivery == "init"
     if not inp.slug and not init:
         # Un init a un slug canonique par scope — seul un on-demand doit être nommé.
-        raise AuthzDenied(400, "missing_slug", "`slug` requis (cf. op=list).")
+        raise AuthzDenied(400, "missing_slug", "`slug` is required (see op=list).")
     if inp.op == "read":
         # Lecture on-demand : `scope` est un FILTRE optionnel (le store cherche dans
         # l'ordre de visibilité plateforme → org → user quand il est omis). Un init,

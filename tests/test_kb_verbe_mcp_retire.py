@@ -216,8 +216,11 @@ def test_aucun_guide_seme_ne_pose_le_concept():
     # La notice a le droit de DIRE que la base n'existe pas — mais pas de nommer le
     # verbe retiré, ni de la présenter comme un lieu où aller.
     for slug, motifs in fautifs.items():
-        assert motifs == ["base de connaissance"], f"{slug} : {motifs}"
-        assert "il n'y a pas de « base de connaissance »" in corpus[slug], slug
+        # Les seeds plateforme sont écrits en anglais (docs/guides.md) : la phrase
+        # permise y est « there is no separate "knowledge base" ».
+        assert motifs in (["base de connaissance"], ["knowledge base"]), f"{slug} : {motifs}"
+        assert ("il n'y a pas de « base de connaissance »" in corpus[slug]
+                or 'there is no separate "knowledge base"' in corpus[slug]), slug
 
 
 def test_aucun_texte_servi_ne_nomme_plus_le_verbe_retire():

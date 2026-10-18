@@ -94,7 +94,7 @@ def test_lecriture_perso_qui_masque_lorg_le_dit_et_la_nomme(campagne):
         "scope": "org", "guide_id": org["guide_id"], "version": org["version"],
         "updated_at": ack["other_scopes"][0]["updated_at"]}]
     alerte = ack["shadow_warning"]
-    assert "MASQUE" in alerte and "PERSONNELLE" in alerte
+    assert "SHADOWS" in alerte and "PERSONAL" in alerte
     assert f"`guide_id` {org['guide_id']}" in alerte and f"v{org['version']}" in alerte
     assert "scope='org'" in alerte                       # le geste qui écrit celle de l'org
     assert "op=archive scope='user'" in alerte           # le geste qui lève le masque
@@ -109,8 +109,8 @@ def test_lecriture_dorg_masquee_par_ma_copie_perso_le_dit(campagne):
     assert ack["scope"] == "org"
     assert [a["scope"] for a in ack["other_scopes"]] == ["user"]
     assert ack["other_scopes"][0]["guide_id"] == campagne["perso"]["guide_id"]
-    assert "Tu viens d'écrire la procédure de l'ORG" in ack["shadow_warning"]
-    assert "MASQUE" in ack["shadow_warning"]
+    assert "You just wrote the ORG procedure" in ack["shadow_warning"]
+    assert "SHADOWS" in ack["shadow_warning"]
 
 
 def test_une_ecriture_sans_homonyme_ne_porte_rien(monde):
@@ -135,7 +135,7 @@ def test_la_lecture_par_nom_dit_la_copie_perso_et_lorg_ecartee(campagne):
         "updated_at": lu["other_scopes"][0]["updated_at"]}
     assert lu["other_scopes"][0]["updated_at"]                          # la date
     alerte = lu["shadow_warning"]
-    assert "Tu lis ta copie PERSONNELLE" in alerte and "ÉCARTÉE" in alerte
+    assert "You are reading your PERSONAL copy" in alerte and "SKIPPED" in alerte
     assert f"`guide_id` {org['guide_id']}" in alerte
     assert "scope='org'" in alerte
 
@@ -143,7 +143,7 @@ def test_la_lecture_par_nom_dit_la_copie_perso_et_lorg_ecartee(campagne):
 def test_la_lecture_dorg_dit_quune_copie_perso_la_masque(campagne):
     lu = _appel("u-admin", op="get", slug="campagne", scope="org")
     assert lu["scope"] == "org" and "Étapes d'org" in lu["body_md"]
-    assert "Tu lis la procédure de l'ORG" in lu["shadow_warning"]
+    assert "You are reading the ORG procedure" in lu["shadow_warning"]
     assert f"`guide_id` {campagne['perso']['guide_id']}" in lu["shadow_warning"]
 
 
@@ -152,7 +152,7 @@ def test_la_verification_par_identifiant_stable_ne_dit_plus_tout_va_bien(campagn
     l'org — l'agent, qui charge par NOM, en recevait un autre."""
     lu = _appel("u-admin", op="get", guide_id=campagne["org"]["guide_id"])
     assert lu["scope"] == "org"
-    assert "MASQUE" in lu["shadow_warning"]
+    assert "SHADOWS" in lu["shadow_warning"]
     assert lu["other_scopes"][0]["scope"] == "user"
 
 
@@ -160,7 +160,7 @@ def test_la_face_rest_de_lorg_le_dit_aussi(campagne):
     """`GET /api/me/instructions/{slug}` — l'écran lit l'org."""
     lu = _appel("u-admin", "org.instruction.get", slug="campagne")
     assert lu["other_scopes"][0]["scope"] == "user"
-    assert "MASQUE" in lu["shadow_warning"]
+    assert "SHADOWS" in lu["shadow_warning"]
 
 
 def test_un_autre_membre_ne_voit_ni_masque_ni_la_copie_dautrui(campagne):
@@ -185,7 +185,7 @@ def test_lequipe_est_nommee_mais_jamais_dite_masquee(monde, campagne):
     lu = _appel("u-admin", op="get", slug="campagne")
     assert lu["scope"] == "user"
     assert [a["scope"] for a in lu["other_scopes"]] == ["org"]
-    assert "équipe" not in lu["shadow_warning"].lower()
+    assert "team" not in lu["shadow_warning"].lower()
 
 
 def test_supprimer_la_copie_perso_leve_le_masque(campagne):
@@ -247,4 +247,4 @@ def test_desarchiver_la_copie_perso_la_remet_en_tete(campagne):
     _appel("u-admin", op="unarchive", slug="campagne", scope="user")
     lu = _appel("u-admin", op="get", slug="campagne")
     assert lu["scope"] == "user" and "Étapes perso" in lu["body_md"]
-    assert "Tu lis ta copie PERSONNELLE" in lu["shadow_warning"]
+    assert "You are reading your PERSONAL copy" in lu["shadow_warning"]

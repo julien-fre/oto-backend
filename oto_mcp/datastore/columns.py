@@ -134,22 +134,22 @@ def _refuse_composite_compare(filters: Optional[list],
         of = champ.get("of") if type_ == "list" else champ
         attrs = [a["key"] for a in ((of or {}).get("fields") or [])
                  if isinstance(a, dict) and isinstance(a.get("key"), str)]
-        tete = (f"filtre `{op}` sur `{nom}` refusé : `{nom}` est une colonne `{type_}`, "
-                f"qui ne se compare pas en bloc — son texte JSON n'est pas une valeur, "
-                f"et la comparaison rendrait un résultat faux sans erreur. ")
+        tete = (f"filter `{op}` on `{nom}` refused: `{nom}` is a `{type_}` column, "
+                f"which is not compared as a whole — its JSON text is not a value, "
+                f"and the comparison would return a wrong result without an error. ")
         if type_ == "list" and attrs:
-            vise = (f"Vise un attribut de ses éléments : `{nom}[].{attrs[0]}` (« il "
-                    f"existe un élément dont… »), ex. "
+            vise = (f"Target an attribute of its items: `{nom}[].{attrs[0]}` (\"there "
+                    f"exists an item whose…\"), e.g. "
                     f"{{\"field\": \"{nom}[].{attrs[0]}\", \"op\": \"{op}\", "
-                    f"\"value\": …}} — attributs déclarés : "
+                    f"\"value\": …}} — declared attributes: "
                     + ", ".join(f"`{a}`" for a in attrs) + ". ")
         elif type_ == "list":
-            vise = ("Ses éléments ne déclarent pas d'attributs : il n'y a rien à "
-                    f"viser sous `{nom}[]`. ")
+            vise = ("Its items declare no attributes: there is nothing to "
+                    f"target under `{nom}[]`. ")
         else:
-            vise = "Ses attributs ne sont pas adressables par un filtre. "
-        raise ValueError(tete + vise + "Sur la colonne entière, `empty` et "
-                         "`not_empty` restent permis.")
+            vise = "Its attributes cannot be addressed by a filter. "
+        raise ValueError(tete + vise + "On the whole column, `empty` and "
+                         "`not_empty` remain allowed.")
 
 
 def _scan_mixed(value: Any, path: str, errors: list) -> None:
@@ -167,11 +167,11 @@ def _scan_mixed(value: Any, path: str, errors: list) -> None:
             inconnues = sorted(cles - set(dsv2.ALL_LAYER_KEYS))
             if inconnues:
                 errors.append(
-                    f"{path}: {', '.join(repr(k) for k in inconnues)} n'est pas une "
-                    f"couche — les couches sont {', '.join(dsv2.ALL_LAYER_KEYS)}. "
-                    "Rien n'a été écrit. Corrige la clé ; si c'est un objet métier "
-                    "qui porte ce nom par coïncidence, déclare la colonne en type "
-                    "`json` (data_set_schema) — elle devient exempte de cette garde.")
+                    f"{path}: {', '.join(repr(k) for k in inconnues)} is not a "
+                    f"layer — the layers are {', '.join(dsv2.ALL_LAYER_KEYS)}. "
+                    "Nothing was written. Fix the key; if it is a business object "
+                    "that carries this name by coincidence, declare the column as type "
+                    "`json` (data_set_schema) — it becomes exempt from this guard.")
             return
         for k, v in value.items():
             _scan_mixed(v, f"{path}.{k}", errors)
@@ -222,9 +222,9 @@ def refuser_cles_internes(user_data: Optional[dict]) -> None:
             for cle, sous in val.items():
                 if cle in dsl.CLES_INTERNES:
                     errors.append(
-                        f"`{chemin}` porte `{cle}` : c'est une clé interne, posée par la "
-                        f"plateforme, jamais écrite. Pour dire « cherché, rien », écris "
-                        f"`{dsl.VIDE_DELIBERE}` ; pour effacer, `null`.")
+                        f"`{chemin}` carries `{cle}`: it is an internal key, set by the "
+                        f"platform, never written. To say \"searched, nothing found\", write "
+                        f"`{dsl.VIDE_DELIBERE}`; to clear, `null`.")
                 else:
                     _scan(sous, f"{chemin}.{cle}")
         elif isinstance(val, list):
@@ -296,10 +296,10 @@ def mots_resolus_a_la_creation(schema: Optional[dict], user_data: Optional[dict]
 
 
 def _refus_hors_case(chemin: str, mot: Any) -> str:
-    return (f"`{chemin}` porte `{mot}` : ce n'est pas une CASE — un élément d'une liste de "
-            "valeurs, un sous-champ d'objet ou le contenu d'une colonne `json` s'écrit avec "
-            "l'ensemble : il n'y a là ni vide à assumer ni valeur à tenir. Rien n'a été "
-            "écrit. Écris le contenu voulu, sans le mot.")
+    return (f"`{chemin}` carries `{mot}`: this is not a CELL — an item of a list of "
+            "values, a sub-field of an object or the content of a `json` column is written with "
+            "the whole: there is neither an empty to assume nor a value to keep there. Nothing was "
+            "written. Write the intended content, without the word.")
 
 
 def _aucun_mot(valeur: Any, chemin: str, errors: list) -> None:
@@ -351,9 +351,9 @@ def mots_dans_l_element(element: Any, ici: str, errors: list, *,
         ou = f"{ici}.{attribut}"
         if attribut == cle_item and dsl.est_vide_delibere(dsv2.unwrap(sous)):
             errors.append(
-                f"`{ou}` porte `{dsv2.unwrap(sous)}` : c'est l'IDENTITÉ de l'élément "
-                f"(`of.key` = `{cle_item}`) — une identité ne se déclare pas vide. Rien "
-                "n'a été écrit. Donne-lui sa valeur.")
+                f"`{ou}` carries `{dsv2.unwrap(sous)}`: it is the IDENTITY of the item "
+                f"(`of.key` = `{cle_item}`) — an identity cannot be declared empty. Nothing "
+                "was written. Give it its value.")
             continue
         _mots_dans_la_case(sous, ou, errors, fiches=False, cle_item=None)
 
@@ -449,7 +449,7 @@ def refuser_les_mots_mal_places(schema: Optional[dict], user_data: Optional[dict
 
 #: Le seul vide non-`null` que l'arbitrage écarte sur une valeur en place — nommé dans
 #: le relevé `valeurs_ignorees` et dans le refus #724.
-_VIDE_ECARTE = "objet vide `{}`, qui n'est pas une valeur"
+_VIDE_ECARTE = "empty object `{}`, which is not a value"
 
 # Deux bornes, pour qu'un relevé reste lisible par un agent : le nombre
 # d'effacements nommés, et la taille d'une valeur rendue. Au-delà, on dit la TAILLE
@@ -542,8 +542,8 @@ def sans_les_nulls_sans_effet(user_data: Optional[dict],
 
 #: Le motif servi pour un `{}` écarté (oto#165), dans `valeurs_ecartees`.
 MOTIF_OBJET_VIDE = (
-    "objet vide `{}` : ce n'est pas une valeur, rien n'est écrit dans cette case. "
-    "Pour dire « cherché, rien », écris `@empty` ; sinon n'envoie pas le champ.")
+    "empty object `{}`: it is not a value, nothing is written in this cell. "
+    "To say \"searched, nothing found\", write `@empty`; otherwise do not send the field.")
 
 
 def _porte_un_objet_vide(neuf: Any) -> bool:
@@ -764,14 +764,14 @@ def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list) -> None:
     cite = ", ".join(f"`{c}`" for c in champs)
     porte = ", ".join(f'"{c}": null' for c in champs)
     raise ValueError(
-        f"écriture sans effet : {cite} porte une valeur VIDE non-`null` "
-        f"({_VIDE_ECARTE}) sur une valeur déjà en place, et ton écriture ne "
-        "pose rien d'autre — elle ne changerait donc RIEN, et te répondrait comme un "
-        "succès. Un tel vide ne déplace pas une valeur : c'est ce que rend "
-        "une source muette ou un gabarit à demi peuplé, pas une demande d'effacement. "
-        f"POUR VIDER POUR DE BON, écris exactement : {{{porte}}}. Pour dire « cherché, "
-        f"rien », écris `{dsl.VIDE_DELIBERE}`, la raison dans `comment`. Pour laisser "
-        "la valeur intacte, retire ce champ de ton corps.")
+        f"write without effect: {cite} carries a non-`null` EMPTY value "
+        f"({_VIDE_ECARTE}) over a value already in place, and your write "
+        "sets nothing else — it would therefore change NOTHING, and answer you as a "
+        "success. Such an empty does not displace a value: it is what a silent "
+        "source or a half-filled template returns, not a request to clear. "
+        f"TO CLEAR FOR GOOD, write exactly: {{{porte}}}. To say \"searched, "
+        f"nothing found\", write `{dsl.VIDE_DELIBERE}`, with the reason in `comment`. To leave "
+        "the value intact, remove this field from your body.")
 
 
 def _valeur_rendue(valeur: Any) -> Any:
@@ -779,8 +779,8 @@ def _valeur_rendue(valeur: Any) -> Any:
     n = len(valeur) if isinstance(valeur, str) else len(str(valeur))
     if n <= _VALEUR_RENDUE_MAX:
         return valeur
-    return (f"<{n} caractères — la valeur complète n'est plus lisible ici, "
-            "elle n'est plus en base non plus>")
+    return (f"<{n} characters — the full value is no longer readable here, "
+            "it is no longer stored either>")
 
 
 def _nommes(records: list) -> tuple:
@@ -810,15 +810,15 @@ def effacements_report(records: list) -> dict:
     valeurs = [r for r in records or [] if "couche" not in r]
     if valeurs:
         nommes, reste = _nommes(valeurs)
-        hint = ("un `null` NOMMÉ dans le payload EFFACE la valeur en place (`@empty` "
-                "aussi, en disant « cherché, rien ») — ce n'est "
-                "PAS la même chose que ne pas nommer le champ, qui le laisse intact. Si "
-                "l'effacement n'était pas voulu (variable non peuplée, gabarit à demi "
-                "rempli), réécris les valeurs ci-dessus : elles ne sont plus en base. "
-                "`\"\"` et `[]` sont des valeurs : eux aussi REMPLACENT la valeur en "
-                "place, qui figure alors ci-dessus.")
+        hint = ("a `null` NAMED in the payload CLEARS the value in place (`@empty` "
+                "too, saying \"searched, nothing found\") — it is "
+                "NOT the same as not naming the field, which leaves it intact. If "
+                "the clearing was not intended (unpopulated variable, half-filled "
+                "template), write the values above again: they are no longer stored. "
+                "`\"\"` and `[]` are values: they too REPLACE the value in "
+                "place, which then appears above.")
         if reste:
-            hint += f" {len(valeurs)} effacements au total, {len(nommes)} nommés ici."
+            hint += f" {len(valeurs)} clearings in total, {len(nommes)} named here."
         out["valeurs_effacees"] = nommes
         out["valeurs_effacees_hint"] = hint
     out.update(couches_effacees_report(
@@ -841,23 +841,23 @@ def couches_effacees_report(records: list) -> dict:
     if not records:
         return {}
     nommes, reste = _nommes(records)
-    hint = ("reposer une colonne-liste la remplace EN BLOC : la fusion se fait au "
-            "grain de la colonne, jamais de l'élément. Les couches ci-dessus étaient "
-            "portées par des éléments de la liste et ne sont PLUS en base — y compris "
-            "sur les éléments dont la valeur n'a pas changé. Il n'existe pas "
-            "d'écriture d'un élément seul : pour écrire dans une liste qui porte des "
-            "couches, relis la ligne et repose la liste entière en réémettant les "
-            "couches telles qu'elles t'ont été servies (`nom.comment` à côté de `nom`, "
-            "dans le même élément). Si la perte n'était pas voulue, réécris les "
-            "valeurs ci-dessus de cette façon.")
+    hint = ("setting a list column again replaces it AS A WHOLE: the merge happens at "
+            "the grain of the column, never of the item. The layers above were "
+            "carried by items of the list and are NO LONGER stored — including "
+            "on items whose value did not change. There is no "
+            "write of a single item: to write into a list that carries "
+            "layers, read the row again and set the whole list again, re-sending the "
+            "layers as they were served to you (`nom.comment` next to `nom`, "
+            "in the same item). If the loss was not intended, write the "
+            "values above again this way.")
     if any(r.get("couche") == dsl.VIDE_DELIBERE for r in records):
-        hint += (f" Une entrée de couche `{dsl.VIDE_DELIBERE}` est un vide ASSUMÉ redevenu "
-                 "vide ordinaire : la liste a été renvoyée avec `\"\"` là où la lecture "
-                 f"avait `{dsl.VIDE_DELIBERE}`. Son chemin est celui de la liste ÉCRITE : "
-                 f"réécris `{dsl.VIDE_DELIBERE}` à cette place, ou relis avec "
-                 "`empties=sentinel` avant de renvoyer une liste.")
+        hint += (f" A `{dsl.VIDE_DELIBERE}` layer entry is an ASSUMED empty turned back into an "
+                 "ordinary empty: the list was sent back with `\"\"` where the read "
+                 f"had `{dsl.VIDE_DELIBERE}`. Its path is that of the WRITTEN list: "
+                 f"write `{dsl.VIDE_DELIBERE}` again at that place, or read again with "
+                 "`empties=sentinel` before sending a list back.")
     if reste:
-        hint += f" {len(records)} couches au total, {len(nommes)} nommées ici."
+        hint += f" {len(records)} layers in total, {len(nommes)} named here."
     return {"couches_effacees": nommes, "couches_effacees_hint": hint}
 
 
@@ -918,13 +918,13 @@ def ignores_report(records: list) -> dict:
     if not records:
         return {}
     nommes, reste = _nommes(records)
-    hint = (f"une valeur VIDE non-`null` ({_VIDE_ECARTE}) ne "
-            "remplace pas une valeur déjà en place : c'est ce que rend une source "
-            "muette ou un gabarit à demi peuplé, pas une demande d'effacement. Les "
-            "valeurs ci-dessus sont INTACTES en base — il n'y a rien à rétablir. "
-            "Pour vider un champ pour de bon, nomme-le avec `null`.")
+    hint = (f"a non-`null` EMPTY value ({_VIDE_ECARTE}) does not "
+            "replace a value already in place: it is what a silent source "
+            "or a half-filled template returns, not a request to clear. The "
+            "values above are INTACT in storage — there is nothing to restore. "
+            "To clear a field for good, name it with `null`.")
     if reste:
-        hint += f" {len(records)} champs préservés au total, {len(nommes)} nommés ici."
+        hint += f" {len(records)} fields preserved in total, {len(nommes)} named here."
     return {"valeurs_ignorees": nommes, "valeurs_ignorees_hint": hint}
 
 
@@ -982,10 +982,10 @@ def _merge_items(avant: Any, nouveaux: list, cle: str) -> list:
     doubles = _doublons(nouveaux)
     if doubles:
         raise RowValidationError(
-            [f"`{cle}` en double dans la liste posée : "
+            [f"`{cle}` duplicated in the list being set: "
              + ", ".join(repr(d) for d in sorted(doubles, key=str))
-             + f" — deux éléments qui portent la même identité ne peuvent pas être "
-             f"appariés. Donne à chacun une valeur de `{cle}` distincte."])
+             + f" — two items carrying the same identity cannot be "
+             f"matched. Give each one a distinct `{cle}` value."])
 
     # ⚠️ **La liste EN PLACE ne refuse plus rien, et c'est un correctif.**
     #

@@ -106,7 +106,7 @@ def test_chaque_deroule_porte_son_etat_LISIBLE(journal):
     « en cours » ici alors qu'il ne le fait plus nulle part."""
     out = P._project(CTX, P.ProjectInput(op="runs"))
     etats = {r["run_id"]: r["status"] for r in out["runs"]}
-    assert etats["r-ancien"].startswith("(sans nouvelles")
+    assert etats["r-ancien"].startswith("(silent since")
     assert etats["r-recent"]                       # une phrase, toujours
 
 

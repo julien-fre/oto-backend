@@ -150,7 +150,7 @@ def test_soft_schema_ne_valide_plus_RIEN_le_type_declare_s_arme_seul():
 
 def test_required_missing():
     errs = dsv2.validate_row(LEAD_SCHEMA, {"status": "nouveau"})
-    assert any("fact_id" in e and "requis" in e for e in errs)
+    assert any("fact_id" in e and "required" in e for e in errs)
 
 
 def test_guard_rail_required_when_qualified():
@@ -210,7 +210,7 @@ _OVERLONG = ("C.O.O & CFO / Directeur General Operations et Finance. Dans "
 def test_max_length_refuses_and_names_both_numbers():
     errs = dsv2.validate_row(BOUNDED, {"societe": "ACME", "fonction": _OVERLONG})
     assert len(errs) == 1
-    assert errs[0] == f"fonction: {len(_OVERLONG)} caractères, maximum 60"
+    assert errs[0] == f"fonction: {len(_OVERLONG)} characters, maximum 60"
     assert dsv2.validate_row(BOUNDED, {"societe": "ACME", "fonction": "DAF"}) == []
 
 
@@ -239,11 +239,11 @@ def test_max_length_unbounded_field_untouched():
 
 def test_lifecycle_unknown_state_and_forbidden_transition():
     errs = dsv2.validate_row(LEAD_SCHEMA, {"fact_id": "f1", "status": "wat"})
-    assert any("état inconnu" in e for e in errs)
+    assert any("unknown state" in e for e in errs)
     errs = dsv2.validate_row(LEAD_SCHEMA,
                              {"fact_id": "f1", "status": "qualified"},
                              prev_status="nouveau")  # nouveau → qualified interdit
-    assert any("transition" in e and "interdite" in e for e in errs)
+    assert any("transition" in e and "forbidden" in e for e in errs)
 
 
 def test_lifecycle_same_state_write_is_free():

@@ -235,8 +235,8 @@ def _dispatch_procedure(ctx: ResolvedCtx, inp: ProcedureInput):
         # `public` ET `unlisted` sont servis SANS LOGIN (l'un est listé dans
         # l'annuaire, l'autre non) : les deux sortent la procédure de l'org.
         _publication.refuser_si_agent(
-            ctx, "cette procédure",
-            "Elle se publie depuis le dashboard, dans la bibliothèque de guides.")
+            ctx, "this procedure",
+            "It is published from the dashboard, in the guide library.")
         return lib._publish(ctx, lib.PublishInput(
             slug=_need(inp.slug, "missing_slug", "`slug` (skill d'org) requis pour publish."),
             public_slug=inp.public_slug, title=inp.title, description=inp.description,

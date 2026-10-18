@@ -107,11 +107,11 @@ def refus(noms: list[str]) -> str:
     pas."""
     liste = ", ".join(f"`{n}`" for n in noms[:5]) + (" …" if len(noms) > 5 else "")
     return (
-        f"{liste} : cet effacement ne détruirait RIEN — rien n'a été écrit. Ces "
-        f"clés sont des reliques stockées au premier niveau de la ligne (avant le "
-        f"31/08/2026), pas des couches : ton écriture vise la couche imbriquée, et "
-        f"la relique — qui porte une valeur — reste. Elle serait donc encore lisible "
-        f"après un succès annoncé. Pour la détruire vraiment : "
-        f"`{GESTE}(<tableau>, \"{noms[0]}\", confirm=True)` — avec le nom LITTÉRAL, "
-        f"point compris. Le compte `rows` qu'il rend est le seul témoin valable ici : "
-        f"il refuse un nom qu'aucune ligne ne porte.")
+        f"{liste}: this clearing would destroy NOTHING — nothing was written. These "
+        f"keys are relics stored at the top level of the row (before "
+        f"2026-08-31), not layers: your write targets the nested layer, and "
+        f"the relic — which carries a value — remains. It would therefore still be readable "
+        f"after an announced success. To really destroy it: "
+        f"`{GESTE}(<table>, \"{noms[0]}\", confirm=True)` — with the LITERAL name, "
+        f"dot included. The `rows` count it returns is the only valid witness here: "
+        f"it refuses a name that no row carries.")

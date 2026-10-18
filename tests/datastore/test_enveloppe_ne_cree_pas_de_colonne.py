@@ -44,8 +44,8 @@ def test_l_enveloppe_est_REFUSEE_a_la_creation():
     with pytest.raises(ValueError) as e:
         _Store()._check_row(SCHEMA, {"row": {"siren": "1"}}, creation=True)
     m = str(e.value)
-    assert "rien n'a été écrit" in m, "l'appelant doit savoir où il en est"
-    assert "Le corps EST la ligne" in m, "la cause, en une phrase"
+    assert "nothing was written" in m, "l'appelant doit savoir où il en est"
+    assert "The body IS the row" in m, "la cause, en une phrase"
     assert "`siren`" in m, "et les colonnes réellement disponibles"
     assert "data_set_schema" in m, "la sortie si ces clés sont vraiment ses données"
 

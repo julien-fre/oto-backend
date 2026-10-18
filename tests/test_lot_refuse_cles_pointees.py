@@ -72,7 +72,7 @@ def test_le_LOT_refuse_la_cle_pointee(table):
         st.write_rows(ns, [{"siren": "552032534",
                             "contact9_nom.comment": "site — probable"}])
 
-    assert "n'est aucune colonne" in str(e.value)
+    assert "is no column" in str(e.value)
     assert "contact9_nom.comment" not in _colonnes(ns_id), "rien n'est écrit"
 
     # Et le pendant : la colonne DÉCLARÉE, elle, se range — c'est l'aller-retour.

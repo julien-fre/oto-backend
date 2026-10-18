@@ -243,6 +243,13 @@ rien ne rendait navigable et que rien ne tenait.
   n'a pas été tenue POUR ça ; c'est ce qui la rend démonstrative — **elle a payé un
   changement que personne n'avait anticipé en la posant.** À citer quand on demande
   pourquoi on s'impose des codes nommés.
+- **Ce que lit un agent hébergé s'écrit en anglais** : instructions de départ composées,
+  résultats et refus d'outils, rappel de contexte en tête de réponse, `oto_context`,
+  guides de plateforme semés, dates comprises (ISO `YYYY-MM-DD`, jamais `jj/mm`). Le
+  compte rendu final d'un agent suit la langue de ce qu'il lit : une phrase de plateforme
+  en français suffit à faire rendre en français le travail d'une personne qui n'en lit
+  pas un mot. **Ce qu'un utilisateur a écrit ne se traduit jamais** — procédures, readmes,
+  instructions : c'est son texte, dans sa langue.
 - **Ce dépôt est PUBLIC : on n'y écrit JAMAIS de donnée réelle de tiers ni d'identifiant réel.**
   Ni nom de client ou de partenaire, ni nom de personne, ni adresse (postale, e-mail), ni
   identifiant de compte, d'organisation, de projet, de run, d'appel, de ligne ou

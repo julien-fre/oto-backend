@@ -242,13 +242,13 @@ def test_un_agent_ne_pose_rien_sur_une_colonne_masquee():
                     {"suivi_commercial": {"comment": "vu au tel"}}):
         errs = _refus(payload, {"suivi_commercial": "gagné"})
         assert len(errs) == 1, payload
-        assert "`suivi_commercial` ne t'est pas servie" in errs[0]
+        assert "`suivi_commercial` is not served to you" in errs[0]
 
 
 def test_une_colonne_en_lecture_refuse_la_valeur_qui_CHANGE():
     errs = _refus({"score_client": "C"}, {"score_client": "A"})
     assert len(errs) == 1
-    assert "servie en LECTURE, pas en écriture" in errs[0]
+    assert "served to you for READING, not for writing" in errs[0]
 
 
 def test_une_colonne_en_lecture_accepte_l_identique_et_le_commentaire():
@@ -283,7 +283,7 @@ def test_le_refus_NOMME_une_destination_reelle_du_tableau():
     assert "`note`" in msg and "`etat`" in msg          # ouvertes à l'écriture
     assert "`source`" not in msg                         # `readonly` : pas une sortie
     assert "`score_client`" not in msg                   # fermée aussi
-    assert "rejouer cet appel rendra le même refus" in msg
+    assert "replaying this call will return the same refusal" in msg
     # Sur `read`, la couche EST la sortie — le refus doit la nommer.
     lecture = _refus({"score_client": "C"}, {"score_client": "A"})[0]
     assert "`score_client.comment`" in lecture
@@ -293,7 +293,7 @@ def test_le_refus_le_dit_quand_il_n_y_a_AUCUNE_destination():
     """Nommer une destination qui n'existe pas serait pire que n'en nommer aucune."""
     schema = {"fields": [{"key": "x", "agent_access": "none"}]}
     msg = dsv2.reserved_refusals(schema, {"x": "v"}, agent=True)[0][0]
-    assert "Aucune colonne de ce tableau ne t'est ouverte à l'écriture" in msg
+    assert "No column of this table is open to you for writing" in msg
 
 
 def test_enforced_annonce_le_cran():
@@ -328,7 +328,7 @@ def test_le_cran_ne_se_pose_pas_sous_un_sous_record():
     errs = dsv2.validate_schema_def({"fields": [
         {"key": "o", "type": "object",
          "fields": [{"key": "y", "agent_access": "none"}]}]})
-    assert any("ne se pose qu'au premier niveau" in e and "agent_access" in e
+    assert any("is set only at the first level" in e and "agent_access" in e
                for e in errs), errs
 
 
@@ -467,10 +467,10 @@ def test_bout_en_bout_l_agent_ne_voit_ni_n_ecrit_la_colonne(live):
         # patch par identifiant et le lot par clé métier.
         with pytest.raises(RowValidationError) as patch:
             st.update_row(ns, rid, {"suivi_commercial": "gagné"})
-        assert "ne t'est pas servie" in str(patch.value)
+        assert "is not served to you" in str(patch.value)
         with pytest.raises(RowValidationError) as lot:
             st.write_rows(ns, [{"ref": "ACME", "suivi_commercial": "gagné"}], key="ref")
-        assert "ne t'est pas servie" in str(lot.value)
+        assert "is not served to you" in str(lot.value)
         # (d) la RÉSERVATION en dernier — c'est elle qui pose un bail, et un bail
         # refuserait les écritures ci-dessus pour une tout autre raison que la nôtre.
         reservee = st.claim_next(ns, worker="w-1")

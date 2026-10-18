@@ -27,9 +27,9 @@ FIELDS_OPS = frozenset({"list", "get", "create", "update", "patch", "move", "rev
 
 # La phrase servie dans la notice d'un ACCUSÉ d'écriture. Distincte de « vue de tri » :
 # l'agent ne trie pas, il vient d'écrire — lui dire le contraire l'enverrait relire.
-HINT_ACCUSE = ("Accusé d'écriture : la page est enregistrée, son corps n'est pas rejoué "
-               "— tu viens de l'écrire. "
-               '`fields=["*"]` le rend, `fields=[…]` choisit les colonnes.')
+HINT_ACCUSE = ("Write receipt: the page is saved, its body is not echoed back "
+               "— you just wrote it. "
+               '`fields=["*"]` returns it, `fields=[…]` picks the columns.')
 
 
 def public_doc_url(token: str, sub: Optional[str] = None) -> Optional[str]:

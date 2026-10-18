@@ -25,7 +25,7 @@ def test_la_date_est_celle_du_retrait_de_namespace():
     """Décision d'Alexis du 29/09/2026 : un seul geste pour les deux retraits."""
     assert deprecations.RETRAIT_NOM_DE_TABLEAU == deprecations.RETRAIT_DATASTORE
     assert deprecations.RETRAIT_NOM_DE_TABLEAU == datetime.date(2026, 11, 8)
-    assert deprecations.date_retrait_nom_de_tableau() == "08/11/2026"
+    assert deprecations.date_retrait_nom_de_tableau() == "2026-11-08"
 
 
 def test_le_plancher_du_preavis_tient_depuis_l_annonce():
@@ -51,7 +51,7 @@ def test_adresse_par_nom_juge_le_resultat_pas_la_forme(adresse, ns_id, par_nom):
 def test_l_avis_donne_le_numero_et_la_date():
     avis = deprecations.avis_nom_de_tableau("edition-vivier", 204)
     assert "`datastore=204`" in avis
-    assert "08/11/2026" in avis
+    assert "2026-11-08" in avis
     assert "edition-vivier" in avis
 
 

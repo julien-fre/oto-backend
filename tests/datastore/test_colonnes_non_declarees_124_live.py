@@ -337,7 +337,7 @@ def test_apres_une_couche_mal_ecrite_est_reconnue(client, apres):
                     json={"nom": "A", "nom_comment": "source"})
     assert r.status_code == 400 and r.json()["error"] == "unknown_column", r.text
     assert r.json()["details"]["expected_column"] == "nom.comment"
-    assert "COUCHE dont le nom s'écrit avec un POINT" in r.json()["detail"]
+    assert "LAYER whose name is written with a DOT" in r.json()["detail"]
 
 
 def test_apres_l_upload_et_l_import_sont_refuses_avant_la_premiere_ligne(

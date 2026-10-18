@@ -59,11 +59,11 @@ class LotsMixin:
         ref = ""
         if key and isinstance(data, dict) and data.get(key) is not None:
             ref = f" ({key}={data[key]})"
-        etat = (f"{faites} ligne{'s' if faites > 1 else ''} déjà "
-                f"écrite{'s' if faites > 1 else ''} avant l'arrêt, aucune après "
-                f"— reprends le lot à la ligne {rang}" if faites
-                else "aucune ligne écrite avant l'arrêt")
-        return f"ligne {rang}/{total} du lot{ref} · {etat}"
+        etat = (f"{faites} row{'s' if faites > 1 else ''} already "
+                f"written before the stop, none after "
+                f"— resume the batch at row {rang}" if faites
+                else "no row written before the stop")
+        return f"row {rang}/{total} of the batch{ref} · {etat}"
 
     @geste.import_si_donnees_d_origine
     def _write_rows_to_ns(self, ns_id: int, rows: list, *, key: Optional[str],
@@ -131,7 +131,7 @@ class LotsMixin:
             self._lot_rang = rang  # read by a sliced import to name the absolute row
             try:
                 if not isinstance(data, dict):
-                    raise ValueError("chaque row doit être un objet")
+                    raise ValueError("each row must be an object")
                 self._reject_misplaced_id(data, None, batch=True)
                 user_data = {k: v for k, v in data.items() if k not in _META_COLS}
                 # oto#22 : l'écriture PAR RANG, sortie avant toute garde (cf.
@@ -312,7 +312,7 @@ class LotsMixin:
                 # n'est pas un objet) nomment déjà LEUR faute, jamais la ligne.
                 raise ValueError(
                     f"{self._designation_de_lot(rang, total, key, data, inserted + updated)}"
-                    f" : {e}") from None
+                    f": {e}") from None
             inserted += 1
             ids.append(row["row_id"])
             suivi.creee(rang, row["row_id"])

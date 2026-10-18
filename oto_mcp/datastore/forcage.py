@@ -85,6 +85,10 @@ MAX_VALEUR = 120
 # demande de construire ces descriptions, ce qui est un lot, pas une retouche.
 PALIER = ("le PROPRIÉTAIRE du tableau (toi, ton org ou ton équipe) ou celui qui le "
           "GOUVERNE")
+#: Le même palier, tel que le dit un REFUS servi (en anglais depuis la décision du
+#: 03/09/2026) ; `PALIER` reste celui de la description REST, en français.
+PALIER_EN = ("the table's OWNER (you, your org or your team) or whoever "
+             "GOVERNS it")
 
 
 def _borne(valeur: Any) -> tuple:
@@ -216,10 +220,10 @@ class Forcage:
         if geste_id:
             bilan["geste_id"] = geste_id
         bilan["historique"] = (
-            "relevé écrêté : l'historique complet (valeurs entières) est au journal "
-            "des révisions — `data_row_history(datastore, row_id)`"
-            + (f", révisions dont `geste_id` = {geste_id}" if geste_id else "")
-            + " ; le compte ci-dessus est un plancher")
+            "truncated record: the full history (whole values) is in the revision "
+            "journal — `data_row_history(datastore, row_id)`"
+            + (f", revisions whose `geste_id` = {geste_id}" if geste_id else "")
+            + "; the count above is a floor")
         return bilan
 
 
@@ -248,12 +252,12 @@ def arbitrer(forcage: Optional[Forcage], colonne: str,
     prochain recalcul, à la prochaine écriture d'une colonne d'entrée)."""
     if colonne_formule:
         return (
-            f"`{colonne}` est une colonne CALCULÉE (formule) — jamais écrite "
-            f"directement, elle se recalcule automatiquement quand les colonnes "
-            f"dont elle dépend changent. `{PARAMETRE}` n'y change rien : forcer "
-            f"une valeur ici n'a pas de sens, elle serait remplacée au prochain "
-            f"recalcul. Écris plutôt les colonnes d'ENTRÉE de la formule.")
-    ou_va = (f"Ce que dit une autre source va dans `{colonne}.comment` "
+            f"`{colonne}` is a COMPUTED column (formula) — never written "
+            f"directly, it is recomputed automatically when the columns "
+            f"it depends on change. `{PARAMETRE}` changes nothing here: forcing "
+            f"a value here makes no sense, it would be replaced at the next "
+            f"recomputation. Write the formula's INPUT columns instead.")
+    ou_va = (f"What another source says goes in `{colonne}.comment` "
              f"({{\"{colonne}\": {{\"comment\": …}}}})")
     if forcage is not None and forcage.actif_sur(colonne):
         forcage.relever(colonne, avant, apres)
@@ -264,10 +268,10 @@ def arbitrer(forcage: Optional[Forcage], colonne: str,
         # réservé à … » alors qu'il A le palier — et il chercherait un droit qu'il
         # possède déjà, au lieu de corriger sa liste.
         return (
-            f"`{colonne}` est verrouillée (`readonly`) et ta liste `force` ne la "
-            f"nomme pas — rien n'a été écrit sur elle. Ajoute-la (`force=[…, "
-            f"\"{colonne}\"]`) si tu voulais la remplacer ; {ou_va} sinon. "
-            f"Ce que tu as nommé a été forcé normalement.")
+            f"`{colonne}` is locked (`readonly`) and your `force` list does not "
+            f"name it — nothing was written to it. Add it (`force=[…, "
+            f"\"{colonne}\"]`) if you meant to replace it; otherwise, {ou_va}. "
+            f"What you named was forced normally.")
     if forcage is not None and forcage.demande:
         # Le palier n'est pas tenu : ce refus-ci NE NOMME PAS le paramètre (oto#234,
         # tranché le 13/09/2026). Le nommer à qui ne peut pas s'en servir ne lui
@@ -277,16 +281,16 @@ def arbitrer(forcage: Optional[Forcage], colonne: str,
         # ⚠️ La branche par défaut, elle, continue de le nommer : son lecteur, lui,
         # peut s'en servir, et c'est ce qui le détourne du schéma (#658, #668).
         return (
-            f"`{colonne}` est une colonne du fichier source, non modifiable "
-            f"(`readonly`) — rien n'a été écrit, et ton accès sur ce tableau ne "
-            f"permet pas de passer outre : réessayer ne changera rien. "
-            f"{ou_va}, ou demande la correction à qui POSSÈDE le tableau.")
+            f"`{colonne}` is a column of the source file, not modifiable "
+            f"(`readonly`) — nothing was written, and your access on this table does "
+            f"not allow overriding it: retrying will change nothing. "
+            f"{ou_va}, or ask whoever OWNS the table for the correction.")
     return (
-        f"`{colonne}` est une colonne du fichier source, non modifiable "
-        f"(`readonly`) — rien n'a été écrit. {ou_va} ; la valeur reste celle du "
-        f"fichier. Pour la REMPLACER malgré le verrou : `{PARAMETRE}=true` sur CET "
-        f"appel, ouvert à {PALIER}. Il ne vaut que pour cet appel — il n'y a rien à "
-        f"rouvrir dans le schéma, donc rien à refermer.")
+        f"`{colonne}` is a column of the source file, not modifiable "
+        f"(`readonly`) — nothing was written. {ou_va}; the value stays the "
+        f"file's. To REPLACE it despite the lock: `{PARAMETRE}=true` on THIS "
+        f"call, open to {PALIER_EN}. It applies to this call only — there is nothing to "
+        f"reopen in the schema, so nothing to close again.")
 
 
 #: Le nom servi du forçage par CIBLES (oto#140). Il coexiste avec le booléen pendant
@@ -311,15 +315,15 @@ def chemins_forces(value: Any) -> Optional[frozenset]:
         value = [value]
     if not isinstance(value, (list, tuple)) or not value:
         raise ValueError(
-            f"`{PARAMETRE_CIBLES}` attend une liste non vide de chemins — reçu "
-            f"{value!r}. Un chemin est une colonne (`raison_sociale`) ou l'une de ses "
-            f"couches (`raison_sociale.origine`). Nommer ce qu'on force évite qu'un "
-            f"lot de cinq cents lignes force tout ce qu'il porte.")
+            f"`{PARAMETRE_CIBLES}` expects a non-empty list of paths — got "
+            f"{value!r}. A path is a column (`raison_sociale`) or one of its "
+            f"layers (`raison_sociale.origine`). Naming what you force prevents a "
+            f"batch of five hundred rows from forcing everything it carries.")
     mauvais = [c for c in value if not isinstance(c, str) or not c.strip()]
     if mauvais:
         raise ValueError(
-            f"`{PARAMETRE_CIBLES}` : {mauvais!r} n'est pas un chemin. Attendu des "
-            f"chaînes — `\"raison_sociale\"` ou `\"raison_sociale.origine\"`.")
+            f"`{PARAMETRE_CIBLES}`: {mauvais!r} is not a path. Expected "
+            f"strings — `\"raison_sociale\"` or `\"raison_sociale.origine\"`.")
     return frozenset(c.strip() for c in value)
 
 

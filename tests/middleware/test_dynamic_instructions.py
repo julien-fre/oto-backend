@@ -67,12 +67,12 @@ def test_format_context_optional_lines():
            "connectors": [], "projects": ["Projet exemple"],
            "runs": [{"label": "prospection", "guide": "scout", "outcome": "done"}]}
     out = instr._format_context(ctx)
-    assert "## Ton contexte oto" in out
-    assert "Organisation : Acme (ton rôle : org_admin)" in out
-    assert "Équipe active" not in out          # vide → ligne omise
-    assert "Connecteurs actifs" not in out
-    assert "Projets récents : Projet exemple" in out
-    assert "Derniers déroulés : prospection [scout] → done" in out
+    assert "## Your oto context" in out
+    assert "Organization: Acme (your role: org_admin)" in out
+    assert "Active team" not in out          # vide → ligne omise
+    assert "Active connectors" not in out
+    assert "Recent projects: Projet exemple" in out
+    assert "Recent runs: prospection [scout] → done" in out
 
 
 # ── composition de session ───────────────────────────────────────────────────
@@ -107,14 +107,14 @@ def test_compose_session_full(monkeypatch):
     out = instr.compose_session("u1", 7)
     assert "TA boîte à outils" in out                       # bloc A
     assert "CATALOGUE" in out                               # catalogue (bloc A, toujours)
-    assert "## Ton contexte oto" in out                     # bloc C contexte
-    assert "Connecteurs actifs : folk" in out               # forbidden exclu
-    assert "Ce que tu sais de l'utilisateur" in out         # fiche profil injectée
-    assert "Rôle : fondateur" in out
-    assert "## README de ton organisation (Acme)" in out    # bloc C readme d'org
+    assert "## Your oto context" in out                     # bloc C contexte
+    assert "Active connectors: folk" in out               # forbidden exclu
+    assert "What you know about the user" in out         # fiche profil injectée
+    assert "Role: fondateur" in out
+    assert "## Your organization's README (Acme)" in out    # bloc C readme d'org
     assert "Readme de Acme." in out                         # variable {{org}} substituée
-    assert "## README de ton équipe" not in out             # pas d'équipe active
-    assert "## README de ton utilisateur" not in out        # readme user vide → omis
+    assert "## Your team's README" not in out             # pas d'équipe active
+    assert "## Your user's README" not in out        # readme user vide → omis
 
 
 def test_compose_session_cumulates_group_and_user_readmes(monkeypatch):
@@ -122,9 +122,9 @@ def test_compose_session_cumulates_group_and_user_readmes(monkeypatch):
     _wire_context(monkeypatch, group_readme="Consignes équipe {{équipe}}.",
                   user_readme="Mes préférences perso.")
     out = instr.compose_session("u1", 7)
-    i_org = out.index("## README de ton organisation (Acme)")
-    i_group = out.index("## README de ton équipe (Sales)")
-    i_user = out.index("## README de ton utilisateur")
+    i_org = out.index("## Your organization's README (Acme)")
+    i_group = out.index("## Your team's README (Sales)")
+    i_user = out.index("## Your user's README")
     assert i_org < i_group < i_user                         # du général au spécifique
     assert "Consignes équipe Sales." in out                 # variables aussi substituées
     assert "Mes préférences perso." in out
@@ -135,7 +135,7 @@ def test_compose_session_catalog_always_present(monkeypatch):
     out = instr.compose_session("u1", 7)
     assert "CATALOGUE" in out                               # plus de gate onboarded
     assert "TA boîte à outils" in out
-    assert "## Ton contexte oto" in out
+    assert "## Your oto context" in out
 
 
 def test_compose_session_no_org(monkeypatch):
@@ -143,7 +143,7 @@ def test_compose_session_no_org(monkeypatch):
     monkeypatch.setattr(providers, "render_namespace_catalog", lambda: "CATALOGUE")
     out = instr.compose_session("u1", None)
     assert "TA boîte à outils" in out
-    assert "## Ton contexte oto" not in out                 # pas d'org → pas de bloc C
+    assert "## Your oto context" not in out                 # pas d'org → pas de bloc C
 
 
 def test_compose_session_readme_fail_open(monkeypatch):
@@ -153,7 +153,7 @@ def test_compose_session_readme_fail_open(monkeypatch):
         raise RuntimeError("status down")
     monkeypatch.setattr(access, "status_for", boom)
     out = instr.compose_session("u1", 7)
-    assert "## README de ton organisation (Acme)" in out    # readme encore servi
+    assert "## Your organization's README (Acme)" in out    # readme encore servi
 
 
 # ── middleware on_initialize ─────────────────────────────────────────────────

@@ -71,8 +71,8 @@ def test_le_refus_nomme_les_DEUX_gestes_et_ne_renvoie_vers_PERSONNE():
     — et, comme sur l'autre verrou de la plateforme (#668), enverrait chercher une
     manœuvre."""
     texte = dsv2.refus_origine(["prio"])
-    assert "écrivez la valeur seule" in texte.lower()
-    assert "reste possible" in texte
+    assert "write the value alone" in texte.lower()
+    assert "remains possible" in texte
     # Pour un import, le geste qui pose l'origine sans l'écrire soi-même est nommé.
     assert "`donnees_d_origine: true`" in texte
     # Plus de date : le refus est la règle, il ne raconte pas son histoire.
@@ -80,7 +80,7 @@ def test_le_refus_nomme_les_DEUX_gestes_et_ne_renvoie_vers_PERSONNE():
     # Plus de promesse d'un filet mort (rien ne pose l'origine d'office).
     assert "posée par la plateforme quand elle manque" not in texte
     assert f"`{dsv2.PARAMETRE_ORIGINE}: true`" in texte
-    assert "rien n'a été écrit" in texte.lower()
+    assert "nothing was written" in texte.lower()
     # ⚠️ Celui qui importe par URL signée ne PEUT pas suivre « ajoutez-le à cet appel » :
     # son PUT ne porte aucun paramètre. Le refus doit lui dire, là où il est, que sa
     # déclaration se fait au moment où l'URL est créée — sinon on l'envoie chercher une

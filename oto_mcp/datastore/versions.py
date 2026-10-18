@@ -72,17 +72,17 @@ def check(value: Any) -> tuple:
         value = [value]
     if not isinstance(value, (list, tuple)) or not value:
         raise ValueError(
-            f"`versions` attend une liste non vide parmi {list(VERSIONS)} — reçu "
-            f"{value!r}. Une case existe en deux versions : `{CURRENT}` (ce qu'on a "
-            f"établi) et `{ORIGINE}` (ce que la cliente a remis). Pour comparer les "
-            f"deux, demande-les dans le MÊME appel : deux appels ne sont pas "
-            f"atomiques.")
+            f"`versions` expects a non-empty list among {list(VERSIONS)} — got "
+            f"{value!r}. A cell exists in two versions: `{CURRENT}` (what has been "
+            f"established) and `{ORIGINE}` (what the client handed over). To compare the "
+            f"two, ask for them in the SAME call: two calls are not "
+            f"atomic.")
     inconnues = [v for v in value if v not in VERSIONS]
     if inconnues:
         raise ValueError(
-            f"`versions` : {inconnues} n'existe pas. Les versions sont "
-            f"{list(VERSIONS)} — `{CURRENT}` est la valeur courante, `{ORIGINE}` celle "
-            f"que la cliente a remise à l'import.")
+            f"`versions`: {inconnues} does not exist. The versions are "
+            f"{list(VERSIONS)} — `{CURRENT}` is the current value, `{ORIGINE}` the one "
+            f"the client handed over at import.")
     # Ordonnées comme VERSIONS, dédoublonnées : la réponse déclare ce qu'elle sert, et
     # deux appelants qui demandent la même chose dans un ordre différent doivent lire
     # la même déclaration.

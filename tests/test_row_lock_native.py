@@ -325,12 +325,12 @@ def test_the_change_is_announced_where_it_happens(table):
 
     assert notices, "le changement doit être dit"
     texte = notices[0]
-    assert texte.startswith("La ligne reste réservée"), "la conséquence d'abord"
+    assert texte.startswith("The row stays claimed"), "la conséquence d'abord"
     assert "data_release" in texte and "run_finish" in texte, "les deux remplaçants"
     # ⚠️ La promesse est réduite à ce qui est VRAI : la fin de run couvre l'oubli de
     # relâcher, PAS l'agent qui meurt (il n'appelle pas `run_finish`).
-    assert "oubliez de relâcher" in texte
-    assert "s'arrête en route" not in texte, "promesse retirée : elle était fausse"
+    assert "forget to release" in texte
+    assert "stops along the way" not in texte, "promesse retirée : elle était fausse"
 
 
 def test_a_table_without_a_lifecycle_hears_nothing(table):

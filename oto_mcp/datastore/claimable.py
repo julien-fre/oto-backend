@@ -51,11 +51,11 @@ class RowOutsideClaimable(Exception):
         self.row_id = row_id
         self.perimetre = dict(perimetre)
         super().__init__(
-            f"ligne « {row_id} » hors du périmètre de réservation déclaré "
-            f"{perimetre_texte(perimetre)} — réservation refusée. Ce tableau ne sert "
-            "que les lignes de ce périmètre (`lifecycle.claimable` de son schéma) ; "
-            "l'élargir est un geste sur le schéma (data_patch_schema), jamais sur "
-            "l'appel.")
+            f"row `{row_id}` is outside the declared claim scope "
+            f"{perimetre_texte(perimetre)} — claim refused. This table only serves "
+            "rows within this scope (`lifecycle.claimable` in its schema); "
+            "widening it is a change to the schema (data_patch_schema), never to "
+            "the call.")
 
 
 def perimetre_of(lc: Optional[dict], ns_id: Optional[int] = None) -> Optional[dict]:
@@ -85,14 +85,14 @@ def perimetre_of(lc: Optional[dict], ns_id: Optional[int] = None) -> Optional[di
         return None
     p = lc[CLE]
     if not isinstance(p, dict) or not p:
-        ou = f"Le tableau {ns_id} déclare" if ns_id is not None else "Ce tableau déclare"
+        ou = f"Table {ns_id} declares" if ns_id is not None else "This table declares"
         raise ValueError(
-            f"{ou} `lifecycle.claimable` sous une forme invalide — reçu {p!r}, "
-            "attendu un objet non vide `{col: val}`. **Ton appel n'est pas en cause : "
-            "il n'y a rien à corriger dans tes arguments, et le réessayer échouera "
-            "pareil.** C'est le FORMAT du tableau qui est fautif, et son propriétaire "
-            "seul peut le réparer — `data_patch_schema` sur la colonne qui porte "
-            "`role: \"status\"`. Signale-le plutôt que de réessayer.")
+            f"{ou} `lifecycle.claimable` in an invalid form — got {p!r}, "
+            "expected a non-empty object `{col: val}`. **Your call is not at fault: "
+            "there is nothing to fix in your arguments, and retrying will fail "
+            "the same way.** It is the table's FORMAT that is wrong, and only its owner "
+            "can repair it — `data_patch_schema` on the column that carries "
+            "`role: \"status\"`. Report it rather than retrying.")
     return dict(p)
 
 
@@ -121,11 +121,11 @@ def clauses(perimetre: Optional[dict]) -> list[dict]:
     # quoi il envoie tout le monde chercher au mauvais endroit, à chaque appel.
     if not isinstance(perimetre, dict):
         raise ValueError(
-            f"le tableau déclare un périmètre de réservation illisible dans SON SCHÉMA "
-            f"(`lifecycle.claimable` = {perimetre!r}, attendu {{colonne: valeur}}). "
-            f"⚠️ Ton appel n'y est pour rien : le réessayer autrement ne changera rien. "
-            f"C'est le schéma du tableau qui doit être corrigé, par qui le gouverne "
-            f"(`data_patch_schema`). Signale-le plutôt que d'insister.")
+            f"the table declares an unreadable claim scope in ITS SCHEMA "
+            f"(`lifecycle.claimable` = {perimetre!r}, expected {{column: value}}). "
+            f"⚠️ Your call has nothing to do with it: retrying it differently will change nothing. "
+            f"The table's schema must be fixed, by whoever governs it "
+            f"(`data_patch_schema`). Report it rather than insisting.")
     from ..db.query import ds_filter_specs
     return ds_filter_specs(perimetre)
 
@@ -147,8 +147,8 @@ def erreurs(lc: dict, *, declared: set, contraignant: bool,
         return []
     p = lc[CLE]
     if not isinstance(p, dict) or not p:
-        return [f"lifecycle.claimable doit être un objet non vide {{col: val}} ou "
-                f"{{col: {{op: val}}}} — la grammaire de `filter` (reçu {p!r})"]
+        return [f"lifecycle.claimable must be a non-empty object {{col: val}} or "
+                f"{{col: {{op: val}}}} — the grammar of `filter` (got {p!r})"]
     from ..db.query import _DS_META_TEXT_COLS, _DS_META_TS_COLS, _ds_filter_clauses
     out: list[str] = []
     try:
@@ -167,13 +167,13 @@ def erreurs(lc: dict, *, declared: set, contraignant: bool,
         tete = _TETE.split(str(col), 1)[0]
         if contraignant and tete not in declared and tete not in meta:
             out.append(
-                f"lifecycle.claimable: colonne `{col}` non déclarée au schéma, dont le "
-                "format fait contrat — déclare-la, ou retire-la du périmètre")
+                f"lifecycle.claimable: column `{col}` is not declared in the schema, whose "
+                "format is binding — declare it, or remove it from the scope")
         if (status_key and col == status_key and states
                 and not isinstance(val, dict) and str(val) not in states):
             out.append(
-                f"lifecycle.claimable: `{col}` = {val!r} n'est pas un état déclaré "
-                f"({', '.join(sorted(states))}) — la file serait vide pour toujours")
+                f"lifecycle.claimable: `{col}` = {val!r} is not a declared state "
+                f"({', '.join(sorted(states))}) — the queue would be empty forever")
     return out
 
 
@@ -199,8 +199,8 @@ def phrase_vide(perimetre: dict, filtre: Optional[dict]) -> str:
     l'appelant a passé un filtre, la phrase dit aussi comment il se combine : en ET.
     C'est le cas de la campagne qui cible un jalon et demande un autre lot — rien
     n'est servi, et sans cette phrase l'agent lirait « file vide »."""
-    tete = f"aucune ligne libre dans le périmètre déclaré {perimetre_texte(perimetre)}"
+    tete = f"no free row in the declared scope {perimetre_texte(perimetre)}"
     if filtre:
-        return (f"{tete} — ton filtre {perimetre_texte(filtre)} s'y ajoute en ET : il "
-                "resserre le périmètre, il ne l'élargit pas")
-    return f"{tete} (`lifecycle.claimable` du tableau ; un `filter` s'y ajoute en ET)"
+        return (f"{tete} — your filter {perimetre_texte(filtre)} is ANDed with it: it "
+                "narrows the scope, it does not widen it")
+    return f"{tete} (the table's `lifecycle.claimable`; a `filter` is ANDed with it)"

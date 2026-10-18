@@ -300,6 +300,8 @@ acceptées à l'appel, précisément pour que la prose déjà écrite aboutisse.
 ## Le semis des guides plateforme : le dépôt atteint la base
 
 Un guide plateforme (`oto_mcp/guides/<slug>.md`) est un **texte servi à l'agent**.
+Les seeds plateforme s'écrivent **en anglais** : les agents hébergés les lisent et
+répondent dans la langue de ce qu'ils lisent.
 Servi périmé, il lui fait appliquer des gestes retirés et ignorer ceux qui existent.
 Mesuré le 13/09/2026 : le guide `datastore-semantics` servi en production avait
 **environ 250 lignes de retard** sur le fichier du dépôt, depuis plusieurs livraisons —

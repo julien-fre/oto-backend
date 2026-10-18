@@ -58,27 +58,27 @@ logger = logging.getLogger(__name__)
 # Le motif CITE SES CHIFFRES : le compte et le plafond en vigueur ce jour-là. Sans
 # eux, il se lit comme un verdict qu'on ne peut ni vérifier ni rejouer — le plafond
 # ayant pu changer depuis.
-_MOTIF = "abandonnée après {claims} réservations sans écriture, plafond {plafond}"
+_MOTIF = "abandoned after {claims} claims without a write, ceiling {plafond}"
 # Le plafond de plateforme se NOMME dans le motif : sans ça, le propriétaire lirait
 # un plafond qu'il n'a jamais déclaré, et ne saurait pas où le régler.
-_MOTIF_DEFAUT = (_MOTIF + " (défaut de la plateforme, aucun `lifecycle.max_claims` "
-                 "déclaré) — mise de côté, statut inchangé ; une écriture la remet "
-                 "dans la file")
+_MOTIF_DEFAUT = (_MOTIF + " (platform default, no `lifecycle.max_claims` "
+                 "declared) — set aside, status unchanged; a write puts it back "
+                 "in the queue")
 # Et il finit par sa CAUSE (#491) : ce que la dernière tentative a rencontré.
-_DERNIERE_TENTATIVE = " — dernière tentative : {cause}"
+_DERNIERE_TENTATIVE = " — last attempt: {cause}"
 
 # Les causes, par ordre de préférence (`_cause_de_l_abandon`). Un texte venu d'ailleurs
 # (erreur d'un travail, note d'un run, refus d'écriture) est ramené à une ligne et borné :
 # le motif est une colonne qu'on lit d'un coup d'œil et qu'on ventile (`abandon_reasons`).
-_CAUSE_TRAVAIL = "erreur du travail : {texte}"
-_CAUSE_RUN = "run clos `{outcome}` : {texte}"
-_CAUSE_ECRITURE = "écriture refusée : {texte}"
-_REFUS_QUI_SE_NOMME = "écriture refusée"
-_CAUSE_APPELS = "appels en erreur : {outils}"
-_CAUSE_BAIL = "bail expiré sans relâchement"
-_CAUSE_RIEN = "aucune écriture tentée"
-_CAUSE_HORS_RUN = "cause inconnue : réservée hors run"
-_CAUSE_ILLISIBLE = "cause inconnue : journal illisible"
+_CAUSE_TRAVAIL = "job error: {texte}"
+_CAUSE_RUN = "run closed `{outcome}`: {texte}"
+_CAUSE_ECRITURE = "write refused: {texte}"
+_REFUS_QUI_SE_NOMME = "write refused"
+_CAUSE_APPELS = "calls in error: {outils}"
+_CAUSE_BAIL = "lease expired without a release"
+_CAUSE_RIEN = "no write attempted"
+_CAUSE_HORS_RUN = "unknown cause: claimed outside a run"
+_CAUSE_ILLISIBLE = "unknown cause: log unreadable"
 _TEXTE_MAX = 300
 # Les issues de run qui disent un échec — `done` et `partial` n'en sont pas
 # (`run_status.OUTCOMES`).
@@ -96,7 +96,7 @@ _PLAFOND_PAR_DEFAUT = "OTO_MCP_CLAIM_DEFAULT_MAX_CLAIMS"
 def plafond_par_defaut() -> int:
     """Le plafond de reprises d'un tableau qui n'en déclare pas (oto#101)."""
     brut = os.environ.get(_PLAFOND_PAR_DEFAUT, "3")
-    refus = f"{_PLAFOND_PAR_DEFAUT} doit être un entier >= 1 (lu : {brut!r})"
+    refus = f"{_PLAFOND_PAR_DEFAUT} must be an integer >= 1 (read: {brut!r})"
     try:
         valeur = int(brut)
     except ValueError:
@@ -161,7 +161,7 @@ def plafond_de(ns_id: int, max_claims: Optional[int] = None) -> Optional[Plafond
     if max_claims is None:
         valeur = en_vigueur
     elif isinstance(max_claims, bool) or not isinstance(max_claims, int) or max_claims < 1:
-        raise ValueError(f"max_claims doit être un entier >= 1 (reçu {max_claims!r})")
+        raise ValueError(f"max_claims must be an integer >= 1 (got {max_claims!r})")
     else:
         # Le paramètre assouplit, jamais l'inverse : ce qui est en jeu n'est pas la
         # sévérité d'une passe mais la sortie DÉFINITIVE d'une ligne de la file.
@@ -174,17 +174,17 @@ def plafond_de(ns_id: int, max_claims: Optional[int] = None) -> Optional[Plafond
     etat = abandon_state_of(schema)
     if not etat:
         raise ValueError(
-            "un plafond de reprises (`max_claims`) exige `lifecycle.abandon_state` "
-            "sur le champ de statut : l'état terminal où verser une ligne réservée "
-            f"{valeur} fois sans écriture. Sans lui, la garde serait inerte.")
+            "a claim ceiling (`max_claims`) requires `lifecycle.abandon_state` "
+            "on the status field: the terminal state where a row claimed "
+            f"{valeur} times without a write goes. Without it, the guard would be inert.")
     if etat not in terminal_states(schema):
         raise ValueError(
-            f"`lifecycle.abandon_state` vaut {etat!r}, qui n'est pas un état terminal "
-            "déclaré — une ligne abandonnée reviendrait dans la file qu'elle vient "
-            "de quitter.")
+            f"`lifecycle.abandon_state` is {etat!r}, which is not a declared terminal "
+            "state — an abandoned row would come back into the queue it has just "
+            "left.")
     champ = (status_field(schema) or {}).get("key")
     if not champ:
-        raise ValueError("un plafond de reprises exige un champ `role=\"status\"`")
+        raise ValueError("a claim ceiling requires a `role=\"status\"` field")
     return Plafond(valeur, etat, str(champ), namespace)
 
 
@@ -206,7 +206,7 @@ def _lu_au_journal(conn, ns_id: int, row_id: str, run_id: str) -> Optional[str]:
                        (run_id,)).fetchone()
     if run and run["outcome"] in _ISSUES_EN_ECHEC:
         return _CAUSE_RUN.format(outcome=run["outcome"],
-                                 texte=_court(run["note"] or "sans note"))
+                                 texte=_court(run["note"] or "no note"))
     fenetre = ("FROM tool_calls WHERE run_id = %(run)s AND kind = 'mcp' "
                "  AND created_at >= (SELECT claimed_at FROM datastore_rows "
                "                      WHERE ns_id = %(ns)s AND row_id = %(row)s) ")
@@ -219,8 +219,8 @@ def _lu_au_journal(conn, ns_id: int, row_id: str, run_id: str) -> Optional[str]:
         "       OR (tool = 'oto_call' AND args->>'name' = 'data_write')) "
         "ORDER BY created_at DESC LIMIT 1", cle).fetchone()
     if ecriture and not ecriture["ok"]:
-        refus = _court(ecriture["error"] or "sans motif")
-        # Le refus du schéma se nomme déjà (« écriture refusée par le schéma : … ») :
+        refus = _court(ecriture["error"] or "no reason given")
+        # Le refus du schéma se nomme déjà (« write refused by the schema: … », errors.py) :
         # le préfixer une seconde fois ne dirait rien de plus.
         return refus if refus.startswith(_REFUS_QUI_SE_NOMME) \
             else _CAUSE_ECRITURE.format(texte=refus)

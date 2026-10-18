@@ -63,7 +63,7 @@ def test_le_message_dit_la_CONSEQUENCE(store):
     ultérieure ne retrouvera cette ligne par sa clé."""
     store.append_row("viviers", {"raison_sociale": "ACME"})
     texte = store.off_schema_report()["non_rapprochable_hint"]
-    assert "rapproch" in texte and "data_write" in texte
+    assert "matched" in texte and "data_write" in texte
 
 
 def test_la_ligne_est_ECRITE_quand_meme(store):
@@ -81,7 +81,7 @@ def test_une_cle_VIDE_est_refusee_et_non_plus_comptee_absente(store):
     """Signal feedback 994 : `""` entre dans l'index d'unicité, deux lignes « à clé
     vide » s'y confondraient. Refusée à l'entrée — bancs réels dans
     `test_cle_metier_vide_signal_994.py`. Seule l'ABSENCE de clé reste permise."""
-    with pytest.raises(ValueError, match="clé métier vide ne désigne aucune entité"):
+    with pytest.raises(ValueError, match="empty business key designates no entity"):
         store.append_row("viviers", {"siren": "", "raison_sociale": "ACME"})
 
 

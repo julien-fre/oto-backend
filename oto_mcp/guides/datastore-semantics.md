@@ -1,726 +1,726 @@
 ---
-title: Sémantique du datastore — couches, faces, clé métier
-description: valeur/comment/link/origine, ce qu'une écriture détruit, ce que readonly et la clé métier protègent, ce qui diverge entre data_* et REST /api/datastore, et ce qu'une réponse ne contient pas
+title: Datastore semantics — layers, faces, business key
+description: valeur/comment/link/origine, what a write destroys, what readonly and the business key protect, what diverges between data_* and REST /api/datastore, and what a response does not contain
 ---
 
-# Sémantique du datastore
+# Datastore semantics
 
-À lire **avant** d'écrire dans un tableau que tu n'as pas rempli toi-même, ou d'appeler
-la face REST (`/api/datastore/…`) à la place des outils `data_*`. Les deux faces parlent
-au même stockage : ce guide dit ce que ce stockage fait d'une écriture, où les deux
-faces divergent, et ce qu'une réponse ne dit pas.
+Read this **before** writing to a table you did not fill yourself, or calling
+the REST face (`/api/datastore/…`) instead of the `data_*` tools. Both faces talk
+to the same storage: this guide says what that storage does with a write, where the two
+faces diverge, and what a response does not say.
 
-## 0. Adresser un tableau : par son NUMÉRO
+## 0. Addressing a table: by its NUMBER
 
-Un tableau porte un **numéro** (`ns_id`, ex. `174`) et un **nom** (`edition-vivier`).
-Jusqu'au 08/11/2026, les deux résolvent, avec le même contrôle de visibilité —
-`datastore: 174` et `datastore: "edition-vivier"` désignent le même tableau.
+A table carries a **number** (`ns_id`, e.g. `174`) and a **name** (`edition-vivier`).
+Until 2026-11-08 (8 November 2026), both resolve, with the same visibility check —
+`datastore: 174` and `datastore: "edition-vivier"` designate the same table.
 
-**Emploie le numéro.** Un nom de tableau sera **REFUSÉ à partir du 08/11/2026** : il
-n'est unique que par propriétaire, il change au renommage, et c'est le numéro que la
-plateforme enregistre. D'ici là, chaque réponse obtenue par un nom le dit en tête, avec
-le numéro à passer.
+**Use the number.** A table name will be **REFUSED from 2026-11-08 (8 November 2026)**: it
+is only unique per owner, it changes on rename, and the number is what the
+platform records. Until then, every response obtained through a name says so at the top, with
+the number to pass.
 
-Où le trouver : `data_list_datastores` le donne sous **les deux noms** (`ns_id`, et `id`
-— le même nombre, gardé pour les liens du tableau de bord), la création et le renommage
-aussi, et surtout **les réponses le
-rendent** — `ns_id` dans la réservation (`data_claim_next`), l'écriture (`data_write`),
-la libération (`data_release`), la lecture d'une page (`data_rows`) et la lecture du
-schéma (`data_get_schema`). Réserve, note le `ns_id`, adresse par lui ensuite.
+Where to find it: `data_list_datastores` gives it under **both names** (`ns_id`, and `id`
+— the same number, kept for the dashboard's links), creation and renaming
+do too, and above all **responses
+return it** — `ns_id` in the claim (`data_claim_next`), the write (`data_write`),
+the release (`data_release`), the reading of a page (`data_rows`) and the reading of the
+schema (`data_get_schema`). Claim, note the `ns_id`, address by it afterwards.
 
-⚠️ La clé `datastore` d'une réponse est le **nom canonique** du tableau, jamais l'écho de
-ce que tu as envoyé : adresser `174` te répond `datastore: "edition-vivier"`, et non
-`"174"`. C'est ainsi qu'on lit *quel* tableau a été touché. (`data_write` sur une ligne
-seule fait exception et ne rend que `ns_id` : son corps **est** la ligne, une clé
-`datastore` y entrerait en collision avec une colonne.)
+⚠️ The `datastore` key of a response is the table's **canonical name**, never the echo of
+what you sent: addressing `174` answers `datastore: "edition-vivier"`, not
+`"174"`. That is how you read *which* table was touched. (`data_write` on a single
+row is the exception and returns only `ns_id`: its body **is** the row, a `datastore`
+key there would collide with a column.)
 
-`slot:<nom>` reste compris des deux côtés : c'est une référence de projet, pas un nom de
-tableau, et elle se résout vers l'un comme vers l'autre.
+`slot:<name>` is still understood on both sides: it is a project reference, not a
+table name, and it resolves to either one.
 
-## 1. Toute colonne a quatre couches
+## 1. Every column has four layers
 
-Vocabulaire fermé : `valeur` (la colonne elle-même) et trois couches qui la décrivent —
-`comment` (ce qu'une autre source dit de cette valeur), `link` (l'URL qui l'étaye),
-`origine` (d'où elle vient ; ou, quand la plateforme la pose, la valeur d'avant).
-Une colonne « plate » est une colonne dont les couches sont vides.
+Closed vocabulary: `valeur` (the column itself) and three layers that describe it —
+`comment` (what another source says about this value), `link` (the URL that supports it),
+`origine` (where it comes from; or, when the platform sets it, the previous value).
+A "flat" column is a column whose layers are empty.
 
-Une couche mal orthographiée est **refusée par son nom** à l'écriture, rien n'est écrit.
-Un dict qui mêle une couche connue et une clé inconnue est refusé de même — sauf si la
-colonne est déclarée `json` au schéma ; un dict qui ne porte **aucune** clé de couche
-est une donnée `json` ordinaire, jamais interprétée.
+A misspelled layer is **refused by name** on write, nothing is written.
+A dict that mixes a known layer and an unknown key is refused likewise — unless the
+column is declared `json` in the schema; a dict that carries **no** layer key
+is ordinary `json` data, never interpreted.
 
-## 2. Écrire imbriqué, relire à plat
+## 2. Write nested, read back flat
 
-Écriture — la couche se pose **dans** la colonne :
+Write — the layer goes **inside** the column:
 
-    {"adresse": {"valeur": "12 rue X", "comment": "registre — 20 B AVENUE Y"}}
-    {"adresse": "12 rue X"}                 # la valeur seule, couches intactes
-    {"adresse": {"comment": "…"}}           # le comment seul, valeur intacte
+    {"adresse": {"valeur": "12 rue X", "comment": "registry — 20 B AVENUE Y"}}
+    {"adresse": "12 rue X"}                 # the value alone, layers intact
+    {"adresse": {"comment": "…"}}           # the comment alone, value intact
 
-Lecture (`data_rows`, `GET …/rows`, `GET …/rows/{row_id}`) — le **nom nu rend toujours
-la valeur**, et chaque couche renseignée arrive **à plat**, sous une clé `champ.couche` :
+Read (`data_rows`, `GET …/rows`, `GET …/rows/{row_id}`) — the **bare name always returns
+the value**, and each filled layer arrives **flat**, under a `field.layer` key:
 
-    {"_id": "…", "adresse": "12 rue X", "adresse.comment": "registre — 20 B AVENUE Y"}
+    {"_id": "…", "adresse": "12 rue X", "adresse.comment": "registry — 20 B AVENUE Y"}
 
-Il n'y a jamais de `adresse.valeur` ; une couche vide (`null`, `""`) n'est pas servie.
-Ces clés plates s'adressent comme des colonnes dans `fields` et `filters` :
-`[{"field": "email.origine", "op": "empty"}]` = les valeurs sans provenance.
+There is never an `adresse.valeur`; an empty layer (`null`, `""`) is not served.
+These flat keys are addressed like columns in `fields` and `filters`:
+`[{"field": "email.origine", "op": "empty"}]` = the values without provenance.
 
-Les deux formes sont **asymétriques** (imbriqué à l'écriture, plat à la lecture par
-défaut). Le paramètre `layers` de `data_rows`, `GET …/rows` et `GET …/rows/{row_id}`
-lève l'asymétrie : `flat` (défaut) = ce qui précède ; `nested` = `adresse` revient
-`{"valeur": …, "comment": …}` — `valeur` toujours, les couches renseignées seulement,
-la forme dans laquelle on écrit ; une cellule sans couche reste le même scalaire, une
-colonne-liste applique la règle dans ses items. Toute autre valeur est refusée en
-nommant le paramètre. En `nested`, `fields` nomme des colonnes (`adresse.comment`
-n'existe qu'en `flat`). `versions` s'applique aux deux formes : la couche `origine` n'y
-est servie que demandée (`versions=["current","origine"]`), à toute profondeur — items
-de listes compris (`item["email.origine"]` à plat, `item["email"]["origine"]` imbriqué).
-**Le défaut basculera vers `nested`, avec préavis daté** :
-nomme `layers` dès maintenant si tu dépends d'une forme.
+The two forms are **asymmetric** (nested on write, flat on read by
+default). The `layers` parameter of `data_rows`, `GET …/rows` and `GET …/rows/{row_id}`
+lifts the asymmetry: `flat` (default) = the above; `nested` = `adresse` comes back as
+`{"valeur": …, "comment": …}` — `valeur` always, filled layers only,
+the form you write in; a cell without layers stays the same scalar, a
+list column applies the rule within its items. Any other value is refused,
+naming the parameter. In `nested`, `fields` names columns (`adresse.comment`
+only exists in `flat`). `versions` applies to both forms: the `origine` layer is
+only served when requested (`versions=["current","origine"]`), at any depth — list
+items included (`item["email.origine"]` flat, `item["email"]["origine"]` nested).
+**The default will switch to `nested`, with dated notice**:
+name `layers` right now if you depend on a form.
 
-Dans les deux formes l'aller-retour tient : une clé plate `adresse.comment` réémise à l'écriture est
-**rangée** sous `adresse` dès que la colonne existe quelque part — dans l'écriture, sur
-la ligne visée ou au schéma. Si elle n'existe nulle part, l'écriture est refusée en
-nommant la clé et les trois endroits regardés — jamais une colonne littérale
-`adresse.comment` créée en silence.
+In both forms the round trip holds: a flat key `adresse.comment` re-emitted on write is
+**filed** under `adresse` as soon as the column exists somewhere — in the write, on
+the target row or in the schema. If it exists nowhere, the write is refused,
+naming the key and the three places looked at — never a literal `adresse.comment`
+column created silently.
 
-## 2 bis. Un élément de liste s'écrit à son RANG
+## 2 bis. A list element is written at its INDEX
 
-Pour toucher UN élément d'une colonne-liste, tu n'as pas à renvoyer la liste : écris à
-l'adresse que tu lis — la même que dans `filters` et `group_by`.
+To touch ONE element of a list column, you do not have to send the list back: write to
+the address you read — the same one as in `filters` and `group_by`.
 
-| ce que tu veux | ce que tu écris |
+| what you want | what you write |
 |---|---|
-| modifier un attribut | `{"contacts[1].email": "d@x.fr"}` — ou `{"valeur": …, "comment": …}` |
-| annoter un attribut sans le réécrire | `{"contacts[1].email.comment": "site officiel"}` |
-| effacer un attribut | `{"contacts[1].email": null}` |
-| ajouter un élément en fin de liste | `{"contacts[+]": {"nom": "Cy", "email": "c@x.fr"}}` — une fiche complète |
-| supprimer un élément | `{"contacts[0]": null}` |
-| ajouter SANS relire, un ou plusieurs éléments | `{"tags[+]": ["relance", "chaud"]}` — dans l'ordre, doublons gardés |
-| retirer SANS relire, par valeur | `{"tags[-]": "chaud"}` ou une liste — toutes les occurrences |
-| ajouter une ligne à une colonne TEXTE, sans la relire | `{"journal[+]": "06/10 relance faite"}` — ou une liste de lignes |
+| modify an attribute | `{"contacts[1].email": "d@x.fr"}` — or `{"valeur": …, "comment": …}` |
+| annotate an attribute without rewriting it | `{"contacts[1].email.comment": "official site"}` |
+| clear an attribute | `{"contacts[1].email": null}` |
+| add an element at the end of the list | `{"contacts[+]": {"nom": "Cy", "email": "c@x.fr"}}` — a complete record |
+| delete an element | `{"contacts[0]": null}` |
+| add WITHOUT reading back, one or several elements | `{"tags[+]": ["relance", "chaud"]}` — in order, duplicates kept |
+| remove WITHOUT reading back, by value | `{"tags[-]": "chaud"}` or a list — all occurrences |
+| add a line to a TEXT column, without reading it back | `{"journal[+]": "06/10 follow-up done"}` — or a list of lines |
 
-L'attribut suit la règle d'une colonne (§3) : `comment`/`link` tombent avec une valeur
-qui change, l'origine reste, les autres attributs et les autres éléments ne bougent pas.
-Le rang part de 0 et **désigne la liste telle que tu l'as lue** : dans un même appel,
-`{"contacts[0]": null, "contacts[2].email": …}` vise le troisième élément lu ; l'ajout
-se fait en dernier. Supprimer le dernier élément efface la colonne. Seul l'élément que
-tu écris est jugé par le schéma.
+The attribute follows the rule of a column (§3): `comment`/`link` drop with a value
+that changes, the origin stays, the other attributes and the other elements do not move.
+The index starts at 0 and **designates the list as you read it**: in a single call,
+`{"contacts[0]": null, "contacts[2].email": …}` targets the third element read; the addition
+happens last. Deleting the last element clears the column. Only the element
+you write is judged by the schema.
 
-L'ajout (`[+]`) et le retrait par valeur (`[-]`) ne demandent aucune lecture : ils se
-résolvent sous le verrou de la ligne, donc deux ajouts simultanés sur la même ligne
-arrivent TOUS LES DEUX — c'est le geste d'un journal tenu à plusieurs. Ordre dans un
-appel : les rangs, puis les retraits, puis les ajouts. Le retrait ne vise qu'une liste
-de VALEURS (une fiche se retire à son rang) ; une valeur absente est refusée, rien
-n'est écrit. Pour compter : `group_by: "tags[]"` (un groupe par valeur).
+Adding (`[+]`) and removing by value (`[-]`) require no read: they are
+resolved under the row's lock, so two simultaneous additions on the same row
+BOTH arrive — it is the operation for a log kept by several writers. Order within a
+call: indexes, then removals, then additions. Removal only targets a list
+of VALUES (a record is removed at its index); an absent value is refused, nothing
+is written. To count: `group_by: "tags[]"` (one group per value).
 
-Sur une colonne `text`, `[+]` ajoute en fin de cellule, sur une nouvelle ligne, sous le
-même verrou : pas besoin de renvoyer un texte de 25 000 caractères pour y ajouter une
-ligne, et deux ajouts simultanés arrivent tous les deux. Le texte obtenu respecte
-`max_length`. Mais un journal tenu à plusieurs vit mieux dans une TABLE, une ligne par
-passage : il se filtre, se compte et se lit par morceaux ; la cellule allongée reste un
-pis-aller.
+On a `text` column, `[+]` appends at the end of the cell, on a new line, under the
+same lock: no need to send back a 25,000-character text to add a
+line to it, and two simultaneous additions both arrive. The resulting text respects
+`max_length`. But a log kept by several writers lives better in a TABLE, one row per
+pass: it can be filtered, counted and read in pieces; the lengthened cell remains a
+stopgap.
 
-Refusé, avec la forme qui marche : un rang qui n'existe pas (« `contacts` a 2 éléments ;
-rang 5 inexistant ; pour ajouter : `contacts[+]` »), `{"contacts[0]": {…}}` (écris ses
-attributs), `contacts[].email` (adresse de lecture), `contacts[+].email` (un élément
-s'ajoute entier), `contacts[role=DAF].email` (vise le rang), et la colonne entière avec
-l'un de ses rangs dans le même appel.
+Refused, with the form that works: an index that does not exist ("`contacts` has 2 items;
+index 5 does not exist. To append: `contacts[+]`"), `{"contacts[0]": {…}}` (write its
+attributes), `contacts[].email` (read address), `contacts[+].email` (an element
+is added whole), `contacts[role=DAF].email` (target the index), and the whole column with
+one of its indexes in the same call.
 
-## 3. Ce qu'une écriture fait — et détruit
+## 3. What a write does — and destroys
 
-Une écriture ne touche **que ce qu'elle nomme**. Sur une colonne ouverte il n'y a pas
-d'annulation : la valeur précédente quitte la ligne quand la tienne arrive. Elle ne
-survit que dans le journal des révisions — `data_row_history` rend l'avant et l'après
-de chaque écriture, 90 jours par défaut — et rien ne la remet en place pour toi.
+A write touches **only what it names**. On an open column there is no
+undo: the previous value leaves the row when yours arrives. It only
+survives in the revision log — `data_row_history` returns the before and after
+of each write, 90 days by default — and nothing puts it back for you.
 
-| tu écris | effet |
+| you write | effect |
 |---|---|
-| `{"champ": Y}` ou `{"champ": {"valeur": Y}}` | valeur remplacée ; `origine` intacte ; `comment` et `link` **tombent** (ils décrivaient l'ancienne valeur) |
-| `{"champ": Y}` avec Y identique à la valeur en place | **no-op** : toutes les couches restent |
-| `{"champ": null}` | valeur effacée ; une `origine` pleine survit ; l'effacement revient dans `valeurs_effacees` (champ, ligne, valeur perdue) |
-| `{"champ": ""}` ou `{"champ": []}` sur une valeur en place | valeur **remplacée**, comme par n'importe quelle valeur ; la valeur remplacée revient dans `valeurs_effacees` |
-| `{"champ": {}}` sur une valeur en place | **ignoré** : la valeur reste, le relevé `valeurs_ignorees` le dit ; si c'était tout ce que l'écriture posait, l'appel est **refusé** en nommant `null` |
-| `{"champ": {"comment": C}}` | comment posé ; valeur et autres couches intactes |
-| `{"champ": {"valeur": Y_identique, "comment": C}}` | comment posé, rien ne tombe |
-| `{"champ": {"origine": null}}` | origine effacée ; la colonne redevient plate |
-| champ non nommé | intact |
+| `{"champ": Y}` or `{"champ": {"valeur": Y}}` | value replaced; `origine` intact; `comment` and `link` **drop** (they described the old value) |
+| `{"champ": Y}` with Y identical to the value in place | **no-op**: all layers stay |
+| `{"champ": null}` | value cleared; a filled `origine` survives; the clearing comes back in `valeurs_effacees` (field, row, lost value) |
+| `{"champ": ""}` or `{"champ": []}` on a value in place | value **replaced**, as by any value; the replaced value comes back in `valeurs_effacees` |
+| `{"champ": {}}` on a value in place | **ignored**: the value stays, the `valeurs_ignorees` report says so; if that was all the write set, the call is **refused**, naming `null` |
+| `{"champ": {"comment": C}}` | comment set; value and other layers intact |
+| `{"champ": {"valeur": Y_identique, "comment": C}}` | comment set, nothing drops |
+| `{"champ": {"origine": null}}` | origin cleared; the column becomes flat again |
+| field not named | intact |
 
-Ne pas nommer un champ le laisse intact ; le nommer avec `null` l'efface — un `null`
-glissé dans un gabarit à moitié rempli détruit une valeur en place.
+Not naming a field leaves it intact; naming it with `null` clears it — a `null`
+slipped into a half-filled template destroys a value in place.
 
-**Deux écritures sur des colonnes différentes ne s'écrasent jamais**, même parties au
-même instant. **Seulement quand ce que tu écris a été CALCULÉ d'après une ligne lue**
-(une liste ou un texte que tu renvoies en entier, un statut choisi d'après le statut en
-place) : passe la `_revision` de cette lecture — `data_write(id=…, expected_revision=…)`,
-ou `PATCH …/rows/{row_id}?expected_revision=…` (en paramètre de requête, jamais dans le
-corps). Si la ligne a changé depuis — n'importe quelle colonne, ou sa réservation —,
-rien n'est écrit et l'appel est refusé avec `revision_conflict` et la révision actuelle
-(REST : `409`, `details.current_revision`) : relis, recalcule, réécris. Sinon, ne la
-passe pas.
+**Two writes on different columns never overwrite each other**, even started at the
+same instant. **Only when what you write was COMPUTED from a row you read**
+(a list or a text you send back whole, a status chosen from the status in
+place): pass the `_revision` of that read — `data_write(id=…, expected_revision=…)`,
+or `PATCH …/rows/{row_id}?expected_revision=…` (as a query parameter, never in the
+body). If the row has changed since — any column, or its claim —,
+nothing is written and the call is refused with `revision_conflict` and the current revision
+(REST: `409`, `details.current_revision`): read again, recompute, rewrite. Otherwise, do not
+pass it.
 
-**Supprimer et libérer prennent la même précondition** — `data_delete_row(id=…,
-expected_revision=…)`, `DELETE …/rows/{row_id}?expected_revision=…`, et
-`POST …/rows/{row_id}/release` — quand c'est une ligne LUE qui t'a fait décider. Une
-suppression sur un état périmé emporte la modification qu'un autre venait d'y poser ; une
-libération sur un état périmé retire le bail que quelqu'un d'autre a repris depuis. Même
-refus, même conduite : relis, décide de nouveau, rejoue. Supprimer une ligne réservée par
-un autre travail est refusé (`row_locked`), comme l'écrire.
+**Deleting and releasing take the same precondition** — `data_delete_row(id=…,
+expected_revision=…)`, `DELETE …/rows/{row_id}?expected_revision=…`, and
+`POST …/rows/{row_id}/release` — when it was a row you READ that made you decide. A
+deletion on a stale state takes away the change someone else had just made; a
+release on a stale state removes the lease someone else has taken back since. Same
+refusal, same course of action: read again, decide again, replay. Deleting a row claimed by
+another job is refused (`row_locked`), like writing to it.
 
-**Plusieurs lignes à supprimer = UN appel** : `data_delete_row(ids=["r1", {"id": "r2",
-"expected_revision": "3"}, …])` (500 au plus). Chaque ligne garde sa précondition ; une
-ligne refusée n'arrête pas les autres et revient dans `refused` avec sa raison (et
-`current_revision` sur un conflit) ; une ligne déjà absente revient dans `not_found`.
-Un élément mal formé refuse tout l'appel, avant la moindre suppression.
+**Several rows to delete = ONE call**: `data_delete_row(ids=["r1", {"id": "r2",
+"expected_revision": "3"}, …])` (500 at most). Each row keeps its precondition; a
+refused row does not stop the others and comes back in `refused` with its reason (and
+`current_revision` on a conflict); a row already absent comes back in `not_found`.
+A malformed element refuses the whole call, before any deletion.
 
-## 4. ⚠️ `origine: "system"` est SUPPRIMÉ
+## 4. ⚠️ `origine: "system"` is REMOVED
 
-Ce cran armait une capture automatique : à la première écriture qui changeait une
-valeur, la plateforme figeait la précédente comme origine. **Il n'existe plus** (08/09/2026).
+This setting armed an automatic capture: on the first write that changed a
+value, the platform froze the previous one as origin. **It no longer exists** (8 September 2026).
 
-Ce qui le remplace : **`donnees_d_origine`** (section suivante), qui fige la version
-d'origine **au moment où la valeur entre**. Un geste déclaré, au lieu d'un filet qui
-dépendait de l'ordre dans lequel on déclarait le cran et importait les données — c'est
-cet ordre inversé qui avait produit 837 cellules « origine inconnue » sur un tableau de
-production.
+What replaces it: **`donnees_d_origine`** (next section), which freezes the original
+version **at the moment the value comes in**. A declared operation, instead of a safety net that
+depended on the order in which the setting was declared and the data imported — it is
+that reversed order that had produced 837 "origine inconnue" cells on a
+production table.
 
-⚠️ **Ce que le retrait change pour toi, et il faut le savoir** : plus rien ne capture
-automatiquement. Une valeur qu'un agent écrase n'est plus retenue par personne. Si tu
-veux garder ce que la cliente a remis, **déclare-le à l'import**.
+⚠️ **What the removal changes for you, and you need to know it**: nothing captures
+automatically anymore. A value an agent overwrites is no longer retained by anyone. If you
+want to keep what the client handed over, **declare it at import**.
 
-⚠️ **Les couches `origine` déjà en base ne bougent pas** — 28 799 cases en portent une
-au moment du retrait. Elles restent lues, servies et jamais réécrites. C'est le
-mécanisme qui part, pas la donnée. Une seule exception : le texte « origine inconnue »
-que le balayage posait À LA PLACE d'une valeur a été retiré des cases qui le portaient.
-**Une case sans couche `origine` n'a pas de valeur de départ connue** : c'est
-l'absence de la couche qui le dit, jamais un texte à sa place.
+⚠️ **The `origine` layers already in the database do not move** — 28,799 cells carry one
+at the time of the removal. They remain read, served and never rewritten. It is the
+mechanism that goes, not the data. One single exception: the text "origine inconnue"
+that the sweep set IN PLACE of a value has been removed from the cells that carried it.
+**A cell without an `origine` layer has no known starting value**: it is
+the absence of the layer that says so, never a text in its place.
 
-Une déclaration `origine` est **refusée** depuis le 01/10/2026, comme toute clé que son
-niveau n'admet pas (§ 4 octies) ; celles qui subsistaient sont retirées par la migration
-de la fermeture.
+An `origine` declaration is **refused** since 1 October 2026, like any key its
+level does not admit (§ 4 octies); those that remained are removed by the closing
+migration.
 
-## 4 bis. `donnees_d_origine: true` — quand TU apportes la donnée de la cliente
+## 4 bis. `donnees_d_origine: true` — when YOU bring the client's data
 
-Le format ci-dessus est un filet : il rattrape la valeur d'avant quand quelqu'un
-écrase. Ce paramètre-ci est l'inverse — **un geste, pas un filet**. Tu déclares que cet
-appel apporte la donnée **telle que la cliente l'a remise**, et chaque case fige sa
-version d'origine au moment où la valeur entre.
+The format above is a safety net: it catches the previous value when someone
+overwrites. This parameter is the opposite — **an operation, not a safety net**. You declare that this
+call brings the data **as the client handed it over**, and each cell freezes its
+original version at the moment the value comes in.
 
 ```
 data_write(datastore="…", key="siren", donnees_d_origine=True,
            rows=[{"siren": "123456789",
                   "raison_sociale": {"valeur": "DUPONT",
-                                     "comment": "fichier de la cliente du 05/08/2026"}}])
+                                     "comment": "client's file of 2026-08-05"}}])
 ```
 
-**La provenance va dans `comment`** — il n'y a pas de paramètre séparé pour ça. Les
-couches que tu écris atterrissent dans les deux versions, parce qu'elles décrivent le
-même fait le jour de l'import.
+**Provenance goes in `comment`** — there is no separate parameter for it. The
+layers you write land in both versions, because they describe the
+same fact on the day of the import.
 
-⚠️ **Réserve-le à l'IMPORT, jamais à l'enrichissement.** Ce qu'un agent établit est la
-version **courante**. Marquer d'origine ta propre trouvaille présenterait ton travail
-comme la donnée de la cliente — exactement ce que la définition de l'origine interdit,
-et le genre d'erreur qu'on ne découvre qu'à la restitution, devant elle.
+⚠️ **Reserve it for IMPORT, never for enrichment.** What an agent establishes is the
+**current** version. Marking your own finding as origin would present your work
+as the client's data — exactly what the definition of origin forbids,
+and the kind of error you only discover at delivery, in front of her.
 
-Trois règles qui te dispensent de précautions :
+Three rules that spare you precautions:
 
-- une **origine déjà posée n'est jamais réécrite**. Un ré-import du même fichier (avec
-  `key=`, qui désigne les lignes, cf. §6) met à jour la version courante et laisse
-  l'origine du premier — tu peux rejouer un import sans rien détruire ;
-- une **case vide ne reçoit rien**. « La cliente n'a rien remis » et « la cliente a
-  remis du vide » sont deux faits différents ; `0` et `false`, eux, sont des valeurs
-  remises et gardent leur origine ;
-- le **défaut ne change pas**. Sans ce paramètre, ton écriture est ordinaire et vise la
-  version courante, comme avant.
+- an **origin already set is never rewritten**. A re-import of the same file (with
+  `key=`, which designates the rows, cf. §6) updates the current version and leaves
+  the origin of the first one — you can replay an import without destroying anything;
+- an **empty cell receives nothing**. "The client handed over nothing" and "the client
+  handed over an empty value" are two different facts; `0` and `false`, on the other hand, are handed-over
+  values and keep their origin;
+- the **default does not change**. Without this parameter, your write is ordinary and targets the
+  current version, as before.
 
-**Pourquoi ce paramètre existe** : avant lui, avoir une origine dépendait d'un ORDRE DE
-GESTES — il fallait que `origine: "system"` ait été déclaré **avant** que la ligne
-n'existe, sans quoi la capture n'avait plus rien à figer. ⚠️ **Ce silence a coûté 837
-cellules sur 846** sur un tableau de campagne : cran déclaré après coup, valeurs de la
-cliente déjà écrasées par des agents, et un balayage qui n'a pu poser qu'un aveu
-d'ignorance, depuis retiré. Un geste explicite ne se trompe pas d'ordre.
+**Why this parameter exists**: before it, having an origin depended on an ORDER OF
+OPERATIONS — `origine: "system"` had to be declared **before** the row
+existed, otherwise the capture had nothing left to freeze. ⚠️ **This silence cost 837
+cells out of 846** on a campaign table: setting declared after the fact, the client's
+values already overwritten by agents, and a sweep that could only set an admission
+of ignorance, since removed. An explicit operation cannot get the order wrong.
 
-**Sur un import en volume** (`oto_upload_url` → `PUT /api/upload/{token}`), déclare-le
-**au mint**, avec le reste : le `PUT` signé ne porte aucun paramètre, donc celui qui
-livre les octets ne peut pas décider que son fichier est la donnée de la cliente.
+**On a bulk import** (`oto_upload_url` → `PUT /api/upload/{token}`), declare it
+**at mint**, with the rest: the signed `PUT` carries no parameter, so whoever
+delivers the bytes cannot decide that their file is the client's data.
 
-## 4 ter. `versions` — quelles versions tu veux LIRE
+## 4 ter. `versions` — which versions you want to READ
 
-Une case existe en deux versions : `current`, ce qu'on a établi, et `origine`, ce que
-la cliente a remis. Une écriture vise toujours la courante et n'a pas à le dire ; une
-lecture, elle, nomme ce qu'elle veut.
+A cell exists in two versions: `current`, what has been established, and `origine`, what
+the client handed over. A write always targets the current one and does not have to say so; a
+read, on the other hand, names what it wants.
 
 ```
-data_rows(datastore="…", versions=["current", "origine"])   # sans `versions` : current seul
+data_rows(datastore="…", versions=["current", "origine"])   # without `versions`: current only
 ```
 
-⚠️ **Demande les DEUX dans le MÊME appel quand tu les compares.** Deux appels ne sont
-pas atomiques : une écriture entre les deux te ferait comparer l'avant d'un état à
-l'après d'un autre, et tu annoncerais « corrigé » sur une ligne que personne n'a
-touchée.
+⚠️ **Request BOTH in the SAME call when you compare them.** Two calls are
+not atomic: a write in between would have you compare the before of one state with
+the after of another, and you would announce "fixed" on a row nobody
+touched.
 
-⚠️ **Le nom NU porte toujours la version courante**, quelle que soit ta demande.
-`versions` décide seulement de ce qui s'AJOUTE à côté (`champ.origine` et ses
-sous-champs) — à toute profondeur : sans `origine`, l'item d'une colonne-liste ne porte
-pas non plus `contacts[0]["email.origine"]`. Faire porter deux sens à `champ` selon un
-paramètre serait un piège, pas une commodité.
+⚠️ **The BARE name always carries the current version**, whatever your request.
+`versions` only decides what is ADDED alongside (`field.origine` and its
+sub-fields) — at any depth: without `origine`, the item of a list column does not
+carry `contacts[0]["email.origine"]` either. Making `field` carry two meanings depending on a
+parameter would be a trap, not a convenience.
 
-**La réponse déclare ce qu'elle a servi**, dans `versions_servies`. C'est ce qui rend
-discernables « je ne l'ai pas demandée » et « cette case n'en a pas » — sans quoi tu
-réinventerais un marqueur, en pire, puisque cette fois tu l'aurais deviné.
+**The response declares what it served**, in `versions_servies`. That is what makes
+"I did not ask for it" and "this cell has none" distinguishable — otherwise you
+would reinvent a marker, worse, since this time you would have guessed it.
 
-**Par défaut, la valeur actuelle seule** : l'origine (la première version de la donnée)
-se demande avec `versions`.
+**By default, the current value only**: the origin (the first version of the data)
+is requested with `versions`.
 
-## 4 quater. `force` — forcer ce qu'on NOMME, pas tout l'appel
+## 4 quater. `force` — forcing what you NAME, not the whole call
 
 ```
 data_write(datastore="…", id="…", force=["raison_sociale", "raison_sociale.origine"],
            row={"raison_sociale": {"valeur": "Dupont SAS"}})
 ```
 
-Le nommer suffit : pas besoin de `readonly_override` en plus. Un chemin est une colonne
-ou l'une de ses couches.
+Naming it is enough: no need for `readonly_override` on top. A path is a column
+or one of its layers.
 
-⚠️ **Ça change la PORTÉE, pas le droit.** Forcer reste réservé au propriétaire du
-tableau ou à qui le gouverne — un accès en écriture partagé ne suffit pas, sinon le
-verrou ne protégerait de personne. Ce que nommer tes cibles change, c'est qu'un lot de
-cinq cents lignes cesse de forcer tout ce qu'il transporte.
+⚠️ **It changes the SCOPE, not the right.** Forcing remains reserved to the owner of the
+table or whoever governs it — shared write access is not enough, otherwise the
+lock would protect from nobody. What naming your targets changes is that a batch of
+five hundred rows stops forcing everything it carries.
 
-Une colonne verrouillée absente de ta liste est refusée normalement, **et le refus te
-dit que c'est ta liste qui ne la nomme pas** — pas que tu manques d'un droit. La
-distinction compte : sans elle, tu partirais chercher une permission que tu as déjà.
+A locked column absent from your list is refused normally, **and the refusal tells
+you that it is your list that does not name it** — not that you lack a right. The
+distinction matters: without it, you would go looking for a permission you already have.
 
-## 4 quinquies. Deux gestes sur une case : `null` efface, `@empty` dit « cherché, rien »
+## 4 quinquies. Two operations on a cell: `null` erases, `@empty` says "searched, nothing"
 
-| ce que tu veux | ce que tu écris |
+| what you want | what you write |
 |---|---|
-| effacer la case | `{"champ": null}` — la valeur perdue revient une fois dans `valeurs_effacees` |
-| dire « cherché, rien » | `{"champ": {"valeur": "@empty", "comment": "registre et mentions légales : rien"}}` — il satisfait un champ requis |
-| ne pas y toucher | **omets le champ** |
+| erase the cell | `{"champ": null}` — the lost value comes back once in `valeurs_effacees` |
+| say "searched, nothing" | `{"champ": {"valeur": "@empty", "comment": "registry and legal notices: nothing"}}` — it satisfies a required field |
+| leave it alone | **omit the field** |
 
-`@empty` vaut aussi sur le champ d'un élément de liste (`{"contacts": [{"nom": …,
-"fonction": "@empty"}]}`). Posé sur une couche (`comment`, `link`), il ne vide que cette
-couche. Un vide assumé se relit `""` par défaut, et `"@empty"` avec `empties=sentinel` :
-c'est la lecture à faire avant de renvoyer une liste sans `of.key`, qui se remplace
-entière. Il est refusé sur l'identité d'un élément (`of.key`), dans une liste de valeurs
-et dans un objet.
+`@empty` also works on the field of a list element (`{"contacts": [{"nom": …,
+"fonction": "@empty"}]}`). Set on a layer (`comment`, `link`), it empties only that
+layer. An assumed empty reads back as `""` by default, and as `"@empty"` with
+`empties=sentinel`: that is the read to do before sending back a list without `of.key`,
+which is replaced whole. It is refused on the identity of an element (`of.key`), in a
+list of values and in an object.
 
-⚠️ **`@empty` doit être la valeur ENTIÈRE du sous-champ, seul.** Mélangé à une phrase, ce
-n'est plus que du texte, stocké tel quel — `"@empty ; rien sur les mentions légales"`
-atterrit dans la case, et une cliente le lit dans son livrable. La raison va dans
-`comment`. Le mot ne mord qu'au mot entier, et c'est délibéré : une sentinelle reconnue
-au milieu d'un texte viderait une valeur sur la foi d'une sous-chaîne.
+⚠️ **`@empty` must be the ENTIRE value of the sub-field, alone.** Mixed into a sentence, it
+is no longer anything but text, stored as is — `"@empty ; nothing on the legal notices"`
+lands in the cell, and a client reads it in her deliverable. The reason goes in
+`comment`. The word only bites as a whole word, and that is deliberate: a sentinel
+recognised in the middle of a text would empty a value on the strength of a substring.
 
-⚠️ **Sur une valeur en place, `null` comme `@empty` la retirent**, et elle n'est gardée
-nulle part (la réponse la rend une fois, dans `valeurs_effacees`) ; seule la version
-remise par la cliente, si elle a été posée à l'import, reste lisible dans
-`champ.origine` (`versions`, 4 ter). **Omettre le champ veut dire « pas à moi »** (la
-valeur est gardée), et une couche `comment` seule ne dit pas « cherché, rien ».
+⚠️ **On a value in place, `null` and `@empty` alike remove it**, and it is kept
+nowhere (the response returns it once, in `valeurs_effacees`); only the version
+supplied by the client, if it was set at import, remains readable in
+`champ.origine` (`versions`, 4 ter). **Omitting the field means "not mine"** (the
+value is kept), and a `comment` layer alone does not say "searched, nothing".
 
-⚠️ **`@keep` et `@clear` ne sont pas acceptés** : une écriture qui les porte, où que ce
-soit (valeur, couche, élément de liste, ligne d'un lot), est refusée ENTIÈRE, et le
-refus nomme les colonnes et le geste à faire. À la place de `@clear`, écris `null`.
-À la place de `@keep`, omets le sous-champ — ou, pour un `comment` ou un `link` qui
-doit survivre à une valeur qui change, renvoie-le tel quel : écrire une valeur fait
-tomber le `comment` et le `link` qui l'accompagnaient.
+⚠️ **`@keep` and `@clear` are not accepted**: a write that carries them, wherever it
+may be (value, layer, list element, row of a batch), is refused WHOLE, and the
+refusal names the columns and the operation to perform. Instead of `@clear`, write `null`.
+Instead of `@keep`, omit the sub-field — or, for a `comment` or a `link` that
+must survive a value that changes, send it back as is: writing a value drops
+the `comment` and the `link` that accompanied it.
 
-⚠️ **`""` et `[]` sont des valeurs : ils REMPLACENT la valeur en place**, et la valeur
-remplacée revient dans `valeurs_effacees`. Un `""` posé ne satisfait pas `required` et
-compte comme vide : pour dire « cherché, rien », c'est `@empty`. Pour garder une
-valeur, omets la colonne ; pour l'effacer, écris `null`. `{}` n'est pas une valeur et n'est jamais stocké.
+⚠️ **`""` and `[]` are values: they REPLACE the value in place**, and the replaced
+value comes back in `valeurs_effacees`. A `""` that is set does not satisfy `required` and
+counts as empty: to say "searched, nothing", use `@empty`. To keep a
+value, omit the column; to erase it, write `null`. `{}` is not a value and is never stored.
 
-`null` efface aussi une case au vide assumé (`@empty`), marqueur compris : c'est le
-geste qui remplace `@clear` pour la démarquer.
+`null` also erases a cell holding an assumed empty (`@empty`), marker included: it is the
+operation that replaces `@clear` to unmark it.
 
-## 4 sexies. Le `lifecycle` DÉSIGNE la colonne d'état
+## 4 sexies. The `lifecycle` DESIGNATES the state column
 
 ```json
 {"key": "statut", "type": "enum", "lifecycle": {"states": [...], "terminal": [...]}}
 ```
 
-**Rien d'autre à déclarer.** La colonne d'état est celle qui porte le bloc — pas
-d'étiquette `role: "status"`, pas de clé de schéma à faire correspondre.
+**Nothing else to declare.** The state column is the one that carries the block — no
+`role: "status"` label, no schema key to match.
 
-**Les transitions s'écrivent toujours en LISTE**, même pour une seule destination :
+**Transitions are always written as a LIST**, even for a single destination:
 `"transitions": {"a_qualifier": ["a_contacter", "perdu"], "a_contacter": ["gagne"]}`.
-`{"a_contacter": "gagne"}` (une chaîne) est **refusé à la pose et au patch**, et le
-refus donne la forme exacte (oto#63) : chaque écran et chaque validateur lit une liste,
-aucun ne devine. Même règle pour `terminal` : `"terminal": ["gagne"]`, jamais
-`"terminal": "gagne"`. Un bloc stocké sous l'ancienne forme est refusé à l'usage
-(changement d'état, réservation), avec le patch qui le répare.
+`{"a_contacter": "gagne"}` (a string) is **refused when the schema is set and when it is patched**, and the
+refusal gives the exact form (oto#63): every screen and every validator reads a list,
+none guesses. Same rule for `terminal`: `"terminal": ["gagne"]`, never
+`"terminal": "gagne"`. A block stored in the old form is refused on use
+(state change, claim), with the patch that repairs it.
 
-⚠️ **Ce que ça supprime** : il est désormais IMPOSSIBLE de poser un cycle de vie qui ne
-s'applique pas. Avant, un `lifecycle` sur une colonne non étiquetée était stocké,
-servi… et jamais lu — cinq tableaux étaient dans ce cas, dont quatre en production, et
-leurs auteurs croyaient avoir armé une file de travail.
+⚠️ **What this removes**: it is now IMPOSSIBLE to set a lifecycle that does not
+apply. Before, a `lifecycle` on an unlabelled column was stored,
+served… and never read — five tables were in that situation, four of them in production, and
+their authors believed they had armed a work queue.
 
-**Le nom affiché d'une étape** se déclare dans le même bloc :
-`"labels": {"a_qualifier": "À qualifier", "perdu": "Perdu"}`. C'est de la
-présentation : une ligne s'écrit toujours avec le CODE (`"statut": "a_qualifier"`),
-jamais avec le libellé. Chaque clé doit être un état de `states` (une clé inconnue est
-refusée, et nommée), chaque valeur une chaîne non vide d'au plus 60 caractères ; un
-état sans libellé est permis. Pour nommer une étape sur un tableau existant :
+**The displayed name of a stage** is declared in the same block:
+`"labels": {"a_qualifier": "À qualifier", "perdu": "Perdu"}`. This is
+presentation: a row is always written with the CODE (`"statut": "a_qualifier"`),
+never with the label. Each key must be a state of `states` (an unknown key is
+refused, and named), each value a non-empty string of at most 60 characters; a
+state without a label is allowed. To name a stage on an existing table:
 `data_patch_schema(fields=[{"key": "statut", "lifecycle": {"labels": {"perdu":
-"Perdu"}}}])` — les autres libellés et le reste du cycle de vie ne bougent pas.
+"Perdu"}}}])` — the other labels and the rest of the lifecycle do not move.
 
-Plusieurs colonnes peuvent porter un bloc — une file d'agents et des états suivis par
-un humain, par exemple. Ce qui est **refusé à la pose**, ce sont deux FILES : deux
-blocs qui déclarent `claimable`, `max_claims`, `abandon_state` ou `advance`. Sinon la première
-trouvée gagnerait, et l'ordre de déclaration trancherait en silence. La file est la
-colonne dont le bloc les déclare (à défaut, la première qui porte un bloc) : c'est elle
-que `data_claim_next` réserve.
+Several columns may carry a block — a queue of agents and states tracked by
+a human, for example. What is **refused when the schema is set** is two QUEUES: two
+blocks that declare `claimable`, `max_claims`, `abandon_state` or `advance`. Otherwise the first
+one found would win, and the order of declaration would decide silently. The queue is the
+column whose block declares them (failing that, the first one that carries a block): it is the one
+that `data_claim_next` claims from.
 
-**Une campagne en plusieurs passes : `advance`** (oto#95). Les passes sont des états
-(`a_traiter → societe → dirigeant → email`), et `"advance": {"societe": "dirigeant",
-"dirigeant": "email"}` déclare leur suite. Chaque passe réserve par SON état
-(`data_claim_next(filter={"statut": "societe"})`), écrit son travail et relâche
-(`data_release`, ou `run_finish`) : si la ligne a été écrite depuis sa réservation, la
-plateforme la fait passer à l'état suivant — une révision du journal, source `system`,
-rattachée au run de la passe. Tu n'écris pas l'état ; si tu l'écris quand même, ton
-écriture fait foi et rien ne bouge de plus. Sans écriture, rien n'avance (le plafond de
-reprises s'applique). Un bail qui expire n'avance pas : la passe se refait. Chaque pas
-doit être une transition déclarée (refusé à la pose sinon), jamais depuis un état
-terminal ; revenir en arrière reste une transition que tu écris.
+**A campaign in several passes: `advance`** (oto#95). The passes are states
+(`a_traiter → societe → dirigeant → email`), and `"advance": {"societe": "dirigeant",
+"dirigeant": "email"}` declares their sequence. Each pass claims by ITS state
+(`data_claim_next(filter={"statut": "societe"})`), writes its work and releases
+(`data_release`, or `run_finish`): if the row has been written since its claim, the
+platform moves it to the next state — a revision in the journal, source `system`,
+attached to the run of the pass. You do not write the state; if you write it anyway, your
+write prevails and nothing more moves. Without a write, nothing advances (the cap on
+retries applies). A lease that expires does not advance: the pass is redone. Each step
+must be a declared transition (refused when the schema is set otherwise), never from a
+terminal state; going backwards remains a transition that you write.
 
-⚠️ **Et si aucune colonne n'en porte, le tableau n'a PAS de cycle de vie** — mais il a
-toujours une file : `data_claim_next` réserve sans rien déclarer. Ce qui manque, ce
-sont les gardes (transitions, plafond de reprises, état d'abandon, périmètre de
-réservation). Une colonne avec ses `options`, ou l'ancienne étiquette, ressemble à un
-état sans en être un — la réponse te le dit plutôt que de te laisser conclure de son
+⚠️ **And if no column carries one, the table has NO lifecycle** — but it
+always has a queue: `data_claim_next` claims without declaring anything. What is missing
+is the guards (transitions, cap on retries, abandon state, claim
+scope). A column with its `options`, or the old label, looks like a
+state without being one — the response tells you so rather than letting you draw conclusions from its
 silence.
 
-## 4 sexies bis. Une colonne se DÉCLARE avant de s'écrire
+## 4 sexies bis. A column is DECLARED before it is written
 
-**À partir du 21 octobre 2026, une écriture dans une colonne que le schéma ne déclare
-pas est REFUSÉE** (`unknown_column`), sur TOUS les tableaux — tableaux sans schéma
-compris (oto#124). Rien n'est écrit ; un lot ou un
-import est refusé ENTIER, avant sa première ligne. Pour écrire dans une colonne
-nouvelle, déclare-la d'abord, puis écris :
+**From 21 October 2026, a write to a column that the schema does not declare
+is REFUSED** (`unknown_column`), on ALL tables — tables without a schema
+included (oto#124). Nothing is written; a batch or an
+import is refused WHOLE, before its first row. To write to a new
+column, declare it first, then write:
 
 ```
 data_patch_schema(datastore=…, fields=[{"key": "score", "type": "number"}])
 ```
 
-(REST : `PATCH /api/datastores/{datastore}/schema`, même corps.) `fields` fusionne par
-clé : la colonne est ajoutée, les autres ne bougent pas. Les colonnes qu'un tableau
-porte déjà le 21 octobre sont déclarées pour lui avant cette date — rien de ce qui
-existe ne devient inécrivable. Un patch qui touche une colonne déclarée d'une ligne
-portant une colonne ancienne non déclarée passe ; écrire `null` dans celle-ci l'efface.
+(REST: `PATCH /api/datastores/{datastore}/schema`, same body.) `fields` merges by
+key: the column is added, the others do not move. The columns that a table
+already carries on 21 October are declared for it before that date — nothing that
+exists becomes unwritable. A patch that touches a declared column of a row
+carrying an old undeclared column goes through; writing `null` to the latter erases it.
 
-**Un tableau neuf naît sans colonne** : à partir du 21 octobre, sa première écriture
-est donc refusée tant que rien n'est déclaré. Pour un tableau que tu vas remplir, le
-geste normal est de le créer AVEC son schéma, en un seul appel :
+**A new table is born without columns**: from 21 October, its first write
+is therefore refused as long as nothing is declared. For a table you are going to fill, the
+normal operation is to create it WITH its schema, in a single call:
 
 ```
 data_create_datastore(datastore="prospects", schema={"fields": [
     {"key": "siren", "type": "text"}, {"key": "nom", "type": "text"}], "key": "siren"})
 ```
 
-(REST : `POST /api/datastores`, corps `{"datastore": …, "schema": {…}}`.) `schema` est
-le MÊME objet que `data_set_schema` — mêmes clés, même vocabulaire fermé, même
-validation, clé métier et réglage de tête compris. Le tableau naît avec ; si le schéma
-est refusé, le tableau n'est PAS créé (rien à nettoyer, le même nom reste libre).
+(REST: `POST /api/datastores`, body `{"datastore": …, "schema": {…}}`.) `schema` is
+the SAME object as `data_set_schema` — same keys, same closed vocabulary, same
+validation, business key and top-level setting included. The table is born with it; if the schema
+is refused, the table is NOT created (nothing to clean up, the same name stays free).
 
-**D'ici là**, la colonne est encore créée, et la réponse le dit dans `notices` : les
-colonnes, la date, le geste. `oto_import` déclare lui-même les colonnes neuves d'un
-fichier (en-têtes CSV, clés NDJSON).
+**Until then**, the column is still created, and the response says so in `notices`: the
+columns, the date, the operation. `oto_import` itself declares the new columns of a
+file (CSV headers, NDJSON keys).
 
-## 4 sexies ter. Le format déclaré fait contrat — plus aucun réglage
+## 4 sexies ter. The declared format is a contract — no more settings
 
-**À partir du 21 octobre 2026, le format déclaré fait contrat sur TOUS les tableaux à
-schéma** (oto#124, décidé le 05/10/2026 : toujours refuser, plus aucun réglage) :
+**From 21 October 2026, the declared format is a contract on ALL tables with a
+schema** (oto#124, decided on 2026-10-05: always refuse, no more settings):
 
-- les `options` d'une colonne sont appliquées, quel que soit son type ;
-- la FORME d'une valeur `text`, `url`, `object`, `list` et `enum` est vérifiée
-  (une URL commence par `http(s)://`, un objet est un objet, une liste une liste) ;
-- une couche inconnue d'une valeur est refusée (`{"valeur": …, "commentaire": …}`) ;
-- un sous-record déclaré (`object.fields`, `list.of.fields`) refuse un attribut qu'il
-  ne déclare pas ;
-- à la pose, la colonne d'un périmètre de réservation (`lifecycle.claimable`) doit
-  être déclarée.
+- the `options` of a column are applied, whatever its type;
+- the SHAPE of a `text`, `url`, `object`, `list` and `enum` value is checked
+  (a URL starts with `http(s)://`, an object is an object, a list a list);
+- an unknown layer of a value is refused (`{"valeur": …, "commentaire": …}`);
+- a declared sub-record (`object.fields`, `list.of.fields`) refuses an attribute it
+  does not declare;
+- when the schema is set, the column of a claim scope (`lifecycle.claimable`) must
+  be declared.
 
-Une faute est refusée (`row_invalid`), rien n'est écrit — sauf une valeur hors
-`options` seule dans sa faute : elle est ÉCARTÉE et le reste de la ligne s'écrit
+A fault is refused (`row_invalid`), nothing is written — except a value outside
+`options` that is alone in its fault: it is DISCARDED and the rest of the row is written
 (`valeurs_ecartees`).
 
-**D'ici là**, sur un tableau qui ne faisait pas contrat de son format, l'écriture
-passe et `notices` dit chaque faute — la colonne, la valeur, la règle (options
-permises, forme attendue) —, la date, et le geste : corriger la valeur, ou, si elle
-est juste, étendre le format :
+**Until then**, on a table whose format was not a contract, the write
+goes through and `notices` states each fault — the column, the value, the rule (permitted
+options, expected shape) —, the date, and the operation: correct the value, or, if it
+is right, extend the format:
 
 ```
 data_patch_schema(datastore=…, fields=[{"key": "statut", "options": ["a", "b", "c"]}])
 ```
 
-**On juge ce que le geste ÉCRIT, jamais ce que la ligne porte déjà.** Une ligne dont
-une valeur en place est hors format s'écrit sur ses AUTRES colonnes, avant comme après
-la date ; la faute en place est dite (`hors_type`), elle ne refuse rien. Les lignes
-existantes ne sont pas corrigées par la plateforme.
+**What is judged is what the operation WRITES, never what the row already carries.** A row in which
+a value in place is out of format is written on its OTHER columns, before as well as after
+the date; the fault in place is stated (`hors_type`), it refuses nothing. Existing
+rows are not corrected by the platform.
 
-**Un seul réglage de tête reste : `new_rows`** — une ligne nouvelle a-t-elle le droit
-de naître ? `"create"` (défaut) ou `"reject"` (une écriture qui ne désigne aucune
-ligne existante est refusée — exige `key`). `data_get_schema` le sert tel qu'il
-s'applique (`reglages`).
+**Only one top-level setting remains: `new_rows`** — does a new row have the right
+to be born? `"create"` (default) or `"reject"` (a write that designates no
+existing row is refused — requires `key`). `data_get_schema` serves it as it
+applies (`reglages`).
 
-`unknown_columns` est **retiré** (05/10/2026) : le poser ou le patcher est refusé,
-avec cette raison — plus aucun réglage, les colonnes et les valeurs sont toujours
-vérifiées. Un schéma qui le porte encore le garde tant qu'on n'y touche pas (la
-plateforme le retire elle-même ; la lecture le dit). `strict`, `unknown_fields` et
-`key_required` sont refusés depuis le 02/10/2026 (`key_required: true` →
+`unknown_columns` is **retired** (2026-10-05): setting or patching it is refused,
+with this reason — no more settings, columns and values are always
+checked. A schema that still carries it keeps it as long as nobody touches it (the
+platform removes it itself; the read says so). `strict`, `unknown_fields` and
+`key_required` have been refused since 2026-10-02 (`key_required: true` →
 `new_rows: "reject"`).
 
-## 4 septies. Une exigence déclarée s'applique, à toute profondeur
+## 4 septies. A declared requirement applies, at any depth
 
-La validation d'un tableau s'arme dès que son schéma déclare une exigence :
-`required`, `required_when`, `max_length`, `max_items` sur une colonne, un
-sous-champ d'objet ou l'attribut d'un élément de liste — et `options` dans un
-sous-champ. « Chaque contact porte un nom » se déclare sur `of.fields`, et il est
-tenu. Le reste du format (les `options` d'une colonne de premier niveau, la forme des
-valeurs) fait contrat partout à partir du 21/10/2026 (§4 sexies ter) ; d'ici là, la
-réponse le dit.
+A table's validation is armed as soon as its schema declares a requirement:
+`required`, `required_when`, `max_length`, `max_items` on a column, an
+object sub-field or the attribute of a list element — and `options` in a
+sub-field. "Each contact carries a name" is declared on `of.fields`, and it is
+enforced. The rest of the format (the `options` of a top-level column, the shape of
+values) is a contract everywhere from 2026-10-21 (§4 sexies ter); until then, the
+response says so.
 
-Deux formes qui ne s'appliqueraient pas sont **refusées à la pose**, avec la bonne :
-`max_items` se pose sur la liste (`{"type": "list", "max_items": 3, "of": {…}}`),
-jamais dans `of` ; des sous-champs (`fields`, `of`) exigent le `type` de leur colonne
-(`object` ou `list`).
+Two forms that would not apply are **refused when the schema is set**, with the right one:
+`max_items` is set on the list (`{"type": "list", "max_items": 3, "of": {…}}`),
+never in `of`; sub-fields (`fields`, `of`) require the `type` of their column
+(`object` or `list`).
 
-Dans une liste à `of.key`, seuls les éléments que ton écriture **change** sont jugés —
-et, dans toute liste, seuls ceux que tu écris par leur rang (§2 bis).
-Un élément renvoyé tel quel, qui ne respectait pas une exigence posée après lui, ne
-bloque pas ton écriture : il est signalé dans `hors_type`, à corriger quand tu y
-reviens.
+In a list with `of.key`, only the elements that your write **changes** are judged —
+and, in any list, only those you write by their rank (§2 bis).
+An element sent back as is, which did not meet a requirement set after it, does not
+block your write: it is flagged in `hors_type`, to be corrected when you come
+back to it.
 
-## 4 octies. Le vocabulaire d'un schéma est FERMÉ
+## 4 octies. The vocabulary of a schema is CLOSED
 
-Depuis le 01/10/2026, chaque niveau d'un schéma déclare les clés qu'il admet — la
-**tête**, une **colonne**, un **sous-champ** (`fields` d'un objet ou d'un élément), l'**élément
-d'une liste** (`of`) et le bloc **`lifecycle`** — et une clé absente de son niveau est
-**refusée**, à la pose (`data_set_schema`, `PUT …/schema`) comme au patch
-(`data_patch_schema`, `PATCH …/schema`). Les listes, et qui lit chaque clé, sont servies
-sur `GET /api/datastore/schema/keys` (`levels`).
+Since 2026-10-01, each level of a schema declares the keys it admits — the
+**top level**, a **column**, a **sub-field** (`fields` of an object or of an element), the **element
+of a list** (`of`) and the **`lifecycle`** block — and a key absent from its level is
+**refused**, when the schema is set (`data_set_schema`, `PUT …/schema`) as well as when it is patched
+(`data_patch_schema`, `PATCH …/schema`). The lists, and who reads each key, are served
+on `GET /api/datastore/schema/keys` (`levels`).
 
-Le refus nomme le chemin, la clé, et où elle va :
+The refusal names the path, the key, and where it goes:
 
 ```
-fields.statut : `enum` n'est pas admise sur une colonne — voulais-tu `options` ?
-fields.etat : `states` n'est pas admise sur une colonne — elle se pose DANS le bloc `lifecycle` de la colonne (`lifecycle.states`) …
-tête : `semantic_search` n'est pas admise en tête du schéma — c'est un PARAMÈTRE de l'appel …
+fields.statut: `enum` is not allowed on a column — did you mean `options`?
+fields.etat: `states` is not allowed on a column — it goes INSIDE the column's `lifecycle` block (`lifecycle.states`) …
+top level: `semantic_search` is not allowed at the top level of the schema — it is a PARAMETER of the call …
 ```
 
-- **un texte d'aide** va dans `description` — le seul : `note`, `help`, `hint` et
-  `placeholder` y ont été repliés et sont refusés ;
-- **une annotation à toi** (une dépendance, un libellé de valeur, une provenance du
-  format) va dans `meta` : un objet, admis à chaque niveau, transporté tel quel,
-  **jamais lu**, borné en taille (`meta_max_bytes`). Rien de ce qui est dans `meta` ne
-  devient actif — un `readonly` rangé là ne verrouille rien ;
-- **une clé déjà stockée** et inchangée ne bloque rien : le refus porte sur ce que le
-  geste POSE ou MODIFIE. Le patch d'une autre colonne passe ; la réponse et
-  `data_get_schema` la nomment dans `warning`. Pour la retirer :
-  `data_patch_schema(remove_attrs={"colonne": ["clé"]})`.
+- **a help text** goes in `description` — the only one: `note`, `help`, `hint` and
+  `placeholder` have been folded into it and are refused;
+- **an annotation of your own** (a dependency, a value label, a provenance of the
+  format) goes in `meta`: an object, admitted at every level, carried as is,
+  **never read**, bounded in size (`meta_max_bytes`). Nothing in `meta`
+  becomes active — a `readonly` stored there locks nothing;
+- **a key already stored** and unchanged blocks nothing: the refusal applies to what the
+  operation SETS or MODIFIES. The patch of another column goes through; the response and
+  `data_get_schema` name it in `warning`. To remove it:
+  `data_patch_schema(remove_attrs={"column": ["key"]})`.
 
-## 5. Ce que `readonly: true` protège — et ne protège pas
+## 5. What `readonly: true` protects — and does not protect
 
-Une colonne `readonly` (schéma) verrouille une **valeur posée** : une écriture qui la
-**change** (valeur nue, `null`, ou `{"valeur": …}`) est refusée en nommant la colonne et
-où va la chose — `champ.comment`, qui reste ouvert. Une valeur identique passe (no-op) ;
-`comment`, `link` et `origine` (sauf si le système la pose) restent écrivables.
+A `readonly` column (schema) locks a **set value**: a write that **changes** it (bare
+value, `null`, or `{"valeur": …}`) is refused, naming the column and where the thing
+goes instead — `champ.comment`, which stays open. An identical value passes (no-op);
+`comment`, `link` and `origine` (unless the system sets it) remain writable.
 
-`readonly` veut dire **« ne se modifie plus une fois posé »**, pas « ne s'écrit plus
-après la création » :
+`readonly` means **"no longer changes once set"**, not "can no longer be written
+after creation":
 
-- une case **sans valeur** — clé absente, `null` ou `""` — **se remplit**, une fois : une
-  colonne verrouillée après son import n'est pas vide pour toujours ;
-- **`@empty` est une valeur posée** (« cherché, rien ») : le remplacer est refusé ;
-- **effacer** une valeur posée (`null`) est un changement : refusé.
+- a cell **without a value** — absent key, `null` or `""` — **gets filled**, once: a
+  column locked after its import is not empty forever;
+- **`@empty` is a set value** ("searched, nothing"): replacing it is refused;
+- **erasing** a set value (`null`) is a change: refused.
 
-Ce que le cran ne ferme **pas** : la **création** d'une ligne — rien n'est écrasé ; un
-tableau qui ne doit pas grossir se ferme par `new_rows: "reject"`. La colonne-clé ne
-peut pas être `readonly` : c'est `new_rows: "reject"` qui la protège. Une colonne
-**calculée** (§9), elle, reste fermée même vide.
+What this notch does **not** close: the **creation** of a row — nothing is overwritten; a
+table that must not grow is closed with `new_rows: "reject"`. The key column cannot be
+`readonly`: it is `new_rows: "reject"` that protects it. A **computed** column (§9), for
+its part, stays closed even when empty.
 
-Pour remplacer quand même : `readonly_override=true` **sur l'appel** (argument de
-`data_write` ; paramètre de query sur `POST`/`PATCH …/rows`). Réservé au propriétaire
-du tableau ou à qui le gouverne — un tableau seulement partagé en écriture est refusé —
-et chaque remplacement forcé est journalisé (ligne, colonne, valeur remplacée).
+To replace anyway: `readonly_override=true` **on the call** (argument of
+`data_write`; query parameter on `POST`/`PATCH …/rows`). Reserved for the owner
+of the table or whoever governs it — a table only shared for writing is refused —
+and every forced replacement is logged (row, column, replaced value).
 
-## 6. Ce que la clé métier fait à l'écriture
+## 6. What the business key does on write
 
-Quand le schéma déclare une `key` (`data_set_schema`), une écriture **sans `id`** qui
-porte une valeur de clé **déjà présente** ne crée pas de doublon : un index unique le
-garantit. Ce qu'elle fait de cette ligne dépend de ce que **ton appel dit** (oto#141) :
+When the schema declares a `key` (`data_set_schema`), a write **without `id`** that
+carries a key value **already present** does not create a duplicate: a unique index
+guarantees it. What it does to that row depends on what **your call says** (oto#141):
 
-- **Tu DÉSIGNES** — par `id=`, ou en nommant la clé avec **`key=`** (un lot, ou une ligne
-  seule avec `key=` = la clé déclarée ; REST `?key=` ; la frappe d'un upload) : une
-  valeur déjà présente **modifie** sa ligne (retour de son `_id`), une valeur neuve la
-  crée. Pas besoin d'`upsert`.
-- **Tu AJOUTES** — ni `id` ni `key=` : une valeur déjà présente est un doublon que tu
-  n'as pas vu.
+- **You DESIGNATE** — by `id=`, or by naming the key with **`key=`** (a batch, or a single
+  row with `key=` = the declared key; REST `?key=`; the minting of an upload): a
+  value already present **modifies** its row (its `_id` is returned), a new value
+  creates it. No need for `upsert`.
+- **You ADD** — neither `id` nor `key=`: a value already present is a duplicate you
+  did not see.
 
-| | jusqu'au 20 octobre 2026 | à partir du **21 octobre 2026** |
+| | until 20 October 2026 | from **21 October 2026** |
 |---|---|---|
-| ajout, clé déjà présente, sans `upsert` | fusionne, et `notices` avertit, daté | **refusé** `business_key_exists` : le refus nomme la ligne en place et les gestes |
-| ajout, clé déjà présente, `upsert=true` | **fusionne** (retour de son `_id`) | **fusionne** |
-| deux lignes d'un même appel à la même clé, sans `upsert` (désignation comme ajout) | fusionnent, averties | le lot est **refusé ENTIER** avant sa première ligne, rangs nommés (« lignes 1 et 2 : même siren '111' ») |
+| add, key already present, without `upsert` | merges, and `notices` warns, with the date | **refused** `business_key_exists`: the refusal names the row in place and the operations |
+| add, key already present, `upsert=true` | **merges** (its `_id` is returned) | **merges** |
+| two rows of the same call with the same key, without `upsert` (designation as well as add) | they merge, with a warning | the batch is **refused WHOLE** before its first row, ranks named ("Rows 1 and 2: same siren '111'.") |
 
-On ne désigne pas deux fois la même ligne dans un appel : retire le doublon, ou passe
-`upsert=true` s'il doit fusionner. `upsert` vaut sur toutes les faces — ligne seule,
-lot, REST, `oto_upload_url` (déclaré à la frappe, scellé dans le jeton, comme `key`) et
-`oto_import` —, et il est refusé là où il ne fusionnerait rien : avec `id=`, ou sur un
-tableau sans clé (et, pour un lot, sans `key=`).
+You do not designate the same row twice in one call: remove the duplicate, or pass
+`upsert=true` if it must merge. `upsert` applies on every face — single row,
+batch, REST, `oto_upload_url` (declared at minting, sealed in the token, like `key`) and
+`oto_import` —, and it is refused where it would merge nothing: with `id=`, or on a
+table without a key (and, for a batch, without `key=`).
 
-Un lot rend chaque fusion dans **`fusions`** : `{rang, dans_rang, id, cle}` — `rang` le
-rang de la ligne dans le lot (à partir de 1), `dans_rang` le rang de la ligne du **même**
-lot qui a posé la ligne visée, `null` pour une ligne déjà en base, `cle`
-`{colonne: valeur}`. **`ids` reste aligné rang pour rang** : deux entrées peuvent
-désigner la même ligne, et `fusions` dit lesquelles. L'accusé d'un upload signé, lu par
-un porteur de lien, rend `fusions` sans `id`.
+A batch returns each merge in **`fusions`**: `{rang, dans_rang, id, cle}` — `rang` the
+rank of the row in the batch (starting at 1), `dans_rang` the rank of the row of the **same**
+batch that set the targeted row, `null` for a row already in the database, `cle`
+`{colonne: valeur}`. **`ids` stays aligned rank for rank**: two entries can
+designate the same row, and `fusions` says which. The receipt of a signed upload, read by
+a link holder, returns `fusions` without `id`.
 
-Sur un tableau **fermé** (`new_rows: "reject"`, ci-dessous), toute écriture sans `id` est une
-désignation par la clé : il ne crée jamais, la valeur de clé y est la façon de viser
-sa ligne.
+On a **closed** table (`new_rows: "reject"`, below), every write without `id` is a
+designation by the key: it never creates, the key value is the way to target
+its row.
 
-Une ligne créée sans valeur de clé est créée quand même et la réponse le signale
-(`notices`) : aucune écriture ultérieure ne la retrouvera par sa clé.
+A row created without a key value is created anyway and the response flags it
+(`notices`): no later write will find it by its key.
 
-`new_rows: "reject"` ferme le tableau (il exige `key`) : une écriture qui ne désigne aucune ligne
-existante — ni `id`, ni valeur de clé déjà portée ; une clé simplement **nouvelle**
-compte comme inconnue — est **refusée** (`business_key_required`) au lieu de créer.
-Le refus dit si l'écriture PORTAIT la clé (« porte `siren` = … » : la valeur est
-inconnue) ou non (« ne porte pas `siren` ») ; REST : `details.cle_portee`, `details.valeur`,
-`details.a_renvoyer`. Un lot dédoublonné par `key=` sur une autre colonne est jugé sur
-la clé DÉCLARÉE.
-Ouvrir, écrire, refermer : `data_patch_schema(new_rows="create")`, l'écriture, puis
+`new_rows: "reject"` closes the table (it requires `key`): a write that designates no
+existing row — neither `id`, nor a key value already carried; a merely **new** key
+counts as unknown — is **refused** (`business_key_required`) instead of creating.
+The refusal says whether the write CARRIED the key ("carries `siren` = …": the value is
+unknown) or not ("does not carry `siren`"); REST: `details.cle_portee`, `details.valeur`,
+`details.a_renvoyer`. A batch deduplicated by `key=` on another column is judged on
+the DECLARED key.
+Open, write, close again: `data_patch_schema(new_rows="create")`, the write, then
 `data_patch_schema(new_rows="reject")`.
 
-Un **lot** (`data_write(rows=[…])`, `oto_upload_url`) n'est pas atomique : il s'arrête à
-la première ligne refusée, les précédentes restent écrites, le refus nomme la ligne et
-dit combien ont atterri. Deux refus font exception, jugés sur le lot ENTIER avant sa
-première ligne : un mot refusé (`@keep`, `@clear`) et, sans `upsert`, une clé en
-doublon ou déjà portée par un ajout (ci-dessus). `key=` sur le lot désigne par une autre
-colonne que la clé déclarée s'il le faut ; sur une ligne seule, seule la clé déclarée
-joue.
+A **batch** (`data_write(rows=[…])`, `oto_upload_url`) is not atomic: it stops at
+the first refused row, the previous ones stay written, the refusal names the row and
+says how many landed. Two refusals are exceptions, judged on the WHOLE batch before its
+first row: a refused word (`@keep`, `@clear`) and, without `upsert`, a key that is
+duplicated or already carried by an add (above). `key=` on the batch designates by a column
+other than the declared key if needed; on a single row, only the declared key
+applies.
 
-## 7. Deux faces, un seul stockage
+## 7. Two faces, one storage
 
-| geste | MCP (`data_*`) | REST (`/api/datastores` = `DS`) |
+| operation | MCP (`data_*`) | REST (`/api/datastores` = `DS`) |
 |---|---|---|
-| tableaux | `data_list_datastores`, `data_create_datastore`, `data_rename_datastore`, `data_delete_datastore`, `data_url` | `GET`/`POST DS` ; `PATCH`/`DELETE DS/{tableau}` ; `GET DS/{tableau}/url` |
-| lignes | `data_rows` (page, ou `id`), `data_write`, `data_delete_row` | `GET`/`POST DS/{tableau}/rows` ; `GET`/`PATCH`/`DELETE …/rows/{row_id}` |
-| schéma | `data_get_schema`, `data_set_schema`, `data_patch_schema`, `data_drop_column` | `GET`/`PUT`/`PATCH …/schema` ; `POST …/drop_column` |
-| file de travail | `data_claim_next`, `data_release` | `POST …/claim_next` ; `POST …/rows/{row_id}/claim` ; `POST …/rows/{row_id}/release` ; `GET …/queue` |
-| agrégat | `data_aggregate` | `GET …/aggregate` |
-| partage | `data_share` | `GET`/`POST`/`DELETE …/share` |
-| historique d'une ligne | `data_row_history` | `GET …/rows/{row_id}/history` |
-| activité | — | `GET …/activity` ; `GET …/rows/{row_id}/activity` |
+| tables | `data_list_datastores`, `data_create_datastore`, `data_rename_datastore`, `data_delete_datastore`, `data_url` | `GET`/`POST DS` ; `PATCH`/`DELETE DS/{tableau}` ; `GET DS/{tableau}/url` |
+| rows | `data_rows` (page, or `id`), `data_write`, `data_delete_row` | `GET`/`POST DS/{tableau}/rows` ; `GET`/`PATCH`/`DELETE …/rows/{row_id}` |
+| schema | `data_get_schema`, `data_set_schema`, `data_patch_schema`, `data_drop_column` | `GET`/`PUT`/`PATCH …/schema` ; `POST …/drop_column` |
+| work queue | `data_claim_next`, `data_release` | `POST …/claim_next` ; `POST …/rows/{row_id}/claim` ; `POST …/rows/{row_id}/release` ; `GET …/queue` |
+| aggregate | `data_aggregate` | `GET …/aggregate` |
+| sharing | `data_share` | `GET`/`POST`/`DELETE …/share` |
+| history of a row | `data_row_history` | `GET …/rows/{row_id}/history` |
+| activity | — | `GET …/activity` ; `GET …/rows/{row_id}/activity` |
 
-`{tableau}` est le **numéro** du tableau (son nom marche encore, en cours de retrait —
-cf. §0) ; `slot:<nom>` est compris des deux côtés. Le
-descriptif complet (entrées, réponses, codes) est `GET /api/openapi.json`, sans auth ;
-la face REST s'appelle avec le même jeton que `/mcp`, ou un jeton API.
+`{tableau}` is the **number** of the table (its name still works, being retired —
+see §0); `slot:<nom>` is understood on both sides. The
+complete description (inputs, responses, codes) is `GET /api/openapi.json`, without auth;
+the REST face is called with the same token as `/mcp`, or an API token.
 
-**Identique** sur les deux faces : le stockage, les couches à la lecture (`layers`),
-la clé métier, `readonly`, les refus de schéma — une ligne créée d'un côté se lit de
-l'autre, à l'identique.
+**Identical** on both faces: the storage, the layers on read (`layers`),
+the business key, `readonly`, the schema refusals — a row created on one side reads on
+the other, identically.
 
-**Diverge** :
+**Diverges**:
 
-- **Lot.** `POST …/rows` écrit **une** ligne : le corps **est** la ligne. Un corps à
-  clé unique dont la valeur est une liste d'objets (`{"data": [...]}`), ou dont la
-  clé `rows` en porte une quelles que soient les autres (`{"rows": [...], "key":
-  "siren"}`), est refusé `400 batch_body`, rien n'est écrit — sauf si une colonne de
-  ce nom est déclarée au schéma. Un corps qui est une liste JSON est refusé `400
-  invalid_body`. Le lot REST est `POST …/rows/batch`, corps `{"rows": [...], "key":
-  "siren", "donnees_d_origine": true}` (`key`, `upsert` et
-  `donnees_d_origine` facultatifs) : le même geste que `data_write(rows=[…])` — même
-  moteur, mêmes refus nommant la ligne, mêmes notices, même réponse (`inserted`,
-  `updated`, `count`, `ids`, `fusions`). `POST …/rows` prend `?key=` et `?upsert=true` en query
-  (son corps est la ligne). Pour un volume, `oto_upload_url`.
-- **Projection.** `fields` n'existe que sur `data_rows` ; REST rend la ligne entière.
-- **Paramètres inconnus.** REST refuse tout paramètre de query ou de chemin qu'il ne
-  connaît pas — 400 `unknown_fields`, qui nomme le champ et les attendus. Le corps de
-  `POST`/`PATCH …/rows` est libre : ce sont les colonnes.
-- **Pagination.** `data_rows` : `limit` (100) + `cursor` → `{rows, count, next_cursor}`.
-  REST : `offset` + `limit` (50, max 500) → `{rows, total, offset, limit}`.
-- **Filtres REST** : `filter`, `filters`, `metrics` sont du JSON **dans une chaîne** de
-  query (`?filters=[{"field":…}]`), envoyée une seule fois.
-- **`group_by`.** Une chaîne `"a,b"` est refusée sur les deux faces : le croisement
-  n'existe pas. La forme **liste** `["a", "b"]` n'existe que sur `data_aggregate`, et
-  elle **fusionne** les valeurs des champs sous une même clé, elle ne croise pas ;
-  REST prend une colonne.
-- **`key=`** : sur un lot, MCP et REST (`…/rows/batch`) prennent n'importe quelle
-  colonne ; sur une ligne seule (`data_write(row=)`, `POST …/rows?key=`), seule la clé
-  déclarée.
-- **Refus de schéma : la charge à renvoyer.** Un refus de validation (requis manquant,
-  type ou format, sous-champ inconnu, couche exigée) porte le fragment de `row` à
-  renvoyer : seuls les champs à corriger, un gabarit `<…>` à la place de chaque valeur
-  (`"<texte>"`, `"<nombre>"`, `"<a | b>"`), `| @empty` là où ce geste est permis, et dans
-  une liste l'élément fautif SEUL, désigné par son `of.key` (sinon son rang, dans
-  `a_renvoyer_elements`). MCP : en fin de message. REST : `details.a_renvoyer`. Remplace
-  les gabarits et réécris ; une liste se renvoie entière, cet élément corrigé à sa place
-  — ou n'écris que ses attributs, à son rang (§2 bis).
-- **Refus.** MCP : erreur `INVALID_PARAMS` qui porte le message. REST : 400 nommé
+- **Batch.** `POST …/rows` writes **one** row: the body **is** the row. A body with a
+  single key whose value is a list of objects (`{"data": [...]}`), or whose
+  `rows` key carries one whatever the others (`{"rows": [...], "key":
+  "siren"}`), is refused `400 batch_body`, nothing is written — unless a column with
+  that name is declared in the schema. A body that is a JSON list is refused `400
+  invalid_body`. The REST batch is `POST …/rows/batch`, body `{"rows": [...], "key":
+  "siren", "donnees_d_origine": true}` (`key`, `upsert` and
+  `donnees_d_origine` optional): the same operation as `data_write(rows=[…])` — same
+  engine, same refusals naming the row, same notices, same response (`inserted`,
+  `updated`, `count`, `ids`, `fusions`). `POST …/rows` takes `?key=` and `?upsert=true` as query
+  (its body is the row). For volume, `oto_upload_url`.
+- **Projection.** `fields` only exists on `data_rows`; REST returns the whole row.
+- **Unknown parameters.** REST refuses any query or path parameter it does not
+  know — 400 `unknown_fields`, which names the field and the expected ones. The body of
+  `POST`/`PATCH …/rows` is free: those are the columns.
+- **Pagination.** `data_rows`: `limit` (100) + `cursor` → `{rows, count, next_cursor}`.
+  REST: `offset` + `limit` (50, max 500) → `{rows, total, offset, limit}`.
+- **REST filters**: `filter`, `filters`, `metrics` are JSON **inside a query
+  string** (`?filters=[{"field":…}]`), sent only once.
+- **`group_by`.** A string `"a,b"` is refused on both faces: cross-grouping
+  does not exist. The **list** form `["a", "b"]` only exists on `data_aggregate`, and
+  it **merges** the values of the fields under the same key, it does not cross;
+  REST takes one column.
+- **`key=`**: on a batch, MCP and REST (`…/rows/batch`) take any
+  column; on a single row (`data_write(row=)`, `POST …/rows?key=`), only the declared
+  key.
+- **Schema refusals: the payload to send back.** A validation refusal (missing required,
+  type or format, unknown sub-field, required layer) carries the fragment of `row` to
+  send back: only the fields to fix, a `<…>` template in place of each value
+  (`"<texte>"`, `"<nombre>"`, `"<a | b>"`), `| @empty` where that operation is allowed, and in
+  a list the faulty element ALONE, designated by its `of.key` (otherwise its rank, in
+  `a_renvoyer_elements`). MCP: at the end of the message. REST: `details.a_renvoyer`. Replace
+  the templates and write again; a list is sent back whole, that element fixed in its place
+  — or write only its attributes, at its rank (§2 bis).
+- **Refusals.** MCP: `INVALID_PARAMS` error carrying the message. REST: named 400
   (`row_invalid`, `business_key_required`, `invalid_row_input`, `jeton_mal_place`,
-  `invalid_filters`…), 403 `datastore_read_only` (tableau partagé en lecture seule),
-  404 `datastore_not_found` (avec l'org où il vit, s'il existe dans une autre des
-  tiennes) ou `row_not_found` ; 409 `row_locked` (ligne réservée par un autre),
-  `revision_conflict` (la ligne a changé depuis la `_revision` passée) ou
-  `business_key_exists` (ajout sur une clé déjà portée, ou doublon dans l'appel, sans
-  `upsert`, §6 — `details` : `id` de la
-  ligne en place, ou `doublons` et `existantes` d'un lot).
+  `invalid_filters`…), 403 `datastore_read_only` (table shared read-only),
+  404 `datastore_not_found` (with the org where it lives, if it exists in another of
+  yours) or `row_not_found`; 409 `row_locked` (row claimed by someone else),
+  `revision_conflict` (the row has changed since the `_revision` passed) or
+  `business_key_exists` (add on a key already carried, or duplicate within the call, without
+  `upsert`, §6 — `details`: `id` of the
+  row in place, or `doublons` and `existantes` of a batch).
 
-## 8. Ce qu'une réponse ne contient pas
+## 8. What a response does not contain
 
-Un succès n'est pas un accusé de ce que tu crois avoir fait ; lis ce qui manque.
+A success is not an acknowledgement of what you believe you did; read what is missing.
 
-- **La liste REST ne sait pas dire « il en reste ».** `{rows, total, offset, limit}`
-  sans curseur : la fin se calcule (`offset + len(rows) >= total`). Un `offset` au-delà
-  du total rend `rows: []` en 200 — la même réponse qu'un tableau vide ; une ligne
-  supprimée entre deux pages décale les suivantes sans un mot. Sur `data_rows`,
-  `next_cursor: null` est le seul signal de fin, et un curseur périmé est refusé.
-- **`data_rows(fields=[…])` ne dit pas qu'une colonne est vide.** Une colonne
-  déclarée au schéma mais renseignée nulle part rend des lignes `{_id}` **sans
-  avertissement** — c'est voulu, pour ne pas accuser une faute d'orthographe qui n'en
-  est pas ; le `warning` ne vient que pour un nom inconnu partout.
-- **Une réponse ne dit pas le tableau qu'elle n'a pas résolu.** `ns_id` est présent
-  dès que le tableau a été atteint ; un `ns_id: null` signale un chemin qui a rendu
-  sans résoudre, pas un tableau sans numéro.
-- **Un `200`/`201` d'écriture ne porte que ce qui a dévié.** `hors_schema`,
+- **The REST list cannot say "there are more".** `{rows, total, offset, limit}`
+  without a cursor: the end is computed (`offset + len(rows) >= total`). An `offset` beyond
+  the total returns `rows: []` with 200 — the same response as an empty table; a row
+  deleted between two pages shifts the following ones without a word. On `data_rows`,
+  `next_cursor: null` is the only end signal, and a stale cursor is refused.
+- **`data_rows(fields=[…])` does not say a column is empty.** A column
+  declared in the schema but filled nowhere returns `{_id}` rows **without a
+  warning** — this is intended, so as not to flag a spelling mistake that is not
+  one; the `warning` only comes for a name unknown everywhere.
+- **A response does not name the table it did not resolve.** `ns_id` is present
+  as soon as the table was reached; an `ns_id: null` signals a path that returned
+  without resolving, not a table without a number.
+- **A write `200`/`201` only carries what deviated.** `hors_schema`,
   `hors_type`, `valeurs_ecartees`, `valeurs_effacees`, `valeurs_ignorees`, `notices`
-  sont absents quand
-  tout est dans le format : leur absence est la réponse normale, leur présence est ce
-  qu'il faut lire.
-- **Un agrégat sur un champ absent rend un groupe de clé `null`**, pas une erreur : un
-  seul groupe contenant tout est le signe d'un nom de colonne faux, pas d'une donnée
-  vide.
+  are absent when
+  everything is in format: their absence is the normal response, their presence is what
+  you must read.
+- **An aggregate on an absent field returns a group with key `null`**, not an error: a
+  single group containing everything is the sign of a wrong column name, not of empty
+  data.
 
-## 9. Une colonne `type: "formula"` est calculée, jamais écrite
+## 9. A `type: "formula"` column is computed, never written
 
-Une formule OpenFormula posée au schéma (`formula: "IFS(…)"`) calcule la colonne à
-partir des autres colonnes **de la même ligne** — jamais une autre ligne, jamais une
-autre colonne calculée. Sous-ensemble fermé : `IFS`, `IF`, `SWITCH`, `AND`, `OR`, `NOT`,
-`LEFT`, `MID`, `LEN`, `COUNTA`, `TRUE`, `FALSE`, comparaisons ; le reste, une colonne
-inconnue ou un chaînage est refusé **à la pose**, en le nommant. Grammaire complète :
-docstring de `oto_mcp/datastore/formule.py`.
+An OpenFormula formula set in the schema (`formula: "IFS(…)"`) computes the column from
+the other columns **of the same row** — never another row, never another
+computed column. Closed subset: `IFS`, `IF`, `SWITCH`, `AND`, `OR`, `NOT`,
+`LEFT`, `MID`, `LEN`, `COUNTA`, `TRUE`, `FALSE`, comparisons; anything else, an unknown
+column or a chain is refused **when the schema is set**, naming it. Complete grammar:
+docstring of `oto_mcp/datastore/formule.py`.
 
-- **Non écrivable.** Une écriture est refusée (« colonne CALCULÉE ») et `readonly_override`
-  n'y change rien : la valeur serait recalculée. Écris les colonnes d'**entrée**.
-  `champ.comment` porte la provenance (la branche `IFS` gagnante) ; `origine` n'est
-  jamais touchée.
-- **Une liste se lit en plage** : `contacts[].telephone` (avec `[]` — un point nu désigne
-  une couche) donne le sous-champ de chaque élément, et ne se consomme que dans
+- **Not writable.** A write is refused ("COMPUTED column") and `readonly_override`
+  changes nothing: the value would be recomputed. Write the **input** columns.
+  `champ.comment` carries the provenance (the winning `IFS` branch); `origine` is
+  never touched.
+- **A list is read as a range**: `contacts[].telephone` (with `[]` — a bare dot designates
+  a layer) gives the sub-field of each element, and is only consumed inside
   `COUNTA(…)`.
-- ⚠️ **`contacts<>""` n'est pas un test de liste vide.** Lue comme un scalaire, une
-  liste vaut son texte (`[]` → `"[]"`) : `contacts<>""` est vrai même pour `[]`. « Au
-  moins une valeur » s'écrit `COUNTA(contacts[].telephone)>0`.
-- **Le vide assumé `@empty` est un vide**, pour les comparaisons comme pour `COUNTA`.
-- **Recalcul** : à chaque écriture de la ligne ; en masse, en tâche de fond, quand la
-  formule est posée ou que son **texte** change (`data_set_schema`, `data_patch_schema`
-  rendent `formules_recalcul_en_cours: true` ; `get_schema` dit `formules_a_recalculer`
-  tant qu'il en reste). Re-poser le même texte ne recalcule rien ; le modifier, même d'un
-  espace, relance le recalcul de toutes les lignes.
-- **Tri, filtre, agrégation** lisent la valeur **stockée**, comme pour toute colonne. La
-  colonne n'a pas de type de résultat : le tri est **textuel** — juste pour un rang
-  « 1 »…« 5 » ou un nom, faux pour des nombres à plusieurs chiffres (`"10"` avant
+- ⚠️ **`contacts<>""` is not an empty-list test.** Read as a scalar, a
+  list is worth its text (`[]` → `"[]"`): `contacts<>""` is true even for `[]`. "At
+  least one value" is written `COUNTA(contacts[].telephone)>0`.
+- **The assumed empty `@empty` is an empty**, for comparisons as for `COUNTA`.
+- **Recomputation**: on every write of the row; in bulk, as a background task, when the
+  formula is set or its **text** changes (`data_set_schema`, `data_patch_schema`
+  return `formules_recalcul_en_cours: true`; `get_schema` says `formules_a_recalculer`
+  as long as some remain). Setting the same text again recomputes nothing; modifying it, even by one
+  space, restarts the recomputation of every row.
+- **Sorting, filtering, aggregation** read the **stored** value, as for any column. The
+  column has no result type: sorting is **textual** — correct for a rank
+  "1"…"5" or a name, wrong for multi-digit numbers (`"10"` before
   `"9"`, oto-backend#1034).

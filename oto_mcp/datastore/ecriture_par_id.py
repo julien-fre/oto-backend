@@ -147,19 +147,19 @@ class EcritureParIdMixin:
                 cle, ancienne, nouvelle = reecrite
                 if dsv2.creation_refusee(schema):
                     raise ValueError(
-                        f"`{cle}` est la clé métier de ce tableau, et ce patch la "
-                        f"réécrit sur la ligne « {row_id} » ({ancienne!r} → "
-                        f"{nouvelle!r}) : refusé, la ligne ne serait plus rapprochée "
-                        f"de son fichier d'origine si {nouvelle!r} est une faute de "
-                        f"frappe. Rien n'est écrit. Si c'est bien la valeur voulue "
-                        f"(correction volontaire), lève le cran le temps du geste : "
-                        f"data_patch_schema(new_rows=\"create\"), écris, puis "
-                        f"new_rows=\"reject\" ; sinon retire `{cle}` du patch.")
+                        f"`{cle}` is the business key of this table, and this patch "
+                        f"rewrites it on row `{row_id}` ({ancienne!r} → "
+                        f"{nouvelle!r}): refused, the row would no longer be matched "
+                        f"to its source file if {nouvelle!r} is a "
+                        f"typo. Nothing is written. If it is indeed the intended value "
+                        f"(deliberate correction), lift the lock for the duration of the change: "
+                        f"data_patch_schema(new_rows=\"create\"), write, then "
+                        f"new_rows=\"reject\"; otherwise remove `{cle}` from the patch.")
                 self.off_notices.add(
-                    f"clé métier `{cle}` modifiée sur la ligne « {row_id} » : "
-                    f"{ancienne!r} → {nouvelle!r}. Si c'est une faute de frappe, la "
-                    f"ligne n'est plus rapprochée de son fichier d'origine : réécris "
-                    f"la valeur d'avant.")
+                    f"business key `{cle}` modified on row `{row_id}`: "
+                    f"{ancienne!r} → {nouvelle!r}. If it is a typo, the "
+                    f"row is no longer matched to its source file: write "
+                    f"the previous value again.")
             avant = dict(data)
             written = set()
             for k, v in pose.items():
@@ -209,8 +209,8 @@ class EcritureParIdMixin:
             dkv = dsv2.unwrap((ecrit.get("data") or {}).get(dk)) if dk else None
             if dk and dkv is not None:
                 raise ValueError(
-                    f"un autre enregistrement porte déjà {dk}={dkv} "
-                    "(clé métier unique) — impossible de dupliquer") from None
+                    f"another record already carries {dk}={dkv} "
+                    "(unique business key) — cannot duplicate") from None
             raise  # violation inexpliquée → erreur franche, pas de repli muet
         if resultat is None:
             raise RowNotFound(row_id)

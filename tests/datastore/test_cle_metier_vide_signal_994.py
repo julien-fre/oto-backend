@@ -22,7 +22,7 @@ from oto_mcp.datastore.core import DatastorePg
 SCHEMA = {"key": "siren", "fields": [{"key": "siren", "type": "text"},
                                      {"key": "nom", "type": "text"}]}
 VIDES = ["@empty", "", {"valeur": ""}]
-REFUS = "clé métier vide ne désigne aucune entité"
+REFUS = "empty business key designates no entity"
 
 
 def _table():
@@ -61,7 +61,7 @@ def test_lot_d_une_cle_vide_refuse_en_nommant_la_ligne(live, vide):
     st, ns, ns_id = _table()
     with pytest.raises(ValueError, match=REFUS) as refus:
         st.write_rows(ns, [{"siren": "1", "nom": "ok"}, {"siren": vide, "nom": "B"}])
-    assert "ligne 2/2" in str(refus.value)
+    assert "row 2/2" in str(refus.value)
 
 
 def test_la_seconde_cle_empty_n_est_plus_une_violation_brute(live):
@@ -122,13 +122,13 @@ def course_sans_gagnante(monkeypatch):
 
 
 def test_filet_unitaire_refus_nomme(course_sans_gagnante):
-    with pytest.raises(ValueError, match="n'a plus été retrouvée") as refus:
+    with pytest.raises(ValueError, match="could no longer be found") as refus:
         course_sans_gagnante.append_row("t", {"member_id": "A"})
     assert not isinstance(refus.value, UniqueViolation)
 
 
 def test_filet_lot_refus_nomme(course_sans_gagnante):
-    with pytest.raises(ValueError, match="n'a plus été retrouvée") as refus:
+    with pytest.raises(ValueError, match="could no longer be found") as refus:
         course_sans_gagnante._write_rows_to_ns(7, [{"member_id": "A"}], key="member_id")
     assert not isinstance(refus.value, UniqueViolation)
-    assert "ligne 1/1" in str(refus.value)
+    assert "row 1/1" in str(refus.value)

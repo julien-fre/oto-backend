@@ -178,7 +178,7 @@ def test_sans_lifecycle_la_ligne_est_mise_de_cote_au_plafond_par_defaut(live):
     assert st.claim_next(ns, worker="w") is None
     brut = _brut(ns_id, ids[0])
     assert brut["abandon_reason"].startswith(
-        "abandonnée après 3 réservations sans écriture, plafond 3 (défaut de la plateforme")
+        "abandoned after 3 claims without a write, ceiling 3 (platform default")
     # Mise de côté par la colonne de plateforme : les données du métier sont intactes.
     assert brut["data"].get("segment") == "a" and brut["data"].get("resultat") is None
 

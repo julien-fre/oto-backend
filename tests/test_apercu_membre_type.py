@@ -60,8 +60,8 @@ def test_les_couches_dans_l_ordre_d_injection(base):
     assert [c["scope"] for c in couches] == ["platform", "org", "group"]
     assert couches[0] == {"scope": "platform", "body_md": "Socle de la plateforme.",
                           "updated_at": _DATE}
-    assert couches[1]["body_md"].startswith("## README de ton organisation (Org Témoin)\n\n")
-    assert couches[2]["body_md"].startswith("## README de ton équipe (Équipe Ventes)\n\n")
+    assert couches[1]["body_md"].startswith("## Your organization's README (Org Témoin)\n\n")
+    assert couches[2]["body_md"].startswith("## Your team's README (Équipe Ventes)\n\n")
     assert all(c["updated_at"] == _DATE for c in couches)
 
 

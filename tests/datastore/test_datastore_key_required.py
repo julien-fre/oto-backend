@@ -124,7 +124,7 @@ def test_incident_2_l_identifiant_INVENTE_ne_cree_toujours_rien(banc):
     mené à la réécriture sans identifiant."""
     st, etat = banc
     etat["schema"] = _FERME
-    with pytest.raises(ValueError, match="ne correspond à aucune ligne"):
+    with pytest.raises(ValueError, match="matches no row"):
         st.append_row("viviers", {"_id": "6723d393f9b0481d9b83b2b2", "siren": "349763571"})
     assert etat["creees"] == []
 
@@ -187,7 +187,7 @@ def test_le_lot_refuse_AUSSI_et_nomme_la_ligne(banc):
         st._write_rows_to_ns(7, [{"siren": "552081317", "raison_sociale": "ACME SA"},
                                  {"raison_sociale": "sans clé"}], key="siren")
     msg = str(exc.value)
-    assert "ligne 2/2" in msg and "1 ligne déjà écrite" in msg
+    assert "row 2/2" in msg and "1 row already written" in msg
     assert etat["creees"] == []                    # la 1ʳᵉ a FUSIONNÉ, rien créé
     assert etat["lignes"]["r-existante"]["raison_sociale"] == "ACME SA"
 
@@ -265,7 +265,7 @@ def test_527_cas_1_id_juste_et_siren_juste_met_a_jour_sans_bruit(banc):
     etat["schema"] = _FERME
     st.update_row("viviers", "r-existante", {"siren": "552081317", "raison_sociale": "ACME SA"})
     assert etat["lignes"]["r-existante"]["raison_sociale"] == "ACME SA"
-    assert not any("clé métier" in n for n in st.off_notices)
+    assert not any("business key" in n for n in st.off_notices)
 
 
 def test_527_cas_2_id_faux_est_refuse_ligne_introuvable(banc):
@@ -295,7 +295,7 @@ def test_527_cas_4_ouvert_un_siren_inexistant_passe_mais_est_dit(banc):
     etat["schema"] = _OUVERT
     st.update_row("viviers", "r-existante", {"siren": "349763571"})
     assert etat["lignes"]["r-existante"]["siren"] == "349763571"
-    dits = [n for n in st.off_notices if "clé métier" in n]
+    dits = [n for n in st.off_notices if "business key" in n]
     assert len(dits) == 1, st.off_notices
     assert "552081317" in dits[0] and "349763571" in dits[0] and "r-existante" in dits[0]
 
@@ -308,7 +308,7 @@ def test_527_une_cle_qui_n_etait_pas_posee_n_est_pas_une_reecriture(banc):
     etat["lignes"]["r-sans-cle"] = {"raison_sociale": "SANS CLE"}
     st.update_row("viviers", "r-sans-cle", {"siren": "349763571"})
     assert etat["lignes"]["r-sans-cle"]["siren"] == "349763571"
-    assert not any("clé métier" in n for n in st.off_notices)
+    assert not any("business key" in n for n in st.off_notices)
 
 
 def test_527_la_cle_annotee_est_jugee_sur_sa_valeur(banc):
@@ -318,7 +318,7 @@ def test_527_la_cle_annotee_est_jugee_sur_sa_valeur(banc):
     etat["schema"] = _FERME
     st.update_row("viviers", "r-existante",
                   {"siren": {"valeur": "552081317", "comment": "registre"}})
-    assert not any("clé métier" in n for n in st.off_notices)
+    assert not any("business key" in n for n in st.off_notices)
 
 
 # ── oto#151 §3 : le refus DISTINGUE la clé absente de la clé inconnue ─────────
@@ -334,7 +334,7 @@ _FERME_MOTIF = {"key": "siren", "new_rows": "reject",
                             "pattern": r"^\d{9}$"},
                            {"key": "code", "type": "text"},
                            {"key": "raison_sociale", "type": "text"}]}
-_GABARIT_SIREN = r"<texte, ≤ 9 caractères, motif ^\d{9}$>"
+_GABARIT_SIREN = r"<text, ≤ 9 characters, pattern ^\d{9}$>"
 
 
 def test_151_la_cle_ABSENTE_est_dite_absente_et_structuree(banc):
@@ -344,7 +344,7 @@ def test_151_la_cle_ABSENTE_est_dite_absente_et_structuree(banc):
         st.append_row("viviers", {"raison_sociale": "ACME"})
     assert exc.value.details == {"key": "siren", "cle_portee": False,
                                  "a_renvoyer": {"siren": _GABARIT_SIREN}}
-    assert str(exc.value).startswith("cette écriture ne porte pas `siren`")
+    assert str(exc.value).startswith("this write does not carry `siren`")
 
 
 def test_151_la_cle_PORTEE_mais_inconnue_est_dite_portee(banc):
@@ -356,8 +356,8 @@ def test_151_la_cle_PORTEE_mais_inconnue_est_dite_portee(banc):
                                  "valeur": "349763571",
                                  "a_renvoyer": {"siren": _GABARIT_SIREN}}
     msg = str(exc.value)
-    assert msg.startswith("cette écriture porte `siren` = '349763571'")
-    assert "n'est pas renseign" not in msg
+    assert msg.startswith("this write carries `siren` = '349763571'")
+    assert "does not carry" not in msg
 
 
 def test_151_le_lot_garde_les_details_en_nommant_la_ligne(banc):
@@ -366,7 +366,7 @@ def test_151_le_lot_garde_les_details_en_nommant_la_ligne(banc):
     with pytest.raises(BusinessKeyRequired) as exc:
         st._write_rows_to_ns(7, [{"siren": "552081317"}, {"siren": "389256712"}],
                              key="siren")
-    assert "ligne 2/2" in str(exc.value)
+    assert "row 2/2" in str(exc.value)
     assert exc.value.details["cle_portee"] is True
     assert exc.value.details["valeur"] == "389256712"
 
@@ -381,7 +381,7 @@ def test_151_le_lot_qui_dedoublonne_sur_une_AUTRE_colonne_le_dit(banc):
     assert exc.value.details["cle_portee"] is False
     assert exc.value.details["cle_du_lot"] == "code"
     msg = str(exc.value)
-    assert "`code`" in msg and "clé DÉCLARÉE" in msg
+    assert "`code`" in msg and "DECLARED key" in msg
 
 
 def test_151_un_champ_nomme_key_dans_la_ligne_est_nomme(banc):
@@ -391,12 +391,12 @@ def test_151_un_champ_nomme_key_dans_la_ligne_est_nomme(banc):
     etat["schema"] = _FERME_MOTIF
     with pytest.raises(BusinessKeyRequired) as exc:
         st.append_row("viviers", {"key": "siren", "raison_sociale": "ACME"})
-    assert "`key` est lu comme une COLONNE" in str(exc.value)
+    assert "`key` is read as a COLUMN" in str(exc.value)
 
 
 def test_151_la_face_REST_rend_les_details():
     from oto_mcp.capabilities.datastore.rows import _write_refusal
 
-    details = {"key": "siren", "cle_portee": False, "a_renvoyer": {"siren": "<texte>"}}
+    details = {"key": "siren", "cle_portee": False, "a_renvoyer": {"siren": "<text>"}}
     refus = _write_refusal(BusinessKeyRequired("x", key="siren", details=details))
     assert refus.code == "business_key_required" and refus.details == details

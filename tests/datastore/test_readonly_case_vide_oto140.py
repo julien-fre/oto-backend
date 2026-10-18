@@ -96,7 +96,7 @@ def test_une_colonne_CALCULEE_reste_fermee_meme_vide():
     schema = {"fields": [{"key": "a", "type": "text"},
                          {"key": "f", "type": "formula", "formula": "IF(a=\"x\";1;0)"}]}
     erreurs, _ = dsv2.reserved_refusals(schema, {"f": 1}, {"a": "x"})
-    assert len(erreurs) == 1 and "CALCULÉE" in erreurs[0]
+    assert len(erreurs) == 1 and "COMPUTED" in erreurs[0]
 
 
 def test_agent_access_read_ne_suit_pas_la_case_vide():

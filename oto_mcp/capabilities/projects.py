@@ -1379,12 +1379,12 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                  "'anonymous' (le web entier, et listé dans l'annuaire public). Il n'y "
                  "a pas de défaut raisonnable ici — le plus ouvert l'était.")
         if inp.mcp_access in ("anonymous", "secret"):
-            quoi = "ce projet"
+            quoi = "this project"
             if inp.mcp_expose_datastore is not False:
-                quoi = "ce projet et les tableaux qui y sont liés"
+                quoi = "this project and the tables linked to it"
             _publication.refuser_si_agent(
                 ctx, quoi,
-                "La publication se fait depuis le dashboard, sur la page du projet.")
+                "Publishing is done from the dashboard, on the project's page.")
         return publish_project_mcp(
             sub, row, access_mode=inp.mcp_access, mcp_slug=inp.mcp_slug,
             mcp_tools=inp.mcp_tools, expose_datastore=inp.mcp_expose_datastore,

@@ -120,14 +120,14 @@ def _unknown_subkey_refusal(path: str, fields: list) -> str:
     # oto#135 : la clé déclarée la plus proche, quand il y en a une — `emial` a une
     # destination, et le refus la dit au lieu de faire relire la liste.
     proche = cle_la_plus_proche(path.rpartition(".")[2], noms)
-    dispo += f" (le plus proche : `{proche}`)" if proche else ""
-    return (f"{path}: attribut non déclaré — le format déclaré fait contrat et ce "
-            f"sous-record ferme ses attributs : {dispo}. Rien n'a été écrit. "
-            "Contrairement à une colonne de premier niveau, un attribut inconnu ne "
-            "crée PAS de colonne libre : il serait stocké là où ni le schéma ni "
-            "l'interface ne le lisent (l'export CSV rend la colonne en une seule "
-            "cellule, en JSON, sans colonne par attribut). Écris-le sous un nom "
-            "déclaré, ou déclare l'attribut (`data_patch_schema`) puis réécris.")
+    dispo += f" (closest: `{proche}`)" if proche else ""
+    return (f"{path}: undeclared attribute — the declared format is a contract and this "
+            f"sub-record closes its attributes: {dispo}. Nothing was written. "
+            "Unlike a top-level column, an unknown attribute does "
+            "NOT create a free column: it would be stored where neither the schema nor "
+            "the interface reads it (the CSV export renders the column in a single "
+            "cell, as JSON, with no column per attribute). Write it under a "
+            "declared name, or declare the attribute (`data_patch_schema`) then write again.")
 
 
 def _off_schema(fields: list, data: dict, prefix: str) -> set:
@@ -171,11 +171,11 @@ def off_schema_warning(keys: list) -> Optional[str]:
     if not keys:
         return None
     noms = ", ".join(f"`{k}`" for k in keys)
-    return (f"écrit HORS SCHÉMA : {noms} — le tableau signale ses colonnes non "
-            "déclarées (`unknown_columns: \"report\"`), ces colonnes sortent de son format : elles sont stockées et lisibles, mais l'interface "
-            "et tout ce qui s'appuie sur le schéma les ignorent. Si c'est une faute de "
-            "nom (champ renommé depuis), relis le format avec `data_get_schema` et "
-            "réécris sous le bon nom ; si le champ est voulu, déclare-le au schéma.")
+    return (f"written OUTSIDE THE SCHEMA: {noms} — the table reports its undeclared "
+            "columns (`unknown_columns: \"report\"`), these columns fall outside its format: they are stored and readable, but the interface "
+            "and everything that relies on the schema ignore them. If it is a "
+            "naming mistake (field renamed since), read the format again with `data_get_schema` and "
+            "write again under the right name; if the field is intended, declare it in the schema.")
 
 
 def types_geles_warning(gelees: list) -> Optional[str]:
@@ -188,13 +188,13 @@ def types_geles_warning(gelees: list) -> Optional[str]:
     if not gelees:
         return None
     noms = ", ".join(f"`{g['champ']}`" for g in gelees)
-    return (f"ton écriture est passée. Signalement sur une AUTRE partie de la ligne : "
-            f"{noms} — la valeur déjà en base n'y respecte plus le format déclaré. Ce "
-            "n'est pas ton geste et rien n'a été refusé : ces colonnes ont été écrites "
-            "avant que le format ne soit posé, ou le format a changé depuis. Tant "
-            "qu'elles restent ainsi, elles s'affichent et se lisent, mais toute "
-            "déclaration qui s'appuie dessus les ignore. Pour les remettre en règle, "
-            "écris-y une valeur conforme — le refus détaillé te dira laquelle.")
+    return (f"your write went through. Report on ANOTHER part of the row: "
+            f"{noms} — the value already stored there no longer respects the declared format. This "
+            "is not your doing and nothing was refused: these columns were written "
+            "before the format was set, or the format has changed since. As long "
+            "as they stay this way, they display and read, but any "
+            "declaration relying on them ignores them. To bring them back in line, "
+            "write a conforming value there — the detailed refusal will tell you which one.")
 
 
 # ── le TROISIÈME cran au premier niveau : `unknown_columns: "reject"` (#614/#678) ─
@@ -311,7 +311,7 @@ def off_schema_refusal(schema: Optional[dict],
              if isinstance(f.get("key"), str) and f["key"]]
     cite = ", ".join(f"`{k}`" for k in dispo[:_REFERENTIEL_CITE])
     if len(dispo) > _REFERENTIEL_CITE:
-        cite += f" (+{len(dispo) - _REFERENTIEL_CITE} autres, `data_get_schema`)"
+        cite += f" (+{len(dispo) - _REFERENTIEL_CITE} more, `data_get_schema`)"
     noms = ", ".join(f"`{k}`" for k in keys)
     # oto#63 : parmi les clés refusées, celles qui sont une COUCHE mal écrite —
     # `effectif_comment` au lieu de `effectif.comment`. Reconnaissance exacte, pas
@@ -324,18 +324,18 @@ def off_schema_refusal(schema: Optional[dict],
     # schéma ») et donne la forme imbriquée. Ajouter la nôtre aurait été du code que
     # rien n'atteint, et qui aurait fait croire à un second chemin.
     if couches:
-        quoi = " ; ".join(
+        quoi = "; ".join(
             f"`{k}` → `{col}.{couche}`" for k, col, couche in couches)
         details = {"expected_column": f"{couches[0][1]}.{couches[0][2]}"}
-        return ([f"{noms} : rien n'a été écrit. ⚠️ Ce n'est pas une colonne "
-                 f"inconnue, c'est une COUCHE dont le nom s'écrit avec un POINT — "
-                 f"{quoi}. La colonne existe, c'est la façon de l'adresser qui "
-                 f"diffère : `{{\"{couches[0][1]}\": {{\"{couches[0][2]}\": …}}}}` "
-                 f"écrit la même chose, et c'est la forme que "
-                 f"`layers=\"nested\"` te rend à la lecture."], details)
-    return ([f"{noms} : aucune colonne déclarée ne porte ce nom, et ce tableau "
-             f"refuse les colonnes non déclarées (`unknown_columns: \"reject\"`) — "
-             f"rien n'a été écrit. Colonnes du tableau : {cite}. Écris sous un nom "
-             f"déclaré, ou déclare la colonne (`data_patch_schema`) puis réécris. "
-             f"⚠️ Ne réessaie pas sous une variante du même nom : elle sera "
-             f"refusée pareil, et la valeur n'a nulle part où aller ici."], {})
+        return ([f"{noms}: nothing was written. ⚠️ This is not an unknown "
+                 f"column, it is a LAYER whose name is written with a DOT — "
+                 f"{quoi}. The column exists, it is the way to address it that "
+                 f"differs: `{{\"{couches[0][1]}\": {{\"{couches[0][2]}\": …}}}}` "
+                 f"writes the same thing, and it is the form "
+                 f"`layers=\"nested\"` returns to you on read."], details)
+    return ([f"{noms}: no declared column has this name, and this table "
+             f"refuses undeclared columns (`unknown_columns: \"reject\"`) — "
+             f"nothing was written. Table columns: {cite}. Write under a "
+             f"declared name, or declare the column (`data_patch_schema`) then write again. "
+             f"⚠️ Do not retry under a variant of the same name: it will be "
+             f"refused the same way, and the value has nowhere to go here."], {})

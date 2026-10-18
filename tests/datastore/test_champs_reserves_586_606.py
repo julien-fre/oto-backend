@@ -85,7 +85,7 @@ def test_changer_une_colonne_readonly_est_REFUSE_en_nommant_ou_va_la_chose(banc)
     with pytest.raises(RowValidationError) as exc:
         st.update_row("viviers", "r1", {"adresse": "2 rue B"})
     msg = str(exc.value)
-    assert "`adresse`" in msg and "non modifiable" in msg
+    assert "`adresse`" in msg and "not modifiable" in msg
     assert "`adresse.comment`" in msg                       # où va la divergence
     assert exc.value.details == {"expected_column": "adresse.comment"}
     assert etat["maj"] == [] and etat["lignes"]["r1"]["adresse"] == "1 rue A"
@@ -131,7 +131,7 @@ def test_la_fusion_par_cle_et_le_lot_refusent_aussi(banc):
         st._write_rows_to_ns(7, [{"siren": "552081317", "libre": "ok"},
                                  {"siren": "552081317", "adresse": "2 rue B"}],
                              key="siren")
-    assert "ligne 2/2" in str(exc.value) and "`adresse`" in str(exc.value)
+    assert "row 2/2" in str(exc.value) and "`adresse`" in str(exc.value)
     assert exc.value.details == {"expected_column": "adresse.comment"}
     assert etat["lignes"]["r1"]["adresse"] == "1 rue A"
 
@@ -192,12 +192,12 @@ def test_les_crans_ne_se_posent_qu_au_PREMIER_niveau():
     errs = _errs([{"key": "o", "type": "object",
                    "fields": [{"key": "a", "readonly": True},
                               {"key": "b", "agent_access": "read"}]}])
-    assert len([e for e in errs if "premier niveau" in e]) == 2, errs
+    assert len([e for e in errs if "is set only at the first level" in e]) == 2, errs
 
 
 def test_origine_est_REFUSEE_a_la_pose():
     errs = _errs([{"key": "b", "origine": "system"}])
-    assert len(errs) == 1 and "retirée le 08/09/2026" in errs[0], errs
+    assert len(errs) == 1 and "removed on 2026-09-08" in errs[0], errs
 
 
 def test_les_crans_ne_se_posent_pas_sur_une_cible_de_couche():

@@ -30,9 +30,9 @@ def test_une_colonne_qui_RESSEMBLE_a_un_etat_sans_lifecycle_avertit():
     w = dsv2.queue_release_warning({"fields": [_STATUS]})
 
     assert w and "statut" in w
-    assert "c'est le bloc `lifecycle` qui fait l'état" in w
-    assert "n'a PAS de file" not in w, "la réservation marche sans rien déclarer"
-    assert "fonctionne quand même" in w and "data_release" in w
+    assert "it is the `lifecycle` block that makes the state" in w
+    assert "has NO queue" not in w, "la réservation marche sans rien déclarer"
+    assert "works anyway" in w and "data_release" in w
 
 
 def test_lifecycle_without_derivable_terminal_warns():
@@ -44,8 +44,8 @@ def test_lifecycle_without_derivable_terminal_warns():
     # verdict — la libération automatique est retirée (#317). Il dit ce que le
     # terminal manquant retire vraiment, et que le bail se rend à la main.
     assert w and "abandon_state" in w and "data_release" in w
-    assert "ne libère jamais" in w
-    assert "AUCUN bail" not in w
+    assert "never releases" in w
+    assert "NO lease" not in w
 
 
 def test_explicit_terminal_is_silent():
@@ -107,7 +107,7 @@ def test_claim_next_warns_the_worker(monkeypatch):
     # Le worker reçoit l'avertissement du schéma tel qu'il est : ici la colonne
     # ressemble à un état sans en être un — ET la ligne lui est servie quand même.
     # Le texte ne peut donc pas dire « pas de file » (oto#91).
-    assert len(warnings) == 1 and "fonctionne quand même" in warnings[0]
+    assert len(warnings) == 1 and "works anyway" in warnings[0]
 
     # schéma sain ⇒ silence ; et `warnings` reste optionnel (appelants historiques)
     monkeypatch.setattr(s, "_ns_of", lambda ns_id: {

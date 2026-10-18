@@ -87,9 +87,8 @@ def bascule_faite(aujourdhui: Optional[_date] = None) -> bool:
 
 
 def _quand() -> str:
-    from .champs_reserves import _en_francais
-
-    return _en_francais(date_de_bascule())
+    # Date ISO : le texte servi est en anglais (décision du 03/09/2026).
+    return date_de_bascule().isoformat()
 
 
 def _a_des_colonnes(schema: Any) -> bool:
@@ -126,21 +125,21 @@ def avertissement(fautes: Iterable[str]) -> Optional[str]:
     fautes = sorted(set(fautes))
     if not fautes:
         return None
-    cite = " ; ".join(fautes[:_CITEES])
+    cite = "; ".join(fautes[:_CITEES])
     reste = len(fautes) - _CITEES
     if reste > 0:
-        cite += f" (+{reste} autres)"
+        cite += f" (+{reste} more)"
     pluriel = len(fautes) > 1
-    return (f"format déclaré non respecté — {cite}. L'écriture est passée telle quelle. "
-            f"À partir du {_quand()}, le format déclaré fait contrat sur TOUS les "
-            f"tableaux : {'ces valeurs seront REFUSÉES' if pluriel else 'cette valeur sera REFUSÉE'} "
-            f"(`row_invalid` ; une valeur hors options seule dans sa faute est écartée et "
-            f"le reste de la ligne s'écrit). Corrige la valeur — ou, si elle est juste, "
-            f"étends le format : `data_patch_schema(datastore=…, fields=[{{\"key\": "
-            f"\"<colonne>\", \"options\": [… toutes les valeurs permises …]}}])` (REST : "
-            f"`PATCH /api/datastores/{{datastore}}/schema`). Les lignes déjà en base ne "
-            f"sont pas touchées, et une écriture d'une AUTRE colonne n'est jamais jugée "
-            f"sur elles.")
+    return (f"declared format not respected — {cite}. The write went through as is. "
+            f"From {_quand()} on, the declared format is a contract on EVERY "
+            f"table: {'these values will be REFUSED' if pluriel else 'this value will be REFUSED'} "
+            f"(`row_invalid`; an off-options value alone in its fault is set aside and "
+            f"the rest of the row is written). Fix the value — or, if it is right, "
+            f"extend the format: `data_patch_schema(datastore=…, fields=[{{\"key\": "
+            f"\"<column>\", \"options\": [… all allowed values …]}}])` (REST: "
+            f"`PATCH /api/datastores/{{datastore}}/schema`). Rows already stored are "
+            f"not touched, and a write to ANOTHER column is never judged "
+            f"on them.")
 
 
 def avertissement_de_pose(fautes: list[str]) -> Optional[str]:
@@ -149,8 +148,8 @@ def avertissement_de_pose(fautes: list[str]) -> Optional[str]:
     déclarée) — dites, pas refusées."""
     if not fautes:
         return None
-    return (f"{' ; '.join(fautes)}. Accepté jusqu'au {_quand()} ; à partir de cette "
-            f"date, ce schéma sera REFUSÉ à la pose tant que la faute demeure.")
+    return (f"{'; '.join(fautes)}. Accepted until {_quand()}; from that "
+            f"date on, this schema will be REFUSED when set as long as the fault remains.")
 
 
 # ── le texte servi ───────────────────────────────────────────────────────────

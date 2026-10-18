@@ -54,20 +54,20 @@ TYPES_ARMES = ("number", "bool", "date", "datetime", "email", "phone")
 
 #: Ce qu'il faut faire, par type — la DESTINATION du refus, pas seulement sa cause.
 _OU_METTRE_QUOI = {
-    "email": ("écris l'adresse seule dans la valeur ; ce que tu en sais — la source, "
-              "le doute — va dans `<colonne>.comment`"),
-    "phone": ("écris le numéro seul, de préférence au format international (`+`, "
-              "indicatif, puis le numéro — espaces et tirets acceptés) ; le poste, le "
-              "contexte ou la source vont dans `<colonne>.comment`"),
-    "number": ("écris le nombre seul ; l'unité, l'exercice ou la tranche vont dans "
-               "`<colonne>.comment`"),
+    "email": ("write the address alone in the value; what you know about it — the source, "
+              "the doubt — goes in `<column>.comment`"),
+    "phone": ("write the number alone, preferably in international format (`+`, "
+              "country code, then the number — spaces and dashes accepted); the extension, the "
+              "context or the source go in `<column>.comment`"),
+    "number": ("write the number alone; the unit, the fiscal year or the range go in "
+               "`<column>.comment`"),
     # #859 : ce qui se LIT est large (`dates.FORMES_ACCEPTEES`), ce qui se STOCKE est
     # une forme ; le refus donne la forme stockée, la plus sûre à recopier.
-    "date": ("écris la date `AAAA-MM-JJ` (ou `AAAA-MM`, `AAAA` si tu ne la connais "
-             "qu'au mois ou à l'année)"),
-    "datetime": ("écris l'instant `AAAA-MM-JJTHH:MM:SSZ` (ou avec son fuseau, "
-                 "`+02:00`), ou la date seule `AAAA-MM-JJ` à sa précision"),
-    "bool": "écris `true` ou `false`, pas leur texte",
+    "date": ("write the date `YYYY-MM-DD` (or `YYYY-MM`, `YYYY` if you only know it "
+             "to the month or the year)"),
+    "datetime": ("write the instant `YYYY-MM-DDTHH:MM:SSZ` (or with its time zone, "
+                 "`+02:00`), or the date alone `YYYY-MM-DD` at its precision"),
+    "bool": "write `true` or `false`, not their text",
 }
 
 
@@ -79,8 +79,8 @@ def _rien_trouve(cle: str) -> str:
     Il disait « omets la colonne » — or omettre veut dire « je n'y touche pas » : la
     recherche vaine ne laissait aucune trace, et une valeur en place survivait à la
     recherche qui l'avait démentie. `@empty` dit l'absence, sa raison va dans `comment`."""
-    return (f"si rien n'a été trouvé, écris `{dsl.VIDE_DELIBERE}` avec la raison dans "
-            f"`{cle}.comment` ; pour ne pas toucher à la case, omets la colonne")
+    return (f"if nothing was found, write `{dsl.VIDE_DELIBERE}` with the reason in "
+            f"`{cle}.comment`; to leave the cell untouched, omit the column")
 
 
 def _juge(valeur: Any, ftype: str) -> bool:
@@ -127,8 +127,8 @@ def types_trahis(schema: Optional[dict], merged: dict, *,
             continue
         if not _juge(valeur, ftype):
             continue
-        quoi = " ; ".join(q for q in (_OU_METTRE_QUOI.get(ftype, ""), _rien_trouve(cle)) if q)
-        refus = f"`{cle}` est déclarée `{ftype}` et reçoit {valeur!r} — refusé. Pour écrire : {quoi}"
+        quoi = "; ".join(q for q in (_OU_METTRE_QUOI.get(ftype, ""), _rien_trouve(cle)) if q)
+        refus = f"`{cle}` is declared `{ftype}` and receives {valeur!r} — refused. To write: {quoi}"
         if written is None or cle in written:
             out.append(refus)
             car.noter(charge, car.champ(car.RACINE, cle), gabarit(f))

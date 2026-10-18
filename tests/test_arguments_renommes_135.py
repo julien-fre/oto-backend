@@ -46,8 +46,8 @@ def _refus(**arguments) -> Exception:
 
 def test_un_nom_retire_dit_son_remplacant_la_valeur_et_l_outil():
     msg = T._arg_error_message(_refus(namespace="vivier", row={}))
-    assert "`namespace` a été renommé `datastore`" in msg, msg
-    assert "`data_write` avec `datastore='vivier'`" in msg, msg
+    assert "`namespace` was renamed `datastore`" in msg, msg
+    assert "`data_write` with `datastore='vivier'`" in msg, msg
     assert "Unexpected keyword argument" not in msg
     assert "missing" not in msg, "le nom neuf n'est pas un paramètre manquant"
 
@@ -75,12 +75,12 @@ def test_une_erreur_de_modele_ne_sert_pas_un_nom_de_classe_comme_outil():
 
 
 # Le texte que la face capacité servait AVANT ce lot, mot pour mot.
-AVANT = ("`namespace` a été renommé `datastore` le 09/09/2026 — le paramètre "
-         "n'existe plus sous ce nom, et rien n'a été écrit. Rejoue le même appel "
-         "avec `datastore='vivier'` : **l'adresse ne change pas** (nom du "
-         "tableau, numéro, forme `slot:<nom>`), c'est la clé qui bascule. "
-         "⚠️ Ne cherche pas un paramètre manquant : tu as fourni la bonne valeur "
-         "sous un nom retiré.")
+AVANT = ("`namespace` was renamed `datastore` on 2026-09-09 — the parameter "
+         "no longer exists under that name, and nothing was written. Replay the same call "
+         "with `datastore='vivier'`: **the address does not change** (table "
+         "name, number, `slot:<name>` form), only the key switches. "
+         "⚠️ Do not hunt for another parameter: you provided the right value "
+         "under a retired name.")
 
 
 def test_la_face_capacite_sert_le_MEME_texte_qu_avant_ce_lot():

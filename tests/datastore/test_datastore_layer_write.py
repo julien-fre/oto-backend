@@ -47,7 +47,7 @@ def test_a_layered_value_is_still_JUDGED():
 def test_options_are_checked_on_the_value():
     assert _err({"nom": "ACME", "statut": {"valeur": "a"}}) == []
     errs = _err({"nom": "ACME", "statut": {"valeur": "zzz"}})
-    assert errs and "hors options" in errs[0]
+    assert errs and "not among the options" in errs[0]
 
 
 def test_a_bound_measures_the_value_not_the_envelope():
@@ -60,7 +60,7 @@ def test_a_bound_measures_the_value_not_the_envelope():
 
 def test_a_required_field_empty_in_its_layers_is_missing():
     errs = _err({"nom": {"valeur": "", "comment": "x"}})
-    assert errs and "requis" in errs[0]
+    assert errs and "required" in errs[0]
 
 
 def test_a_flat_row_is_judged_exactly_as_before():

@@ -61,8 +61,8 @@ def test_le_refus_sur_une_colonne_NON_nommee_ne_parle_pas_de_droit():
     f = Forcage(demande=True, autorise=True, chemins=frozenset({"raison_sociale"}))
     refus = arbitrer(f, "effectif", "a", "b")
 
-    assert "ta liste `force` ne la nomme pas" in refus
-    assert "réservé à" not in refus, "il a le palier : ne pas l'envoyer le chercher"
+    assert "your `force` list does not name it" in refus
+    assert "open to" not in refus, "il a le palier : ne pas l'envoyer le chercher"
     assert "effectif" in refus, "le refus nomme la colonne à ajouter"
 
 
@@ -74,14 +74,14 @@ def test_une_liste_VIDE_est_refusee():
     chercherait un droit qu'il vient de demander."""
     with pytest.raises(ValueError) as e:
         chemins_forces([])
-    assert "non vide" in str(e.value)
+    assert "non-empty" in str(e.value)
 
 
 @pytest.mark.parametrize("mauvais", [[1], [""], [None]])
 def test_un_chemin_qui_n_est_pas_une_chaine_est_refuse_en_le_NOMMANT(mauvais):
     with pytest.raises(ValueError) as e:
         chemins_forces(mauvais)
-    assert "n'est pas un chemin" in str(e.value)
+    assert "is not a path" in str(e.value)
 
 
 def test_rien_demande_vaut_None_et_non_un_ensemble_vide():

@@ -205,7 +205,7 @@ def test_sur_une_valeur_en_place_le_chemin_608_est_inchange(live):
     refusée quand elle est tout le geste. Ce lot n'y touche pas."""
     ns, ns_id = _tableau(_TYPES)
     ligne = _store().append_row(ns, {"siren": "1", "t": "garde"})
-    with pytest.raises(ValueError, match="écriture sans effet"):
+    with pytest.raises(ValueError, match="write without effect"):
         _store().update_row(ns, ligne["_id"], {"t": {}})
     assert _blob(ns_id, ligne["_id"])["t"] == "garde"
     assert dsv2.unwrap(_blob(ns_id, ligne["_id"])["t"]) == "garde"

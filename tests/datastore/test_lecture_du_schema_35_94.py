@@ -122,7 +122,7 @@ def test_sans_effet_nomme_ce_qui_est_declare_et_que_rien_n_applique():
                    ("choix", "options"), ("autre", "lifecycle"), ("vieux", "enum")}
     raisons = {e["chemin"]: e["raison"] for e in lds.gardes(schema)["sans_effet"]
                if e["cle"] == "agent_access"}
-    assert "clé métier" in raisons["ref"] and "non reconnue" in raisons["x"]
+    assert "business key" in raisons["ref"] and "not recognized" in raisons["x"]
 
 
 def test_contre_epreuve_un_tableau_strict_n_a_pas_d_options_inertes(

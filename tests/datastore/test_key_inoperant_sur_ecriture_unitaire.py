@@ -32,10 +32,10 @@ def test_le_refus_nomme_les_TROIS_gestes_qui_aboutissent():
     perplexité — et il réessaie, en consommant. Les trois issues réelles sont nommées :
     viser par `id`, rapprocher par la clé métier dans le corps, dédoubler un lot."""
     msg = jetons.refus_de_key_sans_lot("siren")
-    assert "n'a aucun effet" in msg and "mode LOT" in msg
-    assert "rien n'a été écrit" in msg.lower(), "l'appelant doit savoir où il en est"
+    assert "has no effect" in msg and "BATCH mode" in msg
+    assert "nothing was written" in msg.lower(), "l'appelant doit savoir où il en est"
     assert "id=" in msg, "le geste qui VISE une ligne"
-    assert "clé déclarée du tableau" in msg, "le rapprochement par la clé métier"
+    assert "the table's declared key" in msg, "le rapprochement par la clé métier"
     assert "rows=[…]" in msg, "le mode lot, seul endroit où `key` a un sens"
 
 
@@ -49,7 +49,7 @@ def test_un_jeton_RETIRE_dans_key_est_nomme_comme_tel():
     with pytest.raises(jetons.JetonRetire) as e:
         jetons.refus_de_key_sans_lot("@claimed")
     msg = str(e.value)
-    assert "RETIRÉ" in msg
+    assert "REMOVED" in msg
     assert "`key`" in msg, "le refus dit OÙ le jeton a été posé"
     assert "data_claim_next" in msg, "et ce que la réservation lui a déjà rendu"
 
@@ -60,7 +60,7 @@ def test_la_garde_vise_l_AXE_et_pas_la_valeur_at_claimed():
     écritures muettes."""
     for valeur in ("siren", "_id", "statut", "", "@claim"):
         msg = jetons.refus_de_key_sans_lot(valeur)
-        assert "n'a aucun effet" in msg, valeur
+        assert "has no effect" in msg, valeur
 
 
 def test_le_TOOL_passe_par_la_regle_partagee():

@@ -32,7 +32,7 @@ def test_la_ligne_est_bornee_meme_sous_un_nom_d_org_fleuve():
     assert len(texte) <= rappel_contexte.MAX_LIGNE
     assert "`oto_context`" in texte and "`_org=42`" in texte
     court = rappel_contexte.ligne("Acme", 7)
-    assert "« Acme »" in court
+    assert "“Acme”" in court
     # La mesure : ce que le rappel ajoute à une réponse, au plus.
     assert len(court) < 200
 
@@ -147,7 +147,7 @@ def appel(monkeypatch):
 def test_rappel_sur_un_outil_de_travail(appel):
     cle, texte = rappel_contexte.pour_l_appel("data_rows")
     assert cle == ("u-e", 5)
-    assert "« Epsilon »" in texte and "`_org=5`" in texte
+    assert "“Epsilon”" in texte and "`_org=5`" in texte
 
 
 @pytest.mark.parametrize("outil", sorted(rappel_contexte.EXEMPTS))

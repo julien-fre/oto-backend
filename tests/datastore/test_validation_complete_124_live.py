@@ -41,17 +41,17 @@ SCHEMA = {"fields": [
 
 #: Une faute par famille : `(famille, colonne posée, valeur, ce que la faute dit)`.
 FAUTES = [
-    ("options d'un enum", "statut", "z", "valeur 'z' hors options (a, b)"),
-    ("options d'un texte", "etape", "w", "valeur 'w' hors options (x, y)"),
-    ("forme text", "nom", 42, "nom: attendu text, reçu int"),
-    ("forme url", "site", "www.x.fr", "site: attendu une URL http(s), reçu 'www.x.fr'"),
-    ("forme object", "fiche", "Lyon", "fiche: attendu object, reçu str"),
-    ("forme list", "tags", "a,b", "tags: attendu list, reçu str"),
-    ("forme enum", "statut", ["a"], "statut: attendu une valeur d'énumération"),
+    ("options d'un enum", "statut", "z", "value 'z' not among the options (a, b)"),
+    ("options d'un texte", "etape", "w", "value 'w' not among the options (x, y)"),
+    ("forme text", "nom", 42, "nom: expected text, got int"),
+    ("forme url", "site", "www.x.fr", "site: expected an http(s) URL, got 'www.x.fr'"),
+    ("forme object", "fiche", "Lyon", "fiche: expected object, got str"),
+    ("forme list", "tags", "a,b", "tags: expected list, got str"),
+    ("forme enum", "statut", ["a"], "statut: expected an enumeration value"),
     ("couche inconnue", "autre", {"valeur": "v", "commentaire": "c"},
-     "autre: sous-champ(s) inconnu(s) 'commentaire'"),
+     "autre: unknown sub-field(s) 'commentaire'"),
     ("sous-record fermé", "contacts", [{"nom": "A", "perso": "x"}],
-     "contacts[0].perso: attribut non déclaré"),
+     "contacts[0].perso: undeclared attribute"),
 ]
 IDS = [f[0] for f in FAUTES]
 #: La ligne qui porte TOUTES les fautes à la fois (une colonne par famille).
@@ -303,7 +303,7 @@ def test_avant_le_patch_par_id_est_averti(client, data_write):
     assert r.status_code == 200, r.text
     assert "www.x.fr" in _preavis_servi(r.json())
     rep = data_write(datastore=ns, id=ids[0], row={"statut": "z"})
-    assert "'z' hors options" in _preavis_servi(rep)
+    assert "'z' not among the options" in _preavis_servi(rep)
 
 
 def test_avant_l_upload_signe_et_l_import_avertissent(live, monkeypatch):
@@ -312,14 +312,14 @@ def test_avant_l_upload_signe_et_l_import_avertissent(live, monkeypatch):
     corps = b'{"nom": "A", "statut": "z"}\n{"nom": "B", "site": "www.x.fr"}\n'
     cible = {"kind": "datastore", "ns_id": ns_id, "namespace": ns, "format": "ndjson"}
     rep = upload_tokens.materialize(SUB, cible, corps, "application/x-ndjson")
-    assert rep["inserted"] == 2 and "'z' hors options" in _preavis_servi(rep)
+    assert rep["inserted"] == 2 and "'z' not among the options" in _preavis_servi(rep)
     monkeypatch.setattr(upload_tokens, "IMPORT_SLICE", 1)
     rep = upload_tokens.import_rows(SUB, cible, [{"nom": "C", "etape": "w"},
                                                  {"nom": "D", "tags": "a,b"}],
                                     deadline=time.monotonic() + 60)
     phrases = [n for n in rep["notices"] if "format déclaré" in n]
     assert rep["done"] and len(phrases) == 1
-    assert "'w' hors options" in phrases[0] and "tags: attendu list" in phrases[0]
+    assert "'w' not among the options" in phrases[0] and "tags: attendu list" in phrases[0]
     assert len(_base(ns_id)) == 4
 
 
@@ -342,7 +342,7 @@ def test_au_lendemain_une_faute_est_refusee_sur_toutes_les_faces(client, data_wr
     ns, ns_id, _ = _table()
     with pytest.raises(McpError) as e:
         data_write(datastore=ns, row={"nom": "A", "site": "www.x.fr"})
-    assert "attendu une URL" in e.value.error.message
+    assert "expected an http(s) URL" in e.value.error.message
     r = client.post(f"/api/datastores/{ns}/rows", headers=_h(),
                     json={"nom": "A", "fiche": "Lyon"})
     assert r.status_code == 400 and r.json()["error"] == "row_invalid", r.text

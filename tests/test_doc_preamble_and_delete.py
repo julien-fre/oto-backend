@@ -332,8 +332,8 @@ def test_un_section_ambigu_refuse_en_nommant_les_candidats(seams):
                                body_md="réécrit"))
     assert ei.value.code == "ambiguous_section" and ei.value.status == 409
     msg = ei.value.message
-    assert "2 titres" in msg and "(ligne 3)" in msg and "(ligne 7)" in msg
-    assert "RIEN n'a été modifié" in msg and "op=update" in msg
+    assert "2 headings" in msg and "(line 3)" in msg and "(line 7)" in msg
+    assert "NOTHING was changed" in msg and "op=update" in msg
     assert seams["appels"] == [], "aucune écriture ne doit partir"
 
 

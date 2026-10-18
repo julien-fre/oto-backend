@@ -65,10 +65,10 @@ _CATALOG_HEADER = (
 )
 
 # En-têtes des agent README cumulés (bloc C), du général au spécifique.
-_README_ORG_HEADER = "## README de ton organisation"
-_README_GROUP_HEADER = "## README de ton équipe"
-_README_USER_HEADER = "## README de ton utilisateur"
-_CONTEXT_HEADER = "## Ton contexte oto"
+_README_ORG_HEADER = "## Your organization's README"
+_README_GROUP_HEADER = "## Your team's README"
+_README_USER_HEADER = "## Your user's README"
+_CONTEXT_HEADER = "## Your oto context"
 
 # Tokens de variable substitués dans les agent README (bloc C). Auto-contexte v1.
 _VAR_TOKENS = ("{{org}}", "{{user}}", "{{équipe}}", "{{equipe}}", "{{connecteurs_actifs}}",
@@ -228,17 +228,17 @@ def _apply_vars(body: str, ctx: dict, *, personnel: bool = True) -> str:
 
 
 def _format_context(ctx: dict) -> str:
-    """La section « ## Ton contexte oto » — auto-contexte + anticipation (projets,
+    """La section « ## Your oto context » — auto-contexte + anticipation (projets,
     déroulés). Lignes optionnelles : seules celles avec de la donnée sont rendues."""
     lines = [_CONTEXT_HEADER, ""]
-    role = f" (ton rôle : {ctx['role']})" if ctx["role"] else ""
-    lines.append(f"- Organisation : {ctx['org_name']}{role}")
+    role = f" (your role: {ctx['role']})" if ctx["role"] else ""
+    lines.append(f"- Organization: {ctx['org_name']}{role}")
     if ctx["group_name"]:
-        lines.append(f"- Équipe active : {ctx['group_name']}")
+        lines.append(f"- Active team: {ctx['group_name']}")
     if ctx["connectors"]:
-        lines.append(f"- Connecteurs actifs : {', '.join(ctx['connectors'])}")
+        lines.append(f"- Active connectors: {', '.join(ctx['connectors'])}")
     if ctx["projects"]:
-        lines.append(f"- Projets récents : {' · '.join(ctx['projects'])}")
+        lines.append(f"- Recent projects: {' · '.join(ctx['projects'])}")
     if ctx["runs"]:
         bits = []
         for r in ctx["runs"]:
@@ -249,7 +249,7 @@ def _format_context(ctx: dict) -> str:
             # Un run muet ne s'annonce plus « en cours » : l'agent lisait ça au
             # handshake et croyait reprendre un travail que personne ne menait plus.
             bits.append(f"{label}{doc} {run_status.describe(r)}")
-        lines.append(f"- Derniers déroulés : {' · '.join(bits)}")
+        lines.append(f"- Recent runs: {' · '.join(bits)}")
     annonce = outils_retires.annonce_act_du_jour()
     if annonce:
         lines.append(f"- {annonce}")
@@ -259,9 +259,9 @@ def _format_context(ctx: dict) -> str:
 # Libellés lisibles des champs connus de la fiche (cf. capabilities/profile.PROFILE_FIELDS) ;
 # une clé libre inconnue est rendue telle quelle.
 _PROFILE_LABELS = {
-    "full_name": "Nom", "role": "Rôle", "company": "Entreprise / secteur",
-    "goals": "Objectifs", "crm": "CRM", "connectors_wanted": "Connecteurs voulus",
-    "tone": "Ton / préférences",
+    "full_name": "Name", "role": "Role", "company": "Company / industry",
+    "goals": "Goals", "crm": "CRM", "connectors_wanted": "Wanted connectors",
+    "tone": "Tone / preferences",
 }
 
 
@@ -273,10 +273,10 @@ def _format_profile(profile: dict) -> str:
         text = str(value).strip() if value is not None else ""
         if not text:
             continue
-        rows.append(f"- {_PROFILE_LABELS.get(key, key)} : {text}")
+        rows.append(f"- {_PROFILE_LABELS.get(key, key)}: {text}")
     if not rows:
         return ""
-    return "### Ce que tu sais de l'utilisateur\n" + "\n".join(rows)
+    return "### What you know about the user\n" + "\n".join(rows)
 
 
 def _c_layers(sub: str | None, org_id: int | None) -> list[dict]:
@@ -552,7 +552,7 @@ def seed_platform_blocks() -> None:
 # Marque de palier dans l'index — le tag DIT ce que la portée implique. Sans lui,
 # une procédure perso et une procédure d'org se ressemblent, et l'agent croit avoir
 # publié pour son org ce qu'il a écrit pour lui seul.
-_TAG_PALIER = {"user": " [perso]", "org": "", "group": " [équipe]"}
+_TAG_PALIER = {"user": " [personal]", "org": "", "group": " [team]"}
 
 
 def skills_index_md(sub: str | None = None, org_id: int | None = None) -> str:
@@ -590,8 +590,8 @@ def skills_index_md(sub: str | None = None, org_id: int | None = None) -> str:
         return ""
     if not entrees:
         return ""
-    lines = ["Procédures que tu peux charger (passe le `slug` pour charger le corps) — "
-             "`[perso]` = à toi seul, `[équipe]` = à ton équipe, sans marque = à ton org :"]
+    lines = ["Procedures you can load (pass the `slug` to load the body) — "
+             "`[personal]` = yours alone, `[team]` = your team's, no tag = your org's:"]
     for palier, r in entrees:
         desc = (r.get("description") or "").strip()
         lines.append(f"- {r['slug']} — {r['title']}"

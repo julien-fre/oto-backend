@@ -110,8 +110,8 @@ def missing_fields(payload: Any, *, items_paths: Iterable[str],
 RAW = "*"  # `fields=["*"]` — le chemin vers le brut, même jeton que data_rows/le feed
 
 
-_HINT_TRI = (f'Vue de tri. Corps et colonnes écartés : `fields=["{RAW}"]` '
-             "rend la ligne entière, `fields=[…]` choisit.")
+_HINT_TRI = (f'Triage view. Bodies and columns left out: `fields=["{RAW}"]` '
+             "returns the whole row, `fields=[…]` picks.")
 
 
 def summarize(rows: list[dict], *, body_fields: Iterable[str],

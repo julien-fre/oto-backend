@@ -200,7 +200,7 @@ def test_une_faute_de_frappe_sur_un_cran_est_REFUSEE_et_nommee():
     """`read_only` désarmait le verrou en silence."""
     errs = S.validate_schema_def({"fields": [{"key": "k", "type": "text",
                                               "read_only": True}]})
-    assert len(errs) == 1 and "voulais-tu `readonly` ?" in errs[0], errs
+    assert len(errs) == 1 and "did you mean `readonly`?" in errs[0], errs
 
 
 def test_le_cas_fondateur_est_refuse():
@@ -224,8 +224,8 @@ def test_enum_a_cote_d_options_est_refusee_vers_options():
     refus nomme `enum` et envoie vers `options` — jamais l'inverse."""
     errs = S.validate_schema_def({"fields": [{"key": "s", "type": "enum",
                                               "options": ["a"], "enum": ["a"]}]})
-    assert len(errs) == 1 and errs[0].startswith("fields.s : `enum`"), errs
-    assert "voulais-tu `options` ?" in errs[0]
+    assert len(errs) == 1 and errs[0].startswith("fields.s: `enum`"), errs
+    assert "did you mean `options`?" in errs[0]
 
 
 # ── une clé admise rangée dans `meta` (cas du 14/10/2026) ────────────────
@@ -236,7 +236,7 @@ def test_options_dans_meta_est_REFUSEE_et_renvoyee_a_cote():
     errs = S.validate_schema_def({"fields": [{"key": "s", "type": "enum",
                                               "meta": {"options": ["a", "b"]}}]})
     assert len(errs) == 1 and errs[0].startswith("fields.s.meta.options"), errs
-    assert "SANS EFFET" in errs[0]
+    assert "NO EFFECT" in errs[0]
 
 
 def test_une_cle_admise_a_un_AUTRE_niveau_reste_libre_dans_meta():
@@ -274,6 +274,6 @@ def test_une_ombre_STOCKEE_est_dite_a_la_lecture():
     from oto_mcp.datastore import cles_inconnues as CI
     w = CI.residus_warning({"fields": [{"key": "s", "type": "enum",
                                         "meta": {"options": ["a"]}}]})
-    assert w and "`fields.s.meta.options`" in w and "SANS EFFET" in w
+    assert w and "`fields.s.meta.options`" in w and "NO EFFECT" in w
     assert CI.residus_warning({"fields": [{"key": "s", "type": "enum",
                                            "meta": {"depends_on": "x"}}]}) is None

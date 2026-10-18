@@ -973,9 +973,9 @@ def _release_claim(ctx: ResolvedCtx, inp: ReleaseInput) -> dict:
     worker = (inp.worker or "").strip()
     if not worker and token_scopes.current() is not None:
         raise AuthzDenied(400, "worker_required",
-                          "un jeton porté libère SON bail : passer le worker "
-                          "utilisé au claim (la libération forcée est réservée "
-                          "à la supervision, session interactive)")
+                          "a carried token releases ITS lease: pass the worker "
+                          "used at claim time (forced release is reserved "
+                          "for supervision, interactive session)")
     trace: dict = {}
     store = make_store(ctx.sub)
     attendue = inp.expected_revision

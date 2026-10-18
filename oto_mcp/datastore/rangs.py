@@ -130,7 +130,7 @@ TAILLE_MAX_APRES_AJOUT = 64_000
 
 
 def _refus(message: str) -> RowValidationError:
-    return RowValidationError([message + " Rien n'a été écrit."])
+    return RowValidationError([message + " Nothing was written."])
 
 
 @dataclass
@@ -254,11 +254,11 @@ def _borner_l_ajout(col: _Colonne, champ: Optional[dict], apres: Any) -> None:
               else len(json.dumps(apres, ensure_ascii=False, default=str)))
     if taille > TAILLE_MAX_APRES_AJOUT:
         raise _refus(
-            f"`{col.nom}[+]` porterait la cellule à {taille} caractères, au-delà de "
-            f"{TAILLE_MAX_APRES_AJOUT} : un journal de cette taille ne tient plus dans une "
-            f"cellule. Tiens-le dans une TABLE, une ligne par entrée "
-            f"(`data_create_datastore`, puis `data_write` à chaque passage), et garde "
-            f"ici un résumé ou le dernier état.")
+            f"`{col.nom}[+]` would bring the cell to {taille} characters, beyond "
+            f"{TAILLE_MAX_APRES_AJOUT}: a log of this size no longer fits in a "
+            f"cell. Keep it in a TABLE, one row per entry "
+            f"(`data_create_datastore`, then `data_write` at each pass), and keep "
+            f"a summary or the latest state here.")
 
 
 def sortir_les_rangs(schema: Optional[dict], user_data: Optional[dict]
@@ -310,16 +310,16 @@ def sortir_les_rangs(schema: Optional[dict], user_data: Optional[dict]
     for nom, col in rangs.colonnes.items():
         if nom in reste:
             raise _refus(
-                f"`{nom}` est écrite ENTIÈRE et par rang ({_cites(rangs.brut, nom)}) dans "
-                f"le même geste : deux écritures d'une même colonne, l'une écraserait "
-                f"l'autre. Garde l'une des deux formes.")
+                f"`{nom}` is written WHOLE and by index ({_cites(rangs.brut, nom)}) in "
+                f"the same call: two writes of the same column, one would overwrite "
+                f"the other. Keep one of the two forms.")
         doubles = sorted(set(col.modifs) & col.suppressions)
         if doubles:
             r = doubles[0]
             raise _refus(
-                f"`{nom}[{r}]` est supprimé et modifié dans le même geste. Garde l'un "
-                f"des deux : `{nom}[{r}]: null` supprime l'élément, "
-                f"`{nom}[{r}].<attribut>` le modifie.")
+                f"`{nom}[{r}]` is deleted and modified in the same call. Keep one "
+                f"of the two: `{nom}[{r}]: null` deletes the item, "
+                f"`{nom}[{r}].<attribute>` modifies it.")
     return reste, rangs
 
 
@@ -345,33 +345,33 @@ def _refuser_la_forme(cle: str, nom: str, rang: str, attribut: Optional[str],
             return
         if rang == AJOUT:
             raise _refus(
-                f"`{cle}` ajoute à `{nom}`, déclarée `{champ.get('type')}` : `[+]` "
-                f"n'ajoute qu'à une colonne-liste (un élément) ou texte (une ligne). "
-                f"Écris `{nom}` entière.")
+                f"`{cle}` appends to `{nom}`, declared `{champ.get('type')}`: `[+]` "
+                f"only appends to a list column (an item) or a text column (a line). "
+                f"Write `{nom}` whole.")
         raise _refus(
-            f"`{cle}` vise un rang de `{nom}`, déclarée `{champ.get('type')}` : seule une "
-            f"colonne-liste (`type: list`) s'adresse par rang. Écris `{nom}` entière.")
+            f"`{cle}` targets an index of `{nom}`, declared `{champ.get('type')}`: only a "
+            f"list column (`type: list`) is addressed by index. Write `{nom}` whole.")
     if rang == "":
         raise _refus(
-            f"`{cle}` désigne TOUS les éléments de `{nom}` : c'est une adresse de "
-            f"lecture (filtre, agrégat), pas d'écriture. Vise un rang — "
-            f"`{nom}[0]{'.' + attribut if attribut else ''}` — lu dans data_rows.")
+            f"`{cle}` designates ALL the items of `{nom}`: it is a read "
+            f"address (filter, aggregate), not a write address. Target an index — "
+            f"`{nom}[0]{'.' + attribut if attribut else ''}` — read in data_rows.")
     if "=" in rang:
         raise _refus(
-            f"`{cle}` désigne un élément par son identité : ce n'est pas servi. Vise "
-            f"son RANG, lu dans data_rows — `{nom}[0]"
-            f"{'.' + attribut if attribut else ''}`. Les rangs d'un geste désignent la "
-            f"liste telle qu'elle est en place.")
+            f"`{cle}` designates an item by its identity: that is not supported. Target "
+            f"its INDEX, read in data_rows — `{nom}[0]"
+            f"{'.' + attribut if attribut else ''}`. The indexes of a call designate the "
+            f"list as it currently stands.")
     if rang == AJOUT:
         if attribut is not None:
             raise _refus(
-                f"`{cle}` : un élément s'ajoute ENTIER, en une fiche — "
-                f'`"{nom}[+]": {{"{attribut.split(".")[0]}": …, …}}`. Pour modifier un '
-                f"élément existant : `{nom}[<rang>].{attribut}`.")
+                f"`{cle}`: an item is appended WHOLE, as one record — "
+                f'`"{nom}[+]": {{"{attribut.split(".")[0]}": …, …}}`. To modify an '
+                f"existing item: `{nom}[<index>].{attribut}`.")
         _refuser_le_vide(cle, nom, valeur,
-                         "ajoute un élément — une fiche (`{…}`) ou, dans une liste de "
-                         "valeurs, une valeur — ou une LISTE d'éléments, ajoutés dans "
-                         "l'ordre")
+                         "appends an item — a record (`{…}`) or, in a list of "
+                         "values, a value — or a LIST of items, appended in "
+                         "order")
         return
     if rang == RETRAIT:
         _refuser_le_retrait(cle, nom, attribut, valeur, champ)
@@ -379,33 +379,33 @@ def _refuser_la_forme(cle: str, nom: str, rang: str, attribut: Optional[str],
     if attribut is None:
         if valeur is not None:
             raise _refus(
-                f"`{cle}` : un élément se modifie attribut par attribut — "
-                f"`{nom}[{int(rang)}].<attribut>` —, se supprime par "
-                f"`{nom}[{int(rang)}]: null`, s'ajoute par `{nom}[+]`. La forme "
-                f"imbriquée n'est pas servie : une case n'a qu'une adresse.")
+                f"`{cle}`: an item is modified attribute by attribute — "
+                f"`{nom}[{int(rang)}].<attribute>` —, deleted with "
+                f"`{nom}[{int(rang)}]: null`, appended with `{nom}[+]`. The nested "
+                f"form is not supported: a cell has only one address.")
         return
     if "." in attribut and layer_address(attribut) is None:
         tete = attribut.split(".")[0]
         raise _refus(
-            f"`{cle}` descend sous l'attribut `{tete}` : un attribut d'élément s'écrit "
-            f"entier — `{nom}[{int(rang)}].{tete}` —, ou par l'une de ses couches "
+            f"`{cle}` goes below the attribute `{tete}`: an item attribute is written "
+            f"whole — `{nom}[{int(rang)}].{tete}` —, or through one of its layers "
             f"({', '.join('`' + c + '`' for c in dsv2.LAYER_KEYS)}).")
 
 
 def _refuser_le_texte(cle: str, nom: str, valeur: Any) -> None:
     """`journal[+]` sur une colonne texte : une chaîne, ou une liste de chaînes."""
     _refuser_le_vide(cle, nom, valeur,
-                     "ajoute du texte en fin de cellule — une chaîne, ou une liste de "
-                     "chaînes, chacune sur sa ligne")
+                     "appends text at the end of the cell — a string, or a list of "
+                     "strings, each on its own line")
     morceaux = valeur if isinstance(valeur, list) else [valeur]
     if not all(isinstance(x, str) for x in morceaux):
         raise _refus(
-            f"`{cle}` ajoute du TEXTE à `{nom}` : une chaîne, ou une liste de chaînes ; "
-            f"reçu {_forme(next(x for x in morceaux if not isinstance(x, str)))}. Pour "
-            f"poser une autre forme, écris `{nom}` entière.")
+            f"`{cle}` appends TEXT to `{nom}`: a string, or a list of strings; "
+            f"got {_forme(next(x for x in morceaux if not isinstance(x, str)))}. To "
+            f"set another form, write `{nom}` whole.")
     if any(x == "" for x in morceaux):
         raise _refus(
-            f"`{cle}` : une chaîne vide n'ajoute rien à `{nom}`. Pour l'effacer : "
+            f"`{cle}`: an empty string appends nothing to `{nom}`. To clear it: "
             f"`\"{nom}\": null`.")
 
 
@@ -428,8 +428,8 @@ def _ajouter_le_texte(col: _Colonne, cellule: Any) -> str:
     avant = _existing_layers(cellule).get(dsv2.VALUE_LAYER)
     if avant is not None and not isinstance(avant, str):
         raise _refus(
-            f"`{col.nom}` porte une valeur qui n'est pas du texte ({_forme(avant)}) : "
-            f"`{col.nom}[+]` n'y ajoute pas de ligne. Écris `{col.nom}` entière.")
+            f"`{col.nom}` carries a value that is not text ({_forme(avant)}): "
+            f"`{col.nom}[+]` does not append a line to it. Write `{col.nom}` whole.")
     return SEPARATEUR_DE_LIGNE.join(([avant] if avant else []) + list(col.ajouts))
 
 
@@ -442,10 +442,10 @@ def _refuser_le_retrait(cle: str, nom: str, attribut: Optional[str], valeur: Any
     valeurs = valeur if isinstance(valeur, list) else [valeur]
     if attribut is not None or fiches or any(isinstance(x, dict) for x in valeurs):
         raise _refus(
-            f"`{cle}` : le retrait par valeur ne vise qu'une liste de VALEURS — une "
-            f"fiche n'a pas d'égalité servie (couches, attributs absents). Retire-la à "
-            f"son rang, lu dans data_rows : `\"{nom}[<rang>]\": null`.")
-    _refuser_le_vide(cle, nom, valeur, "retire une valeur, ou chaque valeur d'une liste")
+            f"`{cle}`: removal by value only targets a list of VALUES — a "
+            f"record has no supported equality (layers, missing attributes). Remove it at "
+            f"its index, read in data_rows: `\"{nom}[<index>]\": null`.")
+    _refuser_le_vide(cle, nom, valeur, "removes a value, or each value of a list")
 
 
 def _refuser_le_vide(cle: str, nom: str, valeur: Any, geste: str) -> None:
@@ -453,14 +453,14 @@ def _refuser_le_vide(cle: str, nom: str, valeur: Any, geste: str) -> None:
     if valeur is None:
         recu = "`null`"
     elif valeur == []:
-        recu = "une liste vide"
+        recu = "an empty list"
     elif isinstance(valeur, list) and any(x is None for x in valeur):
-        recu = "un `null` dans la liste"
+        recu = "a `null` in the list"
     else:
         return
     raise _refus(
-        f"`{cle}` {geste} ; reçu {recu}, qui ne désigne aucun élément. Pour effacer la "
-        f"colonne : `\"{nom}\": null`.")
+        f"`{cle}` {geste}; got {recu}, which designates no item. To clear the "
+        f"column: `\"{nom}\": null`.")
 
 
 def _meme_valeur(a: Any, b: Any) -> bool:
@@ -476,14 +476,14 @@ def _retirer(nom: str, suivis: list, retraits: list, creation: bool) -> list:
     absentes = [v for v in retraits if not any(_meme_valeur(x, v) for x, _ in suivis)]
     if absentes:
         if creation:
-            etat = f"cette écriture CRÉE la ligne : `{nom}` n'y a encore aucun élément"
+            etat = f"this write CREATES the row: `{nom}` has no item there yet"
         else:
-            etat = (f"`{nom}` ne porte pas "
+            etat = (f"`{nom}` does not carry "
                     + ", ".join(f"`{json.dumps(v, ensure_ascii=False)}`" for v in absentes)
-                    + f" ({len(suivis)} élément{'s' if len(suivis) > 1 else ''} en place)")
+                    + f" ({len(suivis)} item{'s' if len(suivis) > 1 else ''} in place)")
         raise _refus(
-            f"{etat} — rien à retirer. Relis la ligne : une valeur mal orthographiée, ou "
-            f"déjà retirée par un autre geste.")
+            f"{etat} — nothing to remove. Read the row again: a misspelled value, or "
+            f"one already removed by another write.")
     return [(x, e) for x, e in suivis
             if not any(_meme_valeur(x, v) for v in retraits)]
 
@@ -491,13 +491,13 @@ def _retirer(nom: str, suivis: list, retraits: list, creation: bool) -> list:
 def _refus_hors_bornes(nom: str, rang: int, taille: int, creation: bool
                        ) -> RowValidationError:
     if creation:
-        etat = f"cette écriture CRÉE la ligne : `{nom}` n'y a encore aucun élément"
+        etat = f"this write CREATES the row: `{nom}` has no item there yet"
     elif taille == 0:
-        etat = f"`{nom}` n'a aucun élément sur cette ligne"
+        etat = f"`{nom}` has no item on this row"
     else:
-        etat = (f"`{nom}` a {taille} élément{'s' if taille > 1 else ''} "
-                f"(rangs 0 à {taille - 1})")
-    return _refus(f"{etat} ; rang {rang} inexistant. Pour ajouter : `{nom}[+]`.")
+        etat = (f"`{nom}` has {taille} item{'s' if taille > 1 else ''} "
+                f"(indexes 0 to {taille - 1})")
+    return _refus(f"{etat}; index {rang} does not exist. To append: `{nom}[+]`.")
 
 
 def _liste_en_place(nom: str, cellule: Any, creation: bool) -> list:
@@ -506,9 +506,9 @@ def _liste_en_place(nom: str, cellule: Any, creation: bool) -> list:
         return []
     if not isinstance(valeur, list):
         raise _refus(
-            f"`{nom}` porte une valeur qui n'est pas une liste ({_forme(valeur)}) : un "
-            f"rang ne s'y adresse pas. Écris `{nom}` entière — et si `{nom}[…]` est le "
-            f"NOM d'une colonne, renomme-la : un crochet désigne un rang.")
+            f"`{nom}` carries a value that is not a list ({_forme(valeur)}): an "
+            f"index cannot address it. Write `{nom}` whole — and if `{nom}[…]` is the "
+            f"NAME of a column, rename it: a bracket designates an index.")
     return valeur
 
 
@@ -517,9 +517,9 @@ def _fusionner_l_element(nom: str, rang: int, element: Any, partielle: dict) -> 
     exactement ce que `_merge_items` fait d'un élément apparié par `of.key`."""
     if not isinstance(element, dict):
         raise _refus(
-            f"`{nom}[{rang}]` n'est pas une fiche ({_forme(element)}) : il n'a pas "
-            f"d'attribut. Supprime-le (`{nom}[{rang}]: null`) puis ajoute la fiche "
-            f"(`{nom}[+]`), ou écris `{nom}` entière.")
+            f"`{nom}[{rang}]` is not a record ({_forme(element)}): it has no "
+            f"attribute. Delete it (`{nom}[{rang}]: null`) then append the record "
+            f"(`{nom}[+]`), or write `{nom}` whole.")
     fusion = dict(element)
     for attribut, cellule in partielle.items():
         v = _merge_column(element.get(attribut), cellule)
@@ -551,10 +551,10 @@ def _refuser_identite_doublee(nom: str, cle: str, avant: list, apres: list) -> N
                if n > 1 and v not in deja}
     if doubles:
         raise _refus(
-            f"`{cle}` en double dans `{nom}` après ce geste : "
+            f"`{cle}` duplicated in `{nom}` after this write: "
             + ", ".join(repr(d) for d in sorted(doubles, key=str))
-            + f" — `{cle}` est l'identité des éléments (`of.key`), deux éléments ne la "
-            f"partagent pas. Modifie l'élément qui la porte déjà, à son rang.")
+            + f" — `{cle}` is the identity of the items (`of.key`), two items do not "
+            f"share it. Modify the item that already carries it, at its index.")
 
 
 def _dates(schema: Optional[dict], of: Any, adresse: str, element: Any,
@@ -573,9 +573,9 @@ def _dates(schema: Optional[dict], of: Any, adresse: str, element: Any,
 
 def _forme(valeur: Any) -> str:
     if isinstance(valeur, dict):
-        return "un objet"
+        return "an object"
     if isinstance(valeur, list):
-        return "une liste"
+        return "a list"
     return repr(valeur)
 
 

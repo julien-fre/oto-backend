@@ -97,10 +97,10 @@ def _socle_accueille_une_couche(socle: Any) -> bool:
 
 def _refus_de_collision(base: str, couche: str, cle: str) -> RowValidationError:
     return RowValidationError([
-        f"`{cle}` et `{base}.{couche}` (écrit en forme imbriquée dans `{base}`) "
-        f"désignent la MÊME annotation, avec deux valeurs. Rien n'a été écrit : on ne "
-        f"fusionne jamais deux écritures d'un même champ en silence. Garde l'une des "
-        f"deux formes."])
+        f"`{cle}` and `{base}.{couche}` (written in nested form in `{base}`) "
+        f"designate the SAME annotation, with two values. Nothing was written: two "
+        f"writes of the same field are never merged silently. Keep one of the "
+        f"two forms."])
 
 
 def _absorbe_ou_refuse(out: dict, cle: str, base: str, couche: str) -> bool:
@@ -148,14 +148,14 @@ def _refus_de_couche_orpheline(chemin: str, cle: str, base: str,
     reviendrait à décider que `champ` est un attribut plutôt qu'une clé littérale,
     c'est-à-dire à deviner. Le refus nomme les deux gestes qui, eux, sont sûrs."""
     return RowValidationError([
-        f"`{cle}` dans `{chemin}` : cet élément ne porte pas `{base}`, et un élément "
-        f"de liste n'a ni schéma ni identité — il n'y a rien d'autre à consulter pour "
-        f"savoir si `{base}` est un attribut. Cette clé serait donc stockée "
-        f"LITTÉRALEMENT sous ce nom : invisible au filtre et au tri `{cle}`, qui "
-        f"lisent la couche `{couche}` de `{base}`, et invisible au relevé hors schéma. Rien "
-        f"n'a été écrit. Écris `{base}` dans le MÊME élément, à côté — ou nomme la "
-        f'couche en forme imbriquée, {{"{base}": {{"{couche}": …}}}}, si tu veux '
-        f"l'annoter seule."])
+        f"`{cle}` in `{chemin}`: this item does not carry `{base}`, and a list "
+        f"item has neither schema nor identity — there is nothing else to consult to "
+        f"know whether `{base}` is an attribute. This key would therefore be stored "
+        f"LITERALLY under this name: invisible to the `{cle}` filter and sort, which "
+        f"read the `{couche}` layer of `{base}`, and invisible to the off-schema report. Nothing "
+        f"was written. Write `{base}` in the SAME item, next to it — or name the "
+        f'layer in nested form, {{"{base}": {{"{couche}": …}}}}, if you want '
+        f"to annotate it alone."])
 
 
 def _refus_de_socle_opaque(chemin: str, cle: str, base: str, couche: str,
@@ -166,12 +166,12 @@ def _refus_de_socle_opaque(chemin: str, cle: str, base: str, couche: str,
     silencieuses dans la même fonction, c'est la fonction qu'il faut fermer, pas la
     branche qui s'est présentée."""
     return RowValidationError([
-        f"`{cle}` veut annoter `{base}` dans `{chemin}`, mais cet élément écrit dans "
-        f"`{base}` un objet ({', '.join(sorted(map(str, socle))[:3])}…) qui n'est pas "
-        f"fait de couches : lui ajouter `{couche}` changerait sa forme stockée. Rien "
-        f"n'a été écrit. Écris l'attribut en couches, explicitement — "
-        f'{{"{base}": {{"valeur": {{…}}, "{couche}": …}}}} — ou déclare la colonne '
-        f"`json` (data_set_schema) si c'est un objet métier."])
+        f"`{cle}` wants to annotate `{base}` in `{chemin}`, but this item writes into "
+        f"`{base}` an object ({', '.join(sorted(map(str, socle))[:3])}…) that is not "
+        f"made of layers: adding `{couche}` to it would change its stored form. Nothing "
+        f"was written. Write the attribute as layers, explicitly — "
+        f'{{"{base}": {{"valeur": {{…}}, "{couche}": …}}}} — or declare the column '
+        f"`json` (data_set_schema) if it is a business object."])
 
 
 def _ranger_une_fiche(fiche: dict, chemin: str) -> dict:
@@ -292,12 +292,12 @@ def ranger_les_couches(schema: Optional[dict], user_data: Optional[dict], *,
             # colonne déclarée `json`, elle, ne passe pas ici : la déclaration lève
             # l'indécision, et `unwrap` la rendra nue de toute façon (#728).
             raise RowValidationError([
-                f"`{cle}` veut annoter `{base}`, mais ce geste écrit dans `{base}` un "
-                f"objet ({', '.join(sorted(map(str, socle))[:3])}…) qui n'est pas fait "
-                f"de couches : lui ajouter `{couche}` changerait sa forme stockée. "
-                f"Rien n'a été écrit. Écris la colonne en couches, explicitement — "
-                f'{{"{base}": {{"valeur": {{…}}, "{couche}": …}}}} — ou déclare-la '
-                f"`json` (data_set_schema) si c'est un objet métier."])
+                f"`{cle}` wants to annotate `{base}`, but this write puts into `{base}` an "
+                f"object ({', '.join(sorted(map(str, socle))[:3])}…) that is not made "
+                f"of layers: adding `{couche}` to it would change its stored form. "
+                f"Nothing was written. Write the column as layers, explicitly — "
+                f'{{"{base}": {{"valeur": {{…}}, "{couche}": …}}}} — or declare it '
+                f"`json` (data_set_schema) if it is a business object."])
         val = out.pop(cle)
         if base not in out:
             # Le socle n'est pas dans le geste : on pose l'annotation SEULE. C'est le
@@ -345,14 +345,14 @@ def traduire_les_entetes(schema: Optional[dict], entetes: list) -> dict:
             continue                                  # cas 1 : le store la rangera
         cible = entete.replace(".", "_")
         if cible in reelles or cible in cibles:
-            autre = (f"un autre en-tête du fichier, `{cibles[cible]}`"
+            autre = (f"another header of the file, `{cibles[cible]}`"
                      if cible in cibles else
-                     "un autre en-tête du fichier, ou une colonne du tableau")
+                     "another header of the file, or a column of the table")
             raise RowValidationError([
-                f"L'en-tête `{entete}` ne peut pas devenir la colonne `{cible}` : ce "
-                f"nom est déjà pris par {autre}. Deux colonnes distinctes seraient "
-                f"fusionnées et l'une écraserait l'autre. Rien n'a été importé — "
-                f"renomme `{entete}` dans le fichier source, puis recharge."])
+                f"The header `{entete}` cannot become the column `{cible}`: this "
+                f"name is already taken by {autre}. Two distinct columns would be "
+                f"merged and one would overwrite the other. Nothing was imported — "
+                f"rename `{entete}` in the source file, then reload."])
         traduits[entete] = cible
         cibles[cible] = entete
     return traduits
@@ -364,10 +364,10 @@ def _refuser_les_noms_vides(user_data: Optional[dict]) -> None:
     vides = [cle for cle in user_data or {} if not str(cle).strip()]
     if vides:
         raise RowValidationError([
-            f"{', '.join(repr(c) for c in vides)} n'est pas un nom de colonne : un nom "
-            f"vide ou fait d'espaces ne se déclare pas au schéma, ne s'adresse par "
-            f"aucun filtre et ne se lit dans aucune page ni aucun export. Rien n'a été "
-            f"écrit. Nomme la colonne, ou retire cette clé de l'écriture."])
+            f"{', '.join(repr(c) for c in vides)} is not a column name: a name that is "
+            f"empty or made of spaces cannot be declared in the schema, cannot be addressed by "
+            f"any filter and cannot be read in any page or export. Nothing was "
+            f"written. Name the column, or remove this key from the write."])
 
 
 def _refuse_dotted_names(user_data: Optional[dict]) -> None:
@@ -405,22 +405,22 @@ def _refuse_dotted_names(user_data: Optional[dict]) -> None:
         if adresse is not None:
             base, couche = adresse
             raise RowValidationError([
-                f"`{cle}` désigne l'annotation `{couche}` de la colonne `{base}`, "
-                f"mais `{base}` n'est aucune colonne de ce tableau : ni dans cette "
-                f"écriture, ni sur la ligne visée, ni au schéma. Rien n'a été écrit. "
-                f'Écris la colonne dans le même geste, ou nomme-la en forme imbriquée '
-                f'— {{"{base}": {{"{couche}": …}}}} — si tu veux l\'annoter seule.'])
+                f"`{cle}` designates the `{couche}` annotation of the column `{base}`, "
+                f"but `{base}` is no column of this table: neither in this "
+                f"write, nor on the targeted row, nor in the schema. Nothing was written. "
+                f'Write the column in the same call, or name it in nested form '
+                f'— {{"{base}": {{"{couche}": …}}}} — if you want to annotate it alone.'])
         base = cle.split("[")[0].split(".")[0]
         # oto#22 : un attribut d'élément s'écrit désormais à son RANG — la grammaire
         # que `rangs.sortir_les_rangs` lit en amont. Ce qui arrive ici avec un crochet
         # n'en est pas (rang illisible, colonne qui porte un espace) : on dit la forme.
-        rang = (f" Un attribut d'élément de liste s'écrit à son RANG : "
-                f"`{base}[0].<attribut>` (rang entier, lu dans data_rows), "
-                f"`{base}[+]` pour ajouter un élément." if "[" in cle else "")
+        rang = (f" A list item attribute is written at its INDEX: "
+                f"`{base}[0].<attribute>` (integer index, read in data_rows), "
+                f"`{base}[+]` to add an item." if "[" in cle else "")
         raise RowValidationError([
-            f"`{cle}` n'est pas un nom de colonne — les points désignent des "
-            f"couches ou des attributs, qui s'écrivent en forme imbriquée : "
-            f'{{"{base}": {{…}}}}. Les annotations connues sont '
-            f"{', '.join('`' + k + '`' for k in dsv2.LAYER_KEYS)}.{rang} Une colonne "
-            f"littérale nommée `{cle}` serait invisible au filtre et au tri du même "
-            "nom. Rien n'a été écrit."])
+            f"`{cle}` is not a column name — dots designate "
+            f"layers or attributes, which are written in nested form: "
+            f'{{"{base}": {{…}}}}. The known annotations are '
+            f"{', '.join('`' + k + '`' for k in dsv2.LAYER_KEYS)}.{rang} A literal "
+            f"column named `{cle}` would be invisible to the filter and sort of the same "
+            "name. Nothing was written."])

@@ -96,12 +96,12 @@ def test_un_vide_ordinaire_reste_refuse(vide):
     if vide is not None:
         ligne["fonction"] = vide
     erreurs = validate_row(SCHEMA, ligne)
-    assert any("fonction" in e and "requis" in e for e in erreurs), erreurs
+    assert any("fonction" in e and "required" in e for e in erreurs), erreurs
 
 
 def test_un_sous_champ_vide_ordinaire_reste_refuse():
     erreurs = validate_row(SCHEMA, {"fonction": "DG", "contacts": [{"nom": "X", "fonction": ""}]})
-    assert any("fonction" in e and "requis" in e for e in erreurs), erreurs
+    assert any("fonction" in e and "required" in e for e in erreurs), erreurs
 
 
 def test_le_marqueur_nest_pas_un_sous_champ_inconnu():

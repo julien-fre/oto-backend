@@ -32,7 +32,7 @@ def test_rouge_d_abord_l_entier_est_une_option_ET_satisfait_la_condition():
     """Le cas de l'issue : l'entier 5 n'est plus refusé comme option, et il arme
     toujours la condition écrite en chaîne — une seule réponse sur les deux chemins."""
     erreurs = validate_row(SCHEMA, {"priorite": 5})
-    assert not [e for e in erreurs if "hors options" in e or "énumération" in e], erreurs
+    assert not [e for e in erreurs if "not among the options" in e or "énumération" in e], erreurs
     assert any("motif" in e for e in erreurs), "la condition `\"5\"` est satisfaite par 5"
     assert validate_row(SCHEMA, {"priorite": 5, "motif": "urgent"}) == []
 
@@ -42,17 +42,17 @@ def test_la_chaine_et_l_entier_recoivent_la_meme_reponse():
         assert validate_row(SCHEMA, {"priorite": v, "motif": "x"}) == [], v
     for v in (6, "6"):
         erreurs = validate_row(SCHEMA, {"priorite": v, "motif": "x"})
-        assert len(erreurs) == 1 and "hors options" in erreurs[0], erreurs
+        assert len(erreurs) == 1 and "not among the options" in erreurs[0], erreurs
 
 
 def test_le_refus_reste_nomme_et_cite_les_options():
     erreurs = validate_row(SCHEMA, {"priorite": 7})
-    assert erreurs == ["priorite: valeur '7' hors options (1, 2, 3, 4, 5)"], erreurs
+    assert erreurs == ["priorite: value '7' not among the options (1, 2, 3, 4, 5)"], erreurs
 
 
 def test_un_composite_n_est_pas_une_valeur_d_enumeration():
     erreurs = validate_row(SCHEMA, {"priorite": ["5"], "motif": "x"})
-    assert erreurs and "valeur d'énumération" in erreurs[0], erreurs
+    assert erreurs and "enumeration value" in erreurs[0], erreurs
 
 
 @pytest.mark.parametrize("valeur, declarees, attendu", [

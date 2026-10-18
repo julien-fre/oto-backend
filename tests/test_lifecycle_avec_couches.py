@@ -106,7 +106,7 @@ def test_un_etat_INCONNU_reste_refuse_sur_une_colonne_a_couches(table):
     with pytest.raises(RowValidationError) as e:
         st.update_row(ns, rid, {"statut": "termine"})   # n'existe pas
 
-    assert "état inconnu" in str(e.value)
+    assert "unknown state" in str(e.value)
 
 
 def test_l_etat_PRECEDENT_se_lit_aussi_deballe(table):

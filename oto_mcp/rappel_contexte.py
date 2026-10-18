@@ -60,9 +60,9 @@ def ligne(nom_org: str, org_id: int) -> str:
     """La ligne servie — courte, actionnable, bornée (`MAX_LIGNE`). `_org=` y est écrit
     pour que la lecture atterrisse sous l'org de l'appel, qui peut ne pas être la maison."""
     nom = nom_org if len(nom_org) <= MAX_NOM else nom_org[:MAX_NOM - 1] + "…"
-    return (f"⚠️ oto — contexte de l'org « {nom} » non lu, ou modifié depuis ta dernière "
-            f"lecture : appelle `{OUTIL_CONTEXTE}` (`_org={org_id}`) avant de continuer, "
-            "il porte ses règles de travail.")
+    return (f"⚠️ oto — the context of org “{nom}” is unread, or changed since you last "
+            f"read it: call `{OUTIL_CONTEXTE}` (`_org={org_id}`) before going on, it "
+            "carries the org's working rules.")
 
 
 def _couches(sub: str, org_id: int) -> list[tuple[str, str, str]]:

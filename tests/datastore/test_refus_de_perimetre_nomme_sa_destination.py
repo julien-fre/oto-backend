@@ -40,8 +40,8 @@ def test_le_refus_dit_que_l_APPEL_n_est_pas_en_cause():
         dsv2.claimable_of(MAL_DECLARE, 45)
 
     msg = str(e.value)
-    assert "Ton appel n'est pas en cause" in msg
-    assert "le réessayer échouera pareil" in msg, (
+    assert "Your call is not at fault" in msg
+    assert "retrying will fail the same way" in msg, (
         "sans ça, l'agent peut croire à une contention passagère")
 
 
@@ -50,10 +50,10 @@ def test_le_refus_NOMME_le_tableau_et_le_geste_qui_repare():
         dsv2.claimable_of(MAL_DECLARE, 45)
 
     msg = str(e.value)
-    assert "tableau 45" in msg, "le porteur du défaut doit être désigné"
-    assert "propriétaire" in msg, "et qui peut le réparer"
+    assert "Table 45" in msg, "le porteur du défaut doit être désigné"
+    assert "owner" in msg, "et qui peut le réparer"
     assert "data_patch_schema" in msg, "et par quel geste"
-    assert "Signale-le plutôt que de réessayer" in msg
+    assert "Report it rather than retrying" in msg
 
 
 def test_le_refus_cite_toujours_la_valeur_DECLAREE():
@@ -70,7 +70,7 @@ def test_sans_numero_le_refus_reste_lisible():
     with pytest.raises(ValueError) as e:
         dsv2.claimable_of(MAL_DECLARE)
 
-    assert "Ce tableau déclare" in str(e.value)
+    assert "This table declares" in str(e.value)
 
 
 # ── ⚠️ Un diagnostic ne lève jamais sur ce qu'il diagnostique ────────────────
@@ -93,5 +93,5 @@ def test_l_avertissement_ne_CASSE_PAS_sur_un_perimetre_illisible():
     phrase = na.lifecycle_hors_statut_warning(champs, sch)
 
     assert champs == ["suivi"]
-    assert phrase and "périmètre de réservation" in phrase, (
+    assert phrase and "claim scope" in phrase, (
         "un périmètre illisible compte comme un cran manquant, pas comme un plantage")

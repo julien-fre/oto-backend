@@ -156,10 +156,10 @@ def sans_effet(schema: Optional[dict]) -> list[tuple[str, str]]:
         if v is None or v == ECRITURE:
             continue
         if v not in VALEURS:
-            out.append((cle, f"valeur {v!r} non reconnue : lue comme \"{ECRITURE}\""))
+            out.append((cle, f"value {v!r} not recognized: read as \"{ECRITURE}\""))
         elif cle not in (masq if v == AUCUN else ferm):
-            out.append((cle, "clé métier : jamais masquée ni fermée à un agent"
-                        if cle == cle_metier else "non appliqué"))
+            out.append((cle, "business key: never hidden from or closed to an agent"
+                        if cle == cle_metier else "not applied"))
     return out
 
 
@@ -274,16 +274,16 @@ def _ou_porter(schema: Optional[dict], cle: str, *, couche_ouverte: bool) -> str
     """La phrase de destination, construite depuis le schéma RÉEL du tableau."""
     morceaux = []
     if couche_ouverte:
-        morceaux.append(f"en commentaire de la colonne (`{cle}.comment`), qui reste "
-                        f"ouverte à l'écriture")
+        morceaux.append(f"as a comment on the column (`{cle}.comment`), which stays "
+                        f"open for writing")
     noms = _destinations(schema, cle)
     if noms:
-        morceaux.append("sur les colonnes qui te sont servies en écriture : "
+        morceaux.append("on the columns served to you for writing: "
                         + ", ".join(f"`{n}`" for n in noms))
     if not morceaux:
-        return ("Aucune colonne de ce tableau ne t'est ouverte à l'écriture : ce que tu "
-                "as constaté va dans ton compte rendu de fin de travail, pas ici.")
-    return "Ce que tu as constaté se pose " + ", ou ".join(morceaux) + "."
+        return ("No column of this table is open to you for writing: what you "
+                "observed goes in your end-of-work report, not here.")
+    return "What you observed goes " + ", or ".join(morceaux) + "."
 
 
 def refus(schema: Optional[dict], cle: str, acces: str) -> str:
@@ -296,16 +296,16 @@ def refus(schema: Optional[dict], cle: str, acces: str) -> str:
     colonne, elle est de porter l'intention ailleurs."""
     if acces == AUCUN:
         return (
-            f"`{cle}` ne t'est pas servie : c'est une colonne que le propriétaire de ce "
-            f"tableau tient lui-même, et elle ne figure ni dans le schéma ni dans les "
-            f"lignes que tu lis ou réserves. Rien n'a été écrit, et rejouer cet appel "
-            f"rendra le même refus. "
+            f"`{cle}` is not served to you: it is a column the owner of this "
+            f"table maintains themselves, and it appears neither in the schema nor in the "
+            f"rows you read or claim. Nothing was written, and replaying this call "
+            f"will return the same refusal. "
             + _ou_porter(schema, cle, couche_ouverte=False))
     return (
-        f"`{cle}` t'est servie en LECTURE, pas en écriture : c'est le propriétaire de "
-        f"ce tableau qui la tient à jour, et une valeur posée d'ailleurs dirait ce que "
-        f"tu supposes là où il sait. Rien n'a été écrit, et rejouer cet appel rendra le "
-        f"même refus. "
+        f"`{cle}` is served to you for READING, not for writing: the owner of "
+        f"this table keeps it up to date, and a value set from elsewhere would state what "
+        f"you assume where they know. Nothing was written, and replaying this call will return the "
+        f"same refusal. "
         + _ou_porter(schema, cle, couche_ouverte=True))
 
 

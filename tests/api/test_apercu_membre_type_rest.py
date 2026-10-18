@@ -70,7 +70,7 @@ def test_l_admin_voit_ce_que_recoit_un_membre_de_l_equipe(client, monde):
     assert (body["org_id"], body["group_id"]) == (monde["o"], monde["g"])
     assert [c["scope"] for c in body["layers"]] == ["platform", "org", "group"]
     org, equipe = body["layers"][1], body["layers"][2]
-    assert org["body_md"] == ("## README de ton organisation (Org Aperçu)\n\n"
+    assert org["body_md"] == ("## Your organization's README (Org Aperçu)\n\n"
                               "Règles de Org Aperçu pour {{user}}.")
     assert equipe["body_md"].endswith("Équipe Ventes : on appelle avant.")
     assert org["updated_at"] and equipe["updated_at"]

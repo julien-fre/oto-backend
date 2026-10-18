@@ -1,179 +1,179 @@
 ---
-title: "File de travail : drainer un vivier avec N agents"
-description: claim atomique, bail, libération — le cycle qui garantit qu'une flotte de sous-agents traite un tableau sans doublon ni ligne perdue
+title: "Work queue: draining a pool with N agents"
+description: atomic claim, lease, release — the cycle that guarantees a fleet of sub-agents processes a table with no duplicate and no lost row
 ---
 
-# Drainer un tableau avec plusieurs agents
+# Draining a table with several agents
 
-À lire **avant** tout fan-out sur un vivier partagé : enrichir N leads, qualifier N
-sites, traiter N dossiers avec plusieurs sous-agents en parallèle. Le réflexe naturel —
-lire la table, découper en lots, distribuer — est **non atomique** : deux agents qui
-lisent au même instant voient la même ligne libre et la traitent tous les deux.
+Read this **before** any fan-out over a shared pool: enriching N leads, qualifying N
+sites, processing N files with several sub-agents in parallel. The natural reflex —
+read the table, split it into batches, hand them out — is **non-atomic**: two agents
+that read at the same instant see the same free row and both process it.
 
-Le datastore a la primitive qui règle ça côté serveur : **`data_claim_next`**.
+The datastore has the primitive that settles this on the server side: **`data_claim_next`**.
 
-⚠️ Ce patron boucle DANS ta conversation, qui a un plafond de tours. Pour un vivier de
-plusieurs dizaines de lignes ou plus, lis d'abord le guide `fleet-fanout` — au-delà d'un
-certain volume, arme un fleet plutôt que de risquer un arrêt `blocked` à mi-file.
+⚠️ This pattern loops INSIDE your conversation, which has a turn ceiling. For a pool of
+several dozen rows or more, first read the guide `fleet-fanout` — beyond a
+certain volume, set up a fleet rather than risk a `blocked` stop halfway through the queue.
 
-## Le principe : un bail, pas une liste d'exclusion
+## The principle: a lease, not an exclusion list
 
-`data_claim_next(datastore, worker, filter?, lease_s?)` prend **la prochaine ligne
-claimable et la réserve** dans la même transaction (`FOR UPDATE SKIP LOCKED`, patron
-file de travail PostgreSQL). Deux workers concurrents n'obtiennent **jamais** la même
-ligne — le second saute simplement à la suivante.
+`data_claim_next(datastore, worker, filter?, lease_s?)` takes **the next claimable
+row and reserves it** in the same transaction (`FOR UPDATE SKIP LOCKED`, the PostgreSQL
+work-queue pattern). Two concurrent workers **never** get the same
+row — the second one simply skips to the next.
 
-Le claim pose un **bail** : `_claimed_by` (ton libellé de worker) et `_claimed_until`
-(maintenant + `lease_s`). Une ligne sous bail actif est invisible aux autres claims.
+The claim sets a **lease**: `_claimed_by` (your worker label) and `_claimed_until`
+(now + `lease_s`). A row under an active lease is invisible to other claims.
 
-⚠️ **Le claim ne modifie PAS le contenu de la ligne** — pas de passage automatique en
-« en cours ». C'est le bail, pas le statut, qui protège du double traitement. Ne
-construis donc rien qui suppose que la ligne a changé après le claim.
+⚠️ **The claim does NOT modify the row's content** — no automatic switch to
+"in progress". It is the lease, not the status, that protects against double processing. So
+do not build anything that assumes the row has changed after the claim.
 
-Réponse : `{datastore, ns_id, row}` avec `row = null` quand il n'y a plus rien à prendre
-(file vide pour ce filtre, ou tout est déjà sous bail).
+Response: `{datastore, ns_id, row}` with `row = null` when there is nothing left to take
+(queue empty for this filter, or everything is already under lease).
 
-## Le cycle complet
+## The full cycle
 
 ```
-0. run = run_start(label="<ma campagne>")      → run["run_id"]
-1. row = data_claim_next(datastore="<table>", worker="<mon-libellé>",
+0. run = run_start(label="<my campaign>")      → run["run_id"]
+1. row = data_claim_next(datastore="<table>", worker="<my-label>",
                          filter={"status": "nouveau"}, _run_id=run["run_id"])
-2. si row == null  → terminé, le worker s'arrête
-3. traiter row (enrichissement, appels connecteurs, raisonnement…)
+2. if row == null  → done, the worker stops
+3. process row (enrichment, connector calls, reasoning…)
 4. data_write(datastore="<table>", id=row["_id"],
-              row={"status": "traité", ...livrables}, _run_id=run["run_id"])
-5. data_release(datastore="<table>", id=row["_id"], worker="<mon-libellé>",
+              row={"status": "traité", ...deliverables}, _run_id=run["run_id"])
+5. data_release(datastore="<table>", id=row["_id"], worker="<my-label>",
                 _run_id=run["run_id"])
-6. reboucler en 1                              → puis run_finish(run["run_id"], "done")
+6. loop back to 1                              → then run_finish(run["run_id"], "done")
 ```
 
-⚠️ **`_run_id` se repasse à CHAQUE appel, y compris celui qui écrit.** C'est le
-manquement le plus fréquent, et il coûte la ligne : le jeton est presque toujours
-passé au claim (la consigne est fraîche) puis oublié à l'écriture — et l'écriture est
-alors refusée sur la ligne qu'on tient soi-même. Le serveur ne le retient pas d'un
-appel au suivant : chaque appel arrive dans sa propre session. ⚠️ **Il n'y a pas d'autre voie : `data_write` ne
-prend pas de `worker`.** Le jeton de run est le seul moyen de te faire reconnaître par
-le verrou à l'écriture — porte-le sur CHAQUE appel qui écrit, pas seulement sur celui
-qui a réservé.
+⚠️ **`_run_id` is passed again on EVERY call, including the one that writes.** It is the
+most frequent omission, and it costs the row: the token is almost always
+passed to the claim (the instruction is fresh) then forgotten at the write — and the write is
+then refused on the very row you are holding yourself. The server does not keep it from one
+call to the next: each call arrives in its own session. ⚠️ **There is no other way: `data_write` does
+not take a `worker`.** The run token is the only means of being recognized by
+the lock at write time — carry it on EVERY call that writes, not only on the one
+that claimed.
 
-**Rendre la ligne est un geste, pas une conséquence.** Écrire un verdict ne la libère
-pas : le verrou ne connaît pas tes états métier, et il n'a pas à les connaître — « à
-qualifier » ou « traité » sont TES mots, pas les siens. Ce qui rend une ligne :
+**Giving the row back is an operation, not a consequence.** Writing a verdict does not release
+it: the lock does not know your business states, and it does not have to know them — "à
+qualifier" or "traité" are YOUR words, not its. What gives a row back:
 
-- **`data_release`** — le geste normal, à la fin de chaque ligne traitée ;
-- **la fin de ton traitement** — si tu as encadré ton travail par `run_start` /
-  `run_finish`, toutes les lignes que tu tenais sont rendues à la fermeture, quelle
-  qu'en soit l'issue. C'est le filet quand tu oublies le release ;
-- **l'expiration du bail** — le dernier recours, celui qui joue si ton agent s'arrête
-  sans rien fermer. Il peut être long : ne compte pas dessus (cf. la durée du bail
-  plus bas).
+- **`data_release`** — the normal operation, at the end of each processed row;
+- **the end of your processing** — if you framed your work with `run_start` /
+  `run_finish`, all the rows you were holding are given back at closing, whatever
+  the outcome. It is the safety net when you forget the release;
+- **the lease expiring** — the last resort, the one that kicks in if your agent stops
+  without closing anything. It can be long: do not count on it (see the lease duration
+  below).
 
-Le `worker` est rejoué au release comme garde — on ne libère pas le claim d'un autre.
+The `worker` is replayed at release as a guard — you do not release someone else's claim.
 
-**Tant que tu tiens une ligne, personne d'autre ne peut l'écrire.** Le bail protège
-désormais la donnée, pas seulement l'attribution : une écriture venue d'ailleurs est
-refusée avec un message qui dit qui tient la ligne et jusqu'à quand.
+**As long as you hold a row, nobody else can write it.** The lease now
+protects the data, not only the assignment: a write coming from elsewhere is
+refused with a message saying who holds the row and until when.
 
-**Et « quelqu'un d'autre », c'est toi aussi dès que tu cesses de te nommer.** Tu es
-reconnu par ton **run**, et seulement par lui — à condition de passer `_run_id=` sur
-l'appel qui écrit, pas seulement sur celui qui a réservé. Un `data_write` qui ne le
-porte pas est un inconnu pour le verrou, même s'il vient du compte qui tient le bail :
-il est refusé, et la ligne reste bloquée jusqu'à l'expiration du bail.
+**And "someone else" is you too as soon as you stop naming yourself.** You are
+recognized by your **run**, and only by it — provided you pass `_run_id=` on
+the call that writes, not only on the one that claimed. A `data_write` that does not
+carry it is a stranger to the lock, even if it comes from the account holding the lease:
+it is refused, and the row stays blocked until the lease expires.
 
-⚠️ **Ton `worker` ne te fait PAS reconnaître à l'écriture, contrairement à ce que ce
-guide a dit jusqu'au 05/09/2026.** Le serveur sait le faire — mais aucune surface ne
-lui passe ton libellé, et `data_write` n'a pas de paramètre où l'écrire. Le conseil
-« porte `worker=` si tu écris hors run » désignait donc un geste impossible, au moment
-précis où tu cherches quoi faire d'un refus. Le `worker` sert au claim et au release,
-nulle part ailleurs.
+⚠️ **Your `worker` does NOT get you recognized at write time, contrary to what this
+guide said until 2026-09-05.** The server knows how to do it — but no surface
+passes it your label, and `data_write` has no parameter to write it in. The advice
+"carry `worker=` if you write outside a run" therefore pointed to an impossible operation, at the
+very moment you are looking for what to do with a refusal. The `worker` is used for the claim and the release,
+nowhere else.
 
-## Les trois paramètres qui comptent
+## The three parameters that matter
 
-**`worker`** — un libellé que tu choisis (ex. `"enrich-13"`, `"qualif-nord-2"`), stable
-pour un sous-agent donné et **rejoué verbatim** sur `data_release`. Il sert de garde et
-rend la file lisible en supervision (« qui tient quoi »). Donne un libellé distinct par
-sous-agent : c'est ce qui permet de voir lequel est mort.
+**`worker`** — a label you choose (e.g. `"enrich-13"`, `"qualif-nord-2"`), stable
+for a given sub-agent and **replayed verbatim** on `data_release`. It acts as a guard and
+makes the queue readable for supervision ("who holds what"). Give a distinct label per
+sub-agent: that is what lets you see which one died.
 
-**`filter`** — égalité exacte `{colonne: valeur}`, ce qui définit ce qui **compte comme
-claimable**. Typiquement `{"status": "nouveau"}`. Sans filtre, toute ligne dont le bail
-est libre est candidate — y compris celles déjà traitées. **Mets toujours un filtre**
-dès que la table porte un statut.
+**`filter`** — exact equality `{column: value}`, which defines what **counts as
+claimable**. Typically `{"status": "nouveau"}`. Without a filter, any row whose lease
+is free is a candidate — including those already processed. **Always set a filter**
+as soon as the table carries a status.
 
-⚠️ **Et ce filtre doit porter sur une colonne que ton traitement ÉCRIT.** C'est la
-condition qui fait se VIDER la file, et rien ne la fait respecter. L'ordre : les lignes
-jamais servies d'abord, puis la moins récemment servie — une ligne relâchée passe
-derrière toutes les fraîches, mais elle revient une fois celles-ci servies, tant
-qu'elle correspond à ton filtre. Filtre sur la colonne A, écris dans la colonne B, et
-la file ne se vide jamais : tes lignes déjà traitées te reviennent, tour après tour.
+⚠️ **And this filter must be on a column that your processing WRITES.** It is the
+condition that makes the queue EMPTY, and nothing enforces it. The order: rows
+never served first, then the least recently served — a released row goes
+behind all the fresh ones, but it comes back once those have been served, as long as
+it matches your filter. Filter on column A, write in column B, and
+the queue never empties: your already processed rows come back to you, round after round.
 
-Mesuré le 07/09/2026 sur un tableau de 3 766 lignes, quand l'ordre était encore « la
-plus ancienne d'abord » : trois workers filtraient sur une colonne que le traitement ne
-touchait pas. **834 lignes fraîches n'ont jamais été atteintes**, et un worker a réservé
-SEPT fois la même. Chaque appel réussissait, aucune erreur n'était levée — c'est un
-livelock, pas une panne, et on ne le voit pas de l'intérieur.
+Measured on 2026-09-07 on a table of 3,766 rows, when the order was still "the
+oldest first": three workers were filtering on a column the processing did not
+touch. **834 fresh rows were never reached**, and one worker claimed
+the same one SEVEN times. Every call succeeded, no error was raised — it is a
+livelock, not a failure, and you cannot see it from the inside.
 
-⚠️ **Comment le voir quand même** : la ligne porte `_claims`. Au-dessus de 1, elle dit
-« je t'ai déjà été servie et je n'ai pas été écrite » — c'est la signature. Arrête-toi et
-relis ton filtre : réserver encore n'y changera rien. Ces lignes finissent par sortir de
-la file — au plafond déclaré (`lifecycle.max_claims`, dans l'état d'abandon), sinon au
-plafond de la plateforme (3 réservations sans écriture, statut inchangé, motif dans
-`_abandon`) — **perdues pour la passe, sans avoir rien de fautif**. Le motif finit par ce
-que la DERNIÈRE tentative a rencontré (« dernière tentative : appels en erreur :
-serper_search », « écriture refusée : … », « aucune écriture tentée »…), et
-`_abandon_run` nomme son run : c'est là qu'on lit pourquoi, avant de remettre la ligne
-dans la file. Si le tableau déclare un périmètre de réservation
-(`lifecycle.claimable` dans son schéma), ton `filter` s'y ajoute en ET : il le resserre,
-il ne l'élargit jamais — et une réponse `row: null` te nomme ce périmètre.
+⚠️ **How to see it anyway**: the row carries `_claims`. Above 1, it says
+"I have already been served to you and I was not written" — that is the signature. Stop and
+reread your filter: claiming again will not change anything. These rows eventually leave
+the queue — at the declared ceiling (`lifecycle.max_claims`, in the abandon state), otherwise at
+the platform ceiling (3 claims without a write, status unchanged, reason in
+`_abandon`) — **lost for the pass, without being at fault in any way**. The reason ends with what
+the LAST attempt ran into ("last attempt: calls in error:
+serper_search", "write refused: …", "no write attempted"…), and
+`_abandon_run` names its run: that is where you read why, before putting the row back
+in the queue. If the table declares a claim scope
+(`lifecycle.claimable` in its schema), your `filter` is added to it with AND: it narrows it,
+it never widens it — and a `row: null` response names that scope to you.
 
-**`lease_s`** — durée du bail, 900 s (15 min) par défaut. C'est le mécanisme de
-récupération : un worker qui meurt en cours de route ne bloque pas sa ligne
-éternellement, elle redevient claimable à l'expiration. Cale-le sur la durée réelle
-d'un traitement, avec de la marge : trop court, une ligne lente se fait voler et
-traiter deux fois ; trop long, une ligne abandonnée dort.
+**`lease_s`** — lease duration, 900 s (15 min) by default. It is the
+recovery mechanism: a worker that dies along the way does not block its row
+forever, it becomes claimable again when the lease expires. Set it to the real duration
+of one processing, with some margin: too short, a slow row gets stolen and
+processed twice; too long, an abandoned row sleeps.
 
-## ⚠️ Le piège : écrire un état « final » ne libère rien
+## ⚠️ The trap: writing a "final" state releases nothing
 
-Le verrou est **le même pour tous les tableaux** : il n'y a rien à déclarer au schéma
-pour qu'il fonctionne, et rien à régler par tableau. Un agent prend une ligne, la rend.
+The lock is **the same for all tables**: there is nothing to declare in the schema
+for it to work, and nothing to configure per table. An agent takes a row, gives it back.
 
-Ton champ de statut, lui, reste **entièrement le tien** : `"à qualifier"`, `"traité"`,
-`"écarté"` sont des valeurs de ton métier, dans une colonne ordinaire. Le verrou ne les
-lit pas — c'est ce qui garantit qu'il fonctionne pareil chez tout le monde.
+Your status field, on the other hand, remains **entirely yours**: `"à qualifier"`, `"traité"`,
+`"écarté"` are values of your business, in an ordinary column. The lock does not
+read them — that is what guarantees it works the same for everyone.
 
-> **Ce qui a changé (août 2026).** Écrire un état déclaré « final » libérait
-> automatiquement la ligne. Ce comportement est retiré : la plateforme devait pour cela
-> connaître tes états et deviner lesquels sont des fins, ce qui échouait en silence dès
-> que la déclaration ne correspondait pas exactement à l'usage. Si tu dépendais de cette
-> libération, ajoute un `data_release` après ton écriture — ou encadre ton travail par
+> **What changed (August 2026).** Writing a state declared "final" used to release
+> the row automatically. This behavior is removed: to do so the platform had to
+> know your states and guess which ones are endings, which failed silently as soon
+> as the declaration did not exactly match the usage. If you relied on that
+> release, add a `data_release` after your write — or frame your work with
 > `run_start` / `run_finish`.
 
-**Symptôme à reconnaître** : la file « se vide » alors que les lignes ne sont pas
-traitées, puis se remplit à nouveau plus tard. C'est le bail qui expire, pas un bug — et
-c'est le signe qu'il manque un `data_release` quelque part.
+**Symptom to recognize**: the queue "empties" while the rows are not
+processed, then fills up again later. It is the lease expiring, not a bug — and
+it is the sign that a `data_release` is missing somewhere.
 
-## Fan-out : ce que ça remplace
+## Fan-out: what it replaces
 
-Avec le claim, un sous-agent n'a **pas besoin de savoir ce que font les autres**. Tu
-n'as donc plus à :
+With the claim, a sub-agent has **no need to know what the others are doing**. So you
+no longer have to:
 
-- injecter une **liste d'exclusion** des lignes déjà prises à chaque agent (elle est
-  périmée à la seconde où tu l'écris) ;
-- découper en **lots de 3-4** figés à l'avance (un agent lent bloque son lot, un agent
-  mort le perd) ;
-- **dédupliquer en relisant la table** avant chaque traitement (coûteux et non atomique
-  — deux relectures simultanées donnent le même verdict).
+- inject into each agent an **exclusion list** of rows already taken (it is
+  stale the second you write it);
+- split into **batches of 3-4** fixed in advance (a slow agent blocks its batch, a dead
+  agent loses it);
+- **deduplicate by rereading the table** before each processing (costly and non-atomic
+  — two simultaneous rereads give the same verdict).
 
-Le patron : lance N sous-agents identiques, chacun avec son `worker`, chacun bouclant
-`claim → traiter → écrire → rendre la ligne` jusqu'à `row == null`. Le parallélisme se
-règle par le nombre d'agents, pas par un découpage. Pour les gros volumes, combine avec
-le guide `bulk-load` (garder les payloads hors du contexte principal).
+The pattern: launch N identical sub-agents, each with its own `worker`, each looping
+`claim → process → write → give the row back` until `row == null`. Parallelism is
+tuned by the number of agents, not by a split. For large volumes, combine with
+the guide `bulk-load` (keep payloads out of the main context).
 
-## Divers
+## Miscellaneous
 
-- `datastore` accepte `slot:<nom>` — le tableau bindé par le projet actif.
-- Le bail n'apparaît sur une ligne (`_claimed_by` / `_claimed_until`) **que s'il est
-  posé** : une lecture ordinaire d'une ligne libre n'a pas ces champs.
-- L'ordre de service est l'ordre de création (les plus anciennes d'abord).
-- Le dashboard montre les lignes sous bail (« en cours · worker ») et permet une
-  libération forcée par un humain, sans garde de worker.
+- `datastore` accepts `slot:<name>` — the table bound by the active project.
+- The lease only appears on a row (`_claimed_by` / `_claimed_until`) **if it is
+  set**: an ordinary read of a free row does not have these fields.
+- The serving order is the creation order (oldest first).
+- The dashboard shows the rows under lease ("en cours · worker") and allows a
+  forced release by a human, without a worker guard.

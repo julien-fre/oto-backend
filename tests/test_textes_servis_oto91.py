@@ -66,8 +66,8 @@ def test_l_audit_de_projet_annonce_ses_quatre_listes():
 
 
 @pytest.mark.parametrize("guide,faux", [
-    ("work-queue.md", "sans états terminaux déclarés, rien n'est libéré"),
-    ("datastore-semantics.md", "le tableau n'a PAS de file** : `data_claim_next`"),
+    ("work-queue.md", "without declared terminal states, nothing is released"),
+    ("datastore-semantics.md", "the table has NO queue**: `data_claim_next`"),
 ])
 def test_les_guides_ne_disent_plus_ce_que_le_code_ne_fait_pas(guide, faux):
     assert faux not in (_GUIDES / guide).read_text(encoding="utf-8")

@@ -14,7 +14,7 @@ from .common import require
 
 
 def revisions(sub: Optional[str], inp, pid: int) -> dict:
-    require(common.can(sub, pid, "read"), "forbidden", "Accès refusé.", 403)
+    require(common.can(sub, pid, "read"), "forbidden", "Access refused.", 403)
     return {"doc_id": inp.doc_id,
             "revisions": db.list_doc_revisions(int(inp.doc_id))}
 
@@ -28,16 +28,16 @@ def revert(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     # Régime : on restaure EN AVANT, jamais en rembobinant — même choix que
     # `org.instruction.revert`. L'état courant est snapshotté à son tour (c'est
     # `update_doc` qui le fait), donc un revert se re-revert et rien n'est perdu.
-    require(common.can(sub, pid, "write"), "forbidden", "Écriture refusée.", 403)
+    require(common.can(sub, pid, "write"), "forbidden", "Write refused.", 403)
     require(inp.revision_id is not None, "missing_revision",
-            "`revision_id` requis : le champ `id` de la ligne voulue dans "
-            "op=revisions (l'historique de CETTE page). Ce n'est pas un numéro de "
-            "version — les pages n'en portent pas.")
+            "`revision_id` is required: the `id` field of the wanted row in "
+            "op=revisions (the history of THIS page). It is not a version "
+            "number — pages carry none.")
     rev = db.get_doc_revision(int(inp.doc_id), int(inp.revision_id))
     require(rev is not None, "unknown_revision",
-            f"Aucune version #{inp.revision_id} dans l'historique du doc "
-            f"#{inp.doc_id} (une révision d'une AUTRE page ne compte pas). "
-            f"Liste-les par op=revisions.", 404)
+            f"No version #{inp.revision_id} in the history of doc "
+            f"#{inp.doc_id} (a revision of ANOTHER page does not count). "
+            f"List them with op=revisions.", 404)
     try:
         # Passe par `update_doc` comme tout chemin d'écriture : snapshot de l'état
         # courant, backlinks re-résolus, renommage propagé, conflit optimiste — un
@@ -50,9 +50,9 @@ def revert(sub: Optional[str], inp, row: dict, pid: int) -> dict:
                       face=common.face_de_l_appel())
     except db.DocConflict as e:
         require(False, "conflict",
-                f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "
-                f"Relis-le (op=get) et refais ta restauration sur la version à "
-                f"jour — sinon tu écrases l'édition d'un pair sans la voir.", 409)
+                f"The doc changed in the meantime (current rev {e.current_rev}). "
+                f"Read it again (op=get) and redo your restore on the current "
+                f"version — otherwise you overwrite a peer's edit without seeing it.", 409)
     db.log_project_activity(pid, sub, "doc.revert",
                             f"{row.get('title')} ← révision {inp.revision_id}")
     out = view.projected(db.get_doc_by_id(int(inp.doc_id)), sub, inp.fields,

@@ -56,9 +56,9 @@ def paliers(monkeypatch):
 
 def test_index_cumule_les_trois_paliers(paliers):
     out = instr.skills_index_md("u1", 7)
-    assert "- ma-passe — T-ma-passe : D-ma-passe [perso]" in out
+    assert "- ma-passe — T-ma-passe : D-ma-passe [personal]" in out
     assert "- socle-org — T-socle-org : D-socle-org" in out
-    assert "- compta — T-compta : D-compta [équipe]" in out
+    assert "- compta — T-compta : D-compta [team]" in out
     # La sienne EN TÊTE, comme dans `op=list` : c'est le premier endroit où l'on
     # cherche ce qu'on vient d'écrire.
     assert out.index("ma-passe") < out.index("socle-org") < out.index("compta")
@@ -84,7 +84,7 @@ def test_la_marque_distingue_deux_paliers_qui_portent_le_meme_slug(monkeypatch):
     lignes = [l for l in instr.skills_index_md("u1", 7).splitlines()
               if l.startswith("- slug-en-double")]
     assert len(lignes) == 2 and lignes[0] != lignes[1]
-    assert lignes[0].endswith(" [perso]")
+    assert lignes[0].endswith(" [personal]")
 
 
 def test_index_sans_sub_reste_celui_de_lorg(paliers):
@@ -131,7 +131,7 @@ def test_le_tools_list_sert_bien_le_palier_perso(paliers, monkeypatch):
     monkeypatch.setattr(guide_store, "guides_index_md", lambda sub, org: "")
     servi = {t.name: t for t in
              _list_tools([_FakeTool("oto_procedure", "load")], "u1", monkeypatch)}
-    assert "- ma-passe — T-ma-passe : D-ma-passe [perso]" in servi["oto_procedure"].description
+    assert "- ma-passe — T-ma-passe : D-ma-passe [personal]" in servi["oto_procedure"].description
 
 
 def test_le_middleware_passe_le_sub_et_lorg(monkeypatch):

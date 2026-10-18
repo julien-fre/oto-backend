@@ -29,17 +29,17 @@ def _refus(**kw) -> ds_errors.RowLocked:
 
 def test_le_message_mene_par_le_run_id_puis_dit_l_autre_cas():
     msg = str(_refus())
-    run_id = msg.index("ton appel ne porte pas de `_run_id`")
-    autre = msg.index("tenue par un autre travail")
-    assert msg.index("Si cette ligne est la tienne") < run_id < autre, (
+    run_id = msg.index("your call carries no `_run_id`")
+    autre = msg.index("held by another job")
+    assert msg.index("If this row is yours") < run_id < autre, (
         "les deux cas dans l'ordre du fréquent : la moitié `_run_id` d'abord — " + msg)
-    assert "obligatoire sur ce chemin" in msg and "prouve ta réservation" in msg, msg
+    assert "mandatory on this path" in msg and "proves your claim" in msg, msg
 
 
 def test_l_echeance_est_dite_et_le_geste_de_sortie_reste():
     msg = str(_refus())
-    assert f"jusqu'à {_ECHEANCE}" in msg, "l'échéance suffit à dire quand attendre"
-    assert "attends" in msg and "libère-la" in msg and "data_release" in msg, msg
+    assert f"until {_ECHEANCE}" in msg, "l'échéance suffit à dire quand attendre"
+    assert "wait" in msg and "release it" in msg and "data_release" in msg, msg
 
 
 def test_le_message_ne_nomme_ni_le_run_ni_le_libelle_d_un_tiers():
@@ -49,7 +49,7 @@ def test_le_message_ne_nomme_ni_le_run_ni_le_libelle_d_un_tiers():
     msg = str(_refus())
     assert "run-tiers-9f3a" not in msg
     assert "worker-42" not in msg
-    assert "réservée par" not in msg, "l'ancienne phrase, qui décrivait l'état du monde"
+    assert "claimed by" not in msg, "l'ancienne phrase, qui décrivait l'état du monde"
 
 
 def test_le_refus_est_le_texte_principal_pas_un_hint():
@@ -57,11 +57,11 @@ def test_le_refus_est_le_texte_principal_pas_un_hint():
     e = _refus()
     refus = _write_refusal(e)
     assert refus.status == 409 and refus.code == "row_locked", "le code ne change pas"
-    assert "ton appel ne porte pas de `_run_id`" in refus.message
+    assert "your call carries no `_run_id`" in refus.message
     assert e.motif in refus.message
 
 
 def test_dans_un_lot_le_message_garde_sa_designation_de_ligne():
-    e = _refus(row="ligne 1/1 du lot (siren=55111000)")
-    assert str(e).startswith("ligne 1/1 du lot (siren=55111000) : ")
-    assert "ton appel ne porte pas de `_run_id`" in str(e)
+    e = _refus(row="row 1/1 of the batch (siren=55111000)")
+    assert str(e).startswith("row 1/1 of the batch (siren=55111000): ")
+    assert "your call carries no `_run_id`" in str(e)

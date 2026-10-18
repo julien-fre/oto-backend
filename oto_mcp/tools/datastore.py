@@ -1186,7 +1186,7 @@ def register(mcp: FastMCP) -> None:
 
         ⚠️ **Address the table by its NUMBER.** The reply carries `ns_id` — the
         table's number — and that is the form to pass as `datastore`:
-        `data_write(datastore=174, id=…)`. A name still resolves until 08/11/2026,
+        `data_write(datastore=174, id=…)`. A name still resolves until 2026-11-08,
         then it is REFUSED.
 
         `datastore` also accepts `slot:<name>` = the table BOUND under that slot
@@ -1196,7 +1196,7 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             datastore: the table's NUMBER (`ns_id`, e.g. 174) — the form to use.
-                Its name still resolves until 08/11/2026, then is refused.
+                Its name still resolves until 2026-11-08, then is refused.
                 `slot:<name>` also works. It must already exist.
             row: single-row content as a dict (JSON-encoded automatically).
             id: omit = append a new row ; provided = partial update of that `_id`
@@ -1453,7 +1453,7 @@ def register(mcp: FastMCP) -> None:
         again and again without a write end up set aside (the ceiling below) —
         LOST to the pass, without being at fault.
 
-        A name still resolves as `datastore` until 08/11/2026 — then it is refused —
+        A name still resolves as `datastore` until 2026-11-08 — then it is refused —
         but the number is what to carry: it survives a rename, it is unique where
         a name is only unique per owner, and it is what the platform records.
         `datastore` in the reply is the table's REAL name whatever form you passed
@@ -1512,7 +1512,7 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             datastore: the table's NUMBER (`ns_id`, e.g. 174) — the form to use.
-                Its name still resolves until 08/11/2026, then is refused.
+                Its name still resolves until 2026-11-08, then is refused.
                 `slot:<name>` also works. It must already exist.
             layers: shape of a cell that carries layers. `flat` (default): each
                 filled layer beside the value (`email.comment`). `nested`:
@@ -1565,7 +1565,7 @@ def register(mcp: FastMCP) -> None:
         reply); a row you did not write stays where it is.
 
         `datastore` = the table's NUMBER (`ns_id`, the one data_claim_next handed
-        you) — the form to use. Its name still resolves until 08/11/2026, then is
+        you) — the form to use. Its name still resolves until 2026-11-08, then is
         refused. `slot:<name>` also works."""
         store = _acting_store()
         try:
@@ -1613,7 +1613,7 @@ def register(mcp: FastMCP) -> None:
         it becomes an ordinary empty, refused on a required field.
 
         ⚠️ `datastore` = the table's NUMBER (`ns_id`, e.g. 174) — the form to use;
-        the reply carries it back. A name still resolves until 08/11/2026, then
+        the reply carries it back. A name still resolves until 2026-11-08, then
         is refused. `slot:<name>` also works.
 
         ⚠️ List mode returns `{rows, count, next_cursor, ns_id}`. When `next_cursor`

@@ -76,13 +76,13 @@ def test_le_requis_de_sous_champ_REFUSE_l_element_qui_ne_le_porte_pas():
     errs = dsv2.validate_row(_contacts(required=True),
                              {"contacts": [{"role": "RH", "nom": "Alice"},
                                            {"role": "DAF"}]})
-    assert errs and "contacts[1].nom" in errs[0] and "requis" in errs[0], errs
+    assert errs and "contacts[1].nom" in errs[0] and "required" in errs[0], errs
 
 
 def test_une_option_hors_liste_en_profondeur_est_JUGEE():
     errs = dsv2.validate_row(_contacts(options=["Alice", "Bob"]),
                              {"contacts": [{"role": "RH", "nom": "Carole"}]})
-    assert errs and "contacts[0].nom" in errs[0] and "hors options" in errs[0], errs
+    assert errs and "contacts[0].nom" in errs[0] and "not among the options" in errs[0], errs
 
 
 # ── ② les formes inertes, refusées à la pose ─────────────────────────────────

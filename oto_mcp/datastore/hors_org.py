@@ -94,11 +94,11 @@ def indice_autre_org(sub: Optional[str], datastore: str,
         ailleurs = [(o, n) for o, n in ou_existe(sub, datastore) if o != org_courante]
         if not ailleurs:
             return None
-        ou = ", ".join(f"org {o} « {n or 'sans nom'} »" for o, n in ailleurs)
-        ici = (f"l'org {org_courante} « {_nom(org_courante)} »"
-               if org_courante is not None else "ton espace perso (aucune org)")
-        return (f"il existe dans une autre de tes organisations : {ou}. Cet appel a été "
-                f"résolu dans {ici} — passe `_org={ailleurs[0][0]}` sur l'appel.")
+        ou = ", ".join(f"org {o} \"{n or 'unnamed'}\"" for o, n in ailleurs)
+        ici = (f"org {org_courante} \"{_nom(org_courante)}\""
+               if org_courante is not None else "your personal space (no org)")
+        return (f"it exists in another of your organizations: {ou}. This call was "
+                f"resolved in {ici} — pass `_org={ailleurs[0][0]}` on the call.")
     # noqa: SILENT — un indice est un bonus : absent plutôt que faux, jamais une erreur interne à la place du refus
     except Exception:  # noqa: BLE001
         return None

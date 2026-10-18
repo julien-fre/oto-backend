@@ -183,8 +183,8 @@ def test_le_refus_nomme_la_colonne_ET_sa_destination():
     certains en neuf secondes. Il doit porter la FORME à écrire."""
     (msg,) = dsv2.validate_row(_SCHEMA, {"qualif": "x"}, written={"qualif"})
     assert msg.startswith("qualif:")                      # la colonne
-    assert '"qualif": {"valeur": <ta valeur>, "comment": "…"}' in msg   # la destination
-    assert "MÊME appel" in msg                            # et le tour où l'écrire
+    assert '"qualif": {"valeur": <your value>, "comment": "…"}' in msg   # la destination
+    assert "SAME call" in msg                            # et le tour où l'écrire
 
 
 # ── la déclaration : refusée à la POSE, muette à l'écriture ────────────────
@@ -499,7 +499,7 @@ def test_le_refus_ne_se_contredit_plus_et_donne_la_forme_sans_valeur():
                                pose={"qualif": "x"})
     assert "une couche posée sans valeur, ne déclenche rien" not in msg
     assert '`"qualif": {"comment": "…"}`' in msg          # compléter sans réécrire
-    assert '"qualif": {"valeur": <ta valeur>, "comment": "…"}' in msg
+    assert '"qualif": {"valeur": <your value>, "comment": "…"}' in msg
 
 
 def _ligne_en_place(en_place: dict):

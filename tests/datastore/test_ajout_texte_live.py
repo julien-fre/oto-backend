@@ -164,15 +164,15 @@ def test_le_texte_resultant_passe_max_length(base):
 def test_une_colonne_ni_liste_ni_texte_refuse_l_ajout(table):
     st, ns, ns_id, rid = table
     msg = _refus(lambda: st.update_row(ns, rid, {"score[+]": 3}))
-    assert "`score[+]`" in msg and "liste" in msg and "texte" in msg
+    assert "`score[+]`" in msg and "list" in msg and "text" in msg
 
 
 @pytest.mark.parametrize("valeur, attendu", [
-    (12, "chaîne"),
-    ({"a": 1}, "chaîne"),
-    ("", "chaîne vide"),
+    (12, "string"),
+    ({"a": 1}, "string"),
+    ("", "empty string"),
     (None, "null"),
-    ([], "liste vide"),
+    ([], "empty list"),
 ])
 def test_un_ajout_qui_n_est_pas_du_texte_est_refuse(table, valeur, attendu):
     st, ns, ns_id, rid = table
@@ -238,7 +238,7 @@ def test_un_ajout_qui_deborde_est_refuse_et_oriente_vers_une_table(base):
     st, ns, ns_id, rid = _table(journal=plein)
     st.update_row(ns, rid, {"journal[+]": "a"})          # \n + a : 64 000 pile
     msg = _refus(lambda: st.update_row(ns, rid, {"journal[+]": "b"}))
-    assert "`journal[+]`" in msg and "TABLE" in msg and "Rien n'a été écrit" in msg
+    assert "`journal[+]`" in msg and "TABLE" in msg and "Nothing was written" in msg
     assert _valeur(_stockee(ns_id, rid)["journal"]) == plein + "\na"
 
 

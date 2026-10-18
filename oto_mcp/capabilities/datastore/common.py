@@ -53,8 +53,8 @@ def ns_not_found(sub: Optional[str], datastore: str) -> AuthzDenied:
             first = elsewhere[0][0]
             return AuthzDenied(
                 404, "datastore_not_found",
-                f"« {datastore} » existe, mais dans une autre de tes organisations : "
-                f"{where}. Rejoue la requête avec l'en-tête « X-Oto-Org: {first} ».")
+                f"`{datastore}` exists, but in another of your organizations: "
+                f"{where}. Replay the request with the header `X-Oto-Org: {first}`.")
     # noqa: SILENT — suggestion de tableau voisin : absente plutôt que fausse
     except Exception:  # noqa: BLE001 — un indice ne doit jamais casser la réponse
         pass

@@ -18,7 +18,7 @@ CAMPAGNE = {"input": "Tableau {namespace}, lignes {filter}, fiche du {date_du_jo
 def test_les_trois_marqueurs_sont_remplis():
     texte = C.composer(CAMPAGNE, maintenant=datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc))
     assert texte == ('Tableau tableau-editeurs, lignes {"statut": "à enrichir"}, '
-                     "fiche du 12/09/2026.")
+                     "fiche du 2026-09-12.")
 
 
 def test_le_jour_s_entend_a_PARIS_pas_a_l_heure_du_serveur():
@@ -26,13 +26,14 @@ def test_le_jour_s_entend_a_PARIS_pas_a_l_heure_du_serveur():
     sans le fuseau, une consigne partirait datée de la veille pendant deux heures."""
     texte = C.composer({"input": "{date_du_jour}"},
                        maintenant=datetime(2026, 9, 11, 23, 30, tzinfo=timezone.utc))
-    assert texte == "12/09/2026"
+    assert texte == "2026-09-12"
 
 
-def test_le_format_est_celui_du_mode_direct():
-    """Une même procédure déclarée en local ou en campagne reçoit le même texte :
-    `oto_runner/declaration.py` écrit `%d/%m/%Y`."""
-    assert C.FORMAT_DATE == "%d/%m/%Y"
+def test_le_format_est_ISO():
+    """Le chemin hébergé sert la date ISO (`YYYY-MM-DD`) : un agent hébergé ne lit
+    pas de format de date français (docs/conventions.md). Le mode direct
+    (`oto_runner/declaration.py`, `%d/%m/%Y`) est à aligner dans son dépôt."""
+    assert C.FORMAT_DATE == "%Y-%m-%d"
 
 
 def test_une_consigne_sans_marqueur_passe_telle_quelle():

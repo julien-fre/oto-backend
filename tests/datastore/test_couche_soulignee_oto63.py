@@ -68,7 +68,7 @@ def test_couche_mal_ecrite_le_refus_NOMME_la_colonne():
     msgs, details = off_schema_refusal(SCHEMA, {"effectif_comment": "x"})
     assert len(msgs) == 1
     assert "`effectif.comment`" in msgs[0]
-    assert "COUCHE" in msgs[0]
+    assert "LAYER" in msgs[0]
     assert details.get("expected_column") == "effectif.comment", details
 
 
@@ -91,8 +91,8 @@ def test_colonne_inconnue_sous_une_couche_BIEN_ecrite_dit_l_autre_geste():
     with pytest.raises(RowValidationError) as e:
         _refuse_dotted_names({"inconnue.comment": "x"})
     message = str(e.value)
-    assert "n'est aucune colonne" in message
-    assert "ni au schéma" in message, "le refus doit dire OÙ il a cherché"
+    assert "is no column" in message
+    assert "nor in the schema" in message, "le refus doit dire OÙ il a cherché"
     assert '{"inconnue": {"comment"' in message, "…et donner la forme imbriquée"
 
 
@@ -100,7 +100,7 @@ def test_une_colonne_franchement_inconnue_garde_son_refus_SEC():
     """Aucune des deux reconnaissances ne s'applique : le message d'origine, qui ne
     suggère aucune destination — parce qu'il n'y en a pas."""
     msgs, details = off_schema_refusal(SCHEMA, {"totalement_inconnu": "x"})
-    assert "aucune colonne déclarée ne porte ce nom" in msgs[0]
+    assert "no declared column has this name" in msgs[0]
     assert details == {}
 
 

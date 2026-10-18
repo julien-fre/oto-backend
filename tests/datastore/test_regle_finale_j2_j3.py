@@ -40,8 +40,8 @@ def test_j2_chaine_et_liste_vides_remplacent_et_se_disent():
     # `{}` n'est pas une valeur : toujours écarté, et le relevé ne cite que lui.
     assert [r["champ"] for r in ecartes] == ["meta"]
     hint = ignores_report(ecartes)["valeurs_ignorees_hint"]
-    assert "objet vide `{}`" in hint and "chaîne vide" not in hint
-    assert "REMPLACENT" in effacements_report(effaces)["valeurs_effacees_hint"]
+    assert "empty object `{}`" in hint and "empty string" not in hint
+    assert "REPLACE" in effacements_report(effaces)["valeurs_effacees_hint"]
 
 
 def test_j2_un_vide_seul_n_est_pas_refuse_sauf_objet_vide():
@@ -49,7 +49,7 @@ def test_j2_un_vide_seul_n_est_pas_refuse_sauf_objet_vide():
     refuser_geste_sans_effet(pose, ecartes)
     assert ecartes == []
     pose, _, ecartes = arbitrer_les_vides(EN_PLACE, {"meta": {}})
-    with pytest.raises(ValueError, match=r"objet vide `\{\}`"):
+    with pytest.raises(ValueError, match=r"empty object `\{\}`"):
         refuser_geste_sans_effet(pose, ecartes)
 
 
@@ -63,10 +63,10 @@ def test_j3_l_ecriture_est_refusee_et_le_refus_nomme_le_geste():
     with pytest.raises(RowValidationError) as e:
         mdp.controler({"x": "ok"}, CORPS)
     t = str(e.value)
-    assert "écriture refusée" in t and "rien n'a été écrit" in t
+    assert "write refused" in t and "nothing was written" in t
     assert "`@clear` (`a`)" in t and "`null`" in t
-    assert "`@keep` (`b`, `c`)" in t and "omets le sous-champ" in t
-    assert "renvoie sa valeur telle quelle" in t
+    assert "`@keep` (`b`, `c`)" in t and "leave the sub-field out" in t
+    assert "send its value back as it is" in t
     assert "depuis le" not in t and "octobre" not in t
 
 
@@ -141,10 +141,10 @@ def test_j2_live_un_vide_sur_un_requis_reste_refuse_et_compte_vide(live):
     le filtre `empty` le compte vide. `@empty` reste le seul « cherché, rien »."""
     st, ns, ns_id = _table()
     rid = st.append_row(ns, {"siren": "3", "nom": "C", "site_web": "c.fr"})["_id"]
-    with pytest.raises(ValueError, match="champ requis manquant"):
+    with pytest.raises(ValueError, match="required field missing"):
         st.update_row(ns, rid, {"nom": ""})
     assert _data(ns_id, rid)["nom"] == "C"
-    with pytest.raises(ValueError, match="champ requis manquant"):
+    with pytest.raises(ValueError, match="required field missing"):
         st.append_row(ns, {"siren": "3b", "nom": ""})
 
     st.update_row(ns, rid, {"site_web": ""})

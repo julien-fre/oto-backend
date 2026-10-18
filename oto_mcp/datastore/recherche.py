@@ -55,8 +55,8 @@ class PorteeInconnue(ValueError):
 
     def __init__(self, recu) -> None:
         super().__init__(
-            f"q_scope={recu!r} inconnu : valeurs admises "
-            + ", ".join(f"`{p}`" for p in PORTEES) + f" (défaut `{PORTEE_DEFAUT}`).")
+            f"q_scope={recu!r} unknown: allowed values "
+            + ", ".join(f"`{p}`" for p in PORTEES) + f" (default `{PORTEE_DEFAUT}`).")
 
 
 @dataclass(frozen=True)

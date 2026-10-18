@@ -78,9 +78,8 @@ def refus_arme(aujourdhui: Optional[_date] = None) -> bool:
 
 
 def _quand() -> str:
-    from .champs_reserves import _en_francais
-
-    return _en_francais(date_du_refus())
+    # Date ISO : le texte servi est en anglais (décision du 03/09/2026).
+    return date_du_refus().isoformat()
 
 
 # ── le texte servi ───────────────────────────────────────────────────────────
@@ -176,16 +175,16 @@ def refuser_upsert_sans_cle(upsert: bool, key: Optional[str], datastore: str, *,
     avoir dédoublonné : refusé, comme tout paramètre offert qui ne serait pas réglé."""
     if upsert and not key:
         raise ValueError(
-            f"`upsert=true` n'a rien sur quoi fusionner : `{datastore}` ne déclare pas de "
-            f"clé métier{', et ce lot ne passe pas `key=`' if lot else ''}. Rien n'a été "
-            "écrit. Déclare-la (data_patch_schema(key=…))"
-            f"{' ou passe `key=` au lot' if lot else ''} ; sinon retire `upsert`.")
+            f"`upsert=true` has nothing to merge on: `{datastore}` declares no "
+            f"business key{', and this batch does not pass `key=`' if lot else ''}. Nothing was "
+            "written. Declare it (data_patch_schema(key=…))"
+            f"{' or pass `key=` to the batch' if lot else ''}; otherwise remove `upsert`.")
 
 
 def _geste(key: str, row_id: Optional[str] = None) -> str:
-    cible = f"`id={row_id}`" if row_id else "son `id`"
-    return (f"Pour MODIFIER la ligne en place, désigne-la : {cible}, ou `key={key!r}` ; "
-            "pour fusionner un ajout, passe `upsert=true`.")
+    cible = f"`id={row_id}`" if row_id else "its `id`"
+    return (f"To MODIFY the row in place, designate it: {cible}, or `key={key!r}`; "
+            "to merge an addition, pass `upsert=true`.")
 
 
 def refus_unitaire(datastore: str, key: str, kv: Any, row_id: str, *,
@@ -193,12 +192,12 @@ def refus_unitaire(datastore: str, key: str, kv: Any, row_id: str, *,
     """Le refus d'UN ajout : la valeur, la ligne qu'elle désigne, les gestes.
     `nommer=False` : lu par un porteur de lien anonyme (upload signé) — l'identifiant
     interne de la ligne ne sort pas (oto#86)."""
-    ligne = f"la ligne `{row_id}`" if nommer else "une ligne"
+    ligne = f"row `{row_id}`" if nommer else "a row"
     return BusinessKeyExists(
-        f"cette écriture AJOUTE une ligne (ni `id` ni `key=`), mais `{key}` = "
-        f"{str(kv)!r} désigne déjà {ligne} de `{datastore}` : rien n'a été écrit pour "
-        f"elle. Depuis le {_quand()}, un ajout ne fusionne plus de lui-même sur la clé "
-        f"métier. {_geste(key, row_id if nommer else None)}",
+        f"this write ADDS a row (neither `id` nor `key=`), but `{key}` = "
+        f"{str(kv)!r} already designates {ligne} of `{datastore}`: nothing was written for "
+        f"it. Since {_quand()}, an addition no longer merges by itself on the business "
+        f"key. {_geste(key, row_id if nommer else None)}",
         key=key, details={"key": key, "valeur": kv,
                           **({"id": row_id} if nommer else {})})
 
@@ -207,35 +206,35 @@ def refus_de_doublon(datastore: str, key: str, kv: Any, rangs: list[int]) -> Bus
     """Le refus d'une ligne qui retrouve, PENDANT le lot, une ligne du même lot — une
     course, le lot ayant été jugé entier avant sa première ligne."""
     return BusinessKeyExists(
-        f"lignes {_rangs(rangs)} de cet appel : même {key} {str(kv)!r} — on ne désigne "
-        f"pas deux fois la même ligne dans un appel. Depuis le {_quand()}, c'est refusé "
-        "sans `upsert=true`. Retire le doublon du lot, ou passe `upsert=true` pour "
-        "fusionner.", key=key,
+        f"rows {_rangs(rangs)} of this call: same {key} {str(kv)!r} — the same row "
+        f"is not designated twice in one call. Since {_quand()}, this is refused "
+        "without `upsert=true`. Remove the duplicate from the batch, or pass `upsert=true` to "
+        "merge.", key=key,
         details={"key": key, "doublons": [{"rangs": rangs, "valeur": kv}],
                  "existantes": []})
 
 
 def notice_unitaire(key: str, kv: Any, row_id: str) -> str:
-    return (f"À partir du {_quand()}, cette écriture sera refusée : elle AJOUTE une "
-            f"ligne (ni `id` ni `key=`) et `{key}` = {str(kv)!r} désigne déjà la ligne "
-            f"`{row_id}` — elle y a fusionné. {_geste(key, row_id)}")
+    return (f"From {_quand()} on, this write will be refused: it ADDS a "
+            f"row (neither `id` nor `key=`) and `{key}` = {str(kv)!r} already designates row "
+            f"`{row_id}` — it was merged into it. {_geste(key, row_id)}")
 
 
 def notice_lot(key: str) -> str:
     """Une phrase par CLÉ et non par ligne : un import de huit mille lignes ne rend pas
     huit mille avertissements, et un import découpé en tranches en rend un seul."""
-    return (f"À partir du {_quand()}, ce lot sera refusé : des lignes AJOUTÉES (ni `id` "
-            f"ni `key=`) ont fusionné sur la clé métier `{key}` sans `upsert=true` — "
-            "leurs rangs sont dans `fusions` (`dans_rang: null`). Pour modifier des "
-            f"lignes en place, désigne-les : `key={key!r}` ; pour fusionner, passe "
+    return (f"From {_quand()} on, this batch will be refused: ADDED rows (neither `id` "
+            f"nor `key=`) were merged on the business key `{key}` without `upsert=true` — "
+            "their positions are in `fusions` (`dans_rang: null`). To modify "
+            f"rows in place, designate them: `key={key!r}`; to merge, pass "
             "`upsert=true`.")
 
 
 def notice_doublon(key: str) -> str:
-    return (f"À partir du {_quand()}, ce lot sera refusé : des lignes du même appel "
-            f"portent la même valeur de `{key}` et ont fusionné entre elles — leurs rangs "
-            "sont dans `fusions` (`dans_rang` renseigné). On ne désigne pas deux fois la "
-            "même ligne dans un appel : retire le doublon, ou passe `upsert=true`.")
+    return (f"From {_quand()} on, this batch will be refused: rows of the same call "
+            f"carry the same value of `{key}` and were merged together — their positions "
+            "are in `fusions` (`dans_rang` filled in). The same row is not designated twice "
+            "in one call: remove the duplicate, or pass `upsert=true`.")
 
 
 def controler_fusion(notices: set, *, designation: bool, upsert: bool,
@@ -265,7 +264,7 @@ def controler_fusion(notices: set, *, designation: bool, upsert: bool,
 
 def _rangs(rangs: list[int]) -> str:
     tete = ", ".join(str(r) for r in rangs[:-1])
-    return f"{tete} et {rangs[-1]}"
+    return f"{tete} and {rangs[-1]}"
 
 
 def _majuscule(texte: str) -> str:
@@ -274,7 +273,7 @@ def _majuscule(texte: str) -> str:
 
 def _cites(phrases: list[str]) -> str:
     reste = len(phrases) - _CITES
-    return " ".join(phrases[:_CITES]) + (f" … et {reste} autre(s)." if reste > 0 else "")
+    return " ".join(phrases[:_CITES]) + (f" … and {reste} more." if reste > 0 else "")
 
 
 def juger_le_lot(rows: Iterable[Any], *, key: str, datastore: str, designation: bool,
@@ -311,24 +310,24 @@ def juger_le_lot(rows: Iterable[Any], *, key: str, datastore: str, designation: 
                                **({"id": row_id} if nommer else {})})
     if not doublons and not existantes:
         return
-    phrases = [f"Lignes {_rangs(r)} : même {key} {str(valeurs[c])!r}."
+    phrases = [f"Rows {_rangs(r)}: same {key} {str(valeurs[c])!r}."
                for c, r in doublons.items()]
-    phrases += [f"Ligne {e['rang']} : {key} {str(e['valeur'])!r} désigne déjà "
-                + (f"la ligne `{e['id']}`." if nommer else "une ligne du tableau.")
+    phrases += [f"Row {e['rang']}: {key} {str(e['valeur'])!r} already designates "
+                + (f"row `{e['id']}`." if nommer else "a row of the table.")
                 for e in existantes]
     regles = []
     if doublons:
-        regles.append("on ne désigne pas deux fois la même ligne dans un appel")
+        regles.append("the same row is not designated twice in one call")
     if existantes:
-        regles.append("un AJOUT (ni `id` ni `key=`) ne fusionne plus de lui-même sur la "
-                      "clé métier")
-    gestes = (["un doublon se retire du lot"] if doublons else []) + (
-        [f"pour modifier les lignes en place, désigne-les : `key={key!r}`"]
-        if existantes else []) + ["pour fusionner, passe `upsert=true`"]
+        regles.append("an ADDITION (neither `id` nor `key=`) no longer merges by itself on the "
+                      "business key")
+    gestes = (["a duplicate is removed from the batch"] if doublons else []) + (
+        [f"to modify the rows in place, designate them: `key={key!r}`"]
+        if existantes else []) + ["to merge, pass `upsert=true`"]
     raise BusinessKeyExists(
-        f"lot refusé ENTIER, rien n'a été écrit : depuis le {_quand()}, "
-        f"{' ; '.join(regles)} (`{key}` de `{datastore}`). {_cites(phrases)} "
-        f"{_majuscule(' ; '.join(gestes))}.",
+        f"batch refused ENTIRELY, nothing was written: since {_quand()}, "
+        f"{'; '.join(regles)} (`{key}` of `{datastore}`). {_cites(phrases)} "
+        f"{_majuscule('; '.join(gestes))}.",
         key=key,
         details={"key": key,
                  "doublons": [{"rangs": r, "valeur": valeurs[c]}

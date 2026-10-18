@@ -90,7 +90,7 @@ def test_un_parametre_d_appel_pose_en_COLONNE_est_refuse():
         with pytest.raises(jetons.JetonMalPlace) as e:
             jetons.verifier_contenu({"siren": "1", cle: "abc"})
         assert f"`{cle}`" in str(e.value)
-        assert "PARAMÈTRE" in str(e.value)
+        assert "PARAMETER" in str(e.value)
 
 
 def test_UNE_CHAINE_slot_DANS_UNE_VALEUR_reste_une_donnee_legitime():
@@ -138,8 +138,8 @@ def test_le_refus_du_pronom_NOMME_le_geste_qui_aboutit():
     with pytest.raises(jetons.JetonRetire) as e:
         jetons.verifier_adresse("id", "@claimed")
     msg = str(e.value)
-    assert "RETIRÉ" in msg, "le refus doit dire que le raccourci n'existe plus"
-    assert "`_id`" in msg and "clé métier" in msg, \
+    assert "REMOVED" in msg, "le refus doit dire que le raccourci n'existe plus"
+    assert "`_id`" in msg and "business key" in msg, \
         "il doit nommer les DEUX façons d'adresser la ligne"
     assert "data_claim_next" in msg, "et l'appel qui les lui a déjà rendues"
     assert "`id`" in msg, "et le champ où l'identifiant se pose"
@@ -153,7 +153,7 @@ def test_le_refus_nomme_le_champ_OU_le_pronom_a_ete_pose():
     qu'ils viennent de faire, pas décrire un cas général."""
     with pytest.raises(jetons.JetonRetire) as e:
         jetons.verifier_adresse("datastore", "@claimed")
-    assert "dans `datastore`" in str(e.value)
+    assert "in `datastore`" in str(e.value)
 
 
 def test_un_jeton_retire_est_une_famille_de_refus_deja_traduite_par_les_deux_faces():
@@ -241,7 +241,7 @@ def test_MCP_le_pronom_retire_est_refuse_en_NOMMANT_la_conduite(monkeypatch, adr
     portées. Aucune n'atteint le stockage, et aucune ne revient « inconnu »."""
     outil, st = _monte(monkeypatch, "data_write")
     msg = _refus(outil, row={"statut": "enrichi"}, **adresse)
-    assert "RETIRÉ" in msg and "data_claim_next" in msg and "`_id`" in msg
+    assert "REMOVED" in msg and "data_claim_next" in msg and "`_id`" in msg
     assert "inconnu" not in msg.lower() and "introuvable" not in msg.lower()
     assert st.vu == [], "rien ne doit atteindre le stockage"
 
@@ -251,7 +251,7 @@ def test_MCP_le_pronom_retire_est_refuse_a_la_LECTURE_aussi(monkeypatch):
     où il donnait une adresse, y compris pour lire. Le refus doit être le MÊME."""
     outil, st = _monte(monkeypatch, "data_rows")
     msg = _refus(outil, datastore="@claimed")
-    assert "RETIRÉ" in msg and "data_claim_next" in msg
+    assert "REMOVED" in msg and "data_claim_next" in msg
     assert st.vu == []
 
 
@@ -259,7 +259,7 @@ def test_MCP_un_parametre_d_appel_pose_en_colonne_est_refuse(monkeypatch):
     """Avant : `_run_id` s'écrivait comme une colonne, sans un mot."""
     outil, st = _monte(monkeypatch, "data_write")
     msg = _refus(outil, datastore="vivier", row={"siren": "1", "_run_id": "abc"})
-    assert "`_run_id`" in msg and "PARAMÈTRE" in msg
+    assert "`_run_id`" in msg and "PARAMETER" in msg
     assert st.vu == []
 
 
@@ -339,7 +339,7 @@ def test_etoile_ne_declenche_PAS_l_avertissement_de_colonne_inconnue(rows_outil)
     outil, st = rows_outil
     out = _rendu(_appel(outil, datastore="ns", fields=["*"]))
     assert "inconnue" not in str(out.get("warning", "")).lower()
-    assert out["rows"] == [st.ligne], "et la ligne rendue reste ENTIÈRE"
+    assert out["rows"] == [st.ligne], "et la ligne rendue reste WHOLE"
 
 
 # ── Sur la face REST : LA MÊME couture, pas une seconde idée ─────────────────
@@ -408,7 +408,7 @@ def test_REST_le_pronom_retire_rend_400_avec_la_MEME_conduite_que_la_face_agent(
                            path_params={"datastore": "@claimed", "row_id": "r1"},
                            body={"statut": "enrichi"})
     assert (status, corps["error"]) == (400, "jeton_mal_place")
-    assert "RETIRÉ" in corps["detail"] and "data_claim_next" in corps["detail"]
+    assert "REMOVED" in corps["detail"] and "data_claim_next" in corps["detail"]
     assert st.vu == [], "rien ne doit atteindre le stockage"
 
 

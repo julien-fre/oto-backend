@@ -243,7 +243,7 @@ def test_des_citations_MASQUEES_par_l_acces_sont_dites(monkeypatch):
     out = D._doc(ResolvedCtx(sub="u1", org_id=1), D.DocInput(op="backlinks", doc_id=5))
     assert out["count"] == 0 and out["backlinks"] == []
     assert out["hidden_by_access"] is True
-    assert "PARTIEL" in out["hidden_hint"]
+    assert "PARTIAL" in out["hidden_hint"]
     # LE point : le hint « personne ne cite » ne doit PAS être servi ici.
     assert "hint" not in out, (
         "« Personne ne cite encore cette page » alors que trois pages la citent — "
@@ -263,7 +263,7 @@ def test_aucune_citation_ni_masquee_garde_le_hint_pedagogique(monkeypatch):
     monkeypatch.setattr(db, "doc_backlinks", lambda did: [])
     monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
     out = D._doc(ResolvedCtx(sub="u1", org_id=1), D.DocInput(op="backlinks", doc_id=5))
-    assert "Personne ne cite encore" in out["hint"]
+    assert "No page cites this one yet" in out["hint"]
     assert "hidden_by_access" not in out
 
 

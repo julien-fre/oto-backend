@@ -29,7 +29,7 @@ INTERNE = ResolvedCtx(sub="u1", org_id=7)
 
 def test_un_agent_est_refuse():
     with pytest.raises(AuthzDenied) as e:
-        _publication.refuser_si_agent(AGENT, "cette page", "Passe par le dashboard.")
+        _publication.refuser_si_agent(AGENT, "this page", "Use the dashboard.")
     assert e.value.code == "publication_reservee_a_l_humain"
     assert e.value.status == 403
 
@@ -40,12 +40,12 @@ def test_le_refus_dit_CE_QUI_partirait_et_PAR_OU_passer():
     Il doit aussi dire ce qui reste permis, sinon il enseigne « ne partage rien »."""
     with pytest.raises(AuthzDenied) as e:
         _publication.refuser_si_agent(
-            AGENT, "ce projet et les tableaux qui y sont liés",
-            "La publication se fait depuis le dashboard, sur la page du projet.")
+            AGENT, "this project and the tables linked to it",
+            "Publishing is done from the dashboard, on the project's page.")
     m = e.value.message
-    assert "les tableaux qui y sont liés" in m, "ce qui part avec doit être nommé"
+    assert "the tables linked to it" in m, "ce qui part avec doit être nommé"
     assert "dashboard" in m, "le geste humain équivalent doit être nommé"
-    assert "élargir à l'org reste possible" in m, "sinon le refus enseigne trop large"
+    assert "widening to the org is still possible" in m, "sinon le refus enseigne trop large"
 
 
 def test_la_face_HUMAINE_passe():

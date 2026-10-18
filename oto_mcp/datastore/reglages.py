@@ -147,6 +147,14 @@ PLUS_AUCUN_REGLAGE = ("plus aucun réglage : les colonnes et les valeurs sont to
                       "vérifiées — une colonne non déclarée est refusée, le format "
                       "déclaré (options, forme des valeurs, sous-records) fait contrat "
                       "sur tous les tableaux")
+#: La même phrase, telle que la sert l'avertissement de lecture (`data_get_schema`),
+#: en anglais depuis la décision du 03/09/2026 ; les dates y sont en ISO.
+PLUS_AUCUN_REGLAGE_EN = ("no setting any more: columns and values are always "
+                         "checked — an undeclared column is refused, the declared "
+                         "format (options, value shapes, sub-records) is a contract "
+                         "on every table")
+REMPLACES_LE_ISO = "2026-10-02"
+RETIRE_LE_ISO = "2026-10-05"
 
 
 def refus_unknown_columns() -> str:
@@ -187,19 +195,19 @@ def refus_anciens(tete: dict, poses: list) -> str:
 def residu(tete: dict) -> str:
     """Ce qu'un ancien réglage encore STOCKÉ voulait dire — pour l'avertissement de
     lecture : il n'est plus appliqué."""
-    out = (f"les anciens réglages de tête ne sont plus lus depuis le {REMPLACES_LE}")
+    out = (f"the old top-level settings are no longer read since {REMPLACES_LE_ISO}")
     equivalent = traduire(tete)
     if equivalent:
-        out += (f" ; `key_required` se dit `{NEW_ROWS}: \"{equivalent[NEW_ROWS]}\"` — "
-                f"pose-le (`data_patch_schema`)")
-    return out + " ; retire-les (`data_set_schema`)"
+        out += (f"; `key_required` is now written `{NEW_ROWS}: \"{equivalent[NEW_ROWS]}\"` — "
+                f"set it (`data_patch_schema`)")
+    return out + "; remove them (`data_set_schema`)"
 
 
 def residu_unknown_columns(valeur: Any) -> str:
     """Ce qu'`unknown_columns` encore STOCKÉ fait d'ici à son retrait (oto#124)."""
-    return (f"`unknown_columns: {valeur!r}` (tête) a été retiré le {RETIRE_LE} — "
-            f"{PLUS_AUCUN_REGLAGE}. Il reste stocké jusqu'à son retrait par la "
-            f"plateforme, sans geste de ta part ; le modifier est refusé")
+    return (f"`unknown_columns: {valeur!r}` (top level) was removed on {RETIRE_LE_ISO} — "
+            f"{PLUS_AUCUN_REGLAGE_EN}. It stays stored until the platform removes it, "
+            f"with no action on your part; modifying it is refused")
 
 
 #: Les PARAMÈTRES retirés de `data_patch_schema`.

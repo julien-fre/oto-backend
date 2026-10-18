@@ -139,7 +139,7 @@ def test_un_nom_a_point_SANS_COLONNE_REELLE_est_refuse(monkeypatch):
     s, db = _monte(monkeypatch)
     with pytest.raises(RowValidationError) as e:
         s.update_row("t", "r1", {"fantome.comment": "vérifié"})
-    assert "fantome" in str(e.value) and "imbriqu" in str(e.value)
+    assert "fantome" in str(e.value) and "nested form" in str(e.value)
     assert "fantome.comment" not in db.rows["r1"]["data"], \
         "la colonne fantôme — invisible au filtre du même nom — ne naît plus"
 
@@ -161,7 +161,7 @@ def test_une_adresse_ditem_est_un_RANG_jamais_un_nom_de_colonne(monkeypatch):
     s, db = _monte(monkeypatch)
     with pytest.raises(RowValidationError) as e:
         s.update_row("t", "r1", {"contacts[0].email": "x@y.z"})
-    assert "rang 0 inexistant" in str(e.value) and "`contacts[+]`" in str(e.value)
+    assert "index 0 does not exist" in str(e.value) and "`contacts[+]`" in str(e.value)
     assert "contacts[0].email" not in db.rows["r1"]["data"]
 
 

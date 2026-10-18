@@ -62,7 +62,7 @@ def test_l_ecart_est_DIT_avec_le_champ_et_la_valeur():
     ecarte = rapport["valeurs_ecartees"][0]
     assert ecarte["champ"] == "contacts[0].linkedin"
     assert ecarte["valeur_rejetee"] == "https://example.test/in/jd"
-    assert "hors options" in ecarte["motif"]
+    assert "not among the options" in ecarte["motif"]
     assert rapport["valeurs_ecartees_hint"], "le relevé dit quoi faire, pas seulement quoi"
 
 
@@ -75,7 +75,7 @@ def test_un_defaut_de_COHERENCE_refuse_toujours_TOUT():
     del ligne["nom"]
     with pytest.raises(Exception) as exc:
         store._check_row(SCHEMA_CONTACTS, ligne)
-    assert "requis" in str(exc.value)
+    assert "required" in str(exc.value)
 
 
 def test_une_ligne_AMPUTEE_qui_devient_invalide_refuse_tout():
@@ -125,7 +125,7 @@ def test_un_PATCH_ne_se_fait_pas_amputer_ce_qu_il_n_ecrit_pas():
     # …et pas de silence non plus
     releve = store.off_schema_report()
     assert "statut" in releve["hors_type"]
-    assert "hors options" in releve["hors_type"]["statut"]
+    assert "not among the options" in releve["hors_type"]["statut"]
 
 
 def test_le_relevé_reste_VIDE_quand_tout_est_conforme():

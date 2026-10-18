@@ -169,7 +169,7 @@ def test_une_colonne_vide_recoit_l_ajout(base):
 
 
 @pytest.mark.parametrize("valeur, attendu", [
-    (None, "`null`"), ([], "une liste vide"), (["a", None], "un `null` dans la liste")])
+    (None, "`null`"), ([], "an empty list"), (["a", None], "a `null` in the list")])
 def test_un_ajout_qui_ne_designe_rien_est_refuse(table, valeur, attendu):
     st, ns, ns_id, rid = table
     avant = _stockee(ns_id, rid)
@@ -198,7 +198,7 @@ def test_une_valeur_absente_est_refusee_et_rien_n_est_ecrit(table):
     e = _refus(lambda: st.update_row(ns, rid, {"tags[-]": ["a", "zz"],
                                                "tags[+]": "neuf"}))
     texte = " ".join(e.errors)
-    assert '`"zz"`' in texte and "rien à retirer" in texte
+    assert '`"zz"`' in texte and "nothing to remove" in texte
     assert _stockee(ns_id, rid) == avant
 
 
@@ -283,7 +283,7 @@ def test_la_face_REST_ajoute_et_retire(client, table):
     assert _stockee(ns_id, rid)["tags"] == ["a", "a", "c"]
     r = client.patch(f"/api/datastores/{ns}/rows/{rid}", headers=h,
                      json={"tags[-]": "zz"})
-    assert r.status_code == 400 and "rien à retirer" in r.text, r.text
+    assert r.status_code == 400 and "nothing to remove" in r.text, r.text
     r = client.post(f"/api/datastores/{ns}/rows", headers=h,
                     json={"siren": "130025265", "tags[+]": ["n1", "n2"]})
     assert r.status_code in (200, 201), r.text

@@ -47,7 +47,7 @@ def test_le_reglage_pose_est_refuse_le_stocke_inchange_passe():
     pose comme au patch — seule une valeur posée ou modifiée est refusée."""
     assert S.validate_schema_def(ANCIEN, ANCIEN) == []
     refus = S.validate_schema_def(ANCIEN, RETIRE)
-    assert len(refus) == 1 and "plus aucun réglage" in refus[0], refus
+    assert len(refus) == 1 and "no setting any more" in refus[0], refus
 
 
 # ── le passage sur une base ──────────────────────────────────────────────────

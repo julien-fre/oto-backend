@@ -55,8 +55,8 @@ ADRESSE = ("datastore", "id", "fields", "filter", "filters", "group_by", "order_
 
 # jeton → (champs qui l'acceptent, ce qu'il désigne)
 JETONS: dict[str, tuple[tuple[str, ...], str]] = {
-    SLOT: (("datastore",), "le tableau bindé sous ce nom par le projet actif"),
-    TOUT: (("fields",), "toutes les colonnes"),
+    SLOT: (("datastore",), "the table bound under this name by the active project"),
+    TOUT: (("fields",), "all columns"),
 }
 
 # jeton retiré → (pourquoi il est parti, ce qui aboutit à sa place). Un jeton retiré
@@ -64,14 +64,14 @@ JETONS: dict[str, tuple[tuple[str, ...], str]] = {
 # refus porte la conduite — c'est sa seule raison d'être encore écrit.
 JETONS_RETIRES: dict[str, tuple[str, str]] = {
     "@claimed": (
-        "il se résolvait par le run courant, et un agent sans état n'a pas de « moi » "
-        "auquel accrocher un pronom — plusieurs runs coexistent, « la ligne que je "
-        "tiens » était ambigu par construction",
-        "adresse la ligne explicitement, avec ce que `data_claim_next` t'a rendu au "
-        "moment de la réservation : le nom du tableau dans `datastore`, et la ligne par "
-        "son `_id` dans `id` (ou par sa clé métier dans `filter`). L'un et l'autre sont "
-        "dans la réponse qui t'a réservé la ligne — il n'y a rien à inventer, ni de "
-        "faute de frappe à chercher"),
+        "it was resolved through the current run, and a stateless agent has no \"me\" "
+        "to attach a pronoun to — several runs coexist, \"the row I "
+        "hold\" was ambiguous by construction",
+        "address the row explicitly, with what `data_claim_next` returned to you at "
+        "claim time: the table name in `datastore`, and the row by "
+        "its `_id` in `id` (or by its business key in `filter`). Both are "
+        "in the reply that claimed the row for you — there is nothing to invent, and no "
+        "typo to look for"),
 }
 
 # Ce qui n'a AUCUN sens comme donnée : ces noms sont des paramètres d'appel (ADR 0038),
@@ -121,8 +121,8 @@ def accepte(champ: str, jeton: str) -> bool:
 
 def _ou_il_s_ecrit(jeton: str) -> str:
     champs, quoi = JETONS[jeton]
-    ou = " ou ".join(f"`{c}`" for c in champs)
-    return f"`{jeton if jeton != SLOT else 'slot:<nom>'}` = {quoi} ; il s'écrit dans {ou}"
+    ou = " or ".join(f"`{c}`" for c in champs)
+    return f"`{jeton if jeton != SLOT else 'slot:<name>'}` = {quoi}; it is written in {ou}"
 
 
 def verifier_retire(champ: str, valeur: object) -> None:
@@ -140,7 +140,7 @@ def verifier_retire(champ: str, valeur: object) -> None:
         return
     pourquoi, conduite = retire
     raise JetonRetire(
-        f"`{valeur}` a été RETIRÉ et n'est plus résolu : {pourquoi}. Tu l'as posé dans "
+        f"`{valeur}` was REMOVED and is no longer resolved: {pourquoi}. You put it in "
         f"`{champ}` — {conduite}.")
 
 
@@ -189,22 +189,22 @@ def refus_de_key_sans_lot(key: object, declaree: Optional[str] = None) -> str:
     `@claimed` : ne fermer qu'elle corrigerait un cas et laisserait la classe entière.
     """
     verifier_retire("key", key)
-    clause = (f" La clé métier déclarée de ce tableau est `{declaree}` : une écriture "
-              f"unitaire accepte `key={declaree!r}` quand `row` en porte la valeur, et "
-              f"sans `id=`." if isinstance(declaree, str) and declaree else
-              " Ce tableau ne déclare pas de clé métier.")
+    clause = (f" The declared business key of this table is `{declaree}`: a single "
+              f"write accepts `key={declaree!r}` when `row` carries its value, and "
+              f"without `id=`." if isinstance(declaree, str) and declaree else
+              " This table declares no business key.")
     return (
-        f"`key={key!r}` n'a aucun effet sur une écriture unitaire — il ne sert qu'au "
-        f"mode LOT, où il nomme la colonne de dédup de `rows`. Rien n'a été écrit."
+        f"`key={key!r}` has no effect on a single write — it only serves "
+        f"BATCH mode, where it names the dedup column of `rows`. Nothing was written."
         f"{clause}\n"
-        f"• pour VISER une ligne existante : `data_write(datastore=…, id=\"<le _id "
-        f"rendu par data_claim_next ou data_rows>\", row={{…}})` ;\n"
-        f"• pour la DÉSIGNER par sa CLÉ MÉTIER : mets la valeur dans `row` et passe "
-        f"`key=` = la clé déclarée du tableau — une valeur en place modifie sa ligne, "
-        f"une valeur neuve la crée ;\n"
-        f"• pour DÉSIGNER par `{key}`, même une seule ligne : "
-        f"`data_write(datastore=…, rows=[{{…}}], key={key!r})` — la même ligne "
-        f"enveloppée dans `rows=[…]`.")
+        f"• to TARGET an existing row: `data_write(datastore=…, id=\"<the _id "
+        f"returned by data_claim_next or data_rows>\", row={{…}})`;\n"
+        f"• to DESIGNATE it by its BUSINESS KEY: put the value in `row` and pass "
+        f"`key=` = the table's declared key — an existing value modifies its row, "
+        f"a new value creates it;\n"
+        f"• to DESIGNATE by `{key}`, even a single row: "
+        f"`data_write(datastore=…, rows=[{{…}}], key={key!r})` — the same row "
+        f"wrapped in `rows=[…]`.")
 
 
 def verifier_adresse(champ: str, valeur: object) -> None:
@@ -218,7 +218,7 @@ def verifier_adresse(champ: str, valeur: object) -> None:
     if jeton is None or accepte(champ, jeton):
         return
     raise JetonMalPlace(
-        f"`{valeur}` n'est pas accepté dans `{champ}` — {_ou_il_s_ecrit(jeton)}.")
+        f"`{valeur}` is not accepted in `{champ}` — {_ou_il_s_ecrit(jeton)}.")
 
 
 def verifier_contenu(contenu: object) -> None:
@@ -235,9 +235,9 @@ def verifier_contenu(contenu: object) -> None:
         for cle, valeur in contenu.items():
             if cle in PARAMETRES_D_APPEL:
                 raise JetonMalPlace(
-                    f"`{cle}` est un PARAMÈTRE de l'appel, pas une colonne : il se pose "
-                    f"à côté de `row`, jamais dedans — écrit ici, il grave un contexte "
-                    f"d'exécution dans le fichier.")
+                    f"`{cle}` is a PARAMETER of the call, not a column: it goes "
+                    f"next to `row`, never inside it — written here, it engraves an execution "
+                    f"context into the file.")
             verifier_contenu(valeur)
         return
     if isinstance(contenu, list):

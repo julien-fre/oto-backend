@@ -360,7 +360,7 @@ def test_le_releve_dit_la_relecture_et_ne_fuit_pas():
 def test_le_refus_de_requis_nomme_le_chemin_le_mot_et_la_relecture():
     erreurs = validate_row(SCHEMA, {"fonction": "DG", "contacts": [{"nom": "A", "fonction": ""}]})
     message = " ".join(erreurs)
-    assert "contacts[0].fonction" in message and "requis" in message
+    assert "contacts[0].fonction" in message and "required" in message
     assert "`@empty`" in message and "empties=sentinel" in message
 
 

@@ -49,14 +49,14 @@ def test_une_chaine_a_la_place_d_une_liste_est_REFUSEE_avec_la_forme_exacte():
     erreurs = S.validate_schema_def(_schema({"neuf": "fait"}))
     assert len(erreurs) == 1, erreurs
     assert "`statut`" in erreurs[0] and "lifecycle.transitions['neuf']" in erreurs[0]
-    assert "LISTE" in erreurs[0] and 'str "fait"' in erreurs[0]
+    assert "LIST" in erreurs[0] and 'str "fait"' in erreurs[0]
     assert '{"neuf": ["fait"]}' in erreurs[0], "le refus donne la forme exacte"
 
 
 @pytest.mark.parametrize("valeur", [3, None, {"fait": True}, True])
 def test_toute_valeur_qui_n_est_pas_une_liste_est_refusee(valeur):
     erreurs = S.validate_schema_def(_schema({"neuf": valeur}))
-    assert any("doit être une LISTE" in e for e in erreurs), erreurs
+    assert any("must be a LIST" in e for e in erreurs), erreurs
 
 
 def test_la_colonne_secondaire_est_jugee_aussi():
@@ -74,7 +74,7 @@ def test_la_forme_juste_passe_et_une_table_absente_aussi():
 
 def test_une_table_qui_n_est_pas_un_objet_garde_son_refus():
     erreurs = S.validate_schema_def(_schema("fait"))
-    assert any("lifecycle.transitions doit être un objet" in e and "str" in e
+    assert any("lifecycle.transitions must be an object" in e and "str" in e
                for e in erreurs), erreurs
 
 
@@ -125,7 +125,7 @@ def test_un_bloc_stocke_en_chaine_fait_refuser_la_transition_en_le_nommant(live)
     with pytest.raises(RowValidationError) as e:
         st.write_rows(ns, [{"ref": "r1", "statut": "fait"}])
     message = str(e.value)
-    assert "hors forme" in message and '{"neuf": ["fait"]}' in message, message
+    assert "invalid form" in message and '{"neuf": ["fait"]}' in message, message
     assert "data_patch_schema" in message
     assert "'f'" not in message, "plus jamais parcourue lettre par lettre"
     st.patch_schema(ns, fields=[{"key": "statut",
@@ -136,7 +136,7 @@ def test_un_bloc_stocke_en_chaine_fait_refuser_la_transition_en_le_nommant(live)
 
 def test_table_des_transitions_leve_et_rend_des_listes():
     lc = {"states": ["a", "b"], "transitions": {"a": "b"}}
-    with pytest.raises(ValueError, match="hors forme"):
+    with pytest.raises(ValueError, match="invalid form"):
         S.table_des_transitions("statut", lc)
     assert S.table_des_transitions("statut", {"transitions": {"a": ["b"]}}) == {"a": ["b"]}
     assert S.table_des_transitions("statut", {"states": ["a"]}) is None
@@ -272,7 +272,7 @@ def test_le_texte_servi_dit_la_forme():
     for verbe in ("get", "patch"):
         assert "even for one" in routes[verbe]["description"], verbe
     guide = guide_store.file_guide("datastore-semantics")["body_md"]
-    assert "Les transitions s'écrivent toujours en LISTE" in guide
+    assert "Transitions are always written as a LIST" in guide
 
 
 # ── 5. `terminal`, même défaut, même chemin ──────────────────────────────────
@@ -292,7 +292,7 @@ def test_un_terminal_en_chaine_est_REFUSE_avec_la_forme_exacte():
     erreurs = S.validate_schema_def(_schema_terminal("fait"))
     assert len(erreurs) == 1, erreurs
     assert erreurs[0].startswith("`statut`") and "lifecycle.terminal" in erreurs[0]
-    assert "LISTE" in erreurs[0] and '"terminal": ["fait"]' in erreurs[0], erreurs[0]
+    assert "LIST" in erreurs[0] and '"terminal": ["fait"]' in erreurs[0], erreurs[0]
     assert "'f'" not in erreurs[0]
 
 
@@ -307,7 +307,7 @@ def test_le_terminal_de_la_colonne_secondaire_est_juge_aussi():
 @pytest.mark.parametrize("valeur", [3, {"fait": True}, True, ""])
 def test_tout_terminal_qui_n_est_pas_une_liste_est_refuse(valeur):
     erreurs = S.validate_schema_def(_schema_terminal(valeur))
-    assert any("lifecycle.terminal doit être une LISTE" in e for e in erreurs), erreurs
+    assert any("lifecycle.terminal must be a LIST" in e for e in erreurs), erreurs
 
 
 def test_un_terminal_en_liste_passe_vide_compris():
@@ -318,7 +318,7 @@ def test_un_terminal_en_liste_passe_vide_compris():
 def test_un_terminal_stocke_en_chaine_leve_au_lieu_d_etre_derive():
     """⚠️ Avant : `terminal_states` ignorait la chaîne et DÉRIVAIT les terminaux — un
     autre ensemble que celui déclaré, sans un mot."""
-    with pytest.raises(ValueError, match=r"hors forme.*data_patch_schema"):
+    with pytest.raises(ValueError, match=r"invalid form.*data_patch_schema"):
         S.terminal_states(_schema_terminal("fait"))
     assert S.terminal_states(_schema_terminal(["fait"])) == {"fait"}
 
@@ -340,5 +340,6 @@ def test_le_guide_ne_dit_plus_que_deux_blocs_sont_refuses():
     from oto_mcp import guide_store
     guide = guide_store.file_guide("datastore-semantics")["body_md"]
     assert "Deux colonnes qui porteraient un bloc" not in guide
-    assert "ce sont deux FILES" in guide
+    assert "Two columns that would carry a block" not in guide
+    assert "is two QUEUES" in guide
     assert '`"terminal": ["gagne"]`' in guide

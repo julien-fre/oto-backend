@@ -222,7 +222,7 @@ def bounded(store, monkeypatch):
 
 def test_bound_refuses_the_overlong_write(bounded):
     st, calls = bounded
-    with pytest.raises(RowValidationError, match="247 caractères, maximum 60"):
+    with pytest.raises(RowValidationError, match="247 characters, maximum 60"):
         st.append_row("viviers", {"fonction": "x" * 247})
     assert calls["insert"] == []
 

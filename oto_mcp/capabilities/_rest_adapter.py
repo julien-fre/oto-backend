@@ -300,7 +300,8 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
         adresse = str(request.path_params.get("datastore") or "")
         if adresse and not adresse.isdigit():
             reponse.headers["Deprecation"] = "true"
-            reponse.headers["Sunset"] = deprecations.date_retrait_nom_de_tableau()
+            # La forme de l'en-tête ne bouge pas avec celle du texte servi (ISO).
+            reponse.headers["Sunset"] = deprecations.RETRAIT_NOM_DE_TABLEAU.strftime("%d/%m/%Y")
         return reponse
     return _handler
 

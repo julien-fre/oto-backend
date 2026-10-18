@@ -15,8 +15,8 @@ from .common import require
 
 
 def liste(sub: Optional[str], inp) -> dict:
-    require(inp.project_id is not None, "missing_project", "`project_id` requis.")
-    require(common.can(sub, inp.project_id, "read"), "forbidden", "Accès refusé.", 403)
+    require(inp.project_id is not None, "missing_project", "`project_id` is required.")
+    require(common.can(sub, inp.project_id, "read"), "forbidden", "Access refused.", 403)
     # Une liste sert à choisir quoi ouvrir : elle rend l'INDEX de l'arbre, pas les
     # corps (37 pages = 201 K caractères, refusés par le client). `body_length`
     # remplace `body_md` ; `fields=["*"]` rend le brut. (`fields` est validé en tête
@@ -33,15 +33,15 @@ def search(ctx: ResolvedCtx, inp) -> dict:
     # (`oto_search` scope=project kinds=page) — un seul verbe, un seul code.
     # Forme de sortie conservée-approchée (`results`), + le pointeur.
     sub = ctx.sub
-    require(inp.project_id is not None, "missing_project", "`project_id` requis.")
-    require(inp.query and inp.query.strip(), "missing_query", "`query` requis.")
-    require(common.can(sub, inp.project_id, "read"), "forbidden", "Accès refusé.", 403)
+    require(inp.project_id is not None, "missing_project", "`project_id` is required.")
+    require(inp.query and inp.query.strip(), "missing_query", "`query` is required.")
+    require(common.can(sub, inp.project_id, "read"), "forbidden", "Access refused.", 403)
     from ... import search as search_mod
     out = search_mod.search(sub, ctx.org_id, inp.query.strip(),
                             scope="project", project_id=int(inp.project_id),
                             kinds=["page"])
     return {"project_id": inp.project_id, "query": inp.query.strip(),
-            "deprecated": "utilise oto_search (scope=project) — même chemin, toutes sources",
+            "deprecated": "use oto_search (scope=project) — same path, all sources",
             "results": [{"id": h["ref"], "project_id": h.get("project_id"),
                          "title": h["title"], "snippet": h.get("passage") or "",
                          "updated_at": h.get("updated_at")} for h in out["hits"]]}
@@ -50,7 +50,7 @@ def search(ctx: ResolvedCtx, inp) -> dict:
 def get(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     # La SEULE lecture qu'ouvre un partage de page (#1084) — cf. `common.acces_a_la_page`.
     acces = common.acces_a_la_page(sub, row)
-    require(acces is not None, "forbidden", "Accès refusé.", 403)
+    require(acces is not None, "forbidden", "Access refused.", 403)
     # Une lecture nue rend la page entière ; `fields` est HONORÉ quand il est là
     # (#461/#525 : lire le seul `rev` avant un patch ne doit plus coûter la page).
     out = view.projected(row, sub, inp.fields, brut_par_defaut=True)
@@ -64,7 +64,7 @@ def get(sub: Optional[str], inp, row: dict, pid: int) -> dict:
 def backlinks(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     # « Cité par » (Ship 4) : les pages qui mentionnent celle-ci via [[…]],
     # FILTRÉES par accès (une page d'un projet non lisible ne fuite pas).
-    require(common.can(sub, pid, "read"), "forbidden", "Accès refusé.", 403)
+    require(common.can(sub, pid, "read"), "forbidden", "Access refused.", 403)
     seen: dict[int, bool] = {}
 
     def _readable(prj: int) -> bool:
@@ -91,16 +91,16 @@ def backlinks(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     if masquees:
         out["hidden_by_access"] = True
         out["hidden_hint"] = (
-            "Des pages citent celle-ci depuis des projets auxquels tu n'as pas accès : "
-            "ce relevé est PARTIEL. Demande l'accès au projet concerné si tu as besoin "
-            "du graphe complet.")
+            "Pages cite this one from projects you have no access to: this list is "
+            "PARTIAL. Ask for access to the project concerned if you need the full "
+            "graph.")
     if not cites and not masquees:
         # Un zéro muet se lit comme « la fonction ne marche pas » : personne ne
         # peut deviner que SEUL `[[Titre]]` compte (signal #244 — trois formats
         # de lien essayés, tous inertes, aucun indice nulle part).
         out["hint"] = (
-            f"Personne ne cite encore cette page. Un backlink naît d'un lien wiki "
-            f"`[[{row.get('title') or 'Titre exact'}]]` écrit dans le corps d'une "
-            "autre page (résolu à l'écriture, insensible à la casse) — la prose, "
-            "`[texte](doc:ID)` et `[texte](/docs/ID)` n'en créent aucun.")
+            f"No page cites this one yet. A backlink is born from a wiki link "
+            f"`[[{row.get('title') or 'Exact title'}]]` written in the body of another "
+            "page (resolved at write time, case-insensitive) — prose, "
+            "`[text](doc:ID)` and `[text](/docs/ID)` create none.")
     return out

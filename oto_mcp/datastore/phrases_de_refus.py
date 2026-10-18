@@ -42,34 +42,34 @@ def _forme_attendue(field: dict) -> str:
     options = [str(o) for o in (field.get("options") or [])]
     ftype = field.get("type")
     if options:
-        bouts.append("une valeur parmi " + " | ".join(options))
+        bouts.append("one value among " + " | ".join(options))
     elif ftype in (None, "text"):
-        bouts.append("du texte libre")
+        bouts.append("free text")
     elif ftype in _FORME_DU_TYPE:
         bouts.append(_FORME_DU_TYPE[ftype])
     else:
-        bouts.append(f"une valeur de type `{ftype}`")
+        bouts.append(f"a value of type `{ftype}`")
     ml = max_length_of(field)
     if ml:
-        bouts.append(f"≤ {ml} caractères")
+        bouts.append(f"≤ {ml} characters")
     motif = pattern_of(field)
     if motif:
-        bouts.append(f"de motif `{motif}`")
+        bouts.append(f"matching pattern `{motif}`")
     return ", ".join(bouts)
 
 
 #: Les types dont le NOM ne dit pas la forme — `_forme_attendue` la dit en clair.
 _FORME_DU_TYPE = {
-    "phone": ("un numéro de téléphone — de préférence international : `+`, indicatif, "
-              "numéro (E.164) ; espaces et tirets acceptés"),
+    "phone": ("a phone number — preferably international: `+`, country code, "
+              "number (E.164); spaces and dashes accepted"),
 }
 
 #: Le mot du gabarit, par type déclaré — la forme courte de `_forme_attendue`.
-_MOT_DU_TYPE = {None: "texte", "text": "texte", "number": "nombre", "bool": "true | false",
-                "date": "date AAAA-MM-JJ", "datetime": "date-heure ISO 8601",
-                "url": "URL http(s)", "email": "e-mail",
-                "phone": "téléphone, +indicatif de préférence", "json": "json",
-                "enum": "valeur", "object": "objet", "list": "liste"}
+_MOT_DU_TYPE = {None: "text", "text": "text", "number": "number", "bool": "true | false",
+                "date": "date YYYY-MM-DD", "datetime": "ISO 8601 date-time",
+                "url": "http(s) URL", "email": "email",
+                "phone": "phone, +country code preferred", "json": "json",
+                "enum": "value", "object": "object", "list": "list"}
 
 
 def gabarit(field: dict) -> Any:
@@ -90,10 +90,10 @@ def gabarit(field: dict) -> Any:
     bouts = [" | ".join(options) if options else _MOT_DU_TYPE.get(ftype, str(ftype))]
     ml = max_length_of(field)
     if ml:
-        bouts.append(f"≤ {ml} caractères")
+        bouts.append(f"≤ {ml} characters")
     motif = pattern_of(field)
     if motif:
-        bouts.append(f"motif {motif}")
+        bouts.append(f"pattern {motif}")
     return "<" + ", ".join(bouts) + ">"
 
 
@@ -139,8 +139,8 @@ def _cause_required_when(rw: Any) -> str:
     for champ, attendu in rw.items():
         valeurs = (" | ".join(str(x) for x in attendu)
                    if isinstance(attendu, (list, tuple)) else str(attendu))
-        bouts.append(f"`{champ}` vaut {valeurs}")
-    return " (requis quand " + " et ".join(bouts) + ")"
+        bouts.append(f"`{champ}` is {valeurs}")
+    return " (required when " + " and ".join(bouts) + ")"
 
 
 def _clause_un_seul_appel(rw: Any) -> str:
@@ -160,9 +160,9 @@ def _clause_un_seul_appel(rw: Any) -> str:
     if not isinstance(rw, dict) or not rw:
         return ""
     noms = ", ".join(f"`{c}`" for c in rw)
-    return (f" ; pour revenir en arrière, vide ce champ ET change {noms} dans le "
-            f"MÊME appel — vider ce champ seul, pendant que la condition tient "
-            f"encore, reste refusé")
+    return (f"; to go back, clear this field AND change {noms} in the "
+            f"SAME call — clearing this field alone, while the condition still "
+            f"holds, remains refused")
 
 
 def _clause_aiguillage(fields: list, rw: Any) -> str:
@@ -182,5 +182,5 @@ def _clause_aiguillage(fields: list, rw: Any) -> str:
     if not fermes:
         return ""
     noms = ", ".join(f"`{c}`" for c in fermes)
-    return (f" ; ne l'écris pas dans {noms}, qui n'accepte que "
-            + ("ces valeurs" if len(fermes) > 1 else "les valeurs ci-dessus"))
+    return (f"; do not write it in {noms}, which only accepts "
+            + ("these values" if len(fermes) > 1 else "the values above"))

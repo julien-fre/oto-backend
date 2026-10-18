@@ -37,7 +37,7 @@ def test_une_colonne_heritee_invalide_ne_gele_pas_un_patch_sans_rapport():
     # la présence, pas l'unicité.
     champs_geles = {g["champ"] for g in gelees}
     assert champs_geles == {"ca"}, gelees
-    assert any("`ca`" in g["refus"] and "refusé" in g["refus"] for g in gelees
+    assert any("`ca`" in g["refus"] and "refused" in g["refus"] for g in gelees
               if g["champ"] == "ca"), gelees
 
 
@@ -46,7 +46,7 @@ def test_la_meme_valeur_est_refusee_si_le_geste_l_ecrit_lui_meme():
     restriction ne désarme rien, elle ne fait que juger le bon périmètre."""
     merged = {"priorite": 3, "ca": "5547719 (2024)"}
     errors = V.validate_row(_schema(), merged, written={"priorite", "ca"})
-    assert any("`ca`" in e and "refusé" in e for e in errors), errors
+    assert any("`ca`" in e and "refused" in e for e in errors), errors
 
 
 def test_insert_sans_written_juge_toujours_la_row_entiere():
@@ -54,7 +54,7 @@ def test_insert_sans_written_juge_toujours_la_row_entiere():
     tout ce qui est posé est jugé — comportement inchangé sur ce chemin."""
     merged = {"priorite": 3, "ca": "5547719 (2024)"}
     errors = V.validate_row(_schema(), merged, written=None)
-    assert any("`ca`" in e and "refusé" in e for e in errors), errors
+    assert any("`ca`" in e and "refused" in e for e in errors), errors
 
 
 def test_sans_validation_active_la_colonne_heritee_est_gelee_par_types_trahis_seul():
@@ -70,4 +70,4 @@ def test_sans_validation_active_la_colonne_heritee_est_gelee_par_types_trahis_se
     errors = V.validate_row(schema, merged, written={"priorite"}, gelees=gelees)
     assert errors == [], errors
     assert [g["champ"] for g in gelees] == ["ca"], gelees
-    assert "`ca`" in gelees[0]["refus"] and "refusé" in gelees[0]["refus"], gelees
+    assert "`ca`" in gelees[0]["refus"] and "refused" in gelees[0]["refus"], gelees

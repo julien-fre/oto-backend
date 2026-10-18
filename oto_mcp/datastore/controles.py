@@ -187,7 +187,7 @@ class ControlesMixin:
             options = ", ".join(str(o) for o in (h.get("options") or []))
             releve.append({
                 "champ": champ,
-                "motif": f"valeur hors options ({options})",
+                "motif": f"value not among the options ({options})",
                 "valeur_rejetee": h.get("valeur"),
             })
         # Rien à sauver ⇒ rien à écarter. Quand la valeur fautive est TOUT ce que
@@ -329,23 +329,23 @@ class ControlesMixin:
             # est CRU, et il fait dépenser.
             if lot:
                 conduite = (
-                    "Un LOT ne cible aucune ligne par son identifiant, sous aucune "
-                    "forme : sa seule cible est la clé métier (`key`). Ne repose donc "
-                    "PAS l'`_id` dans la ligne — il serait refusé lui aussi — et ne "
-                    "passe pas `id=`, qui est incompatible avec `rows`. Deux voies "
-                    "aboutissent : laisser la clé métier dédoublonner "
-                    "(`data_write(datastore=…, rows=[…], key=\"<colonne>\")`), ou "
-                    "sortir du lot pour cette ligne "
+                    "A BATCH targets no row by its identifier, in any "
+                    "form: its only target is the business key (`key`). So do NOT "
+                    "put the `_id` back in the row — it would be refused too — and do not "
+                    "pass `id=`, which is incompatible with `rows`. Two ways "
+                    "work: let the business key deduplicate "
+                    "(`data_write(datastore=…, rows=[…], key=\"<column>\")`), or "
+                    "take this row out of the batch "
                     "(`data_write(datastore=…, id=\"<_id>\", row={…})`).")
             else:
-                conduite = ("Pour cibler une ligne : garde son `_id` tel que servi "
-                            "dans la ligne, ou passe le paramètre id=.")
+                conduite = ("To target a row: keep its `_id` as served "
+                            "in the row, or pass the id= parameter.")
             raise ValueError(
-                f"`id` ({posed['id']!r}) posé dans `row` sans être une colonne "
-                "déclarée du tableau : un identifiant de ligne ne s'écrit pas "
-                "comme une donnée — l'écriture viserait à côté (ligne fantôme). "
-                f"{conduite} Si `id` est une vraie colonne de TES données, "
-                "déclare-la au schéma (data_set_schema) puis réécris.")
+                f"`id` ({posed['id']!r}) set in `row` without being a declared "
+                "column of the table: a row identifier is not written "
+                "as data — the write would miss its target (ghost row). "
+                f"{conduite} If `id` is a real column of YOUR data, "
+                "declare it in the schema (data_set_schema) then write again.")
         # #614/#678 : le TROISIÈME cran au premier niveau — refuser la colonne non
         # déclarée, opt-in table par table (`unknown_columns: "reject"`, oto#127).
         # ⚠️ oto#124 : le réglage est retiré ; il ne vit plus que STOCKÉ, d'ici au
@@ -383,16 +383,16 @@ class ControlesMixin:
                      if isinstance(f.get("key"), str) and f["key"]]
             cite = ", ".join(f"`{k}`" for k in dispo[:6])
             if len(dispo) > 6:
-                cite += f" (+{len(dispo) - 6} autres, `data_get_schema`)"
+                cite += f" (+{len(dispo) - 6} more, `data_get_schema`)"
             raise ValueError(
-                f"aucune des clés posées ({', '.join(repr(k) for k in sorted(posed))}) "
-                f"n'est une colonne de ce tableau — rien n'a été écrit. ⚠️ Le corps EST "
-                f"la ligne : ne l'enveloppe pas dans un objet qui la nomme. Écris "
-                f"`{{\"{dispo[0]}\": …}}` directement, pas "
-                f"`{{\"row\": {{\"{dispo[0]}\": …}}}}`. Les colonnes déclarées sont "
-                f"{cite}. Si ces clés sont VRAIMENT tes données, déclare-les au schéma "
-                f"(`data_set_schema`) — sinon elles naîtraient en colonnes que "
-                f"personne n'a voulues.")
+                f"none of the keys set ({', '.join(repr(k) for k in sorted(posed))}) "
+                f"is a column of this table — nothing was written. ⚠️ The body IS "
+                f"the row: do not wrap it in an object that names it. Write "
+                f"`{{\"{dispo[0]}\": …}}` directly, not "
+                f"`{{\"row\": {{\"{dispo[0]}\": …}}}}`. The declared columns are "
+                f"{cite}. If these keys REALLY are your data, declare them in the schema "
+                f"(`data_set_schema`) — otherwise they would be born as columns that "
+                f"nobody wanted.")
         # oto#124 : UNE règle, tous réglages confondus — une colonne que le schéma ne
         # déclare pas est REFUSÉE à partir de la date, et avant elle créée avec un
         # préavis daté. Même seam, même `posed` que le relevé et le cran `reject`
@@ -433,23 +433,23 @@ class ControlesMixin:
             return   # round-trip cohérent : l'intention est claire
         if batch:
             raise ValueError(
-                f"`_id` ({posed!r}) dans une row du LOT : un batch dédouble par clé "
-                "métier (`key`), il ne cible pas une ligne par son `_id`. Pour "
-                "modifier UNE ligne précise, appelle data_write(id=…, row={…}) ; "
-                "pour un lot, déclare la clé métier et laisse-la dédoublonner.")
+                f"`_id` ({posed!r}) in a row of the BATCH: a batch deduplicates by business "
+                "key (`key`), it does not target a row by its `_id`. To "
+                "modify ONE specific row, call data_write(id=…, row={…}); "
+                "for a batch, declare the business key and let it deduplicate.")
         if row_id is None:
             # Chemin normalement inatteignable depuis append_row depuis #354 (la
             # promotion capte `_id` en amont et route vers update) — conservé en
             # défense en profondeur pour tout futur appelant.
             raise ValueError(
-                f"`_id` ({posed!r}) posé DANS `row` : il y serait ignoré et ton "
-                "écriture INSÉRERAIT une nouvelle ligne au lieu de modifier "
-                "celle-là. L'identifiant est un paramètre : data_write(id=" +
+                f"`_id` ({posed!r}) set INSIDE `row`: it would be ignored there and your "
+                "write would INSERT a new row instead of modifying "
+                "that one. The identifier is a parameter: data_write(id=" +
                 f"{posed!r}, row={{…}}).")
         raise ValueError(
-            f"`_id` ({posed!r}) dans `row` ne correspond pas au `id` visé "
-            f"({row_id!r}) — deux cibles pour une écriture. Retire `_id` du corps : "
-            "seul le paramètre `id` désigne la ligne.")
+            f"`_id` ({posed!r}) in `row` does not match the targeted `id` "
+            f"({row_id!r}) — two targets for one write. Remove `_id` from the body: "
+            "only the `id` parameter designates the row.")
 
     def off_schema_report(self) -> dict:
         """Le relevé « hors schéma » du geste, prêt à fusionner dans une réponse
@@ -520,14 +520,14 @@ class ControlesMixin:
     # — un agent qui meurt n'appelle pas `run_finish`. Ce que la fin de run couvre,
     # c'est l'OUBLI de relâcher. Une promesse doit suivre le code, pas l'inverse.
     _TERMINAL_RELEASE_RETIRED = (
-        "La ligne reste réservée. Écrire un état final ne libère plus la ligne "
-        "automatiquement — ce comportement a été retiré. Ce qui la libère "
-        "maintenant : la fin du traitement en cours (`run_finish`, quelle que soit "
-        "son issue) rend toutes les lignes qu'il avait prises ; ou un `data_release` "
-        "explicite si vous travaillez hors traitement. Si vous dépendiez de la "
-        "libération automatique : appelez `data_release` après avoir écrit l'état "
-        "final, ou encadrez votre travail par `run_start` / `run_finish` — la "
-        "libération devient alors automatique si vous oubliez de relâcher vos lignes."
+        "The row stays claimed. Writing a final state no longer releases the row "
+        "automatically — this behaviour was removed. What releases it "
+        "now: the end of the current job (`run_finish`, whatever "
+        "its outcome) returns all the rows it had taken; or an explicit `data_release` "
+        "if you work outside a job. If you relied on "
+        "automatic release: call `data_release` after writing the final "
+        "state, or wrap your work in `run_start` / `run_finish` — "
+        "release then becomes automatic if you forget to release your rows."
     )
 
     def _terminal_write_notice(self, schema: Optional[dict], ns_id: int, row_id: str,

@@ -150,30 +150,30 @@ def _deja_en_place(data: dict, set_: dict) -> bool:
 def _verifier_set(set_: Any) -> dict:
     if not isinstance(set_, dict) or not set_:
         raise ValueError(
-            "`set` = les colonnes à poser, `{\"tier\": \"Tier 1\"}` — reçu "
-            f"{set_!r}. Rien n'est écrit.")
+            "`set` = the columns to set, `{\"tier\": \"Tier 1\"}` — got "
+            f"{set_!r}. Nothing is written.")
     for cle, v in set_.items():
         if not isinstance(cle, str) or not cle.strip():
-            raise ValueError(f"`set` : clé de colonne vide ou non textuelle ({cle!r}).")
+            raise ValueError(f"`set`: empty or non-text column key ({cle!r}).")
         if cle.startswith("_"):
             raise ValueError(
-                f"`set` : `{cle}` est une colonne de la plateforme, pas une donnée.")
+                f"`set`: `{cle}` is a platform column, not data.")
         if "[" in cle and colonne_ajoutee(cle) is None:
             raise ValueError(
-                f"`set` : `{cle}` vise un RANG de liste — une règle par filtre pose une "
-                f"colonne entière, ou AJOUTE (`col[+]`). Écris ce rang ligne par ligne "
-                f"avec `data_write`.")
+                f"`set`: `{cle}` targets a list INDEX — a rule by filter sets a whole "
+                f"column, or APPENDS (`col[+]`). Write this index row by row "
+                f"with `data_write`.")
         if _efface(v):
             # Effacer une colonne sur N lignes d'un seul geste, sans `confirm` : le
             # verbe détruirait en masse là où `data_drop_column` exige une confirmation.
             raise ValueError(
-                f"`set` : `{cle}: {v!r}` EFFACERAIT la valeur sur chaque ligne visée — "
-                f"refusé ici. Pour une colonne morte, `data_drop_column` ; pour une "
-                f"ligne, `data_write(id=…)`.")
+                f"`set`: `{cle}: {v!r}` WOULD CLEAR the value on every targeted row — "
+                f"refused here. For a dead column, `data_drop_column`; for one "
+                f"row, `data_write(id=…)`.")
         if split_layer(cle)[1] == ORIGIN_LAYER or (names_layers(v) and ORIGIN_LAYER in v):
             raise ValueError(
-                f"`set` : `{cle}` pose la couche `origine`, qui appartient à un import "
-                f"(`data_write(donnees_d_origine=true)`), jamais à une règle.")
+                f"`set`: `{cle}` sets the `origine` layer, which belongs to an import "
+                f"(`data_write(donnees_d_origine=true)`), never to a rule.")
     return set_
 
 
@@ -196,24 +196,24 @@ class ParFiltreMixin:
         clauses = self._clauses(ns_id, filter, filters)
         if only_if_empty and ajoutees:
             raise ValueError(
-                f"`only_if_empty` attend une case vide, et `{ajoutees[0]}[+]` AJOUTE à "
-                f"la cellule quelle qu'elle soit. Retire `only_if_empty`, ou filtre sur "
-                f"l'état qui dit que l'entrée manque.")
+                f"`only_if_empty` expects an empty cell, and `{ajoutees[0]}[+]` APPENDS to "
+                f"the cell whatever it holds. Remove `only_if_empty`, or filter on "
+                f"the state that says the entry is missing.")
         if only_if_empty:
             if not a_valeur:
                 raise ValueError(
-                    "`only_if_empty` attend une colonne dont la VALEUR est posée : `set` "
-                    "ne pose ici que des couches (`.comment`, `.link`), qui n'ont pas "
-                    "de case vide à attendre. Retire `only_if_empty`, ou pose la valeur.")
+                    "`only_if_empty` expects a column whose VALUE is set: `set` "
+                    "only sets layers here (`.comment`, `.link`), which have no "
+                    "empty cell to wait for. Remove `only_if_empty`, or set the value.")
             for c in sorted(a_valeur):
                 clauses.append({"field": c, "op": "empty"})
         schema = self._schema_of(ns_id)
         cle_metier = self._declared_key_of(schema)
         if cle_metier and cle_metier in colonnes:
             raise ValueError(
-                f"`set` vise `{cle_metier}`, la clé métier du tableau : une même valeur "
-                f"posée sur plusieurs lignes les ferait entrer en collision. Rien n'est "
-                f"écrit.")
+                f"`set` targets `{cle_metier}`, the table's business key: the same value "
+                f"set on several rows would make them collide. Nothing is "
+                f"written.")
         self._juger_la_regle(schema, colonnes, a_valeur, only_if_empty)
         declarees = {f.get("key") for f in _fields(schema)}
         self._juger_les_ajouts(schema, ajoutees, declarees)
@@ -264,18 +264,18 @@ class ParFiltreMixin:
         verrouillees = sorted(set(a_valeur) & readonly_fields(schema))
         if verrouillees and not only_if_empty:
             raise ValueError(
-                f"`set` remplace {', '.join(f'`{c}`' for c in verrouillees)}, colonne(s) "
-                f"verrouillée(s) (`readonly`) : une règle ne force pas un verrou. Avec "
-                f"`only_if_empty=true`, elle remplit les cases encore vides.")
+                f"`set` replaces {', '.join(f'`{c}`' for c in verrouillees)}, locked "
+                f"column(s) (`readonly`): a rule does not force a lock. With "
+                f"`only_if_empty=true`, it fills the cells that are still empty.")
         for c, val in a_valeur.items():
             decl = champ_declare(schema, c) or {}
             opts = decl.get("options")
             if (isinstance(opts, list) and not isinstance(val, (list, dict))
                     and hors_des_options(val, opts)):
                 raise RowValidationError([
-                    f"{c}: valeur {val!r} hors options "
-                    f"({', '.join(str(o) for o in opts)}) — la règle la poserait sur "
-                    f"chaque ligne. Rien n'est écrit."])
+                    f"{c}: value {val!r} not among the options "
+                    f"({', '.join(str(o) for o in opts)}) — the rule would set it on "
+                    f"every row. Nothing is written."])
 
     @staticmethod
     def _juger_les_ajouts(schema: Optional[dict], ajoutees: list,
@@ -284,16 +284,16 @@ class ParFiltreMixin:
         verrouillees = sorted(set(ajoutees) & readonly_fields(schema))
         if verrouillees:
             raise ValueError(
-                f"`set` ajoute à `{verrouillees[0]}`, colonne verrouillée (`readonly`) : "
-                f"une règle ne force pas un verrou. Rien n'est écrit.")
+                f"`set` appends to `{verrouillees[0]}`, a locked column (`readonly`): "
+                f"a rule does not force a lock. Nothing is written.")
         manquantes = [c for c in ajoutees if declarees and c not in declarees]
         if manquantes:
             c = manquantes[0]
             raise ValueError(
-                f"`set` ajoute à `{c}`, que le schéma ne déclare pas : une règle ne devine "
-                f"pas si c'est un journal ou une liste. Déclare-la d'abord "
-                f"(`data_patch_schema`, `{{\"key\": \"{c}\", \"type\": \"text\"}}` pour un "
-                f"journal, `\"list\"` pour des éléments), puis relance. Rien n'est écrit.")
+                f"`set` appends to `{c}`, which the schema does not declare: a rule does not guess "
+                f"whether it is a log or a list. Declare it first "
+                f"(`data_patch_schema`, `{{\"key\": \"{c}\", \"type\": \"text\"}}` for a "
+                f"log, `\"list\"` for items), then run again. Nothing is written.")
 
     def _boucle(self, datastore, ns_id, set_, clauses, cursor, *,
                 precondition: bool = True) -> dict:

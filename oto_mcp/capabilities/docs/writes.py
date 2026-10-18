@@ -19,13 +19,13 @@ from .common import require
 
 
 def create(sub: Optional[str], inp) -> dict:
-    require(inp.project_id is not None, "missing_project", "`project_id` requis.")
-    require(inp.title and inp.title.strip(), "missing_title", "`title` requis.")
-    require(common.can(sub, inp.project_id, "write"), "forbidden", "Écriture refusée.", 403)
+    require(inp.project_id is not None, "missing_project", "`project_id` is required.")
+    require(inp.title and inp.title.strip(), "missing_title", "`title` is required.")
+    require(common.can(sub, inp.project_id, "write"), "forbidden", "Write refused.", 403)
     if inp.parent_id is not None:
         parent = db.get_doc_by_id(int(inp.parent_id))
         require(parent and parent["project_id"] == inp.project_id, "bad_parent",
-                "Parent invalide (autre projet ou inexistant).")
+                "Invalid parent (another project, or nonexistent).")
     trace: dict = {}
     did = db.create_doc(int(inp.project_id), inp.title.strip(), parent_id=inp.parent_id,
                         body_md=inp.body_md or "", kind=(inp.kind or "doc"), created_by=sub,
@@ -38,17 +38,17 @@ def create(sub: Optional[str], inp) -> dict:
 def bulk_create(sub: Optional[str], inp) -> dict:
     # A4 (#6) : créer N pages en UN appel (33 pages ≠ 33 allers-retours). Arbre en un
     # coup via `parent_index` (index d'une page PLUS TÔT dans le lot) ; sinon `parent_id`.
-    require(inp.project_id is not None, "missing_project", "`project_id` requis.")
-    require(common.can(sub, inp.project_id, "write"), "forbidden", "Écriture refusée.", 403)
-    require(bool(inp.pages), "missing_pages", "`pages` (liste non vide) requis.")
+    require(inp.project_id is not None, "missing_project", "`project_id` is required.")
+    require(common.can(sub, inp.project_id, "write"), "forbidden", "Write refused.", 403)
+    require(bool(inp.pages), "missing_pages", "`pages` (non-empty list) is required.")
     if inp.parent_id is not None:
         par = db.get_doc_by_id(int(inp.parent_id))
         require(par and par["project_id"] == inp.project_id, "bad_parent",
-                "`parent_id` invalide (autre projet ou inexistant).")
+                "Invalid `parent_id` (another project, or nonexistent).")
     created: list[int] = []
     for i, p in enumerate(inp.pages):
         title = str(p.get("title") or "").strip()
-        require(bool(title), "missing_title", f"page #{i} sans `title`.")
+        require(bool(title), "missing_title", f"page #{i} has no `title`.")
         pi = p.get("parent_index")
         parent = created[pi] if isinstance(pi, int) and 0 <= pi < len(created) else inp.parent_id
         created.append(db.create_doc(
@@ -60,7 +60,7 @@ def bulk_create(sub: Optional[str], inp) -> dict:
 
 def set_public(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     # Partager publiquement (ou retirer) — action d'écriture (gap #4a).
-    require(common.can(sub, pid, "write"), "forbidden", "Écriture refusée.", 403)
+    require(common.can(sub, pid, "write"), "forbidden", "Write refused.", 403)
     if inp.public:
         # Ouvrir au web exige d'appartenir au propriétaire du projet (#1176) ; refermer
         # réduit la portée et reste ouvert à qui écrit.
@@ -73,7 +73,7 @@ def set_public(sub: Optional[str], inp, row: dict, pid: int) -> dict:
 
 
 def update(sub: Optional[str], inp, row: dict, pid: int) -> dict:
-    require(common.can(sub, pid, "write"), "forbidden", "Écriture refusée.", 403)
+    require(common.can(sub, pid, "write"), "forbidden", "Write refused.", 403)
     trace: dict = {}
     try:
         db.update_doc(int(inp.doc_id), title=(inp.title.strip() if inp.title else None),
@@ -83,8 +83,8 @@ def update(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     except db.DocConflict as e:
         # Écrasement concurrent évité : le doc a changé depuis la lecture du client.
         require(False, "conflict",
-                f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "
-                f"Relis-le (op=get) et refais ton édition sur la version à jour.", 409)
+                f"The doc changed in the meantime (current rev {e.current_rev}). "
+                f"Read it again (op=get) and redo your edit on the current version.", 409)
     db.log_project_activity(pid, sub, "doc.update", row.get("title"))
     return {**view.projected(db.get_doc_by_id(int(inp.doc_id)), sub, inp.fields,
                              brut_par_defaut=False, hint=view.HINT_ACCUSE), **trace}
@@ -95,17 +95,17 @@ def delete(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     # disait pas ce qu'elle emportait, donc aucun front ne pouvait annoncer « ceci
     # supprimera N pages » ni prévenir que c'était sans retour. On ne change pas ce
     # que le geste FAIT — on le DÉCLARE, et `dry_run` permet de le demander avant.
-    require(common.can(sub, pid, "write"), "forbidden", "Écriture refusée.", 403)
+    require(common.can(sub, pid, "write"), "forbidden", "Write refused.", 403)
     if inp.dry_run:
         n = db.count_doc_descendants(int(inp.doc_id))
         return {"ok": True, "id": inp.doc_id, "deleted": False, "dry_run": True,
                 "descendants": n,
                 "hint": (
-                    f"Rien n'a été supprimé. Un op=delete sur « {row.get('title')} » "
-                    f"emporterait cette page et {n} descendante(s), avec leur "
-                    f"historique de versions. C'est SANS RETOUR : op=revert restaure "
-                    f"une version d'une page qui existe encore, il ne ressuscite pas "
-                    f"une page supprimée.")}
+                    f"Nothing was deleted. An op=delete on “{row.get('title')}” "
+                    f"would take this page and {n} descendant(s), with their "
+                    f"version history. It CANNOT be undone: op=revert restores "
+                    f"a version of a page that still exists, it does not bring back "
+                    f"a deleted page.")}
     n = db.delete_doc(int(inp.doc_id))
     db.log_project_activity(
         pid, sub, "doc.delete",
@@ -115,17 +115,17 @@ def delete(sub: Optional[str], inp, row: dict, pid: int) -> dict:
         # Même posture que `removed_subsections` sur op=patch : ce qui est parti EN
         # PLUS de la cible se dit, sinon la perte ne se découvre qu'à l'usage.
         out["warning"] = (
-            f"Cette suppression a aussi emporté {n} sous-page(s) et leur historique "
-            f"de versions — la cascade suit tout le sous-arbre. Sans retour : "
-            f"op=revert ne restaure qu'une version d'une page existante. Passe "
-            f"`dry_run: true` pour connaître le compte AVANT de supprimer.")
+            f"This deletion also took {n} sub-page(s) and their version "
+            f"history — the cascade follows the whole subtree. It cannot be undone: "
+            f"op=revert only restores a version of an existing page. Pass "
+            f"`dry_run: true` to know the count BEFORE deleting.")
     return out
 
 
 def move(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     # move — nouveau parent dans le MÊME projet (cycle profond non gardé en v1) ET/OU
     # réordonnancement (Ship 2 : `position` = index cible, la fratrie est réindexée).
-    require(common.can(sub, pid, "write"), "forbidden", "Écriture refusée.", 403)
+    require(common.can(sub, pid, "write"), "forbidden", "Write refused.", 403)
 
     # A4 (#6) : déplacement CROSS-PROJET — la page + son sous-arbre changent de projet.
     # Écriture requise sur la SOURCE (ci-dessus) ET la CIBLE ; le parent proposé (si
@@ -135,15 +135,15 @@ def move(sub: Optional[str], inp, row: dict, pid: int) -> dict:
         # F-016 : le droit AVANT l'existence — `can` est faux sur un projet absent, donc
         # même 403 pour « n'existe pas » et « pas à toi » (sinon oracle sur les ids).
         require(common.can(sub, tgt, "write"), "forbidden",
-                "Écriture refusée sur le projet cible.", 403)
+                "Write refused on the target project.", 403)
         require(db.get_project_by_id(tgt) is not None, "unknown_project",
-                f"Projet cible #{tgt} inconnu.", 404)
+                f"Unknown target project #{tgt}.", 404)
         if inp.parent_id is not None:
             require(int(inp.parent_id) != int(inp.doc_id), "bad_parent",
-                    "Un doc ne peut pas être son propre parent.")
+                    "A doc cannot be its own parent.")
             parent = db.get_doc_by_id(int(inp.parent_id))
             require(parent and parent["project_id"] == tgt, "bad_parent",
-                    "Parent invalide (doit être une page du projet cible).")
+                    "Invalid parent (must be a page of the target project).")
         n = db.move_doc_to_project(int(inp.doc_id), tgt,
                                    inp.parent_id if "parent_id" in inp.model_fields_set else None,
                                    position=inp.position)
@@ -156,10 +156,10 @@ def move(sub: Optional[str], inp, row: dict, pid: int) -> dict:
 
     if inp.parent_id is not None:
         require(int(inp.parent_id) != int(inp.doc_id), "bad_parent",
-                "Un doc ne peut pas être son propre parent.")
+                "A doc cannot be its own parent.")
         parent = db.get_doc_by_id(int(inp.parent_id))
         require(parent and parent["project_id"] == pid, "bad_parent",
-                "Parent invalide (autre projet ou inexistant).")
+                "Invalid parent (another project, or nonexistent).")
     # Trois intentions distinguées par `model_fields_set` (JSON null ≠ absent) :
     # parent FOURNI (id ou null=racine) = reparenter là ; absent + `position` posé =
     # réordonner DANS la fratrie courante ; absent + rien = racine (historique).

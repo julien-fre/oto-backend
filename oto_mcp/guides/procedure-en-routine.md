@@ -1,102 +1,102 @@
 ---
-title: Faire tourner une procédure en autonome (routine Claude Code)
-description: "Monter une routine Claude Code qui exécute une procédure oto sans personne devant l'écran : le prompt est un POINTEUR vers la procédure (jamais une copie), le connecteur Oto porte les outils, et le déclencheur peut être planifié, API (instantané) ou GitHub. Couvre le gabarit de prompt, le passage de contexte à un run (donnée non fiable, passer une référence), et les cinq causes d'échec — secrets restés sur le poste en tête."
+title: Running a procedure autonomously (Claude Code routine)
+description: "Set up a Claude Code routine that runs an oto procedure with nobody in front of the screen: the prompt is a POINTER to the procedure (never a copy), the Oto connector carries the tools, and the trigger can be scheduled, API (instant) or GitHub. Covers the prompt template, passing context to a run (untrusted data, pass a reference), and the five causes of failure — secrets left on the workstation first."
 ---
 
-# Faire tourner une procédure en autonome
+# Running a procedure autonomously
 
-Une **routine Claude Code** est un agent hébergé par Anthropic : un prompt figé, des connecteurs MCP, un ou plusieurs déclencheurs. Y brancher le connecteur Oto et lui donner un prompt qui *charge une procédure*, c'est faire tourner cette procédure sans machine allumée et sans personne devant l'écran.
+A **Claude Code routine** is an agent hosted by Anthropic: a fixed prompt, MCP connectors, one or more triggers. Plugging the Oto connector into it and giving it a prompt that *loads a procedure* means running that procedure with no machine switched on and nobody in front of the screen.
 
-Le montage tient en une phrase : **le prompt de la routine est un pointeur, jamais une copie.** Le savoir-faire reste dans la procédure — versionnée, éditable, partageable, lue à chaque run. Le prompt fait trois lignes et ne bouge plus.
+The setup fits in one sentence: **the routine's prompt is a pointer, never a copy.** The know-how stays in the procedure — versioned, editable, shareable, read at every run. The prompt is three lines long and no longer moves.
 
-Recopier la procédure dans le prompt est l'erreur qui coûte le plus cher : deux sources de vérité qui divergent en silence, et une correction de procédure qui n'atteint jamais l'agent.
+Copying the procedure into the prompt is the most expensive mistake: two sources of truth that silently diverge, and a procedure fix that never reaches the agent.
 
-## Monter la routine
+## Setting up the routine
 
-Depuis Claude Code, `/schedule` crée la routine en conversation (déclencheur planifié ou GitHub) ; le jeton du déclencheur API reste un geste web.
+From Claude Code, `/schedule` creates the routine in conversation (scheduled or GitHub trigger); the API trigger token remains a web operation.
 
-Sur `claude.ai/code/routines`, **Nouvelle routine** :
+On `claude.ai/code/routines`, **New routine**:
 
-1. **Nom** — ce que fait la routine, pas la procédure qu'elle charge.
-2. **Instructions** — le pointeur (gabarit ci-dessous).
-3. **Dépôt** — aucun, sauf si la procédure touche du code. Une routine sans dépôt démarre sur un contexte nu, ce qui est exactement ce qu'on veut : elle ne connaît que la procédure et les outils.
-4. **Connecteurs** — **ne garder que ceux dont la procédure a besoin.** Tous les connecteurs du compte sont ajoutés par défaut, et pendant un run l'agent peut appeler n'importe lequel de leurs outils, écritures comprises, sans confirmation.
-5. **Déclencheur** — voir plus bas.
+1. **Name** — what the routine does, not the procedure it loads.
+2. **Instructions** — the pointer (template below).
+3. **Repository** — none, unless the procedure touches code. A routine without a repository starts on a bare context, which is exactly what we want: it only knows the procedure and the tools.
+4. **Connectors** — **keep only those the procedure needs.** All the account's connectors are added by default, and during a run the agent can call any of their tools, writes included, without confirmation.
+5. **Trigger** — see below.
 
-## Le gabarit de prompt
+## The prompt template
 
 ```
-Charge la procédure `<slug>` : oto_procedure(op="get", slug="<slug>").
-Elle porte la méthode complète et fait autorité : en cas de divergence avec
-ce prompt, c'est elle qui gagne.
+Load the procedure `<slug>`: oto_procedure(op="get", slug="<slug>").
+It carries the complete method and takes precedence: if it diverges from
+this prompt, it wins.
 
-<Le périmètre du run : sur quoi l'appliquer, ce qui compte comme terminé.>
+<The scope of the run: what to apply it to, what counts as done.>
 
-Tu tournes sans dépôt et sans machine locale : tout passe par les outils du
-connecteur Oto (préfixe `mcp__Oto__`). Ils ne sont pas tous chargés d'emblée
-— résous ceux dont tu as besoin avec ToolSearch.
+You run without a repository and without a local machine: everything goes
+through the tools of the Oto connector (prefix `mcp__Oto__`). They are not
+all loaded upfront — resolve the ones you need with ToolSearch.
 
-Si la procédure est introuvable, si la source est vide, ou si un outil te
-manque, dis-le explicitement dans ton compte rendu au lieu de produire un
-résultat plausible.
+If the procedure cannot be found, if the source is empty, or if you are
+missing a tool, say so explicitly in your report instead of producing a
+plausible result.
 ```
 
-La dernière ligne n'est pas de la politesse : un agent autonome que personne ne relance a une pente naturelle à combler les trous. Lui demander de nommer ce qui a bloqué transforme un run raté en information exploitable.
+The last line is not politeness: an autonomous agent that nobody follows up on has a natural tendency to fill the gaps. Asking it to name what blocked turns a failed run into actionable information.
 
-## Les trois déclencheurs
+## The three triggers
 
-Ils se combinent sur la même routine.
+They can be combined on the same routine.
 
-| | quand | à savoir |
+| | when | good to know |
 |---|---|---|
-| **planifié** | cadence régulière ou date unique | heure saisie en **heure locale** puis convertie (vérifier l'heure affichée après création), intervalle **minimum une heure**. Un tir unique ne compte pas dans le plafond quotidien de runs |
-| **API** | déclenchement instantané par un tiers | endpoint `/fire` + jeton bearer. **Le jeton se crée uniquement dans l'interface** et ne s'affiche qu'une fois — aucune API publique ne le génère |
-| **GitHub** | pull requests, releases | filtres par auteur, branche, labels, état |
+| **scheduled** | regular cadence or single date | time entered in **local time** then converted (check the displayed time after creation), interval **minimum one hour**. A one-off fire does not count toward the daily run cap |
+| **API** | instant triggering by a third party | `/fire` endpoint + bearer token. **The token can only be created in the interface** and is displayed only once — no public API generates it |
+| **GitHub** | pull requests, releases | filters by author, branch, labels, state |
 
-Le déclencheur API est le seul chemin temps réel. Le minimum d'une heure ne concerne que le planifié.
+The API trigger is the only real-time path. The one-hour minimum only applies to the scheduled one.
 
-## Passer du contexte à un run
+## Passing context to a run
 
-Le champ `text` du déclenchement arrive à l'agent **enveloppé dans un bloc `<routine-fire-payload>` étiqueté donnée non fiable**, avec la consigne de ne pas suivre les instructions qu'il contient. Le prompt de la routine doit explicitement opter pour le lire, sinon le texte reste du contexte inerte.
+The `text` field of the fire reaches the agent **wrapped in a `<routine-fire-payload>` block labeled as untrusted data**, with the instruction not to follow the instructions it contains. The routine's prompt must explicitly opt in to reading it, otherwise the text remains inert context.
 
-Conséquence directe : **passer une référence, jamais l'enregistrement.** « la ligne `019ff08f…` du tableau leads » plutôt que le lead recopié — l'agent recharge la donnée fraîche par oto, et le payload ne devient jamais un vecteur d'instruction. Plafond : 65 536 caractères, ce qui est une autre façon de dire la même chose.
+Direct consequence: **pass a reference, never the record.** "row `019ff08f…` of the leads table" rather than the copied lead — the agent reloads the fresh data through oto, and the payload never becomes an instruction vector. Cap: 65,536 characters, which is another way of saying the same thing.
 
-## Ce qui casse un run, par fréquence décroissante
+## What breaks a run, by decreasing frequency
 
-1. **Un secret resté sur le poste.** Une procédure qui lit un vault local (SOPS, `~/.config`, variable d'environnement du shell) échoue en routine : il n'y a pas de machine. Le credential doit vivre dans le coffre oto, résolu par un connecteur.
-2. **Un fichier ou un dépôt local.** Même cause.
-3. **L'heure.** Elle se saisit en heure locale et la routine la convertit ; relire l'heure affichée après création, surtout si le cron a été écrit à la main.
-4. **Un prompt qui recopie la procédure** au lieu de la charger.
-5. **Un payload traité comme une instruction** — la routine l'ignore, et le run part sur le mauvais périmètre sans le dire.
+1. **A secret left on the workstation.** A procedure that reads a local vault (SOPS, `~/.config`, shell environment variable) fails as a routine: there is no machine. The credential must live in the oto vault, resolved by a connector.
+2. **A local file or repository.** Same cause.
+3. **The time.** It is entered in local time and the routine converts it; reread the displayed time after creation, especially if the cron was written by hand.
+4. **A prompt that copies the procedure** instead of loading it.
+5. **A payload treated as an instruction** — the routine ignores it, and the run goes off on the wrong scope without saying so.
 
-## Ce qu'une routine ne fait pas
+## What a routine does not do
 
-- **Pas d'idempotence.** Chaque déclenchement crée une session ; il n'existe pas de clé d'idempotence, et un retour de webhook produit un second run. La déduplication se fait dans la procédure (revérifier l'état avant d'écrire) ou en amont du déclenchement.
-- **Elle appartient à un compte individuel.** Elle agit sous l'identité de son créateur, avec ses accès, et compte contre son plafond quotidien de runs. Ce n'est pas un compte de service.
-- **Elle ne se provisionne pas depuis un tiers.** Seul `/fire` est une API publique : créer une routine et générer son jeton restent des gestes d'interface.
+- **No idempotency.** Each fire creates a session; there is no idempotency key, and a webhook retry produces a second run. Deduplication happens in the procedure (recheck the state before writing) or upstream of the fire.
+- **It belongs to an individual account.** It acts under its creator's identity, with their access, and counts against their daily run cap. It is not a service account.
+- **It cannot be provisioned from a third party.** Only `/fire` is a public API: creating a routine and generating its token remain interface operations.
 
-## Lire le résultat
+## Reading the result
 
-Chaque run est une **session consultable** : le transcript complet, les appels d'outils, les erreurs. C'est ce qui distingue une routine d'un job planifié maison — la supervision est fournie.
+Each run is a **viewable session**: the full transcript, the tool calls, the errors. That is what sets a routine apart from a homemade scheduled job — supervision is provided.
 
-Attention au statut : un run vert signifie que la session a démarré et s'est terminée sans erreur d'infrastructure. **Il ne dit pas que la tâche a réussi.** Les échecs de la tâche, les outils manquants et les requêtes réseau bloquées apparaissent dans le transcript, pas dans le voyant.
+Watch out for the status: a green run means the session started and ended without an infrastructure error. **It does not say the task succeeded.** Task failures, missing tools and blocked network requests show up in the transcript, not in the indicator light.
 
-Le vrai réflexe : **faire écrire à la procédure une trace datée dans un tableau du datastore.** Un run devient alors lisible d'un coup d'œil, sans ouvrir un transcript — et l'historique s'accumule là où on sait déjà chercher.
+The real reflex: **have the procedure write a dated trace in a datastore table.** A run then becomes readable at a glance, without opening a transcript — and the history accumulates where you already know to look.
 
-## Déclencher une routine depuis oto
+## Triggering a routine from oto
 
-Le connecteur `routine` porte une routine par instance (`routine_id` + jeton de déclenchement, posés depuis les connecteurs du dashboard). `routine_fire` la déclenche et rend la session à ouvrir ; le résultat se lit dans cette session, pas dans la réponse.
+The `routine` connector carries one routine per instance (`routine_id` + fire token, set from the dashboard's connectors). `routine_fire` triggers it and returns the session to open; the result is read in that session, not in the response.
 
-C'est utile quand le déclencheur est un agent en conversation, ou un service qui passe déjà par oto. Un outil tiers qui sait faire un POST HTTP appellera `/fire` directement — inutile de mettre oto sur ce chemin.
+It is useful when the trigger is an agent in conversation, or a service that already goes through oto. A third-party tool that can make an HTTP POST will call `/fire` directly — no need to put oto on that path.
 
-## Selon le client
+## Depending on the client
 
-- **Claude Code** (terminal, desktop) : `/schedule` crée la routine en conversation ; cadence minimale une heure.
-- **App Claude / Cowork** : c'est la tâche programmée de l'utilisateur (Scheduled → New task, ou décrite dans la conversation, que Claude propose puis fait confirmer).
-- **Ailleurs** (chat sans planification) : donner à l'utilisateur les étapes sur `claude.ai/code/routines`, avec le gabarit de prompt ci-dessus prêt à coller.
+- **Claude Code** (terminal, desktop): `/schedule` creates the routine in conversation; minimum cadence one hour.
+- **Claude app / Cowork**: it is the user's scheduled task (Scheduled → New task, or described in the conversation, which Claude proposes then has confirmed).
+- **Elsewhere** (chat without scheduling): give the user the steps on `claude.ai/code/routines`, with the prompt template above ready to paste.
 
-Une tâche **pour un client** se crée sur le compte Claude du client, pas sur le nôtre.
+A task **for a client** is created on the client's Claude account, not on ours.
 
-## Routine ou agent hébergé
+## Routine or hosted agent
 
-Une routine Claude Code est **le** chemin quand un utilisateur demande à son assistant de planifier une tâche (« tous les lundis », « rappelle-moi »). `oto_trigger` est autre chose : il crée un **agent hébergé de l'org**, exécuté par la flotte de workers d'oto sur la clé de modèle de l'org, sous l'identité de son propriétaire, et géré dans le dashboard. Ne s'y tourner que si l'utilisateur demande explicitement un agent hébergé oto ou un webhook.
+A Claude Code routine is **the** path when a user asks their assistant to schedule a task ("every Monday", "remind me"). `oto_trigger` is something else: it creates a **hosted agent of the org**, run by oto's fleet of workers on the org's model key, under its owner's identity, and managed in the dashboard. Only turn to it if the user explicitly asks for an oto hosted agent or a webhook.

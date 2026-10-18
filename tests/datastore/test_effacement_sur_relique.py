@@ -60,8 +60,8 @@ def test_l_effacement_qui_ne_detruirait_rien_est_REFUSE(live, payload):
         st.update_row(ns, rid, payload)
 
     msg = str(e.value)
-    assert "ne détruirait RIEN" in msg
-    assert "rien n'a été écrit" in msg
+    assert "would destroy NOTHING" in msg
+    assert "nothing was written" in msg
     assert "data_drop_column" in msg, "le refus nomme le geste qui ABOUTIT"
     assert "contact1_nom.link" in msg, "avec le nom LITTÉRAL, point compris"
 

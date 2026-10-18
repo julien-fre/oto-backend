@@ -109,8 +109,8 @@ def _worker(raw: str) -> str:
     if not w:
         raise AuthzDenied(
             400, "worker_required",
-            "worker = libellé stable de celui qui réserve (une personne, un poste, "
-            "un agent), rejoué tel quel au release : c'est la garde du bail.")
+            "worker = stable label of whoever claims (a person, a workstation, "
+            "an agent), replayed as-is on release: it is what guards the lease.")
     return w
 
 
@@ -154,7 +154,7 @@ def _claim_next(ctx: ResolvedCtx, inp: ClaimNextInput) -> dict:
 def _hint_vide(perimetre: dict, filtre: Optional[dict]) -> str:
     if perimetre:
         return claimable.phrase_vide(perimetre, filtre)
-    return "plus rien à réserver (file vide pour ce filtre, ou tout est sous bail actif)"
+    return "nothing left to claim (queue empty for this filter, or everything is under an active lease)"
 
 
 def _claim_row(ctx: ResolvedCtx, inp: ClaimRowInput) -> dict:
@@ -184,7 +184,7 @@ def _claim_row(ctx: ResolvedCtx, inp: ClaimRowInput) -> dict:
         # plus rapide — et l'utilisateur a besoin de savoir QUI et jusqu'à QUAND.
         raise AuthzDenied(
             409, "row_claimed",
-            f"ligne déjà réservée par « {e.claimed_by} » jusqu'à {e.claimed_until}")
+            f"row already claimed by `{e.claimed_by}` until {e.claimed_until}")
     except ValueError as e:
         raise AuthzDenied(400, "invalid_claim", str(e))
     datastore_journal.record(

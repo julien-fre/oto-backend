@@ -224,7 +224,7 @@ def test_two_thousand_rows_through_the_cursor(store):
 
 def test_null_and_business_key_are_refused(store):
     ns, ns_id = _table(LIGNES, schema={**SCHEMA, "key": "nom"})
-    with pytest.raises(ValueError, match="EFFACERAIT"):
+    with pytest.raises(ValueError, match="WOULD CLEAR"):
         store.update_where(ns, {"tier": None})
     with pytest.raises(ValueError, match="clé métier"):
         store.update_where(ns, {"nom": "x"})
@@ -235,7 +235,7 @@ def test_null_and_business_key_are_refused(store):
                                   {"valeur": "x", "comment": ""}])
 def test_every_value_that_would_erase_is_refused(store, vide):
     ns, ns_id = _table(LIGNES)
-    with pytest.raises(ValueError, match="EFFACERAIT"):
+    with pytest.raises(ValueError, match="WOULD CLEAR"):
         store.update_where(ns, {"tier": vide})
 
 

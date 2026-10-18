@@ -83,7 +83,7 @@ def test_a_promoted_unknown_id_never_creates(store, monkeypatch):
     erreur nommée — re-fabriquer le fantôme par cette porte est interdit."""
     st, calls = store
     monkeypatch.setattr(dsm.db, "datastore_get_row", lambda ns_id, rid: None)
-    with pytest.raises(ValueError, match="aucune ligne"):
+    with pytest.raises(ValueError, match="matches no row"):
         st.append_row("v", {"_id": "019f-inconnu", "statut": "enrichi"})
     assert calls["insert"] == [] and calls["update"] == []
 
@@ -94,7 +94,7 @@ def test_a_naked_undeclared_id_is_refused(store):
     l'enrichissement, le tableau de la cliente pollué. Refus nommé, sur le seam
     que TOUS les chemins d'écriture traversent."""
     st, calls = store
-    with pytest.raises(ValueError, match="fantôme"):
+    with pytest.raises(ValueError, match="ghost row"):
         st.append_row("v", {"id": ROW, "statut": "enrichi"})
     assert calls["insert"] == []
 
@@ -116,7 +116,7 @@ def test_a_naked_undeclared_id_in_a_batch_is_refused_too(store):
     """Le lot passe par le même seam : un `id` égaré dans une row de batch est
     refusé pareil — pas de fantôme au volume."""
     st, calls = store
-    with pytest.raises(ValueError, match="fantôme"):
+    with pytest.raises(ValueError, match="ghost row"):
         st.write_rows("v", [{"siren": "1"}, {"id": ROW, "siren": "2"}])
 
 
@@ -132,7 +132,7 @@ def test_patch_with_a_coherent_id_passes(store):
 def test_patch_with_a_divergent_id_is_refused(store):
     """Deux cibles pour une écriture : on ne devine pas laquelle."""
     st, calls = store
-    with pytest.raises(ValueError, match="ne correspond pas"):
+    with pytest.raises(ValueError, match="does not match"):
         st.update_row("v", ROW, {"_id": "019f-autre", "statut": "enrichi"})
     assert calls["update"] == []
 
@@ -140,7 +140,7 @@ def test_patch_with_a_divergent_id_is_refused(store):
 def test_batch_row_carrying_an_id_is_refused(store):
     """Un lot dédouble par clé métier ; il ne cible pas une ligne par `_id`."""
     st, calls = store
-    with pytest.raises(ValueError, match="dédouble par clé"):
+    with pytest.raises(ValueError, match="deduplicates by business"):
         st.write_rows("v", [{"siren": "1"}, {"_id": ROW, "siren": "2"}])
     assert len(calls["insert"]) == 1       # la 1ʳᵉ passe, le lot s'arrête net
 
