@@ -16,6 +16,22 @@ from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
 
 @pytest.fixture(autouse=True)
+def _aucune_cle_partagee(monkeypatch):
+    """Aucune clé partagée (plateforme ou tenant) n'est posée ni accordée ici : sans cette
+    doublure, la garde d'argent irait la résoudre dans le vrai coffre. Le cas où elle
+    l'est a son banc (`test_cle_partagee_anthropic.py`)."""
+    monkeypatch.setattr("oto_mcp.capabilities._cle_exigee.cle_partagee",
+                        lambda org_id, fournisseur, sub=None, strict=False: None)
+    monkeypatch.setattr("oto_mcp.capabilities._cle_exigee.cle_de_plateforme_posee",
+                        lambda fournisseur: False)
+    # Le dépôt de l'org se lit ABSENT, sans aller au coffre : un coffre injoignable
+    # se lit désormais « doute » et rend le travail à la file (`_doute_du_coffre`).
+    monkeypatch.setattr("oto_mcp.capabilities.runner_jobs._depot_pose",
+                        lambda org_id, depot: False)
+
+
+
+@pytest.fixture(autouse=True)
 def _cle_de_modele_non_exigee(monkeypatch):
     """Ce fichier ne parle pas de la garde de clé de modèle — elle a son propre banc
     (`test_cle_de_modele_exigee.py`). Le réglage est lu ÉTEINT, comme sur toute

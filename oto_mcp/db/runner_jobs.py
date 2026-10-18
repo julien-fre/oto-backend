@@ -957,6 +957,84 @@ def _cle_ok_pour_repli(org_id: int, famille: str) -> bool:
     return bool(ligne and ligne.get("secret"))
 
 
+def estampiller_cle_partagee(job_id: int, worker_sub: str, depot: str,
+                             mode: str) -> bool:
+    """Écrit sur le travail QUI paie cette tentative : la clé PARTAGÉE `depot`,
+    servie depuis le rang `mode` (`tenant` | `platform`), et le numéro de la
+    tentative. C'est ce que la conclusion relit pour mesurer le coût
+    (`capabilities.runner_jobs._mesurer_cle_partagee`).
+
+    ⚠️ La tentative fait partie de l'estampille : un travail re-filé puis repris
+    sur la clé de SON org garderait sinon l'estampille d'avant, et serait facturé
+    pour une clé qui ne l'a pas servi. La conclusion ne mesure que si la tentative
+    estampillée est celle qu'elle conclut.
+
+    Faux si le travail n'est plus à ce worker : rien n'est alors servi."""
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE runner_jobs j
+               SET payload = jsonb_set(
+                       COALESCE(j.payload, '{}'::jsonb), '{_plateforme}',
+                       COALESCE(j.payload->'_plateforme', '{}'::jsonb)
+                       || jsonb_build_object('cle_partagee', jsonb_build_object(
+                              'depot', %s::text, 'mode', %s::text,
+                              'tentative', j.attempts)))
+             WHERE j.id = %s AND j.claimed_by = %s AND j.status = 'claimed'
+            """,
+            (depot, mode, job_id, worker_sub))
+        return bool(cur.rowcount)
+
+
+def metrer_un_tour(job_id: int, worker_sub: str, tour: int, microdollars: int,
+                   postes: dict, args: dict) -> Optional[str]:
+    """Inscrit le coût d'UN appel au modèle d'une tentative payée par une clé
+    partagée : la ligne au journal des appels ET le cumul sur l'estampille, dans la
+    MÊME transaction — un cumul sans ligne (ou l'inverse) ferait mentir le reste
+    calculé à la conclusion.
+
+    Rend `"inscrit"`, `"deja_inscrit"` (ce tour, ou un plus récent, l'est déjà : un
+    rapport rejoué ne s'inscrit pas deux fois), `"sans_cle_partagee"` (la tentative
+    en cours n'est pas estampillée : la clé de l'org paie), ou None si le travail
+    n'est plus à ce worker."""
+    with _connect() as conn:
+        prise = conn.execute(
+            """
+            SELECT org_id, sub, run_id, attempts,
+                   payload->'_plateforme'->'cle_partagee' AS cle_partagee
+              FROM runner_jobs
+             WHERE id = %s AND claimed_by = %s AND status = 'claimed'
+             FOR UPDATE
+            """, (job_id, worker_sub)).fetchone()
+        if not prise:
+            return None
+        est = prise["cle_partagee"]
+        if not isinstance(est, dict) or est.get("tentative") != prise["attempts"]:
+            return "sans_cle_partagee"
+        if int(est.get("dernier_tour", -1)) >= int(tour):
+            return "deja_inscrit"
+        conn.execute(
+            """
+            UPDATE runner_jobs
+               SET payload = jsonb_set(payload, '{_plateforme,cle_partagee}',
+                       (payload->'_plateforme'->'cle_partagee') || jsonb_build_object(
+                           'dernier_tour', %s::int,
+                           'microdollars', COALESCE((payload->'_plateforme'->
+                               'cle_partagee'->>'microdollars')::bigint, 0) + %s::bigint))
+             WHERE id = %s
+            """, (int(tour), int(microdollars), job_id))
+        conn.execute(
+            """
+            INSERT INTO tool_calls (server, kind, sub, tool, args, ok, duration_ms,
+                                    run_id, org_id, quantity, key_mode)
+            VALUES ('oto', 'mcp', %s, %s, %s::jsonb, TRUE, 0, %s, %s, %s, %s)
+            """, (prise["sub"], f"{est.get('depot')}_tokens",
+                  json.dumps({**args, "attempt": prise["attempts"],
+                              "tokens": {k: int(v) for k, v in postes.items()}}),
+                  prise["run_id"], prise["org_id"], int(microdollars), est.get("mode")))
+        return "inscrit"
+
+
 def defaire_le_repli(job_id: int, worker_sub: str, raison: str,
                      delai_s: int = 60) -> bool:
     """Un travail REPLIÉ que la remise n'a finalement pas pu payer sur la clé de son
@@ -1452,7 +1530,9 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
     sinon None) : c'est la clé de la libération des baux du datastore (#633),
     lue par la capacité sans second aller-retour — ou None si le job n'est pas
     au claimant (déjà re-claimé après bail mort, ou jamais à lui) : l'appelant
-    ne conclut pas ce qui ne lui appartient plus."""
+    ne conclut pas ce qui ne lui appartient plus. Rend aussi `org_id`, `sub`,
+    `attempts` et l'estampille `cle_partagee` (ou None) : de quoi mesurer, sans
+    relire le travail, ce qu'une clé partagée a payé."""
     with _connect() as conn:
         if ok:
             row = conn.execute(
@@ -1462,7 +1542,8 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                        run_id = COALESCE(%s, run_id), last_error = NULL,
                        result = COALESCE(%s::jsonb, result)
                  WHERE id = %s AND claimed_by = %s AND status = 'claimed'
-                RETURNING status, run_id
+                RETURNING status, run_id, org_id, sub, attempts,
+                          payload->'_plateforme'->'cle_partagee' AS cle_partagee
                 """,
                 (run_id, json.dumps(result) if result is not None else None,
                  job_id, worker_sub),
@@ -1496,7 +1577,8 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                                                'error', %s::text)),
                        result = COALESCE(%s::jsonb, result)
                  WHERE id = %s AND claimed_by = %s AND status = 'claimed'
-                RETURNING status, run_id
+                RETURNING status, run_id, org_id, sub, attempts,
+                          payload->'_plateforme'->'cle_partagee' AS cle_partagee
                 """,
                 (_BACKOFF_S, motif, motif,
                  json.dumps(result) if result is not None else None,

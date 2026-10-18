@@ -716,6 +716,11 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("MISTRAL_API_KEY", Classe.REGLAGE, None,
              "Clé Mistral — absente, le worker d'embeddings ne tourne pas.",
              ("oto_mcp/embeddings.py:62",)),
+    Variable("OTO_ANTHROPIC_ADMIN_KEY", Classe.REGLAGE, None,
+             "Clé d'ADMIN Anthropic (`sk-ant-admin…`) de l'organisation qui porte la clé "
+             "`anthropic` de plateforme — absente, `oto_admin_model_spend` refuse "
+             "(`admin_key_not_configured`) : le relevé d'Anthropic ne se rapproche pas du journal.",
+             ("oto_mcp/anthropic_usage.py:59",)),
     Variable("OTO_MAILER_SEND_BEARER", Classe.REGLAGE, None,
              "Bearer du relais mailer commun (byo-org a le sien en coffre).",
              ("oto_mcp/email.py:151",)),

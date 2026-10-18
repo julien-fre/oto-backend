@@ -2749,3 +2749,21 @@ def premiers_appels(org_ids: list[int]) -> dict[int, Optional[str]]:
             "FROM unnest(%s::bigint[]) AS o(id)",
             ([int(i) for i in org_ids],)).fetchall()
     return {int(r["org_id"]): r["premier"] for r in rows}
+
+
+def quantite_du_jour(outil: str, key_mode: str, jour) -> int:
+    """La somme des `quantity` d'un outil, sous un mode de clé, pour un jour UTC (la
+    session est en UTC, `_connect_options`) — les appels `ok` seulement, comme la
+    lentille de facturation. Sert le rapprochement d'un relevé fournisseur
+    (`capabilities/platform_model_spend.py`)."""
+    from datetime import datetime, time, timedelta, timezone
+    debut = datetime.combine(jour, time(0), tzinfo=timezone.utc)
+    with _agregat("quantité d'un outil sur un jour") as conn:
+        row = conn.execute(
+            """
+            SELECT COALESCE(SUM(quantity), 0) AS n FROM tool_calls
+             WHERE tool = %s AND key_mode = %s AND ok
+               AND created_at >= %s AND created_at < %s
+            """, (outil, key_mode, debut, debut + timedelta(days=1))).fetchone()
+    return int(row["n"] or 0)
+

@@ -13,10 +13,18 @@ from ._model import CredentialField, _c
 # would present itself as a connector without having its effects; the
 # distinct type lets the screen say what it is.
 #
-# `byo_org` only: the key is the ORGANIZATION's, not a person's —
+# `byo_org`: the key is the ORGANIZATION's, not a person's —
 # it is what pays for the turns, and a scheduled agent outlives its author.
+#
+# `platform` (18/10/2026): a SHARED key — set at the platform level of the instance,
+# or by the tenant — serves an org that deposited none, and its cost is metered per
+# job in the call log (`anthropic_tokens`, micro-dollars, `key_mode` tenant|platform)
+# for the billing service to charge back. CLOSED (`platform_key_open=False`): it only
+# serves the orgs it is granted to — the grant IS the right, and removing it cuts the
+# org at the next claim. Cf. `capabilities/_cle_exigee.cle_partagee`.
 CONNECTOR = _c(
-    "anthropic", [], kind="credential", auth_modes={"byo_org"}, keyed=True,
+    "anthropic", [], kind="credential", auth_modes={"byo_org", "platform"}, keyed=True,
+    platform_key_open=False,
     # ⚠️ SINGLE-account, declared: the derivation would yield `multi` (api_key), and
     # the screen would offer to set a second key that nothing could choose between.
     # A run uses ONE key — two deposits for the same org would be two
@@ -36,7 +44,8 @@ CONNECTOR = _c(
             help="Only for an ORGANIZATION key (created outside a workspace): "
                  "the id of the workspace to bill. Empty for a workspace key."),
     ),
-    help="Anthropic model key — used by the organization's scheduled agents, never by a tool",
+    help="Anthropic model key — used by the organization's scheduled agents, never by a tool. "
+         "Without one, a platform key granted to the organization is used and billed.",
     href="https://console.anthropic.com/settings/keys",
 )
 

@@ -21,6 +21,7 @@ Pur : aucune dépendance, pour que la base comme les capacités puissent le lire
 """
 from __future__ import annotations
 
+import math
 from typing import NamedTuple, Optional
 
 
@@ -88,6 +89,73 @@ FAMILLES_PERSONNELLES = frozenset(f for f in FAMILLES if f.endswith("_subscripti
 #: Les modèles qui tournent sur l'abonnement d'une personne — ce que l'écriture d'une
 #: retouche confronte au modèle STOCKÉ, sans relire le déclencheur (`update_trigger`).
 MODELES_PERSONNELS = tuple(m.id for m in MODELES if m.family in FAMILLES_PERSONNELLES)
+
+
+class Tarif(NamedTuple):
+    """Ce que le FOURNISSEUR nous facture, en dollars par million de jetons — un
+    coût, jamais un prix de vente : la marge vit chez celui qui facture."""
+    entree: float
+    sortie: float
+    ecriture_cache: float
+    lecture_cache: float
+
+
+#: Le tarif public Anthropic des modèles `anthropic` du catalogue (relevé le
+#: 18/10/2026). Ne sert qu'aux travaux payés par une clé PARTAGÉE (tenant ou
+#: plateforme) : c'est ce qui se mesure au journal pour être refacturé.
+#: ⚠️ `ecriture_cache` = l'écriture à 5 minutes (1,25 × l'entrée), la seule que le
+#: worker pose (`CACHE_CONTROL = {"type": "ephemeral"}`, sans `ttl`). Un worker qui
+#: passerait à 1 h doublerait l'entrée, pas 1,25 : la table serait à reprendre.
+#: ⚠️ Un modèle `anthropic` ajouté au catalogue SANS tarif ne se mesure pas : aucune
+#: ligne, une erreur au journal (`cout_en_microdollars`) — jamais un coût nul.
+TARIFS_ANTHROPIC: dict[str, Tarif] = {
+    "claude-sonnet-5": Tarif(2.0, 10.0, 2.5, 0.20),
+    "claude-opus-5": Tarif(5.0, 25.0, 6.25, 0.50),
+    "claude-haiku-4-5": Tarif(1.0, 5.0, 1.25, 0.10),
+}
+
+
+def ecriture_cache_1h(tarif: Tarif) -> float:
+    """L'écriture de cache à 1 h : 2 × l'entrée (la grille Anthropic, à côté du 1,25 ×
+    de l'écriture à 5 min). Le worker n'en pose pas ; le relevé d'Anthropic, lui, la
+    sépare (`anthropic_usage.microdollars`)."""
+    return 2 * tarif.entree
+
+
+def tarif_anthropic(model: Optional[str]) -> Optional[Tarif]:
+    """Le tarif d'un modèle tel que l'API le SERT : l'id du catalogue, ou cet id
+    prolongé d'une DATE à 8 chiffres (`claude-sonnet-5-20260601` → `claude-sonnet-5`).
+    Jamais un autre modèle : `claude-opus-5-5` n'est pas Opus 5, il n'a pas de tarif."""
+    m = model or ""
+    if m in TARIFS_ANTHROPIC:
+        return TARIFS_ANTHROPIC[m]
+    candidats = [i for i in TARIFS_ANTHROPIC
+                 if m.startswith(i + "-") and len(m) == len(i) + 9
+                 and m[len(i) + 1:].isdigit()]
+    return TARIFS_ANTHROPIC[max(candidats, key=len)] if candidats else None
+
+
+def cout_en_microdollars(model: Optional[str], *, entree, sortie, ecriture_cache,
+                         lecture_cache) -> Optional[int]:
+    """Le coût fournisseur d'un travail, en micro-dollars arrondis au-dessus — ou
+    `None` s'il ne se calcule pas : modèle sans tarif, ou un poste NON DÉCLARÉ.
+
+    ⚠️ Un poste `None` n'est pas un zéro (oto-runner `comptage`) : un tour muet
+    sur un poste rend le coût inconnu, et un coût inconnu ne se facture pas.
+
+    Un jeton au tarif de X $ par million coûte X micro-dollars : la somme des
+    postes pondérés EST le coût en micro-dollars, sans conversion."""
+    tarif = tarif_anthropic(model)
+    postes = (entree, sortie, ecriture_cache, lecture_cache)
+    if tarif is None or any(p is None for p in postes):
+        return None
+    if any(isinstance(p, bool) or not isinstance(p, int) or p < 0 for p in postes):
+        return None
+    total = (entree * tarif.entree + sortie * tarif.sortie
+             + ecriture_cache * tarif.ecriture_cache + lecture_cache * tarif.lecture_cache)
+    # Arrondi à 6 décimales AVANT le plafond : 0,20 × 5 vaut 1,0000000000000002 en
+    # flottant, et ne doit pas coûter 2.
+    return math.ceil(round(total, 6))
 
 
 def famille(model: Optional[str]) -> Optional[str]:

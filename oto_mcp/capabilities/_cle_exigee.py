@@ -80,10 +80,104 @@ def cle_deposee(org_id: int, fournisseur: str) -> bool:
         return False
 
 
+#: Les rangs d'une clé PARTAGÉE : payée par le tenant ou la plateforme, jamais par
+#: l'org — donc refacturée (`runner_jobs._mesurer_cle_partagee`).
+RANGS_PARTAGES = (credentials_store.TENANT, credentials_store.PLATFORM)
+
+
+class CleIllisible(RuntimeError):
+    """Le coffre n'a pas répondu : on ne SAIT pas si une clé partagée sert cette org.
+    Levée seulement à qui la demande (`strict=True`) — la réservation, qui ne doit ni
+    servir ni arrêter un travail sur un doute."""
+
+
+def cle_partagee(org_id: int, fournisseur: str, sub: Optional[str] = None, *,
+                 strict: bool = False):
+    """La clé PARTAGÉE (tenant ou plateforme) qui sert `fournisseur` à cette org, ou
+    None. Rend le `ResolvedCredential` gagnant : sa clé et son rang (`mode`).
+
+    ⚠️ **Seulement un fournisseur qui DÉCLARE une clé de plateforme** (`platform` dans
+    ses `auth_modes`) : c'est la déclaration qu'une clé partagée de ce fournisseur se
+    sert, et se refacture. Sans elle, une clé posée au tenant pour un autre usage
+    partirait payer des travaux que rien ne mesure.
+
+    ⚠️ **Fermée** (`platform_key_open=False`) : la clé de plateforme ne sert que les
+    orgs à qui elle est accordée — c'est le DROIT. Le retirer (le grant de l'org)
+    coupe l'org dès la réservation suivante, ses agents compris.
+
+    `sub` = le demandeur du travail : la cascade complète, à son nom et dans l'org du
+    travail (son tenant compris). Sans lui — un écran, la pose d'un agent, ou un
+    travail d'avant le 02/09/2026 —, la cascade de l'ORG seule (l'arête tenant→org,
+    puis la plateforme), qui ne lit le tenant que par une arête vivante.
+
+    Le doute se lit « pas de clé partagée » et le dit : pour une garde d'argent, un
+    refus vaut mieux qu'une facture qui change de destinataire. Avec `strict`, il
+    LÈVE `CleIllisible` : la réservation rend alors le travail à la file plutôt que
+    de l'arrêter sur une raison fausse."""
+    from .. import access, session_org
+    from ..auth import hooks as auth_hooks
+    from ..mcp_errors import McpError
+    c = providers.connector_for_provider(fournisseur)
+    if c is None or "platform" not in c.auth_modes:
+        return None
+    try:
+        if sub:
+            with auth_hooks.sub_override(sub):
+                jeton = session_org.set_call_org(int(org_id))
+                try:
+                    rc = access.resolve_credential(fournisseur, sub=sub,
+                                                   emit_on_failure=False,
+                                                   check_usage=False)
+                finally:
+                    session_org.reset_call_org(jeton)
+        else:
+            rc = access._resolve_credential_anon(fournisseur, "auto", int(org_id),
+                                                 check_usage=False)
+    except McpError:
+        return None
+    except Exception as e:
+        logger.warning("clé partagée `%s` illisible pour l'org %s — %s", fournisseur,
+                       org_id, "doute rendu à l'appelant" if strict else "lue comme absente",
+                       exc_info=True)
+        if strict:
+            raise CleIllisible(str(e)) from e
+        return None
+    return rc if rc.mode in RANGS_PARTAGES else None
+
+
+def cle_de_plateforme_posee(fournisseur: str) -> Optional[bool]:
+    """L'instance a-t-elle POSÉ une clé partagée de ce fournisseur au rang plateforme ?
+    C'est le signe qu'elle paie ce fournisseur, et qu'un travail sans clé ne doit
+    plus tourner sur celle de l'environnement d'un worker (`runner_jobs._avec_cle`).
+
+    `None` = on ne sait pas (le coffre n'a pas répondu), et le dit : la réservation
+    ne sert alors rien et n'arrête rien — le travail retourne à la file."""
+    c = providers.connector_for_provider(fournisseur)
+    if c is None or "platform" not in c.auth_modes:
+        return False
+    try:
+        return bool(credentials_store.list_platform_credentials(fournisseur))
+    except Exception:
+        logger.warning("clés de plateforme `%s` illisibles — doute rendu à l'appelant",
+                       fournisseur, exc_info=True)
+        return None
+
+
+def raison_sans_acces(fournisseur: str) -> str:
+    return (f"cette organisation n'a pas déposé de clé `{fournisseur}`, et la clé partagée "
+            "de la plateforme ne lui est pas ouverte — jamais accordée, ou retirée. Deux "
+            "issues : déposer sa propre clé (Connecteurs), ou demander l'accès à qui "
+            "administre la clé partagée de cette instance. L'agent repartira à sa "
+            "prochaine échéance.")
+
+
 def manquantes(org_id: int, fournisseurs: Optional[list[str]] = None) -> list[str]:
-    """Les fournisseurs dont une clé est EXIGÉE et que l'org n'a pas déposée."""
+    """Les fournisseurs dont une clé est EXIGÉE et que l'org n'a ni déposée, ni reçue
+    en partage (`cle_partagee` : une clé de plateforme accordée paie, et se
+    refacture — l'org n'a rien à déposer)."""
     return [f for f in (fournisseurs or fournisseurs_de_modele())
-            if cle_exigee(org_id, f) and not cle_deposee(org_id, f)]
+            if cle_exigee(org_id, f) and not cle_deposee(org_id, f)
+            and cle_partagee(org_id, f) is None]
 
 
 def raison_du_refus(fournisseurs: list[str]) -> str:

@@ -193,6 +193,7 @@ PLANCHERS = {
     # ordinaire pour l'admin de son org, alors que le geste est un acte de litige.
     "oto_admin_legal_proof": "operator",
     "oto_admin_platform_balances": "operator",
+    "oto_admin_model_spend": "operator",
     "oto_admin_signal": "operator",
     "oto_admin_tenant": "operator",        # list/get PLATFORM, reload SUPER
     "oto_admin_unipile_seat": "super",

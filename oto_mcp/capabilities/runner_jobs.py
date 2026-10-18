@@ -40,7 +40,10 @@ class JobsInput(BaseModel):
     op: Literal["enqueue", "claim", "bind_run", "complete", "extend", "get", "list",
                 # Ce que la page Agents trace, pour toute l'org en UN appel : voir
                 # `_resume`. Lecture de membre, jamais de worker.
-                "summary"]
+                "summary",
+                # L'usage d'UN appel au modèle, rapporté par le worker AVANT de
+                # continuer (18/10/2026) : voir `_metrer_un_tour`.
+                "meter"]
     # enqueue —
     kind: Optional[Literal["start", "continue"]] = None
     payload: Optional[dict[str, Any]] = None
@@ -74,6 +77,13 @@ class JobsInput(BaseModel):
     # claim — le MOTEUR d'exécution du worker (29/09/2026). `farm` = Claude Code dans la
     # ferme : seul un tel worker réserve les travaux d'une org routée vers la ferme
     # (option d'org `claude_farm`). Absent = la boucle, comme avant.
+    meters_usage: bool = Field(False, description=(
+        "claim: this worker reports the usage of EVERY model call (`op=meter`) before "
+        "its next step, and stops when a report is refused. Only such a worker is "
+        "served a SHARED key (platform or tenant), whose cost is charged back: a "
+        "worker that does not declare it never receives one."))
+    # meter — le rang du tour dans la tentative (0, 1, 2…), strictement croissant.
+    turn: Optional[int] = Field(None, ge=0)
     engine: Optional[Literal["farm"]] = Field(None, description=(
         "claim: this worker's execution engine. `farm` = Claude Code in the farm. Jobs "
         "of the `anthropic` family of an organization routed to the farm (org option "
@@ -513,7 +523,7 @@ def _cle_de_modele(org_id: int, depot: str) -> tuple[Optional[str], Optional[str
 # seul.
 
 
-def _depot_pose(org_id: int, depot: str) -> bool:
+def _depot_pose(org_id: int, depot: str) -> Optional[bool]:
     """Cette org a-t-elle DÉPOSÉ cette clé — présence seule, sans déchiffrer.
 
     Sert à décider s'il y a quelque chose à refuser, donc quelque chose à dire.
@@ -522,6 +532,10 @@ def _depot_pose(org_id: int, depot: str) -> bool:
 
     `account=""` — le mono-compte, exactement ce que la remise lit : signaler un
     refus sur un dépôt qu'on n'aurait de toute façon pas servi serait un faux.
+
+    `None` = le coffre n'a pas répondu (18/10/2026) : la réservation ne sert alors
+    rien et n'arrête rien (`_doute_du_coffre`) — servir pourrait faire payer notre
+    clé sans mesure, arrêter écrirait une raison fausse.
     """
     from .. import credentials_store, providers
     c = providers.connector_for_provider(depot)
@@ -532,7 +546,7 @@ def _depot_pose(org_id: int, depot: str) -> bool:
     except Exception:
         logger.warning("présence du dépôt `%s` illisible pour l'org %s",
                        depot, org_id, exc_info=True)
-        return False
+        return None
 
 
 def _charge_servie(job: dict) -> dict:
@@ -574,7 +588,8 @@ def _charge_servie(job: dict) -> dict:
 
 
 def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
-              worker: bool, org_key_only: bool = False) -> Optional[dict]:
+              worker: bool, org_key_only: bool = False, metre: bool = False,
+              ferme: bool = False) -> Optional[dict]:
     """Le travail, augmenté de la clé de modèle de son org — à la RÉSERVATION.
 
     Le worker fait partie du backend et a le droit de lire les clés que les orgs
@@ -668,6 +683,62 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
         logger.warning("repli du travail %s NON défait (course) — rien n'est servi",
                        job.get("id"))
         return None
+    payeur = None
+    depose = _depot_pose(job["org_id"], depot) if not cle else True
+    if depose is None:
+        return _doute_du_coffre(job, appelant, depot)
+    if not cle and not depose:
+        # LA CLÉ PARTAGÉE (18/10/2026) : l'org n'a rien déposé, mais une clé de
+        # plateforme (ou de son tenant) lui est ACCORDÉE. Elle paie, et chaque appel
+        # au modèle se mesure au journal (`_metrer_un_tour`) pour être refacturé.
+        # ⚠️ Jamais quand l'org a DÉPOSÉ une clé que le coffre n'a pas rendue :
+        # elle paie déjà son fournisseur, et la facturer sur la nôtre pour un
+        # hoquet du coffre serait la faire payer deux fois. Ce cas garde le
+        # comportement d'avant.
+        try:
+            partagee = _cle_exigee.cle_partagee(job["org_id"], depot, sub=job.get("sub"),
+                                                strict=True)
+        except _cle_exigee.CleIllisible:
+            return _doute_du_coffre(job, appelant, depot)
+        posee = None if partagee is not None else _cle_exigee.cle_de_plateforme_posee(depot)
+        if partagee is None and posee is None:
+            return _doute_du_coffre(job, appelant, depot)
+        if partagee is not None:
+            if ferme:
+                # La ferme fait tourner Claude Code, dont nous ne mesurons pas chaque
+                # appel : elle ne reçoit jamais une clé que nous refacturons.
+                return _refuser_sans_cle(job, appelant, _FERME_SANS_CLE_D_ORG)
+            if not metre:
+                # Un worker qui ne mesure pas chaque appel ne reçoit pas notre clé —
+                # mais l'org y a droit : le travail retourne à la file, sans compter
+                # la tentative, pour un worker qui mesure.
+                db.rendre_a_la_file(job["id"], appelant, _ATTEND_UN_WORKER_QUI_MESURE)
+                logger.warning("travail %s (org %s) : clé partagée `%s` NON servie à %s, "
+                               "qui ne mesure pas chaque appel — rendu à la file",
+                               job.get("id"), job["org_id"], depot, appelant)
+                return None
+            if not db.estampiller_cle_partagee(job["id"], appelant, depot, partagee.mode):
+                # Plus à ce worker (course) : rien n'est servi sur une clé qu'on ne
+                # saurait pas refacturer. Le bail expirera.
+                logger.warning("travail %s : estampille de la clé partagée `%s` NON "
+                               "écrite — rien n'est servi", job.get("id"), depot)
+                return None
+            cle, payeur = partagee.key, partagee.mode
+            # Le workspace d'une clé d'ORGANISATION Anthropic, s'il voyage avec la
+            # config résolue. ⚠️ Au rang plateforme, la `meta` n'en fait pas partie :
+            # la clé partagée se pose donc en clé de WORKSPACE, qui n'en a pas besoin.
+            try:
+                workspace = (partagee.config or {}).get("workspace_id") or None
+            except Exception:
+                logger.warning("travail %s : config de la clé partagée `%s` illisible — "
+                               "servie sans workspace", job.get("id"), depot, exc_info=True)
+                workspace = None
+        elif posee:
+            # ⚠️ L'instance PAIE ce fournisseur par une clé partagée, et cette org n'y
+            # a pas accès (jamais accordée, ou retirée). Servi sans
+            # clé, le travail tournerait sur la clé de l'ENVIRONNEMENT du worker :
+            # payée par nous, mesurée nulle part. Arrêté, la raison dit les deux issues.
+            return _refuser_sans_cle(job, appelant, _cle_exigee.raison_sans_acces(depot))
     if not cle and org_key_only:
         # ⚠️ Un worker SANS clé de plateforme : le remettre sans clé, c'est un
         # travail qui échouera chez le fournisseur — ou, pire, qui trouvera une
@@ -688,11 +759,126 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
     # Trace de REMISE : qui, quelle org, quel dépôt, quel travail — jamais la clé.
     # Sans elle, une remise anormale ne laisse aucune trace : le seul endroit où
     # elle se verrait serait la facture de l'org.
-    logger.info("clé de modèle `%s` remise à %s pour l'org %s (travail %s)",
-                depot, appelant, job["org_id"], job.get("id"))
+    logger.info("clé de modèle `%s` remise à %s pour l'org %s (travail %s, %s)",
+                depot, appelant, job["org_id"], job.get("id"),
+                f"clé partagée, rang {payeur}" if payeur else "clé de l'org")
     # Le workspace part À CÔTÉ de la clé, s'il est posé — et reste hors de la trace
     # ci-dessus comme elle.
-    return {**job, "model_key": cle, **({"model_workspace": workspace} if workspace else {})}
+    return {**job, "model_key": cle, **({"model_workspace": workspace} if workspace else {}),
+            # Le worker rapporte alors CHAQUE appel au modèle (`op=meter`) avant de
+            # continuer : c'est ce que ce drapeau lui demande.
+            **({"meter_usage": True} if payeur else {})}
+
+
+def _postes_du_resultat(r: dict) -> dict:
+    """Les quatre postes facturés d'un usage rapporté, sous les noms du worker."""
+    return dict(entree=r.get("usage_input"), sortie=r.get("usage_output"),
+                ecriture_cache=r.get("usage_cache_write"),
+                lecture_cache=r.get("usage_cache_read"))
+
+
+def _metrer_un_tour(ctx: ResolvedCtx, job_id: int, tour: int, usage: dict) -> dict:
+    """L'usage d'UN appel au modèle, payé par une clé PARTAGÉE, au journal des appels
+    — AVANT que le worker continue (18/10/2026).
+
+    La mesure à la conclusion seule laissait filer tout ce qu'un worker dépensait
+    puis perdait : un processus tué, un bail mort, une conclusion jamais envoyée.
+    Ici chaque appel s'inscrit à mesure — une ligne `anthropic_tokens` par tour,
+    `quantity` en micro-dollars — et le worker s'ARRÊTE si le rapport est refusé :
+    un travail ne continue pas sur notre clé sans que son coût soit inscrit. Au pire,
+    un crash perd l'appel en vol.
+
+    - **Refusé** (422) quand l'entrée ou la sortie n'est pas déclarée, ou que le modèle
+      n'a pas de tarif : rien ne s'inscrit, et le worker s'arrête. Le cache non
+      déclaré se lit zéro, et la ligne le dit (`cache_non_declare`).
+    - **Idempotent** : un tour déjà inscrit (le worker rejoue un rapport dont il n'a
+      pas reçu la réponse) ne s'inscrit pas deux fois — `duplicate: true`.
+    - Un travail servi par la clé de SON org n'a rien à mesurer : `metered: false`."""
+    postes = _postes_du_resultat(usage)
+    if postes["entree"] is None or postes["sortie"] is None:
+        raise AuthzDenied(422, "usage_unmeasured",
+                          "l'entrée et la sortie du tour doivent être déclarées : sans "
+                          "elles, le coût ne s'inscrit pas et le travail s'arrête.")
+    cache_non_declare = postes["ecriture_cache"] is None or postes["lecture_cache"] is None
+    postes = {k: (v or 0) for k, v in postes.items()}
+    modele = usage.get("model")
+    cout = runner_models.cout_en_microdollars(modele, **postes)
+    if cout is None:
+        raise AuthzDenied(422, "model_unpriced",
+                          f"aucun tarif pour le modèle {modele!r} : le coût ne s'inscrit "
+                          "pas, et le travail s'arrête.")
+    ecrit = db.metrer_un_tour(job_id, ctx.sub, tour, cout, postes, {
+        "runner_job_id": int(job_id), "turn": int(tour), "model": modele,
+        **({"cache_non_declare": True} if cache_non_declare else {})})
+    if ecrit is None:
+        raise AuthzDenied(404, "job_not_found", "job inconnu")
+    if ecrit == "sans_cle_partagee":
+        return {"ok": True, "metered": False}
+    return {"ok": True, "metered": True, "microdollars": cout,
+            "duplicate": ecrit == "deja_inscrit"}
+
+
+def outil_du_cout(depot: str) -> str:
+    """Le nom sous lequel le coût d'une clé partagée s'inscrit au journal, par dépôt.
+    ⚠️ C'est le nom que le service qui facture relève, octet pour octet."""
+    return f"{depot}_tokens"
+
+
+def _mesurer_cle_partagee(job_id: int, conclu: dict, resultat: Optional[dict]) -> None:
+    """À la conclusion d'une tentative payée par une clé PARTAGÉE : le RESTE, s'il y
+    en a — ce que le worker déclare au total moins ce que ses tours ont déjà inscrit
+    (`_metrer_un_tour`, cumulé sur l'estampille).
+
+    Les tours mesurés font la facture ; la conclusion la RAPPROCHE. Un tour que le
+    worker n'a pas pu rapporter (un appel qui coupe la boucle avant le rapport, un
+    worker d'avant la mesure par tour) se retrouve ici, mesuré par le total que le
+    fournisseur a déclaré — jamais estimé. L'écart dans l'autre sens (inscrit >
+    déclaré, l'arrondi de chaque tour au micro-dollar) ne rembourse rien.
+
+    - **Seulement la tentative estampillée** (`db.estampiller_cle_partagee`).
+    - **Une tentative qui échoue a consommé** : `ok=True`, la dépense est réelle.
+    - **Rien d'inventé** : un total non déclaré ou un modèle sans tarif, et rien de
+      plus ne s'inscrit — une erreur au journal si les tours n'ont rien inscrit non
+      plus.
+
+    Best-effort : la mesure ne casse jamais la conclusion d'un travail."""
+    estampille = (conclu or {}).get("cle_partagee")
+    if not isinstance(estampille, dict) or estampille.get("tentative") != conclu.get("attempts"):
+        return
+    deja = int(estampille.get("microdollars") or 0)
+    r = resultat or {}
+    modele = r.get("model")
+    declare = runner_models.cout_en_microdollars(modele, **_postes_du_resultat(r))
+    if declare is None:
+        (logger.warning if deja else logger.error)(
+            "travail %s (org %s) servi sur la clé partagée `%s` (%s) : total NON mesuré "
+            "— modèle %r, postes %s ; %s µ$ déjà inscrits par tour", job_id,
+            conclu.get("org_id"), estampille.get("depot"), estampille.get("mode"), modele,
+            {k: r.get(k) for k in ("usage_input", "usage_output",
+                                   "usage_cache_write", "usage_cache_read")}, deja)
+        return
+    reste = declare - deja
+    if reste <= 0:
+        return
+    from ..calllog import truncated_args
+    outil = outil_du_cout(str(estampille.get("depot")))
+    ligne = {
+        "server": "oto", "kind": "mcp", "sub": conclu.get("sub"), "tool": outil,
+        "args": truncated_args({"runner_job_id": int(job_id), "model": modele,
+                                "attempt": conclu.get("attempts"), "turn": "reste"},
+                               tool=outil),
+        "ok": True, "duration_ms": 0, "org_id": conclu.get("org_id"),
+        "run_id": conclu.get("run_id"), "quantity": reste,
+        "key_mode": estampille.get("mode"),
+    }
+    if deja:
+        logger.warning("travail %s : %s µ$ déclarés au total au-delà des tours inscrits "
+                       "(%s µ$) — inscrits en reste", job_id, reste, deja)
+    try:
+        db.insert_tool_call(ligne)
+    except Exception:  # noqa: BLE001 — journalisé ; la conclusion tient quoi qu'il arrive
+        logger.error("travail %s : coût de la clé partagée NON journalisé (quantity=%s µ$, "
+                     "org %s)", job_id, reste, conclu.get("org_id"), exc_info=True)
 
 
 def _avec_abonnement(job: dict, famille: str, appelant: str) -> dict:
@@ -777,6 +963,28 @@ def _refuser_sans_cle(job: dict, appelant: str, raison: str) -> dict:
     logger.warning("travail %s (org %s) ARRÊTÉ sans clé de modèle : %s",
                    job.get("id"), job.get("org_id"), raison)
     return {**job, "delegation_refusee": raison, "delegated_token": None}
+
+
+def _doute_du_coffre(job: dict, appelant: str, depot: str) -> None:
+    """Le coffre n'a pas répondu à la réservation : on ne sait ni quelle clé sert
+    cette org, ni si elle en a une. Rien n'est servi — notre clé pourrait payer sans
+    mesure — et rien n'est arrêté — une raison écrite sur un doute serait fausse. Le
+    travail retourne à la file sans compter la tentative."""
+    db.rendre_a_la_file(job["id"], appelant,
+                        f"coffre illisible à la réservation (clé `{depot}`) — réessai")
+    logger.warning("travail %s (org %s) : coffre illisible pour la clé `%s` — rendu à la "
+                   "file, ni servi ni arrêté", job.get("id"), job.get("org_id"), depot)
+    return None
+
+
+_FERME_SANS_CLE_D_ORG = (
+    "cette organisation est servie par la ferme (Claude Code), qui ne tourne que sur la "
+    "clé Anthropic de l'organisation elle-même. Elle n'en a pas déposé : dépose-la "
+    "(Connecteurs), ou fais retirer l'option ferme pour tourner sur la clé partagée.")
+
+_ATTEND_UN_WORKER_QUI_MESURE = (
+    "en attente d'un worker qui mesure chaque appel au modèle : la clé partagée n'est "
+    "servie qu'à lui.")
 
 
 _SANS_PORTEUR = (
@@ -1020,7 +1228,7 @@ def _charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
 #: Ce qu'un worker sait faire — et rien d'autre. Enfiler, lister, lire un
 #: travail sont des gestes d'organisation : ils exigent une org, et un worker
 #: n'en a pas.
-_VERBES_DU_WORKER = frozenset({"claim", "bind_run", "extend", "complete"})
+_VERBES_DU_WORKER = frozenset({"claim", "bind_run", "extend", "complete", "meter"})
 
 
 def _exige_flotte_servie(statut: Optional[str]) -> None:
@@ -1251,7 +1459,8 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         # ensuite voit l'org et les outils que l'agent recevra.
         return {"job": _avec_cle(
             _delegue(_charge_servie(job), bail, ctx.sub), inp.provider,
-            ctx.sub, worker=ctx.platform_worker, org_key_only=inp.org_key_only)}
+            ctx.sub, worker=ctx.platform_worker, org_key_only=inp.org_key_only,
+            metre=inp.meters_usage, ferme=ferme)}
 
     if inp.op == "summary":
         return _resume(ctx, inp.days)
@@ -1301,6 +1510,12 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             raise AuthzDenied(404, "job_not_found", "job inconnu")
         return {"ok": True}
 
+    if inp.op == "meter":
+        if inp.job_id is None or inp.turn is None or not inp.result:
+            raise AuthzDenied(400, "missing_fields",
+                              "meter exige `job_id`, `turn` et `result` (l'usage du tour)")
+        return _metrer_un_tour(ctx, inp.job_id, inp.turn, inp.result)
+
     if inp.op == "complete":
         if inp.ok is None:
             raise AuthzDenied(400, "missing_fields", "complete exige `ok` (true/false)")
@@ -1313,6 +1528,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             # Déjà re-claimé après bail mort, ou jamais à lui : on ne conclut pas
             # ce qui ne nous appartient plus.
             raise AuthzDenied(404, "job_not_found", "job inconnu")
+        _mesurer_cle_partagee(inp.job_id, res, inp.result)
         # Ce que le worker a vu du FORFAIT (OTO-130) se porte sur la connexion du
         # demandeur. ⚠️ Worker de plateforme SEULEMENT : la conclusion est ouverte
         # à qui tient la prise, et un membre qui aurait réservé le travail d'un

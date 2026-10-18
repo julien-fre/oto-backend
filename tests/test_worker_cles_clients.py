@@ -22,6 +22,21 @@ import pytest
 from oto_mcp.capabilities import runner_jobs as RJ
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
+
+@pytest.fixture(autouse=True)
+def _aucune_cle_partagee(monkeypatch):
+    """Aucune clé partagée (plateforme ou tenant) n'est posée ni accordée ici, et le
+    dépôt de l'org se lit sans aller au coffre : un coffre injoignable se lit
+    désormais « doute » et rend le travail à la file. Le cas de la clé partagée a
+    son banc (`test_cle_partagee_anthropic.py`)."""
+    monkeypatch.setattr("oto_mcp.capabilities._cle_exigee.cle_partagee",
+                        lambda org_id, fournisseur, sub=None, strict=False: None)
+    monkeypatch.setattr("oto_mcp.capabilities._cle_exigee.cle_de_plateforme_posee",
+                        lambda fournisseur: False)
+    monkeypatch.setattr("oto_mcp.capabilities.runner_jobs._depot_pose",
+                        lambda org_id, depot: False)
+
+
 ORG = 42
 
 
