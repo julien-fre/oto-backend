@@ -19,10 +19,12 @@ provider's row, never on the waterfall's), and ITS namespace's redaction policy.
    `secret=False`: a setting, never a secret). An unknown key there is IGNORED and named
    on the receipt (`ignored_steps`): the person calling did not write it;
 3. the default table below (`EMAIL_STEPS`…).
-Then **the providers the caller holds their OWN key for run first** (user, team, org or
-tenant key — `access.credential_mode_for`, read once per call, before spending anything),
-the shared platform keys next, each group in the order above. A provider with no key at
-all is skipped without being called.
+On the DEFAULT order only, **the providers the caller holds their OWN key for run first**
+(user, team, org or tenant key — `access.credential_mode_for`, read once per call, before
+spending anything) together with the FREE steps (French registry, the caller's own
+LinkedIn session), the shared platform keys next, each group in the table's order. An
+order someone WROTE (the call's, the setting's) is kept as written. Either way, a
+provider with no key at all is skipped without being called.
 
 **What a step's failure does**: nothing but move on — a connector not activated, a key
 refused, an empty account, a rate limit, a provider error: each is recorded on the receipt
@@ -67,11 +69,12 @@ _OWN_KEY = ("user", "group", "org", "tenant")
 #: …and those that mean "no usable key": the step is skipped without a call.
 _NO_KEY = ("forbidden", "over_quota")
 
-#: The whole cascade answers within this, under the process tool bound (120 s): a step
+#: The whole cascade answers within this — under the 45 s of the REST tool-invoke path
+#: (`capabilities/tools_me.py`), the tightest bound a caller meets (MCP: 120 s). A step
 #: that would start after it is skipped (`time_budget`).
-DEADLINE_S = 90.0
+DEADLINE_S = 40.0
 #: An asynchronous step polls for at most this long, first poll after `POLL_FIRST_S`.
-POLL_BUDGET_S = 40.0
+POLL_BUDGET_S = 25.0
 POLL_FIRST_S = 8.0
 POLL_EVERY_S = 6.0
 
@@ -238,6 +241,8 @@ class Step:
     # not say it (an internal flag is not something a caller can give).
     needs: str = ""
     collect: Optional[Collect] = None
+    # Costs the caller nothing (open data, their own session): ranks with their own keys.
+    free: bool = False
 
 
 def _runnable(step: Step, inputs: dict) -> bool:
@@ -322,8 +327,10 @@ def _plan(ns: str, steps: tuple[Step, ...], providers_arg: Optional[list[str]],
             keys = list(by_key)
     ordered = [by_key[k] for k in dict.fromkeys(keys)]
     modes = _key_modes(sub, [s.tool for s in ordered])
-    # Own keys first, then shared keys — `sorted` is stable: each group keeps its order.
-    ordered.sort(key=lambda s: 0 if modes.get(s.tool) in _OWN_KEY else 1)
+    if source == "default":
+        # Own keys and free steps first, then shared keys — the sort is stable: each
+        # group keeps the table's order. A WRITTEN order is not re-sorted.
+        ordered.sort(key=lambda s: 0 if s.free or modes.get(s.tool) in _OWN_KEY else 1)
     return ordered, ignored, source, modes
 
 
@@ -866,11 +873,12 @@ def _cognism_company(res, inputs):
 
 COMPANY_STEPS: tuple[Step, ...] = (
     Step("fr_get", "fr_get", (("siren",),),
-         lambda i: {"siren": i["siren"]}, _fr_get_company, "free (French open data)"),
+         lambda i: {"siren": i["siren"]}, _fr_get_company, "free (French open data)",
+         free=True),
     Step("fr_search", "fr_search", (("company_name", "fr"),),
          lambda i: {"query": i["company_name"], "per_page": 5},
          _fr_search_company, "free (French open data)",
-         needs="company_name, and a French company (country omitted or FR)"),
+         needs="company_name, and a French company (country omitted or FR)", free=True),
     Step("aiark", "linkedin_aiark_search", (("domain",), ("company_name",)),
          _aiark_company_args, _aiark_company, "AI Ark credits per company returned"),
     Step("apollo", "apollo_enrich_organization", (("domain",),),
@@ -954,7 +962,8 @@ def _lemlist_person(res, inputs):
 PERSON_STEPS: tuple[Step, ...] = (
     Step("linkedin", "linkedin_unipile_profile", (("linkedin_url",),),
          lambda i: {"op": "person", "identifier": _slug(i["linkedin_url"])},
-         _generic_person, "free — your connected LinkedIn account (rate-limited)"),
+         _generic_person, "free — your connected LinkedIn account (rate-limited)",
+         free=True),
     Step("aiark", "linkedin_aiark_person", (("linkedin_url",),),
          lambda i: {"op": "export", "url": i["linkedin_url"]},
          _aiark_person, "AI Ark export credits"),
@@ -982,9 +991,10 @@ PERSON_STEPS: tuple[Step, ...] = (
 # --- the tools -----------------------------------------------------------------------
 
 _ORDER_DOC = """**Order**: your `steps` setting on this connector's card if set (an org
-        default, or your own override), else the default order above; either way, the
-        providers you hold your OWN key for run first, the shared platform keys next,
-        and a provider with no usable key is skipped without being called. Each step
+        default, or your own override), kept as written; else the default order above,
+        where the providers you hold your OWN key for (and the free steps) run first and
+        the shared platform keys next. A provider with no usable key is skipped without
+        being called. Each step
         uses THAT provider's key and is billed by it, exactly as a direct call of its
         tool — the waterfall adds no cost. A step whose inputs are missing, or whose
         connector is not activated for this org, is skipped too. Give every input you
@@ -998,7 +1008,8 @@ _RECEIPT_DOC = """`attempts` says, step by step, what happened (found / no_match
 _COMMON_ARGS = """            providers: the steps to try for THIS call, in this order — keys
                 from the list above. Overrides your setting. Never a tool name.
             dry_run: return the plan (order, key per step, arguments, skips) without
-                calling anything."""
+                calling anything. `planned` is not a promise: the connector's activation
+                for your org is only checked by the real call."""
 
 
 def register(mcp: FastMCP) -> None:

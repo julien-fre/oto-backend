@@ -19,7 +19,7 @@ CONNECTOR = _c(
     credential_fields=(CredentialField(
         "steps", "Steps, in order", secret=False, required=False,
         help="optional — comma-separated provider keys, e.g. `aiark,apollo,forager,cognism,lusha,lemlist`. "
-             "Empty = the default order. Providers you hold a key for always run first."),),
+             "Empty = the default order, where providers you hold your own key for run first."),),
     label="Person waterfall",
     help="a person's current role and company, across your connected providers one after the other, stopping at the "
          "first hit",

@@ -2,7 +2,8 @@
 
 this connector has no key of its own: each step calls another connector's tool, with that connector's key.
 - connect the providers you want in the cascade on their own cards, and have them activated for your org — your connected linkedin account (free), ai ark (`aiark`), apollo, forager, cognism, lusha, lemlist
-- providers you hold your **own** key for always run first; the shared platform keys next; a provider with no usable key is skipped without being called
+- with the default order, providers you hold your **own** key for (and the free steps) run first, the shared platform keys next; an order you write is kept as written
+- a provider with no usable key is skipped without being called
 - each step is billed by its provider exactly as a direct call would be — the waterfall adds no cost of its own
 - in a hosted agent, list the step tools you want it to use next to `waterfall_person` — a step outside the job's tool list is skipped
 

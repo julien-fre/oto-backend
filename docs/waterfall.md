@@ -60,10 +60,14 @@ Trois couches, la plus spécifique gagne :
    nommée (`ignored_steps`) : celui qui appelle ne l'a pas écrite ;
 3. la table par défaut.
 
-Puis **les fournisseurs pour lesquels l'appelant détient SA clé passent devant**
+Sur l'ordre PAR DÉFAUT seulement, **les fournisseurs pour lesquels l'appelant détient SA
+clé passent devant**, avec les étapes GRATUITES (`Step.free` : registre français, session
+LinkedIn de l'appelant — que `credential_mode_for` dit `platform` et qu'un tri par clé
+aurait placées derrière une clé payante)
 (utilisateur, équipe, org, tenant — `access.credential_mode_for`, lu une fois par
 porteur et par appel, AVANT toute dépense), les clés partagées de la plateforme ensuite,
-chaque groupe dans l'ordre ci-dessus (tri stable). Un fournisseur sans clé utilisable
+chaque groupe dans l'ordre de la table (tri stable). Un ordre ÉCRIT — celui de l'appel ou
+du réglage — est gardé tel quel : quelqu'un l'a choisi. Un fournisseur sans clé utilisable
 (`forbidden`, `over_quota`) est sauté sans être appelé. ⚠️ Ce mode est une lecture
 proche de la résolution réelle, pas exacte (il ignore un `_instance` épinglé, un compte
 nommé, l'option payante) : il ORDONNE, il ne garde rien — la garde reste l'appel de
@@ -78,8 +82,10 @@ de débit, panne), un résultat retenu par la rédaction, une réponse sans vale
 écrit dans `attempts` (statut, code, message, mode de clé) et l'étape suivante est
 essayée. Un `not_found` (404) est un non-trouvé, pas un échec. Seules les fautes de
 l'appelant lèvent : aucune étape possible avec ces entrées, une clé de `providers`
-inconnue, un SIREN malformé. Le tout tient en **90 s** (`DEADLINE_S`, sous la borne de
-120 s du processus) : une étape qui partirait après est sautée (`time_budget`).
+inconnue, un SIREN malformé. Le tout tient en **40 s** (`DEADLINE_S`) : sous les 45 s du
+chemin REST d'invocation (`capabilities/tools_me.py`, la borne la plus serrée qu'un
+appelant rencontre — MCP : 120 s) ; une étape qui partirait après est sautée
+(`time_budget`).
 
 ⚠️ **Un trouvé se juge à la FORME de la valeur** : une adresse qui a la forme d'un email,
 un numéro d'au moins six chiffres, un profil qui nomme un titre ou une société. Un
@@ -93,7 +99,7 @@ réponse plus bas.
 ## L'étape asynchrone : lemlist
 
 `lemlist_enrich` soumet et rend un `enrichment_id` ; `lemlist_enrich_result` relève
-(gratuit). L'étape soumet, attend ~8 s, relève toutes les ~6 s pendant au plus 40 s
+(gratuit). L'étape soumet, attend ~8 s, relève toutes les ~6 s pendant au plus 25 s
 (`POLL_*`). Fini à temps → lu comme une étape ordinaire ; un `done` à digest vide qui
 porte un `warning` n'est pas final (lemlist demande une relève de plus). Pas fini → l'étape
 est `pending`, la réponse donne l'appel exact à faire plus tard (`pending[]`), et la

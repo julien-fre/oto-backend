@@ -19,7 +19,7 @@ CONNECTOR = _c(
     credential_fields=(CredentialField(
         "steps", "Steps, in order", secret=False, required=False,
         help="optional — comma-separated provider keys, e.g. `hunter,apollo,aiark,kaspr,forager,lusha,lemlist`. "
-             "Empty = the default order. Providers you hold a key for always run first."),),
+             "Empty = the default order, where providers you hold your own key for run first."),),
     label="Email waterfall",
     help="a person's professional email, across your connected providers one after the other, stopping at the "
          "first hit",

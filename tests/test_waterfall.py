@@ -141,7 +141,21 @@ def test_un_fournisseur_sans_cle_est_saute_sans_appel(calls):
     assert _made(calls) == ["apollo_match_person"]
 
 
+def test_un_ordre_ecrit_n_est_pas_retrie(calls):
+    calls["modes"] = {"hunter_email_finder": "user"}
+    _run("waterfall_email", full_name="Jane Doe", domain="acme.com", providers=["lusha", "hunter"])
+    assert _made(calls) == ["lusha_search_and_enrich", "hunter_email_finder"]
+
+
+def test_les_etapes_gratuites_restent_devant_une_cle_payante(calls):
+    calls["modes"] = {"apollo_enrich_organization": "org"}
+    out = _run("waterfall_company", company_name="Acme", domain="acme.com", siren="123456789",
+               dry_run=True)
+    assert [a["provider"] for a in out["attempts"]][:3] == ["fr_get", "fr_search", "apollo"]
+
+
 def test_le_reglage_de_la_carte_fixe_l_ordre_et_ignore_l_inconnu(calls):
+    calls["modes"] = {"hunter_email_finder": "user"}
     calls["setting"] = ["lusha", "nope", "hunter"]
     out = _run("waterfall_email", full_name="Jane Doe", domain="acme.com")
     assert _made(calls) == ["lusha_search_and_enrich", "hunter_email_finder"]
