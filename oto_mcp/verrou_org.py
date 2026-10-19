@@ -38,6 +38,10 @@ mordre) ou `off`. Indépendant du verrou d'org : couper l'un ne coupe pas l'autr
 `OTO_VERROU_ROLES_PLATEFORME_ORGS` (ids d'org, virgules) EXEMPTE de ce verrou les travaux
 de ces orgs — celle de l'opérateur, dont les agents hébergés servent des `oto_admin_*` :
 leur porteur garde son rôle plateforme, quel que soit le mode. Vide = aucune exemption.
+⚠️ Seulement pour un agent que SON PORTEUR SEUL peut changer
+(`db.agent_au_seul_proprietaire`) : un agent tourne sous son propriétaire quel que soit
+celui qui l'a modifié, donc un agent qu'un autre peut retoucher prêterait le rôle à cet
+autre. Un travail enfilé à la main, ou d'un agent prêté, reste borné.
 """
 from __future__ import annotations
 
@@ -87,6 +91,9 @@ _ROLES_PLATEFORME = ("admin", "super_admin")
 #: requête, pas une par prédicat — `get_user_role` est lu des dizaines de fois.
 _ROLE_SIGNALE: contextvars.ContextVar[Optional[Verrou]] = contextvars.ContextVar(
     "oto_verrou_role_signale", default=None)
+#: Le verdict d'exemption déjà lu en base pour ce verrou : une lecture par requête.
+_EXEMPTION: contextvars.ContextVar[Optional[tuple[Verrou, bool]]] = contextvars.ContextVar(
+    "oto_verrou_role_exemption", default=None)
 
 
 def poser(verrou: Optional[Verrou]) -> contextvars.Token:
@@ -217,10 +224,28 @@ def orgs_exemptees() -> frozenset[int]:
     return frozenset(orgs)
 
 
+def _exempte(v: Verrou) -> bool:
+    """Le travail de `v` garde-t-il le rôle plateforme de son porteur ? Son org est
+    exemptée ET son agent n'est modifiable que par lui. Lu au plus une fois par requête."""
+    if v.org_id is None or v.job_id is None or v.org_id not in orgs_exemptees():
+        return False
+    deja = _EXEMPTION.get()
+    if deja is not None and deja[0] is v:
+        return deja[1]
+    from . import db
+    verdict = db.agent_au_seul_proprietaire(v.job_id)
+    if not verdict:
+        logger.info("verrou des rôles plateforme : le travail %s (org exemptée %s) "
+                       "vient d'un agent qu'un autre que son porteur peut changer — "
+                       "non exempté", v.job_id, v.org_id)
+    _EXEMPTION.set((v, verdict))
+    return verdict
+
+
 def role_plateforme(sub: Optional[str], role: str) -> str:
     """Le rôle plateforme de `sub` sous la requête courante : `member` à la place
     d'`admin`/`super_admin` pour le PORTEUR d'un jeton de délégation, en `enforce` —
-    sauf si l'org de son travail est exemptée (`orgs_exemptees`), ni retiré ni journalisé.
+    sauf pour un travail exempté (`_exempte`), ni retiré ni journalisé.
 
     Lit la ContextVar BRUTE, pas `courant()` : `OTO_VERROU_ORG_DELEGATION=off` ne doit
     pas rendre au porteur ses rôles plateforme — chaque réglage coupe son verrou. Un
@@ -231,7 +256,7 @@ def role_plateforme(sub: Optional[str], role: str) -> str:
     v = _COURANT.get()
     if v is None or sub is None or str(sub) != v.sub:
         return role
-    if v.org_id is not None and v.org_id in orgs_exemptees():
+    if _exempte(v):
         return role
     m = mode_roles()
     if m == "off":

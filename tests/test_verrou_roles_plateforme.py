@@ -132,7 +132,18 @@ def test_un_member_reste_member(delegue, monkeypatch):
 ENV_ORGS = "OTO_VERROU_ROLES_PLATEFORME_ORGS"
 
 
-def test_org_exemptee_garde_le_role_sans_le_journaliser(delegue, monkeypatch, caplog):
+@pytest.fixture
+def seul_proprietaire(monkeypatch):
+    """L'agent du travail n'est modifiable que par son porteur (doublure de la base,
+    prouvée par `test_partage_agents_db::test_l_agent_au_seul_proprietaire`)."""
+    lus = []
+    monkeypatch.setattr(access.db, "agent_au_seul_proprietaire",
+                        lambda job_id: lus.append(job_id) or True)
+    return lus
+
+
+def test_org_exemptee_garde_le_role_sans_le_journaliser(delegue, seul_proprietaire,
+                                                         monkeypatch, caplog):
     """L'org de l'opérateur : ses agents hébergés servent des `oto_admin_*`."""
     monkeypatch.setenv(ENV, "enforce")
     monkeypatch.setenv(ENV_ORGS, "7, 42")
@@ -142,15 +153,29 @@ def test_org_exemptee_garde_le_role_sans_le_journaliser(delegue, monkeypatch, ca
     with caplog.at_level(logging.WARNING, logger="oto_mcp.verrou_org"):
         assert access.is_super_admin(PORTEUR)
     assert not [r for r in caplog.records if "rôles plateforme" in r.getMessage()]
+    assert set(seul_proprietaire) == {7}
 
 
-def test_une_autre_org_reste_bornee(delegue, monkeypatch):
+def test_un_agent_qu_un_autre_peut_changer_n_est_pas_exempte(delegue, monkeypatch):
+    """Un agent tourne sous son propriétaire quel que soit celui qui l'a modifié :
+    exempter un agent prêté prêterait le rôle plateforme à son éditeur."""
+    monkeypatch.setenv(ENV, "enforce")
+    monkeypatch.setenv(ENV_ORGS, "42")
+    lus = []
+    monkeypatch.setattr(access.db, "agent_au_seul_proprietaire",
+                        lambda job_id: lus.append(job_id) or False)
+    assert access.get_user_role(PORTEUR) == "member"
+    assert not access.is_super_admin(PORTEUR)
+    assert lus == [7], "lu une fois par requête, pas une par prédicat"
+
+
+def test_une_autre_org_reste_bornee(delegue, seul_proprietaire, monkeypatch):
     monkeypatch.setenv(ENV, "enforce")
     monkeypatch.setenv(ENV_ORGS, "43")
     assert access.get_user_role(PORTEUR) == "member"
 
 
-def test_un_travail_sans_org_n_est_jamais_exempte(comptes, monkeypatch):
+def test_un_travail_sans_org_n_est_jamais_exempte(comptes, seul_proprietaire, monkeypatch):
     monkeypatch.setenv(ENV, "enforce")
     monkeypatch.setenv(ENV_ORGS, "42")
     t = verrou_org.poser(verrou_org.Verrou(sub=PORTEUR, org_id=None, job_id=8))
@@ -160,7 +185,8 @@ def test_un_travail_sans_org_n_est_jamais_exempte(comptes, monkeypatch):
         verrou_org.lever(t)
 
 
-def test_un_element_non_entier_n_exempte_rien(delegue, monkeypatch, caplog):
+def test_un_element_non_entier_n_exempte_rien(delegue, seul_proprietaire, monkeypatch,
+                                              caplog):
     monkeypatch.setenv(ENV, "enforce")
     monkeypatch.setenv(ENV_ORGS, "quarante-deux")
     with caplog.at_level(logging.WARNING, logger="oto_mcp.verrou_org"):

@@ -80,3 +80,34 @@ def test_le_forfait_ne_se_prete_que_par_son_proprietaire_a_une_personne(live, pg
     assert db.forfaits_pretes([tid], "nomme") == set()
     assert db.update_trigger(tid, ORG, {"input": "y"},
                              hors_abonnement_d_autrui="nomme") is None
+
+
+def test_l_agent_au_seul_proprietaire(live):
+    """Ce qui exempte un travail du verrou des rôles plateforme (`verrou_org._exempte`) :
+    un agent que SON PORTEUR SEUL peut changer — abonnement personnel, aucun éditeur
+    nommé par lui. Un partage à l'org entière ou posé par un admin ne prête rien."""
+    from oto_mcp import db
+
+    def travail(t, sub="proprio", org=ORG):
+        return db.enqueue_job(org, "agent", {"trigger_id": t["id"]}, sub=sub)["id"]
+
+    seul = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC", tools=["a"],
+                             cron="0 8 * * *", model="sub:sonnet")
+    db.grant_resource("runner_trigger", str(seul["id"]), "org", str(ORG), role="editor",
+                      granted_by="proprio")
+    db.grant_resource("runner_trigger", str(seul["id"]), "user", "par-admin",
+                      role="editor", granted_by="un-admin")
+    assert db.agent_au_seul_proprietaire(travail(seul))
+
+    prete = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC", tools=["a"],
+                              cron="0 8 * * *", model="sub:sonnet")
+    db.grant_resource("runner_trigger", str(prete["id"]), "user", "nomme", role="editor",
+                      granted_by="proprio")
+    assert not db.agent_au_seul_proprietaire(travail(prete)), "prêté à un éditeur"
+
+    cle_d_org = _agent(db)   # tout admin de l'org le retouche
+    assert not db.agent_au_seul_proprietaire(travail(cle_d_org)), "clé d'org"
+    assert not db.agent_au_seul_proprietaire(travail(seul, sub="autre")), "autre porteur"
+    assert not db.agent_au_seul_proprietaire(
+        db.enqueue_job(ORG, "agent", {}, sub="proprio")["id"]), "enfilé à la main"
+    assert not db.agent_au_seul_proprietaire(-1), "introuvable"

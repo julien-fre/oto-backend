@@ -154,9 +154,17 @@ disparaissent de `tools/list` et toute garde plateforme les refuse.
 `OTO_VERROU_ROLES_PLATEFORME_ORGS` (ids d'org, virgules, vide par défaut) EXEMPTE les
 travaux de ces orgs : leur porteur garde son rôle plateforme, dans tous les modes, sans
 ligne au journal. C'est l'org de l'opérateur, dont les agents hébergés (tri des retours,
-activation des inscrits, veille des crédits) servent des `oto_admin_*` — l'exemption
-porte sur QUI garde le rôle, pas sur sa portée : un tel agent reste opérateur de toute la
-plateforme. La borne par outil du travail (F-008 partie 2) la rendra plus fine.
+activation des inscrits, veille des crédits) servent des `oto_admin_*`.
+⚠️ **Seulement pour un agent que son porteur SEUL peut changer**
+(`db.agent_au_seul_proprietaire`, lu une fois par requête) : posé sur son abonnement
+personnel et prêté à aucun éditeur nommé — un admin de l'org ou un partage à l'org entière
+ne peuvent alors que l'éteindre (`capabilities/_acces_agent.py`). Un agent tourne sous son
+propriétaire quel que soit celui qui l'a modifié : exempter un agent qu'un autre retouche
+(clé d'org, éditeur nommé) prêterait le rôle plateforme à cet autre. Un travail enfilé à la
+main n'est pas exempté non plus. Le reste de la borne tient : l'org du travail est
+celle de la base (vérifiée à la réservation), et ses outils sont ceux de sa liste
+(`outils_du_travail.py`) — l'exemption dit QUI garde le rôle, pas sa portée : un tel agent
+reste opérateur de toute la plateforme pour les outils de sa liste.
 
 Le verrou ne vise que le porteur : une lecture sur un tiers garde son chemin. Il est posé
 pour la requête par le bord — l'authentification REST et `middleware/verrou_org.py` côté

@@ -157,6 +157,30 @@ def forfaits_pretes(ids: list[int], sub: str) -> set[int]:
     return {int(r["id"]) for r in rows}
 
 
+def agent_au_seul_proprietaire(job_id: int) -> bool:
+    """Le travail `job_id` vient-il d'un agent que SEUL celui sous qui il tourne peut
+    changer ? L'agent de sa charge (`payload->>'trigger_id'`), de la même org et du
+    même porteur, posé sur l'abonnement PERSONNEL de ce porteur, et qu'il n'a prêté à
+    aucun éditeur (`_forfait_prete`, ici pour n'importe quel éditeur). Un admin de
+    l'org et un partage à l'org entière ne peuvent alors que l'éteindre
+    (`_acces_agent`). Faux pour un travail enfilé à la main (aucun agent), introuvable,
+    ou dont l'agent a changé de main — ce qui en dépend se ferme."""
+    from ._partage_vivant import PARTAGE_VIVANT_G
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM runner_jobs j JOIN runner_triggers t "
+            "  ON t.id::text = j.payload->>'trigger_id' "
+            "WHERE j.id = %s AND t.org_id = j.org_id AND t.sub = j.sub "
+            "  AND t.model = ANY(%s) "
+            "  AND NOT EXISTS (SELECT 1 FROM resource_grants g "
+            "    WHERE g.resource_type = 'runner_trigger' AND g.resource_id = t.id::text "
+            "      AND g.principal_type = 'user' AND g.permission = 'write' "
+            f"      AND g.granted_by = t.sub AND {PARTAGE_VIVANT_G})",
+            (job_id, list(runner_models.MODELES_PERSONNELS)),
+        ).fetchone()
+    return row is not None
+
+
 def retirer_partages_d_agent(trigger_id: int) -> int:
     """Retire tous les partages d'un agent SUPPRIMÉ : une ligne de `resource_grants`
     ne survit pas à sa ressource (pas de clé étrangère pour le faire à sa place)."""
