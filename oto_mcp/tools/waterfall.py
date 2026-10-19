@@ -540,6 +540,102 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
     return found
 
 
+# --- qualification by Jev: a typed verdict per result, instead of an agent reading them ---
+
+#: The ONLY fields sent to Jev (a third party: OpenRouter, then TypeSafe) — what a fit
+#: judgement needs, never a name, an email, a phone or a profile URL.
+_QUALIFY_FIELDS = {
+    "people": ("title", "headline", "seniority", "location"),
+    "person": ("title", "headline", "seniority", "location", "company", "company_domain"),
+    "company": ("name", "domain", "industry", "description", "employees", "revenue_range",
+                "keywords", "country", "city", "founded"),
+}
+#: Under this many seconds left, the pass is skipped rather than cut off midway.
+_QUALIFY_MIN_S = 5.0
+
+
+def _qualify_args(qualify, qualify_min) -> Optional[dict]:
+    """The caller's rubric, validated — `None` when no qualification is asked."""
+    if qualify is None:
+        if qualify_min is not None:
+            raise _bad("`qualify_min` needs `qualify` (the rubric it applies to).")
+        return None
+    if not isinstance(qualify, dict) or not qualify:
+        raise _bad("`qualify`: a Jev rubric `{name: {type, instructions, criteria}}`, "
+                   "as `jev_ask` takes it.")
+    if qualify_min is not None:
+        if not 0 < qualify_min < 1:
+            raise _bad("`qualify_min` is a probability, between 0 and 1 (e.g. 0.7).")
+        if not any(isinstance(q, dict) and q.get("type") == "noul" for q in qualify.values()):
+            raise _bad("`qualify_min` filters on the rubric's yes/no (`noul`) questions: "
+                       "the rubric has none.")
+    return {"questions": qualify, "min": qualify_min}
+
+
+def _qualify_state(kind: str, rec: dict, inputs: dict) -> dict:
+    state = {k: rec[k] for k in _QUALIFY_FIELDS[kind] if rec.get(k) not in (None, "", [])}
+    if kind == "people":
+        # The company is the lookup's, the same for every person: said once, from the inputs.
+        state["company"] = inputs.get("company_name") or inputs.get("domain")
+    return state
+
+
+def _passes(answers: dict, questions: dict, min_p: Optional[float]) -> bool:
+    """Every yes/no question at or above `min_p`; a question without an answer fails."""
+    if min_p is None:
+        return True
+    for name, q in questions.items():
+        if isinstance(q, dict) and q.get("type") == "noul":
+            p = (answers.get(name) or {}).get("noul")
+            if not isinstance(p, (int, float)) or p < min_p:
+                return False
+    return True
+
+
+async def _qualify(mcp: FastMCP, sub, kind: str, found: dict, inputs: dict,
+                   rubric: dict, deadline: float) -> tuple[dict, dict]:
+    """ONE `jev_items` call over what the cascade found: each record gets its answers
+    (`qualification`), and with `min` the people below it are dropped. It never fails
+    the lookup: no Jev key, a refusal or no time left → the results come back
+    unqualified, and the receipt says why."""
+    records = found["people"] if kind == "people" else [found]
+    report: dict = {"tool": "jev_items"}
+    if time.monotonic() > deadline - _QUALIFY_MIN_S:
+        report.update(status="skipped", code="deadline",
+                      message="no time left in this call to qualify the results")
+        return found, report
+    items = [{"key": str(i), "state": _qualify_state(kind, r, inputs)}
+             for i, r in enumerate(records)]
+    issue = await _call(mcp, sub, "jev_items",
+                        {"items": items, "questions": rubric["questions"],
+                         "parallel": min(50, max(10, len(items)))}, report)
+    if issue is None or not _judge(issue, report):
+        return found, report
+    res = _payload(issue) or {}
+    model = res.get("model")
+    by_index = {a.get("index"): a for a in res.get("answers") or [] if isinstance(a, dict)}
+    kept, dropped, failed = [], 0, 0
+    for i, r in enumerate(records):
+        a = by_index.get(i) or {}
+        if "answers" not in a:
+            failed += 1     # no verdict is never a false one: kept, unqualified
+            kept.append(r)
+            continue
+        ok = _passes(a["answers"], rubric["questions"], rubric["min"])
+        r = {**r, "qualification": {"answers": a["answers"], "model": model,
+                                    **({"passed": ok} if rubric["min"] is not None else {})}}
+        if kind == "people" and not ok:
+            dropped += 1
+            continue
+        kept.append(r)
+    report.update(status="done", model=model, failed=failed,
+                  cost_usd=(res.get("usage") or {}).get("cost"))
+    if kind == "people":
+        report["dropped"] = dropped
+        return {**found, "people": kept, "count": len(kept)}, report
+    return kept[0], report
+
+
 def _limits(max_paid_steps: Optional[int], apify_max_usd: Optional[float]) -> dict:
     """The caller's own limits, validated — none is set by default."""
     if max_paid_steps is not None and max_paid_steps < 1:
@@ -552,7 +648,8 @@ def _limits(max_paid_steps: Optional[int], apify_max_usd: Optional[float]) -> di
 
 async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...],
                        inputs: dict, providers_arg: Optional[list[str]],
-                       dry_run: bool, limits: Optional[dict] = None) -> dict:
+                       dry_run: bool, limits: Optional[dict] = None,
+                       qualify: Optional[dict] = None) -> dict:
     """The cascade: the first step that finds the value wins. Then the COMPLETION
     steps (`Step.fills`, e.g. a company's LinkedIn page): each runs only while the
     value still lacks the field it fills, and merges what it finds — a page found
@@ -607,9 +704,17 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
             winner = winner or step.key
     if dry_run:
         return {"dry_run": True, "order_from": source, "attempts": attempts,
-                **({"ignored_steps": ignored} if ignored else {})}
-    return _receipt(kind, found is not None, winner, found, attempts, source, ignored,
-                    pending)
+                **({"ignored_steps": ignored} if ignored else {}),
+                **({"qualification": {"tool": "jev_items", "status": "planned"}}
+                   if qualify else {})}
+    report = None
+    if qualify and found:
+        found, report = await _qualify(mcp, sub, kind, found, inputs, qualify, deadline)
+    out = _receipt(kind, found is not None, winner, found, attempts, source, ignored,
+                   pending)
+    if report is not None:
+        out["qualification"] = report
+    return out
 
 
 # --- reading a provider's answer -----------------------------------------------------
@@ -1691,6 +1796,20 @@ _RECEIPT_DOC = """`attempts` says, step by step, what happened (found / no_match
         used); `order_from` says where the order came from (call / setting / default);
         `pending` lists the asynchronous steps to collect later."""
 
+_QUALIFY_ARGS = """            qualify: a Jev rubric to judge each result against your target, in ONE
+                cheap call (micro-dollars, on the shared Jev key) — instead of reading
+                every result yourself. Same shape as `jev_ask`'s `questions`, e.g.
+                `{"fit": {"type": "noul", "instructions": "Is this a buyer of …?",
+                "criteria": {"true": "…", "false": "…"}}}`. Only the fields a fit needs
+                go to Jev (title, seniority, industry, size…), never a name, email,
+                phone or profile URL. Each result gets `qualification: {answers,
+                model}`; no Jev key or no time left → results come back unqualified,
+                the receipt's `qualification` says why. Qualify BEFORE you pay to
+                reveal or enrich anyone.
+            qualify_min: keep only results whose yes/no (`noul`) answers are all at or
+                above this probability (e.g. 0.7). Omitted = nothing dropped, every
+                result annotated. A probability near 0.5 means "as likely as not"."""
+
 _COMMON_ARGS = """            providers: the steps to try for THIS call, in this order — keys
                 from the list above. Overrides your setting. Never a tool name.
             dry_run: return the plan (order, key per step, arguments, skips) without
@@ -1812,17 +1931,20 @@ def register(mcp: FastMCP) -> None:
             siren: its 9-digit SIREN (France).
             country: ISO country code; other than FR skips the registry's name search.
 {_COMMON_ARGS}
+{_QUALIFY_ARGS}
         """)
     async def waterfall_company(
         company_name: Optional[str] = None, domain: Optional[str] = None,
         siren: Optional[str] = None, country: Optional[str] = None,
         providers: Optional[list[str]] = None, dry_run: bool = False,
         max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
+        qualify: Optional[dict] = None, qualify_min: Optional[float] = None,
     ) -> dict:
         inputs = _company_inputs(company_name, domain, siren, country)
         return await _run_cascade(mcp, "waterfall_company", "company", COMPANY_STEPS,
                                   inputs, providers, dry_run,
-                                  _limits(max_paid_steps, apify_max_usd))
+                                  _limits(max_paid_steps, apify_max_usd),
+                                  _qualify_args(qualify, qualify_min))
 
     @mcp.tool(annotations=LECTURE)
     @documente(f"""Find ONE person's current profile (title, company, seniority, location,
@@ -1849,6 +1971,7 @@ def register(mcp: FastMCP) -> None:
             domain: the company's domain (`acme.com`; a URL is accepted).
             company_name: the company's name, when the domain is unknown.
 {_COMMON_ARGS}
+{_QUALIFY_ARGS}
         """)
     async def waterfall_person(
         linkedin_url: Optional[str] = None, email: Optional[str] = None,
@@ -1857,12 +1980,14 @@ def register(mcp: FastMCP) -> None:
         company_name: Optional[str] = None,
         providers: Optional[list[str]] = None, dry_run: bool = False,
         max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
+        qualify: Optional[dict] = None, qualify_min: Optional[float] = None,
     ) -> dict:
         inputs = _person_inputs(first_name, last_name, full_name, domain,
                                 company_name, linkedin_url, email)
         return await _run_cascade(mcp, "waterfall_person", "person", PERSON_STEPS,
                                   inputs, providers, dry_run,
-                                  _limits(max_paid_steps, apify_max_usd))
+                                  _limits(max_paid_steps, apify_max_usd),
+                                  _qualify_args(qualify, qualify_min))
 
     @mcp.tool(annotations=LECTURE)
     @documente(f"""Find the PEOPLE working at ONE company — its decision-makers when you
@@ -1896,6 +2021,7 @@ def register(mcp: FastMCP) -> None:
             limit: how many people at most (default 10, up to 100) — AI Ark and the
                 LinkedIn employees bill per person returned, so raise it knowingly.
 {_COMMON_ARGS}
+{_QUALIFY_ARGS}
         """)
     async def waterfall_people(
         domain: Optional[str] = None, company_name: Optional[str] = None,
@@ -1904,9 +2030,11 @@ def register(mcp: FastMCP) -> None:
         limit: int = 10,
         providers: Optional[list[str]] = None, dry_run: bool = False,
         max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
+        qualify: Optional[dict] = None, qualify_min: Optional[float] = None,
     ) -> dict:
         inputs = _people_inputs(company_name, domain, company_linkedin_url, roles,
                                 country, limit)
         return await _run_cascade(mcp, "waterfall_people", "people", PEOPLE_STEPS,
                                   inputs, providers, dry_run,
-                                  _limits(max_paid_steps, apify_max_usd))
+                                  _limits(max_paid_steps, apify_max_usd),
+                                  _qualify_args(qualify, qualify_min))

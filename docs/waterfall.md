@@ -245,6 +245,24 @@ optionnels, sur chacun des 5 outils, pour l'agent qui veut une limite :
 Restent les bornes de forme, pas de dépense : la réponse (`limit` des gens, jusqu'à 100),
 le délai de la cascade (40 s, la route REST coupe à 45 s) et celui d'une exécution Apify.
 
+## Qualifier par Jev avant de dépenser
+
+`waterfall_company`, `waterfall_person` et `waterfall_people` prennent `qualify` (une
+rubrique Jev, la forme des `questions` de `jev_ask`) et `qualify_min`. Après la cascade,
+UN appel `jev_items` (via `executer_cible` : gardes, facturation au coût réel) juge ce qui a
+été trouvé : chaque résultat porte `qualification: {answers, model}` ; avec `qualify_min`,
+les gens sous le seuil sont écartés (`dropped`), une société ou une personne reste avec
+`passed`. Le but : qu'un agent ne lise pas 25 profils pour en garder 3, et qu'on ne paie
+de révélation ou d'enrichissement que pour ceux qui passent.
+
+- ⚠️ Jev est un tiers (OpenRouter puis TypeSafe) : seuls partent les champs d'un jugement
+  (`_QUALIFY_FIELDS` — titre, séniorité, lieu, secteur, taille…), jamais un nom, un email,
+  un téléphone ni une URL de profil. Figé par un test.
+- Ça n'échoue jamais la recherche : pas de clé Jev (clé partagée du tenant ou de la
+  plateforme), refus ou moins de 5 s restantes → résultats non qualifiés, et pourquoi.
+- Ne compte pas dans `max_paid_steps`. Une étape dont personne ne passe ne relance PAS la
+  cascade (la qualification est une passe finale, pas un critère de trouvaille).
+
 ## Ajouter une étape
 
 Une ligne `Step(...)` dans la table : la clé, l'outil (déjà monté — vérifié par

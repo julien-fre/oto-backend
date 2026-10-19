@@ -21,3 +21,10 @@ one company per call, stopping at the first source that identifies it.
 - a search result only counts if its domain matches, or its name contains the name asked — a namesake never stops the cascade
 - `employees_band` (french registry) is the insee size band code, not a headcount
 - `dry_run=true` shows the plan without spending anything
+
+## usage — qualify before you spend
+
+- `qualify=` takes a Jev rubric (same shape as `jev_ask`'s `questions`): the company found gets typed answers with probabilities, in ONE call for micro-dollars, instead of being read and judged by the agent
+- `qualify_min=0.7` keeps only what passes every yes/no question (the record stays, with `qualification.passed`)
+- only the fields a fit needs are sent to Jev (title, seniority, industry, size…), never a name, email, phone or profile URL
+- no Jev key or no time left: results come back unqualified and the receipt's `qualification` says why

@@ -21,3 +21,10 @@ one person per call, stopping at the first provider that returns a title or a co
 - give the linkedin url when you have it: it opens every step; an email or name + domain opens apollo, cognism, lusha and lemlist
 - lemlist answers asynchronously (see `pending` in the response)
 - `dry_run=true` shows the plan without spending anything
+
+## usage — qualify before you spend
+
+- `qualify=` takes a Jev rubric (same shape as `jev_ask`'s `questions`): the person found gets typed answers with probabilities, in ONE call for micro-dollars, instead of being read and judged by the agent
+- `qualify_min=0.7` keeps only what passes every yes/no question (the record stays, with `qualification.passed`)
+- only the fields a fit needs are sent to Jev (title, seniority, industry, size…), never a name, email, phone or profile URL
+- no Jev key or no time left: results come back unqualified and the receipt's `qualification` says why

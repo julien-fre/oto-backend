@@ -22,3 +22,10 @@ one company per call, stopping at the first source that returns at least one mat
 - apollo's search hides last names: reveal someone with `apollo_match_person(person_id=<apollo_id>)`, never by name + company
 - no linkedin page yet? `waterfall_company` finds it (from the website, then by name)
 - then, per person: `waterfall_email` and `waterfall_phone`
+
+## usage — qualify before you spend
+
+- `qualify=` takes a Jev rubric (same shape as `jev_ask`'s `questions`): each person found gets typed answers with probabilities, in ONE call for micro-dollars, instead of being read and judged by the agent
+- `qualify_min=0.7` keeps only what passes every yes/no question (the others are dropped, counted in `qualification.dropped`)
+- only the fields a fit needs are sent to Jev (title, seniority, industry, size…), never a name, email, phone or profile URL
+- no Jev key or no time left: results come back unqualified and the receipt's `qualification` says why

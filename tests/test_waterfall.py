@@ -845,3 +845,81 @@ def test_un_plafond_apify_sous_le_minimum_est_refuse(calls):
     with pytest.raises(Exception, match="0.50"):
         _run("waterfall_people", company_linkedin_url="https://www.linkedin.com/company/acme/",
              apify_max_usd=0.1)
+
+
+# --- qualification par Jev (optionnelle) ----------------------------------------------
+
+_FIT = {"fit": {"type": "noul", "instructions": "Does this person decide on purchases?",
+                "criteria": {"true": "a buyer or decision-maker", "false": "anyone else"}}}
+
+
+def _gens(calls):
+    calls["answers"]["serper_search"] = IssueCible(ok=True, result={"organic": [
+        {"title": "Ann Boss – Acme", "subtitle": "Lyon · CEO · Acme",
+         "link": "https://fr.linkedin.com/in/ann-boss"},
+        {"title": "Bob Dev – Acme", "subtitle": "Lyon · Developer · Acme",
+         "link": "https://fr.linkedin.com/in/bob-dev"}]})
+
+
+def _verdicts(*ps):
+    return IssueCible(ok=True, result={"model": "jev-2026-09", "usage": {"cost": 6e-05},
+                                       "answers": [{"index": i, "key": str(i),
+                                                    "answers": {"fit": {"type": "noul", "noul": p}}}
+                                                   for i, p in enumerate(ps)]})
+
+
+def test_qualifier_annote_chaque_personne_sans_rien_ecarter_par_defaut(calls):
+    _gens(calls)
+    calls["answers"]["jev_items"] = _verdicts(0.95, 0.10)
+    out = _run("waterfall_people", company_name="Acme", providers=["google"], qualify=_FIT)
+    people = out["people"]["people"]
+    assert [p["qualification"]["answers"]["fit"]["noul"] for p in people] == [0.95, 0.10]
+    assert out["qualification"]["status"] == "done" and out["qualification"]["model"] == "jev-2026-09"
+    # Seuls les champs d'un jugement partent chez Jev : jamais un nom ni une URL.
+    sent = dict(calls["made"])["jev_items"]["items"]
+    assert sent[0]["state"] == {"title": "CEO", "location": "Lyon", "company": "Acme"}
+
+
+def test_qualify_min_ecarte_les_personnes_sous_le_seuil(calls):
+    _gens(calls)
+    calls["answers"]["jev_items"] = _verdicts(0.95, 0.10)
+    out = _run("waterfall_people", company_name="Acme", providers=["google"],
+               qualify=_FIT, qualify_min=0.7)
+    assert [p["full_name"] for p in out["people"]["people"]] == ["Ann Boss"]
+    assert out["people"]["count"] == 1 and out["qualification"]["dropped"] == 1
+
+
+def test_sans_cle_jev_les_resultats_reviennent_non_qualifies(calls):
+    _gens(calls)
+    calls["answers"]["jev_items"] = McpError(ErrorData(code=INVALID_PARAMS,
+                                                       message="No `jev` key for your org"))
+    out = _run("waterfall_people", company_name="Acme", providers=["google"],
+               qualify=_FIT, qualify_min=0.7)
+    assert out["found"] is True and out["people"]["count"] == 2
+    assert out["qualification"]["status"] == "skipped"
+
+
+def test_une_societe_qualifiee_reste_trouvee_et_dit_si_elle_passe(calls):
+    calls["answers"]["linkedin_aiark_search"] = IssueCible(ok=True, result={"content": [{
+        "summary": {"name": "Acme", "industry": "machinery"}, "link": {"domain": "acme.com"}}]})
+    calls["answers"]["jev_items"] = _verdicts(0.2)
+    out = _run("waterfall_company", domain="acme.com", providers=["aiark"],
+               qualify=_FIT, qualify_min=0.7)
+    assert out["found"] is True and out["company"]["qualification"]["passed"] is False
+    assert dict(calls["made"])["jev_items"]["items"][0]["state"]["industry"] == "machinery"
+
+
+def test_pas_de_qualification_sans_resultat_ni_en_dry_run(calls):
+    out = _run("waterfall_people", company_name="Acme", providers=["google"], qualify=_FIT)
+    assert out["found"] is False and "jev_items" not in _made(calls)
+    out = _run("waterfall_people", company_name="Acme", providers=["google"], qualify=_FIT,
+               dry_run=True)
+    assert out["qualification"]["status"] == "planned"
+
+
+@pytest.mark.parametrize("kwargs", [{"qualify_min": 0.7}, {"qualify": {}},
+                                    {"qualify": _FIT, "qualify_min": 1.5},
+                                    {"qualify": {"x": {"type": "score"}}, "qualify_min": 0.5}])
+def test_une_rubrique_mal_formee_est_refusee(calls, kwargs):
+    with pytest.raises(McpError):
+        _run("waterfall_people", company_name="Acme", **kwargs)
