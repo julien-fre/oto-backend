@@ -123,3 +123,12 @@ def test_les_lectures_d_une_org_chargee_passent_par_l_index(base, monkeypatch):
             plan = "\n".join(r["QUERY PLAN"] for r in c.execute("EXPLAIN " + sql, params).fetchall())
             assert RJ.INDEX_DECLENCHEURS.nom in plan and "Seq Scan" not in plan, plan
         c.rollback()
+
+
+def test_le_resume_rend_les_dates_en_texte(base):
+    """Le pool normalise les dates en texte (`_str_dict_row`) : la capacité les sert
+    telles quelles. Un `.isoformat()` dessus a rendu `op=summary` en 500 partout."""
+    from oto_mcp.db import runner_jobs as RJ
+    cases, pannes = RJ.resume_des_declencheurs(1, 7)
+    assert cases and all(isinstance(c["heure"], str) for c in cases)
+    assert pannes and all(isinstance(p["due_at"], str) for p in pannes)

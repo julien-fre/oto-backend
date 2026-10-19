@@ -632,8 +632,8 @@ def test_summary_rend_heures_total_et_derniere_panne_des_agents_vus(monkeypatch)
     """Par agent visible : ses heures non vides (triées), son total, sa dernière
     panne. Un agent que l'appelant ne voit pas n'apparaît pas — pas même par son
     nombre de travaux."""
-    import datetime as dt
-    h = lambda d, hh: dt.datetime(2026, 10, d, hh, tzinfo=dt.timezone.utc)  # noqa: E731
+    # En TEXTE, comme `_str_dict_row` les rend : des `datetime` ici masquaient le 500.
+    h = lambda d, hh: f"2026-10-{d:02d} {hh:02d}:00:00"  # noqa: E731
     vu = {}
     monkeypatch.setattr(RJ.db, "resume_des_declencheurs", lambda org, jours: vu.update(org=org, jours=jours) or (
         [{"trigger_id": 5, "heure": h(2, 8), "status": "done", "n": 3},
@@ -653,6 +653,8 @@ def test_summary_rend_heures_total_et_derniere_panne_des_agents_vus(monkeypatch)
     assert a["total"] == 4
     assert [x["status"] for x in a["hours"]] == ["failed", "done"]   # triées par heure
     assert a["last_failure"]["error"] == "refusé"
+    assert a["hours"][0]["hour"] == "2026-10-01 08:00:00"
+    assert a["last_failure"]["due_at"] == "2026-10-01 08:00:00"
     assert rep["since"].endswith("Z")
 
 
@@ -678,10 +680,9 @@ def _effets_servis():
 
 
 def _un_agent_vu(monkeypatch, conclus, appels, surcharges=None):
-    import datetime as dt
     from oto_mcp import tool_registry
     monkeypatch.setattr(tool_registry, "_EFFETS", _effets_servis())
-    h = dt.datetime(2026, 10, 1, 8, tzinfo=dt.timezone.utc)
+    h = "2026-10-01 08:00:00"
     monkeypatch.setattr(RJ.db, "resume_des_declencheurs", lambda org, jours: (
         [{"trigger_id": 5, "heure": h, "status": "done", "n": 2},
          {"trigger_id": 9, "heure": h, "status": "done", "n": 1}], []))

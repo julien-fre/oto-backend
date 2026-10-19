@@ -1074,11 +1074,14 @@ def _resume(ctx: ResolvedCtx, jours: int) -> dict:
             continue
         a = par_agent.setdefault(tid, {"trigger_id": tid, "total": 0, "hours": [], "last_failure": None})
         a["total"] += int(r["n"])
-        a["hours"].append({"hour": r["heure"].isoformat(), "status": r["status"], "count": int(r["n"])})
+        # Les dates arrivent DÉJÀ en texte (« AAAA-MM-JJ HH:MM:SS », UTC naïf) : le
+        # `row_factory` du pool (`_str_dict_row`) les normalise, comme pour toute la
+        # base. Un `.isoformat()` ici tombait sur `str` — un 500 sur chaque org.
+        a["hours"].append({"hour": r["heure"], "status": r["status"], "count": int(r["n"])})
     for r in pannes:
         tid = int(r["trigger_id"])
         if tid in par_agent:
-            par_agent[tid]["last_failure"] = {"due_at": r["due_at"].isoformat(),
+            par_agent[tid]["last_failure"] = {"due_at": r["due_at"],
                                               "error": r["last_error"]}
     for a in par_agent.values():
         a["hours"].sort(key=lambda h: h["hour"])
