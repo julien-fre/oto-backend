@@ -20,7 +20,10 @@ scope COLUMN, not one table per grain.
 
 **One-time seed** (platform rows): the connectors in the registry AT THE TIME the
 tier was introduced are activated; later ones stay OFF until explicit
-activation. **Legacy copy at boot** (guarded by `to_regclass`, newer-wins on `set_at`):
+activation — unless the INSTANCE declares `OTO_CONNECTEURS_ACTIFS_PAR_DEFAUT`
+(`seed_default_on`): every boot then opens, at the platform, each registry
+connector that has no platform row yet (backlog included), platform-key connectors
+excepted. An explicit OFF is never reopened. **Legacy copy at boot** (guarded by `to_regclass`, newer-wins on `set_at`):
 the two historical tables are copied over as long as they exist — they drop
 in B2 once this code is promoted (shared canary/prod DB).
 
@@ -32,7 +35,8 @@ imported lazily to avoid any cycle.
 """
 from __future__ import annotations
 
-from typing import Optional
+import os
+from typing import NamedTuple, Optional
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS connector_availability (
@@ -100,6 +104,70 @@ def seed_initial(conn) -> None:
             "VALUES ('platform', '', %s, TRUE, %s) ON CONFLICT DO NOTHING",
             (name, "seed"),
         )
+
+
+ENV_DEFAUT_ACTIF = "OTO_CONNECTEURS_ACTIFS_PAR_DEFAUT"
+
+
+class OuvertureParDefaut(NamedTuple):
+    """What `seed_default_on` did at this boot — `db.init_db` journals it."""
+    ouverts: tuple[str, ...]   # opened at the platform by this boot
+    exclus: tuple[str, ...]    # platform-key connectors with no platform row, kept closed
+
+
+def seed_default_on(conn) -> OuvertureParDefaut:
+    """Open at the platform every registry connector that has NO platform row yet —
+    only on an instance that declares `ENV_DEFAUT_ACTIF`.
+
+    The deny-by-default of `seed_initial` is the right rule for oto: a new connector
+    is a product decision. An instance that would rather offer new connectors as they
+    ship declares it, and stops discovering them as « missing » one by one.
+
+    **What « new » covers.** Every connector WITHOUT a platform row — the deny-by-default
+    is the absence of a row, not an OFF row. The first boot with the variable therefore
+    opens the whole backlog of connectors added since `seed_initial` and never decided,
+    not only the latest release's.
+
+    **Excluded: platform-key connectors** (`platform_key_open=True`). Opening one makes
+    the platform key usable by every org without a grant, at the instance's expense: it
+    stays closed until a platform row opens it explicitly. They are returned in
+    `exclus` so the boot journal names them.
+
+    Only the ABSENCE of a row is filled: an explicit OFF (`enabled = FALSE`) stays OFF,
+    an org override or a team cut is untouched, and the tenant ceiling still applies
+    above. Platform rows are never deleted (`clear_activation` is org-scoped), so
+    replaying it at every boot reopens nothing that was closed.
+
+    **Per role, but it writes the DATABASE.** The variable is declared per role; the
+    row it writes is shared by every role on the same database: declared on preprod
+    alone, it also opens for prod when both share the database.
+
+    Run AFTER the split fan-outs (`db.init_db`): a split's targets must first copy
+    their source's state, ON or OFF, before anything fills them with ON. Read at
+    boot only — a new connector only arrives with a new release, hence a boot."""
+    from .. import interrupteurs, providers
+
+    if not interrupteurs.oui_non(ENV_DEFAUT_ACTIF, os.environ.get(ENV_DEFAUT_ACTIF)):
+        return OuvertureParDefaut((), ())
+    cle_plateforme = [n for n, c in providers.REGISTRY.items() if c.platform_key_open]
+    ouvrables = [n for n in providers.REGISTRY if n not in cle_plateforme]
+    # ONE write, not one per connector: it replays at every boot (`db/_ddl_garde`
+    # spirit — a boot with nothing to do should cost next to nothing).
+    ouverts = conn.execute(
+        "INSERT INTO connector_availability (scope_type, scope_id, connector, enabled, set_by) "
+        "SELECT 'platform', '', c, TRUE, 'seed:default_on' FROM unnest(%s::text[]) AS c "
+        "ON CONFLICT DO NOTHING RETURNING connector",
+        (ouvrables,),
+    ).fetchall()
+    decides = {r["connector"] for r in conn.execute(
+        "SELECT connector FROM connector_availability "
+        "WHERE scope_type = 'platform' AND scope_id = '' AND connector = ANY(%s)",
+        (cle_plateforme,),
+    ).fetchall()}
+    return OuvertureParDefaut(
+        tuple(sorted(r["connector"] for r in ouverts)),
+        tuple(sorted(n for n in cle_plateforme if n not in decides)),
+    )
 
 
 def fanout_availability(conn, source: str, targets: tuple[str, ...]) -> int:

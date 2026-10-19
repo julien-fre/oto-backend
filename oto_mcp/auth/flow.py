@@ -221,13 +221,34 @@ def return_url(app: Optional[str], suffix: str, *, org: Optional[int] = None) ->
 # query string de retour, à la main : cinq formes différentes, dont deux replis
 # cassés (une f-string à accolades doublées qui rendait une chaîne littérale au
 # lieu d'une URL). La forme salesforce — `?connector=<nom>&connect=<etat>`,
-# `etat ∈ {connected, error, forbidden}` — devient LA convention, fabriquée ici
+# `etat ∈ {connected, error, forbidden, denied}` — devient LA convention, fabriquée ici
 # une fois plutôt que recopiée cinq fois.
 #
 # Le vocabulaire s'étend pour Microsoft (2026-10-08), lu par le dashboard sur la carte :
 # `admin_required` (l'organisation de la personne exige l'approbation d'un
 # administrateur), `admin_approved` / `admin_refused` (réponse d'un administrateur au
 # lien d'approbation, `auth/microsoft.admin_consent_url`).
+#
+# Trois échecs, trois causes, trois mots (oto-app#11) — jamais l'un pour l'autre :
+# - `denied` : le fournisseur a refusé l'autorisation (`error=access_denied`, ou
+#   l'équivalent documenté du fournisseur) — rien n'a été échangé ni rangé ;
+# - `forbidden` : c'est OTO qui refuse — la personne n'a plus le droit d'écrire au
+#   niveau demandé au départ (rôle perdu, org quittée, connecteur coupé entre-temps) ;
+# - `error` : une vraie panne (state illisible ou rejoué, échange en échec, code absent
+#   sans motif, toute autre erreur du fournisseur).
+
+#: RFC 6749 §4.1.2.1 : « the resource owner OR the authorization server denied the
+#: request ». Les deux à la fois, et c'est voulu : le fournisseur peut refuser pour la
+#: personne (une app non publiée chez Meta, par exemple) sans qu'on puisse le distinguer.
+REFUS_FOURNISSEUR = "access_denied"
+
+
+def etat_sans_code(erreur: Optional[str]) -> str:
+    """L'état d'un retour de consentement arrivé SANS code : `denied` si le fournisseur
+    dit avoir refusé (`error=access_denied`), `error` pour tout le reste — une autre
+    erreur, ou ni code ni motif. Le motif n'entre jamais dans l'URL : il va au journal."""
+    return "denied" if erreur == REFUS_FOURNISSEUR else "error"
+
 
 def connector_return_suffix(connector: str, etat: str) -> str:
     """`?connector=<connector>&connect=<etat>`.

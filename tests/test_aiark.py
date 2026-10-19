@@ -46,7 +46,7 @@ def test_aiark_is_classic_keyed_connector():
 
 def test_aiark_supports_platform_mode():
     c = providers.REGISTRY["aiark"]
-    # mode plateforme désormais possible (record_platform_usage dans les handlers)
+    # mode plateforme désormais possible (`units` notés par les handlers, L8)
     assert "platform" in c.auth_modes
     assert c.auth_modes == frozenset({"byo_user", "byo_org", "platform"})
 

@@ -29,9 +29,6 @@ logger = logging.getLogger(__name__)
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
-_REFUS = "access_denied"
-
-
 def make_routes(
     verifier: JWTVerifier,
     authenticate: AuthFn,
@@ -61,8 +58,8 @@ def make_routes(
             logger.info("ubersuggest: connection not completed (sub=%s, reason=%s)",
                         sub, erreur or "missing code")
             return RedirectResponse(
-                _retour("denied" if erreur == _REFUS else "error",
-                        return_app, org_id), status_code=302)
+                _retour(oauth_flow.etat_sans_code(erreur), return_app, org_id),
+                status_code=302)
         if not await run_in_threadpool(ub_auth.still_allowed, parsed):
             logger.warning("ubersuggest: connection return refused: %s is no longer a "
                            "member of org %s, or the connector is now cut there",

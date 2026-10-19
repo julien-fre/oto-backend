@@ -198,6 +198,13 @@ _IDENTITE: tuple[Variable, ...] = (
     Variable("OTO_DASHBOARD_BASE_URL", Classe.IDENTITE, None,
              "Troisième variable de la cascade `dashboard_url()` — voir `OTO_APP_URL`.",
              ("oto_mcp/config.py:229",)),
+    Variable("OTO_DASHBOARD_LINK_PATHS", Classe.REGLAGE, "",
+             "Chemins des liens servis vers le tableau de bord de CETTE instance, en JSON "
+             "`{type: chemin}` fusionné sur `links.DEFAULT_PATHS` (ex. "
+             "`{\"table\": \"/org/{org}/tables/{id}\"}`). Vide = les chemins par défaut. "
+             "Une déclaration illisible ou un type de lien inconnu refuse le démarrage "
+             "(`links.verifier_reglages`).",
+             ("oto_mcp/links.py:95",)),
     Variable("OTO_INVITE_BASE_URL", Classe.IDENTITE, None,
              "Base des liens d'invitation d'une org sans front déclaré "
              "(`orgs.front_base_url` gagne quand il est posé).",
@@ -281,6 +288,17 @@ _REGLAGES: tuple[Variable, ...] = (
              "Absente, vide ou un non = ces travaux attendent la réinitialisation ; "
              "l'org peut toujours l'ouvrir ou le couper. Toute autre valeur lève.",
              ("oto_mcp/db/org_subscription_pool.py:75",)),
+    Variable("OTO_CONNECTEURS_ACTIFS_PAR_DEFAUT", Classe.REGLAGE, "",
+             "Ouvre à la plateforme, à chaque boot, tout connecteur du registre qui n'y "
+             "a encore AUCUNE ligne (`1`, `true`, `yes`, `on`) — arriéré compris : au "
+             "premier boot, tous les connecteurs jamais décidés, pas seulement ceux de la "
+             "release. Les connecteurs à clé plateforme (`platform_key_open`) sont exclus "
+             "et restent fermés tant qu'une ligne plateforme ne les ouvre pas. Un OFF "
+             "explicite reste OFF ; le boot journalise les ouverts et les exclus. Posée "
+             "par rôle, elle écrit la BASE : si préprod et prod partagent la base, la "
+             "poser sur un rôle ouvre pour les deux. Absente, vide ou un non = "
+             "deny-by-default. Toute autre valeur lève.",
+             ("oto_mcp/connectors/activation.py:150",)),
     Variable("OTO_EQUIPE_PAR_DEFAUT_TENANTS", Classe.REGLAGE, "",
              "Slugs de tenants (virgules) dont les membres d'équipe ne sont jamais "
              "« sans équipe » : faute d'équipe désignée, l'équipe du sub dans l'org "

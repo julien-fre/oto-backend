@@ -204,8 +204,6 @@ def register(mcp: FastMCP) -> None:
                 recu.echec(rid, f"writeback_{ecrit}")
 
         poussees = recu.comptes.get("pushed", 0)
-        if is_platform and poussees:
-            access.record_platform_usage("lemlist", poussees)
         if not dry_run:
             # The BILLED line counts the leads created, as N calls to
             # lemlist_create_lead would have (`tool_calls.quantity`).

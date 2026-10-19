@@ -63,7 +63,9 @@ def _controler_lespion(espion, monkeypatch) -> None:
     monkeypatch.setenv("OTO_MAILER_SEND_BEARER", "bearer-de-suite")
     with contextlib.suppress(Exception):
         email._send("temoin@exemple.test", "témoin", "<p>témoin</p>")
-    assert espion.vers(email._mailer_url()), (
+    relais = email.transport_plateforme()
+    assert isinstance(relais, str), "la suite envoie par le relais (OTO_MAILER_URL)"
+    assert espion.vers(relais), (
         "l'espion doit voir passer un e-mail RÉEL, sinon un zéro d'e-mail ne "
         "prouverait rien non plus")
     espion.appels.clear()

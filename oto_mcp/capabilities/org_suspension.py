@@ -16,10 +16,16 @@ d'être super admin pour que le commerce coupe une org.
 toutes ses orgs (`admin.tenant_disablement`). Tant qu'il l'est, `resume` est refusé
 (`409 tenant_disabled`) ; `suspend` sur une org qu'il a suspendue REPREND la suspension
 à son compte, pour que la réactivation du tenant ne la lève pas.
+
+**La fin d'essai** (`service.org.trial`, `admin.org_trial`) : la date de fin d'essai est
+tenue par le commerce ; le cœur la lit. Le commerce la pousse (`orgs.trial_ends_at`,
+`null` l'efface), pour que la plateforme, les admins et les agents la lisent
+(`oto_admin_org op=get`). Le cœur ne fait que la servir.
 """
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel
@@ -132,5 +138,66 @@ CAPABILITIES += [
             "deleting anything; op=resume lifts it. Idempotent both ways. Same effect "
             "as the super admin's `admin.org_suspension`."),
         rest=RestBinding("POST", "/api/service/orgs/{id}/suspension", {"id": "org_id"}),
+    ),
+]
+
+
+# ── la fin d'essai, poussée par le commerce ─────────────────────────────────
+
+class OrgTrialInput(BaseModel):
+    org_id: int
+    # `null` efface : l'org a payé, plus d'essai en cours.
+    ends_at: Optional[datetime] = None
+
+
+class OrgTrialOut(BaseModel):
+    org_id: int
+    trial_ends_at: Optional[str] = None
+    changed: bool
+
+
+def _org_trial(ctx: ResolvedCtx, inp: OrgTrialInput) -> dict:
+    if inp.ends_at is not None and inp.ends_at.tzinfo is None:
+        raise AuthzDenied(422, "ends_at_without_timezone",
+                          "`ends_at` doit porter son fuseau (ISO 8601 avec `Z` ou "
+                          "`+HH:MM`) : sans lui, l'instant serait deviné.")
+    if not org_store.get_org(inp.org_id):
+        raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
+    change = org_store.set_trial_ends_at(inp.org_id, inp.ends_at)
+    # Relue plutôt que recopiée : la forme servie est celle de la fiche d'org.
+    fin = org_store.get_trial_ends_at(inp.org_id)
+    logger.info("fin d'essai org=%s par=%s : %s (change=%s)", inp.org_id, ctx.sub, fin, change)
+    return {"org_id": inp.org_id, "trial_ends_at": fin, "changed": change}
+
+
+_ERREURS_ESSAI = (
+    DeclaredError(404, "unknown_org", "aucune org ne porte cet id"),
+    DeclaredError(422, "ends_at_without_timezone", "`ends_at` sans fuseau"),
+)
+
+_DESCRIPTION_ESSAI = (
+    "Set an org's trial end date (`ends_at`, ISO 8601 with its offset — `Z` or "
+    "`+HH:MM`; without one it is refused), or clear it with `null`. The trial end "
+    "date is held by commerce; the core reads it: it is served in the org detail "
+    "(`trial_ends_at`) and nothing in the core acts on it. "
+    "Idempotent: `changed` says whether the value moved.")
+
+CAPABILITIES += [
+    # REST seule, comme `service.org.suspension` : un tuyau de service.
+    Capability(
+        key="service.org.trial", handler=_org_trial, Input=OrgTrialInput,
+        Output=OrgTrialOut, authz=COMMERCE_SERVICE, mcp=None,
+        errors=_ERREURS_ESSAI,
+        description="[service commerce] " + _DESCRIPTION_ESSAI,
+        rest=RestBinding("POST", "/api/service/orgs/{id}/trial", {"id": "org_id"}),
+    ),
+    # Le même geste pour un super admin, à la main ; le commerce passe par son
+    # identité de service (`COMMERCE_SERVICE`, ci-dessus).
+    Capability(
+        key="admin.org_trial", handler=_org_trial, Input=OrgTrialInput,
+        Output=OrgTrialOut, authz=SUPER_ADMIN, mcp=None,
+        errors=_ERREURS_ESSAI,
+        description="[super admin] " + _DESCRIPTION_ESSAI,
+        rest=RestBinding("POST", "/api/admin/orgs/{id}/trial", {"id": "org_id"}),
     ),
 ]

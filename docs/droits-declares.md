@@ -358,7 +358,13 @@ Détail et ordre : `docs/migrations-versionnees.md` §5.1, et l'en-tête de chaq
 - faire lire `unipile_seats` et `platform_key:<connecteur>` par `value_for` (messagerie,
   quotas et cascade des clés de plateforme) — en traduisant le `0` « illimité » hérité
   (limite (b)) ;
-- l'essai (source `trial`), les droits payants par personne, le retrait de `members_max`.
+- les droits payants par personne, le retrait de `members_max`.
+
+**La fin d'essai.** La date de fin d'essai est tenue par le commerce ; le cœur la lit.
+Le commerce la pousse pour chaque org (`service.org.trial`, `orgs.trial_ends_at`), et
+elle est servie dans la fiche d'org ; le cœur n'agit pas dessus. Ce que le commerce
+accorde pendant un essai, et ce qu'il fait à sa fin, relèvent du commerce. L'étiquette
+de source `trial` reste acceptée par l'API de service.
 
 ## Ce qu'on ne fait pas
 

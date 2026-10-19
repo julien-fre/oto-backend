@@ -248,6 +248,10 @@ class CallContextMiddleware(Middleware):
             await access_level_gate.require_covered(
                 name, args, lambda: self._schema_of(context, name))
             result = await call_next(context)
+            # Le règlement de l'appel (L8), au SUCCÈS seulement, tant que son contexte
+            # (org, équipe) est encore posé — hors boucle : il écrit les compteurs.
+            await run_in_threadpool(access.regler_appel, current_user_sub_from_token(),
+                                    name, session_org.current_call_trace())
             return _echo_account(result, _cible(name, args),
                                  rappel=await _rappel_de_l_appel())
         finally:

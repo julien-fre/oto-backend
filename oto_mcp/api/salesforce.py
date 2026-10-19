@@ -34,6 +34,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
+from ..auth import flow as oauth_flow
 from ..auth import salesforce as salesforce_oauth
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,6 @@ def make_routes(
         Salesforce IS the target shape (oto-backend#670): `connector_return_url`
         (the shared maker) only does here what this function already composed
         by hand — no behaviour change, salesforce has nothing to double."""
-        from ..auth import flow as oauth_flow
         return oauth_flow.connector_return_url(
             return_app, "salesforce", etat, org=org_id)
 
@@ -80,13 +80,22 @@ def make_routes(
         # come from the signed state (see salesforce_oauth.make_state).
         code = request.query_params.get("code")
         state = request.query_params.get("state")
+        erreur = request.query_params.get("error")
         parsed = salesforce_oauth.verify_state(state) if state else None
-        if not code or not parsed:
+        if not parsed:
             # State missing/expired/tampered: we have NEITHER org_id NOR return_app (they live
             # IN this state that we just failed to read) — accepted degradation to
             # the oto-dashboard default, the only case where this module cannot do better.
             return RedirectResponse(_retour("error"), status_code=302)
         sub, org_id, scope, verifier_pkce, group_id, return_app = parsed
+        if erreur or not code:
+            # The person's refusal comes back WITHOUT a code (`error=access_denied`,
+            # "end-user denied authorization"): `denied`, back to the front that asked.
+            # Nothing is written, so there is no right to re-check.
+            logger.info("salesforce oauth callback: consent not completed (sub=%s, reason=%s)",
+                        sub, erreur or "missing code")
+            return RedirectResponse(_retour(oauth_flow.etat_sans_code(erreur),
+                                            return_app, org_id), status_code=302)
         # RE-GUARD of the right to write at the requested scope. `build_auth_url` checked it
         # at /start, but the state lives 10 min: between the click and the return, the author
         # may have lost their role. In-house stance (ADR 0038, what closed #108):

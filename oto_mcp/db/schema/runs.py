@@ -310,6 +310,10 @@ CREATE TABLE IF NOT EXISTS runner_triggers (
     org_id BIGINT NOT NULL,
     sub TEXT NOT NULL,
     label TEXT,
+    -- 16/10/2026 : dossier d'affichage facultatif — les listes regroupent les
+    -- agents au même libellé. NULL = hors dossier. Aucune hiérarchie, aucune
+    -- règle d'accès.
+    folder TEXT,
     procedure TEXT NOT NULL,
     project_id BIGINT,
     tools JSONB NOT NULL,
@@ -559,8 +563,8 @@ MODEL_SUBSCRIPTION_LIMITS = """
 -- du compte du fournisseur (fenêtres cinq heures et sept jours, usage perso compris)
 -- au-delà de laquelle les travaux de l'org attendent la réinitialisation. Sans ligne,
 -- le défaut du code s'applique (`_abonnement.DEFAUT_LIMITE_PCT`). Une personne peut
--- poser plus bas pour elle-même (`user_model_subscriptions.limite_pct`), jamais plus
--- haut : le seuil effectif est le min des deux.
+-- poser le sien (`user_model_subscriptions.limite_pct`, ≤ 95), qui le remplace pour
+-- elle, plus bas ou plus haut.
 --
 -- ⚠️ Constante À PART de `RUNS`, assemblée en queue (après `orgs`, qu'elle
 -- référence) : `RUNS` se joue seul sur une base vierge et ne porte aucune FK vers

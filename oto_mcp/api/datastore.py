@@ -37,6 +37,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
+from ..auth import flow as oauth_flow
 from ..auth import google as google_oauth
 
 logger = logging.getLogger(__name__)
@@ -82,8 +83,6 @@ def make_routes(
         Les branches d'ÉCHEC ne redirigeaient PAS du tout avant ce lot — un JSON
         brut 400/502/504 à la place. Rien n'a jamais été doublé pour elles : un
         statut qui n'a jamais existé n'a pas de lecteur à préserver."""
-        from ..auth import flow as oauth_flow
-
         # Le front qui a DEMANDÉ la connexion, porté par le state signé depuis
         # oto-backend#877. Sans lui, le retour partait sur le front d'oto en dur :
         # un utilisateur venu d'un front tiers atterrissait chez nous après avoir
@@ -107,18 +106,24 @@ def make_routes(
         # Validation via le `state` HMAC-signé.
         code = request.query_params.get("code")
         state = request.query_params.get("state")
-        if not code or not state:
-            logger.warning("google oauth callback: code ou state absent")
-            return RedirectResponse(url=_retour("error"), status_code=302)
-        parsed = google_oauth.verify_state(state)
+        erreur = request.query_params.get("error")
+        parsed = google_oauth.verify_state(state) if state else None
         if not parsed:
-            logger.warning("google oauth callback: state illisible/expiré")
+            logger.warning("google oauth callback: state absent, illisible ou expiré")
             return RedirectResponse(url=_retour("error"), status_code=302)
         # `scope`/`group_id` (2026-09-27) : à qui le compte est confié — le membre, ou
         # son org / son équipe (compte partagé posé par un admin). Un state d'avant ne
         # les porte pas : le membre, comme alors.
         sub, org_id, return_app, connector, *reste = parsed
         scope, group_id = (list(reste) + ["member", None])[:2]
+        if erreur or not code:
+            # Le refus de la personne (`error=access_denied`) revient SANS code : il
+            # repartait en `error`, et vers le front par défaut faute d'avoir lu le state.
+            logger.info("google oauth callback: consentement non abouti (sub=%s, motif=%s)",
+                        sub, erreur or "code absent")
+            return RedirectResponse(url=_retour(oauth_flow.etat_sans_code(erreur),
+                                                app=return_app, org=org_id,
+                                                connector=connector), status_code=302)
 
         def _finish() -> None:
             # `sub` (qualifié, porté par le state) choisit l'app qui a demandé le

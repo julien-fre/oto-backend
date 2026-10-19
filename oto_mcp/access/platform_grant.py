@@ -98,8 +98,8 @@ def _legacy_platform_grant_meta(sub, provider, active_org, *,
 
     ⚠️ **The old path, and it does not move by a single byte** (blueprint ADR 0053, lot L5):
     it remains the only one for the nine non-switched connectors, and the EXACT fallback for a
-    beneficiary the chain does not know. The `_legacy_` prefix does not deprecate it —
-    it names one of the two paths of the double-read window.
+    beneficiary the chain does not know (the chain is SILENT). It is no longer read where
+    the chain has an opinion (R6).
 
     `instances`: read in advance (cf. `cascade.preloaded_presence_probe`) — `None` rereads.
 
@@ -121,7 +121,7 @@ def _platform_grant_meta(sub, provider, active_org, *,
                          instances: "list[dict] | None" = None) -> "dict | None":
     """The platform rung, **grants chain first** (blueprint ADR 0053, lot L5).
 
-    Three outcomes, and the third is what makes the window safe:
+    Three outcomes, and the third is what keeps the switch safe:
 
     - the chain GRANTS → its verdict (key + quota carried by the edge);
     - the chain REFUSES (edges exist, all revoked) → refusal **without fallback**:
@@ -130,19 +130,22 @@ def _platform_grant_meta(sub, provider, active_org, *,
     - the chain is SILENT (connector not switched, or no edge ever targeted this
       caller) → the old path, unchanged.
 
-    Both paths are read for a switched connector — this is the accepted price of the
-    window (one more indexed read) and it is what produces the discrepancy journal,
-    the material for the end-of-window verdict.
+    Where the chain has an opinion, the old path is no longer read (R6,
+    `docs/credits-au-moment-de-l-appel.md`): the double-read window and its discrepancy
+    journal are closed. A `user` edge also carries `edge_counter` — the edge whose
+    counter the refusal reads (`quotas.platform_used_today`); under an `org` or `group`
+    edge, the refusal keeps reading `usage`, counted per person.
 
-    `instances`: passed as is to BOTH paths — two computations on one read."""
+    `instances`: passed as is to whichever path answers."""
     verdict = grants_chain.platform_rung(sub, provider, active_org, instances=instances)
     if verdict is None:
         return _legacy_platform_grant_meta(sub, provider, active_org, instances=instances)
-    legacy = _legacy_platform_grant_meta(sub, provider, active_org, instances=instances)
-    grants_chain.journal_resolution(provider, sub, active_org, verdict, legacy)
     if not verdict.granted:
         return None
-    return {"label": verdict.label, "daily_quota": verdict.quota}
+    meta = {"label": verdict.label, "daily_quota": verdict.quota}
+    if verdict.grantee is not None and verdict.grantee[0] == "user":
+        meta["edge_counter"] = verdict.resource_id
+    return meta
 
 
 def _resolve_platform_grant(sub, provider, active_org) -> "dict | None":

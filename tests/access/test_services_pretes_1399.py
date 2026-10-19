@@ -139,7 +139,10 @@ def test_la_lecture_d_une_cle_entiere_ne_dit_pas_de_services(coffre, monkeypatch
 # ── à l'usage ────────────────────────────────────────────────────────────────
 
 def _servi(entity_type, entity_id, account):
-    return SimpleNamespace(entity_type=entity_type, entity_id=entity_id, account=account)
+    # Une ligne de membre n'est jamais la clé plateforme : le résolveur lit `is_platform`
+    # pour noter le porteur que le règlement débite (L8).
+    return SimpleNamespace(entity_type=entity_type, entity_id=entity_id, account=account,
+                           is_platform=False)
 
 
 LIGNE = _servi(credentials_store.MEMBER, f"{ORG}:{PRETEUSE}", COMPTE)

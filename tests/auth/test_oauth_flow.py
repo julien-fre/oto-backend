@@ -216,6 +216,34 @@ def test_avec_connect_pose_le_point_dinterrogation_si_absent():
         "https://x/connectors?connect=error"
 
 
+# --- un retour sans code : refus du fournisseur, ou panne (oto-app#11) --------
+
+@pytest.mark.parametrize("erreur, etat", [
+    ("access_denied", "denied"),
+    ("server_error", "error"),
+    ("invalid_scope", "error"),
+    ("", "error"),
+    (None, "error"),
+])
+def test_etat_sans_code(erreur, etat):
+    """`denied` = le fournisseur a refusé ; `forbidden` n'en sort jamais — il dit
+    qu'OTO refuse, ce qu'un retour sans code ne peut pas savoir."""
+    assert of.etat_sans_code(erreur) == etat
+
+
+def test_aucun_callback_ne_tranche_access_denied_a_la_main():
+    """Le refus du fournisseur se tranche à UN endroit (`etat_sans_code`). Avant
+    oto-app#11, trois callbacks le traduisaient en `forbidden` et trois autres ne le
+    lisaient pas du tout : chacun avait sa constante, chacun sa réponse."""
+    import pathlib
+    import re
+    api = pathlib.Path(of.__file__).resolve().parents[1] / "api"
+    litteral = re.compile(r"""["']access_denied["']""")
+    fautifs = sorted(p.name for p in api.glob("*.py")
+                     if litteral.search(p.read_text(encoding="utf-8")))
+    assert fautifs == [], f"`access_denied` comparé à la main dans {fautifs} : `etat_sans_code`"
+
+
 # --- la duplication doit DÉCROÎTRE --------------------------------------------
 
 def _modules_with(pattern: str) -> list[str]:

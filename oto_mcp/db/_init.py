@@ -14,7 +14,7 @@ import time
 import psycopg
 
 from . import (_prerequis, access_shadow, index_concurrent, index_releve, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions,
-               revision, rowlock, transcription, user_subscriptions, valeurs_servies)
+               projects, revision, runner_jobs, runner_triggers, rowlock, transcription, user_subscriptions, valeurs_servies)
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
 from ._schema import _SCHEMA
@@ -379,6 +379,9 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # peut ni la produire ni la servir par erreur.
     _poser_domaine(conn, "runner_jobs", "runner_jobs_status_check", "status",
                    ("pending", "held", "claimed", "done", "failed", "expired"))
+    # Les travaux d'un déclencheur (page Agents, temps gagné) : régime des index
+    # concurrents — une base servie le reçoit de la révision 0067 ou à la main (§5.1).
+    index_concurrent.poser_au_demarrage(conn, runner_jobs.INDEX_DECLENCHEURS)
     # Chantier runner R4b : l'INTENTION se sépare du FAIT. `armed` (on a demandé
     # que ça tourne) ≠ `running` (un ordonnanceur l'a prise) ; `stopping` (l'arrêt
     # est demandé) ≠ `stopped` (il a été accusé). ⚠️ Un `CREATE TABLE IF NOT
@@ -651,6 +654,18 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # pose la révision `0059` : ordre indifférent entre elles.
     if _colonne_absente(conn, "transcription_jobs", transcription.COLONNE_KEY_MODE):
         conn.execute(transcription.DDL_COLONNE_KEY_MODE)
+    # Le dossier d'affichage d'un projet — le même que pose la révision `0063` : ordre
+    # indifférent entre elles.
+    if _colonne_absente(conn, "projects", projects.COLONNE_FOLDER):
+        conn.execute(projects.DDL_COLONNE_FOLDER)
+    # Le dossier d'affichage d'un agent — le même que pose la révision `0065` : ordre
+    # indifférent entre elles.
+    if _colonne_absente(conn, "runner_triggers", runner_triggers.COLONNE_FOLDER):
+        conn.execute(runner_triggers.DDL_COLONNE_FOLDER)
+    # Les surcharges du temps gagné d'une org — la même que pose la révision `0066` :
+    # ordre indifférent entre elles.
+    if _colonne_absente(conn, "orgs", runner_jobs.COLONNE_TEMPS_GAGNE):
+        conn.execute(runner_jobs.DDL_COLONNE_TEMPS_GAGNE)
     # Lot 3 Ship 3 : propositions de CRÉATION (doc_id nullable + project_id +
     # emplacement proposé + CHECK). Le CHECK valide sur l'existant (toutes les
     # lignes ont doc_id). Idempotent.
@@ -1625,6 +1640,16 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
             (list(_conn_sel.GOOGLE_SERVICES), list(_conn_sel.GOOGLE_SERVICES)),
         )
         _conn_sel.mark_split_fanout(conn, _conn_sel.GOOGLE_SPLIT_MARK)
+    # Instance qui ouvre les nouveaux connecteurs d'elle-même
+    # (`OTO_CONNECTEURS_ACTIFS_PAR_DEFAUT`, 17/10/2026) : APRÈS les deux fan-outs, pour
+    # qu'une cible de split hérite d'abord de l'état de sa source, ON ou OFF.
+    ouverture = _conn_act.seed_default_on(conn)
+    if ouverture.ouverts or ouverture.exclus:
+        logger.info("boot: %s — %d connecteur(s) ouvert(s) à la plateforme %s ; "
+                    "%d à clé plateforme laissé(s) fermé(s) %s",
+                    _conn_act.ENV_DEFAUT_ACTIF, len(ouverture.ouverts),
+                    list(ouverture.ouverts), len(ouverture.exclus),
+                    list(ouverture.exclus))
     # === Le nœud gagne sa DONNÉE et son BAIL (2026-09-01, ADR 0054/0063) ========
     #
     # **Pourquoi une colonne et pas une clé de `props`.** Jusqu'ici, un nœud-ligne

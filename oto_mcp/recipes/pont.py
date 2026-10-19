@@ -103,8 +103,10 @@ def appeleur_de_recette(fastmcp, sub: Optional[str], *, datastore: Any, ecrire: 
     Un outil de `ecritures.ECRITURES` (lot 3) : ses ops de lecture passent ; une op qui
     écrit doit être dans `ecritures` (ce que la recette déclare), hors épreuve, sans
     jeton qui l'emmène hors de l'org du run, et dans la limite de `max_ecritures` —
-    comptée À LA TENTATIVE (un délai dépassé a pu écrire). `compteur` reçoit les
-    comptes. Tout autre nom suit `appeleur_en_lecture`."""
+    comptée À LA TENTATIVE (un délai dépassé a pu écrire), PAR FICHE : un appel en lot
+    (`items` / `ids`, au plus `MAX_FICHES_PAR_APPEL`) compte autant d'écritures que de
+    fiches, et n'est joué que s'il tient en entier dans ce qui reste. `compteur` reçoit
+    les comptes. Tout autre nom suit `appeleur_en_lecture`."""
     lecture = appeleur_en_lecture(fastmcp, sub)
     etat = compteur if compteur is not None else compteur_neuf()
 
@@ -136,8 +138,10 @@ def appeleur_de_recette(fastmcp, sub: Optional[str], *, datastore: Any, ecrire: 
         sens, nom = ec.juger(outil, arguments)
         if sens == "refus":
             return {"ok": False, "code": "write_op_not_allowed", "message": nom}
+        fiches = 0
         if sens == "ecrire":
-            refus = _refus_ecrire_chez_un_tiers(nom, arguments)
+            fiches = _fiches(arguments)
+            refus = _refus_ecrire_chez_un_tiers(nom, arguments, fiches)
             if refus:
                 return refus
         from ..tools import meta
@@ -146,11 +150,12 @@ def appeleur_de_recette(fastmcp, sub: Optional[str], *, datastore: Any, ecrire: 
             return {"ok": False, "code": "unknown_tool",
                     "message": f"`{outil}` is not served by this instance."}
         if sens == "ecrire":
-            etat["total"] += 1
-            etat["writes"][nom] = etat["writes"].get(nom, 0) + 1
+            etat["total"] += fiches
+            etat["writes"][nom] = etat["writes"].get(nom, 0) + fiches
         return await _executer(tool, sub, outil, arguments)
 
-    def _refus_ecrire_chez_un_tiers(nom: str, arguments: dict) -> Optional[dict]:
+    def _refus_ecrire_chez_un_tiers(nom: str, arguments: dict,
+                                    fiches: Optional[int]) -> Optional[dict]:
         if nom not in ecritures:
             return {"ok": False, "code": "write_not_declared",
                     "message": f"`{nom}` writes at the provider and this recipe does not "
@@ -163,13 +168,36 @@ def appeleur_de_recette(fastmcp, sub: Optional[str], *, datastore: Any, ecrire: 
         if hors:
             return {"ok": False, "code": "write_outside_run_org",
                     "message": f"A write lands in the run's org: leave {hors} out."}
-        if etat["total"] >= max_ecritures:
+        if fiches is None or not 1 <= fiches <= MAX_FICHES_PAR_APPEL:
+            return {"ok": False, "code": "invalid_call",
+                    "message": f"A batch (`items` / `ids`) is a list of 1 to "
+                               f"{MAX_FICHES_PAR_APPEL} records. Nothing was called."}
+        reste = max_ecritures - etat["total"]
+        if fiches > reste:
+            # Un lot qui ne tient pas n'est pas joué en partie : le code peut le
+            # redécouper dans ce qui reste, et le reçu dit que le plafond a mordu.
             etat["stopped"] = etat["stopped"] or "max_writes"
             return {"ok": False, "code": "budget_exhausted",
-                    "message": f"This run's write budget is spent (max_writes="
-                               f"{max_ecritures}). Nothing was called."}
+                    "message": f"This run's write budget (max_writes={max_ecritures}) "
+                               f"has {max(reste, 0)} write(s) left; this call writes "
+                               f"{fiches}. Nothing was called."}
         return None
     return appeler
+
+
+#: Ce qu'un appel EN LOT peut porter de fiches : la borne des outils CRM de la liste
+#: (`items` / `ids`, 50 au plus).
+MAX_FICHES_PAR_APPEL = 50
+
+
+def _fiches(arguments: dict) -> Optional[int]:
+    """Combien de fiches touche un appel qui écrit : la longueur de son lot (`items`,
+    sinon `ids`), 1 sans lot. `None` = un lot qui n'est pas une liste."""
+    for cle in ("items", "ids"):
+        lot = arguments.get(cle)
+        if lot is not None:
+            return len(lot) if isinstance(lot, list) else None
+    return 1
 
 
 async def _outil_de_tableau(fastmcp, sub: Optional[str], outil: str,

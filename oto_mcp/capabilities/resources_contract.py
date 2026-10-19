@@ -268,6 +268,7 @@ class PublishedProject(BaseModel):
     id: int
     name: str
     icon: Optional[str] = None
+    folder: Optional[str] = None
     url: Optional[str] = None
     brief_md: str
     owner_type: str

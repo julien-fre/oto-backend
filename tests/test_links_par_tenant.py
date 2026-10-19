@@ -236,3 +236,77 @@ def test_l_org_des_liens_se_resout_UNE_fois_et_seulement_si_le_patron_la_reclame
     assert _Store("acme:u")._org_des_liens() is None
     assert appels == [], "aucune résolution quand le patron ne la réclame pas"
 
+
+
+# --- les chemins de L'INSTANCE (OTO_DASHBOARD_LINK_PATHS) ----------------------
+#
+# Une instance dont le tableau de bord range tout sous l'org servait `/data/{id}`
+# pour chaque tableau : une adresse que son tableau de bord ne route pas. Les
+# chemins se DÉCLARENT par instance (convention de `docs/tenants.md`), pas par tenant.
+
+_CHEMINS_ORG = ('{"table": "/org/{org}/tables/{id}", '
+                '"doc": "/org/{org}/projects/{project_id}/memory/{id}", '
+                '"project": "/org/{org}/projects/{id}"}')
+
+
+def test_l_instance_declare_ses_chemins(registre, monkeypatch):
+    monkeypatch.setenv(links.ENV_INSTANCE_PATHS, _CHEMINS_ORG)
+    base = config.dashboard_url()
+    assert links.link_for("table", sub="bn01jfy76a5n", id=203, org=42) == \
+        f"{base}/org/42/tables/203"
+    assert links.link_for("doc", sub="bn01jfy76a5n", id=5, project_id=7, org=42) == \
+        f"{base}/org/42/projects/7/memory/5"
+    assert links.link_for("project", sub=None, id=7, org=42) == \
+        f"{base}/org/42/projects/7"
+    # Un type que l'instance ne redéclare pas garde le chemin par défaut.
+    assert links.link_for("public_doc", sub=None, token="tok") == f"{base}/p/d/tok"
+
+
+def test_un_chemin_d_instance_qui_reclame_l_org_sans_l_avoir_ne_rend_rien(
+        registre, monkeypatch):
+    """Jamais `/org//tables/203` : sans org, pas de lien, et la raison le dit."""
+    monkeypatch.setenv(links.ENV_INSTANCE_PATHS, _CHEMINS_ORG)
+    assert links.link_for("table", sub="bn01jfy76a5n", id=203) is None
+    assert links.patron_reclame("table", "org", sub="bn01jfy76a5n") is True
+    assert "`org`" in links.raison_sans_lien("table", sub="bn01jfy76a5n", id=203)
+
+
+def test_les_chemins_d_instance_ne_touchent_pas_un_tenant_tiers(registre, monkeypatch):
+    """Un partenaire garde SES chemins, et n'hérite pas de ceux de l'instance."""
+    monkeypatch.setenv(links.ENV_INSTANCE_PATHS, _CHEMINS_ORG)
+    assert links.link_for("table", sub="acme:u", id=203, org=1) is None
+    assert links.link_for("doc", sub="acme:u", org=7, id=12) == \
+        "https://app.acme.test/network/7/knowledge/12"
+
+
+@pytest.mark.parametrize("valeur", ["pas du json", "[]", '{"table": 12}', '"x"'])
+def test_une_declaration_d_instance_illisible_leve(registre, monkeypatch, valeur):
+    """Jamais nos chemins par défaut en silence : la déclaration illisible lève, au
+    démarrage (`verifier_reglages`) comme à l'appel."""
+    monkeypatch.setenv(links.ENV_INSTANCE_PATHS, valeur)
+    with pytest.raises(links.InstancePathsInvalid, match=links.ENV_INSTANCE_PATHS):
+        links.verifier_reglages()
+    with pytest.raises(links.InstancePathsInvalid):
+        links.link_for("table", sub=None, id=1)
+
+
+def test_un_type_de_lien_inconnu_est_refuse(registre, monkeypatch):
+    """Un type qu'aucun appelant ne demande ne peut être qu'une faute de frappe."""
+    monkeypatch.setenv(links.ENV_INSTANCE_PATHS, '{"tables": "/org/{org}/tables/{id}"}')
+    with pytest.raises(links.InstancePathsInvalid, match="tables"):
+        links.verifier_reglages()
+
+
+def test_la_garde_des_chemins_est_appelee_au_demarrage():
+    """`server.main` lit la déclaration avant de servir, à côté des autres réglages."""
+    import inspect
+
+    from oto_mcp import server
+
+    assert "links.verifier_reglages()" in inspect.getsource(server.main)
+
+
+def test_sans_declaration_d_instance_rien_ne_change(registre, monkeypatch):
+    monkeypatch.delenv(links.ENV_INSTANCE_PATHS, raising=False)
+    links.verifier_reglages()
+    assert links.instance_paths() is links.DEFAULT_PATHS

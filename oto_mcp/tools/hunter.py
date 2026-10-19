@@ -13,7 +13,7 @@ from fastmcp import FastMCP
 
 from ..connectors import verify as connector_verify
 
-from .. import access, output_projection
+from .. import access, output_projection, session_org
 
 
 def _verify(fields: dict, config: dict | None = None) -> dict:
@@ -106,7 +106,7 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         result = client.domain_search(domain=domain, limit=limit)
         if is_platform:
-            access.record_platform_usage("hunter")
+            session_org.note_call_trace(units=1)
         # Tightened default (#36): a saving that has to be asked for serves no one
         # — measured, no agent ever passed the old `compact=True`.
         if not full:
@@ -132,7 +132,7 @@ def register(mcp: FastMCP) -> None:
             domain=domain, first_name=first_name, last_name=last_name, full_name=full_name,
         )
         if is_platform:
-            access.record_platform_usage("hunter")
+            session_org.note_call_trace(units=1)
         return result
 
     @mcp.tool()
@@ -144,5 +144,5 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         result = client.email_verifier(email=email)
         if is_platform:
-            access.record_platform_usage("hunter")
+            session_org.note_call_trace(units=1)
         return result

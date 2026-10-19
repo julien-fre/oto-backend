@@ -322,14 +322,16 @@ def test_enrich_bulk_surfaces_per_entry_errors():
         assert out["submitted"][1]["error"] == "MISSING_INPUTS"
 
 
-def test_enrich_records_platform_usage():
+def test_enrich_notes_no_platform_units():
+    # lemlist n'a pas de clé plateforme (`auth_modes`) : le débit d'avant L8 était mort,
+    # il est retiré sans remplacement — rien n'est noté pour le règlement.
     key = patch("oto_mcp.access.resolve_api_key", return_value=("platform-key", True))
     cls = patch("oto.tools.lemlist.LemlistClient")
-    rec = patch("oto_mcp.access.record_platform_usage")
-    with key, cls as client_cls, rec as record:
+    note = patch("oto_mcp.session_org.note_call_trace")
+    with key, cls as client_cls, note as noted:
         client_cls.return_value.enrich.return_value = {"id": "enr_1"}
         _tool("lemlist_enrich").fn(email="a@acme.fr", find_phone=True)
-        record.assert_called_once_with("lemlist")
+        assert not any("units" in c.kwargs for c in noted.call_args_list)
 
 
 def test_bulk_action_vocabulary_matches_the_client():
@@ -342,20 +344,19 @@ def test_bulk_action_vocabulary_matches_the_client():
     assert BULK_ACTIONS["verify_email"] == "verify"
 
 
-def test_enrich_bulk_records_one_platform_usage_per_person():
-    # Un bulk est facturé à la personne : compter 1 pour l'appel sous-facturerait
-    # un lot de 40 d'un facteur 40.
+def test_enrich_bulk_notes_no_platform_units():
+    # Même raison : pas de clé plateforme chez lemlist, donc aucun quota à débiter.
     key = patch("oto_mcp.access.resolve_api_key", return_value=("platform-key", True))
     cls = patch("oto.tools.lemlist.LemlistClient")
-    rec = patch("oto_mcp.access.record_platform_usage")
-    with key, cls as client_cls, rec as record:
+    note = patch("oto_mcp.session_org.note_call_trace")
+    with key, cls as client_cls, note as noted:
         client_cls.return_value.bulk_enrich.return_value = [
             {"id": "enr_1"}, {"id": "enr_2"}, {"id": "enr_3"},
         ]
         _tool("lemlist_enrich_bulk").fn(people=[
             {"email": f"a{i}@acme.fr", "actions": ["find_email"]} for i in range(3)
         ])
-        record.assert_called_once_with("lemlist", 3)
+        assert not any("units" in c.kwargs for c in noted.call_args_list)
 
 
 def test_enrich_result_union_survives_the_mcp_validation_boundary():

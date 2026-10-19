@@ -23,7 +23,9 @@ import logging
 from typing import Any, Optional
 
 from .. import runner_models
+from . import user_subscriptions
 from ._conn import _connect
+from .index_concurrent import IndexConcurrent
 
 logger = logging.getLogger(__name__)
 
@@ -850,19 +852,21 @@ _CHARGE_DU_MODELE = ("model", "model_family", "effort", "max_output_tokens",
 def _pause_pour_l_org(ab: str, org: str, seuil_defaut_pct: int) -> str:
     """SQL : l'abonnement `ab` est-il en pause POUR l'org `org` — plafond à échéance
     future, et forfait épuisé (refus du fournisseur) ou usage au-delà du seuil de
-    CETTE org (`_abonnement.seuil`, relu ici : le plafond de l'org, sinon le défaut,
-    resserré par le plafond perso) ? Toujours vrai ou faux, jamais NULL : un
+    CETTE org (`_abonnement.seuil`, relu ici : le plafond perso borné à
+    `LIMITE_PERSO_MAX`, sinon celui de l'org, sinon le défaut) ? Toujours vrai ou faux, jamais NULL : un
     `bool_and` lirait un NULL comme un « oui » (une échéance ou une cause absentes).
 
     Une pause sans cause (écrite avant la révision `0025`) n'ouvre rien."""
     return f"""COALESCE(
         {ab}.statut = 'paused_limit' AND {ab}.limit_reset_at > NOW()
         AND ({ab}.limit_epuise
-             OR {ab}.limit_utilisation >= LEAST(
-                    COALESCE((SELECT lim.limite_pct FROM org_model_subscription_limits lim
-                               WHERE lim.org_id = {org} AND lim.famille = {ab}.famille),
-                             {int(seuil_defaut_pct)}),
-                    COALESCE({ab}.limite_pct, 100)) / 100.0),
+             OR {ab}.limit_utilisation >= (CASE
+                    WHEN {ab}.limite_pct IS NOT NULL
+                    THEN LEAST({ab}.limite_pct, {int(user_subscriptions.LIMITE_PERSO_MAX)})
+                    ELSE COALESCE((SELECT lim.limite_pct FROM org_model_subscription_limits lim
+                                    WHERE lim.org_id = {org} AND lim.famille = {ab}.famille),
+                                  {int(seuil_defaut_pct)})
+                    END) / 100.0),
         false)"""
 
 
@@ -1714,3 +1718,144 @@ def runner_arme(org_id: int) -> dict:
             "last_seen": str(dernier) if dernier else None,
             "families": list(familles["f"] or []) if familles else [],
             "farm_routed": bool(routee)}
+
+
+# --- Les travaux d'un DÉCLENCHEUR : le prédicat et l'index qui le servent ---------
+# Le résumé de la page Agents et le temps gagné lisent les travaux d'une org sur une
+# fenêtre, qui portent une clé `trigger_id`. Sans index, chaque lecture balaye toute la
+# file : mesuré en production le 18/10/2026, 775 ms à froid (42 ms à chaud) et 86 616
+# lignes écartées, pour l'org la plus chargée, dont tous les travaux viennent de
+# flottes. L'index ne garde que les travaux d'un déclencheur (une fraction de la file :
+# les flottes n'en portent pas), rangés par (org, échéance). Son prédicat est celui des
+# requêtes, mot pour mot : un prédicat d'index que la requête n'implique pas ne sert
+# aucune lecture.
+PREDICAT_DECLENCHEUR = "payload->>'trigger_id' ~ '^[0-9]+$'"
+
+#: La révision qui pose l'index des travaux d'un déclencheur.
+REVISION_DECLENCHEURS = "0067_runner_jobs_declencheurs"
+
+#: Posé CONCURRENTLY par sa révision, ou par le démarrage d'une base neuve (`_init.py`),
+#: sous le verdict commun (`index_concurrent`).
+INDEX_DECLENCHEURS = IndexConcurrent(
+    nom="idx_runner_jobs_declencheurs",
+    table="runner_jobs",
+    forme=f"(org_id, due_at) WHERE {PREDICAT_DECLENCHEUR}",
+    revision=REVISION_DECLENCHEURS,
+)
+
+
+def resume_des_declencheurs(org_id: int, jours: int) -> tuple[list[dict], list[dict]]:
+    """Ce que la page Agents DESSINE, en deux lectures pour toute l'org : par
+    déclencheur, combien de travaux de chaque statut sont tombés dus à chaque
+    HEURE des `jours` derniers jours, et la dernière panne de chacun.
+
+    Une heure plutôt qu'un jour : c'est la plus fine des cases que l'écran trace
+    (24 h en heures), et l'écran regroupe lui-même en jours ou en quarts de
+    journée. Les lignes sont creuses — une heure sans travail n'existe pas.
+
+    ⚠️ Remplace, pour la page, une lecture par agent (`list_jobs` × N, 200 lignes
+    pleines chacune) : N requêtes et des mégaoctets de `result`, pour tracer des
+    cases et un total."""
+    with _connect() as conn:
+        cases = conn.execute(
+            f"""
+            SELECT payload->>'trigger_id' AS trigger_id,
+                   date_trunc('hour', due_at) AS heure, status, COUNT(*)::int AS n
+              FROM runner_jobs
+             WHERE org_id = %s AND due_at >= NOW() - make_interval(days => %s)
+               AND {PREDICAT_DECLENCHEUR}
+             GROUP BY 1, 2, 3
+            """,
+            (org_id, int(jours)),
+        ).fetchall()
+        pannes = conn.execute(
+            f"""
+            SELECT DISTINCT ON (payload->>'trigger_id')
+                   payload->>'trigger_id' AS trigger_id, due_at, last_error
+              FROM runner_jobs
+             WHERE org_id = %s AND status = 'failed'
+               AND due_at >= NOW() - make_interval(days => %s)
+               AND {PREDICAT_DECLENCHEUR}
+             ORDER BY payload->>'trigger_id', due_at DESC
+            """,
+            (org_id, int(jours)),
+        ).fetchall()
+    # La clé est lue en TEXTE (jamais `::bigint`, cf. `_filtre_de_file`) ; le filtre
+    # `~ '^[0-9]+$'` garantit qu'elle se convertit, côté Python.
+    return ([{**r, "trigger_id": int(r["trigger_id"])} for r in cases],
+            [{**r, "trigger_id": int(r["trigger_id"])} for r in pannes])
+
+
+# --- Le temps gagné des agents : les surcharges d'une org (`time_saved.py`) -----
+# Posée par la révision `0066_orgs_time_saved_minutes` ET par le démarrage, sous
+# garde de catalogue — même DDL.
+COLONNE_TEMPS_GAGNE = "time_saved_minutes"
+DDL_COLONNE_TEMPS_GAGNE = f"ALTER TABLE orgs ADD COLUMN IF NOT EXISTS {COLONNE_TEMPS_GAGNE} JSONB"
+
+
+def minutes_gagnees_de_l_org(org_id: int) -> dict:
+    """Les surcharges de l'org, `{}` quand elle n'en pose aucune (ou est inconnue)."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"SELECT {COLONNE_TEMPS_GAGNE} AS v FROM orgs WHERE id = %s", (org_id,)
+        ).fetchone()
+    v = row["v"] if row else None
+    return v if isinstance(v, dict) else {}
+
+
+def poser_minutes_gagnees(org_id: int, minutes: Optional[dict]) -> bool:
+    """Pose (ou retire, `None`/`{}`) les surcharges de l'org. False si l'org est absente."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"UPDATE orgs SET {COLONNE_TEMPS_GAGNE} = %s::jsonb WHERE id = %s RETURNING id",
+            (json.dumps(minutes) if minutes else None, org_id),
+        ).fetchone()
+    return row is not None
+
+
+def outils_des_runs_conclus(org_id: int, jours: int) -> list[dict]:
+    """Les runs d'agents CONCLUS `done` sur la fenêtre — la matière du temps gagné,
+    dans l'ordre où ils sont tombés dus. Une ligne par run : `{trigger_id, run_id}`
+    (`trigger_id` en TEXTE, tel que le payload le porte : la clé n'est jamais castée
+    en SQL ; `run_id` mène à ses appels dans le journal, None quand le run n'y est
+    pas lié — il n'est alors pas compté)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT payload->>'trigger_id' AS trigger_id, run_id
+              FROM runner_jobs
+             WHERE org_id = %s AND status = 'done'
+               AND due_at >= NOW() - make_interval(days => %s)
+               AND {PREDICAT_DECLENCHEUR}
+             ORDER BY due_at
+            """,
+            (org_id, int(jours)),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+#: Les arguments qui NOMMENT l'enregistrement touché, dans l'ordre où on les essaie —
+#: pour « un même enregistrement compte une fois par jour ».
+CLES_D_ENREGISTREMENT = ("id", "record_id", "person_id", "contact_id", "company_id",
+                         "lead_id", "issue_id", "row_id", "email", "linkedin_url", "url")
+
+
+def appels_des_runs(run_ids: list[str]) -> list[dict]:
+    """Les appels d'outils MCP de ces runs, dans l'ordre (`tool_calls`, par
+    `idx_tool_calls_run`) : outil, `op`, réussite, l'enregistrement nommé et le jour.
+    Rien d'autre des arguments n'est lu — ni corps, ni lignes, ni contenu."""
+    if not run_ids:
+        return []
+    cle = "COALESCE(" + ", ".join(f"args->>'{k}'" for k in CLES_D_ENREGISTREMENT) + ")"
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT run_id, tool, args->>'op' AS op, ok, {cle} AS cle,
+                   to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS jour
+              FROM tool_calls
+             WHERE run_id = ANY(%s) AND kind = 'mcp'
+             ORDER BY run_id, created_at
+            """,
+            (list(run_ids),),
+        ).fetchall()
+    return [dict(r) for r in rows]

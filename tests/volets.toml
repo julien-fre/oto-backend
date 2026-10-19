@@ -56,6 +56,7 @@ tests = [
   "tests/test_db_surface_frozen.py",
   "tests/test_schema_assembly_frozen.py",
   "tests/test_access_surface_frozen.py",
+  "tests/test_reglement_appel.py",
   "tests/test_org_store_surface_frozen.py",
   "tests/test_tenant_ne_s_etend_plus.py",
   "tests/test_selection_tests.py",
@@ -420,6 +421,7 @@ sources = [
   "oto_mcp/runner_*.py",
   "oto_mcp/run_*.py",
   "oto_mcp/routine_fire.py",
+  "oto_mcp/time_saved.py",
   "oto_mcp/capabilities/runner_*.py",
   "oto_mcp/capabilities/run_thread.py",
   "oto_mcp/capabilities/automation.py",
@@ -438,6 +440,7 @@ tests = [
   "tests/**/test_declencheur*.py",
   "tests/**/test_portee_runner.py",
   "tests/**/test_trigger*.py",
+  "tests/**/test_time_saved.py",
 ]
 
 [[volet]]

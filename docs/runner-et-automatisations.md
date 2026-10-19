@@ -1716,12 +1716,14 @@ que le fournisseur rapporte, usage perso compris —, la même pour les deux fen
   admin d'org ; `limit_pct` 1..100, `null` = retour au défaut), REST
   `GET|PUT /api/orgs/{id}/model-subscriptions/{family}`, table
   `org_model_subscription_limits`. Sans réglage, **80 %** (`_abonnement.DEFAUT_LIMITE_PCT`).
-- **La personne peut le resserrer pour elle-même** : `PATCH
+- **La personne peut poser le sien** (1..95, `user_subscriptions.LIMITE_PERSO_MAX`) : `PATCH
   /api/me/model-subscriptions/{family}` `{"limit_pct": int|null}` (sa ligne seulement,
   `404 not_connected` sans abonnement), colonne `user_model_subscriptions.limite_pct`,
   rendue par la liste.
-- **Seuil effectif = le plus strict des deux** (min). Un plafond perso plus haut que celui
-  de l'org ne relâche rien. La règle est écrite UNE fois, dans `_abonnement.seuil`, lue
+- **Seuil effectif = le plafond perso s'il est posé** (plus bas ou plus haut que celui de
+  l'org, borné à 95 — une ligne d'avant posée à 100 se lit 95), sinon celui de l'org. La
+  règle est écrite UNE fois, dans `_abonnement.seuil` (relue en SQL par
+  `runner_jobs._pause_pour_l_org`), lue
   avec l'org du travail (`runner_jobs.porteur_et_famille` rend `org_id`).
 - **Le run en cours finit toujours** : le plafond se juge sur le rapport de fin d'un
   travail, qui met la personne en `paused_limit` jusqu'à l'échéance de la fenêtre
@@ -2163,3 +2165,104 @@ une automatisation*. Il ne vaudra plus que ça tant qu'oto ne fait rien entre le
 (tracer les tirs, router selon l'événement, dédupliquer). **Aucune API publique de
 création de routine ni de génération de jeton** — le provisionnement reste manuel, par
 construction ; l'état vide de la page Automatisations du dashboard l'explique.
+
+## Dossier d'affichage d'un agent — `folder` (2026-10-16)
+
+**Le besoin.** À vingt automatisations, la liste du dashboard se lit nom par nom. Ce qui
+manquait n'est pas une hiérarchie, c'est un **regroupement visuel** — même réponse que
+`projects.folder` (docs/projects.md §Dossier d'affichage).
+
+**La forme.** Colonne `runner_triggers.folder` (TEXT, NULL = hors dossier), posée par
+`oto_trigger op=update folder="…"` — rognée, `""` la retire, plus de 80 caractères
+refusé (`folder_too_long`, rien d'écrit). Servie par `op=get`/`list`. Les agents au même
+libellé forment un dossier : **il n'existe pas d'objet dossier** — ni table, ni id, ni
+dossier vide. Les campagnes (`runner_fleets`) n'en ont pas.
+
+**Ce que ce n'est pas.** Aucune règle d'accès (un dossier ne partage ni ne masque rien),
+aucune imbrication, aucun effet sur l'exécution. Même garde que le renommage : le droit
+de modifier l'agent. Partagé par tous ceux qui voient l'agent — un rangement d'équipe.
+
+**En lot.** `oto_trigger op=update trigger_ids=[…] folder="…"` range jusqu'à 100 agents en
+un appel (`_LOT_MAX`, bien en deçà des 45 s de l'invocation REST). `trigger_ids` remplace
+`trigger_id` (les deux ensemble : `ambiguous_target`) et `folder` est le seul champ admis
+(`bulk_folder_only`) : un horaire, un modèle ou un interrupteur en lot déplaceraient les
+gardes du geste unitaire vers des refus partiels illisibles. Chaque agent passe par le
+geste unitaire — mêmes gardes, même droit de modifier — et un refus n'arrête pas le lot.
+Une panne sur un agent (base, valeur inattendue) non plus : journalisée, rendue dans
+`failed` avec le code `bulk_item_failed`. `trigger_ids` sur un autre geste qu'`update`
+(`create` et `list` compris) est refusé (`bulk_unsupported`), jamais ignoré.
+Reçu léger : `{total, succeeded, failed: [{index, id, error}]}`, jamais N agents.
+La validation du libellé (borne, refus, `""`) est UNE fonction partagée avec les projets
+(`capabilities/_dossier.py`).
+
+## Résumé de la page Agents — `runner.jobs op=summary` (2026-10-17)
+
+**Le besoin.** La page Agents chargeait l'historique de chaque agent séparément
+(`op=list trigger_id=… limit=200`) : une requête par agent, des centaines de lignes
+pleines (`result` compris) chacune, pour tracer des cases et un total. Et ces
+historiques ne se rafraîchissaient jamais.
+
+**La forme.** `op=summary days=1..31` (défaut 28) rend, pour chaque agent que
+l'appelant VOIT (`_acces_agent.niveaux`, comme `runner.triggers op=list`) : ses
+travaux par heure et par statut (`hours`, lignes creuses), son `total`, et sa
+dernière panne (`last_failure`). Deux lectures pour toute l'org
+(`db.resume_des_declencheurs`). Un geste de membre : un worker de plateforme est
+refusé (`worker_verbs_only`). L'écran regroupe les heures en cases et le
+rafraîchit avec son sondage ; le détail d'un travail se lit toujours par `list`/`get`.
+
+La clé `trigger_id` est lue en TEXTE (filtrée `~ '^[0-9]+$'`) et convertie côté Python,
+jamais castée en SQL : une seule ligne non numérique ferait tomber la lecture entière.
+
+**L'index.** Mesuré en production le 18/10/2026 sur l'org la plus chargée : un
+parcours complet de la file, 775 ms à froid (42 ms à chaud), 86 616 lignes écartées —
+ses travaux viennent tous de flottes et ne portent pas la clé. D'où
+`idx_runner_jobs_declencheurs (org_id, due_at)`, partiel sur le prédicat des requêtes
+(`runner_jobs.PREDICAT_DECLENCHEUR`, partagé avec le temps gagné) : il ne garde que
+les travaux d'un déclencheur. Révision `0067_runner_jobs_declencheurs`, CONCURRENTLY
+sous le verdict commun (`index_concurrent`) ; le démarrage d'une base neuve le pose.
+
+## Temps gagné des agents — `time_saved.py` (2026-10-17)
+
+**Le besoin.** Montrer ce qu'un agent rapporte sans rien demander à personne : ni
+saisie à la création, ni question, ni table à tenir.
+
+**La règle (décision d'Alexis, 17/10/2026) : SEUL ce qu'un outil DÉCLARE compte.**
+Temps gagné d'un run = Σ résultats × minutes par type. Le TYPE vient de l'annotation que
+l'outil porte (`tools/lecture.py`, mise en cache au boot par `tool_registry.effet_de`) :
+- `LECTURE` → recherche ;
+- `SIMULATION` (`gmail`, `outlook`) → ses `op` qui lisent (`time_saved.READ_OPS`) sont
+  des recherches ; préparer un brouillon ne compte pas (c'est l'envoi qui compte) ;
+- `ACTE` / `ENVOI` → sans `op`, un message ou une action ; avec une `op`, seule une `op`
+  qui atteint un tiers (`time_saved.SEND_OPS` : send, reply, publish, invite…) est un
+  envoi — archiver, mettre à la corbeille, déplacer ne rapportent rien ;
+- un outil qui ne déclare RIEN ne rapporte RIEN : on ne déduit jamais une écriture de
+  l'absence d'annotation, ni un type du nom de l'outil. Le chiffre grandit à mesure que
+  les connecteurs déclarent ce qu'ils font (`<ns>` / `<ns>_act`) ;
+- les écritures du tableau de l'agent (`data_write`, `data_update_where`) sont des
+  enregistrements écrits : les capacités de la plateforme ne portent pas d'annotation
+  MCP, la liste `_DATA_WRITES` est leur déclaration.
+
+Défauts : rapport 15 min, message/action 4, écriture 1,5, recherche 2 — **plafonnée à
+10 min par run**. Ces minutes sont des **estimations** (des points de départ prudents,
+pas des mesures) : chaque org les surcharge. Servi par `runner.jobs op=summary`
+(`time_saved_minutes`, `time_saved` par type, `time_saved_not_counted`,
+`time_standards`).
+
+**La matière : le journal.** Les appels des runs conclus `done` (`tool_calls` par
+`run_id`, `db.appels_des_runs`) : l'`op`, la réussite, et l'enregistrement nommé
+(`CLES_D_ENREGISTREMENT` : id, email, url… — rien d'autre des arguments n'est lu). Un
+run sans appel au journal n'est **pas compté** : il est rendu dans
+`time_saved_not_counted` (`reason: no_logged_calls`, `runs`), jamais estimé depuis ses
+`tool_counts`.
+
+**Revu sur des agents réels (17/10/2026)**, qui surcomptaient :
+- un balayage qui ne PRODUIT rien de neuf ne gagne rien — sa recherche ne compte que
+  dans un run productif ;
+- un même enregistrement compte UNE fois par jour et par agent ;
+- un appel refusé ne compte pas ;
+- chercher puis seulement ENVOYER (un résumé, une alerte) est UN rapport par run.
+
+**Surcharge d'org.** `oto_org_settings domain=time_saved` : `get` (membre) rend défauts et
+minutes appliquées ; `set` (admin) prend `minutes` `{type: 0..240 | null}` — null rend le
+défaut, `{}` les rend tous. Colonne `orgs.time_saved_minutes` (révision
+`0066_orgs_time_saved_minutes` + démarrage). Jamais par agent : c'est un réglage, pas une étape.

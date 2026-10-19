@@ -32,7 +32,8 @@ class ZohoConnectInput(BaseModel):
     # Region of the Zoho account — REQUIRED for `start`: the OAuth app and the token are
     # tied to their data center, an `.eu` client on `accounts.zoho.com` is rejected
     # with an opaque `invalid_client`. Unguessable, hence explicit — except under an app
-    # dedicated by the org or the team, which carries its own (`consent_region`).
+    # dedicated by the org or the team, or set as a key with its `data_center`, which
+    # carries its own (`consent_region`).
     data_center: Optional[str] = None
 
 
@@ -87,6 +88,8 @@ def start_for(ctx: ResolvedCtx, connector: str, data_center: str,
             ctx.sub, org, connector, zoho_oauth.consent_region(app, data_center),
             app=app, return_app=return_app, group_id=group,
             level=zoho_oauth.consent_level(connector, org, group))
+    except zoho_oauth.ZohoRegionMissing as e:
+        raise AuthzDenied(400, "zoho_region_missing", str(e))
     except zoho_oauth.ZohoOAuthError as e:
         raise AuthzDenied(400, "zoho_oauth_unavailable", str(e))
     # The connector echo is SPECIFIC to Zoho (three connectors share this flow):

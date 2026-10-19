@@ -37,6 +37,7 @@ from .. import (db, org_store, ownership, roles, runner_hook, runner_models, run
                 session_visibility, tool_alias, tool_registry)
 from ..tools import catalogue as tool_catalogue
 from ._authz import ORG_MEMBER
+from ._dossier import FOLDER_MAX, dossier_valide
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding)
 from .registry import CAPABILITIES
@@ -44,6 +45,12 @@ from .registry import CAPABILITIES
 logger = logging.getLogger(__name__)
 
 _TZ_DEFAUT = "Europe/Paris"
+
+# Ranger EN LOT : un appel pour N agents (oto_trigger op=update trigger_ids=[…]
+# folder=…). Une boucle sur le geste unitaire — chaque agent passe par les mêmes
+# gardes que seul —, bornée bien en deçà des 45 s de l'invocation REST : deux à
+# trois lectures et une écriture par agent.
+_LOT_MAX = 100
 
 
 class TriggerInput(BaseModel):
@@ -80,6 +87,11 @@ class TriggerInput(BaseModel):
                 # admins ; `shares` se lit par quiconque voit l'agent.
                 "shares", "share", "unshare"]
     trigger_id: Optional[int] = None
+    trigger_ids: Optional[list[int]] = Field(None, description=(
+        f"update, IN BULK (≤ {_LOT_MAX}): file these agents under `folder` in one call — "
+        "instead of `trigger_id`, never with it, and with `folder` as the only field. "
+        "Each agent is checked as if updated alone; one refused does not stop the others "
+        "(returns `total` / `succeeded` / `failed`)."))
     # create / update —
     procedure: Optional[str] = None
     cron: Optional[str] = None
@@ -88,6 +100,10 @@ class TriggerInput(BaseModel):
     project_id: Optional[int] = None
     input: Optional[str] = None
     label: Optional[str] = None
+    folder: Optional[str] = Field(default=None, description=(
+        "update: the folder the agent is shown under in lists — a free label "
+        f"(≤ {FOLDER_MAX} characters), shared by every agent that carries the "
+        "same one. Display only: no hierarchy, no access rule. `\"\"` clears it."))
     max_steps: Optional[int] = None
     #: Les limites d'UN run (`_limites_du_run`). Absent = on ne touche à rien, `0` = retirer.
     max_tokens: Optional[int] = Field(None, description=(
@@ -226,6 +242,9 @@ class Trigger(BaseModel):
     org_id: Optional[int] = None
     sub: Optional[str] = None
     label: Optional[str] = None
+    # Dossier d'affichage : les agents au même libellé se regroupent dans les
+    # listes. `null` = hors dossier. Aucune hiérarchie ni règle d'accès.
+    folder: Optional[str] = None
     procedure: Optional[str] = None
     project_id: Optional[int] = None
     tools: Optional[list[str]] = None
@@ -388,8 +407,22 @@ class AgentShare(BaseModel):
     granted_at: Optional[str] = None
 
 
+class BulkFailure(BaseModel):
+    """Un agent d'un lot qui n'a PAS été rangé, et pourquoi (le code du refus seul)."""
+    index: int
+    id: int
+    error: str = Field(description=(
+        "the refusal code for this agent (e.g. `not_found`, `forbidden`), or "
+        "`bulk_item_failed` when the update broke on this agent — nothing was changed "
+        "for it, the others went on"))
+
+
 class TriggerOut(BaseModel):
     trigger: Optional[Trigger] = None
+    #: Le reçu d'un rangement EN LOT (`trigger_ids`) — léger, jamais N agents.
+    total: Optional[int] = None
+    succeeded: Optional[int] = None
+    failed: Optional[list[BulkFailure]] = None
     triggers: Optional[list[Trigger]] = None
     ok: Optional[bool] = None
     runner: Optional[RunnerArme] = None
@@ -691,6 +724,11 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if not ctx.org_id:
         raise AuthzDenied(400, "org_required", "les automatisations sont org-scopées")
     inp = _noms_canoniques(ctx, inp)
+    # Le lot ne vaut que pour `update` — refusé AVANT les branches `create` et `list`,
+    # qui sinon l'ignoreraient sans rien dire (un rangement demandé, un autre geste fait).
+    if inp.trigger_ids is not None and inp.op != "update":
+        raise AuthzDenied(400, "bulk_unsupported",
+                          "`trigger_ids` ne vaut que pour `op=update`.")
     if inp.op in ("create", "update"):
         _limites_du_run.valider(inp.max_tokens, inp.max_run_seconds)
 
@@ -851,6 +889,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                                  ferme=_acces_agent.forfait_ferme(ctx.sub, t, pretes))
                              for t in _servis_en_liste(ctx.org_id, vus)],
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
+
+    if inp.trigger_ids is not None:
+        return _ranger_en_lot(ctx, inp)
 
     if inp.trigger_id is None:
         raise AuthzDenied(400, "missing_fields", f"{inp.op} exige `trigger_id`")
@@ -1017,6 +1058,10 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         v = getattr(inp, c)
         if v is not None:
             champs[c] = v
+    folder = dossier_valide(inp.folder)
+    if folder is not None:
+        # chaîne vide = sortir du dossier (NULL) — on ne stocke pas de libellé vide
+        champs["folder"] = folder or None
     _exiger_projet_de_l_org(ctx, champs.get("project_id"))
     for c in ("max_tokens", "max_run_seconds"):
         v = getattr(inp, c)
@@ -1525,6 +1570,49 @@ def _avec_mon_acces(ctx: ResolvedCtx, rep: dict) -> dict:
     return rep
 
 
+def _ranger_en_lot(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
+    """`op=update trigger_ids=[…] folder=…` : le même rangement pour N agents.
+
+    ⚠️ Le DOSSIER seul, et c'est voulu : il n'a aucun effet sur l'exécution et se
+    défait en un geste. Un horaire, un modèle ou un interrupteur en lot
+    déplaceraient les gardes du geste unitaire (runner armé, forfait d'autrui,
+    modèle servi) vers des refus partiels difficiles à relire.
+
+    Chaque agent passe par `_triggers_sync` comme s'il était rangé seul — mêmes
+    gardes, même droit de modifier. Un refus n'arrête pas le lot : il est rendu,
+    avec son code, dans `failed`. Une panne sur un agent (base, valeur inattendue)
+    non plus : journalisée, rendue `failed` avec le code `bulk_item_failed`, et le lot
+    continue — sinon un lot à moitié rangé s'arrêterait sans dire où il en est."""
+    if inp.trigger_id is not None:
+        raise AuthzDenied(400, "ambiguous_target",
+                          "`trigger_id` OU `trigger_ids`, jamais les deux.")
+    autres = sorted(k for k in inp.model_fields_set
+                    if k not in ("op", "trigger_ids", "folder") and getattr(inp, k) is not None)
+    if inp.folder is None or autres:
+        raise AuthzDenied(400, "bulk_folder_only",
+                          "En lot, `folder` est le seul champ — "
+                          + (f"reçu aussi : {', '.join(autres)}." if autres else "absent ici."))
+    ids = list(dict.fromkeys(inp.trigger_ids))
+    if not ids:
+        raise AuthzDenied(400, "missing_fields", "`trigger_ids` est vide.")
+    if len(ids) > _LOT_MAX:
+        raise AuthzDenied(400, "too_many_ids",
+                          f"{len(ids)} agents : au plus {_LOT_MAX} par appel.")
+    # Jugé UNE fois : le même libellé trop long refusé N fois ne dirait rien de plus.
+    dossier_valide(inp.folder)
+    echecs: list[dict] = []
+    for index, tid in enumerate(ids):
+        seul = inp.model_copy(update={"trigger_id": tid, "trigger_ids": None})
+        try:
+            _triggers_sync(ctx, seul)
+        except AuthzDenied as e:
+            echecs.append({"index": index, "id": tid, "error": e.code})
+        except Exception:  # noqa: SILENT — journalisé et rendu dans `failed`, le lot continue
+            logger.exception("rangement en lot : l'agent %s n'a pas été rangé", tid)
+            echecs.append({"index": index, "id": tid, "error": "bulk_item_failed"})
+    return {"total": len(ids), "succeeded": len(ids) - len(echecs), "failed": echecs}
+
+
 def _triggers_et_acces(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     return _avec_mon_acces(ctx, _triggers_sync(ctx, inp))
 
@@ -1552,6 +1640,13 @@ CAPABILITIES += [
             DeclaredError(400, "missing_fields",
                           "`create` sans `procedure`/`cron`/`tools`, ou une "
                           "opération sur une automatisation sans `trigger_id`"),
+            DeclaredError(400, "bulk_unsupported", "`trigger_ids` sur un autre geste qu'`update`"),
+            DeclaredError(400, "ambiguous_target", "`trigger_id` et `trigger_ids` ensemble"),
+            DeclaredError(400, "bulk_folder_only",
+                          "`trigger_ids` sans `folder`, ou avec un autre champ que `folder`"),
+            DeclaredError(400, "too_many_ids", "`trigger_ids` de plus de 100 agents"),
+            DeclaredError(400, "folder_too_long",
+                          f"`folder` de plus de {FOLDER_MAX} caractères — un libellé, pas une phrase"),
             DeclaredError(400, "invalid_schedule",
                           "cron malformé, fuseau inconnu, ou deux occurrences "
                           "espacées de moins de 5 minutes"),
@@ -1631,7 +1726,9 @@ CAPABILITIES += [
             "(procedure slug + `cron` + `tools` allowlist ; `tz` defaults to "
             "Europe/Paris and the cron evaluates IN that timezone — say WHICH 8am "
             "you mean) / list / get / update (editing cron or tz revalidates and "
-            "recomputes the next due) / delete / take_over (org admin only, and "
+            "recomputes the next due; `folder` = a display label the lists group "
+            "agents under, \"\" clears it — `trigger_ids=[…]` instead of `trigger_id` "
+            "files up to 100 agents in one call, `folder` only) / delete / take_over (org admin only, and "
             "only when the agent's owner is no longer a member of the org — "
             "`owner_still_member` otherwise: an agent is shared, never taken. You "
             "become the agent's owner — it then acts as YOU and, on a personal "

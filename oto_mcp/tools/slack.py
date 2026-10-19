@@ -23,6 +23,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access, file_content
 from ..mcp_errors import McpError
 from ..connectors import verify as connector_verify
+from .lecture import ACTE, LECTURE
 
 
 #: What, in the body of `auth.test`, IDENTIFIES the application — and nothing else.
@@ -206,6 +207,32 @@ def _refus(e, channel: Optional[str] = None) -> ValueError:
             "Check the ID with `slack_list_channels`; if it is private, "
             + _GESTE_INVITATION + ".")
 
+    if code == "permission_denied":
+        # User groups: the workspace setting "who can manage user groups" is
+        # checked on the ACTOR. A bot token only passes when it is "everyone".
+        return ValueError(
+            "Slack refuses: this identity is not allowed to manage user groups in this "
+            "workspace. A bot token (`author=\"app\"`) only can when the workspace lets "
+            "everyone manage them; otherwise write with `author=\"me\"` and the user token "
+            "of a member allowed by that setting (an admin, by default).")
+
+    if code in ("plan_upgrade_required", "paid_teams_only"):
+        return ValueError(
+            "Slack refuses: user groups require a paid Slack plan (Pro or above) — this "
+            "workspace does not have them.")
+
+    if code == "no_such_subteam":
+        return ValueError(
+            "Slack does not know this user group ID. List them with "
+            "`slack(op=\"usergroups\")` (`include_disabled=true` for disabled ones).")
+
+    if code in ("name_already_exists", "handle_already_exists"):
+        quoi = "name" if code.startswith("name") else "handle"
+        return ValueError(
+            "Slack refuses: this " + quoi + " is already used in the workspace (a "
+            "disabled group keeps its " + quoi + "). Pick another, or update/enable the "
+            "existing group — `slack(op=\"usergroups\", include_disabled=true)` finds it.")
+
     if code == "is_archived":
         return ValueError(
             "Slack refuses: " + cible + " is archived — it can no longer be posted to or "
@@ -285,10 +312,6 @@ def register(mcp: FastMCP) -> None:
                 "is_dm": bool(info.get("is_im")),
                 "shared_externally": bool(info.get("is_ext_shared"))}
 
-    def _record_if_platform(is_platform: bool) -> None:
-        if is_platform:
-            access.record_platform_usage("slack")
-
     @mcp.tool()
     def slack_post_message(
         channel: str,
@@ -324,7 +347,6 @@ def register(mcp: FastMCP) -> None:
         client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
             result = client.post_message(channel, text=text, thread_ts=thread_ts)
-        _record_if_platform(is_platform)
         return {**result, "_author": qui, "_channel": _ou(client, channel)}
 
     @mcp.tool()
@@ -342,7 +364,6 @@ def register(mcp: FastMCP) -> None:
         client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
             result = client.delete_message(channel, ts)
-        _record_if_platform(is_platform)
         return {**result, "_author": qui}
 
     @mcp.tool()
@@ -355,7 +376,6 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         with _traduit():
             result = {"channels": client.list_channels(types=types)}
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -385,7 +405,6 @@ def register(mcp: FastMCP) -> None:
         with _traduit(channel):
             result = client.history(channel, limit=limit, cursor=cursor, oldest=oldest,
                                     latest=latest, inclusive=inclusive)
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -439,7 +458,6 @@ def register(mcp: FastMCP) -> None:
                 "`thread_ts` points to a REPLY, not the thread's parent: Slack "
                 "therefore returned only that message, and nothing of the thread. Call again with "
                 "thread_ts=`" + vrai_parent + "`.")
-        _record_if_platform(is_platform)
         return {
             "parent": parent,
             "replies": msgs[1:],
@@ -479,7 +497,6 @@ def register(mcp: FastMCP) -> None:
                 "oto cannot do it for you — " + _GESTE_INVITATION + ".")
         with _traduit(channel):
             client.join_channel(channel)
-        _record_if_platform(is_platform)
         return {"channel": info, "joined": True, "already_member": False}
 
     @mcp.tool()
@@ -527,7 +544,6 @@ def register(mcp: FastMCP) -> None:
                 sub=sub, prefix="slack-files", sheet=sheet, max_rows=max_rows)
         except (file_content.MediaUnavailable, file_content.SpreadsheetError) as e:
             raise ValueError(str(e))
-        _record_if_platform(is_platform)
         return out
 
     @mcp.tool()
@@ -536,7 +552,6 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         with _traduit():
             result = client.find_user_by_email(email)
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -549,7 +564,6 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         with _traduit():
             result = client.open_dm(user)
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -568,5 +582,203 @@ def register(mcp: FastMCP) -> None:
         client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
             result = client.add_reaction(channel, ts, name)
-        _record_if_platform(is_platform)
+        return {**result, "_author": qui}
+
+    # --- user groups (`@team` handles) — the connector's pair (17/10/2026) ---------
+    # `slack` reads, `slack_act` acts: an MCP client authorizes TOOLS, so a write never
+    # lives as an `op` of the reader (`lecture.py`, `tests/test_convention_act.py`). The
+    # older Slack tools (one per gesture) join the pair when Slack is migrated.
+
+    @mcp.tool(name="slack", annotations=LECTURE)
+    def slack(
+        op: Literal["usergroups", "usergroup_members"],
+        usergroup: Optional[str] = None,
+        include_users: bool = False,
+        include_disabled: bool = False,
+    ) -> dict:
+        """Read Slack — ops: `usergroups`, `usergroup_members`. Changes: `slack_act`.
+
+        - `usergroups`: the workspace's user groups (`@team` handles) →
+          `{usergroups: [{id, name, handle, description, user_count, date_delete,
+          prefs.channels, users?}]}` — `date_delete != 0` means disabled.
+        - `usergroup_members`: `usergroup` → `{usergroup, users: [U…]}`, its member IDs.
+
+        Requires the `usergroups:read` scope, and a paid Slack plan.
+
+        Args:
+            op: What to read (see above).
+            usergroup: User group ID (S…) — `usergroup_members` only.
+            include_users: `usergroups` — add each group's member IDs.
+            include_disabled: Also return disabled groups (or read a disabled one).
+        """
+        if op == "usergroup_members":
+            if not usergroup:
+                raise _refus_auteur("`op=\"usergroup_members\"` needs `usergroup` (S…) — "
+                                    "find it with `slack(op=\"usergroups\")`.")
+            if include_users:
+                raise _refus_auteur("`include_users` only applies to `op=\"usergroups\"`.")
+        elif usergroup is not None:
+            raise _refus_auteur("`usergroup` only applies to `op=\"usergroup_members\"` — "
+                                "`op=\"usergroups\"` lists every group.")
+        client, is_platform = _client()
+        if op == "usergroup_members":
+            with _traduit():
+                users = client.usergroup_users(usergroup, include_disabled=include_disabled)
+            result = {"usergroup": usergroup, "users": users}
+        else:
+            with _traduit():
+                groups = client.list_usergroups(include_users=include_users,
+                                                include_disabled=include_disabled,
+                                                include_count=True)
+            result = {"usergroups": groups}
+        return result
+
+    @mcp.tool(name="slack_act", annotations=ACTE)
+    def slack_act(
+        op: Literal["create_usergroup", "update_usergroup", "disable_usergroup",
+                    "enable_usergroup", "set_usergroup_members",
+                    "add_usergroup_members", "remove_usergroup_members"],
+        usergroup: Optional[str] = None,
+        name: Optional[str] = None,
+        handle: Optional[str] = None,
+        description: Optional[str] = None,
+        channels: Optional[list[str]] = None,
+        users: Optional[list[str]] = None,
+        author: Optional[Auteur] = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Change Slack — ops: `create_usergroup`, `update_usergroup`,
+        `disable_usergroup`, `enable_usergroup`, `set_usergroup_members`,
+        `add_usergroup_members`, `remove_usergroup_members`. Reads: `slack`.
+
+        - `create_usergroup`: `name` (+ `handle`, `description`, `channels`, `users`) —
+          a group starts empty; `users` sets its members right after.
+        - `update_usergroup`: `usergroup` + any of `name`, `handle` (without `@`),
+          `description`, `channels` (default channel IDs, replaces the list).
+        - `disable_usergroup` / `enable_usergroup`: `usergroup`. Disabling is how a
+          group is emptied or retired; it is reversible and keeps the members.
+        - `set_usergroup_members`: `usergroup` + `users` = the FULL new list (whoever
+          is missing leaves). `add_usergroup_members` / `remove_usergroup_members`:
+          `usergroup` + `users` to add or remove — the current list is read, then
+          replaced. Every member op answers `{before, after, added, removed}`.
+
+        `dry_run=true` validates and returns that diff (or the fields that would be
+        sent) without writing. Slack refuses an empty member list: removing the
+        last members is refused here — disable the group instead.
+
+        Requires `usergroups:write`. ⚠️ A bot token (`author="app"`) can only write
+        when the workspace lets everyone manage user groups; otherwise use
+        `author="me"` with the user token of an allowed member.
+
+        Args:
+            op: The change to make (see above).
+            usergroup: User group ID (S…), from `slack(op="usergroups")`. All ops but
+                `create_usergroup`.
+            name: Display name (`create_usergroup`, `update_usergroup`).
+            handle: Mention handle without `@` (`create_usergroup`, `update_usergroup`).
+            description: Description (`create_usergroup`, `update_usergroup`).
+            channels: Default channel IDs (C…) (`create_usergroup`, `update_usergroup`).
+            users: Member user IDs (U…) — the member ops; `create_usergroup` too.
+            author: Who acts — `"me"` (user token) or `"app"` (bot token).
+                Required when the workspace holds both tokens.
+            dry_run: Validate and preview, write nothing.
+        """
+        champs = {k: v for k, v in (("name", name), ("handle", handle),
+                                    ("description", description),
+                                    ("channels", channels)) if v is not None}
+        if op == "create_usergroup":
+            if not name:
+                raise _refus_auteur("`op=\"create_usergroup\"` needs `name`.")
+        elif not usergroup:
+            raise _refus_auteur("`op=\"" + op + "\"` needs `usergroup` (S…) — "
+                                "find it with `slack(op=\"usergroups\")`.")
+        if op == "update_usergroup" and not champs:
+            raise _refus_auteur("`op=\"update_usergroup\"` needs at least one of `name`, "
+                                "`handle`, `description`, `channels`.")
+        membres_op = op in ("set_usergroup_members", "add_usergroup_members",
+                            "remove_usergroup_members")
+        if membres_op and not users:
+            raise _refus_auteur("`op=\"" + op + "\"` needs `users` (U… IDs).")
+        if handle is not None:
+            champs["handle"] = handle.lstrip("@")
+
+        # The author is checked BEFORE anything is read: an ambiguous call is
+        # refused without a single upstream request, dry_run included.
+        client, is_platform, qui = _ecrivain(author)
+
+        if membres_op:
+            demandes = list(dict.fromkeys(u.strip() for u in users if u and u.strip()))
+            with _traduit():
+                avant = client.usergroup_users(usergroup, include_disabled=True)
+            if op == "set_usergroup_members":
+                apres = demandes
+            elif op == "add_usergroup_members":
+                apres = avant + [u for u in demandes if u not in avant]
+            else:
+                apres = [u for u in avant if u not in demandes]
+            diff = {"usergroup": usergroup, "before": avant, "after": apres,
+                    "added": [u for u in apres if u not in avant],
+                    "removed": [u for u in avant if u not in apres]}
+            if not apres:
+                raise _refus_auteur(
+                    "This would leave the group with no members, which Slack refuses. "
+                    "Use `op=\"disable_usergroup\"` to empty or retire the group.")
+            if dry_run:
+                return {**diff, "dry_run": True, "_author": qui}
+            if not diff["added"] and not diff["removed"]:
+                return {**diff, "changed": False, "_author": qui}
+            with _traduit():
+                client.set_usergroup_users(usergroup, apres)
+            return {**diff, "changed": True, "_author": qui}
+
+        if dry_run:
+            apercu: dict = {"op": op, "dry_run": True, "_author": qui}
+            if op == "create_usergroup":
+                apercu["fields"] = champs
+                if users:
+                    apercu["users"] = users
+            else:
+                apercu["usergroup"] = usergroup
+                with _traduit():
+                    groupes = client.list_usergroups(include_disabled=True)
+                actuel = next((g for g in groupes if g.get("id") == usergroup), None)
+                if actuel is None:
+                    raise _refus_auteur(
+                        "Slack does not know the user group `" + usergroup + "`. List them "
+                        "with `slack(op=\"usergroups\", include_disabled=true)`.")
+                if op == "update_usergroup":
+                    courant = {"name": actuel.get("name"), "handle": actuel.get("handle"),
+                               "description": actuel.get("description"),
+                               "channels": (actuel.get("prefs") or {}).get("channels")}
+                    apercu["changes"] = {k: {"from": courant.get(k), "to": v}
+                                         for k, v in champs.items() if courant.get(k) != v}
+                else:
+                    apercu["currently_disabled"] = bool(actuel.get("date_delete"))
+            return apercu
+
+        if op == "create_usergroup":
+            with _traduit():
+                result = client.create_usergroup(
+                    name, handle=champs.get("handle"), description=description,
+                    channels=channels)
+            cree = (result.get("usergroup") or {}).get("id")
+            if users and cree:
+                # The group EXISTS from here on: a member failure is named in the
+                # response, it does not turn the creation into an error.
+                try:
+                    with _traduit():
+                        result = client.set_usergroup_users(cree, users)
+                except ValueError as e:
+                    result = {**result, "members_error": str(e)}
+        elif op == "update_usergroup":
+            with _traduit():
+                result = client.update_usergroup(
+                    usergroup, name=name, handle=champs.get("handle"),
+                    description=description, channels=channels)
+        elif op == "disable_usergroup":
+            with _traduit():
+                result = client.disable_usergroup(usergroup)
+        else:
+            with _traduit():
+                result = client.enable_usergroup(usergroup)
         return {**result, "_author": qui}

@@ -4,7 +4,7 @@ Classic connector (kind="tools", ex-mount #152→#160) on AI Ark's synchronous R
 (docs.ai-ark.com). LLM contract curated here; the HTTP client lives in oto-core
 (`oto.tools.aiark.client.AiArkClient`). Standard key cascade
 (`resolve_api_key("aiark")`: BYO user/org > platform grant + quota) → platform
-mode possible via `record_platform_usage`.
+mode possible, its quota debited by the `units` each call notes.
 
 v1 = SYNCHRONOUS endpoints only. AI Ark's BULK exports/find-emails
 answer by webhook (async) → out of scope (next iteration).
@@ -334,7 +334,7 @@ def register(mcp: FastMCP) -> None:
                 msg = f"AI Ark could not process the request ({e})."
             raise McpError(ErrorData(code=INVALID_PARAMS, message=msg))
         if is_platform:
-            access.record_platform_usage("aiark")
+            session_org.note_call_trace(units=1)
         return result
 
     @mcp.tool(annotations=LECTURE)

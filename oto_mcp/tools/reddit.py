@@ -13,7 +13,7 @@ from typing import Optional
 
 from fastmcp import FastMCP
 
-from .. import access
+from .. import access, session_org
 from ..connectors import verify as connector_verify
 
 
@@ -24,7 +24,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:
     `search_subreddits`), a generic search (`q="a"`, `limit=1`) that does not
     depend on any existing target: the redditapis.com gateway exposes neither
     `/me` nor a balance. Like `hunter`/`folk`, this probe does NOT count against the
-    platform quota (`record_platform_usage` is only called by the real
+    platform quota (`units` is only noted by the real
     tools, never by `_verify` — same precedent).
 
     **Authenticated ≠ usable** (class oto#69): `RedditClient._get` already raises
@@ -69,7 +69,7 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         result = client.subreddit(name, sort=sort, limit=limit, time=time, after=after)
         if is_platform:
-            access.record_platform_usage("reddit")
+            session_org.note_call_trace(units=1)
         return result
 
     @mcp.tool()
@@ -96,7 +96,7 @@ def register(mcp: FastMCP) -> None:
             query, subreddit=subreddit, sort=sort, time=time, limit=limit, after=after
         )
         if is_platform:
-            access.record_platform_usage("reddit")
+            session_org.note_call_trace(units=1)
         return result
 
     @mcp.tool()
@@ -109,7 +109,7 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         result = client.search_subreddits(query, limit=limit)
         if is_platform:
-            access.record_platform_usage("reddit")
+            session_org.note_call_trace(units=1)
         return result
 
     @mcp.tool()
@@ -130,5 +130,5 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         result = client.post(url_or_id, comment_limit=comment_limit, depth=depth)
         if is_platform:
-            access.record_platform_usage("reddit")
+            session_org.note_call_trace(units=1)
         return result
