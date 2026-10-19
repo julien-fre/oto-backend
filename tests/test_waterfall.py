@@ -630,15 +630,18 @@ def test_people_page_linkedin_malformee_refusee(calls):
 
 
 
-def test_chaque_etape_dit_son_prix_en_donnees():
-    """Toute étape payante porte un prix lisible par un écran : la ligne de la grille
-    Tulina (outil facturé) ou le prix du fournisseur sur sa propre clé. Les étapes
-    gratuites (registre, LinkedIn connecté) n'en ont pas besoin."""
+def test_chaque_etape_dit_son_prix_en_credits_tulina():
+    """Toute étape payante dit l'outil que Tulina facture sur SA clé (la grille publiée
+    donne le chiffre) ; une étape gratuite n'a pas de prix ; aucun prix fournisseur."""
     for ns, steps in waterfall.STEPS_BY_NAMESPACE.items():
         for s in steps:
-            price = waterfall.PRICES.get((ns, s.key))
-            assert s.free or price, (ns, s.key)
-            if price and "rate" in price:
-                assert price["rate"]["tool"], (ns, s.key)
+            row = waterfall._step_row(s, ns=ns)
+            if s.free:
+                assert row["price"] is None, (ns, s.key)
+            else:
+                assert set(row["price"]) == {"rate"} and row["price"]["rate"]["tool"], (ns, s.key)
+    assert waterfall._step_row(next(s for s in waterfall.PHONE_STEPS if s.key == "fullenrich"),
+                               ns="waterfall_phone")["price"]["rate"] == {
+        "tool": "fullenrich_result", "pick": "phones"}
     assert set(waterfall.PRICES) <= {(ns, s.key) for ns, st in waterfall.STEPS_BY_NAMESPACE.items()
                                      for s in st}

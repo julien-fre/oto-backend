@@ -1462,62 +1462,32 @@ PEOPLE_STEPS: tuple[Step, ...] = (
 
 # --- the plan, for a screen ----------------------------------------------------------
 
-#: What a step costs, as DATA for a screen (the `cost` sentences are for agents).
-#: `rate`: the tool Tulina BILLS for the step when it runs on Tulina's key (the collect
-#: tool, for FullEnrich) and which row of the published credit grid applies (`pick`:
-#: the grid row's `kind` or short name) — the figure itself lives in the grid, never
-#: here. `provider`: what the PROVIDER takes on the caller's own key — `amount` None
-#: when the provider publishes no fixed figure.
+#: What a step costs in TULINA credits when it runs on Tulina's key, as data for a
+#: screen: the tool Tulina BILLS for the step (the collect tool, for FullEnrich) and,
+#: when that tool has several prices, which row of the published credit grid applies
+#: (`pick`: the row's `kind` or short name). The figure itself lives in the grid, never
+#: here. A step absent from this table is billed on its own tool, if at all; on the
+#: caller's OWN key, Tulina bills nothing — what the provider takes is not shown.
 PRICES: dict[tuple[str, str], dict] = {
-    ("waterfall_email", "hunter"): {"provider": {"amount": 1, "per": "call"}},
-    ("waterfall_email", "apollo"): {"rate": {"tool": "apollo_match_person"},
-                                    "provider": {"amount": 1, "per": "match"}},
-    ("waterfall_email", "aiark"): {"rate": {"tool": "linkedin_aiark_person"},
-                                   "provider": {"amount": None, "per": "profile"}},
-    ("waterfall_email", "kaspr"): {"provider": {"amount": 1, "per": "email"}},
-    ("waterfall_email", "forager"): {"rate": {"tool": "forager_person", "pick": "email"},
-                                     "provider": {"amount": 1, "per": "lookup"}},
-    ("waterfall_email", "lusha"): {"provider": {"amount": None, "per": "email"}},
-    ("waterfall_email", "dropcontact"): {"provider": {"amount": 1, "per": "email"}},
-    ("waterfall_email", "lemlist"): {"provider": {"amount": None, "per": "email"}},
-    ("waterfall_email", "fullenrich"): {"rate": {"tool": "fullenrich_result",
-                                                 "pick": "work_emails"},
-                                        "provider": {"amount": 1, "per": "email"}},
-    ("waterfall_phone", "kaspr"): {"provider": {"amount": 1, "per": "phone"}},
-    ("waterfall_phone", "forager"): {"rate": {"tool": "forager_person", "pick": "phone"},
-                                     "provider": {"amount": None, "per": "phone"}},
-    ("waterfall_phone", "lusha"): {"provider": {"amount": None, "per": "phone"}},
-    ("waterfall_phone", "apollo"): {"provider": {"amount": 9, "per": "reveal", "from": True}},
-    ("waterfall_phone", "lemlist"): {"provider": {"amount": None, "per": "phone"}},
-    ("waterfall_phone", "dropcontact"): {"provider": {"amount": None, "per": "phone"}},
-    ("waterfall_phone", "fullenrich"): {"rate": {"tool": "fullenrich_result", "pick": "phones"},
-                                        "provider": {"amount": 10, "per": "phone"}},
-    ("waterfall_company", "aiark"): {"rate": {"tool": "linkedin_aiark_search"},
-                                     "provider": {"amount": None, "per": "company"}},
-    ("waterfall_company", "apollo"): {"rate": {"tool": "apollo_enrich_organization"},
-                                      "provider": {"amount": 1, "per": "company"}},
-    ("waterfall_company", "theirstack"): {"rate": {"tool": "theirstack_companies_search"},
-                                          "provider": {"amount": 3, "per": "company",
-                                                       "from": True}},
-    ("waterfall_company", "cognism"): {"provider": {"amount": None, "per": "company"}},
-    ("waterfall_company", "linkedin"): {"rate": {"tool": "apify_run_sync"}},
-    ("waterfall_person", "aiark"): {"rate": {"tool": "linkedin_aiark_person"},
-                                    "provider": {"amount": None, "per": "profile"}},
-    ("waterfall_person", "apollo"): {"rate": {"tool": "apollo_match_person"},
-                                     "provider": {"amount": 1, "per": "match"}},
-    ("waterfall_person", "forager"): {"rate": {"tool": "forager_person",
-                                               "pick": "profile or search"},
-                                      "provider": {"amount": 1, "per": "lookup"}},
-    ("waterfall_person", "cognism"): {"provider": {"amount": None, "per": "profile"}},
-    ("waterfall_person", "lusha"): {"provider": {"amount": None, "per": "profile"}},
-    ("waterfall_person", "lemlist"): {"provider": {"amount": None, "per": "profile"}},
-    ("waterfall_people", "apollo"): {"rate": {"tool": "apollo_search_people"},
-                                     "provider": {"amount": 0, "per": "search"}},
-    ("waterfall_people", "aiark"): {"rate": {"tool": "linkedin_aiark_search"},
-                                    "provider": {"amount": None, "per": "profile"}},
-    ("waterfall_people", "linkedin_employees"): {"rate": {"tool": "apify_run_sync"}},
-    ("waterfall_people", "google"): {"rate": {"tool": "serper_search"},
-                                     "provider": {"amount": 1, "per": "search"}},
+    ("waterfall_email", "apollo"): {"tool": "apollo_match_person"},
+    ("waterfall_email", "aiark"): {"tool": "linkedin_aiark_person"},
+    ("waterfall_email", "forager"): {"tool": "forager_person", "pick": "email"},
+    ("waterfall_email", "fullenrich"): {"tool": "fullenrich_result",
+                                        "pick": "work_emails"},
+    ("waterfall_phone", "forager"): {"tool": "forager_person", "pick": "phone"},
+    ("waterfall_phone", "fullenrich"): {"tool": "fullenrich_result", "pick": "phones"},
+    ("waterfall_company", "aiark"): {"tool": "linkedin_aiark_search"},
+    ("waterfall_company", "apollo"): {"tool": "apollo_enrich_organization"},
+    ("waterfall_company", "theirstack"): {"tool": "theirstack_companies_search"},
+    ("waterfall_company", "linkedin"): {"tool": "apify_run_sync"},
+    ("waterfall_person", "aiark"): {"tool": "linkedin_aiark_person"},
+    ("waterfall_person", "apollo"): {"tool": "apollo_match_person"},
+    ("waterfall_person", "forager"): {"tool": "forager_person",
+                                      "pick": "profile or search"},
+    ("waterfall_people", "apollo"): {"tool": "apollo_search_people"},
+    ("waterfall_people", "aiark"): {"tool": "linkedin_aiark_search"},
+    ("waterfall_people", "linkedin_employees"): {"tool": "apify_run_sync"},
+    ("waterfall_people", "google"): {"tool": "serper_search"},
 }
 
 
@@ -1545,7 +1515,8 @@ def _step_row(step: Step, mode: Optional[str] = None, ns: Optional[str] = None) 
            "cost": step.cost, "free": step.free,
            # A completion step: runs after the cascade, only to fill this missing field.
            "fills": step.fills or None,
-           "price": PRICES.get((ns, step.key)) if ns else None,
+           "price": ({"rate": PRICES.get((ns, step.key)) or {"tool": step.tool}}
+                     if ns and not step.free else None),
            "asynchronous": step.collect is not None}
     if mode is not None:
         row["key_mode"] = mode
