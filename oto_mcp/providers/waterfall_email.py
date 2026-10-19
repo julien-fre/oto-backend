@@ -12,14 +12,14 @@ from ._model import CredentialField, _c
 # activation gate and bills on ITS row. The only thing this card stores is a SETTING —
 # the ordered list of steps — never a secret: `secret=False`, rendered as-is, set by an
 # org admin (`byo_org`, the org default) or by a member for themselves (`byo_user`, an
-# override), resolved by the same cascade as a key. Nothing set = the default order.
+# override), resolved by the same cascade as a key. Nothing set = the default order —
+# hence `secret_kind="settings"`: the card works with nothing set.
 CONNECTOR = _c(
-    "waterfall_email", ["waterfall_email"], secret_kind="fields", auth_modes={"byo_user", "byo_org"},
+    "waterfall_email", ["waterfall_email"], secret_kind="settings", auth_modes={"byo_user", "byo_org"},
     cardinality="mono", modules=("waterfall",),
     credential_fields=(CredentialField(
         "steps", "Steps, in order", secret=False, required=False,
-        help="optional — comma-separated provider keys, e.g. `hunter,apollo,aiark,kaspr,forager,lusha,lemlist`. "
-             "Empty = the default order, where providers you hold your own key for run first."),),
+        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: hunter, apollo, aiark, kaspr, forager, lusha, lemlist."),),
     label="Email waterfall",
     help="a person's professional email, across your connected providers one after the other, stopping at the "
          "first hit",
@@ -32,8 +32,5 @@ SANS_LOGO_DE_MARQUE = True
 CATEGORY = "Prospecting"
 
 DESCRIPTION = (
-    "Native waterfall enrichment: finds a person's professional email by trying the "
-    "providers you have connected one after the other and stopping at the first that "
-    "finds it. You choose the providers and their order; each one is billed on its own "
-    "key, as a direct call would be."
+    "Finds a person's work email by trying your connected providers in turn — Hunter, Apollo, AI Ark, Kaspr, Forager, Lusha, lemlist — and stopping at the first hit. Each is billed on its own key."
 )

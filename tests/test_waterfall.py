@@ -416,3 +416,17 @@ def test_reglage_absent_ou_pose(monkeypatch):
     assert waterfall._configured_steps("waterfall_email") is None
     monkeypatch.setattr(access, "resolve_credential", lambda *a, **k: Rc())
     assert waterfall._configured_steps("waterfall_email") == ["lusha", "hunter", "apollo"]
+
+
+@pytest.mark.parametrize("ns", NAMESPACES)
+def test_une_carte_de_reglages_se_pose_et_se_relit_par_le_coffre(ns):
+    """Le front pose ce réglage par la MÊME route qu'une clé (champ unique : `api_key`
+    côté org, le nom du champ côté membre). Ce qui revient du coffre doit être
+    `{"steps": …}`, sans espace (copier-coller), sinon la cascade lirait le défaut."""
+    from oto_mcp import credentials_store
+    c = providers.REGISTRY[ns]
+    assert c.secret_kind == "settings" and c.auth_method == "secret"
+    kept = credentials_store.validate_fields(ns, {"steps": "lemlist, hunter , apollo"})
+    stored = credentials_store.pack_secret(ns, kept)
+    assert credentials_store.unpack_secret(ns, stored) == {"steps": "lemlist,hunter,apollo"}
+    assert waterfall._parse_steps("lemlist,hunter,apollo") == ["lemlist", "hunter", "apollo"]

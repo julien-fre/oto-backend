@@ -52,6 +52,10 @@ Trois couches, la plus spécifique gagne :
 
 1. `providers=[…]` sur l'appel — validé : une clé inconnue est la faute de l'appelant ;
 2. le réglage **`steps`** de la carte du connecteur — un `CredentialField(secret=False)`
+   sur une carte `secret_kind="settings"` (19/10/2026 : « cette carte ne porte que des
+   réglages FACULTATIFS, elle marche sans rien » — même formulaire que `fields`, méthode
+   d'auth `secret`, mais un front y lit « inclus, rien à connecter » au lieu de « non
+   connecté »)
    (un réglage, jamais un secret), posé par un admin d'org (défaut de l'org) ou par un
    membre pour lui-même (sa surcharge), résolu par la même cascade qu'une clé
    (`access.resolve_credential(ns, want="byo", emit_on_failure=False)` : sans réglage,

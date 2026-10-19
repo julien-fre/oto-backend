@@ -1,4 +1,4 @@
-## prerequisite — connect the providers it cascades over
+## prerequisite — connect the providers you want it to try
 
 this connector has no key of its own: each step calls another connector's tool, with that connector's key.
 - connect the providers you want in the cascade on their own cards, and have them activated for your org — the french registry (free), ai ark (`aiark`), apollo, theirstack, cognism

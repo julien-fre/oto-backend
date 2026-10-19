@@ -99,7 +99,12 @@ class Connector:
                                        # Browserbase) on the UI side — ORTHOGONAL to sharing:
                                        # the level (user/team/org) follows `auth_modes`
                                        # (`byo_org` ⇒ shareable session, e.g. pennylaneged)
-    secret_kind: str                   # api_key|refresh_token|oauth|cookie|none
+    secret_kind: str                   # api_key|refresh_token|oauth|cookie|fields|none|settings
+                                       # `settings` (19/10/2026): the card holds ONLY optional,
+                                       # non-secret SETTINGS — it works with nothing set (the
+                                       # waterfalls). Same form as `fields` (auth method
+                                       # `secret`); a front reads it to say "included, nothing
+                                       # to connect" instead of "not connected".
     default_quota: int                 # 0 = unlimited
     default_active: bool               # axis B: curated base set (ADR 0050) — installed
                                        # by default when seeding a new (sub, org);
