@@ -116,7 +116,6 @@ def _fake_key(monkeypatch):
     monkeypatch.setattr(
         "oto_mcp.access.resolve_api_key", lambda provider, account=None: ("k", False)
     )
-    monkeypatch.setattr("oto_mcp.access.record_platform_usage", lambda provider: None)
 
 
 def _call(tool_name, **kwargs):

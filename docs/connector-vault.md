@@ -774,6 +774,11 @@ consentement.
   à un membre de cliquer « connecter » sans connaître la région de l'app de son équipe.
   Sans région nulle part, le refus est nommé `zoho_region_missing` et dit quoi renseigner :
   aucune région par défaut.
+  L'écran le sait avant le clic : `connect.fixed` (projection authentifiée de
+  `GET /api/me/connectors`) porte `{data_center: <région>}` quand l'app applicable en lie
+  une — le front montre la région au lieu du choix. Lu dans le même passage qu'`app_ready`
+  (`auth/zoho.py::_applicable_app`, une fois par appel), sans secret ; vide pour l'app
+  d'éditeur, qui se choisit par région au clic.
 - **Pose : REST seule** (secret brut), `ORG_ADMIN_OF` / `GROUP_ADMIN_OF`,
   `PUT|GET|DELETE /api/{orgs,groups}/{id}/connectors/{name}/oauth-app`
   (`capabilities/connectors/oauth_app.py`). Le `GET` rend `configured`, la région, la date

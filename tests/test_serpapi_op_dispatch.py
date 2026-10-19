@@ -264,13 +264,15 @@ def test_platform_key_usage_is_counted_on_every_path(monkeypatch, client, tool, 
     appel gratuit, et le quota ne protège plus rien."""
     seen: list[str] = []
     monkeypatch.setattr("oto_mcp.access.resolve_api_key", lambda provider: ("k", True))
-    monkeypatch.setattr("oto_mcp.access.record_platform_usage", seen.append)
+    from _releve import capter_units
+    capter_units(monkeypatch, "serpapi", lambda p, n: seen.append(p))
     _tool(tool)(**kwargs)
     assert seen == ["serpapi"]
 
 
 def test_user_key_is_not_counted_against_the_platform_quota(monkeypatch, client):
     seen: list[str] = []
-    monkeypatch.setattr("oto_mcp.access.record_platform_usage", seen.append)
+    from _releve import capter_units
+    capter_units(monkeypatch, "serpapi", lambda p, n: seen.append(p))
     _tool("serpapi_search")(engine="bing", query="pizza")
     assert seen == []

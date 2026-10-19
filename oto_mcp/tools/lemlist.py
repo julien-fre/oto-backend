@@ -295,10 +295,6 @@ def register(mcp: FastMCP) -> None:
         key, is_platform = access.resolve_api_key("lemlist", units=units)
         return LemlistClient(api_key=key), is_platform
 
-    def _record_if_platform(is_platform: bool) -> None:
-        if is_platform:
-            access.record_platform_usage("lemlist")
-
     @mcp.tool()
     def lemlist_status() -> dict:
         """Workspace status (account, credits, plan).
@@ -310,7 +306,6 @@ def register(mcp: FastMCP) -> None:
         non-empty result as automatically working."""
         client, is_platform = _client()
         result = client.status()
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -345,7 +340,6 @@ def register(mcp: FastMCP) -> None:
             filters["sort_order"] = "desc"
         pages = max(1, -(-max_campaigns // 100))  # ceil
         campaigns, truncated = client.list_all_campaigns(max_pages=pages, **filters)
-        _record_if_platform(is_platform)
         return {
             "campaigns": [asdict(c) for c in campaigns],
             "count": len(campaigns),
@@ -357,7 +351,6 @@ def register(mcp: FastMCP) -> None:
         """Fetch full campaign details by ID."""
         client, is_platform = _client()
         result = client.get_campaign(campaign_id)
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -392,7 +385,6 @@ def register(mcp: FastMCP) -> None:
             campaign_id, start_date=start, end_date=end,
             channels=channels, ab_selected=ab_selected, send_user=send_user,
         )
-        _record_if_platform(is_platform)
         return _project_stats(result, full=full)
 
     @mcp.tool()
@@ -443,7 +435,6 @@ def register(mcp: FastMCP) -> None:
                 start_date=start_date, end_date=end_date,
                 min_date=min_date, max_date=max_date,
             )
-        _record_if_platform(is_platform)
         return {"activities": events, "count": len(events)}
 
     @mcp.tool()
@@ -460,7 +451,6 @@ def register(mcp: FastMCP) -> None:
         """
         client, is_platform = _client()
         exported = client.export_campaign_leads(campaign_id, format="json")
-        _record_if_platform(is_platform)
         return {"leads": exported if isinstance(exported, list)
                 else (exported or {}).get("leads", exported)}
 
@@ -576,7 +566,6 @@ def register(mcp: FastMCP) -> None:
                 f"lemlist answered without a lead id for campaign `{campaign_id}`: "
                 "no lead was created. Check the campaign id and the lead's "
                 "fields before retrying.", campaign_id=campaign_id)
-        _record_if_platform(is_platform)
         # oto#264: the review state is not in the response — say so, and drop
         # the field that was wrongly read as its answer.
         return {**project(result, drop=("isPaused",)),
@@ -635,7 +624,6 @@ def register(mcp: FastMCP) -> None:
             linkedin_enrichment=linkedin_enrichment, find_phone=find_phone,
             webhook_url=webhook_url,
         )
-        _record_if_platform(is_platform)
         return {
             "enrichment_id": result.get("id"),
             "next_step": ("Enrichment accepted. Call "
@@ -682,7 +670,6 @@ def register(mcp: FastMCP) -> None:
             linkedin_enrichment=linkedin_enrichment, find_phone=find_phone,
             webhook_url=webhook_url,
         )
-        _record_if_platform(is_platform)
         return {
             "enrichment_id": result.get("id"),
             "next_step": ("Enrichment accepted. Call "
@@ -828,13 +815,6 @@ def register(mcp: FastMCP) -> None:
             items.append(item)
 
         raw = client.bulk_enrich(items, webhook_url=webhook_url)
-        if is_platform:
-            # A bulk is billed PER PERSON: consumption is the number of
-            # entries submitted, not 1 for the call (same rule as FullEnrich).
-            # `len(items)` and not a real cost: lemlist's response gives no
-            # per-call cost (only `team/credits` gives a global balance), so
-            # at that point upstream says nothing — we do not guess.
-            access.record_platform_usage("lemlist", len(items))
         submitted = []
         for i, entry in enumerate(raw if isinstance(raw, list) else []):
             # `metadata` is returned as is by lemlist, but its shape is not
@@ -873,7 +853,6 @@ def register(mcp: FastMCP) -> None:
         """
         client, is_platform = _client()
         result = client.launch_lead(lead_id)
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -882,7 +861,6 @@ def register(mcp: FastMCP) -> None:
         data, e.g. for `{{variableName}}` placeholders in campaign templates."""
         client, is_platform = _client()
         result = client.add_lead_variables(lead_id, variables)
-        _record_if_platform(is_platform)
         return result
 
     # --- Campaign management ---------------------------------------------------
@@ -1076,7 +1054,6 @@ def register(mcp: FastMCP) -> None:
                 "statutes, reports, batch_stats, export_start, export_status, "
                 "export_email, export_leads")
 
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -1096,7 +1073,6 @@ def register(mcp: FastMCP) -> None:
         """
         client, is_platform = _client()
         result = client.start_campaign(campaign_id)
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -1185,7 +1161,6 @@ def register(mcp: FastMCP) -> None:
                     f'unknown op "{op}" — expected: get, add_step, update_step, '
                     "delete_step, ab_create, ab_get, ab_update, ab_delete, ab_winner")
 
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -1274,7 +1249,6 @@ def register(mcp: FastMCP) -> None:
                 f'unknown op "{op}" — expected: list, get, create, update, delete, '
                 "for_campaign, associate")
 
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -1304,7 +1278,6 @@ def register(mcp: FastMCP) -> None:
             settings["autoReviewConditions"] = conditions
         client, is_platform = _client()
         result = client.update_campaign(campaign_id, settings)
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -1452,5 +1425,4 @@ def register(mcp: FastMCP) -> None:
                 "unsubscribe, pause, resume, interested, not_interested, "
                 "vars_update, vars_delete, import_crm, upload_audio")
 
-        _record_if_platform(is_platform)
         return result

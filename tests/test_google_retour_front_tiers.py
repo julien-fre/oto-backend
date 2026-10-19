@@ -196,6 +196,21 @@ def test_un_echec_ramene_AUSSI_au_front_tiers(monkeypatch):
     assert "connect=error" in url
 
 
+def test_un_refus_chez_google_ramene_AUSSI_au_front_tiers_en_denied(monkeypatch):
+    """oto-app#11 : le refus de la personne revient SANS code (`error=access_denied`).
+    Il était lu comme un code absent : `error`, et vers NOTRE front faute d'avoir lu le
+    state — la personne d'un front tiers atterrissait chez nous, devant une « panne »."""
+    def _jamais(code, sub):
+        raise AssertionError("un refus n'échange rien")
+
+    monkeypatch.setattr(google_oauth, "exchange_code", _jamais)
+    etat = google_oauth.make_state("sub-1", 42, "acme")
+    url = asyncio.run(_callback()(_requete(
+        f"error=access_denied&state={etat}"))).headers["location"]
+    assert url.startswith("https://app.acme.test/"), url
+    assert "connect=denied" in url
+
+
 def test_un_state_illisible_ne_peut_que_retomber_sur_le_defaut():
     """Limite ASSUMÉE, écrite ici pour qu'on ne la prenne pas pour un oubli : si
     le state ne se relit pas, on ignore d'où vient la personne. Il n'existe aucun

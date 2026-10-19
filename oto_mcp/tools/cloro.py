@@ -30,7 +30,7 @@ from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, url_perimeter
+from .. import access, session_org, url_perimeter
 
 # AI engines → (Cloro API slug, human label). The slug is the value of the `engine`
 # parameter of `cloro_ask` (⚠️ `aimode`, not `ai_mode`: it is the Cloro API's slug).
@@ -56,7 +56,7 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         result = getattr(client, method)(**kwargs)
         if is_platform:
-            access.record_platform_usage("cloro")
+            session_org.note_call_trace(units=1)
         return result
 
     def _bad(msg: str) -> McpError:

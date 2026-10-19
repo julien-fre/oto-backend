@@ -428,8 +428,8 @@ def _cran_deux(monkeypatch, reponse, *, platform=True):
                      fetch={"ok": False, "verdict": "HTTP 403", "status": 403},
                      serper=reponse)
     monkeypatch.setattr(W.access, "resolve_api_key", lambda p: ("k", platform))
-    monkeypatch.setattr(W.access, "record_platform_usage",
-                        lambda provider, calls=1: debits.append((provider, calls)))
+    from _releve import capter_units
+    capter_units(monkeypatch, "serper", lambda provider, calls: debits.append((provider, calls)))
     return lire, debits
 
 

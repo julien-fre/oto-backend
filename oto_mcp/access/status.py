@@ -162,7 +162,12 @@ def _status_for_projection(sub: str, *, org: "int | None | object" = scope._UNSE
         group_has = any(r.mode == "group" for r in hits)
         org_has = any(r.mode == "org" for r in hits)
         grant = next((r.payload for r in hits if r.mode == "platform"), None)
-        used = _used(provider)
+        # The refusal's count (`quotas.platform_used_today`) when the platform rung
+        # ANSWERS: a `user` edge reads its edge counter, anything else the preloaded
+        # per-person map. Not shown otherwise, so not read.
+        used = (quotas.platform_used_today(sub, provider, grant.get("edge_counter"),
+                                           lambda: _used(provider))
+                if grant and hits[0].mode == "platform" else _used(provider))
         # The refusal cap (`quotas.plafond_du_jour`), entitlement lift included: a
         # cap copied here announced `over_quota` to a person nothing limits.
         limit = quotas.plafond_du_jour(grant, provider, leves) if grant else 0
@@ -202,8 +207,8 @@ def _status_for_projection(sub: str, *, org: "int | None | object" = scope._UNSE
             # EFFECT fields (read on `winner`): the platform key's counter
             # and its cap. Outside the platform rung, neither makes
             # sense — `resolve_api_key` returns BEFORE `_win_quota` as soon as
-            # `win.mode != "platform"`, and the tools only call
-            # `record_platform_usage` under `if is_platform`. A cap announced
+            # `win.mode != "platform"`, and the settlement only debits a call the
+            # resolver noted as served by a platform key (`access.reglement`). A cap announced
             # there would thus be a PHANTOM in both directions: neither counted (hence the perpetual
             # "0" in the numerator), nor enforceable. Lived on an org served by
             # a TENANT key: "0/200 today" on a connector without

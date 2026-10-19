@@ -1,5 +1,5 @@
 """zoho/google/salesforce — la convention unique de retour OAuth
-(`?connector=<nom>&connect=connected|error|forbidden`, oto-backend#670) au
+(`?connector=<nom>&connect=connected|error|forbidden|denied`, oto-backend#670) au
 niveau de la ROUTE (callback réel, pas la fabrique seule).
 
 - **zoho** et **google** (`api/datastore.py`) doublaient un temps l'ancienne
@@ -217,3 +217,61 @@ def test_salesforce_conserve_sa_forme_apres_le_passage_au_fabricant_partage(monk
     q = _qs(_location(resp))
     assert q["connector"] == ["salesforce"] and q["connect"] == ["error"]
     assert "salesforce" not in q, "salesforce n'a jamais servi de clé `salesforce=`"
+
+
+# --- le refus chez le fournisseur : `denied`, sur la carte du state (oto-app#11) ---
+#
+# Le refus revient SANS code (`error=access_denied`). Les trois callbacks le lisaient
+# comme un « code absent » : `error`, et vers le front par défaut faute d'avoir lu le
+# state. Le dashboard affichait un échec technique là où la personne avait refusé.
+
+_STATE_LU = {
+    "google": (datastore_routes, "google_oauth", GOOGLE_CALLBACK,
+               ("sub-1", 7, "", "drive"), "drive"),
+    "salesforce": (salesforce_routes, "salesforce_oauth", "/api/salesforce/oauth/callback",
+                   ("sub-1", 7, "org", "verif", None, ""), "salesforce"),
+    "zoho": (zoho_routes, "zoho_oauth", ZOHO_CALLBACK,
+             {"sub": "u1", "org": 5, "group": None, "connector": "zohodesk",
+              "data_center": "eu", "level": "full", "return_app": ""}, "zohodesk"),
+}
+
+
+def _callback_au_state_lu(monkeypatch, nom: str, query: str):
+    module, auth, path, parsed, _carte = _STATE_LU[nom]
+
+    def _jamais(*a, **k):
+        raise AssertionError("un retour sans code n'échange rien et ne relit aucun rôle")
+    monkeypatch.setattr(getattr(module, auth), "verify_state", lambda s: parsed)
+    monkeypatch.setattr(getattr(module, auth), "exchange_code", _jamais)
+    if nom == "zoho":
+        monkeypatch.setattr(zoho_routes.roles, "is_org_member", _jamais)
+    from oto_mcp import roles
+    monkeypatch.setattr(roles, "is_org_admin", _jamais)
+    handler = _endpoint(module, path, with_cors=(nom == "google"))
+    return _qs(_location(asyncio.run(handler(_get(path, query)))))
+
+
+@pytest.mark.parametrize("nom", sorted(_STATE_LU))
+def test_un_refus_chez_le_fournisseur_revient_en_denied(monkeypatch, nom):
+    q = _callback_au_state_lu(monkeypatch, nom, "error=access_denied&state=s")
+    assert q["connect"] == ["denied"], "un refus du fournisseur n'est ni une panne ni un refus d'oto"
+    assert q["connector"] == [_STATE_LU[nom][4]], "la carte du state, pas le défaut"
+
+
+@pytest.mark.parametrize("nom", sorted(_STATE_LU))
+@pytest.mark.parametrize("query", ["error=server_error&state=s", "state=s"])
+def test_une_autre_erreur_ou_un_code_absent_reste_une_panne(monkeypatch, nom, query):
+    q = _callback_au_state_lu(monkeypatch, nom, query)
+    assert q["connect"] == ["error"]
+    assert q["connector"] == [_STATE_LU[nom][4]]
+
+
+@pytest.mark.parametrize("nom", sorted(_STATE_LU))
+def test_un_refus_au_state_illisible_reste_une_panne(monkeypatch, nom):
+    """Sans state lisible, rien ne dit que ce retour est le nôtre : `error`, jamais
+    un `denied` sur la foi d'un paramètre que n'importe qui peut poser."""
+    module, auth, path, _parsed, _carte = _STATE_LU[nom]
+    monkeypatch.setattr(getattr(module, auth), "verify_state", lambda s: None)
+    handler = _endpoint(module, path, with_cors=(nom == "google"))
+    q = _qs(_location(asyncio.run(handler(_get(path, "error=access_denied&state=bad")))))
+    assert q["connect"] == ["error"]

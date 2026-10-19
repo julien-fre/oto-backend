@@ -95,7 +95,7 @@ class PlafondInput(BaseModel):
     # que la face REST (seule face de ce geste) garde intacte. Au moins un des deux
     # champs doit être là.
     limit_pct: Optional[int] = Field(
-        None, description=("Your own consumption cap, in % (1..100) of your provider "
+        None, description=("Your own consumption cap, in % (1..95) of your provider "
                            "account's TOTAL usage (5-hour and 7-day windows, your "
                            "personal use included). `null` removes it; omitted leaves "
                            "it unchanged."))
@@ -133,8 +133,8 @@ class Abonnement(BaseModel):
     last_ok_at: Optional[str] = None
     limit_pct: Optional[int] = Field(
         None, description=("YOUR own consumption cap, in % of the account's total usage "
-                           "(`null` = none). It can only tighten your org's cap "
-                           "(default 80 %): the lower of the two applies."))
+                           "(`null` = none, your org's cap applies, default 80 %). "
+                           "When set, it replaces your org's cap, higher or lower."))
     lent_to: list[int] = Field(
         default_factory=list,
         description=("The orgs whose pool you lend this subscription to. Each lender's "
@@ -281,7 +281,7 @@ def _exiger_membre_de(sub: str, org_ids: list[int]) -> None:
 def _plafonner(ctx: ResolvedCtx, inp: PlafondInput) -> dict:
     """Mon plafond PERSO, et mes PRÊTS au pool de mes orgs. Ils ne s'écrivent que sur
     MA ligne : sans abonnement, rien à plafonner ni à prêter (404) ; le plafond ne
-    relâche jamais celui de l'org (`_abonnement.seuil`), et il s'applique à MON
+    remplace celui de l'org (`_abonnement.seuil`), et il s'applique à MON
     compte aussi quand il sert le pool d'une org."""
     _exiger_famille(inp.family)
     poser_plafond = "limit_pct" in inp.model_fields_set
@@ -289,7 +289,7 @@ def _plafonner(ctx: ResolvedCtx, inp: PlafondInput) -> dict:
         raise AuthzDenied(400, "nothing_to_change",
                           "rien à changer : envoie `limit_pct`, `lent_to` ou `used_in`.")
     if poser_plafond:
-        _abonnement.exiger_limite_valide(inp.limit_pct)
+        _abonnement.exiger_limite_perso_valide(inp.limit_pct)
     if inp.lent_to:
         # Prêter, c'est ouvrir SON forfait au travail des autres : réservé, comme se
         # connecter, aux personnes qui portent l'option. Retirer ses prêts, jamais.
@@ -336,12 +336,12 @@ subscription is `connected`; your agents run on it in the orgs where you opened 
 
 _DOC_PLAFOND = """Set YOUR own consumption cap on a model subscription, the orgs where it runs your agents, and/or the orgs you lend it to.
 
-`limit_pct`: a share, in % (1..100), of your provider account's TOTAL usage — the
+`limit_pct`: a share, in % (1..95), of your provider account's TOTAL usage — the
 5-hour and 7-day windows the provider reports, your personal use included (`null`
 removes it). Once a window reaches it, the next jobs on your subscription WAIT for the
 window to reset; a job already running is never cut. Your organisation sets its own
-cap (80 % unless it chose otherwise): the LOWER of the two applies, so yours can only
-keep more room for yourself, never raise the org's.
+cap (80 % unless it chose otherwise), which applies while you set none; yours, once
+set, replaces it on your subscription — lower or higher, up to 95 %.
 
 `lent_to`: the orgs whose POOL you lend this subscription to (the whole set; `[]`
 lends to none). Explicit and per org: nothing is lent by default. It only serves an
@@ -394,7 +394,7 @@ CAPABILITIES += [
         errors=(
             DeclaredError(400, "unknown_family",
                           "une famille qui n'est pas servie par abonnement"),
-            DeclaredError(400, "invalid_limit", "`limit_pct` hors de 1..100"),
+            DeclaredError(400, "invalid_limit", "`limit_pct` hors de 1..95"),
             DeclaredError(400, "nothing_to_change", "ni `limit_pct`, ni `lent_to`, ni `used_in`"),
             DeclaredError(403, "subscription_not_enabled",
                           "prêter n'est pas ouvert à cette personne"),

@@ -1716,12 +1716,14 @@ que le fournisseur rapporte, usage perso compris —, la même pour les deux fen
   admin d'org ; `limit_pct` 1..100, `null` = retour au défaut), REST
   `GET|PUT /api/orgs/{id}/model-subscriptions/{family}`, table
   `org_model_subscription_limits`. Sans réglage, **80 %** (`_abonnement.DEFAUT_LIMITE_PCT`).
-- **La personne peut le resserrer pour elle-même** : `PATCH
+- **La personne peut poser le sien** (1..95, `user_subscriptions.LIMITE_PERSO_MAX`) : `PATCH
   /api/me/model-subscriptions/{family}` `{"limit_pct": int|null}` (sa ligne seulement,
   `404 not_connected` sans abonnement), colonne `user_model_subscriptions.limite_pct`,
   rendue par la liste.
-- **Seuil effectif = le plus strict des deux** (min). Un plafond perso plus haut que celui
-  de l'org ne relâche rien. La règle est écrite UNE fois, dans `_abonnement.seuil`, lue
+- **Seuil effectif = le plafond perso s'il est posé** (plus bas ou plus haut que celui de
+  l'org, borné à 95 — une ligne d'avant posée à 100 se lit 95), sinon celui de l'org. La
+  règle est écrite UNE fois, dans `_abonnement.seuil` (relue en SQL par
+  `runner_jobs._pause_pour_l_org`), lue
   avec l'org du travail (`runner_jobs.porteur_et_famille` rend `org_id`).
 - **Le run en cours finit toujours** : le plafond se juge sur le rapport de fin d'un
   travail, qui met la personne en `paused_limit` jusqu'à l'échéance de la fenêtre

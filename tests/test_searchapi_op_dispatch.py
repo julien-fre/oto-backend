@@ -72,8 +72,8 @@ def seen(monkeypatch):
 
     monkeypatch.setattr(S.httpx, "Client", _Client)
     monkeypatch.setattr(S.access, "resolve_api_key", lambda p: ("k-1", False))
-    monkeypatch.setattr(S.access, "record_platform_usage",
-                        lambda p: captured["usage"].append(p))
+    from _releve import capter_units
+    capter_units(monkeypatch, "searchapi", lambda p, n: captured["usage"].append(p))
     return captured
 
 

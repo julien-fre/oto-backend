@@ -12,27 +12,27 @@ same budget, and that is intended.
   convention of the old path) and the edge is debited;
 - REFUSED (all revoked) → the walker has already SKIPPED the rung, we never get here.
 
-⚠️ **Debited at RESOLUTION, not on call success** — unlike the platform counter,
-which each tool debits itself after a successful call
-(`access.record_platform_usage`, ~10 sites). A tenant key has no such sites, and
-adding one per tool would be precisely the copy the single walker exists to
-avoid. The price: a call that fails at the provider still counts. The alternative —
-a bound that is set but that nobody debits — is the defect of #409 (an accepted row
-that nothing reads), and it is worse. Moving to "on success" will go through the
-middleware's call record, with L8.
+⚠️ **Checked at RESOLUTION, debited on SUCCESS** (L8): the resolution refuses an
+exhausted day and notes the edge on the call record (`tenant_grant_ids`); the edge of
+the call debits it once the tool has returned without error
+(`reglement.regler_appel`), at the same point as the platform counter. A call that
+fails at the provider no longer counts. OUTSIDE a call record (a REST face, a
+maintenance command) there is no edge to settle: the debit is made at resolution,
+as before L8 — otherwise those calls would never be counted.
 """
 from __future__ import annotations
 
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import grants_chain
+from .. import grants_chain, session_org
 from ..db import grants as db_grants
 
 
 def enforce(slug: str, provider: str, org: "int | None") -> None:
     """Apply the tenant→org edge budget for THIS call: raise if the day is
-    exhausted, debit otherwise. No-op (no read) without an edge."""
+    exhausted, otherwise note the edge for the settlement of the call (debited on
+    success, `regler_aretes_tenant`). No-op (no read) without an edge."""
     verdict = grants_chain.tenant_rung(slug, provider, org)
     if verdict is None or not verdict.granted or verdict.grant_id is None:
         return
@@ -46,4 +46,17 @@ def enforce(slug: str, provider: str, org: "int | None") -> None:
                     f"for this org ({used}/{verdict.quota}). The budget is shared by "
                     f"the whole org; its tenant admin can raise it."
                 )))
-    db_grants.bump_counter(verdict.grant_id, 1)
+    releve = session_org.current_call_trace()
+    if releve is None:
+        db_grants.bump_counter(verdict.grant_id, 1)
+        return
+    # A list, not a key: a composite tool that resolves the tenant key twice
+    # debited twice before L8, and still does.
+    releve.setdefault("tenant_grant_ids", []).append(verdict.grant_id)
+
+
+def regler_aretes_tenant(grant_ids: list) -> None:
+    """Debits the tenant edges noted by `enforce` for a call that SUCCEEDED — one
+    unit per resolution, as at resolution before L8."""
+    for grant_id in grant_ids:
+        db_grants.bump_counter(grant_id, 1)

@@ -146,15 +146,15 @@ def test_credential_fields_reste_le_miroir_de_auth_fields():
 
 
 def test_le_flux_de_connexion_est_declare():
-    """`connect` porte deux clés de plus sur la projection AUTHENTIFIÉE
-    (`callback_url`, `app_ready`, posées par `_me`) : elles sont déclarées sur
+    """`connect` porte trois clés de plus sur la projection AUTHENTIFIÉE
+    (`callback_url`, `app_ready`, `fixed`, posées par `_me`) : elles sont déclarées sur
     `ConnectFlow` alors que le catalogue public ne les rend jamais. C'est voulu — le
     modèle décrit la carte du MEMBRE, qui est la plus riche des deux."""
     flux = _declares(card.ConnectFlow)
     param = _declares(card.ConnectParam)
     option = _declares(card.ConnectParamOption)
-    assert {"callback_url", "app_ready"} <= flux, \
-        "la projection authentifiée pose ces deux clés (cf. `_me`) — elles se déclarent"
+    assert {"callback_url", "app_ready", "fixed"} <= flux, \
+        "la projection authentifiée pose ces trois clés (cf. `_me`) — elles se déclarent"
     inconnues: dict[str, set[str]] = {}
     for row in public_catalog():
         c = row.get("connect")

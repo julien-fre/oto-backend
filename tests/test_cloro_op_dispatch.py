@@ -37,7 +37,6 @@ def client(monkeypatch):
     monkeypatch.setattr(cc, "CloroClient", MagicMock(return_value=inst))
     monkeypatch.setattr("oto_mcp.access.resolve_api_key",
                         lambda provider: ("fake-key", False))
-    monkeypatch.setattr("oto_mcp.access.record_platform_usage", MagicMock())
     return inst
 
 
@@ -166,16 +165,16 @@ def test_google_refuses_an_unknown_op_and_names_the_valid_ones(client):
 def test_platform_usage_is_counted_only_on_a_platform_key(client, monkeypatch):
     """Le décompte de quota est porté par `_run` (partagé par les 3 chemins) : la
     fusion ne doit ni le perdre ni le déclencher sur une clé BYO."""
-    rec = MagicMock()
-    monkeypatch.setattr("oto_mcp.access.record_platform_usage", rec)
+    vus = []
+    from _releve import capter_units
+    capter_units(monkeypatch, "cloro", lambda p, n: vus.append(p))
 
     _tool("cloro_ask").fn(engine="chatgpt", prompt="x")
-    rec.assert_not_called()
+    assert vus == []
 
     monkeypatch.setattr("oto_mcp.access.resolve_api_key",
                         lambda provider: ("platform-key", True))
     _tool("cloro_ask").fn(engine="chatgpt", prompt="x")
     _tool("cloro_google").fn(query="q")
     _tool("cloro_google").fn(query="q", op="news")
-    assert rec.call_count == 3
-    assert {c.args[0] for c in rec.call_args_list} == {"cloro"}
+    assert vus == ["cloro"] * 3

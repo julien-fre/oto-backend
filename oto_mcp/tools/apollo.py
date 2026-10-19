@@ -44,7 +44,7 @@ endpoint queries, NOT on read/write:
 - **The REVEALS** (`apollo_reveal_phone`, and `apollo_match_person(reveal_personal_emails=True)`):
   byo-only too, but for a THIRD reason — COST, not the data
   boundary. They do query the shared database, so nothing would prevent the
-  common key; what prevents it is that the counter (`record_platform_usage`) debits
+  common key; what prevents it is that the counter (`units`, settled per call) debits
   1 unit per call, the price of a bare match, whereas Apollo bills a surcharge
   on top (~9 credits for a phone; plan-dependent scale, not measured, for
   personal emails). `platform_quota` would lie by a factor we cannot
@@ -124,7 +124,7 @@ def register(mcp: FastMCP) -> None:
     # a DIFFERENT reason than everything else in this module: it is not a data
     # boundary, it is COST. A reveal makes Apollo bill a
     # SURCHARGE on top of the match, while the platform counter
-    # (`record_platform_usage`) debits 1 unit per call — the price of a bare match,
+    # (`units`, settled per call) debits 1 unit per call — the price of a bare match,
     # whatever happens. Yet `platform_quota` exists precisely so that a batch worker
     # stops BEFORE the wall (oto-backend#710): letting it lie would break
     # the only measure it relies on.
@@ -240,7 +240,7 @@ def register(mcp: FastMCP) -> None:
         # with at least one company — in `organizations` or in `accounts`, the two
         # lists of this endpoint — counts 1, and an empty page 0: nothing shows that
         # Apollo bills a page that returned nothing. The common key's quota
-        # (`record_platform_usage`) is not debited by a search, and still is not.
+        # (`units`) is not debited by a search, and still is not.
         session_org.note_call_trace(quantity=_credits_billed(
             found, "apollo_search_organizations",
             1 if isinstance(found, dict) and any(
@@ -583,7 +583,7 @@ def register(mcp: FastMCP) -> None:
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         if is_platform:
-            access.record_platform_usage("apollo")
+            session_org.note_call_trace(units=1)
             quota = access.platform_quota_hint("apollo")
             if quota is not None:
                 result = {**result, "platform_quota": quota}
@@ -927,11 +927,9 @@ def register(mcp: FastMCP) -> None:
                            "(%r) in Apollo's response — quota and quantity counted "
                            "on the %d people submitted", credits, len(people))
             credits = len(people)
-        # The common key's quota. 0 debits nothing (`record_platform_usage`
-        # would floor at 1).
+        # The common key's quota, in the credits deducted: 0 debits nothing.
         if is_platform:
-            if credits > 0:
-                access.record_platform_usage("apollo", credits)
+            session_org.note_call_trace(units=credits)
             quota = access.platform_quota_hint("apollo")
             if quota is not None:
                 out = {**out, "platform_quota": quota}

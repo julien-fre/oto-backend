@@ -182,6 +182,10 @@ for _c in ("zoho", "zohodesk", "zohoanalytics"):
         # or oto's for at least one region). The region is only chosen at click time,
         # so the promise displayed before the click cannot depend on it.
         app_ready=lambda sub, _c=_c: zoho_oauth.app_ready(_c, sub),
+        # The region of the applicable app (the team's, set on the card): shown, not
+        # asked — `consent_region` refuses any other one.
+        fixed=lambda sub, _c=_c: (
+            {"data_center": r} if (r := zoho_oauth.app_region(_c, sub)) else {}),
         params=(connector_flow.FlowParam(
             name="data_center", label="Region of your Zoho account", default="eu",
             help="the OAuth app and the token are bound to their data center",

@@ -86,7 +86,8 @@ def _mount(monkeypatch, client=None):
     usage: list[str] = []
     monkeypatch.setattr(access, "resolve_api_key", _resolve_api_key)
     monkeypatch.setattr(access, "resolve_credential", _resolve_credential)
-    monkeypatch.setattr(access, "record_platform_usage", lambda p: usage.append(p))
+    from _releve import capter_units
+    capter_units(monkeypatch, "apollo", lambda p, n: usage.append(p))
     monkeypatch.setattr(apollo_client, "ApolloClient", lambda **kw: client)
 
     m = FastMCP("t")

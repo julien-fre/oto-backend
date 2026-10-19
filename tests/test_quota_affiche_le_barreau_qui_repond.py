@@ -9,7 +9,7 @@ or les hits portent TOUTE la cascade, pas le seul gagnant, et un connecteur
 
 Ce que le produit garantit, et que ces deux tests gravent :
 - `resolve_api_key` rend AVANT `_win_quota` dès que `win.mode != "platform"` ;
-- les outils n'appellent `record_platform_usage` que sous `if is_platform`.
+- le règlement (L8) ne débite que sous la clé plateforme (`platform_carrier`).
 Un plafond annoncé hors du barreau plateforme est donc un plafond FANTÔME : ni
 compté, ni opposable.
 """

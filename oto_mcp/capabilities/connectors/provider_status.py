@@ -60,7 +60,7 @@ class ProviderStatus(BaseModel):
     # ── The quota, when the key that RESPONDS carries one ─────────────────────
     # Both are read on the WINNING tier, never on the mere presence of a platform tier
     # in the cascade: outside that tier, the quota is neither counted
-    # (`record_platform_usage` is under `if is_platform`) nor enforced
+    # (the settlement only debits a call served by a platform key) nor enforced
     # (`resolve_api_key` returns before `_win_quota`). `null` on both sides = this
     # access path has no quota — NOT “zero allowed”.
     # ⚠️ `quota_used_today` used to be `int = 0`: serving `null` on a connector without a

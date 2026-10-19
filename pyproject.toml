@@ -51,6 +51,18 @@ dependencies = [
     # branche : on n'écrit pas dans le dépôt d'autrui (l'API Contents rend 404 dessus).
     # Le mainteneur bump ici, puis `update-branch` la PR. L'atomicité du revert cède
     # devant ça. Cf. docs/contributions-forks.md (amendement du 2026-09-01).
+    # v1.185.0 = folk : cadence des requêtes dans le client (`min_interval_s`, 0,125 s par
+    # défaut, régulateur partagé par empreinte de clé entre threads, rejeu des 429
+    # conservé) ; sert les lots de `folk_record` et `folk_group`,
+    # dont le serveur ne fixe plus la cadence. Le reste du tag (`oto/connectors/cost.py` :
+    # nombre fini comme le lit l'hôte, jeu de cas commun) est sans effet sur `oto.tools`.
+    # Aucun extra.
+    # v1.184.0 = folk : endpoints batch natifs (`create_*_batch`, `update_*_batch`,
+    # `*_body`, contribution externe) ; malibou (paie et RH, lecture seule, contribution
+    # externe) ; elevenlabs et mux (clients neufs, contribution externe). Le reste du tag
+    # (v1.183.0 : `oto/connectors/{cost,declared}.py`, sortie Python du coût ; fod :
+    # données personnelles marquées dans la description) est sans effet sur `oto.tools`
+    # tant que le backend ne l'importe pas. Aucun extra.
     # v1.182.0 = slack : groupes d'utilisateurs (`usergroups.*`, contribution externe) ;
     # sert `slack(op="usergroups")` et `slack_act(op="…_usergroup…")`. Le reste du tag
     # (format, fabrique, TS) est sans effet sur `oto.tools`. Aucun extra.
@@ -426,7 +438,7 @@ dependencies = [
     # antérieur, pip ignore un extra inconnu (avec un avertissement) — le
     # connecteur marcherait par accident, en tirant les deux libs du socle. Cette
     # ligne et ce tag se déplacent donc ENSEMBLE.
-    "oto-core[anonymize,planity] @ git+https://github.com/otomata-tech/oto-core.git@v1.182.0",
+    "oto-core[anonymize,planity] @ git+https://github.com/otomata-tech/oto-core.git@v1.185.0",
     # Patchright = client CDP qui pilote le Chrome HÉBERGÉ Browserbase (connect_over_cdp)
     # pour les connecteurs d'API privée cookie-bound (tools/brevo.py, tools/crunchbase.py).
     # AUCUN browser local sur la box (connect_over_cdp ne lance rien → pas de binaire Chrome

@@ -197,8 +197,10 @@ def _project_web_url(sub: Optional[str], project_id) -> Optional[str]:
     pas de réponse, et l'agent se rabat sur un patron d'URL deviné. `None` quand le
     produit du lecteur n'a pas cette vue — jamais notre domaine servi à quelqu'un qui
     n'a pas notre produit (`links`)."""
-    from .. import links
-    return links.link_for("project", sub=sub, id=project_id)
+    from .. import access, links
+    org = (access.current_org(sub)
+           if links.patron_reclame("project", "org", sub=sub) else None)
+    return links.link_for("project", sub=sub, id=project_id, org=org)
 
 
 def _visible_to(row: dict, partages: Optional[list[str]] = None,

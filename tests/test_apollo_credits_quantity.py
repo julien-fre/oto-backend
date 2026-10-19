@@ -13,7 +13,7 @@ Ce fichier fige, dans la MÊME unité (le crédit Apollo) :
   jamais 1 pour l'appel ;
 - rien de servi trace 0 (un 0 tracé = rien de facturé), jamais une ligne sans compte ;
 - la trace est INCONDITIONNELLE (clé commune comme clé propre) et ne touche pas au
-  quota de la clé commune (`record_platform_usage`, 1 par match) ;
+  quota de la clé commune (`units`, 1 par match) ;
 - un appel refusé ou en échec ne trace rien ;
 - `apollo_search_people` et `apollo_job_postings` ne tracent AUCUNE quantité.
 
@@ -48,10 +48,10 @@ def apollo(monkeypatch):
                         lambda *a, **k: ("k", mode["platform"]))
     monkeypatch.setattr(access, "resolve_credential",
                         lambda *a, **k: MagicMock(key="k-byo"))
-    monkeypatch.setattr(access, "record_platform_usage",
-                        lambda p, n=1: usage.append((p, n)))
     monkeypatch.setattr(access, "platform_quota_hint", lambda p: None)
     monkeypatch.setattr(session_org, "note_call_trace", lambda **kw: traces.append(kw))
+    from _releve import capter_units
+    capter_units(monkeypatch, "apollo", lambda p, n: usage.append((p, n)))
     monkeypatch.setattr(apollo_client, "ApolloClient", lambda **kw: client)
 
     m = FastMCP("t")

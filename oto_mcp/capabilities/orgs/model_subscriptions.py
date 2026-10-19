@@ -5,9 +5,9 @@ porteur (`capabilities/_abonnement`). L'org règle la part maximale, en %, de l'
 TOTAL du compte du fournisseur (fenêtres cinq heures et sept jours, usage perso
 compris) que ses travaux peuvent atteindre : au-delà, les travaux suivants ATTENDENT
 la réinitialisation — le run en cours finit toujours. Sans réglage, le défaut du code
-(`_abonnement.DEFAUT_LIMITE_PCT`). Une personne peut resserrer pour elle-même
-(`PATCH /api/me/model-subscriptions/{family}`), jamais relâcher : le seuil effectif
-est le min des deux, calculé par `_abonnement.seuil` et nulle part ailleurs.
+(`_abonnement.DEFAUT_LIMITE_PCT`). Une personne peut poser le sien
+(`PATCH /api/me/model-subscriptions/{family}`), plus bas ou plus haut (≤ 95) : il
+remplace celui de l'org sur son forfait — calculé par `_abonnement.seuil`.
 
 Le MODE de l'org, sur la même ressource : `personnel` (défaut — chaque travail sur
 l'abonnement de son demandeur) ou `pool` (sur l'abonnement d'un membre qui l'a prêté à
@@ -209,7 +209,7 @@ CAPABILITIES += [
                      "of each member's provider account TOTAL usage (5-hour and 7-day "
                      "windows) the org's jobs may reach before the next ones wait for "
                      "the reset. `default: true` = not set, platform default (80). A "
-                     "member may set a LOWER cap for themselves; the lower one applies. "
+                     "member may set their own cap (1..95), which replaces the org's for them. "
                      "Also returns the org's `mode` (`personnel` | `pool`), its "
                      "`pool_size` (members lending a usable subscription) and "
                      "`lenders` (who lends, and whether each is usable right now — "

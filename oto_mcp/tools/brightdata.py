@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from .. import access
+from .. import access, session_org
 
 
 def register(mcp: FastMCP) -> None:
@@ -30,7 +30,7 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         result = getattr(client, method)(**kwargs)
         if is_platform:
-            access.record_platform_usage("brightdata")
+            session_org.note_call_trace(units=1)
         return result
 
     # TODO — register the product tools here (see the module docstring):

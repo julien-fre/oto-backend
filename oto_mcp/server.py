@@ -1111,6 +1111,11 @@ def main():
     # jamais lu « défaut » en silence. Cf. `access/platform_rate.verifier_reglages`.
     from .access import platform_rate
     platform_rate.verifier_reglages()
+    # Chemins des liens de l'instance (`OTO_DASHBOARD_LINK_PATHS`) : une déclaration
+    # illisible ou un type de lien inconnu refuse le démarrage ici, jamais nos chemins
+    # par défaut en silence. Cf. `links.verifier_reglages`.
+    from . import links
+    links.verifier_reglages()
 
     # Identité de l'instance (#968, décision du 28/09/2026) : adresses, email, marque,
     # contrats — tout ce qui pointerait chez quelqu'un d'autre sans déclaration. Un

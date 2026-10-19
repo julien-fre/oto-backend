@@ -54,7 +54,7 @@ _SURFACE = """
     personal_instance_org preloaded_presence_probe project_declared_identities
     project_pinned_identity project_pinned_instance quota_for
     reachable_instances reachable_instances_map
-    reachable_team_key record_platform_usage
+    reachable_team_key
     resolve_api_key resolve_credential resolve_credential_fields
     resolve_field_filter resolve_datastore_ref
     resolve_slot_tableau session_org status_for status_hints
@@ -96,12 +96,15 @@ def test_l_inventaire_n_est_pas_vide():
     `require_connector_access`, `rbac_denied_connectors` et
     `group_rbac_denied_connectors` retirés avec la restriction d'accès « vers le
     bas » (ADR 0053 D1 : restreindre, c'est placer la clé au bon niveau) — le
-    concept n'existe plus, ses trois seams non plus.
+    concept n'existe plus, ses trois seams non plus. 85 → 84 le 19/10/2026 :
+    `record_platform_usage` retiré — un outil ne débite plus la clé plateforme
+    lui-même, il note ses `units` et le bord de l'appel règle (L8,
+    `access/reglement.py`) ; un appel de plus ailleurs compterait deux fois.
     Ce compte n'est pas décoratif — c'est lui
     qui oblige à écrire POURQUOI la surface bouge. Une baisse qu'on ne peut pas
     justifier nom par nom est un rabotage, pas un nettoyage.
     """
-    assert len(_SURFACE) == 85
+    assert len(_SURFACE) == 84
 
 
 def test_une_ecriture_sur_la_facade_traverse_les_sous_modules(monkeypatch):

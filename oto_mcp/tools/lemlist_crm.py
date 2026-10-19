@@ -127,10 +127,6 @@ def register(mcp: FastMCP) -> None:
         key, is_platform = access.resolve_api_key("lemlist")
         return LemlistClient(api_key=key), is_platform
 
-    def _record_if_platform(is_platform: bool) -> None:
-        if is_platform:
-            access.record_platform_usage("lemlist")
-
     # --- CRM: contacts & companies ---------------------------------------------
 
     @mcp.tool()
@@ -210,7 +206,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(f'unknown op "{op}" — expected: list, get, upsert, delete, '
                        "lists, list_create, list_manage, list_export")
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -269,7 +264,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(f'unknown op "{op}" — expected: list, upsert, delete, '
                        "notes, note_create")
-        _record_if_platform(is_platform)
         return result
 
     # --- Inbox ------------------------------------------------------------------
@@ -386,7 +380,6 @@ def register(mcp: FastMCP) -> None:
                 f'unknown op "{op}" — expected: list, messages, labels, label_get, '
                 "label_create, labels_attach, labels_remove, drafts, draft_get, "
                 "draft_create, draft_update, draft_delete")
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -442,7 +435,6 @@ def register(mcp: FastMCP) -> None:
                 lead_id=lead_id, contact_id=contact_id, message=message)
         else:
             raise _bad(f'unknown op "{op}" — expected: email, linkedin, whatsapp')
-        _record_if_platform(is_platform)
         return result
 
     # --- Unsubscribes ------------------------------------------------------------
@@ -516,7 +508,6 @@ def register(mcp: FastMCP) -> None:
                 f'unknown op "{op}" — expected: list, get, add, delete, export, '
                 "var_list, var_get, var_add, var_bulk, var_remove, var_export, "
                 "contact_status, contact_add, contact_remove, contact_export")
-        _record_if_platform(is_platform)
         return result
 
     # --- Tasks, signals, shared base ----------------------------------------------
@@ -580,7 +571,6 @@ def register(mcp: FastMCP) -> None:
             result = client.ignore_tasks(ids)
         else:
             raise _bad(f'unknown op "{op}" — expected: list, create, update, ignore')
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -695,7 +685,6 @@ def register(mcp: FastMCP) -> None:
             raise _bad(
                 f'unknown op "{op}" — expected: list, create, update, delete, '
                 "filters, filter_values, library, history, signals, push_signals")
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -745,7 +734,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(f'unknown op "{op}" — expected: people, companies, filters, '
                        "personas, persona_create, persona_delete")
-        _record_if_platform(is_platform)
         return result
 
     # --- Team, mailboxes, deliverability, webhooks -----------------------------------
@@ -802,7 +790,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(f'unknown op "{op}" — expected: team, credits, senders, user, '
                        "user_channels, crm_users, crm_filters, fields")
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -856,7 +843,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(f'unknown op "{op}" — expected: connect, disconnect, test, '
                        "lemwarm, lemwarm_update, lemwarm_start, lemwarm_pause")
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -917,7 +903,6 @@ def register(mcp: FastMCP) -> None:
             result = client.delete_deliverability_alert(alert_id)
         else:
             raise _bad(f'unknown op "{op}" — expected: list, get, create, update, delete')
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -956,7 +941,6 @@ def register(mcp: FastMCP) -> None:
             result = client.delete_webhook(hook_id)
         else:
             raise _bad(f'unknown op "{op}" — expected: list, add, delete')
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -968,5 +952,4 @@ def register(mcp: FastMCP) -> None:
         """
         client, is_platform = _client()
         result = client.delete_activity_recording_transcript(activity_id)
-        _record_if_platform(is_platform)
         return result

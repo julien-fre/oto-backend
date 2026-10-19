@@ -85,6 +85,8 @@ QUOTA_AUTORISE = {
     "theirstack",
     # `tests/test_sonde_apify.py::test_un_compte_a_SEC_est_un_refus_de_QUOTA_pas_d_AUTH`
     "apify",
+    # `tests/test_elevenlabs_tools.py::test_probe_empty_account`
+    "elevenlabs",
 }
 
 

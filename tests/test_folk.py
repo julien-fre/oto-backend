@@ -4,7 +4,9 @@ en `op=` (ADR 0047 §Amendement), solo OU bulk selon le param passé (`item`/`id
 `folk_record(op="create")`, ex-`folk_*_webhook` → `folk_webhook(op=…)`) : le
 comportement verrouillé ici est le même qu'avant. Verrouille :
 la validation "exactement un des deux" (ni les deux, ni aucun), le for-loop
-server-side en mode bulk (pas de batch natif Folk), le reçu allégé (compte +
+server-side en mode bulk pour les entités sans endpoint batch natif (note,
+interaction, task… ; le chemin batch de person/company/deal est verrouillé dans
+`test_folk_batch.py`), le reçu allégé (compte +
 erreurs par item, IDs pour create), l'abandon immédiat du lot sur erreur
 d'auth/connexion (vs. continuer sur une erreur par item), le cap de taille,
 l'entity allow-list élargie (note/reminder acceptés en solo comme en bulk),
@@ -67,13 +69,14 @@ def test_create_bulk_success_returns_ids(client_cls):
     # plus garanti suivre l'ordre des items — seul l'`index` porté par chaque
     # tuple de résultat l'est (vérifié ci-dessous).
     inst = _instance(client_cls)
-    inst.create_person.side_effect = lambda **fields: {"id": f"per_{fields['first_name']}"}
+    inst.create_note.side_effect = lambda **fields: {"id": f"nte_{fields['content']}"}
     r = _register_and_call(
-        "folk_record", op="create", entity="person",
-        items=[{"first_name": "A"}, {"first_name": "B"}])
+        "folk_record", op="create", entity="note",
+        items=[{"entity_id": "per_1", "content": "A"},
+               {"entity_id": "per_1", "content": "B"}])
     assert r["total"] == 2
     assert r["succeeded"] == 2
-    assert r["created"] == [{"index": 0, "id": "per_A"}, {"index": 1, "id": "per_B"}]
+    assert r["created"] == [{"index": 0, "id": "nte_A"}, {"index": 1, "id": "nte_B"}]
     assert r["failed"] == []
 
 
@@ -82,15 +85,15 @@ def test_create_bulk_partial_failure_continues_batch(client_cls):
     inst = _instance(client_cls)
 
     def _side_effect(**fields):
-        if fields["first_name"] == "B":
-            raise UpstreamHTTPError(422, {"message": "invalid email"}, service="folk")
-        return {"id": f"per_{fields['first_name']}"}
+        if fields["content"] == "B":
+            raise UpstreamHTTPError(422, {"message": "invalid entity"}, service="folk")
+        return {"id": f"nte_{fields['content']}"}
 
-    inst.create_person.side_effect = _side_effect
+    inst.create_note.side_effect = _side_effect
     r = _register_and_call(
-        "folk_record", op="create", entity="person",
-        items=[{"first_name": "A"}, {"first_name": "B"}, {"first_name": "C"}])
-    assert inst.create_person.call_count == 3  # le lot n'est pas interrompu
+        "folk_record", op="create", entity="note",
+        items=[{"entity_id": "per_1", "content": c} for c in "ABC"])
+    assert inst.create_note.call_count == 3  # le lot n'est pas interrompu
     assert r["total"] == 3
     assert r["succeeded"] == 2
     assert [c["index"] for c in r["created"]] == [0, 2]
@@ -101,18 +104,18 @@ def test_create_bulk_auth_error_aborts_whole_batch(client_cls):
     from oto.tools.common.errors import UpstreamHTTPError
     from oto_mcp.tools.folk import _BULK_CONCURRENCY
     inst = _instance(client_cls)
-    inst.create_person.side_effect = UpstreamHTTPError(401, {"message": "bad key"}, service="folk")
+    inst.create_note.side_effect = UpstreamHTTPError(401, {"message": "bad key"}, service="folk")
     with pytest.raises(UpstreamHTTPError):
         _register_and_call(
-            "folk_record", op="create", entity="person",
-            items=[{"first_name": str(i)} for i in range(20)])
+            "folk_record", op="create", entity="note",
+            items=[{"entity_id": "per_1", "content": str(i)} for i in range(20)])
     # Abandon anticipé : dès la 1re erreur fatale vue, les futures pas encore
     # démarrées sont annulées. Le lot tourne en parallèle (`_BULK_CONCURRENCY`
     # appels en vol) donc "exactement 1 appel" n'est plus un invariant garanti
     # (plusieurs workers peuvent avoir démarré avant que le 1er échec soit
     # détecté) — l'invariant qui tient est que le lot entier (20) n'est
     # JAMAIS entièrement exécuté.
-    assert inst.create_person.call_count < 20
+    assert inst.create_note.call_count < 20
 
 
 def test_create_bulk_rejects_over_cap(client_cls):
@@ -167,7 +170,8 @@ def test_create_item_key_colliding_with_a_param_is_a_clean_refusal(client_cls, c
 def test_create_bulk_item_key_collision_is_a_per_item_failure(client_cls):
     """Même garantie en lot : l'item fautif échoue seul, le reste passe."""
     inst = _instance(client_cls)
-    inst.create_person.return_value = {"id": "p1"}
+    inst.create_people_batch.side_effect = lambda recs: [
+        {"status": "succeeded", "data": {"id": "p1"}} for _ in recs]
     out = _register_and_call("folk_record", op="create", entity="person", items=[
         {"first_name": "Ada"},
         {"first_name": "Bob", "group_id": "grp_1"},
@@ -258,11 +262,11 @@ def test_update_solo_now_accepts_note_and_reminder(client_cls):
 
 def test_update_bulk_success(client_cls):
     inst = _instance(client_cls)
-    inst.update_person.side_effect = [{"id": "per_1"}, {"id": "per_2"}]
+    inst.update_note.side_effect = [{"id": "nte_1"}, {"id": "nte_2"}]
     r = _register_and_call(
-        "folk_record", op="update", entity="person",
-        items=[{"id": "per_1", "fields": {"jobTitle": "CTO"}},
-               {"id": "per_2", "fields": {"jobTitle": "CEO"}}])
+        "folk_record", op="update", entity="note",
+        items=[{"id": "nte_1", "fields": {"content": "x"}},
+               {"id": "nte_2", "fields": {"content": "y"}}])
     assert r == {"total": 2, "succeeded": 2, "failed": []}
 
 
@@ -271,30 +275,30 @@ def test_update_bulk_partial_failure_reports_id(client_cls):
     inst = _instance(client_cls)
 
     def _side_effect(id, **fields):
-        if id == "per_404":
+        if id == "nte_404":
             raise UpstreamHTTPError(404, {"message": "not found"}, service="folk")
         return {"id": id}
 
-    inst.update_person.side_effect = _side_effect
+    inst.update_note.side_effect = _side_effect
     r = _register_and_call(
-        "folk_record", op="update", entity="person",
-        items=[{"id": "per_1", "fields": {"jobTitle": "CTO"}},
-               {"id": "per_404", "fields": {"jobTitle": "CEO"}}])
+        "folk_record", op="update", entity="note",
+        items=[{"id": "nte_1", "fields": {"content": "x"}},
+               {"id": "nte_404", "fields": {"content": "y"}}])
     assert r["succeeded"] == 1
-    assert r["failed"] == [{"index": 1, "id": "per_404", "error": str(
+    assert r["failed"] == [{"index": 1, "id": "nte_404", "error": str(
         UpstreamHTTPError(404, {"message": "not found"}, service="folk"))}]
 
 
 def test_update_bulk_missing_id_is_per_item_failure_not_abort(client_cls):
     inst = _instance(client_cls)
-    inst.update_person.side_effect = [{"id": "per_2"}]
+    inst.update_note.side_effect = [{"id": "nte_2"}]
     r = _register_and_call(
-        "folk_record", op="update", entity="person",
-        items=[{"fields": {"jobTitle": "CTO"}},  # pas d'id
-               {"id": "per_2", "fields": {"jobTitle": "CEO"}}])
+        "folk_record", op="update", entity="note",
+        items=[{"fields": {"content": "x"}},  # pas d'id
+               {"id": "nte_2", "fields": {"content": "y"}}])
     assert r["succeeded"] == 1
     assert r["failed"][0]["index"] == 0
-    assert inst.update_person.call_count == 1
+    assert inst.update_note.call_count == 1
 
 
 def test_update_interaction_rejected():
@@ -439,21 +443,24 @@ def test_add_to_group_solo_preserves_existing_groups(client_cls):
 def test_add_to_group_bulk_preserves_existing_groups(client_cls):
     inst = _instance(client_cls)
     inst.get_person.return_value = {"groups": [{"id": "g1"}]}
-    inst.update_person.return_value = {"id": "per_1"}
+    inst.update_people_batch.side_effect = lambda recs: [
+        {"status": "succeeded", "data": {"id": r["id"]}} for r in recs]
     r = _register_and_call(
         "folk_record", op="add_to_group", entity="person", ids=["per_1"], group_id="g2")
     assert r == {"total": 1, "succeeded": 1, "failed": []}
-    inst.update_person.assert_called_once_with("per_1", groups=[{"id": "g1"}, {"id": "g2"}])
+    inst.update_people_batch.assert_called_once_with(
+        [{"id": "per_1", "groups": [{"id": "g1"}, {"id": "g2"}]}])
 
 
 def test_add_to_group_already_member_is_noop_success(client_cls):
     inst = _instance(client_cls)
     inst.get_person.return_value = {"groups": [{"id": "g1"}]}
-    inst.update_person.return_value = {"id": "per_1"}
+    inst.update_people_batch.side_effect = lambda recs: [
+        {"status": "succeeded", "data": {"id": r["id"]}} for r in recs]
     r = _register_and_call(
         "folk_record", op="add_to_group", entity="person", ids=["per_1"], group_id="g1")
     assert r["succeeded"] == 1
-    inst.update_person.assert_called_once_with("per_1", groups=[{"id": "g1"}])
+    inst.update_people_batch.assert_called_once_with([{"id": "per_1", "groups": [{"id": "g1"}]}])
 
 
 def test_add_to_group_deal_entity_rejected():

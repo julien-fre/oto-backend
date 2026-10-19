@@ -312,10 +312,6 @@ def register(mcp: FastMCP) -> None:
                 "is_dm": bool(info.get("is_im")),
                 "shared_externally": bool(info.get("is_ext_shared"))}
 
-    def _record_if_platform(is_platform: bool) -> None:
-        if is_platform:
-            access.record_platform_usage("slack")
-
     @mcp.tool()
     def slack_post_message(
         channel: str,
@@ -351,7 +347,6 @@ def register(mcp: FastMCP) -> None:
         client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
             result = client.post_message(channel, text=text, thread_ts=thread_ts)
-        _record_if_platform(is_platform)
         return {**result, "_author": qui, "_channel": _ou(client, channel)}
 
     @mcp.tool()
@@ -369,7 +364,6 @@ def register(mcp: FastMCP) -> None:
         client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
             result = client.delete_message(channel, ts)
-        _record_if_platform(is_platform)
         return {**result, "_author": qui}
 
     @mcp.tool()
@@ -382,7 +376,6 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         with _traduit():
             result = {"channels": client.list_channels(types=types)}
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -412,7 +405,6 @@ def register(mcp: FastMCP) -> None:
         with _traduit(channel):
             result = client.history(channel, limit=limit, cursor=cursor, oldest=oldest,
                                     latest=latest, inclusive=inclusive)
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -466,7 +458,6 @@ def register(mcp: FastMCP) -> None:
                 "`thread_ts` points to a REPLY, not the thread's parent: Slack "
                 "therefore returned only that message, and nothing of the thread. Call again with "
                 "thread_ts=`" + vrai_parent + "`.")
-        _record_if_platform(is_platform)
         return {
             "parent": parent,
             "replies": msgs[1:],
@@ -506,7 +497,6 @@ def register(mcp: FastMCP) -> None:
                 "oto cannot do it for you — " + _GESTE_INVITATION + ".")
         with _traduit(channel):
             client.join_channel(channel)
-        _record_if_platform(is_platform)
         return {"channel": info, "joined": True, "already_member": False}
 
     @mcp.tool()
@@ -554,7 +544,6 @@ def register(mcp: FastMCP) -> None:
                 sub=sub, prefix="slack-files", sheet=sheet, max_rows=max_rows)
         except (file_content.MediaUnavailable, file_content.SpreadsheetError) as e:
             raise ValueError(str(e))
-        _record_if_platform(is_platform)
         return out
 
     @mcp.tool()
@@ -563,7 +552,6 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         with _traduit():
             result = client.find_user_by_email(email)
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -576,7 +564,6 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         with _traduit():
             result = client.open_dm(user)
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool()
@@ -595,7 +582,6 @@ def register(mcp: FastMCP) -> None:
         client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
             result = client.add_reaction(channel, ts, name)
-        _record_if_platform(is_platform)
         return {**result, "_author": qui}
 
     # --- user groups (`@team` handles) — the connector's pair (17/10/2026) ---------
@@ -645,7 +631,6 @@ def register(mcp: FastMCP) -> None:
                                                 include_disabled=include_disabled,
                                                 include_count=True)
             result = {"usergroups": groups}
-        _record_if_platform(is_platform)
         return result
 
     @mcp.tool(name="slack_act", annotations=ACTE)
@@ -744,7 +729,6 @@ def register(mcp: FastMCP) -> None:
                 return {**diff, "changed": False, "_author": qui}
             with _traduit():
                 client.set_usergroup_users(usergroup, apres)
-            _record_if_platform(is_platform)
             return {**diff, "changed": True, "_author": qui}
 
         if dry_run:
@@ -797,5 +781,4 @@ def register(mcp: FastMCP) -> None:
         else:
             with _traduit():
                 result = client.enable_usergroup(usergroup)
-        _record_if_platform(is_platform)
         return {**result, "_author": qui}
