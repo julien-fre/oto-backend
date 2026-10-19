@@ -248,7 +248,7 @@ def test_le_formulaire_d_upload_SERVI_porte_sa_politique(monkeypatch, valide):
     from oto_mcp.entetes_securite import csp_upload
     monkeypatch.setattr(upload_tokens, "verify",
                         lambda t: {"target": {"kind": "x"}} if valide else None)
-    monkeypatch.setattr(upload_tokens, "target_label", lambda t: "cible")
+    monkeypatch.setattr(upload_tokens, "target_label", lambda t, lang="en": "cible")
     req = Request({"type": "http", "method": "GET", "path": "/u/jeton", "query_string": b"",
                    "root_path": "", "scheme": "https", "server": ("test", 443),
                    "http_version": "1.1", "headers": [], "path_params": {"token": "jeton"}},

@@ -158,4 +158,13 @@ def test_la_page_d_upload_affiche_l_url_rendue_par_l_accuse():
     """Sans ça, le dépôt par formulaire serait un succès inerte : l'URL n'arriverait
     nulle part, et personne ne pourrait la donner à `email_send`."""
     page = api_uploads._upload_page_html(ut.target_label({"kind": "image"}))
-    assert "j.url" in page and "image publique" in page
+    assert "j.url" in page and "public image" in page
+
+
+def test_la_page_d_upload_est_en_anglais_par_defaut_et_en_francais_sur_demande():
+    cible = {"kind": "project_file", "filename": "r.pdf"}
+    en = api_uploads._upload_page_html(ut.target_label(cible))
+    assert '<html lang="en">' in en and "Upload a file" in en and "file “r.pdf”" in en
+    fr = api_uploads._upload_page_html(ut.target_label(cible, "fr"), "fr")
+    assert '<html lang="fr">' in fr and "Déposer un fichier" in fr and "fichier « r.pdf »" in fr
+    assert "Invalid or expired link" in api_uploads._upload_page_html(None)

@@ -135,7 +135,7 @@ def verify(token: str, typ: str = "upload") -> Optional[dict]:
     return data
 
 
-def target_label(target: dict) -> str:
+def target_label(target: dict, lang: str = "en") -> str:
     """Libellé humain de la cible (page d'upload GET, servie SANS authentification).
     Pas de secret, pas de contenu — et depuis oto#86, plus aucun IDENTIFIANT
     INTERNE (`doc_id`/`project_id`) : la docstring promettait déjà « pas de secret,
@@ -144,23 +144,29 @@ def target_label(target: dict) -> str:
     base (nom de projet/titre du doc) pour les remplacer — un aller-retour DB de
     plus sur un chemin anonyme pour un gain d'ergonomie seul ne le vaut pas ici ;
     le libellé s'appuie donc uniquement sur ce que le jeton porte déjà (titre,
-    nom de fichier), sans jamais l'id brut."""
+    nom de fichier), sans jamais l'id brut. `lang` : `en` (défaut) ou `fr`."""
+    fr = lang == "fr"
     k = target.get("kind")
     if k == "doc":
         if target.get("op") == "update":
-            return "mise à jour d'une page Documents"
-        return f"nouvelle page « {target.get('title')} »"
+            return "mise à jour d'une page Documents" if fr else "update of a Documents page"
+        return (f"nouvelle page « {target.get('title')} »" if fr
+                else f"new page “{target.get('title')}”")
     if k == "project_file":
-        return f"fichier « {target.get('filename')} »"
+        return (f"fichier « {target.get('filename')} »" if fr
+                else f"file “{target.get('filename')}”")
     if k == "datastore":
         # ⚠️ `namespace` et non `datastore` : cette cible est SCELLÉE dans un jeton
         # d'upload signé. Les jetons déjà émis portent l'ancienne clé, et un jeton ne se
         # réécrit pas — le renommage du 08/09/2026 s'arrête donc à cette frontière, comme
         # il s'arrête au bord du stockage. Lire `datastore` ici rendrait « tableau
         # « None » » sur tout jeton en circulation, sans lever d'erreur.
-        return f"tableau « {target.get('namespace')} » (lot {target.get('format', 'ndjson')})"
+        fmt = target.get("format", "ndjson")
+        return (f"tableau « {target.get('namespace')} » (lot {fmt})" if fr
+                else f"table “{target.get('namespace')}” ({fmt} batch)")
     if k == "image":
-        return "image publique (png, jpeg, gif ou webp, 2 Mo max)"
+        return ("image publique (png, jpeg, gif ou webp, 2 Mo max)" if fr
+                else "public image (png, jpeg, gif or webp, 2 MB max)")
     return k or "?"
 
 
