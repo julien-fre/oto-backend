@@ -463,7 +463,8 @@ rien ne rendait navigable et que rien ne tenait.
   (spine) + `remote` (générique) restent chargés explicitement — `mount` l'était
   aussi jusqu'au **2026-09-09**, retiré avec la fédération MCP (**ADR 0069**). ⚠️ Le
   namespace déclaré doit matcher `namespace_of(tool)` (1er token avant `_`) — pas de
-  namespace multi-mot (`culture_spectacle`→`culture`), sinon fail-open du gate.
+  namespace multi-mot (`culture_spectacle`→`culture`), sinon fail-open du gate. Un connecteur multi-token qui ne sert que `<ns>` se résout à lui-même : le nom entier
+  est un candidat de `namespace_of` (`docs/waterfall.md`).
   Le garde-fou `test_tools_module_derivation_matches_filesystem` (`tests/test_capabilities_drift.py`)
   est **auto-maintenu** (croise `tools/*.py` au registre) — ajouter un connecteur
   (fichier + entrée registre) le garde vert SANS rien y toucher ; il casse seulement

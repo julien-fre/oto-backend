@@ -204,12 +204,17 @@ def namespace_of(name: str) -> str:
     boucle retombe sur le 1er token — comportement identique à l'implémentation
     précédente. Un tool dont aucun préfixe n'est déclaré garde son 1er token (le gate
     reste fail-open sur un namespace inconnu, inchangé).
+
+    Le nom ENTIER est un candidat (19/10/2026) : un connecteur multi-token qui ne sert
+    que `<ns>` (convention `<ns>` / `<ns>_act`, ex. `waterfall_email`) se résout à
+    lui-même. Avant, la boucle excluait le dernier token : `waterfall_email` tombait sur
+    `waterfall`, hors de tout connecteur — donc hors gate d'activation, en silence.
     """
     if "_" not in name:
         return name
     from . import providers
     parts = name.split("_")
-    for i in range(len(parts) - 1, 1, -1):   # du plus long au plus court, 1er token exclu
+    for i in range(len(parts), 1, -1):   # du plus long (le nom entier) au plus court, 1er token exclu
         candidate = "_".join(parts[:i])
         if providers.connector_for_namespace(candidate) is not None:
             return candidate

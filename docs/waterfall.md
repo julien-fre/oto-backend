@@ -1,16 +1,18 @@
 ---
-title: Le waterfall natif — email, téléphone, société
+title: Les waterfalls natifs — email, téléphone, société, personne
 type: explanation
 description: >-
-  `waterfall(op=email|phone|company)` : une cascade de fournisseurs
-  DÉJÀ connectés, arrêtée au premier trouvé, où chaque étape est un appel ordinaire de
-  l'outil du fournisseur (`meta.executer_cible`). Ce que la cascade garde de chaque
-  étape (garde, clé, facturation, rédaction), ce qu'elle refuse d'être (un appel
-  d'outil arbitraire, un fournisseur asynchrone, un lot), et comment on y ajoute une
-  étape. À lire avant de toucher `oto_mcp/tools/waterfall.py`.
+  Quatre connecteurs (`waterfall_email`, `waterfall_phone`, `waterfall_company`,
+  `waterfall_person`), un outil chacun, servis par un seul module : une cascade de
+  fournisseurs DÉJÀ connectés, arrêtée au premier trouvé, où chaque étape est un appel
+  ordinaire de l'outil du fournisseur (`meta.executer_cible`). D'où vient l'ordre (appel,
+  réglage `steps` de la carte, défaut) et pourquoi les clés de l'appelant passent devant ;
+  ce que la cascade garde de chaque étape (garde, clé, facturation, rédaction) ; l'étape
+  asynchrone (lemlist) ; ce qu'elle refuse d'être. À lire avant de toucher
+  `oto_mcp/tools/waterfall.py`.
 ---
 
-# Le waterfall natif
+# Les waterfalls natifs
 
 ## Le problème
 
@@ -22,73 +24,121 @@ lui, sur ses fournisseurs, à son prix ; l'org qui a déjà ses propres clés n'
 
 ## Le principe
 
-Un outil, `waterfall` (lecteur seul, donc pas de `waterfall_act` : convention
-`<ns>` / `<ns>_act`), et une table d'étapes par `op` (`EMAIL_STEPS`, `PHONE_STEPS`, `COMPANY_STEPS`).
-Une étape = un outil de connecteur existant, les entrées qu'il exige, la façon de
-construire ses arguments et de lire sa réponse. La cascade s'arrête au **premier**
-trouvé (choix produit : le moins cher, pas le plus sûr — l'email n'est pas vérifié ici).
+Quatre connecteurs, un outil `<ns>` chacun (lecteurs seuls, donc pas de `<ns>_act` :
+convention du 17/10), une table d'étapes chacun (`EMAIL_STEPS`, `PHONE_STEPS`,
+`COMPANY_STEPS`, `PERSON_STEPS`), un seul module (`Connector.modules=("waterfall",)`,
+que `register_all` ne charge qu'une fois). Une étape = un outil de connecteur existant,
+les entrées qu'il exige, la façon de construire ses arguments et de lire sa réponse. La
+cascade s'arrête au **premier** trouvé (choix produit : le moins cher, pas le plus sûr —
+l'email n'est pas vérifié ici).
+
+⚠️ **Un nom de connecteur multi-token qui ne sert que `<ns>`** : `namespace_of` excluait
+le nom ENTIER des candidats, si bien que `waterfall_email` se résolvait à `waterfall` —
+hors de tout connecteur, donc hors gate d'activation, en silence (et
+`test_convention_act` l'aurait laissé passer : il écarte les outils sans connecteur). Le
+nom entier est désormais un candidat ; aucun outil existant ne change de namespace.
 
 **Chaque étape passe par `meta.executer_cible`**, la couture d'`oto_call` et des
 recettes. Elle garde donc tout ce qu'un appel direct a : la garde d'activation du
 connecteur pour l'org et l'équipe de l'appel, la cascade de clé, le niveau d'accès, la
 liste d'outils d'un travail hébergé, **sa** ligne dans `tool_calls` (donc sa `quantity`
 et son `key_mode` : la facturation reste sur la ligne du fournisseur, jamais sur celle
-du waterfall), et la rédaction de **son** namespace. Le waterfall n'a ni clé, ni
-facturation propres (`providers/waterfall.py`, `secret_kind="none"`).
+du waterfall), et la rédaction de **son** namespace. Le waterfall n'a ni clé ni
+facturation propres.
+
+## D'où vient l'ordre
+
+Trois couches, la plus spécifique gagne :
+
+1. `providers=[…]` sur l'appel — validé : une clé inconnue est la faute de l'appelant ;
+2. le réglage **`steps`** de la carte du connecteur — un `CredentialField(secret=False)`
+   (un réglage, jamais un secret), posé par un admin d'org (défaut de l'org) ou par un
+   membre pour lui-même (sa surcharge), résolu par la même cascade qu'une clé
+   (`access.resolve_credential(ns, want="byo", emit_on_failure=False)` : sans réglage,
+   aucun événement de monitoring n'est émis). Rendu par le formulaire générique des
+   champs de connecteur : aucun travail de front. Une clé inconnue y est IGNORÉE et
+   nommée (`ignored_steps`) : celui qui appelle ne l'a pas écrite ;
+3. la table par défaut.
+
+Puis **les fournisseurs pour lesquels l'appelant détient SA clé passent devant**
+(utilisateur, équipe, org, tenant — `access.credential_mode_for`, lu une fois par
+porteur et par appel, AVANT toute dépense), les clés partagées de la plateforme ensuite,
+chaque groupe dans l'ordre ci-dessus (tri stable). Un fournisseur sans clé utilisable
+(`forbidden`, `over_quota`) est sauté sans être appelé. ⚠️ Ce mode est une lecture
+proche de la résolution réelle, pas exacte (il ignore un `_instance` épinglé, un compte
+nommé, l'option payante) : il ORDONNE, il ne garde rien — la garde reste l'appel de
+l'étape.
 
 ## Ce qu'une étape qui échoue fait : rien d'autre que passer la main
 
 Une garde qui refuse (`McpError` levée par `executer_cible` : connecteur coupé, hors
-liste du travail), un échec du fournisseur (`IssueCible(ok=False)` : clé absente —
-classée `invalid_input` par la taxonomie, il n'existe pas de code « non connecté » —,
-compte vide, limite de débit, panne), un résultat retenu par la rédaction, une réponse
-sans valeur : tout est écrit dans `attempts` (statut, code, message) et l'étape suivante
-est essayée. Seules les fautes de l'appelant lèvent : aucune étape possible avec ces
-entrées, une clé de `providers` inconnue, un SIREN malformé.
+liste du travail), un échec du fournisseur (`IssueCible(ok=False)` : clé refusée —
+classée `invalid_input`, il n'existe pas de code « non connecté » —, compte vide, limite
+de débit, panne), un résultat retenu par la rédaction, une réponse sans valeur : tout est
+écrit dans `attempts` (statut, code, message, mode de clé) et l'étape suivante est
+essayée. Un `not_found` (404) est un non-trouvé, pas un échec. Seules les fautes de
+l'appelant lèvent : aucune étape possible avec ces entrées, une clé de `providers`
+inconnue, un SIREN malformé. Le tout tient en **90 s** (`DEADLINE_S`, sous la borne de
+120 s du processus) : une étape qui partirait après est sautée (`time_budget`).
 
 ⚠️ **Un trouvé se juge à la FORME de la valeur** : une adresse qui a la forme d'un email,
-un numéro qui a au moins six chiffres. Un fournisseur qui renvoie l'entrée qu'on lui a
-donnée n'a rien trouvé ; un `person._stub` d'Apollo (fiche vide créée sur un identifiant
-faible, pourtant facturée) non plus ; une ligne Lusha porteuse d'`error` non plus.
-⚠️ **Une recherche par nom rend toujours quelque chose** : `fr_search` ne compte que si
-le domaine correspond ou si le nom demandé est contenu dans la raison sociale — un
-homonyme arrêtant la cascade cacherait la bonne réponse plus bas.
+un numéro d'au moins six chiffres, un profil qui nomme un titre ou une société. Un
+fournisseur qui renvoie l'entrée qu'on lui a donnée n'a rien trouvé ; un `person._stub`
+d'Apollo (fiche vide, pourtant facturée) non plus ; une ligne Lusha porteuse d'`error`
+non plus. ⚠️ **Une recherche rend toujours quelque chose** : `fr_search`, AI Ark par nom,
+TheirStack, Cognism ne comptent que si le domaine correspond ou si le nom demandé est
+contenu dans celui du résultat — un homonyme arrêtant la cascade cacherait la bonne
+réponse plus bas.
+
+## L'étape asynchrone : lemlist
+
+`lemlist_enrich` soumet et rend un `enrichment_id` ; `lemlist_enrich_result` relève
+(gratuit). L'étape soumet, attend ~8 s, relève toutes les ~6 s pendant au plus 40 s
+(`POLL_*`). Fini à temps → lu comme une étape ordinaire ; un `done` à digest vide qui
+porte un `warning` n'est pas final (lemlist demande une relève de plus). Pas fini → l'étape
+est `pending`, la réponse donne l'appel exact à faire plus tard (`pending[]`), et la
+cascade continue — les crédits lemlist de cette soumission sont dépensés quoi qu'il arrive.
+lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans appel.
 
 ## Ce que le waterfall refuse d'être
 
-- **Un appel d'outil arbitraire** : `providers=[…]` réordonne ou restreint les clés de
-  la table, jamais un nom d'outil. C'est ce qui tient une écriture (ou le waterfall
-  lui-même) hors d'une cascade.
-- **Un fournisseur asynchrone** : Dropcontact, FullEnrich, lemlist, la révélation de
-  téléphone d'Apollo répondent plus tard (sondage ou webhook) ; ils ne peuvent pas être
-  une étape d'un appel qui doit répondre dans le délai d'un outil. Ils restent appelables
-  directement.
+- **Un appel d'outil arbitraire** : `providers` et `steps` ne nomment que des clés de la
+  table, jamais un outil. C'est ce qui tient une écriture (ou un waterfall lui-même) hors
+  d'une cascade.
 - **Un lot** : une personne par appel. Une liste passe par une recette (`oto_recipe`,
-  `for_each` sur les lignes d'un tableau) — d'où la déclaration `LECTURE` de
-  l'outil : ils ne changent rien chez aucun tiers, même si leurs étapes dépensent des
-  crédits (c'est le sens de `lecture.LECTURE`, qui ne dit pas « gratuit »). ⚠️ La recette
-  ne juge que le waterfall ; ses étapes, appelées par `executer_cible`, ne sont pas
-  rejugées « en lecture » — elles le sont toutes (des lectures d'enrichissement), et
-  c'est la table fermée qui le garantit.
+  `for_each`) — d'où la déclaration `LECTURE` des outils : ils ne changent rien chez
+  aucun tiers, même si leurs étapes dépensent des crédits. ⚠️ La recette ne juge que le
+  waterfall ; ses étapes, appelées par `executer_cible`, ne sont pas rejugées « en
+  lecture » — ce sont toutes des lectures d'enrichissement (`lemlist_enrich` écrit une
+  demande d'enrichissement chez lemlist, rien qu'un tiers voit), et c'est la table fermée
+  qui le garantit.
+- **Hors `BETA_TOOLS`** : quatre noms neufs, mais des connecteurs fermés par défaut
+  (`default_active=False`) — l'activation par la plateforme fait office de population.
 
-## Les étapes, et pourquoi pas les autres
+## Les étapes
 
-- **Email** : hunter (nom + domaine) → apollo (URL LinkedIn, ou nom + domaine /
-  société) → aiark (URL) → kaspr (URL) → forager (URL) → lusha (URL, ou nom + domaine /
-  société).
-- **Téléphone** : kaspr → aiark (`op=mobile`) → forager (`op=phone_numbers`) → lusha.
-- **Société** : `fr_get` (SIREN) → `fr_search` (nom, France seulement, gratuit) → apollo
-  (domaine, 1 crédit).
-- **Absents, et pourquoi** : Cognism (ce que l'enrichissement rend dépend du contrat de
-  la clé, et la forme de sa réponse n'est figée nulle part ici), HitHorizons (deux appels
-  par société), Topograph et Crunchbase (un « introuvable » ne s'y distingue pas d'une
-  panne : `internal`). Kaspr, Forager et Lusha sont lus par une extraction profonde
-  (toute clé qui contient `email` / `phone`, hors celles qui ne font que qualifier) parce
-  que la forme de leur réponse n'est figée par aucun test du dépôt.
+- **Email** : hunter → apollo → aiark → kaspr → forager → lusha → lemlist.
+- **Téléphone** : kaspr → forager → lusha → lemlist (pas d'AI Ark).
+- **Société** : `fr_get` (SIREN) → `fr_search` (nom, France, gratuit) → aiark
+  (`linkedin_aiark_search op=companies`, domaine ou nom) → apollo (domaine) → theirstack
+  (domaine) → cognism (domaine ou nom).
+- **Personne** : linkedin (`linkedin_unipile_profile`, le compte LinkedIn connecté de
+  l'appelant, gratuit) → aiark (export) → apollo → forager (`op=detail`) → cognism →
+  lusha (recherche sans `reveal`, le mode bon marché) → lemlist (`linkedin_enrichment`).
+- **Lus par des noms de clés connus, faute de forme figée par un test ici** : Kaspr,
+  Forager, Lusha (email/téléphone par extraction profonde), et pour la personne et la
+  société Forager, Cognism, Lusha, Unipile, le profil LinkedIn brut de lemlist, le domaine
+  d'une société AI Ark. À confirmer sur une réponse réelle avant de s'y fier — et à figer
+  alors par un test de son extraction.
+- **Absents, et pourquoi** : HitHorizons (deux appels par société, aucune forme connue),
+  Topograph et Crunchbase (un « introuvable » ne s'y distingue pas d'une panne :
+  `internal`), Dropcontact et FullEnrich (asynchrones par lot, minutes de latence), la
+  révélation de téléphone d'Apollo (asynchrone par webhook).
 
 ## Ajouter une étape
 
-Une ligne `Step(...)` dans la table : la clé, l'outil (synchrone, déjà monté — vérifié
-par `tests/test_waterfall.py`), les groupes d'entrées exigées, `build`, `extract` (qui
-lit le résultat SERVI, après rédaction) et une note de coût. Un test de son extraction
-sur une réponse réelle du fournisseur, anonymisée.
+Une ligne `Step(...)` dans la table : la clé, l'outil (déjà monté — vérifié par
+`tests/test_waterfall.py`), les groupes d'entrées exigées, `build`, `extract` (qui lit le
+résultat SERVI, après rédaction), une note de coût, et `collect` si le fournisseur répond
+plus tard. Un test de son extraction sur une réponse réelle du fournisseur, anonymisée.
+La clé devient aussitôt utilisable dans le réglage `steps` de la carte.
