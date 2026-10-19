@@ -9,7 +9,7 @@ this connector has no key of its own: each step calls another connector's tool, 
 
 ## setup — choose your steps (optional)
 
-set **steps** on this card: the provider keys, comma-separated, in the order you want — e.g. `fr_get,fr_search,apollo,aiark`.
+set **steps** on this card: the provider keys, comma-separated, in the order you want — e.g. `fr,apollo,aiark,linkedin`.
 - an org admin sets it for the whole org; any member can set their own, which wins for them
 - empty = the default order; a key that is not a step of this waterfall is ignored (the response names it under `ignored_steps`)
 - `providers=[…]` on a call overrides both, for that call only
@@ -17,7 +17,7 @@ set **steps** on this card: the provider keys, comma-separated, in the order you
 ## usage — a company's firmographics
 
 one company per call, stopping at the first source that identifies it.
-- `waterfall_company` — default order: fr_get (siren) → fr_search (name, french companies) → aiark (domain or name) → apollo (domain) → theirstack (domain) → cognism
+- `waterfall_company` — default order: fr (the french registry: by siren, else by name) → aiark (domain or name) → apollo (domain) → theirstack (domain) → cognism; then, only when the company's linkedin page is still missing, linkedin (its own website, else a search by name checked against the domain)
 - a search result only counts if its domain matches, or its name contains the name asked — a namesake never stops the cascade
 - `employees_band` (french registry) is the insee size band code, not a headcount
 - `dry_run=true` shows the plan without spending anything

@@ -165,7 +165,7 @@ def test_les_etapes_gratuites_restent_devant_une_cle_payante(calls):
     calls["modes"] = {"apollo_enrich_organization": "org"}
     out = _run("waterfall_company", company_name="Acme", domain="acme.com", siren="123456789",
                dry_run=True)
-    assert [a["provider"] for a in out["attempts"]][:3] == ["fr_get", "fr_search", "apollo"]
+    assert [a["provider"] for a in out["attempts"]][:2] == ["fr", "apollo"]
 
 
 def test_le_reglage_de_la_carte_fixe_l_ordre_et_ignore_l_inconnu(calls):
@@ -316,7 +316,7 @@ def test_societe_registre_par_siren(calls):
         "siren": "123456789", "nom_complet": "ACME", "activite_principale": "62.01Z",
         "siege": {"libelle_commune": "PARIS"}, "site_internet": "https://acme.com"}})
     out = _run("waterfall_company", siren="123 456 789")
-    assert out["provider"] == "fr_get"
+    assert out["provider"] == "fr" and out["attempts"][0]["via"] == "fr_siren"
     assert out["company"]["siren"] == "123456789" and out["company"]["domain"] == "acme.com"
     assert calls["made"] == [("fr_get", {"siren": "123456789"})]
 
@@ -329,7 +329,9 @@ def test_societe_homonyme_ne_stoppe_pas_la_cascade(calls):
          "link": {"linkedin": "https://linkedin.com/company/acme"},
          "location": {"headquarter": {"city": "Paris", "country": "France"}}}]})
     out = _run("waterfall_company", company_name="Acme", domain="acme.com")
-    assert [a["status"] for a in out["attempts"][:3]] == ["skipped", "no_match", "found"]
+    # Le registre (une ligne) : pas de SIREN, la recherche par nom rend un homonyme.
+    assert [a["status"] for a in out["attempts"][:2]] == ["no_match", "found"]
+    assert [t["via"] for t in out["attempts"][0]["tried"]] == ["fr_name"]
     assert out["provider"] == "aiark"
     assert out["company"]["employees"] == 42 and out["company"]["domain"] == "acme.com"
     assert calls["made"][-1][1]["account"] == {"domain": {"any": {"include": ["acme.com"]}}}
@@ -339,7 +341,8 @@ def test_societe_nom_contenu_dans_la_raison_sociale(calls):
     calls["answers"]["fr_search"] = IssueCible(ok=True, result={"results": [
         {"siren": "222222222", "nom_complet": "Société Acmé Industries"}]})
     out = _run("waterfall_company", company_name="acme")
-    assert out["provider"] == "fr_search" and out["company"]["siren"] == "222222222"
+    assert out["provider"] == "fr" and out["company"]["siren"] == "222222222"
+    assert out["attempts"][0]["via"] == "fr_name"
 
 
 def test_societe_theirstack_exige_le_meme_domaine(calls):
@@ -354,8 +357,8 @@ def test_societe_hors_france_saute_le_registre_en_le_disant(calls):
     out = _run("waterfall_company", company_name="Acme", domain="acme.de", country="DE",
                dry_run=True)
     plan = {a["provider"]: a for a in out["attempts"]}
-    assert plan["fr_get"]["status"] == plan["fr_search"]["status"] == "skipped"
-    assert "French company" in plan["fr_search"]["message"]
+    assert plan["fr"]["status"] == "skipped"
+    assert "French company" in plan["fr"]["message"]
     assert plan["apollo"]["status"] == "planned"
 
 
@@ -539,7 +542,7 @@ def test_la_page_linkedin_complete_une_societe_identifiee_sans_elle(calls):
     calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=[
         {"domain": "acme.com", "linkedIns": ["https://www.linkedin.com/in/jane-doe",
                                              "https://fr.linkedin.com/company/Acme-SAS/about"]}])
-    out = _run("waterfall_company", domain="acme.com", providers=["apollo", "linkedin_site"])
+    out = _run("waterfall_company", domain="acme.com", providers=["apollo", "linkedin"])
     assert out["provider"] == "apollo"
     assert out["company"]["name"] == "Acme"
     assert out["company"]["linkedin_url"] == "https://www.linkedin.com/company/acme-sas/"
@@ -552,7 +555,7 @@ def test_la_completion_ne_tourne_pas_quand_la_page_est_deja_la(calls):
     calls["answers"]["apollo_enrich_organization"] = IssueCible(ok=True, result={
         "organization": {"name": "Acme", "primary_domain": "acme.com",
                          "linkedin_url": "https://www.linkedin.com/company/acme"}})
-    out = _run("waterfall_company", domain="acme.com", providers=["apollo", "linkedin_site"])
+    out = _run("waterfall_company", domain="acme.com", providers=["apollo", "linkedin"])
     assert _made(calls) == ["apollo_enrich_organization"]
     assert [a["provider"] for a in out["attempts"]] == ["apollo"]
 
@@ -564,9 +567,12 @@ def test_la_recherche_par_nom_ecarte_l_homonyme(calls):
         {"name": "FlyingBear", "linkedinUrl": "https://www.linkedin.com/company/flyingbear3d",
          "website": "https://www.flyingbear3d.com", "employeeCount": 42}])
     out = _run("waterfall_company", company_name="FlyingBear", domain="flyingbear3d.com",
-               providers=["linkedin_search"])
-    # Rien d'autre n'a identifié la société : la page, vérifiée par son site, suffit.
-    assert out["found"] is True and out["provider"] == "linkedin_search"
+               providers=["linkedin"])
+    # Le site n'a rien donné (même réponse servie : un homonyme écarté), la recherche par
+    # nom a trouvé — et, rien d'autre n'ayant identifié la société, la page suffit.
+    assert out["found"] is True and out["provider"] == "linkedin"
+    assert out["attempts"][0]["via"] == "linkedin_search"
+    assert [t["via"] for t in out["attempts"][0]["tried"]] == ["linkedin_site", "linkedin_search"]
     assert out["company"]["linkedin_url"] == "https://www.linkedin.com/company/flyingbear3d/"
     assert out["company"]["employees"] == 42
 
@@ -575,7 +581,7 @@ def test_une_execution_apify_coupee_rend_encore_ses_elements(calls):
     calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result={
         "error": "TIMED-OUT", "run_id": "r1", "status": "TIMED-OUT",
         "items": [{"linkedIns": ["https://linkedin.com/company/acme"]}]})
-    out = _run("waterfall_company", domain="acme.com", providers=["linkedin_site"])
+    out = _run("waterfall_company", domain="acme.com", providers=["linkedin"])
     assert out["company"]["linkedin_url"] == "https://www.linkedin.com/company/acme/"
 
 
@@ -621,3 +627,18 @@ def test_people_google_lit_le_titre_et_exige_la_societe(calls):
 def test_people_page_linkedin_malformee_refusee(calls):
     with pytest.raises(McpError, match="LinkedIn company page"):
         _run("waterfall_people", company_linkedin_url="https://example.com/acme")
+
+
+
+def test_chaque_etape_dit_son_prix_en_donnees():
+    """Toute étape payante porte un prix lisible par un écran : la ligne de la grille
+    Tulina (outil facturé) ou le prix du fournisseur sur sa propre clé. Les étapes
+    gratuites (registre, LinkedIn connecté) n'en ont pas besoin."""
+    for ns, steps in waterfall.STEPS_BY_NAMESPACE.items():
+        for s in steps:
+            price = waterfall.PRICES.get((ns, s.key))
+            assert s.free or price, (ns, s.key)
+            if price and "rate" in price:
+                assert price["rate"]["tool"], (ns, s.key)
+    assert set(waterfall.PRICES) <= {(ns, s.key) for ns, st in waterfall.STEPS_BY_NAMESPACE.items()
+                                     for s in st}

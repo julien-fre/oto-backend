@@ -37,6 +37,11 @@ class WaterfallStep(BaseModel):
         "key of at least one group is given (`fr` = a French company)."))
     cost: str
     free: bool
+    price: Optional[dict] = Field(default=None, description=(
+        "What the step costs, as data: `rate` = the tool Tulina bills on Tulina's key and "
+        "the row of the published credit grid that applies (`pick`); `provider` = what "
+        "the provider takes on your own key (`amount` null = no fixed figure, `per` = "
+        "call | match | email | phone | reveal | profile | company | lookup | search)."))
     fills: Optional[str] = Field(default=None, description=(
         "A completion step: it runs after the cascade, only when the find still lacks "
         "this field (`linkedin_url`)."))

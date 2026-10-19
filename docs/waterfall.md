@@ -95,7 +95,7 @@ appelant rencontre — MCP : 120 s) ; une étape qui partirait après est sauté
 un numéro d'au moins six chiffres, un profil qui nomme un titre ou une société. Un
 fournisseur qui renvoie l'entrée qu'on lui a donnée n'a rien trouvé ; un `person._stub`
 d'Apollo (fiche vide, pourtant facturée) non plus ; une ligne Lusha porteuse d'`error`
-non plus. ⚠️ **Une recherche rend toujours quelque chose** : `fr_search`, AI Ark par nom,
+non plus. ⚠️ **Une recherche rend toujours quelque chose** : le registre par nom, AI Ark par nom,
 TheirStack, Cognism ne comptent que si le domaine correspond ou si le nom demandé est
 contenu dans celui du résultat — un homonyme arrêtant la cascade cacherait la bonne
 réponse plus bas.
@@ -133,7 +133,8 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
   fullenrich (les asynchrones en dernier).
 - **Téléphone** : kaspr → forager → lusha → apollo (`apollo_reveal_phone`, clé propre) →
   lemlist → dropcontact → fullenrich (pas d'AI Ark ; les asynchrones en dernier).
-- **Société** : `fr_get` (SIREN) → `fr_search` (nom, France, gratuit) → aiark
+- **Société** : `fr` (le registre français, UNE ligne à deux entrées : `fr_get` par SIREN,
+  sinon `fr_search` par nom, France seulement, gratuit) → aiark
   (`linkedin_aiark_search op=companies`, domaine ou nom) → apollo (domaine) → theirstack
   (domaine) → cognism (domaine ou nom).
 - **Personne** : linkedin (`linkedin_unipile_profile`, le compte LinkedIn connecté de
@@ -150,11 +151,16 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
 
 ## Les étapes de complétion : la page LinkedIn d'une société
 
+**Une ligne, plusieurs entrées** (`Step.variants`, `_one_row`) : le registre (SIREN, sinon
+nom) et la page LinkedIn (site, sinon nom) sont UNE étape chacun — un écran les montre une
+fois, un réglage les nomme une fois ; les variantes tournent dans l'ordre, chacune quand
+ses entrées sont là, et le reçu dit laquelle a répondu (`via`, `tried`).
+
 Une étape `Step(fills="linkedin_url")` ne concourt pas au trouvé : après la cascade, elle
 ne tourne que si la valeur trouvée n'a PAS ce champ, et y fusionne ce qu'elle trouve
 (sans écraser). Une page trouvée alors que rien d'autre n'avait identifié la société fait
-encore un trouvé, mince (`linkedin_url`, et ce que la recherche rend). Deux étapes, deux
-acteurs Apify, chacun une exécution bornée par `apify_run_sync` avec `timeout_secs` (25 s,
+encore un trouvé, mince (`linkedin_url`, et ce que la recherche rend). Une ligne `linkedin`,
+deux variantes, deux acteurs Apify, chacun une exécution bornée par `apify_run_sync` avec `timeout_secs` (25 s,
 côté Apify) et un plafond de coût — un acteur coupé rend encore ses éléments partiels :
 
 - `linkedin_site` (`vdrmota/contact-info-scraper`) : les liens LinkedIn du site de la

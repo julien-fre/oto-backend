@@ -249,6 +249,10 @@ class Step:
     # A COMPLETION step: it does not compete for the find, it fills ONE field the find
     # still lacks (`linkedin_url`), after the cascade — see `_run_cascade`.
     fills: str = ""
+    # ONE row, several ways in (the French registry by SIREN, else by name): the variants
+    # run in order, each when its own inputs are there, until one finds the value. The
+    # receipt says which one answered (`via`). A screen shows one step.
+    variants: tuple["Step", ...] = ()
 
 
 def _payload(issue):
@@ -266,12 +270,16 @@ def _payload(issue):
 
 
 def _runnable(step: Step, inputs: dict) -> bool:
+    if step.variants:
+        return any(_runnable(v, inputs) for v in step.variants)
     return any(all(inputs.get(k) for k in group) for group in step.requires)
 
 
 def _missing(step: Step) -> str:
     if step.needs:
         return step.needs
+    if step.variants:
+        return " or ".join(_missing(v) for v in step.variants)
     return " or ".join("+".join(g) for g in step.requires)
 
 
@@ -426,6 +434,29 @@ def _receipt(kind, found, provider, value, attempts, source, ignored, pending) -
 async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
                     dry_run: bool, deadline: float, attempt: dict, pending: list):
     """Run ONE step and record what happened on `attempt`; return its find, or None."""
+    if step.variants:
+        if not _runnable(step, inputs):
+            attempt.update(status="skipped", code="missing_input",
+                           message=f"needs {_missing(step)}")
+            return None
+        tried: list[dict] = []
+        for v in step.variants:
+            if not _runnable(v, inputs):
+                continue
+            part = {"via": v.key, "tool": v.tool}
+            tried.append(part)
+            found = await _run_step(mcp, sub, v, mode, inputs, dry_run,
+                                    deadline, part, pending)
+            if found is not None:
+                attempt.update(status="found", via=v.key, tool=v.tool, tried=tried)
+                return found
+        last = tried[-1] if tried else {}
+        attempt.update({k: v for k, v in last.items() if k not in ("via", "tool")},
+                       tried=tried)
+        if dry_run:
+            attempt.update(status="planned", arguments=last.get("arguments"),
+                           cost=step.cost, tried=tried)
+        return None
     if not _runnable(step, inputs):
         attempt.update(status="skipped", code="missing_input",
                        message=f"needs {_missing(step)}")
@@ -1108,15 +1139,30 @@ def _search_linkedin(res, inputs):
     return None
 
 
+def _one_row(key: str, label: str, cost: str, *variants: Step, fills: str = "") -> Step:
+    """One row of the table made of several ways in (`Step.variants`): what a screen
+    shows and a setting names once."""
+    groups: list[tuple[str, ...]] = []
+    for v in variants:
+        groups += [g for g in v.requires if g not in groups]
+    first = variants[0]
+    return Step(key, first.tool, tuple(groups), first.build, first.extract, cost,
+                free=all(v.free for v in variants), label=label, fills=fills,
+                variants=variants)
+
+
 COMPANY_STEPS: tuple[Step, ...] = (
-    Step("fr_get", "fr_get", (("siren",),),
-         lambda i: {"siren": i["siren"]}, _fr_get_company, "free (French open data)",
-         free=True, label="French registry — by SIREN"),
-    Step("fr_search", "fr_search", (("company_name", "fr"),),
-         lambda i: {"query": i["company_name"], "per_page": 5},
-         _fr_search_company, "free (French open data)",
-         needs="company_name, and a French company (country omitted or FR)", free=True,
-         label="French registry — by name"),
+    _one_row(
+        "fr", "French registry", "free (French open data)",
+        Step("fr_siren", "fr_get", (("siren",),),
+             lambda i: {"siren": i["siren"]}, _fr_get_company, "free (French open data)",
+             free=True),
+        Step("fr_name", "fr_search", (("company_name", "fr"),),
+             lambda i: {"query": i["company_name"], "per_page": 5},
+             _fr_search_company, "free (French open data)",
+             needs="company_name, and a French company (country omitted or FR)",
+             free=True),
+    ),
     Step("aiark", "linkedin_aiark_search", (("domain",), ("company_name",)),
          _aiark_company_args, _aiark_company, "AI Ark credits per company returned"),
     Step("apollo", "apollo_enrich_organization", (("domain",),),
@@ -1128,23 +1174,26 @@ COMPANY_STEPS: tuple[Step, ...] = (
          lambda i: {k: v for k, v in {"name": i.get("company_name"),
                                       "domain": i.get("domain")}.items() if v},
          _cognism_company, "Cognism credits (per its contract)"),
-    # Completion: the LinkedIn page, when no source above returned it.
-    Step("linkedin_site", "apify_run_sync", (("domain",),),
-         lambda i: {"actor_id": "vdrmota/contact-info-scraper",
-                    "run_input": {"startUrls": [{"url": f"https://www.{i['domain']}"}],
-                                  "maxDepth": 1, "maxRequestsPerStartUrl": 4,
-                                  "sameDomain": True},
-                    "timeout_secs": _APIFY_TIMEOUT_S,
-                    "max_total_charge_usd": _APIFY_MAX_USD},
-         _site_linkedin, "a few cents of Apify per site", fills="linkedin_url",
-         label="LinkedIn page · website"),
-    Step("linkedin_search", "apify_run_sync", (("company_name",),),
-         lambda i: {"actor_id": "harvestapi/linkedin-company",
-                    "run_input": {"searches": [i["company_name"]]},
-                    "max_items": 3, "timeout_secs": _APIFY_TIMEOUT_S,
-                    "max_total_charge_usd": _APIFY_MAX_USD},
-         _search_linkedin, "a few cents of Apify per search", fills="linkedin_url",
-         label="LinkedIn page · by name"),
+    # Completion: the LinkedIn page, when no source above returned it — from the
+    # company's own website first, then by a search on its name.
+    _one_row(
+        "linkedin", "LinkedIn page", "a few cents of Apify per try",
+        Step("linkedin_site", "apify_run_sync", (("domain",),),
+             lambda i: {"actor_id": "vdrmota/contact-info-scraper",
+                        "run_input": {"startUrls": [{"url": f"https://www.{i['domain']}"}],
+                                      "maxDepth": 1, "maxRequestsPerStartUrl": 4,
+                                      "sameDomain": True},
+                        "timeout_secs": _APIFY_TIMEOUT_S,
+                        "max_total_charge_usd": _APIFY_MAX_USD},
+             _site_linkedin, "a few cents of Apify per site"),
+        Step("linkedin_search", "apify_run_sync", (("company_name",),),
+             lambda i: {"actor_id": "harvestapi/linkedin-company",
+                        "run_input": {"searches": [i["company_name"]]},
+                        "max_items": 3, "timeout_secs": _APIFY_TIMEOUT_S,
+                        "max_total_charge_usd": _APIFY_MAX_USD},
+             _search_linkedin, "a few cents of Apify per search"),
+        fills="linkedin_url",
+    ),
 )
 
 
@@ -1413,6 +1462,65 @@ PEOPLE_STEPS: tuple[Step, ...] = (
 
 # --- the plan, for a screen ----------------------------------------------------------
 
+#: What a step costs, as DATA for a screen (the `cost` sentences are for agents).
+#: `rate`: the tool Tulina BILLS for the step when it runs on Tulina's key (the collect
+#: tool, for FullEnrich) and which row of the published credit grid applies (`pick`:
+#: the grid row's `kind` or short name) — the figure itself lives in the grid, never
+#: here. `provider`: what the PROVIDER takes on the caller's own key — `amount` None
+#: when the provider publishes no fixed figure.
+PRICES: dict[tuple[str, str], dict] = {
+    ("waterfall_email", "hunter"): {"provider": {"amount": 1, "per": "call"}},
+    ("waterfall_email", "apollo"): {"rate": {"tool": "apollo_match_person"},
+                                    "provider": {"amount": 1, "per": "match"}},
+    ("waterfall_email", "aiark"): {"rate": {"tool": "linkedin_aiark_person"},
+                                   "provider": {"amount": None, "per": "profile"}},
+    ("waterfall_email", "kaspr"): {"provider": {"amount": 1, "per": "email"}},
+    ("waterfall_email", "forager"): {"rate": {"tool": "forager_person", "pick": "email"},
+                                     "provider": {"amount": 1, "per": "lookup"}},
+    ("waterfall_email", "lusha"): {"provider": {"amount": None, "per": "email"}},
+    ("waterfall_email", "dropcontact"): {"provider": {"amount": 1, "per": "email"}},
+    ("waterfall_email", "lemlist"): {"provider": {"amount": None, "per": "email"}},
+    ("waterfall_email", "fullenrich"): {"rate": {"tool": "fullenrich_result",
+                                                 "pick": "work_emails"},
+                                        "provider": {"amount": 1, "per": "email"}},
+    ("waterfall_phone", "kaspr"): {"provider": {"amount": 1, "per": "phone"}},
+    ("waterfall_phone", "forager"): {"rate": {"tool": "forager_person", "pick": "phone"},
+                                     "provider": {"amount": None, "per": "phone"}},
+    ("waterfall_phone", "lusha"): {"provider": {"amount": None, "per": "phone"}},
+    ("waterfall_phone", "apollo"): {"provider": {"amount": 9, "per": "reveal", "from": True}},
+    ("waterfall_phone", "lemlist"): {"provider": {"amount": None, "per": "phone"}},
+    ("waterfall_phone", "dropcontact"): {"provider": {"amount": None, "per": "phone"}},
+    ("waterfall_phone", "fullenrich"): {"rate": {"tool": "fullenrich_result", "pick": "phones"},
+                                        "provider": {"amount": 10, "per": "phone"}},
+    ("waterfall_company", "aiark"): {"rate": {"tool": "linkedin_aiark_search"},
+                                     "provider": {"amount": None, "per": "company"}},
+    ("waterfall_company", "apollo"): {"rate": {"tool": "apollo_enrich_organization"},
+                                      "provider": {"amount": 1, "per": "company"}},
+    ("waterfall_company", "theirstack"): {"rate": {"tool": "theirstack_companies_search"},
+                                          "provider": {"amount": 3, "per": "company",
+                                                       "from": True}},
+    ("waterfall_company", "cognism"): {"provider": {"amount": None, "per": "company"}},
+    ("waterfall_company", "linkedin"): {"rate": {"tool": "apify_run_sync"}},
+    ("waterfall_person", "aiark"): {"rate": {"tool": "linkedin_aiark_person"},
+                                    "provider": {"amount": None, "per": "profile"}},
+    ("waterfall_person", "apollo"): {"rate": {"tool": "apollo_match_person"},
+                                     "provider": {"amount": 1, "per": "match"}},
+    ("waterfall_person", "forager"): {"rate": {"tool": "forager_person",
+                                               "pick": "profile or search"},
+                                      "provider": {"amount": 1, "per": "lookup"}},
+    ("waterfall_person", "cognism"): {"provider": {"amount": None, "per": "profile"}},
+    ("waterfall_person", "lusha"): {"provider": {"amount": None, "per": "profile"}},
+    ("waterfall_person", "lemlist"): {"provider": {"amount": None, "per": "profile"}},
+    ("waterfall_people", "apollo"): {"rate": {"tool": "apollo_search_people"},
+                                     "provider": {"amount": 0, "per": "search"}},
+    ("waterfall_people", "aiark"): {"rate": {"tool": "linkedin_aiark_search"},
+                                    "provider": {"amount": None, "per": "profile"}},
+    ("waterfall_people", "linkedin_employees"): {"rate": {"tool": "apify_run_sync"}},
+    ("waterfall_people", "google"): {"rate": {"tool": "serper_search"},
+                                     "provider": {"amount": 1, "per": "search"}},
+}
+
+
 #: Each waterfall connector's step table — what the plan below and the tools read.
 STEPS_BY_NAMESPACE: dict[str, tuple[Step, ...]] = {
     "waterfall_email": EMAIL_STEPS, "waterfall_phone": PHONE_STEPS,
@@ -1421,7 +1529,7 @@ STEPS_BY_NAMESPACE: dict[str, tuple[Step, ...]] = {
 }
 
 
-def _step_row(step: Step, mode: Optional[str] = None) -> dict:
+def _step_row(step: Step, mode: Optional[str] = None, ns: Optional[str] = None) -> dict:
     from .. import providers
     from ..tool_visibility import namespace_of
     con = providers.connector_for_namespace(namespace_of(step.tool))
@@ -1437,6 +1545,7 @@ def _step_row(step: Step, mode: Optional[str] = None) -> dict:
            "cost": step.cost, "free": step.free,
            # A completion step: runs after the cascade, only to fill this missing field.
            "fills": step.fills or None,
+           "price": PRICES.get((ns, step.key)) if ns else None,
            "asynchronous": step.collect is not None}
     if mode is not None:
         row["key_mode"] = mode
@@ -1453,8 +1562,8 @@ def plan(ns: str, sub: Optional[str]) -> dict:
     steps = STEPS_BY_NAMESPACE[ns]
     order, ignored, source, modes = _plan(ns, steps, None, sub)
     return {"connector": ns, "order_from": source, "ignored_steps": ignored,
-            "steps": [_step_row(s, modes.get(s.tool, "unknown")) for s in order],
-            "available": [_step_row(s) for s in steps]}
+            "steps": [_step_row(s, modes.get(s.tool, "unknown"), ns) for s in order],
+            "available": [_step_row(s, ns=ns) for s in steps]}
 
 
 # --- the tools -----------------------------------------------------------------------
@@ -1562,12 +1671,12 @@ def register(mcp: FastMCP) -> None:
         industry / NAF, size, revenue, founding date, LinkedIn), trying sources in turn
         and stopping at the FIRST that identifies it (native waterfall).
 
-        Steps (default order): fr_get (SIREN — French registry, free) → fr_search (name,
-        French companies only, free) → aiark (domain or name) → apollo (domain) →
+        Steps (default order): fr (the French registry, free — by SIREN, else by name for a
+        French company) → aiark (domain or name) → apollo (domain) →
         theirstack (domain) → cognism (domain or name); then, when none of them gave
-        the company's LinkedIn page: linkedin_site (the LinkedIn links on its own
-        website) → linkedin_search (a LinkedIn company search by name, kept only if its
-        website is the domain). A search result counts only if
+        the company's LinkedIn page: linkedin (the LinkedIn links on its own website,
+        else a LinkedIn company search by name, kept only if its website is the
+        domain). A search result counts only if
         its domain matches, or its name contains the name asked: a namesake never stops
         the cascade. `employees_band` is the INSEE size band code, not a headcount.
 
@@ -1581,7 +1690,7 @@ def register(mcp: FastMCP) -> None:
             company_name: the company's name.
             domain: its website domain (`acme.com`; a URL is accepted).
             siren: its 9-digit SIREN (France).
-            country: ISO country code; other than FR skips fr_search.
+            country: ISO country code; other than FR skips the registry's name search.
 {_COMMON_ARGS}
         """)
     async def waterfall_company(
