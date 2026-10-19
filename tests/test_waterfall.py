@@ -20,6 +20,19 @@ from oto_mcp.tools import meta
 from oto_mcp.tools import waterfall
 from oto_mcp.tools.meta import IssueCible
 
+def _servi(issue):
+    """Ce qu'`executer_cible` rend VRAIMENT : le `ToolResult` servi, jamais le dict brut
+    de l'outil (une liste y est enveloppée en `{"result": [...]}`, comme FastMCP le
+    fait). Un faux qui rendait le dict a caché que la cascade ne lisait rien en vrai."""
+    from dataclasses import replace
+    from fastmcp.tools.tool import ToolResult
+    r = issue.result
+    if not issue.ok or issue.retenu or not isinstance(r, (dict, list)):
+        return issue
+    return replace(issue, result=ToolResult(
+        structured_content=r if isinstance(r, dict) else {"result": r}))
+
+
 NAMESPACES = ("waterfall_email", "waterfall_phone", "waterfall_company", "waterfall_person")
 
 
@@ -39,7 +52,7 @@ def calls(monkeypatch):
             answer = answer.pop(0) if len(answer) > 1 else answer[0]
         if isinstance(answer, Exception):
             raise answer
-        return answer
+        return _servi(answer)
 
     monkeypatch.setattr(meta, "resoudre_outil", resoudre)
     monkeypatch.setattr(meta, "executer_cible", executer)

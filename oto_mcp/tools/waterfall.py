@@ -245,6 +245,20 @@ class Step:
     free: bool = False
 
 
+def _payload(issue):
+    """What the step's tool RETURNED, out of its served `ToolResult` (structured content,
+    else the JSON of its first block) — the same reading as the recipes
+    (`redaction.extract_payload`). A tool that returns a list is served wrapped
+    (`{"result": [...]}`): unwrapped here, so an extractor reads what the tool wrote."""
+    from .. import redaction
+    data = redaction.extract_payload(issue.result)
+    if data is None and isinstance(issue.result, (dict, list)):
+        data = issue.result
+    if isinstance(data, dict) and set(data) == {"result"}:
+        data = data["result"]
+    return data
+
+
 def _runnable(step: Step, inputs: dict) -> bool:
     return any(all(inputs.get(k) for k in group) for group in step.requires)
 
@@ -348,7 +362,7 @@ async def _poll(mcp: FastMCP, sub, step: Step, submitted, deadline: float):
     while True:
         issue = await meta.executer_cible(tool, sub, step.collect.tool,
                                           step.collect.tool, dict(args))
-        if not issue.ok or issue.retenu or step.collect.done(issue.result):
+        if not issue.ok or issue.retenu or step.collect.done(_payload(issue)):
             return issue, args, True
         if time.monotonic() + POLL_EVERY_S > stop:
             return issue, args, False
@@ -442,7 +456,7 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
         issue = await _call(mcp, sub, step.tool, args, attempt)
         if issue is None or not _judge(issue, attempt):
             continue
-        result = issue.result
+        result = _payload(issue)
         if step.collect is not None:
             collected, collect_args, finished = await _poll(mcp, sub, step, result,
                                                             deadline)
@@ -458,7 +472,7 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
                 continue
             if not _judge(collected, attempt):
                 continue
-            result = collected.result
+            result = _payload(collected)
         found = step.extract(result, inputs)
         if not found:
             attempt.update(status="no_match")
