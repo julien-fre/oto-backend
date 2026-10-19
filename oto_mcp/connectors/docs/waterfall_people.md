@@ -26,6 +26,6 @@ one company per call, stopping at the first source that returns at least one mat
 ## usage — qualify before you spend
 
 - `qualify=` takes a Jev rubric (same shape as `jev_ask`'s `questions`): each person found gets typed answers with probabilities, in ONE call for micro-dollars, instead of being read and judged by the agent
-- `qualify_min=0.7` keeps only what passes every yes/no question (the others are dropped, counted in `qualification.dropped`)
+- `qualify_min=0.7` keeps only what passes every yes/no question ; a provider whose people ALL fall short does not end the search, the next one is tried; the rejected come back under `unqualified` (name, title, URL, answers), `show_unqualified=true` for their full records
 - only the fields a fit needs are sent to Jev (title, seniority, industry, size…), never a name, email, phone or profile URL
 - no Jev key or no time left: results come back unqualified and the receipt's `qualification` says why

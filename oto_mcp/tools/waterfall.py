@@ -586,6 +586,19 @@ class _Tally:
         self.reports: list[dict] = []
         self.rejected: list[dict] = []
 
+    def seen(self) -> frozenset:
+        return frozenset(_person_key(p) for p in self.rejected)
+
+    def compact(self) -> list[dict]:
+        """The rejected, in a few tokens each: who, their title, and the answers."""
+        return [{k: v for k, v in {
+            "full_name": p.get("full_name"), "title": p.get("title"),
+            "linkedin_url": p.get("linkedin_url"),
+            "answers": {n: a.get("noul", a.get("choice", a.get("score")))
+                        for n, a in ((p.get("qualification") or {}).get("answers") or {}).items()
+                        if isinstance(a, dict)}}.items() if v}
+            for p in self.rejected]
+
     def add(self, attempt: Optional[dict], report: dict) -> None:
         self.rejected += report.pop("_rejected", [])
         self.reports.append(report)
@@ -602,11 +615,6 @@ class _Tally:
                "cost_usd": round(sum(r.get("cost_usd") or 0 for r in done), 8)}
         if "qualified" in done[-1]:
             out["not_qualified"] = len(self.rejected)
-            if self.rejected and not qualify["show"]:
-                out["hint"] = (f"{len(self.rejected)} person(s) found did not reach "
-                               "`qualify_min`. To see them, call again with "
-                               "`show_unqualified=true` (the providers are called and "
-                               "billed again).")
         return out
 
 
@@ -630,14 +638,27 @@ def _passes(answers: dict, questions: dict, min_p: Optional[float]) -> bool:
     return True
 
 
+def _person_key(p: dict) -> str:
+    return (p.get("linkedin_url") or p.get("full_name") or "").rstrip("/").lower()
+
+
 async def _qualify(mcp: FastMCP, sub, kind: str, found: dict, inputs: dict,
-                   rubric: dict, deadline: float) -> tuple[dict, dict]:
+                   rubric: dict, deadline: float,
+                   seen_rejected: frozenset = frozenset()) -> tuple[dict, dict]:
     """ONE `jev_items` call over what the cascade found: each record gets its answers
     (`qualification`), and with `min` the people below it are dropped. It never fails
     the lookup: no Jev key, a refusal or no time left → the results come back
     unqualified, and the receipt says why."""
     records = found["people"] if kind == "people" else [found]
     report: dict = {"tool": "jev_items"}
+    if kind == "people" and seen_rejected:
+        # Already judged and rejected on an earlier step: never paid for twice.
+        records = [r for r in records if _person_key(r) not in seen_rejected]
+        found = {**found, "people": records, "count": len(records)}
+        if not records:
+            report.update(status="done", qualified=0, not_qualified=0, _rejected=[],
+                          message="only people already rejected on an earlier step")
+            return found, report
     if time.monotonic() > deadline - _QUALIFY_MIN_S:
         report.update(status="skipped", code="deadline",
                       message="no time left in this call to qualify the results")
@@ -724,7 +745,8 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
                 fallback, fallback_step = got, step.key
             continue
         if got is not None and not dry_run and _per_step(kind, qualify):
-            got, report = await _qualify(mcp, sub, kind, got, inputs, qualify, deadline)
+            got, report = await _qualify(mcp, sub, kind, got, inputs, qualify, deadline,
+                                         tally.seen())
             tally.add(attempt, report)
             if report.get("status") == "done" and not got["people"]:
                 attempt.update(status="unqualified")
@@ -734,7 +756,8 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
     if found is None and fallback is not None:
         found, winner = fallback, fallback_step
         if not dry_run and _per_step(kind, qualify):
-            found, report = await _qualify(mcp, sub, kind, found, inputs, qualify, deadline)
+            found, report = await _qualify(mcp, sub, kind, found, inputs, qualify,
+                                           deadline, tally.seen())
             tally.add(None, report)
             if report.get("status") == "done" and not found["people"]:
                 found, winner = None, None
@@ -764,8 +787,10 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
                    pending)
     if tally.reports:
         out["qualification"] = tally.receipt(qualify)
-        if qualify.get("show") and tally.rejected:
-            out["unqualified"] = tally.rejected
+        if tally.rejected:
+            # ALWAYS returned (a few tokens each): checking the rubric never costs a
+            # second, billed cascade. The full records on demand.
+            out["unqualified"] = tally.rejected if qualify.get("show") else tally.compact()
     return out
 
 
@@ -1865,9 +1890,13 @@ _QUALIFY_ARGS = """            qualify: a Jev rubric to judge each result agains
                 people ALL fall short does not end the search — the next one is tried —
                 and each attempt says `qualified` / `not_qualified`. A company or a
                 person stays, with `qualification.passed`.
-            show_unqualified: also return, under `unqualified`, the people who did not
-                pass (with their answers) — to check the rubric. Default: only their
-                count, in `qualification.not_qualified`."""
+            show_unqualified: the people who did not pass are ALWAYS returned under
+                `unqualified` — name, title, profile URL and Jev's answers, to check the
+                rubric without paying again; true returns their FULL records instead.
+                Continuing past an unqualified provider pays off when it found FEW
+                people; when the company simply has no fit, the next providers find the
+                same people again (already-rejected ones are not re-judged) —
+                `max_paid_steps` is the brake."""
 
 _COMMON_ARGS = """            providers: the steps to try for THIS call, in this order — keys
                 from the list above. Overrides your setting. Never a tool name.

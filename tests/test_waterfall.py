@@ -888,7 +888,10 @@ def test_qualify_min_ecarte_les_personnes_sous_le_seuil(calls):
     assert [p["full_name"] for p in out["people"]["people"]] == ["Ann Boss"]
     assert out["people"]["count"] == 1 and out["qualification"]["not_qualified"] == 1
     assert out["attempts"][0]["qualified"] == 1 and out["attempts"][0]["not_qualified"] == 1
-    assert "show_unqualified" in out["qualification"]["hint"] and "unqualified" not in out
+    # Les écartés reviennent toujours, en compact : vérifier la rubrique ne repaie rien.
+    assert out["unqualified"] == [{"full_name": "Bob Dev", "title": "Developer",
+                                   "linkedin_url": "https://fr.linkedin.com/in/bob-dev",
+                                   "answers": {"fit": 0.1}}]
 
 
 def test_sans_cle_jev_les_resultats_reviennent_non_qualifies(calls):
@@ -951,4 +954,17 @@ def test_show_unqualified_rend_les_ecartes_avec_leurs_reponses(calls):
     assert out["found"] is False
     assert [p["full_name"] for p in out["unqualified"]] == ["Ann Boss", "Bob Dev"]
     assert out["unqualified"][0]["qualification"]["answers"]["fit"]["noul"] == 0.2
-    assert "hint" not in out["qualification"]
+    assert out["unqualified"][0]["location"] == "Lyon"     # the full record
+
+
+def test_un_ecarte_retrouve_par_le_fournisseur_suivant_n_est_pas_rejuge(calls):
+    _gens(calls)
+    calls["answers"]["linkedin_aiark_search"] = IssueCible(ok=True, result={"content": [
+        {"profile": {"full_name": "Bob Dev", "title": "Developer"},
+         "link": {"linkedin": "https://fr.linkedin.com/in/bob-dev/"}}]})
+    calls["answers"]["jev_items"] = _verdicts(0.2, 0.1)
+    out = _run("waterfall_people", company_name="Acme", domain="acme.com",
+               providers=["google", "aiark"], qualify=_FIT, qualify_min=0.7)
+    assert _made(calls).count("jev_items") == 1
+    assert out["found"] is False and out["qualification"]["not_qualified"] == 2
+    assert out["attempts"][1]["status"] == "unqualified"

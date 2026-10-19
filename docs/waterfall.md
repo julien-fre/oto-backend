@@ -260,8 +260,16 @@ de révélation ou d'enrichissement que pour ceux qui passent.
   un téléphone ni une URL de profil. Figé par un test.
 - Ça n'échoue jamais la recherche : pas de clé Jev (clé partagée du tenant ou de la
   plateforme), refus ou moins de 5 s restantes → résultats non qualifiés, et pourquoi.
-- Ne compte pas dans `max_paid_steps`. Une étape dont personne ne passe ne relance PAS la
-  cascade (la qualification est une passe finale, pas un critère de trouvaille).
+- Ne compte pas dans `max_paid_steps`.
+- Gens avec `qualify_min` (décision du 19/10) : qualifiés étape par étape ; un fournisseur
+  dont personne ne passe ne clôt pas la cascade, le suivant est essayé. Un écarté retrouvé
+  plus loin n'est pas rejugé. Les écartés reviennent TOUJOURS, en compact (`unqualified` :
+  nom, titre, URL, réponses) — vérifier la rubrique ne repaie jamais une cascade ;
+  `show_unqualified=true` rend les fiches entières. Limite connue : quand la société n'a
+  simplement personne qui convienne, les fournisseurs suivants retrouvent les mêmes gens
+  et sont payés pour rien — `max_paid_steps` est le frein.
+- Une société ou une personne est jugée une fois, à la fin (`passed`) : le fournisseur
+  suivant ne trouverait que la même.
 
 ## Ajouter une étape
 
