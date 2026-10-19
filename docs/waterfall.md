@@ -53,7 +53,7 @@ l'org) → clé de Tulina la moins chère → la plus chère → les asynchrones
 facturées même quand elles finissent `pending`). On ne demande jamais à une étape plus
 d'unités facturées qu'elle n'en garde (AI Ark : `size` = la limite ; TheirStack : une
 société ; une recherche AI Ark par domaine : une), et le plan sert les PLAFONDS
-(`max_units`, `max_usd` d'une exécution Apify, `per_item`) pour qu'un écran ne montre jamais
+(`max_units`, `per_item`) et le coût typique d'une exécution Apify (`typical_usd`) pour qu'un écran ne montre jamais
 un prix unitaire là où l'étape peut en facturer plusieurs.
 
 ## D'où vient l'ordre
@@ -214,8 +214,10 @@ Ce que les vraies réponses ont appris, et qui est désormais figé par des test
 (`test_reel_*`, réponses anonymisées) :
 
 - ⚠️ **Apify refuse une exécution dont le plafond est sous 0,50 \$**
-  (`max-total-charge-usd-below-minimum`) : les plafonds sont ce minimum, et un écran
-  montre le coût TYPIQUE (`typical_usd`), jamais le plafond comme prix.
+  (`max-total-charge-usd-below-minimum`). Décision (19/10) : **aucun plafond de coût par
+  défaut** — une exécution est bornée par sa TAILLE (pages, résultats, profils = la
+  `limit` de l'appel) et son DÉLAI (`timeout_secs`, côté Apify), bornes figées par les
+  tests ; un écran montre le coût TYPIQUE (`typical_usd`).
 - AI Ark écrit le statut d'un email en capitales (`VALID`).
 - Apollo trouve des personnes sans email (`email_status: unavailable`) — facturées quand
   même — et rend leur URL LinkedIn encodée en pourcents : la personne rendue garde l'URL

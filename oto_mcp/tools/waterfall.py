@@ -1119,17 +1119,17 @@ def _cognism_company(res, inputs):
     return None
 
 
-# The LinkedIn company page — two Apify actors, each one bounded run (`timeout_secs`
-# on Apify's side, a cost ceiling): learned on a real list (a trade-show exhibitor
-# list, 2026-10), where they recovered the pages the data vendors did not have.
+# The LinkedIn company page — two Apify actors, learned on a real list (a trade-show
+# exhibitor list, 2026-10), where they recovered the pages the data vendors did not have.
+#
+# NO cost ceiling (`max_total_charge_usd`) by default — Julien's decision, 19/10/2026: what
+# bounds a run is its SIZE (pages crawled, results, profiles = the call's `limit`) and its
+# TIME (`timeout_secs`, on Apify's side), pinned by `tests/test_waterfall.py`. (Apify
+# refuses a ceiling under $0.50 anyway — measured — so a ceiling here would be a backstop
+# far above the cost, not a bound.) What a run TYPICALLY costs is what a screen shows
+# (`typical_usd`): a site scrape ~$0.006 (52 sites for ~$0.30 on a real list), a page's
+# employees ~$0.003-0.008 a profile.
 _APIFY_TIMEOUT_S = 25
-#: ⚠️ Apify REFUSES a run whose cost ceiling is under $0.50 (`max-total-charge-usd-below-
-#: minimum`, measured on a live run 2026-10-19): the ceiling is that minimum, not the
-#: expected cost. What a run TYPICALLY costs is what a screen shows (`typical_usd`): a
-#: site scrape ~$0.006 (52 sites for ~$0.30 on a real list), a page's employees
-#: ~$0.003-0.008 a profile.
-_APIFY_MAX_USD = 0.50
-_APIFY_EMPLOYEES_MAX_USD = 0.50
 _APIFY_SITE_TYPICAL_USD = 0.006
 _APIFY_SEARCH_TYPICAL_USD = 0.01
 _APIFY_EMPLOYEES_TYPICAL_USD_PER_PROFILE = 0.005
@@ -1237,14 +1237,12 @@ COMPANY_STEPS: tuple[Step, ...] = (
                         "run_input": {"startUrls": [{"url": f"https://www.{i['domain']}"}],
                                       "maxDepth": 1, "maxRequestsPerStartUrl": 4,
                                       "sameDomain": True},
-                        "timeout_secs": _APIFY_TIMEOUT_S,
-                        "max_total_charge_usd": _APIFY_MAX_USD},
+                        "max_items": 4, "timeout_secs": _APIFY_TIMEOUT_S},
              _site_linkedin, "a few cents of Apify per site"),
         Step("linkedin_search", "apify_run_sync", (("company_name",),),
              lambda i: {"actor_id": "harvestapi/linkedin-company",
                         "run_input": {"searches": [i["company_name"]]},
-                        "max_items": 3, "timeout_secs": _APIFY_TIMEOUT_S,
-                        "max_total_charge_usd": _APIFY_MAX_USD},
+                        "max_items": 3, "timeout_secs": _APIFY_TIMEOUT_S},
              _search_linkedin, "a few cents of Apify per search"),
         fills="linkedin_url",
     ),
@@ -1550,8 +1548,7 @@ PEOPLE_STEPS: tuple[Step, ...] = (
                     "run_input": {"companies": [i["company_linkedin_url"]],
                                   "maxItems": i["limit"]},
                     "max_items": i["limit"],
-                    "timeout_secs": _APIFY_TIMEOUT_S,
-                    "max_total_charge_usd": _APIFY_EMPLOYEES_MAX_USD},
+                    "timeout_secs": _APIFY_TIMEOUT_S},
          _employees, "Apify, ~$0.003-0.008 per profile",
          label="LinkedIn employees"),
 
@@ -1565,9 +1562,8 @@ PEOPLE_STEPS: tuple[Step, ...] = (
 #: when that tool has several prices, which row of the published credit grid applies
 #: (`pick`: the row's `kind` or short name); `reveal`: the tool that turns what a FREE
 #: step found into something usable, billed per person; `max_units`: the most units one
-#: call can bill (a company search by name returns up to 3 profiles); `max_usd`: the cost
-#: ceiling of an Apify run (its grid rate is per $0.01 of run cost) and `typical_usd` what
-#: one usually costs — Apify's own minimum ceiling ($0.50) is far above it; `per_item`: billed per
+#: call can bill (a company search by name returns up to 3 profiles); `typical_usd`: what
+#: an Apify run usually costs (its grid rate is per $0.01 of run cost); `per_item`: billed per
 #: result returned, up to the call's own `limit`. The figure lives in the grid, never
 #: here. A step absent from this table is billed on its own tool, if at all; on the
 #: caller's OWN key, Tulina bills nothing — what the provider takes is not shown.
@@ -1582,7 +1578,7 @@ PRICES: dict[tuple[str, str], dict] = {
     ("waterfall_company", "aiark"): {"tool": "linkedin_aiark_search", "max_units": 3},
     ("waterfall_company", "apollo"): {"tool": "apollo_enrich_organization"},
     ("waterfall_company", "theirstack"): {"tool": "theirstack_companies_search"},
-    ("waterfall_company", "linkedin"): {"tool": "apify_run_sync", "max_usd": _APIFY_MAX_USD * 2,
+    ("waterfall_company", "linkedin"): {"tool": "apify_run_sync",
                                         "typical_usd": _APIFY_SITE_TYPICAL_USD
                                         + _APIFY_SEARCH_TYPICAL_USD},
     ("waterfall_person", "aiark"): {"tool": "linkedin_aiark_person"},
@@ -1595,7 +1591,7 @@ PRICES: dict[tuple[str, str], dict] = {
                                      "reveal": "apollo_match_person"},
     ("waterfall_people", "aiark"): {"tool": "linkedin_aiark_search", "per_item": True},
     ("waterfall_people", "linkedin_employees"): {
-        "tool": "apify_run_sync", "max_usd": _APIFY_EMPLOYEES_MAX_USD,
+        "tool": "apify_run_sync",
         # ~10 profiles (the default limit) at ~$0.005.
         "typical_usd": _APIFY_EMPLOYEES_TYPICAL_USD_PER_PROFILE * 10},
     ("waterfall_people", "google"): {"tool": "serper_search"},

@@ -705,8 +705,8 @@ def test_on_ne_demande_pas_plus_que_ce_que_l_etape_garde(calls):
 def test_les_plafonds_de_prix_sont_servis():
     row = lambda ns, key: waterfall._step_row(
         next(s for s in waterfall.STEPS_BY_NAMESPACE[ns] if s.key == key), ns=ns)["price"]["rate"]
-    assert row("waterfall_people", "linkedin_employees")["max_usd"] == waterfall._APIFY_EMPLOYEES_MAX_USD
-    assert row("waterfall_company", "linkedin")["max_usd"] == waterfall._APIFY_MAX_USD * 2
+    assert row("waterfall_people", "linkedin_employees")["typical_usd"] > 0
+    assert row("waterfall_company", "linkedin")["typical_usd"] > 0
     assert row("waterfall_company", "aiark")["max_units"] == 3
     assert row("waterfall_people", "aiark")["per_item"] is True
 
@@ -801,12 +801,18 @@ def test_reel_linkedin_non_connecte_est_saute(calls):
     assert out["attempts"][0]["status"] == "skipped" and out["attempts"][0]["code"] == "not_connected"
 
 
-def test_reel_apify_exige_un_plafond_d_au_moins_50_centimes():
+def test_une_execution_apify_est_bornee_par_sa_taille_et_son_delai_sans_plafond_de_cout():
+    """Pas de plafond de coût par défaut (décision du 19/10/2026) : ce qui borne une
+    exécution, c'est son NOMBRE d'éléments et son DÉLAI — figés ici, sans quoi un appel
+    pourrait faire tourner un acteur sans limite."""
     for steps in waterfall.STEPS_BY_NAMESPACE.values():
         for s in steps:
             for v in s.variants or (s,):
-                if v.tool == "apify_run_sync":
-                    args = v.build({"domain": "acme.com", "company_name": "Acme",
-                                    "company_linkedin_url": "https://www.linkedin.com/company/acme/",
-                                    "limit": 10})
-                    assert args["max_total_charge_usd"] >= 0.50, v.key
+                if v.tool != "apify_run_sync":
+                    continue
+                args = v.build({"domain": "acme.com", "company_name": "Acme",
+                                "company_linkedin_url": "https://www.linkedin.com/company/acme/",
+                                "limit": 10})
+                assert "max_total_charge_usd" not in args, v.key
+                assert args["timeout_secs"] == waterfall._APIFY_TIMEOUT_S, v.key
+                assert 1 <= args["max_items"] <= waterfall.PEOPLE_MAX, v.key
