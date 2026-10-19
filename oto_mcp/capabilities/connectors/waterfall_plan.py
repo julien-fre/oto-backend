@@ -63,6 +63,10 @@ class WaterfallPlan(BaseModel):
     steps: list[WaterfallStep] = Field(description="What a call would try, in order.")
     available: list[WaterfallStep] = Field(description=(
         "Every step the waterfall offers, in its default order."))
+    qualification: Optional[dict] = Field(default=None, description=(
+        "The optional Jev pass (`qualify=` on a call) — NOT a step: it judges what the "
+        "steps found. `key_mode`, `usable` (a shared tenant/platform key), `shadowed` (a "
+        "closer key that Jev refuses), `price.rate`. On company, person and people only."))
 
 
 async def _plan(ctx: ResolvedCtx, inp: WaterfallPlanInput) -> dict:

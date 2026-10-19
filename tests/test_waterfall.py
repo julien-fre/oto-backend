@@ -978,3 +978,15 @@ def test_moins_de_qualifies_que_demande_s_arrete_et_propose_la_suite(calls):
     assert out["provider"] == "google" and "linkedin_aiark_search" not in _made(calls)
     assert out["continue_with"]["providers"] == ["aiark"]
     assert out["continue_with"]["short_of_limit"] == 4
+
+
+def test_le_plan_montre_la_qualification_jev_hors_des_etapes(calls):
+    calls["modes"] = {"jev_items": "platform"}
+    out = waterfall.plan("waterfall_people", "sub-test")
+    q = out["qualification"]
+    assert q["usable"] is True and q["connector"] == "jev"
+    assert all(s["tool"] != "jev_items" for s in out["steps"])
+    calls["modes"] = {"jev_items": "org"}
+    q = waterfall.plan("waterfall_company", "sub-test")["qualification"]
+    assert q["usable"] is False and q["shadowed"] is True
+    assert "qualification" not in waterfall.plan("waterfall_email", "sub-test")

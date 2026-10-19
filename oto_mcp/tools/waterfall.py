@@ -1863,9 +1863,30 @@ def plan(ns: str, sub: Optional[str]) -> dict:
     reads the vault and the cascade): off the loop."""
     steps = STEPS_BY_NAMESPACE[ns]
     order, ignored, source, modes = _plan(ns, steps, None, sub)
-    return {"connector": ns, "order_from": source, "ignored_steps": ignored,
-            "steps": [_step_row(s, modes.get(s.tool, "unknown"), ns) for s in order],
-            "available": [_step_row(s, ns=ns) for s in steps]}
+    out = {"connector": ns, "order_from": source, "ignored_steps": ignored,
+           "steps": [_step_row(s, modes.get(s.tool, "unknown"), ns) for s in order],
+           "available": [_step_row(s, ns=ns) for s in steps]}
+    if ns in _QUALIFIABLE:
+        out["qualification"] = _qualification_row(sub)
+    return out
+
+
+#: The waterfalls whose finds a caller can have Jev qualify (`qualify=`).
+_QUALIFIABLE = {"waterfall_company": "company", "waterfall_person": "person",
+                "waterfall_people": "people"}
+
+
+def _qualification_row(sub: Optional[str]) -> dict:
+    """The optional Jev pass, for a screen: not a step (it finds nothing, it judges), so
+    never in the order — whether it can run for `sub`, and what it costs. Jev runs on a
+    SHARED key only (the tenant's, or the platform's): a closer one is refused."""
+    mode = _key_modes(sub, ["jev_items"]).get("jev_items", "unknown")
+    return {"tool": "jev_items", "connector": "jev", "label": "Jev",
+            "key_mode": mode,
+            "usable": mode in ("tenant", "platform") or mode == "unknown",
+            "shadowed": mode in ("org", "group", "user"),
+            "fields": list(_QUALIFY_FIELDS["people"]),
+            "price": {"rate": {"tool": "jev_items"}}}
 
 
 # --- the tools -----------------------------------------------------------------------
