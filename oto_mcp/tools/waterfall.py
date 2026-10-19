@@ -1463,7 +1463,10 @@ COMPANY_STEPS: tuple[Step, ...] = (
                         "run_input": {"startUrls": [{"url": f"https://www.{i['domain']}"}],
                                       "maxDepth": 1, "maxRequestsPerStartUrl": 4,
                                       "sameDomain": True},
-                        "max_items": 4, "timeout_secs": _APIFY_TIMEOUT_S},
+                        # ⚠️ No `max_items`: on this pay-per-event actor Apify derives
+                        # a charge ceiling from it, under its $0.50 minimum — refused
+                        # (measured 19/10/2026). Bounded by its 4 pages, depth 1, and time.
+                        "timeout_secs": _APIFY_TIMEOUT_S},
              _site_linkedin, "a few cents of Apify per site"),
         Step("linkedin_search", "apify_run_sync", (("company_name",),),
              lambda i: {"actor_id": "harvestapi/linkedin-company",

@@ -819,7 +819,14 @@ def test_une_execution_apify_est_bornee_par_sa_taille_et_son_delai_sans_plafond_
                                 "limit": 10})
                 assert "max_total_charge_usd" not in args, v.key
                 assert args["timeout_secs"] == waterfall._APIFY_TIMEOUT_S, v.key
-                assert 1 <= args["max_items"] <= waterfall.PEOPLE_MAX, v.key
+                if v.key == "linkedin_site":
+                    # Sans `max_items` (Apify en tirerait un plafond refusé) : borné par
+                    # ses pages et sa profondeur.
+                    assert "max_items" not in args, v.key
+                    ri = args["run_input"]
+                    assert ri["maxRequestsPerStartUrl"] <= 4 and ri["maxDepth"] <= 1
+                else:
+                    assert 1 <= args["max_items"] <= waterfall.PEOPLE_MAX, v.key
 
 
 # --- limites fixées par l'appelant (aucune par défaut, décision du 19/10/2026) ------------
