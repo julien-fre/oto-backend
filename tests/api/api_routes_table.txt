@@ -789,6 +789,8 @@ POST /api/datastores/{datastore}/rows/update_where -> _handler
 OPTIONS /api/datastores/{datastore}/rows/update_where -> options_handler
 GET,HEAD /api/datastores/{datastore}/rows/{row_id}/history -> _handler
 OPTIONS /api/datastores/{datastore}/rows/{row_id}/history -> options_handler
+GET,HEAD /api/me/waterfalls/{name}/plan -> _handler
+OPTIONS /api/me/waterfalls/{name}/plan -> options_handler
 POST /api/me/automations/fire -> _handler
 OPTIONS /api/me/automations/fire -> options_handler
 POST /api/me/runs/thread -> _handler

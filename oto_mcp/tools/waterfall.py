@@ -243,6 +243,9 @@ class Step:
     collect: Optional[Collect] = None
     # Costs the caller nothing (open data, their own session): ranks with their own keys.
     free: bool = False
+    # What a screen calls the step, when the connector's own label would not tell two
+    # steps apart (the French registry by SIREN, and by name).
+    label: str = ""
 
 
 def _payload(issue):
@@ -888,11 +891,12 @@ def _cognism_company(res, inputs):
 COMPANY_STEPS: tuple[Step, ...] = (
     Step("fr_get", "fr_get", (("siren",),),
          lambda i: {"siren": i["siren"]}, _fr_get_company, "free (French open data)",
-         free=True),
+         free=True, label="French registry — by SIREN"),
     Step("fr_search", "fr_search", (("company_name", "fr"),),
          lambda i: {"query": i["company_name"], "per_page": 5},
          _fr_search_company, "free (French open data)",
-         needs="company_name, and a French company (country omitted or FR)", free=True),
+         needs="company_name, and a French company (country omitted or FR)", free=True,
+         label="French registry — by name"),
     Step("aiark", "linkedin_aiark_search", (("domain",), ("company_name",)),
          _aiark_company_args, _aiark_company, "AI Ark credits per company returned"),
     Step("apollo", "apollo_enrich_organization", (("domain",),),
@@ -977,7 +981,7 @@ PERSON_STEPS: tuple[Step, ...] = (
     Step("linkedin", "linkedin_unipile_profile", (("linkedin_url",),),
          lambda i: {"op": "person", "identifier": _slug(i["linkedin_url"])},
          _generic_person, "free — your connected LinkedIn account (rate-limited)",
-         free=True),
+         free=True, label="Your LinkedIn"),
     Step("aiark", "linkedin_aiark_person", (("linkedin_url",),),
          lambda i: {"op": "export", "url": i["linkedin_url"]},
          _aiark_person, "AI Ark export credits"),
@@ -1000,6 +1004,49 @@ PERSON_STEPS: tuple[Step, ...] = (
          _lemlist_person, "lemlist credits (own key only; asynchronous)",
          collect=_LEMLIST_COLLECT),
 )
+
+
+# --- the plan, for a screen ----------------------------------------------------------
+
+#: Each waterfall connector's step table — what the plan below and the tools read.
+STEPS_BY_NAMESPACE: dict[str, tuple[Step, ...]] = {
+    "waterfall_email": EMAIL_STEPS, "waterfall_phone": PHONE_STEPS,
+    "waterfall_company": COMPANY_STEPS, "waterfall_person": PERSON_STEPS,
+}
+
+
+def _step_row(step: Step, mode: Optional[str] = None) -> dict:
+    from .. import providers
+    from ..tool_visibility import namespace_of
+    con = providers.connector_for_namespace(namespace_of(step.tool))
+    row = {"key": step.key, "tool": step.tool,
+           # The CONNECTOR the step goes through — what a screen shows (its logo, its
+           # card), not the vault carrier (`fr_get` → `sirene`, aiark → `aiark`).
+           "connector": con.name if con is not None else None,
+           "label": step.label or (con.label if con is not None else step.key),
+           "needs": _missing(step),
+           # The same thing, as data: alternative groups of input keys (`fr` = a French
+           # company) — what a screen translates, where `needs` is a sentence for agents.
+           "requires": [list(g) for g in step.requires],
+           "cost": step.cost, "free": step.free,
+           "asynchronous": step.collect is not None}
+    if mode is not None:
+        row["key_mode"] = mode
+        row["usable"] = mode not in _NO_KEY
+    return row
+
+
+def plan(ns: str, sub: Optional[str]) -> dict:
+    """The waterfall's order for `sub` — what a call would try, spending nothing: where
+    the order comes from (`setting` / `default`), each step with the key it would use,
+    and every step the waterfall offers (`available`, the table's order), so a screen
+    can show the cascade and let someone remove, reorder or add back a step. SYNC (it
+    reads the vault and the cascade): off the loop."""
+    steps = STEPS_BY_NAMESPACE[ns]
+    order, ignored, source, modes = _plan(ns, steps, None, sub)
+    return {"connector": ns, "order_from": source, "ignored_steps": ignored,
+            "steps": [_step_row(s, modes.get(s.tool, "unknown")) for s in order],
+            "available": [_step_row(s) for s in steps]}
 
 
 # --- the tools -----------------------------------------------------------------------

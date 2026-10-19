@@ -430,3 +430,36 @@ def test_une_carte_de_reglages_se_pose_et_se_relit_par_le_coffre(ns):
     stored = credentials_store.pack_secret(ns, kept)
     assert credentials_store.unpack_secret(ns, stored) == {"steps": "lemlist,hunter,apollo"}
     assert waterfall._parse_steps("lemlist,hunter,apollo") == ["lemlist", "hunter", "apollo"]
+
+
+# --- le plan, pour un écran (`me.waterfall_plan`) ---------------------------------
+
+def test_le_plan_dit_l_ordre_les_cles_et_tout_ce_qui_est_offert(monkeypatch):
+    monkeypatch.setattr(waterfall, "_configured_steps", lambda ns: ["lusha", "nope", "hunter"])
+    monkeypatch.setattr(waterfall, "_key_modes", lambda sub, tools: {
+        "lusha_search_and_enrich": "org", "hunter_email_finder": "forbidden"})
+    out = waterfall.plan("waterfall_email", "sub-test")
+    assert out["order_from"] == "setting" and out["ignored_steps"] == ["nope"]
+    assert [(s["key"], s["key_mode"], s["usable"]) for s in out["steps"]] == [
+        ("lusha", "org", True), ("hunter", "forbidden", False)]
+    assert [s["key"] for s in out["available"]] == [s.key for s in waterfall.EMAIL_STEPS]
+    first = out["available"][0]
+    assert first["connector"] == "hunter" and first["needs"] == "first_name+last_name+domain"
+    assert first["requires"] == [["first_name", "last_name", "domain"]]
+    labels = [s["label"] for s in waterfall.plan("waterfall_company", "sub-test")["available"]]
+    assert len(labels) == len(set(labels)), labels
+    assert "key_mode" not in first
+    aiark = next(s for s in out["available"] if s["key"] == "aiark")
+    assert aiark["connector"] == "aiark"
+
+
+def test_le_plan_est_servi_par_une_capacite_rest_qui_refuse_un_autre_connecteur():
+    import oto_mcp.capabilities  # noqa: F401 — les déclarations
+    from oto_mcp.capabilities.connectors import waterfall_plan as cap
+    from oto_mcp.capabilities._types import AuthzDenied
+    from oto_mcp.capabilities.registry import CAPABILITIES
+    decl = next(c for c in CAPABILITIES if c.key == "me.waterfall_plan")
+    assert decl.rest.path == "/api/me/waterfalls/{name}/plan" and decl.mcp is None
+    ctx = type("Ctx", (), {"sub": "sub-test"})()
+    with pytest.raises(AuthzDenied):
+        asyncio.run(cap._plan(ctx, cap.WaterfallPlanInput(name="hunter")))
