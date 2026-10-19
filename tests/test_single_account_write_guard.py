@@ -146,10 +146,17 @@ def test_seuls_les_depots_de_cle_se_declarent_MONO_et_on_sait_pourquoi():
     `pennylane_firm` (08/10/2026) est mono parce qu'un jeton de cabinet atteint déjà
     tout le portefeuille, et que le relais d'upload rejoue l'org scellée sans aucun axe
     `_account` (l'URL est appelée par un `curl` anonyme). Deux jetons dans une org
-    seraient deux cabinets que rien ne départagerait."""
+    seraient deux cabinets que rien ne départagerait.
+
+    Les quatre `waterfall_*` (19/10/2026) sont mono parce que leur carte ne porte AUCUNE
+    clé, seulement un RÉGLAGE (`steps`, l'ordre des fournisseurs), lu par la cascade
+    sans `_account` : deux « comptes » seraient deux ordres concurrents sur le même
+    palier, que rien ne départagerait au moment de lancer la cascade."""
     assert sorted(c.name for c in providers._REGISTRY_LIST
                   if c.cardinality == "mono") == ["anthropic", "jev", "mistral",
-                                                  "pennylane_firm", "transcription"]
+                                                  "pennylane_firm", "transcription",
+                                                  "waterfall_company", "waterfall_email",
+                                                  "waterfall_person", "waterfall_phone"]
 
 
 def test_un_compte_nomme_sur_un_depot_de_cle_est_refuse(monkeypatch):
