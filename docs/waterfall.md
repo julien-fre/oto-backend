@@ -100,10 +100,12 @@ TheirStack, Cognism ne comptent que si le domaine correspond ou si le nom demand
 contenu dans celui du résultat — un homonyme arrêtant la cascade cacherait la bonne
 réponse plus bas.
 
-## L'étape asynchrone : lemlist
+## Les étapes asynchrones : lemlist, Dropcontact, FullEnrich, la révélation Apollo
 
-`lemlist_enrich` soumet et rend un `enrichment_id` ; `lemlist_enrich_result` relève
-(gratuit). L'étape soumet, attend ~8 s, relève toutes les ~6 s pendant au plus 25 s
+`lemlist_enrich` / `dropcontact_enrich` / `fullenrich_enrich_linkedin` /
+`apollo_reveal_phone` soumettent et rendent un identifiant ; leur outil de relève
+(gratuit) lit le résultat. ⚠️ FullEnrich met d'ordinaire 30 s à 4 min : dans un appel,
+il finit le plus souvent `pending`. L'étape soumet, attend ~8 s, relève toutes les ~6 s pendant au plus 25 s
 (`POLL_*`). Fini à temps → lu comme une étape ordinaire ; un `done` à digest vide qui
 porte un `warning` n'est pas final (lemlist demande une relève de plus). Pas fini → l'étape
 est `pending`, la réponse donne l'appel exact à faire plus tard (`pending[]`), et la
@@ -127,8 +129,10 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
 
 ## Les étapes
 
-- **Email** : hunter → apollo → aiark → kaspr → forager → lusha → lemlist.
-- **Téléphone** : kaspr → forager → lusha → lemlist (pas d'AI Ark).
+- **Email** : hunter → apollo → aiark → kaspr → forager → lusha → dropcontact → lemlist →
+  fullenrich (les asynchrones en dernier).
+- **Téléphone** : kaspr → forager → lusha → apollo (`apollo_reveal_phone`, clé propre) →
+  lemlist → dropcontact → fullenrich (pas d'AI Ark ; les asynchrones en dernier).
 - **Société** : `fr_get` (SIREN) → `fr_search` (nom, France, gratuit) → aiark
   (`linkedin_aiark_search op=companies`, domaine ou nom) → apollo (domaine) → theirstack
   (domaine) → cognism (domaine ou nom).
@@ -142,8 +146,7 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
   alors par un test de son extraction.
 - **Absents, et pourquoi** : HitHorizons (deux appels par société, aucune forme connue),
   Topograph et Crunchbase (un « introuvable » ne s'y distingue pas d'une panne :
-  `internal`), Dropcontact et FullEnrich (asynchrones par lot, minutes de latence), la
-  révélation de téléphone d'Apollo (asynchrone par webhook).
+  `internal`).
 
 ## Ajouter une étape
 

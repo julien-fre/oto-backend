@@ -144,7 +144,8 @@ def test_les_cles_de_l_appelant_passent_devant(calls):
     order = [a["provider"] for a in out["attempts"]]
     # Propres clés d'abord, dans l'ordre du défaut (kaspr avant lusha), puis le reste.
     assert order[:2] == ["kaspr", "lusha"]
-    assert order[2:] == ["hunter", "apollo", "aiark", "forager", "lemlist"]
+    assert order[2:] == ["hunter", "apollo", "aiark", "forager", "dropcontact", "lemlist",
+                         "fullenrich"]
     assert out["attempts"][0]["key"] == "user"
 
 
@@ -463,3 +464,67 @@ def test_le_plan_est_servi_par_une_capacite_rest_qui_refuse_un_autre_connecteur(
     ctx = type("Ctx", (), {"sub": "sub-test"})()
     with pytest.raises(AuthzDenied):
         asyncio.run(cap._plan(ctx, cap.WaterfallPlanInput(name="hunter")))
+
+
+
+def test_rien_trouve_rend_un_recu_complet(calls):
+    out = _run("waterfall_phone", linkedin_url="https://linkedin.com/in/jane")
+    assert out["found"] is False and out["phone"] is None
+    assert [a["status"] for a in out["attempts"]] == ["no_match"] * len(waterfall.PHONE_STEPS)
+
+
+# --- les asynchrones ajoutés : FullEnrich, Dropcontact, révélation Apollo ----------
+
+def test_fullenrich_telephone_soumet_un_slug_puis_releve(calls):
+    calls["answers"]["fullenrich_enrich_linkedin"] = IssueCible(ok=True, result={
+        "enrichment_id": "fe_1", "submitted_at": "2026-10-19T10:00:00Z"})
+    calls["answers"]["fullenrich_result"] = [
+        IssueCible(ok=True, result={"done": False, "retry_after_s": 20}),
+        IssueCible(ok=True, result={"done": True, "profiles": [
+            {"found": True, "phones": ["+33 6 11 22 33 44"], "work_emails": []}]}),
+    ]
+    out = _run("waterfall_phone", linkedin_url="https://www.linkedin.com/in/Jane-Doe/",
+               full_name="Jane Doe", providers=["fullenrich"])
+    assert out["provider"] == "fullenrich" and out["phone"]["phone"] == "+33 6 11 22 33 44"
+    assert calls["made"][0] == ("fullenrich_enrich_linkedin", {
+        "contacts": [{"first_name": "Jane", "last_name": "Doe", "linkedin_slug": "jane-doe"}],
+        "enrich_fields": ["contact.phones"]})
+    assert calls["made"][1][1] == {"enrichment_id": "fe_1", "submitted_at": "2026-10-19T10:00:00Z"}
+
+
+def test_dropcontact_email_ecarte_une_adresse_qu_il_dit_invalide(calls):
+    calls["answers"]["dropcontact_enrich"] = IssueCible(ok=True, result={"request_id": "dc_1"})
+    calls["answers"]["dropcontact_result"] = IssueCible(ok=True, result={"done": True, "profiles": [
+        {"email": [{"email": "old@acme.com", "qualification": "invalid@invalid"},
+                   {"email": "jane@acme.com", "qualification": "nominative@pro"}]}]})
+    out = _run("waterfall_email", full_name="Jane Doe", domain="acme.com",
+               providers=["dropcontact"])
+    assert out["email"] == {"email": "jane@acme.com", "all": ["jane@acme.com"],
+                            "status": "nominative@pro"}
+    assert calls["made"][0][1] == {"contacts": [
+        {"first_name": "Jane", "last_name": "Doe", "full_name": "Jane Doe", "website": "acme.com"}]}
+
+
+def test_revelation_apollo_mobile_d_abord_et_sans_correspondance_rien_n_est_releve(calls):
+    calls["answers"]["apollo_reveal_phone"] = IssueCible(ok=True, result={"request_id": 123})
+    calls["answers"]["apollo_reveal_phone_result"] = IssueCible(ok=True, result={
+        "done": True, "result": {"webhook_result": {"people": [{"phone_numbers": [
+            {"sanitized_number": "+14155550100", "type_cd": "work_direct"},
+            {"sanitized_number": "+14155550199", "type_cd": "mobile"}]}]}}})
+    out = _run("waterfall_phone", linkedin_url="https://linkedin.com/in/jane", providers=["apollo"])
+    assert out["phone"]["phone"] == "+14155550199"
+    assert calls["made"][1] == ("apollo_reveal_phone_result", {"request_id": "123"})
+
+    calls["made"].clear()
+    calls["answers"]["apollo_reveal_phone"] = IssueCible(ok=True, result={"matched": False})
+    out = _run("waterfall_phone", linkedin_url="https://linkedin.com/in/jane", providers=["apollo"])
+    assert out["attempts"][0]["status"] == "no_match"
+    assert [n for n, _ in calls["made"]] == ["apollo_reveal_phone"]
+
+
+def test_revelation_apollo_non_livree_n_est_pas_un_trouve(calls):
+    calls["answers"]["apollo_reveal_phone"] = IssueCible(ok=True, result={"request_id": "9"})
+    calls["answers"]["apollo_reveal_phone_result"] = IssueCible(ok=True, result={
+        "done": True, "delivered": False, "reason": "out_of_credits"})
+    out = _run("waterfall_phone", linkedin_url="https://linkedin.com/in/jane", providers=["apollo"])
+    assert out["found"] is False

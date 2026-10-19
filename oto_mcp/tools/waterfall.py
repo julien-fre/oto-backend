@@ -631,6 +631,66 @@ _LEMLIST_COLLECT = Collect(
 )
 
 
+def _fullenrich_args(inputs: dict, field: str) -> dict:
+    """FullEnrich takes a LinkedIn SLUG (not a URL) and/or the domain; one contact."""
+    c = {"first_name": inputs.get("first_name"), "last_name": inputs.get("last_name"),
+         "domain": inputs.get("domain"), "company_name": inputs.get("company_name")}
+    if inputs.get("linkedin_url"):
+        c["linkedin_slug"] = _slug(inputs["linkedin_url"])
+    return {"contacts": [{k: v for k, v in c.items() if v}], "enrich_fields": [field]}
+
+
+def _fullenrich_profile(res) -> dict:
+    p = _get(res, "profiles[0]")
+    return p if isinstance(p, dict) else {}
+
+
+_FULLENRICH_COLLECT = Collect(
+    "fullenrich_result",
+    lambda submitted: ({k: submitted[k] for k in ("enrichment_id", "submitted_at")
+                        if submitted.get(k)}
+                       if isinstance(submitted, dict) and submitted.get("enrichment_id")
+                       else None),
+    lambda res: isinstance(res, dict) and bool(res.get("done")),
+)
+
+
+def _dropcontact_args(inputs: dict) -> dict:
+    c = {"first_name": inputs.get("first_name"), "last_name": inputs.get("last_name"),
+         "full_name": inputs.get("full_name"), "company": inputs.get("company_name"),
+         "website": inputs.get("domain"), "linkedin": inputs.get("linkedin_url"),
+         "email": inputs.get("email")}
+    return {"contacts": [{k: v for k, v in c.items() if v}]}
+
+
+def _dropcontact_profile(res) -> dict:
+    p = _get(res, "profiles[0]")
+    return p if isinstance(p, dict) else {}
+
+
+_DROPCONTACT_COLLECT = Collect(
+    "dropcontact_result",
+    lambda submitted: ({"request_id": submitted["request_id"]}
+                       if isinstance(submitted, dict) and submitted.get("request_id")
+                       else None),
+    lambda res: isinstance(res, dict) and bool(res.get("done")),
+)
+
+_APOLLO_REVEAL_COLLECT = Collect(
+    "apollo_reveal_phone_result",
+    # `{"matched": false}` at submission: no handle, nothing ordered — a miss.
+    lambda submitted: ({"request_id": str(submitted["request_id"])}
+                       if isinstance(submitted, dict) and submitted.get("request_id")
+                       else None),
+    lambda res: isinstance(res, dict) and bool(res.get("done")),
+)
+
+# Dropcontact identifies a person by LinkedIn URL, email, or name + company/website.
+_DROPCONTACT_IDS = (("linkedin_url",), ("email",), _NAMES_AND_COMPANY, _NAMES_AND_DOMAIN)
+# FullEnrich needs a LinkedIn slug OR a domain, with the name.
+_FULLENRICH_IDS = (("linkedin_url",), _NAMES_AND_DOMAIN)
+
+
 # Email ------------------------------------------------------------------------------
 
 def _hunter_email(res, inputs):
@@ -674,6 +734,22 @@ def _lusha_email(res, inputs):
                                             inputs, "email"))
 
 
+def _fullenrich_email(res, inputs):
+    return _email_find(_not_input(_emails_in(_fullenrich_profile(res).get("work_emails")),
+                                  inputs, "email"))
+
+
+def _dropcontact_email(res, inputs):
+    """`email[]` items carry a `qualification` (`nominative@pro`, `invalid@invalid`…):
+    an address Dropcontact itself calls invalid is not a find."""
+    items = _dropcontact_profile(res).get("email") or []
+    items = items if isinstance(items, list) else [items]
+    good = [i for i in items
+            if not (isinstance(i, dict) and "invalid" in str(i.get("qualification", "")))]
+    status = next((i.get("qualification") for i in good if isinstance(i, dict)), None)
+    return _email_find(_not_input(_emails_in(good), inputs, "email"), status)
+
+
 def _lemlist_email(res, inputs):
     found = _lemlist_first(res).get("found") or {}
     return isinstance(found, dict) and _email_find(
@@ -702,10 +778,19 @@ EMAIL_STEPS: tuple[Step, ...] = (
     Step("lusha", "lusha_search_and_enrich", _PERSON_IDS,
          lambda i: {"contacts": [_lusha_contact(i)], "reveal": ["emails"]},
          _lusha_email, "Lusha credits per revealed email"),
+    # The asynchronous ones last: each may wait up to `POLL_BUDGET_S` for its answer.
+    Step("dropcontact", "dropcontact_enrich", _DROPCONTACT_IDS,
+         _dropcontact_args, _dropcontact_email,
+         "1 Dropcontact credit per email found (own key only; asynchronous)",
+         collect=_DROPCONTACT_COLLECT),
     Step("lemlist", "lemlist_enrich", (("linkedin_url",), _NAMES_AND_DOMAIN),
          lambda i: _lemlist_args(i, find_email=True),
          _lemlist_email, "lemlist credits per email found (own key only; asynchronous)",
          collect=_LEMLIST_COLLECT),
+    Step("fullenrich", "fullenrich_enrich_linkedin", _FULLENRICH_IDS,
+         lambda i: _fullenrich_args(i, "contact.work_emails"), _fullenrich_email,
+         "1 FullEnrich credit per work email found (asynchronous, ~30 s to 4 min)",
+         collect=_FULLENRICH_COLLECT),
 )
 
 
@@ -722,6 +807,30 @@ def _forager_phone(res, inputs):
 def _lusha_phone(res, inputs):
     first = _lusha_first(res)
     return first and _phone_find(_deep(first, "phone", _phones_in))
+
+
+def _fullenrich_phone(res, inputs):
+    return _phone_find(_phones_in(_fullenrich_profile(res).get("phones")))
+
+
+def _dropcontact_phone(res, inputs):
+    p = _dropcontact_profile(res)
+    return _phone_find(_phones_in([p.get("mobile_phone"), p.get("phone")]))
+
+
+def _apollo_reveal_phone(res, inputs):
+    if not isinstance(res, dict) or res.get("delivered") is False:
+        return None
+    people = _get(res, "result.webhook_result.people") or []
+    numbers = [n for p in people if isinstance(p, dict) for n in (p.get("phone_numbers") or [])]
+    # Mobiles first, then direct dials; a number flagged do-not-call is still returned
+    # (the caller decides), but never ahead of one that is not.
+    def rank(n):
+        if not isinstance(n, dict):
+            return (2, 1)
+        kind = str(n.get("type_cd") or n.get("type") or "")
+        return (0 if "mobile" in kind else 1, 1 if n.get("dnc_status_cd") else 0)
+    return _phone_find(_phones_in(sorted(numbers, key=rank)))
 
 
 def _lemlist_phone(res, inputs):
@@ -742,10 +851,23 @@ PHONE_STEPS: tuple[Step, ...] = (
     Step("lusha", "lusha_search_and_enrich", _PERSON_IDS,
          lambda i: {"contacts": [_lusha_contact(i)], "reveal": ["phones"]},
          _lusha_phone, "Lusha credits per revealed phone"),
+    # The asynchronous ones last: each may wait up to `POLL_BUDGET_S` for its answer.
+    Step("apollo", "apollo_reveal_phone", _PERSON_IDS,
+         _apollo_args, _apollo_reveal_phone,
+         "~9 Apollo credits per reveal (own key only; asynchronous)",
+         collect=_APOLLO_REVEAL_COLLECT),
     Step("lemlist", "lemlist_enrich", (("linkedin_url",), _NAMES_AND_DOMAIN),
          lambda i: _lemlist_args(i, find_phone=True),
          _lemlist_phone, "lemlist credits per phone found (own key only; asynchronous)",
          collect=_LEMLIST_COLLECT),
+    Step("dropcontact", "dropcontact_enrich", _DROPCONTACT_IDS,
+         _dropcontact_args, _dropcontact_phone,
+         "Dropcontact credits (own key only; asynchronous)",
+         collect=_DROPCONTACT_COLLECT),
+    Step("fullenrich", "fullenrich_enrich_linkedin", _FULLENRICH_IDS,
+         lambda i: _fullenrich_args(i, "contact.phones"), _fullenrich_phone,
+         "10 FullEnrich credits per phone found (asynchronous, ~30 s to 4 min)",
+         collect=_FULLENRICH_COLLECT),
 )
 
 
@@ -1081,8 +1203,11 @@ def register(mcp: FastMCP) -> None:
 
         Steps (default order): hunter (name + domain) → apollo (LinkedIn URL, or name +
         domain / company) → aiark (LinkedIn URL) → kaspr (LinkedIn URL) → forager
-        (LinkedIn URL) → lusha (LinkedIn URL, or name + domain / company) → lemlist
-        (LinkedIn URL, or name + domain — asynchronous). The email is NOT verified here.
+        (LinkedIn URL) → lusha (LinkedIn URL, or name + domain / company) → then the
+        asynchronous ones: dropcontact (LinkedIn URL, or name + company / domain) →
+        lemlist (LinkedIn URL, or name + domain) → fullenrich (LinkedIn URL, or name +
+        domain — usually 30 s to 4 min, so often `pending`). The email is NOT verified
+        here.
 
         {_ORDER_DOC}
 
@@ -1114,8 +1239,11 @@ def register(mcp: FastMCP) -> None:
         the FIRST that returns one (native waterfall).
 
         Steps (default order): kaspr (LinkedIn URL) → forager (LinkedIn URL) → lusha
-        (LinkedIn URL, or name + domain / company) → lemlist (LinkedIn URL, or name +
-        domain — asynchronous). The LinkedIn URL opens the most steps. Phone credits
+        (LinkedIn URL, or name + domain / company) → then the asynchronous ones: apollo
+        (phone reveal, your own Apollo key; LinkedIn URL, or name + domain / company) →
+        lemlist (LinkedIn URL, or name + domain) → dropcontact (LinkedIn URL, or name +
+        company / domain) → fullenrich (LinkedIn URL, or name + domain — usually 30 s to
+        4 min, so often `pending`). The LinkedIn URL opens the most steps. Phone credits
         cost more than email credits.
 
         {_ORDER_DOC}
