@@ -218,6 +218,10 @@ Ce que les vraies réponses ont appris, et qui est désormais figé par des test
   défaut** — une exécution est bornée par sa TAILLE (pages, résultats, profils = la
   `limit` de l'appel) et son DÉLAI (`timeout_secs`, côté Apify), bornes figées par les
   tests ; un écran montre le coût TYPIQUE (`typical_usd`).
+- ⚠️ **Sur un acteur facturé à l'événement, `max_items` DEVIENT un plafond** : Apify en tire
+  un plafond de coût (quelques éléments × un prix d'un centime) sous son minimum, et refuse.
+  La page par le site (`linkedin_site`) part donc sans `max_items`, bornée par ses 4 pages
+  et sa profondeur ; la recherche et les employés l'acceptent (mesuré le 19/10).
 - AI Ark écrit le statut d'un email en capitales (`VALID`).
 - Apollo trouve des personnes sans email (`email_status: unavailable`) — facturées quand
   même — et rend leur URL LinkedIn encodée en pourcents : la personne rendue garde l'URL

@@ -139,6 +139,7 @@ def test_dry_run_ne_declare_ni_n_ecrit_rien(calls, table):
                         "website": "acme.com"}]
     out = _act("waterfall_email", dry_run=True, **_EMAIL_ARGS)
     assert out["would_look_up"] == 1 and out["first_lookup_plan"]["dry_run"] is True
+    assert "Jane" not in str(out) and "acme" not in str(out)   # rien de la ligne
     assert table["store"].patches == [] and table["store"].ecrites == {}
     assert "hunter_email_finder" not in [n for n, _ in calls["made"]]
 
@@ -177,3 +178,21 @@ def test_people_ecrit_la_liste_compacte_et_marque_unqualified(calls, table):
     found = next(v for v in w.values() if v["people_status"] == "found")
     assert found["people"][0]["fit"] == {"fit": 0.9} and "location" not in found["people"][0]
     assert out["qualification"]["calls"] == 2
+
+
+def test_que_des_etapes_asynchrones_est_refuse_sans_marquer_les_lignes(calls, table):
+    table["lignes"] = [{"_id": "r1", "linkedin": "https://www.linkedin.com/in/jane"}]
+    with pytest.raises(McpError):
+        _act("waterfall_email", datastore="42", inputs={"linkedin_url": "linkedin"},
+             output={"email": "email"}, status_column="email_status", providers=["lemlist"])
+    assert table["store"].ecrites == {}
+
+
+def test_une_recherche_pas_partie_a_temps_arrete_le_recu(calls, table, monkeypatch):
+    monkeypatch.setattr(waterfall_lignes, "DEPART_S", -1)
+    table["lignes"] = [{"_id": "r1", "first_name": "Jane", "last_name": "Doe",
+                        "website": "acme.com"},
+                       {"_id": "r2", "first_name": "Bad", "last_name": "Siren",
+                        "website": "b.com"}]
+    out = _act("waterfall_email", **_EMAIL_ARGS)
+    assert out["stopped"] == "time_budget" and table["store"].ecrites == {}

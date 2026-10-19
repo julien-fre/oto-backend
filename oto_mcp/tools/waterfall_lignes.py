@@ -166,6 +166,15 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
     kind = w._QUALIFIABLE.get(ns) or ns.split("_", 1)[1]
     steps = w.STEPS_BY_NAMESPACE[ns]
     entrees, sorties = _valider(ns, inputs, output, status_column)
+    # What can run HERE: the synchronous steps, among `providers` if given — a row is
+    # judged against these, never against a step the table mode leaves out.
+    voulus = {str(p).strip().lower() for p in providers or []}
+    actifs = [s for s in steps if s.collect is None and (not voulus or s.key in voulus)]
+    if not actifs:
+        raise pr.refus("waterfall_rows_no_step",
+                       "no synchronous step to run: the asynchronous ones ("
+                       + ", ".join(sorted(s.key for s in steps if s.collect is not None))
+                       + ") are left out on a table. Nothing was sent.")
     # The table is read (and the write right checked) off the loop: it is the database.
     lot = await run_in_threadpool(pr.ouvrir, datastore, row_ids=row_ids, filter=filter,
                                   colonne_etat=status_column, limite=batch_size)
@@ -211,7 +220,7 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
                 await run_in_threadpool(pr.ecrire, lot, rid, {
                     status_column: ECHEC, f"{status_column}.comment": "invalid_input"})
             continue
-        if not any(w._runnable(s, entree) for s in steps):
+        if not any(w._runnable(s, entree) for s in actifs):
             # Not a verdict: the row waits until its inputs are filled.
             recu.ecarter(rid, "missing_input")
             continue
@@ -232,6 +241,10 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
             premiere = next(iter(groupes.values()))[0]
             plan = await w._run_cascade(mcp, ns, kind, steps, premiere, providers, True,
                                         limits, qualify, synchronous_only=True)
+            # The plan, never its arguments: they are the row's values.
+            plan = {**plan, "attempts": [
+                {k: v for k, v in a.items() if k != "arguments"}
+                for a in plan.get("attempts") or []]}
         recu.compter("would_look_up", len(groupes))
         # `rendre` counts what is left: the database, off the loop.
         return await run_in_threadpool(
@@ -242,10 +255,13 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
     porte = asyncio.Semaphore(PARALLELE)
     vides = {champ: True for champ in sorties}
     qualif = {"calls": 0, "not_qualified": 0, "cost_usd": 0.0}
+    #: Rows of `groupes` whose cascade did not START (time): left pending.
+    attente = {"rows": 0}
 
     async def _une(sig: str, entree: dict, rids: list[str]) -> None:
         async with porte:
             if time.monotonic() - debut > DEPART_S:
+                attente["rows"] += len(rids)
                 return          # not started: the rows stay pending for the next call
             try:
                 out = await w._run_cascade(
@@ -298,11 +314,8 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
                 recu.compter(cle)
 
     await asyncio.gather(*(_une(sig, e, r) for sig, (e, r) in groupes.items()))
-    faites = sum(recu.comptes.get(k, 0) for k in ("found", "no_match", "unqualified",
-                                                    "failed"))
-    pas_partis = sum(len(r) for _, r in groupes.values()) - faites \
-        - recu.comptes.get("skipped_time_budget", 0)
-    if pas_partis > 0 or recu.comptes.get("skipped_time_budget"):
+    pas_partis = attente["rows"]
+    if pas_partis or recu.comptes.get("skipped_time_budget"):
         recu.arret = "time_budget"
     if recu.comptes.get("found"):
         # A typo in `output` writes nothing, silently: named, never guessed.
