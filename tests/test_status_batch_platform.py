@@ -10,8 +10,9 @@ que soit le nombre de connecteurs interrogés ensuite — et non plus une durée
 COMPTE de requêtes.
 
 ⚠️ Le calcul ne bouge pas : la chaîne de grants et le repli legacy restent deux
-verdicts séparés, la comparaison (`journal_resolution`) est intacte — seule la
-LECTURE `list_platform_instances` leur est mutualisée.
+verdicts séparés — seule la LECTURE `list_platform_instances` leur est mutualisée.
+(La comparaison des deux, `journal_resolution`, a été retirée avec R6 : là où la
+chaîne a un avis, l'ancien chemin n'est plus lu.)
 """
 from __future__ import annotations
 

@@ -52,9 +52,9 @@ than THIS run (empty body, list, other identifier) counts as a failure: it never
 replaces the accepted run.
 
 **Metering** (pattern `tools/theirstack.py`): a launch that returns a run counts 1 —
-`note_call_trace` always, `record_platform_usage` only under the platform key. A
-quota debit that fails never hides an accepted run: it is logged with
-the run's identifier (to catch up the count), and the envelope is returned.
+`quantity` always, `units` (the quota) only under the platform key. A quota debit
+that fails never hides an accepted run: the settlement of the call journals it and
+the envelope is returned (`access.reglement`).
 
 Client calls are written in plain sight (`client.run(…)`): that is what makes them
 checkable by the version-skew probe (`test_tools_client_methods_exist`). The bounds,
@@ -232,14 +232,9 @@ def register(mcp: FastMCP) -> None:
         # A run came back: it counts, whatever becomes of it next.
         session_org.note_call_trace(quantity=1)
         if is_platform:
-            try:
-                access.record_platform_usage("monid", 1)
-            except Exception:
-                # The run is launched and billed: hiding its identifier over a counter
-                # would push the agent to relaunch, hence to pay twice.
-                logger.warning("monid_run: platform quota debit FAILED for run %s "
-                               "(run launched and returned, the quota did NOT move)",
-                               run.get("runId"), exc_info=True)
+            # The quota's unit, debited by the settlement of the call — which never turns
+            # a served call into an error (`access.reglement`).
+            session_org.note_call_trace(units=1)
         rid = run["runId"]
         if is_terminal(run) or wait_seconds == 0:
             return _enveloppe(run, run_id=rid)

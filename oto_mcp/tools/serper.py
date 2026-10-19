@@ -263,7 +263,7 @@ def register(mcp: FastMCP) -> None:
         credits = credits_consumed(method, result)
         session_org.note_call_trace(quantity=credits)
         if is_platform:
-            access.record_platform_usage("serper", credits)
+            session_org.note_call_trace(units=max(1, credits))
         return result
 
     def _project(result: dict, items: str, full: bool, fields) -> dict:

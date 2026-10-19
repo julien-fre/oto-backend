@@ -607,13 +607,15 @@ def _me_projection(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
         # public catalog): it tells the front end whether an app remains to be set before
         # being able to consent. Without it, the connection screen promised the worst case to
         # everyone — "first set the application's credentials", including to whoever has nothing left to set
-        # since oto publishes its own.
+        # since oto publishes its own. `fixed`, same rule: what the requester's app
+        # already binds (the Zoho region of their team's app) is shown, not asked.
         if base.get("connect"):
             from ...connectors import flow as connector_flow
             base = {**base, "connect": {
                 **base["connect"],
                 "callback_url": connector_flow.callback_url(c["name"]),
-                "app_ready": connector_flow.app_ready(c["name"], ctx.sub)}}
+                "app_ready": connector_flow.app_ready(c["name"], ctx.sub),
+                "fixed": connector_flow.fixed(c["name"], ctx.sub)}}
         # Layer 3 (paid option) on the USER surface — without it the front end cannot
         # say WHICH of the 3 conditions is missing (the "State for you" banner, ADR 0044):
         # `mode==forbidden` conflates option/activation/RBAC. `option_ok=True` if no

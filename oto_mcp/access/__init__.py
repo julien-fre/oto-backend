@@ -65,6 +65,8 @@ caller changes (see `tests/test_access_surface_frozen.py`).
 - `status`  — the per-connector snapshot of `/api/me`.
 - `entitlements` — the DECLARED entitlements of an org or a person (ADR 0070 §7),
               re-read on every use; depends only on `db`, never on `billing`.
+- `reglement` — the settlement of a call that succeeded (L8): debits what the tool
+              noted (`units`) on the key the resolver noted, at the edge of the call.
 
 The graph is a strict DAG — no cycle, every arrow goes downward:
 
@@ -113,10 +115,12 @@ import sys
 import types
 
 from . import (scope, quotas, cascade, platform_grant, rbac, indices, resolved_credential,
-               tenant_budget, resolve_anon, resolve, views, status, entitlements, prets)
+               tenant_budget, resolve_anon, resolve, views, status, entitlements, prets,
+               reglement)
 
 _MODULES = (scope, quotas, cascade, platform_grant, rbac, indices, resolved_credential,
-            tenant_budget, resolve_anon, resolve, views, status, entitlements, prets)
+            tenant_budget, resolve_anon, resolve, views, status, entitlements, prets,
+            reglement)
 
 # Flat re-export (public + single-underscore privates; dunders stay with the
 # package) + `name -> modules that define it` map, which serves the propagation

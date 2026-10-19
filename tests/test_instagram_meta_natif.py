@@ -617,3 +617,45 @@ def test_la_convention_de_nommage_du_secret_est_tenue():
         assert k.endswith(pc._SUFFIXE_SECRET), (
             f"{k} porte un secret sans le suffixe `{pc._SUFFIXE_SECRET}` : "
             "la console admin le rendrait en clair.")
+
+
+# ── Retour de consentement : le refus de Meta (oto-app#11) ──────────────────
+
+def _callback(query: dict):
+    from urllib.parse import urlencode
+
+    from starlette.requests import Request
+
+    from oto_mcp.api import instagram_meta as api_meta
+
+    route = api_meta.make_routes(None, None, None, None, None)[0]
+    req = Request({"type": "http", "method": "GET", "path": route.path,
+                   "query_string": urlencode(query).encode(), "headers": []})
+    return asyncio.run(route.endpoint(req))
+
+
+@pytest.mark.parametrize("error_reason", ["user_denied", None])
+def test_un_refus_chez_meta_revient_en_denied_jamais_forbidden(env, error_reason):
+    """`access_denied` : la personne a refusé, OU Meta a refusé pour elle (application
+    sans l'accès requis) — indiscernables, et on n'invente pas de distinction. Les deux
+    sont un refus DU FOURNISSEUR : `denied`. `forbidden` dit qu'oto refuse (plus le
+    droit d'écrire à ce niveau) : faux dans les deux cas."""
+    query = {"error": "access_denied", "state": env.auth.make_state(SUB, ORG, "")}
+    if error_reason:
+        query["error_reason"] = error_reason
+    resp = _callback(query)
+    assert resp.headers["location"].endswith(f"?connector={CONNECTEUR}&connect=denied")
+    env.coeur.connect.assert_not_called()
+    assert not env.coffre.lignes
+
+
+@pytest.mark.parametrize("query", [{"error": "server_error"}, {}])
+def test_une_autre_erreur_de_meta_ou_un_code_absent_reste_une_panne(env, query):
+    resp = _callback({**query, "state": env.auth.make_state(SUB, ORG, "")})
+    assert resp.headers["location"].endswith(f"?connector={CONNECTEUR}&connect=error")
+    env.coeur.connect.assert_not_called()
+
+
+def test_un_refus_au_state_illisible_reste_une_panne(env):
+    resp = _callback({"error": "access_denied", "state": "faux"})
+    assert resp.headers["location"].endswith("connect=error")

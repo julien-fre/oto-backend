@@ -55,7 +55,7 @@ from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, session_org
 from ..connectors import verify as connector_verify
 
 
@@ -140,7 +140,7 @@ def register(mcp: FastMCP) -> None:
                 msg = f"Cognism could not process the request ({e})."
             raise McpError(ErrorData(code=INVALID_PARAMS, message=msg))
         if is_platform:
-            access.record_platform_usage("cognism")
+            session_org.note_call_trace(units=1)
         return result
 
     @mcp.tool()

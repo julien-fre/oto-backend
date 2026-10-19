@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp.capabilities import _abonnement, runner_jobs as RJ
+from oto_mcp.capabilities._types import AuthzDenied
 from oto_mcp.db import user_subscriptions as US
 
 _WORKER = "svc-runner-worker"
@@ -396,17 +397,27 @@ class TestRapport:
         assert _abonnement.DEFAUT_LIMITE_PCT == 80
         assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.80
 
-    def test_le_seuil_est_le_MIN_de_l_org_et_du_perso(self, _plafonds):
+    def test_le_perso_REMPLACE_celui_de_l_org(self, _plafonds):
         _plafonds.update(org=90, perso=70)
         assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.70
         _plafonds.update(org=60, perso=70)
-        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.60
+        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.70
 
-    def test_un_perso_plus_HAUT_ne_relache_rien(self, _plafonds):
-        _plafonds.update(org=None, perso=100)
-        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.80
+    def test_un_perso_plus_HAUT_releve_le_seuil_jusqu_a_95(self, _plafonds):
+        _plafonds.update(org=None, perso=95)
+        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.95
         _plafonds.update(org=50, perso=95)
-        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.50
+        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.95
+        _plafonds.update(org=None, perso=100)   # ligne posée avant la borne
+        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.95
+
+    def test_le_perso_est_borne_a_95(self):
+        _abonnement.exiger_limite_perso_valide(95)
+        _abonnement.exiger_limite_perso_valide(None)
+        for hors in (0, 96, 100):
+            with pytest.raises(AuthzDenied) as e:
+                _abonnement.exiger_limite_perso_valide(hors)
+            assert e.value.status == 400
 
     def test_le_perso_seul_resserre_le_defaut(self, _plafonds):
         _plafonds.update(org=None, perso=30)

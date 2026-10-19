@@ -74,7 +74,9 @@ def test_granted_beneficiary_resolves_exactly_as_before(vault, monkeypatch):
     legacy = access._legacy_platform_grant_meta("granted-sub", "fullenrich", None)
     _edges(monkeypatch, [_edge()])
     chained = access._platform_grant_meta("granted-sub", "fullenrich", None)
-    assert chained == legacy == {"label": "env", "daily_quota": 200}
+    assert legacy == {"label": "env", "daily_quota": 200}
+    # Une arête `user` désigne en plus le compteur que lit le refus (R6).
+    assert chained == {**legacy, "edge_counter": REF}
 
 
 def test_unknown_beneficiary_falls_back_identically(vault, monkeypatch):
@@ -100,23 +102,16 @@ def test_revoked_edge_cuts_access_without_falling_back(vault, monkeypatch):
     assert access._platform_grant_meta("granted-sub", "fullenrich", None) is None
 
 
-def test_divergence_is_journalled_not_raised(vault, monkeypatch, caplog):
-    """Un écart entre les deux voies ne dégrade jamais le service : il se journalise
-    en WARN. C'est la matière du verdict de fin de fenêtre."""
+def test_where_the_chain_has_an_opinion_the_old_path_is_not_read(vault, monkeypatch):
+    """R6 : la fenêtre de double lecture est close. Là où la chaîne ACCORDE ou REFUSE,
+    l'ancien chemin n'est plus lu — ni pour décider, ni pour journaliser un écart."""
+    def boom(*a, **k):  # pragma: no cover - doit ne jamais être appelé
+        raise AssertionError("l'ancien chemin a été lu alors que la chaîne a un avis")
+    monkeypatch.setattr(access, "_legacy_platform_grant_meta", boom)
+    _edges(monkeypatch, [_edge()])
+    assert access._platform_grant_meta("granted-sub", "fullenrich", None)["label"] == "env"
     _edges(monkeypatch, [_edge(revoked="2026-08-12 10:00:00")])
-    with caplog.at_level("WARNING"):
-        access._platform_grant_meta("granted-sub", "fullenrich", None)
-    assert "ÉCART d'accès" in caplog.text
-    assert all(r.levelname == "WARNING" for r in caplog.records), caplog.text
-
-
-def test_quota_divergence_is_journalled(vault, monkeypatch, caplog):
-    """Les deux accordent mais pas le même plafond ⟹ la migration a mal reproduit
-    `rate_limit_by`, ou un admin a écrit d'un seul côté. WARN, pas d'erreur."""
-    _edges(monkeypatch, [_edge(quota=999)])
-    with caplog.at_level("WARNING"):
-        access._platform_grant_meta("granted-sub", "fullenrich", None)
-    assert "ÉCART de quota" in caplog.text
+    assert access._platform_grant_meta("granted-sub", "fullenrich", None) is None
 
 
 # ── 2. Le quota : la règle vient de l'arête, le refus reste le même ────────────
@@ -129,7 +124,12 @@ def test_edge_quota_produces_the_same_refusal_as_before(vault, monkeypatch):
     monkeypatch.setattr(access, "project_pinned_instance", lambda p, *a: None)
     monkeypatch.setattr(access, "current_org", lambda sub: None)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
-    monkeypatch.setattr(access.db, "get_usage_today", lambda sub, p: 7)
+    # Sous une arête `user`, le compte du refus est celui de l'arête (R6) ; l'historique
+    # `usage` ne décide plus — 0 ici, pour qu'un refus ne puisse venir que de l'arête.
+    monkeypatch.setattr(access.db, "get_usage_today", lambda sub, p: 0)
+    monkeypatch.setattr(db_grants, "counter_sum_today",
+                        lambda ref, kind, gid: 7 if (ref, kind, gid) == (REF, "user",
+                                                                         "granted-sub") else 0)
     monkeypatch.setattr(credentials_store, "get_credential", lambda *a, **k: "SECRET")
     _edges(monkeypatch, [_edge(quota=7)])
     with pytest.raises(McpError) as e:
@@ -438,21 +438,19 @@ def test_a_bulk_debits_both_counters_once(monkeypatch):
     métrage se compte en unités consommées : ce n'était pas une propriété à tenir, c'était
     un manque figé."""
     legacy, edge = [], []
-    monkeypatch.setattr(access, "current_user_sub_from_token", lambda: "s")
     monkeypatch.setattr(access, "current_org", lambda sub: None)
     monkeypatch.setattr(access.db, "increment_usage",
                         lambda sub, p, amount=1: legacy.append((p, amount)))
     monkeypatch.setattr(grants_chain, "record_usage",
                         lambda sub, p, org, calls: edge.append(calls))
-    access.record_platform_usage("fullenrich", 100)
+    access.debiter_plateforme("s", "fullenrich", 100)
     assert legacy == [("fullenrich", 100)], (
         "l'historique est débité UNE fois, du montant exact — pas 100 fois de 1")
     assert edge == [100], "l'arête est débitée une fois, du bon montant"
 
 
 def test_a_non_migrated_connector_never_reaches_the_chain_counter(monkeypatch):
-    monkeypatch.setattr(access, "current_user_sub_from_token", lambda: "s")
     monkeypatch.setattr(access.db, "increment_usage", lambda sub, p, amount=1: None)
     monkeypatch.setattr(grants_chain, "record_usage",
                         lambda *a, **k: pytest.fail("connecteur non basculé compté"))
-    access.record_platform_usage("unipile", 3)
+    access.debiter_plateforme("s", "unipile", 3)

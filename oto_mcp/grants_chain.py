@@ -24,8 +24,9 @@ chaque entrée publique.
 | REFUSE | des arêtes existent, toutes révoquées | accès **coupé**, sans repli |
 | MUETTE | aucune arête, jamais | repli sur l'ancien chemin, **à l'identique** |
 
-L'état MUET est ce qui rend la fenêtre de double lecture sûre : personne ne perd
-d'accès le jour du déploiement. L'état REFUSE est ce qui rend la révocation vraie —
+L'état MUET est ce qui rend la bascule sûre : personne ne perd d'accès le jour du
+déploiement. Là où la chaîne a un avis (ACCORDE ou REFUSE), l'ancien chemin n'est plus
+lu (R6). L'état REFUSE est ce qui rend la révocation vraie —
 sans lui, révoquer une arête laisserait l'ancien chemin free-tier re-accorder aussitôt,
 et « la révocation coupe l'accès » serait faux. Ensemble, ils disent l'extinction de
 `platform_key_open` pour ce connecteur : **pour qui la chaîne connaît, l'ouverture
@@ -257,8 +258,8 @@ def platform_rung(sub: Optional[str], provider: str,
     existeront réellement.
 
     `instances` : les lignes PLATEFORME de ce `provider`, déjà lues — évite de
-    relire la même table que `_legacy_platform_grant_meta` (appelée juste après,
-    sur le même provider, par `_platform_grant_meta`). `None` = lit elle-même,
+    relire la même table que `_legacy_platform_grant_meta` (le repli de
+    `_platform_grant_meta` quand la chaîne est muette). `None` = lit elle-même,
     comme avant (repli, pas un défaut plus permissif)."""
     if not is_chained(provider) or not sub:
         return None
@@ -370,48 +371,16 @@ def tenant_org_grants(slug: str, provider: str) -> list[dict]:
     return out
 
 
-# ── La double lecture : journal d'écart ────────────────────────────────────────
-
-def journal_resolution(provider: str, sub: str, active_org: Optional[int],
-                       verdict: ChainVerdict, legacy: Optional[dict]) -> None:
-    """Journalise un écart entre les deux voies. **WARN, jamais une erreur** : la
-    fenêtre de double lecture ne dégrade pas le service, elle produit la matière du
-    verdict de fin de fenêtre (« zéro écart sur N jours ⟹ l'ancien chemin peut
-    partir »). Deux écarts possibles, et ils ne disent pas la même chose :
-
-    - **l'accès** : l'une accorde, l'autre refuse. C'est celui qui compte.
-    - **le quota** : les deux accordent, mais pas le même plafond ⟹ la migration a
-      mal reproduit `rate_limit_by` (ou un admin a écrit d'un seul côté)."""
-    legacy_ok = legacy is not None
-    if verdict.granted != legacy_ok:
-        logger.warning(
-            "grants-chain: ÉCART d'accès sur %s (sub=%s org=%s) — chaîne=%s ancien=%s "
-            "(ADR 0053 L5, fenêtre de double lecture)",
-            provider, sub, active_org,
-            "accorde" if verdict.granted else "refuse",
-            "accorde" if legacy_ok else "refuse")
-        return
-    if verdict.granted and legacy_ok:
-        chain_q, legacy_q = verdict.quota or 0, legacy.get("daily_quota") or 0
-        if chain_q != legacy_q:
-            logger.warning(
-                "grants-chain: ÉCART de quota sur %s (sub=%s org=%s) — chaîne=%s "
-                "ancien=%s (ADR 0053 L5)", provider, sub, active_org, chain_q, legacy_q)
-
-
 # ── Le comptage (0053-D7) ──────────────────────────────────────────────────────
 # L'arête porte la règle ET les incréments. Ce qui suit débite l'arête gagnante à
-# chaque appel réussi sous clé plateforme.
+# chaque appel réussi sous clé plateforme (le règlement de l'appel, L8).
 #
-# ⚠️ **Ce que ce lot ne fait PAS : donner l'autorité du refus au compteur d'arête.**
-# Le plafond vient de l'arête (sa contrainte `quota`), mais le COMPTE qui décide du
-# refus reste `usage(sub, tool, day)` pendant la fenêtre. Raison : `grant_counters`
-# n'a pas de passé (le passé n'a pas d'arêtes), donc basculer l'autorité rendrait à
-# chaque bénéficiaire un quota neuf le jour du déploiement. Choisir entre « repartir
-# à zéro sur une frontière de période » et « une période sous-comptée assumée » est
-# l'arbitrage **R6** du plan de chantier — non rendu, et il gouverne L8, pas L5.
-# La fenêtre le prépare : les deux compteurs sont tenus en parallèle et comparés
-# ci-dessous, donc le jour où R6 est tranché, la bascule est vérifiée d'avance.
+# **L'autorité du refus (R6, `docs/credits-au-moment-de-l-appel.md`).** Sous une arête
+# `user`, le refus lit le compteur d'arête (`quotas.platform_used_today`). Sous une
+# arête `org` ou `group`, il lit `usage(sub, tool, day)`, par personne : un compteur
+# d'arête compte pour TOUS ses bénéficiaires, et le plafond d'une arête d'org est un
+# plafond par personne — le basculer changerait le plafond de chacun. `grant_counters`
+# n'a pas de colonne de bénéficiaire ; le pot commun des crédits le remplacera.
 
 def record_usage(sub: str, provider: str, active_org: Optional[int],
                  calls: int = 1) -> None:
@@ -429,7 +398,6 @@ def record_usage(sub: str, provider: str, active_org: Optional[int],
         if verdict is None or not verdict.granted or verdict.grant_id is None:
             return
         db_grants.bump_counter(verdict.grant_id, calls)
-        _journal_counters(provider, sub, verdict)
     except Exception:  # noqa: BLE001
         # Le fail-open est JUSTE : le metering ne casse jamais un appel qui a réussi.
         # C'est le NIVEAU qui en faisait un silence — `debug` ne sort pas en prod, donc
@@ -441,27 +409,6 @@ def record_usage(sub: str, provider: str, active_org: Optional[int],
             "grant=%s calls=%s (l'appel a réussi, le quota n'a PAS bougé)",
             provider, sub, active_org,
             getattr(verdict, "grant_id", None), calls, exc_info=True)
-
-
-def _journal_counters(provider: str, sub: str, verdict: ChainVerdict) -> None:
-    """Compare le compteur d'arête (D7 : somme des arêtes, archivées comprises) au
-    compteur historique. Un écart = la bascule d'autorité ne serait PAS un no-op.
-
-    Ne compare QUE pour une arête `user` : une arête `org` compte pour l'org entière
-    là où `usage` compte par personne — l'écart y est **structurel**, pas une
-    anomalie (et c'est un vrai changement de sémantique de quota, à trancher avant
-    de basculer un connecteur qui porte des grants d'org)."""
-    if verdict.grantee is None or verdict.grantee[0] != "user":
-        return
-    from . import db  # import tardif (la façade `db` tire tous ses modules de domaine)
-
-    edge = db_grants.counter_sum_today(verdict.resource_id, *verdict.grantee)
-    legacy = db.get_usage_today(sub, provider)
-    if edge != legacy:
-        logger.warning(
-            "grants-chain: ÉCART de compteur sur %s (sub=%s) — arête=%s ancien=%s "
-            "(ADR 0053 D7 ; l'autorité du refus reste sur l'ancien, cf. R6)",
-            provider, sub, edge, legacy)
 
 
 # ── L'écriture d'un grant (la surface admin) ───────────────────────────────────

@@ -50,7 +50,7 @@ partage un objet.
 Pourquoi pas un principal distinct (comme `platform_worker` ou l'identité de service) :
 `current_org`, `accessor_scope`, `can_access`, `walk_cascade`, les quotas, le journal et
 le geste lisent tous un sub. Un principal sans sub les traverse tous, et les quotas ne
-seraient plus métrés (`record_platform_usage` ne fait rien sans sub).
+seraient plus métrés (le règlement de l'appel ne débite rien sans sub).
 
 **L'enfermement.** Chaque clé d'org porte le verrou d'org (`verrou_org=true`,
 `verrou_org_id=<org>`), comme un jeton de délégation : hors de son org, aucun rôle, aucune

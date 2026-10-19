@@ -118,6 +118,11 @@ contrat provisoire) ; il en est SORTI le 2026-09-24, quand les agents hébergés
 ouverts à toute org. Sa porte n'était pas un contrat provisoire mais un coût : ses
 déroulés pouvaient tourner sur notre clé de modèle. Ce qui la remplace — modèle
 obligatoire, clé de modèle de l'org — vit dans `docs/runner-et-automatisations.md`.
+`oto_recipe` y était entré à sa naissance (contrat provisoire, refusée dans un agent
+hébergé) ; il en est SORTI le 2026-10-19 : le jeton d'un travail porte désormais la liste
+d'outils de son déclencheur (`outils_du_travail.py`), un agent hébergé lance une recette
+comme tout client (`docs/recettes.md`), et la page publique d'aide la présente comme
+ouverte à tous.
 
 ⚠️ **N'entrent dans `BETA_TOOLS` que des noms NEUFS.** Le bloc masque fail-closed : y
 poser le nom d'une surface vivante la retirerait d'un coup à tous les comptes sans

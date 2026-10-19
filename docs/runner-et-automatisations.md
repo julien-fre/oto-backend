@@ -1716,12 +1716,14 @@ que le fournisseur rapporte, usage perso compris —, la même pour les deux fen
   admin d'org ; `limit_pct` 1..100, `null` = retour au défaut), REST
   `GET|PUT /api/orgs/{id}/model-subscriptions/{family}`, table
   `org_model_subscription_limits`. Sans réglage, **80 %** (`_abonnement.DEFAUT_LIMITE_PCT`).
-- **La personne peut le resserrer pour elle-même** : `PATCH
+- **La personne peut poser le sien** (1..95, `user_subscriptions.LIMITE_PERSO_MAX`) : `PATCH
   /api/me/model-subscriptions/{family}` `{"limit_pct": int|null}` (sa ligne seulement,
   `404 not_connected` sans abonnement), colonne `user_model_subscriptions.limite_pct`,
   rendue par la liste.
-- **Seuil effectif = le plus strict des deux** (min). Un plafond perso plus haut que celui
-  de l'org ne relâche rien. La règle est écrite UNE fois, dans `_abonnement.seuil`, lue
+- **Seuil effectif = le plafond perso s'il est posé** (plus bas ou plus haut que celui de
+  l'org, borné à 95 — une ligne d'avant posée à 100 se lit 95), sinon celui de l'org. La
+  règle est écrite UNE fois, dans `_abonnement.seuil` (relue en SQL par
+  `runner_jobs._pause_pour_l_org`), lue
   avec l'org du travail (`runner_jobs.porteur_et_famille` rend `org_id`).
 - **Le run en cours finit toujours** : le plafond se juge sur le rapport de fin d'un
   travail, qui met la personne en `paused_limit` jusqu'à l'échéance de la fenêtre
@@ -2211,10 +2213,13 @@ rafraîchit avec son sondage ; le détail d'un travail se lit toujours par `list
 La clé `trigger_id` est lue en TEXTE (filtrée `~ '^[0-9]+$'`) et convertie côté Python,
 jamais castée en SQL : une seule ligne non numérique ferait tomber la lecture entière.
 
-**À suivre.** Aucun index ne porte `(org_id, due_at)` : la lecture parcourt la file
-de l'org. À mesurer en production (`EXPLAIN (ANALYZE, BUFFERS)` sur l'org la plus
-chargée) avant de servir l'écran ; à poser par `index_concurrent` si la mesure le
-demande.
+**L'index.** Mesuré en production le 18/10/2026 sur l'org la plus chargée : un
+parcours complet de la file, 775 ms à froid (42 ms à chaud), 86 616 lignes écartées —
+ses travaux viennent tous de flottes et ne portent pas la clé. D'où
+`idx_runner_jobs_declencheurs (org_id, due_at)`, partiel sur le prédicat des requêtes
+(`runner_jobs.PREDICAT_DECLENCHEUR`, partagé avec le temps gagné) : il ne garde que
+les travaux d'un déclencheur. Révision `0067_runner_jobs_declencheurs`, CONCURRENTLY
+sous le verdict commun (`index_concurrent`) ; le démarrage d'une base neuve le pose.
 
 ## Temps gagné des agents — `time_saved.py` (2026-10-17)
 

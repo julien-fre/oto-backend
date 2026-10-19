@@ -79,6 +79,12 @@ def resolve_credential(provider: str, want: str = "auto",
         if emit_on_failure:
             _emit_connector_failure(provider, sub)
         raise
+    if check_usage and resolved.is_platform:
+        # The call goes through a PLATFORM key it is about to consume: the edge of the
+        # call settles it (`reglement.regler_appel`) with the `units` the tool notes.
+        # Not on a connection (`check_usage=False`), which consumes nothing — nor on
+        # the anonymous path above, which has no sub to meter.
+        session_org.note_call_trace(platform_carrier=providers.credential_provider(provider))
     return _note_resolved_instance(resolved)
 
 
@@ -432,7 +438,7 @@ def _win_quota(win, sub: str, provider: str,
     all go through it. The ceiling itself comes from `quotas.plafond_du_jour`, which the
     `/api/me` snapshot also reads. The same number computed in two places ends up diverging —
     that is why the `cascade` walker exists (seen 2026-07-07, option rule copied 3×)."""
-    used = quotas.usage_today(sub, provider)
+    used = quotas.platform_used_today(sub, provider, win.payload.get("edge_counter"))
     limit = quotas.plafond_du_jour(win.payload, provider,
                                    lambda: quotas.quotas_leves(sub, active_org))
     return used, limit

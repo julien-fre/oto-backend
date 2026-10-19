@@ -39,7 +39,6 @@ def client(monkeypatch):
                         lambda api_key=None: inst)
     monkeypatch.setattr("oto_mcp.access.resolve_api_key",
                         lambda provider, account=None: ("k", False))
-    monkeypatch.setattr("oto_mcp.access.record_platform_usage", lambda provider: None)
     return inst
 
 

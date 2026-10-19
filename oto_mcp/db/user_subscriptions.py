@@ -35,6 +35,10 @@ _CHAMPS = ("sub, famille, sandbox_id, statut, plan, method, limit_reset_at, "
 # `CREATE TABLE` (`db/schema/runs.py`), dans la révision `0019` et au démarrage : une
 # base neuve, une base migrée et une base que le démarrage rattrape ont la même colonne.
 COLONNE_LIMITE = "limite_pct"
+#: Le plus HAUT qu'une personne peut se poser (`_abonnement.seuil`) : son plafond perso
+#: remplace celui de l'org, mais garde toujours 5 % du compte pour elle. Une ligne
+#: posée plus haut avant cette borne (jusqu'à 100) se LIT à cette valeur.
+LIMITE_PERSO_MAX = 95
 DDL_COLONNE_LIMITE = (f"ALTER TABLE user_model_subscriptions ADD COLUMN IF NOT EXISTS "
                       f"{COLONNE_LIMITE} SMALLINT "
                       f"CHECK ({COLONNE_LIMITE} BETWEEN 1 AND 100)")

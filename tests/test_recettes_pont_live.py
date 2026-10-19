@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from typing import Optional
 
 import pytest
 
@@ -205,8 +206,10 @@ def crm(serveur, monkeypatch):
         frozenset({"search"}), frozenset({"create"})))
 
     @m.tool()
-    def acme_crm(op: str = "search", name: str = "") -> dict:
-        appels.append(f"acme_crm:{op}")
+    def acme_crm(op: str = "search", name: str = "", items: Optional[list] = None,
+                 ids: Optional[list] = None) -> dict:
+        lot = items if items is not None else ids
+        appels.append(f"acme_crm:{op}" + (f"x{len(lot)}" if lot is not None else ""))
         return {"op": op, "id": f"rec-{name}"}
     return m, appels
 
@@ -280,6 +283,44 @@ def test_le_plafond_d_ecritures_arrete_les_suivantes(crm):
     # Une lecture du même outil n'est pas une écriture : le plafond ne la touche pas.
     assert _ecrire(m, "acme_crm", {"op": "search"}, max_ecritures=1, compteur=compteur)["ok"]
     assert appels == ["acme_crm:create", "acme_crm:search"]
+
+
+def test_un_lot_est_compte_fiche_par_fiche(crm):
+    from oto_mcp.recipes import pont
+    m, appels = crm
+    compteur = pont.compteur_neuf()
+    lot = [{"name": str(i)} for i in range(50)]
+    assert _ecrire(m, "acme_crm", {"op": "create", "items": lot}, max_ecritures=100,
+                   compteur=compteur)["ok"]
+    assert _ecrire(m, "acme_crm", {"op": "create", "ids": ["a", "b"]}, max_ecritures=100,
+                   compteur=compteur)["ok"]
+    assert appels == ["acme_crm:createx50", "acme_crm:createx2"]
+    assert compteur == {"writes": {"acme_crm:create": 52}, "total": 52, "stopped": None}
+
+
+def test_un_lot_mal_forme_ou_trop_gros_n_appelle_rien(crm):
+    m, appels = crm
+    for lot in ([], "x", [{}] * 51):
+        assert _ecrire(m, "acme_crm", {"op": "create", "items": lot},
+                       max_ecritures=1000)["code"] == "invalid_call"
+    assert appels == []
+
+
+def test_un_lot_qui_ne_tient_pas_dans_le_reste_n_est_pas_joue(crm):
+    from oto_mcp.recipes import pont
+    m, appels = crm
+    compteur = pont.compteur_neuf()
+    assert _ecrire(m, "acme_crm", {"op": "create", "items": [{}] * 3}, max_ecritures=5,
+                   compteur=compteur)["ok"]
+    refus = _ecrire(m, "acme_crm", {"op": "create", "items": [{}] * 3}, max_ecritures=5,
+                    compteur=compteur)
+    assert refus["code"] == "budget_exhausted" and "2 write(s) left" in refus["message"]
+    assert compteur["stopped"] == "max_writes" and compteur["total"] == 3
+    # Redécoupé dans ce qui reste, il passe.
+    assert _ecrire(m, "acme_crm", {"op": "create", "items": [{}] * 2}, max_ecritures=5,
+                   compteur=compteur)["ok"]
+    assert compteur["total"] == 5
+    assert appels == ["acme_crm:createx3", "acme_crm:createx2"]
 
 
 def test_un_outil_qui_ecrit_hors_liste_reste_refuse(crm):

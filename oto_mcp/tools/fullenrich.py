@@ -170,9 +170,9 @@ def register(mcp: FastMCP) -> None:
             # `len(contacts)` and not the real cost: FullEnrich bills per data point
             # found and says nothing at submission (the cost only exists at the result
             # of the job, `fullenrich_result`, on another call) — we do not guess.
-            access.record_platform_usage("fullenrich", len(contacts))
+            session_org.note_call_trace(units=max(1, len(contacts)))
         # Per-unit metering (partner billing, 21/08) — UNCONDITIONAL (platform key
-        # OR BYO), unlike `record_platform_usage` above (which only counts
+        # OR BYO), unlike `units` above (which only counts
         # oto's internal quota on the platform key): `tool_calls.quantity`
         # serves an EXTERNAL consumer (the partner's) who bills the org whatever the
         # key mode. Counts the contacts SUBMITTED, not those actually

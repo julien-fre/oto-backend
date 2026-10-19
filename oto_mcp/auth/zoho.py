@@ -46,6 +46,7 @@ from ..mcp_errors import McpError
 from .. import access, credentials_store, group_store, providers, session_org
 from ..access import chain_shadow
 from ..connectors import access_levels
+from ..db.lecture_d_appel import lecture_d_appel
 from . import flow as oauth_flow
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,12 @@ class ZohoOAuthError(ValueError):
     """Acquisition failure — message WITHOUT secrets (cf. `zoho.auth`, incident #284)."""
 
 
+class ZohoRegionMissing(ZohoOAuthError):
+    """No region for the consent: neither the app nor the request carries one. Named
+    (`zoho_region_missing`) because the fix is a gesture — fill in the region —, never
+    a default region chosen for the user."""
+
+
 # --- app (client_id / client_secret) ----------------------------------------
 
 def editor_app(connector: str, data_center: str) -> dict:
@@ -141,8 +148,7 @@ def editor_app(connector: str, data_center: str) -> dict:
 class DedicatedApp(dict):
     """The fields of a DEDICATED app — a dict that says where it comes from: its
     `data_center` is the app's own region, which binds the consent (`consent_region`).
-    A brought credential also carries a `data_center`; it keeps the behaviour of before
-    (the requested region wins)."""
+    A brought credential's `data_center` binds it the same way."""
 
 
 def dedicated_app(connector: str, org_id: Optional[int],
@@ -228,17 +234,31 @@ def resolve_app(fields: Optional[dict]) -> tuple[str, str]:
 
 
 def consent_region(app: dict, data_center: Optional[str]) -> str:
-    """The region of the consent. A dedicated app carries its own: a request naming
-    ANOTHER one is refused (an app registered in one data center is rejected by the
-    others), an empty request takes it. Any other app: the requested region."""
+    """The region of the consent. An app that carries its region binds it — the app
+    dedicated by the team or the org, AND the app set as a key on the connector's card
+    (its `data_center` field): a request naming ANOTHER region is refused (an app
+    registered in one data center is rejected by the others), an empty request takes
+    it. That is what lets a member click "connect" without knowing the region of their
+    team's app. An app without a region (oto's publisher app, keyed by the requested
+    region): the requested region.
+
+    Neither: `ZohoRegionMissing`, which says who sets it — never a default region."""
     demande = (data_center or "").strip().lower()
-    propre = ((app.get("data_center") or "").strip().lower()
-              if isinstance(app, DedicatedApp) else "")
+    propre = _region_of(app)
     if propre and demande and propre != demande:
         raise ZohoOAuthError(
-            f"The Zoho app of your organization or team is registered in the "
-            f"`{propre}` data center: restart the connection with data_center={propre}.")
-    return normalize_region(propre or demande)
+            f"The Zoho app used for this connection is registered in the `{propre}` "
+            f"data center: restart the connection with data_center={propre}.")
+    if propre or demande:
+        return normalize_region(propre or demande)
+    if app.get("client_id"):
+        raise ZohoRegionMissing(
+            "The Zoho app set on the connector's card (yours, your team's or your "
+            "org's) has no region: whoever set it fills in its \"Data center\" field "
+            f"({', '.join(_ACCOUNTS)}), then restart the connection.")
+    raise ZohoRegionMissing(
+        f"Choose the region of your Zoho account (data_center: {', '.join(_ACCOUNTS)}) "
+        "to start the connection.")
 
 
 def has_app(connector: str, sub: str, data_center: str = "", *,
@@ -249,7 +269,8 @@ def has_app(connector: str, sub: str, data_center: str = "", *,
     shows the button, the region only being chosen on click)."""
     if data_center:
         f = app_fields(connector, sub, data_center, org=org, group=group)
-        if isinstance(f, DedicatedApp) and f.get("data_center") != data_center.strip().lower():
+        propre = _region_of(f)
+        if propre and propre != data_center.strip().lower():
             return False
         return bool(f.get("client_id") and f.get("client_secret"))
     # Without a region, `app_fields` only consults the dedicated app and the BYO (the
@@ -262,8 +283,22 @@ def has_app(connector: str, sub: str, data_center: str = "", *,
 
 def app_ready(connector: str, sub: str) -> bool:
     """The promise of the connection screen (`connect.app_ready`, served row by row by
-    `GET /api/me/connectors`): `has_app` without a region — the same answer, at the
-    price of one read per fact and per call (oto-backend#1148).
+    `GET /api/me/connectors`): `has_app` without a region. Cf. `_applicable_app`."""
+    return _applicable_app(connector, sub)[0]
+
+
+def app_region(connector: str, sub: str) -> str:
+    """The region the applicable app BINDS (`connect.fixed`), `""` if none does — oto's
+    publisher app, keyed by the region chosen on click. The front then shows the region
+    instead of a select whose other choices `consent_region` refuses."""
+    return _applicable_app(connector, sub)[1]
+
+
+@lecture_d_appel
+def _applicable_app(connector: str, sub: str) -> tuple[bool, str]:
+    """`(app_ready, region)` in ONE pass, read once per call (`lecture_d_appel`): the
+    listing asks both for each of the three Zoho connectors (oto-backend#1148). Never a
+    secret in the answer — only whether an app exists and the region it carries.
 
     `has_app` asks the RESOLUTION whether an app was brought: on a member who brought
     none — the common case — the failed cascade builds its diagnostic (reachable
@@ -272,21 +307,28 @@ def app_ready(connector: str, sub: str) -> bool:
     Here the PRESENCE answers first, with the walker and the preloaded probe of
     `status_for` (`want="byo"`, no platform tier), from the inventory the same call has
     already read: no credential within reach ⟹ nothing brought, and the resolution is
-    not asked. A credential within reach ⟹ `has_app`, unchanged (the fields still decide).
+    not asked. A credential within reach ⟹ its fields decide, as in `has_app`.
     """
     org = access.current_org(sub)
     group = access.current_group(sub)
-    # An app dedicated by the team or the org: one query for both, without decrypting.
+    # An app dedicated by the team or the org: its presence without decrypting, then
+    # its region (the one query that decrypts, only when such an app exists).
     if credentials_store.dedicated_app_owners(connector, org, group):
-        return True
+        return True, _region_of(dedicated_app(connector, org, group))
     groups = group_store.list_groups_for_user(sub, org) if org is not None else []
     sonde = access.preloaded_presence_probe(sub, org=org, groups=groups)
     a_portee = next(chain_shadow.resolution_rungs(
         sub, connector, org=org, group=group, probe=sonde,
         want="byo"), None)
     if a_portee is not None:
-        return has_app(connector, sub, org=org, group=group)
-    return _has_editor_app(connector)
+        byo = app_fields(connector, sub, org=org, group=group)
+        if byo.get("client_id") and byo.get("client_secret"):
+            return True, _region_of(byo)
+    return _has_editor_app(connector), ""
+
+
+def _region_of(app: dict) -> str:
+    return (app.get("data_center") or "").strip().lower()
 
 
 def _has_editor_app(connector: str) -> bool:

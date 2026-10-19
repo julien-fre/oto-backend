@@ -40,8 +40,8 @@ def serper(monkeypatch):
                             "html": "<p>rien de caché</p>", "final_url": url})
     monkeypatch.setattr("oto_mcp.session_org.note_call_trace",
                         lambda **kw: traced.append(kw))
-    monkeypatch.setattr("oto_mcp.access.record_platform_usage",
-                        lambda provider, calls=1: used.append((provider, calls)))
+    from _releve import capter_units
+    capter_units(monkeypatch, "serper", lambda provider, calls: used.append((provider, calls)))
     return inst, traced, used, mode
 
 

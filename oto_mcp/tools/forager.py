@@ -311,7 +311,7 @@ def register(mcp: FastMCP) -> None:
                 session_org.note_call_trace(found_work_emails=0, found_personal_emails=0,
                                             found_phones=trouve, quantity=trouve)
                 if is_platform:
-                    access.record_platform_usage("forager")
+                    session_org.note_call_trace(units=1)
                 return phones
 
             if op == "reverse_by_email":

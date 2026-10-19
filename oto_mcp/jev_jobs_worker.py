@@ -97,7 +97,7 @@ def _facturer(job: dict, trace: dict, geste_id: str, debut: float,
 def _tranche(job: dict) -> str:
     """One slice of `job`, under its caller. Returns the job's status afterwards.
     Never raises: every outcome is written on the job."""
-    from . import geste, session_org
+    from . import access, geste, session_org
     from .auth import hooks as auth_hooks
     from .db import jev_jobs as db_jev
     from .mcp_errors import McpError
@@ -136,6 +136,10 @@ def _tranche(job: dict) -> str:
                 out, panne = jev.qualifier(plan, cursor=cursor, limite=jr.MAX_ROWS,
                                            fenetre_s=TRANCHE_S, relever=jev.releve,
                                            passer_les_echecs=True)
+                # The slice's settlement (L8), on success only and under its axes:
+                # this worker sets the call record, so it is the edge that settles it.
+                if panne is None:
+                    access.regler_appel(job["sub"], "jev_rows", trace)
             finally:
                 for reset, jeton in reversed(axes):
                     reset(jeton)

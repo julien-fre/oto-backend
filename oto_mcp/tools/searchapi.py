@@ -28,7 +28,7 @@ from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, url_perimeter
+from .. import access, session_org, url_perimeter
 from ..connectors import verify as connector_verify
 
 _BASE_URL = "https://www.searchapi.io/api/v1/search"
@@ -78,7 +78,7 @@ def register(mcp: FastMCP) -> None:
             r.raise_for_status()
             data = r.json()
         if is_platform:
-            access.record_platform_usage("searchapi")
+            session_org.note_call_trace(units=1)
         return data
 
     @mcp.tool()

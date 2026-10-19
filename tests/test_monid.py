@@ -25,8 +25,6 @@ import json as _json
 import logging
 from urllib.parse import urlsplit
 
-import psycopg
-import psycopg_pool
 import pytest
 import requests
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS
@@ -149,8 +147,8 @@ def metrage(monkeypatch):
     rec = {"trace": [], "usage": []}
     monkeypatch.setattr("oto_mcp.session_org.note_call_trace",
                         lambda **kw: rec["trace"].append(kw))
-    monkeypatch.setattr("oto_mcp.access.record_platform_usage",
-                        lambda provider, calls=1: rec["usage"].append((provider, calls)))
+    from _releve import capter_units
+    capter_units(monkeypatch, "monid", lambda provider, calls: rec["usage"].append((provider, calls)))
     return rec
 
 
@@ -600,29 +598,9 @@ def test_the_platform_key_debits_the_internal_quota(fake, cle, metrage):
     assert metrage["trace"] == [{"quantity": 1}] and metrage["usage"] == [("monid", 1)]
 
 
-@pytest.mark.parametrize("panne, lancement", [
-    (psycopg.OperationalError("base injoignable"), [Resp(200, _run())]),
-    (psycopg_pool.PoolTimeout("pool épuisé"), [Resp(202, _run("READY"))]),
-])
-def test_a_failed_quota_debit_never_hides_a_launched_run(fake, cle, metrage, monkeypatch,
-                                                         caplog, panne, lancement):
-    """Le run est lancé et facturé : une panne du compteur ne doit pas le rendre en
-    « erreur interne » sans son identifiant — l'agent relancerait, et paierait deux fois."""
-    cle["platform"] = True
-
-    def _debit_en_panne(provider, calls=1):
-        raise panne
-
-    monkeypatch.setattr("oto_mcp.access.record_platform_usage", _debit_en_panne)
-    fake.routes[("POST", "/v1/run")] = lancement
-    fake.routes[("GET", f"/v1/runs/{RID}")] = [Resp(200, _run())]
-    with caplog.at_level(logging.WARNING, logger="oto_mcp.tools.monid"):
-        out = _outil("monid_run")(provider=PROVIDER, endpoint=ENDPOINT)
-    assert out["run"]["runId"] == RID and out["done"] is True
-    assert len(fake.envois("POST", "/v1/run")) == 1
-    assert metrage["trace"] == [{"quantity": 1}]
-    assert any(r.levelno >= logging.WARNING and RID in r.getMessage() and r.exc_info
-               for r in caplog.records if r.name == "oto_mcp.tools.monid")
+# Une panne du compteur ne peut plus cacher un run lancé : l'outil ne débite plus, il note
+# `units` et le bord règle APRÈS lui, sans jamais transformer le succès en erreur
+# (`test_reglement_appel.test_un_debit_en_panne_ne_defait_pas_l_appel`).
 
 
 def test_a_refused_launch_meters_nothing(fake, cle, metrage):

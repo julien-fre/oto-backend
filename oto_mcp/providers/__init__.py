@@ -300,6 +300,10 @@ _DECLARATIONS: tuple[str, ...] = (
     # scheduling and time-clock product. A GROUP-level API key reads every company
     # of the group; read-only.
     "sivan",
+    # --- payroll and HR, read-only — wired 2026-10-17 -------------------------
+    # Neighbour of `payfit` by trade and by SITUATION (NIR, IBAN): the API key and
+    # the organization id travel together; the redaction floor masks NIR and IBAN/BIC.
+    "malibou",
     # --- a project audio becomes a project page — ADR 0074, #674 ------------
     "transcription",
     # --- US occupations reference — wired 2026-09-22 --------------------------
@@ -310,6 +314,12 @@ _DECLARATIONS: tuple[str, ...] = (
     # of `transcription` by SITUATION: an inference service whose key is
     # never an org's — here the tenant's, never ours.
     "jev",
+    # --- audio and video media — wired 2026-10-19 ----------------------------
+    # Voice, music and sound generated with the customer's ElevenLabs credits.
+    "elevenlabs",
+    # Neighbour of `elevenlabs` by situation (media production): video hosting
+    # and streaming on the customer's Mux account.
+    "mux",
     # --- KEY carriers, no tools (kind="credential") --------------------------
     # The model key an org deposits for its scheduled agents. They serve
     # no tool: the worker consumes it on the org's behalf.

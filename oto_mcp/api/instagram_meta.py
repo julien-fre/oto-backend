@@ -11,10 +11,13 @@ this handler has, and that is why the state carries `sub` and `org`.
 ⚠️ **The most frequent refusal of this flow is not a bug, it is the regime of
 unpublished Meta apps**: until it has passed App Review, only accounts INVITED
 as testers can consent. Meta then returns an
-`error=access_denied`, indistinguishable from a real refusal by the person. The message
-therefore names both causes, in this order — because the first is ours to
-fix, and telling someone who clicked "Allow" that "you refused"
-leaves them with no recourse.
+`error=access_denied`, indistinguishable from a real refusal by the person. The return
+is therefore `connect=denied` (oto-app#11), whose message says "the authorization was
+refused at the provider" — true in both cases, without asserting that the PERSON
+refused — and the card's documentation (`connectors/docs/instagram_meta.md`) names the
+tester invitation. It used to be `forbidden`, which says OTO refused (no more right to
+write at that level): false in both cases. Meta's `error_reason` is logged as received;
+we do not derive a distinction from it.
 """
 from __future__ import annotations
 
@@ -33,12 +36,6 @@ from ..auth import instagram_meta as ig_auth
 logger = logging.getLogger(__name__)
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
-
-#: The reason Meta returns when the person is not a tester of the application.
-#: It is the SAME as a real refusal: `access_denied`. We therefore cannot
-#: tell them apart — hence a message that names both, without asserting either.
-_REFUS = "access_denied"
-
 
 def make_routes(
     verifier: JWTVerifier,
@@ -73,11 +70,12 @@ def make_routes(
             # We LOG the reason returned by Meta (it is not secret) and we
             # send the user back to her card, where the message below
             # awaits her. See `oto_mcp/connectors/docs/instagram_meta.md`.
-            logger.info("instagram_meta: consent not completed (sub=%s, reason=%s)",
-                        sub, erreur or "missing code")
+            logger.info("instagram_meta: consent not completed (sub=%s, reason=%s, "
+                        "error_reason=%s)", sub, erreur or "missing code",
+                        request.query_params.get("error_reason"))
             return RedirectResponse(
-                _retour("forbidden" if erreur == _REFUS else "error",
-                        return_app, org_id), status_code=302)
+                _retour(oauth_flow.etat_sans_code(erreur), return_app, org_id),
+                status_code=302)
 
         def _echanger_et_ranger() -> dict:
             grant = ig_auth._coeur().connect(

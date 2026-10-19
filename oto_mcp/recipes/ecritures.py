@@ -11,8 +11,10 @@ chacun avec SES ops :
   par la recette (`writes: ["folk_record:create", …]`) — c'est ce que la plateforme
   relit avant de publier —, jamais jouée en épreuve.
 
-Jamais `delete`, `merge` ni une op en masse (`bulk_*`) : une recette relancée repart du
-début, ses écritures doivent être sans dégât. Un outil multiplexé par `op` exige une
+Jamais `delete`, `merge` ni une op `bulk_*` : une recette relancée repart du début, ses
+écritures doivent être sans dégât. Un LOT d'une op permise (`items` / `ids` de l'outil,
+50 fiches au plus) passe : le pont le compte fiche par fiche dans `max_writes`
+(`pont._fiches`). Un outil multiplexé par `op` exige une
 `op` LITTÉRALE dans l'appel (son défaut est une lecture, jamais présumé). Un outil sans
 `op` (`ops=None`) est une écriture en entier. Un outil qui peut déclencher un ENVOI (une
 piste ajoutée à une campagne active reçoit sa séquence) exige en plus
@@ -48,7 +50,8 @@ ECRITURES: dict[str, Ecriture] = {
     "lemlist_create_lead": Ecriture(envoie=True),
 }
 
-#: Ce qu'aucune op permise ne peut être : détruire, fusionner, écrire en masse.
+#: Ce qu'aucune op permise ne peut être : détruire, fusionner, une op `bulk_*` (un lot
+#: passe par `items` / `ids` d'une op permise, compté par fiche au pont).
 OPS_DESTRUCTRICES = frozenset({"delete", "merge", "bulk_create", "bulk_update",
                                "bulk_delete", "bulk_upsert"})
 
@@ -92,4 +95,4 @@ def juger(outil: str, arguments: dict) -> tuple[str, Optional[str]]:
         return "ecrire", nom_declare(outil, op)
     return "refus", (f"op `{op}` of `{outil}` is not open to a recipe (reads: "
                      f"{sorted(e.lire or ())}, writes: {sorted(e.ecrire)}; never delete, "
-                     "merge or bulk).")
+                     "merge or a bulk_* op — batch a permitted op with `items` / `ids`).")

@@ -218,6 +218,17 @@ l'administrons) est une autre décision non prise (`tenancy.ForeignTenantDirecto
 >   chemin d'une page l'ouvre DANS son projet (`/projects/{project_id}?doc={id}`) : une
 >   page n'a pas d'écran à elle. **Un patron sans appelant n'est pas inerte, il est
 >   simplement non testé** — n'en déclarer un qu'avec ce qui l'utilise.
+> - **Les chemins de NOTRE instance se déclarent par instance** (`OTO_DASHBOARD_LINK_PATHS`,
+>   JSON `{type: chemin}` fusionné sur `DEFAULT_PATHS`). Le tenant primaire ne lit pas sa
+>   ligne `tenants` (son émetteur vient de l'env) : ses `link_paths` n'ont jamais servi. Une
+>   instance dont le tableau de bord range tout sous l'org (`/org/{org}/tables/{id}`)
+>   servait donc `/data/{id}` à chaque tableau, une adresse que son routeur ne connaît pas.
+>   Conformément à la convention ci-dessus, le correctif est un réglage d'INSTANCE, pas un
+>   champ de plus sur le tenant. Les appelants de `table`, `doc`, `project` et `billing`
+>   ne résolvent l'org (`access.current_org`) que si le chemin la réclame
+>   (`patron_reclame`) ; sans org, aucun lien, jamais `/org//…`.
+>   Une déclaration illisible ou un type de lien inconnu refuse le démarrage
+>   (`links.verifier_reglages`), jamais nos chemins par défaut en silence.
 > - **Le socle d'instructions suit le tenant** (`guides` scope `tenant`, owner = le slug) :
 >   sinon l'assistant d'un partenaire se présente sous NOTRE marque à chaque session.
 > - **La page publique d'un projet partagé suit la marque de son PROPRIÉTAIRE**
@@ -586,12 +597,12 @@ et passe au palier suivant sur REFUSE comme lui : aucun `inconnu` créé (gardé
 `test_tenant_edge_chain.py`). L'arête n'est lue qu'APRÈS que la sonde a trouvé une clé —
 sans clé de tenant, zéro lecture.
 
-⚠️ **Le budget est débité à la RÉSOLUTION, pas au succès de l'appel** — à la différence du
-compteur plateforme, que chaque outil débite lui-même après un appel réussi
-(`record_platform_usage`, ~10 sites). Une clé de tenant n'a pas ces sites ; en ajouter un par
-outil serait la copie que le walker unique existe pour éviter, et une borne posée que personne
-ne débite est le défaut de #409. Un appel qui échoue chez le fournisseur compte donc. Le
-déplacement vers « au succès » passe par le relevé d'appel du middleware, avec L8.
+⚠️ **Le budget est vérifié à la RÉSOLUTION et débité au SUCCÈS de l'appel** (L8) : la
+résolution refuse une journée épuisée et note l'arête au relevé d'appel
+(`tenant_grant_ids`) ; le bord de l'appel la débite une fois l'outil revenu sans erreur
+(`access.reglement`), au même point que le compteur plateforme. Un appel qui échoue chez le
+fournisseur ne compte plus. Hors relevé d'appel (face REST, commande de maintenance), il n'y a
+pas de bord pour régler : le débit se fait à la résolution, comme avant L8.
 
 **L'anonyme** (`<slug>.mcp.oto.cx`, ADR 0032) n'a pas d'identité : il n'obtient l'étage tenant
 que par une **arête vivante** tenant→org (`grants_chain.tenant_for_org`), jamais par le

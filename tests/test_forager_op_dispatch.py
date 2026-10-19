@@ -349,8 +349,8 @@ def trace(monkeypatch):
 @pytest.fixture
 def platform_usage(monkeypatch):
     calls: list = []
-    monkeypatch.setattr("oto_mcp.access.record_platform_usage",
-                        lambda provider, *a, **kw: calls.append(provider))
+    from _releve import capter_units
+    capter_units(monkeypatch, "forager", lambda provider, n: calls.append(provider))
     return calls
 
 

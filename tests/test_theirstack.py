@@ -292,10 +292,10 @@ def _search_returning(n, monkeypatch, *, is_platform):
                         lambda provider, account=None: ("k", is_platform))
     payload = {"data": [{"id": i} for i in range(n)], "metadata": {}}
     with patch("oto.tools.theirstack.client.TheirStackClient") as cls, \
-         patch("oto_mcp.tools.theirstack.access.record_platform_usage") as rec, \
          patch("oto_mcp.tools.theirstack.session_org.note_call_trace") as trace:
         cls.return_value.search_jobs.return_value = payload
         _tool("theirstack_jobs_search").fn(company_names=["acme"])
+    rec = [c.kwargs["units"] for c in trace.call_args_list if "units" in c.kwargs]
     return rec, trace
 
 
@@ -304,13 +304,13 @@ def test_une_cle_plateforme_debite_le_quota_oto_au_nombre_de_RECORDS(monkeypatch
     appel qui rend 50 offres doit débiter 50, sinon notre propre quota compte
     des appels pendant que le fournisseur compte des records."""
     rec, _ = _search_returning(50, monkeypatch, is_platform=True)
-    rec.assert_called_once_with("theirstack", 50)
+    assert rec == [50]
 
 
 def test_une_cle_du_CLIENT_ne_debite_jamais_notre_quota(monkeypatch):
     """Le client apporte sa clé : c'est SON quota chez TheirStack qui bouge."""
     rec, _ = _search_returning(50, monkeypatch, is_platform=False)
-    rec.assert_not_called()
+    assert rec == []
 
 
 def test_le_metrage_lui_est_INCONDITIONNEL(monkeypatch):
@@ -320,14 +320,17 @@ def test_le_metrage_lui_est_INCONDITIONNEL(monkeypatch):
     que le tool ait à connaître la règle de facturation."""
     for platform in (True, False):
         _, trace = _search_returning(7, monkeypatch, is_platform=platform)
-        trace.assert_called_once_with(quantity=7)
+        trace.assert_any_call(quantity=7)
 
 
-def test_une_page_vide_sur_cle_plateforme_ne_debite_rien(monkeypatch):
-    """Zéro record rendu = zéro crédit chez TheirStack, donc zéro chez nous."""
+def test_une_page_vide_sur_cle_plateforme_debite_1_comme_avant(monkeypatch):
+    """Zéro record rendu = zéro crédit chez TheirStack, mais notre quota en débitait 1 :
+    l'ancien compteur plafonnait tout débit à 1 au minimum. L8 garde le montant
+    (`docs/credits-au-moment-de-l-appel.md`, écarts connus) ; la quantité facturée,
+    elle, reste 0."""
     rec, trace = _search_returning(0, monkeypatch, is_platform=True)
-    rec.assert_called_once_with("theirstack", 0)
-    trace.assert_called_once_with(quantity=0)   # 0 TRACÉ ≠ non tracé
+    assert rec == [1]
+    trace.assert_any_call(quantity=0)   # 0 TRACÉ ≠ non tracé
 
 
 def test_verify_probe_counts_a_decimal_usage():
