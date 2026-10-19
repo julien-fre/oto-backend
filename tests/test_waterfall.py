@@ -144,8 +144,8 @@ def test_les_cles_de_l_appelant_passent_devant(calls):
     order = [a["provider"] for a in out["attempts"]]
     # Propres clés d'abord, dans l'ordre du défaut (kaspr avant lusha), puis le reste.
     assert order[:2] == ["kaspr", "lusha"]
-    assert order[2:] == ["hunter", "apollo", "aiark", "forager", "dropcontact", "lemlist",
-                         "fullenrich"]
+    assert order[2:] == ["hunter", "apollo", "aiark", "dropcontact", "lemlist", "fullenrich",
+                         "forager"]
     assert out["attempts"][0]["key"] == "user"
 
 
@@ -200,7 +200,9 @@ def test_garde_et_echec_passent_la_main(calls):
     calls["answers"]["forager_person"] = IssueCible(ok=False, code="quota_exhausted", message="no credits")
     calls["answers"]["lusha_search_and_enrich"] = IssueCible(ok=True, result={
         "results": [{"phones": [{"number": "+33 6 12 34 56 78", "phoneType": "mobile"}]}]})
-    out = _run("waterfall_phone", linkedin_url="https://www.linkedin.com/in/Jane-Doe/?trk=x")
+    # Lusha passes before Forager (◎ 33): it is the one that must find, after Forager's failure.
+    out = _run("waterfall_phone", linkedin_url="https://www.linkedin.com/in/Jane-Doe/?trk=x",
+               providers=["kaspr", "forager", "lusha"])
     assert out["provider"] == "lusha" and out["phone"]["phone"] == "+33 6 12 34 56 78"
     by = {a["provider"]: a for a in out["attempts"]}
     assert by["kaspr"]["status"] == "skipped" and by["kaspr"]["code"] == "connector_disabled"
@@ -473,7 +475,9 @@ def test_le_plan_est_servi_par_une_capacite_rest_qui_refuse_un_autre_connecteur(
 def test_rien_trouve_rend_un_recu_complet(calls):
     out = _run("waterfall_phone", linkedin_url="https://linkedin.com/in/jane")
     assert out["found"] is False and out["phone"] is None
-    assert [a["status"] for a in out["attempts"]] == ["no_match"] * len(waterfall.PHONE_STEPS)
+    # Apollo's reveal needs the caller's own key (the fixture's keys are Tulina's): skipped.
+    assert [a["status"] for a in out["attempts"]] == [
+        "skipped" if s.own_key_only else "no_match" for s in waterfall.PHONE_STEPS]
 
 
 # --- les asynchrones ajoutés : FullEnrich, Dropcontact, révélation Apollo ----------
@@ -509,6 +513,7 @@ def test_dropcontact_email_ecarte_une_adresse_qu_il_dit_invalide(calls):
 
 
 def test_revelation_apollo_mobile_d_abord_et_sans_correspondance_rien_n_est_releve(calls):
+    calls["modes"] = {"apollo_reveal_phone": "org"}    # own key only
     calls["answers"]["apollo_reveal_phone"] = IssueCible(ok=True, result={"request_id": 123})
     calls["answers"]["apollo_reveal_phone_result"] = IssueCible(ok=True, result={
         "done": True, "result": {"webhook_result": {"people": [{"phone_numbers": [
@@ -526,6 +531,7 @@ def test_revelation_apollo_mobile_d_abord_et_sans_correspondance_rien_n_est_rele
 
 
 def test_revelation_apollo_non_livree_n_est_pas_un_trouve(calls):
+    calls["modes"] = {"apollo_reveal_phone": "org"}    # own key only
     calls["answers"]["apollo_reveal_phone"] = IssueCible(ok=True, result={"request_id": "9"})
     calls["answers"]["apollo_reveal_phone_result"] = IssueCible(ok=True, result={
         "done": True, "delivered": False, "reason": "out_of_credits"})
@@ -652,3 +658,65 @@ def test_la_recherche_apollo_dit_le_prix_de_la_revelation():
     row = waterfall._step_row(waterfall.PEOPLE_STEPS[0], ns="waterfall_people")
     assert row["key"] == "apollo"
     assert row["price"]["rate"] == {"tool": "apollo_search_people", "reveal": "apollo_match_person"}
+
+
+
+# --- ordre par défaut : crédits × résultats ---------------------------------------
+
+def test_les_etapes_cheres_de_tulina_passent_apres_les_moins_cheres():
+    assert [s.key for s in waterfall.EMAIL_STEPS][-2:] == ["fullenrich", "forager"]
+    phone = [s.key for s in waterfall.PHONE_STEPS]
+    assert phone.index("lusha") < phone.index("forager") < phone.index("fullenrich")
+    assert phone.index("apollo") < phone.index("forager")
+
+
+def test_des_noms_masques_ne_stoppent_pas_la_cascade_mais_restent_le_repli(calls):
+    calls["answers"]["apollo_search_people"] = IssueCible(ok=True, result={"people": [
+        {"id": "a1", "first_name": "Jane", "last_name_obfuscated": "Do***e", "title": "VP Sales"}]})
+    calls["answers"]["serper_search"] = IssueCible(ok=True, result={"organic": [
+        {"title": "Jane Doe - VP Sales - Acme | LinkedIn",
+         "link": "https://linkedin.com/in/janedoe", "snippet": ""}]})
+    out = _run("waterfall_people", domain="acme.com", company_name="Acme",
+               providers=["apollo", "google"])
+    assert out["provider"] == "google"
+    assert out["people"]["people"][0]["full_name"] == "Jane Doe"
+    assert [a["status"] for a in out["attempts"]] == ["weak", "found"]
+
+    calls["made"].clear()
+    calls["answers"]["serper_search"] = IssueCible(ok=True, result={"organic": []})
+    out = _run("waterfall_people", domain="acme.com", company_name="Acme",
+               providers=["apollo", "google"])
+    # Rien de mieux : les noms masqués d'Apollo sont la réponse.
+    assert out["found"] is True and out["provider"] == "apollo"
+    assert out["people"]["people"][0]["apollo_id"] == "a1"
+
+
+def test_on_ne_demande_pas_plus_que_ce_que_l_etape_garde(calls):
+    _run("waterfall_people", domain="acme.com", providers=["aiark"], limit=7)
+    assert calls["made"][0][1]["size"] == 7
+    calls["made"].clear()
+    _run("waterfall_company", domain="acme.com", providers=["theirstack", "aiark"])
+    args = dict(calls["made"])
+    assert args["theirstack_companies_search"]["limit"] == 1
+    assert args["linkedin_aiark_search"]["size"] == 1
+
+
+def test_les_plafonds_de_prix_sont_servis():
+    row = lambda ns, key: waterfall._step_row(
+        next(s for s in waterfall.STEPS_BY_NAMESPACE[ns] if s.key == key), ns=ns)["price"]["rate"]
+    assert row("waterfall_people", "linkedin_employees")["max_usd"] == waterfall._APIFY_EMPLOYEES_MAX_USD
+    assert row("waterfall_company", "linkedin")["max_usd"] == waterfall._APIFY_MAX_USD * 2
+    assert row("waterfall_company", "aiark")["max_units"] == 3
+    assert row("waterfall_people", "aiark")["per_item"] is True
+
+
+
+def test_la_revelation_de_telephone_apollo_exige_la_cle_de_l_appelant(calls):
+    calls["modes"] = {"apollo_reveal_phone": "platform"}
+    out = _run("waterfall_phone", linkedin_url="https://linkedin.com/in/jane", providers=["apollo", "lusha"])
+    assert out["attempts"][0]["code"] == "own_key_required"
+    assert "apollo_reveal_phone" not in _made(calls)
+    calls["modes"] = {"apollo_reveal_phone": "org"}
+    calls["made"].clear()
+    _run("waterfall_phone", linkedin_url="https://linkedin.com/in/jane", providers=["apollo"])
+    assert _made(calls)[0] == "apollo_reveal_phone"

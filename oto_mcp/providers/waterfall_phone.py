@@ -19,7 +19,7 @@ CONNECTOR = _c(
     cardinality="mono", modules=("waterfall",),
     credential_fields=(CredentialField(
         "steps", "Steps, in order", secret=False, required=False,
-        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: kaspr, forager, lusha, apollo, lemlist, dropcontact, fullenrich."),),
+        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: kaspr, lusha, apollo, forager, lemlist, dropcontact, fullenrich."),),
     label="Phone waterfall",
     help="a person's phone number, across your connected providers one after the other, stopping at the "
          "first hit",
@@ -32,5 +32,5 @@ SANS_LOGO_DE_MARQUE = True
 CATEGORY = "Prospecting"
 
 DESCRIPTION = (
-    "Finds a person's phone number by trying your connected providers in turn — Kaspr, Forager, Lusha, Apollo, lemlist, Dropcontact, FullEnrich — and stopping at the first hit. Each is billed on its own key."
+    "Finds a person's phone number by trying your connected providers in turn — Kaspr, Lusha, Apollo, Forager, lemlist, Dropcontact, FullEnrich — and stopping at the first hit. Each is billed on its own key."
 )

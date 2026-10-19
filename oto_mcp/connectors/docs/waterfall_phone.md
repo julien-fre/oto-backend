@@ -1,7 +1,7 @@
 ## prerequisite — connect the providers you want it to try
 
 this connector has no key of its own: each step calls another connector's tool, with that connector's key.
-- connect the providers you want in the cascade on their own cards, and have them activated for your org — kaspr, forager, lusha, apollo (phone reveal, your own key), lemlist, dropcontact, fullenrich
+- connect the providers you want in the cascade on their own cards, and have them activated for your org — kaspr, lusha, apollo (phone reveal, your own key), forager, lemlist, dropcontact, fullenrich
 - with the default order, providers you hold your **own** key for (and the free steps) run first, the shared platform keys next; an order you write is kept as written
 - a provider with no usable key is skipped without being called
 - each step is billed by its provider exactly as a direct call would be — the waterfall adds no cost of its own
@@ -17,7 +17,7 @@ set **steps** on this card: the provider keys, comma-separated, in the order you
 ## usage — a person's phone number
 
 one person per call, stopping at the first provider that returns a number.
-- `waterfall_phone` — default order: kaspr → forager → lusha → apollo (reveal) → lemlist → dropcontact → fullenrich; the linkedin url opens the most steps
+- `waterfall_phone` — default order: kaspr → lusha → apollo (reveal, your own key) → forager → lemlist → dropcontact → fullenrich; the linkedin url opens the most steps
 - phone credits cost more than email credits: narrow the steps to the provider you want to spend on
 - apollo's reveal, lemlist, dropcontact and fullenrich answer asynchronously: each waits up to ~25 s, otherwise it is `pending` (see `pending` in the response) — fullenrich usually takes 30 s to 4 min
 - `dry_run=true` shows the plan without spending anything

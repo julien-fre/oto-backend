@@ -46,6 +46,16 @@ et son `key_mode` : la facturation reste sur la ligne du fournisseur, jamais sur
 du waterfall), et la rédaction de **son** namespace. Le waterfall n'a ni clé ni
 facturation propres.
 
+## Ce que l'ordre par défaut optimise
+
+Gratuit → clé de l'appelant (Tulina ne facture rien — même si le fournisseur facture
+l'org) → clé de Tulina la moins chère → la plus chère → les asynchrones (lentes, et
+facturées même quand elles finissent `pending`). On ne demande jamais à une étape plus
+d'unités facturées qu'elle n'en garde (AI Ark : `size` = la limite ; TheirStack : une
+société ; une recherche AI Ark par domaine : une), et le plan sert les PLAFONDS
+(`max_units`, `max_usd` d'une exécution Apify, `per_item`) pour qu'un écran ne montre jamais
+un prix unitaire là où l'étape peut en facturer plusieurs.
+
 ## D'où vient l'ordre
 
 Trois couches, la plus spécifique gagne :
@@ -129,10 +139,13 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
 
 ## Les étapes
 
-- **Email** : hunter → apollo → aiark → kaspr → forager → lusha → dropcontact → lemlist →
-  fullenrich (les asynchrones en dernier).
-- **Téléphone** : kaspr → forager → lusha → apollo (`apollo_reveal_phone`, clé propre) →
-  lemlist → dropcontact → fullenrich (pas d'AI Ark ; les asynchrones en dernier).
+- **Email** : hunter → apollo → aiark → kaspr → lusha → dropcontact → lemlist → fullenrich →
+  forager (les asynchrones vers la fin ; Forager en dernier : sur la clé de Tulina, une
+  recherche d'email y coûte ◎ 11, deux fois un email FullEnrich).
+- **Téléphone** : kaspr → lusha → apollo (`apollo_reveal_phone`, clé propre : 0 crédit
+  Tulina) → forager (◎ 33 sur la clé de Tulina) → lemlist → dropcontact → fullenrich (◎ 60
+  par numéro trouvé). Pas d'AI Ark. ⚠️ Le seul waterfall où le défaut peut dépenser ◎ 93 sur
+  un non-trouvé (Forager + FullEnrich).
 - **Société** : `fr` (le registre français, UNE ligne à deux entrées : `fr_get` par SIREN,
   sinon `fr_search` par nom, France seulement, gratuit) → aiark
   (`linkedin_aiark_search op=companies`, domaine ou nom) → apollo (domaine) → theirstack
@@ -175,6 +188,11 @@ Appris sur une vraie liste (un salon professionnel, octobre 2026) : ces deux ét
 retrouvé les pages que les fournisseurs de données n'avaient pas, pour quelques centimes.
 
 ## Les gens d'une société (`waterfall_people`)
+
+⚠️ **Des noms masqués ne stoppent pas la cascade** (`Step.weak`) : la recherche d'Apollo
+est gratuite mais rend des noms de famille masqués ; elle est gardée comme REPLI, la
+cascade continue (google → aiark → employés LinkedIn), et ce repli n'est rendu que si rien
+de mieux ne vient. Le reçu marque l'étape `weak`.
 
 Une société en entrée (domaine, nom, page LinkedIn), des `roles` facultatifs, une
 `limit` (≤ 25) ; la première source qui rend au moins une personne gagne. Une personne

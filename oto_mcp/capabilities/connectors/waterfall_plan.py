@@ -40,7 +40,8 @@ class WaterfallStep(BaseModel):
     price: Optional[dict] = Field(default=None, description=(
         "What the step costs in Tulina credits on Tulina's key, as data: `rate` = the tool "
         "Tulina bills and the row of the published credit grid that applies (`pick`); "
-        "`reveal` = for a free step, the tool billed per person to reveal what it found. On "
+        "`reveal` = for a free step, the tool billed per person to reveal what it found; "
+        "`max_units` / `max_usd` / `per_item` = the ceiling of what one call can bill. On "
         "your own key Tulina bills nothing. Null for a free step."))
     fills: Optional[str] = Field(default=None, description=(
         "A completion step: it runs after the cascade, only when the find still lacks "

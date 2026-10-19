@@ -19,7 +19,7 @@ CONNECTOR = _c(
     cardinality="mono", modules=("waterfall",),
     credential_fields=(CredentialField(
         "steps", "Steps, in order", secret=False, required=False,
-        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: apollo, aiark, linkedin_employees, google."),),
+        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: apollo, google, aiark, linkedin_employees."),),
     label="People at a company",
     help="the people working at a company — its decision-makers by role — across your connected "
          "providers, stopping at the first that finds them",
@@ -33,6 +33,6 @@ CATEGORY = "Prospecting"
 
 DESCRIPTION = (
     "Finds the people working at a company — its decision-makers when you give roles — "
-    "through Apollo, AI Ark, the company's LinkedIn employees, then Google, stopping at the "
+    "through Apollo, Google, AI Ark, then the company's LinkedIn employees, stopping at the "
     "first source that finds them. Each is billed on its own key."
 )

@@ -253,6 +253,14 @@ class Step:
     # run in order, each when its own inputs are there, until one finds the value. The
     # receipt says which one answered (`via`). A screen shows one step.
     variants: tuple["Step", ...] = ()
+    # A find too thin to stop on (Apollo's people search: every last name masked): kept
+    # as the FALLBACK while the cascade looks further, returned only if nothing better
+    # comes. The receipt marks the step `weak`.
+    weak: Optional[Callable[[object], bool]] = None
+    # The provider's tool refuses Tulina's shared key for this gesture (Apollo's phone
+    # reveal): on any key but the caller's own, the step is skipped BEFORE the call, and
+    # a screen lists it with the ones to connect.
+    own_key_only: bool = False
 
 
 def _payload(issue):
@@ -461,6 +469,11 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
         attempt.update(status="skipped", code="missing_input",
                        message=f"needs {_missing(step)}")
         return None
+    if step.own_key_only and mode not in _OWN_KEY and mode != "unknown":
+        attempt.update(status="skipped", code="own_key_required",
+                       message="this step needs your own key for this provider — Tulina's "
+                               "shared key does not serve it")
+        return None
     if mode in _NO_KEY:
         attempt.update(status="skipped", code="no_key", message=(
             "no usable key for this provider — connect yours on its card"
@@ -521,6 +534,7 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
     attempts: list[dict] = []
     pending: list[dict] = []
     found, winner = None, None
+    fallback, fallback_step = None, None
     for step in order:
         if step.fills:
             continue
@@ -529,9 +543,17 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
         attempt = {"provider": step.key, "tool": step.tool,
                    "key": modes.get(step.tool, "unknown")}
         attempts.append(attempt)
-        found = await _run_step(mcp, sub, step, attempt["key"], inputs, dry_run,
-                                deadline, attempt, pending)
+        got = await _run_step(mcp, sub, step, attempt["key"], inputs, dry_run,
+                              deadline, attempt, pending)
+        if got is not None and step.weak is not None and step.weak(got):
+            attempt.update(status="weak")
+            if fallback is None:
+                fallback, fallback_step = got, step.key
+            continue
+        found = got
         winner = step.key if found is not None else None
+    if found is None and fallback is not None:
+        found, winner = fallback, fallback_step
     for step in order:
         if not step.fills:
             continue
@@ -836,14 +858,10 @@ EMAIL_STEPS: tuple[Step, ...] = (
          lambda i: {"linkedin_id": i["linkedin_url"], "data_to_get": ["workEmail"],
                     **({"name": i["full_name"]} if i.get("full_name") else {})},
          _kaspr_email, "1 Kaspr credit per email"),
-    Step("forager", "forager_person", (("linkedin_url",),),
-         lambda i: {"op": "work_emails",
-                    "linkedin_public_identifier": _slug(i["linkedin_url"])},
-         _forager_email, "1 Forager credit (own key only)"),
     Step("lusha", "lusha_search_and_enrich", _PERSON_IDS,
          lambda i: {"contacts": [_lusha_contact(i)], "reveal": ["emails"]},
          _lusha_email, "Lusha credits per revealed email"),
-    # The asynchronous ones last: each may wait up to `POLL_BUDGET_S` for its answer.
+    # The asynchronous ones next: each may wait up to `POLL_BUDGET_S` for its answer.
     Step("dropcontact", "dropcontact_enrich", _DROPCONTACT_IDS,
          _dropcontact_args, _dropcontact_email,
          "1 Dropcontact credit per email found (own key only; asynchronous)",
@@ -855,7 +873,12 @@ EMAIL_STEPS: tuple[Step, ...] = (
     Step("fullenrich", "fullenrich_enrich_linkedin", _FULLENRICH_IDS,
          lambda i: _fullenrich_args(i, "contact.work_emails"), _fullenrich_email,
          "1 FullEnrich credit per work email found (asynchronous, ~30 s to 4 min)",
-         collect=_FULLENRICH_COLLECT),
+         collect=_FULLENRICH_COLLECT),    # Forager last: on Tulina's key an email lookup is ◎ 11 — twice a FullEnrich email.
+    Step("forager", "forager_person", (("linkedin_url",),),
+         lambda i: {"op": "work_emails",
+                    "linkedin_public_identifier": _slug(i["linkedin_url"])},
+         _forager_email, "1 Forager credit (own key only)"),
+
 )
 
 
@@ -909,18 +932,19 @@ PHONE_STEPS: tuple[Step, ...] = (
                     "data_to_get": ["phone"],
                     **({"name": i["full_name"]} if i.get("full_name") else {})},
          _kaspr_phone, "1 Kaspr credit per phone"),
+    Step("lusha", "lusha_search_and_enrich", _PERSON_IDS,
+         lambda i: {"contacts": [_lusha_contact(i)], "reveal": ["phones"]},
+         _lusha_phone, "Lusha credits per revealed phone"),
+    # Apollo's reveal runs on your own key only (0 Tulina credits), before the ◎ 33
+    # Forager lookup; the slow ones last — FullEnrich (◎ 60 per phone found) at the end.
+    Step("apollo", "apollo_reveal_phone", _PERSON_IDS,
+         _apollo_args, _apollo_reveal_phone,
+         "~9 Apollo credits per reveal (own key only; asynchronous)",
+         collect=_APOLLO_REVEAL_COLLECT, own_key_only=True),
     Step("forager", "forager_person", (("linkedin_url",),),
          lambda i: {"op": "phone_numbers",
                     "linkedin_public_identifier": _slug(i["linkedin_url"])},
          _forager_phone, "Forager credits on a hit only"),
-    Step("lusha", "lusha_search_and_enrich", _PERSON_IDS,
-         lambda i: {"contacts": [_lusha_contact(i)], "reveal": ["phones"]},
-         _lusha_phone, "Lusha credits per revealed phone"),
-    # The asynchronous ones last: each may wait up to `POLL_BUDGET_S` for its answer.
-    Step("apollo", "apollo_reveal_phone", _PERSON_IDS,
-         _apollo_args, _apollo_reveal_phone,
-         "~9 Apollo credits per reveal (own key only; asynchronous)",
-         collect=_APOLLO_REVEAL_COLLECT),
     Step("lemlist", "lemlist_enrich", (("linkedin_url",), _NAMES_AND_DOMAIN),
          lambda i: _lemlist_args(i, find_phone=True),
          _lemlist_phone, "lemlist credits per phone found (own key only; asynchronous)",
@@ -1014,7 +1038,10 @@ def _aiark_company_args(inputs: dict) -> dict:
     else:
         account = {"name": {"any": {"include": {"mode": "SMART",
                                                 "content": [inputs["company_name"]]}}}}
-    return {"op": "companies", "account": account, "size": 3}
+    # Billed PER PROFILE returned: a domain names one company (1); a name needs a few to
+    # step over namesakes (3) — never more than the step can use.
+    return {"op": "companies", "account": account,
+            "size": 1 if inputs.get("domain") else 3}
 
 
 def _aiark_company(res, inputs):
@@ -1080,6 +1107,8 @@ def _cognism_company(res, inputs):
 # list, 2026-10), where they recovered the pages the data vendors did not have.
 _APIFY_TIMEOUT_S = 25
 _APIFY_MAX_USD = 0.05
+#: The employees of a page, ~$0.003-0.008 a profile: `limit` (≤ 25) of them stays under it.
+_APIFY_EMPLOYEES_MAX_USD = 0.10
 
 
 def _apify_items(res) -> list:
@@ -1168,7 +1197,8 @@ COMPANY_STEPS: tuple[Step, ...] = (
     Step("apollo", "apollo_enrich_organization", (("domain",),),
          lambda i: {"domain": i["domain"]}, _apollo_company, "1 Apollo credit"),
     Step("theirstack", "theirstack_companies_search", (("domain",),),
-         lambda i: {"extra": {"company_domain_or": [i["domain"]]}, "limit": 3},
+         # Billed PER COMPANY returned (◎ 30 each): the domain names one — never ask 3.
+         lambda i: {"extra": {"company_domain_or": [i["domain"]]}, "limit": 1},
          _theirstack_company, "~3 TheirStack credits per company"),
     Step("cognism", "cognism_enrich_account", (("domain",), ("company_name",)),
          lambda i: {k: v for k, v in {"name": i.get("company_name"),
@@ -1436,27 +1466,33 @@ PEOPLE_STEPS: tuple[Step, ...] = (
              "domains": [i["domain"]], "titles": i.get("roles"),
              "person_locations": [i["country"]] if i.get("country") else None,
              "per_page": min(25, i["limit"] * 2)}.items() if v},
-         _apollo_people, "free search (names obfuscated; reveal per person: 1 Apollo credit)"),
-    Step("aiark", "linkedin_aiark_search", (("domain",),),
-         lambda i: {"op": "people",
-                    "account": {"domain": {"any": {"include": [i["domain"]]}}},
-                    "size": min(50, i["limit"] * 3)},
-         _aiark_people, "AI Ark credits per person returned"),
-    Step("linkedin_employees", "apify_run_sync", (("company_linkedin_url",),),
-         lambda i: {"actor_id": "harvestapi/linkedin-company-employees",
-                    "run_input": {"companies": [i["company_linkedin_url"]],
-                                  "maxItems": min(50, i["limit"] * 3)},
-                    "max_items": min(50, i["limit"] * 3),
-                    "timeout_secs": _APIFY_TIMEOUT_S,
-                    "max_total_charge_usd": _APIFY_MAX_USD * 4},
-         _employees, "Apify, ~$0.003-0.008 per profile",
-         label="LinkedIn employees"),
+         _apollo_people, "free search (names obfuscated; reveal per person: 1 Apollo credit)",
+         # Masked last names only: a fallback, never the answer while a source that
+         # names people fully is left to try.
+         weak=lambda found: all(p.get("name_obfuscated") for p in found["people"])),
+    # Then by price, full names first: google (◎ 1, names + LinkedIn URLs, low recall) →
+    # aiark (◎ 1 per profile) → the page's LinkedIn employees (Apify, up to ◎ 30).
     Step("google", "serper_search", (("company_name",), ("domain",)),
          lambda i: {"query": f'"{i.get("company_name") or i["domain"].split(".")[0]}" '
                              f"({_role_query(i)})",
                     "site_filter": "linkedin.com/in", "num": 10, "country": None,
                     "language": None},
-         _serper_people, "1 Serper search", label="Google — LinkedIn profiles"),
+         _serper_people, "1 Serper search", label="Google — LinkedIn profiles"),    Step("aiark", "linkedin_aiark_search", (("domain",),),
+         lambda i: {"op": "people",
+                    "account": {"domain": {"any": {"include": [i["domain"]]}}},
+                    # Billed PER PROFILE returned: ask what the call keeps, not 3×.
+                    "size": i["limit"]},
+         _aiark_people, "AI Ark credits per person returned"),
+    Step("linkedin_employees", "apify_run_sync", (("company_linkedin_url",),),
+         lambda i: {"actor_id": "harvestapi/linkedin-company-employees",
+                    "run_input": {"companies": [i["company_linkedin_url"]],
+                                  "maxItems": i["limit"]},
+                    "max_items": i["limit"],
+                    "timeout_secs": _APIFY_TIMEOUT_S,
+                    "max_total_charge_usd": _APIFY_EMPLOYEES_MAX_USD},
+         _employees, "Apify, ~$0.003-0.008 per profile",
+         label="LinkedIn employees"),
+
 )
 
 
@@ -1466,7 +1502,10 @@ PEOPLE_STEPS: tuple[Step, ...] = (
 #: screen: the tool Tulina BILLS for the step (the collect tool, for FullEnrich) and,
 #: when that tool has several prices, which row of the published credit grid applies
 #: (`pick`: the row's `kind` or short name); `reveal`: the tool that turns what a FREE
-#: step found into something usable, billed per person. The figure lives in the grid, never
+#: step found into something usable, billed per person; `max_units`: the most units one
+#: call can bill (a company search by name returns up to 3 profiles); `max_usd`: the cost
+#: ceiling of an Apify run (its grid rate is per $0.01 of run cost); `per_item`: billed per
+#: result returned, up to the call's own `limit`. The figure lives in the grid, never
 #: here. A step absent from this table is billed on its own tool, if at all; on the
 #: caller's OWN key, Tulina bills nothing — what the provider takes is not shown.
 PRICES: dict[tuple[str, str], dict] = {
@@ -1477,10 +1516,10 @@ PRICES: dict[tuple[str, str], dict] = {
                                         "pick": "work_emails"},
     ("waterfall_phone", "forager"): {"tool": "forager_person", "pick": "phone"},
     ("waterfall_phone", "fullenrich"): {"tool": "fullenrich_result", "pick": "phones"},
-    ("waterfall_company", "aiark"): {"tool": "linkedin_aiark_search"},
+    ("waterfall_company", "aiark"): {"tool": "linkedin_aiark_search", "max_units": 3},
     ("waterfall_company", "apollo"): {"tool": "apollo_enrich_organization"},
     ("waterfall_company", "theirstack"): {"tool": "theirstack_companies_search"},
-    ("waterfall_company", "linkedin"): {"tool": "apify_run_sync"},
+    ("waterfall_company", "linkedin"): {"tool": "apify_run_sync", "max_usd": _APIFY_MAX_USD * 2},
     ("waterfall_person", "aiark"): {"tool": "linkedin_aiark_person"},
     ("waterfall_person", "apollo"): {"tool": "apollo_match_person"},
     ("waterfall_person", "forager"): {"tool": "forager_person",
@@ -1489,8 +1528,9 @@ PRICES: dict[tuple[str, str], dict] = {
     # says that price, or the free search reads as the whole cost.
     ("waterfall_people", "apollo"): {"tool": "apollo_search_people",
                                      "reveal": "apollo_match_person"},
-    ("waterfall_people", "aiark"): {"tool": "linkedin_aiark_search"},
-    ("waterfall_people", "linkedin_employees"): {"tool": "apify_run_sync"},
+    ("waterfall_people", "aiark"): {"tool": "linkedin_aiark_search", "per_item": True},
+    ("waterfall_people", "linkedin_employees"): {"tool": "apify_run_sync",
+                                                 "max_usd": _APIFY_EMPLOYEES_MAX_USD},
     ("waterfall_people", "google"): {"tool": "serper_search"},
 }
 
@@ -1524,7 +1564,10 @@ def _step_row(step: Step, mode: Optional[str] = None, ns: Optional[str] = None) 
            "asynchronous": step.collect is not None}
     if mode is not None:
         row["key_mode"] = mode
-        row["usable"] = mode not in _NO_KEY
+        row["usable"] = mode not in _NO_KEY and not (
+            step.own_key_only and mode not in _OWN_KEY and mode != "unknown")
+    if step.own_key_only:
+        row["own_key_only"] = True
     return row
 
 
@@ -1572,12 +1615,13 @@ def register(mcp: FastMCP) -> None:
         stopping at the FIRST that returns one (native waterfall).
 
         Steps (default order): hunter (name + domain) → apollo (LinkedIn URL, or name +
-        domain / company) → aiark (LinkedIn URL) → kaspr (LinkedIn URL) → forager
-        (LinkedIn URL) → lusha (LinkedIn URL, or name + domain / company) → then the
-        asynchronous ones: dropcontact (LinkedIn URL, or name + company / domain) →
-        lemlist (LinkedIn URL, or name + domain) → fullenrich (LinkedIn URL, or name +
-        domain — usually 30 s to 4 min, so often `pending`). The email is NOT verified
-        here.
+        domain / company) → aiark (LinkedIn URL) → kaspr (LinkedIn URL) → lusha (LinkedIn
+        URL, or name + domain / company) → then the asynchronous ones: dropcontact
+        (LinkedIn URL, or name + company / domain) → lemlist (LinkedIn URL, or name +
+        domain) → fullenrich (LinkedIn URL, or name + domain — usually 30 s to 4 min, so
+        often `pending`) → forager last (LinkedIn URL — on Tulina's key the dearest email
+        lookup). A slow step is billed even when its answer comes back `pending`. The
+        email is NOT verified here.
 
         {_ORDER_DOC}
 
@@ -1608,13 +1652,14 @@ def register(mcp: FastMCP) -> None:
     @documente(f"""Find ONE person's phone number, trying providers in turn and stopping at
         the FIRST that returns one (native waterfall).
 
-        Steps (default order): kaspr (LinkedIn URL) → forager (LinkedIn URL) → lusha
-        (LinkedIn URL, or name + domain / company) → then the asynchronous ones: apollo
-        (phone reveal, your own Apollo key; LinkedIn URL, or name + domain / company) →
-        lemlist (LinkedIn URL, or name + domain) → dropcontact (LinkedIn URL, or name +
-        company / domain) → fullenrich (LinkedIn URL, or name + domain — usually 30 s to
-        4 min, so often `pending`). The LinkedIn URL opens the most steps. Phone credits
-        cost more than email credits.
+        Steps (default order): kaspr (LinkedIn URL) → lusha (LinkedIn URL, or name +
+        domain / company) → apollo (phone reveal, your own Apollo key — asynchronous;
+        LinkedIn URL, or name + domain / company) → forager (LinkedIn URL — on Tulina's
+        key a phone lookup is dear) → then the asynchronous ones: lemlist (LinkedIn URL,
+        or name + domain) → dropcontact (LinkedIn URL, or name + company / domain) →
+        fullenrich (LinkedIn URL, or name + domain — usually 30 s to 4 min, so often
+        `pending`). A slow step is billed even when its answer comes back `pending`. The
+        LinkedIn URL opens the most steps. Phone credits cost more than email credits.
 
         {_ORDER_DOC}
 
@@ -1721,11 +1766,12 @@ def register(mcp: FastMCP) -> None:
         least one matching person (native waterfall).
 
         Steps (default order): apollo (domain — a free search; last names come back
-        obfuscated, reveal one by its `apollo_id` with `apollo_match_person`) → aiark
-        (domain) → linkedin_employees (the company's LinkedIn page — current titles
-        straight from LinkedIn, often fresher than the data vendors; get the page with
-        `waterfall_company`) → google (name or domain — LinkedIn profiles found on
-        Google). A person is kept only when their title matches one of `roles` (when
+        MASKED, reveal one by its `apollo_id` with `apollo_match_person`, a paid match:
+        masked names alone do NOT stop the cascade, they are its fallback) → google (name
+        or domain — LinkedIn profiles found on Google, full names) → aiark (domain) →
+        linkedin_employees (the company's LinkedIn page — current titles straight from
+        LinkedIn, often fresher than the data vendors; get the page with
+        `waterfall_company`). A person is kept only when their title matches one of `roles` (when
         given), and, for LinkedIn and Google, only when their CURRENT company is the
         one asked for: a company page or a search pulls in people from elsewhere.
 

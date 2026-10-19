@@ -9,7 +9,7 @@ this connector has no key of its own: each step calls another connector's tool, 
 
 ## setup — choose your steps (optional)
 
-set **steps** on this card: the provider keys, comma-separated, in the order you want — e.g. `linkedin_employees,apollo,google`.
+set **steps** on this card: the provider keys, comma-separated, in the order you want — e.g. `google,linkedin_employees,apollo`.
 - an org admin sets it for the whole org; any member can set their own, which wins for them
 - empty = the default order; a key that is not a step of this waterfall is ignored (the response names it under `ignored_steps`)
 - `providers=[…]` on a call overrides both, for that call only
@@ -17,7 +17,7 @@ set **steps** on this card: the provider keys, comma-separated, in the order you
 ## usage — the people at a company
 
 one company per call, stopping at the first source that returns at least one matching person.
-- `waterfall_people` — default order: apollo (domain) → aiark (domain) → linkedin_employees (the company's linkedin page) → google (linkedin profiles on google)
+- `waterfall_people` — default order: apollo (domain, free — masked last names don't stop the cascade, they're its fallback) → google (linkedin profiles on google, full names) → aiark (domain) → linkedin_employees (the company's linkedin page)
 - pass `roles` (e.g. `["sales", "CEO"]`) to keep only the decision-makers you want, `country` for a local subsidiary of a global domain, `limit` (≤ 25)
 - apollo's search hides last names: reveal someone with `apollo_match_person(person_id=<apollo_id>)`, never by name + company
 - no linkedin page yet? `waterfall_company` finds it (from the website, then by name)
