@@ -17,7 +17,7 @@ set **steps** on this card: the provider keys, comma-separated, in the order you
 ## usage — a person's professional email
 
 one person per call, stopping at the first provider that returns an email.
-- `waterfall_email` — default order: hunter (name + domain) → apollo → aiark → kaspr → lusha → dropcontact → lemlist → fullenrich → forager (last: on tulina's key the dearest email lookup)
+- `waterfall_email` — default order: hunter (name + domain) → aiark → apollo → kaspr → lusha → dropcontact → lemlist → fullenrich → forager (last: on tulina's key the dearest email lookup)
 - dropcontact, lemlist and fullenrich answer asynchronously: each step waits up to ~25 s, otherwise it is `pending` and the response gives the collect call to make later (fullenrich usually takes 30 s to 4 min)
 - the email is not verified here — chain `zerobounce_verify_email` or `hunter_email_verify` if you need it
 - `dry_run=true` shows the plan (order, key per step, arguments) without spending anything

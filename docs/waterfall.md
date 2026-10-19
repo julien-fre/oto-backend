@@ -139,7 +139,8 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
 
 ## Les étapes
 
-- **Email** : hunter → apollo → aiark → kaspr → lusha → dropcontact → lemlist → fullenrich →
+- **Email** : hunter → aiark (◎ 1 — sur une vraie liste, les mêmes emails qu'Apollo, ◎ 2,
+  qui facture sa correspondance même sans email) → apollo → kaspr → lusha → dropcontact → lemlist → fullenrich →
   forager (les asynchrones vers la fin ; Forager en dernier : sur la clé de Tulina, une
   recherche d'email y coûte ◎ 11, deux fois un email FullEnrich).
 - **Téléphone** : kaspr → lusha → apollo (`apollo_reveal_phone`, clé propre : 0 crédit
@@ -206,6 +207,28 @@ poste ACTUEL est ailleurs, et des faux profils : gardés seulement si
 `currentPosition[0].companyUniversalName` est la page demandée) → google (`serper_search`
 sur `linkedin.com/in`, un titre « Nom – Poste – Société | LinkedIn », gardé seulement s'il
 nomme la société).
+
+## Essai réel (19/10/2026, exposants d'un salon professionnel)
+
+Ce que les vraies réponses ont appris, et qui est désormais figé par des tests
+(`test_reel_*`, réponses anonymisées) :
+
+- ⚠️ **Apify refuse une exécution dont le plafond est sous 0,50 \$**
+  (`max-total-charge-usd-below-minimum`) : les plafonds sont ce minimum, et un écran
+  montre le coût TYPIQUE (`typical_usd`), jamais le plafond comme prix.
+- AI Ark écrit le statut d'un email en capitales (`VALID`).
+- Apollo trouve des personnes sans email (`email_status: unavailable`) — facturées quand
+  même — et rend leur URL LinkedIn encodée en pourcents : la personne rendue garde l'URL
+  de l'appelant.
+- Google : le `subtitle` (« Lieu · Titre · Société ») est fiable, le `title` ne l'est pas ;
+  un extrait qui MENTIONNE les mots de la société n'en fait pas un employé. Sur un nom peu
+  distinctif, la recherche ne rend que du bruit — d'où la société exigée dans le résultat.
+- Une recherche LinkedIn par nom rend d'abord un homonyme (vérifié : une cimenterie pour
+  une société d'IA) : la garde par domaine est indispensable.
+- Les sources rendent les gens dans leur ordre (un ingénieur avant le CTO) : la cascade
+  les range par séniorité avant d'appliquer la limite.
+- lemlist a répondu en ~25 s (dans la fenêtre), FullEnrich en ~80 s (donc `pending`).
+- Votre LinkedIn non connecté : l'étape gratuite est `skipped / not_connected`, pas un échec.
 
 ## Ajouter une étape
 

@@ -412,11 +412,22 @@ async def _call(mcp: FastMCP, sub, tool_name: str, args: dict, attempt: dict):
         return None
 
 
+#: A step refused because the caller's own account is not linked (measured: "Connect
+#: your Linkedin account at … before using these tools").
+_NOT_CONNECTED = re.compile(r"\bConnect your \w+ account\b", re.I)
+
+
 def _judge(issue, attempt: dict) -> bool:
     """Records a non-usable outcome on `attempt`; True if the result can be read."""
     if not issue.ok and issue.code == "not_found":
         # The provider answered "no such person/company" with a 404: a miss.
         attempt.update(status="no_match")
+        return False
+    if not issue.ok and _NOT_CONNECTED.search(issue.message or ""):
+        # The caller's OWN account is not linked (their LinkedIn, for the free step): not
+        # a failure of the provider — the step is skipped, and the receipt says why.
+        attempt.update(status="skipped", code="not_connected",
+                       message=(issue.message or "")[:300])
         return False
     if not issue.ok:
         attempt.update(status="failed", code=issue.code,
@@ -801,7 +812,8 @@ def _aiark_email(res, inputs):
     out = _get(res, "email.output") or []
     # The verified addresses first: AI Ark rates each one.
     ranked = sorted((o for o in out if isinstance(o, dict)),
-                    key=lambda o: 0 if o.get("status") == "valid" else 1)
+                    # AI Ark writes the status in capitals ("VALID").
+                    key=lambda o: 0 if str(o.get("status", "")).lower() == "valid" else 1)
     emails = _emails_in([o.get("address") for o in ranked])
     return _email_find(emails, ranked[0].get("status") if emails else None)
 
@@ -849,11 +861,13 @@ EMAIL_STEPS: tuple[Step, ...] = (
          lambda i: {"domain": i["domain"], "first_name": i["first_name"],
                     "last_name": i["last_name"]},
          _hunter_email, "1 Hunter credit"),
-    Step("apollo", "apollo_match_person", _PERSON_IDS,
-         _apollo_args, _apollo_email, "1 Apollo credit"),
+    # AI Ark before Apollo: on a real list both found the same emails, AI Ark for ◎ 1 and
+    # the whole profile, Apollo for ◎ 2 — and Apollo bills its match even without email.
     Step("aiark", "linkedin_aiark_person", (("linkedin_url",),),
          lambda i: {"op": "export", "url": i["linkedin_url"]},
          _aiark_email, "AI Ark export credits"),
+    Step("apollo", "apollo_match_person", _PERSON_IDS,
+         _apollo_args, _apollo_email, "1 Apollo credit"),
     Step("kaspr", "kaspr_enrich_linkedin", (("linkedin_url",),),
          lambda i: {"linkedin_id": i["linkedin_url"], "data_to_get": ["workEmail"],
                     **({"name": i["full_name"]} if i.get("full_name") else {})},
@@ -1064,6 +1078,9 @@ def _aiark_company(res, inputs):
             "country": _pick(rec, "location.headquarter.country", "location.country"),
             "linkedin_url": _pick(rec, "link.linkedin"),
             "founded": _pick(rec, "summary.founded_year", "summary.founded"),
+            # A RANGE ("100000-500000"), as AI Ark gives it — never a guessed figure.
+            "revenue_range": _pick(rec, "financial.revenue.annual.amount"),
+            "phone": _pick(rec, "contact.phone.sanitized", "contact.phone.raw"),
         }, ("name",))
     return None
 
@@ -1106,9 +1123,16 @@ def _cognism_company(res, inputs):
 # on Apify's side, a cost ceiling): learned on a real list (a trade-show exhibitor
 # list, 2026-10), where they recovered the pages the data vendors did not have.
 _APIFY_TIMEOUT_S = 25
-_APIFY_MAX_USD = 0.05
-#: The employees of a page, ~$0.003-0.008 a profile: `limit` (≤ 25) of them stays under it.
-_APIFY_EMPLOYEES_MAX_USD = 0.10
+#: ⚠️ Apify REFUSES a run whose cost ceiling is under $0.50 (`max-total-charge-usd-below-
+#: minimum`, measured on a live run 2026-10-19): the ceiling is that minimum, not the
+#: expected cost. What a run TYPICALLY costs is what a screen shows (`typical_usd`): a
+#: site scrape ~$0.006 (52 sites for ~$0.30 on a real list), a page's employees
+#: ~$0.003-0.008 a profile.
+_APIFY_MAX_USD = 0.50
+_APIFY_EMPLOYEES_MAX_USD = 0.50
+_APIFY_SITE_TYPICAL_USD = 0.006
+_APIFY_SEARCH_TYPICAL_USD = 0.01
+_APIFY_EMPLOYEES_TYPICAL_USD_PER_PROFILE = 0.005
 
 
 def _apify_items(res) -> list:
@@ -1260,7 +1284,9 @@ def _apollo_person(res, inputs):
         company_name=org.get("name"),
         company_domain=_domain(org.get("primary_domain")),
         seniority=p.get("seniority"), city=p.get("city"), country=p.get("country"),
-        linkedin_url=p.get("linkedin_url") or inputs.get("linkedin_url"),
+        # The URL the caller gave, when there is one: Apollo answers it percent-encoded
+        # (`…/in/sinan-oru%c3%a7…`), which matches nothing the caller holds.
+        linkedin_url=inputs.get("linkedin_url") or p.get("linkedin_url"),
     )
 
 
@@ -1351,10 +1377,31 @@ def _matches_roles(title, roles) -> bool:
     return any(_norm_name(r) and f" {_norm_name(r)} " in f" {t} " for r in roles)
 
 
+_SENIORITY_WORDS = (
+    ("founder", "co founder", "owner", "ceo", "chief", "president", "managing director",
+     "geschaftsfuhrer", "general manager", "c suite", "cto", "cfo", "coo", "cmo", "cro"),
+    ("vp", "vice president", "head", "director", "partner"),
+    ("manager", "lead", "leader", "senior"),
+)
+
+
+def _seniority_rank(title, seniority) -> int:
+    """0 = the top (founder, C-level), then VP/head/director, then manager/lead, then
+    the rest — read from the provider's seniority when it has one, else the title."""
+    text = f" {_norm_name(f'{seniority or ''} {title or ''}'.replace('_', ' '))} "
+    for rank, words in enumerate(_SENIORITY_WORDS):
+        if any(f" {w} " in text for w in words):
+            return rank
+    return len(_SENIORITY_WORDS)
+
+
 def _people_find(people: list[dict], inputs: dict) -> Optional[dict]:
     """The people that name a person and match the roles asked, deduplicated by
     LinkedIn URL (else name), at most `limit` — a find when at least one remains."""
     out, seen = [], set()
+    # Decision-makers first: a source returns people in its own order (an engineer ahead
+    # of the CTO, measured on a real company), and `limit` would cut the wrong end.
+    people = sorted(people, key=lambda p: _seniority_rank(p.get("title"), p.get("seniority")))
     for p in people:
         p = {k: v for k, v in p.items() if v not in (None, "", [], {})}
         if not p.get("full_name") or not _matches_roles(p.get("title"), inputs.get("roles")):
@@ -1383,6 +1430,10 @@ def _apollo_people(res, inputs):
             # by this id, NEVER by name + company (it would mint an empty, billed record).
             "apollo_id": p.get("id"),
             "name_obfuscated": True if p.get("last_name_obfuscated") else None,
+            # What a reveal would bring — what tells a caller whom to spend it on.
+            "has_email": p.get("has_email"),
+            "has_direct_phone": (str(p.get("has_direct_phone")).lower().startswith("yes")
+                                 if p.get("has_direct_phone") is not None else None),
         })
     return _people_find(rows, inputs)
 
@@ -1435,22 +1486,33 @@ _LINKEDIN_RESULT = re.compile(r"^\s*(?P<name>[^|\-–—]+?)\s*[-–—]\s*(?P<r
 
 
 def _serper_people(res, inputs):
-    """Google results on `linkedin.com/in`: a title reads « Name – Title – Company |
-    LinkedIn ». Kept only when the result names the company (title or snippet)."""
+    """Google results on `linkedin.com/in`. The `subtitle` is the reliable part —
+    « Location · Title · Company » (or « Location · Company ») — the `title` varies
+    (« Name – Company », « Name - Headline »). A result counts only when the COMPANY it
+    names is the one asked: a snippet merely mentioning the words is not (« … additive
+    marking techniques … » is someone else, measured)."""
     asked = _norm_name(inputs.get("company_name") or (inputs.get("domain") or "").split(".")[0])
     rows = []
     for o in _get(res, "organic") or []:
         if not isinstance(o, dict) or "linkedin.com/in/" not in str(o.get("link", "")):
             continue
-        text = _norm_name(f"{o.get('title', '')} {o.get('snippet', '')}")
-        if asked and f" {asked} " not in f" {text} ":
-            continue
         m = _LINKEDIN_RESULT.match(str(o.get("title", "")))
         if not m:
             continue
-        parts = [x.strip() for x in re.split(r"\s[-–—]\s", m.group("rest")) if x.strip()]
-        rows.append({"full_name": m.group("name").strip(),
-                     "title": parts[0] if parts else None,
+        name = m.group("name").strip()
+        sub = [x.strip() for x in str(o.get("subtitle") or "").split("·") if x.strip()]
+        rest = [x.strip() for x in re.split(r"\s[-–—]\s", m.group("rest")) if x.strip()]
+        if sub:
+            company = sub[-1]
+            title = sub[1] if len(sub) >= 3 else None
+        else:
+            # No subtitle: « Name – Title – Company », or « Name – Company ».
+            company = rest[-1] if rest else ""
+            title = rest[0] if len(rest) >= 2 else None
+        if asked and f" {asked} " not in f" {_norm_name(company)} ":
+            continue
+        rows.append({"full_name": name, "title": title,
+                     "location": sub[0] if len(sub) >= 2 else None,
                      "linkedin_url": str(o["link"]).split("?")[0]})
     return _people_find(rows, inputs)
 
@@ -1504,7 +1566,8 @@ PEOPLE_STEPS: tuple[Step, ...] = (
 #: (`pick`: the row's `kind` or short name); `reveal`: the tool that turns what a FREE
 #: step found into something usable, billed per person; `max_units`: the most units one
 #: call can bill (a company search by name returns up to 3 profiles); `max_usd`: the cost
-#: ceiling of an Apify run (its grid rate is per $0.01 of run cost); `per_item`: billed per
+#: ceiling of an Apify run (its grid rate is per $0.01 of run cost) and `typical_usd` what
+#: one usually costs — Apify's own minimum ceiling ($0.50) is far above it; `per_item`: billed per
 #: result returned, up to the call's own `limit`. The figure lives in the grid, never
 #: here. A step absent from this table is billed on its own tool, if at all; on the
 #: caller's OWN key, Tulina bills nothing — what the provider takes is not shown.
@@ -1519,7 +1582,9 @@ PRICES: dict[tuple[str, str], dict] = {
     ("waterfall_company", "aiark"): {"tool": "linkedin_aiark_search", "max_units": 3},
     ("waterfall_company", "apollo"): {"tool": "apollo_enrich_organization"},
     ("waterfall_company", "theirstack"): {"tool": "theirstack_companies_search"},
-    ("waterfall_company", "linkedin"): {"tool": "apify_run_sync", "max_usd": _APIFY_MAX_USD * 2},
+    ("waterfall_company", "linkedin"): {"tool": "apify_run_sync", "max_usd": _APIFY_MAX_USD * 2,
+                                        "typical_usd": _APIFY_SITE_TYPICAL_USD
+                                        + _APIFY_SEARCH_TYPICAL_USD},
     ("waterfall_person", "aiark"): {"tool": "linkedin_aiark_person"},
     ("waterfall_person", "apollo"): {"tool": "apollo_match_person"},
     ("waterfall_person", "forager"): {"tool": "forager_person",
@@ -1529,8 +1594,10 @@ PRICES: dict[tuple[str, str], dict] = {
     ("waterfall_people", "apollo"): {"tool": "apollo_search_people",
                                      "reveal": "apollo_match_person"},
     ("waterfall_people", "aiark"): {"tool": "linkedin_aiark_search", "per_item": True},
-    ("waterfall_people", "linkedin_employees"): {"tool": "apify_run_sync",
-                                                 "max_usd": _APIFY_EMPLOYEES_MAX_USD},
+    ("waterfall_people", "linkedin_employees"): {
+        "tool": "apify_run_sync", "max_usd": _APIFY_EMPLOYEES_MAX_USD,
+        # ~10 profiles (the default limit) at ~$0.005.
+        "typical_usd": _APIFY_EMPLOYEES_TYPICAL_USD_PER_PROFILE * 10},
     ("waterfall_people", "google"): {"tool": "serper_search"},
 }
 
@@ -1614,8 +1681,8 @@ def register(mcp: FastMCP) -> None:
     @documente(f"""Find ONE person's professional email, trying providers in turn and
         stopping at the FIRST that returns one (native waterfall).
 
-        Steps (default order): hunter (name + domain) → apollo (LinkedIn URL, or name +
-        domain / company) → aiark (LinkedIn URL) → kaspr (LinkedIn URL) → lusha (LinkedIn
+        Steps (default order): hunter (name + domain) → aiark (LinkedIn URL) → apollo
+        (LinkedIn URL, or name + domain / company) → kaspr (LinkedIn URL) → lusha (LinkedIn
         URL, or name + domain / company) → then the asynchronous ones: dropcontact
         (LinkedIn URL, or name + company / domain) → lemlist (LinkedIn URL, or name +
         domain) → fullenrich (LinkedIn URL, or name + domain — usually 30 s to 4 min, so

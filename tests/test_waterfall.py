@@ -132,7 +132,8 @@ def test_s_arrete_au_premier_trouve(calls):
                domain="https://www.acme.com/x", linkedin_url="https://www.linkedin.com/in/jane-doe/")
     assert out["found"] is True and out["provider"] == "apollo"
     assert out["email"] == {"email": "jane@acme.com", "all": ["jane@acme.com"], "status": "verified"}
-    assert _made(calls) == ["hunter_email_finder", "apollo_match_person"]
+    # AI Ark (◎ 1) passes before Apollo (◎ 2): it found nothing here.
+    assert _made(calls) == ["hunter_email_finder", "linkedin_aiark_person", "apollo_match_person"]
     assert calls["made"][0][1] == {"domain": "acme.com", "first_name": "Jane", "last_name": "Doe"}
     assert out["order_from"] == "default"
 
@@ -144,7 +145,7 @@ def test_les_cles_de_l_appelant_passent_devant(calls):
     order = [a["provider"] for a in out["attempts"]]
     # Propres clés d'abord, dans l'ordre du défaut (kaspr avant lusha), puis le reste.
     assert order[:2] == ["kaspr", "lusha"]
-    assert order[2:] == ["hunter", "apollo", "aiark", "dropcontact", "lemlist", "fullenrich",
+    assert order[2:] == ["hunter", "aiark", "apollo", "dropcontact", "lemlist", "fullenrich",
                          "forager"]
     assert out["attempts"][0]["key"] == "user"
 
@@ -720,3 +721,92 @@ def test_la_revelation_de_telephone_apollo_exige_la_cle_de_l_appelant(calls):
     calls["made"].clear()
     _run("waterfall_phone", linkedin_url="https://linkedin.com/in/jane", providers=["apollo"])
     assert _made(calls)[0] == "apollo_reveal_phone"
+
+
+
+# --- réponses RÉELLES (essai sur des exposants d'un salon, 2026-10-19), anonymisées --------
+
+def test_reel_aiark_export_statut_en_capitales(calls):
+    calls["answers"]["linkedin_aiark_person"] = IssueCible(ok=True, result={
+        "found": True, "profile": {"full_name": "Jane Doe", "title": "CEO"},
+        "email": {"state": "DONE", "output": [
+            {"address": "j.d@other.example", "status": "INVALID"},
+            {"address": "jane@acme.com", "status": "VALID", "found": True}]}})
+    out = _run("waterfall_email", linkedin_url="https://www.linkedin.com/in/jane-doe-1",
+               providers=["aiark"])
+    assert out["email"]["email"] == "jane@acme.com" and out["email"]["status"] == "VALID"
+
+
+def test_reel_apollo_sans_email_ne_compte_pas_mais_la_personne_si(calls):
+    person = {"person": {"name": "Sam Roe", "title": "Sales Leader", "seniority": "manager",
+                         "linkedin_url": "http://www.linkedin.com/in/sam-ro%c3%a7-1",
+                         "email": None, "email_status": "unavailable",
+                         "organization": {"name": "ACME", "primary_domain": "acme.com"}}}
+    calls["answers"]["apollo_match_person"] = IssueCible(ok=True, result=person)
+    url = "https://www.linkedin.com/in/sam-roç-1"
+    assert _run("waterfall_email", linkedin_url=url, providers=["apollo"])["found"] is False
+    out = _run("waterfall_person", linkedin_url=url, providers=["apollo"])
+    assert out["person"]["title"] == "Sales Leader"
+    assert out["person"]["linkedin_url"] == url        # the caller's, not Apollo's %-encoded one
+
+
+def test_reel_aiark_societe_par_domaine_avec_url_et_chiffre_d_affaires(calls):
+    calls["answers"]["linkedin_aiark_search"] = IssueCible(ok=True, result={"content": [{
+        "summary": {"name": "ACME GmbH", "founded_year": 2025, "industry": "it services",
+                    "staff": {"total": 4, "range": {"start": 2, "end": 10}}},
+        "link": {"website": "http://www.acme.de", "domain": "http://www.acme.de",
+                 "linkedin": "https://www.linkedin.com/company/acme-gmbh"},
+        "contact": {"phone": {"raw": "+49 1556 0000000", "sanitized": "+4915560000000"}},
+        "financial": {"revenue": {"annual": {"amount": "0-100000"}}}}]})
+    out = _run("waterfall_company", domain="acme.de", providers=["aiark"])
+    c = out["company"]
+    assert c["domain"] == "acme.de" and c["employees"] == 4 and c["revenue_range"] == "0-100000"
+    assert c["phone"] == "+4915560000000" and c["linkedin_url"].endswith("/acme-gmbh")
+
+
+def test_reel_google_lit_le_sous_titre_et_ecarte_la_simple_mention(calls):
+    calls["answers"]["serper_search"] = IssueCible(ok=True, result={"organic": [
+        {"title": "Dr. Ulla Jay – Acme Marking GmbH",
+         "subtitle": "Paderborn, Deutschland · Acme Marking GmbH",
+         "link": "https://de.linkedin.com/in/ulla-jay-1"},
+        {"title": "Phil Bee – TRACEABLE AND ...",
+         "subtitle": "Paderborn, Deutschland · CTO - Acme Marking · Acme Marking GmbH",
+         "link": "https://de.linkedin.com/in/phil-bee-2"},
+        {"title": "Dr Paul Roe - Senior Project Manager", "link": "https://uk.linkedin.com/in/paul-roe",
+         "snippet": "... Acme Marking Techniques Deposition PECVD ..."}]})
+    out = _run("waterfall_people", company_name="Acme Marking", providers=["google"])
+    people = out["people"]["people"]
+    # Le CTO d'abord (séniorité), la simple mention dans un extrait écartée.
+    assert [p["full_name"] for p in people] == ["Phil Bee", "Dr. Ulla Jay"]
+    assert people[0]["title"] == "CTO - Acme Marking" and people[1].get("title") is None
+
+
+def test_reel_apollo_people_dit_qui_a_un_email(calls):
+    calls["answers"]["apollo_search_people"] = IssueCible(ok=True, result={"people": [
+        {"id": "a2", "first_name": "Dev", "last_name_obfuscated": "Pi***k", "title": "Software Developer",
+         "has_email": True, "has_direct_phone": "Maybe: please request direct dial via people/bulk_match"},
+        {"id": "a1", "first_name": "Ulla", "last_name_obfuscated": "Ja***y", "title": "CEO, Co-Founder",
+         "has_email": True, "has_direct_phone": "Yes"}]})
+    out = _run("waterfall_people", domain="acme.de", providers=["apollo"])
+    first = out["people"]["people"][0]
+    assert first["apollo_id"] == "a1" and first["has_email"] is True and first["has_direct_phone"] is True
+
+
+def test_reel_linkedin_non_connecte_est_saute(calls):
+    calls["answers"]["linkedin_unipile_profile"] = IssueCible(
+        ok=False, code="invalid_input",
+        message="Connect your Linkedin account at https://example.test/console/connections "
+                "(or via `unipile_connect_start`) before using these tools.")
+    out = _run("waterfall_person", linkedin_url="https://linkedin.com/in/jane", providers=["linkedin"])
+    assert out["attempts"][0]["status"] == "skipped" and out["attempts"][0]["code"] == "not_connected"
+
+
+def test_reel_apify_exige_un_plafond_d_au_moins_50_centimes():
+    for steps in waterfall.STEPS_BY_NAMESPACE.values():
+        for s in steps:
+            for v in s.variants or (s,):
+                if v.tool == "apify_run_sync":
+                    args = v.build({"domain": "acme.com", "company_name": "Acme",
+                                    "company_linkedin_url": "https://www.linkedin.com/company/acme/",
+                                    "limit": 10})
+                    assert args["max_total_charge_usd"] >= 0.50, v.key

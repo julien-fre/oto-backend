@@ -19,7 +19,7 @@ CONNECTOR = _c(
     cardinality="mono", modules=("waterfall",),
     credential_fields=(CredentialField(
         "steps", "Steps, in order", secret=False, required=False,
-        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: hunter, apollo, aiark, kaspr, lusha, dropcontact, lemlist, fullenrich, forager."),),
+        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: hunter, aiark, apollo, kaspr, lusha, dropcontact, lemlist, fullenrich, forager."),),
     label="Email waterfall",
     help="a person's professional email, across your connected providers one after the other, stopping at the "
          "first hit",
@@ -32,5 +32,5 @@ SANS_LOGO_DE_MARQUE = True
 CATEGORY = "Prospecting"
 
 DESCRIPTION = (
-    "Finds a person's work email by trying your connected providers in turn — Hunter, Apollo, AI Ark, Kaspr, Lusha, Dropcontact, lemlist, FullEnrich, Forager — and stopping at the first hit. Each is billed on its own key."
+    "Finds a person's work email by trying your connected providers in turn — Hunter, AI Ark, Apollo, Kaspr, Lusha, Dropcontact, lemlist, FullEnrich, Forager — and stopping at the first hit. Each is billed on its own key."
 )
