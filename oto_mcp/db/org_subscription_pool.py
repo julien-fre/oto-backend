@@ -3,7 +3,8 @@
 Deux tables (`db/schema/runs.py::MODEL_SUBSCRIPTION_POOL`) :
 
 - `org_model_subscription_modes` — une ligne par (org, famille) qui a réglé son mode.
-  Sans ligne : `personnel`, le travail tourne sur l'abonnement de SON demandeur ;
+  Sans ligne : `pool` dès qu'un membre vivant prête son abonnement à l'org, sinon
+  `personnel` (le travail tourne sur l'abonnement de SON demandeur) — cf. `mode_effectif` ;
 - `user_model_subscription_loans` — une ligne par (personne, famille, org) : ce
   membre prête son abonnement au pool de CETTE org. Opt-in, par org.
 
@@ -17,11 +18,16 @@ QUEL sandbox peut servir, jamais comment s'y connecter.
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Iterable, Optional
 
+import psycopg
+
 from .. import interrupteurs
 from ._conn import _connect
+
+logger = logging.getLogger(__name__)
 
 PERSONNEL = "personnel"
 POOL = "pool"
@@ -57,8 +63,32 @@ def get_mode(org_id: Optional[int], famille: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def mode_effectif(org_id: Optional[int], famille: str) -> str:
+    """Le mode qui S'APPLIQUE : celui que l'org a réglé, sinon `pool` dès qu'un membre
+    vivant lui prête son abonnement, sinon `personnel`.
+
+    Le défaut (19/10/2026) : partager son forfait avec l'équipe sert tout de suite,
+    sans attendre qu'un admin passe l'org en pool — un prêt est déjà un opt-in, par
+    org. Un mode RÉGLÉ gagne toujours, `personnel` compris : un admin qui l'a choisi
+    garde des prêts sans effet. Même règle en SQL : `sql_en_pool`."""
+    regle = (get_mode(org_id, famille) or {}).get("mode")
+    if regle:
+        return regle
+    return POOL if org_id and taille_totale_du_pool(org_id, famille) else PERSONNEL
+
+
 def en_pool(org_id: Optional[int], famille: str) -> bool:
-    return ((get_mode(org_id, famille) or {}).get("mode")) == POOL
+    return mode_effectif(org_id, famille) == POOL
+
+
+def sql_en_pool(org: str, famille: str) -> str:
+    """`mode_effectif(...) == 'pool'` en SQL, pour la réservation qui lit les tables
+    elle-même (`runner_jobs`). `org` et `famille` sont des EXPRESSIONS SQL."""
+    return f"""COALESCE(
+                (SELECT m.mode = 'pool' FROM org_model_subscription_modes m
+                  WHERE m.org_id = {org} AND m.famille = {famille}),
+                EXISTS (SELECT 1 FROM user_model_subscription_loans l {PRET_VIVANT}
+                         WHERE l.org_id = {org} AND l.famille = {famille}))"""
 
 
 ENV_REPLI_PAR_DEFAUT = "OTO_REPLI_API_PAR_DEFAUT"
@@ -89,19 +119,29 @@ def repli_api_actif(org_id: Optional[int], famille: str) -> bool:
 
 
 def set_repli_api(org_id: int, famille: str, actif: bool, par: Optional[str]) -> dict:
-    """Ouvre ou referme le repli API de cette org. Fait NAÎTRE la ligne à
-    `personnel` si l'org n'a jamais réglé de mode — son mode effectif d'avant, donc
-    rien ne change d'autre que l'interrupteur."""
-    with _connect() as conn:
-        row = conn.execute(
-            "INSERT INTO org_model_subscription_modes "
-            "  (org_id, famille, mode, repli_api, updated_by) "
-            "VALUES (%s, %s, %s, %s, %s) "
-            "ON CONFLICT (org_id, famille) DO UPDATE "
-            "   SET repli_api = EXCLUDED.repli_api, updated_at = NOW(), "
-            "       updated_by = EXCLUDED.updated_by "
-            "RETURNING org_id, famille, mode, repli_api, updated_at, updated_by",
-            (org_id, famille, PERSONNEL, bool(actif), par)).fetchone()
+    """Ouvre ou referme le repli API de cette org. Fait NAÎTRE la ligne SANS mode
+    (NULL) si l'org n'en a jamais réglé : le mode reste celui qui s'applique
+    (`mode_effectif`), rien ne change d'autre que l'interrupteur.
+
+    ⚠️ Tant que la révision 0068 n'est pas jouée sur la base (geste manuel sur notre
+    box, docs/migrations-versionnees.md §5.1), la colonne refuse NULL : la ligne naît
+    alors à `personnel`, comme avant, et le journal le dit — l'ordre entre le tag et
+    la révision est ainsi indifférent."""
+    sql = ("INSERT INTO org_model_subscription_modes "
+           "  (org_id, famille, mode, repli_api, updated_by) "
+           "VALUES (%s, %s, %s, %s, %s) "
+           "ON CONFLICT (org_id, famille) DO UPDATE "
+           "   SET repli_api = EXCLUDED.repli_api, updated_at = NOW(), "
+           "       updated_by = EXCLUDED.updated_by "
+           "RETURNING org_id, famille, mode, repli_api, updated_at, updated_by")
+    try:
+        with _connect() as conn:
+            row = conn.execute(sql, (org_id, famille, None, bool(actif), par)).fetchone()
+    except psycopg.errors.NotNullViolation:
+        logger.warning("org_model_subscription_modes.mode encore NOT NULL (révision 0068 "
+                       "non jouée) : la ligne de l'org %s naît à `personnel`", org_id)
+        with _connect() as conn:
+            row = conn.execute(sql, (org_id, famille, PERSONNEL, bool(actif), par)).fetchone()
     return dict(row)
 
 

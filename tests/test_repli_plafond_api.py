@@ -460,8 +460,8 @@ def test_un_defaut_d_instance_illisible_leve(defaut_instance, illisible):
 
 def test_couper_le_repli_ne_change_pas_le_mode(live):
     """Couper le repli sur une org qui n'a jamais réglé de mode fait naître la
-    ligne à `personnel` — son mode effectif d'avant. L'interrupteur ne doit pas
-    basculer une org en pool par effet de bord."""
+    ligne SANS mode (19/10/2026) : l'interrupteur ne bascule pas l'org en pool, et
+    il ne la FIGE pas non plus en personnel — le mode reste celui qui s'applique."""
     from oto_mcp.db import org_subscription_pool as P
 
     oid = _org("p12", "p12-dem", repli=False)
@@ -470,7 +470,8 @@ def test_couper_le_repli_ne_change_pas_le_mode(live):
     P.set_repli_api(oid, "claude_subscription", False, "p12-dem")
 
     assert P.en_pool(oid, "claude_subscription") is False
-    assert P.get_mode(oid, "claude_subscription")["mode"] == P.PERSONNEL
+    assert P.get_mode(oid, "claude_subscription")["mode"] is None
+    assert P.mode_effectif(oid, "claude_subscription") == P.PERSONNEL
 
 
 def test_le_repli_se_rouvre(live):
@@ -844,3 +845,27 @@ def test_des_travaux_anciens_sans_cle_ne_bloquent_pas_une_org_qui_paie(live):
     # ne s'en mêlent pas.
     row = _repli(None, org_ids=[muette, payeuse])
     assert row is not None and row["id"] == jid
+
+
+def test_avant_la_revision_0068_le_repli_nait_a_personnel(live):
+    """La révision se joue à la main sur notre box : tant qu'elle ne l'est pas, la
+    colonne refuse NULL, et ouvrir le repli doit marcher comme avant."""
+    from oto_mcp.db import org_subscription_pool as P
+    from oto_mcp.db._conn import _connect
+
+    oid = _org("p13", "p13-dem", repli=False)
+    with _connect() as conn:
+        # Les lignes sans mode d'autres tests : mises de côté, puis rendues telles.
+        sans_mode = conn.execute(
+            "UPDATE org_model_subscription_modes SET mode = 'personnel' WHERE mode IS NULL "
+            "RETURNING org_id, famille").fetchall()
+        conn.execute("ALTER TABLE org_model_subscription_modes ALTER COLUMN mode SET NOT NULL")
+    try:
+        ligne = P.set_repli_api(oid, "claude_subscription", True, "p13-dem")
+        assert ligne["mode"] == P.PERSONNEL and ligne["repli_api"] is True
+    finally:
+        with _connect() as conn:
+            conn.execute("ALTER TABLE org_model_subscription_modes ALTER COLUMN mode DROP NOT NULL")
+            for r in sans_mode:
+                conn.execute("UPDATE org_model_subscription_modes SET mode = NULL "
+                             "WHERE org_id = %s AND famille = %s", (r["org_id"], r["famille"]))

@@ -162,11 +162,9 @@ def _fragments_abonnement(abonnement: bool) -> dict:
     if not abonnement:
         return {"colonnes_forfait": "", "jointure_pret": "", "clause_abonnement": "",
                 "verrou_de": "", "charge_prise": _CHARGE_PRISE, "retour_preteur": ""}
-    from .org_subscription_pool import PRET_VIVANT, PRETEUR_SERVABLE
-    en_pool = f"""EXISTS (
-                SELECT 1 FROM org_model_subscription_modes m
-                 WHERE m.org_id = rj.org_id AND m.famille = {_FAMILLE_RJ}
-                   AND m.mode = 'pool')"""
+    from .org_subscription_pool import PRET_VIVANT, PRETEUR_SERVABLE, sql_en_pool
+    # Réglé `pool`, ou rien réglé et au moins un prêt vivant (`mode_effectif`).
+    en_pool = sql_en_pool("rj.org_id", _FAMILLE_RJ)
     return {
         "colonnes_forfait": ", pret.sub AS preteur, COALESCE(pret.sub, rj.sub) AS forfait",
         # ⚠️ LATERAL, et `FOR UPDATE OF rj` : la ligne du prêteur n'est pas verrouillée
@@ -174,11 +172,9 @@ def _fragments_abonnement(abonnement: bool) -> dict:
         # le même prêteur se tranche au verrou consultatif de `_deja_en_vol`.
         "jointure_pret": f"""LEFT JOIN LATERAL (
                     SELECT l.sub FROM user_model_subscription_loans l
-                      JOIN org_model_subscription_modes m
-                        ON m.org_id = l.org_id AND m.famille = l.famille
-                       AND m.mode = 'pool'
                       {PRET_VIVANT}
                      WHERE l.org_id = rj.org_id AND l.famille = {_FAMILLE_RJ}
+                       AND {en_pool}
                        AND {PRETEUR_SERVABLE}
                        AND NOT {_en_vol("l.sub", "l.famille")}
                      ORDER BY l.servi_at NULLS FIRST, l.created_at, l.sub
@@ -930,13 +926,10 @@ def _jointures_de_repli(seuil_defaut_pct: int) -> str:
     son abonnement est ouvert : `_ABONNEMENT_OUVERT_ICI`), et celle de TOUS les
     prêteurs vivants de son pool (mode pool) — la même dans la liste des candidats et
     dans la prise, qui la revérifie."""
-    from .org_subscription_pool import PRET_VIVANT
+    from .org_subscription_pool import PRET_VIVANT, sql_en_pool
     return f"""
-      LEFT JOIN LATERAL (SELECT EXISTS (
-               SELECT 1 FROM org_model_subscription_modes m
-                WHERE m.org_id = rj.org_id
-                  AND m.famille = rj.payload->>'model_family'
-                  AND m.mode = 'pool') AS actif) modep ON TRUE
+      LEFT JOIN LATERAL (SELECT {sql_en_pool("rj.org_id", "rj.payload->>'model_family'")}
+                         AS actif) modep ON TRUE
       LEFT JOIN LATERAL (
              SELECT ab.limit_reset_at
                FROM user_model_subscriptions ab

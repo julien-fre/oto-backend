@@ -140,8 +140,9 @@ def _servi(org_id: int, famille: str) -> dict:
                 for p in org_subscription_pool.preteurs(org_id, famille)]
     # `pool_size` se DÉDUIT de `lenders` : une seule lecture, aucun écart possible
     # entre le compte et la liste montrés sur le même écran.
-    pool = {"mode": ((org_subscription_pool.get_mode(org_id, famille) or {}).get("mode")
-                     or org_subscription_pool.PERSONNEL),
+    # Le mode qui S'APPLIQUE (`mode_effectif`) : sans réglage, le premier prêt passe
+    # l'org en pool — l'écran doit dire ce que la réservation fera.
+    pool = {"mode": org_subscription_pool.mode_effectif(org_id, famille),
             "pool_size": sum(p["usable_now"] for p in preteurs),
             "lenders": preteurs}
     ligne = org_subscription_limits.get_limite(org_id, famille)

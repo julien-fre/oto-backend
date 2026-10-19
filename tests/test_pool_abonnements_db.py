@@ -286,6 +286,43 @@ def test_une_org_en_PERSONNEL_ignore_les_prets(live):
         "en pool, sa connexion ne compte plus : le prêteur sert")
 
 
+def test_sans_mode_REGLE_le_premier_pret_passe_l_org_en_pool(live):
+    """Le défaut (19/10/2026) : partager son forfait avec l'équipe sert tout de
+    suite, sans qu'un admin passe l'org en pool. Avant le premier prêt, l'org est
+    en personnel ; un mode RÉGLÉ (`personnel` compris) gagne toujours."""
+    from oto_mcp.db import org_subscription_pool as P
+    oid = _org("defaut", "defaut-dem", "defaut-p", mode=None)
+    _abonne("defaut-dem", statut="needs_login")
+    travail = _travail(oid, "defaut-dem")
+    assert P.mode_effectif(oid, _F) == P.PERSONNEL
+    assert _claim(oid) is None, "aucun prêt : personnel, le demandeur attend"
+
+    _abonne("defaut-p", pret_a=[oid])
+    assert P.mode_effectif(oid, _F) == P.POOL
+    pris = _claim(oid)
+    assert pris["id"] == travail and _forfait(pris) == "defaut-p", (
+        "un collègue prête : le pool sert, sans réglage d'admin")
+
+
+def test_le_repli_API_ne_fige_pas_le_defaut(live):
+    """Ouvrir le repli fait naître la ligne de l'org : sans mode, le premier prêt
+    passe toujours l'org en pool."""
+    from oto_mcp.db import org_subscription_pool as P
+    oid = _org("repli-defaut", "rd-dem", "rd-p", mode=None)
+    P.set_repli_api(oid, _F, True, "rd-dem")
+    _abonne("rd-p", pret_a=[oid])
+    assert P.en_pool(oid, _F) is True
+    _travail(oid, "rd-dem")
+    assert _forfait(_claim(oid)) == "rd-p"
+
+
+def test_un_PERSONNEL_regle_garde_les_prets_sans_effet(live):
+    from oto_mcp.db import org_subscription_pool as P
+    oid = _org("perso-regle", "pr-dem", "pr-p", mode="personnel")
+    _abonne("pr-p", pret_a=[oid])
+    assert P.mode_effectif(oid, _F) == P.PERSONNEL
+
+
 def test_un_preteur_AU_PLAFOND_est_saute_jusqu_a_son_echeance(live):
     from oto_mcp.db._conn import _connect
     with _connect() as conn:
