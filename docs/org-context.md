@@ -151,6 +151,12 @@ rien) ou `off`. Il ne suit pas `OTO_VERROU_ORG_DELEGATION` : couper l'un ne rend
 l'autre. ⚠️ Avant `enforce`, relever au journal (`verrou des rôles plateforme (report)`)
 les travaux qui agissent avec un rôle plateforme : sous `enforce`, leurs `oto_admin_*`
 disparaissent de `tools/list` et toute garde plateforme les refuse.
+`OTO_VERROU_ROLES_PLATEFORME_ORGS` (ids d'org, virgules, vide par défaut) EXEMPTE les
+travaux de ces orgs : leur porteur garde son rôle plateforme, dans tous les modes, sans
+ligne au journal. C'est l'org de l'opérateur, dont les agents hébergés (tri des retours,
+activation des inscrits, veille des crédits) servent des `oto_admin_*` — l'exemption
+porte sur QUI garde le rôle, pas sur sa portée : un tel agent reste opérateur de toute la
+plateforme. La borne par outil du travail (F-008 partie 2) la rendra plus fine.
 
 Le verrou ne vise que le porteur : une lecture sur un tiers garde son chemin. Il est posé
 pour la requête par le bord — l'authentification REST et `middleware/verrou_org.py` côté

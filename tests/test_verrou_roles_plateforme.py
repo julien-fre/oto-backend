@@ -34,6 +34,7 @@ def comptes(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda sub: 42)
     monkeypatch.delenv("OTO_MCP_ADMIN_SUB", raising=False)
     monkeypatch.delenv(ENV, raising=False)
+    monkeypatch.delenv("OTO_VERROU_ROLES_PLATEFORME_ORGS", raising=False)
     monkeypatch.delenv("OTO_VERROU_ORG_DELEGATION", raising=False)
 
 
@@ -126,3 +127,43 @@ def test_sans_jeton_de_delegation_rien_ne_change(comptes, monkeypatch):
 def test_un_member_reste_member(delegue, monkeypatch):
     monkeypatch.setenv(ENV, "enforce")
     assert access.get_user_role("sub-quelconque") == "member"
+
+
+ENV_ORGS = "OTO_VERROU_ROLES_PLATEFORME_ORGS"
+
+
+def test_org_exemptee_garde_le_role_sans_le_journaliser(delegue, monkeypatch, caplog):
+    """L'org de l'opérateur : ses agents hébergés servent des `oto_admin_*`."""
+    monkeypatch.setenv(ENV, "enforce")
+    monkeypatch.setenv(ENV_ORGS, "7, 42")
+    assert access.get_user_role(PORTEUR) == "super_admin"
+    assert _authz.SUPER_ADMIN(_raw(PORTEUR)).sub == PORTEUR
+    monkeypatch.setenv(ENV, "report")
+    with caplog.at_level(logging.WARNING, logger="oto_mcp.verrou_org"):
+        assert access.is_super_admin(PORTEUR)
+    assert not [r for r in caplog.records if "rôles plateforme" in r.getMessage()]
+
+
+def test_une_autre_org_reste_bornee(delegue, monkeypatch):
+    monkeypatch.setenv(ENV, "enforce")
+    monkeypatch.setenv(ENV_ORGS, "43")
+    assert access.get_user_role(PORTEUR) == "member"
+
+
+def test_un_travail_sans_org_n_est_jamais_exempte(comptes, monkeypatch):
+    monkeypatch.setenv(ENV, "enforce")
+    monkeypatch.setenv(ENV_ORGS, "42")
+    t = verrou_org.poser(verrou_org.Verrou(sub=PORTEUR, org_id=None, job_id=8))
+    try:
+        assert access.get_user_role(PORTEUR) == "member"
+    finally:
+        verrou_org.lever(t)
+
+
+def test_un_element_non_entier_n_exempte_rien(delegue, monkeypatch, caplog):
+    monkeypatch.setenv(ENV, "enforce")
+    monkeypatch.setenv(ENV_ORGS, "quarante-deux")
+    with caplog.at_level(logging.WARNING, logger="oto_mcp.verrou_org"):
+        assert verrou_org.orgs_exemptees() == frozenset()
+        assert access.get_user_role(PORTEUR) == "member"
+    assert any("quarante-deux" in r.getMessage() for r in caplog.records)

@@ -35,6 +35,9 @@ plateforme dérivent. Réglage PROPRE, `OTO_VERROU_ROLES_PLATEFORME` : `enforce`
 `report` (DÉFAUT : journalise ce qui serait retiré, ne retire rien — des agents
 hébergés de comptes admin servent peut-être des outils d'admin, à relever avant de
 mordre) ou `off`. Indépendant du verrou d'org : couper l'un ne coupe pas l'autre.
+`OTO_VERROU_ROLES_PLATEFORME_ORGS` (ids d'org, virgules) EXEMPTE de ce verrou les travaux
+de ces orgs — celle de l'opérateur, dont les agents hébergés servent des `oto_admin_*` :
+leur porteur garde son rôle plateforme, quel que soit le mode. Vide = aucune exemption.
 """
 from __future__ import annotations
 
@@ -77,6 +80,7 @@ _COURANT: contextvars.ContextVar[Optional[Verrou]] = contextvars.ContextVar(
     "oto_verrou_org", default=None)
 
 _ENV_ROLES = "OTO_VERROU_ROLES_PLATEFORME"
+_ENV_ROLES_ORGS = "OTO_VERROU_ROLES_PLATEFORME_ORGS"
 #: Les rôles plateforme qu'un jeton de délégation ne porte pas (`access.scope`).
 _ROLES_PLATEFORME = ("admin", "super_admin")
 #: Le verrou dont le rôle plateforme a déjà été signalé en `report` : une ligne par
@@ -197,9 +201,26 @@ def mode_roles() -> str:
     return m if m in _MODES else "report"
 
 
+def orgs_exemptees() -> frozenset[int]:
+    """Les orgs dont les travaux gardent le rôle plateforme de leur porteur, lues à
+    chaque appel. Un élément qui n'est pas un entier est ignoré et journalisé : il
+    n'exempte rien — fail-closed."""
+    orgs: set[int] = set()
+    for brut in (os.environ.get(_ENV_ROLES_ORGS) or "").split(","):
+        brut = brut.strip()
+        if not brut:
+            continue
+        try:
+            orgs.add(int(brut))
+        except ValueError:
+            logger.warning("%s : %r n'est pas un id d'org, ignoré", _ENV_ROLES_ORGS, brut)
+    return frozenset(orgs)
+
+
 def role_plateforme(sub: Optional[str], role: str) -> str:
     """Le rôle plateforme de `sub` sous la requête courante : `member` à la place
-    d'`admin`/`super_admin` pour le PORTEUR d'un jeton de délégation, en `enforce`.
+    d'`admin`/`super_admin` pour le PORTEUR d'un jeton de délégation, en `enforce` —
+    sauf si l'org de son travail est exemptée (`orgs_exemptees`), ni retiré ni journalisé.
 
     Lit la ContextVar BRUTE, pas `courant()` : `OTO_VERROU_ORG_DELEGATION=off` ne doit
     pas rendre au porteur ses rôles plateforme — chaque réglage coupe son verrou. Un
@@ -209,6 +230,8 @@ def role_plateforme(sub: Optional[str], role: str) -> str:
         return role
     v = _COURANT.get()
     if v is None or sub is None or str(sub) != v.sub:
+        return role
+    if v.org_id is not None and v.org_id in orgs_exemptees():
         return role
     m = mode_roles()
     if m == "off":
