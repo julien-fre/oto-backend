@@ -511,6 +511,13 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
         attempt.update(status="skipped", code="time_budget",
                        message=f"the waterfall's {int(DEADLINE_S)} s budget is spent")
         return None
+    run_s = args.get("timeout_secs") if step.tool == "apify_run_sync" else None
+    if run_s and time.monotonic() + run_s > deadline + 5:
+        # An Apify run that cannot end inside the call: not started (nothing billed),
+        # rather than cut off by the REST bound with nothing to show.
+        attempt.update(status="skipped", code="time_budget",
+                       message=f"a {run_s} s run does not fit in what is left of the call")
+        return None
     issue = await _call(mcp, sub, step.tool, args, attempt)
     if issue is not None and paid:
         budget["paid_steps"] = budget.get("paid_steps", 0) + 1
@@ -1356,6 +1363,9 @@ def _cognism_company(res, inputs):
 # (`typical_usd`): a site scrape ~$0.006 (52 sites for ~$0.30 on a real list), a page's
 # employees ~$0.003-0.008 a profile.
 _APIFY_TIMEOUT_S = 25
+#: A page's employees take ~27 s for a few full profiles (measured 19/10/2026; the
+#: « short » mode is no faster and carries no title): the people waterfall's LAST step.
+_APIFY_EMPLOYEES_TIMEOUT_S = 35
 _APIFY_SITE_TYPICAL_USD = 0.006
 _APIFY_SEARCH_TYPICAL_USD = 0.01
 _APIFY_EMPLOYEES_TYPICAL_USD_PER_PROFILE = 0.005
@@ -1778,7 +1788,7 @@ PEOPLE_STEPS: tuple[Step, ...] = (
                     "run_input": {"companies": [i["company_linkedin_url"]],
                                   "maxItems": i["limit"]},
                     "max_items": i["limit"],
-                    "timeout_secs": _APIFY_TIMEOUT_S},
+                    "timeout_secs": _APIFY_EMPLOYEES_TIMEOUT_S},
          _employees, "Apify, ~$0.003-0.008 per profile",
          label="LinkedIn employees"),
 

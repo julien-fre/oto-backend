@@ -222,6 +222,11 @@ Ce que les vraies réponses ont appris, et qui est désormais figé par des test
   un plafond de coût (quelques éléments × un prix d'un centime) sous son minimum, et refuse.
   La page par le site (`linkedin_site`) part donc sans `max_items`, bornée par ses 4 pages
   et sa profondeur ; la recherche et les employés l'acceptent (mesuré le 19/10).
+- Les employés d'une page prennent ~27 s pour quelques profils complets (le mode « court »
+  n'est pas plus rapide et n'a pas de titre) : délai propre de 35 s, dernière étape des
+  gens. Une exécution Apify qui ne tient plus dans ce qui reste de l'appel n'est PAS lancée
+  (`skipped / time_budget`, rien de facturé). Sans plafond de notre part, Apify prend le
+  reste du budget du compte comme plafond d'exécution.
 - AI Ark écrit le statut d'un email en capitales (`VALID`).
 - Apollo trouve des personnes sans email (`email_status: unavailable`) — facturées quand
   même — et rend leur URL LinkedIn encodée en pourcents : la personne rendue garde l'URL

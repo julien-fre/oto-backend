@@ -296,7 +296,7 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
             cle = "found"
         elif any(a.get("status") == "unqualified" for a in attempts):
             patch, cle = {status_column: ECARTE}, "unqualified"
-        elif any(a.get("status") in ("failed", "skipped") and a.get("code") == "deadline"
+        elif any(a.get("status") == "skipped" and a.get("code") == "time_budget"
                  for a in attempts):
             # Out of time mid-cascade: nothing written, the next call tries it again.
             for rid in rids:

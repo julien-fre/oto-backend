@@ -196,3 +196,12 @@ def test_une_recherche_pas_partie_a_temps_arrete_le_recu(calls, table, monkeypat
                         "website": "b.com"}]
     out = _act("waterfall_email", **_EMAIL_ARGS)
     assert out["stopped"] == "time_budget" and table["store"].ecrites == {}
+
+
+def test_une_cascade_coupee_par_le_temps_laisse_la_ligne_en_attente(calls, table, monkeypatch):
+    monkeypatch.setattr(waterfall_lignes, "CASCADE_S", -100)
+    table["lignes"] = [{"_id": "r1", "first_name": "Jane", "last_name": "Doe",
+                        "website": "acme.com"}]
+    out = _act("waterfall_email", **_EMAIL_ARGS)
+    assert table["store"].ecrites == {} and out["skipped_time_budget"] == 1
+    assert out["stopped"] == "time_budget"

@@ -818,7 +818,8 @@ def test_une_execution_apify_est_bornee_par_sa_taille_et_son_delai_sans_plafond_
                                 "company_linkedin_url": "https://www.linkedin.com/company/acme/",
                                 "limit": 10})
                 assert "max_total_charge_usd" not in args, v.key
-                assert args["timeout_secs"] == waterfall._APIFY_TIMEOUT_S, v.key
+                assert args["timeout_secs"] in (waterfall._APIFY_TIMEOUT_S,
+                                                waterfall._APIFY_EMPLOYEES_TIMEOUT_S), v.key
                 if v.key == "linkedin_site":
                     # Sans `max_items` (Apify en tirerait un plafond refusé) : borné par
                     # ses pages et sa profondeur.
@@ -1010,3 +1011,11 @@ def test_la_carte_liste_les_etapes_dans_l_ordre_par_defaut(ns):
     aide = providers.REGISTRY[ns].credential_fields[0].help
     annonce = [k.strip(" .") for k in aide.split("Available:")[1].split(",")]
     assert annonce == [s.key for s in waterfall.STEPS_BY_NAMESPACE[ns]]
+
+
+def test_une_execution_apify_trop_longue_pour_le_reste_n_est_pas_lancee(calls, monkeypatch):
+    monkeypatch.setattr(waterfall, "DEADLINE_S", 10)
+    out = _run("waterfall_people", company_linkedin_url="https://www.linkedin.com/company/acme/",
+               providers=["linkedin_employees"])
+    assert "apify_run_sync" not in _made(calls)
+    assert out["attempts"][0]["code"] == "time_budget"
