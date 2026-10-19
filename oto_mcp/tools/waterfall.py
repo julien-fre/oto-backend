@@ -708,7 +708,9 @@ def _limits(max_paid_steps: Optional[int], apify_max_usd: Optional[float]) -> di
 async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...],
                        inputs: dict, providers_arg: Optional[list[str]],
                        dry_run: bool, limits: Optional[dict] = None,
-                       qualify: Optional[dict] = None) -> dict:
+                       qualify: Optional[dict] = None,
+                       deadline_at: Optional[float] = None,
+                       synchronous_only: bool = False) -> dict:
     """The cascade: the first step that finds the value wins. Then the COMPLETION
     steps (`Step.fills`, e.g. a company's LinkedIn page): each runs only while the
     value still lacks the field it fills, and merges what it finds — a page found
@@ -718,11 +720,15 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
     sub = await run_in_threadpool(current_user_sub_from_token)
     order, ignored, source, modes = await run_in_threadpool(
         _plan, ns, steps, providers_arg, sub)
+    if synchronous_only:
+        # Table mode: an asynchronous step would be paid now and answer after the
+        # call has written its row — its find would be lost (`waterfall_lignes.py`).
+        order = [s for s in order if s.collect is None]
     if not any(_runnable(s, inputs) for s in order):
         raise _bad(
             f"No provider of this {kind} waterfall can run on these inputs. Each needs: "
             + "; ".join(f"{s.key} → {_missing(s)}" for s in order) + ".")
-    deadline = time.monotonic() + DEADLINE_S
+    deadline = deadline_at or (time.monotonic() + DEADLINE_S)
     attempts: list[dict] = []
     pending: list[dict] = []
     budget = dict(limits or {})
@@ -1867,7 +1873,7 @@ def plan(ns: str, sub: Optional[str]) -> dict:
            "steps": [_step_row(s, modes.get(s.tool, "unknown"), ns) for s in order],
            "available": [_step_row(s, ns=ns) for s in steps]}
     if ns in _QUALIFIABLE:
-        out["qualification"] = _qualification_row(sub)
+        out["qualification"] = _qualification_row(sub, ns)
     return out
 
 
@@ -1876,7 +1882,7 @@ _QUALIFIABLE = {"waterfall_company": "company", "waterfall_person": "person",
                 "waterfall_people": "people"}
 
 
-def _qualification_row(sub: Optional[str]) -> dict:
+def _qualification_row(sub: Optional[str], ns: str) -> dict:
     """The optional Jev pass, for a screen: not a step (it finds nothing, it judges), so
     never in the order — whether it can run for `sub`, and what it costs. Jev runs on a
     SHARED key only (the tenant's, or the platform's): a closer one is refused."""
@@ -1885,7 +1891,7 @@ def _qualification_row(sub: Optional[str]) -> dict:
             "key_mode": mode,
             "usable": mode in ("tenant", "platform") or mode == "unknown",
             "shadowed": mode in ("org", "group", "user"),
-            "fields": list(_QUALIFY_FIELDS["people"]),
+            "fields": list(_QUALIFY_FIELDS[_QUALIFIABLE[ns]]),
             "price": {"rate": {"tool": "jev_items"}}}
 
 
@@ -1947,6 +1953,8 @@ _COMMON_ARGS = """            providers: the steps to try for THIS call, in this
 
 
 def register(mcp: FastMCP) -> None:
+    from . import waterfall_lignes
+    waterfall_lignes.register(mcp)
 
     @mcp.tool(annotations=LECTURE)
     @documente(f"""Find ONE person's professional email, trying providers in turn and

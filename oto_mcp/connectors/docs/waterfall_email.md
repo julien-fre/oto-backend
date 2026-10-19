@@ -21,4 +21,4 @@ one person per call, stopping at the first provider that returns an email.
 - dropcontact, lemlist and fullenrich answer asynchronously: each step waits up to ~25 s, otherwise it is `pending` and the response gives the collect call to make later (fullenrich usually takes 30 s to 4 min)
 - the email is not verified here — chain `zerobounce_verify_email` or `hunter_email_verify` if you need it
 - `dry_run=true` shows the plan (order, key per step, arguments) without spending anything
-- for a whole list, run it from a recipe (`oto_recipe`, `for_each` over the rows of a table)
+- for a whole list, `waterfall_email_act(op="update_rows")` runs it over a table's rows on the server: only rows with an empty `status_column` are taken, rows with the same inputs share one lookup, the find is written into each row and the answer is counts only — call again until `remaining` is 0; the asynchronous steps are left out there

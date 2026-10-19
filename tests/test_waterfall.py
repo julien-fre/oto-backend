@@ -94,7 +94,11 @@ def test_un_outil_par_connecteur_decrit_et_en_lecture():
     m = FastMCP("t")
     waterfall.register(m)
     tools = {t.name: t for t in asyncio.run(m._list_tools())}
-    assert set(tools) == set(NAMESPACES)
+    # `<ns>` lit ; `<ns>_act` écrit dans un tableau (`waterfall_lignes.py`).
+    assert set(tools) == set(NAMESPACES) | {f"{ns}_act" for ns in NAMESPACES}
+    for name in NAMESPACES:
+        assert tools[f"{name}_act"].annotations.destructiveHint is True
+    tools = {n: t for n, t in tools.items() if n in NAMESPACES}
     for t in tools.values():
         assert t.description and t.annotations.readOnlyHint is True
         props = t.parameters["properties"]
@@ -990,3 +994,12 @@ def test_le_plan_montre_la_qualification_jev_hors_des_etapes(calls):
     q = waterfall.plan("waterfall_company", "sub-test")["qualification"]
     assert q["usable"] is False and q["shadowed"] is True
     assert "qualification" not in waterfall.plan("waterfall_email", "sub-test")
+
+
+@pytest.mark.parametrize("ns", NAMESPACES)
+def test_la_carte_liste_les_etapes_dans_l_ordre_par_defaut(ns):
+    """Le réglage `steps` annonce ses clés dans l'ordre par défaut : un ordre changé dans
+    le code sans la carte la ferait mentir (vu une fois)."""
+    aide = providers.REGISTRY[ns].credential_fields[0].help
+    annonce = [k.strip(" .") for k in aide.split("Available:")[1].split(",")]
+    assert annonce == [s.key for s in waterfall.STEPS_BY_NAMESPACE[ns]]

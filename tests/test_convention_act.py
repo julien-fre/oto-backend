@@ -80,6 +80,9 @@ def _ops(outil) -> list[str]:
     op = (outil.parameters.get("properties") or {}).get("op") or {}
     if "enum" in op:
         return list(op["enum"])
+    if "const" in op:
+        # Un seul geste (`Literal["update_rows"]`) : le schéma le dit en `const`.
+        return [op["const"]]
     return [v for branche in op.get("anyOf", ()) for v in branche.get("enum", ())]
 
 

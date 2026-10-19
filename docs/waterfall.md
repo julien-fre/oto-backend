@@ -274,6 +274,42 @@ de révélation ou d'enrichissement que pour ceux qui passent.
 - Une société ou une personne est jugée une fois, à la fin (`passed`) : le fournisseur
   suivant ne trouverait que la même.
 
+## Sur un tableau : `waterfall_<x>_act(op="update_rows")`
+
+Un tableau s'enrichissait un appel par ligne : l'agent lisait la ligne, appelait la
+cascade, relisait la trouvaille et la retapait — chaque ligne deux fois dans un contexte
+de modèle, et chaque tour renvoyait la conversation. Le mode tableau
+(`tools/waterfall_lignes.py`) prend les LIGNES (`row_ids` ou `filter`) et les COLONNES
+(`inputs`, `output`, `status_column`) une fois ; le serveur lit, lance la MÊME cascade
+(`_run_cascade`), écrit en retour, et ne rend que des comptes et des codes — le contrat
+de `datastore/par_reference` (`docs/donnees-par-reference.md`), comme `lemlist_push_rows`.
+
+- **Écrire, c'est `<ns>_act`** (la règle `<ns>`/`<ns>_act`, `tests/test_convention_act.py`) :
+  op unique `update_rows`, annotations d'acte.
+- **Une ligne se paie une fois** : seules les lignes à `status_column` vide sont prises ;
+  chacune reçoit `found` (le fournisseur en commentaire), `no_match`, `unqualified` (gens
+  sous `qualify_min`) ou `failed` (`invalid_input`). Vider l'état remet la ligne en jeu.
+  Une ligne sans entrée exploitable n'est pas marquée : elle attend qu'on la remplisse.
+- **Mêmes entrées, une recherche** : les lignes dont les entrées normalisées coïncident
+  partagent UNE cascade, écrite sur chacune (`unique_lookups`, `rows_sharing_a_lookup`).
+- **En parallèle** (`PARALLELE` = 8), dans la borne REST : aucune cascade ne PART après
+  `DEPART_S`, et leurs étapes cessent d'être tentées à `CASCADE_S` ; ce qui n'est pas parti
+  reste en attente (`stopped: "time_budget"`).
+- **Les colonnes se déclarent avant de s'écrire** (une colonne non déclarée est refusée) :
+  état en texte, listes (`all`, `people`) en json, le reste en texte ; une valeur va au
+  TYPE de sa colonne (un nombre dans `number`, une liste jointe dans `text`), une valeur
+  qui ne s'y range pas reste vide. `output_fields_never_found` nomme un champ qui n'a
+  rien écrit (une faute de frappe).
+- ⚠️ **Les étapes asynchrones sont laissées de côté** (lemlist, FullEnrich, Dropcontact,
+  la révélation de téléphone Apollo) : payées maintenant, elles répondraient après
+  l'écriture de la ligne. Le reçu les nomme (`left_out_async_steps`). Suite naturelle :
+  écrire la poignée de collecte sur la ligne et une op `collect_rows`.
+- **Pas encore de travail de fond** : un appel traite ce qui tient dans sa fenêtre
+  (jusqu'à `batch_size` lignes, 50 au plus) ; l'agent rappelle avec les mêmes arguments.
+  Un travail de fond sur le modèle de `jev_rows(background=true)` se justifiera si la
+  mesure des lignes par appel ne suffit pas.
+- `qualify` (company, person, people) juge par recherche — un appel Jev par recherche.
+
 ## Ajouter une étape
 
 Une ligne `Step(...)` dans la table : la clé, l'outil (déjà monté — vérifié par

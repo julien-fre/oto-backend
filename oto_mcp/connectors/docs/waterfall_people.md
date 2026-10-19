@@ -29,3 +29,4 @@ one company per call, stopping at the first source that returns at least one mat
 - `qualify_min=0.7` keeps only what passes every yes/no question ; a provider whose people ALL fall short does not end the search, the next one is tried; the rejected come back under `unqualified` (name, title, URL, answers), `show_unqualified=true` for their full records
 - only the fields a fit needs are sent to Jev (title, seniority, industry, size…), never a name, email, phone or profile URL
 - no Jev key or no time left: results come back unqualified and the receipt's `qualification` says why
+- for a whole list, `waterfall_people_act(op="update_rows")` runs it over a table's rows on the server: only rows with an empty `status_column` are taken, rows with the same inputs share one lookup, the find is written into each row and the answer is counts only — call again until `remaining` is 0; the asynchronous steps are left out there

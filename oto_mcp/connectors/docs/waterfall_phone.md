@@ -21,3 +21,4 @@ one person per call, stopping at the first provider that returns a number.
 - phone credits cost more than email credits: narrow the steps to the provider you want to spend on
 - apollo's reveal, lemlist, dropcontact and fullenrich answer asynchronously: each waits up to ~25 s, otherwise it is `pending` (see `pending` in the response) — fullenrich usually takes 30 s to 4 min
 - `dry_run=true` shows the plan without spending anything
+- for a whole list, `waterfall_phone_act(op="update_rows")` runs it over a table's rows on the server: only rows with an empty `status_column` are taken, rows with the same inputs share one lookup, the find is written into each row and the answer is counts only — call again until `remaining` is 0; the asynchronous steps are left out there
