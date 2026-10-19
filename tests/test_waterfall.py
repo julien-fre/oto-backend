@@ -886,7 +886,9 @@ def test_qualify_min_ecarte_les_personnes_sous_le_seuil(calls):
     out = _run("waterfall_people", company_name="Acme", providers=["google"],
                qualify=_FIT, qualify_min=0.7)
     assert [p["full_name"] for p in out["people"]["people"]] == ["Ann Boss"]
-    assert out["people"]["count"] == 1 and out["qualification"]["dropped"] == 1
+    assert out["people"]["count"] == 1 and out["qualification"]["not_qualified"] == 1
+    assert out["attempts"][0]["qualified"] == 1 and out["attempts"][0]["not_qualified"] == 1
+    assert "show_unqualified" in out["qualification"]["hint"] and "unqualified" not in out
 
 
 def test_sans_cle_jev_les_resultats_reviennent_non_qualifies(calls):
@@ -923,3 +925,30 @@ def test_pas_de_qualification_sans_resultat_ni_en_dry_run(calls):
 def test_une_rubrique_mal_formee_est_refusee(calls, kwargs):
     with pytest.raises(McpError):
         _run("waterfall_people", company_name="Acme", **kwargs)
+
+
+def test_si_personne_ne_passe_le_fournisseur_suivant_est_essaye(calls):
+    _gens(calls)
+    calls["answers"]["linkedin_aiark_search"] = IssueCible(ok=True, result={"content": [
+        {"profile": {"full_name": "Cleo Head", "title": "Head of Marketing"},
+         "link": {"linkedin": "https://www.linkedin.com/in/cleo-head"}}]})
+    calls["answers"]["jev_items"] = [_verdicts(0.2, 0.1), _verdicts(0.9)]
+    out = _run("waterfall_people", company_name="Acme", domain="acme.com",
+               providers=["google", "aiark"], qualify=_FIT, qualify_min=0.7)
+    assert out["provider"] == "aiark"
+    assert [p["full_name"] for p in out["people"]["people"]] == ["Cleo Head"]
+    assert out["attempts"][0]["status"] == "unqualified"
+    assert out["attempts"][0]["not_qualified"] == 2
+    q = out["qualification"]
+    assert q["calls"] == 2 and q["not_qualified"] == 2
+
+
+def test_show_unqualified_rend_les_ecartes_avec_leurs_reponses(calls):
+    _gens(calls)
+    calls["answers"]["jev_items"] = _verdicts(0.2, 0.1)
+    out = _run("waterfall_people", company_name="Acme", providers=["google"],
+               qualify=_FIT, qualify_min=0.7, show_unqualified=True)
+    assert out["found"] is False
+    assert [p["full_name"] for p in out["unqualified"]] == ["Ann Boss", "Bob Dev"]
+    assert out["unqualified"][0]["qualification"]["answers"]["fit"]["noul"] == 0.2
+    assert "hint" not in out["qualification"]

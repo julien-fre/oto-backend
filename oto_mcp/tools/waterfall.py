@@ -554,11 +554,11 @@ _QUALIFY_FIELDS = {
 _QUALIFY_MIN_S = 5.0
 
 
-def _qualify_args(qualify, qualify_min) -> Optional[dict]:
+def _qualify_args(qualify, qualify_min, show_unqualified: bool = False) -> Optional[dict]:
     """The caller's rubric, validated — `None` when no qualification is asked."""
     if qualify is None:
-        if qualify_min is not None:
-            raise _bad("`qualify_min` needs `qualify` (the rubric it applies to).")
+        if qualify_min is not None or show_unqualified:
+            raise _bad("`qualify_min` / `show_unqualified` need `qualify` (the rubric).")
         return None
     if not isinstance(qualify, dict) or not qualify:
         raise _bad("`qualify`: a Jev rubric `{name: {type, instructions, criteria}}`, "
@@ -569,7 +569,45 @@ def _qualify_args(qualify, qualify_min) -> Optional[dict]:
         if not any(isinstance(q, dict) and q.get("type") == "noul" for q in qualify.values()):
             raise _bad("`qualify_min` filters on the rubric's yes/no (`noul`) questions: "
                        "the rubric has none.")
-    return {"questions": qualify, "min": qualify_min}
+    return {"questions": qualify, "min": qualify_min, "show": bool(show_unqualified)}
+
+
+def _per_step(kind: str, qualify: Optional[dict]) -> bool:
+    """People with a threshold are qualified STEP BY STEP: a provider whose people all
+    fall short does not end the cascade, the next one is tried. A company or a person is
+    judged once at the end — the next provider would only find the same one again."""
+    return bool(qualify) and qualify.get("min") is not None and kind == "people"
+
+
+class _Tally:
+    """What qualification did over a whole cascade — the receipt's `qualification`."""
+
+    def __init__(self):
+        self.reports: list[dict] = []
+        self.rejected: list[dict] = []
+
+    def add(self, attempt: Optional[dict], report: dict) -> None:
+        self.rejected += report.pop("_rejected", [])
+        self.reports.append(report)
+        if attempt is not None and report.get("status") == "done":
+            attempt.update(qualified=report.get("qualified"),
+                           not_qualified=report.get("not_qualified"))
+
+    def receipt(self, qualify: dict) -> dict:
+        done = [r for r in self.reports if r.get("status") == "done"]
+        if not done:
+            return self.reports[-1]     # skipped: says why (no key, no time…)
+        out = {"tool": "jev_items", "status": "done", "model": done[-1].get("model"),
+               "calls": len(done),
+               "cost_usd": round(sum(r.get("cost_usd") or 0 for r in done), 8)}
+        if "qualified" in done[-1]:
+            out["not_qualified"] = len(self.rejected)
+            if self.rejected and not qualify["show"]:
+                out["hint"] = (f"{len(self.rejected)} person(s) found did not reach "
+                               "`qualify_min`. To see them, call again with "
+                               "`show_unqualified=true` (the providers are called and "
+                               "billed again).")
+        return out
 
 
 def _qualify_state(kind: str, rec: dict, inputs: dict) -> dict:
@@ -614,7 +652,7 @@ async def _qualify(mcp: FastMCP, sub, kind: str, found: dict, inputs: dict,
     res = _payload(issue) or {}
     model = res.get("model")
     by_index = {a.get("index"): a for a in res.get("answers") or [] if isinstance(a, dict)}
-    kept, dropped, failed = [], 0, 0
+    kept, rejected, failed = [], [], 0
     for i, r in enumerate(records):
         a = by_index.get(i) or {}
         if "answers" not in a:
@@ -625,13 +663,13 @@ async def _qualify(mcp: FastMCP, sub, kind: str, found: dict, inputs: dict,
         r = {**r, "qualification": {"answers": a["answers"], "model": model,
                                     **({"passed": ok} if rubric["min"] is not None else {})}}
         if kind == "people" and not ok:
-            dropped += 1
+            rejected.append(r)
             continue
         kept.append(r)
     report.update(status="done", model=model, failed=failed,
                   cost_usd=(res.get("usage") or {}).get("cost"))
     if kind == "people":
-        report["dropped"] = dropped
+        report.update(qualified=len(kept), not_qualified=len(rejected), _rejected=rejected)
         return {**found, "people": kept, "count": len(kept)}, report
     return kept[0], report
 
@@ -667,6 +705,7 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
     attempts: list[dict] = []
     pending: list[dict] = []
     budget = dict(limits or {})
+    tally = _Tally()
     found, winner = None, None
     fallback, fallback_step = None, None
     for step in order:
@@ -684,10 +723,21 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
             if fallback is None:
                 fallback, fallback_step = got, step.key
             continue
+        if got is not None and not dry_run and _per_step(kind, qualify):
+            got, report = await _qualify(mcp, sub, kind, got, inputs, qualify, deadline)
+            tally.add(attempt, report)
+            if report.get("status") == "done" and not got["people"]:
+                attempt.update(status="unqualified")
+                continue    # nobody here passes: the next provider is tried
         found = got
         winner = step.key if found is not None else None
     if found is None and fallback is not None:
         found, winner = fallback, fallback_step
+        if not dry_run and _per_step(kind, qualify):
+            found, report = await _qualify(mcp, sub, kind, found, inputs, qualify, deadline)
+            tally.add(None, report)
+            if report.get("status") == "done" and not found["people"]:
+                found, winner = None, None
     for step in order:
         if not step.fills:
             continue
@@ -707,13 +757,15 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
                 **({"ignored_steps": ignored} if ignored else {}),
                 **({"qualification": {"tool": "jev_items", "status": "planned"}}
                    if qualify else {})}
-    report = None
-    if qualify and found:
+    if qualify and found and not _per_step(kind, qualify):
         found, report = await _qualify(mcp, sub, kind, found, inputs, qualify, deadline)
+        tally.add(None, report)
     out = _receipt(kind, found is not None, winner, found, attempts, source, ignored,
                    pending)
-    if report is not None:
-        out["qualification"] = report
+    if tally.reports:
+        out["qualification"] = tally.receipt(qualify)
+        if qualify.get("show") and tally.rejected:
+            out["unqualified"] = tally.rejected
     return out
 
 
@@ -1808,7 +1860,14 @@ _QUALIFY_ARGS = """            qualify: a Jev rubric to judge each result agains
                 reveal or enrich anyone.
             qualify_min: keep only results whose yes/no (`noul`) answers are all at or
                 above this probability (e.g. 0.7). Omitted = nothing dropped, every
-                result annotated. A probability near 0.5 means "as likely as not"."""
+                result annotated. A probability near 0.5 means "as likely as not". For
+                PEOPLE, each provider's finds are judged as they come: a provider whose
+                people ALL fall short does not end the search — the next one is tried —
+                and each attempt says `qualified` / `not_qualified`. A company or a
+                person stays, with `qualification.passed`.
+            show_unqualified: also return, under `unqualified`, the people who did not
+                pass (with their answers) — to check the rubric. Default: only their
+                count, in `qualification.not_qualified`."""
 
 _COMMON_ARGS = """            providers: the steps to try for THIS call, in this order — keys
                 from the list above. Overrides your setting. Never a tool name.
@@ -1939,12 +1998,13 @@ def register(mcp: FastMCP) -> None:
         providers: Optional[list[str]] = None, dry_run: bool = False,
         max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
         qualify: Optional[dict] = None, qualify_min: Optional[float] = None,
+        show_unqualified: bool = False,
     ) -> dict:
         inputs = _company_inputs(company_name, domain, siren, country)
         return await _run_cascade(mcp, "waterfall_company", "company", COMPANY_STEPS,
                                   inputs, providers, dry_run,
                                   _limits(max_paid_steps, apify_max_usd),
-                                  _qualify_args(qualify, qualify_min))
+                                  _qualify_args(qualify, qualify_min, show_unqualified))
 
     @mcp.tool(annotations=LECTURE)
     @documente(f"""Find ONE person's current profile (title, company, seniority, location,
@@ -1981,13 +2041,14 @@ def register(mcp: FastMCP) -> None:
         providers: Optional[list[str]] = None, dry_run: bool = False,
         max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
         qualify: Optional[dict] = None, qualify_min: Optional[float] = None,
+        show_unqualified: bool = False,
     ) -> dict:
         inputs = _person_inputs(first_name, last_name, full_name, domain,
                                 company_name, linkedin_url, email)
         return await _run_cascade(mcp, "waterfall_person", "person", PERSON_STEPS,
                                   inputs, providers, dry_run,
                                   _limits(max_paid_steps, apify_max_usd),
-                                  _qualify_args(qualify, qualify_min))
+                                  _qualify_args(qualify, qualify_min, show_unqualified))
 
     @mcp.tool(annotations=LECTURE)
     @documente(f"""Find the PEOPLE working at ONE company — its decision-makers when you
@@ -2031,10 +2092,11 @@ def register(mcp: FastMCP) -> None:
         providers: Optional[list[str]] = None, dry_run: bool = False,
         max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
         qualify: Optional[dict] = None, qualify_min: Optional[float] = None,
+        show_unqualified: bool = False,
     ) -> dict:
         inputs = _people_inputs(company_name, domain, company_linkedin_url, roles,
                                 country, limit)
         return await _run_cascade(mcp, "waterfall_people", "people", PEOPLE_STEPS,
                                   inputs, providers, dry_run,
                                   _limits(max_paid_steps, apify_max_usd),
-                                  _qualify_args(qualify, qualify_min))
+                                  _qualify_args(qualify, qualify_min, show_unqualified))
