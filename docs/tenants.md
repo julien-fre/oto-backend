@@ -218,6 +218,15 @@ l'administrons) est une autre décision non prise (`tenancy.ForeignTenantDirecto
 >   chemin d'une page l'ouvre DANS son projet (`/projects/{project_id}?doc={id}`) : une
 >   page n'a pas d'écran à elle. **Un patron sans appelant n'est pas inerte, il est
 >   simplement non testé** — n'en déclarer un qu'avec ce qui l'utilise.
+> - **Les chemins de NOTRE instance se déclarent par instance** (`OTO_DASHBOARD_LINK_PATHS`,
+>   JSON `{type: chemin}` fusionné sur `DEFAULT_PATHS`). Le tenant primaire ne lit pas sa
+>   ligne `tenants` (son émetteur vient de l'env) : ses `link_paths` n'ont jamais servi. Une
+>   instance dont le tableau de bord range tout sous l'org (`/org/{org}/tables/{id}`)
+>   servait donc `/data/{id}` à chaque tableau, une adresse que son routeur ne connaît pas.
+>   Conformément à la convention ci-dessus, le correctif est un réglage d'INSTANCE, pas un
+>   champ de plus sur le tenant. Les appelants de `table`, `doc`, `project` et `billing`
+>   ne résolvent l'org (`access.current_org`) que si le chemin la réclame
+>   (`patron_reclame`) ; sans org, aucun lien, jamais `/org//…`.
 > - **Le socle d'instructions suit le tenant** (`guides` scope `tenant`, owner = le slug) :
 >   sinon l'assistant d'un partenaire se présente sous NOTRE marque à chaque session.
 > - **La page publique d'un projet partagé suit la marque de son PROPRIÉTAIRE**

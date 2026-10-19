@@ -30,13 +30,23 @@ only charges an expensive parameter (the caller's org) to the product that requi
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 from typing import Any, Optional
 
 from . import config
 
 logger = logging.getLogger(__name__)
+
+# The paths of THIS instance's dashboard, when it is not the one `DEFAULT_PATHS`
+# describes. An instance whose dashboard routes everything under the org
+# (`/org/{org}/tables/{id}`) was handing out `/data/{id}` for every table: an address
+# its dashboard does not route, so every table link in an agent's report led nowhere.
+# Declared per INSTANCE (the convention of `docs/tenants.md`: nothing new per tenant),
+# as a JSON object `{kind: path}` merged over `DEFAULT_PATHS`; absent = our paths.
+ENV_INSTANCE_PATHS = "OTO_DASHBOARD_LINK_PATHS"
 
 # Our own paths, by type. Single source: what the `oto` tenant serves, and the
 # default of any tenant that declares nothing. `{…}` = the link's named parameters.
@@ -66,6 +76,30 @@ DEFAULT_PATHS: dict[str, str] = {
     "connector_return": "/connectors?connector={connector}",
     "marketplace": "/connectors?tab=marketplace",
 }
+
+
+def instance_paths() -> dict[str, str]:
+    """The paths of this instance's dashboard: `DEFAULT_PATHS`, overridden kind by
+    kind by `OTO_DASHBOARD_LINK_PATHS`.
+
+    Read at each call (like `config.dashboard_url`), so a test or a restart sees the
+    declaration as it stands. An unreadable declaration is LOGGED and ignored rather
+    than half-applied: a link to a page that exists elsewhere beats a link built from
+    a guess about what the declaration meant."""
+    raw = os.environ.get(ENV_INSTANCE_PATHS, "").strip()
+    if not raw:
+        return DEFAULT_PATHS
+    try:
+        declared = json.loads(raw)
+    except ValueError:
+        logger.error("%s is not JSON: instance link paths ignored", ENV_INSTANCE_PATHS)
+        return DEFAULT_PATHS
+    if not isinstance(declared, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in declared.items()):
+        logger.error("%s must be a JSON object of strings {kind: path}: ignored",
+                     ENV_INSTANCE_PATHS)
+        return DEFAULT_PATHS
+    return {**DEFAULT_PATHS, **declared}
 
 
 def _tenant_of(sub: Optional[str]):
@@ -108,7 +142,7 @@ def link_for(kind: str, *, sub: Optional[str] = None, **params: Any) -> Optional
     """
     entry = _tenant_of(sub)
     if entry is None:
-        chemin = DEFAULT_PATHS.get(kind)
+        chemin = instance_paths().get(kind)
         return None if chemin is None else _render(config.dashboard_url(), chemin, params)
 
     patrons = getattr(entry, "link_paths", None) or {}
@@ -150,7 +184,7 @@ _NOMS = {"table": "table", "doc": "page", "project": "project",
 def _chemin_pour(kind: str, sub: Optional[str]) -> Optional[str]:
     entry = _tenant_of(sub)
     if entry is None:
-        return DEFAULT_PATHS.get(kind)
+        return instance_paths().get(kind)
     return (getattr(entry, "link_paths", None) or {}).get(kind)
 
 
@@ -176,7 +210,7 @@ def raison_sans_lien(kind: str, *, sub: Optional[str] = None, **params: Any) -> 
     nom = _NOMS.get(kind, kind)
     entry = _tenant_of(sub)
     if entry is None:
-        chemin = DEFAULT_PATHS.get(kind)
+        chemin = instance_paths().get(kind)
         if chemin is None:
             return f"no {nom} page exists in this product"
     else:
@@ -206,5 +240,5 @@ def redirect_for(kind: str, *, sub: Optional[str] = None, **params: Any) -> str:
     brand once beats a blank page in the middle of a connection.
     """
     return (link_for(kind, sub=sub, **params)
-            or _render(config.dashboard_url(), DEFAULT_PATHS.get(kind, ""), params)
+            or _render(config.dashboard_url(), instance_paths().get(kind, ""), params)
             or config.dashboard_url())

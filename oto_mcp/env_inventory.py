@@ -198,6 +198,11 @@ _IDENTITE: tuple[Variable, ...] = (
     Variable("OTO_DASHBOARD_BASE_URL", Classe.IDENTITE, None,
              "Troisième variable de la cascade `dashboard_url()` — voir `OTO_APP_URL`.",
              ("oto_mcp/config.py:229",)),
+    Variable("OTO_DASHBOARD_LINK_PATHS", Classe.REGLAGE, "",
+             "Chemins des liens servis vers le tableau de bord de CETTE instance, en JSON "
+             "`{type: chemin}` fusionné sur `links.DEFAULT_PATHS` (ex. "
+             "`{\"table\": \"/org/{org}/tables/{id}\"}`). Vide = les chemins par défaut.",
+             ("oto_mcp/links.py:89",)),
     Variable("OTO_INVITE_BASE_URL", Classe.IDENTITE, None,
              "Base des liens d'invitation d'une org sans front déclaré "
              "(`orgs.front_base_url` gagne quand il est posé).",
