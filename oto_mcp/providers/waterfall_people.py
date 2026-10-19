@@ -1,0 +1,38 @@
+"""Registry declaration of the `waterfall_people` connector.
+
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
+"""
+from __future__ import annotations
+
+from ._model import CredentialField, _c
+
+# A COMPOSITE (`tools/waterfall.py`, shared by the four waterfall connectors): each step
+# is an ordinary call of another connector's tool, which resolves ITS key, passes ITS
+# activation gate and bills on ITS row. The only thing this card stores is a SETTING —
+# the ordered list of steps — never a secret: `secret=False`, rendered as-is, set by an
+# org admin (`byo_org`, the org default) or by a member for themselves (`byo_user`, an
+# override), resolved by the same cascade as a key. Nothing set = the default order —
+# hence `secret_kind="settings"`: the card works with nothing set.
+CONNECTOR = _c(
+    "waterfall_people", ["waterfall_people"], secret_kind="settings", auth_modes={"byo_user", "byo_org"},
+    cardinality="mono", modules=("waterfall",),
+    credential_fields=(CredentialField(
+        "steps", "Steps, in order", secret=False, required=False,
+        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: apollo, aiark, linkedin_employees, google."),),
+    label="People at a company",
+    help="the people working at a company — its decision-makers by role — across your connected "
+         "providers, stopping at the first that finds them",
+)
+
+# Publisher: ours — the cascade runs on our server; the calls it makes reach the
+# providers under their own connectors, each of which names its own publisher.
+PUBLISHER = "Otomata"
+SANS_LOGO_DE_MARQUE = True
+CATEGORY = "Prospecting"
+
+DESCRIPTION = (
+    "Finds the people working at a company — its decision-makers when you give roles — "
+    "through Apollo, AI Ark, the company's LinkedIn employees, then Google, stopping at the "
+    "first source that finds them. Each is billed on its own key."
+)

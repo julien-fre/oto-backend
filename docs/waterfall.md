@@ -1,9 +1,9 @@
 ---
-title: Les waterfalls natifs — email, téléphone, société, personne
+title: Les waterfalls natifs — email, téléphone, société, personne, gens d'une société
 type: explanation
 description: >-
-  Quatre connecteurs (`waterfall_email`, `waterfall_phone`, `waterfall_company`,
-  `waterfall_person`), un outil chacun, servis par un seul module : une cascade de
+  Cinq connecteurs (`waterfall_email`, `waterfall_phone`, `waterfall_company`,
+  `waterfall_person`, `waterfall_people`), un outil chacun, servis par un seul module : une cascade de
   fournisseurs DÉJÀ connectés, arrêtée au premier trouvé, où chaque étape est un appel
   ordinaire de l'outil du fournisseur (`meta.executer_cible`). D'où vient l'ordre (appel,
   réglage `steps` de la carte, défaut) et pourquoi les clés de l'appelant passent devant ;
@@ -24,9 +24,9 @@ lui, sur ses fournisseurs, à son prix ; l'org qui a déjà ses propres clés n'
 
 ## Le principe
 
-Quatre connecteurs, un outil `<ns>` chacun (lecteurs seuls, donc pas de `<ns>_act` :
+Cinq connecteurs, un outil `<ns>` chacun (lecteurs seuls, donc pas de `<ns>_act` :
 convention du 17/10), une table d'étapes chacun (`EMAIL_STEPS`, `PHONE_STEPS`,
-`COMPANY_STEPS`, `PERSON_STEPS`), un seul module (`Connector.modules=("waterfall",)`,
+`COMPANY_STEPS`, `PERSON_STEPS`, `PEOPLE_STEPS`), un seul module (`Connector.modules=("waterfall",)`,
 que `register_all` ne charge qu'une fois). Une étape = un outil de connecteur existant,
 les entrées qu'il exige, la façon de construire ses arguments et de lire sa réponse. La
 cascade s'arrête au **premier** trouvé (choix produit : le moins cher, pas le plus sûr —
@@ -147,6 +147,41 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
 - **Absents, et pourquoi** : HitHorizons (deux appels par société, aucune forme connue),
   Topograph et Crunchbase (un « introuvable » ne s'y distingue pas d'une panne :
   `internal`).
+
+## Les étapes de complétion : la page LinkedIn d'une société
+
+Une étape `Step(fills="linkedin_url")` ne concourt pas au trouvé : après la cascade, elle
+ne tourne que si la valeur trouvée n'a PAS ce champ, et y fusionne ce qu'elle trouve
+(sans écraser). Une page trouvée alors que rien d'autre n'avait identifié la société fait
+encore un trouvé, mince (`linkedin_url`, et ce que la recherche rend). Deux étapes, deux
+acteurs Apify, chacun une exécution bornée par `apify_run_sync` avec `timeout_secs` (25 s,
+côté Apify) et un plafond de coût — un acteur coupé rend encore ses éléments partiels :
+
+- `linkedin_site` (`vdrmota/contact-info-scraper`) : les liens LinkedIn du site de la
+  société. ⚠️ Le site d'un grand groupe lie souvent la page du GROUPE (`linkedin_source`
+  le dit : `website`).
+- `linkedin_search` (`harvestapi/linkedin-company`, `searches` — pas `companies`, qui
+  attend des URL) : le premier résultat d'une recherche par nom est souvent un homonyme ;
+  gardé seulement si son site est le domaine, ou, sans domaine, si son nom est celui
+  demandé.
+
+Appris sur une vraie liste (un salon professionnel, octobre 2026) : ces deux étapes ont
+retrouvé les pages que les fournisseurs de données n'avaient pas, pour quelques centimes.
+
+## Les gens d'une société (`waterfall_people`)
+
+Une société en entrée (domaine, nom, page LinkedIn), des `roles` facultatifs, une
+`limit` (≤ 25) ; la première source qui rend au moins une personne gagne. Une personne
+n'est gardée que si elle a un nom et si son titre correspond à l'un des `roles` (quand il
+y en a) : apollo (recherche gratuite ; les noms y sont masqués — on révèle par
+`apollo_id`, JAMAIS par nom + société, qui facturerait une fiche vide) → aiark (domaine ;
+pas de filtre de titre côté AI Ark : il est appliqué ici) → `linkedin_employees`
+(`harvestapi/linkedin-company-employees`, les employés de la page LinkedIn — titres
+actuels, souvent plus frais que les fournisseurs ; ⚠️ une page tire des gens dont le
+poste ACTUEL est ailleurs, et des faux profils : gardés seulement si
+`currentPosition[0].companyUniversalName` est la page demandée) → google (`serper_search`
+sur `linkedin.com/in`, un titre « Nom – Poste – Société | LinkedIn », gardé seulement s'il
+nomme la société).
 
 ## Ajouter une étape
 

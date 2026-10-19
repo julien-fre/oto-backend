@@ -246,6 +246,9 @@ class Step:
     # What a screen calls the step, when the connector's own label would not tell two
     # steps apart (the French registry by SIREN, and by name).
     label: str = ""
+    # A COMPLETION step: it does not compete for the find, it fills ONE field the find
+    # still lacks (`linkedin_url`), after the cascade — see `_run_cascade`.
+    fills: str = ""
 
 
 def _payload(issue):
@@ -420,9 +423,60 @@ def _receipt(kind, found, provider, value, attempts, source, ignored, pending) -
     return out
 
 
+async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
+                    dry_run: bool, deadline: float, attempt: dict, pending: list):
+    """Run ONE step and record what happened on `attempt`; return its find, or None."""
+    if not _runnable(step, inputs):
+        attempt.update(status="skipped", code="missing_input",
+                       message=f"needs {_missing(step)}")
+        return None
+    if mode in _NO_KEY:
+        attempt.update(status="skipped", code="no_key", message=(
+            "no usable key for this provider — connect yours on its card"
+            if mode == "forbidden" else "the shared key's quota is used up for today"))
+        return None
+    args = step.build(inputs)
+    if dry_run:
+        attempt.update(status="planned", arguments=args, cost=step.cost)
+        return None
+    if time.monotonic() >= deadline:
+        attempt.update(status="skipped", code="time_budget",
+                       message=f"the waterfall's {int(DEADLINE_S)} s budget is spent")
+        return None
+    issue = await _call(mcp, sub, step.tool, args, attempt)
+    if issue is None or not _judge(issue, attempt):
+        return None
+    result = _payload(issue)
+    if step.collect is not None:
+        collected, collect_args, finished = await _poll(mcp, sub, step, result, deadline)
+        if not finished:
+            collect = {"tool": step.collect.tool, "arguments": collect_args}
+            attempt.update(status="pending", collect=collect,
+                           message="submitted, not finished in time — collect it "
+                                   "later with `collect`")
+            pending.append({"provider": step.key, **collect})
+            return None
+        if collected is None:
+            attempt.update(status="no_match")
+            return None
+        if not _judge(collected, attempt):
+            return None
+        result = _payload(collected)
+    found = step.extract(result, inputs)
+    if not found:
+        attempt.update(status="no_match")
+        return None
+    attempt.update(status="found")
+    return found
+
+
 async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...],
                        inputs: dict, providers_arg: Optional[list[str]],
                        dry_run: bool) -> dict:
+    """The cascade: the first step that finds the value wins. Then the COMPLETION
+    steps (`Step.fills`, e.g. a company's LinkedIn page): each runs only while the
+    value still lacks the field it fills, and merges what it finds — a page found
+    when nothing else identified the company still makes a (thin) find."""
     # The identity seam and the plan read the database: off the loop
     # (`docs/event-loop-perf.md`).
     sub = await run_in_threadpool(current_user_sub_from_token)
@@ -435,57 +489,37 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
     deadline = time.monotonic() + DEADLINE_S
     attempts: list[dict] = []
     pending: list[dict] = []
+    found, winner = None, None
     for step in order:
-        mode = modes.get(step.tool, "unknown")
-        attempt = {"provider": step.key, "tool": step.tool, "key": mode}
+        if step.fills:
+            continue
+        if found is not None:
+            break       # the receipt ends at the winner, as it always has
+        attempt = {"provider": step.key, "tool": step.tool,
+                   "key": modes.get(step.tool, "unknown")}
         attempts.append(attempt)
-        if not _runnable(step, inputs):
-            attempt.update(status="skipped", code="missing_input",
-                           message=f"needs {_missing(step)}")
+        found = await _run_step(mcp, sub, step, attempt["key"], inputs, dry_run,
+                                deadline, attempt, pending)
+        winner = step.key if found is not None else None
+    for step in order:
+        if not step.fills:
             continue
-        if mode in _NO_KEY:
-            attempt.update(status="skipped", code="no_key", message=(
-                "no usable key for this provider — connect yours on its card"
-                if mode == "forbidden" else "the shared key's quota is used up for today"))
-            continue
-        args = step.build(inputs)
-        if dry_run:
-            attempt.update(status="planned", arguments=args, cost=step.cost)
-            continue
-        if time.monotonic() >= deadline:
-            attempt.update(status="skipped", code="time_budget",
-                           message=f"the waterfall's {int(DEADLINE_S)} s budget is spent")
-            continue
-        issue = await _call(mcp, sub, step.tool, args, attempt)
-        if issue is None or not _judge(issue, attempt):
-            continue
-        result = _payload(issue)
-        if step.collect is not None:
-            collected, collect_args, finished = await _poll(mcp, sub, step, result,
-                                                            deadline)
-            if not finished:
-                collect = {"tool": step.collect.tool, "arguments": collect_args}
-                attempt.update(status="pending", collect=collect,
-                               message="submitted, not finished in time — collect it "
-                                       "later with `collect`")
-                pending.append({"provider": step.key, **collect})
-                continue
-            if collected is None:
-                attempt.update(status="no_match")
-                continue
-            if not _judge(collected, attempt):
-                continue
-            result = _payload(collected)
-        found = step.extract(result, inputs)
-        if not found:
-            attempt.update(status="no_match")
-            continue
-        attempt.update(status="found")
-        return _receipt(kind, True, step.key, found, attempts, source, ignored, pending)
+        if isinstance(found, dict) and found.get(step.fills):
+            continue    # the field is there: nothing to fill, nothing to say
+        attempt = {"provider": step.key, "tool": step.tool,
+                   "key": modes.get(step.tool, "unknown"), "fills": step.fills}
+        attempts.append(attempt)
+        extra = await _run_step(mcp, sub, step, attempt["key"], inputs, dry_run,
+                                deadline, attempt, pending)
+        if extra:
+            found = {**(found or {}), **{k: v for k, v in extra.items()
+                                          if not (found or {}).get(k)}}
+            winner = winner or step.key
     if dry_run:
         return {"dry_run": True, "order_from": source, "attempts": attempts,
                 **({"ignored_steps": ignored} if ignored else {})}
-    return _receipt(kind, False, None, None, attempts, source, ignored, pending)
+    return _receipt(kind, found is not None, winner, found, attempts, source, ignored,
+                    pending)
 
 
 # --- reading a provider's answer -----------------------------------------------------
@@ -1010,6 +1044,70 @@ def _cognism_company(res, inputs):
     return None
 
 
+# The LinkedIn company page — two Apify actors, each one bounded run (`timeout_secs`
+# on Apify's side, a cost ceiling): learned on a real list (a trade-show exhibitor
+# list, 2026-10), where they recovered the pages the data vendors did not have.
+_APIFY_TIMEOUT_S = 25
+_APIFY_MAX_USD = 0.05
+
+
+def _apify_items(res) -> list:
+    """`apify_run_sync` answers the item LIST, or `{error, run_id, status, items}` for a
+    run that ended TIMED-OUT/FAILED — whose partial items are still worth reading."""
+    if isinstance(res, list):
+        return res
+    if isinstance(res, dict) and isinstance(res.get("items"), list):
+        return res["items"]
+    return []
+
+
+_COMPANY_PAGE = re.compile(r"linkedin\.com/(?:company|school|showcase)/[^/?#\s]+", re.I)
+
+
+def _company_page(url) -> Optional[str]:
+    m = _COMPANY_PAGE.search(str(url or ""))
+    return f"https://www.{m.group(0).lower()}/" if m else None
+
+
+def _site_linkedin(res, inputs):
+    """The LinkedIn links the company's OWN website carries (`linkedIns`). A company
+    page wins; a big group's site often links the PARENT's page — the scrape cannot
+    tell, so the result says where it came from (`linkedin_source`)."""
+    for item in _apify_items(res):
+        if not isinstance(item, dict):
+            continue
+        links = item.get("linkedIns") or item.get("linkedins") or []
+        pages = [p for p in (_company_page(u) for u in links) if p]
+        if pages:
+            return {"linkedin_url": pages[0], "linkedin_source": "website"}
+    return None
+
+
+def _search_linkedin(res, inputs):
+    """A LinkedIn company search by NAME returns its top hit — usually a namesake on a
+    short name (a restaurant, a dev shop elsewhere): kept only when its website is the
+    company's domain, or, without a domain, when its name is the name asked."""
+    for item in _apify_items(res)[:3]:
+        if not isinstance(item, dict):
+            continue
+        url = _company_page(_pick(item, "linkedinUrl", "url", "companyUrl", "link"))
+        if not url:
+            continue
+        website = _domain(_pick(item, "website", "websiteUrl", "companyWebsite"))
+        name = _pick(item, "name", "companyName")
+        if inputs.get("domain"):
+            if website != inputs["domain"]:
+                continue
+        elif not _same_company(inputs, name, None):
+            continue
+        return _clean({"linkedin_url": url, "linkedin_source": "search", "name": name,
+                       "domain": website,
+                       "employees": _pick(item, "employeeCount", "staffCount"),
+                       "industry": _pick(item, "industry", "industries[0]")},
+                      ("linkedin_url",))
+    return None
+
+
 COMPANY_STEPS: tuple[Step, ...] = (
     Step("fr_get", "fr_get", (("siren",),),
          lambda i: {"siren": i["siren"]}, _fr_get_company, "free (French open data)",
@@ -1030,6 +1128,23 @@ COMPANY_STEPS: tuple[Step, ...] = (
          lambda i: {k: v for k, v in {"name": i.get("company_name"),
                                       "domain": i.get("domain")}.items() if v},
          _cognism_company, "Cognism credits (per its contract)"),
+    # Completion: the LinkedIn page, when no source above returned it.
+    Step("linkedin_site", "apify_run_sync", (("domain",),),
+         lambda i: {"actor_id": "vdrmota/contact-info-scraper",
+                    "run_input": {"startUrls": [{"url": f"https://www.{i['domain']}"}],
+                                  "maxDepth": 1, "maxRequestsPerStartUrl": 4,
+                                  "sameDomain": True},
+                    "timeout_secs": _APIFY_TIMEOUT_S,
+                    "max_total_charge_usd": _APIFY_MAX_USD},
+         _site_linkedin, "a few cents of Apify per site", fills="linkedin_url",
+         label="LinkedIn page · website"),
+    Step("linkedin_search", "apify_run_sync", (("company_name",),),
+         lambda i: {"actor_id": "harvestapi/linkedin-company",
+                    "run_input": {"searches": [i["company_name"]]},
+                    "max_items": 3, "timeout_secs": _APIFY_TIMEOUT_S,
+                    "max_total_charge_usd": _APIFY_MAX_USD},
+         _search_linkedin, "a few cents of Apify per search", fills="linkedin_url",
+         label="LinkedIn page · by name"),
 )
 
 
@@ -1128,12 +1243,181 @@ PERSON_STEPS: tuple[Step, ...] = (
 )
 
 
+# People at a company ------------------------------------------------------------------
+
+#: The most people one call returns.
+PEOPLE_MAX = 25
+
+
+def _people_inputs(company_name, domain, company_linkedin_url, roles, country,
+                   limit) -> dict:
+    if isinstance(roles, str):
+        roles = [r for r in re.split(r"[,;]", roles)]
+    roles = [r.strip() for r in (roles or []) if r and r.strip()]
+    page = _company_page(company_linkedin_url) if company_linkedin_url else None
+    if company_linkedin_url and not page:
+        raise _bad(f"`company_linkedin_url` must be a LinkedIn company page "
+                   f"(linkedin.com/company/…) — got `{company_linkedin_url}`.")
+    n = max(1, min(int(limit or 10), PEOPLE_MAX))
+    return {"company_name": (company_name or "").strip() or None,
+            "domain": _domain(domain), "company_linkedin_url": page,
+            "roles": roles or None, "country": (country or "").strip() or None,
+            "limit": n}
+
+
+def _matches_roles(title, roles) -> bool:
+    if not roles:
+        return True
+    t = _norm_name(str(title or ""))
+    return any(_norm_name(r) and f" {_norm_name(r)} " in f" {t} " for r in roles)
+
+
+def _people_find(people: list[dict], inputs: dict) -> Optional[dict]:
+    """The people that name a person and match the roles asked, deduplicated by
+    LinkedIn URL (else name), at most `limit` — a find when at least one remains."""
+    out, seen = [], set()
+    for p in people:
+        p = {k: v for k, v in p.items() if v not in (None, "", [], {})}
+        if not p.get("full_name") or not _matches_roles(p.get("title"), inputs.get("roles")):
+            continue
+        key = (p.get("linkedin_url") or p["full_name"]).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+        if len(out) >= inputs["limit"]:
+            break
+    return {"people": out, "count": len(out)} if out else None
+
+
+def _apollo_people(res, inputs):
+    rows = []
+    for p in (_get(res, "people") or []) + (_get(res, "contacts") or []):
+        if not isinstance(p, dict):
+            continue
+        last = p.get("last_name") or p.get("last_name_obfuscated") or ""
+        rows.append({
+            "full_name": p.get("name") or " ".join(x for x in (p.get("first_name"), last) if x),
+            "title": p.get("title"), "linkedin_url": p.get("linkedin_url"),
+            "location": ", ".join(x for x in (p.get("city"), p.get("country")) if x) or None,
+            # Apollo's search obfuscates last names: reveal with `apollo_match_person`
+            # by this id, NEVER by name + company (it would mint an empty, billed record).
+            "apollo_id": p.get("id"),
+            "name_obfuscated": True if p.get("last_name_obfuscated") else None,
+        })
+    return _people_find(rows, inputs)
+
+
+def _aiark_people(res, inputs):
+    rows = []
+    for rec in _get(res, "content") or []:
+        if isinstance(rec, dict):
+            rows.append({
+                "full_name": _pick(rec, "profile.full_name"),
+                "title": _pick(rec, "profile.title", "profile.headline"),
+                "linkedin_url": _pick(rec, "link.linkedin"),
+                "location": _pick(rec, "location.default", "location.city"),
+                "seniority": _pick(rec, "department.seniority"),
+            })
+    return _people_find(rows, inputs)
+
+
+def _company_slug(url: Optional[str]) -> Optional[str]:
+    m = re.search(r"linkedin\.com/(?:company|school|showcase)/([^/?#\s]+)", url or "", re.I)
+    return m.group(1).lower() if m else None
+
+
+def _employees(res, inputs):
+    """LinkedIn employees of the company page. A page's employee list pulls in people
+    whose CURRENT position is elsewhere (and fake profiles): kept only when their current
+    company is the page asked for."""
+    slug = _company_slug(inputs.get("company_linkedin_url"))
+    rows = []
+    for item in _apify_items(res):
+        if not isinstance(item, dict):
+            continue
+        current = _get(item, "currentPosition[0]") or {}
+        where = str(_pick(current, "companyUniversalName", "companyLinkedinUrl",
+                          "companyUrl") or "").lower()
+        if slug and where and slug not in where:
+            continue
+        first, last = item.get("firstName"), item.get("lastName")
+        rows.append({
+            "full_name": _pick(item, "fullName", "name")
+            or " ".join(x for x in (first, last) if x) or None,
+            "title": _pick(current, "position", "title") or _pick(item, "headline"),
+            "linkedin_url": _pick(item, "linkedinUrl", "profileUrl", "url"),
+            "location": _pick(item, "location.linkedinText", "location", "locationName"),
+        })
+    return _people_find(rows, inputs)
+
+
+_LINKEDIN_RESULT = re.compile(r"^\s*(?P<name>[^|\-–—]+?)\s*[-–—]\s*(?P<rest>.+?)(?:\s*\|\s*LinkedIn.*)?$")
+
+
+def _serper_people(res, inputs):
+    """Google results on `linkedin.com/in`: a title reads « Name – Title – Company |
+    LinkedIn ». Kept only when the result names the company (title or snippet)."""
+    asked = _norm_name(inputs.get("company_name") or (inputs.get("domain") or "").split(".")[0])
+    rows = []
+    for o in _get(res, "organic") or []:
+        if not isinstance(o, dict) or "linkedin.com/in/" not in str(o.get("link", "")):
+            continue
+        text = _norm_name(f"{o.get('title', '')} {o.get('snippet', '')}")
+        if asked and f" {asked} " not in f" {text} ":
+            continue
+        m = _LINKEDIN_RESULT.match(str(o.get("title", "")))
+        if not m:
+            continue
+        parts = [x.strip() for x in re.split(r"\s[-–—]\s", m.group("rest")) if x.strip()]
+        rows.append({"full_name": m.group("name").strip(),
+                     "title": parts[0] if parts else None,
+                     "linkedin_url": str(o["link"]).split("?")[0]})
+    return _people_find(rows, inputs)
+
+
+def _role_query(inputs: dict) -> str:
+    roles = inputs.get("roles") or ["director", "manager", "head", "CEO", "founder"]
+    return " OR ".join(f'"{r}"' if " " in r else r for r in roles)
+
+
+PEOPLE_STEPS: tuple[Step, ...] = (
+    Step("apollo", "apollo_search_people", (("domain",),),
+         lambda i: {k: v for k, v in {
+             "domains": [i["domain"]], "titles": i.get("roles"),
+             "person_locations": [i["country"]] if i.get("country") else None,
+             "per_page": min(25, i["limit"] * 2)}.items() if v},
+         _apollo_people, "free search (names obfuscated; reveal per person: 1 Apollo credit)"),
+    Step("aiark", "linkedin_aiark_search", (("domain",),),
+         lambda i: {"op": "people",
+                    "account": {"domain": {"any": {"include": [i["domain"]]}}},
+                    "size": min(50, i["limit"] * 3)},
+         _aiark_people, "AI Ark credits per person returned"),
+    Step("linkedin_employees", "apify_run_sync", (("company_linkedin_url",),),
+         lambda i: {"actor_id": "harvestapi/linkedin-company-employees",
+                    "run_input": {"companies": [i["company_linkedin_url"]],
+                                  "maxItems": min(50, i["limit"] * 3)},
+                    "max_items": min(50, i["limit"] * 3),
+                    "timeout_secs": _APIFY_TIMEOUT_S,
+                    "max_total_charge_usd": _APIFY_MAX_USD * 4},
+         _employees, "Apify, ~$0.003-0.008 per profile",
+         label="LinkedIn employees"),
+    Step("google", "serper_search", (("company_name",), ("domain",)),
+         lambda i: {"query": f'"{i.get("company_name") or i["domain"].split(".")[0]}" '
+                             f"({_role_query(i)})",
+                    "site_filter": "linkedin.com/in", "num": 10, "country": None,
+                    "language": None},
+         _serper_people, "1 Serper search", label="Google — LinkedIn profiles"),
+)
+
+
 # --- the plan, for a screen ----------------------------------------------------------
 
 #: Each waterfall connector's step table — what the plan below and the tools read.
 STEPS_BY_NAMESPACE: dict[str, tuple[Step, ...]] = {
     "waterfall_email": EMAIL_STEPS, "waterfall_phone": PHONE_STEPS,
     "waterfall_company": COMPANY_STEPS, "waterfall_person": PERSON_STEPS,
+    "waterfall_people": PEOPLE_STEPS,
 }
 
 
@@ -1151,6 +1435,8 @@ def _step_row(step: Step, mode: Optional[str] = None) -> dict:
            # company) — what a screen translates, where `needs` is a sentence for agents.
            "requires": [list(g) for g in step.requires],
            "cost": step.cost, "free": step.free,
+           # A completion step: runs after the cascade, only to fill this missing field.
+           "fills": step.fills or None,
            "asynchronous": step.collect is not None}
     if mode is not None:
         row["key_mode"] = mode
@@ -1278,7 +1564,10 @@ def register(mcp: FastMCP) -> None:
 
         Steps (default order): fr_get (SIREN — French registry, free) → fr_search (name,
         French companies only, free) → aiark (domain or name) → apollo (domain) →
-        theirstack (domain) → cognism (domain or name). A search result counts only if
+        theirstack (domain) → cognism (domain or name); then, when none of them gave
+        the company's LinkedIn page: linkedin_site (the LinkedIn links on its own
+        website) → linkedin_search (a LinkedIn company search by name, kept only if its
+        website is the domain). A search result counts only if
         its domain matches, or its name contains the name asked: a namesake never stops
         the cascade. `employees_band` is the INSEE size band code, not a headcount.
 
@@ -1340,4 +1629,47 @@ def register(mcp: FastMCP) -> None:
         inputs = _person_inputs(first_name, last_name, full_name, domain,
                                 company_name, linkedin_url, email)
         return await _run_cascade(mcp, "waterfall_person", "person", PERSON_STEPS,
+                                  inputs, providers, dry_run)
+
+    @mcp.tool(annotations=LECTURE)
+    @documente(f"""Find the PEOPLE working at ONE company — its decision-makers when you
+        give roles — trying sources in turn and stopping at the FIRST that returns at
+        least one matching person (native waterfall).
+
+        Steps (default order): apollo (domain — a free search; last names come back
+        obfuscated, reveal one by its `apollo_id` with `apollo_match_person`) → aiark
+        (domain) → linkedin_employees (the company's LinkedIn page — current titles
+        straight from LinkedIn, often fresher than the data vendors; get the page with
+        `waterfall_company`) → google (name or domain — LinkedIn profiles found on
+        Google). A person is kept only when their title matches one of `roles` (when
+        given), and, for LinkedIn and Google, only when their CURRENT company is the
+        one asked for: a company page or a search pulls in people from elsewhere.
+
+        {_ORDER_DOC}
+
+        Returns `{{found, provider, people: {{people: [{{full_name, title?,
+        linkedin_url?, location?, apollo_id?}}], count}}, attempts, order_from}}` —
+        {_RECEIPT_DOC}
+
+        Args:
+            domain: the company's domain (`acme.com`; a URL is accepted).
+            company_name: the company's name.
+            company_linkedin_url: the company's LinkedIn page (linkedin.com/company/…).
+            roles: role keywords to keep, e.g. ["sales", "CEO", "head of marketing"]
+                (or one comma-separated string). Omitted = everyone the step returns.
+            country: where the people are (e.g. "France") — the filter for a local
+                subsidiary of a global domain (Apollo).
+            limit: how many people at most (1-25, default 10).
+{_COMMON_ARGS}
+        """)
+    async def waterfall_people(
+        domain: Optional[str] = None, company_name: Optional[str] = None,
+        company_linkedin_url: Optional[str] = None,
+        roles: Optional[list[str]] = None, country: Optional[str] = None,
+        limit: int = 10,
+        providers: Optional[list[str]] = None, dry_run: bool = False,
+    ) -> dict:
+        inputs = _people_inputs(company_name, domain, company_linkedin_url, roles,
+                                country, limit)
+        return await _run_cascade(mcp, "waterfall_people", "people", PEOPLE_STEPS,
                                   inputs, providers, dry_run)

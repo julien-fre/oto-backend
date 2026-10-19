@@ -37,6 +37,9 @@ class WaterfallStep(BaseModel):
         "key of at least one group is given (`fr` = a French company)."))
     cost: str
     free: bool
+    fills: Optional[str] = Field(default=None, description=(
+        "A completion step: it runs after the cascade, only when the find still lacks "
+        "this field (`linkedin_url`)."))
     asynchronous: bool
     key_mode: Optional[str] = Field(default=None, description=(
         "The key the step would use (`user` | `group` | `org` | `tenant` | `platform` "

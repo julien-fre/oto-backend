@@ -258,7 +258,7 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
   recette versionnée, pages appelées par le corps d'`oto_call`, reçu en comptes, `for_each` sur
   les lignes d'un tableau, dérive surveillée ; un agent hébergé la lance comme tout client
   (identité et org de son travail)
-- `waterfall.md` — 4 connecteurs `waterfall_email|phone|company|person` : cascade des fournisseurs connectés,
+- `waterfall.md` — 5 connecteurs `waterfall_email|phone|company|person|people` : cascade des fournisseurs connectés,
   arrêtée au premier trouvé ; ordre = appel > réglage `steps` de la carte > défaut, clés de l'appelant d'abord
 - `datastore.md` — spine PG `data_*`, OAuth Google
 - `donnees-par-reference.md` — rien de personnel ni d'URL extérieure en argument :

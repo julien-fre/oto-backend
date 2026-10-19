@@ -33,7 +33,8 @@ def _servi(issue):
         structured_content=r if isinstance(r, dict) else {"result": r}))
 
 
-NAMESPACES = ("waterfall_email", "waterfall_phone", "waterfall_company", "waterfall_person")
+NAMESPACES = ("waterfall_email", "waterfall_phone", "waterfall_company", "waterfall_person",
+              "waterfall_people")
 
 
 @pytest.fixture
@@ -105,8 +106,7 @@ def test_les_etapes_ne_nomment_que_des_outils_montes():
     m = FastMCP("t")
     register_all(m)
     names = {t.name for t in asyncio.run(m._list_tools())}
-    for steps in (waterfall.EMAIL_STEPS, waterfall.PHONE_STEPS, waterfall.COMPANY_STEPS,
-                  waterfall.PERSON_STEPS):
+    for steps in waterfall.STEPS_BY_NAMESPACE.values():
         for s in steps:
             assert s.tool in names, s.tool
             assert not s.tool.startswith("waterfall")
@@ -528,3 +528,96 @@ def test_revelation_apollo_non_livree_n_est_pas_un_trouve(calls):
         "done": True, "delivered": False, "reason": "out_of_credits"})
     out = _run("waterfall_phone", linkedin_url="https://linkedin.com/in/jane", providers=["apollo"])
     assert out["found"] is False
+
+
+
+# --- la page LinkedIn d'une société : étapes de COMPLÉTION ------------------------
+
+def test_la_page_linkedin_complete_une_societe_identifiee_sans_elle(calls):
+    calls["answers"]["apollo_enrich_organization"] = IssueCible(ok=True, result={
+        "organization": {"name": "Acme", "primary_domain": "acme.com"}})
+    calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=[
+        {"domain": "acme.com", "linkedIns": ["https://www.linkedin.com/in/jane-doe",
+                                             "https://fr.linkedin.com/company/Acme-SAS/about"]}])
+    out = _run("waterfall_company", domain="acme.com", providers=["apollo", "linkedin_site"])
+    assert out["provider"] == "apollo"
+    assert out["company"]["name"] == "Acme"
+    assert out["company"]["linkedin_url"] == "https://www.linkedin.com/company/acme-sas/"
+    assert out["company"]["linkedin_source"] == "website"
+    assert calls["made"][1][1]["actor_id"] == "vdrmota/contact-info-scraper"
+    assert calls["made"][1][1]["timeout_secs"] == waterfall._APIFY_TIMEOUT_S
+
+
+def test_la_completion_ne_tourne_pas_quand_la_page_est_deja_la(calls):
+    calls["answers"]["apollo_enrich_organization"] = IssueCible(ok=True, result={
+        "organization": {"name": "Acme", "primary_domain": "acme.com",
+                         "linkedin_url": "https://www.linkedin.com/company/acme"}})
+    out = _run("waterfall_company", domain="acme.com", providers=["apollo", "linkedin_site"])
+    assert _made(calls) == ["apollo_enrich_organization"]
+    assert [a["provider"] for a in out["attempts"]] == ["apollo"]
+
+
+def test_la_recherche_par_nom_ecarte_l_homonyme(calls):
+    calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=[
+        {"name": "FlyingBear Restaurant", "linkedinUrl": "https://www.linkedin.com/company/flyingbear-food",
+         "website": "https://flyingbear-food.com"},
+        {"name": "FlyingBear", "linkedinUrl": "https://www.linkedin.com/company/flyingbear3d",
+         "website": "https://www.flyingbear3d.com", "employeeCount": 42}])
+    out = _run("waterfall_company", company_name="FlyingBear", domain="flyingbear3d.com",
+               providers=["linkedin_search"])
+    # Rien d'autre n'a identifié la société : la page, vérifiée par son site, suffit.
+    assert out["found"] is True and out["provider"] == "linkedin_search"
+    assert out["company"]["linkedin_url"] == "https://www.linkedin.com/company/flyingbear3d/"
+    assert out["company"]["employees"] == 42
+
+
+def test_une_execution_apify_coupee_rend_encore_ses_elements(calls):
+    calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result={
+        "error": "TIMED-OUT", "run_id": "r1", "status": "TIMED-OUT",
+        "items": [{"linkedIns": ["https://linkedin.com/company/acme"]}]})
+    out = _run("waterfall_company", domain="acme.com", providers=["linkedin_site"])
+    assert out["company"]["linkedin_url"] == "https://www.linkedin.com/company/acme/"
+
+
+# --- les gens d'une société (`waterfall_people`) ----------------------------------
+
+def test_people_apollo_garde_les_roles_et_l_id_de_revelation(calls):
+    calls["answers"]["apollo_search_people"] = IssueCible(ok=True, result={"people": [
+        {"id": "a1", "first_name": "Jane", "last_name_obfuscated": "Do***e", "title": "VP Sales"},
+        {"id": "a2", "first_name": "Bob", "last_name_obfuscated": "Sm***h", "title": "Engineer"}]})
+    out = _run("waterfall_people", domain="acme.com", roles="sales, CEO", country="France")
+    assert out["provider"] == "apollo" and out["people"]["count"] == 1
+    assert out["people"]["people"][0] == {"full_name": "Jane Do***e", "title": "VP Sales",
+                                          "apollo_id": "a1", "name_obfuscated": True}
+    assert calls["made"][0][1] == {"domains": ["acme.com"], "titles": ["sales", "CEO"],
+                                   "person_locations": ["France"], "per_page": 20}
+
+
+def test_people_employes_linkedin_ecarte_ceux_d_ailleurs(calls):
+    calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=[
+        {"firstName": "Li", "lastName": "Wei", "linkedinUrl": "https://linkedin.com/in/liwei",
+         "currentPosition": [{"companyUniversalName": "kingroon", "position": "VP of B2B BU"}]},
+        {"firstName": "Fake", "lastName": "Profile", "linkedinUrl": "https://linkedin.com/in/fake",
+         "currentPosition": [{"companyUniversalName": "someone-else", "position": "CEO"}]}])
+    out = _run("waterfall_people", company_linkedin_url="https://www.linkedin.com/company/kingroon/",
+               providers=["linkedin_employees"])
+    assert [p["full_name"] for p in out["people"]["people"]] == ["Li Wei"]
+    assert out["people"]["people"][0]["title"] == "VP of B2B BU"
+    assert calls["made"][0][1]["run_input"]["companies"] == ["https://www.linkedin.com/company/kingroon/"]
+
+
+def test_people_google_lit_le_titre_et_exige_la_societe(calls):
+    calls["answers"]["serper_search"] = IssueCible(ok=True, result={"organic": [
+        {"title": "Zhang San - VP of Overseas Business - Haitian Additive | LinkedIn",
+         "link": "https://cn.linkedin.com/in/zhangsan?trk=x", "snippet": ""},
+        {"title": "John Roe - Director - Other Corp | LinkedIn",
+         "link": "https://linkedin.com/in/johnroe", "snippet": ""}]})
+    out = _run("waterfall_people", company_name="Haitian Additive", providers=["google"])
+    assert out["people"]["people"] == [{"full_name": "Zhang San", "title": "VP of Overseas Business",
+                                        "linkedin_url": "https://cn.linkedin.com/in/zhangsan"}]
+    assert calls["made"][0][1]["site_filter"] == "linkedin.com/in"
+
+
+def test_people_page_linkedin_malformee_refusee(calls):
+    with pytest.raises(McpError, match="LinkedIn company page"):
+        _run("waterfall_people", company_linkedin_url="https://example.com/acme")
