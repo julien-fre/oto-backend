@@ -816,3 +816,32 @@ def test_une_execution_apify_est_bornee_par_sa_taille_et_son_delai_sans_plafond_
                 assert "max_total_charge_usd" not in args, v.key
                 assert args["timeout_secs"] == waterfall._APIFY_TIMEOUT_S, v.key
                 assert 1 <= args["max_items"] <= waterfall.PEOPLE_MAX, v.key
+
+
+# --- limites fixées par l'appelant (aucune par défaut, décision du 19/10/2026) ------------
+
+def test_max_paid_steps_saute_les_etapes_payantes_au_dela(calls):
+    for t in ("hunter_email_finder", "linkedin_aiark_person", "apollo_match_person"):
+        calls["answers"][t] = IssueCible(ok=True, result={})
+    out = _run("waterfall_email", first_name="Jane", last_name="Doe", domain="acme.com",
+               linkedin_url="https://www.linkedin.com/in/jane-doe", max_paid_steps=2,
+               providers=["hunter", "aiark", "apollo"])
+    assert _made(calls) == ["hunter_email_finder", "linkedin_aiark_person"]
+    assert out["attempts"][2]["status"] == "skipped"
+    assert out["attempts"][2]["code"] == "max_paid_steps"
+
+
+def test_sans_limite_aucun_plafond_apify_et_avec_il_est_transmis(calls):
+    calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result={"result": []})
+    _run("waterfall_people", company_linkedin_url="https://www.linkedin.com/company/acme/",
+         providers=["linkedin_employees"])
+    assert "max_total_charge_usd" not in calls["made"][-1][1]
+    _run("waterfall_people", company_linkedin_url="https://www.linkedin.com/company/acme/",
+         providers=["linkedin_employees"], apify_max_usd=1.0)
+    assert calls["made"][-1][1]["max_total_charge_usd"] == 1.0
+
+
+def test_un_plafond_apify_sous_le_minimum_est_refuse(calls):
+    with pytest.raises(Exception, match="0.50"):
+        _run("waterfall_people", company_linkedin_url="https://www.linkedin.com/company/acme/",
+             apify_max_usd=0.1)

@@ -451,7 +451,8 @@ def _receipt(kind, found, provider, value, attempts, source, ignored, pending) -
 
 
 async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
-                    dry_run: bool, deadline: float, attempt: dict, pending: list):
+                    dry_run: bool, deadline: float, attempt: dict, pending: list,
+                    budget: Optional[dict] = None):
     """Run ONE step and record what happened on `attempt`; return its find, or None."""
     if step.variants:
         if not _runnable(step, inputs):
@@ -465,7 +466,7 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
             part = {"via": v.key, "tool": v.tool}
             tried.append(part)
             found = await _run_step(mcp, sub, v, mode, inputs, dry_run,
-                                    deadline, part, pending)
+                                    deadline, part, pending, budget)
             if found is not None:
                 attempt.update(status="found", via=v.key, tool=v.tool, tried=tried)
                 return found
@@ -490,7 +491,19 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
             "no usable key for this provider — connect yours on its card"
             if mode == "forbidden" else "the shared key's quota is used up for today"))
         return None
+    budget = budget if budget is not None else {}
     args = step.build(inputs)
+    # The caller's OWN limits — none by default: an Apify run's cost ceiling, passed to
+    # Apify as is; and how many paid calls one lookup may make (free steps don't count).
+    if step.tool == "apify_run_sync" and budget.get("apify_max_usd"):
+        args = {**args, "max_total_charge_usd": budget["apify_max_usd"]}
+    paid = not step.free
+    if (paid and budget.get("max_paid_steps") is not None
+            and budget.get("paid_steps", 0) >= budget["max_paid_steps"]):
+        attempt.update(status="skipped", code="max_paid_steps",
+                       message=f"the call's limit of {budget['max_paid_steps']} paid "
+                               "step(s) is reached")
+        return None
     if dry_run:
         attempt.update(status="planned", arguments=args, cost=step.cost)
         return None
@@ -499,6 +512,8 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
                        message=f"the waterfall's {int(DEADLINE_S)} s budget is spent")
         return None
     issue = await _call(mcp, sub, step.tool, args, attempt)
+    if issue is not None and paid:
+        budget["paid_steps"] = budget.get("paid_steps", 0) + 1
     if issue is None or not _judge(issue, attempt):
         return None
     result = _payload(issue)
@@ -525,9 +540,19 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
     return found
 
 
+def _limits(max_paid_steps: Optional[int], apify_max_usd: Optional[float]) -> dict:
+    """The caller's own limits, validated — none is set by default."""
+    if max_paid_steps is not None and max_paid_steps < 1:
+        raise _bad("`max_paid_steps` must be at least 1 — omit it for no limit.")
+    if apify_max_usd is not None and apify_max_usd < 0.50:
+        raise _bad("`apify_max_usd` must be at least 0.50: Apify refuses a lower ceiling "
+                   "on a run. Omit it for no ceiling.")
+    return {"max_paid_steps": max_paid_steps, "apify_max_usd": apify_max_usd}
+
+
 async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...],
                        inputs: dict, providers_arg: Optional[list[str]],
-                       dry_run: bool) -> dict:
+                       dry_run: bool, limits: Optional[dict] = None) -> dict:
     """The cascade: the first step that finds the value wins. Then the COMPLETION
     steps (`Step.fills`, e.g. a company's LinkedIn page): each runs only while the
     value still lacks the field it fills, and merges what it finds — a page found
@@ -544,6 +569,7 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
     deadline = time.monotonic() + DEADLINE_S
     attempts: list[dict] = []
     pending: list[dict] = []
+    budget = dict(limits or {})
     found, winner = None, None
     fallback, fallback_step = None, None
     for step in order:
@@ -555,7 +581,7 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
                    "key": modes.get(step.tool, "unknown")}
         attempts.append(attempt)
         got = await _run_step(mcp, sub, step, attempt["key"], inputs, dry_run,
-                              deadline, attempt, pending)
+                              deadline, attempt, pending, budget)
         if got is not None and step.weak is not None and step.weak(got):
             attempt.update(status="weak")
             if fallback is None:
@@ -574,7 +600,7 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
                    "key": modes.get(step.tool, "unknown"), "fills": step.fills}
         attempts.append(attempt)
         extra = await _run_step(mcp, sub, step, attempt["key"], inputs, dry_run,
-                                deadline, attempt, pending)
+                                deadline, attempt, pending, budget)
         if extra:
             found = {**(found or {}), **{k: v for k, v in extra.items()
                                           if not (found or {}).get(k)}}
@@ -1348,8 +1374,9 @@ PERSON_STEPS: tuple[Step, ...] = (
 
 # People at a company ------------------------------------------------------------------
 
-#: The most people one call returns.
-PEOPLE_MAX = 25
+#: The most people one call returns — a bound on the RESPONSE'S size (an agent reads it),
+#: not on spend: the call's `limit` (10 by default) is the caller's to raise.
+PEOPLE_MAX = 100
 
 
 def _people_inputs(company_name, domain, company_linkedin_url, roles, country,
@@ -1525,7 +1552,7 @@ PEOPLE_STEPS: tuple[Step, ...] = (
          lambda i: {k: v for k, v in {
              "domains": [i["domain"]], "titles": i.get("roles"),
              "person_locations": [i["country"]] if i.get("country") else None,
-             "per_page": min(25, i["limit"] * 2)}.items() if v},
+             "per_page": min(100, i["limit"] * 2)}.items() if v},
          _apollo_people, "free search (names obfuscated; reveal per person: 1 Apollo credit)",
          # Masked last names only: a fallback, never the answer while a source that
          # names people fully is left to try.
@@ -1668,7 +1695,13 @@ _COMMON_ARGS = """            providers: the steps to try for THIS call, in this
                 from the list above. Overrides your setting. Never a tool name.
             dry_run: return the plan (order, key per step, arguments, skips) without
                 calling anything. `planned` is not a promise: the connector's activation
-                for your org is only checked by the real call."""
+                for your org is only checked by the real call.
+            max_paid_steps: at most this many PAID provider calls for this lookup (free
+                steps don't count); the steps past it are skipped. Omitted = no limit —
+                the default: set it when spend matters more than finding.
+            apify_max_usd: a cost ceiling for each Apify run of this lookup (≥ 0.50 —
+                Apify refuses less). Omitted = no ceiling — the default: a run is bounded
+                by its size and its time."""
 
 
 def register(mcp: FastMCP) -> None:
@@ -1705,11 +1738,13 @@ def register(mcp: FastMCP) -> None:
         full_name: Optional[str] = None, domain: Optional[str] = None,
         company_name: Optional[str] = None, linkedin_url: Optional[str] = None,
         providers: Optional[list[str]] = None, dry_run: bool = False,
+        max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
     ) -> dict:
         inputs = _person_inputs(first_name, last_name, full_name, domain,
                                 company_name, linkedin_url, None)
         return await _run_cascade(mcp, "waterfall_email", "email", EMAIL_STEPS, inputs,
-                                  providers, dry_run)
+                                  providers, dry_run,
+                                  _limits(max_paid_steps, apify_max_usd))
 
     @mcp.tool(annotations=LECTURE)
     @documente(f"""Find ONE person's phone number, trying providers in turn and stopping at
@@ -1743,11 +1778,13 @@ def register(mcp: FastMCP) -> None:
         last_name: Optional[str] = None, full_name: Optional[str] = None,
         domain: Optional[str] = None, company_name: Optional[str] = None,
         providers: Optional[list[str]] = None, dry_run: bool = False,
+        max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
     ) -> dict:
         inputs = _person_inputs(first_name, last_name, full_name, domain,
                                 company_name, linkedin_url, None)
         return await _run_cascade(mcp, "waterfall_phone", "phone", PHONE_STEPS, inputs,
-                                  providers, dry_run)
+                                  providers, dry_run,
+                                  _limits(max_paid_steps, apify_max_usd))
 
     @mcp.tool(annotations=LECTURE)
     @documente(f"""Find ONE company's firmographics (legal name, SIREN, domain, city,
@@ -1780,10 +1817,12 @@ def register(mcp: FastMCP) -> None:
         company_name: Optional[str] = None, domain: Optional[str] = None,
         siren: Optional[str] = None, country: Optional[str] = None,
         providers: Optional[list[str]] = None, dry_run: bool = False,
+        max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
     ) -> dict:
         inputs = _company_inputs(company_name, domain, siren, country)
         return await _run_cascade(mcp, "waterfall_company", "company", COMPANY_STEPS,
-                                  inputs, providers, dry_run)
+                                  inputs, providers, dry_run,
+                                  _limits(max_paid_steps, apify_max_usd))
 
     @mcp.tool(annotations=LECTURE)
     @documente(f"""Find ONE person's current profile (title, company, seniority, location,
@@ -1817,11 +1856,13 @@ def register(mcp: FastMCP) -> None:
         full_name: Optional[str] = None, domain: Optional[str] = None,
         company_name: Optional[str] = None,
         providers: Optional[list[str]] = None, dry_run: bool = False,
+        max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
     ) -> dict:
         inputs = _person_inputs(first_name, last_name, full_name, domain,
                                 company_name, linkedin_url, email)
         return await _run_cascade(mcp, "waterfall_person", "person", PERSON_STEPS,
-                                  inputs, providers, dry_run)
+                                  inputs, providers, dry_run,
+                                  _limits(max_paid_steps, apify_max_usd))
 
     @mcp.tool(annotations=LECTURE)
     @documente(f"""Find the PEOPLE working at ONE company — its decision-makers when you
@@ -1852,7 +1893,8 @@ def register(mcp: FastMCP) -> None:
                 (or one comma-separated string). Omitted = everyone the step returns.
             country: where the people are (e.g. "France") — the filter for a local
                 subsidiary of a global domain (Apollo).
-            limit: how many people at most (1-25, default 10).
+            limit: how many people at most (default 10, up to 100) — AI Ark and the
+                LinkedIn employees bill per person returned, so raise it knowingly.
 {_COMMON_ARGS}
         """)
     async def waterfall_people(
@@ -1861,8 +1903,10 @@ def register(mcp: FastMCP) -> None:
         roles: Optional[list[str]] = None, country: Optional[str] = None,
         limit: int = 10,
         providers: Optional[list[str]] = None, dry_run: bool = False,
+        max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
     ) -> dict:
         inputs = _people_inputs(company_name, domain, company_linkedin_url, roles,
                                 country, limit)
         return await _run_cascade(mcp, "waterfall_people", "people", PEOPLE_STEPS,
-                                  inputs, providers, dry_run)
+                                  inputs, providers, dry_run,
+                                  _limits(max_paid_steps, apify_max_usd))

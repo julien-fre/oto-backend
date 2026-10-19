@@ -232,6 +232,19 @@ Ce que les vraies réponses ont appris, et qui est désormais figé par des test
 - lemlist a répondu en ~25 s (dans la fenêtre), FullEnrich en ~80 s (donc `pending`).
 - Votre LinkedIn non connecté : l'étape gratuite est `skipped / not_connected`, pas un échec.
 
+## Limites : aucune par défaut, l'agent en fixe une s'il le faut
+
+Décision du 19/10/2026 : la cascade ne plafonne rien de son propre chef. Deux paramètres
+optionnels, sur chacun des 5 outils, pour l'agent qui veut une limite :
+
+- `max_paid_steps` — au plus N appels PAYANTS par recherche (les étapes gratuites ne
+  comptent pas) ; les suivantes sont `skipped / max_paid_steps`.
+- `apify_max_usd` — un plafond de coût par exécution Apify (≥ 0,50 \$, le minimum
+  d'Apify), transmis tel quel.
+
+Restent les bornes de forme, pas de dépense : la réponse (`limit` des gens, jusqu'à 100),
+le délai de la cascade (40 s, la route REST coupe à 45 s) et celui d'une exécution Apify.
+
 ## Ajouter une étape
 
 Une ligne `Step(...)` dans la table : la clé, l'outil (déjà monté — vérifié par
