@@ -968,3 +968,13 @@ def test_un_ecarte_retrouve_par_le_fournisseur_suivant_n_est_pas_rejuge(calls):
     assert _made(calls).count("jev_items") == 1
     assert out["found"] is False and out["qualification"]["not_qualified"] == 2
     assert out["attempts"][1]["status"] == "unqualified"
+
+
+def test_moins_de_qualifies_que_demande_s_arrete_et_propose_la_suite(calls):
+    _gens(calls)
+    calls["answers"]["jev_items"] = _verdicts(0.95, 0.10)
+    out = _run("waterfall_people", company_name="Acme", domain="acme.com", limit=5,
+               providers=["google", "aiark"], qualify=_FIT, qualify_min=0.7)
+    assert out["provider"] == "google" and "linkedin_aiark_search" not in _made(calls)
+    assert out["continue_with"]["providers"] == ["aiark"]
+    assert out["continue_with"]["short_of_limit"] == 4

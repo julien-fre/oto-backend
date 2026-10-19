@@ -268,6 +268,9 @@ de révélation ou d'enrichissement que pour ceux qui passent.
   `show_unqualified=true` rend les fiches entières. Limite connue : quand la société n'a
   simplement personne qui convienne, les fournisseurs suivants retrouvent les mêmes gens
   et sont payés pour rien — `max_paid_steps` est le frein.
+- Moins de qualifiés que `limit` (décision du 19/10) : la cascade S'ARRÊTE et
+  `continue_with` nomme les fournisseurs pas encore essayés — l'agent appelant décide s'ils
+  valent d'être payés.
 - Une société ou une personne est jugée une fois, à la fin (`passed`) : le fournisseur
   suivant ne trouverait que la même.
 

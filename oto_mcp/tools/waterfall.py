@@ -787,6 +787,18 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
                    pending)
     if tally.reports:
         out["qualification"] = tally.receipt(qualify)
+        if _per_step(kind, qualify) and found and found["count"] < inputs["limit"]:
+            # Fewer qualified people than asked: the cascade STOPS (stop-at-first-hit),
+            # and the calling agent decides whether the rest is worth paying for.
+            rest = [st.key for st in order[order.index(next(
+                        st for st in order if st.key == winner)) + 1:]
+                    if not st.fills and _runnable(st, inputs)] if winner else []
+            if rest:
+                out["continue_with"] = {
+                    "providers": rest, "short_of_limit": inputs["limit"] - found["count"],
+                    "message": (f"{found['count']} qualified of the {inputs['limit']} asked. "
+                                "To look for more, call again with these `providers` (each is "
+                                "billed); already-found people may come back.")}
         if tally.rejected:
             # ALWAYS returned (a few tokens each): checking the rubric never costs a
             # second, billed cascade. The full records on demand.
@@ -1896,7 +1908,9 @@ _QUALIFY_ARGS = """            qualify: a Jev rubric to judge each result agains
                 Continuing past an unqualified provider pays off when it found FEW
                 people; when the company simply has no fit, the next providers find the
                 same people again (already-rejected ones are not re-judged) —
-                `max_paid_steps` is the brake."""
+                `max_paid_steps` is the brake. When fewer people qualify than `limit`, the
+                search STOPS at that provider and `continue_with` names the providers not
+                tried yet: yours to call (with `providers=`) if more are worth paying for."""
 
 _COMMON_ARGS = """            providers: the steps to try for THIS call, in this order — keys
                 from the list above. Overrides your setting. Never a tool name.
