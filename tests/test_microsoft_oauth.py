@@ -455,9 +455,15 @@ def test_retour_refuse_sans_state_ou_sur_refus(env):
     assert "connect=error" in _callback({"code": "c", "state": "faux"}).headers["location"]
     etat = env.auth.make_state(SUB, ORG, "", SERVICE)
     resp = _callback({"error": "access_denied", "state": etat})
-    assert "connect=forbidden" in resp.headers["location"]
+    assert resp.headers["location"].endswith("?connector=sharepoint&connect=denied"), (
+        "un refus chez Microsoft n'est pas un refus d'oto (`forbidden`) — oto-app#11")
     env.coeur.auth.exchange_code.assert_not_called()
     assert not env.coffre.lignes
+    resp = _callback({"error": "access_denied", "state": etat,
+                      "error_description": "AADSTS65004: User declined to consent."})
+    assert resp.headers["location"].endswith("connect=denied")
+    resp = _callback({"error": "server_error", "state": etat})
+    assert resp.headers["location"].endswith("connect=error")
 
 
 def test_retour_quand_l_organisation_exige_un_administrateur(env):

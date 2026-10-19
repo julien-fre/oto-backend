@@ -14,7 +14,7 @@ from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import INVALID_PARAMS, ErrorData
 
-from .. import access, output_projection
+from .. import access, output_projection, session_org
 from .lecture import LECTURE
 # Outside `tools/`: this module serves NO tool, it carries the reading of the
 # people register. `tools/<m>.py` is reserved for modules mounted from
@@ -579,7 +579,7 @@ def register(mcp: FastMCP) -> None:
         key, is_platform = _sirene_key()
         result = fod_fr.insee_siret(siret, key)
         if is_platform:
-            access.record_platform_usage("sirene")
+            session_org.note_call_trace(units=1)
         return result
 
     @mcp.tool(annotations=LECTURE)
@@ -625,7 +625,7 @@ def register(mcp: FastMCP) -> None:
         key, is_platform = _sirene_key()
         result = fod_fr.insee_headquarters(siren, key)
         if is_platform:
-            access.record_platform_usage("sirene")
+            session_org.note_call_trace(units=1)
         return result
 
     # --- Finances (INPI/BCE, open data) ---

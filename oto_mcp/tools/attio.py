@@ -367,10 +367,6 @@ def register(mcp: FastMCP) -> None:
         # "Erreur interne du serveur.".
         return _rendre_le_refus_lisible(AttioClient(api_key=key)), is_platform
 
-    def _record_if_platform(is_platform: bool) -> None:
-        if is_platform:
-            access.record_platform_usage("attio")
-
     # --- records : any object of the workspace ---------------------------
 
     @mcp.tool()
@@ -514,7 +510,6 @@ def register(mcp: FastMCP) -> None:
             # success. Same safety net in each tool below.
             raise _bad(_one_of("op", _RECORD_OPS))
 
-        _record_if_platform(is_platform)
         return result
 
     # --- notes ------------------------------------------------------------
@@ -583,7 +578,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(_one_of("op", _NOTE_OPS))
 
-        _record_if_platform(is_platform)
         return result
 
     # --- tasks ------------------------------------------------------------
@@ -666,7 +660,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(_one_of("op", _TASK_OPS))
 
-        _record_if_platform(is_platform)
         return result
 
     # --- lists ------------------------------------------------------------
@@ -734,7 +727,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(_one_of("op", _LIST_OPS))
 
-        _record_if_platform(is_platform)
         return result
 
     # --- entries (list membership) ----------------------------------------
@@ -814,7 +806,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(_one_of("op", _ENTRY_OPS))
 
-        _record_if_platform(is_platform)
         return result
 
     # --- workspace members ------------------------------------------------
@@ -850,7 +841,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(_one_of("op", _MEMBER_OPS))
 
-        _record_if_platform(is_platform)
         return result
 
     # --- comments & threads -----------------------------------------------
@@ -941,7 +931,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(_one_of("op", _COMMENT_OPS))
 
-        _record_if_platform(is_platform)
         return result
 
     # --- meetings / call recordings / transcripts -------------------------
@@ -1004,7 +993,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(_one_of("op", _MEETING_OPS))
 
-        _record_if_platform(is_platform)
         return result
 
     # --- meta : objects ---------------------------------------------------
@@ -1047,7 +1035,6 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(_one_of("op", _OBJECT_OPS))
 
-        _record_if_platform(is_platform)
         return result
 
     # --- meta : attributes ------------------------------------------------
@@ -1124,5 +1111,4 @@ def register(mcp: FastMCP) -> None:
         else:
             raise _bad(_one_of("op", _ATTRIBUTE_OPS))
 
-        _record_if_platform(is_platform)
         return result

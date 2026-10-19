@@ -1,6 +1,8 @@
 """Monitoring connecteur (ADR 0017, kind='connector') : un échec de résolution de
 credential émet un événement de monitoring AVANT de relever — sans masquer l'erreur,
 sans fausser le signal sur les sondes (emit_on_failure=False)."""
+from types import SimpleNamespace
+
 import pytest
 from oto_mcp.mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
@@ -38,7 +40,9 @@ def test_probe_does_not_emit(captured, monkeypatch):
 
 
 def test_success_does_not_emit(captured, monkeypatch):
-    sentinel = object()
+    # Une résolution sous clé propre : le résolveur lit `is_platform` (L8, le porteur
+    # que le règlement débite) — une doublure sans lui ne serait plus une résolution.
+    sentinel = SimpleNamespace(is_platform=False)
     monkeypatch.setattr(access, "_resolve_credential_impl", lambda *a, **k: sentinel)
     assert access.resolve_credential("serper", sub="u1") is sentinel
     assert captured == []  # le chemin heureux n'émet jamais

@@ -2,7 +2,7 @@
 must trace the number of contacts SUBMITTED (not enriched/found — that count only
 exists later, inside `fullenrich_result`, a separate call/journal row) via
 `session_org.note_call_trace(quantity=…)`, regardless of platform vs BYO key —
-unlike `access.record_platform_usage`, which only fires on the platform key and
+unlike `units` (L8, `access/reglement.py`), which only debits on the platform key and
 serves a different purpose (oto's own internal quota, not org billing).
 
 `fullenrich_result` traces what FullEnrich DEDUCTED for the job (`cost_credits`,
@@ -84,8 +84,8 @@ def test_enrich_linkedin_traces_the_submitted_contact_count(is_platform):
         _tool("fullenrich_enrich_linkedin").fn(contacts=_contacts(7))
 
     # Unconditional — fires the SAME on a platform key and a BYO key, unlike
-    # access.record_platform_usage (platform-only, a different mechanism/purpose).
-    trace.assert_called_once_with(quantity=7)
+    # `units` (settled on the platform key only, a different mechanism/purpose).
+    trace.assert_any_call(quantity=7)
 
 
 def test_enrich_linkedin_traces_the_batch_size_not_a_fixed_value():

@@ -331,7 +331,7 @@ def register(mcp: FastMCP) -> None:
             # internal quota therefore under-counted by half everything that went
             # through tier ②. Same rule as the `serper_*` tools, imported and
             # not copied — a duplicated cost rule is a rule that diverges.
-            access.record_platform_usage("serper", credits_consumed("scrape_page", res))
+            session_org.note_call_trace(units=max(1, credits_consumed("scrape_page", res)))
         return res
 
     @mcp.tool()

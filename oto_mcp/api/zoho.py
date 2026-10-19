@@ -25,6 +25,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
+from ..auth import flow as oauth_flow
 from ..auth import zoho as zoho_oauth
 from .. import config, roles
 
@@ -64,7 +65,6 @@ def make_routes(
         notice period, was removed on 17/09/2026 — no reader measured any more (the
         dashboard has read `connect=` since 04/09, and no Zoho connection exists
         at the only partner concerned, Tulina)."""
-        from ..auth import flow as oauth_flow
         suffix = oauth_flow.connector_return_suffix(connector, etat)
         if oauth_flow.resolve_return_app(return_app):
             return oauth_flow.return_url(return_app, suffix, org=org_id)
@@ -73,12 +73,23 @@ def make_routes(
     async def callback(request: Request) -> Response:
         code = request.query_params.get("code")
         state = request.query_params.get("state")
+        erreur = request.query_params.get("error")
         parsed = zoho_oauth.verify_state(state) if state else None
-        if not code or not parsed:
+        if not parsed:
             # Unreadable state: neither `return_app` nor `org` (they live inside it), nor the
             # real connector — `_retour` falls back to its default ("zoho").
             return RedirectResponse(_retour("error"),
                                     status_code=302)
+        if erreur or not code:
+            # The person's refusal comes back WITHOUT a code (`error=access_denied`):
+            # `denied`, on the card that asked. Nothing is exchanged nor written.
+            logger.info("zoho oauth callback: consent not completed (sub=%s, connector=%s, "
+                        "reason=%s)", parsed["sub"], parsed["connector"],
+                        erreur or "missing code")
+            return RedirectResponse(
+                _retour(oauth_flow.etat_sans_code(erreur), parsed["return_app"],
+                        parsed["org"], parsed["connector"]),
+                status_code=302)
 
         def _finish() -> None:
             # The SAME resolution as the start, from the signed state: org AND team

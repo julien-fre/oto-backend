@@ -65,7 +65,6 @@ def _mount(monkeypatch, *, match_return=None):
     monkeypatch.setattr(access, "resolve_credential",
                         lambda *a, **k: MagicMock(key="k-byo"))
     monkeypatch.setattr(access, "resolve_api_key", lambda *a, **k: ("k", False))
-    monkeypatch.setattr(access, "record_platform_usage", lambda p, n=1: None)
     monkeypatch.setattr(access, "platform_quota_hint", lambda p: None)
     monkeypatch.setattr(apollo_client, "ApolloClient", lambda **kw: client)
     # Le receveur d'oto (éprouvé dans `test_apollo_receveur.py`) : rien de livré,

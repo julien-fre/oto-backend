@@ -43,7 +43,7 @@ from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, url_perimeter
+from .. import access, session_org, url_perimeter
 
 # No `verify` probe here (otomata-tech/oto#69): the WHOLE SerpApi API
 # authenticates by `api_key` in the QUERY STRING, with no alternative (confirmed in
@@ -88,7 +88,7 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
         result = getattr(client, method)(**kwargs)
         if is_platform:
-            access.record_platform_usage("serpapi")
+            session_org.note_call_trace(units=1)
         return result
 
     def _bad(msg: str) -> McpError:

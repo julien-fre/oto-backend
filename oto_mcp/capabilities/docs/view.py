@@ -59,9 +59,14 @@ def doc_url(sub: Optional[str], row: dict) -> Optional[str]:
     connaît pas sans une requête de plus par ligne de liste. Dans les deux cas la
     réponse part SANS adresse, ce qui reste juste ; un lien mort, lui, ne se
     diagnostique pas, il se subit."""
-    from ... import links
+    from ... import access, links
+    # `org` is only resolved when this reader's paths carry it (`/org/{org}/…`):
+    # one org lookup per page served, and none at all on a product that opens a
+    # page by its id alone (cf. `links.patron_reclame`).
+    org = (access.current_org(sub)
+           if links.patron_reclame("doc", "org", sub=sub) else None)
     return links.link_for("doc", sub=sub, id=row.get("id"),
-                          project_id=row.get("project_id"))
+                          project_id=row.get("project_id"), org=org)
 
 
 def view(row: dict, sub: Optional[str] = None) -> dict:

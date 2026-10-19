@@ -573,20 +573,17 @@ def test_empty_payload_counts_as_missing_on_writes(client, tool, op, kwargs):
 
 # --- comptage d'usage plateforme (comportement préservé) ----------------------
 
-def test_platform_usage_is_recorded_only_on_the_platform_key(monkeypatch):
-    """La clé plateforme se compte, la clé BYO non — invariant d'avant le
-    refactor, qui vit maintenant dans 10 tools au lieu de 56."""
+def test_attio_notes_no_platform_units(monkeypatch):
+    """attio n'a pas de clé plateforme (`auth_modes`) : le débit d'avant L8 ne
+    s'exécutait jamais, il est retiré sans remplacement (L8, `access/reglement.py`)."""
     import oto.tools.attio.client as core
 
     inst = MagicMock()
     monkeypatch.setattr(core, "AttioClient", lambda **kw: inst)
     recorded = []
-    monkeypatch.setattr("oto_mcp.access.record_platform_usage", recorded.append)
+    from _releve import capter_units
+    capter_units(monkeypatch, "attio", lambda p, n: recorded.append(p))
 
     monkeypatch.setattr("oto_mcp.access.resolve_api_key", lambda *a, **k: ("k", True))
     _tool("attio_record")(object="companies", op="list")
-    assert recorded == ["attio"]
-
-    monkeypatch.setattr("oto_mcp.access.resolve_api_key", lambda *a, **k: ("k", False))
-    _tool("attio_record")(object="companies", op="list")
-    assert recorded == ["attio"]
+    assert recorded == []

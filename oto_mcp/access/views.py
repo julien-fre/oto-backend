@@ -170,7 +170,7 @@ def platform_quota_hint(provider: str, sub: Optional[str] = None) -> Optional[di
     """READ-ONLY snapshot of today's platform quota for `provider` —
     decrypts nothing (PRESENCE probe, like `status_for`/`GET /api/me`) and consumes
     nothing. For a connector that debits this quota ON SPEND
-    (`record_platform_usage`, e.g. `apollo_match_person`), this is what lets
+    (the `units` settled per call, e.g. `apollo_match_person`), this is what lets
     a caller know what remains WITHOUT waiting for the bare refusal — a batch
     worker can arbitrate its calls instead of discovering the limit in the middle of a
     lead (oto-backend#710, signals #311/#312/#313).

@@ -11,7 +11,7 @@ from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, session_org
 from ..connectors import verify as connector_verify
 
 # The LinkedIn slug normalization (URL → bare slug, otherwise Kaspr 500) lives in the
@@ -151,5 +151,5 @@ def register(mcp: FastMCP) -> None:
                        f"LinkedIn profile (valid slug or URL).")
             raise McpError(ErrorData(code=INVALID_PARAMS, message=msg))
         if is_platform:
-            access.record_platform_usage("kaspr")
+            session_org.note_call_trace(units=1)
         return result

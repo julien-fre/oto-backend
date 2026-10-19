@@ -61,8 +61,8 @@ def _mount(monkeypatch, *, byo: bool = True, match_return=_DEFAUT, bulk_return=_
 
     monkeypatch.setattr(access, "resolve_credential", _resolve)
     monkeypatch.setattr(access, "resolve_api_key", lambda *a, **k: ("k", not byo))
-    monkeypatch.setattr(access, "record_platform_usage",
-                        lambda p, n=1: usage.append((p, n)))
+    from _releve import capter_units
+    capter_units(monkeypatch, "apollo", lambda p, n: usage.append((p, n)))
     monkeypatch.setattr(access, "platform_quota_hint", lambda p: None)
     monkeypatch.setattr(apollo_client, "ApolloClient", lambda **kw: client)
 
@@ -217,7 +217,7 @@ def test_no_request_id_invents_none(monkeypatch):
 @pytest.mark.parametrize("byo,kwargs", [(False, {}),
                                         (True, {"reveal_personal_emails": True})])
 def test_a_lot_writes_its_BILLED_quantity_on_any_key(monkeypatch, byo, kwargs):
-    """`record_platform_usage` tient le QUOTA de la clé commune ; la ligne FACTURÉE
+    """`units` tient le QUOTA de la clé commune ; la ligne FACTURÉE
     (`tool_calls.quantity`) est écrite par `note_call_trace`. Sans elle la quantité
     reste NULL, que le consommateur lit 1 : un lot de 10 se facturait 1.
     Inconditionnelle (clé commune comme clé propre), comme `fullenrich`."""

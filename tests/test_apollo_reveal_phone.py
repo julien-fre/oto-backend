@@ -6,7 +6,7 @@ Ce que ces tests figent :
 
 1. **Le reveal ne part JAMAIS sur la clé plateforme.** Apollo facture ~9 crédits
    un appel qui rend un mobile là où un match nu en coûte 1, pendant que
-   `record_platform_usage` débite 1 unité : servir le reveal sur la clé commune
+   le quota (`units`) débite 1 unité : servir le reveal sur la clé commune
    ferait mentir `platform_quota`, le seul chiffre sur lequel un worker batch
    s'arrête avant le mur (oto-backend#710). Le refus s'exerce sur le GESTE RÉEL,
    et on vérifie qu'AUCUNE requête ne part (`docs/conventions.md` : « un cran ne
@@ -81,8 +81,8 @@ def _mount(monkeypatch, *, byo: bool = True, is_platform=None, quota=None,
     monkeypatch.setattr(access, "resolve_credential", _resolve)
     plateforme = (not byo) if is_platform is None else is_platform
     monkeypatch.setattr(access, "resolve_api_key", lambda *a, **k: ("k", plateforme))
-    monkeypatch.setattr(access, "record_platform_usage",
-                        lambda p, n=1: usage.append(p))
+    from _releve import capter_units
+    capter_units(monkeypatch, "apollo", lambda p, n: usage.append(p))
     monkeypatch.setattr(access, "platform_quota_hint", lambda p: quota)
     monkeypatch.setattr(apollo_client, "ApolloClient", lambda **kw: client)
 
@@ -298,7 +298,7 @@ def test_match_person_forwards_reveal_personal_emails(monkeypatch):
 
 def test_personal_emails_reveal_is_refused_without_your_own_key(monkeypatch):
     """Le reveal d'emails personnels est un reveal : Apollo le facture EN PLUS du
-    match pendant que `record_platform_usage` débite une unité — le prix d'un
+    match pendant que le quota (`units`) débite une unité — le prix d'un
     match nu. Le laisser partir sur la clé commune fait mentir `platform_quota`,
     exactement comme le téléphone ; que l'écart soit mesuré (~9×) ou seulement
     inconnu ne change pas le sens du défaut."""

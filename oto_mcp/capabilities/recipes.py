@@ -69,7 +69,8 @@ class RecipeInput(BaseModel):
         "code calls `await oto.call(tool, arguments)` (read-only connector tools, "
         "`data_rows`, `data_write(rows, key)` into the run's `datastore` only, and the "
         "CRM writes it declares in `writes`, e.g. \"folk_record:create\" — never in a "
-        "test, never delete/merge/bulk) and returns a receipt of counts; test/publish of "
+        "test, never delete/merge; a batch via `items`/`ids` (≤50) counts one write per "
+        "record against `max_writes`) and returns a receipt of counts; test/publish of "
         "a code recipe are platform-only."))
     note: Optional[str] = None
     expected_version: Optional[int] = Field(default=None, description=(

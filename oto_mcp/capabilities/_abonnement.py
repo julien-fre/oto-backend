@@ -289,6 +289,16 @@ def exiger_a_la_pose(sub: str, proprietaire: Optional[str], famille: Optional[st
             "l'agent.")
 
 
+def exiger_limite_perso_valide(limite_pct: Optional[int]) -> None:
+    """Un plafond PERSO est un pourcentage entier de 1 à
+    `user_subscriptions.LIMITE_PERSO_MAX`, ou `None` (aucun : celui de l'org)."""
+    plus_haut = user_subscriptions.LIMITE_PERSO_MAX
+    if limite_pct is not None and not 1 <= limite_pct <= plus_haut:
+        raise AuthzDenied(
+            400, "invalid_limit",
+            f"`limit_pct` doit être un entier de 1 à {plus_haut} (reçu {limite_pct}), ou null.")
+
+
 def exiger_limite_valide(limite_pct: Optional[int]) -> None:
     """Un plafond (org ou perso) est un pourcentage entier de 1 à 100, ou `None`
     (org : revenir au défaut ; perso : aucun). 0 n'est pas un plafond : c'est ne plus
@@ -303,16 +313,16 @@ def seuil(sub: str, org_id: Optional[int], famille: str) -> float:
     """La part d'une fenêtre du forfait (0..1) au-delà de laquelle les travaux de
     `sub` sur `famille`, lancés dans `org_id`, ATTENDENT la réinitialisation.
 
-    **LA règle du plafond** (décidée le 25/09/2026), et elle n'est écrite qu'ici : le
-    plafond de l'org (`DEFAUT_LIMITE_PCT` si elle n'a rien réglé), resserré par le
-    plafond PERSO de la personne s'il est plus bas. Un plafond perso plus haut ne
-    relâche rien : un abonnement sert l'org sous SES règles, la personne ne peut que
-    se garder plus de marge."""
-    reglee = org_subscription_limits.get_limite(org_id, famille) if org_id else None
-    pct = reglee["limite_pct"] if reglee else DEFAUT_LIMITE_PCT
+    **LA règle du plafond**, et elle n'est écrite qu'ici (le SQL de
+    `db.runner_jobs._pause_pour_l_org` la relit) : le plafond PERSO de la personne
+    s'il est posé — plus bas OU plus haut que celui de l'org, c'est son forfait —,
+    borné à `user_subscriptions.LIMITE_PERSO_MAX` ; sinon le plafond de l'org
+    (`DEFAUT_LIMITE_PCT` si elle n'a rien réglé)."""
     perso = (user_subscriptions.get_subscription(sub, famille) or {}).get("limite_pct")
     if perso is not None:
-        pct = min(pct, perso)
+        return min(perso, user_subscriptions.LIMITE_PERSO_MAX) / 100
+    reglee = org_subscription_limits.get_limite(org_id, famille) if org_id else None
+    pct = reglee["limite_pct"] if reglee else DEFAUT_LIMITE_PCT
     return pct / 100
 
 

@@ -23,7 +23,9 @@ import logging
 from typing import Any, Optional
 
 from .. import runner_models
+from . import user_subscriptions
 from ._conn import _connect
+from .index_concurrent import IndexConcurrent
 
 logger = logging.getLogger(__name__)
 
@@ -850,19 +852,21 @@ _CHARGE_DU_MODELE = ("model", "model_family", "effort", "max_output_tokens",
 def _pause_pour_l_org(ab: str, org: str, seuil_defaut_pct: int) -> str:
     """SQL : l'abonnement `ab` est-il en pause POUR l'org `org` — plafond à échéance
     future, et forfait épuisé (refus du fournisseur) ou usage au-delà du seuil de
-    CETTE org (`_abonnement.seuil`, relu ici : le plafond de l'org, sinon le défaut,
-    resserré par le plafond perso) ? Toujours vrai ou faux, jamais NULL : un
+    CETTE org (`_abonnement.seuil`, relu ici : le plafond perso borné à
+    `LIMITE_PERSO_MAX`, sinon celui de l'org, sinon le défaut) ? Toujours vrai ou faux, jamais NULL : un
     `bool_and` lirait un NULL comme un « oui » (une échéance ou une cause absentes).
 
     Une pause sans cause (écrite avant la révision `0025`) n'ouvre rien."""
     return f"""COALESCE(
         {ab}.statut = 'paused_limit' AND {ab}.limit_reset_at > NOW()
         AND ({ab}.limit_epuise
-             OR {ab}.limit_utilisation >= LEAST(
-                    COALESCE((SELECT lim.limite_pct FROM org_model_subscription_limits lim
-                               WHERE lim.org_id = {org} AND lim.famille = {ab}.famille),
-                             {int(seuil_defaut_pct)}),
-                    COALESCE({ab}.limite_pct, 100)) / 100.0),
+             OR {ab}.limit_utilisation >= (CASE
+                    WHEN {ab}.limite_pct IS NOT NULL
+                    THEN LEAST({ab}.limite_pct, {int(user_subscriptions.LIMITE_PERSO_MAX)})
+                    ELSE COALESCE((SELECT lim.limite_pct FROM org_model_subscription_limits lim
+                                    WHERE lim.org_id = {org} AND lim.famille = {ab}.famille),
+                                  {int(seuil_defaut_pct)})
+                    END) / 100.0),
         false)"""
 
 
@@ -1716,6 +1720,30 @@ def runner_arme(org_id: int) -> dict:
             "farm_routed": bool(routee)}
 
 
+# --- Les travaux d'un DÉCLENCHEUR : le prédicat et l'index qui le servent ---------
+# Le résumé de la page Agents et le temps gagné lisent les travaux d'une org sur une
+# fenêtre, qui portent une clé `trigger_id`. Sans index, chaque lecture balaye toute la
+# file : mesuré en production le 18/10/2026, 775 ms à froid (42 ms à chaud) et 86 616
+# lignes écartées, pour l'org la plus chargée, dont tous les travaux viennent de
+# flottes. L'index ne garde que les travaux d'un déclencheur (une fraction de la file :
+# les flottes n'en portent pas), rangés par (org, échéance). Son prédicat est celui des
+# requêtes, mot pour mot : un prédicat d'index que la requête n'implique pas ne sert
+# aucune lecture.
+PREDICAT_DECLENCHEUR = "payload->>'trigger_id' ~ '^[0-9]+$'"
+
+#: La révision qui pose l'index des travaux d'un déclencheur.
+REVISION_DECLENCHEURS = "0067_runner_jobs_declencheurs"
+
+#: Posé CONCURRENTLY par sa révision, ou par le démarrage d'une base neuve (`_init.py`),
+#: sous le verdict commun (`index_concurrent`).
+INDEX_DECLENCHEURS = IndexConcurrent(
+    nom="idx_runner_jobs_declencheurs",
+    table="runner_jobs",
+    forme=f"(org_id, due_at) WHERE {PREDICAT_DECLENCHEUR}",
+    revision=REVISION_DECLENCHEURS,
+)
+
+
 def resume_des_declencheurs(org_id: int, jours: int) -> tuple[list[dict], list[dict]]:
     """Ce que la page Agents DESSINE, en deux lectures pour toute l'org : par
     déclencheur, combien de travaux de chaque statut sont tombés dus à chaque
@@ -1730,24 +1758,24 @@ def resume_des_declencheurs(org_id: int, jours: int) -> tuple[list[dict], list[d
     cases et un total."""
     with _connect() as conn:
         cases = conn.execute(
-            """
+            f"""
             SELECT payload->>'trigger_id' AS trigger_id,
                    date_trunc('hour', due_at) AS heure, status, COUNT(*)::int AS n
               FROM runner_jobs
              WHERE org_id = %s AND due_at >= NOW() - make_interval(days => %s)
-               AND payload->>'trigger_id' ~ '^[0-9]+$'
+               AND {PREDICAT_DECLENCHEUR}
              GROUP BY 1, 2, 3
             """,
             (org_id, int(jours)),
         ).fetchall()
         pannes = conn.execute(
-            """
+            f"""
             SELECT DISTINCT ON (payload->>'trigger_id')
                    payload->>'trigger_id' AS trigger_id, due_at, last_error
               FROM runner_jobs
              WHERE org_id = %s AND status = 'failed'
                AND due_at >= NOW() - make_interval(days => %s)
-               AND payload->>'trigger_id' ~ '^[0-9]+$'
+               AND {PREDICAT_DECLENCHEUR}
              ORDER BY payload->>'trigger_id', due_at DESC
             """,
             (org_id, int(jours)),
@@ -1793,12 +1821,12 @@ def outils_des_runs_conclus(org_id: int, jours: int) -> list[dict]:
     pas lié — il n'est alors pas compté)."""
     with _connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT payload->>'trigger_id' AS trigger_id, run_id
               FROM runner_jobs
              WHERE org_id = %s AND status = 'done'
                AND due_at >= NOW() - make_interval(days => %s)
-               AND payload->>'trigger_id' ~ '^[0-9]+$'
+               AND {PREDICAT_DECLENCHEUR}
              ORDER BY due_at
             """,
             (org_id, int(jours)),

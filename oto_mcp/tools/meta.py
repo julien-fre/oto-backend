@@ -284,16 +284,22 @@ async def executer_cible(tool, sub: Optional[str], name: str, demande: str,
         except Exception:
             pass
         target_run = session_org.current_call_run()
+        # The target's settlement (L8), on SUCCESS only, under the target's context
+        # (its axes are undone below): what it noted on ITS record, debited once.
+        if ok:
+            await run_in_threadpool(access.regler_appel, sub, name, target_trace)
         session_org.reset_call_trace(trace_tok)
         # The echo returned to the agent (`resolved_account`/`resolved_connector`, read by
         # `CallContextMiddleware` in the ENVELOPE record) must survive; only
-        # the keys that bill stay on the target's row.
+        # the keys that bill stay on the target's row, and the keys of the settlement
+        # stay with the target, which has just settled them.
         # `credential_row` also stays with the target: carried up into the envelope
         # record, it would make the envelope (which sees `oto_call`
         # succeed) CLEAR the "credits exhausted" mark the target just set.
         if outer_trace is not None:
             outer_trace.update({k: v for k, v in target_trace.items()
                                 if k not in _BILLING_TRACE_KEYS
+                                and k not in access.CLES_REGLEMENT
                                 and k != "credential_row"})
         for _reset, _tok in reversed(undo):
             _reset(_tok)

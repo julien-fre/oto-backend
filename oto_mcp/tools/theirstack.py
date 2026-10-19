@@ -180,23 +180,27 @@ def _trace_quantity(result: Any) -> None:
         session_org.note_call_trace(quantity=len(result["data"]))
 
 
-def _record_platform_usage(result, is_platform: bool) -> None:
-    """Debit oto's internal quota when OUR key was the one used.
+def _poser_units(result, is_platform: bool) -> None:
+    """oto's internal quota when OUR key was the one used — noted as `units`, debited by
+    the settlement of the call (`access.reglement`).
 
     Same two operations as `aiark`/`fullenrich`, and the same clean separation:
-    - `record_platform_usage` counts ONLY platform mode — it is oto's quota
-      on its own key, irrelevant when the customer brings their own;
+    - `units` counts ONLY platform mode — it is oto's quota on its own key,
+      irrelevant when the customer brings their own;
     - `note_call_trace(quantity=…)` above is UNCONDITIONAL — it is the
       metering, and `tool_calls.key_mode` says separately which key the call
       went through, which the billing consumer reads to bill only
       the partner's key.
     Counted in RECORDS returned, not in calls: TheirStack bills us
     per record (1 credit/job, 3/company), so a call that returns 50
-    jobs costs 50, and an empty page costs 0."""
+    jobs costs 50. An empty page debits 1 and a response without `data` nothing —
+    the counter has always floored a debit at 1."""
     if not is_platform:
         return
     if isinstance(result, dict) and isinstance(result.get("data"), list):
-        access.record_platform_usage("theirstack", len(result["data"]))
+        session_org.note_call_trace(units=max(1, len(result["data"])))
+    else:
+        session_org.note_call_trace(units=0)
 
 
 def register(mcp: FastMCP) -> None:
@@ -287,7 +291,7 @@ def register(mcp: FastMCP) -> None:
         payload = _merge_extra(payload, extra)
         client, is_platform = _client()
         result = _run(lambda: client.search_jobs(payload))
-        _record_platform_usage(result, is_platform)
+        _poser_units(result, is_platform)
         _trace_quantity(result)
         return _with_credit_estimate(_project(result, _JOB_FIELDS, full),
                                      _CREDITS_PAR_OFFRE, "job")
@@ -351,7 +355,7 @@ def register(mcp: FastMCP) -> None:
         payload = _merge_extra(payload, extra)
         client, is_platform = _client()
         result = _run(lambda: client.search_companies(payload))
-        _record_platform_usage(result, is_platform)
+        _poser_units(result, is_platform)
         _trace_quantity(result)
         return _with_credit_estimate(_project(result, _COMPANY_FIELDS, full),
                                      _CREDITS_PAR_ENTREPRISE, "company")

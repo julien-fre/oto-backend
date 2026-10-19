@@ -3,7 +3,7 @@
 Two distinct levels, often confused:
 
 - the daily **quota** of a PLATFORM key (`quota_for`, `usage_today`,
-  `record_platform_usage`) — a trial safeguard, lifted by the person's declared
+  `debiter_plateforme`) — a trial safeguard, lifted by the person's declared
   `platform_unmetered` right in their org (`plafond_du_jour`, `quotas_leves`);
 - a connector's **paid option** (`paid_option_for`, `has_option`) — a declared
   right (`entitlements.has_right`), a single rule: the org's, or a right row
@@ -23,7 +23,7 @@ from typing import Callable, Optional
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import entitlements_catalogue as catalogue, providers, db, grants_chain
-from ..auth.hooks import current_user_sub_from_token
+from ..db import grants as db_grants
 from ..mcp_errors import McpError
 from . import entitlements, heritage, scope
 
@@ -181,6 +181,29 @@ def usage_today(sub: str, provider: str) -> int:
     return db.get_usage_today(sub, providers.credential_provider(provider))
 
 
+def platform_used_today(sub: str, provider: str, edge_counter: Optional[str],
+                        usage: Optional[Callable[[], int]] = None) -> int:
+    """The day's count the PLATFORM quota refusal reads (R6, `docs/credits-au-moment-de-l-appel.md`) — SINGLE function, like
+    `plafond_du_jour`: the refusal (`resolve._win_quota`) and the `/api/me` snapshot
+    (`status.status_for`) read the same number.
+
+    - a `user` edge of the grants chain (`edge_counter`, the grant's key of that name)
+      → its edge counter, archived edges included (`db.grants.counter_sum_today`,
+      0053-D7);
+    - otherwise → `usage(sub, provider, day)`, per person. Under an `org` or `group`
+      edge this is deliberate: an edge counter counts for ALL its beneficiaries, and the
+      ceiling of an org edge is a per-person ceiling — switching it would change the
+      ceiling of every beneficiary. `grant_counters` has no beneficiary column.
+
+    Takes the edge's ref, never the grant: on the resolution path the grant carries the
+    DECRYPTED secret, and a frame that raises keeps its locals in the traceback (#564).
+
+    `usage`: the per-person count already read (a preloaded map), `None` reads it."""
+    if edge_counter:
+        return db_grants.counter_sum_today(edge_counter, "user", sub)
+    return usage() if usage is not None else usage_today(sub, provider)
+
+
 def quotas_leves(sub: str, org: Optional[int]) -> bool:
     """Does the `platform_unmetered` right lift the platform quotas for the person
     `sub` acting in `org` (ADR 0070 §7)? The right of the org the caller can
@@ -204,30 +227,23 @@ def plafond_du_jour(grant: dict, provider: str, leves: Callable[[], bool]) -> in
     return 0 if limit and leves() else limit
 
 
-def record_platform_usage(provider: str, calls: int = 1) -> None:
-    """To be called AFTER a successful call with the platform key. No-op if not authenticated.
+def debiter_plateforme(sub: str, provider: str, unites: int) -> None:
+    """Debits `unites` on `provider`'s PLATFORM key for `sub` — called by the single
+    settlement of a call (`reglement.regler_appel`), never by a tool: a tool SAYS what
+    it consumes (`units` on the call record), the edge of the call debits it.
 
-    Two counters during the double-read window (blueprint ADR 0053, L5):
-    the `usage(sub, tool, day)` history — which keeps the refusal's AUTHORITY, cf.
-    `grants_chain` §Counting — and the EDGE counter of 0053-D7, kept in parallel
-    so the authority switch is verified before it is made. No-op (and no
-    query) outside switched connectors.
+    Two counters (blueprint ADR 0053, L5, then R6): the `usage(sub, tool, day)`
+    history, per person — the refusal's authority outside a `user` edge — and the EDGE
+    counter of 0053-D7, the authority under a `user` edge (`platform_used_today`).
+    No-op (and no query) on the edge outside switched connectors.
 
-    `calls` = consumption of ONE call that counts as several (a bulk billed per
-    contact, a Serper call billed at the deducted credit). BOTH counters debit in
-    ONE go. The history used to loop, for lack of a step in its signature; it has one
-    since metering is counted in credits and no longer in calls — a default Maps census
-    would otherwise have taken 81 pool connections and 81 transactions for a single
-    tool call, up to 2,000 on a dense grid, on the hot path of a single-loop server.
-    The counter is worth the same as after N increments."""
-    sub = current_user_sub_from_token()
-    if not sub:
-        return
+    BOTH counters debit in ONE go: a call worth N units costs one write, not N
+    (a default Maps census would otherwise take 81 pool connections and 81
+    transactions for a single tool call, on the hot path of a single-loop server)."""
     # Metered on the key ACTUALLY consumed (delegation): a WhatsApp call burns
     # the unipile account's quota, not that of a "whatsapp" counter that nobody
     # reads. Write and read (`usage_today`) normalize the same way.
     provider = providers.credential_provider(provider)
-    unites = max(1, calls)
     db.increment_usage(sub, provider, unites)
     if grants_chain.is_chained(provider):
         grants_chain.record_usage(sub, provider, scope.current_org(sub), unites)

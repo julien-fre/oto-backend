@@ -104,8 +104,10 @@ def qui_leve_une_option(sub: Optional[str], org_id: Optional[int]) -> str:
     nommée : sous un tenant, la plateforme que voit l'utilisateur n'est pas la nôtre. « À accorder par un
     admin » seul laissait l'administrateur de l'org se croire visé, chercher un geste
     qu'il n'a pas, et conclure que le connecteur n'était pas supporté."""
-    from . import links  # paresseux : `links` lit la config des tenants à l'appel
-    facturation = links.link_for("billing", sub=sub)
+    from . import access, links  # paresseux : `links` lit la config des tenants à l'appel
+    org = (access.current_org(sub)
+           if links.patron_reclame("billing", "org", sub=sub) else None)
+    facturation = links.link_for("billing", sub=sub, org=org)
     ou = f" ({facturation})" if facturation else ""
     return (" Qui la lève : la facturation de l'org, qui pose ce droit — un "
             f"administrateur de cette org y prend une formule qui l'inclut{ou}, ou "

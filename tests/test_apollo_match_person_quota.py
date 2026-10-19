@@ -37,7 +37,8 @@ def _mount(monkeypatch, *, is_platform: bool, hint):
     usage: list[str] = []
 
     monkeypatch.setattr(access, "resolve_api_key", lambda *a, **k: ("k", is_platform))
-    monkeypatch.setattr(access, "record_platform_usage", lambda p: usage.append(p))
+    from _releve import capter_units
+    capter_units(monkeypatch, "apollo", lambda p, n: usage.append(p))
     monkeypatch.setattr(access, "platform_quota_hint", lambda p: hint)
     monkeypatch.setattr(apollo_client, "ApolloClient", lambda **kw: client)
 

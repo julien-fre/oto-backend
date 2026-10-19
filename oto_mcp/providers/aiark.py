@@ -10,7 +10,7 @@ from ._model import _c
 # aiark: classic connector (kind="tools", ex-federated MCP #152 → requalified
 # #160). Synchronous REST client in oto-core (`oto.tools.aiark`), curated tools
 # in `tools/aiark.py` (LLM contract), standard key cascade
-# (`resolve_api_key`) + `record_platform_usage` → platform mode possible.
+# (`resolve_api_key`) + a quota settled per call (`units`) → platform mode possible.
 # v1 = synchronous endpoints (company/people search, single-person export+email,
 # reverse-lookup, mobile phone); AI Ark's bulk exports are async
 # (webhook) → out of scope.

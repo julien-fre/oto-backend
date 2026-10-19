@@ -290,7 +290,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   c'est un connecteur NATIF dont le credential s'acquiert par OAuth, comme salesforce
   ou zoho.
   ⚠️ **LA convention de retour, après ce consentement, est UNIQUE depuis
-  oto-backend#670** : `?connector=<nom>&connect=connected|error|forbidden`, généralisée
+  oto-backend#670** : `?connector=<nom>&connect=connected|error|forbidden|denied`, généralisée
   depuis la forme salesforce et fabriquée une seule fois
   (`auth.flow.connector_return_suffix`/`connector_return_url`) plutôt que composée à la
   main dans chaque callback — c'était le cas avant ce lot, avec cinq formes différentes
@@ -304,6 +304,12 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   bougeait pas) ; ils ne servaient AUCUNE distinction succès/échec avant ce lot (le
   repli cassé rendait toujours la même destination), donc rien n'y avait de lecteur à
   préserver — et ils sont partis le 2026-09-09.
+  ⚠️ **Un échec, un mot** (oto-app#11) : `denied` = le fournisseur a refusé
+  l'autorisation (`error=access_denied`, ou son équivalent documenté — `success=false`
+  chez WordPress), tranché une fois par `auth.flow.etat_sans_code` ; `forbidden` = c'est
+  oto qui refuse (plus le droit d'écrire au niveau demandé au départ) ; `error` = une
+  vraie panne. Chez Meta, `access_denied` couvre aussi l'app non publiée : c'est bien un
+  refus du fournisseur, donc `denied`, sans distinction inventée.
   **Il ne reste qu'une famille.** Jusqu'au 2026-09-09 il y en avait deux : `atlassian`
   et `folkmcp` fédéraient un MCP distant (jeton per-user au coffre, injecté par
   `tools/mount.py`), surface identique au champ près, symétrie **contractuelle** — le
@@ -824,7 +830,7 @@ Trois projections d'une même route, du plus léger au plus lourd :
 | requête | ce que porte chaque ligne | mesuré (145 connecteurs, 14/10/2026) |
 |---|---|---|
 | `GET /api/me/connectors` | la ligne compacte : identité, axes de tri, `secret_kind`, état du membre | ~66 Ko |
-| `GET /api/me/connectors?include=card` | la ligne compacte **+ la carte sans `doc_sections`** : `auth`, `credential_fields`, `connect` (avec `callback_url` et `app_ready`), `namespaces`, `description`, `publisher`, `auth_modes`, `personal_session`, `free_tier`, `identities`, `verifiable`, `href` | ~235 Ko |
+| `GET /api/me/connectors?include=card` | la ligne compacte **+ la carte sans `doc_sections`** : `auth`, `credential_fields`, `connect` (avec `callback_url`, `app_ready` et `fixed`), `namespaces`, `description`, `publisher`, `auth_modes`, `personal_session`, `free_tier`, `identities`, `verifiable`, `href` | ~235 Ko |
 | `GET /api/me/connectors?include=card,docs` ou `?verbose=true` | la carte complète, mode d'emploi markdown (`doc_sections`) compris | ~745 Ko |
 
 Le nombre de requêtes SQL est le même pour les trois (≈ 50, borné depuis #1148) : ce

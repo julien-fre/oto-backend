@@ -118,7 +118,7 @@ près (cliquet `tests/test_access_surface_frozen.py`).
 | module              | ce qu'il porte                                                        |
 | ------------------- | --------------------------------------------------------------------- |
 | `access/scope.py`   | rôle plateforme (`get_user_role`, `is_super_admin`, `is_platform_operator`), contexte de l'appel (`current_org`/`current_group`/`current_project`, `_UNSET`), appartenance à un scope de partage, ce que le projet ÉPINGLE (`project_pinned_identity`/`_instance`, slots) |
-| `access/quotas.py`  | `quota_for`, `record_platform_usage`, `paid_option_for`, `has_option` (option payante = `entitlements.has_right`, org ou personne), `plafond_du_jour`/`quotas_leves` (levée `platform_unmetered`) |
+| `access/quotas.py`  | `quota_for`, `debiter_plateforme` (appelé par le seul règlement, `reglement.py`), `paid_option_for`, `has_option` (option payante = `entitlements.has_right`, org ou personne), `plafond_du_jour`/`quotas_leves` (levée `platform_unmetered`) |
 | `access/entitlements.py` | `value_for` (le point de lecture unique : la valeur de l'org — ses lignes, sinon le défaut déclaré par l'instance —, qu'une ligne de personne ne fait que relever), `has_right`, `org_has`, `verifier_defauts` — les droits déclarés (ADR 0070 §7, `docs/droits-declares.md`), jamais `billing` |
 | `access/cascade.py` | `walk_cascade`/`cascade_winner`, `CascadeRung`/`CascadeProbe`, `PRESENCE_PROBE`/`FETCH_PROBE`/`preloaded_presence_probe`, `group_secret_map`, le palier plateforme, `ORG_SHAREABLE_PROVIDERS` |
 | `access/rbac.py`    | `org_admin_hidden_tools` (+ équipe), `guard_instance_access`, `reachable_instances`(+`_map`, `_team_key`), `resolve_field_filter` |
@@ -126,6 +126,7 @@ près (cliquet `tests/test_access_surface_frozen.py`).
 | `access/resolve.py` | `ResolvedCredential`, `resolve_credential` et son `_impl`, la résolution d'une instance épinglée, `_resolve_credential_anon`, `platform_quota_hint` (sonde en lecture seule du quota jour, sans consommer — oto-backend#710) |
 | `access/views.py`   | `resolve_api_key`, `resolve_credential_fields`, `credential_mode_for`, `option_open`, `connector_resolvable_for_org`, `BYO_MODES` (⚠️ `resolve_mount_token` y a vécu jusqu'au 2026-09-09 — retiré avec la fédération MCP, ADR 0069) |
 | `access/status.py`  | `status_for` (le snapshot `/api/me`) et ses trois préchargements |
+| `access/reglement.py` | `regler_appel` : le règlement d'un appel RÉUSSI, au bord qui a posé son relevé (middleware de contexte, cible d'`oto_call`, worker jev) — débite les `units` notées par l'outil sur la clé notée par le résolveur, et les arêtes de tenant ; `SANS_DEBIT`, les outils d'un connecteur à clé plateforme qui ne débitent rien (`docs/credits-au-moment-de-l-appel.md`) |
 
 Les dépendances **descendent**, sans cycle (garde dans le même fichier de test) :
 

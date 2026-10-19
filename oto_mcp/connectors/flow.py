@@ -98,6 +98,10 @@ class Flow:
     # credentials", even of someone with nothing left to set. `None` = the connector
     # does not declare the question, the front then promises nothing.
     app_ready: Optional[Callable[[str], bool]] = None
+    # Parameters the requester's applicable app already BINDS (`{name: value}`): the
+    # Zoho region of the app set by their team. The front shows them instead of asking —
+    # the start refuses any other value. `None` = nothing ever bound.
+    fixed: Optional[Callable[[str], dict]] = None
 
 
 _FLOWS: dict[str, Flow] = {}
@@ -106,7 +110,8 @@ _FLOWS: dict[str, Flow] = {}
 def declare(connector: str, *, start: Callable[..., FlowStart],
             params: tuple[FlowParam, ...] = (), label: str = "Connect",
             callback_path: str = "",
-            app_ready: Optional[Callable[[str], bool]] = None) -> None:
+            app_ready: Optional[Callable[[str], bool]] = None,
+            fixed: Optional[Callable[[str], dict]] = None) -> None:
     """Declare this connector's connection flow. Called at MODULE level (like
     `status_hints.register_state`): it is a pure declaration, it must be readable
     at import, without waiting for the FastMCP mount."""
@@ -118,7 +123,8 @@ def declare(connector: str, *, start: Callable[..., FlowStart],
                 f"{connector}.{p.name}: required parameter without options or default.")
     _FLOWS[connector] = Flow(connector=connector, start=start,
                              params=tuple(params), label=label,
-                             callback_path=callback_path, app_ready=app_ready)
+                             callback_path=callback_path, app_ready=app_ready,
+                             fixed=fixed)
 
 
 def supports(connector: str) -> bool:
@@ -223,3 +229,24 @@ def app_ready(connector: str, sub: str) -> Optional[bool]:
     except Exception:  # noqa: BLE001
         logger.debug("app_ready failed for %s", connector, exc_info=True)
         return None
+
+
+def fixed(connector: str, sub: str) -> dict:
+    """The parameters this user's applicable app binds — `{}` if none. Like `app_ready`,
+    ONLY on the authenticated projection (the answer depends on who asks).
+
+    Fail-open like `app_ready`, and for the same reason: the start re-reads the app and
+    refuses a mismatching value, so an unreadable answer costs a select, never a wrong
+    consent. A value outside the declared options is not served: the front would show a
+    region it cannot name, the start says what is wrong."""
+    f = _FLOWS.get(connector)
+    if not f or f.fixed is None or not sub:
+        return {}
+    try:
+        valeurs = f.fixed(sub) or {}
+    except Exception:  # noqa: BLE001
+        logger.warning("fixed failed for %s", connector, exc_info=True)
+        return {}
+    permis = {p.name: {v for v, _ in p.options} for p in f.params}
+    return {k: v for k, v in valeurs.items()
+            if k in permis and (not permis[k] or v in permis[k])}

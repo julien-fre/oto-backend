@@ -66,7 +66,8 @@ def test_un_accord_individuel_ne_rouvre_pas_la_revocation_de_l_org(base):
 
     assert _platform_grant_meta("membre", "serper", 42) is None
     assert _platform_grant_meta("membre", "serper", 77) == {
-        "label": "commune", "daily_quota": 500}
+        "label": "commune", "daily_quota": 500,
+        "edge_counter": "platform:serper:commune"}   # le compteur du refus (R6)
 
     credentials_store.platform_grant("serper", "org:42")
     assert _platform_grant_meta("membre", "serper", 42) is not None

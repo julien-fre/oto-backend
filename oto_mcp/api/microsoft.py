@@ -13,7 +13,7 @@ AUDIENCE says which return it is:
 
 The return goes back to the card that asked (`state.c`), `?connector=<card>&connect=
 <state>` (`auth/flow.connector_return_url`), in the vocabulary the dashboard reads:
-`connected`, `error`, `forbidden` (the person refused), plus `admin_required` (the
+`connected`, `error`, `denied` (the person refused at Microsoft), plus `admin_required` (the
 person's organization forbids them to consent alone — the card offers the
 administrator's approval) and `admin_approved` / `admin_refused` (an administrator's
 answer to the approval link).
@@ -37,7 +37,6 @@ logger = logging.getLogger(__name__)
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
-_REFUS = "access_denied"
 _AADSTS = re.compile(r"AADSTS\d+")
 #: The organization requires an administrator's approval (user consent disabled or
 #: restricted; AADSTS65001 at exchange: consent missing for this application).
@@ -53,10 +52,13 @@ def _aadsts(texte: Optional[str]) -> Optional[str]:
 
 def _verdict(erreur: Optional[str], aadsts: Optional[str],
              description: Optional[str] = None) -> str:
-    """The return state of a connection that did not complete."""
+    """The return state of a connection that did not complete. The organisation's
+    approval requirement comes first (it may arrive as an `access_denied` too); then
+    the person's refusal (`access_denied`, AADSTS65004) is `denied` — never
+    `forbidden`, which says oto refused."""
     if aadsts in _ADMIN_REQUIS or "admin approval" in (description or "").lower():
         return "admin_required"
-    return "forbidden" if erreur == _REFUS else "error"
+    return oauth_flow.etat_sans_code(erreur)
 
 
 def make_routes(

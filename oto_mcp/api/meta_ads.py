@@ -5,7 +5,11 @@ Same shape as `api/instagram_meta.py`: `/start` goes through the common seam
 with no auth header). The identity comes from the signed `state`.
 
 ⚠️ As long as the application does not have the required access, Meta may refuse the dialog
-with `error=access_denied` — indistinguishable from a genuine refusal by the person.
+with `error=access_denied` — indistinguishable from a genuine refusal by the person. Both
+come back as `connect=denied` (oto-app#11): "the authorization was refused at the
+provider" is TRUE in both cases — Meta refused, for the person or for itself — whereas
+`forbidden` (oto refuses: no more right to write at that level) is true in neither. We do
+not guess which of the two it was: Meta's `error_reason` is logged as received.
 """
 from __future__ import annotations
 
@@ -24,9 +28,6 @@ from ..auth import meta_ads as ads_auth
 logger = logging.getLogger(__name__)
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
-
-_REFUS = "access_denied"
-
 
 def make_routes(
     verifier: JWTVerifier,
@@ -50,11 +51,12 @@ def make_routes(
             return RedirectResponse(_retour("error"), status_code=302)
         sub, org_id, return_app = parsed
         if erreur or not code:
-            logger.info("meta_ads: consent not completed (sub=%s, reason=%s)",
-                        sub, erreur or "code missing")
+            logger.info("meta_ads: consent not completed (sub=%s, reason=%s, error_reason=%s)",
+                        sub, erreur or "code missing",
+                        request.query_params.get("error_reason"))
             return RedirectResponse(
-                _retour("forbidden" if erreur == _REFUS else "error",
-                        return_app, org_id), status_code=302)
+                _retour(oauth_flow.etat_sans_code(erreur), return_app, org_id),
+                status_code=302)
 
         def _echanger_et_ranger() -> dict:
             grant = ads_auth._coeur().connect(
