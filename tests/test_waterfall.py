@@ -645,3 +645,10 @@ def test_chaque_etape_dit_son_prix_en_credits_tulina():
         "tool": "fullenrich_result", "pick": "phones"}
     assert set(waterfall.PRICES) <= {(ns, s.key) for ns, st in waterfall.STEPS_BY_NAMESPACE.items()
                                      for s in st}
+
+
+
+def test_la_recherche_apollo_dit_le_prix_de_la_revelation():
+    row = waterfall._step_row(waterfall.PEOPLE_STEPS[0], ns="waterfall_people")
+    assert row["key"] == "apollo"
+    assert row["price"]["rate"] == {"tool": "apollo_search_people", "reveal": "apollo_match_person"}

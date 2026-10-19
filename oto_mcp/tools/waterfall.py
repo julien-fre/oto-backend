@@ -1465,7 +1465,8 @@ PEOPLE_STEPS: tuple[Step, ...] = (
 #: What a step costs in TULINA credits when it runs on Tulina's key, as data for a
 #: screen: the tool Tulina BILLS for the step (the collect tool, for FullEnrich) and,
 #: when that tool has several prices, which row of the published credit grid applies
-#: (`pick`: the row's `kind` or short name). The figure itself lives in the grid, never
+#: (`pick`: the row's `kind` or short name); `reveal`: the tool that turns what a FREE
+#: step found into something usable, billed per person. The figure lives in the grid, never
 #: here. A step absent from this table is billed on its own tool, if at all; on the
 #: caller's OWN key, Tulina bills nothing — what the provider takes is not shown.
 PRICES: dict[tuple[str, str], dict] = {
@@ -1484,7 +1485,10 @@ PRICES: dict[tuple[str, str], dict] = {
     ("waterfall_person", "apollo"): {"tool": "apollo_match_person"},
     ("waterfall_person", "forager"): {"tool": "forager_person",
                                       "pick": "profile or search"},
-    ("waterfall_people", "apollo"): {"tool": "apollo_search_people"},
+    # The search is free; revealing ONE person it found is the billed gesture — a screen
+    # says that price, or the free search reads as the whole cost.
+    ("waterfall_people", "apollo"): {"tool": "apollo_search_people",
+                                     "reveal": "apollo_match_person"},
     ("waterfall_people", "aiark"): {"tool": "linkedin_aiark_search"},
     ("waterfall_people", "linkedin_employees"): {"tool": "apify_run_sync"},
     ("waterfall_people", "google"): {"tool": "serper_search"},
