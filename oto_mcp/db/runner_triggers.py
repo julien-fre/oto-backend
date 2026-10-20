@@ -19,8 +19,18 @@ from ._conn import _connect
 # démarrage, sous garde de catalogue — même DDL.
 COLONNE_FOLDER = "folder"
 DDL_COLONNE_FOLDER = f"ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS {COLONNE_FOLDER} TEXT"
+# Les `oto_admin_*` qu'un agent exerce avec le rôle plateforme de son porteur sous le
+# verrou des rôles (`verrou_org.outils_permis`, revue de #1274) : posée par la révision
+# `0068_triggers_outils_plateforme` ET par le démarrage, sous garde de catalogue
+# — même DDL. `[]` (défaut) = aucun : l'état de tous les agents d'avant.
+COLONNE_OUTILS_PLATEFORME = "outils_plateforme"
+DDL_COLONNE_OUTILS_PLATEFORME = (
+    f"ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS {COLONNE_OUTILS_PLATEFORME} "
+    "JSONB NOT NULL DEFAULT '[]'::jsonb")
 
-_COLS = ("id, org_id, sub, label, folder, procedure, project_id, tools, input, max_steps, "
+_COLS = ("id, org_id, sub, label, folder, procedure, project_id, tools, "
+         "outils_plateforme AS platform_tools, "
+         "input, max_steps, "
          "max_tokens, max_run_seconds, model, kind, payload_mode, payload_fields, max_per_hour, fraicheur_s, "
          "cron, tz, enabled, next_due, last_enqueued_at, created_at, hook_auth, "
          "(hook_signing_secret_enc IS NOT NULL) AS signing_secret_set, "
@@ -157,18 +167,20 @@ def forfaits_pretes(ids: list[int], sub: str) -> set[int]:
     return {int(r["id"]) for r in rows}
 
 
-def agent_au_seul_proprietaire(job_id: int) -> bool:
-    """Le travail `job_id` vient-il d'un agent que SEUL celui sous qui il tourne peut
-    changer ? L'agent de sa charge (`payload->>'trigger_id'`), de la même org et du
-    même porteur, posé sur l'abonnement PERSONNEL de ce porteur, et qu'il n'a prêté à
-    aucun éditeur (`_forfait_prete`, ici pour n'importe quel éditeur). Un admin de
-    l'org et un partage à l'org entière ne peuvent alors que l'éteindre
-    (`_acces_agent`). Faux pour un travail enfilé à la main (aucun agent), introuvable,
-    ou dont l'agent a changé de main — ce qui en dépend se ferme."""
+def outils_plateforme_du_travail(job_id: int) -> list[str]:
+    """Les `oto_admin_*` que le travail `job_id` exerce avec le rôle plateforme de son
+    porteur (`verrou_org.outils_permis`) : la liste de l'agent de sa charge
+    (`payload->>'trigger_id'`) — SEULEMENT si cet agent ne peut être changé que par celui
+    sous qui le travail tourne. Même org, même porteur, posé sur l'abonnement PERSONNEL
+    de ce porteur, et prêté à aucun éditeur (`_forfait_prete`, ici pour n'importe quel
+    éditeur) : un admin de l'org et un partage à l'org entière ne peuvent alors que
+    l'éteindre (`_acces_agent`). `[]` pour un travail enfilé à la main ou d'une flotte
+    (aucun agent), introuvable, dont l'agent a changé de main, ou qui ne remplit pas la
+    condition — ce qui en dépend se ferme."""
     from ._partage_vivant import PARTAGE_VIVANT_G
     with _connect() as conn:
         row = conn.execute(
-            "SELECT 1 FROM runner_jobs j JOIN runner_triggers t "
+            "SELECT t.outils_plateforme FROM runner_jobs j JOIN runner_triggers t "
             "  ON t.id::text = j.payload->>'trigger_id' "
             "WHERE j.id = %s AND t.org_id = j.org_id AND t.sub = j.sub "
             "  AND t.model = ANY(%s) "
@@ -178,7 +190,8 @@ def agent_au_seul_proprietaire(job_id: int) -> bool:
             f"      AND g.granted_by = t.sub AND {PARTAGE_VIVANT_G})",
             (job_id, list(runner_models.MODELES_PERSONNELS)),
         ).fetchone()
-    return row is not None
+    outils = (row or {}).get("outils_plateforme") if row else None
+    return [n for n in outils if isinstance(n, str)] if isinstance(outils, list) else []
 
 
 def retirer_partages_d_agent(trigger_id: int) -> int:
@@ -215,8 +228,11 @@ def reprendre_trigger(trigger_id: int, org_id: int,
         ).fetchone()
         if not avant:
             return None
+        # ⚠️ La liste d'outils d'admin ne SUIT PAS l'agent : posée par l'ancien
+        # propriétaire pour SON rôle, elle s'éteint au transfert (`outils_plateforme`).
         row = conn.execute(
-            f"UPDATE runner_triggers SET sub = %s WHERE id = %s AND org_id = %s "
+            f"UPDATE runner_triggers SET sub = %s, outils_plateforme = '[]'::jsonb "
+            f"WHERE id = %s AND org_id = %s "
             f"RETURNING {_COLS}",
             (nouveau_sub, trigger_id, org_id),
         ).fetchone()
@@ -243,6 +259,9 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
     l'appelant qui relit, et seulement quand rien n'a été écrit. Le prêt s'y juge
     aussi : retiré entre la lecture et l'écriture, il n'ouvre plus rien."""
     autorises = {"label", "folder", "procedure", "project_id", "tools", "input", "max_steps",
+                 # Les `oto_admin_*` exercés avec le rôle plateforme : jugés par la
+                 # capacité (`_outils_plateforme_valides`), jamais par cette écriture.
+                 "outils_plateforme",
                  "max_tokens", "max_run_seconds", "model", "cron", "tz", "enabled", "next_due",
                  # Le webhook. ⚠️ `kind` n'y est PAS : un déclencheur ne change pas
                  # de coup d'envoi en cours de route — ce serait un autre agent, et
@@ -260,8 +279,8 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
         return get_trigger(trigger_id, org_id)
     sets, vals = [], []
     for k, v in champs.items():
-        if k == "tools":
-            sets.append("tools = %s::jsonb")
+        if k in ("tools", "outils_plateforme"):
+            sets.append(f"{k} = %s::jsonb")
             vals.append(json.dumps(list(v), ensure_ascii=False))
         elif k == "payload_fields":
             # Un dict nu ne s'adapte pas en jsonb (psycopg refuse `dict`) : le

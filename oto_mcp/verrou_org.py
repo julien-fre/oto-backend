@@ -35,13 +35,19 @@ plateforme dérivent. Réglage PROPRE, `OTO_VERROU_ROLES_PLATEFORME` : `enforce`
 `report` (DÉFAUT : journalise ce qui serait retiré, ne retire rien — des agents
 hébergés de comptes admin servent peut-être des outils d'admin, à relever avant de
 mordre) ou `off`. Indépendant du verrou d'org : couper l'un ne coupe pas l'autre.
-`OTO_VERROU_ROLES_PLATEFORME_ORGS` (ids d'org, virgules) EXEMPTE de ce verrou les travaux
-de ces orgs — celle de l'opérateur, dont les agents hébergés servent des `oto_admin_*` :
-leur porteur garde son rôle plateforme, quel que soit le mode. Vide = aucune exemption.
-⚠️ Seulement pour un agent que SON PORTEUR SEUL peut changer
-(`db.agent_au_seul_proprietaire`) : un agent tourne sous son propriétaire quel que soit
-celui qui l'a modifié, donc un agent qu'un autre peut retoucher prêterait le rôle à cet
-autre. Un travail enfilé à la main, ou d'un agent prêté, reste borné.
+**Les outils d'admin PERMIS à un agent** (19/10/2026, revue de #1274) : sous `enforce`,
+un agent ne garde le rôle plateforme de son porteur QUE pour les `oto_admin_*` que son
+agent nomme (`runner_triggers.outils_plateforme`), et seulement PENDANT l'appel de l'un
+d'eux (`poser_outil`, posé là où la liste du travail est tenue : `CallContextMiddleware`
+et `meta.executer_cible`). Tout autre appel du même travail est lu `member`. Un agent qui
+lit du contenu extérieur ne porte donc pas tous les droits d'admin : une injection de
+prompt n'atteint que les outils nommés. ⚠️ Seulement pour un agent que SON PORTEUR SEUL
+peut changer (`db.outils_plateforme_du_travail`) : un agent tourne sous son propriétaire
+quel que soit celui qui l'a modifié, donc un agent qu'un autre peut retoucher (clé d'org,
+éditeur nommé) prêterait le rôle à cet autre — sa liste ne vaut rien. Un travail enfilé à
+la main ou d'une flotte (aucun `trigger_id`) n'a pas de liste. Sans outil posé (la face
+REST), rien n'est permis. **La trace reste** : chaque outil exercé ainsi est journalisé,
+une ligne par outil et par requête, quel que soit le mode.
 """
 from __future__ import annotations
 
@@ -84,16 +90,29 @@ _COURANT: contextvars.ContextVar[Optional[Verrou]] = contextvars.ContextVar(
     "oto_verrou_org", default=None)
 
 _ENV_ROLES = "OTO_VERROU_ROLES_PLATEFORME"
-_ENV_ROLES_ORGS = "OTO_VERROU_ROLES_PLATEFORME_ORGS"
 #: Les rôles plateforme qu'un jeton de délégation ne porte pas (`access.scope`).
 _ROLES_PLATEFORME = ("admin", "super_admin")
+#: Les seuls outils qu'une liste d'agent peut nommer (`runner_triggers.outils_plateforme`).
+PREFIXE_ADMIN = "oto_admin_"
 #: Le verrou dont le rôle plateforme a déjà été signalé en `report` : une ligne par
 #: requête, pas une par prédicat — `get_user_role` est lu des dizaines de fois.
 _ROLE_SIGNALE: contextvars.ContextVar[Optional[Verrou]] = contextvars.ContextVar(
     "oto_verrou_role_signale", default=None)
-#: Le verdict d'exemption déjà lu en base pour ce verrou : une lecture par requête.
-_EXEMPTION: contextvars.ContextVar[Optional[tuple[Verrou, bool]]] = contextvars.ContextVar(
-    "oto_verrou_role_exemption", default=None)
+#: Les outils d'admin permis au travail de ce verrou, déjà lus en base : une lecture par
+#: requête (`outils_permis`).
+_PERMIS: contextvars.ContextVar[Optional[tuple[Verrou, frozenset]]] = contextvars.ContextVar(
+    "oto_verrou_outils_permis", default=None)
+#: L'outil dont l'appel est en cours (au canonique), posé par `poser_outil` — None hors
+#: d'un appel d'outil (`tools/list`, la face REST) : rien n'y est permis.
+_OUTIL: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "oto_verrou_outil", default=None)
+#: Faux le temps d'une lecture qui n'EXERCE rien (la visibilité de `tools/list`) : elle
+#: ne laisse pas de trace d'exercice.
+_TRACER: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "oto_verrou_tracer", default=True)
+#: Les outils déjà tracés pour ce verrou : une ligne par outil et par requête.
+_TRACES: contextvars.ContextVar[Optional[tuple[Verrou, frozenset]]] = contextvars.ContextVar(
+    "oto_verrou_traces", default=None)
 
 
 def poser(verrou: Optional[Verrou]) -> contextvars.Token:
@@ -208,44 +227,79 @@ def mode_roles() -> str:
     return m if m in _MODES else "report"
 
 
-def orgs_exemptees() -> frozenset[int]:
-    """Les orgs dont les travaux gardent le rôle plateforme de leur porteur, lues à
-    chaque appel. Un élément qui n'est pas un entier est ignoré et journalisé : il
-    n'exempte rien — fail-closed."""
-    orgs: set[int] = set()
-    for brut in (os.environ.get(_ENV_ROLES_ORGS) or "").split(","):
-        brut = brut.strip()
-        if not brut:
-            continue
-        try:
-            orgs.add(int(brut))
-        except ValueError:
-            logger.warning("%s : %r n'est pas un id d'org, ignoré", _ENV_ROLES_ORGS, brut)
-    return frozenset(orgs)
+def poser_outil(name: Optional[str]) -> contextvars.Token:
+    """Pose l'outil dont l'appel commence (`lever_outil` au retour). Au canonique : la
+    liste d'un agent se tient aux noms canoniques, comme sa liste d'outils."""
+    from . import deprecations
+    return _OUTIL.set(deprecations.tool_canonique(name) if name else None)
 
 
-def _exempte(v: Verrou) -> bool:
-    """Le travail de `v` garde-t-il le rôle plateforme de son porteur ? Son org est
-    exemptée ET son agent n'est modifiable que par lui. Lu au plus une fois par requête."""
-    if v.org_id is None or v.job_id is None or v.org_id not in orgs_exemptees():
-        return False
-    deja = _EXEMPTION.get()
+def lever_outil(jeton: contextvars.Token) -> None:
+    _OUTIL.reset(jeton)
+
+
+def outils_permis(v: Optional[Verrou] = None) -> frozenset:
+    """Les `oto_admin_*` que le travail de `v` (par défaut, celui de la requête) exerce
+    avec le rôle plateforme de son porteur — vide sans travail, ou si son agent n'est pas
+    au seul porteur (`db.outils_plateforme_du_travail`). Lu au plus une fois par requête.
+    Seuls les `oto_admin_*` comptent : un autre nom n'ouvre rien, même stocké."""
+    v = v if v is not None else _COURANT.get()
+    if v is None or v.job_id is None:
+        return frozenset()
+    deja = _PERMIS.get()
     if deja is not None and deja[0] is v:
         return deja[1]
     from . import db
-    verdict = db.agent_au_seul_proprietaire(v.job_id)
-    if not verdict:
-        logger.info("verrou des rôles plateforme : le travail %s (org exemptée %s) "
-                       "vient d'un agent qu'un autre que son porteur peut changer — "
-                       "non exempté", v.job_id, v.org_id)
-    _EXEMPTION.set((v, verdict))
-    return verdict
+    permis = frozenset(n for n in (db.outils_plateforme_du_travail(v.job_id) or ())
+                       if isinstance(n, str) and n.startswith(PREFIXE_ADMIN))
+    _PERMIS.set((v, permis))
+    return permis
+
+
+class lecture_pour_outil:
+    """Le rôle qu'aurait le porteur PENDANT l'appel de `name`, lu sans l'exercer (la
+    visibilité) : pose l'outil, coupe la trace, rétablit tout en sortant."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def __enter__(self):
+        self._jetons = (_OUTIL.set(self.name), _TRACER.set(False))
+        return self
+
+    def __exit__(self, *exc):
+        _TRACER.reset(self._jetons[1])
+        _OUTIL.reset(self._jetons[0])
+        return False
+
+
+def _tracer(v: Verrou, outil: str, role: str, mode: str, *, permis: bool) -> None:
+    """La trace d'un outil d'admin appelé sous un jeton de délégation avec un rôle
+    plateforme : exercé (permis par la liste de l'agent, quel que soit le mode — revue de
+    #1274) ou lu `member` (hors liste, en `enforce`). Une ligne par outil et par requête ;
+    aucune pour une lecture qui n'exerce rien (`lecture_pour_outil`)."""
+    if not _TRACER.get():
+        return
+    deja = _TRACES.get()
+    vus = deja[1] if deja is not None and deja[0] is v else frozenset()
+    if outil in vus:
+        return
+    _TRACES.set((v, vus | {outil}))
+    if permis:
+        logger.warning("verrou des rôles plateforme (%s) : le travail %s (org %s) exerce "
+                       "`%s` avec le rôle `%s` — permis par la liste de son agent",
+                       mode, v.job_id, v.org_id, outil, role)
+    else:
+        logger.warning("verrou des rôles plateforme (%s) : le travail %s (org %s) appelle "
+                       "`%s`, hors de la liste de son agent — rôle `%s` lu `member`",
+                       mode, v.job_id, v.org_id, outil, role)
 
 
 def role_plateforme(sub: Optional[str], role: str) -> str:
     """Le rôle plateforme de `sub` sous la requête courante : `member` à la place
     d'`admin`/`super_admin` pour le PORTEUR d'un jeton de délégation, en `enforce` —
-    sauf pour un travail exempté (`_exempte`), ni retiré ni journalisé.
+    sauf pendant l'appel d'un outil que son agent permet (`outils_permis`), toujours
+    tracé.
 
     Lit la ContextVar BRUTE, pas `courant()` : `OTO_VERROU_ORG_DELEGATION=off` ne doit
     pas rendre au porteur ses rôles plateforme — chaque réglage coupe son verrou. Un
@@ -256,10 +310,12 @@ def role_plateforme(sub: Optional[str], role: str) -> str:
     v = _COURANT.get()
     if v is None or sub is None or str(sub) != v.sub:
         return role
-    if _exempte(v):
-        return role
     m = mode_roles()
     if m == "off":
+        return role
+    outil = _OUTIL.get()
+    if outil is not None and outil in outils_permis(v):
+        _tracer(v, outil, role, m, permis=True)
         return role
     if m == "report":
         if _ROLE_SIGNALE.get() is not v:
@@ -268,4 +324,6 @@ def role_plateforme(sub: Optional[str], role: str) -> str:
                            "%s (org %s) agit avec le rôle `%s` — `enforce` le lirait "
                            "`member`", v.job_id, v.org_id, role)
         return role
+    if outil is not None and outil.startswith(PREFIXE_ADMIN):
+        _tracer(v, outil, role, m, permis=False)
     return "member"

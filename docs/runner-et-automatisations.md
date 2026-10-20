@@ -2266,3 +2266,29 @@ run sans appel au journal n'est **pas compté** : il est rendu dans
 minutes appliquées ; `set` (admin) prend `minutes` `{type: 0..240 | null}` — null rend le
 défaut, `{}` les rend tous. Colonne `orgs.time_saved_minutes` (révision
 `0066_orgs_time_saved_minutes` + démarrage). Jamais par agent : c'est un réglage, pas une étape.
+
+## Outils d'admin d'un agent — `platform_tools` (2026-10-19)
+
+**Le besoin.** Sous `OTO_VERROU_ROLES_PLATEFORME=enforce` (docs/org-context.md), un agent
+hébergé est lu `member` : les agents d'exploitation de l'opérateur (tri des retours,
+activation des inscrits, veille des crédits) perdent leurs `oto_admin_*`. Exempter une org
+entière leur rendait TOUT l'admin — un agent qui lit du contenu extérieur portait alors le
+rôle plateforme face à une injection de prompt (revue de #1274).
+
+**La forme.** Colonne `runner_triggers.outils_plateforme` (JSONB, `[]` par défaut),
+servie `platform_tools` par `op=get`/`list`, posée par `oto_trigger op=update
+platform_tools=[…]` (`[]` la vide). Le travail garde le rôle plateforme de son porteur
+PENDANT l'appel d'un de ces outils, et seulement lui (`verrou_org.outils_permis`).
+
+**Qui la pose.** Une personne, jamais un agent (`platform_tools_human_only` sous un jeton
+de délégation) ; le propriétaire seul (`platform_tools_owner_only`) ; opérateur plateforme
+pour une liste non vide (`platform_tools_operator_only`). Au plus 10 noms
+(`platform_tools_too_many`), chacun un `oto_admin_*` (`platform_tools_not_admin`) déjà dans
+`tools` (`platform_tools_not_in_tools`). Pas à la création (`platform_tools_update_only`).
+`give`/`take_over` la vident : posée pour le rôle de l'ancien propriétaire, elle ne le suit
+pas. Retirer un outil de `tools` ne la réécrit pas — l'outil y devient inerte, la liste
+d'outils du travail le refusant de toute façon (`tool_not_in_job`).
+
+**Quand elle vaut.** Seulement pour un agent que son porteur SEUL peut changer : abonnement
+personnel, aucun éditeur nommé (`db.outils_plateforme_du_travail`). Ailleurs elle est lue
+vide. Chaque exercice laisse une ligne au journal, quel que soit le mode.

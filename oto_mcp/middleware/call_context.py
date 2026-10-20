@@ -8,7 +8,7 @@ from fastmcp.server.middleware import Middleware
 from starlette.concurrency import run_in_threadpool
 
 from .. import (access, call_axes, guide_run, outils_du_travail, providers, redaction,
-               run_org, session_org)
+               run_org, session_org, verrou_org)
 from ..auth.hooks import current_user_sub_from_token
 from ..connectors import access_level_gate, activation_gate
 from ..tool_visibility import namespace_of
@@ -181,6 +181,10 @@ class CallContextMiddleware(Middleware):
             # d'en oublier une.
             undo.append((session_org.reset_call_face,
                          session_org.set_call_face(session_org.FACE_MCP)))
+            # L'outil APPELÉ, pour le verrou des rôles plateforme : un agent hébergé ne
+            # garde le rôle de son porteur que pendant l'un des `oto_admin_*` que son
+            # agent nomme (`verrou_org.outils_permis`). `oto_call` repose sa cible.
+            undo.append((verrou_org.lever_outil, verrou_org.poser_outil(name)))
             # Relevé de résolution : posé EN PREMIER (donc reset EN DERNIER, LIFO) pour
             # que les seams l'aient pendant tout le handler ET que le calllog le relise
             # après. Inerte si rien ne le remplit — un dict vide n'ajoute aucune ligne.

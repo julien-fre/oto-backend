@@ -21,7 +21,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import (access, call_axes, calllog, db, deprecations, error_taxonomy, guide_run,
                 outils_du_travail, outils_retires, redaction, run_org, session_org,
-                tool_alias)
+                tool_alias, verrou_org)
 from ..auth.hooks import current_user_sub_from_token
 from ..connectors import access_level_gate, activation_gate
 from ..connectors import health as connector_health
@@ -197,6 +197,10 @@ async def executer_cible(tool, sub: Optional[str], name: str, demande: str,
     call_axes.reject_legacy_axis_names(args, getattr(tool, "parameters", None))
     undo: list = []
     try:
+        # The TARGET is the tool being called, for the platform-role bound: a hosted
+        # agent keeps its bearer's platform role only while one of the `oto_admin_*` its
+        # agent lists runs (`verrou_org.outils_permis`) — never `oto_call` itself.
+        undo.append((verrou_org.lever_outil, verrou_org.poser_outil(name)))
         # Off the loop: the axes list reads the database (`docs/event-loop-perf.md`).
         for axis in await run_in_threadpool(call_axes.axes_for_call, name):
             if axis.param in args:

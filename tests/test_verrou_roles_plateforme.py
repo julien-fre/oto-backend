@@ -34,7 +34,6 @@ def comptes(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda sub: 42)
     monkeypatch.delenv("OTO_MCP_ADMIN_SUB", raising=False)
     monkeypatch.delenv(ENV, raising=False)
-    monkeypatch.delenv("OTO_VERROU_ROLES_PLATEFORME_ORGS", raising=False)
     monkeypatch.delenv("OTO_VERROU_ORG_DELEGATION", raising=False)
 
 
@@ -129,67 +128,128 @@ def test_un_member_reste_member(delegue, monkeypatch):
     assert access.get_user_role("sub-quelconque") == "member"
 
 
-ENV_ORGS = "OTO_VERROU_ROLES_PLATEFORME_ORGS"
+# ── Les outils d'admin PERMIS à un agent (revue de #1274) ─────────────────────────────
+
+PERMIS = ["oto_admin_org", "oto_admin_signal"]
 
 
 @pytest.fixture
-def seul_proprietaire(monkeypatch):
-    """L'agent du travail n'est modifiable que par son porteur (doublure de la base,
-    prouvée par `test_partage_agents_db::test_l_agent_au_seul_proprietaire`)."""
-    lus = []
-    monkeypatch.setattr(access.db, "agent_au_seul_proprietaire",
-                        lambda job_id: lus.append(job_id) or True)
-    return lus
+def liste_de_l_agent(monkeypatch):
+    """La liste d'outils d'admin de l'agent du travail, telle que la base la rend
+    (doublure, prouvée par `test_partage_agents_db::test_les_outils_plateforme_ne_valent_
+    que_pour_l_agent_au_seul_proprietaire`). `[]` = agent qu'un autre peut changer."""
+    etat = {"liste": list(PERMIS), "lus": []}
+
+    def lire(job_id):
+        etat["lus"].append(job_id)
+        return list(etat["liste"])
+    monkeypatch.setattr(access.db, "outils_plateforme_du_travail", lire)
+    return etat
 
 
-def test_org_exemptee_garde_le_role_sans_le_journaliser(delegue, seul_proprietaire,
-                                                         monkeypatch, caplog):
-    """L'org de l'opérateur : ses agents hébergés servent des `oto_admin_*`."""
+def _pendant(name, f):
+    jeton = verrou_org.poser_outil(name)
+    try:
+        return f()
+    finally:
+        verrou_org.lever_outil(jeton)
+
+
+def test_un_outil_permis_garde_le_role_et_laisse_une_trace(delegue, liste_de_l_agent,
+                                                           monkeypatch, caplog):
+    """Le tri des retours exerce `oto_admin_org` avec le rôle de son porteur — tracé."""
     monkeypatch.setenv(ENV, "enforce")
-    monkeypatch.setenv(ENV_ORGS, "7, 42")
-    assert access.get_user_role(PORTEUR) == "super_admin"
-    assert _authz.SUPER_ADMIN(_raw(PORTEUR)).sub == PORTEUR
+    with caplog.at_level(logging.WARNING, logger="oto_mcp.verrou_org"):
+        assert _pendant("oto_admin_org", lambda: access.get_user_role(PORTEUR)) \
+            == "super_admin"
+        assert _pendant("oto_admin_org",
+                        lambda: _authz.SUPER_ADMIN(_raw(PORTEUR)).sub) == PORTEUR
+    traces = [r.getMessage() for r in caplog.records
+              if "permis par la liste de son agent" in r.getMessage()]
+    assert len(traces) == 1, "une ligne par outil et par requête, pas une par prédicat"
+    assert "`oto_admin_org`" in traces[0] and "travail 7" in traces[0]
+    assert liste_de_l_agent["lus"] == [7], "la liste se lit une fois par requête"
+
+
+def test_la_trace_reste_en_report(delegue, liste_de_l_agent, monkeypatch, caplog):
     monkeypatch.setenv(ENV, "report")
     with caplog.at_level(logging.WARNING, logger="oto_mcp.verrou_org"):
-        assert access.is_super_admin(PORTEUR)
-    assert not [r for r in caplog.records if "rôles plateforme" in r.getMessage()]
-    assert set(seul_proprietaire) == {7}
+        assert _pendant("oto_admin_signal", lambda: access.is_super_admin(PORTEUR))
+    assert any("`oto_admin_signal`" in r.getMessage()
+               and "permis par la liste" in r.getMessage() for r in caplog.records)
 
 
-def test_un_agent_qu_un_autre_peut_changer_n_est_pas_exempte(delegue, monkeypatch):
-    """Un agent tourne sous son propriétaire quel que soit celui qui l'a modifié :
-    exempter un agent prêté prêterait le rôle plateforme à son éditeur."""
+def test_un_outil_d_admin_hors_liste_est_lu_member(delegue, liste_de_l_agent,
+                                                   monkeypatch, caplog):
+    """Une injection de prompt n'atteint pas l'admin que l'agent ne nomme pas."""
     monkeypatch.setenv(ENV, "enforce")
-    monkeypatch.setenv(ENV_ORGS, "42")
-    lus = []
-    monkeypatch.setattr(access.db, "agent_au_seul_proprietaire",
-                        lambda job_id: lus.append(job_id) or False)
+    with caplog.at_level(logging.WARNING, logger="oto_mcp.verrou_org"):
+        assert _pendant("oto_admin_user", lambda: access.get_user_role(PORTEUR)) == "member"
+        with pytest.raises(AuthzDenied):
+            _pendant("oto_admin_user", lambda: _authz.SUPER_ADMIN(_raw(PORTEUR)))
+    assert any("`oto_admin_user`" in r.getMessage() and "hors de la liste" in r.getMessage()
+               for r in caplog.records), "le refus aussi se trace"
+
+
+def test_hors_appel_d_un_outil_permis_le_travail_reste_member(delegue, liste_de_l_agent,
+                                                              monkeypatch):
+    """Un autre outil du même travail (`oto_call` lui-même, un outil métier) et la face
+    REST (aucun outil posé) : rien n'est permis."""
+    monkeypatch.setenv(ENV, "enforce")
     assert access.get_user_role(PORTEUR) == "member"
-    assert not access.is_super_admin(PORTEUR)
-    assert lus == [7], "lu une fois par requête, pas une par prédicat"
+    assert _pendant("oto_call", lambda: access.get_user_role(PORTEUR)) == "member"
+    assert _pendant("fr_siret", lambda: access.is_platform_operator(PORTEUR)) is False
 
 
-def test_une_autre_org_reste_bornee(delegue, seul_proprietaire, monkeypatch):
+def test_la_cible_d_oto_call_repose_l_outil(delegue, liste_de_l_agent, monkeypatch):
+    """`meta.executer_cible` pose la CIBLE par-dessus `oto_call` : c'est elle qui juge."""
     monkeypatch.setenv(ENV, "enforce")
-    monkeypatch.setenv(ENV_ORGS, "43")
-    assert access.get_user_role(PORTEUR) == "member"
-
-
-def test_un_travail_sans_org_n_est_jamais_exempte(comptes, seul_proprietaire, monkeypatch):
-    monkeypatch.setenv(ENV, "enforce")
-    monkeypatch.setenv(ENV_ORGS, "42")
-    t = verrou_org.poser(verrou_org.Verrou(sub=PORTEUR, org_id=None, job_id=8))
+    dehors = verrou_org.poser_outil("oto_call")
     try:
-        assert access.get_user_role(PORTEUR) == "member"
+        assert _pendant("oto_admin_org",
+                        lambda: access.get_user_role(PORTEUR)) == "super_admin"
+        assert access.get_user_role(PORTEUR) == "member", "rétabli au retour de la cible"
+    finally:
+        verrou_org.lever_outil(dehors)
+
+
+def test_un_agent_qu_un_autre_peut_changer_n_a_rien(delegue, liste_de_l_agent, monkeypatch):
+    """Un agent tourne sous son propriétaire quel que soit celui qui l'a modifié : la
+    liste d'un agent prêté ou sur clé d'org prêterait le rôle plateforme à son éditeur —
+    la base la rend vide."""
+    monkeypatch.setenv(ENV, "enforce")
+    liste_de_l_agent["liste"] = []
+    assert _pendant("oto_admin_org", lambda: access.get_user_role(PORTEUR)) == "member"
+
+
+def test_seuls_les_oto_admin_comptent(delegue, liste_de_l_agent, monkeypatch):
+    """Un autre nom stocké n'ouvre rien : la liste ne prête le rôle qu'à l'admin."""
+    monkeypatch.setenv(ENV, "enforce")
+    liste_de_l_agent["liste"] = ["oto_trigger", "oto_admin_org"]
+    assert verrou_org.outils_permis() == frozenset({"oto_admin_org"})
+    assert _pendant("oto_trigger", lambda: access.get_user_role(PORTEUR)) == "member"
+
+
+def test_un_travail_sans_numero_n_a_rien(comptes, liste_de_l_agent, monkeypatch):
+    monkeypatch.setenv(ENV, "enforce")
+    t = verrou_org.poser(verrou_org.Verrou(sub=PORTEUR, org_id=42, job_id=None))
+    try:
+        assert _pendant("oto_admin_org", lambda: access.get_user_role(PORTEUR)) == "member"
     finally:
         verrou_org.lever(t)
+    assert liste_de_l_agent["lus"] == []
 
 
-def test_un_element_non_entier_n_exempte_rien(delegue, seul_proprietaire, monkeypatch,
-                                              caplog):
+def test_la_lecture_pour_la_liste_ne_trace_rien(delegue, liste_de_l_agent, monkeypatch,
+                                                caplog):
+    """`tools/list` juge un outil permis au rôle qu'il aura à l'appel, sans l'exercer."""
+    from oto_mcp import session_visibility
     monkeypatch.setenv(ENV, "enforce")
-    monkeypatch.setenv(ENV_ORGS, "quarante-deux")
     with caplog.at_level(logging.WARNING, logger="oto_mcp.verrou_org"):
-        assert verrou_org.orgs_exemptees() == frozenset()
-        assert access.get_user_role(PORTEUR) == "member"
-    assert any("quarante-deux" in r.getMessage() for r in caplog.records)
+        roles_ = session_visibility._roles_des_outils_permis(PORTEUR)
+    assert roles_ == {"oto_admin_org": "super_admin", "oto_admin_signal": "super_admin"}
+    assert not [r for r in caplog.records if "exerce" in r.getMessage()]
+    masques = session_visibility._hors_de_portee_plateforme(
+        {"oto_admin_org", "oto_admin_user"}, "member", roles_)
+    assert masques == {"oto_admin_user"}, (
+        "l'outil permis reste visible (un outil masqué est injoignable), l'autre non")

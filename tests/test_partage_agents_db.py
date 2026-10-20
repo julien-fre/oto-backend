@@ -82,32 +82,48 @@ def test_le_forfait_ne_se_prete_que_par_son_proprietaire_a_une_personne(live, pg
                              hors_abonnement_d_autrui="nomme") is None
 
 
-def test_l_agent_au_seul_proprietaire(live):
-    """Ce qui exempte un travail du verrou des rôles plateforme (`verrou_org._exempte`) :
-    un agent que SON PORTEUR SEUL peut changer — abonnement personnel, aucun éditeur
-    nommé par lui. Un partage à l'org entière ou posé par un admin ne prête rien."""
+def test_les_outils_plateforme_ne_valent_que_pour_l_agent_au_seul_proprietaire(live):
+    """Ce qui permet à un travail d'exercer des `oto_admin_*` avec le rôle plateforme de
+    son porteur (`verrou_org.outils_permis`) : la liste de son agent, SEULEMENT si cet agent
+    n'est modifiable que par son porteur — abonnement personnel, aucun éditeur nommé par
+    lui. Un partage à l'org entière ou posé par un admin ne prête rien. La liste ne suit
+    pas l'agent à un transfert."""
     from oto_mcp import db
+    liste = ["oto_admin_org", "oto_admin_signal"]
 
     def travail(t, sub="proprio", org=ORG):
-        return db.enqueue_job(org, "agent", {"trigger_id": t["id"]}, sub=sub)["id"]
+        # `start` : le seul coup d'envoi d'un agent programmé (`runner_jobs.kind`).
+        return db.enqueue_job(org, "start", {"trigger_id": t["id"]}, sub=sub)["id"]
 
-    seul = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC", tools=["a"],
-                             cron="0 8 * * *", model="sub:sonnet")
+    def arme(t):
+        return db.update_trigger(t["id"], ORG, {"outils_plateforme": liste})
+
+    seul = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC",
+                             tools=["a", *liste], cron="0 8 * * *", model="sub:sonnet")
+    assert seul["platform_tools"] == [], "aucun outil d'admin par défaut"
+    assert db.outils_plateforme_du_travail(travail(seul)) == []
+    assert arme(seul)["platform_tools"] == liste
     db.grant_resource("runner_trigger", str(seul["id"]), "org", str(ORG), role="editor",
                       granted_by="proprio")
     db.grant_resource("runner_trigger", str(seul["id"]), "user", "par-admin",
                       role="editor", granted_by="un-admin")
-    assert db.agent_au_seul_proprietaire(travail(seul))
+    assert db.outils_plateforme_du_travail(travail(seul)) == liste
 
-    prete = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC", tools=["a"],
-                              cron="0 8 * * *", model="sub:sonnet")
+    prete = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC",
+                              tools=["a", *liste], cron="0 8 * * *", model="sub:sonnet")
+    arme(prete)
     db.grant_resource("runner_trigger", str(prete["id"]), "user", "nomme", role="editor",
                       granted_by="proprio")
-    assert not db.agent_au_seul_proprietaire(travail(prete)), "prêté à un éditeur"
+    assert db.outils_plateforme_du_travail(travail(prete)) == [], "prêté à un éditeur"
 
     cle_d_org = _agent(db)   # tout admin de l'org le retouche
-    assert not db.agent_au_seul_proprietaire(travail(cle_d_org)), "clé d'org"
-    assert not db.agent_au_seul_proprietaire(travail(seul, sub="autre")), "autre porteur"
-    assert not db.agent_au_seul_proprietaire(
-        db.enqueue_job(ORG, "agent", {}, sub="proprio")["id"]), "enfilé à la main"
-    assert not db.agent_au_seul_proprietaire(-1), "introuvable"
+    arme(cle_d_org)
+    assert db.outils_plateforme_du_travail(travail(cle_d_org)) == [], "clé d'org"
+    assert db.outils_plateforme_du_travail(travail(seul, sub="autre")) == [], "autre porteur"
+    assert db.outils_plateforme_du_travail(
+        db.enqueue_job(ORG, "start", {}, sub="proprio")["id"]) == [], "enfilé à la main"
+    assert db.outils_plateforme_du_travail(-1) == [], "introuvable"
+
+    repris = db.reprendre_trigger(seul["id"], ORG, "nouveau")
+    assert repris[0]["platform_tools"] == [], "la liste ne suit pas l'agent"
+    assert db.outils_plateforme_du_travail(travail(seul, sub="nouveau")) == []

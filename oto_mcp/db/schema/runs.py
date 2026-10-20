@@ -317,6 +317,9 @@ CREATE TABLE IF NOT EXISTS runner_triggers (
     procedure TEXT NOT NULL,
     project_id BIGINT,
     tools JSONB NOT NULL,
+    -- 19/10/2026 : les `oto_admin_*` que l'agent exerce avec le rôle plateforme de
+    -- son porteur sous le verrou des rôles (`verrou_org.outils_permis`). `[]` = aucun.
+    outils_plateforme JSONB NOT NULL DEFAULT '[]'::jsonb,
     input TEXT,
     max_steps INT,
     -- 25/09/2026 : les limites d'UN run déclarées par l'utilisateur

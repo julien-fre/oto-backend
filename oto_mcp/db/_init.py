@@ -662,6 +662,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # indifférent entre elles.
     if _colonne_absente(conn, "runner_triggers", runner_triggers.COLONNE_FOLDER):
         conn.execute(runner_triggers.DDL_COLONNE_FOLDER)
+    # Les outils d'admin permis à un agent — la même que pose la révision `0068` : ordre
+    # indifférent entre elles.
+    if _colonne_absente(conn, "runner_triggers", runner_triggers.COLONNE_OUTILS_PLATEFORME):
+        conn.execute(runner_triggers.DDL_COLONNE_OUTILS_PLATEFORME)
     # Les surcharges du temps gagné d'une org — la même que pose la révision `0066` :
     # ordre indifférent entre elles.
     if _colonne_absente(conn, "orgs", runner_jobs.COLONNE_TEMPS_GAGNE):

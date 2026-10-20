@@ -318,3 +318,90 @@ def test_le_dossier_d_un_agent_et_d_un_projet_ont_une_seule_definition():
     copies finiraient par accepter pour un agent ce qu'elles refusent pour un projet."""
     from oto_mcp.capabilities import projects as P
     assert RT.dossier_valide is P.dossier_valide
+
+
+# ── les outils d'admin d'un agent (`platform_tools`, revue de #1274) ──────────
+
+@pytest.fixture
+def agent_d_operateur(monkeypatch):
+    """L'agent 3 d'`alexis`, opérateur plateforme, qui a deux `oto_admin_*` dans ses
+    outils. Rend ce que `update_trigger` a reçu."""
+    monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: {
+        "id": i, "sub": "alexis", "tools": ["fr_siret", "oto_admin_org", "oto_admin_signal"]})
+    monkeypatch.setattr(RT.tool_alias, "canonical_names", lambda noms, sub: list(noms))
+    monkeypatch.setattr(RT.access, "is_platform_operator", lambda sub: sub == "alexis")
+    vu: dict = {}
+    monkeypatch.setattr(RT.db, "update_trigger",
+                        lambda i, o, champs, **k: vu.update(champs) or {"id": i, **champs})
+    return vu
+
+
+def test_platform_tools_se_pose_par_le_proprietaire_operateur(agent_d_operateur):
+    _appel(_ctx(), op="update", trigger_id=3,
+           platform_tools=["oto_admin_org", " oto_admin_org", "oto_admin_signal"])
+    assert agent_d_operateur == {"outils_plateforme": ["oto_admin_org", "oto_admin_signal"]}
+
+
+def test_platform_tools_vide_se_retire_sans_etre_operateur(agent_d_operateur, monkeypatch):
+    monkeypatch.setattr(RT.access, "is_platform_operator", lambda sub: False)
+    _appel(_ctx(), op="update", trigger_id=3, platform_tools=[])
+    assert agent_d_operateur == {"outils_plateforme": []}
+
+
+@pytest.mark.parametrize("kw, code", [
+    ({"platform_tools": ["fr_siret"]}, "platform_tools_not_admin"),
+    ({"platform_tools": ["oto_admin_user"]}, "platform_tools_not_in_tools"),
+    ({"platform_tools": [f"oto_admin_{i}" for i in range(RT.PLATFORM_TOOLS_MAX + 1)]},
+     "platform_tools_too_many"),
+])
+def test_platform_tools_est_une_liste_bornee(agent_d_operateur, kw, code):
+    """Des `oto_admin_*` NOMMÉS, déjà dans les outils de l'agent — jamais tout l'admin."""
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="update", trigger_id=3, **kw)
+    assert e.value.code == code
+    assert agent_d_operateur == {}, "rien n'est écrit"
+
+
+def test_platform_tools_suit_les_outils_poses_dans_le_meme_appel(agent_d_operateur):
+    _appel(_ctx(), op="update", trigger_id=3, tools=["oto_admin_user"],
+           platform_tools=["oto_admin_user"])
+    assert agent_d_operateur["outils_plateforme"] == ["oto_admin_user"]
+
+
+def test_platform_tools_refuse_a_un_membre(agent_d_operateur, monkeypatch):
+    """Un membre n'a aucun rôle plateforme à prêter ; posée d'avance, la liste
+    s'armerait le jour où il le devient."""
+    monkeypatch.setattr(RT.access, "is_platform_operator", lambda sub: False)
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="update", trigger_id=3, platform_tools=["oto_admin_org"])
+    assert (e.value.status, e.value.code) == (403, "platform_tools_operator_only")
+
+
+def test_platform_tools_refuse_a_un_autre_que_le_proprietaire(agent_d_operateur):
+    """C'est le rôle du PROPRIÉTAIRE qu'elle prête : un éditeur ne la pose pas."""
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(sub="editeur"), op="update", trigger_id=3,
+               platform_tools=["oto_admin_org"])
+    assert (e.value.status, e.value.code) == (403, "platform_tools_owner_only")
+    assert agent_d_operateur == {}
+
+
+def test_platform_tools_refuse_sous_un_jeton_de_delegation(agent_d_operateur):
+    """Un agent qui a `oto_trigger` dans sa liste n'élargit pas la sienne : une
+    injection de prompt suffirait."""
+    from oto_mcp import verrou_org
+    t = verrou_org.poser(verrou_org.Verrou(sub="alexis", org_id=2, job_id=9))
+    try:
+        with pytest.raises(AuthzDenied) as e:
+            _appel(_ctx(), op="update", trigger_id=3, platform_tools=["oto_admin_org"])
+    finally:
+        verrou_org.lever(t)
+    assert (e.value.status, e.value.code) == (403, "platform_tools_human_only")
+    assert agent_d_operateur == {}
+
+
+def test_platform_tools_ne_se_pose_pas_a_la_creation():
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="create", procedure="veille", cron="0 8 * * *",
+               platform_tools=["oto_admin_org"])
+    assert e.value.code == "platform_tools_update_only"

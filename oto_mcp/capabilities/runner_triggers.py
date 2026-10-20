@@ -33,8 +33,8 @@ from starlette.concurrency import run_in_threadpool
 
 from . import (_abonnement, _acces_agent, _cle_exigee, _instruction, _limites_du_run,
                _modele)
-from .. import (db, org_store, ownership, roles, runner_hook, runner_models, runner_tick,
-                session_visibility, tool_alias, tool_registry)
+from .. import (access, db, org_store, ownership, roles, runner_hook, runner_models,
+                runner_tick, session_visibility, tool_alias, tool_registry, verrou_org)
 from ..tools import catalogue as tool_catalogue
 from ._authz import ORG_MEMBER
 from ._dossier import FOLDER_MAX, dossier_valide
@@ -51,6 +51,8 @@ _TZ_DEFAUT = "Europe/Paris"
 # gardes que seul —, bornée bien en deçà des 45 s de l'invocation REST : deux à
 # trois lectures et une écriture par agent.
 _LOT_MAX = 100
+#: La borne de `platform_tools` : une liste d'outils d'admin NOMMÉS, jamais tout l'admin.
+PLATFORM_TOOLS_MAX = 10
 
 
 class TriggerInput(BaseModel):
@@ -97,6 +99,12 @@ class TriggerInput(BaseModel):
     cron: Optional[str] = None
     tz: Optional[str] = None
     tools: Optional[list[str]] = None
+    platform_tools: Optional[list[str]] = Field(default=None, description=(
+        f"update, OWNER and platform operator only, never from a hosted agent: the "
+        f"`oto_admin_*` tools (≤ {PLATFORM_TOOLS_MAX}, each already in `tools`) this "
+        "agent runs with your platform role. Every other tool runs as a member. "
+        "Kept only while the agent is on your personal subscription with no named "
+        "editor; cleared on `give`/`take_over`. `[]` clears it."))
     project_id: Optional[int] = None
     input: Optional[str] = None
     label: Optional[str] = None
@@ -248,6 +256,9 @@ class Trigger(BaseModel):
     procedure: Optional[str] = None
     project_id: Optional[int] = None
     tools: Optional[list[str]] = None
+    #: Les `oto_admin_*` que l'agent exerce avec le rôle plateforme de son porteur
+    #: (`verrou_org.outils_permis`). `[]` = aucun.
+    platform_tools: Optional[list[str]] = None
     input: Optional[str] = None
     max_steps: Optional[int] = None
     max_tokens: Optional[int] = None
@@ -711,9 +722,57 @@ def _noms_canoniques(ctx: ResolvedCtx, inp: TriggerInput) -> TriggerInput:
     maj: dict[str, Any] = {}
     if inp.tools is not None:
         maj["tools"] = tool_alias.canonical_names(inp.tools, ctx.sub)
+    if inp.platform_tools is not None:
+        maj["platform_tools"] = tool_alias.canonical_names(inp.platform_tools, ctx.sub)
     if inp.input:
         maj["input"] = tool_alias.canonical_prose(inp.input, ctx.sub)
     return inp.model_copy(update=maj) if maj else inp
+
+
+def _outils_plateforme_valides(ctx: ResolvedCtx, noms: list[str], actuel: dict,
+                               outils: Optional[list[str]]) -> list[str]:
+    """La liste BORNÉE des `oto_admin_*` qu'un agent exerce avec le rôle plateforme de
+    son porteur sous le verrou des rôles (`verrou_org.outils_permis`, revue de #1274).
+
+    ⚠️ Elle ne se pose que par une PERSONNE : sous un jeton de délégation, un agent qui a
+    `oto_trigger` dans sa liste élargirait la sienne — une injection de prompt suffirait.
+    Seul le PROPRIÉTAIRE la pose (c'est son rôle qu'elle prête), et une liste non vide
+    exige qu'il soit opérateur plateforme : un membre n'a rien à prêter, et une liste
+    posée d'avance s'armerait le jour où il le devient. Chaque nom est un `oto_admin_*`
+    déjà dans les outils de l'agent (`outils`, sinon ceux stockés) : la liste ne sort pas
+    de la liste d'outils, que le serveur tient de toute façon (`outils_du_travail`)."""
+    if verrou_org.travail_de_la_requete() is not None:
+        raise AuthzDenied(403, "platform_tools_human_only",
+                          "`platform_tools` ne se pose pas depuis un agent hébergé : "
+                          "c'est son propriétaire qui la pose, depuis son compte.")
+    if str(actuel.get("sub")) != str(ctx.sub):
+        raise AuthzDenied(403, "platform_tools_owner_only",
+                          "`platform_tools` prête le rôle plateforme du propriétaire : "
+                          "lui seul la pose.")
+    liste = list(dict.fromkeys(n.strip() for n in noms if isinstance(n, str) and n.strip()))
+    if not liste:
+        return []
+    if not access.is_platform_operator(ctx.sub):
+        raise AuthzDenied(403, "platform_tools_operator_only",
+                          "`platform_tools` ne vaut que pour un opérateur plateforme : "
+                          "un membre n'a aucun rôle plateforme à prêter.")
+    if len(liste) > PLATFORM_TOOLS_MAX:
+        raise AuthzDenied(400, "platform_tools_too_many",
+                          f"`platform_tools` : au plus {PLATFORM_TOOLS_MAX} outils — une "
+                          "liste BORNÉE, pas tout l'admin.")
+    hors = [n for n in liste if not n.startswith(verrou_org.PREFIXE_ADMIN)]
+    if hors:
+        raise AuthzDenied(400, "platform_tools_not_admin",
+                          f"`platform_tools` ne nomme que des `oto_admin_*` : {hors}.")
+    declares = set(outils if outils is not None else (actuel.get("tools") or []))
+    absents = [n for n in liste if n not in declares]
+    if absents:
+        raise AuthzDenied(400, "platform_tools_not_in_tools",
+                          f"`platform_tools` : {absents} absents des `tools` de l'agent — "
+                          "ajoute-les d'abord à sa liste d'outils.")
+    logger.warning("agent %s (org %s) : %s pose ses outils d'admin au rôle plateforme %s",
+                   actuel.get("id"), ctx.org_id, ctx.sub, liste)
+    return liste
 
 
 def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
@@ -732,6 +791,10 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if inp.op in ("create", "update"):
         _limites_du_run.valider(inp.max_tokens, inp.max_run_seconds)
 
+    if inp.platform_tools is not None and inp.op != "update":
+        raise AuthzDenied(400, "platform_tools_update_only",
+                          "`platform_tools` ne se pose que par `op=update`, sur un agent "
+                          "existant.")
     if inp.op == "create":
         webhook = (inp.kind or "schedule") == "webhook"
         # Un webhook se pose dans toute org depuis le 24/09/2026 : la porte `beta`
@@ -1255,6 +1318,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     # lit donc ici, juste avant d'écrire.
     if not _actuel():
         raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
+    if inp.platform_tools is not None:
+        champs["outils_plateforme"] = _outils_plateforme_valides(
+            ctx, inp.platform_tools, _actuel(), champs.get("tools"))
     if inp.model is not None and _abonnement.est_abonnement(famille) and _actuel():
         _juger(_actuel())
     eteindre = set(champs) <= {"enabled"} and champs.get("enabled") is False
@@ -1645,6 +1711,20 @@ CAPABILITIES += [
             DeclaredError(400, "bulk_folder_only",
                           "`trigger_ids` sans `folder`, ou avec un autre champ que `folder`"),
             DeclaredError(400, "too_many_ids", "`trigger_ids` de plus de 100 agents"),
+            DeclaredError(400, "platform_tools_update_only",
+                          "`platform_tools` hors d'`op=update`"),
+            DeclaredError(403, "platform_tools_human_only",
+                          "`platform_tools` posé depuis un agent hébergé (jeton de délégation)"),
+            DeclaredError(403, "platform_tools_owner_only",
+                          "`platform_tools` posé par un autre que le propriétaire de l'agent"),
+            DeclaredError(403, "platform_tools_operator_only",
+                          "`platform_tools` non vide par quelqu'un qui n'est pas opérateur plateforme"),
+            DeclaredError(400, "platform_tools_too_many",
+                          f"`platform_tools` de plus de {PLATFORM_TOOLS_MAX} outils"),
+            DeclaredError(400, "platform_tools_not_admin",
+                          "`platform_tools` nomme un outil qui n'est pas un `oto_admin_*`"),
+            DeclaredError(400, "platform_tools_not_in_tools",
+                          "`platform_tools` nomme un outil absent des `tools` de l'agent"),
             DeclaredError(400, "folder_too_long",
                           f"`folder` de plus de {FOLDER_MAX} caractères — un libellé, pas une phrase"),
             DeclaredError(400, "invalid_schedule",

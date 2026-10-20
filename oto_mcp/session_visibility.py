@@ -15,6 +15,7 @@ Deux appelants :
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from fastmcp.server.transforms.visibility import disable_components, reset_visibility
 from starlette.concurrency import run_in_threadpool
@@ -261,7 +262,8 @@ def _compute_couches(sub: str, active_org, prof_org, role_plateforme: str,
         couches[COUCHE_BETA] = all_names & BETA_TOOLS
     # Outils hors de portée : masqués d'après l'AUTORISATION DÉCLARÉE, pas d'après
     # le nom. Visibilité seulement — l'autz reste appliquée à l'appel, ici comme avant.
-    couches[COUCHE_HORS_DE_PORTEE] = _hors_de_portee_plateforme(all_names, role_plateforme)
+    couches[COUCHE_HORS_DE_PORTEE] = _hors_de_portee_plateforme(
+        all_names, role_plateforme, _roles_des_outils_permis(sub))
     # Garde anti-lockout STRUCTUREL (signal d’usage #213) : AUCUN bloc de gating ci-dessus
     # (connecteur/RBAC/sélection/admin) ne peut masquer un tool SPINE/protégé. Jusqu'ici
     # le spine n'était sauvé que parce que son namespace ne résolvait aucun connecteur
@@ -273,7 +275,29 @@ def _compute_couches(sub: str, active_org, prof_org, role_plateforme: str,
     return {nom: noms - proteges for nom, noms in couches.items()}
 
 
-def _hors_de_portee_plateforme(all_names: set[str], role_plateforme: str) -> set[str]:
+def _roles_des_outils_permis(sub: str) -> dict[str, str]:
+    """Sous un jeton de délégation : le rôle plateforme qu'aura le porteur PENDANT l'appel
+    de chacun des `oto_admin_*` que son agent permet (`verrou_org.outils_permis`). Sans
+    lui, `tools/list` jugerait ces outils au rôle lu hors appel (`member` en `enforce`)
+    et les masquerait — or un outil masqué est INJOIGNABLE (fastmcp filtre `get_tool`) :
+    la liste de l'agent ne servirait jamais. Lu sans trace (`lecture_pour_outil`) : lister
+    n'exerce rien. Vide hors délégation ; repli vide sur erreur (le masquage reste celui
+    du rôle lu hors appel — fail-closed)."""
+    from . import verrou_org
+    try:
+        permis = verrou_org.outils_permis()
+        roles: dict[str, str] = {}
+        for nom in permis:
+            with verrou_org.lecture_pour_outil(nom):
+                roles[nom] = access.get_user_role(sub)
+        return roles
+    except Exception as e:
+        logger.warning("Cannot read the platform tools of the job for %s: %s", sub, e)
+        return {}
+
+
+def _hors_de_portee_plateforme(all_names: set[str], role_plateforme: str,
+                               roles_par_outil: Optional[dict[str, str]] = None) -> set[str]:
     """Outils qu'AUCUN appel de ce user ne pourrait faire aboutir, d'après le plancher
     de rôle plateforme que leur autorisation DÉCLARE (`capabilities/_authz.py`).
 
@@ -307,7 +331,7 @@ def _hors_de_portee_plateforme(all_names: set[str], role_plateforme: str) -> set
         n for n in all_names
         if not _authz.meets_platform_floor(
             plancher_par_tool.get(n, "operator" if n.startswith("oto_admin_") else None),
-            role_plateforme)
+            (roles_par_outil or {}).get(n, role_plateforme))
     }
 
 

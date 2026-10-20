@@ -331,22 +331,15 @@ _REGLAGES: tuple[Variable, ...] = (
              "(défaut) refuse toute résolution du porteur hors de l'org de son travail, "
              "`report` la journalise et la laisse passer, `off` le coupe. Une valeur "
              "inconnue vaut `enforce`.",
-             ("oto_mcp/verrou_org.py:122",)),
+             ("oto_mcp/verrou_org.py:141",)),
     Variable("OTO_VERROU_ROLES_PLATEFORME", Classe.REGLAGE, "report",
              "Verrou des rôles PLATEFORME des jetons de délégation (`verrou_org.py`) : "
              "`enforce` lit `member` le porteur `admin`/`super_admin` d'un travail du "
-             "runner (aucune garde plateforme, aucun `oto_admin_*`), `report` (défaut) "
+             "runner (aucune garde plateforme, aucun `oto_admin_*` — sauf, pendant leur "
+             "appel, ceux que son agent nomme : `platform_tools`), `report` (défaut) "
              "journalise ce qui serait retiré et ne retire rien, `off` le coupe. Une "
              "valeur inconnue vaut `report`. Indépendant d'`OTO_VERROU_ORG_DELEGATION`.",
-             ("oto_mcp/verrou_org.py:207",)),
-    Variable("OTO_VERROU_ROLES_PLATEFORME_ORGS", Classe.REGLAGE, "",
-             "Orgs (ids, virgules) dont les travaux du runner GARDENT le rôle plateforme "
-             "de leur porteur sous `OTO_VERROU_ROLES_PLATEFORME` (`verrou_org.py`) : "
-             "l'org de l'opérateur, dont les agents hébergés servent des `oto_admin_*`. "
-             "Seulement pour un agent que son porteur SEUL peut changer (abonnement "
-             "personnel, aucun éditeur nommé). Vide (défaut) = aucune exemption ; un "
-             "élément non entier est ignoré.",
-             ("oto_mcp/verrou_org.py:216",)),
+             ("oto_mcp/verrou_org.py:226",)),
     Variable("OTO_PLATFORM_KEY_ORG_RATE", Classe.REGLAGE, "report",
              "Équité d'une clé PLATEFORME partagée entre orgs (F-051, "
              "`access/platform_rate.py`) : `enforce` refuse l'appel d'une org au-delà "
