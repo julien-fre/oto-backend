@@ -17,6 +17,9 @@ par défaut** : sans `--appliquer`, il liste ce qu'il ferait et n'écrit rien. I
     ./.venv/bin/python -m scripts.instructions_en_anglais --appliquer
     # 3. vérifier : un second passage à blanc doit annoncer 0 à réécrire
 
+Le rapport nomme d'abord la BASE visée (hôte, port, nom), puis chaque instruction en
+entier, avant et après : c'est ce texte-là, et rien d'autre, que `--appliquer` écrit.
+
 ## Ce qu'il réécrit
 
 Une instruction n'est réécrite que si elle est ÉGALE, au caractère près, à ce que
@@ -32,7 +35,10 @@ Trois paquets au rapport :
 - le reste : ignoré.
 
 L'écriture est une comparaison-échange (`WHERE input = <lue>`) : une instruction
-retouchée entre la lecture et l'écriture n'est pas écrasée, elle est comptée.
+retouchée entre la lecture et l'écriture n'est pas écrasée, elle est comptée. Toutes
+les écritures passent dans UNE transaction : une erreur en route n'en laisse aucune.
+Idempotent : une instruction réécrite ne porte plus le marqueur, un second passage
+ne la relit même pas.
 
 ⚠️ **À passer juste après le déploiement, AVANT de relancer une campagne encore
 adressée par le NOM de son tableau** : `_lignes_reservables.fixer_le_tableau` reconnaît
@@ -146,31 +152,46 @@ def inventaire(conn) -> dict[str, dict[str, list]]:
         for r in lignes:
             neuve = plan(dict(r))
             if neuve is None:
-                a_relire.append((r["id"], r["org_id"]))
+                a_relire.append((r["id"], r["org_id"], r["input"]))
             else:
                 a_reecrire.append((r["id"], r["org_id"], r["input"], neuve))
         rapport[table] = {"a_reecrire": a_reecrire, "a_relire": a_relire}
     return rapport
 
 
-def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--appliquer", action="store_true",
-                    help="écrire (sans : à blanc, rien n'est écrit)")
-    args = ap.parse_args(argv)
-    with _connect_autocommit() as conn:
-        rapport = inventaire(conn)
-        for table, paquets in rapport.items():
-            print(f"{table} : {len(paquets['a_reecrire'])} à réécrire, "
-                  f"{len(paquets['a_relire'])} à relire")
-            for id_, org, *_ in paquets["a_reecrire"]:
-                print(f"  réécrire  id={id_} org={org}")
-            for id_, org in paquets["a_relire"]:
-                print(f"  relire    id={id_} org={org}")
-        if not args.appliquer:
-            print("à blanc : rien n'a été écrit (--appliquer pour écrire)")
-            return 0
-        ecrites = bougees = 0
+def _cite(texte: str) -> str:
+    """Le texte en entier, indenté : le rapport montre CE qui sera écrit, pas un résumé."""
+    return "\n".join(f"      | {l}" for l in (texte or "").splitlines() or [""])
+
+
+def _cible(conn) -> str:
+    """La base visée, sans secret : à relire AVANT `--appliquer` (prod et préprod la partagent)."""
+    info = conn.info
+    return f"{info.host}:{info.port}/{info.dbname} (utilisateur {info.user})"
+
+
+def imprimer(rapport: dict[str, dict[str, list]]) -> None:
+    for table, paquets in rapport.items():
+        print(f"{table} : {len(paquets['a_reecrire'])} à réécrire, "
+              f"{len(paquets['a_relire'])} à relire")
+        for id_, org, lue, neuve in paquets["a_reecrire"]:
+            print(f"  réécrire  id={id_} org={org}")
+            print("    avant :")
+            print(_cite(lue))
+            print("    après :")
+            print(_cite(neuve))
+        for id_, org, lue in paquets["a_relire"]:
+            print(f"  relire    id={id_} org={org} (laissée telle quelle)")
+            print(_cite(lue))
+
+
+def appliquer(conn, rapport: dict[str, dict[str, list]]) -> tuple[int, int]:
+    """Écrit le plan en UNE transaction, ligne par ligne en comparaison-échange.
+
+    `WHERE input = <lue>` : une instruction retouchée depuis la lecture n'est pas
+    écrasée, elle est comptée. Une erreur en route n'écrit RIEN (tout ou rien)."""
+    ecrites = bougees = 0
+    with conn.transaction():
         for table, paquets in rapport.items():
             for id_, _org, lue, neuve in paquets["a_reecrire"]:
                 n = conn.execute(
@@ -181,6 +202,24 @@ def main(argv: Optional[list[str]] = None) -> int:
                 else:
                     bougees += 1
                     print(f"  {table} id={id_} : retouchée depuis la lecture, laissée telle quelle")
+    return ecrites, bougees
+
+
+def main(argv: Optional[list[str]] = None, *, connecter=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--appliquer", action="store_true",
+                    help="écrire (sans : à blanc, rien n'est écrit)")
+    args = ap.parse_args(argv)
+    with (connecter or _connect_autocommit)() as conn:
+        print(f"base : {_cible(conn)}")
+        print("mode : " + ("ÉCRITURE (--appliquer)" if args.appliquer
+                           else "à blanc — rien ne sera écrit"))
+        rapport = inventaire(conn)
+        imprimer(rapport)
+        if not args.appliquer:
+            print("à blanc : rien n'a été écrit (--appliquer pour écrire)")
+            return 0
+        ecrites, bougees = appliquer(conn, rapport)
         print(f"{ecrites} réécrite(s), {bougees} laissée(s) car retouchée(s) entre-temps")
     return 0
 
