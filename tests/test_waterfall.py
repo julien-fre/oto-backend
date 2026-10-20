@@ -34,7 +34,7 @@ def _servi(issue):
 
 
 NAMESPACES = ("waterfall_email", "waterfall_phone", "waterfall_company", "waterfall_person",
-              "waterfall_people")
+              "waterfall_people", "waterfall_tech")
 
 
 @pytest.fixture
@@ -826,6 +826,9 @@ def test_une_execution_apify_est_bornee_par_sa_taille_et_son_delai_sans_plafond_
                     assert "max_items" not in args, v.key
                     ri = args["run_input"]
                     assert ri["maxRequestsPerStartUrl"] <= 4 and ri["maxDepth"] <= 1
+                elif v.key == "website":
+                    # Pile technique : facturé par site, UNE URL — un site au plus.
+                    assert "max_items" not in args and args["run_input"]["urls"] == ["acme.com"]
                 else:
                     assert 1 <= args["max_items"] <= waterfall.PEOPLE_MAX, v.key
 
@@ -1175,3 +1178,92 @@ def test_full_rend_chaque_personne_entiere(calls):
                full=True)
     p = out["people"]["people"][0]
     assert p["qualification"]["answers"]["fit"]["noul"] == 0.95 and "fit" not in p
+
+
+# --- pile technique (`waterfall_tech`) ---------------------------------------------
+# Réponses réelles du 20/10/2026, anonymisées : le même domaine vu par l'index DataForSEO
+# (6 noms), un crawl Apify (7) et les offres d'emploi TheirStack (~100 slugs).
+
+_DATAFORSEO_TECH = {"cost_usd": 0.012, "domain": "www.acme.com", "technologies": {
+    "web_development": {"javascript_frameworks": ["Next.js", "React"],
+                        "web_frameworks": ["Next.js"]},
+    "servers": {"paas": ["Vercel"]}, "content": {"cms": ["Storyblok"]}}}
+_APIFY_TECH = [{"url": "https://acme.com/", "statusCode": 200, "technologyCount": 2,
+                "technologies": [{"name": "Storyblok", "version": None, "categories": ["CMS"]},
+                                 {"name": "Vercel", "version": None, "categories": ["PaaS"]}],
+                "byCategory": {"CMS": ["Storyblok"], "PaaS": ["Vercel"]}, "error": None}]
+_THEIRSTACK_TECH = {"metadata": {}, "data": [{
+    "name": "Acme", "domain": "acme.com", "employee_count": 277,
+    "technology_names": ["hubspot", "salesforce", "next-js", "spendesk1", "snowflake"]}]}
+
+
+def test_tech_l_index_du_site_d_abord_et_par_categorie(calls):
+    calls["answers"]["dataforseo_technologies"] = IssueCible(ok=True, result=_DATAFORSEO_TECH)
+    out = _run("waterfall_tech", domain="https://www.acme.com/")
+    assert out["provider"] == "dataforseo" and _made(calls) == ["dataforseo_technologies"]
+    assert calls["made"][0][1] == {"op": "domain", "target": "acme.com"}
+    t = out["tech"]
+    assert t["source"] == "website" and t["technologies"] == ["Next.js", "React", "Vercel",
+                                                               "Storyblok"]
+    assert t["by_category"]["cms"] == ["Storyblok"] and t["count"] == 4
+
+
+def test_tech_un_site_absent_de_l_index_passe_au_crawl(calls):
+    calls["answers"]["dataforseo_technologies"] = IssueCible(ok=True, result={"cost_usd": 0.01})
+    calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=_APIFY_TECH)
+    out = _run("waterfall_tech", domain="acme.com")
+    assert out["provider"] == "website" and out["tech"]["technologies"] == ["Storyblok", "Vercel"]
+    args = dict(calls["made"])["apify_run_sync"]
+    # Une URL, un site facturé au plus ; pas de `max_items` (plafond sous le minimum d'Apify).
+    assert args["run_input"]["urls"] == ["acme.com"] and "max_items" not in args
+    assert args["timeout_secs"] == waterfall._APIFY_TIMEOUT_S
+
+
+def test_tech_un_site_injoignable_n_est_pas_un_trouve(calls):
+    calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=[
+        {"url": "https://acme.com/", "technologies": [], "error": "timeout"}])
+    out = _run("waterfall_tech", domain="acme.com", providers=["website"])
+    assert out["found"] is False and out["attempts"][0]["status"] == "no_match"
+
+
+def test_tech_cherchee_ne_stoppe_que_si_detectee(calls):
+    """« Utilise-t-elle HubSpot ? » : le site ne le voit pas, la cascade continue ;
+    les offres d'emploi le nomment en slug, comparé sans ponctuation."""
+    calls["answers"]["dataforseo_technologies"] = IssueCible(ok=True, result=_DATAFORSEO_TECH)
+    calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=_APIFY_TECH)
+    calls["answers"]["theirstack_companies_search"] = IssueCible(ok=True, result=_THEIRSTACK_TECH)
+    out = _run("waterfall_tech", domain="acme.com", technologies="HubSpot, Spendesk")
+    assert out["provider"] == "theirstack" and out["tech"]["source"] == "job_postings"
+    assert out["tech"]["matched"] == ["HubSpot", "Spendesk"]
+    assert [a["status"] for a in out["attempts"]] == ["no_match", "no_match", "found"]
+
+    calls["made"].clear()
+    out = _run("waterfall_tech", domain="acme.com", technologies=["nextjs"])
+    assert out["provider"] == "dataforseo" and out["tech"]["matched"] == ["nextjs"]
+
+
+def test_tech_jamais_detectee_rend_un_non_trouve(calls):
+    calls["answers"]["dataforseo_technologies"] = IssueCible(ok=True, result=_DATAFORSEO_TECH)
+    calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=_APIFY_TECH)
+    calls["answers"]["theirstack_companies_search"] = IssueCible(ok=True, result=_THEIRSTACK_TECH)
+    out = _run("waterfall_tech", domain="acme.com", technologies=["Shopify"])
+    assert out["found"] is False and len(out["attempts"]) == 3
+
+
+def test_tech_par_nom_seulement_theirstack_et_l_homonyme_ecarte(calls):
+    calls["answers"]["theirstack_companies_search"] = IssueCible(ok=True, result={"data": [
+        {"name": "Acmeville Bakery", "domain": "acmeville.fr", "technology_names": ["wix"]},
+        *_THEIRSTACK_TECH["data"]]})
+    out = _run("waterfall_tech", company_name="acme")
+    assert _made(calls) == ["theirstack_companies_search"]
+    assert calls["made"][0][1]["extra"] == {"company_name_case_insensitive_or": ["acme"]}
+    assert out["tech"]["technologies"][0] == "hubspot"
+
+    calls["made"].clear()
+    _run("waterfall_tech", domain="acme.com", providers=["theirstack"])
+    assert calls["made"][0][1] == {"extra": {"company_domain_or": ["acme.com"]}, "limit": 1}
+
+
+def test_tech_sans_domaine_ni_nom_est_refuse(calls):
+    with pytest.raises(McpError):
+        _run("waterfall_tech", technologies=["Shopify"])

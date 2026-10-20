@@ -1,7 +1,8 @@
-"""Waterfall — native enrichment cascades: email, phone, company, person.
+"""Waterfall — native enrichment cascades: email, phone, company, person, people, tech.
 
-FOUR connectors, one tool each (`waterfall_email`, `waterfall_phone`, `waterfall_company`,
-`waterfall_person` — readers only, so no `<ns>_act`, `tests/test_convention_act.py`),
+SIX connectors, one tool each (`waterfall_email`, `waterfall_phone`, `waterfall_company`,
+`waterfall_person`, `waterfall_people`, `waterfall_tech` — plus a table-writing
+`<ns>_act`, `tools/waterfall_lignes.py`),
 served by this ONE module (`Connector.modules=("waterfall",)`, loaded once).
 
 Each tool tries a list of existing connector tools, one after the other, and stops at the
@@ -2052,6 +2053,114 @@ PEOPLE_STEPS: tuple[Step, ...] = (
 )
 
 
+# Tech stack -------------------------------------------------------------------------
+#
+# Two kinds of source, measured on one domain (20/10/2026): what the WEBSITE runs (CMS,
+# front framework, hosting, analytics — DataForSEO's index, a live crawl) — 6-7 names;
+# and what the JOB POSTINGS name (CRM, ERP, data stack, internal tools — TheirStack) —
+# ~100 slugs, but dearer and thin on small companies. Cheapest first, as everywhere.
+
+#: A live crawl of ONE site — plain HTTP, no browser, billed per site analysed (a site
+#: that fails or times out is free).
+_APIFY_TECH_TYPICAL_USD = 0.01
+
+
+def _tech_inputs(company_name, domain, technologies) -> dict:
+    if isinstance(technologies, str):
+        technologies = re.split(r"[,;]", technologies)
+    wanted = [t.strip() for t in (technologies or []) if t and t.strip()]
+    return {"company_name": (company_name or "").strip() or None,
+            "domain": _domain(domain), "wanted": wanted or None}
+
+
+def _tech_key(name) -> str:
+    """`Next.js`, `next-js`, `nextjs` → one key: the website sources give display names,
+    TheirStack gives slugs (`google-cloud-platform`, `spendesk1`)."""
+    return re.sub(r"\d+$", "", _norm_name(str(name or "")).replace(" ", ""))
+
+
+def _tech_find(names: list, inputs: dict, source: str, by_category=None) -> Optional[dict]:
+    """The find: the names, deduplicated. With `technologies` asked, a source counts
+    only when it detects at least one of them — a stack without them is not an answer
+    to « does it use X? », and the next source (which sees other things) is tried."""
+    names = list(dict.fromkeys(str(n) for n in names if n))
+    if not names:
+        return None
+    found = {"technologies": names, "count": len(names), "source": source}
+    if by_category:
+        found["by_category"] = by_category
+    wanted = inputs.get("wanted")
+    if wanted:
+        have = {_tech_key(n) for n in names}
+        matched = [w for w in wanted if _tech_key(w) in have]
+        if not matched:
+            return None
+        found["matched"] = matched
+    return found
+
+
+def _dataforseo_tech(res, inputs):
+    """`technologies` is `{group: {category: [names]}}` — flattened by category."""
+    groups = _get(res, "technologies")
+    if not isinstance(groups, dict):
+        return None
+    by_category: dict[str, list] = {}
+    for cats in groups.values():
+        for cat, names in (cats or {}).items() if isinstance(cats, dict) else ():
+            by_category.setdefault(cat, []).extend(n for n in names or () if n)
+    return _tech_find([n for ns in by_category.values() for n in ns], inputs, "website",
+                      by_category)
+
+
+def _website_tech(res, inputs):
+    for item in _apify_items(res)[:1]:
+        if not isinstance(item, dict) or item.get("error"):
+            continue
+        names = [t.get("name") for t in item.get("technologies") or ()
+                 if isinstance(t, dict)]
+        return _tech_find(names, inputs, "website", item.get("byCategory") or None)
+    return None
+
+
+def _theirstack_tech(res, inputs):
+    for rec in (_get(res, "data") or [])[:3]:
+        if isinstance(rec, dict) and _same_company(inputs, rec.get("name"),
+                                                   rec.get("domain")):
+            return _tech_find(rec.get("technology_names") or [], inputs, "job_postings")
+    return None
+
+
+def _theirstack_tech_args(inputs: dict) -> dict:
+    # Billed PER COMPANY returned: the domain names one; a name may need a namesake
+    # stepped over (3).
+    if inputs.get("domain"):
+        return {"extra": {"company_domain_or": [inputs["domain"]]}, "limit": 1}
+    return {"extra": {"company_name_case_insensitive_or": [inputs["company_name"]]},
+            "limit": 3}
+
+
+TECH_STEPS: tuple[Step, ...] = (
+    Step("dataforseo", "dataforseo_technologies", (("domain",),),
+         lambda i: {"op": "domain", "target": i["domain"]},
+         _dataforseo_tech, "~$0.01-0.02 per domain (DataForSEO)",
+         label="Website (DataForSEO index)"),
+    # The live crawl: a site DataForSEO has not indexed (small companies), or a stack
+    # changed since its last visit.
+    Step("website", "apify_run_sync", (("domain",),),
+         lambda i: {"actor_id": "kfirs/tech-stack-detector",
+                    "run_input": {"urls": [i["domain"]], "minConfidence": 50,
+                                  "includeDetails": False, "timeoutSecs": 20},
+                    # ⚠️ No `max_items`: pay-per-event, Apify would derive a ceiling
+                    # under its $0.50 minimum (see the LinkedIn page). One URL = one
+                    # billed site at most.
+                    "timeout_secs": _APIFY_TIMEOUT_S},
+         _website_tech, "~$0.01 of Apify per site", label="Website (live crawl)"),
+    Step("theirstack", "theirstack_companies_search", (("domain",), ("company_name",)),
+         _theirstack_tech_args, _theirstack_tech, "~3 TheirStack credits per company",
+         label="Job postings (TheirStack)"),
+)
+
+
 # --- the plan, for a screen ----------------------------------------------------------
 
 #: What a step costs in TULINA credits when it runs on Tulina's key, as data for a
@@ -2092,6 +2201,11 @@ PRICES: dict[tuple[str, str], dict] = {
         # ~10 profiles (the default limit) at ~$0.005.
         "typical_usd": _APIFY_EMPLOYEES_TYPICAL_USD_PER_PROFILE * 10},
     ("waterfall_people", "google"): {"tool": "serper_search"},
+    ("waterfall_tech", "dataforseo"): {"tool": "dataforseo_technologies"},
+    ("waterfall_tech", "website"): {"tool": "apify_run_sync",
+                                    "typical_usd": _APIFY_TECH_TYPICAL_USD},
+    ("waterfall_tech", "theirstack"): {"tool": "theirstack_companies_search",
+                                       "max_units": 3},
 }
 
 
@@ -2099,7 +2213,7 @@ PRICES: dict[tuple[str, str], dict] = {
 STEPS_BY_NAMESPACE: dict[str, tuple[Step, ...]] = {
     "waterfall_email": EMAIL_STEPS, "waterfall_phone": PHONE_STEPS,
     "waterfall_company": COMPANY_STEPS, "waterfall_person": PERSON_STEPS,
-    "waterfall_people": PEOPLE_STEPS,
+    "waterfall_people": PEOPLE_STEPS, "waterfall_tech": TECH_STEPS,
 }
 
 
@@ -2454,3 +2568,47 @@ def register(mcp: FastMCP) -> None:
                                  _limits(max_paid_steps, apify_max_usd),
                                  _qualify_args(qualify, qualify_min, show_unqualified))
         return out if full else _slim_people(out)
+
+    @mcp.tool(annotations=LECTURE)
+    @documente(f"""Find ONE company's tech stack, trying sources in turn and stopping at
+        the FIRST that returns it (native waterfall) — or, with `technologies`, at the
+        first that detects one of them.
+
+        Steps (default order): dataforseo (domain — what the WEBSITE runs, from
+        DataForSEO's index: CMS, framework, hosting, analytics, e-commerce, payment) →
+        website (domain — the same, by a live crawl of the site now: for a site the index
+        has not seen) → theirstack (domain or name — what the company's JOB POSTINGS
+        name: CRM, ERP, data stack, internal tools; far more names, dearer, thin on small
+        companies). The website sources give display names (`Next.js`), TheirStack gives
+        slugs (`next-js`): `matched` compares them loosely.
+
+        To know whether a company uses a given tool, pass it in `technologies`: a
+        source that does not detect any of them does NOT stop the cascade (the next
+        one sees other things), and `found: false` means none of the sources detected
+        it — not that the company does not use it. To read back-office tools first,
+        call with `providers=["theirstack"]`.
+
+        {_ORDER_DOC}
+
+        Returns `{{found, provider, tech: {{technologies, count, source ("website" |
+        "job_postings"), by_category?, matched?}}, attempts, order_from}}` —
+        {_RECEIPT_DOC}
+
+        Args:
+            domain: the company's website domain (`acme.com`; a URL is accepted).
+            company_name: the company's name, when the domain is unknown (TheirStack
+                only).
+            technologies: the tools you are looking for (e.g. ["Shopify", "HubSpot"],
+                or one comma-separated string). Omitted = the first stack found.
+{_COMMON_ARGS}
+        """)
+    async def waterfall_tech(
+        domain: Optional[str] = None, company_name: Optional[str] = None,
+        technologies: Optional[list[str]] = None,
+        providers: Optional[list[str]] = None, dry_run: bool = False,
+        max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
+    ) -> dict:
+        inputs = _tech_inputs(company_name, domain, technologies)
+        return await _run_cascade(mcp, "waterfall_tech", "tech", TECH_STEPS, inputs,
+                                  providers, dry_run,
+                                  _limits(max_paid_steps, apify_max_usd))

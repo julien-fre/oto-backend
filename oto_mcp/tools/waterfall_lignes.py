@@ -57,13 +57,14 @@ ENTREES = {
     "waterfall_person": ("first_name", "last_name", "full_name", "domain",
                          "company_name", "linkedin_url", "email"),
     "waterfall_people": ("domain", "company_name", "company_linkedin_url", "country"),
+    "waterfall_tech": ("domain", "company_name"),
 }
 #: The status written on a row, so the next call never pays it again.
 TROUVE, SANS, ECARTE, ECHEC = "found", "no_match", "unqualified", "failed"
 #: What a find carries besides its own fields.
 PROVIDER = "provider"
 #: The fields whose value is a LIST: a missing column for them is declared `json`.
-CHAMPS_LISTE = frozenset({"all", "people"})
+CHAMPS_LISTE = frozenset({"all", "people", "technologies", "matched", "by_category"})
 
 
 def _a_declarer(sorties: dict, status_column: str, champs: dict) -> list[dict]:
@@ -105,6 +106,9 @@ def _entrees(ns: str, valeurs: dict, appel: dict) -> dict:
     if ns == "waterfall_company":
         return w._company_inputs(v.get("company_name"), v.get("domain"), v.get("siren"),
                                  v.get("country"))
+    if ns == "waterfall_tech":
+        return w._tech_inputs(v.get("company_name"), v.get("domain"),
+                              appel.get("technologies"))
     if ns == "waterfall_people":
         return w._people_inputs(v.get("company_name"), v.get("domain"),
                                 v.get("company_linkedin_url"), appel.get("roles"),
@@ -161,7 +165,7 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
                     status_column: str, row_ids: Optional[list], filter: Optional[dict],
                     batch_size: int, providers: Optional[list[str]], limits: dict,
                     qualify: Optional[dict], appel: dict, dry_run: bool) -> dict:
-    """The table pass behind the five `waterfall_<x>_act(op="update_rows")`."""
+    """The table pass behind the `waterfall_<x>_act(op="update_rows")`."""
     from . import waterfall as w
     kind = w._QUALIFIABLE.get(ns) or ns.split("_", 1)[1]
     steps = w.STEPS_BY_NAMESPACE[ns]
@@ -368,19 +372,24 @@ _CHAMPS = {
                         "`company_linkedin_url`, `linkedin_url`, `seniority`, `city`, "
                         "`country`",
     "waterfall_people": "`people` (a list: name, title, profile, Jev's answers), `count`",
+    "waterfall_tech": "`technologies`, `count`, `source` (website | job_postings), "
+                      "`by_category`, `matched` (with `technologies`)",
 }
 _LABELS = {"waterfall_email": "email", "waterfall_phone": "phone",
            "waterfall_company": "company", "waterfall_person": "person",
-           "waterfall_people": "people-at-a-company"}
+           "waterfall_people": "people-at-a-company", "waterfall_tech": "tech stack"}
 _QUALIFY_ROW = """
             qualify / qualify_min: a Jev rubric, as on `{ns}`, judged per lookup."""
 _PEOPLE_ROW = """
             roles / people_per_row: as `roles` / `limit` on `waterfall_people`, the
                 same for every row (default 10)."""
+_TECH_ROW = """
+            technologies: as on `waterfall_tech`, the same for every row — a row is
+                `found` only when one of them is detected, `no_match` when none is."""
 
 
 def register_act(mcp: FastMCP) -> None:
-    """Mounts the five `<ns>_act` — called by `waterfall.register`, the connectors'
+    """Mounts the `<ns>_act` — called by `waterfall.register`, the connectors'
     module: this one is its helper (no `register`, nothing of its own to declare)."""
     from . import waterfall as w
 
@@ -396,7 +405,8 @@ def register_act(mcp: FastMCP) -> None:
             if ns == "waterfall_people" else "",
             unq_short=" | unqualified" if ns == "waterfall_people" else "",
             extra_args=(_QUALIFY_ROW.format(ns=ns) if qualifiable else "")
-            + (_PEOPLE_ROW if ns == "waterfall_people" else ""))
+            + (_PEOPLE_ROW if ns == "waterfall_people" else "")
+            + (_TECH_ROW if ns == "waterfall_tech" else ""))
 
         @mcp.tool(name=f"{ns}_act", annotations=ACTE)
         @documente(doc)
@@ -413,6 +423,7 @@ def register_act(mcp: FastMCP) -> None:
             max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
             qualify: Optional[dict] = None, qualify_min: Optional[float] = None,
             roles: Optional[list[str]] = None, people_per_row: int = 10,
+            technologies: Optional[list[str]] = None,
             dry_run: bool = False,
         ) -> dict:
             if (qualify is not None or qualify_min is not None) and not qualifiable:
@@ -424,13 +435,18 @@ def register_act(mcp: FastMCP) -> None:
                                "`roles` and `people_per_row` belong to "
                                "waterfall_people_act. "
                                "Nothing was sent.")
+            if ns != "waterfall_tech" and technologies:
+                raise pr.refus("waterfall_rows_tech_args",
+                               "`technologies` belongs to waterfall_tech_act. "
+                               "Nothing was sent.")
             return await fill_rows(
                 mcp, ns, datastore=datastore, inputs=inputs, output=output,
                 status_column=status_column, row_ids=row_ids, filter=filter,
                 batch_size=batch_size, providers=providers,
                 limits=w._limits(max_paid_steps, apify_max_usd),
                 qualify=w._qualify_args(qualify, qualify_min) if qualifiable else None,
-                appel={"roles": roles, "limit": people_per_row}, dry_run=dry_run)
+                appel={"roles": roles, "limit": people_per_row,
+                       "technologies": technologies}, dry_run=dry_run)
 
         return acte
 

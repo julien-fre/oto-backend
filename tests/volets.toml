@@ -670,7 +670,7 @@ tests = ["tests/**/test_procedure_diagram*.py", "tests/test_procedure_app.py"]
 
 [[volet]]
 nom = "waterfalls"
-# Un module pour quatre connecteurs (`waterfall_email|phone|company|person`) : la
+# Un module pour six connecteurs (`waterfall_email|phone|company|person|people|tech`) : la
 # famille « connecteur » le rate, son nom n'est celui d'aucun.
 sources = ["oto_mcp/tools/waterfall.py", "oto_mcp/tools/waterfall_lignes.py"]
 tests = ["tests/**/test_waterfall*.py"]

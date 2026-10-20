@@ -205,3 +205,26 @@ def test_une_cascade_coupee_par_le_temps_laisse_la_ligne_en_attente(calls, table
     out = _act("waterfall_email", **_EMAIL_ARGS)
     assert table["store"].ecrites == {} and out["skipped_time_budget"] == 1
     assert out["stopped"] == "time_budget"
+
+
+def test_tech_sur_un_tableau_la_liste_en_json_et_la_techno_cherchee_pour_chaque_ligne(calls, table):
+    table["lignes"] = [{"_id": "r1", "website": "acme.com"}, {"_id": "r2", "website": "b.com"}]
+    calls["answers"]["dataforseo_technologies"] = [
+        IssueCible(ok=True, result={"technologies": {"content": {"cms": ["Shopify"]}}}),
+        IssueCible(ok=True, result={"technologies": {"content": {"cms": ["WordPress"]}}})]
+    out = _act("waterfall_tech", datastore="42", inputs={"domain": "website"},
+               output={"technologies": "stack", "matched": "uses"},
+               status_column="tech_status", providers=["dataforseo"],
+               technologies=["shopify"])
+    e = table["store"].ecrites
+    assert out["found"] == 1 and out["no_match"] == 1
+    statuts = sorted(w["tech_status"] for w in e.values())
+    assert statuts == ["found", "no_match"]
+    trouvee = next(w for w in e.values() if w["tech_status"] == "found")
+    assert trouvee["stack"] == ["Shopify"] and trouvee["uses"] == ["shopify"]
+    assert {f["key"]: f["type"] for f in table["store"].patches[0]}["stack"] == "json"
+
+
+def test_technologies_refuse_hors_du_waterfall_tech(calls, table):
+    with pytest.raises(McpError):
+        _act("waterfall_email", technologies=["Shopify"], **_EMAIL_ARGS)

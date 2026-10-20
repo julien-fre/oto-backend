@@ -1,9 +1,9 @@
 ---
-title: Les waterfalls natifs — email, téléphone, société, personne, gens d'une société
+title: Les waterfalls natifs — email, téléphone, société, personne, gens d'une société, pile technique
 type: explanation
 description: >-
-  Cinq connecteurs (`waterfall_email`, `waterfall_phone`, `waterfall_company`,
-  `waterfall_person`, `waterfall_people`), un outil chacun, servis par un seul module : une cascade de
+  Six connecteurs (`waterfall_email`, `waterfall_phone`, `waterfall_company`,
+  `waterfall_person`, `waterfall_people`, `waterfall_tech`), un outil chacun, servis par un seul module : une cascade de
   fournisseurs DÉJÀ connectés, arrêtée au premier trouvé, où chaque étape est un appel
   ordinaire de l'outil du fournisseur (`meta.executer_cible`). D'où vient l'ordre (appel,
   réglage `steps` de la carte, défaut) et pourquoi les clés de l'appelant passent devant ;
@@ -24,9 +24,9 @@ lui, sur ses fournisseurs, à son prix ; l'org qui a déjà ses propres clés n'
 
 ## Le principe
 
-Cinq connecteurs, un outil `<ns>` chacun (lecteurs seuls, donc pas de `<ns>_act` :
-convention du 17/10), une table d'étapes chacun (`EMAIL_STEPS`, `PHONE_STEPS`,
-`COMPANY_STEPS`, `PERSON_STEPS`, `PEOPLE_STEPS`), un seul module (`Connector.modules=("waterfall",)`,
+Six connecteurs, un outil `<ns>` chacun (plus un `<ns>_act` qui écrit dans un tableau,
+plus bas), une table d'étapes chacun (`EMAIL_STEPS`, `PHONE_STEPS`,
+`COMPANY_STEPS`, `PERSON_STEPS`, `PEOPLE_STEPS`, `TECH_STEPS`), un seul module (`Connector.modules=("waterfall",)`,
 que `register_all` ne charge qu'une fois). Une étape = un outil de connecteur existant,
 les entrées qu'il exige, la façon de construire ses arguments et de lire sa réponse. La
 cascade s'arrête au **premier** trouvé (choix produit : le moins cher, pas le plus sûr —
@@ -163,6 +163,31 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
   Topograph et Crunchbase (un « introuvable » ne s'y distingue pas d'une panne :
   `internal`).
 
+## La pile technique d'une société (`waterfall_tech`)
+
+Deux sortes de sources, mesurées sur un même domaine (20/10/2026) : ce que le SITE fait
+tourner (CMS, framework, hébergement, analytics — l'index DataForSEO, ou un crawl) — 6 à
+7 noms ; et ce que les OFFRES D'EMPLOI nomment (CRM, ERP, pile data, outils internes —
+TheirStack) — une centaine de slugs, mais plus cher et maigre sur les petites sociétés.
+D'où l'ordre : dataforseo (~0,01-0,02 \$) → website (`kfirs/tech-stack-detector`,
+HTTP simple sans navigateur, ~0,01 \$ par site analysé, un site en échec n'est pas
+facturé ; une URL par exécution, sans `max_items` — même raison que la page LinkedIn) →
+theirstack (~3 crédits par société ; par domaine `limit=1`, par nom `limit=3` et la garde
+d'homonyme). Le reçu dit `source` : `website` ou `job_postings`.
+
+⚠️ **`technologies=[…]` change ce qu'est un trouvé** : une source qui ne détecte aucune
+des technologies demandées n'arrête PAS la cascade (la suivante voit autre chose — le site
+ne voit pas un CRM, les offres si), `matched` dit lesquelles. La comparaison est lâche
+(`_tech_key` : `Next.js` = `next-js` = `nextjs`, `spendesk1` = `spendesk`) parce que les
+sites rendent des noms et TheirStack des slugs. Un `found: false` dit « aucune source ne
+l'a vue », jamais « ne l'utilise pas ». Sur un tableau, `waterfall_tech_act` prend la même
+liste pour toutes les lignes.
+
+Écartés pour l'instant (comparatif du 20/10/2026) : BuiltWith et Wappalyzer (abonnements
+mensuels de 250-995 \$ pour ce que l'index DataForSEO et le crawl donnent à quelques
+centimes ; seul l'historique d'adoption de BuiltWith n'a pas d'équivalent ici),
+PredictLeads (pas encore de connecteur).
+
 ## Les étapes de complétion : la page LinkedIn d'une société
 
 **Une ligne, plusieurs entrées** (`Step.variants`, `_one_row`) : le registre (SIREN, sinon
@@ -244,7 +269,7 @@ Ce que les vraies réponses ont appris, et qui est désormais figé par des test
 ## Limites : aucune par défaut, l'agent en fixe une s'il le faut
 
 Décision du 19/10/2026 : la cascade ne plafonne rien de son propre chef. Deux paramètres
-optionnels, sur chacun des 5 outils, pour l'agent qui veut une limite :
+optionnels, sur chacun des outils, pour l'agent qui veut une limite :
 
 - `max_paid_steps` — au plus N appels PAYANTS par recherche (les étapes gratuites ne
   comptent pas) ; les suivantes sont `skipped / max_paid_steps`.

@@ -76,7 +76,7 @@ porte `deprecation`. `exclude_args` est déprécié côté FastMCP ; le jour où
 
 ## 2. Les lignes poussées par référence
 
-Les cinq `waterfall_<x>_act(op="update_rows")` suivent ce contrat dans l'autre sens (le serveur lit des entrées, écrit une trouvaille : `docs/waterfall.md`). `lemlist_push_rows` et `hubspot_push_rows` prennent un tableau, des `row_ids` (≤ 50)
+Les `waterfall_<x>_act(op="update_rows")` suivent ce contrat dans l'autre sens (le serveur lit des entrées, écrit une trouvaille : `docs/waterfall.md`). `lemlist_push_rows` et `hubspot_push_rows` prennent un tableau, des `row_ids` (≤ 50)
 OU un `filter` (grammaire de `data_rows`), et une correspondance `{champ du connecteur:
 colonne}`. La mécanique commune vit dans `datastore/par_reference.py` ; chaque outil ne
 porte que son appel au connecteur (`tools/lemlist_lignes.py`, `tools/hubspot_lignes.py`).

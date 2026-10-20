@@ -97,6 +97,7 @@ _DECLARATIONS: tuple[str, ...] = (
     "waterfall_company",
     "waterfall_person",
     "waterfall_people",
+    "waterfall_tech",
     # Neighbour of `fullenrich` by trade (enrichment); also carries the Clay
     # table webhooks (write), see `providers/clay.py`.
     "clay",
