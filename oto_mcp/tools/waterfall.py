@@ -1845,7 +1845,9 @@ _SENIORITY_WORDS = (
 def _seniority_rank(title, seniority) -> int:
     """0 = the top (founder, C-level), then VP/head/director, then manager/lead, then
     the rest — read from the provider's seniority when it has one, else the title."""
-    text = f" {_norm_name(f'{seniority or ''} {title or ''}'.replace('_', ' '))} "
+    # No nested same-quote f-string: the floor is Python 3.10.
+    raw = " ".join(str(x) for x in (seniority, title) if x).replace("_", " ")
+    text = f" {_norm_name(raw)} "
     for rank, words in enumerate(_SENIORITY_WORDS):
         if any(f" {w} " in text for w in words):
             return rank
