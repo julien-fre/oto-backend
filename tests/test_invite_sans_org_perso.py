@@ -8,7 +8,7 @@ présente son jeton. Le premier est gardé dans `upsert_user`
 à l'acceptation l'org perso née de l'inscription — et rien d'autre.
 
 Banc : le PostgreSQL réel de `test_org_quota_archivage`, augmenté des tables que le
-critère « vierge » lit (projets, tableaux, coffre, instances, comptes connectés,
+critère « vierge » lit (projets, tableaux, coffre, comptes connectés,
 partages).
 
 Revue du 19/10 : la maison d'un invité est FIXE et EXPLICITE — son org perso, créée à
@@ -26,7 +26,7 @@ from test_org_quota_archivage import AUTRE, SUB, _espace, _perso, conn, store  #
 @pytest.fixture()
 def banc(store, conn):
     tables = ("projects", "user_datastores", "connector_credentials",
-              "connector_instances", "unipile_accounts", "resource_grants")
+              "unipile_accounts", "resource_grants")
     for t in reversed(tables):
         conn.execute(f"DROP TABLE IF EXISTS {t} CASCADE")
     from test_org_quota_archivage import _real_ddl
@@ -109,14 +109,6 @@ def test_la_cle_d_une_autre_org_ne_compte_pas(banc):
         c.execute("INSERT INTO connector_credentials (entity_type, entity_id, connector, "
                   "secret_enc) VALUES ('member', %s, 'serper', 'x')", (f"{boite}:{SUB}",))
     assert banc.liberer_perso_vierge(SUB, boite) == perso
-
-
-def test_une_perso_avec_une_instance_n_est_pas_relachee(banc):
-    perso, boite = _invite_par_lien(banc)
-    with banc._connect() as c:
-        c.execute("INSERT INTO connector_instances (connector, owner_type, owner_id) "
-                  "VALUES ('serper', 'member', %s)", (f"{perso}:{SUB}",))
-    assert banc.liberer_perso_vierge(SUB, boite) is None
 
 
 @pytest.mark.parametrize("deconnecte", [False, True])

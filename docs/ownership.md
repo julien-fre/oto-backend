@@ -164,7 +164,7 @@ de faire entrer dans une org n'a pas besoin d'un second espace. L'invité **par 
 reçoit encore au premier appel authentifié (le jeton n'arrive qu'après, par
 `org.invite.accept`) : l'acceptation la relâche si elle est **vierge**
 (`org_store.liberer_perso_vierge` — née il y a moins d'une heure, seul membre, rien dedans
-que le projet « Découverte », ni clé déposée au coffre (org ou membre, instance comprise),
+que le projet « Découverte », ni clé déposée au coffre (org ou membre),
 ni compte connecté, même déconnecté, ni partage nominatif reçu), par `archive_org` ; un
 échec lève, l'acceptation ne le tait pas. Le boot (`backfill_personal_orgs`) ne
 rattrape que les comptes **sans org active vivante** : membre d'une org, la plus ancienne

@@ -18,6 +18,7 @@ from typing import Optional
 from . import members
 from . import orgs
 from ..db import _connect
+from ..db._partage_vivant import PARTAGE_VIVANT_G
 
 _log = logging.getLogger(__name__)
 
@@ -162,11 +163,16 @@ def backfill_personal_orgs() -> dict:
 # L'org perso qu'un invité PAR LIEN reçoit avant d'accepter (`upsert_user` tourne au
 # premier appel authentifié, avant que le front ne présente le jeton) : née il y a
 # moins d'une heure, seul membre, et rien dedans hormis le projet « Découverte » semé
-# à sa création — ni tableau, ni clé déposée (coffre de l'org ou du membre, instance
-# de connecteur), ni compte connecté (même déconnecté : la ligne reste la preuve de
+# à sa création — ni tableau, ni clé déposée (coffre de l'org ou du membre : une
+# instance de connecteur vivante a toujours sa ligne au coffre, et la table des
+# instances reste réservée à sa projection de lecture, lot L6), ni compte connecté (même déconnecté : la ligne reste la preuve de
 # propriété), ni partage nominatif dont elle serait la maison (`ownership.org_perso_de`).
 # Au-delà, ce n'est plus un artefact d'inscription : on n'y touche pas.
-_PERSO_VIERGE = """
+def _requete_perso_vierge() -> str:
+    """La requête du critère ci-dessus. Dans une fonction, pas au niveau du module :
+    la garde des partages échus (`tests/test_partages_echeance_39.py`) attribue chaque
+    lecture de `resource_grants` à la fonction qui la porte."""
+    return f"""
     SELECT o.id FROM orgs o
      WHERE o.personal_of = %(sub)s AND o.archived_at IS NULL AND o.id <> %(rejointe)s
        AND o.created_at > now() - interval '1 hour'
@@ -183,16 +189,12 @@ _PERSO_VIERGE = """
                         WHERE (c.entity_type = 'org' AND c.entity_id = o.id::text)
                            OR (c.entity_type = 'member'
                                AND c.entity_id LIKE o.id::text || ':%%'))
-       AND NOT EXISTS (SELECT 1 FROM connector_instances i
-                        WHERE i.revoked_at IS NULL
-                          AND ((i.owner_type = 'org' AND i.owner_id = o.id::text)
-                               OR (i.owner_type = 'member'
-                                   AND i.owner_id LIKE o.id::text || ':%%')))
        AND NOT EXISTS (SELECT 1 FROM unipile_accounts a WHERE a.org_id = o.id)
        AND NOT EXISTS (SELECT 1 FROM resource_grants g
                         WHERE g.principal_type = 'user' AND g.principal_id = %(sub)s
                           -- même exception que `ownership._PARTAGES_LISTES_DANS_L_ORG`
-                          AND g.resource_type <> 'runner_trigger')
+                          AND g.resource_type <> 'runner_trigger'
+                          AND {PARTAGE_VIVANT_G})
 """
 
 
@@ -203,7 +205,7 @@ def liberer_perso_vierge(sub: str, org_rejointe: int) -> Optional[int]:
     et `archive_org` rebascule de toute façon qui l'avait pour active."""
     from .. import discovery
     with _connect() as conn:
-        row = conn.execute(_PERSO_VIERGE, {"sub": sub, "rejointe": int(org_rejointe),
+        row = conn.execute(_requete_perso_vierge(), {"sub": sub, "rejointe": int(org_rejointe),
                                            "decouverte": discovery.PROJECT_NAME}).fetchone()
     if not row:
         return None
