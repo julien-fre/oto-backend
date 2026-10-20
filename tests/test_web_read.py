@@ -100,6 +100,34 @@ def test_un_403_escalade_vers_serper(monkeypatch):
     assert out["tentatives"][1]["cran"] == "serper"
 
 
+def _quantite_tracee(lire, **kw):
+    """La `quantity` que le relevé d'appel porte après une lecture — l'axe que
+    le facturier de Tulina lit (absente = 1, d'où le zéro TRACÉ)."""
+    from oto_mcp import session_org
+    releve: dict = {}
+    jeton = session_org.set_call_trace(releve)
+    try:
+        lire(**kw)
+    finally:
+        session_org.reset_call_trace(jeton)
+    return releve.get("quantity")
+
+
+def test_la_quantite_facturee_est_celle_des_credits_serper(monkeypatch):
+    lire = _web_read(monkeypatch,
+                     fetch={"ok": False, "verdict": "HTTP 403", "status": 403},
+                     serper={"markdown": "# ACME\n\nContact : x@acme.fr\n" * 20,
+                             "credits": 2})
+    assert _quantite_tracee(lire, url="https://acme.fr") == 2
+
+
+def test_le_fetch_gratuit_trace_un_zero(monkeypatch):
+    lire = _web_read(monkeypatch,
+                     fetch={"ok": True, "status": 200, "html": _HTML_OK,
+                            "final_url": "https://acme.fr", "verdict": "lu"})
+    assert _quantite_tracee(lire, url="https://acme.fr") == 0
+
+
 def test_une_coquille_vide_escalade_aussi(monkeypatch):
     lire = _web_read(monkeypatch,
                      fetch={"ok": True, "status": 200, "final_url": "https://x.fr",

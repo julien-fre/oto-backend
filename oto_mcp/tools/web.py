@@ -326,6 +326,11 @@ def register(mcp: FastMCP) -> None:
             if ligne is not None:
                 connector_health.marquer_quota_epuise(ligne, MSG_A_SEC)
             return A_SEC
+        # BILLING axis (`quantity`), unconditional like the `serper_*` tools: the
+        # Serper credits this read deducted. The biller prices `web_read` per
+        # credit and only charges a Tulina key (`key_mode`), so a read on the
+        # client's own key is measured, never billed.
+        session_org.note_call_trace(quantity=credits_consumed("scrape_page", res))
         if is_platform:
             # `web_read` is the backend's SECOND serper mouth, and it debited 1 where
             # a scrape costs 2 (the description below has always said so): the
@@ -384,6 +389,10 @@ def register(mcp: FastMCP) -> None:
         cap = max(1, int(max_chars))
         tentatives: list = []
         cout = {"serper_credits": 0, "browser_session": False}
+        # A TRACED zero until tier ② deducts something: the biller reads an
+        # absent `quantity` as 1, and a read served by the free fetch — or a
+        # tier ② skipped on a dry key, which still resolved one — costs nothing.
+        session_org.note_call_trace(quantity=0)
 
         demande = urlsplit(url).hostname or ""
 
