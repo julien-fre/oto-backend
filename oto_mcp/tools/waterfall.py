@@ -530,6 +530,9 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
     if issue is None or not _judge(issue, attempt):
         return None
     result = _payload(issue)
+    if step.reveal and inputs.get("_pool") and isinstance(result, dict):
+        result = await _every_free_page(mcp, sub, step, args, result, inputs, deadline,
+                                        attempt)
     if step.collect is not None:
         collected, collect_args, finished = await _poll(mcp, sub, step, result, deadline)
         if not finished:
@@ -565,6 +568,8 @@ _QUALIFY_FIELDS = {
 }
 #: Under this many seconds left, the pass is skipped rather than cut off midway.
 _QUALIFY_MIN_S = 5.0
+#: States per `jev_items` call (its own maximum, `tools/jev.MAX_ITEMS`).
+_JEV_CHUNK = 200
 
 
 def _qualify_args(qualify, qualify_min, show_unqualified: bool = False) -> Optional[dict]:
@@ -678,14 +683,26 @@ async def _qualify(mcp: FastMCP, sub, kind: str, found: dict, inputs: dict,
         return found, report
     items = [{"key": str(i), "state": _qualify_state(kind, r, inputs)}
              for i, r in enumerate(records)]
-    issue = await _call(mcp, sub, "jev_items",
-                        {"items": items, "questions": rubric["questions"],
-                         "parallel": min(50, max(10, len(items)))}, report)
-    if issue is None or not _judge(issue, report):
-        return found, report
-    res = _payload(issue) or {}
-    model = res.get("model")
-    by_index = {a.get("index"): a for a in res.get("answers") or [] if isinstance(a, dict)}
+    # `jev_items` takes 200 states a call: a big pool goes in chunks, judged together.
+    chunks = [items[i:i + _JEV_CHUNK] for i in range(0, len(items), _JEV_CHUNK)]
+    parts = [dict(report) for _ in chunks]
+    issues = await asyncio.gather(*(
+        _call(mcp, sub, "jev_items", {"items": c, "questions": rubric["questions"],
+                                      "parallel": min(50, max(10, len(c)))}, part)
+        for c, part in zip(chunks, parts)))
+    by_index, model, cost = {}, None, 0.0
+    for n, (issue, part) in enumerate(zip(issues, parts)):
+        if issue is None or not _judge(issue, part):
+            if n == 0:
+                report.update(part)
+                return found, report
+            continue    # a later chunk refused: its people stay unjudged, kept
+        res = _payload(issue) or {}
+        model = model or res.get("model")
+        cost += (res.get("usage") or {}).get("cost") or 0
+        for a in res.get("answers") or []:
+            if isinstance(a, dict) and a.get("index") is not None:
+                by_index[a["index"] + n * _JEV_CHUNK] = a
     kept, rejected, failed = [], [], 0
     for i, r in enumerate(records):
         a = by_index.get(i) or {}
@@ -700,12 +717,52 @@ async def _qualify(mcp: FastMCP, sub, kind: str, found: dict, inputs: dict,
             rejected.append(r)
             continue
         kept.append(r)
-    report.update(status="done", model=model, failed=failed,
-                  cost_usd=(res.get("usage") or {}).get("cost"))
+    report.update(status="done", model=model, failed=failed, cost_usd=cost,
+                  **({"calls": len(chunks)} if len(chunks) > 1 else {}))
     if kind == "people":
         report.update(qualified=len(kept), not_qualified=len(rejected), _rejected=rejected)
         return {**found, "people": kept, "count": len(kept)}, report
     return kept[0], report
+
+
+#: The most people a judged pool holds: every page of a free search, up to this (Jev
+#: judges them 200 a call — 1,000 titles are ~$0.02).
+POOL_MAX = 1000
+#: Seconds kept, after the pages, for Jev and the reveals.
+_PAGES_RESERVE_S = _QUALIFY_MIN_S + 8.0
+
+
+async def _every_free_page(mcp: FastMCP, sub, step: Step, args: dict, first: dict,
+                           inputs: dict, deadline: float, attempt: dict) -> dict:
+    """EVERY page of a FREE search (Apollo's people search: names masked, nothing billed)
+    — the whole pool goes to Jev, not its first page. Stops at the last page, at
+    `_pool`, or when the time Jev and the reveals need is all that is left; the receipt
+    says which (`pages`, `total`, `pool_truncated`)."""
+    people = list(first.get("people") or [])
+    total = first.get("total_entries") or _get(first, "pagination.total_entries") or 0
+    per = int(args.get("per_page") or len(people) or 1)
+    page, why = 1, None
+    while total and page * per < total:
+        if len(people) >= inputs["_pool"]:
+            why = "pool_max"
+            break
+        if time.monotonic() > deadline - _PAGES_RESERVE_S:
+            why = "time_budget"
+            break
+        page += 1
+        part: dict = {}
+        issue = await _call(mcp, sub, step.tool, {**args, "page": page}, part)
+        if issue is None or not _judge(issue, part):
+            why = part.get("code") or "page_refused"
+            break
+        more = _get(_payload(issue), "people") or []
+        if not more:
+            break
+        people += more
+    attempt.update(pages=page, total=total)
+    if why:
+        attempt["pool_truncated"] = why
+    return {**first, "people": people}
 
 
 def _revealed_person(res, base: dict) -> Optional[dict]:
@@ -808,7 +865,7 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
     if kind == "people" and qualify:
         # Judging needs the whole free pool, not its first `limit`: kept up to
         # PEOPLE_MAX until Jev has ranked it (what is PAID is still sized by `limit`).
-        inputs = {**inputs, "_pool": PEOPLE_MAX}
+        inputs = {**inputs, "_pool": POOL_MAX}
     attempts: list[dict] = []
     pending: list[dict] = []
     budget = dict(limits or {})
@@ -2047,8 +2104,9 @@ _QUALIFY_ARGS = """            qualify: a Jev rubric to judge each result agains
                 people ALL fall short does not end the search — the next one is tried —
                 and each attempt says `qualified` / `not_qualified`. A company or a
                 person stays, with `qualification.passed`.
-            (People: Apollo's FREE search, names masked, is judged on its titles and
-                only the best `limit` that pass are revealed — 1 Apollo credit each, with
+            (People: Apollo's FREE search, names masked, is read on EVERY page (up to
+                1,000 people, while time allows — `pages` / `pool_truncated` say so), judged
+                on its titles, and only the best `limit` that pass are revealed — 1 Apollo credit each, with
                 the full name, LinkedIn URL and Apollo's email — before any paid
                 provider is tried.)
             show_unqualified: the people who did not pass are ALWAYS returned under

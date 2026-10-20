@@ -292,8 +292,10 @@ jugé 100 titres pour 0,0019 \$ ; les deux premiers révélés (`apollo_match_pe
 1 crédit Apollo chacun) étaient le directeur marketing-communication-omnicommerce du siège
 et le responsable expérience client, avec URL LinkedIn ET email vérifié.
 
-D'où, sous `qualify` : Apollo prend une page entière (le vivier, `_pool`), Jev juge le
-vivier sur les titres, et seuls les `limit` meilleurs qui passent sont révélés
+D'où, sous `qualify` : la recherche gratuite est lue sur TOUTES ses pages (le vivier,
+jusqu'à `POOL_MAX` = 1 000 personnes ; elle s'arrête à la dernière page, au plafond, ou
+quand il ne reste que le temps de juger et révéler — `pages`, `total`, `pool_truncated`
+au reçu), Jev juge le vivier sur les titres par lots de 200 en parallèle, et seuls les `limit` meilleurs qui passent sont révélés
 (`Step.reveal`, `_reveal_qualified`) — avant tout fournisseur payé au profil. Sans
 `qualify`, les noms masqués restent un repli (`weak`), comme avant. Les révélations
 comptent chacune dans `max_paid_steps` ; la recherche, gratuite, non. Jev indisponible →

@@ -1076,3 +1076,41 @@ def test_max_paid_steps_borne_aussi_les_revelations(calls):
                providers=["apollo"], max_paid_steps=2)
     assert _made(calls).count("apollo_match_person") == 2
     assert out["attempts"][0]["stopped"] == "max_paid_steps"
+
+
+def _page(start, n, total):
+    return IssueCible(ok=True, result={"total_entries": total, "people": [
+        {"id": f"p{i}", "first_name": f"P{i}", "last_name_obfuscated": "X***",
+         "title": "CMO" if i == start else "Developer"} for i in range(start, start + n)]})
+
+
+def test_la_recherche_gratuite_est_lue_page_apres_page_jusqu_au_bout(calls):
+    calls["answers"]["apollo_search_people"] = [_page(0, 100, 230), _page(100, 100, 230),
+                                                _page(200, 30, 230)]
+    calls["answers"]["jev_items"] = _verdicts(*([0.9] + [0.1] * 199))
+    calls["answers"]["apollo_match_person"] = IssueCible(ok=True, result={"person": {
+        "name": "P0 Y", "linkedin_url": "http://www.linkedin.com/in/p0"}})
+    out = _run("waterfall_people", domain="acme.fr", limit=1, qualify=_FIT, qualify_min=0.7,
+               providers=["apollo"])
+    pages = [a.get("page", 1) for n, a in calls["made"] if n == "apollo_search_people"]
+    assert pages == [1, 2, 3]
+    a = out["attempts"][0]
+    assert a["pages"] == 3 and a["total"] == 230 and "pool_truncated" not in a
+    # 230 titres = deux appels Jev (200 + 30), jugés ensemble.
+    jev = [args for n, args in calls["made"] if n == "jev_items"]
+    assert [len(j["items"]) for j in jev] == [200, 30]
+    assert out["qualification"]["not_qualified"] >= 199
+
+
+def test_sans_temps_pour_juger_les_pages_s_arretent_et_le_recu_le_dit(calls, monkeypatch):
+    monkeypatch.setattr(waterfall, "_PAGES_RESERVE_S", 10_000)
+    calls["answers"]["apollo_search_people"] = [_page(0, 100, 500)]
+    out = _run("waterfall_people", domain="acme.fr", qualify=_FIT, providers=["apollo"])
+    a = out["attempts"][0]
+    assert a["pages"] == 1 and a["pool_truncated"] == "time_budget"
+
+
+def test_sans_rubrique_une_seule_page(calls):
+    calls["answers"]["apollo_search_people"] = [_page(0, 20, 500)]
+    _run("waterfall_people", domain="acme.fr", providers=["apollo"])
+    assert _made(calls).count("apollo_search_people") == 1
