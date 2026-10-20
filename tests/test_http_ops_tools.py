@@ -1,5 +1,6 @@
-"""Les outils « Custom API » (`tools/http_ops.py`) : lien de connexion SANS secret,
-opérations décrites, appel par nom.
+"""Les outils « Custom API » — la paire `http` (lit : `tools/http_ops.py`) / `http_act`
+(agit : `tools/http_calls.py`) : lien de connexion SANS secret, opérations décrites,
+appel par nom.
 
 Ce qu'on remplace : la résolution de la clé (`access.resolve_credential`), la ligne
 d'instance (`connector_instances`), et la CLASSE client d'oto-core — jamais la règle
@@ -96,20 +97,34 @@ def _tool(name):
     return asyncio.run(m.get_tool(name))
 
 
+def _lien(**kw):
+    return _tool("http").fn(op="setup_link", **kw)
+
+
+def _lire(**kw):
+    return _tool("http").fn(**kw)
+
+
+def _act(op, **kw):
+    return _tool("http_act").fn(op=op, **kw)
+
+
 # ── le lien de connexion ──────────────────────────────────────────────────────
 
 def test_le_lien_ne_peut_porter_aucun_secret():
     """Aucun paramètre ne peut recevoir une clé : la liste est FERMÉE."""
-    params = set(inspect.signature(_tool("http_setup_link").fn).parameters)
-    assert params == {"label", "base_url", "auth_mode", "header_name", "query_param",
-                      "doc_path"}
-    assert not params & {"token", "api_key", "key", "password", "client_secret", "secret"}
+    params = set(inspect.signature(_tool("http").fn).parameters)
+    assert params == {"op", "label", "base_url", "auth_mode", "header_name",
+                      "query_param", "doc_path"}
+    secrets = {"token", "api_key", "key", "password", "client_secret", "secret"}
+    assert not params & secrets
+    assert not set(inspect.signature(_tool("http_act").fn).parameters) & secrets
 
 
 def test_le_lien_porte_les_seuls_champs_non_secrets(monkeypatch, compte):
     monkeypatch.setattr(links, "link_for",
                         lambda kind, sub=None, **p: "https://app.example.test/connectors")
-    out = _tool("http_setup_link").fn(label="Acme Payroll",
+    out = _lien(label="Acme Payroll",
                                       base_url="https://payroll.example.test/api/public/v1/",
                                       auth_mode="bearer")
     assert out["url"] == ("https://app.example.test/connectors/http?label=Acme+Payroll"
@@ -132,28 +147,46 @@ def test_le_lien_refuse_ce_qui_porterait_un_secret_ou_une_adresse_interne(
         monkeypatch, compte, kw, motif):
     args = {"label": "Acme", **kw}
     with pytest.raises(McpError, match=motif):
-        _tool("http_setup_link").fn(**args)
+        _lien(**args)
 
 
 def test_sans_page_connecteurs_pas_de_lien_mais_la_raison(monkeypatch, compte):
     monkeypatch.setattr(links, "link_for", lambda kind, sub=None, **p: None)
     monkeypatch.setattr(links, "raison_sans_lien", lambda kind, sub=None, **p: "no page")
-    out = _tool("http_setup_link").fn(label="Acme")
+    out = _lien(label="Acme")
     assert out["url"] is None and out["url_missing"] == "no page"
 
 
-def test_annotations_lecture_et_ecriture():
-    assert _tool("http_setup_link").annotations.readOnlyHint is True
-    assert _tool("http_operations").annotations.readOnlyHint is True
-    for nom in ("http_call", "http_request", "http_set_definition"):
-        ann = _tool(nom).annotations
-        assert ann is None or ann.readOnlyHint is not True, nom
+def test_la_paire_lit_puis_agit():
+    """`http` ne fait que lire ; `http_act` est l'outil que le client fait confirmer
+    (la forme vérifiée en entier par `tests/test_convention_act.py`)."""
+    assert _tool("http").annotations.readOnlyHint is True
+    a = _tool("http_act").annotations
+    assert (a.readOnlyHint, a.destructiveHint, a.openWorldHint) == (False, True, True)
+
+
+@pytest.mark.parametrize("outil, op, kw, motif", [
+    ("http", "list", {"label": "Acme"}, r'`http\(op="list"\)` does not take `label`'),
+    ("http_act", "call", {"operation": "x", "path": "/a"},
+     r"does not take `path` — it takes: `operation`, `args`, `dry_run`"),
+    ("http_act", "import", {"source": "inline", "dry_run": True}, "`dry_run`"),
+    ("http_act", "set_definition", {"args": {}}, "`args`"),
+])
+def test_un_argument_qui_ne_sert_pas_a_l_op_est_refuse(compte, outil, op, kw, motif):
+    with pytest.raises(McpError, match=motif):
+        _tool(outil).fn(op=op, **kw)
+    assert compte["ecrit"] == []
+
+
+def test_call_sans_operation_est_refuse(compte):
+    with pytest.raises(McpError, match="needs `operation`"):
+        _act("call")
 
 
 # ── découvrir : sans `_account`, tous les connecteurs personnalisés de l'org ─────
 
 def test_sans_account_la_liste_rend_chaque_connecteur_de_l_org(compte):
-    out = _tool("http_operations").fn()
+    out = _lire()
     assert [(c["account"], c["label"], c["actions"]) for c in out["connectors"]] == [
         ("paie", "Acme Payroll", ["list_collaborators", "create_absence"]),
         ("rh", "rh", ["list_teams"])]
@@ -163,7 +196,7 @@ def test_sans_account_la_liste_rend_chaque_connecteur_de_l_org(compte):
 
 def test_avec_account_le_detail_d_un_connecteur(compte):
     compte["compte"] = "paie"
-    out = _tool("http_operations").fn()
+    out = _lire()
     assert out["account"] == "paie" and out["label"] == "Acme Payroll"
     assert out["operations"][0]["input"]["required"] == ["organizationId"]
     assert out["variables"]["organizationId"]["value"] == "org_9"
@@ -172,7 +205,7 @@ def test_avec_account_le_detail_d_un_connecteur(compte):
 # ── la définition : configurée une fois ───────────────────────────────────────
 
 def test_poser_ne_change_que_les_parties_donnees(compte):
-    out = _tool("http_set_definition").fn(operations=OPS[:1],
+    out = _act("set_definition", operations=OPS[:1],
                                           description="Payroll, v2")
     assert out["saved"] == ["description", "operations"]
     assert out["actions"] == ["list_collaborators"]
@@ -190,7 +223,7 @@ def test_poser_ne_change_que_les_parties_donnees(compte):
 ])
 def test_une_definition_invalide_nomme_les_problemes(compte, kw, motif):
     with pytest.raises(McpError, match=motif):
-        _tool("http_set_definition").fn(**kw)
+        _act("set_definition", **kw)
     assert compte["ecrit"] == []
 
 
@@ -200,29 +233,29 @@ def test_l_en_tete_de_la_cle_ne_devient_pas_constant(compte, monkeypatch):
                         SimpleNamespace(entity_type="org", entity_id="35", account="paie",
                                         fields=champs, provider="http"))
     with pytest.raises(McpError, match="authenticates"):
-        _tool("http_set_definition").fn(headers={"x-key": "abc"})
+        _act("set_definition", headers={"x-key": "abc"})
 
 
 def test_poser_et_importer_exigent_l_admin_du_compte(monkeypatch, compte):
     monkeypatch.setattr(roles, "is_org_admin", lambda sub, org: False)
     with pytest.raises(McpError, match="reserved"):
-        _tool("http_set_definition").fn(operations=[])
+        _act("set_definition", operations=[])
     compte["compte"] = "paie"
     with pytest.raises(McpError, match="reserved"):
-        _tool("http_operations").fn(op="import", source="inline", document={})
-    assert _tool("http_operations").fn()["operations"]   # la lecture reste ouverte
+        _act("import", source="inline", document={})
+    assert _lire()["operations"]   # la lecture reste ouverte
 
 
 def test_importer_un_document_inline_ne_sauve_rien(compte):
     doc = {"openapi": "3.0.0", "paths": {"/teams": {"get": {"operationId": "listTeams"}}}}
-    out = _tool("http_operations").fn(op="import", source="inline", document=doc)
+    out = _act("import", source="inline", document=doc)
     assert [o["name"] for o in out["operations"]] == ["list_teams"]
     assert out["saved"] is False and compte["ecrit"] == []
 
 
 def test_importer_une_url_interne_est_refuse(compte):
     with pytest.raises(McpError, match="127.0.0.1"):
-        _tool("http_operations").fn(op="import", source="url",
+        _act("import", source="url",
                                     url="http://127.0.0.1/openapi.json")
 
 
@@ -232,7 +265,7 @@ def test_dry_run_variable_et_compte_trouve_par_le_nom(compte):
     """Ni `_account` ni `organizationId` : l'action n'existe que sur `paie`, la
     variable enregistrée remplit l'argument."""
     with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
-        out = _tool("http_call").fn(operation="list_collaborators", args={"page": 2},
+        out = _act("call", operation="list_collaborators", args={"page": 2},
                                     dry_run=True)
     assert out == {"dry_run": True, "account": "paie", "method": "GET",
                    "path": "/organizations/org_9/collaborators", "query": {"page": 2},
@@ -241,20 +274,20 @@ def test_dry_run_variable_et_compte_trouve_par_le_nom(compte):
 
 
 def test_une_action_d_un_autre_connecteur_se_resout_seule(compte):
-    out = _tool("http_call").fn(operation="list_teams", dry_run=True)
+    out = _act("call", operation="list_teams", dry_run=True)
     assert out["account"] == "rh" and out["path"] == "/teams"
 
 
 def test_un_nom_partage_est_refuse_en_nommant_les_candidats(compte):
     compte["configs"]["rh"]["operations"] = [RH_OP, OPS[1]]
     with pytest.raises(McpError, match="several custom connectors.*paie.*rh"):
-        _tool("http_call").fn(operation="create_absence", args={"start": "x"})
+        _act("call", operation="create_absence", args={"start": "x"})
 
 
 def test_l_appel_passe_par_le_client_avec_les_en_tetes_constants(compte):
     with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
         cls.return_value.request.return_value = {"id": "abs_1"}
-        out = _tool("http_call").fn(operation="create_absence",
+        out = _act("call", operation="create_absence",
                                     args={"start": "2026-10-01"})
     assert out == {"id": "abs_1"}
     base, mode, fields = cls.call_args.args
@@ -266,7 +299,7 @@ def test_l_appel_passe_par_le_client_avec_les_en_tetes_constants(compte):
 def test_une_traversee_est_refusee_avant_tout_appel(compte):
     with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
         with pytest.raises(McpError, match="single segment"):
-            _tool("http_call").fn(operation="list_collaborators",
+            _act("call", operation="list_collaborators",
                                   args={"organizationId": "../admin"})
     cls.assert_not_called()
 
@@ -274,7 +307,7 @@ def test_une_traversee_est_refusee_avant_tout_appel(compte):
 def test_operation_inconnue_nomme_les_disponibles(compte):
     compte["compte"] = "paie"
     with pytest.raises(McpError, match="list_collaborators, create_absence"):
-        _tool("http_call").fn(operation="delete_everything")
+        _act("call", operation="delete_everything")
 
 
 def test_l_erreur_amont_est_traduite_comme_http_get(compte):
@@ -284,7 +317,7 @@ def test_l_erreur_amont_est_traduite_comme_http_get(compte):
     with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
         cls.return_value.request.side_effect = requests.HTTPError(response=rep)
         with pytest.raises(McpError, match="HTTP 429"):
-            _tool("http_call").fn(operation="create_absence", args={"start": "x"})
+            _act("call", operation="create_absence", args={"start": "x"})
 
 
 # ── appel brut : tous les verbes ──────────────────────────────────────────────
@@ -293,7 +326,7 @@ def test_l_erreur_amont_est_traduite_comme_http_get(compte):
 def test_http_request_porte_chaque_verbe(compte, verbe):
     with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
         cls.return_value.request.return_value = {"ok": True}
-        assert _tool("http_request").fn(method=verbe.lower(), path="/teams/t1",
+        assert _act("request", method=verbe.lower(), path="/teams/t1",
                                         body={"a": 1}) == {"ok": True}
     cls.return_value.request.assert_called_once_with(verbe, "/teams/t1", params=None,
                                                      json={"a": 1})
@@ -308,12 +341,12 @@ def test_http_request_porte_chaque_verbe(compte, verbe):
 def test_http_request_refuse_avant_tout_appel(compte, kw, motif):
     with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
         with pytest.raises(McpError, match=motif):
-            _tool("http_request").fn(**kw)
+            _act("request", **kw)
     cls.assert_not_called()
 
 
 def test_http_request_dry_run(compte):
-    out = _tool("http_request").fn(method="patch", path="/x", params={"a": 1},
+    out = _act("request", method="patch", path="/x", params={"a": 1},
                                    dry_run=True)
     assert out == {"dry_run": True, "account": "paie", "method": "PATCH", "path": "/x",
                    "query": {"a": 1}, "body": None}
@@ -335,10 +368,10 @@ def test_les_en_tetes_constants_s_ajoutent_sans_toucher_l_auth():
 def test_un_nom_d_en_tete_avec_soulignement_est_un_nom_valide(monkeypatch, compte):
     """`api_key` est un jeton HTTP (RFC 9110) — une vraie API l'attend tel quel."""
     monkeypatch.setattr(links, "link_for", lambda kind, sub=None, **p: "https://x.test/c")
-    out = _tool("http_setup_link").fn(label="Pets", auth_mode="header",
+    out = _lien(label="Pets", auth_mode="header",
                                       header_name="api_key")
     assert out["prefilled"]["header_name"] == "api_key"
-    assert _tool("http_set_definition").fn(headers={"x_source": "e2e"})["saved"] == \
+    assert _act("set_definition", headers={"x_source": "e2e"})["saved"] == \
         ["headers"]
 
 
@@ -349,5 +382,5 @@ def test_un_succes_au_corps_non_json_est_un_succes(compte):
     with patch("oto_mcp.tools.http.HttpConnectorClient") as cls:
         cls.return_value.request.side_effect = requests.JSONDecodeError(
             "Expecting value", "Pet deleted", 0)
-        out = _tool("http_request").fn(method="DELETE", path="/pet/1")
+        out = _act("request", method="DELETE", path="/pet/1")
     assert out == {"ok": True, "non_json_body": "Pet deleted", "truncated": False}

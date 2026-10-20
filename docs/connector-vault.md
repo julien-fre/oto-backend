@@ -619,7 +619,7 @@ Le connecteur `http` se présente comme **« Custom API »** (catégorie `Custom
 carte qu'on cherche quand l'outil d'un client (une paie, un ERP) n'a pas de connecteur.
 Une org y **décrit en données** les opérations qu'elle appelle (nom, description, méthode,
 gabarit de chemin, schéma d'entrée — format de `oto_mcp/custom_ops.py`, sous-ensemble à plat
-de `connector.schema.json` d'oto-core), et l'agent les appelle par leur nom (`http_call`).
+de `connector.schema.json` d'oto-core), et l'agent les appelle par leur nom (`http_act(op="call")`).
 La liste vit dans **`connector_instances.config["operations"]`** de l'instance qui nomme la
 ligne du coffre — désignée par le quadruplet, jamais autrement
 (`connectors/http_operations.py`, seul module admis à cette clé, cf. l'allowlist de
@@ -630,9 +630,14 @@ suivre (`move_instance_to_account`), un **retrait** de la clé l'archive avec l'
 jamais le document entier. Droits : ceux de la pose de la clé (`ORG_ADMIN_OF` pour un compte d'org, chef
 d'équipe pour un compte d'équipe) ; la lecture est ouverte aux membres. Faces : REST
 `/api/orgs/{id}/connectors/http/operations` (+ `/import`, conversion OpenAPI sans
-écriture), MCP `http_operations` / `http_set_definition` / `http_call` / `http_request`, et
-`http_setup_link` — le lien de la carte pré-remplie **sans** secret, la clé se saisit
-dans le formulaire, jamais dans une conversation.
+écriture), MCP en paire (`tests/test_convention_act.py`) : `http` lit — `op=list` (les connecteurs
+personnalisés de l'org, ou la définition d'un compte) et `op=setup_link` (le lien de la carte pré-remplie **sans** secret, la clé se saisit
+dans le formulaire, jamais dans une conversation) ; `http_act` agit — `op=call` (une
+action par son nom ; même un GET : le client ne peut pas savoir ce qu'une action décrite
+fait chez le tiers), `op=request` (appel brut), `op=import` (conversion OpenAPI, sans
+écriture mais préparant une écriture) et `op=set_definition`. Les outils d'avant la paire
+(`http_get`/`http_post`/`http_doc`) restent servis ; `http` reste dans `A_MIGRER` tant
+qu'ils n'ont pas rejoint la paire.
 
 **Configuré une fois, servi à tous** : la `config` porte aussi la **définition** du
 connecteur personnalisé (`oto_mcp/custom_ops_definition.py`) — `label`, `description`,
@@ -647,6 +652,22 @@ personnalisés de l'org (`connectors/http_operations.org_connectors`), le refus
 de l'agent (une ligne par connecteur) et le roster `/api/me/connector-instances`
 (`custom_api`) le lisent sans déchiffrer. Export/pose : `GET|PUT
 /api/orgs/{id}/connectors/http/definition` — l'export ne porte aucun champ `secret`.
+
+**Rapport à `otomata-tech/oto-pkg#60`** (le connecteur privé décrit en données, repris
+d'oto-backend#808 pour oto 2). Le Custom API est la forme d'**oto 1** de ce besoin, livrée
+ici sans attendre oto 2 ; il ne fixe rien pour oto 2. Point par point :
+
+| #60 demande | Ici | |
+| --- | --- | --- |
+| le format au grain de l'opération, textes compris (nom, description, verbe, chemin, paramètres typés) | `custom_ops.py` — sous-ensemble à plat de `function` (`name`, `description`, `input`, `call.method`, `call.path`) | ✓ |
+| la forme de la sortie (`function.output.schema`, déclarable côté `connectors`) | absente : la réponse du tiers est rendue telle quelle | ✗ — à ajouter avec le même nom de clé, `output`, si oto 1 en a besoin |
+| un verbe générique : lister les méthodes d'une instance, en appeler une par son nom | `http(op="list")`, `http_act(op="call", operation=…)` — deux noms d'outils fixes, la liste vient de l'instance | ✓ |
+| la garde de destination dès le départ | `egress.check_url` à chaque appel (base, serveur de jeton, document importé), aucune redirection suivie | ✓ |
+| le jeton de rafraîchissement | absent (`oauth2` = client credentials seulement) | ✗ |
+| le repli hébergé chez le tiers | hors périmètre | ✗ |
+
+Le jour où oto 2 sert les connecteurs privés, une définition d'ici s'y convertit champ à champ
+(`GET …/http/definition`, sans secret) : ses champs sont ceux de `function`, à plat.
 
 ### `inst:{id}` — la forme de fil
 

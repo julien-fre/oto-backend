@@ -1,16 +1,18 @@
-"""`http` connector, second module: setting up a Custom API, and its described operations.
+"""`http` connector, second module: `http`, the READER of a Custom API (the pair's
+convention, `tests/test_convention_act.py`: `http` reads, `http_act` acts).
 
-`tools/http.py` reaches a configured API by raw path (`http_get`/`http_post`). This
-module adds what makes the connector usable for a tool we do not ship:
+`tools/http.py` reaches a configured API by raw path (`http_get`/`http_post`/`http_doc`,
+the connector's tools from before the pair). This module adds what makes the connector
+usable for a tool we do not ship, without changing anything:
 
-- `http_setup_link` — the link a person opens to connect the API THEMSELVES, the key
-  typed in the form. A raw secret is never an MCP argument (CLAUDE.md): the tool has
-  no parameter that could carry one.
-- `http_operations` / `http_set_definition` — the org's custom connectors and the
-  definition each one SAVES once for every member (`custom_ops_definition`: label,
-  description, constant headers, variables, actions), stored on the credential's
-  instance (`connectors/http_operations`).
-- the calls (`http_call` by action name, `http_request` raw) live in `http_calls.py`.
+- `http(op="setup_link")` — the link a person opens to connect the API THEMSELVES, the
+  key typed in the form. A raw secret is never an MCP argument (CLAUDE.md): the tool
+  has no parameter that could carry one. Building a link writes nothing.
+- `http(op="list")` — the org's custom connectors, or one connector's saved definition
+  (`custom_ops_definition`: label, description, constant headers, variables, actions),
+  stored on the credential's instance (`connectors/http_operations`).
+- everything that writes or reaches the API — calls, OpenAPI import, saving the
+  definition — is `http_act`, in `http_calls.py`.
 
 The row whose definition is read or written is the one the cascade RESOLVES for the
 call (`_account`, team, org) — the same key the calls use.
@@ -41,11 +43,23 @@ INSTRUCTIONS = (
     "vault. Never ask for the key in the conversation and never pass it to a tool. "
     "If a key was already pasted in a chat, ask them to revoke it at the provider and "
     "create a new one before connecting. Once saved, the API is reachable with "
-    "`http_get`/`http_post`, and by name with `http_call` once operations are described.")
+    "`http_get`/`http_post`, and by name with `http_act(op=\"call\")` once operations "
+    "are described.")
 
 
 def _bad(message: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=message))
+
+
+def refuse_foreign(tool: str, op: str, given: dict, allowed: tuple) -> None:
+    """A multiplexed tool refuses an argument its `op` does not read — named, so the
+    agent never believes it was applied."""
+    foreign = sorted(k for k, v in given.items() if v is not None and k not in allowed)
+    if foreign:
+        raise _bad(f"`{tool}(op=\"{op}\")` does not take "
+                   + ", ".join(f"`{k}`" for k in foreign)
+                   + (f" — it takes: {', '.join(f'`{a}`' for a in allowed)}." if allowed
+                      else "."))
 
 
 def setup_params(label: str, base_url: Optional[str], auth_mode: Optional[str],
@@ -99,7 +113,7 @@ def _resolved(account: Optional[str] = None):
     rc = access.resolve_credential("http", want="byo", account=account)
     if rc.entity_type is None:
         raise _bad("http connector: no Custom API account of yours, your team's or your "
-                   "org's resolves — connect one first (`http_setup_link`).")
+                   "org's resolves — connect one first (`http(op=\"setup_link\")`).")
     return rc
 
 
@@ -140,117 +154,62 @@ def _require_admin(sub: str, rc) -> None:
 
 
 def register(mcp: FastMCP) -> None:
-    @mcp.tool(name="http_setup_link", annotations=LECTURE)
-    def http_setup_link(label: str, base_url: Optional[str] = None,
-                        auth_mode: Optional[str] = None,
-                        header_name: Optional[str] = None,
-                        query_param: Optional[str] = None,
-                        doc_path: Optional[str] = None) -> dict:
-        """Link to connect a tool that has no dedicated connector (a payroll, ERP or
-        any SaaS with an API key) through the Custom API connector. Returns `{url,
-        instructions}`: send the url to the person who holds the key; they paste the
-        key in the form, never in the chat — this tool takes no secret. If a key was
-        already pasted in a chat, tell them to revoke it and create a new one.
+    @mcp.tool(name="http", annotations=LECTURE)
+    def http(op: Literal["list", "setup_link"] = "list",
+             label: Optional[str] = None, base_url: Optional[str] = None,
+             auth_mode: Optional[str] = None, header_name: Optional[str] = None,
+             query_param: Optional[str] = None,
+             doc_path: Optional[str] = None) -> dict:
+        """Read the org's custom connectors (Custom API) — ops: `list`, `setup_link`.
+        Calls, import and changes: `http_act`.
+
+        - `list` (default): without `_account`, every custom connector of the org
+          (tools connected once for every member: account, label, description, action
+          names) — start here. With `_account`: that connector's definition, its
+          actions with their input schema. Call an action with
+          `http_act(op="call", operation=…, args={…})`.
+        - `setup_link`: a link to connect a tool that has no dedicated connector (a
+          payroll, ERP or any SaaS with an API key) → `{url, prefilled,
+          instructions}`. Send the url to the person who holds the key; they paste the
+          key in the form, never in the chat — this tool takes no secret. If a key was
+          already pasted in a chat, tell them to revoke it and create a new one.
 
         Args:
-            label: name of the tool to connect (e.g. "Acme Payroll").
-            base_url: API root to pre-fill (e.g. https://api.acme.test/v1), no query.
-            auth_mode: bearer | header | query | basic | oauth2 | none.
-            header_name: header NAME carrying the key, header mode (e.g. x-api-key).
-            query_param: parameter NAME carrying the key, query mode.
-            doc_path: path of the API's OpenAPI JSON, relative to base_url.
+            op: list (default) | setup_link.
+            label: setup_link — name of the tool to connect (e.g. "Acme Payroll").
+            base_url: setup_link — API root to pre-fill (e.g. https://api.acme.test/v1),
+                no query.
+            auth_mode: setup_link — bearer | header | query | basic | oauth2 | none.
+            header_name: setup_link — header NAME carrying the key, header mode
+                (e.g. x-api-key).
+            query_param: setup_link — parameter NAME carrying the key, query mode.
+            doc_path: setup_link — path of the API's OpenAPI JSON, relative to base_url.
         """
+        setup = {"label": label, "base_url": base_url, "auth_mode": auth_mode,
+                 "header_name": header_name, "query_param": query_param,
+                 "doc_path": doc_path}
         sub = _sub()
-        params = setup_params(label, base_url, auth_mode, header_name, query_param,
-                              doc_path)
-        org = access.current_org(sub)
-        url = links.connector_setup_link("http", sub=sub, org=org, **params)
-        out = {"url": url, "prefilled": params, "instructions": INSTRUCTIONS}
-        if url is None:
-            out["url_missing"] = links.raison_sans_lien("connectors", sub=sub, org=org)
-        return out
-
-    @mcp.tool(name="http_operations", annotations=LECTURE)
-    def http_operations(op: Literal["list", "import"] = "list",
-                        source: Optional[Literal["doc_path", "url", "inline"]] = None,
-                        url: Optional[str] = None,
-                        document: Optional[dict] = None) -> dict:
-        """The org's custom connectors (tools connected through Custom API, configured
-        once for every member) and their actions. Without `_account`: every custom
-        connector (account, label, description, action names) — start here. With
-        `_account`: that connector's definition, actions with their input schema.
-        Call an action with `http_call`. `op="import"` (admin) turns an
-        OpenAPI/Swagger JSON document into candidate actions WITHOUT saving them;
-        review, then save with `http_set_definition`.
-
-        Args:
-            op: list (default) | import.
-            source: import only — doc_path (the card's doc route, same auth), url
-                (a public JSON document, no auth sent) or inline (`document`).
-            url: source=url only.
-            document: source=inline only — the OpenAPI JSON document.
-        """
-        sub = _sub()
-        if op == "list" and session_org.current_call_account() is None:
+        if op == "setup_link":
+            params = setup_params(label, base_url, auth_mode, header_name, query_param,
+                                  doc_path)
+            org = access.current_org(sub)
+            url = links.connector_setup_link("http", sub=sub, org=org, **params)
+            out = {"url": url, "prefilled": params, "instructions": INSTRUCTIONS}
+            if url is None:
+                out["url_missing"] = links.raison_sans_lien("connectors", sub=sub, org=org)
+            return out
+        refuse_foreign("http", op, setup, ())
+        if session_org.current_call_account() is None:
             conns = _org_connectors(sub)
             if conns:
                 return {"connectors": [
                     {**{k: v for k, v in c.items() if k != "operations"},
                      "actions": [o["name"] for o in c["operations"]]} for c in conns],
-                    "next": "http_operations(_account=<account>) for an action's input; "
-                            "http_call(operation=<action>, args={…}) to call it."}
+                    "next": "http(op=\"list\", _account=<account>) for an action's "
+                            "input; http_act(op=\"call\", operation=<action>, "
+                            "args={…}) to call it."}
         rc = _resolved()
-        if op == "list":
-            d = _definition(rc)
-            return {"account": rc.account, "label": d["label"],
-                    "description": d["description"], "variables": d["variables"],
-                    "operations": [custom_ops.summary(o) for o in d["operations"]]}
-        _require_admin(sub, rc)
-        try:
-            cands, skipped = store.import_candidates(
-                source or "", url=url, document=document,
-                fields=rc.fields if source == "doc_path" else None)
-        except store.ImportFailed as e:
-            raise _bad(f"import: {e}")
-        return {"account": rc.account, "operations": cands, "skipped": skipped,
-                "saved": False}
-
-    @mcp.tool(name="http_set_definition")
-    def http_set_definition(operations: Optional[list[dict]] = None,
-                            label: Optional[str] = None,
-                            description: Optional[str] = None,
-                            logo_domain: Optional[str] = None,
-                            headers: Optional[dict] = None,
-                            variables: Optional[dict] = None) -> dict:
-        """Save the definition of the custom connector of this call (`_account`;
-        admin), reused by every member and session. Only the parts given change.
-        `operations` REPLACES the action list: each `name` (snake_case),
-        `description`, `method` GET|POST|PUT|PATCH|DELETE, `path` relative with
-        `{param}`, `input` (JSON schema object), optional `in` {arg: path|query|body}.
-        Never a secret here: the key stays on the card.
-
-        Args:
-            operations: the full action list (100 max); [] clears it.
-            label: display name of the connector (e.g. "Acme Payroll").
-            description: what the tool is and what it holds, for the agent.
-            logo_domain: brand domain for the logo (e.g. acme.test).
-            headers: constant NON-secret headers (e.g. an API version).
-            variables: saved values {name: {value, description}} that fill an action
-                argument of the same name when the call omits it.
-        """
-        sub = _sub()
-        rc = _resolved()
-        _require_admin(sub, rc)
-        given = {k: v for k, v in (("operations", operations), ("label", label),
-                                   ("description", description),
-                                   ("logo_domain", logo_domain), ("headers", headers),
-                                   ("variables", variables)) if v is not None}
-        try:
-            d = store.save_definition(rc.entity_type, str(rc.entity_id), rc.account,
-                                      given, auth_header=_auth_header(rc))
-        except custom_ops.OperationsInvalid as e:
-            raise _bad("definition refused: " + " | ".join(e.errors[:20]))
-        except store.InstanceMissing as e:
-            raise _bad(f"http connector: {e}.")
-        return {"account": rc.account, "saved": sorted(given),
-                "label": d["label"], "actions": [o["name"] for o in d["operations"]]}
+        d = _definition(rc)
+        return {"account": rc.account, "label": d["label"],
+                "description": d["description"], "variables": d["variables"],
+                "operations": [custom_ops.summary(o) for o in d["operations"]]}

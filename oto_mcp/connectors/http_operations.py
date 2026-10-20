@@ -122,6 +122,26 @@ def org_connectors(org_id: int) -> list[dict]:
     return out
 
 
+def for_context(org_id: int, connectors: list[str]) -> list[dict]:
+    """The org's custom connectors for the agent's context (`instructions`, « Ton
+    contexte oto ») — a tool configured once by the org, that the agent would not find
+    in the catalogue. At most 10; `[]` when `http` is not active. Fail-open, logged."""
+    if "http" not in connectors or not org_id:
+        return []
+    try:
+        return org_connectors(org_id)[:10]
+    except Exception:
+        logger.warning("contexte : connecteurs personnalisés illisibles (omis)",
+                       exc_info=True)
+        return []
+
+
+def context_line(c: dict) -> str:
+    """One line of the agent's context per custom connector."""
+    return (f"- Connecteur personnalisé : {c['label']} — "
+            f"`http(op=\"list\", _account=\"{c['account']}\")`")
+
+
 def match_org_connector(org_id: int, name: str) -> Optional[dict]:
     """The org's custom connector whose label (or account) IS `name`, case and
     surrounding spaces ignored — what `oto_connector(name=…)` returns for a tool
@@ -134,9 +154,9 @@ def match_org_connector(org_id: int, name: str) -> Optional[dict]:
             return {"connector": CONNECTOR, "account": c["account"], "label": c["label"],
                     "description": c["description"], "logo_domain": c["logo_domain"],
                     "actions_count": c["actions_count"],
-                    "how_to_call": (f"http_operations(_account=\"{c['account']}\") lists "
-                                    "its actions; http_call(operation=…, args={…}) "
-                                    "calls one.")}
+                    "how_to_call": (f"http(op=\"list\", _account=\"{c['account']}\") "
+                                    "lists its actions; http_act(op=\"call\", "
+                                    "operation=…, args={…}) calls one.")}
     return None
 
 

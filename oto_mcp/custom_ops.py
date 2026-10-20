@@ -4,7 +4,7 @@ An org connects a tool we do not ship (a payroll or ERP SaaS with an API key) th
 the generic `http` connector. `http_get`/`http_post` reach it, but the agent has to
 guess paths and parameters each time. An org can instead DESCRIBE the operations it
 uses — name, description, method, path template, input schema — and the agent calls
-them by name (`http_call`). The list lives in `connector_instances.config["operations"]`
+them by name (`http_act(op="call")`). The list lives in `connector_instances.config["operations"]`
 of the credential's instance (`connectors/http_operations.py`); this module is PURE:
 no I/O, no DB, testable on its own.
 
@@ -37,7 +37,7 @@ from urllib.parse import quote, unquote
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 MAX_OPERATIONS = 100
-# The whole list, serialized: it rides in a JSONB column read on every `http_call`.
+# The whole list, serialized: it rides in a JSONB column read on every `http_act(op="call")`.
 MAX_BYTES = 256 * 1024
 MAX_DESCRIPTION = 1000
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
@@ -58,7 +58,7 @@ class OperationsInvalid(ValueError):
 
 
 class CallRefused(ValueError):
-    """The arguments of an `http_call` do not fit the operation."""
+    """The arguments of an `http_act(op="call")` do not fit the operation."""
 
 
 def placeholders(path: str) -> list[str]:
@@ -81,7 +81,7 @@ def _path_errors(where: str, path: Any) -> list[str]:
     return errs
 
 
-path_errors = _path_errors     # the raw call (`http_request`) checks a path the same way
+path_errors = _path_errors     # the raw call (`http_act(op="request")`) checks a path the same way
 
 
 def _type_errors(where: str, schema: Any) -> list[str]:
@@ -307,6 +307,6 @@ def plan_call(op: dict, args: Optional[dict],
 
 
 def summary(op: dict) -> dict:
-    """What `http_operations` lists for one operation."""
+    """What `http(op="list")` lists for one operation."""
     return {"name": op["name"], "description": op["description"],
             "method": op["method"], "path": op["path"], "input": op.get("input")}

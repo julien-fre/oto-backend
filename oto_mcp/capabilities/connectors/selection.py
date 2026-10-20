@@ -26,17 +26,17 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from ... import access, db, links, org_store, providers, session_org, tool_registry
+from ... import access, db, org_store, providers, session_org, tool_registry
 from ...connectors import activation as connector_activation
 from ...connectors import cardinality as connector_cardinality
 from ...connectors import credential_presence
-from ...connectors import http_operations
 from ...connectors.credential_presence import CredentialPresence
 from ...connectors import readiness as connector_readiness
 from ...connectors import selection as connector_selection
 from .._authz import ORG_ADMIN_OF, SUB_ONLY
 from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
 from ..registry import CAPABILITIES
+from . import custom_api
 from .kit import (BulkSelectInput, BulkSelectResult,  # noqa: F401 — re-exported
                   OrgRecommendedConnectors, RecommendInput, UnsetDefaultInput,
                   UnsetDefaultResult, _bulk_select, _recommend, _unset_default)
@@ -274,10 +274,8 @@ class MyConnectors(BaseModel):
     credentials: str = "computed"
     name_match: Optional[NameMatch] = None
     toolbox_scope: Optional[ToolboxScope] = None
-    # A `name=` that is no catalog connector but the label (or account) of one of the
-    # org's CUSTOM connectors (`http`, "Custom API"): that connector — `{connector,
-    # account, label, description, logo_domain, actions_count, how_to_call}` — and
-    # `connectors` is empty.
+    # `name=` designates one of the org's custom connectors (`custom_api.py`): that one,
+    # and `connectors` is empty.
     custom_connector: Optional[dict] = None
 
 
@@ -484,22 +482,6 @@ def _suggestions(catalog: list[dict], demande: str, n: int = 5) -> list[str]:
     return list(dict.fromkeys(proches))[:n]
 
 
-def _repli_api_perso(catalog: list[dict], demande: str,
-                     ctx: Optional[ResolvedCtx]) -> tuple[str, Optional[str]]:
-    """The way out when the tool has no card: the Custom API connector (`http`), IF the
-    org can reach it. Its setup link carries the searched name, never a secret — the
-    key is typed in the form. `("", None)` when `http` is not open to the org."""
-    if not any(c["name"] == "http" for c in catalog):
-        return "", None
-    url = links.connector_setup_link("http", sub=ctx.sub if ctx else None,
-                                     org=ctx.org_id if ctx else None, label=demande)
-    where = f" at {url}" if url else " (`http_setup_link` gives the link)"
-    return (f" There is no dedicated connector, but a tool with an API key can be "
-            f"connected through the Custom API connector (`http`){where}. Send the "
-            f"link to whoever holds the key: they paste it in that form — never ask "
-            f"for the key in the chat."), url
-
-
 def _refus_nom_inconnu(catalog: list[dict], demande: str,
                        ctx: Optional[ResolvedCtx] = None) -> AuthzDenied:
     """The refusal of a name that designates nothing — NAMED and offering suggestions
@@ -511,16 +493,13 @@ def _refus_nom_inconnu(catalog: list[dict], demande: str,
     else:
         suite = (" No close name: `oto_connector(op='list')` without `name` returns the "
                  "compact catalog with the exact names.")
-    repli, setup_url = _repli_api_perso(catalog, demande, ctx)
-    details: dict = {"query": demande, "suggestions": proches}
-    if repli:
-        details["custom_api"] = {"connector": "http", "setup_url": setup_url}
+    repli, extra = custom_api.repli(catalog, demande, ctx)
     return AuthzDenied(
         404, "unknown_connector",
         f"No connector available to your active org is named `{demande}` or carries "
         f"this label (or it is not open to your org).{suite}{repli} This refusal says "
         f"NOTHING about your connections: it concerns the name.",
-        details=details)
+        details={"query": demande, "suggestions": proches, **extra})
 
 
 def _with_readiness(ctx: ResolvedCtx, row: dict) -> dict:
@@ -587,12 +566,10 @@ def _me_projection(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
             # Not exposed for the active org, restricted by the org RBAC, or unknown name
             # — indistinguishable on the member side (same verdict as `_require_exposed`). But
             # the refusal OFFERS suggestions: a curt "unknown" was read as "not connected" (#1112).
-            perso = (http_operations.match_org_connector(ctx.org_id, inp.name)
-                     if any(c["name"] == "http" for c in catalog) else None)
+            perso = custom_api.projection_for_name(ctx, catalog, inp.name,
+                                                   verbose=inp.verbose, include=inp.include)
             if perso is not None:
-                return {"connectors": [], "verbose": inp.verbose,
-                        "include": inp.include or [], "credentials": "computed",
-                        "readiness": "not_computed", "custom_connector": perso}
+                return perso
             raise _refus_nom_inconnu(catalog, inp.name, ctx)
         if [c["name"] for c in trouves] != [inp.name]:
             name_match = {

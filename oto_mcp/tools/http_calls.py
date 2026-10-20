@@ -1,18 +1,24 @@
-"""`http` connector, third module: the CALLS of a custom connector.
+"""`http` connector, third module: `http_act`, what ACTS on a custom connector (the
+pair's convention: `http` reads, `http_act` acts — the tool an MCP client confirms).
 
-- `http_call` — one of its saved actions, by name. Without `_account`, the action is
+- `op="call"` — one of its saved actions, by name. Without `_account`, the action is
   looked up across the org's custom connectors: a name that only one of them carries
-  resolves alone, a shared name is refused with the candidates.
-- `http_request` — a raw call, any verb, for what no action describes yet.
+  resolves alone, a shared name is refused with the candidates. An action may be a GET:
+  the client cannot know what a described action does at the third party, so every
+  call is an act.
+- `op="request"` — a raw call, any verb, for what no action describes yet.
+- `op="import"` (admin) — candidate actions from an OpenAPI/Swagger JSON document,
+  NOT saved: it fetches a document the admin points at, and prepares a write.
+- `op="set_definition"` (admin) — saves the connector's definition for every member.
 
-Both go through the same client as `http_get` (vault, egress guard, redirect refusal,
-upstream-error translation), with the definition's constant headers; `http_call`
+The calls go through the same client as `http_get` (vault, egress guard, redirect
+refusal, upstream-error translation), with the definition's constant headers; `call`
 also fills an omitted argument from the definition's saved variables. Every verb is
 carried: oto-core's `HttpConnectorClient.request` takes GET/POST/PUT/PATCH/DELETE.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 import requests
 from fastmcp import FastMCP
@@ -20,7 +26,18 @@ from fastmcp import FastMCP
 from .. import custom_ops, session_org
 from ..connectors import http_operations as store
 from . import http as http_tool
-from .http_ops import _bad, _definition, _org_connectors, _resolved, _sub
+from .http_ops import (_auth_header, _bad, _definition, _org_connectors, _require_admin,
+                       _resolved, _sub, refuse_foreign)
+from .lecture import ACTE
+
+#: What each op reads; any other argument given is refused by name.
+ARGS = {
+    "call": ("operation", "args", "dry_run"),
+    "request": ("method", "path", "params", "body", "dry_run"),
+    "import": ("source", "url", "document"),
+    "set_definition": ("operations", "label", "description", "logo_domain", "headers",
+                       "variables"),
+}
 
 
 def _account_for(sub: str, operation: str) -> Optional[str]:
@@ -50,65 +67,150 @@ def _send(rc, headers: dict, plan: dict):
         raise http_tool._upstream_error(e)
 
 
+def _call(sub: str, operation: Optional[str], args: Optional[dict],
+          dry_run: bool) -> dict:
+    if not operation:
+        raise _bad("`http_act(op=\"call\")` needs `operation` — the action's name, "
+                   "from `http(op=\"list\")`.")
+    rc = _resolved(_account_for(sub, operation))
+    d = _definition(rc)
+    found = custom_ops.find(d["operations"], operation)
+    if found is None:
+        names = ", ".join(o["name"] for o in d["operations"][:30]) or "none yet"
+        raise _bad(f"no action `{operation}` on custom connector `{rc.account}` — "
+                   f"available: {names}.")
+    try:
+        plan = custom_ops.plan_call(found, args, d["variables"])
+    except custom_ops.CallRefused as e:
+        raise _bad(str(e))
+    if dry_run:
+        return {"dry_run": True, "account": rc.account, **plan}
+    return _send(rc, d["headers"], plan)
+
+
+def _request(method: Optional[str], path: Optional[str], params: Optional[dict],
+             body, dry_run: bool) -> dict:
+    verb = (method or "").strip().upper()
+    if verb not in custom_ops.METHODS:
+        raise _bad(f"`method` must be one of {', '.join(custom_ops.METHODS)}.")
+    errs = custom_ops.path_errors("`path`", path)
+    if errs:
+        raise _bad("; ".join(errs))
+    rc = _resolved()
+    plan = {"method": verb, "path": path, "query": params or {}, "body": body}
+    if dry_run:
+        return {"dry_run": True, "account": rc.account, **plan}
+    try:
+        headers = store.load_definition(rc.entity_type, str(rc.entity_id),
+                                        rc.account)["headers"]
+    except store.InstanceMissing:
+        headers = {}      # no saved definition: the card alone
+    return _send(rc, headers, plan)
+
+
+def _import(sub: str, source: Optional[str], url: Optional[str],
+            document: Optional[dict]) -> dict:
+    rc = _resolved()
+    _require_admin(sub, rc)
+    try:
+        cands, skipped = store.import_candidates(
+            source or "", url=url, document=document,
+            fields=rc.fields if source == "doc_path" else None)
+    except store.ImportFailed as e:
+        raise _bad(f"import: {e}")
+    return {"account": rc.account, "operations": cands, "skipped": skipped,
+            "saved": False}
+
+
+def _set_definition(sub: str, given: dict) -> dict:
+    rc = _resolved()
+    _require_admin(sub, rc)
+    try:
+        d = store.save_definition(rc.entity_type, str(rc.entity_id), rc.account,
+                                  given, auth_header=_auth_header(rc))
+    except custom_ops.OperationsInvalid as e:
+        raise _bad("definition refused: " + " | ".join(e.errors[:20]))
+    except store.InstanceMissing as e:
+        raise _bad(f"http connector: {e}.")
+    return {"account": rc.account, "saved": sorted(given),
+            "label": d["label"], "actions": [o["name"] for o in d["operations"]]}
+
+
 def register(mcp: FastMCP) -> None:
-    @mcp.tool(name="http_call")
-    def http_call(operation: str, args: Optional[dict] = None,
-                  dry_run: bool = False) -> dict:
-        """Call an action of a custom connector by name (list them with
-        `http_operations`). `_account` is optional when only one of the org's custom
-        connectors has this action. Arguments are checked against its input; an
-        omitted one takes the connector's saved variable of the same name. Any verb.
-        `dry_run=true` returns the request without sending it.
+    @mcp.tool(name="http_act", annotations=ACTE)
+    def http_act(op: Literal["call", "request", "import", "set_definition"],
+                 operation: Optional[str] = None, args: Optional[dict] = None,
+                 method: Optional[str] = None, path: Optional[str] = None,
+                 params: Optional[dict] = None, body: Optional[dict | list] = None,
+                 source: Optional[Literal["doc_path", "url", "inline"]] = None,
+                 url: Optional[str] = None, document: Optional[dict] = None,
+                 operations: Optional[list[dict]] = None, label: Optional[str] = None,
+                 description: Optional[str] = None, logo_domain: Optional[str] = None,
+                 headers: Optional[dict] = None, variables: Optional[dict] = None,
+                 dry_run: bool = False) -> dict:
+        """Act on a custom connector (Custom API) — ops: `call`, `request`, `import`,
+        `set_definition`. Reads (the org's connectors, an action's input, the setup
+        link): `http`.
+
+        - `call`: an action by name (`operation`, `args`). `_account` is optional when
+          only one of the org's custom connectors has this action. Arguments are
+          checked against its input; an omitted one takes the connector's saved
+          variable of the same name. Any verb.
+        - `request`: a raw call to the custom connector of this call (`_account` when
+          there are several), any verb (`method`, `path`, `params`, `body`) — for what
+          no saved action describes. Its auth and constant headers are applied.
+          Prefer `call` when an action exists.
+        - `import` (admin): turns an OpenAPI/Swagger JSON document into candidate
+          actions WITHOUT saving them (`source`, `url` | `document`); review, then
+          save with `set_definition`.
+        - `set_definition` (admin): saves the definition of the custom connector of
+          this call (`_account`), reused by every member and session. Only the parts
+          given change. `operations` REPLACES the action list: each `name`
+          (snake_case), `description`, `method` GET|POST|PUT|PATCH|DELETE, `path`
+          relative with `{param}`, `input` (JSON schema object), optional `in`
+          {arg: path|query|body}. Never a secret here: the key stays on the card.
+
+        `dry_run=true` (`call`, `request`) returns {method, path, query, body} without
+        sending it.
 
         Args:
-            operation: name of the action.
-            args: its arguments, by name.
-            dry_run: validate and return {method, path, query, body} without calling.
+            op: call | request | import | set_definition.
+            operation: call — name of the action.
+            args: call — its arguments, by name.
+            method: request — GET | POST | PUT | PATCH | DELETE.
+            path: request — relative to the connector's base URL, starts with /, no
+                query.
+            params: request — query parameters.
+            body: request — JSON body.
+            source: import — doc_path (the card's doc route, same auth), url (a public
+                JSON document, no auth sent) or inline (`document`).
+            url: import, source=url only.
+            document: import, source=inline only — the OpenAPI JSON document.
+            operations: set_definition — the full action list (100 max); [] clears it.
+            label: set_definition — display name of the connector (e.g. "Acme
+                Payroll").
+            description: set_definition — what the tool is and what it holds, for the
+                agent.
+            logo_domain: set_definition — brand domain for the logo (e.g. acme.test).
+            headers: set_definition — constant NON-secret headers (e.g. an API
+                version).
+            variables: set_definition — saved values {name: {value, description}} that
+                fill an action argument of the same name when the call omits it.
+            dry_run: call, request — validate and preview, send nothing.
         """
+        given = {"operation": operation, "args": args, "method": method, "path": path,
+                 "params": params, "body": body, "source": source, "url": url,
+                 "document": document, "operations": operations, "label": label,
+                 "description": description, "logo_domain": logo_domain,
+                 "headers": headers, "variables": variables,
+                 "dry_run": dry_run or None}
+        refuse_foreign("http_act", op, given, ARGS[op])
         sub = _sub()
-        rc = _resolved(_account_for(sub, operation))
-        d = _definition(rc)
-        found = custom_ops.find(d["operations"], operation)
-        if found is None:
-            names = ", ".join(o["name"] for o in d["operations"][:30]) or "none yet"
-            raise _bad(f"no action `{operation}` on custom connector `{rc.account}` — "
-                       f"available: {names}.")
-        try:
-            plan = custom_ops.plan_call(found, args, d["variables"])
-        except custom_ops.CallRefused as e:
-            raise _bad(str(e))
-        if dry_run:
-            return {"dry_run": True, "account": rc.account, **plan}
-        return _send(rc, d["headers"], plan)
-
-    @mcp.tool(name="http_request")
-    def http_request(method: str, path: str, params: Optional[dict] = None,
-                     body: Optional[dict | list] = None, dry_run: bool = False) -> dict:
-        """Raw call to the custom connector of this call (`_account` when there are
-        several), any verb — for what no saved action describes. Its auth and
-        constant headers are applied. Prefer `http_call` when an action exists.
-
-        Args:
-            method: GET | POST | PUT | PATCH | DELETE.
-            path: relative to the connector's base URL, starts with /, no query.
-            params: query parameters.
-            body: JSON body.
-            dry_run: return {method, path, query, body} without calling.
-        """
-        _sub()
-        verb = (method or "").strip().upper()
-        if verb not in custom_ops.METHODS:
-            raise _bad(f"`method` must be one of {', '.join(custom_ops.METHODS)}.")
-        errs = custom_ops.path_errors("`path`", path)
-        if errs:
-            raise _bad("; ".join(errs))
-        rc = _resolved()
-        plan = {"method": verb, "path": path, "query": params or {}, "body": body}
-        if dry_run:
-            return {"dry_run": True, "account": rc.account, **plan}
-        try:
-            headers = store.load_definition(rc.entity_type, str(rc.entity_id),
-                                            rc.account)["headers"]
-        except store.InstanceMissing:
-            headers = {}      # no saved definition: the card alone
-        return _send(rc, headers, plan)
+        if op == "call":
+            return _call(sub, operation, args, dry_run)
+        if op == "request":
+            return _request(method, path, params, body, dry_run)
+        if op == "import":
+            return _import(sub, source, url, document)
+        return _set_definition(sub, {k: given[k] for k in ARGS["set_definition"]
+                                     if given[k] is not None})

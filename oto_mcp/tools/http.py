@@ -177,14 +177,14 @@ def _client() -> HttpConnectorClient:
 
 def client_from_fields(f: dict, headers: dict | None = None) -> HttpConnectorClient:
     """The client for these credential fields, refusals translated into actionable
-    McpErrors — `_client()` for the call's credential, `http_call` for the row it
+    McpErrors — `_client()` for the call's credential, `http_act` for the row it
     resolved. The TWO destinations the card carries are guarded: the called base,
     and — in oauth2 mode — the token server, which goes out via `requests.post`
     from oto-core without passing through `base_url`. Guarding only the first would
     leave an entire outbound path outside the guard. (The REST import of a
     `doc_path` builds its client in `connectors/http_operations.client_for`, same
-    guard.) `headers` = the saved definition's constant headers (`http_call`,
-    `http_request`)."""
+    guard.) `headers` = the saved definition's constant headers (`http_act`
+    `call` and `request`)."""
     base_url = (f.get("base_url") or "").strip()
     mode = (f.get("auth_mode") or "").strip()
     if not base_url or not mode:

@@ -36,9 +36,10 @@ CONNECTOR = _c(
     # use (a payroll or ERP SaaS…) is not in the catalogue. The NAME stays `http` —
     # tool names, vault rows and instance refs all carry it.
     label="Custom API",
-    # `tools/http_ops.py`: setup link and saved definition; `tools/http_calls.py`:
-    # calls by action name and raw (500-line ceiling: `tools/http.py` keeps the
-    # raw-path tools).
+    # The pair (`tests/test_convention_act.py`): `tools/http_ops.py` serves `http`
+    # (reads: custom connectors, definition, setup link), `tools/http_calls.py` serves
+    # `http_act` (calls, OpenAPI import, saving the definition). `tools/http.py` keeps
+    # the raw-path tools from before the pair (`http_get`/`http_post`/`http_doc`).
     modules=("http", "http_ops", "http_calls"),
     # `auth_mode` SELECTS the other fields (oto-backend#449): a `bearer` form
     # need not show the six oauth2 and basic fields, and the write

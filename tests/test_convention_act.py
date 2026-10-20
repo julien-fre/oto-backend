@@ -59,7 +59,8 @@ A_MIGRER = frozenset({
 VERBES_EFFET = re.compile(
     r"^(send|reply|forward|publish|broadcast|invite|remind|trash|archive|move|delete|"
     r"remove|rm|create|update|upsert|set|add|cancel|trigger|activate|post|react|"
-    r"comment|review|push|upload|share|unshare|lend|revoke|disable|enable)(_|$)")
+    r"comment|review|push|upload|share|unshare|lend|revoke|disable|enable|call|request|"
+    r"import)(_|$)")
 #: Les ops qui SIMULENT : elles écrivent ce que personne ne voit et que rien ne détruit.
 SIMULATIONS = frozenset({"draft"})
 #: Les paramètres qui feraient agir l'outil qui lit.
@@ -191,3 +192,25 @@ def test_la_migration_reecrit_sur_place_sans_doublon():
                                  "outlook_act"]
     with pytest.raises(ValueError):
         m.reecrire([{"name": "gmail_message"}], table)
+
+
+#: Les connecteurs encore dans `A_MIGRER` dont la PAIRE est déjà née : leurs outils
+#: d'avant restent, mais `<ns>` et `<ns>_act` ont la forme cible dès aujourd'hui.
+PAIRES_NEES = ("http", "slack")
+
+
+@pytest.mark.parametrize("ns", PAIRES_NEES)
+def test_une_paire_nee_avant_la_migration_a_deja_la_forme_cible(par_connecteur, ns):
+    outils = {n: t for n, t in par_connecteur[ns].items() if n in (ns, f"{ns}_act")}
+    assert set(outils) == {ns, f"{ns}_act"}, (ns, sorted(par_connecteur[ns]))
+    lecteur, acteur = outils[ns], outils[f"{ns}_act"]
+    assert lecteur.annotations is not None and lecteur.annotations.readOnlyHint is True
+    for op in _ops(lecteur):
+        assert not VERBES_EFFET.match(op), (ns, op)
+    for p in lecteur.parameters.get("properties") or {}:
+        assert not PARAMETRES_DECLENCHEURS.match(p), (ns, p)
+    a = acteur.annotations
+    assert a is not None and a.readOnlyHint is False
+    assert {"destructiveHint", "openWorldHint"} <= set(a.model_dump(exclude_unset=True))
+    assert _ops(acteur) and all(VERBES_EFFET.match(op) for op in _ops(acteur)), (
+        f"{ns}_act", _ops(acteur))

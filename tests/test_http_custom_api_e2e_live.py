@@ -146,7 +146,7 @@ def test_le_parcours_complet(monde, agent, emis):
     assert ligne["meta"]["label"] == "Pet Store"
 
     # 2. import depuis l'URL publique du document OpenAPI
-    imp = agent("http_operations")(op="import", source="url", url=DOC)
+    imp = agent("http_act")(op="import", source="url", url=DOC)
     par_nom = {o["name"]: o for o in imp["operations"]}
     assert set(GARDEES) <= set(par_nom), sorted(par_nom)
     assert (par_nom["get_pet_by_id"]["method"], par_nom["get_pet_by_id"]["path"]) == \
@@ -165,17 +165,18 @@ def test_le_parcours_complet(monde, agent, emis):
                  "method": "GET", "path": "/pet/{id}",
                  "input": {"type": "object", "properties": {"id": {"type": "string"}},
                            "required": ["id"]}}
-    out = agent("http_set_definition")(
+    out = agent("http_act")(
+        op="set_definition",
         operations=[par_nom[n] for n in GARDEES] + [a_la_main],
         description="Swagger demo pet store: pets, orders, users.",
-        logo_domain="swagger.io", headers={"X-Request-Source": "tulina-e2e"},
+        logo_domain="swagger.io", headers={"X-Request-Source": "oto-e2e"},
         variables={"petId": {"value": str(PET), "description": "the e2e pet"}})
     assert out["actions"] == [*GARDEES, "get_pet_text"]
     with pytest.raises(McpError, match="authenticates"):
-        agent("http_set_definition")(headers={"api_key": "x"})   # l'en-tête de la clé
+        agent("http_act")(op="set_definition", headers={"api_key": "x"})   # l'en-tête de la clé
 
     # 4. découverte : la liste de l'org, et `oto_connector(name=…)`
-    liste = agent("http_operations")()
+    liste = agent("http")()
     [c] = liste["connectors"]
     assert (c["label"], c["account"], c["actions_count"]) == ("Pet Store", "petstore", 5)
     from oto_mcp.capabilities._types import ResolvedCtx
@@ -185,7 +186,10 @@ def test_le_parcours_complet(monde, agent, emis):
     assert trouve["custom_connector"]["label"] == "Pet Store"
     assert trouve["custom_connector"]["actions_count"] == 5
 
-    call = agent("http_call")
+    act = agent("http_act")
+
+    def call(**kw):
+        return act(op="call", **kw)
     pet = {"id": PET, "name": "e2e-dog", "photoUrls": [], "status": "available"}
     try:
         # 5. chaque verbe : dry_run puis réel, compte résolu par le nom de l'action
@@ -194,7 +198,7 @@ def test_le_parcours_complet(monde, agent, emis):
         assert call(operation="add_pet", args=pet)["id"] == PET
         envoi = emis[n]
         assert envoi.method == "POST"
-        assert envoi.headers["X-Request-Source"] == "tulina-e2e"
+        assert envoi.headers["X-Request-Source"] == "oto-e2e"
         assert envoi.headers["api_key"] == "special-key"
 
         sec = call(operation="get_pet_by_id", args={"petId": PET}, dry_run=True)
@@ -210,7 +214,8 @@ def test_le_parcours_complet(monde, agent, emis):
 
         # 6. appel brut (PATCH n'existe pas chez Petstore : DELETE brut, après un
         # second pet créé à cette fin)
-        brut = agent("http_request")
+        def brut(**kw):
+            return act(op="request", **kw)
         assert brut(method="delete", path=f"/pet/{PET + 1}", dry_run=True) == {
             "dry_run": True, "account": "petstore", "method": "DELETE",
             "path": f"/pet/{PET + 1}", "query": {}, "body": None}
@@ -241,7 +246,7 @@ def test_le_parcours_complet(monde, agent, emis):
     try:
         n = len(emis)
         with pytest.raises(McpError, match="OTO_EGRESS_ALLOW|interne|internal"):
-            agent("http_request")(method="GET", path="/x")
+            agent("http_act")(op="request", method="GET", path="/x")
         assert len(emis) == n
     finally:
         reset(jeton)
@@ -257,5 +262,5 @@ def test_le_parcours_complet(monde, agent, emis):
     assert not secrets & set(export) and "special-key" not in str(export)
     assert (export["label"], export["base_url"], export["header_name"]) == \
         ("Pet Store", BASE, "api_key")
-    assert export["headers"] == {"X-Request-Source": "tulina-e2e"}
+    assert export["headers"] == {"X-Request-Source": "oto-e2e"}
     assert [o["name"] for o in export["operations"]] == [*GARDEES, "get_pet_text"]

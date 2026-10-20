@@ -56,9 +56,9 @@ from pydantic import BaseModel, ConfigDict, Field
 # list_platform_keys (which decrypts), never the impoverished forms
 # list_org_secrets/list_group_secrets (they overwrite account/meta/secret_kind).
 from ... import access, credentials_store, db, group_store, instance_refs, providers
-from . import instances_tenant
+from . import custom_api, instances_tenant
 from ._level_doc import DOC_LEVEL as _DOC_LEVEL, DOC_OWNER_TYPE as _DOC_OWNER_TYPE
-from ...connectors import http_operations, instance_visibility
+from ...connectors import instance_visibility
 from .._authz import SUB_ONLY
 from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
 from ..registry import CAPABILITIES
@@ -187,9 +187,7 @@ class ConnectorInstance(BaseModel):
     # filed by R9 under an opt-in org setting.
     # ⚠️ **May be absent** — same fail-open as `id`.
     visible_to: Optional[list[str]] = None
-    # `http` instances only ("Custom API"): the custom connector's saved definition,
-    # for a card of its own — `{label, description, logo_domain, actions_count}`.
-    # ⚠️ May be absent (fail-open, like `id`).
+    # `http` instances only: the custom connector's card (`custom_api.py`). May be absent.
     custom_api: Optional[dict] = None
 
 
@@ -378,30 +376,7 @@ def _stamp_instance_identity(out: list[dict]) -> None:
             cle[0], cle[1], cle[2], account=cle[3],
             visibility=ligne["visibility"], share_mode=mode,
             share_down=down, share_side=side)
-    _stamp_custom_api(out, connues, cles)
-
-
-def _stamp_custom_api(out: list[dict], connues: dict, cles: list) -> None:
-    """Each `http` instance ("Custom API") is a custom connector the front renders as
-    its OWN card: `custom_api = {label, description, logo_domain, actions_count}`, read
-    from the instance's saved definition (one query, no decryption). Fail-open and
-    logged, like `id`: the listing never falls for it."""
-    ids = {i: connues[c]["id"] for i, c in enumerate(cles)
-           if c and c[2] == "http" and c in connues}
-    if not ids:
-        return
-    try:
-        resumes = http_operations.summaries_for_instances(list(ids.values()))
-    except Exception:
-        logger.warning("instances: custom connector definitions unavailable "
-                       "(fail-open)", exc_info=True)
-        return
-    for i, iid in ids.items():
-        if iid in resumes:
-            resume = dict(resumes[iid])
-            if resume["label"] == "Custom API" and out[i].get("name"):
-                resume["label"] = out[i]["name"]     # the card's display name
-            out[i]["custom_api"] = resume
+    custom_api.stamp_instances(out, connues, cles)
 
 
 def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:

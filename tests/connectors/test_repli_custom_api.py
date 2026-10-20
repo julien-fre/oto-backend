@@ -51,7 +51,7 @@ def test_sans_page_connecteurs_l_issue_reste_nommee_sans_lien(monkeypatch):
     monkeypatch.setattr(links, "link_for", lambda *a, **k: None)
     e = _refus([_ligne("http")])
     assert e.details["custom_api"]["setup_url"] is None
-    assert "`http_setup_link`" in e.message
+    assert '`http(op="setup_link")`' in e.message
 
 
 def test_le_connecteur_se_presente_en_custom_api():
@@ -96,7 +96,8 @@ def test_le_nom_d_un_connecteur_personnalise_le_rend_au_lieu_du_refus(monkeypatc
     c = out["custom_connector"]
     assert (c["connector"], c["account"], c["label"], c["actions_count"]) == \
         ("http", "paie", "Acme Payroll", 2)
-    assert 'http_operations(_account="paie")' in c["how_to_call"]
+    assert 'http(op="list", _account="paie")' in c["how_to_call"]
+    assert 'http_act(op="call"' in c["how_to_call"]
     # Un autre nom reste refusé — avec l'issue Custom API.
     monkeypatch.setattr(links, "link_for", lambda *a, **k: None)
     with pytest.raises(AuthzDenied):
@@ -109,12 +110,12 @@ def test_le_contexte_de_l_agent_nomme_les_connecteurs_personnalises(org_paie):
            "custom_connectors": [{"label": "Acme Payroll", "account": "paie"}],
            "projects": [], "runs": []}
     texte = instructions._format_context(ctx)
-    assert '- Connecteur personnalisé : Acme Payroll — `http_operations(_account="paie")`' \
+    assert '- Connecteur personnalisé : Acme Payroll — `http(op="list", _account="paie")`' \
         in texte
 
 
 def test_le_roster_des_instances_porte_la_carte_du_connecteur(monkeypatch):
-    from oto_mcp.capabilities.connectors import instances
+    from oto_mcp.capabilities.connectors import custom_api
     from oto_mcp.db import connector_instances as ci
     monkeypatch.setattr(ci, "configs_for_instance_ids", lambda ids: {
         3: {"label": "Acme Payroll", "logo_domain": "acme.test",
@@ -123,7 +124,7 @@ def test_le_roster_des_instances_porte_la_carte_du_connecteur(monkeypatch):
     cles = [("org", "7", "http", "paie"), ("org", "7", "http", "rh"),
             ("org", "7", "folk", "")]
     connues = {cles[0]: {"id": 3}, cles[1]: {"id": 4}, cles[2]: {"id": 5}}
-    instances._stamp_custom_api(out, connues, cles)
+    custom_api.stamp_instances(out, connues, cles)
     assert out[0]["custom_api"] == {"label": "Acme Payroll", "description": None,
                                     "logo_domain": "acme.test", "actions_count": 1}
     assert out[1]["custom_api"]["label"] == "Custom API · rh"
