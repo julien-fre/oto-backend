@@ -283,6 +283,22 @@ de révélation ou d'enrichissement que pour ceux qui passent.
 - Une société ou une personne est jugée une fois, à la fin (`passed`) : le fournisseur
   suivant ne trouverait que la même.
 
+## Gens : juger la recherche gratuite, ne révéler que les retenus
+
+Mesuré le 19/10/2026 sur une grande enseigne de distribution (le cas le plus cher d'un
+sourcing par AI Ark : ~660 profils facturés pour en garder 10) : la recherche Apollo est
+GRATUITE et montre les TITRES (noms masqués) — 239 personnes pour les rôles visés. Jev a
+jugé 100 titres pour 0,0019 \$ ; les deux premiers révélés (`apollo_match_person` par id,
+1 crédit Apollo chacun) étaient le directeur marketing-communication-omnicommerce du siège
+et le responsable expérience client, avec URL LinkedIn ET email vérifié.
+
+D'où, sous `qualify` : Apollo prend une page entière (le vivier, `_pool`), Jev juge le
+vivier sur les titres, et seuls les `limit` meilleurs qui passent sont révélés
+(`Step.reveal`, `_reveal_qualified`) — avant tout fournisseur payé au profil. Sans
+`qualify`, les noms masqués restent un repli (`weak`), comme avant. Les révélations
+comptent chacune dans `max_paid_steps` ; la recherche, gratuite, non. Jev indisponible →
+le vivier redevient le repli.
+
 ## Sur un tableau : `waterfall_<x>_act(op="update_rows")`
 
 Un tableau s'enrichissait un appel par ligne : l'agent lisait la ligne, appelait la

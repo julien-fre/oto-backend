@@ -1019,3 +1019,60 @@ def test_une_execution_apify_trop_longue_pour_le_reste_n_est_pas_lancee(calls, m
                providers=["linkedin_employees"])
     assert "apify_run_sync" not in _made(calls)
     assert out["attempts"][0]["code"] == "time_budget"
+
+
+
+def test_reel_recherche_apollo_gratuite_jugee_puis_seuls_les_retenus_reveles(calls):
+    """Le cas d'une grande enseigne (19/10/2026) : 239 personnes à la recherche gratuite,
+    titres visibles, noms masqués — Jev juge les titres, on ne révèle que les meilleurs
+    qui passent ; AI Ark (payé au profil) n'est jamais appelé."""
+    calls["answers"]["apollo_search_people"] = IssueCible(ok=True, result={"people": [
+        {"id": "p1", "first_name": "Bo", "last_name_obfuscated": "D***c",
+         "title": "Directeur Marketing, Communication, Omnicommerce"},
+        {"id": "p2", "first_name": "Ba", "last_name_obfuscated": "V***n",
+         "title": "Customer Experience Leader"},
+        {"id": "p3", "first_name": "Ev", "last_name_obfuscated": "E***t",
+         "title": "Responsable des Événements de Communication"}]})
+    calls["answers"]["jev_items"] = _verdicts(0.82, 0.78, 0.22)
+    calls["answers"]["apollo_match_person"] = [
+        IssueCible(ok=True, result={"person": {"name": "Bo Dee", "title": "Directeur Marketing",
+                                               "linkedin_url": "http://www.linkedin.com/in/bo-dee",
+                                               "email": "bo@acme.fr", "email_status": "verified"}}),
+        IssueCible(ok=True, result={"person": {"name": "Ba Vee", "title": "Customer Experience Leader",
+                                               "linkedin_url": "http://www.linkedin.com/in/ba-vee",
+                                               "email": "ba@acme.fr", "email_status": "verified"}})]
+    out = _run("waterfall_people", domain="acme.fr", limit=2, qualify=_FIT, qualify_min=0.7,
+               providers=["apollo", "aiark"])
+    made = _made(calls)
+    assert made.count("apollo_match_person") == 2 and "linkedin_aiark_search" not in made
+    assert made.count("jev_items") == 1
+    people = out["people"]["people"]
+    assert [p["full_name"] for p in people] == ["Bo Dee", "Ba Vee"]
+    assert people[0]["email"] == "bo@acme.fr" and people[0]["qualification"]["answers"]["fit"]["noul"] == 0.82
+    a = out["attempts"][0]
+    assert a["status"] == "found" and a["revealed"] == 2 and a["reveals_paid"] == 2
+    assert out["qualification"]["not_qualified"] == 1
+    # Les révélations sont payées en série, par id — jamais par nom.
+    assert [args for n, args in calls["made"] if n == "apollo_match_person"] == [
+        {"person_id": "p1"}, {"person_id": "p2"}]
+
+
+def test_sans_rubrique_les_noms_masques_restent_un_repli(calls):
+    calls["answers"]["apollo_search_people"] = IssueCible(ok=True, result={"people": [
+        {"id": "p1", "first_name": "Bo", "last_name_obfuscated": "D***c", "title": "CMO"}]})
+    out = _run("waterfall_people", domain="acme.fr", providers=["apollo"])
+    assert "apollo_match_person" not in _made(calls)
+    assert out["attempts"][0]["status"] == "weak" and out["found"] is True
+
+
+def test_max_paid_steps_borne_aussi_les_revelations(calls):
+    calls["answers"]["apollo_search_people"] = IssueCible(ok=True, result={"people": [
+        {"id": f"p{i}", "first_name": f"X{i}", "last_name_obfuscated": "Y***", "title": "CMO"}
+        for i in range(3)]})
+    calls["answers"]["jev_items"] = _verdicts(0.9, 0.9, 0.9)
+    calls["answers"]["apollo_match_person"] = IssueCible(ok=True, result={"person": {
+        "name": "X Y", "linkedin_url": "http://www.linkedin.com/in/x"}})
+    out = _run("waterfall_people", domain="acme.fr", limit=3, qualify=_FIT,
+               providers=["apollo"], max_paid_steps=2)
+    assert _made(calls).count("apollo_match_person") == 2
+    assert out["attempts"][0]["stopped"] == "max_paid_steps"

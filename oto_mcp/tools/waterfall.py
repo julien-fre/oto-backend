@@ -261,6 +261,10 @@ class Step:
     # reveal): on any key but the caller's own, the step is skipped BEFORE the call, and
     # a screen lists it with the ones to connect.
     own_key_only: bool = False
+    # The tool that turns ONE of this step's (masked) finds into a usable one, billed per
+    # person (Apollo: `apollo_match_person` by id). With `qualify=`, the cascade judges
+    # the free finds first and reveals only those that pass (`_reveal_qualified`).
+    reveal: str = ""
 
 
 def _payload(issue):
@@ -497,7 +501,9 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
     # Apify as is; and how many paid calls one lookup may make (free steps don't count).
     if step.tool == "apify_run_sync" and budget.get("apify_max_usd"):
         args = {**args, "max_total_charge_usd": budget["apify_max_usd"]}
-    paid = not step.free
+    # A free search whose finds are revealed one by one (Apollo): the REVEALS are what is
+    # paid, and they count one by one (`_reveal_qualified`) — not the search.
+    paid = not step.free and not step.reveal
     if (paid and budget.get("max_paid_steps") is not None
             and budget.get("paid_steps", 0) >= budget["max_paid_steps"]):
         attempt.update(status="skipped", code="max_paid_steps",
@@ -702,6 +708,69 @@ async def _qualify(mcp: FastMCP, sub, kind: str, found: dict, inputs: dict,
     return kept[0], report
 
 
+def _revealed_person(res, base: dict) -> Optional[dict]:
+    """A revealed Apollo person, merged over what the search gave (its answers kept)."""
+    p = _get(res, "person") or {}
+    if not p or p.get("_stub") or not (p.get("name") or p.get("linkedin_url")):
+        return None
+    out = {k: v for k, v in base.items()
+           if k not in ("name_obfuscated", "has_email", "has_direct_phone")}
+    out.update({k: v for k, v in {
+        "full_name": p.get("name"), "title": p.get("title") or base.get("title"),
+        "linkedin_url": p.get("linkedin_url"), "seniority": p.get("seniority"),
+        "location": ", ".join(x for x in (p.get("city"), p.get("country")) if x) or None,
+        # Bought with the reveal, not extra: Apollo's email and its own status.
+        "email": p.get("email"), "email_status": p.get("email_status"),
+    }.items() if v})
+    return out
+
+
+async def _reveal_qualified(mcp: FastMCP, sub, step: Step, got: dict, inputs: dict,
+                            qualify: dict, deadline: float, budget: dict,
+                            tally: "_Tally", attempt: dict) -> Optional[dict]:
+    """Judge a free, masked pool with Jev, then reveal only the best `limit` that pass —
+    each reveal one paid call (`step.reveal`). None when Jev could not judge (no key, no
+    time): the pool then stays the cascade's fallback, as without `qualify`."""
+    judged, report = await _qualify(mcp, sub, "people", got, inputs, qualify, deadline,
+                                    tally.seen())
+    tally.add(attempt, report)
+    if report.get("status") != "done":
+        return None
+
+    def _fit(p) -> float:
+        answers = (p.get("qualification") or {}).get("answers") or {}
+        ps = [a.get("noul") for a in answers.values()
+              if isinstance(a, dict) and isinstance(a.get("noul"), (int, float))]
+        return min(ps) if ps else 0.0
+
+    best = sorted(judged["people"], key=_fit, reverse=True)[:inputs["limit"]]
+    out, paid = [], 0
+    for p in best:
+        if not p.get("apollo_id"):
+            continue
+        if (budget.get("max_paid_steps") is not None
+                and budget.get("paid_steps", 0) >= budget["max_paid_steps"]):
+            attempt["stopped"] = "max_paid_steps"
+            break
+        if time.monotonic() >= deadline:
+            attempt["stopped"] = "time_budget"
+            break
+        sub_attempt: dict = {}
+        issue = await _call(mcp, sub, step.reveal, {"person_id": p["apollo_id"]},
+                            sub_attempt)
+        if issue is not None:
+            paid += 1
+            budget["paid_steps"] = budget.get("paid_steps", 0) + 1
+        if issue is None or not _judge(issue, sub_attempt):
+            continue
+        person = _revealed_person(_payload(issue), p)
+        if person:
+            out.append(person)
+    attempt.update(status="found" if out else "unqualified", via=step.reveal,
+                   revealed=len(out), reveals_paid=paid)
+    return {"people": out, "count": len(out)}
+
+
 def _limits(max_paid_steps: Optional[int], apify_max_usd: Optional[float]) -> dict:
     """The caller's own limits, validated — none is set by default."""
     if max_paid_steps is not None and max_paid_steps < 1:
@@ -736,11 +805,16 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
             f"No provider of this {kind} waterfall can run on these inputs. Each needs: "
             + "; ".join(f"{s.key} → {_missing(s)}" for s in order) + ".")
     deadline = deadline_at or (time.monotonic() + DEADLINE_S)
+    if kind == "people" and qualify:
+        # Judging needs the whole free pool, not its first `limit`: kept up to
+        # PEOPLE_MAX until Jev has ranked it (what is PAID is still sized by `limit`).
+        inputs = {**inputs, "_pool": PEOPLE_MAX}
     attempts: list[dict] = []
     pending: list[dict] = []
     budget = dict(limits or {})
     tally = _Tally()
     found, winner = None, None
+    deja_juge = False
     fallback, fallback_step = None, None
     for step in order:
         if step.fills:
@@ -752,6 +826,18 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
         attempts.append(attempt)
         got = await _run_step(mcp, sub, step, attempt["key"], inputs, dry_run,
                               deadline, attempt, pending, budget)
+        if (got is not None and step.weak is not None and step.weak(got) and step.reveal
+                and qualify and not dry_run):
+            # Masked names, but titles: judged for free, then only the ones that pass
+            # are revealed — instead of paying the next provider for everyone.
+            revealed = await _reveal_qualified(mcp, sub, step, got, inputs, qualify,
+                                               deadline, budget, tally, attempt)
+            if revealed is not None:
+                if revealed["people"]:
+                    found, winner, deja_juge = revealed, step.key, True
+                    continue
+                attempt.update(status="unqualified")
+                continue
         if got is not None and step.weak is not None and step.weak(got):
             attempt.update(status="weak")
             if fallback is None:
@@ -793,9 +879,22 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
                 **({"ignored_steps": ignored} if ignored else {}),
                 **({"qualification": {"tool": "jev_items", "status": "planned"}}
                    if qualify else {})}
-    if qualify and found and not _per_step(kind, qualify):
+    if qualify and found and not _per_step(kind, qualify) and not deja_juge:
         found, report = await _qualify(mcp, sub, kind, found, inputs, qualify, deadline)
         tally.add(None, report)
+    if kind == "people" and found and len(found.get("people") or []) > inputs["limit"]:
+        # The pool was widened for judging (`_pool`): the answer is `limit` people,
+        # the best fit first when they were judged.
+        people = found["people"]
+        if any("qualification" in p for p in people):
+            def _fit(p):
+                ans = (p.get("qualification") or {}).get("answers") or {}
+                ps = [a.get("noul") for a in ans.values() if isinstance(a, dict)
+                      and isinstance(a.get("noul"), (int, float))]
+                return min(ps) if ps else 0.0
+            people = sorted(people, key=_fit, reverse=True)
+        found = {**found, "people": people[:inputs["limit"]],
+                 "count": min(len(people), inputs["limit"])}
     out = _receipt(kind, found is not None, winner, found, attempts, source, ignored,
                    pending)
     if tally.reports:
@@ -1617,9 +1716,13 @@ def _matches_roles(title, roles) -> bool:
 
 _SENIORITY_WORDS = (
     ("founder", "co founder", "owner", "ceo", "chief", "president", "managing director",
-     "geschaftsfuhrer", "general manager", "c suite", "cto", "cfo", "coo", "cmo", "cro"),
-    ("vp", "vice president", "head", "director", "partner"),
-    ("manager", "lead", "leader", "senior"),
+     "geschaftsfuhrer", "general manager", "c suite", "cto", "cfo", "coo", "cmo", "cro",
+     # French and German titles (a French retailer's head office reads in French).
+     "fondateur", "fondatrice", "pdg", "directeur general", "directrice generale",
+     "gerant", "gerante", "inhaber", "vorstand"),
+    ("vp", "vice president", "head", "director", "partner", "directeur", "directrice",
+     "leiter", "leiterin", "bereichsleiter"),
+    ("manager", "lead", "leader", "senior", "responsable", "chef", "manageur"),
 )
 
 
@@ -1649,7 +1752,7 @@ def _people_find(people: list[dict], inputs: dict) -> Optional[dict]:
             continue
         seen.add(key)
         out.append(p)
-        if len(out) >= inputs["limit"]:
+        if len(out) >= (inputs.get("_pool") or inputs["limit"]):
             break
     return {"people": out, "count": len(out)} if out else None
 
@@ -1765,8 +1868,10 @@ PEOPLE_STEPS: tuple[Step, ...] = (
          lambda i: {k: v for k, v in {
              "domains": [i["domain"]], "titles": i.get("roles"),
              "person_locations": [i["country"]] if i.get("country") else None,
-             "per_page": min(100, i["limit"] * 2)}.items() if v},
+             # A FREE search: under `qualify`, a whole page — the pool Jev judges on titles.
+             "per_page": 100 if i.get("_pool") else min(100, i["limit"] * 2)}.items() if v},
          _apollo_people, "free search (names obfuscated; reveal per person: 1 Apollo credit)",
+         reveal="apollo_match_person",
          # Masked last names only: a fallback, never the answer while a source that
          # names people fully is left to try.
          weak=lambda found: all(p.get("name_obfuscated") for p in found["people"])),
@@ -1942,6 +2047,10 @@ _QUALIFY_ARGS = """            qualify: a Jev rubric to judge each result agains
                 people ALL fall short does not end the search — the next one is tried —
                 and each attempt says `qualified` / `not_qualified`. A company or a
                 person stays, with `qualification.passed`.
+            (People: Apollo's FREE search, names masked, is judged on its titles and
+                only the best `limit` that pass are revealed — 1 Apollo credit each, with
+                the full name, LinkedIn URL and Apollo's email — before any paid
+                provider is tried.)
             show_unqualified: the people who did not pass are ALWAYS returned under
                 `unqualified` — name, title, profile URL and Jev's answers, to check the
                 rubric without paying again; true returns their FULL records instead.
