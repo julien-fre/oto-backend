@@ -265,6 +265,9 @@ class Step:
     # person (Apollo: `apollo_match_person` by id). With `qualify=`, the cascade judges
     # the free finds first and reveals only those that pass (`_reveal_qualified`).
     reveal: str = ""
+    # A PAID list that pages (`(parameter, first page)`): under `qualify_min`, its next
+    # pages are bought one by one until `limit` people pass (`_fill_from_pages`).
+    pages: Optional[tuple[str, int]] = None
 
 
 def _payload(issue):
@@ -765,6 +768,58 @@ async def _every_free_page(mcp: FastMCP, sub, step: Step, args: dict, first: dic
     return {**first, "people": people}
 
 
+async def _fill_from_pages(mcp: FastMCP, sub, step: Step, got: dict, inputs: dict,
+                           qualify: dict, deadline: float, budget: dict,
+                           tally: "_Tally", attempt: dict) -> dict:
+    """A PAID list that came up short of `limit` qualified people: its NEXT pages are
+    bought one at a time, each judged as it comes, until `limit` pass — or the results
+    end, a page brings nobody new, the time Jev needs is all that is left, or
+    `max_paid_steps` is reached (each page is a paid step). The receipt says how many
+    pages and why it stopped (`pages`, `stopped`)."""
+    param, first = step.pages
+    base = step.build(inputs)
+    people = list(got["people"])
+    seen = {_person_key(p) for p in people} | set(tally.seen())
+    page, read, why = first + 1, 1, None
+    while len(people) < inputs["limit"]:
+        if (budget.get("max_paid_steps") is not None
+                and budget.get("paid_steps", 0) >= budget["max_paid_steps"]):
+            why = "max_paid_steps"
+            break
+        if time.monotonic() > deadline - _PAGES_RESERVE_S:
+            why = "time_budget"
+            break
+        part: dict = {}
+        issue = await _call(mcp, sub, step.tool, {**base, param: page}, part)
+        if issue is not None:
+            budget["paid_steps"] = budget.get("paid_steps", 0) + 1
+        if issue is None or not _judge(issue, part):
+            why = part.get("code") or "page_refused"
+            break
+        read += 1
+        more = step.extract(_payload(issue), inputs) or {}
+        fresh = [p for p in more.get("people") or [] if _person_key(p) not in seen]
+        if not fresh:
+            break       # the end of the results, or only people already seen
+        seen |= {_person_key(p) for p in fresh}
+        judged, report = await _qualify(mcp, sub, "people",
+                                        {"people": fresh, "count": len(fresh)}, inputs,
+                                        qualify, deadline, tally.seen())
+        tally.add(None, report)
+        if report.get("status") != "done":
+            why = report.get("code") or "qualification_skipped"
+            break
+        attempt["qualified"] = (attempt.get("qualified") or 0) + report.get("qualified", 0)
+        attempt["not_qualified"] = ((attempt.get("not_qualified") or 0)
+                                    + report.get("not_qualified", 0))
+        people += judged["people"]
+        page += 1
+    attempt["pages"] = read
+    if why:
+        attempt["stopped"] = why
+    return {**got, "people": people, "count": len(people)}
+
+
 def _revealed_person(res, base: dict) -> Optional[dict]:
     """A revealed Apollo person, merged over what the search gave (its answers kept)."""
     p = _get(res, "person") or {}
@@ -904,6 +959,10 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
             got, report = await _qualify(mcp, sub, kind, got, inputs, qualify, deadline,
                                          tally.seen())
             tally.add(attempt, report)
+            if (report.get("status") == "done" and step.pages
+                    and len(got["people"]) < inputs["limit"]):
+                got = await _fill_from_pages(mcp, sub, step, got, inputs, qualify,
+                                             deadline, budget, tally, attempt)
             if report.get("status") == "done" and not got["people"]:
                 attempt.update(status="unqualified")
                 continue    # nobody here passes: the next provider is tried
@@ -1939,12 +1998,13 @@ PEOPLE_STEPS: tuple[Step, ...] = (
                              f"({_role_query(i)})",
                     "site_filter": "linkedin.com/in", "num": 10, "country": None,
                     "language": None},
-         _serper_people, "1 Serper search", label="Google — LinkedIn profiles"),    Step("aiark", "linkedin_aiark_search", (("domain",),),
+         _serper_people, "1 Serper search", label="Google — LinkedIn profiles",
+         pages=("page", 1)),    Step("aiark", "linkedin_aiark_search", (("domain",),),
          lambda i: {"op": "people",
                     "account": {"domain": {"any": {"include": [i["domain"]]}}},
                     # Billed PER PROFILE returned: ask what the call keeps, not 3×.
                     "size": i["limit"]},
-         _aiark_people, "AI Ark credits per person returned"),
+         _aiark_people, "AI Ark credits per person returned", pages=("page", 0)),
     Step("linkedin_employees", "apify_run_sync", (("company_linkedin_url",),),
          lambda i: {"actor_id": "harvestapi/linkedin-company-employees",
                     "run_input": {"companies": [i["company_linkedin_url"]],
@@ -2115,9 +2175,12 @@ _QUALIFY_ARGS = """            qualify: a Jev rubric to judge each result agains
                 Continuing past an unqualified provider pays off when it found FEW
                 people; when the company simply has no fit, the next providers find the
                 same people again (already-rejected ones are not re-judged) —
-                `max_paid_steps` is the brake. When fewer people qualify than `limit`, the
-                search STOPS at that provider and `continue_with` names the providers not
-                tried yet: yours to call (with `providers=`) if more are worth paying for."""
+                `max_paid_steps` is the brake. A PAID list (Google, AI Ark) short of `limit`
+                qualified people buys its NEXT pages, one at a time, each judged, until
+                `limit` pass or its results end (`pages`, `stopped` on the attempt; each
+                page counts in `max_paid_steps`). Still short, the search STOPS at that
+                provider and `continue_with` names the providers not tried yet: yours to
+                call (with `providers=`) if more are worth paying for."""
 
 _COMMON_ARGS = """            providers: the steps to try for THIS call, in this order — keys
                 from the list above. Overrides your setting. Never a tool name.

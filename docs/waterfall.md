@@ -301,6 +301,22 @@ au reçu), Jev juge le vivier sur les titres par lots de 200 en parallèle, et s
 comptent chacune dans `max_paid_steps` ; la recherche, gratuite, non. Jev indisponible →
 le vivier redevient le repli.
 
+## Les pages (décision du 20/10/2026)
+
+- **Sources gratuites** (la recherche Apollo) : toutes les pages, sous `qualify`
+  (ci-dessus).
+- **Listes payées** (Google, AI Ark) : sous `qualify_min`, une liste qui rend moins de
+  `limit` personnes retenues achète sa page SUIVANTE, une à la fois, jugée à son arrivée,
+  jusqu'à `limit` retenus — ou la fin des résultats, une page sans personne nouvelle, le
+  temps qu'il faut encore pour juger, ou `max_paid_steps` (chaque page est une étape
+  payée). Le reçu dit `pages` et `stopped`. Encore court ensuite : `continue_with`, comme
+  avant. Sans seuil, une page : `limit` personnes y sont déjà.
+- Les employés d'une page LinkedIn (Apify) ne se paginent pas : une exécution par page,
+  bornée par `limit`.
+- **Les outils des fournisseurs eux-mêmes ne changent pas** (une page par appel,
+  l'appelant pagine) : un défaut changé changerait sans bruit le coût de chaque agent et
+  de chaque recette existants.
+
 ## Sur un tableau : `waterfall_<x>_act(op="update_rows")`
 
 Un tableau s'enrichissait un appel par ligne : l'agent lisait la ligne, appelait la

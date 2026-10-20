@@ -1114,3 +1114,54 @@ def test_sans_rubrique_une_seule_page(calls):
     calls["answers"]["apollo_search_people"] = [_page(0, 20, 500)]
     _run("waterfall_people", domain="acme.fr", providers=["apollo"])
     assert _made(calls).count("apollo_search_people") == 1
+
+
+def _aiark_page(names_titles):
+    return IssueCible(ok=True, result={"content": [
+        {"profile": {"full_name": n, "title": t},
+         "link": {"linkedin": f"https://www.linkedin.com/in/{n.lower().replace(' ', '-')}"}}
+        for n, t in names_titles]})
+
+
+def test_une_liste_payee_achete_ses_pages_suivantes_jusqu_a_limit_qualifies(calls):
+    calls["answers"]["linkedin_aiark_search"] = [
+        _aiark_page([("Ann A", "CMO"), ("Bob B", "Developer")]),
+        _aiark_page([("Cy C", "Head of Marketing"), ("Di D", "Intern")]),
+        _aiark_page([("Ed E", "Never reached")])]
+    calls["answers"]["jev_items"] = [_verdicts(0.9, 0.1), _verdicts(0.8, 0.1)]
+    out = _run("waterfall_people", domain="acme.fr", limit=2, qualify=_FIT, qualify_min=0.7,
+               providers=["aiark"])
+    pages = [a.get("page", 0) for n, a in calls["made"] if n == "linkedin_aiark_search"]
+    assert pages == [0, 1]                       # page 2 never bought: limit reached
+    assert [p["full_name"] for p in out["people"]["people"]] == ["Ann A", "Cy C"]
+    a = out["attempts"][0]
+    assert a["pages"] == 2 and a["qualified"] == 2 and a["not_qualified"] == 2
+    assert "continue_with" not in out
+
+
+def test_les_pages_payees_comptent_dans_max_paid_steps(calls):
+    calls["answers"]["linkedin_aiark_search"] = [
+        _aiark_page([("Ann A", "Intern")]), _aiark_page([("Bob B", "Intern")]),
+        _aiark_page([("Cy C", "Intern")])]
+    calls["answers"]["jev_items"] = _verdicts(0.1)
+    out = _run("waterfall_people", domain="acme.fr", limit=3, qualify=_FIT, qualify_min=0.7,
+               providers=["aiark"], max_paid_steps=2)
+    assert _made(calls).count("linkedin_aiark_search") == 2
+    assert out["attempts"][0]["stopped"] == "max_paid_steps"
+
+
+def test_la_fin_des_resultats_arrete_les_pages(calls):
+    calls["answers"]["linkedin_aiark_search"] = [_aiark_page([("Ann A", "Intern")]),
+                                                 IssueCible(ok=True, result={"content": []})]
+    calls["answers"]["jev_items"] = _verdicts(0.1)
+    out = _run("waterfall_people", domain="acme.fr", limit=3, qualify=_FIT, qualify_min=0.7,
+               providers=["aiark"])
+    assert _made(calls).count("linkedin_aiark_search") == 2
+    assert out["attempts"][0]["pages"] == 2 and "stopped" not in out["attempts"][0]
+
+
+def test_sans_seuil_une_liste_payee_ne_lit_qu_une_page(calls):
+    calls["answers"]["linkedin_aiark_search"] = _aiark_page([("Ann A", "CMO")])
+    calls["answers"]["jev_items"] = _verdicts(0.1)
+    _run("waterfall_people", domain="acme.fr", limit=3, qualify=_FIT, providers=["aiark"])
+    assert _made(calls).count("linkedin_aiark_search") == 1
