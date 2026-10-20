@@ -375,10 +375,13 @@ _LABELS = {"waterfall_email": "email", "waterfall_phone": "phone",
 _QUALIFY_ROW = """
             qualify / qualify_min: a Jev rubric, as on `{ns}`, judged per lookup."""
 _PEOPLE_ROW = """
-            roles / limit: as on `waterfall_people`, the same for every row."""
+            roles / people_per_row: as `roles` / `limit` on `waterfall_people`, the
+                same for every row (default 10)."""
 
 
-def register(mcp: FastMCP) -> None:
+def register_act(mcp: FastMCP) -> None:
+    """Mounts the five `<ns>_act` — called by `waterfall.register`, the connectors'
+    module: this one is its helper (no `register`, nothing of its own to declare)."""
     from . import waterfall as w
 
     def _outil(ns: str):
@@ -409,16 +412,17 @@ def register(mcp: FastMCP) -> None:
             providers: Optional[list[str]] = None,
             max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
             qualify: Optional[dict] = None, qualify_min: Optional[float] = None,
-            roles: Optional[list[str]] = None, limit: int = 10,
+            roles: Optional[list[str]] = None, people_per_row: int = 10,
             dry_run: bool = False,
         ) -> dict:
             if (qualify is not None or qualify_min is not None) and not qualifiable:
                 raise pr.refus("waterfall_rows_qualify",
                                f"`qualify` is not offered on {ns}: an email or a phone "
                                "has nothing to qualify. Nothing was sent.")
-            if ns != "waterfall_people" and (roles or limit != 10):
+            if ns != "waterfall_people" and (roles or people_per_row != 10):
                 raise pr.refus("waterfall_rows_people_args",
-                               "`roles` and `limit` belong to waterfall_people_act. "
+                               "`roles` and `people_per_row` belong to "
+                               "waterfall_people_act. "
                                "Nothing was sent.")
             return await fill_rows(
                 mcp, ns, datastore=datastore, inputs=inputs, output=output,
@@ -426,7 +430,7 @@ def register(mcp: FastMCP) -> None:
                 batch_size=batch_size, providers=providers,
                 limits=w._limits(max_paid_steps, apify_max_usd),
                 qualify=w._qualify_args(qualify, qualify_min) if qualifiable else None,
-                appel={"roles": roles, "limit": limit}, dry_run=dry_run)
+                appel={"roles": roles, "limit": people_per_row}, dry_run=dry_run)
 
         return acte
 

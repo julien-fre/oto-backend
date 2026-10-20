@@ -820,6 +820,39 @@ async def _fill_from_pages(mcp: FastMCP, sub, step: Step, got: dict, inputs: dic
     return {**got, "people": people, "count": len(people)}
 
 
+#: What a person keeps by default in `waterfall_people`'s answer (`full=True`: all).
+_PERSON_KEYS = ("full_name", "title", "linkedin_url", "location", "seniority", "email",
+                "email_status", "apollo_id", "name_obfuscated", "has_email",
+                "has_direct_phone")
+
+
+def _slim_person(p: dict) -> dict:
+    out = {k: p[k] for k in _PERSON_KEYS if p.get(k) not in (None, "", [])}
+    answers = (p.get("qualification") or {}).get("answers") or {}
+    if answers:
+        # The answers as their values (`{"fit": 0.82}`): the model is said once, on the
+        # receipt's `qualification`, not on every person.
+        out["fit"] = {n: a.get("noul", a.get("choice", a.get("score")))
+                      for n, a in answers.items() if isinstance(a, dict)}
+        passed = (p.get("qualification") or {}).get("passed")
+        if passed is not None:
+            out["passed"] = passed
+    return out
+
+
+def _slim_people(out: dict) -> dict:
+    """The default answer of `waterfall_people`: each person reduced to who they are,
+    how to reach them and Jev's verdict — the rest (a source's raw extras, the model
+    repeated per person) stays behind `full=True`."""
+    out = dict(out)
+    if isinstance(out.get("people"), dict):
+        out["people"] = {**out["people"], "people": [
+            _slim_person(p) for p in out["people"].get("people") or []
+            if isinstance(p, dict)]}
+    # `unqualified` is left as asked: compact by default, whole with `show_unqualified`.
+    return out
+
+
 def _revealed_person(res, base: dict) -> Optional[dict]:
     """A revealed Apollo person, merged over what the search gave (its answers kept)."""
     p = _get(res, "person") or {}
@@ -2199,7 +2232,7 @@ _COMMON_ARGS = """            providers: the steps to try for THIS call, in this
 
 def register(mcp: FastMCP) -> None:
     from . import waterfall_lignes
-    waterfall_lignes.register(mcp)
+    waterfall_lignes.register_act(mcp)
 
     @mcp.tool(annotations=LECTURE)
     @documente(f"""Find ONE person's professional email, trying providers in turn and
@@ -2400,6 +2433,9 @@ def register(mcp: FastMCP) -> None:
                 LinkedIn employees bill per person returned, so raise it knowingly.
 {_COMMON_ARGS}
 {_QUALIFY_ARGS}
+            full: every field a source gave for each person, and Jev's answers in full.
+                Default: who they are (name, title, LinkedIn URL, location, seniority),
+                how to reach them (email, Apollo id) and Jev's verdict as `fit`.
         """)
     async def waterfall_people(
         domain: Optional[str] = None, company_name: Optional[str] = None,
@@ -2409,11 +2445,12 @@ def register(mcp: FastMCP) -> None:
         providers: Optional[list[str]] = None, dry_run: bool = False,
         max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
         qualify: Optional[dict] = None, qualify_min: Optional[float] = None,
-        show_unqualified: bool = False,
+        show_unqualified: bool = False, full: bool = False,
     ) -> dict:
         inputs = _people_inputs(company_name, domain, company_linkedin_url, roles,
                                 country, limit)
-        return await _run_cascade(mcp, "waterfall_people", "people", PEOPLE_STEPS,
-                                  inputs, providers, dry_run,
-                                  _limits(max_paid_steps, apify_max_usd),
-                                  _qualify_args(qualify, qualify_min, show_unqualified))
+        out = await _run_cascade(mcp, "waterfall_people", "people", PEOPLE_STEPS,
+                                 inputs, providers, dry_run,
+                                 _limits(max_paid_steps, apify_max_usd),
+                                 _qualify_args(qualify, qualify_min, show_unqualified))
+        return out if full else _slim_people(out)

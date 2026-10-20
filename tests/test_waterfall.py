@@ -885,7 +885,7 @@ def test_qualifier_annote_chaque_personne_sans_rien_ecarter_par_defaut(calls):
     calls["answers"]["jev_items"] = _verdicts(0.95, 0.10)
     out = _run("waterfall_people", company_name="Acme", providers=["google"], qualify=_FIT)
     people = out["people"]["people"]
-    assert [p["qualification"]["answers"]["fit"]["noul"] for p in people] == [0.95, 0.10]
+    assert [p["fit"]["fit"] for p in people] == [0.95, 0.10]   # vue resserrée par défaut
     assert out["qualification"]["status"] == "done" and out["qualification"]["model"] == "jev-2026-09"
     # Seuls les champs d'un jugement partent chez Jev : jamais un nom ni une URL.
     sent = dict(calls["made"])["jev_items"]["items"]
@@ -1048,7 +1048,7 @@ def test_reel_recherche_apollo_gratuite_jugee_puis_seuls_les_retenus_reveles(cal
     assert made.count("jev_items") == 1
     people = out["people"]["people"]
     assert [p["full_name"] for p in people] == ["Bo Dee", "Ba Vee"]
-    assert people[0]["email"] == "bo@acme.fr" and people[0]["qualification"]["answers"]["fit"]["noul"] == 0.82
+    assert people[0]["email"] == "bo@acme.fr" and people[0]["fit"] == {"fit": 0.82}
     a = out["attempts"][0]
     assert a["status"] == "found" and a["revealed"] == 2 and a["reveals_paid"] == 2
     assert out["qualification"]["not_qualified"] == 1
@@ -1165,3 +1165,13 @@ def test_sans_seuil_une_liste_payee_ne_lit_qu_une_page(calls):
     calls["answers"]["jev_items"] = _verdicts(0.1)
     _run("waterfall_people", domain="acme.fr", limit=3, qualify=_FIT, providers=["aiark"])
     assert _made(calls).count("linkedin_aiark_search") == 1
+
+
+
+def test_full_rend_chaque_personne_entiere(calls):
+    _gens(calls)
+    calls["answers"]["jev_items"] = _verdicts(0.95, 0.10)
+    out = _run("waterfall_people", company_name="Acme", providers=["google"], qualify=_FIT,
+               full=True)
+    p = out["people"]["people"][0]
+    assert p["qualification"]["answers"]["fit"]["noul"] == 0.95 and "fit" not in p
