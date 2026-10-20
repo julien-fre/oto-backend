@@ -324,6 +324,10 @@ _DECLARATIONS: tuple[str, ...] = (
     # The documents a company keeps indexed in Zeendoc (supplier invoices…): a
     # Zeendoc user's login and password and the cabinet id travel together.
     "zeendoc",
+    # --- telephony — wired 2026-10-20 ----------------------------------------
+    # Neighbour of `aircall` by situation: a team's calls and texts with their AI
+    # summaries, its contacts CRM and Power Dialer queue, on one Allo API key.
+    "allo",
     # --- KEY carriers, no tools (kind="credential") --------------------------
     # The model key an org deposits for its scheduled agents. They serve
     # no tool: the worker consumes it on the org's behalf.
