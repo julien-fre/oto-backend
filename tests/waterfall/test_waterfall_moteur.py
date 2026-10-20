@@ -280,7 +280,7 @@ def test_une_execution_apify_est_bornee_par_sa_taille_et_son_delai_sans_plafond_
                     assert "max_items" not in args, v.key
                     ri = args["run_input"]
                     assert ri["maxRequestsPerStartUrl"] <= 4 and ri["maxDepth"] <= 1
-                elif v.key == "website":
+                elif v.key == "apify":
                     # Pile technique : facturé par site, UNE URL — un site au plus.
                     assert "max_items" not in args and args["run_input"]["urls"] == ["acme.com"]
                 else:

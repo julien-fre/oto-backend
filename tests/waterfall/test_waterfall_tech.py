@@ -42,7 +42,7 @@ def test_tech_un_site_absent_de_l_index_passe_au_crawl(calls):
     calls["answers"]["dataforseo_technologies"] = IssueCible(ok=True, result={"cost_usd": 0.01})
     calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=_APIFY_TECH)
     out = _run("waterfall_tech", domain="acme.com")
-    assert out["provider"] == "website" and out["tech"]["technologies"] == ["Storyblok", "Vercel"]
+    assert out["provider"] == "apify" and out["tech"]["technologies"] == ["Storyblok", "Vercel"]
     args = dict(calls["made"])["apify_run_sync"]
     # Une URL, un site facturé au plus ; pas de `max_items` (plafond sous le minimum d'Apify).
     assert args["run_input"]["urls"] == ["acme.com"] and "max_items" not in args
@@ -52,7 +52,7 @@ def test_tech_un_site_absent_de_l_index_passe_au_crawl(calls):
 def test_tech_un_site_injoignable_n_est_pas_un_trouve(calls):
     calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=[
         {"url": "https://acme.com/", "technologies": [], "error": "timeout"}])
-    out = _run("waterfall_tech", domain="acme.com", providers=["website"])
+    out = _run("waterfall_tech", domain="acme.com", providers=["apify"])
     assert out["found"] is False and out["attempts"][0]["status"] == "no_match"
 
 
@@ -65,7 +65,7 @@ def test_tech_cherchee_ne_stoppe_que_si_detectee(calls):
     out = _run("waterfall_tech", domain="acme.com", technologies="HubSpot, Spendesk")
     assert out["provider"] == "theirstack" and out["tech"]["source"] == "job_postings"
     assert out["tech"]["matched"] == ["HubSpot", "Spendesk"]
-    assert [a["status"] for a in out["attempts"]] == ["no_match", "no_match", "found"]
+    assert [a["status"] for a in out["attempts"]] == ["no_match"] * 4 + ["found"]
 
     calls["made"].clear()
     out = _run("waterfall_tech", domain="acme.com", technologies=["nextjs"])
@@ -77,7 +77,7 @@ def test_tech_jamais_detectee_rend_un_non_trouve(calls):
     calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=_APIFY_TECH)
     calls["answers"]["theirstack_companies_search"] = IssueCible(ok=True, result=_THEIRSTACK_TECH)
     out = _run("waterfall_tech", domain="acme.com", technologies=["Shopify"])
-    assert out["found"] is False and len(out["attempts"]) == 3
+    assert out["found"] is False and len(out["attempts"]) == 5
 
 
 def test_tech_par_nom_seulement_theirstack_et_l_homonyme_ecarte(calls):
@@ -97,3 +97,45 @@ def test_tech_par_nom_seulement_theirstack_et_l_homonyme_ecarte(calls):
 def test_tech_sans_domaine_ni_nom_est_refuse(calls):
     with pytest.raises(McpError):
         _run("waterfall_tech", technologies=["Shopify"])
+
+
+# Fiches société réelles du 20/10/2026 (~100 technologies chacune), anonymisées et réduites.
+_APOLLO_TECH = {"organization": {"name": "Acme", "primary_domain": "acme.com",
+    "technology_names": ["Hubspot", "Salesforce", "Snowflake", "Next.js"],
+    "current_technologies": [
+        {"uid": "hubspot", "name": "Hubspot", "category": "Marketing Automation"},
+        {"uid": "salesforce", "name": "Salesforce", "category": "Customer Relationship Management"},
+        {"uid": "snowflake", "name": "Snowflake", "category": "Database"},
+        {"uid": "nextjs", "name": "Next.js", "category": "Frameworks and Programming Languages"}]}}
+_AIARK_TECH = {"content": [{"summary": {"name": "Acme"},
+    "link": {"website": "https://www.acme.com", "domain": "acme.com"},
+    "technologies": [{"name": "google analytics"}, {"name": "Google Analytics",
+                      "category": "Analytics and Tracking"},
+                     {"name": "Lever", "category": "Recruitment"},
+                     {"name": "Salesforce", "category": "Customer Relationship Management"}]}]}
+
+
+def test_tech_apollo_rend_outils_metier_et_categories(calls):
+    calls["answers"]["apollo_enrich_organization"] = IssueCible(ok=True, result=_APOLLO_TECH)
+    out = _run("waterfall_tech", domain="acme.com", providers=["apollo"], technologies=["salesforce"])
+    t = out["tech"]
+    assert out["provider"] == "apollo" and t["source"] == "vendor_database"
+    assert t["matched"] == ["salesforce"] and t["by_category"]["Database"] == ["Snowflake"]
+    assert calls["made"][0][1] == {"domain": "acme.com"}
+
+
+def test_tech_apollo_d_un_autre_domaine_ne_compte_pas(calls):
+    other = {"organization": {**_APOLLO_TECH["organization"], "primary_domain": "acme.de"}}
+    calls["answers"]["apollo_enrich_organization"] = IssueCible(ok=True, result=other)
+    out = _run("waterfall_tech", domain="acme.com", providers=["apollo"])
+    assert out["found"] is False
+
+
+def test_tech_aiark_une_fiche_par_domaine_et_doublons_de_casse_fusionnes(calls):
+    calls["answers"]["linkedin_aiark_search"] = IssueCible(ok=True, result=_AIARK_TECH)
+    out = _run("waterfall_tech", domain="acme.com", providers=["aiark"])
+    args = calls["made"][0][1]
+    assert args["size"] == 1 and args["full"] is True and "technologies" in args["fields"]
+    t = out["tech"]
+    assert t["technologies"] == ["google analytics", "Lever", "Salesforce"] and t["count"] == 3
+    assert t["by_category"]["Recruitment"] == ["Lever"]

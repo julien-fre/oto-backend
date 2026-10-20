@@ -88,3 +88,14 @@ def test_le_plan_montre_la_qualification_jev_hors_des_etapes(calls):
     q = plan.plan("waterfall_company", "sub-test")["qualification"]
     assert q["usable"] is False and q["shadowed"] is True
     assert "qualification" not in plan.plan("waterfall_email", "sub-test")
+
+
+
+def test_chaque_etape_s_explique_et_le_plan_le_sert():
+    """Un écran qui laisse choisir l'ordre doit dire ce que chaque étape apporte."""
+    for ns, steps in plan.STEPS_BY_NAMESPACE.items():
+        for s in steps:
+            row = plan._step_row(s, ns=ns)
+            assert row["explains"] and len(row["explains"]) < 160, (ns, s.key)
+    assert set(plan.EXPLAINS) == {(ns, s.key) for ns, st in plan.STEPS_BY_NAMESPACE.items()
+                                  for s in st}

@@ -31,6 +31,9 @@ class WaterfallStep(BaseModel):
     connector: Optional[str] = Field(default=None, description=(
         "The connector the step goes through (its card, its logo)."))
     label: str
+    explains: Optional[str] = Field(default=None, description=(
+        "What the step brings, in one line: what its source sees, and when it is worth "
+        "its place in the order."))
     needs: str = Field(description="The inputs the step needs to run, in words.")
     requires: list[list[str]] = Field(description=(
         "The same, as data: alternative groups of input keys — the step runs when every "

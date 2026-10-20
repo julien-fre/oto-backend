@@ -1,6 +1,7 @@
-"""The tech-stack cascade (`waterfall_tech`): what a company's website runs, then what
-its job postings name — and, with `technologies`, a source counts only when it detects
-one of them."""
+"""The tech-stack cascade (`waterfall_tech`): what a company's website runs (DataForSEO's
+index, then a live Apify crawl), what the data vendors' company records list (Apollo, AI
+Ark), then what its job postings name (TheirStack) — and, with `technologies`, a source
+counts only when it detects one of them."""
 from __future__ import annotations
 
 import re
@@ -8,12 +9,14 @@ from typing import Optional
 
 from .etape import Step
 from .fournisseurs import _APIFY_TIMEOUT_S, _apify_items
-from .valeurs import _get, _norm_name, _same_company
+from .valeurs import _domain, _get, _norm_name, _pick, _same_company
 
 # Two kinds of source, measured on one domain (20/10/2026): what the WEBSITE runs (CMS,
 # front framework, hosting, analytics — DataForSEO's index, a live crawl) — 6-7 names;
 # and what the JOB POSTINGS name (CRM, ERP, data stack, internal tools — TheirStack) —
-# ~100 slugs, but dearer and thin on small companies. Cheapest first, as everywhere.
+# ~100 slugs, but dearer and thin on small companies. Between them, the data vendors'
+# company records (Apollo, AI Ark — measured the same day: ~100 categorized names each,
+# website AND business tools: CRM, data stack, payments). Cheapest first, as everywhere.
 
 
 def _tech_key(name) -> str:
@@ -26,7 +29,13 @@ def _tech_find(names: list, inputs: dict, source: str, by_category=None) -> Opti
     """The find: the names, deduplicated. With `technologies` asked, a source counts
     only when it detects at least one of them — a stack without them is not an answer
     to « does it use X? », and the next source (which sees other things) is tried."""
-    names = list(dict.fromkeys(str(n) for n in names if n))
+    # One entry per technology, whatever its case or punctuation (AI Ark lists both
+    # « google analytics » and « Google Analytics »): the first spelling wins.
+    seen: dict[str, str] = {}
+    for n in names:
+        if n and _tech_key(n) not in seen:
+            seen[_tech_key(n)] = str(n)
+    names = list(seen.values())
     if not names:
         return None
     found = {"technologies": names, "count": len(names), "source": source}
@@ -65,6 +74,44 @@ def _website_tech(res, inputs):
     return None
 
 
+def _by_category(records) -> Optional[dict]:
+    """`[{name, category?}]` → `{category: [names]}` (records without one left out)."""
+    out: dict[str, list] = {}
+    for r in records or ():
+        if isinstance(r, dict) and r.get("name") and r.get("category"):
+            out.setdefault(str(r["category"]), []).append(r["name"])
+    return out or None
+
+
+def _apollo_tech(res, inputs):
+    """Apollo's company record: `technology_names`, and `current_technologies`
+    (`{uid, name, category}`) for the categories."""
+    org = _get(res, "organization")
+    if not isinstance(org, dict):
+        return None
+    if inputs.get("domain") and _domain(org.get("primary_domain")) not in (None, inputs["domain"]):
+        return None
+    current = org.get("current_technologies") or []
+    names = org.get("technology_names") or [t.get("name") for t in current
+                                            if isinstance(t, dict)]
+    return _tech_find(names, inputs, "vendor_database", _by_category(current))
+
+
+def _aiark_tech(res, inputs):
+    """AI Ark's company record (`technologies`: `{name, category?}`) — website detections
+    and business tools mixed, some names lower-cased."""
+    for rec in (_get(res, "content") or [])[:1]:
+        if not isinstance(rec, dict):
+            continue
+        domain = _domain(_pick(rec, "link.domain", "link.website"))
+        if inputs.get("domain") and domain and domain != inputs["domain"]:
+            continue
+        techs = rec.get("technologies") or []
+        return _tech_find([t.get("name") for t in techs if isinstance(t, dict)], inputs,
+                          "vendor_database", _by_category(techs))
+    return None
+
+
 def _theirstack_tech(res, inputs):
     for rec in (_get(res, "data") or [])[:3]:
         if isinstance(rec, dict) and _same_company(inputs, rec.get("name"),
@@ -86,11 +133,12 @@ TECH_STEPS: tuple[Step, ...] = (
     Step("dataforseo", "dataforseo_technologies", (("domain",),),
          lambda i: {"op": "domain", "target": i["domain"]},
          _dataforseo_tech, "~$0.01-0.02 per domain (DataForSEO)",
-         label="Website (DataForSEO index)"),
+         label="Website — DataForSEO index"),
     # The live crawl — plain HTTP, no browser, billed per site analysed (a site that
     # fails or times out is free): a site DataForSEO has not indexed (small companies),
-    # or a stack changed since its last visit.
-    Step("website", "apify_run_sync", (("domain",),),
+    # or a stack changed since its last visit. One row per provider, each with its own
+    # logo: a screen says WHO looks.
+    Step("apify", "apify_run_sync", (("domain",),),
          lambda i: {"actor_id": "kfirs/tech-stack-detector",
                     "run_input": {"urls": [i["domain"]], "minConfidence": 50,
                                   "includeDetails": False, "timeoutSecs": 20},
@@ -98,7 +146,17 @@ TECH_STEPS: tuple[Step, ...] = (
                     # under its $0.50 minimum (see the LinkedIn page). One URL = one
                     # billed site at most.
                     "timeout_secs": _APIFY_TIMEOUT_S},
-         _website_tech, "~$0.01 of Apify per site", label="Website (live crawl)"),
+         _website_tech, "~$0.01 of Apify per site", label="Website — Apify live crawl"),
+    Step("apollo", "apollo_enrich_organization", (("domain",),),
+         lambda i: {"domain": i["domain"]}, _apollo_tech, "1 Apollo credit",
+         label="Apollo company record", max_units=1),
+    # `full` + `fields`: the default view drops `technologies`; one record, by domain.
+    Step("aiark", "linkedin_aiark_search", (("domain",),),
+         lambda i: {"op": "companies", "size": 1, "full": True,
+                    "fields": ["summary", "link", "technologies"],
+                    "account": {"domain": {"any": {"include": [i["domain"]]}}}},
+         _aiark_tech, "AI Ark credits for one company", label="AI Ark company record",
+         max_units=1),
     Step("theirstack", "theirstack_companies_search", (("domain",), ("company_name",)),
          _theirstack_tech_args, _theirstack_tech, "~3 TheirStack credits per company",
          label="Job postings (TheirStack)", max_units=3),

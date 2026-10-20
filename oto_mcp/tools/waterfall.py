@@ -313,8 +313,10 @@ def register(mcp: FastMCP) -> None:
 
         Steps (default order): dataforseo (domain — what the WEBSITE runs, from
         DataForSEO's index: CMS, framework, hosting, analytics, e-commerce, payment) →
-        website (domain — the same, by a live crawl of the site now: for a site the index
-        has not seen) → theirstack (domain or name — what the company's JOB POSTINGS
+        apify (domain — the same, by a live crawl of the site now: for a site the index
+        has not seen) → apollo (domain — Apollo's company record: website AND business
+        tools, ~100 names with categories) → aiark (domain — AI Ark's company record,
+        the same kind of mix) → theirstack (domain or name — what the company's JOB POSTINGS
         name: CRM, ERP, data stack, internal tools; far more names, dearer, thin on small
         companies). The website sources give display names (`Next.js`), TheirStack gives
         slugs (`next-js`): `matched` compares them loosely.
@@ -328,7 +330,7 @@ def register(mcp: FastMCP) -> None:
         {_ORDER_DOC}
 
         Returns `{{found, provider, tech: {{technologies, count, source ("website" |
-        "job_postings"), by_category?, matched?}}, attempts, order_from}}` —
+        "vendor_database" | "job_postings"), by_category?, matched?}}, attempts, order_from}}` —
         {_RECEIPT_DOC}
 
         Args:
