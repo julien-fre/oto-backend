@@ -873,27 +873,27 @@ def test_une_org_SUSPENDUE_refuse_la_livraison_et_le_journal_le_dit(live):
     assert db.livraisons(t["id"], susp)[0]["outcome"] in (db.QUEUED, db.DELAYED)
 
 
-# ── les PRÉRÉGLAGES : Lemlist (secret dans le corps) et `none`, en base (06/10/2026)
+# ── les PRÉRÉGLAGES : `body_secret` (secret dans le corps) et `none`, en base (06/10/2026)
 
-def test_lemlist_le_porteur_ne_s_ouvre_QUE_dans_SON_mode_EN_SQL(live):
-    """⚠️ Le même `otoh_` ouvre un agent `lemlist` par le CORPS, jamais par
+def test_body_secret_le_porteur_ne_s_ouvre_QUE_dans_SON_mode_EN_SQL(live):
+    """⚠️ Le même `otoh_` ouvre un agent `body_secret` par le CORPS, jamais par
     l'en-tête — et l'inverse pour un agent au porteur. La garde est dans le WHERE."""
     from oto_mcp import db, runner_hook
     t, porteur = _webhook(db, procedure="prereglage-lemlist")
-    db.poser_auth_de_hook(t["id"], ORG, "lemlist", effacer_le_secret=True)
+    db.poser_auth_de_hook(t["id"], ORG, "body_secret", effacer_le_secret=True)
     h = runner_hook.hacher(porteur)
     assert db.trigger_par_secret(t["id"], h) is None, "l'en-tête n'ouvre plus"
-    assert db.trigger_par_secret(t["id"], h, "lemlist")["id"] == t["id"]
+    assert db.trigger_par_secret(t["id"], h, "body_secret")["id"] == t["id"]
     au_porteur, autre = _webhook(db, procedure="prereglage-porteur")
     assert db.trigger_par_secret(au_porteur["id"], runner_hook.hacher(autre),
-                                 "lemlist") is None
+                                 "body_secret") is None
 
 
-def test_lemlist_bout_en_bout_secret_retire_et_retentative_ecartee(live):
+def test_body_secret_bout_en_bout_secret_retire_et_retentative_ecartee(live):
     from oto_mcp import db, runner_hook
     t, porteur = _webhook(db, procedure="prereglage-lemlist-bout",
                           payload_mode="inline")
-    db.poser_auth_de_hook(t["id"], ORG, "lemlist", effacer_le_secret=True)
+    db.poser_auth_de_hook(t["id"], ORG, "body_secret", effacer_le_secret=True)
     corps = {"_id": "act_1", "type": "emailsReplied", "secret": porteur}
     premier = runner_hook.declencher(t["id"], None, dict(corps), "lemlist")
     second = runner_hook.declencher(t["id"], None, dict(corps), "lemlist")
@@ -902,6 +902,18 @@ def test_lemlist_bout_en_bout_secret_retire_et_retentative_ecartee(live):
         charge = conn.execute("SELECT payload FROM runner_jobs WHERE id = %s",
                               (premier["job_id"],)).fetchone()["payload"]
     assert porteur not in str(charge), "le secret n'est jamais persisté dans le travail"
+
+
+def test_une_ligne_encore_LEMLIST_s_ouvre_toujours_EN_SQL(live):
+    """Les lignes posées sous l'ancien nom ne sont pas migrées : la boucle des
+    préréglages doit encore les trouver par le corps."""
+    from oto_mcp import db, runner_hook
+    t, porteur = _webhook(db, procedure="prereglage-lemlist-ancien",
+                          payload_mode="inline")
+    db.poser_auth_de_hook(t["id"], ORG, "lemlist", effacer_le_secret=True)
+    out = runner_hook.declencher(t["id"], None, {"_id": "act_9", "secret": porteur},
+                                 "lemlist")
+    assert out["job_id"]
 
 
 def test_none_ne_se_trouve_QU_avec_une_adresse_privee_EN_SQL(live):

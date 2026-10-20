@@ -1,10 +1,10 @@
-"""Les PRÉRÉGLAGES de fournisseur d'un webhook — Lemlist (`body_secret`) et `none`.
+"""Les PRÉRÉGLAGES d'un webhook — `body_secret` (Lemlist, cal.com…) et `none`.
 
 Une source prouve qui elle est d'une des quelques manières génériques ; un
 fournisseur n'est qu'un préréglage (`runner_hook.PREREGLAGES`). Ce fichier tient
 les propriétés des deux schémas ajoutés le 06/10/2026 :
 
-1. **`body_secret` (Lemlist)** : la source ne sait pas poser d'en-tête, elle renvoie
+1. **`body_secret`** (ex-`lemlist`, renommé le 20/10/2026) : la source ne sait pas poser d'en-tête, elle renvoie
    notre `otoh_` dans son corps. Il est vérifié, puis RETIRÉ avant que l'agent ne
    voie le corps ; une retentative du même `_id` ne refait pas de déroulé.
 2. **Chacun sa porte** : le porteur en en-tête n'ouvre pas un agent qui l'attend
@@ -47,7 +47,7 @@ def porte(monkeypatch):
          "tools": ["a"], "input": "go", "enabled": True, "kind": "webhook",
          "payload_mode": "inline", "payload_fields": None, "max_per_hour": None,
          "fraicheur_s": None, "model": None, "project_id": None, "max_steps": None,
-         "label": None, "hook_auth": "lemlist", "max_per_day": None,
+         "label": None, "hook_auth": "body_secret", "max_per_day": None,
          "hook_slug": "h_privee"}
     vu["trigger"] = t
 
@@ -104,12 +104,25 @@ def test_l_API_de_pose_sert_EXACTEMENT_le_registre():
     assert set(servis) == set(runner_hook.HOOK_AUTHS)
 
 
+def test_le_nom_CANONIQUE_d_un_prereglage():
+    assert runner_hook.canonique("lemlist") == runner_hook.BODY_SECRET
+    assert runner_hook.canonique(None) == runner_hook.BEARER
+    for nom in (runner_hook.BEARER, runner_hook.STANDARD_WEBHOOKS,
+                runner_hook.BODY_SECRET, runner_hook.NONE):
+        assert runner_hook.canonique(nom) == nom
+    for ancien, neuf in runner_hook.ALIAS.items():
+        a, n = runner_hook.PREREGLAGES[ancien], runner_hook.PREREGLAGES[neuf]
+        assert (a.schema, a.champ_secret, a.chemin_id) == \
+            (n.schema, n.champ_secret, n.chemin_id), \
+            "un ancien nom se lit EXACTEMENT comme le nouveau"
+
+
 def test_un_mode_inconnu_se_lit_PORTEUR():
     assert runner_hook.prereglage("jamais_vu").nom == runner_hook.BEARER
     assert runner_hook.prereglage(None).nom == runner_hook.BEARER
 
 
-# ── 1. Lemlist : le secret dans le CORPS ──────────────────────────────────────
+# ── 1. `body_secret` : le secret dans le CORPS ──────────────────────────────────────
 
 def test_lemlist_le_bon_secret_dans_le_corps_ENFILE(porte):
     out = runner_hook.declencher(5, None, _lemlist(), "lemlist",
@@ -159,7 +172,17 @@ def test_lemlist_par_l_id_NUMERIQUE_d_un_agent_a_adresse_privee_est_refuse(porte
 
 # ── 2. chacun SA porte ────────────────────────────────────────────────────────
 
-def test_le_porteur_en_EN_TETE_n_ouvre_pas_un_agent_lemlist(porte):
+def test_une_ligne_encore_LEMLIST_s_ouvre_toujours_par_le_corps(porte):
+    """Les lignes posées avant le renommage gardent `lemlist` en base : la garde
+    SQL filtre par nom, l'ancien doit donc rester un préréglage à part entière."""
+    porte["trigger"]["hook_auth"] = "lemlist"
+    out = runner_hook.declencher(5, None, _lemlist(), "lemlist",
+                                 par_adresse_privee=True)
+    assert out["job_id"] == 900
+    assert JETON not in porte["enfile"]["payload"]["input"]
+
+
+def test_le_porteur_en_EN_TETE_n_ouvre_pas_un_agent_body_secret(porte):
     with pytest.raises(runner_hook.HookRefus) as e:
         runner_hook.declencher(5, JETON, {}, "curl", par_adresse_privee=True)
     assert e.value.statut == 404
@@ -273,11 +296,31 @@ def base(monkeypatch):
     return etat
 
 
-def test_passer_en_lemlist_emet_un_porteur_NEUF_et_efface_la_signature(base):
-    out = _auth(hook_auth="lemlist")
+def test_passer_en_body_secret_emet_un_porteur_NEUF_et_efface_la_signature(base):
+    out = _auth(hook_auth="body_secret")
     assert out["hook_secret"].startswith("otoh_")
     assert base["hash"] == runner_hook.hacher(out["hook_secret"])
-    assert base["enc"] is None and out["trigger"]["hook_auth"] == "lemlist"
+    assert base["enc"] is None and out["trigger"]["hook_auth"] == "body_secret"
+
+
+def test_l_ANCIEN_nom_lemlist_se_pose_et_se_sert_sous_body_secret(base):
+    out = _auth(hook_auth="lemlist")
+    assert out["hook_secret"].startswith("otoh_")
+    assert base["ligne"]["hook_auth"] == "body_secret", "plus rien n'écrit `lemlist`"
+    assert out["trigger"]["hook_auth"] == "body_secret"
+
+
+def test_une_ligne_encore_lemlist_se_SERT_body_secret(base):
+    base["ligne"]["hook_auth"] = "lemlist"
+    assert RT._avec_hook(ORG, dict(base["ligne"]))["hook_auth"] == "body_secret"
+
+
+def test_redemander_body_secret_sur_une_ligne_lemlist_ne_COUPE_pas_la_source(base):
+    """⚠️ Même mode sous deux noms : un porteur neuf invaliderait celui que la
+    source détient déjà, sans que personne n'ait rien changé."""
+    base["ligne"]["hook_auth"] = "lemlist"
+    out = _auth(hook_auth="body_secret")
+    assert not out.get("hook_secret") and base["hash"] == "h0"
 
 
 def test_none_SANS_adresse_privee_en_RECOIT_une(base):
@@ -311,8 +354,8 @@ def test_le_plafond_d_un_agent_none_ne_se_RETIRE_pas(base):
     assert base["ligne"]["max_per_day"] == 40
 
 
-def test_la_rotation_du_porteur_marche_sur_lemlist_PAS_sur_none(base):
-    _auth(hook_auth="lemlist")
+def test_la_rotation_du_porteur_marche_sur_body_secret_PAS_sur_none(base):
+    _auth(hook_auth="body_secret")
     out = _appel(op="rotate_secret", trigger_id=5)
     assert out["hook_secret"].startswith("otoh_")
     _auth(hook_auth="none")
@@ -358,7 +401,7 @@ def test_rotate_address_PAR_L_OUTIL_est_refuse_sur_none(base):
 
 def test_un_agent_AUTHENTIFIE_sert_son_adresse_en_clair(base):
     assert RT._avec_hook(ORG, dict(base["ligne"]))["hook_url"].endswith("/api/hooks/h_privee")
-    assert not _auth(hook_auth="lemlist").get("hook_url")
+    assert not _auth(hook_auth="body_secret").get("hook_url")
 
 
 # ── 6. Sentry : ni l'adresse ni le corps d'un webhook ne partent ──────────────

@@ -1218,10 +1218,22 @@ change** et aucune colonne n'est ajoutée.
 |---|---|---|---|
 | `bearer` (défaut) | `bearer` | en-tête `Authorization: Bearer otoh_…` | — |
 | `standard_webhooks` | `standard_webhooks` | signature `webhook-*` (ci-dessus) | `webhook-id`, signé |
-| `lemlist` | `body_secret` | le **même** `otoh_`, renvoyé par la source dans le champ `secret` de son corps JSON | `_id` du corps |
+| `body_secret` (ex-`lemlist`) | `body_secret` | le **même** `otoh_`, renvoyé par la source dans le champ `secret` de son corps JSON | `_id` du corps, s'il y en a un |
 | `none` | `none` | **aucune** — choix explicite du propriétaire | — |
 
 - **`body_secret`, pour une source qui ne sait ni poser un en-tête ni signer.**
+  **Le nom est générique** (20/10/2026) : le préréglage s'appelait `lemlist`, la
+  source pour laquelle il a été écrit, alors qu'il sert toute source qui sait
+  mettre un champ `secret` de premier niveau dans son JSON (cal.com, un formulaire
+  no-code…). `lemlist` reste un **alias** : accepté à la pose et posé sous
+  `body_secret` (`runner_hook.canonique`), servi `body_secret`, et gardé comme
+  préréglage à part entière tant que des lignes le portent — la garde SQL filtre
+  par NOM, une ligne `lemlist` doit continuer d'ouvrir pendant et après le
+  déploiement bleu/vert. ⚠️ Les deux noms se comparent **canoniques** : redemander
+  `body_secret` sur une ligne `lemlist` n'émet pas de porteur neuf (il couperait la
+  source). Les lignes seront migrées, puis l'alias retiré, une fois les deux
+  couleurs sur ce code. La déduplication par `_id` ne joue que si la source en
+  envoie un.
   Lemlist renvoie tel quel, dans chaque corps, le `secret` qu'on lui a donné à la
   création du hook : on lui donne le porteur `otoh_` de l'agent. Il est haché et
   comparé **dans le WHERE**, comme l'en-tête, avec le préfixe exigé. ⚠️ **Il est
@@ -1233,14 +1245,14 @@ change** et aucune colonne n'est ajoutée.
   le porteur. Le rejeu exact est écarté par `_id` ; un corps modifié (autre `_id`,
   autre contenu) passe, comme passerait un porteur d'en-tête fuité. `max_per_day`
   le borne **s'il est posé** — il reste optionnel, comme pour `bearer` : à poser
-  sur tout agent `lemlist` dont le volume est connu. Un porteur fuité se coupe par
+  sur tout agent `body_secret` dont le volume est connu. Un porteur fuité se coupe par
   `rotate_secret`. Seule une livraison ACCEPTÉE compte comme
   doublon : un corps capturé pendant une pause (409) se rejoue UNE fois après la
   reprise — assumé, c'est la même règle que pour une signature.
   `champ_secret` est une clé de premier niveau (c'est elle qu'on retire du
   corps) ; `chemin_id` est un chemin (`a.b`).
 - **Chacun sa porte, en SQL.** `trigger_par_secret(…, hook_auth)` filtre le mode :
-  le porteur montré par l'en-tête n'ouvre pas un agent `lemlist`, le même jeton dans
+  le porteur montré par l'en-tête n'ouvre pas un agent `body_secret`, le même jeton dans
   le corps n'ouvre pas un agent `bearer`. L'ordre des essais (en-tête, corps, rien)
   n'ouvre donc jamais un agent par une preuve qu'il n'a pas choisie. Un champ
   `secret` dans le corps d'un agent au porteur est une donnée comme une autre :
@@ -1269,14 +1281,14 @@ change** et aucune colonne n'est ajoutée.
     l'outil y est refusé (`no_auth_address`) : l'adresse neuve passerait par un
     transcript. Sentry ne reçoit ni le chemin ni le corps d'une requête
     `/api/hooks/*` (`sentry_setup._redact_hook_request` — le corps d'un agent
-    `lemlist` porte aussi son porteur). Le journal d'accès d'uvicorn masque le
+    `body_secret` porte aussi son porteur). Le journal d'accès d'uvicorn masque le
     chemin (`parametres_secrets`) ; ⚠️ celui du **reverse proxy** (dépôt `infra`)
     le garde entier — l'adresse d'un agent `none` y est un credential.
   - `hook_slug` n'est **jamais servi brut**, par aucune capacité (`_avec_hook` et
     `_sans_adresse_brute`, à la sortie d'`oto_trigger` et de `hook-auth`) : un
     `Output` décrit la réponse, il ne la filtre pas.
 - **Pose** : la même capacité REST `runner.trigger.hook_auth`. Passer vers un
-  préréglage qui s'ouvre avec le porteur (`bearer`, `lemlist`) **émet un porteur
+  préréglage qui s'ouvre avec le porteur (`bearer`, `body_secret`) **émet un porteur
   neuf**, rendu une fois — l'ancien n'a été montré qu'une fois et la source doit de
   toute façon recevoir celui-ci. `rotate_secret` marche sur ces deux-là, est refusé
   sur `standard_webhooks` et `none` (il ne fabriquerait rien qui ouvre).
@@ -1286,7 +1298,7 @@ change** et aucune colonne n'est ajoutée.
   alignés. Un **nouveau schéma** (HMAC d'en-tête à la Stripe/GitHub/Slack, poignée
   de main de vérification) reste du code — une fois par schéma, pas par source.
 - ⚠️ **Base partagée, fenêtre de déploiement** : l'ancien code ne connaît pas
-  `lemlist` ni `none`. Il les traite en **fermé** — son porteur filtre `bearer`, sa
+  `lemlist` ni `none` (ni, au renommage du 20/10, `body_secret`). Il les traite en **fermé** — son porteur filtre `bearer`, sa
   signature filtre `standard_webhooks` : 404, rien n'enfile. Une ligne posée
   depuis la preprod reste donc fermée côté prod tant que la prod ne porte pas ce
   lot. Deux trous, d'où l'**ordre** : l'ancien `update max_per_day=0` ne connaît

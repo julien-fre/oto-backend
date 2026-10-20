@@ -284,7 +284,7 @@ class Trigger(BaseModel):
     #: L'URL à donner à la source. Servie sur un déclencheur webhook, jamais le
     #: secret — celui-ci n'existe en clair qu'au retour de `create`/`rotate_secret`.
     hook_url: Optional[str] = None
-    #: Le PRÉRÉGLAGE — `bearer` | `standard_webhooks` | `lemlist` | `none` (la
+    #: Le PRÉRÉGLAGE — `bearer` | `standard_webhooks` | `body_secret` | `none` (la
     #: preuve que la source doit apporter, `runner_hook.PREREGLAGES`). En `none`,
     #: `hook_url` est servie MASQUÉE : l'adresse y est le credential.
     hook_auth: Optional[str] = None
@@ -610,7 +610,9 @@ def _avec_hook(org_id: int, t: dict, compte: Optional[dict] = None,
     # l'URL masquée. `hook_url` et `private_address` en portent tout ce qu'il faut.
     servi = {k: v for k, v in t.items() if k != "hook_slug"}
     return {**servi,
-            "hook_auth": t.get("hook_auth") or runner_hook.BEARER,
+            # Servi sous son nom CANONIQUE : une ligne encore `lemlist` se lit
+            # `body_secret`, le seul nom que l'écran et les outils connaissent.
+            "hook_auth": runner_hook.canonique(t.get("hook_auth")),
             "signing_secret_set": bool(t.get("signing_secret_set")),
             "private_address": bool(t.get("hook_slug")),
             "hook_url": _url_du_hook(adresse),
@@ -1363,7 +1365,9 @@ def _partager(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
 
 class HookAuthInput(BaseModel):
     trigger_id: int
-    hook_auth: Literal["bearer", "standard_webhooks", "lemlist", "none"] = Field(
+    # `lemlist` : l'ANCIEN nom de `body_secret`, accepté et posé sous le nouveau.
+    hook_auth: Literal["bearer", "standard_webhooks", "body_secret", "lemlist",
+                       "none"] = Field(
         description=(
         "How the sender proves who it is. `bearer`: the sender posts "
         "`Authorization: Bearer otoh_…`, a secret the platform generates. "
@@ -1371,10 +1375,13 @@ class HookAuthInput(BaseModel):
         "(`whsec_…` — Granola, Svix, Resend, Clerk…) in the headers `webhook-id`, "
         "`webhook-timestamp`, `webhook-signature`; the bearer is then REFUSED for "
         "this agent, and a retry of an already-accepted `webhook-id` does not "
-        "start a second run. `lemlist`: Lemlist cannot set a header; give it the "
-        "agent's `otoh_…` token as the hook's `secret` — it comes back in every "
-        "body, is checked, and is REMOVED before the agent sees the body; a retry "
-        "of the same activity `_id` does not start a second run. `none`: NO proof "
+        "start a second run. `body_secret`: for a sender that can neither set a "
+        "header nor sign (Lemlist, cal.com, no-code forms…): it puts the agent's "
+        "`otoh_…` token in a top-level `secret` field of each JSON body — in "
+        "Lemlist, the hook's `secret`. It is checked, then REMOVED before the "
+        "agent sees the body; when the body carries a top-level `_id`, a retry of "
+        "the same `_id` does not start a second run. `lemlist` is its former name, "
+        "still accepted and stored as `body_secret`. `none`: NO proof "
         "at all — anyone who has the agent's private address can start it. Needs a "
         "`max_per_day` cap; mints a NEW private address, returned once as "
         "`hook_url` (served masked everywhere else); the agent is told its input "
@@ -1474,16 +1481,19 @@ def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
     actuel = db.get_trigger(inp.trigger_id, ctx.org_id)
     _valide_l_authentification(inp, actuel)
     _exiger_la_porte(ctx, actuel)
-    mode_avant = actuel.get("hook_auth") or runner_hook.BEARER
+    # Les deux sous leur nom CANONIQUE : redemander `body_secret` sur une ligne
+    # encore `lemlist` n'est PAS un changement de mode (aucun porteur neuf).
+    mode_avant = runner_hook.canonique(actuel.get("hook_auth"))
+    mode = runner_hook.canonique(inp.hook_auth)
     porteur = adresse_neuve = None
-    vise = runner_hook.prereglage(inp.hook_auth)
+    vise = runner_hook.prereglage(mode)
     if vise.schema == runner_hook.STANDARD_WEBHOOKS:
         enveloppe = (runner_hook.chiffrer_secret_de_signature(
                          inp.trigger_id, inp.signing_secret)
                      if inp.signing_secret else None)
-        db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, inp.hook_auth,
+        db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, mode,
                               secret_enc=enveloppe)
-        if mode_avant != inp.hook_auth:
+        if mode_avant != mode:
             db.poser_secret_de_hook(inp.trigger_id, ctx.org_id, None)
         logger.warning("webhook %s (org %s) : authentification par SIGNATURE posée "
                        "par %s%s", inp.trigger_id, ctx.org_id, ctx.sub,
@@ -1501,25 +1511,25 @@ def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
         # l'adresse déjà servie en clair.
         adresse = runner_hook.nouvelle_adresse()
         db.poser_adresse_de_hook(inp.trigger_id, ctx.org_id, adresse)
-        if mode_avant != inp.hook_auth:
-            db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, inp.hook_auth,
+        if mode_avant != mode:
+            db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, mode,
                                   effacer_le_secret=True)
             db.poser_secret_de_hook(inp.trigger_id, ctx.org_id, None)
         adresse_neuve = _url_du_hook(adresse)
         logger.warning("webhook %s (org %s) : SANS PREUVE (`none`) par %s — porteur "
                        "et secret de signature effacés, adresse neuve émise",
                        inp.trigger_id, ctx.org_id, ctx.sub)
-    elif mode_avant != inp.hook_auth:
+    elif mode_avant != mode:
         # Vers un préréglage qui s'ouvre avec NOTRE porteur (en-tête ou corps) : un
         # porteur NEUF à chaque changement — l'ancien n'a été montré qu'une fois,
         # et la source devra de toute façon recevoir celui-ci.
-        db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, inp.hook_auth,
+        db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, mode,
                               effacer_le_secret=True)
         porteur, hache = runner_hook.nouveau_secret()
         db.poser_secret_de_hook(inp.trigger_id, ctx.org_id, hache)
         logger.warning("webhook %s (org %s) : passé en `%s` par %s — secret de "
                        "signature effacé, porteur neuf émis", inp.trigger_id,
-                       ctx.org_id, inp.hook_auth, ctx.sub)
+                       ctx.org_id, mode, ctx.sub)
     t = db.get_trigger(inp.trigger_id, ctx.org_id) or actuel
     return _avec_mon_acces(ctx, {"trigger": _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)),
                                  "hook_secret": porteur, "hook_url": adresse_neuve})

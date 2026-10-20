@@ -186,7 +186,7 @@ class Prereglage:
       - `bearer` : l'en-tête `Authorization: Bearer otoh_…` ;
       - `standard_webhooks` : la source SIGNE (`whsec_…`, en-têtes `webhook-*`) ;
       - `body_secret` : la source ne sait ni poser un en-tête ni signer ; elle
-        RENVOIE dans son corps JSON un secret qu'on lui a donné (Lemlist). Ce
+        RENVOIE dans son corps JSON un secret qu'on lui a donné (Lemlist, cal.com…). Ce
         secret est NOTRE porteur `otoh_`, posé dans la clé de PREMIER niveau
         `champ_secret` (pas un chemin : c'est elle qui est retirée du corps) ;
       - `none` : AUCUNE preuve, choix explicite du propriétaire. L'adresse privée
@@ -208,13 +208,24 @@ class Prereglage:
 PREREGLAGES: dict[str, Prereglage] = {p.nom: p for p in (
     Prereglage(BEARER, BEARER),
     Prereglage(STANDARD_WEBHOOKS, STANDARD_WEBHOOKS),
-    # Lemlist (`POST /api/hooks` côté Lemlist) : « secret » est renvoyé tel quel
-    # dans le corps de chaque appel ; `_id` est l'identifiant de l'activité.
+    # Le jeton dans le corps, pour TOUTE source qui sait mettre un champ de
+    # premier niveau `secret` dans son JSON (Lemlist, cal.com, un formulaire
+    # no-code…). `_id` ne déduplique que si la source en envoie un : Lemlist y met
+    # l'identifiant de l'activité ; une source sans `_id` n'a pas de déduplication.
     # https://developer.lemlist.com/api-reference/endpoints/webhooks/add-webhook
+    Prereglage(BODY_SECRET, BODY_SECRET, champ_secret="secret", chemin_id="_id"),
+    # L'ANCIEN nom du même préréglage (06/10 → 20/10/2026), gardé pour les lignes
+    # déjà posées : `trigger_par_secret` filtre par NOM, et une ligne `lemlist`
+    # doit continuer d'ouvrir pendant et après le déploiement. Plus rien ne
+    # l'ÉCRIT (`canonique`) ; une migration des lignes le retirera.
     Prereglage("lemlist", BODY_SECRET, champ_secret="secret", chemin_id="_id"),
     Prereglage(NONE, NONE),
 )}
 HOOK_AUTHS = tuple(PREREGLAGES)
+
+#: Les anciens noms d'un préréglage → son nom d'aujourd'hui. Lus en entrée et servis
+#: en sortie sous le nom canonique : une marque ne nomme plus un schéma générique.
+ALIAS: dict[str, str] = {"lemlist": BODY_SECRET}
 
 #: Le plafond journalier d'un agent SANS preuve dont le propriétaire n'en a pas
 #: déclaré (la pose l'exige, mais une ligne ne doit jamais dépendre d'une seule
@@ -225,6 +236,15 @@ PLAFOND_SANS_PREUVE_DEFAUT = 100
 def prereglage(nom: Optional[str]) -> Prereglage:
     """Le préréglage d'un agent ; inconnu → le porteur (le comportement d'avant)."""
     return PREREGLAGES.get(nom or BEARER) or PREREGLAGES[BEARER]
+
+
+def canonique(nom: Optional[str]) -> str:
+    """Le nom d'aujourd'hui d'un préréglage (`lemlist` → `body_secret`) ; absent →
+    le porteur. ⚠️ À appliquer AVANT toute comparaison d'un mode stocké avec un
+    mode demandé : `lemlist` ≠ `body_secret` ferait sinon émettre un porteur neuf
+    — et couperait la source — à qui ne fait que redemander le même mode."""
+    nom = nom or BEARER
+    return ALIAS.get(nom, nom)
 
 
 def secret_du_corps(p: Prereglage, corps: Any) -> Optional[str]:
