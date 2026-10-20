@@ -280,10 +280,14 @@ def test_list_includes_projects_shared_to_my_team(seams, monkeypatch):
 
 def test_lint_reports_stale_empty_duplicates(seams, monkeypatch):
     # B1 (#6) : op=lint remonte pages stale / vides / titres en double d'un projet.
+    # « Récent » se date depuis aujourd'hui : une date figée devenait elle-même vieille
+    # de 90 jours (le 22/07/2026 l'était le 20/10/2026) et le test rougissait seul.
+    import datetime as _dt
+    recent = (_dt.datetime.now() - _dt.timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
     docs = [
-        {"id": 1, "title": "A", "body_md": "contenu suffisant.", "updated_at": "2026-07-22 10:00:00"},
-        {"id": 2, "title": "A", "body_md": "autre contenu.", "updated_at": "2026-07-22 10:00:00"},  # doublon
-        {"id": 3, "title": "Vide", "body_md": " ", "updated_at": "2026-07-22 10:00:00"},            # vide
+        {"id": 1, "title": "A", "body_md": "contenu suffisant.", "updated_at": recent},
+        {"id": 2, "title": "A", "body_md": "autre contenu.", "updated_at": recent},  # doublon
+        {"id": 3, "title": "Vide", "body_md": " ", "updated_at": recent},            # vide
         {"id": 4, "title": "Vieux", "body_md": "du contenu ancien.", "updated_at": "2020-01-01 10:00:00"},  # stale
     ]
     monkeypatch.setattr(P.db, "list_docs_for_project", lambda pid: docs)
