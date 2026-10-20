@@ -18,8 +18,12 @@ Usage (from the repo root, with the repo's venv):
         email --first_name Jane --last_name Doe --domain acme.com [--dry_run] \\
         [--providers hunter,apollo] [--raw]
 
-    waterfall: email | phone | company | person. Inputs: --linkedin_url --email
-    --first_name --last_name --full_name --domain --company_name --siren --country.
+    waterfall: email | phone | company | person | tech. Inputs: --linkedin_url --email
+    --first_name --last_name --full_name --domain --company_name --siren --country
+    --technologies (tech: comma-separated, e.g. `Shopify,HubSpot`).
+
+    tech: `OTO_FIELDS_DATAFORSEO='{"login": "…", "password": "…"}'`, `OTO_KEY_APIFY`,
+    `OTO_KEY_THEIRSTACK`.
     --raw also prints what each step's tool returned (to check an extractor).
 
 Start with `--dry_run`: it spends nothing and shows the order and the arguments.
@@ -111,9 +115,9 @@ def _install(raw_log: list):
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Run a waterfall locally (real providers).")
-    p.add_argument("waterfall", choices=["email", "phone", "company", "person"])
+    p.add_argument("waterfall", choices=["email", "phone", "company", "person", "tech"])
     for name in ("linkedin_url", "email", "first_name", "last_name", "full_name",
-                 "domain", "company_name", "siren", "country", "providers"):
+                 "domain", "company_name", "siren", "country", "technologies", "providers"):
         p.add_argument(f"--{name}")
     p.add_argument("--dry_run", action="store_true")
     p.add_argument("--raw", action="store_true")
