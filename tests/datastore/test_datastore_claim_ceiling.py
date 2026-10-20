@@ -370,7 +370,7 @@ def test_le_parametre_ne_descend_pas_sous_le_plafond_par_defaut(live):
     # C'est le plafond en vigueur qui décide, et il finit par mordre.
     rid = _tourner_a_vide(st, ns, 1)
     assert st.claim_next(ns, worker="agent-1", max_claims=1) is None
-    assert "plafond 3" in _brut(ns_id, rid)["abandon_reason"]
+    assert "ceiling 3" in _brut(ns_id, rid)["abandon_reason"]
 
 
 # ══ la déclaration se valide à la pose ══════════════════════════════════════

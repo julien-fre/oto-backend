@@ -226,9 +226,9 @@ def test_sous_of_key_le_rang_ne_fabrique_pas_une_identite_en_double(base):
     st, ns, ns_id, rid = _table(SCHEMA_CLE, [{"role": "RH", "nom": "Ada"},
                                             {"role": "DAF", "nom": "Bob"}])
     e = _refus(lambda: st.update_row(ns, rid, {"contacts[1].role": "RH"}))
-    assert "en double" in " ".join(e.errors)
+    assert "duplicated" in " ".join(e.errors)
     e = _refus(lambda: st.update_row(ns, rid, {"contacts[+]": {"role": "DAF"}}))
-    assert "en double" in " ".join(e.errors)
+    assert "duplicated" in " ".join(e.errors)
     st.update_row(ns, rid, {"contacts[1].nom": "Bruno"})
     assert _stockee(ns_id, rid)["contacts"][1] == {"role": "DAF", "nom": "Bruno"}
 

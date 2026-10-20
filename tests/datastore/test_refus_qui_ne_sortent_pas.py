@@ -146,7 +146,7 @@ def test_une_forme_non_prevue_de_transitions_est_un_REFUS(live, forme):
     message = str(e.value)
     assert "lifecycle.transitions" in message, "le refus doit NOMMER la clé fautive"
     assert type(forme).__name__ in message, "…et dire ce qu'il a reçu"
-    assert "état" in message, "…et la forme attendue"
+    assert "state" in message, "…et la forme attendue"
 
 
 def test_la_forme_JUSTE_passe_toujours(live):
@@ -182,7 +182,7 @@ def test_les_refus_DEJA_bons_du_lifecycle_ne_sont_pas_touches(live):
          "abandon_state"),
         ({"fields": [{"key": "s", "role": "status",
                       "lifecycle": {"states": "a", "transitions": {}}}]},
-         "liste non-empty"),
+         "liste non vide"),
         ({"fields": [{"key": "x", "type": "licorne"}]}, "type inconnu"),
     ):
         with pytest.raises(ValueError) as e:

@@ -162,7 +162,7 @@ def test_donnees_d_origine_pose_l_origine_et_le_reimport_ne_la_touche_pas(client
                                                           "comment": "fichier du 05/08"}}],
                            "donnees_d_origine": True})
     assert r1.status_code == 200, r1.text
-    assert any("origine POSÉE" in n and "`nom`" in n for n in r1.json()["notices"])
+    assert any("origin SET" in n and "`nom`" in n for n in r1.json()["notices"])
     cell = _base(ns_id)["1"]["nom"]
     origine = dsv2.layer_value(cell, dsv2.ORIGIN_LAYER)
     assert dsv2.unwrap(origine) == "DUPONT"
@@ -172,7 +172,7 @@ def test_donnees_d_origine_pose_l_origine_et_le_reimport_ne_la_touche_pas(client
               query="?donnees_d_origine=true")
     assert r2.status_code == 200, r2.text
     assert r2.json()["updated"] == 1
-    assert any("NON posée" in n and "déjà posée" in n for n in r2.json()["notices"])
+    assert any("origin NOT set" in n and "already set" in n for n in r2.json()["notices"])
     cell = _base(ns_id)["1"]["nom"]
     assert dsv2.unwrap(cell) == "Dupont SAS"
     assert dsv2.unwrap(dsv2.layer_value(cell, dsv2.ORIGIN_LAYER)) == "DUPONT"
@@ -197,7 +197,7 @@ def test_une_ligne_refusee_est_nommee_et_le_refus_dit_ou_reprendre(
                                    {"siren": "2", "effectif": "beaucoup"}]})
     assert r.status_code == 400, r.text
     assert r.json()["error"] == "row_invalid"
-    assert "ligne 2/2" in r.json()["detail"] and "reprends le lot à la ligne 2" in r.json()["detail"]
+    assert "row 2/2" in r.json()["detail"] and "resume the batch at row 2" in r.json()["detail"]
     assert sorted(_base(ns_id)) == ["1"]
 
 
@@ -247,9 +247,9 @@ def test_le_refus_de_cle_dit_si_l_ecriture_la_portait_sur_les_deux_faces(
     ns, ns_id = _table(FERME)
     attendu = {"key": "siren", "cle_portee": portee,
                **({"valeur": "999"} if portee else {}),
-               "a_renvoyer": {"siren": "<texte>"}}
-    ouverture = ("cette écriture porte `siren` = '999'" if portee
-                 else "cette écriture ne porte pas `siren`")
+               "a_renvoyer": {"siren": "<text>"}}
+    ouverture = ("this write carries `siren` = '999'" if portee
+                 else "this write does not carry `siren`")
     for r in (client.post(f"/api/datastores/{ns}/rows", headers=_h(), json=ligne),
               _lot(client, ns, {"rows": [ligne]})):
         assert r.status_code == 400, r.text
@@ -260,6 +260,6 @@ def test_le_refus_de_cle_dit_si_l_ecriture_la_portait_sur_les_deux_faces(
     for kw in ({"row": ligne}, {"rows": [ligne]}):
         msg = _refus_mcp(data_write, datastore=ns, **kw)
         assert ouverture in msg
-        assert msg.endswith('À renvoyer, les gabarits `<…>` remplacés : '
-                            '{"siren": "<texte>"}.')
+        assert msg.endswith('To send back, with the `<…>` templates replaced: '
+                            '{"siren": "<text>"}.')
     assert _base(ns_id) == {}

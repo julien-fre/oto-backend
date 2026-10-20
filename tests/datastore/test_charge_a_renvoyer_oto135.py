@@ -213,9 +213,9 @@ def test_la_face_MCP_finit_le_message_par_la_charge(live, monkeypatch):
             "contacts": [{"role": "RH", "nom": "Alice"}, {"role": "DAF"}]}}))
     msg = str(e.value)
     assert "contacts[1].nom" in msg, msg
-    assert ('À renvoyer, les gabarits `<…>` remplacés : '
+    assert ('To send back, with the `<…>` templates replaced: '
             '{"contacts": [{"role": "DAF", "nom": "<text> | @empty"}]}') in msg, msg
-    assert "Alice" not in msg.split("À renvoyer")[1], "l'élément fautif seul"
+    assert "Alice" not in msg.split("To send back")[1], "l'élément fautif seul"
 
 
 def test_un_lot_garde_la_charge(live):

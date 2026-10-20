@@ -209,7 +209,7 @@ def test_renvoyer_une_liste_SANS_cle_d_element_est_refuse_sans_perte(ligne_marqu
     servie = st.get_row(ns, rid)
     with pytest.raises(RowValidationError) as e:
         st.update_row(ns, rid, {k: v for k, v in servie.items() if not k.startswith("_")})
-    assert "contacts[0].fonction" in str(e.value) and "requis" in str(e.value)
+    assert "contacts[0].fonction" in str(e.value) and "required" in str(e.value)
     assert _stockee(ns_id, rid) == avant, "un refus a laissé une trace en base"
 
 
@@ -242,4 +242,4 @@ def test_sans_marqueur_un_vide_ordinaire_reste_refuse_comme_avant(ligne_marquee)
     with pytest.raises(RowValidationError) as e:
         st.append_row(ns, {"raison": "GAMMA", "fonction": "",
                            "contacts": [{"nom": "Z", "fonction": "CEO"}]})
-    assert "requis" in str(e.value)
+    assert "required" in str(e.value)

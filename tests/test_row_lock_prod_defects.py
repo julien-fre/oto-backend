@@ -182,7 +182,7 @@ def test_the_refusal_carries_the_way_out(table):
     msg = str(e.value)
     assert "_run_id" in msg                    # la faute la plus fréquente, d'abord
     assert "agent-1" not in msg                # le titulaire d'un tiers n'est pas nommé
-    assert "jusqu'à" in msg                    # jusqu'à quand
+    assert "until" in msg                      # jusqu'à quand
     assert "data_release" in msg               # comment lever
 
 

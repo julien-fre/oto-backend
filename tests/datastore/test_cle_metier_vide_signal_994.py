@@ -52,7 +52,7 @@ def test_ecriture_unitaire_d_une_cle_vide_refusee_avant_tout_insert(live, vide):
     with pytest.raises(ValueError, match=REFUS) as refus:
         st.append_row(ns, {"siren": vide, "nom": "A"})
     assert not isinstance(refus.value, UniqueViolation)
-    assert "omets la colonne" in str(refus.value)
+    assert "leave the column out" in str(refus.value)
     assert _lignes(ns_id) == {}, "rien ne doit avoir été écrit"
 
 

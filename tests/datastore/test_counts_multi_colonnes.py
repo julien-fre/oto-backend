@@ -112,7 +112,7 @@ def test_sous_les_memes_filtres_que_les_lignes(store, ns):
 
 
 @pytest.mark.parametrize("champs,motif", [
-    (["inconnue"], "non déclarée"),
+    (["inconnue"], "not declared"),
     (["ville.comment"], "pas un nom de colonne nu"),
     (["ville", "ville"], "deux fois"),
     ([], "LISTE NON VIDE"),

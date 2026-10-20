@@ -190,7 +190,7 @@ def test_la_mise_de_cote_se_dit_dans_la_ligne_servie(live):
 
     ligne = next(r for r in st.list_rows(ns) if r["_id"] == ids[0])
 
-    assert "plafond 3" in ligne["_abandon"]
+    assert "ceiling 3" in ligne["_abandon"]
 
 
 def test_une_ecriture_remet_la_ligne_mise_de_cote_dans_la_file(live):
@@ -213,7 +213,7 @@ def test_le_plafond_par_defaut_est_un_reglage(live, monkeypatch):
         _prendre_et_rendre(st, ns)
 
     assert st.claim_next(ns, worker="w") is None
-    assert "plafond 2" in _brut(ns_id, ids[0])["abandon_reason"]
+    assert "ceiling 2" in _brut(ns_id, ids[0])["abandon_reason"]
 
 
 @pytest.mark.parametrize("valeur", ["0", "-1", "trois", ""])

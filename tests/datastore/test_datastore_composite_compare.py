@@ -86,14 +86,14 @@ def test_comparer_une_colonne_liste_entiere_est_refuse_sur_tout_verbe(
     with pytest.raises(ValueError) as e:
         _VERBES[verbe](s, filters=[{"field": "contacts", "op": op, "value": "DRH"}])
     msg = str(e.value)
-    assert f"filtre `{op}` sur `contacts` refusé" in msg
+    assert f"filter `{op}` on `contacts` refused" in msg
     assert "contacts[].fonction" in msg          # la destination qui existe
     assert "`empty`" in msg and "`not_empty`" in msg
 
 
 def test_le_raccourci_filter_est_garde_aussi(pg, monkeypatch):
     """`filter={"contacts": "DRH"}` est un `eq` : il passe par la même garde."""
-    with pytest.raises(ValueError, match="colonne `list`"):
+    with pytest.raises(ValueError, match="`list` column"):
         _store(monkeypatch).count_rows("t", filter={"contacts": "DRH"})
 
 
@@ -114,14 +114,14 @@ def test_une_colonne_objet_entiere_est_refusee(pg, monkeypatch):
     with pytest.raises(ValueError) as e:
         _store(monkeypatch).count_rows("t", filters=[
             {"field": "adresse", "op": "eq", "value": "Lyon"}])
-    assert "colonne `object`" in str(e.value)
+    assert "`object` column" in str(e.value)
 
 
 def test_une_liste_de_scalaires_est_refusee_sans_promettre_un_chemin(pg, monkeypatch):
     with pytest.raises(ValueError) as e:
         _store(monkeypatch).count_rows("t", filters=[
             {"field": "tags", "op": "eq", "value": "x"}])
-    assert "ne déclarent pas d'attributs" in str(e.value)
+    assert "declare no attributes" in str(e.value)
 
 
 def test_la_file_de_travail_est_gardee(monkeypatch):

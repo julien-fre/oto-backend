@@ -451,7 +451,7 @@ def test_clear_et_keep_sont_refuses_sans_rien_ecrire(client, base, corps):
     avant = _intacte(ns_id, rid)
     r = _patcher(client, ns, rid, corps)
     assert r.status_code == 400 and r.json()["error"] == "row_invalid", r.text
-    assert "ne sont pas acceptés" in r.text
+    assert "are not accepted" in r.text
     assert _intacte(ns_id, rid) == avant
     r = client.post(f"/api/datastores/{ns}/rows", headers=_h(),
                     json={"fonction": "DG", "contacts": [], **corps})

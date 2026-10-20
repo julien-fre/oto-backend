@@ -218,7 +218,7 @@ def test_une_fiche_ne_se_retire_pas_par_valeur(base):
     st, ns, ns_id, rid = _table(journal=[{"quand": "2026-10-01"}])
     avant = _stockee(ns_id, rid)
     e = _refus(lambda: st.update_row(ns, rid, {"journal[-]": {"quand": "2026-10-01"}}))
-    assert "`\"journal[<rang>]\": null`" in " ".join(e.errors)
+    assert "`\"journal[<index>]\": null`" in " ".join(e.errors)
     assert _stockee(ns_id, rid) == avant
 
 

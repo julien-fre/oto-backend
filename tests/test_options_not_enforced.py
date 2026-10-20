@@ -175,7 +175,7 @@ def test_the_real_write_path_carries_the_notice(live):
     assert "hors_options" not in out, "relevé retiré : le préavis le dit"
     notice = " ".join(out.get("notices") or [])
     assert "'Moyenne' not among the options (haute, basse)" in notice
-    assert "21 octobre 2026" in notice and "data_patch_schema" in notice
+    assert "From 2026-10-21 on" in notice and "data_patch_schema" in notice
     ns_id = st.resolve_ns_id_for_write(ns)
     assert [l["data"]["priorite"] for l in db.datastore_list_rows(ns_id)] == ["Moyenne"]
 

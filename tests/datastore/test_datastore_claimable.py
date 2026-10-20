@@ -125,8 +125,8 @@ def test_un_filtre_contradictoire_n_elargit_pas_et_le_perimetre_est_nomme(live):
     mcp = T._hint_file_vide(perimetre, {"lot_test": "jalon-200"})
     rest = C._hint_vide(perimetre, {"lot_test": "jalon-200"})
     for phrase in (mcp, rest):
-        assert "périmètre déclaré `{lot_test: jalon-100, statut: a_enrichir}`" in phrase
-        assert "`{lot_test: jalon-200}`" in phrase and "ET" in phrase
+        assert "declared scope `{lot_test: jalon-100, statut: a_enrichir}`" in phrase
+        assert "`{lot_test: jalon-200}`" in phrase and "ANDed" in phrase
     # La suite MCP ne change pas : l'agent ne tient rien, il n'écrit rien — et on ne
     # lui souffle aucun geste d'écriture, pas même le nom d'un raccourci (#517, 29/08 :
     # « ou écris avec un identifiant explicite » l'avait fait en inventer un).

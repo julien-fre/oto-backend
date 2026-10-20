@@ -136,7 +136,7 @@ def test_face_REST_phone_et_motif_seul(live, monkeypatch):
     assert code == 400 and "phone" in corps["detail"], corps
     code, corps = call("me.datastore.append_row", path_params={"datastore": ns},
                        body={"ref": "c", "siren": "abc"}, sub=SUB)
-    assert code == 400 and "motif" in corps["detail"], corps
+    assert code == 400 and "pattern" in corps["detail"], corps
 
 
 def test_face_OUTIL_phone_et_motif_seul(live, monkeypatch):
@@ -170,4 +170,4 @@ def test_face_OUTIL_phone_et_motif_seul(live, monkeypatch):
     assert "phone" in e.value.error.message
     with pytest.raises(McpError) as e:
         appeler(datastore=ns, rows=[{"ref": "c", "siren": "abc"}])
-    assert "motif" in e.value.error.message
+    assert "pattern" in e.value.error.message

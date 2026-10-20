@@ -107,10 +107,10 @@ def test_le_refus_dit_OU_reprendre_pas_seulement_ce_qui_a_echoue(live):
         st.write_rows(ns, [{"ref": f"r{i}", "statut": "en_cours"} for i in range(1, 7)])
 
     message = str(e.value)
-    assert "ligne 4/6 du lot" in message
+    assert "row 4/6 of the batch" in message
     assert "ref=r4" in message
-    assert "3 lignes déjà écrites avant l'arrêt, aucune après" in message
-    assert "reprends le lot à la ligne 4" in message
+    assert "3 rows already written before the stop, none after" in message
+    assert "resume the batch at row 4" in message
 
 
 def test_la_ligne_fautive_EN_TETE_fait_tout_perdre(live):
@@ -128,7 +128,7 @@ def test_la_ligne_fautive_EN_TETE_fait_tout_perdre(live):
 
     assert _etats(st, ns) == {"r1": "perdu", "r2": "neuf", "r3": "neuf",
                               "r4": "neuf", "r5": "neuf", "r6": "neuf"}
-    assert "aucune ligne écrite avant l'arrêt" in str(e.value)
+    assert "no row written before the stop" in str(e.value)
 
 
 def test_la_SORTIE_d_un_etat_terminal_est_DEJA_declarable(live):
@@ -256,4 +256,4 @@ def test_un_etat_terminal_ENFERME_la_ligne_meme_seule(live):
 
     with pytest.raises(RowValidationError) as e:
         st.update_row(ns, _id(st, ns, "r1"), {"statut": "en_cours"})
-    assert "état terminal" in str(e.value)
+    assert "terminal state" in str(e.value)

@@ -82,7 +82,7 @@ def test_un_reimport_pose_l_origine_sur_le_marqueur_vide(live, chemin):
     assert blob["nom"] == {"valeur": "Z", "origine": {"valeur": "Z"}}, (
         "le marqueur sous une valeur non plus")
     notices = _notices(st)
-    assert "origine POSÉE sur `email` (1), `nom` (1)" in notices, notices
+    assert "origin SET on `email` (1), `nom` (1)" in notices, notices
 
 
 @pytest.mark.parametrize("chemin", sorted(_CHEMINS))
@@ -98,9 +98,9 @@ def test_une_origine_pleine_reste_figee_et_le_saut_est_dit(live, chemin):
     assert blob["email"] == {"valeur": "autre@x", "origine": {"valeur": "x@x"}}, (
         "une origine non vide ne bouge jamais : le courant bouge, l'origine non")
     notices = _notices(st2)
-    assert "origine NON posée, déjà posée, sur `email` (1), `nom` (1)" in notices, notices
-    assert "origine POSÉE" not in notices or "`email`" not in notices.split(
-        "origine POSÉE")[1].split("—")[0], notices
+    assert "origin NOT set, already set, on `email` (1), `nom` (1)" in notices, notices
+    assert "origin SET" not in notices or "`email`" not in notices.split(
+        "origin SET")[1].split("—")[0], notices
 
 
 def test_le_releve_cumule_sur_un_lot_et_nomme_chaque_raison(live):
@@ -112,10 +112,10 @@ def test_le_releve_cumule_sur_un_lot_et_nomme_chaque_raison(live):
                         "nom": {"valeur": "N", "origine": "écrite"}}],
                   key="siren", donnees_d_origine=True, origine_override=True)
     notices = _notices(st)
-    assert "origine POSÉE sur `email` (3), `siren` (3)" in notices, notices
-    assert "origine NON posée, valeur vide, sur `nom` (2)" in notices, notices
-    assert "origine NON posée, écrite par l'appelant, sur `nom` (1)" in notices, notices
-    assert sum("origine POSÉE" in n for n in st.off_schema_report()["notices"]) == 1, (
+    assert "origin SET on `email` (3), `siren` (3)" in notices, notices
+    assert "origin NOT set, empty value, on `nom` (2)" in notices, notices
+    assert "origin NOT set, written by the caller, on `nom` (1)" in notices, notices
+    assert sum("origin SET" in n for n in st.off_schema_report()["notices"]) == 1, (
         "une phrase par raison sur le lot entier, jamais une par ligne")
 
 
@@ -123,7 +123,7 @@ def test_la_creation_unitaire_dit_aussi_ce_qu_elle_pose(live):
     ns, ns_id = _tableau()
     st = _store()
     st.append_row(ns, {"siren": "9", "email": "e@x"}, donnees_d_origine=True)
-    assert "origine POSÉE sur `email` (1), `siren` (1)" in _notices(st)
+    assert "origin SET on `email` (1), `siren` (1)" in _notices(st)
 
 
 def test_l_origine_posee_par_le_parametre_n_est_pas_ecrite_sans_le_dire(live):

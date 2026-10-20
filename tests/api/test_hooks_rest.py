@@ -334,7 +334,7 @@ def test_le_mode_FIELDS_de_bout_en_bout(client, org):
     r = _post(client, t["id"], secret,
               {"data": {"id": 4242, "email": "prive@exemple.test"}})
     charge = db.get_job(r.json()["job_id"], org["id"])["payload"]["input"]
-    assert "4242" in charge and "NON FIABLE" in charge
+    assert "4242" in charge and "UNTRUSTED" in charge
     assert "prive@exemple.test" not in charge, (
         "ce qui n'est pas nommé ne quitte jamais la livraison")
 

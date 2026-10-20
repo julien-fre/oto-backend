@@ -264,7 +264,7 @@ def test_un_refus_de_revision_ne_touche_a_rien(portes, porte):
         p.ecrire(ns, "r1", {"statut": "fait"}, revision=lue)
     assert _etat(ns_id) == avant, "un refus a modifié la ligne (donnée, rev, horodatage, claims)"
     assert "revision_conflict" in refus.value.texte
-    assert f"révision actuelle {avant['rev']}" in refus.value.texte
+    assert f"current revision {avant['rev']}" in refus.value.texte
     if refus.value.courante is not None:
         assert refus.value.courante == str(avant["rev"])
 

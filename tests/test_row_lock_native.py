@@ -341,7 +341,7 @@ def test_a_table_without_a_lifecycle_hears_nothing(table):
     # Seul le préavis des colonnes non déclarées (oto#124) peut parler ici — `societe`
     # n'est déclarée nulle part ; aucun message de cycle de vie.
     assert not [n for n in st.off_schema_report().get("notices") or []
-                if "non déclarée" not in n]
+                if "column not declared" not in n]
 
 
 def test_a_free_row_hears_nothing_either(table):

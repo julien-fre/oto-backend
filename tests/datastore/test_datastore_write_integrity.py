@@ -207,7 +207,7 @@ def test_le_lot_nomme_la_ligne_quil_refuse(table):
         ], key="siren")
 
     msg = str(exc.value)
-    assert "ligne 2/3" in msg, "l'index dans le lot — la ligne se retrouve"
+    assert "row 2/3" in msg, "l'index dans le lot — la ligne se retrouve"
     assert "552081317" in msg, "et sa clé métier, qui la nomme dans le fichier"
     assert "entreprise_email" in msg and "editeur-temoin.example" in msg, \
         "sans rien perdre de ce que le refus disait déjà"
@@ -228,7 +228,7 @@ def test_le_lot_refuse_dit_ce_quil_a_deja_ecrit(table):
         ], key="siren")
 
     assert _cardinal(ns_id) == 2, "le témoin + la première du lot : rien n'est annulé"
-    assert "1 ligne" in str(exc.value), \
+    assert "1 row" in str(exc.value), \
         "le refus dit combien de lignes il laisse derrière lui"
 
 

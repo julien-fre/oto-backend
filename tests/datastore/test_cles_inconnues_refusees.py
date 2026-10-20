@@ -203,7 +203,7 @@ def test_le_patch_qui_POSE_une_cle_inconnue_est_refuse(live, monkeypatch):
     from oto_mcp.datastore.errors import SchemaDefinitionError
     ns_id = _tableau(ANCIEN)
     st = _store(monkeypatch, ns_id)
-    with pytest.raises(SchemaDefinitionError, match="fields.b : `hint`"):
+    with pytest.raises(SchemaDefinitionError, match="fields.b: `hint`"):
         st.patch_schema(str(ns_id), fields=[{"key": "b", "hint": "h"}])
     with pytest.raises(SchemaDefinitionError, match="fields.a: `note`"):
         st.patch_schema(str(ns_id), fields=[{"key": "a", "note": "autre"}])

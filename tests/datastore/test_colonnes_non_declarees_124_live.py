@@ -194,7 +194,7 @@ def _refus_mcp(data_write, **kw) -> str:
 
 
 def _avertissement(rep: dict) -> str:
-    return next(n for n in rep.get("notices") or [] if "non déclarée" in n)
+    return next(n for n in rep.get("notices") or [] if "not declared in this table's schema" in n)
 
 
 # ── AVANT la date : écrite, et dite ──────────────────────────────────────────
@@ -217,8 +217,8 @@ def test_avant_la_colonne_est_creee_et_l_avertissement_est_date(
             assert r.status_code == 201, r.text
             rep = r.json()
         texte = _avertissement(rep)
-        assert "`age`" in texte and "À partir du 21 octobre 2026" in texte, face
-        assert "REFUSÉ (`unknown_column`)" in texte and "data_patch_schema" in texte
+        assert "`age`" in texte and "From 2026-10-21 on" in texte, face
+        assert "REFUSED (`unknown_column`)" in texte and "data_patch_schema" in texte
         assert '{"key": "age"}' in texte
         # Sans schéma, `nom` n'est pas déclarée non plus : nommée elle aussi.
         assert ("`nom`" in texte) is (schema is None), face
@@ -228,18 +228,18 @@ def test_avant_la_colonne_est_creee_et_l_avertissement_est_date(
 def test_avant_une_colonne_declaree_ne_dit_rien(client, data_write):
     ns, _, _ = _table()
     rep = data_write(datastore=ns, row={"nom": "A", "nom.comment": "source : registre"})
-    assert not any("non déclarée" in n for n in rep.get("notices") or [])
+    assert not any("not declared in this table's schema" in n for n in rep.get("notices") or [])
 
 
 def test_avant_le_lot_dit_une_seule_phrase_pour_toutes_ses_colonnes(client, data_write):
     ns, ns_id, _ = _table()
     lot = [{"nom": "A", "age": 1}, {"nom": "B", "taille": 2}, {"nom": "C", "age": 3}]
     rep = data_write(datastore=ns, rows=lot)
-    phrases = [n for n in rep["notices"] if "non déclarée" in n]
+    phrases = [n for n in rep["notices"] if "not declared in this table's schema" in n]
     assert len(phrases) == 1 and "`age`, `taille`" in phrases[0]
     r = client.post(f"/api/datastores/{ns}/rows/batch", headers=_h(), json={"rows": lot})
     assert r.status_code == 200, r.text
-    assert len([n for n in r.json()["notices"] if "non déclarée" in n]) == 1
+    assert len([n for n in r.json()["notices"] if "not declared in this table's schema" in n]) == 1
     assert len(_base(ns_id)) == 6
 
 
@@ -264,7 +264,7 @@ def test_avant_l_upload_signe_et_l_import_avertissent(live, monkeypatch):
     rep = upload_tokens.import_rows(SUB, cible, [{"nom": "C", "rang": 1},
                                                  {"nom": "D", "rang": 2}],
                                     deadline=time.monotonic() + 60)
-    assert rep["done"] and len([n for n in rep["notices"] if "non déclarée" in n]) == 1
+    assert rep["done"] and len([n for n in rep["notices"] if "not declared in this table's schema" in n]) == 1
 
 
 # ── APRÈS la date : refusée, rien n'est écrit ────────────────────────────────
@@ -283,13 +283,13 @@ def test_apres_la_ligne_seule_est_refusee_avec_son_code(client, data_write, apre
     assert corps["error"] == "unknown_column"
     assert "age" in corps["details"]["colonnes"]
     for texte in (msg, corps["detail"]):
-        assert "`age`" in texte and "rien n'a été écrit" in texte
-        assert "Depuis le 1er janvier 2026" in texte  # la date EN VIGUEUR, réglée
+        assert "`age`" in texte and "nothing was written" in texte
+        assert "Since 2026-01-01" in texte  # la date EN VIGUEUR, réglée
         assert "data_patch_schema" in texte and "PATCH /api/datastores/" in texte
     if schema is None:
-        assert "ne déclare encore aucune colonne" in corps["detail"]
+        assert "does not declare any column yet" in corps["detail"]
     else:
-        assert "Colonnes du tableau : `nom`, `ville`" in corps["detail"]
+        assert "Table columns: `nom`, `ville`" in corps["detail"]
     assert _base(ns_id) == []
 
 
@@ -299,7 +299,7 @@ def test_apres_declarer_la_colonne_ouvre_l_ecriture(client, data_write, apres):
                      json={"fields": [{"key": "nom"}, {"key": "age", "type": "number"}]})
     assert r.status_code == 200, r.text
     rep = data_write(datastore=ns, row={"nom": "A", "age": 41})
-    assert not any("non déclarée" in n for n in rep.get("notices") or [])
+    assert not any("not declared in this table's schema" in n for n in rep.get("notices") or [])
     assert _base(ns_id)[0]["age"] == 41
 
 
@@ -311,7 +311,7 @@ def test_apres_le_lot_est_refuse_entier_avant_sa_premiere_ligne(client, data_wri
     r = client.post(f"/api/datastores/{ns}/rows/batch", headers=_h(), json={"rows": lot})
     assert r.status_code == 400 and r.json()["error"] == "unknown_column", r.text
     for texte in (msg, r.json()["detail"]):
-        assert "ce lot est refusé ENTIER" in texte and "`age`" in texte
+        assert "this batch is refused ENTIRELY" in texte and "`age`" in texte
     assert _base(ns_id) == []
 
 
