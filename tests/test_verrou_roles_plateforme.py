@@ -199,6 +199,7 @@ def test_hors_appel_d_un_outil_permis_le_travail_reste_member(delegue, liste_de_
     assert access.get_user_role(PORTEUR) == "member"
     assert _pendant("oto_call", lambda: access.get_user_role(PORTEUR)) == "member"
     assert _pendant("fr_siret", lambda: access.is_platform_operator(PORTEUR)) is False
+    assert liste_de_l_agent["lus"] == [], "un appel ordinaire ne lit pas la liste en base"
 
 
 def test_la_cible_d_oto_call_repose_l_outil(delegue, liste_de_l_agent, monkeypatch):
@@ -249,7 +250,10 @@ def test_la_lecture_pour_la_liste_ne_trace_rien(delegue, liste_de_l_agent, monke
         roles_ = session_visibility._roles_des_outils_permis(PORTEUR)
     assert roles_ == {"oto_admin_org": "super_admin", "oto_admin_signal": "super_admin"}
     assert not [r for r in caplog.records if "exerce" in r.getMessage()]
-    masques = session_visibility._hors_de_portee_plateforme(
-        {"oto_admin_org", "oto_admin_user"}, "member", roles_)
+    # `oto_admin_signal` : un plancher plateforme réel (sinon le test ne prouverait rien).
+    noms = {"oto_admin_signal", "oto_admin_user"}
+    assert session_visibility._hors_de_portee_plateforme(noms, "member") == noms, (
+        "témoin : sans la liste, les deux sont masqués")
+    masques = session_visibility._hors_de_portee_plateforme(noms, "member", roles_)
     assert masques == {"oto_admin_user"}, (
         "l'outil permis reste visible (un outil masqué est injoignable), l'autre non")

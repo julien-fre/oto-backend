@@ -314,7 +314,9 @@ def role_plateforme(sub: Optional[str], role: str) -> str:
     if m == "off":
         return role
     outil = _OUTIL.get()
-    if outil is not None and outil in outils_permis(v):
+    # Le préfixe AVANT la base : seul un `oto_admin_*` peut être permis — un appel
+    # ordinaire (le gros des appels d'un agent) ne lit rien.
+    if outil is not None and outil.startswith(PREFIXE_ADMIN) and outil in outils_permis(v):
         _tracer(v, outil, role, m, permis=True)
         return role
     if m == "report":
