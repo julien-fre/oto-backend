@@ -11,8 +11,6 @@ Contrat MCP : `org_id` (entier) remplace l'ancien `org` (id-ou-nom).
 """
 from __future__ import annotations
 
-import logging
-
 from typing import Literal, Optional
 
 from pydantic import BaseModel
@@ -23,8 +21,6 @@ from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestB
                       cap_limit)
 from ..registry import CAPABILITIES
 from .core import refuser_maison_sous_verrou
-
-_log = logging.getLogger(__name__)
 
 _ID = {"id": "org_id"}  # placeholder de route {id} → champ Input org_id
 
@@ -179,15 +175,13 @@ def _set_member_role(ctx: ResolvedCtx, inp: SetMemberRoleInput) -> dict:
 def _rendre_un_espace(sub: str) -> None:
     """Un invité n'a pas d'org perso : sorti de sa dernière org, il retrouve tout de
     suite un espace (même geste que l'archivage, `update._archive_org`) au lieu de
-    traverser le système sans org jusqu'au prochain boot. Best-effort : le retrait,
-    lui, a réussi, et le backfill du prochain boot reste le filet."""
+    traverser le système sans org. Un échec LÈVE : le retrait est déjà fait, mais
+    l'appelant doit l'apprendre plutôt que de croire le compte servi — le backfill du
+    boot n'est pas une excuse pour taire la panne."""
     if org_store.list_orgs_for_user(sub):
         return
-    try:
-        u = db.get_user(sub) or {}
-        org_store.ensure_personal_org(sub, email=u.get("email"), name=u.get("name"))
-    except Exception:
-        _log.warning("retrait d'org : espace perso non recréé pour %s", sub, exc_info=True)
+    u = db.get_user(sub) or {}
+    org_store.ensure_personal_org(sub, email=u.get("email"), name=u.get("name"))
 
 
 def _remove_member(ctx: ResolvedCtx, inp: RemoveMemberInput) -> dict:

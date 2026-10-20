@@ -17,6 +17,9 @@ def _wire(monkeypatch, *, owner, grant=None, org_ids=(), group_ids=(),
           group_read_of=()):
     # owner de la ressource
     monkeypatch.setattr(ownership, "owner_of", lambda rt, rid: owner)
+    # L'ancien propriétaire garde un partage nominatif : sa maison (org perso) existe
+    # déjà — sans cette doublure, `ownership.maison_du_partage` la lirait en base.
+    monkeypatch.setattr(ownership.org_store, "get_personal_org", lambda sub: 1)
     # scope de l'acteur
     monkeypatch.setattr(ownership, "accessor_scope",
                         lambda sub: ownership.AccessorScope(sub, list(org_ids), list(group_ids)))
@@ -258,6 +261,9 @@ def test_project_transfer_vers_une_org_efface_le_contexte(monkeypatch):
 
 def _kind_stub(monkeypatch, owner, context_org=None):
     calls = []
+    # L'ancien propriétaire garde un partage nominatif : sa maison (org perso) existe
+    # déjà — sans cette doublure, `ownership.maison_du_partage` la lirait en base.
+    monkeypatch.setattr(ownership.org_store, "get_personal_org", lambda sub: 1)
     monkeypatch.setattr(ownership, "_kind", lambda rt: ownership.ResourceKind(
         owner_getter=lambda rid: owner,
         reparent=lambda rid, nt, ni: calls.append((rid, nt, ni)),

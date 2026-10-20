@@ -162,7 +162,10 @@ def backfill_personal_orgs() -> dict:
 # L'org perso qu'un invité PAR LIEN reçoit avant d'accepter (`upsert_user` tourne au
 # premier appel authentifié, avant que le front ne présente le jeton) : née il y a
 # moins d'une heure, seul membre, et rien dedans hormis le projet « Découverte » semé
-# à sa création. Au-delà, ce n'est plus un artefact d'inscription : on n'y touche pas.
+# à sa création — ni tableau, ni clé déposée (coffre de l'org ou du membre, instance
+# de connecteur), ni compte connecté (même déconnecté : la ligne reste la preuve de
+# propriété), ni partage nominatif dont elle serait la maison (`ownership.org_perso_de`).
+# Au-delà, ce n'est plus un artefact d'inscription : on n'y touche pas.
 _PERSO_VIERGE = """
     SELECT o.id FROM orgs o
      WHERE o.personal_of = %(sub)s AND o.archived_at IS NULL AND o.id <> %(rejointe)s
@@ -176,6 +179,20 @@ _PERSO_VIERGE = """
        AND NOT EXISTS (SELECT 1 FROM user_datastores d
                         WHERE (d.owner_type = 'org' AND d.owner_id = o.id::text)
                            OR d.context_org_id = o.id)
+       AND NOT EXISTS (SELECT 1 FROM connector_credentials c
+                        WHERE (c.entity_type = 'org' AND c.entity_id = o.id::text)
+                           OR (c.entity_type = 'member'
+                               AND c.entity_id LIKE o.id::text || ':%%'))
+       AND NOT EXISTS (SELECT 1 FROM connector_instances i
+                        WHERE i.revoked_at IS NULL
+                          AND ((i.owner_type = 'org' AND i.owner_id = o.id::text)
+                               OR (i.owner_type = 'member'
+                                   AND i.owner_id LIKE o.id::text || ':%%')))
+       AND NOT EXISTS (SELECT 1 FROM unipile_accounts a WHERE a.org_id = o.id)
+       AND NOT EXISTS (SELECT 1 FROM resource_grants g
+                        WHERE g.principal_type = 'user' AND g.principal_id = %(sub)s
+                          -- même exception que `ownership._PARTAGES_LISTES_DANS_L_ORG`
+                          AND g.resource_type <> 'runner_trigger')
 """
 
 

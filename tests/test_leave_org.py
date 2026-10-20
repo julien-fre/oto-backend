@@ -33,7 +33,16 @@ def _patch(monkeypatch, *, org=True, personal=False, role="org_member",
         calls["actor"] = actor
         return removed
     monkeypatch.setattr(om.org_store, "remove_org_member", _remove)
+    # Après le retrait, `_rendre_un_espace` lit les orgs restantes : le compte en garde
+    # une, aucun espace n'est à rendre (le cas « dernière org » est couvert par
+    # `test_invite_sans_org_perso.py`). Sans cette doublure, la lecture part en base.
+    monkeypatch.setattr(om.org_store, "list_orgs_for_user", lambda sub: [{"org_id": 99}])
+    monkeypatch.setattr(om.org_store, "ensure_personal_org", _jamais)
     return calls
+
+
+def _jamais(*a, **k):
+    raise AssertionError("aucun espace à rendre : le compte garde une org")
 
 
 def test_leave_ok(monkeypatch):
