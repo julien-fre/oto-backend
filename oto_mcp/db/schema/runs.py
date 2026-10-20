@@ -358,7 +358,11 @@ CREATE TABLE IF NOT EXISTS runner_triggers (
     -- REMPLACE l'adresse numérique `/api/hooks/{id}`, qui cesse d'ouvrir. Pas un
     -- credential : la preuve reste exigée derrière. ⚠️ Son index unique n'est
     -- pas ici (colonne née d'un ALTER du boot, #450) : `db/_init.py`.
-    hook_slug TEXT
+    hook_slug TEXT,
+    -- 20/10/2026 : les webhooks qu'oto a INSCRITS chez la source pour cet agent
+    -- (`connect_source`) — `[{source, remote_id, event, campaign_id}]`. Des
+    -- identifiants chez le tiers, jamais un secret. NULL = rien d'inscrit.
+    hook_sources JSONB
 );
 CREATE INDEX IF NOT EXISTS idx_runner_triggers_due
     ON runner_triggers(next_due) WHERE enabled;

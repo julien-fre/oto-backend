@@ -1308,6 +1308,44 @@ change** et aucune colonne n'est ajoutée.
   poser aucun `none` avant que la prod porte ce lot**, et renouveler l'adresse
   (`hook_auth=none` redemandé) de tout agent posé pendant la fenêtre.
 
+#### Brancher une source : le serveur inscrit le webhook lui-même (20/10/2026)
+
+En `body_secret`, la source doit détenir le porteur `otoh_` de l'agent. Le donner
+supposait qu'il passe par quelqu'un : rendu une fois à l'écran, copié, collé chez la
+source — ou passé en argument d'outil par un modèle, ce que la règle du dépôt
+interdit. **`oto_trigger op=connect_source`** (`capabilities/_source_du_hook.py`)
+fait tout côté serveur : il fabrique le porteur, l'inscrit chez la source avec la clé
+de la source que l'APPELANT résout dans l'org (`check_usage=False` : configurer ne
+consomme pas), passe l'agent en `body_secret` (adresse privée posée s'il n'en a pas),
+et ne rend que les identifiants chez la source, dans `runner_triggers.hook_sources`
+(`[{source, remote_id, event, campaign_id}]`, révision `0069_triggers_hook_sources`
++ démarrage). **Le porteur n'apparaît dans aucune réponse ni aucun journal** ; un
+refus du tiers se décrit par son type et son statut, jamais par `str(e)`, qui peut
+recopier la requête.
+
+| source | événements | ce qui est inscrit |
+|---|---|---|
+| `lemlist` | `events=[…]`, **exigé** (un webhook par événement, ≤ 10) | `POST /hooks` : `targetUrl` = l'adresse privée, `secret` = le porteur, `campaignId`/`isFirst` facultatifs |
+
+- **L'ordre fait la sûreté.** Inscrire d'abord, porteur encore en mémoire ; une
+  inscription refusée (ou rendue sans identifiant) retire celles déjà faites et
+  **n'écrit rien** : l'agent garde sa porte intacte. Puis UNE transaction écrit le
+  mode, le haché et les inscriptions (`db.brancher_la_source`). Enfin les
+  inscriptions d'AVANT sont retirées chez la source.
+- **Rebrancher = la rotation d'un agent branché.** Tant que `hook_sources` n'est pas
+  vide, `rotate_secret`, `rotate_address` et le changement de mode (REST
+  `hook_auth`) sont refusés en **409 `source_connected`** : ils couperaient la source
+  sans qu'oto puisse lui donner la nouvelle porte.
+- **Débrancher et supprimer retirent chez la source.** `op=disconnect_source` garde
+  le mode et le porteur ; ce que la source refuse de retirer **reste** dans
+  `hook_sources` (oto doit pouvoir le retirer plus tard) et est rendu dans
+  `remote_cleanup_failed`. `delete` fait le même retrait et n'en est jamais bloqué —
+  pas même sans clé de la source : ce qui reste est rendu, avec sa raison.
+- **Porte = propriétaire ou admin** (`_exiger_la_porte`), comme toute retouche de
+  porte : l'agent tourne sous l'identité de son propriétaire.
+- Une source de plus = un client qui sait inscrire et retirer un webhook, et le
+  préréglage par lequel elle prouve (`_source_du_hook.SOURCES`).
+
 #### Deux protections réglées par l'utilisateur
 
 Un agent existant ne change pas de comportement ; un webhook NEUF naît avec une
