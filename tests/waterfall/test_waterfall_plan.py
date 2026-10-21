@@ -91,11 +91,18 @@ def test_le_plan_montre_la_qualification_jev_hors_des_etapes(calls):
 
 
 
-def test_chaque_etape_s_explique_et_le_plan_le_sert():
-    """Un écran qui laisse choisir l'ordre doit dire ce que chaque étape apporte."""
+def test_une_explication_dit_un_fait_que_la_ligne_ne_dit_pas_et_le_plan_la_sert():
+    """Une explication seulement là où elle apporte un fait (ce que la source voit, un
+    comportement mesuré, un piège) : jamais les entrées, la clé ni la lenteur, que l'écran
+    montre déjà ; courte ; et jamais pour une étape qui n'existe plus."""
+    etapes = {(ns, s.key) for ns, st in plan.STEPS_BY_NAMESPACE.items() for s in st}
+    assert set(plan.EXPLAINS) <= etapes
+    redites = ("your key", "own key", "asynchronous", "needs the", "from a linkedin profile")
+    for (ns, key), text in plan.EXPLAINS.items():
+        assert len(text) <= 120, (ns, key)
+        assert not any(r in text.lower() for r in redites), (ns, key, text)
+        # Each org reorders: a line never leans on the row above it.
+        assert not text.lower().startswith(("the same", "same ")), (ns, key, text)
     for ns, steps in plan.STEPS_BY_NAMESPACE.items():
         for s in steps:
-            row = plan._step_row(s, ns=ns)
-            assert row["explains"] and len(row["explains"]) < 160, (ns, s.key)
-    assert set(plan.EXPLAINS) == {(ns, s.key) for ns, st in plan.STEPS_BY_NAMESPACE.items()
-                                  for s in st}
+            assert plan._step_row(s, ns=ns)["explains"] == plan.EXPLAINS.get((ns, s.key))

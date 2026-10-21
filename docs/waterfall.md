@@ -200,8 +200,11 @@ aiark (comme apollo, la fiche société d'un fournisseur de données, mesurée l
 source `vendor_database` ; une fiche par domaine, `max_units=1`) →
 theirstack (~3 crédits par société ; par domaine `limit=1`, par nom `limit=3` et la garde
 d'homonyme). Le reçu dit `source` : `website`, `vendor_database` ou `job_postings`.
-Chaque étape s'explique en une ligne (`plan.EXPLAINS`, servie par `/plan` en `explains`) :
-ce que la source voit et quand elle vaut sa place — un test l'exige pour chaque étape.
+Une étape s'explique en une ligne (`plan.EXPLAINS`, servie par `/plan` en `explains`)
+SEULEMENT si elle apporte un fait que sa ligne ne dit pas — ce que la source voit, un
+comportement mesuré, un piège (21/10 : la moitié répétaient les entrées, la clé ou la
+lenteur que l'écran montre déjà, ou ne disaient rien de plus que le libellé). Jamais une
+ligne relative à une autre (chaque org réordonne) ; un test y veille.
 
 ⚠️ **`technologies=[…]` change ce qu'est un trouvé** : une source qui ne détecte aucune
 des technologies demandées n'arrête PAS la cascade (la suivante voit autre chose — le site
