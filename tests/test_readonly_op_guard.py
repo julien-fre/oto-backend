@@ -99,7 +99,7 @@ ECRITURES = {
     "resources.govern.v2": {"share", "unshare", "transfer"},
     "runner.fleets": {"create", "update", "launch", "stop", "take", "beat", "ack_stop"},
     "runner.jobs": {"enqueue", "claim", "bind_run", "extend", "complete", "reserve",
-                    "meter"},
+                    "meter", "forfait"},
     "runner.triggers": {"create", "update", "delete", "clear_queue", "rotate_secret",
                         "take_over", "give", "rotate_address", "share", "unshare",
                         "connect_source", "disconnect_source"},
