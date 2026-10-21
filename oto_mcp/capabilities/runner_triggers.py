@@ -64,6 +64,10 @@ HANDOFF_MAX = 20_000
 #: se relancerait par un tiers (A → B → A …). Cinq maillons couvrent une chaîne réelle
 #: (collecter → enrichir → noter → rédiger → publier) ; au-delà, c'est une boucle.
 CHAINE_MAX = 5
+#: Combien d'agents UN run peut lancer. La profondeur ne borne pas la LARGEUR : un
+#: modèle qui appelle l'outil deux fois, ou une boucle sur une liste, lancerait autant
+#: de runs payés. Cinq suffisent à un aiguillage (« selon le résultat, B ou C ou D »).
+CHAINE_ENFANTS_MAX = 5
 
 
 class TriggerInput(BaseModel):
@@ -787,7 +791,7 @@ def _noms_canoniques(ctx: ResolvedCtx, inp: TriggerInput) -> TriggerInput:
     return inp.model_copy(update=maj) if maj else inp
 
 
-def _maillon_suivant(trigger_id: int) -> Optional[dict]:
+def _maillon_suivant(org_id: int, trigger_id: int) -> Optional[dict]:
     """La lignée du run que `run_now` va lancer, quand l'appel vient d'un AGENT HÉBERGÉ —
     None pour une personne (bouton de l'écran, MCP d'un humain) : rien ne s'enchaîne.
 
@@ -795,9 +799,15 @@ def _maillon_suivant(trigger_id: int) -> Optional[dict]:
     lignée se lit dans SA charge en base — jamais un argument de l'appel : un agent qui
     déclarerait sa propre profondeur désarmerait la borne.
 
-    ⚠️ Deux refus, avant tout enfilage : relancer SON PROPRE agent (`chain_self` — une
-    boucle immédiate, qui n'attendrait même pas la borne), et dépasser `CHAINE_MAX`
-    (`chain_too_deep` — la boucle par un tiers, A → B → A)."""
+    ⚠️ Quatre refus, avant tout enfilage : relancer SON PROPRE agent (`chain_self` — une
+    boucle immédiate, qui n'attendrait même pas la borne), dépasser `CHAINE_MAX`
+    (`chain_too_deep` — la boucle par un tiers, A → B → A), relancer un agent que ce
+    run a déjà lancé (`chain_already_started` — l'appel répété d'un modèle), et en
+    lancer plus de `CHAINE_ENFANTS_MAX` (`chain_too_wide`).
+
+    La relecture des enfants et l'enfilage ne partagent pas de verrou : deux appels
+    SIMULTANÉS d'un même run passeraient tous deux. Un agent appelle ses outils l'un
+    après l'autre ; la borne vise la répétition, pas la course."""
     v = verrou_org.travail_de_la_requete()
     if v is None or v.job_id is None:
         return None
@@ -806,6 +816,15 @@ def _maillon_suivant(trigger_id: int) -> Optional[dict]:
         raise AuthzDenied(400, "chain_self",
                           "un agent hébergé ne relance pas son propre agent : la "
                           "prochaine occurrence passe par son horloge.")
+    enfants = db.enfants_du_travail(v.job_id, org_id)
+    if str(trigger_id) in enfants:
+        raise AuthzDenied(400, "chain_already_started",
+                          f"le job {v.job_id} a déjà lancé l'agent {trigger_id} : un run "
+                          "passe la main une fois par agent.")
+    if len(enfants) >= CHAINE_ENFANTS_MAX:
+        raise AuthzDenied(400, "chain_too_wide",
+                          f"le job {v.job_id} a déjà lancé {len(enfants)} agents — "
+                          f"au plus {CHAINE_ENFANTS_MAX} par run.")
     lignee = parent.get(db.CHAMP_CHAINE) or {}
     profondeur = int(lignee.get("depth") or 0) + 1
     if profondeur > CHAINE_MAX:
@@ -813,7 +832,10 @@ def _maillon_suivant(trigger_id: int) -> Optional[dict]:
                           f"chaîne d'agents de plus de {CHAINE_MAX} maillons — "
                           f"refusé au job {v.job_id} : c'est une boucle, pas un enchaînement.")
     return {"parent_job": v.job_id, "root_job": lignee.get("root_job") or v.job_id,
-            "depth": profondeur}
+            "depth": profondeur,
+            # Ce que le run suivant lit de qui l'a lancé : un numéro de job ne lui dit
+            # rien, le nom de l'agent et sa procédure si.
+            "parent_label": parent.get("label") or parent.get("procedure")}
 
 
 def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
@@ -1135,7 +1157,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # redéduite, garde d'abonnement sur l'appelant.
         # ⚠️ L'identité est l'APPELANT (`ctx.sub`), pas le propriétaire : un run
         # lancé à la main tourne en ton nom — comme le bouton de l'écran.
-        chaine = _maillon_suivant(inp.trigger_id)
+        chaine = _maillon_suivant(ctx.org_id, inp.trigger_id)
         charge = runner_tick.charge_du_declencheur(
             {**t, "tz": t.get("tz") or _TZ_DEFAUT},
             datetime.datetime.now(datetime.timezone.utc),
@@ -1143,7 +1165,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         if inp.handoff:
             charge["input"] = _instruction.transmise(
                 charge["input"], inp.handoff,
-                depuis=f"hosted job {chaine['parent_job']}" if chaine else None)
+                depuis=(f"the agent “{chaine['parent_label']}” (job {chaine['parent_job']})"
+                        if chaine and chaine.get("parent_label")
+                        else f"hosted job {chaine['parent_job']}" if chaine else None))
         charge = runner_jobs._charge_et_modele(ctx, runner_jobs.JobsInput(
             op="enqueue", kind="start",
             payload={k: v for k, v in charge.items() if v is not None}))
@@ -1897,6 +1921,10 @@ CAPABILITIES += [
                           "`run_now` d'un agent hébergé sur son propre agent"),
             DeclaredError(400, "chain_too_deep",
                           f"`run_now` au-delà de {CHAINE_MAX} agents enchaînés"),
+            DeclaredError(400, "chain_already_started",
+                          "`run_now` d'un agent que ce run a déjà lancé"),
+            DeclaredError(400, "chain_too_wide",
+                          f"`run_now` au-delà de {CHAINE_ENFANTS_MAX} agents lancés par un run"),
             DeclaredError(403, "org_admin_required",
                           "`take_over` par quelqu'un qui n'est pas admin de l'org"),
             DeclaredError(403, "owner_still_member",
@@ -1975,8 +2003,11 @@ CAPABILITIES += [
             "run_now at the end of its run to start the next agent, passing its result "
             "as `handoff` — the next agent gets it appended to its own instruction, as "
             "data; the run is filed with its lineage (`job.chain`: parent_job, root_job, "
-            f"depth). An agent cannot relaunch itself (`chain_self`) and a chain stops at "
-            f"{CHAINE_MAX} agents (`chain_too_deep`)) / take_over (org admin only, and "
+            f"depth). Call it as your LAST action: the next run may start at once. An agent "
+            "cannot relaunch itself (`chain_self`), starts each agent once per run "
+            f"(`chain_already_started`), at most {CHAINE_ENFANTS_MAX} per run "
+            f"(`chain_too_wide`), and a chain stops at {CHAINE_MAX} agents "
+            "(`chain_too_deep`)) / take_over (org admin only, and "
             "only when the agent's owner is no longer a member of the org — "
             "`owner_still_member` otherwise: an agent is shared, never taken. You "
             "become the agent's owner — it then acts as YOU and, on a personal "

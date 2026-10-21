@@ -1297,6 +1297,20 @@ def repli_disponible(org_id: Optional[int], org_ids: Optional[list], worker_sub:
     return None
 
 
+def enfants_du_travail(job_id: int, org_id: int) -> list[str]:
+    """Les agents (`trigger_id`, en texte) que le travail `job_id` a déjà lancés par
+    `run_now` — un par travail enfant, quel que soit son statut : un enfant terminé a
+    été payé autant qu'un enfant en attente. Lu par la lignée que le serveur écrit
+    (`CHAMP_CHAINE`), jamais par un argument de l'appel."""
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT payload->>'trigger_id' AS trigger_id FROM runner_jobs "
+            f"WHERE org_id = %s AND payload->'{CHAMP_CHAINE}'->>'parent_job' = %s",
+            (org_id, str(job_id)),
+        ).fetchall()
+    return [r["trigger_id"] for r in rows]
+
+
 def charge_du_travail(job_id: int) -> Optional[dict]:
     """La charge STOCKÉE d'un travail (`payload`), ou None s'il n'existe pas — ce que la
     liste d'outils d'un travail hébergé lit à chaque appel (`outils_du_travail`). Sans

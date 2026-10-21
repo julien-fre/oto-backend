@@ -1538,6 +1538,24 @@ frein d'une boucle par un tiers (A → B → A). Le run enchaîné tourne au nom
 du premier (`ctx.sub` du jeton), qui doit avoir le droit de modifier le second agent ;
 son libellé par défaut est `enchaîné — <procédure>`.
 
+La profondeur ne borne pas la LARGEUR : un modèle qui appelle l'outil deux fois
+lancerait deux runs payés. D'où deux refus de plus, lus dans les enfants déjà lancés
+par ce run (`db.enfants_du_travail`, par la lignée) : relancer un agent déjà lancé
+(`chain_already_started`), et plus de **5 agents** par run (`chain_too_wide`). Une
+flotte n'est pas bornée au-delà : chacun de ses travaux peut passer la main, la taille
+de la campagne est la borne qu'a posée son auteur.
+
+`run_now` enfile TOUT DE SUITE : c'est le DERNIER geste du premier agent. Le second
+peut partir pendant que le premier écrit encore — ce qu'il lui faut voyage dans
+`handoff`, pas dans un tableau que le premier n'a pas fini de remplir.
+
+⚠️ **Donner `oto_trigger` à un agent, c'est laisser ce qu'il LIT lancer tout agent que
+son porteur peut modifier, avec un `handoff` de son choix.** Un agent qui lit des
+courriels entrants et passe la main à un agent qui en envoie ouvre une injection de
+prompt d'un agent à l'autre. Le `handoff` est délimité et nommé comme donnée, et la
+cible exige le droit de modifier — ce sont des freins, pas une garantie : n'enchaîne
+vers un agent qui agit au dehors qu'un agent dont les lectures sont sûres.
+
 `queue_pending`/`queue_held` comptent **exactement le prédicat de `clear_queue`**
 (`status IN ('pending','held')` pour ce déclencheur, dans cette org) — le nombre
 posé à côté du bouton est ce que le bouton périme. `op=list` lit ces comptes, les
