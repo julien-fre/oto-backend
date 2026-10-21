@@ -19,7 +19,7 @@ CONNECTOR = _c(
     cardinality="mono", modules=("waterfall", "waterfall_lignes"),
     credential_fields=(CredentialField(
         "steps", "Steps, in order", secret=False, required=False,
-        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: apollo, google, aiark, linkedin_employees."),),
+        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: apollo, lemlist, google, aiark, linkedin_employees."),),
     label="People at a company",
     help="the people working at a company — its decision-makers by role — across your connected "
          "providers, stopping at the first that finds them",

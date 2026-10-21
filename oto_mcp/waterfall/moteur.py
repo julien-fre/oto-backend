@@ -10,7 +10,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..auth.hooks import current_user_sub_from_token
 from . import appel, ordre, qualification, vivier
-from .etape import Step, _missing, _payload, _runnable
+from .etape import Step, _bills, _missing, _payload, _runnable
 from .valeurs import _bad
 
 #: The whole cascade answers within this — under the 45 s of the REST tool-invoke path
@@ -77,9 +77,7 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
     # Apify as is; and how many paid calls one lookup may make (free steps don't count).
     if step.tool == "apify_run_sync" and budget.get("apify_max_usd"):
         args = {**args, "max_total_charge_usd": budget["apify_max_usd"]}
-    # A free search whose finds are revealed one by one (Apollo): the REVEALS are what is
-    # paid, and they count one by one (`vivier._reveal_qualified`) — not the search.
-    paid = not step.free and not step.reveal
+    paid = _bills(step)
     if (paid and budget.get("max_paid_steps") is not None
             and budget.get("paid_steps", 0) >= budget["max_paid_steps"]):
         attempt.update(status="skipped", code="max_paid_steps",
@@ -106,7 +104,8 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
     if issue is None or not appel._judge(issue, attempt):
         return None
     result = _payload(issue)
-    if step.reveal and inputs.get("_pool") and isinstance(result, dict):
+    if ((step.reveal or (step.quota_only and step.pages)) and inputs.get("_pool")
+            and isinstance(result, dict)):
         result = await vivier._every_free_page(mcp, sub, step, args, result, inputs,
                                                deadline, attempt)
     if step.collect is not None:
@@ -218,7 +217,7 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
             got, report = await qualification._qualify(mcp, sub, kind, got, inputs,
                                                        qualify, deadline, tally.seen())
             tally.add(attempt, report)
-            if (report.get("status") == "done" and step.pages
+            if (report.get("status") == "done" and step.pages and _bills(step)
                     and len(got["people"]) < inputs["limit"]):
                 got = await vivier._fill_from_pages(mcp, sub, step, got, inputs, qualify,
                                                     deadline, budget, tally, attempt)

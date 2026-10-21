@@ -258,13 +258,18 @@ def register(mcp: FastMCP) -> None:
 
         Steps (default order): apollo (domain — a free search; last names come back
         MASKED, reveal one by its `apollo_id` with `apollo_match_person`, a paid match:
-        masked names alone do NOT stop the cascade, they are its fallback) → google (name
+        masked names alone do NOT stop the cascade, they are its fallback) → lemlist
+        (domain or LinkedIn page — lemlist's people database: full names, current titles,
+        LinkedIn URLs and a pattern-guessed email, `email_status="guessed"`; no credits,
+        each page one call of the key's search quota; FIRST when the lemlist key is
+        your own or your org's) → google (name
         or domain — LinkedIn profiles found on Google, full names) → aiark (domain) →
         linkedin_employees (the company's LinkedIn page — current titles straight from
         LinkedIn, often fresher than the data vendors; get the page with
         `waterfall_company`). A person is kept only when their title matches one of `roles` (when
         given), and, for LinkedIn and Google, only when their CURRENT company is the
-        one asked for: a company page or a search pulls in people from elsewhere.
+        one asked for: a company page or a search pulls in people from elsewhere
+        (lemlist: a current position there; its own title filter serves `roles`).
 
         {_ORDER_DOC}
 

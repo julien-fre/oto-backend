@@ -22,10 +22,13 @@ _SENIORITY_WORDS = (
      "geschaftsfuhrer", "general manager", "c suite", "cto", "cfo", "coo", "cmo", "cro",
      # French and German titles (a French retailer's head office reads in French).
      "fondateur", "fondatrice", "pdg", "directeur general", "directrice generale",
-     "gerant", "gerante", "inhaber", "vorstand"),
+     "gerant", "gerante", "inhaber", "vorstand",
+     # lemlist's seniority levels.
+     "executive leadership", "firm leadership"),
     ("vp", "vice president", "head", "director", "partner", "directeur", "directrice",
-     "leiter", "leiterin", "bereichsleiter"),
-    ("manager", "lead", "leader", "senior", "responsable", "chef", "manageur"),
+     "leiter", "leiterin", "bereichsleiter", "department leadership"),
+    ("manager", "lead", "leader", "senior", "responsable", "chef", "manageur",
+     "people management"),
 )
 
 
@@ -101,6 +104,71 @@ def _aiark_people(res, inputs):
 def _company_slug(url: Optional[str]) -> Optional[str]:
     m = re.search(r"linkedin\.com/(?:company|school|showcase)/([^/?#\s]+)", url or "", re.I)
     return m.group(1).lower() if m else None
+
+
+#: What lemlist drops from each record when asked (`excludes`): parts no step reads. It
+#: does NOT drop `experiences` (~90 % of a record: the companies' descriptions and tech) —
+#: nor any nested path, measured.
+_LEMLIST_EXCLUDES = ["education", "skills", "languages", "interests", "summary",
+                     "shorthand_name_list", "lead_logo_url"]
+
+
+def _lemlist_args(i: dict) -> dict:
+    """lemlist's people database, by the company's website (else its LinkedIn page) and
+    the roles asked. `country` is left out: an autocomplete filter, a form it does not
+    know (`FR`) silently empties the search."""
+    if i.get("domain"):
+        company = {"filterId": "currentCompanyWebsiteUrl", "in": [i["domain"]], "out": []}
+    else:
+        company = {"filterId": "currentCompanyLinkedInUrl",
+                   "in": [f"https://www.linkedin.com/company/"
+                          f"{_company_slug(i['company_linkedin_url'])}"], "out": []}
+    filters = [company]
+    if i.get("roles"):
+        filters.append({"filterId": "currentTitle", "in": list(i["roles"]), "out": []})
+    # A free search: under `qualify`, whole pages — the pool Jev judges on titles. Each
+    # call is one of the key's search quota, whatever its size.
+    return {"op": "people", "filters": filters, "excludes": _LEMLIST_EXCLUDES, "page": 1,
+            "size": 100 if i.get("_pool") else min(100, i["limit"] * 2)}
+
+
+def _lemlist_here(exp: dict, domain: str, slug: Optional[str]) -> bool:
+    if exp.get("date_to"):
+        return False
+    if slug and _company_slug(exp.get("company_linkedin_url")) == slug:
+        return True
+    where = str(exp.get("company_domain") or "").lower()
+    return bool(domain and where and (where == domain or where.endswith("." + domain)))
+
+
+def _lemlist_people(res, inputs):
+    """lemlist's people database. A person counts only through a CURRENT position (no
+    end date) at the company asked — their title is that position's, not the headline
+    (« … @ Other Corp » on someone still in post, measured). The roles are lemlist's own
+    filter (`currentTitle`: words in any order, normalized titles — « Head of Enterprise
+    Sales » for « Head of Sales », « Directeur des ressources humaines » for « director »),
+    not matched again here: the stricter match drops those, measured. Its email is a
+    pattern guess: returned as `guessed` (Apollo's word for it)."""
+    domain = (inputs.get("domain") or "").lower()
+    slug = _company_slug(inputs.get("company_linkedin_url"))
+    rows = []
+    for rec in _get(res, "results") or []:
+        if not isinstance(rec, dict):
+            continue
+        here = [e for e in rec.get("experiences") or []
+                if isinstance(e, dict) and _lemlist_here(e, domain, slug)]
+        if not here:
+            continue
+        exp = min(here, key=lambda e: e.get("order_in_profile") or 99)
+        email = rec.get("potential_email")
+        rows.append({
+            "full_name": rec.get("full_name"),
+            "title": exp.get("title") or rec.get("headline"),
+            "linkedin_url": rec.get("lead_linkedin_url"),
+            "location": rec.get("location"), "seniority": rec.get("seniority"),
+            "email": email, "email_status": "guessed" if email else None,
+        })
+    return _people_find(rows, {**inputs, "roles": None})
 
 
 def _employees(res, inputs):
@@ -183,6 +251,13 @@ PEOPLE_STEPS: tuple[Step, ...] = (
          explains=(
              "Apollo's free people search — titles for everyone, names masked; only the "
              "ones you keep are revealed (paid).")),
+    Step("lemlist", "lemlist_database", (("domain",), ("company_linkedin_url",)),
+         _lemlist_args, _lemlist_people,
+         "free search (no lemlist credits; each page is one call of the key's search quota)",
+         label="lemlist database", pages=("page", 1), quota_only=True,
+         explains=(
+             "lemlist's shared people database — full names, current titles and LinkedIn "
+             "URLs, with a pattern-guessed email; spends no credits.")),
     # Then full names, by provider cost: google (a search, names + LinkedIn URLs, low
     # recall) → aiark (per profile) → the page's LinkedIn employees (an Apify run).
     Step("google", "serper_search", (("company_name",), ("domain",)),

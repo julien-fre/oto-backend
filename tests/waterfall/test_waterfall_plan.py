@@ -76,6 +76,8 @@ def test_les_bornes_d_une_etape_sont_servies():
     assert row(gens.PEOPLE_STEPS, "aiark")["per_item"] is True
     assert row(gens.PEOPLE_STEPS, "linkedin_employees")["per_item"] is True
     assert row(email.EMAIL_STEPS, "hunter")["max_units"] is None
+    assert row(gens.PEOPLE_STEPS, "lemlist")["quota_only"] is True
+    assert "quota_only" not in row(gens.PEOPLE_STEPS, "google")
 
 
 def test_le_plan_montre_la_qualification_jev_hors_des_etapes(calls):

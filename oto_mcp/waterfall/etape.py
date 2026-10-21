@@ -36,6 +36,10 @@ class Step:
     collect: Optional[Collect] = None
     # Costs the caller nothing (open data, their own session): ranks with their own keys.
     free: bool = False
+    # Bills no credits but spends the KEY's call quota (lemlist's database search): never
+    # counts against `max_paid_steps`, its pages are read like a free search's — yet it
+    # keeps its written place in the order, unlike `free` (a shared quota is not nothing).
+    quota_only: bool = False
     # What a screen calls the step, when the connector's own label would not tell two
     # steps apart (the French registry by SIREN, and by name).
     label: str = ""
@@ -63,8 +67,10 @@ class Step:
     # person (Apollo: `apollo_match_person` by id). With `qualify=`, the cascade judges
     # the free finds first and reveals only those that pass (`vivier._reveal_qualified`).
     reveal: str = ""
-    # A PAID list that pages (`(parameter, first page)`): under `qualify_min`, its next
+    # A list that pages (`(parameter, first page)`). PAID: under `qualify_min`, its next
     # pages are bought one by one until `limit` people pass (`vivier._fill_from_pages`).
+    # FREE (`quota_only`): under `qualify`, every page is read into the pool Jev judges
+    # (`vivier._every_free_page`).
     pages: Optional[tuple[str, int]] = None
     # Neutral facts a screen maps to its own price list (the trunk carries no price):
     # what the step asks its tool for when the tool bills by what is asked (`asks`:
@@ -74,6 +80,13 @@ class Step:
     asks: str = ""
     max_units: Optional[int] = None
     per_item: bool = False
+
+
+def _bills(step: Step) -> bool:
+    """A step whose call is paid, counted against `max_paid_steps` — not a free one, not
+    a quota-only search, not a free search whose finds are revealed one by one (Apollo:
+    the REVEALS are what is paid, counted one by one in `vivier._reveal_qualified`)."""
+    return not (step.free or step.quota_only or step.reveal)
 
 
 def _payload(issue):

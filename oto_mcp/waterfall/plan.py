@@ -55,6 +55,9 @@ def _step_row(step: Step, mode: Optional[str] = None) -> dict:
         row["usable"] = mode not in ordre._NO_KEY and not ordre.own_key_missing(step, mode)
     if step.own_key_only:
         row["own_key_only"] = True
+    if step.quota_only:
+        # No credits billed — a screen prices it at nothing, but it spends the key's quota.
+        row["quota_only"] = True
     return row
 
 

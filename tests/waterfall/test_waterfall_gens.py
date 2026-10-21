@@ -400,3 +400,118 @@ def test_full_rend_chaque_personne_entiere(calls):
                full=True)
     p = out["people"]["people"][0]
     assert p["qualification"]["answers"]["fit"]["noul"] == 0.95 and "fit" not in p
+
+
+# --- la base de personnes de lemlist ----------------------------------------------
+
+def _lemlist_rec(i, title, *, domain="acme.fr", ended=False, headline=None, email=True):
+    exp = {"company_domain": domain, "title": title, "order_in_profile": 1,
+           "company_linkedin_url": f"https://www.linkedin.com/company/{domain.split('.')[0]}"}
+    if ended:
+        exp["date_to"] = "July 2023"
+    return {"_id": str(i), "full_name": f"Person {i}", "headline": headline or title,
+            "lead_linkedin_url": f"https://www.linkedin.com/in/person-{i}",
+            "location": "Paris, France", "seniority": "Department Leadership",
+            "potential_email": f"p{i}@acme.fr" if email else None, "experiences": [exp]}
+
+
+def _lemlist_page(recs, total=None, page=1):
+    return IssueCible(ok=True, result={"results": recs, "total": total or len(recs),
+                                       "page": page, "size": len(recs), "limitation": 1999})
+
+
+def test_lemlist_lit_le_poste_actuel_dans_la_societe_demandee(calls):
+    calls["answers"]["lemlist_database"] = _lemlist_page([
+        # Toujours en poste ici, malgré un headline qui nomme ailleurs : gardé, titre du poste.
+        _lemlist_rec(1, "Head of Sales", headline="Senior Director @ Other Corp"),
+        # Les rôles sont le filtre de lemlist (mots dans le désordre, titre normalisé) :
+        # pas re-filtrés ici — « Head of Enterprise Sales » reste pour « Head of Sales ».
+        _lemlist_rec(2, "Head of Enterprise Sales - Spain"),
+        # Parti : écarté.
+        _lemlist_rec(3, "Head of Sales", ended=True),
+        # En poste ailleurs : écarté.
+        _lemlist_rec(4, "Head of Sales", domain="other.com")])
+    out = _run("waterfall_people", domain="acme.fr", roles="Head of Sales, director",
+               providers=["lemlist"])
+    assert out["provider"] == "lemlist"
+    people = out["people"]["people"]
+    assert [p["full_name"] for p in people] == ["Person 1", "Person 2"]
+    assert people[0]["title"] == "Head of Sales"
+    assert people[0]["email"] == "p1@acme.fr" and people[0]["email_status"] == "guessed"
+    args = calls["made"][0][1]
+    assert args["op"] == "people" and args["page"] == 1 and args["size"] == 20
+    assert args["filters"] == [
+        {"filterId": "currentCompanyWebsiteUrl", "in": ["acme.fr"], "out": []},
+        {"filterId": "currentTitle", "in": ["Head of Sales", "director"], "out": []}]
+    assert "experiences" not in args["excludes"]
+
+
+def test_lemlist_par_la_page_linkedin_sans_domaine(calls):
+    calls["answers"]["lemlist_database"] = _lemlist_page([_lemlist_rec(1, "CEO")])
+    out = _run("waterfall_people",
+               company_linkedin_url="https://www.linkedin.com/company/acme/about",
+               providers=["lemlist"])
+    assert out["people"]["count"] == 1
+    assert calls["made"][0][1]["filters"] == [
+        {"filterId": "currentCompanyLinkedInUrl",
+         "in": ["https://www.linkedin.com/company/acme"], "out": []}]
+
+
+def test_lemlist_garde_sa_place_apres_apollo(calls):
+    out = _run("waterfall_people", domain="acme.fr", dry_run=True)
+    keys = [a["provider"] for a in out["attempts"]]
+    assert keys[:3] == ["apollo", "lemlist", "google"]
+
+
+@pytest.mark.parametrize("mode", ["org", "user", "group"])
+def test_lemlist_passe_en_tete_sur_la_cle_de_l_appelant(calls, mode):
+    """Sa propre clé lemlist (org, perso, équipe) : la base de lemlist passe devant tout,
+    Apollo sur sa propre clé compris — des noms complets qui ne facturent rien."""
+    calls["modes"] = {"lemlist_database": mode, "apollo_search_people": "org"}
+    out = _run("waterfall_people", domain="acme.fr", dry_run=True)
+    assert [a["provider"] for a in out["attempts"]][:3] == ["lemlist", "apollo", "google"]
+
+
+def test_un_ordre_ecrit_garde_lemlist_ou_il_est(calls):
+    calls["modes"] = {"lemlist_database": "org"}
+    out = _run("waterfall_people", domain="acme.fr", dry_run=True,
+               providers=["apollo", "lemlist"])
+    assert [a["provider"] for a in out["attempts"]] == ["apollo", "lemlist"]
+
+
+def test_lemlist_toutes_les_pages_sous_qualify_sans_compter_d_etape_payee(calls):
+    """Sous `qualify`, la base de lemlist est lue page après page (à partir de 1, `total`
+    lu au premier appel) dans le vivier que Jev juge — sans rien compter dans
+    `max_paid_steps` : elle ne facture aucun crédit."""
+    recs = [_lemlist_rec(i, "CMO" if i == 0 else "Developer") for i in range(230)]
+    calls["answers"]["lemlist_database"] = [
+        _lemlist_page(recs[:100], 230, 1), _lemlist_page(recs[100:200], 230, 2),
+        _lemlist_page(recs[200:], 230, 3)]
+    calls["answers"]["jev_items"] = _verdicts(*([0.9] + [0.1] * 199))
+    out = _run("waterfall_people", domain="acme.fr", limit=1, qualify=_FIT,
+               qualify_min=0.7, providers=["lemlist", "aiark"], max_paid_steps=1)
+    pages = [a["page"] for n, a in calls["made"] if n == "lemlist_database"]
+    sizes = {a["size"] for n, a in calls["made"] if n == "lemlist_database"}
+    assert pages == [1, 2, 3] and sizes == {100}
+    a = out["attempts"][0]
+    assert a["pages"] == 3 and a["total"] == 230 and "pool_truncated" not in a
+    assert out["provider"] == "lemlist"
+    assert [p["full_name"] for p in out["people"]["people"]] == ["Person 0"]
+    assert "linkedin_aiark_search" not in _made(calls)
+
+
+def test_lemlist_une_seule_page_sans_rubrique(calls):
+    calls["answers"]["lemlist_database"] = _lemlist_page(
+        [_lemlist_rec(i, "CEO") for i in range(20)], total=358)
+    _run("waterfall_people", domain="acme.fr", providers=["lemlist"])
+    assert _made(calls).count("lemlist_database") == 1
+
+
+def test_lemlist_ne_compte_pas_dans_max_paid_steps(calls):
+    """Une étape `quota_only` qui ne trouve rien laisse le budget d'étapes payées intact :
+    la suivante tourne encore sous `max_paid_steps=1`."""
+    calls["answers"]["lemlist_database"] = _lemlist_page([])
+    _gens(calls)
+    out = _run("waterfall_people", company_name="Acme", domain="acme.fr",
+               providers=["lemlist", "google"], max_paid_steps=1)
+    assert out["provider"] == "google"

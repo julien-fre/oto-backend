@@ -253,7 +253,9 @@ Une société en entrée (domaine, nom, page LinkedIn), des `roles` facultatifs,
 `limit` (≤ 25) ; la première source qui rend au moins une personne gagne. Une personne
 n'est gardée que si elle a un nom et si son titre correspond à l'un des `roles` (quand il
 y en a) : apollo (recherche gratuite ; les noms y sont masqués — on révèle par
-`apollo_id`, JAMAIS par nom + société, qui facturerait une fiche vide) → aiark (domaine ;
+`apollo_id`, JAMAIS par nom + société, qui facturerait une fiche vide) → lemlist
+(`lemlist_database op="people"`, la base partagée de lemlist, par `currentCompanyWebsiteUrl`
+sinon `currentCompanyLinkedInUrl`, et `currentTitle` = les `roles` ; voir ci-dessous) → aiark (domaine ;
 pas de filtre de titre côté AI Ark : il est appliqué ici) → `linkedin_employees`
 (`harvestapi/linkedin-company-employees`, les employés de la page LinkedIn — titres
 actuels, souvent plus frais que les fournisseurs ; ⚠️ une page tire des gens dont le
@@ -261,6 +263,39 @@ poste ACTUEL est ailleurs, et des faux profils : gardés seulement si
 `currentPosition[0].companyUniversalName` est la page demandée) → google (`serper_search`
 sur `linkedin.com/in`, un titre « Nom – Poste – Société | LinkedIn », gardé seulement s'il
 nomme la société).
+
+### La base de personnes de lemlist (21/10/2026)
+
+Mesuré sur une vraie société (~360 personnes en base) :
+
+- **Gratuite en crédits** (solde inchangé après une dizaine de recherches) mais **chaque appel
+  décompte un quota d'appels de la clé** (`limitation`, −1 par appel quelle que soit la
+  `size`) : l'étape est `quota_only` — elle ne compte pas dans `max_paid_steps` et ses
+  pages se lisent comme une recherche gratuite, mais elle GARDE sa place dans l'ordre (un
+  `free` passerait devant l'Apollo de la clé partagée : un quota partagé n'est pas rien) —
+  et des pages de 100 sous `qualify` (moins d'appels). **Sur la clé de l'appelant** (perso,
+  équipe ou org), l'ordre par défaut la met **en tête**, devant Apollo même sur sa propre
+  clé : des noms complets qui ne facturent rien, sur un quota qui est le sien (décision
+  produit du 21/10/2026). Un ordre écrit n'est pas retrié.
+- **Pagination à partir de 1** (`page=0` est servi comme la page 1). Sur un résultat étroit
+  (7 personnes, `size=3`), les pages 1 → 2 → 3 rendent les 7, sans doublon. ⚠️ Sur un résultat
+  large aux scores proches, **deux appels identiques ne rendent pas le même ordre** : des
+  pages successives peuvent se recouvrir ou sauter quelqu'un — le dédoublonnage par URL
+  LinkedIn absorbe les doublons, un saut est une perte de rappel. Sous `qualify`, toutes
+  les pages sont lues dans le vivier (`vivier._every_free_page`, `total` lu au premier
+  appel).
+- **Une fiche pèse ~60 Ko** : `experiences` (descriptions et technos de chaque société) en
+  fait ~90 %. `excludes` retire des champs de premier niveau (`education`, `skills`,
+  `languages`, `interests`, `summary`…) mais **ni `experiences` ni un chemin imbriqué**.
+- **Le titre se lit sur le poste ACTUEL** (sans `date_to`) dans la société demandée, pas sur
+  le `headline` (un « … @ Autre Société » chez quelqu'un toujours en poste, mesuré). Les
+  `roles` sont le filtre `currentTitle` de lemlist (mots dans le désordre, titre normalisé :
+  « Head of Enterprise Sales » pour « Head of Sales », « Directeur des ressources humaines »
+  pour « director ») et ne sont PAS re-filtrés ici : la correspondance stricte des autres
+  étapes les perdait (1 sur 7 sur l'essai).
+- `potential_email` est un email deviné par motif : rendu avec `email_status="guessed"` (le mot d'Apollo pour la même chose).
+- `country` n'est pas envoyé : filtre à autocomplétion, une forme qu'il ne connaît pas
+  (`FR`) vide la recherche sans erreur.
 
 ## Essai réel (19/10/2026, exposants d'un salon professionnel)
 
