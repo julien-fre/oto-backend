@@ -311,12 +311,13 @@ def register(mcp: FastMCP) -> None:
         the FIRST that returns it (native waterfall) — or, with `technologies`, at the
         first that detects one of them.
 
-        Steps (default order): dataforseo (domain — what the WEBSITE runs, from
-        DataForSEO's index: CMS, framework, hosting, analytics, e-commerce, payment) →
-        apify (domain — the same, by a live crawl of the site now: for a site the index
-        has not seen) → apollo (domain — Apollo's company record: website AND business
-        tools, ~100 names with categories) → aiark (domain — AI Ark's company record,
-        the same kind of mix) → theirstack (domain or name — what the company's JOB POSTINGS
+        Steps (default order): apollo (domain — Apollo's company record: website AND
+        business tools, ~100 names with categories; first because the cascade stops at
+        the first answer, and this is the fullest) → dataforseo (domain — what the
+        WEBSITE runs, from DataForSEO's index: CMS, framework, hosting, analytics,
+        e-commerce, payment) → apify (domain — the same, by a live crawl of the site
+        now: for a site the index has not seen) → aiark (domain — AI Ark's company
+        record, website and business tools mixed) → theirstack (domain or name — what the company's JOB POSTINGS
         name: CRM, ERP, data stack, internal tools; far more names, dearer, thin on small
         companies). The website sources give display names (`Next.js`), TheirStack gives
         slugs (`next-js`): `matched` compares them loosely.

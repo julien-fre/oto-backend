@@ -188,11 +188,14 @@ Deux sortes de sources, mesurées sur un même domaine (20/10/2026) : ce que le 
 tourner (CMS, framework, hébergement, analytics — l'index DataForSEO, ou un crawl) — 6 à
 7 noms ; et ce que les OFFRES D'EMPLOI nomment (CRM, ERP, pile data, outils internes —
 TheirStack) — une centaine de slugs, mais plus cher et maigre sur les petites sociétés.
-D'où l'ordre : dataforseo (~0,01-0,02 \$) → apify (`kfirs/tech-stack-detector`,
+D'où l'ordre : **apollo d'abord** (décision du 21/10/2026 : la cascade s'arrête au
+premier qui répond, et la poignée de noms « front » de l'index arrêtait la recherche avant
+la fiche la plus riche — ~100 outils catégorisés, logiciels métier compris, pour un
+crédit) → dataforseo (~0,01-0,02 \$) → apify (`kfirs/tech-stack-detector`,
 HTTP simple sans navigateur, ~0,01 \$ par site analysé, un site en échec n'est pas
 facturé ; une URL par exécution, sans `max_items` — même raison que la page LinkedIn ;
 une ligne par fournisseur, chacune avec son logo, pour qu'un écran dise QUI regarde) →
-apollo puis aiark (la fiche société de chaque fournisseur de données, mesurée le 20/10 :
+aiark (comme apollo, la fiche société d'un fournisseur de données, mesurée le 20/10 :
 ~100 technologies catégorisées chacune, site ET outils métier — CRM, pile data, paiement ;
 source `vendor_database` ; une fiche par domaine, `max_units=1`) →
 theirstack (~3 crédits par société ; par domaine `limit=1`, par nom `limit=3` et la garde

@@ -27,11 +27,13 @@ _THEIRSTACK_TECH = {"metadata": {}, "data": [{
     "technology_names": ["hubspot", "salesforce", "next-js", "spendesk1", "snowflake"]}]}
 
 
-def test_tech_l_index_du_site_d_abord_et_par_categorie(calls):
+def test_tech_apollo_d_abord_puis_l_index_du_site_par_categorie(calls):
+    """Apollo d'abord (21/10/2026) : sa fiche est la plus riche ; sans elle, l'index."""
     calls["answers"]["dataforseo_technologies"] = IssueCible(ok=True, result=_DATAFORSEO_TECH)
     out = _run("waterfall_tech", domain="https://www.acme.com/")
-    assert out["provider"] == "dataforseo" and _made(calls) == ["dataforseo_technologies"]
-    assert calls["made"][0][1] == {"op": "domain", "target": "acme.com"}
+    assert _made(calls) == ["apollo_enrich_organization", "dataforseo_technologies"]
+    assert out["provider"] == "dataforseo"
+    assert calls["made"][1][1] == {"op": "domain", "target": "acme.com"}
     t = out["tech"]
     assert t["source"] == "website" and t["technologies"] == ["Next.js", "React", "Vercel",
                                                                "Storyblok"]

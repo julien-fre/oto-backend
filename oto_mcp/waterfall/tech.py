@@ -16,7 +16,8 @@ from .valeurs import _domain, _get, _norm_name, _pick, _same_company
 # and what the JOB POSTINGS name (CRM, ERP, data stack, internal tools — TheirStack) —
 # ~100 slugs, but dearer and thin on small companies. Between them, the data vendors'
 # company records (Apollo, AI Ark — measured the same day: ~100 categorized names each,
-# website AND business tools: CRM, data stack, payments). Cheapest first, as everywhere.
+# website AND business tools: CRM, data stack, payments). Apollo's record first (the
+# fullest answer for one credit), then cheapest first.
 
 
 def _tech_key(name) -> str:
@@ -130,6 +131,12 @@ def _theirstack_tech_args(inputs: dict) -> dict:
 
 
 TECH_STEPS: tuple[Step, ...] = (
+    # Apollo first (decision of 21/10/2026): the waterfall stops at the first source that
+    # answers, and the website index's handful of front-end names stopped it before the
+    # richest record (~100 categorized tools, business software included) for 1 credit.
+    Step("apollo", "apollo_enrich_organization", (("domain",),),
+         lambda i: {"domain": i["domain"]}, _apollo_tech, "1 Apollo credit",
+         label="Apollo company record", max_units=1),
     Step("dataforseo", "dataforseo_technologies", (("domain",),),
          lambda i: {"op": "domain", "target": i["domain"]},
          _dataforseo_tech, "~$0.01-0.02 per domain (DataForSEO)",
@@ -147,9 +154,6 @@ TECH_STEPS: tuple[Step, ...] = (
                     # billed site at most.
                     "timeout_secs": _APIFY_TIMEOUT_S},
          _website_tech, "~$0.01 of Apify per site", label="Website — Apify live crawl"),
-    Step("apollo", "apollo_enrich_organization", (("domain",),),
-         lambda i: {"domain": i["domain"]}, _apollo_tech, "1 Apollo credit",
-         label="Apollo company record", max_units=1),
     # `full` + `fields`: the default view drops `technologies`; one record, by domain.
     Step("aiark", "linkedin_aiark_search", (("domain",),),
          lambda i: {"op": "companies", "size": 1, "full": True,
