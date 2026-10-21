@@ -35,7 +35,8 @@ from starlette.concurrency import run_in_threadpool
 from . import (_abonnement, _acces_agent, _cle_exigee, _instruction, _limites_du_run,
                _modele, _source_du_hook, runner_jobs)
 from .. import (db, org_store, ownership, procedure_retiree, roles, runner_hook,
-                runner_models, runner_tick, session_visibility, tool_alias, tool_registry)
+                runner_models, runner_tick, session_visibility, tool_alias, tool_registry,
+                verrou_org)
 from ..tools import catalogue as tool_catalogue
 from ._authz import ORG_MEMBER
 from ._dossier import FOLDER_MAX, dossier_valide
@@ -53,6 +54,16 @@ _TZ_DEFAUT = "Europe/Paris"
 # gardes que seul —, bornée bien en deçà des 45 s de l'invocation REST : deux à
 # trois lectures et une écriture par agent.
 _LOT_MAX = 100
+
+
+#: La taille d'un `handoff` : le résultat d'un run, pas un export — un volume se passe
+#: par un tableau ou un document, que le run suivant lit lui-même.
+HANDOFF_MAX = 20_000
+#: La profondeur d'une chaîne d'agents (`run_now` depuis un travail hébergé). Chaque
+#: maillon est un run payé par le porteur : la borne est le seul frein d'une chaîne qui
+#: se relancerait par un tiers (A → B → A …). Cinq maillons couvrent une chaîne réelle
+#: (collecter → enrichir → noter → rédiger → publier) ; au-delà, c'est une boucle.
+CHAINE_MAX = 5
 
 
 class TriggerInput(BaseModel):
@@ -116,6 +127,13 @@ class TriggerInput(BaseModel):
         "editor; cleared on `give`/`take_over`. `[]` clears it."))
     project_id: Optional[int] = None
     input: Optional[str] = None
+    #: `run_now` seulement : ce que l'appelant passe au run qu'il lance — le résultat
+    #: d'un premier agent pour le second d'une chaîne. AJOUTÉ à l'instruction de l'agent,
+    #: jamais à sa place (`_instruction.transmise`).
+    handoff: Optional[str] = Field(default=None, max_length=HANDOFF_MAX, description=(
+        "run_now only: context handed to the run you start — typically your own "
+        "result, so the next agent of a chain works from it. Appended to that agent's "
+        f"instruction as data, never replacing it (≤ {HANDOFF_MAX} characters)."))
     label: Optional[str] = None
     folder: Optional[str] = Field(default=None, description=(
         "update: the folder the agent is shown under in lists — a free label "
@@ -769,6 +787,35 @@ def _noms_canoniques(ctx: ResolvedCtx, inp: TriggerInput) -> TriggerInput:
     return inp.model_copy(update=maj) if maj else inp
 
 
+def _maillon_suivant(trigger_id: int) -> Optional[dict]:
+    """La lignée du run que `run_now` va lancer, quand l'appel vient d'un AGENT HÉBERGÉ —
+    None pour une personne (bouton de l'écran, MCP d'un humain) : rien ne s'enchaîne.
+
+    Le travail appelant est celui du JETON (`verrou_org.travail_de_la_requete`), et sa
+    lignée se lit dans SA charge en base — jamais un argument de l'appel : un agent qui
+    déclarerait sa propre profondeur désarmerait la borne.
+
+    ⚠️ Deux refus, avant tout enfilage : relancer SON PROPRE agent (`chain_self` — une
+    boucle immédiate, qui n'attendrait même pas la borne), et dépasser `CHAINE_MAX`
+    (`chain_too_deep` — la boucle par un tiers, A → B → A)."""
+    v = verrou_org.travail_de_la_requete()
+    if v is None or v.job_id is None:
+        return None
+    parent = db.charge_du_travail(v.job_id) or {}
+    if str(parent.get("trigger_id")) == str(trigger_id):
+        raise AuthzDenied(400, "chain_self",
+                          "un agent hébergé ne relance pas son propre agent : la "
+                          "prochaine occurrence passe par son horloge.")
+    lignee = parent.get(db.CHAMP_CHAINE) or {}
+    profondeur = int(lignee.get("depth") or 0) + 1
+    if profondeur > CHAINE_MAX:
+        raise AuthzDenied(400, "chain_too_deep",
+                          f"chaîne d'agents de plus de {CHAINE_MAX} maillons — "
+                          f"refusé au job {v.job_id} : c'est une boucle, pas un enchaînement.")
+    return {"parent_job": v.job_id, "root_job": lignee.get("root_job") or v.job_id,
+            "depth": profondeur}
+
+
 def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     """TOUT le SQL de `runner.triggers`, en synchrone — `_triggers` l'exécute dans le
     threadpool. Rend les déclencheurs SANS leurs avertissements d'outils : ceux-là
@@ -785,6 +832,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if inp.op in ("create", "update"):
         _limites_du_run.valider(inp.max_tokens, inp.max_run_seconds)
 
+    if inp.handoff is not None and inp.op != "run_now":
+        raise AuthzDenied(400, "handoff_run_now_only",
+                          "`handoff` ne se passe qu'à `op=run_now`.")
     if inp.platform_tools is not None and inp.op != "update":
         raise AuthzDenied(400, "platform_tools_update_only",
                           "`platform_tools` ne se pose que par `op=update`, sur un agent "
@@ -1085,18 +1135,28 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # redéduite, garde d'abonnement sur l'appelant.
         # ⚠️ L'identité est l'APPELANT (`ctx.sub`), pas le propriétaire : un run
         # lancé à la main tourne en ton nom — comme le bouton de l'écran.
+        chaine = _maillon_suivant(inp.trigger_id)
         charge = runner_tick.charge_du_declencheur(
             {**t, "tz": t.get("tz") or _TZ_DEFAUT},
-            datetime.datetime.now(datetime.timezone.utc), origine="à la demande")
+            datetime.datetime.now(datetime.timezone.utc),
+            origine="enchaîné" if chaine else "à la demande")
+        if inp.handoff:
+            charge["input"] = _instruction.transmise(
+                charge["input"], inp.handoff,
+                depuis=f"hosted job {chaine['parent_job']}" if chaine else None)
         charge = runner_jobs._charge_et_modele(ctx, runner_jobs.JobsInput(
             op="enqueue", kind="start",
             payload={k: v for k, v in charge.items() if v is not None}))
-        res = db.enqueue_job(ctx.org_id, "start", payload=charge, sub=ctx.sub)
-        logger.info("déclencheur %s (org %s) : run lancé à la demande de %s — job %s",
-                    inp.trigger_id, ctx.org_id, ctx.sub, res["id"])
+        res = db.enqueue_job(ctx.org_id, "start", payload=charge, sub=ctx.sub,
+                             chaine=chaine)
+        logger.info("déclencheur %s (org %s) : run lancé à la demande de %s — job %s%s",
+                    inp.trigger_id, ctx.org_id, ctx.sub, res["id"],
+                    f", maillon {chaine['depth']} après le job {chaine['parent_job']}"
+                    if chaine else "")
         return {"ok": True,
                 "job": {"id": res["id"], "status": res["status"],
-                        "due_at": str(res["due_at"])},
+                        "due_at": str(res["due_at"]),
+                        **({"chain": chaine} if chaine else {})},
                 "trigger": _avec_hook(ctx.org_id, t)}
 
     if inp.op == "take_over":
@@ -1832,6 +1892,11 @@ CAPABILITIES += [
                           "automatisation inconnue dans l'org du porteur"),
             DeclaredError(400, "procedure_archived",
                           "`run_now` d'un agent dont la procédure est archivée"),
+            DeclaredError(400, "handoff_run_now_only", "`handoff` hors d'`op=run_now`"),
+            DeclaredError(400, "chain_self",
+                          "`run_now` d'un agent hébergé sur son propre agent"),
+            DeclaredError(400, "chain_too_deep",
+                          f"`run_now` au-delà de {CHAINE_MAX} agents enchaînés"),
             DeclaredError(403, "org_admin_required",
                           "`take_over` par quelqu'un qui n'est pas admin de l'org"),
             DeclaredError(403, "owner_still_member",
@@ -1906,7 +1971,12 @@ CAPABILITIES += [
             "edit access; the run acts as YOU, the caller, and is filed under the "
             "agent's own history; returns `job` {id, status, due_at} — the call does "
             "not wait for the run; refused like `create` when nothing serves the "
-            "agent's model) / take_over (org admin only, and "
+            "agent's model. CHAINING: a hosted agent with `oto_trigger` in its tools calls "
+            "run_now at the end of its run to start the next agent, passing its result "
+            "as `handoff` — the next agent gets it appended to its own instruction, as "
+            "data; the run is filed with its lineage (`job.chain`: parent_job, root_job, "
+            f"depth). An agent cannot relaunch itself (`chain_self`) and a chain stops at "
+            f"{CHAINE_MAX} agents (`chain_too_deep`)) / take_over (org admin only, and "
             "only when the agent's owner is no longer a member of the org — "
             "`owner_still_member` otherwise: an agent is shared, never taken. You "
             "become the agent's owner — it then acts as YOU and, on a personal "

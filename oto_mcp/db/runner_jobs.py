@@ -63,6 +63,11 @@ JOBS_PAGE_MAX = 200
 # travail, et le `bind_run` suivant écrase `run_id`. Le worker ne la lit pas.
 _CHAMP_PLATEFORME = "_plateforme"
 
+#: La LIGNÉE d'un travail lancé par un autre agent hébergé (`runner.triggers op=run_now`
+#: depuis un travail) : `{parent_job, root_job, depth}`. Écrite par le serveur seul, comme
+#: `_plateforme` : une profondeur fournie par l'appelant désarmerait la borne des chaînes.
+CHAMP_CHAINE = "_chaine"
+
 # L'entrée ajoutée à la trace — SQL évalué dans l'UPDATE de la réservation, donc sur
 # les valeurs d'AVANT (`j.run_id`, `j.attempts`). Un run déjà tracé ne l'est pas deux fois.
 _TRACE_RUN_CLOS = f"""
@@ -217,7 +222,8 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
                 delai_s: Optional[int] = None,
                 perime_apres_s: Optional[int] = None,
                 conn=None,
-                seulement_si_servable: bool = False) -> Optional[dict]:
+                seulement_si_servable: bool = False,
+                chaine: Optional[dict] = None) -> Optional[dict]:
     """Enfile un travail, éventuellement rattaché à une FLOTTE.
 
     ⚠️ `sub` = **l'identité que l'agent portera en exécutant ce travail**, pas
@@ -279,14 +285,21 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
     READ COMMITTED l'instantané d'une instruction date de son DÉBUT, donc un verrou
     pris dans le `WHERE` de l'INSERT arriverait après l'instantané et ne verrait
     pas le travail qu'un sondage concurrent vient de valider.
+
+    `chaine` : la lignée d'un travail lancé par un autre (`CHAMP_CHAINE`). Seul ce
+    paramètre l'écrit — retirée de la charge reçue pour la même raison que les deux
+    autres champs du serveur.
     """
     if payload is not None:
         payload = {k: v for k, v in payload.items()
-                  if k not in (_CHAMP_PLATEFORME, "_perime_apres_s")}
+                  if k not in (_CHAMP_PLATEFORME, "_perime_apres_s", CHAMP_CHAINE)}
     charge = dict(payload) if payload is not None else None
     if perime_apres_s:
         charge = charge or {}
         charge["_perime_apres_s"] = int(perime_apres_s)
+    if chaine:
+        charge = charge or {}
+        charge[CHAMP_CHAINE] = dict(chaine)
 
     def _poser(c):
         return c.execute(

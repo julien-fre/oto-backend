@@ -1520,6 +1520,24 @@ l'APPELANT, se range sous l'agent (`trigger_id`), et marche agent en pause. Refu
 comme `create` quand rien ne sert le modèle de l'agent (`no_runner_armed`,
 `model_not_served`, `model_key_required`), et quand la procédure est archivée.
 
+**Enchaîner des agents** : un agent hébergé qui a `oto_trigger` dans ses outils appelle
+`run_now` en fin de run pour lancer le suivant, et lui passe son résultat en `handoff`
+(≤ 20 000 caractères). Le run suivant reçoit sa PROPRE instruction, intacte, suivie du
+contexte transmis, délimité et nommé comme donnée (`_instruction.transmise`) : la
+procédure du second agent fait foi, le premier ne la réécrit pas. C'est le premier
+agent qui décide — lancer ou non, et quoi passer — selon ce que sa procédure lui dit :
+pas de graphe déclaré, une chaîne se lit dans les procédures.
+
+La lignée se range dans la charge du travail lancé (`_chaine` : `parent_job`,
+`root_job`, `depth`), écrite par le SERVEUR seul (`enqueue_job(chaine=…)`, retirée
+d'une charge reçue comme `_plateforme`). Elle se lit depuis le travail porté par le
+jeton (`verrou_org.travail_de_la_requete`), jamais depuis l'appel. Deux refus :
+relancer son propre agent (`chain_self`), et dépasser **5 maillons** (`chain_too_deep`,
+`CHAINE_MAX`) — chaque maillon est un run payé par le porteur, la borne est le seul
+frein d'une boucle par un tiers (A → B → A). Le run enchaîné tourne au nom du porteur
+du premier (`ctx.sub` du jeton), qui doit avoir le droit de modifier le second agent ;
+son libellé par défaut est `enchaîné — <procédure>`.
+
 `queue_pending`/`queue_held` comptent **exactement le prédicat de `clear_queue`**
 (`status IN ('pending','held')` pour ce déclencheur, dans cette org) — le nombre
 posé à côté du bouton est ce que le bouton périme. `op=list` lit ces comptes, les

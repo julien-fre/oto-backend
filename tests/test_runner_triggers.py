@@ -479,3 +479,99 @@ def test_run_now_refuse_une_procedure_archivee(agent_lancable, monkeypatch):
         _appel(_ctx(), op="run_now", trigger_id=5)
     assert e.value.code == "procedure_archived"
     assert not agent_lancable
+
+
+# ── enchaîner : un agent hébergé lance le suivant ─────────────────────────────
+
+def _depuis_le_travail(monkeypatch, job_id=77, charge=None):
+    """L'appel vient d'un agent hébergé : le jeton porte le travail `job_id`, dont la
+    charge en base est `charge`."""
+    from oto_mcp import verrou_org
+    jeton = verrou_org.poser(verrou_org.Verrou(sub="alexis", org_id=2, job_id=job_id))
+    monkeypatch.setattr(RT.db, "charge_du_travail",
+                        lambda j: (charge if charge is not None else {"trigger_id": 4})
+                        if j == job_id else None)
+    return jeton
+
+
+def test_run_now_passe_le_handoff_apres_l_instruction(agent_lancable):
+    _appel(_ctx(), op="run_now", trigger_id=5, handoff="12 leads qualifiés : …")
+    entree = agent_lancable["payload"]["input"]
+    assert entree.startswith("Read the procedure `veille-linkedin`"), \
+        "l'instruction de l'agent reste en tête"
+    assert entree.rstrip().endswith("12 leads qualifiés : …\n</handoff>")
+    assert "not instructions" in entree
+
+
+def test_handoff_hors_run_now_est_refuse():
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="update", trigger_id=5, handoff="x")
+    assert e.value.code == "handoff_run_now_only"
+
+
+def test_une_personne_ne_pose_pas_de_lignee(agent_lancable):
+    out = _appel(_ctx(), op="run_now", trigger_id=5)
+    assert "chain" not in out["job"]
+    assert agent_lancable["payload"]["label"] == "à la demande — veille-linkedin"
+
+
+def test_un_agent_heberge_enchaine_avec_sa_lignee(agent_lancable, monkeypatch):
+    from oto_mcp import verrou_org
+    lignee = {}
+    original = agent_lancable  # le banc capture `payload` ; la lignée passe à part
+    monkeypatch.setattr(RT.db, "enqueue_job",
+                        lambda org, kind, payload=None, sub=None, chaine=None, **_:
+                        original.update(payload=payload, sub=sub) or lignee.update(chaine or {})
+                        or {"id": 42, "status": "pending", "due_at": "2026-10-21 08:00:00"})
+    jeton = _depuis_le_travail(monkeypatch, charge={"trigger_id": 4})
+    try:
+        out = _appel(_ctx(), op="run_now", trigger_id=5, handoff="résultat")
+    finally:
+        verrou_org.lever(jeton)
+    assert lignee == {"parent_job": 77, "root_job": 77, "depth": 1}
+    assert out["job"]["chain"] == lignee
+    assert agent_lancable["payload"]["label"] == "enchaîné — veille-linkedin"
+    assert "started by hosted job 77" in agent_lancable["payload"]["input"]
+
+
+def test_la_profondeur_se_lit_chez_le_parent(agent_lancable, monkeypatch):
+    from oto_mcp import verrou_org
+    lignee = {}
+    monkeypatch.setattr(RT.db, "enqueue_job",
+                        lambda org, kind, payload=None, sub=None, chaine=None, **_:
+                        lignee.update(chaine or {})
+                        or {"id": 43, "status": "pending", "due_at": "2026-10-21 08:00:00"})
+    jeton = _depuis_le_travail(monkeypatch, charge={
+        "trigger_id": 4, "_chaine": {"parent_job": 70, "root_job": 60, "depth": 2}})
+    try:
+        _appel(_ctx(), op="run_now", trigger_id=5)
+    finally:
+        verrou_org.lever(jeton)
+    assert lignee == {"parent_job": 77, "root_job": 60, "depth": 3}
+
+
+def test_un_agent_ne_se_relance_pas_lui_meme(agent_lancable, monkeypatch):
+    from oto_mcp import verrou_org
+    jeton = _depuis_le_travail(monkeypatch, charge={"trigger_id": 5})
+    try:
+        with pytest.raises(AuthzDenied) as e:
+            _appel(_ctx(), op="run_now", trigger_id=5)
+    finally:
+        verrou_org.lever(jeton)
+    assert e.value.code == "chain_self"
+    assert not agent_lancable
+
+
+def test_une_chaine_s_arrete_a_la_borne(agent_lancable, monkeypatch):
+    from oto_mcp import verrou_org
+    jeton = _depuis_le_travail(monkeypatch, charge={
+        "trigger_id": 4, "_chaine": {"parent_job": 70, "root_job": 60,
+                                     "depth": RT.CHAINE_MAX}})
+    try:
+        with pytest.raises(AuthzDenied) as e:
+            _appel(_ctx(), op="run_now", trigger_id=5)
+    finally:
+        verrou_org.lever(jeton)
+    assert e.value.code == "chain_too_deep"
+    assert not agent_lancable
+
