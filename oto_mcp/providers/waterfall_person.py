@@ -21,8 +21,7 @@ CONNECTOR = _c(
         "steps", "Steps, in order", secret=False, required=False,
         help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: linkedin, aiark, apollo, forager, cognism, lusha, lemlist."),),
     label="Person waterfall",
-    help="a person's current role and company, across your connected providers one after the other, stopping at the "
-         "first hit",
+    help="a person's current role, provider after provider",
 )
 
 # Publisher: ours — the cascade runs on our server; the calls it makes reach the
@@ -32,5 +31,5 @@ SANS_LOGO_DE_MARQUE = True
 CATEGORY = "Prospecting"
 
 DESCRIPTION = (
-    "Finds a person's current title, company and location — your LinkedIn first, then AI Ark, Apollo, Forager, Cognism, Lusha, lemlist — stopping at the first match."
+    "Finds a person's current title and company, trying your connected providers one after another."
 )

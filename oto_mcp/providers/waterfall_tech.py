@@ -21,8 +21,7 @@ CONNECTOR = _c(
         "steps", "Steps, in order", secret=False, required=False,
         help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: apollo, dataforseo, apify, aiark, theirstack."),),
     label="Tech stack waterfall",
-    help="a company's tech stack, across your connected providers one after the other, stopping at the "
-         "first hit",
+    help="a company's tech stack, provider after provider",
 )
 
 # Publisher: ours — the cascade runs on our server; the calls it makes reach the
@@ -32,5 +31,5 @@ SANS_LOGO_DE_MARQUE = True
 CATEGORY = "Prospecting"
 
 DESCRIPTION = (
-    "Finds a company's tech stack — Apollo's company record first, then what its website runs (DataForSEO, a live Apify crawl), AI Ark's record, and what its job postings name (TheirStack) — stopping at the first match, or at the first that detects the tools you ask about."
+    "Finds the tools a company uses, trying your connected providers one after another."
 )

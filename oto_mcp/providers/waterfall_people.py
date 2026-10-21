@@ -21,8 +21,7 @@ CONNECTOR = _c(
         "steps", "Steps, in order", secret=False, required=False,
         help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: apollo, google, aiark, linkedin_employees."),),
     label="People at a company",
-    help="the people working at a company — its decision-makers by role — across your connected "
-         "providers, stopping at the first that finds them",
+    help="a company's people by role, provider after provider",
 )
 
 # Publisher: ours — the cascade runs on our server; the calls it makes reach the
@@ -32,7 +31,5 @@ SANS_LOGO_DE_MARQUE = True
 CATEGORY = "Prospecting"
 
 DESCRIPTION = (
-    "Finds the people working at a company — its decision-makers when you give roles — "
-    "through Apollo, Google, AI Ark, then the company's LinkedIn employees, stopping at the "
-    "first source that finds them. Each is billed on its own key."
+    "Finds the people at a company, by role, trying your connected providers one after another."
 )

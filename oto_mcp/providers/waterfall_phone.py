@@ -21,8 +21,7 @@ CONNECTOR = _c(
         "steps", "Steps, in order", secret=False, required=False,
         help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: kaspr, lusha, forager, apollo, lemlist, dropcontact, fullenrich."),),
     label="Phone waterfall",
-    help="a person's phone number, across your connected providers one after the other, stopping at the "
-         "first hit",
+    help="a person's phone number, provider after provider",
 )
 
 # Publisher: ours — the cascade runs on our server; the calls it makes reach the
@@ -32,5 +31,5 @@ SANS_LOGO_DE_MARQUE = True
 CATEGORY = "Prospecting"
 
 DESCRIPTION = (
-    "Finds a person's phone number by trying your connected providers in turn — Kaspr, Lusha, Forager, Apollo, lemlist, Dropcontact, FullEnrich — and stopping at the first hit. Each is billed on its own key."
+    "Finds a person's phone number, trying your connected providers one after another until one has it."
 )

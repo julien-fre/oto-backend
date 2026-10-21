@@ -21,8 +21,7 @@ CONNECTOR = _c(
         "steps", "Steps, in order", secret=False, required=False,
         help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: hunter, aiark, apollo, kaspr, lusha, forager, dropcontact, lemlist, fullenrich."),),
     label="Email waterfall",
-    help="a person's professional email, across your connected providers one after the other, stopping at the "
-         "first hit",
+    help="a person's work email, provider after provider",
 )
 
 # Publisher: ours — the cascade runs on our server; the calls it makes reach the
@@ -32,5 +31,5 @@ SANS_LOGO_DE_MARQUE = True
 CATEGORY = "Prospecting"
 
 DESCRIPTION = (
-    "Finds a person's work email by trying your connected providers in turn — Hunter, AI Ark, Apollo, Kaspr, Lusha, Forager, Dropcontact, lemlist, FullEnrich — and stopping at the first hit. Each is billed on its own key."
+    "Finds a person's work email, trying your connected providers one after another until one has it."
 )
