@@ -37,10 +37,14 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
+from .lecture import ACTE, LECTURE
 
 
 def _bad(msg: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+
+_DATABASE_ACT_OPS = ("persona_create", "persona_delete")
 
 
 def _need(**kwargs) -> None:
@@ -720,32 +724,33 @@ def register(mcp: FastMCP) -> None:
                 "filters, filter_values, library, history, signals, push_signals")
         return result
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def lemlist_database(
-        op: Literal["people", "companies", "filters", "personas",
-                    "persona_create", "persona_delete"],
+        op: str,
         filters: Optional[list[dict]] = None,
         search: Optional[str] = None,
         excludes: Optional[list[str]] = None,
         page: Optional[int] = None,
         size: Optional[int] = None,
-        name: Optional[str] = None,
         mode: Optional[str] = None,
-        persona_id: Optional[str] = None,
     ) -> dict:
-        """Search lemlist's SHARED prospecting database, and save personas.
+        """Search lemlist's SHARED prospecting database. Read-only.
 
         Distinct from `lemlist_contact`/`lemlist_company`, which hold only YOUR
         data. Read `op="filters"` first: the filter vocabulary is server-side,
-        and a `filters` payload built from guesswork comes back empty.
+        and a `filters` payload built from guesswork comes back empty. Saving or
+        deleting a persona is `lemlist_database_act`.
 
         Args by op:
         - `people`: `filters`, `search`, `excludes`, `page`, `size`.
         - `companies`: `filters`, `page`, `size`.
         - `filters`: no argument — the available filters.
-        - `personas`: optional `mode`. `persona_create`: `name` + `filters` +
-          `mode` (`leads` or `companies`). `persona_delete`: `persona_id`.
+        - `personas`: optional `mode` — the saved personas.
         """
+        if op in _DATABASE_ACT_OPS:
+            raise _bad(f'op "{op}" moved to `lemlist_database_act(op="{op}", …)` '
+                       "with the same arguments: `lemlist_database` only reads "
+                       "(op_moved).")
         client, is_platform = _client()
         if op == "people":
             result = client.search_people_database(
@@ -758,16 +763,35 @@ def register(mcp: FastMCP) -> None:
             result = {"filters": client.get_database_filters()}
         elif op == "personas":
             result = {"personas": client.list_personas(mode=mode)}
-        elif op == "persona_create":
-            _need(name=name, mode=mode)
-            result = client.create_persona(name, filters=filters or [], mode=mode)
-        elif op == "persona_delete":
-            _need(persona_id=persona_id)
-            result = client.delete_persona(persona_id)
         else:
             raise _bad(f'unknown op "{op}" — expected: people, companies, filters, '
-                       "personas, persona_create, persona_delete")
+                       "personas")
         return result
+
+    @mcp.tool(annotations=ACTE)
+    def lemlist_database_act(
+        op: str,
+        name: Optional[str] = None,
+        filters: Optional[list[dict]] = None,
+        mode: Optional[str] = None,
+        persona_id: Optional[str] = None,
+    ) -> dict:
+        """Save or delete a persona in lemlist's shared database (a saved search:
+        who to look for at a company, used by watch lists).
+
+        Args by op:
+        - `persona_create`: `name` + `filters` + `mode` (`leads` or `companies`).
+        - `persona_delete`: `persona_id` — irreversible.
+        Searching the database is `lemlist_database`.
+        """
+        if op not in _DATABASE_ACT_OPS:
+            raise _bad(f'unknown op "{op}" — expected: persona_create, persona_delete')
+        client, is_platform = _client()
+        if op == "persona_create":
+            _need(name=name, mode=mode)
+            return client.create_persona(name, filters=filters or [], mode=mode)
+        _need(persona_id=persona_id)
+        return client.delete_persona(persona_id)
 
     # --- Team, mailboxes, deliverability, webhooks -----------------------------------
 

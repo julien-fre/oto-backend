@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastmcp import FastMCP
+from .lecture import LECTURE
 
 from . import dataforseo as d
 
@@ -168,7 +169,7 @@ def register(mcp: FastMCP) -> None:
         d.bill(task)
         return d.view(task, full)
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def dataforseo_technologies(
         op: str,
         target: Optional[str] = None,

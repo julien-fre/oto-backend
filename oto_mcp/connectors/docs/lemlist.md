@@ -26,7 +26,7 @@ the connector mirrors the **141 documented routes**, without exception. by famil
 **inbox** — `lemlist_inbox` (conversations, drafts, labels) and `lemlist_inbox_send`
 **unsubscribes** — `lemlist_unsubscribe`: ⚠️ **three distinct lists** (v1 emails/domains, v2 variables, a contact's do-not-contact flag); writing to one does not write to the others
 **signals** — `lemlist_watchlist`: companies that are hiring, fundraising, job changes, visiting your website… (website visitors: section below)
-**the rest** — `lemlist_task`, `lemlist_database` (shared base + personas), `lemlist_team`, `lemlist_mailbox` (SMTP/IMAP connection + lemwarm), `lemlist_deliverability`, `lemlist_webhook`, `lemlist_get_activities`
+**the rest** — `lemlist_task`, `lemlist_database` (shared base, read-only: people, companies, filters, personas) and `lemlist_database_act` (save or delete a persona), `lemlist_team`, `lemlist_mailbox` (SMTP/IMAP connection + lemwarm), `lemlist_deliverability`, `lemlist_webhook`, `lemlist_get_activities`
 
 ## usage — website visitors
 

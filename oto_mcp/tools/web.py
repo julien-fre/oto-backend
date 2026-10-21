@@ -48,6 +48,7 @@ from oto.tools.common.errors import UpstreamHTTPError
 from . import cesures
 
 from .. import access, browserbase, egress, session_org, url_perimeter
+from .lecture import LECTURE
 from ..connectors import health as connector_health
 
 #: Marker for tier ② skipped because the Serper account being served is dry.
@@ -340,7 +341,7 @@ def register(mcp: FastMCP) -> None:
             session_org.note_call_trace(units=max(1, credits_consumed("scrape_page", res)))
         return res
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     async def web_read(url: str, browser: bool = False, as_html: bool = False,
                        max_chars: int = _DEFAULT_MAX_CHARS) -> dict:
         """Read a PUBLIC web page, escalating until it yields — and always

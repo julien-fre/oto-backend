@@ -46,6 +46,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, output_projection, session_org
+from .lecture import LECTURE
 from ..connectors import verify as connector_verify
 
 # What a sourcing sweep reads on a job / a company (`full=True` returns everything).
@@ -222,7 +223,7 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def theirstack_jobs_search(
         company_names: Optional[list[str]] = None,
         posted_at_max_age_days: int = 90,
@@ -296,7 +297,7 @@ def register(mcp: FastMCP) -> None:
         return _with_credit_estimate(_project(result, _JOB_FIELDS, full),
                                      _CREDITS_PAR_OFFRE, "job")
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def theirstack_companies_search(
         company_names: Optional[list[str]] = None,
         company_country_code_or: Optional[list[str]] = None,

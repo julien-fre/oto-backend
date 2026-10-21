@@ -66,6 +66,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
+from .lecture import LECTURE
 from ..connectors import verify as connector_verify
 from ..output_projection import project
 
@@ -676,7 +677,7 @@ def register(mcp: FastMCP) -> None:
                           "lemlist_enrich_result(enrichment_id) in ~10-20s."),
         }
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def lemlist_enrich_result(enrichment_id: str | list[str]) -> dict:
         """Collect the result of an enrichment submitted with `lemlist_enrich`,
         `lemlist_enrich_lead` or `lemlist_enrich_bulk`.

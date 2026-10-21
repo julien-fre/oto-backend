@@ -30,7 +30,7 @@ def _with_fake_client():
 CRM_TOOLS = {
     "lemlist_contact", "lemlist_company", "lemlist_inbox", "lemlist_inbox_send",
     "lemlist_unsubscribe", "lemlist_task", "lemlist_watchlist",
-    "lemlist_database", "lemlist_team", "lemlist_mailbox",
+    "lemlist_database", "lemlist_database_act", "lemlist_team", "lemlist_mailbox",
     "lemlist_deliverability", "lemlist_webhook",
     "lemlist_delete_activity_transcript",
 }
@@ -65,6 +65,7 @@ def test_le_second_module_est_charge_par_le_boot_reel(all_tools):
     ("lemlist_task", "lemlist_crm", {}),
     ("lemlist_watchlist", "lemlist_crm", {}),
     ("lemlist_database", "lemlist_crm", {}),
+    ("lemlist_database_act", "lemlist_crm", {}),
     ("lemlist_team", "lemlist_crm", {}),
     ("lemlist_mailbox", "lemlist_crm", {}),
     ("lemlist_deliverability", "lemlist_crm", {}),
@@ -500,3 +501,39 @@ def test_max_chars_nul_est_refuse(max_chars):
         with pytest.raises(Exception, match="max_chars"):
             _tool("lemlist_inbox").fn(op="messages", contact_id="ctc_1",
                                       max_chars=max_chars)
+
+
+# --- La base partagée : lire et agir sont deux outils ---------------------------
+
+def test_la_base_partagee_se_declare_en_lecture_et_ses_personas_en_acte():
+    """Une recette n'appelle que des outils déclarés en lecture : la recherche dans la
+    base partagée doit l'être, la création et la suppression de personas non."""
+    from oto_mcp.tools.lecture import en_lecture
+
+    assert en_lecture(_tool("lemlist_database", "lemlist_crm"))
+    act = _tool("lemlist_database_act", "lemlist_crm")
+    assert not en_lecture(act)
+    assert act.annotations.destructiveHint is True
+
+
+@pytest.mark.parametrize("op", ["persona_create", "persona_delete"])
+def test_une_op_de_persona_sur_la_lecture_nomme_son_outil(op):
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        with pytest.raises(Exception, match="lemlist_database_act"):
+            _tool("lemlist_database", "lemlist_crm").fn(op=op)
+        assert not inst.method_calls
+
+
+def test_les_personas_passent_par_l_outil_qui_agit():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        act = _tool("lemlist_database_act", "lemlist_crm")
+        act.fn(op="persona_create", name="CX leads", mode="leads",
+               filters=[{"filterId": "department", "in": ["Customer service"]}])
+        assert inst.create_persona.call_args.args == ("CX leads",)
+        assert inst.create_persona.call_args.kwargs["mode"] == "leads"
+        act.fn(op="persona_delete", persona_id="pdp_1")
+        assert inst.delete_persona.call_args.args == ("pdp_1",)
