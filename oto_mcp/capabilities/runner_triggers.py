@@ -24,6 +24,7 @@ les échéances : une seule vérité.
 """
 from __future__ import annotations
 
+import datetime
 import logging
 import types
 from typing import Any, Literal, Optional
@@ -32,9 +33,9 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from . import (_abonnement, _acces_agent, _cle_exigee, _instruction, _limites_du_run,
-               _modele, _source_du_hook)
-from .. import (db, org_store, ownership, roles, runner_hook, runner_models, runner_tick,
-                session_visibility, tool_alias, tool_registry)
+               _modele, _source_du_hook, runner_jobs)
+from .. import (db, org_store, ownership, procedure_retiree, roles, runner_hook,
+                runner_models, runner_tick, session_visibility, tool_alias, tool_registry)
 from ..tools import catalogue as tool_catalogue
 from ._authz import ORG_MEMBER
 from ._dossier import FOLDER_MAX, dossier_valide
@@ -73,6 +74,10 @@ class TriggerInput(BaseModel):
                 # c'est délibérément une décision de l'utilisateur : la pause,
                 # elle, ne perd plus rien (13/09/2026).
                 "clear_queue",
+                # LANCER un run MAINTENANT, sans attendre l'horloge : ce que fait le
+                # bouton « Exécuter maintenant » de l'écran, servi aussi au MCP — la
+                # charge se compose ICI, jamais chez l'appelant (21/10/2026).
+                "run_now",
                 # REPRENDRE un agent : un admin d'org en devient le propriétaire —
                 # l'identité au nom de laquelle il agit, et l'abonnement qui le
                 # paie. Verbe séparé d'`update` : le propriétaire n'est pas de la
@@ -467,6 +472,9 @@ class TriggerOut(BaseModel):
     #: Combien de travaux `clear_queue` a périmés. `0` est un vrai zéro (la file
     #: était vide), jamais une absence de mesure.
     cleared: Optional[int] = None
+    #: `run_now` seulement : le travail enfilé (`id`, `status`, `due_at`). Le run
+    #: se lit ensuite dans l'historique de l'agent — l'appel ne l'attend pas.
+    job: Optional[dict] = None
     #: Le secret en clair — rendu par `create` d'un webhook et par
     #: `rotate_secret`, et par RIEN D'AUTRE. Il n'est pas stocké : seul son haché
     #: l'est. Perdu, il se remplace ; il ne se relit jamais.
@@ -1055,6 +1063,41 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         return {"ok": True, "cleared": vides,
                 "trigger": _avec_hook(ctx.org_id,
                                       db.get_trigger(inp.trigger_id, ctx.org_id))}
+
+    if inp.op == "run_now":
+        # ⚠️ Gardé sur le RUNNER, pas sur `enabled` : un agent en pause se lance à
+        # la main — l'essayer avant de l'armer est justement le cas d'usage. Mais
+        # sans worker pour le prendre, le travail attendrait pour toujours : même
+        # refus qu'à la pose, plutôt qu'un « lancé » qui ne part pas.
+        t = db.get_trigger(inp.trigger_id, ctx.org_id)
+        _acces_agent.exiger(ctx, t, _acces_agent.ECRIRE)
+        if procedure_retiree.archivee(ctx.org_id, t.get("sub"), t.get("procedure")):
+            raise AuthzDenied(400, "procedure_archived",
+                              f"la procédure `{t.get('procedure')}` est archivée : "
+                              "l'agent ne la déroule plus.")
+        famille = runner_models.famille(t.get("model"))
+        _modele.exige_un_modele(famille)
+        _modele.exige_servi(_modele.exige_un_runner(ctx.org_id), famille)
+        _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
+        # La MÊME charge que l'horloge (`runner_tick.charge_du_declencheur`), datée
+        # de maintenant. Puis le chemin d'un enfilage à la main
+        # (`runner_jobs._charge_et_modele`) : outils au canonique, famille
+        # redéduite, garde d'abonnement sur l'appelant.
+        # ⚠️ L'identité est l'APPELANT (`ctx.sub`), pas le propriétaire : un run
+        # lancé à la main tourne en ton nom — comme le bouton de l'écran.
+        charge = runner_tick.charge_du_declencheur(
+            {**t, "tz": t.get("tz") or _TZ_DEFAUT},
+            datetime.datetime.now(datetime.timezone.utc), origine="à la demande")
+        charge = runner_jobs._charge_et_modele(ctx, runner_jobs.JobsInput(
+            op="enqueue", kind="start",
+            payload={k: v for k, v in charge.items() if v is not None}))
+        res = db.enqueue_job(ctx.org_id, "start", payload=charge, sub=ctx.sub)
+        logger.info("déclencheur %s (org %s) : run lancé à la demande de %s — job %s",
+                    inp.trigger_id, ctx.org_id, ctx.sub, res["id"])
+        return {"ok": True,
+                "job": {"id": res["id"], "status": res["status"],
+                        "due_at": str(res["due_at"])},
+                "trigger": _avec_hook(ctx.org_id, t)}
 
     if inp.op == "take_over":
         # ⚠️ ADMIN d'org seulement, et seulement l'agent d'un membre PARTI : c'est
@@ -1787,6 +1830,8 @@ CAPABILITIES += [
                           "est son credential, elle se renouvelle par l'écran (REST)"),
             DeclaredError(404, "trigger_not_found",
                           "automatisation inconnue dans l'org du porteur"),
+            DeclaredError(400, "procedure_archived",
+                          "`run_now` d'un agent dont la procédure est archivée"),
             DeclaredError(403, "org_admin_required",
                           "`take_over` par quelqu'un qui n'est pas admin de l'org"),
             DeclaredError(403, "owner_still_member",
@@ -1855,7 +1900,13 @@ CAPABILITIES += [
             "you mean) / list / get / update (editing cron or tz revalidates and "
             "recomputes the next due; `folder` = a display label the lists group "
             "agents under, \"\" clears it — `trigger_ids=[…]` instead of `trigger_id` "
-            "files up to 100 agents in one call, `folder` only) / delete / take_over (org admin only, and "
+            "files up to 100 agents in one call, `folder` only) / delete / run_now (start "
+            "ONE run now, without waiting for the clock — same payload as a scheduled "
+            "occurrence, stamped with the current time; works on a paused agent; needs "
+            "edit access; the run acts as YOU, the caller, and is filed under the "
+            "agent's own history; returns `job` {id, status, due_at} — the call does "
+            "not wait for the run; refused like `create` when nothing serves the "
+            "agent's model) / take_over (org admin only, and "
             "only when the agent's owner is no longer a member of the org — "
             "`owner_still_member` otherwise: an agent is shared, never taken. You "
             "become the agent's owner — it then acts as YOU and, on a personal "

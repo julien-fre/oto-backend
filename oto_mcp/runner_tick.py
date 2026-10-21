@@ -74,6 +74,54 @@ def _occurrence_sautee(t: dict, issue: str = db.REFUSE_SUSPENDED) -> None:
         db.enregistrer(conn, t["id"], t["org_id"], issue, source="schedule")
 
 
+def charge_du_declencheur(t: dict, echeance, origine: str = "planifié") -> dict:
+    """La charge du travail `start` d'une occurrence de `t` — UNE définition pour
+    l'horloge (`_tick`) et le lancement à la demande (`runner.triggers op=run_now`).
+    Un run lancé à la main et un run lancé par l'horloge doivent être le MÊME run :
+    deux copies de cette charge finiraient par tester deux choses différentes.
+
+    `echeance` = le moment que l'occurrence représente (l'échéance consommée pour
+    l'horloge, maintenant pour un lancement à la main). Les champs None restent :
+    l'appelant les retire à l'enfilage."""
+    return {
+        "procedure": t["procedure"],
+        "project_id": t["project_id"],
+        "tools": t.get("tools") or [],
+        # ⚠️ DÉRIVÉE quand le déclencheur n'en porte pas. Sans cette ligne
+        # le travail part sans instruction de départ, et le worker le refuse
+        # — il exécute une instruction, il n'en compose pas (_instruction.py,
+        # tranché le 02/09). Constaté en production le 14/09 : les six
+        # déclencheurs de l'org 196 portent `input = NULL`, donc CHACUNE de
+        # leurs occurrences échouait, silencieusement, depuis qu'un défaut
+        # vivait dans le runner et en a été retiré.
+        #
+        # `create` compose bien la sienne (`inp.input or derivee(...)`) —
+        # mais c'est le SEUL site qui le fait : tout déclencheur né avant ce
+        # jour-là n'en a jamais reçu, et aucune mise à jour ne lui en donne.
+        # Réparer ici plutôt que par une migration couvre d'un coup les rangs
+        # anciens ET le cas où quelqu'un vide l'invite depuis le produit.
+        #
+        # ⚠️ Toujours par `_instruction`, jamais rédigée sur place : une
+        # variante écrite ici rouvrirait le « second domicile du métier » que
+        # ce module existe pour fermer.
+        #
+        # Et l'occurrence se DATE (`horodatee`) : un agent hébergé n'a pas
+        # d'horloge, il apprend ici quel jour et quelle heure il représente.
+        "input": _instruction.horodatee(
+            t.get("input") or _instruction.derivee(t["procedure"]),
+            echeance, t["tz"]),
+        "label": t.get("label") or f"{origine} — {t['procedure']}",
+        "max_steps": t.get("max_steps"),
+        # Les limites du run déclarées sur l'agent — seulement si déclarées.
+        **_limites_du_run.charge(t.get("max_tokens"), t.get("max_run_seconds")),
+        "trigger_id": t["id"],
+        # Le modèle DÉCLARÉ et sa famille — la famille route le travail vers un
+        # worker qui la sert (`claim_next_job`). Sans modèle : rien ne part, et
+        # n'importe quel worker le prend sur le sien, comme avant.
+        **runner_models.charge(t.get("model")),
+    }
+
+
 def _tick() -> int:
     """UN tour d'horloge. Rend le nombre de jobs enfilés (télémétrie du log)."""
     enfiles = 0
@@ -109,43 +157,7 @@ def _tick() -> int:
                 continue
         except Exception as e:  # noqa: BLE001 — voir ci-dessus
             log.warning("déclencheur %s : état de la procédure illisible (%s)", t["id"], e)
-        payload = {
-            "procedure": t["procedure"],
-            "project_id": t["project_id"],
-            "tools": t.get("tools") or [],
-            # ⚠️ DÉRIVÉE quand le déclencheur n'en porte pas. Sans cette ligne
-            # le travail part sans instruction de départ, et le worker le refuse
-            # — il exécute une instruction, il n'en compose pas (_instruction.py,
-            # tranché le 02/09). Constaté en production le 14/09 : les six
-            # déclencheurs de l'org 196 portent `input = NULL`, donc CHACUNE de
-            # leurs occurrences échouait, silencieusement, depuis qu'un défaut
-            # vivait dans le runner et en a été retiré.
-            #
-            # `create` compose bien la sienne (`inp.input or derivee(...)`) —
-            # mais c'est le SEUL site qui le fait : tout déclencheur né avant ce
-            # jour-là n'en a jamais reçu, et aucune mise à jour ne lui en donne.
-            # Réparer ici plutôt que par une migration couvre d'un coup les rangs
-            # anciens ET le cas où quelqu'un vide l'invite depuis le produit.
-            #
-            # ⚠️ Toujours par `_instruction`, jamais rédigée sur place : une
-            # variante écrite ici rouvrirait le « second domicile du métier » que
-            # ce module existe pour fermer.
-            #
-            # Et l'occurrence se DATE (`horodatee`) : un agent hébergé n'a pas
-            # d'horloge, il apprend ici quel jour et quelle heure il représente.
-            "input": _instruction.horodatee(
-                t.get("input") or _instruction.derivee(t["procedure"]),
-                t["next_due"], t["tz"]),
-            "label": t.get("label") or f"planifié — {t['procedure']}",
-            "max_steps": t.get("max_steps"),
-            # Les limites du run déclarées sur l'agent — seulement si déclarées.
-            **_limites_du_run.charge(t.get("max_tokens"), t.get("max_run_seconds")),
-            "trigger_id": t["id"],
-            # Le modèle DÉCLARÉ et sa famille — la famille route le travail vers un
-            # worker qui la sert (`claim_next_job`). Sans modèle : rien ne part, et
-            # n'importe quel worker le prend sur le sien, comme avant.
-            **runner_models.charge(t.get("model")),
-        }
+        payload = charge_du_declencheur(t, t["next_due"])
         # ⚠️ PÉRIMER AVANT D'ENFILER. Ce qui restait en attente pour ce
         # déclencheur n'a pas été pris dans son cycle : une veille quotidienne
         # exécutée treize jours plus tard ne rend pas un résultat en retard, elle

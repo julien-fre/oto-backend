@@ -406,3 +406,76 @@ def test_platform_tools_ne_se_pose_pas_a_la_creation():
         _appel(_ctx(), op="create", procedure="veille", cron="0 8 * * *",
                platform_tools=["oto_admin_org"])
     assert e.value.code == "platform_tools_update_only"
+
+
+# ── run_now : un run tout de suite, la charge composée côté serveur ──────────
+
+@pytest.fixture
+def agent_lancable(monkeypatch):
+    """Un agent EN PAUSE sans instruction, une org servie : ce que `run_now`
+    enfile, capturé."""
+    enfile = {}
+    monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: _declencheur(
+        id=i, enabled=False, sub="julien", model="claude-sonnet-5"))
+    monkeypatch.setattr(RT.db, "runner_arme",
+                        lambda org: {"armed": True, "workers": 1,
+                                     "last_seen": "2026-10-21 07:00:00",
+                                     "families": ["anthropic"]})
+    monkeypatch.setattr(RT.procedure_retiree, "archivee", lambda *a: None)
+    # La garde de clé a son banc (`test_cle_de_modele_exigee.py`).
+    monkeypatch.setattr(RT._cle_exigee, "exiger_a_la_pose", lambda *a, **k: None)
+    monkeypatch.setattr(RT.runner_jobs._abonnement, "exiger_a_la_pose", lambda *a, **k: None)
+    monkeypatch.setattr(RT.runner_jobs.tool_alias, "canonical_names", lambda noms, sub: noms)
+    monkeypatch.setattr(RT.db, "enqueue_job",
+                        lambda org, kind, payload=None, sub=None, **_: enfile.update(
+                            org=org, kind=kind, payload=payload, sub=sub)
+                        or {"id": 41, "status": "pending", "due_at": "2026-10-21 08:00:00"})
+    return enfile
+
+
+def test_run_now_enfile_la_charge_de_l_horloge_au_nom_de_l_appelant(agent_lancable):
+    out = _appel(_ctx(sub="alexis"), op="run_now", trigger_id=5)
+    assert out["job"]["id"] == 41 and out["ok"] is True
+    assert agent_lancable["kind"] == "start" and agent_lancable["org"] == 2
+    assert agent_lancable["sub"] == "alexis", "un run lancé à la main tourne au nom de l'appelant"
+    charge = agent_lancable["payload"]
+    assert charge["trigger_id"] == 5, "le run se range sous l'agent"
+    assert charge["procedure"] == "veille-linkedin" and charge["tools"] == ["data_write"]
+    assert charge["model"] == "claude-sonnet-5" and charge["model_family"] == "anthropic"
+    assert charge["input"], "sans instruction, le worker refuse : elle se dérive"
+    assert charge["label"] == "à la demande — veille-linkedin"
+    assert "max_steps" not in charge, "les champs None ne voyagent pas"
+
+
+def test_run_now_exige_le_droit_de_modifier(agent_lancable, monkeypatch):
+    from oto_mcp.capabilities import _acces_agent
+    monkeypatch.setattr(_acces_agent, "niveaux",
+                        lambda sub, org_id, agents: {int(t["id"]): "viewer" for t in agents})
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="run_now", trigger_id=5)
+    assert e.value.status == 403
+    assert not agent_lancable, "rien n'est enfilé"
+
+
+def test_run_now_exige_trigger_id(agent_lancable):
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="run_now")
+    assert e.value.code == "missing_fields"
+
+
+def test_run_now_refuse_sans_runner(agent_lancable, monkeypatch):
+    monkeypatch.setattr(RT.db, "runner_arme",
+                        lambda org: {"armed": False, "workers": 0, "last_seen": None,
+                                     "families": []})
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="run_now", trigger_id=5)
+    assert e.value.code == "no_runner_armed"
+    assert not agent_lancable
+
+
+def test_run_now_refuse_une_procedure_archivee(agent_lancable, monkeypatch):
+    monkeypatch.setattr(RT.procedure_retiree, "archivee", lambda *a: "2026-10-01")
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="run_now", trigger_id=5)
+    assert e.value.code == "procedure_archived"
+    assert not agent_lancable

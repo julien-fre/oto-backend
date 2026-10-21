@@ -102,7 +102,7 @@ ECRITURES = {
                     "meter"},
     "runner.triggers": {"create", "update", "delete", "clear_queue", "rotate_secret",
                         "take_over", "give", "rotate_address", "share", "unshare",
-                        "connect_source", "disconnect_source"},
+                        "connect_source", "disconnect_source", "run_now"},
     "runs.thread": {"append"},
     "usage.notify_reporters": {"send"},
     "org.instruction.share.write": {"publish", "set", "unpublish"},
