@@ -318,6 +318,7 @@ def register(mcp: FastMCP) -> None:
         text: str,
         thread_ts: Optional[str] = None,
         author: Optional[Auteur] = None,
+        unfurl: bool = True,
     ) -> dict:
         """Send a Slack message to a channel or DM. The response says who wrote
         (`_author`) and where it landed (`_channel`: name, DM, shared externally).
@@ -343,10 +344,15 @@ def register(mcp: FastMCP) -> None:
             author: Who writes — `"me"` (as you, user token) or `"app"` (as the
                 Slack app, bot token). Required when the workspace holds both
                 tokens; with a single one, it is used and may be omitted.
+            unfurl: `false` = Slack shows NO preview card under the links of
+                this message (every part, when it is split). Default `true` =
+                Slack's usual previews. A procedure that says "no link previews"
+                passes `false`.
         """
         client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
-            result = client.post_message(channel, text=text, thread_ts=thread_ts)
+            result = client.post_message(channel, text=text, thread_ts=thread_ts,
+                                         **({} if unfurl else {"unfurl": False}))
         return {**result, "_author": qui, "_channel": _ou(client, channel)}
 
     @mcp.tool()
