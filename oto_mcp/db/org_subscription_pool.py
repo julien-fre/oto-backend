@@ -22,6 +22,7 @@ from typing import Iterable, Optional
 
 from .. import interrupteurs
 from ._conn import _connect
+from .user_subscriptions import pause_en_vigueur
 
 PERSONNEL = "personnel"
 POOL = "pool"
@@ -31,11 +32,14 @@ MODES = (PERSONNEL, POOL)
 # l'échéance est passée ou inconnue, exactement comme la clause « la personne qui ne
 # peut pas servir attend » de la réservation (sans échéance connue, rien ne freine).
 # `ab` = `user_model_subscriptions`. Une seule écriture, lue par la pose ET la file.
-PRETEUR_SERVABLE = (
-    "ab.sandbox_id IS NOT NULL "
-    "AND ab.statut IN ('connected', 'paused_limit') "
-    "AND (ab.statut = 'connected' OR ab.limit_reset_at IS NULL "
-    "OR ab.limit_reset_at <= NOW())")
+def preteur_servable(sonde: bool = False) -> str:
+    """`PRETEUR_SERVABLE`, pour un worker qui sonde le forfait (`pause_en_vigueur`)."""
+    return ("ab.sandbox_id IS NOT NULL "
+            "AND ab.statut IN ('connected', 'paused_limit') "
+            f"AND NOT {pause_en_vigueur('ab', sonde)}")
+
+
+PRETEUR_SERVABLE = preteur_servable()
 
 # Le prêt `l` vaut : son abonnement existe, et son auteur est TOUJOURS membre de
 # l'org. Quitter l'org rend le prêt inerte sans qu'aucun chemin de départ n'ait à

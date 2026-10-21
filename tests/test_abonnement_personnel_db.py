@@ -139,6 +139,34 @@ def test_un_forfait_epuise_attend_son_echeance_puis_REPART(live):
         "est tué par un plafond expiré")
 
 
+def test_une_pause_ANCIENNE_n_est_servie_qu_au_worker_qui_SONDE(live):
+    """Une pause plus vieille que la fenêtre de revérification ne freine plus un worker
+    qui sonde le forfait avant le run (`forfait_sonde`) : la sonde tranchera. Un worker
+    qui ne sonde pas attend toujours l'échéance — il lancerait un run refusé."""
+    from oto_mcp import db
+    from oto_mcp.db import user_subscriptions as US
+    from oto_mcp.db._conn import _connect
+    s = _personne("abo-sonde")
+    US.upsert_sandbox(s, _FAMILLE, "sandbox-s")
+    with _connect() as conn:
+        futur = conn.execute("SELECT NOW() + interval '5 days' AS t").fetchone()["t"]
+    US.marquer_statut(s, _FAMILLE, US.PLAFOND, limit_reset_at=futur, epuise=True)
+    travail = _travail(9406, s)
+
+    def _prise(sonde):
+        return db.claim_next_job(9406, "w-sonde", lease_seconds=60, depot=_FAMILLE,
+                                 famille_seule=True, sonde=sonde)
+    assert _prise(True) is None, "pause FRAÎCHE : même le worker qui sonde attend"
+
+    with _connect() as conn:
+        conn.execute("UPDATE user_model_subscriptions SET updated_at = NOW() - "
+                     "make_interval(secs => %s) WHERE sub = %s",
+                     (US.VERIFICATION_S + 60, s))
+    assert _prise(False) is None, "sans sonde, l'échéance stockée fait foi"
+    pris = _prise(True)
+    assert pris and pris["id"] == travail, "pause ANCIENNE : la sonde tranchera"
+
+
 def test_deux_workers_SIMULTANES_ne_prennent_pas_deux_travaux_d_une_personne(live):
     """La sérialisation tient-elle sous concurrence réelle ? `NOT EXISTS` lit un
     instantané : deux transactions parallèles ne voient pas la prise de l'autre."""

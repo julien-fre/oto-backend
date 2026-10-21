@@ -1851,7 +1851,22 @@ cinq heures et sept jours. La personne est mise en attente dès qu'une fenêtre 
 son **plafond de consommation** (`_abonnement.seuil`, ci-dessous), **avant** qu'un
 travail soit refusé ; deux fenêtres saturées attendent la plus lointaine. ⚠️ Un
 `allowed_warning` du fournisseur n'est PAS un refus (`_abonnement.ETATS_SERVABLES`) :
-lu comme tel, il mettait en pause pour sept jours un forfait à quelques %. Un rapport mal
+lu comme tel, il mettait en pause pour sept jours un forfait à quelques %. Sur un refus,
+l'échéance attendue est celle de la fenêtre que le fournisseur NOMME (`fenetre` /
+`echeance`, rapportées par oto-runner), plus toute fenêtre au-delà du seuil — la plus
+lointaine de toutes n'est plus que le repli d'un rapport sans fenêtre nommée.
+
+**La sonde avant le run (21/10/2026).** Une pause ne se corrigeait qu'au rapport d'un run
+conclu, et un forfait en pause ne reçoit aucun travail : une pause fausse figeait le
+forfait jusqu'à sa réinitialisation. Un worker qui le promet au claim (`forfait_sonde`,
+oto-runner `OTO_RUNNER_SONDE_FORFAIT=1`) sonde le forfait avant chaque run d'abonnement
+(un tour sans outil, dont on lit le `rate_limit_event`) et rapporte par `op=forfait` :
+même `noter_rapport` qu'une conclusion, puis le verdict relu sur la ligne — en pause à
+échéance future, le travail est rendu à la file sans tentative comptée, avec
+`user_subscriptions.VERIFICATION_S` de délai. À ce worker-là seulement, une pause plus
+vieille que cette fenêtre ne freine plus la réservation (`pause_en_vigueur(ab, sonde)`,
+le prédicat unique du personnel, du prêteur du pool et du repli) : la sonde tranche. Un
+worker qui ne sonde pas attend l'échéance stockée, comme avant. Un rapport mal
 formé s'ignore et se journalise : il ne fait jamais échouer une conclusion. Seul un
 worker de plateforme est écouté.
 

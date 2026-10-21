@@ -21,6 +21,7 @@ import base64
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -28,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from . import (_abonnement, _acces_agent, _cle_exigee, _limites_du_run,
                _lignes_reservables, _modele, _ordre_de_service)
 from .. import db, outils_du_travail, runner_consigne, runner_models, time_saved, tool_alias
+from ..db import user_subscriptions
 from ..access import credits as budget
 from ..access import credits_tours as tours
 from ._authz import WORKER_OR_ORG_MEMBER
@@ -46,7 +48,10 @@ class JobsInput(BaseModel):
                 # UN appel au modèle sur une clé PARTAGÉE (18/10/2026) : réservé avant
                 # d'être envoyé, réglé à son usage avant que le worker continue —
                 # voir `_reserver_un_tour` et `_regler_un_tour`.
-                "reserve", "meter"]
+                "reserve", "meter",
+                # Ce que la SONDE du worker a vu du forfait, AVANT le run (21/10/2026) :
+                # le backend le porte et tranche — voir `_trancher_le_forfait`.
+                "forfait"]
     # enqueue —
     kind: Optional[Literal["start", "continue"]] = None
     payload: Optional[dict[str, Any]] = None
@@ -87,6 +92,11 @@ class JobsInput(BaseModel):
         "platform's, or its primary tenant's), whose calls are settled in the credit "
         "ledger: a worker that does not declare "
         "it never receives one."))
+    forfait_sonde: bool = Field(False, description=(
+        "claim: this worker probes the Claude plan before every subscription run and "
+        "reports it with `op=forfait`. Such a worker is also served jobs whose plan "
+        "pause is older than the verification window: the probe decides. A worker "
+        "that does not declare it keeps waiting for the stored reset."))
     # reserve / meter — le rang du tour dans la tentative (0, 1, 2…).
     turn: Optional[int] = Field(None, ge=0)
     # reserve — le `max_tokens` de l'appel : la seule borne connue avant l'appel.
@@ -350,6 +360,10 @@ class JobsOut(BaseModel):
     job: Optional[Job] = None
     jobs: Optional[list[Job]] = None
     ok: Optional[bool] = None
+    # forfait — le verdict de la sonde : `false` = le travail est DÉJÀ rendu à la file,
+    # sans tentative comptée ; le worker ne lance rien et ne conclut rien.
+    servable: Optional[bool] = None
+    limit_reset_at: Optional[str] = None
     # list (#469) — les deux champs sans lesquels une page pleine est indiscernable
     # d'une file épuisée. Un relevé tronqué SOUS-DÉCLARE : il rassure exactement
     # quand il ne faut pas.
@@ -899,6 +913,43 @@ def _clore_la_tentative(job_id: int, conclu: dict) -> None:
                           estampille.get("mode"))
 
 
+def _trancher_le_forfait(ctx, inp: JobsInput) -> dict:
+    """`op=forfait` : ce que la SONDE du worker a vu du forfait, AVANT le run.
+
+    Porté sur la connexion qui PAIE, exactement comme le rapport d'une conclusion
+    (`noter_rapport_du_travail` : même seuil, même pause). Puis le verdict, relu sur la
+    ligne : en pause à échéance future → le travail est RENDU à la file sans tentative
+    comptée, avec le délai de revérification — un forfait vraiment épuisé n'est sondé
+    qu'une fois par fenêtre (`user_subscriptions.VERIFICATION_S`).
+
+    ⚠️ Worker de PLATEFORME seulement, et sur un travail qu'il TIENT : même garde que
+    le rapport de `complete` — un membre ne met pas un collègue en pause."""
+    if not ctx.platform_worker:
+        raise AuthzDenied(403, "platform_worker_only",
+                          "`op=forfait` est réservé au worker de plateforme")
+    if not isinstance(inp.result, dict) or not isinstance(inp.result.get("abonnement"), dict):
+        raise AuthzDenied(400, "missing_fields",
+                          "`op=forfait` exige `result.abonnement` (le rapport de la sonde)")
+    conclu = db.porteur_et_famille(inp.job_id) or {}
+    if not conclu or not db.tenu_par(inp.job_id, ctx.sub):
+        raise AuthzDenied(404, "job_not_found", "job inconnu")
+    _abonnement.noter_rapport(conclu, True, inp.result)
+    famille = conclu.get("model_family")
+    porteur = conclu.get("abonnement") or conclu.get("sub")
+    ligne = (user_subscriptions.get_subscription(porteur, famille) or {}) if porteur else {}
+    reprise = ligne.get("limit_reset_at")
+    en_pause = (ligne.get("statut") == user_subscriptions.PLAFOND and reprise is not None
+                and reprise > datetime.now(timezone.utc))
+    if not en_pause:
+        return {"ok": True, "servable": True}
+    db.rendre_a_la_file(inp.job_id, ctx.sub,
+                        _abonnement.raison_de_l_attente(famille, user_subscriptions.PLAFOND,
+                                                        pool=_abonnement.en_pool(
+                                                            conclu.get("org_id"), famille)),
+                        delai_s=user_subscriptions.VERIFICATION_S)
+    return {"ok": True, "servable": False, "limit_reset_at": reprise.isoformat()}
+
+
 def _avec_abonnement(job: dict, famille: str, appelant: str) -> dict:
     """Le travail d'un abonnement, servi avec le SANDBOX de l'abonnement qui le paie
     (son demandeur, ou le membre qui a prêté le sien au pool de l'org).
@@ -1444,7 +1495,8 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         porteur = None if ctx.platform_worker else ctx.sub
         job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail,
                                 depot=inp.provider, famille_seule=famille_seule,
-                                org_ids=inp.org_ids, ferme=ferme, porteur=porteur)
+                                org_ids=inp.org_ids, ferme=ferme, porteur=porteur,
+                                sonde=inp.forfait_sonde)
         if job is None:
             # ⚠️ La file vide n'est pas la fin de l'histoire : une CAMPAGNE en
             # cours est une règle qui produit des travaux, et c'est ici qu'on
@@ -1462,7 +1514,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
                                     depot=inp.provider,
                                     famille_seule=famille_seule,
                                     org_ids=inp.org_ids, ferme=ferme,
-                                    porteur=porteur)
+                                    porteur=porteur, sonde=inp.forfait_sonde)
             if job is None and panne:
                 # « Rien à faire » et « je n'ai pas pu regarder » ne se disent
                 # pas de la même façon. Les confondre a coûté des jours de
@@ -1478,7 +1530,8 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             # chemin traverse une famille que le dépôt de ce worker ne nomme pas.
             job = db.repli_disponible(ctx.org_id, inp.org_ids, ctx.sub,
                                       inp.provider, _abonnement.DEFAUT_LIMITE_PCT,
-                                      lease_seconds=bail, ferme=ferme)
+                                      lease_seconds=bail, ferme=ferme,
+                                      sonde=inp.forfait_sonde)
         if job is None:
             return {"job": None}
         # La charge servie est composée AVANT la délégation : tout ce qui se décide
@@ -1547,6 +1600,9 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             raise AuthzDenied(400, "missing_fields",
                               "meter exige `job_id`, `turn` et `result` (l'usage du tour)")
         return _regler_un_tour(ctx, inp.job_id, inp.turn, inp.result)
+
+    if inp.op == "forfait":
+        return _trancher_le_forfait(ctx, inp)
 
     if inp.op == "complete":
         if inp.ok is None:

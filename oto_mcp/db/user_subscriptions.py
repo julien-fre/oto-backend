@@ -44,6 +44,29 @@ DDL_COLONNE_LIMITE = (f"ALTER TABLE user_model_subscriptions ADD COLUMN IF NOT E
                       f"CHECK ({COLONNE_LIMITE} BETWEEN 1 AND 100)")
 
 
+#: Combien de temps une pause fait foi sans être revérifiée, pour un worker qui SONDE le
+#: forfait avant chaque run (`forfait_sonde` à la réservation). Au-delà, le travail est
+#: servi et la sonde tranche : une pause posée par un rapport faux ou ancien ne fige plus
+#: le forfait jusqu'à sa réinitialisation — sans travail servi, aucun rapport ne venait la
+#: corriger. Un forfait vraiment épuisé est sondé au plus une fois par fenêtre (le verdict
+#: rend le travail à la file avec ce délai, et un seul travail est en vol par forfait).
+VERIFICATION_S = 600
+
+
+def pause_en_vigueur(ab: str, sonde: bool = False) -> str:
+    """SQL : la ligne `ab` est-elle en pause qui FREINE la réservation ? Jamais NULL.
+
+    `sonde` : le worker sondera le forfait avant de lancer — une pause plus vieille que
+    `VERIFICATION_S` ne freine plus. ⚠️ L'horloge est `updated_at` : toute autre écriture
+    de la ligne (plafond perso, sandbox, connexion) la rajeunit, ce qui ne fait que
+    retarder la revérification — le sens sûr. Ne pas la « corriger » en colonne dédiée
+    sans raison."""
+    fraiche = (f" AND {ab}.updated_at > NOW() - make_interval(secs => {int(VERIFICATION_S)})"
+               if sonde else "")
+    return (f"COALESCE({ab}.statut = '{PLAFOND}' AND {ab}.limit_reset_at > NOW()"
+            f"{fraiche}, false)")
+
+
 def get_subscription(sub: str, famille: str) -> Optional[dict]:
     """L'abonnement d'une personne pour une famille, ou None."""
     with _connect() as conn:

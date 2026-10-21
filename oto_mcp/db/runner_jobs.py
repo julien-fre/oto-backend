@@ -126,7 +126,7 @@ _ABONNEMENT_OUVERT_ICI = f"""(rj.org_id IS NULL OR EXISTS (
                                     AND u.org_id = rj.org_id))"""
 
 
-def _fragments_abonnement(abonnement: bool) -> dict:
+def _fragments_abonnement(abonnement: bool, sonde: bool = False) -> dict:
     """Ce que la réservation ajoute pour un dépôt d'ABONNEMENT (OTO-130) — et RIEN
     pour tout autre dépôt : le SQL d'un worker de clé ne nomme même pas les tables du
     pool. Ces clauses décrivent ce qu'est un forfait, pas ce qu'est une file.
@@ -162,7 +162,8 @@ def _fragments_abonnement(abonnement: bool) -> dict:
     if not abonnement:
         return {"colonnes_forfait": "", "jointure_pret": "", "clause_abonnement": "",
                 "verrou_de": "", "charge_prise": _CHARGE_PRISE, "retour_preteur": ""}
-    from .org_subscription_pool import PRET_VIVANT, PRETEUR_SERVABLE
+    from .org_subscription_pool import PRET_VIVANT, preteur_servable
+    PRETEUR_SERVABLE = preteur_servable(sonde)
     en_pool = f"""EXISTS (
                 SELECT 1 FROM org_model_subscription_modes m
                  WHERE m.org_id = rj.org_id AND m.famille = {_FAMILLE_RJ}
@@ -194,8 +195,7 @@ def _fragments_abonnement(abonnement: bool) -> dict:
                                   WHERE ab.sub = rj.sub
                                     AND ab.famille = {_FAMILLE_RJ}
                                     AND (ab.statut IN ('needs_login', 'disconnected')
-                                         OR (ab.statut = 'paused_limit'
-                                             AND ab.limit_reset_at > NOW())))
+                                         OR {user_subscriptions.pause_en_vigueur('ab', sonde)}))
                    END""",
         "verrou_de": "OF rj ",
         "charge_prise": f"""(SELECT jsonb_set(
@@ -625,8 +625,13 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                    famille_seule: bool = False,
                    org_ids: Optional[list] = None,
                    ferme: bool = False,
-                   porteur: Optional[str] = None) -> Optional[dict]:
+                   porteur: Optional[str] = None,
+                   sonde: bool = False) -> Optional[dict]:
     """Le prochain job, bail posé — ou None (file vide).
+
+    ⚠️ `sonde` : le worker SONDE le forfait avant chaque run d'abonnement
+    (`forfait_sonde`) — une pause plus vieille que `user_subscriptions.VERIFICATION_S`
+    ne le freine plus (`user_subscriptions.pause_en_vigueur`), la sonde tranchera.
 
     ⚠️ `depot` = le dépôt de clé que le worker nomme, c'est-à-dire la FAMILLE de
     modèles qu'il sait servir (`runner_models`). Il ne réserve que les travaux de
@@ -759,7 +764,7 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
             # PARTAGÉE avec un appelant (`_emprunt_partage`), dont une annulation
             # entière déferait aussi les écritures. Seule la prise se défait.
             conn.execute("SAVEPOINT prise_abonnement")
-        frag = _fragments_abonnement(abonnement)
+        frag = _fragments_abonnement(abonnement, sonde)
         de_la_famille_ferme = f"rj.payload->>'model_family' IS NOT DISTINCT FROM '{FAMILLE_FERME}'"
         row = conn.execute(
             f"""
@@ -896,7 +901,7 @@ _CHARGE_DU_MODELE = ("model", "model_family", "effort", "max_output_tokens",
                      "max_tokens")
 
 
-def _pause_pour_l_org(ab: str, org: str, seuil_defaut_pct: int) -> str:
+def _pause_pour_l_org(ab: str, org: str, seuil_defaut_pct: int, sonde: bool = False) -> str:
     """SQL : l'abonnement `ab` est-il en pause POUR l'org `org` — plafond à échéance
     future, et forfait épuisé (refus du fournisseur) ou usage au-delà du seuil de
     CETTE org (`_abonnement.seuil`, relu ici : le plafond perso borné à
@@ -905,7 +910,7 @@ def _pause_pour_l_org(ab: str, org: str, seuil_defaut_pct: int) -> str:
 
     Une pause sans cause (écrite avant la révision `0025`) n'ouvre rien."""
     return f"""COALESCE(
-        {ab}.statut = 'paused_limit' AND {ab}.limit_reset_at > NOW()
+        {user_subscriptions.pause_en_vigueur(ab, sonde)}
         AND ({ab}.limit_epuise
              OR {ab}.limit_utilisation >= (CASE
                     WHEN {ab}.limite_pct IS NOT NULL
@@ -924,7 +929,7 @@ def _forfait_de_repli(rj: str, modep: str) -> str:
             f"THEN 'org:' || {rj}.org_id ELSE 'sub:' || {rj}.sub END")
 
 
-def _jointures_de_repli(seuil_defaut_pct: int) -> str:
+def _jointures_de_repli(seuil_defaut_pct: int, sonde: bool = False) -> str:
     """Les trois lectures qui décident si un travail `rj` est repliable : le mode de
     son org, la pause de son demandeur (mode personnel, et seulement dans une org où
     son abonnement est ouvert : `_ABONNEMENT_OUVERT_ICI`), et celle de TOUS les
@@ -943,7 +948,7 @@ def _jointures_de_repli(seuil_defaut_pct: int) -> str:
               WHERE NOT modep.actif AND ab.sub = rj.sub
                 AND ab.famille = rj.payload->>'model_family'
                 AND {_ABONNEMENT_OUVERT_ICI}
-                AND {_pause_pour_l_org("ab", "rj.org_id", seuil_defaut_pct)}
+                AND {_pause_pour_l_org("ab", "rj.org_id", seuil_defaut_pct, sonde)}
             ) perso ON TRUE
       LEFT JOIN LATERAL (
              SELECT MAX(ab.limit_reset_at) AS reset_at
@@ -952,7 +957,7 @@ def _jointures_de_repli(seuil_defaut_pct: int) -> str:
               WHERE modep.actif AND l.org_id = rj.org_id
                 AND l.famille = rj.payload->>'model_family'
              HAVING COUNT(*) > 0
-                AND bool_and({_pause_pour_l_org("ab", "rj.org_id", seuil_defaut_pct)})
+                AND bool_and({_pause_pour_l_org("ab", "rj.org_id", seuil_defaut_pct, sonde)})
             ) pool ON TRUE"""
 
 
@@ -1097,7 +1102,8 @@ def defaire_le_repli(job_id: int, worker_sub: str, raison: str,
 
 def candidats_repli_abonnement(org_id: Optional[int], org_ids: Optional[list],
                                familles: frozenset, depot: str, seuil_defaut_pct: int,
-                               limit: int = 25, ferme: bool = False) -> list[dict]:
+                               limit: int = 25, ferme: bool = False,
+                               sonde: bool = False) -> list[dict]:
     """Travaux `pending` d'une famille d'ABONNEMENT que l'org PEUT replier — lecture
     SEULE, hors verrou, pour que l'appelant choisisse une cible avant le claim
     atomique (`claim_fallback_job`, qui revérifie la MÊME pause : entre les deux, une
@@ -1130,7 +1136,7 @@ def candidats_repli_abonnement(org_id: Optional[int], org_ids: Optional[list],
                    rj.payload->>'model' AS model,
                    rj.payload->>'model_family' AS model_family
               FROM runner_jobs rj
-              {_jointures_de_repli(seuil_defaut_pct)}
+              {_jointures_de_repli(seuil_defaut_pct, sonde)}
              WHERE (%s::bigint IS NULL OR rj.org_id = %s)
                AND (%s::bigint[] IS NULL OR rj.org_id = ANY(%s::bigint[]))
                AND rj.status = 'pending' AND rj.due_at <= NOW()
@@ -1159,7 +1165,8 @@ def candidats_repli_abonnement(org_id: Optional[int], org_ids: Optional[list],
 
 def claim_fallback_job(job_id: int, worker_sub: str, to_model: str, to_family: str,
                        seuil_defaut_pct: int,
-                       lease_seconds: int = _LEASE_DEFAULT_S) -> Optional[dict]:
+                       lease_seconds: int = _LEASE_DEFAULT_S,
+                       sonde: bool = False) -> Optional[dict]:
     """Réclame UN travail d'abonnement en pause pour le REJOUER sur `to_model`
     (famille `to_family`, une clé API) — revérifie la pause dans le WHERE de
     l'UPDATE, jamais celle lue par `candidats_repli_abonnement` : entre les deux, le
@@ -1195,7 +1202,7 @@ def claim_fallback_job(job_id: int, worker_sub: str, to_model: str, to_family: s
                        CASE WHEN modep.actif THEN 'pool' ELSE 'personnel' END AS mode,
                        {_forfait_de_repli("rj", "modep")} AS forfait
                   FROM runner_jobs rj
-                  {_jointures_de_repli(seuil_defaut_pct)}
+                  {_jointures_de_repli(seuil_defaut_pct, sonde)}
                  WHERE rj.id = %s AND rj.status = 'pending' AND rj.due_at <= NOW()
                    AND rj.attempts < rj.max_attempts
                    AND (perso.limit_reset_at IS NOT NULL OR pool.reset_at IS NOT NULL)
@@ -1254,7 +1261,7 @@ def claim_fallback_job(job_id: int, worker_sub: str, to_model: str, to_family: s
 def repli_disponible(org_id: Optional[int], org_ids: Optional[list], worker_sub: str,
                      depot: Optional[str], seuil_defaut_pct: int,
                      lease_seconds: int = _LEASE_DEFAULT_S,
-                     ferme: bool = False) -> Optional[dict]:
+                     ferme: bool = False, sonde: bool = False) -> Optional[dict]:
     """Tente un repli abonnement épuisé → clé API pour le dépôt `depot` d'un worker
     de PLATEFORME (`claim_next_job` a déjà rendu `None` pour lui) : parcourt les
     candidats du PLUS ANCIEN au plus récent, s'arrête au premier repli que l'org
@@ -1269,7 +1276,7 @@ def repli_disponible(org_id: Optional[int], org_ids: Optional[list], worker_sub:
     if not familles:
         return None
     for cand in candidats_repli_abonnement(org_id, org_ids, familles, depot,
-                                           seuil_defaut_pct, ferme=ferme):
+                                           seuil_defaut_pct, ferme=ferme, sonde=sonde):
         to_model = runner_models.repli_api(cand["model"])
         if not to_model or runner_models.famille(to_model) != depot:
             continue
@@ -1278,7 +1285,7 @@ def repli_disponible(org_id: Optional[int], org_ids: Optional[list], worker_sub:
         if not _cle_ok_pour_repli(cand["org_id"], depot):
             continue
         row = claim_fallback_job(cand["id"], worker_sub, to_model, depot,
-                                 seuil_defaut_pct, lease_seconds)
+                                 seuil_defaut_pct, lease_seconds, sonde=sonde)
         if row:
             return row
     return None
@@ -1402,6 +1409,16 @@ def rendre_a_la_file(job_id: int, worker_sub: str, raison: str,
             (int(delai_s), raison, job_id, worker_sub),
         )
         return bool(cur.rowcount)
+
+
+def tenu_par(job_id: int, worker_sub: str) -> bool:
+    """Le travail est-il pris, bail courant, par ce worker ? La garde d'un rapport qui
+    agit sur la connexion d'un tiers (`op=forfait`) : on ne parle que de ce qu'on tient."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM runner_jobs WHERE id = %s AND claimed_by = %s "
+            "AND status = 'claimed'", (job_id, worker_sub)).fetchone()
+    return row is not None
 
 
 def travaux_en_attente_d_abonnement(sub: str, famille: str) -> int:

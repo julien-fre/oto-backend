@@ -454,6 +454,7 @@ def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
     Le rapport voyage dans le résultat déclaré, clé `abonnement` :
 
         {"etat": "allowed" | "allowed_warning" | <autre>,   # `rate_limit_info.status`
+         "fenetre": "five_hour", "echeance": 1790029800,  # `rateLimitType` / `resetsAt`
          "deconnecte": true,                     # le programme n'a plus de session
          "fenetres": {"five_hour": {"utilization": 0.07, "resetsAt": 1790029800},
                       "seven_day": {"utilization": 0.49, "resetsAt": 1790053200}}}
@@ -497,9 +498,15 @@ def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
             and isinstance(f.get("utilization"), (int, float))
             and f["utilization"] >= plafond]
         refuse = rapport.get("etat") not in ETATS_SERVABLES
-        if refuse and not echeances:
-            # Refusé sans fenêtre saturée lisible : toutes les échéances connues
-            # comptent, faute de savoir laquelle a mordu.
+        if refuse and isinstance(rapport.get("echeance"), (int, float)):
+            # Le fournisseur NOMME la fenêtre qui a refusé (`rateLimitType`, rapportée
+            # en `fenetre`/`echeance` par oto-runner) : c'est son échéance qu'on attend,
+            # pas la plus lointaine — un refus sur cinq heures ne fige plus une semaine.
+            echeances.append(rapport["echeance"])
+        elif refuse and not echeances:
+            # Refusé sans fenêtre nommée ni saturée lisible (un runner d'avant
+            # `fenetre`) : toutes les échéances connues comptent, faute de savoir
+            # laquelle a mordu.
             echeances = [f["resetsAt"] for f in fenetres.values()
                          if isinstance(f, dict)
                          and isinstance(f.get("resetsAt"), (int, float))]
@@ -520,9 +527,10 @@ def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
             # (`limit_epuise`, `limit_utilisation`), qui ne dit ni l'état exact du
             # fournisseur ni la fenêtre qui a mordu — sans lui, une pause douteuse ne
             # se prouve pas.
-            logger.info("forfait en pause (famille %s, porteur %s) : etat=%r seuil=%s "
-                        "fenetres=%s → jusqu'à %s", famille, porteur, rapport.get("etat"),
-                        plafond, fenetres, quand)
+            logger.info("forfait en pause (famille %s, porteur %s) : etat=%r fenetre=%r "
+                        "seuil=%s fenetres=%s → jusqu'à %s", famille, porteur,
+                        rapport.get("etat"), rapport.get("fenetre"), plafond, fenetres,
+                        quand)
             user_subscriptions.marquer_statut(
                 porteur, famille, user_subscriptions.PLAFOND, limit_reset_at=quand,
                 epuise=refuse, utilisation=max(charges) if charges else None,
