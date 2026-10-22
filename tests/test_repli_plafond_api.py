@@ -461,7 +461,7 @@ def test_un_defaut_d_instance_illisible_leve(defaut_instance, illisible):
 def test_couper_le_repli_ne_change_pas_le_mode(live):
     """Couper le repli sur une org qui n'a jamais réglé de mode fait naître la
     ligne SANS mode (19/10/2026) : l'interrupteur ne bascule pas l'org en pool, et
-    il ne la FIGE pas non plus en personnel — le mode reste celui qui s'applique."""
+    il ne la FIGE pas non plus en personnel — le pool continue de compléter."""
     from oto_mcp.db import org_subscription_pool as P
 
     oid = _org("p12", "p12-dem", repli=False)
@@ -471,7 +471,6 @@ def test_couper_le_repli_ne_change_pas_le_mode(live):
 
     assert P.en_pool(oid, "claude_subscription") is False
     assert P.get_mode(oid, "claude_subscription")["mode"] is None
-    assert P.mode_effectif(oid, "claude_subscription") == P.PERSONNEL
 
 
 def test_le_repli_se_rouvre(live):
@@ -847,25 +846,22 @@ def test_des_travaux_anciens_sans_cle_ne_bloquent_pas_une_org_qui_paie(live):
     assert row is not None and row["id"] == jid
 
 
-def test_avant_la_revision_0068_le_repli_nait_a_personnel(live):
-    """La révision se joue à la main sur notre box : tant qu'elle ne l'est pas, la
-    colonne refuse NULL, et ouvrir le repli doit marcher comme avant."""
-    from oto_mcp.db import org_subscription_pool as P
-    from oto_mcp.db._conn import _connect
 
-    oid = _org("p13", "p13-dem", repli=False)
-    with _connect() as conn:
-        # Les lignes sans mode d'autres tests : mises de côté, puis rendues telles.
-        sans_mode = conn.execute(
-            "UPDATE org_model_subscription_modes SET mode = 'personnel' WHERE mode IS NULL "
-            "RETURNING org_id, famille").fetchall()
-        conn.execute("ALTER TABLE org_model_subscription_modes ALTER COLUMN mode SET NOT NULL")
-    try:
-        ligne = P.set_repli_api(oid, "claude_subscription", True, "p13-dem")
-        assert ligne["mode"] == P.PERSONNEL and ligne["repli_api"] is True
-    finally:
-        with _connect() as conn:
-            conn.execute("ALTER TABLE org_model_subscription_modes ALTER COLUMN mode DROP NOT NULL")
-            for r in sans_mode:
-                conn.execute("UPDATE org_model_subscription_modes SET mode = NULL "
-                             "WHERE org_id = %s AND famille = %s", (r["org_id"], r["famille"]))
+# ── 18. sans mode réglé, le repli suit la voie du travail (revue du 19/10/2026) ─
+
+def test_sans_mode_regle_le_repli_suit_la_voie_du_travail(live):
+    """Le pool complète : un demandeur au plafond passe par le pool, et c'est le
+    POOL qui doit être en pause pour replier (forfait de l'org) ; un prêteur libre
+    sert le travail, aucun repli."""
+    oid = _org("p31", "p31-dem", "p31-p")
+    _abonne("p31-dem", statut="paused_limit", reset=_futur())
+    _abonne("p31-p", pret_a=[oid])
+    jid = _travail(oid, "p31-dem")
+    _cle_org(oid)
+    assert _repli(oid) is None, "un prêteur sert : on ne paie pas de jetons"
+
+    _abonne("p31-p", statut="paused_limit", reset=_futur(), pret_a=[oid])
+    row = _repli(oid)
+    assert row is not None and row["id"] == jid
+    repli = row["payload"]["_plateforme"]["repli"]
+    assert (repli["mode"], repli["forfait"]) == ("pool", f"{_F}:org:{oid}")

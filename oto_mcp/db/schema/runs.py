@@ -604,8 +604,8 @@ MODEL_SUBSCRIPTION_POOL = """
 CREATE TABLE IF NOT EXISTS org_model_subscription_modes (
     org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
     famille TEXT NOT NULL,
-    -- NULL = rien CHOISI (une ligne née du repli API) : `mode_effectif` tranche —
-    -- révision 0068.
+    -- NULL = rien CHOISI (une ligne née du repli API) : le pool complète
+    -- (`sql_par_le_pool`) — révision 20261022_1950.
     mode TEXT CHECK (mode IN ('personnel', 'pool')),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     -- Qui l'a réglé (un admin de l'org).
