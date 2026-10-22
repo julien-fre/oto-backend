@@ -68,6 +68,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..connectors import verify as connector_verify
 from ..output_projection import project
+from .lecture import LECTURE
 
 #: Action vocabulary of lemlist's v2 bulk. Deliberately written by hand:
 #: it is NOT a snake_case of the v1 flags — email verification is called
@@ -295,7 +296,7 @@ def register(mcp: FastMCP) -> None:
         key, is_platform = access.resolve_api_key("lemlist", units=units)
         return LemlistClient(api_key=key), is_platform
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def lemlist_status() -> dict:
         """Workspace status (account, credits, plan).
 
@@ -308,7 +309,7 @@ def register(mcp: FastMCP) -> None:
         result = client.status()
         return result
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def lemlist_list_campaigns(
         status: Optional[str] = None,
         created_by: Optional[str] = None,
@@ -346,14 +347,14 @@ def register(mcp: FastMCP) -> None:
             "truncated": truncated,
         }
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def lemlist_get_campaign(campaign_id: str) -> dict:
         """Fetch full campaign details by ID."""
         client, is_platform = _client()
         result = client.get_campaign(campaign_id)
         return result
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def lemlist_get_campaign_stats(
         campaign_id: str,
         start_date: Optional[str] = None,
@@ -387,7 +388,7 @@ def register(mcp: FastMCP) -> None:
         )
         return _project_stats(result, full=full)
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def lemlist_get_activities(
         campaign_id: Optional[str] = None,
         limit: int = 100,
@@ -437,7 +438,7 @@ def register(mcp: FastMCP) -> None:
             )
         return {"activities": events, "count": len(events)}
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def lemlist_get_leads(campaign_id: str) -> dict:
         """List all leads for a campaign with their state (sent, replied…).
 
@@ -676,7 +677,7 @@ def register(mcp: FastMCP) -> None:
                           "lemlist_enrich_result(enrichment_id) in ~10-20s."),
         }
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def lemlist_enrich_result(enrichment_id: str | list[str]) -> dict:
         """Collect the result of an enrichment submitted with `lemlist_enrich`,
         `lemlist_enrich_lead` or `lemlist_enrich_bulk`.

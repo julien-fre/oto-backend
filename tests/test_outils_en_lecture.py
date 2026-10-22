@@ -79,6 +79,20 @@ async def test_les_lecteurs_de_messagerie_sont_declares_en_lecture():
 
 
 @pytest.mark.asyncio
+async def test_les_lecteurs_lemlist_sont_declares_en_lecture():
+    """Une recette compare les leads d'un tableau aux campagnes avant de pousser :
+    lister, lire une campagne, ses leads, ses activités, un résultat d'enrichissement."""
+    servis = {t.name: t for t in await _outils()}
+    for nom in ("lemlist_status", "lemlist_list_campaigns", "lemlist_get_campaign",
+                "lemlist_get_campaign_stats", "lemlist_get_activities", "lemlist_get_leads",
+                "lemlist_enrich_result"):
+        assert en_lecture(servis[nom]), nom
+    for nom in ("lemlist_campaign", "lemlist_lead", "lemlist_create_lead",
+                "lemlist_enrich", "lemlist_enrich_bulk", "lemlist_launch_lead"):
+        assert not en_lecture(servis[nom]), nom
+
+
+@pytest.mark.asyncio
 async def test_aucun_outil_de_plateforme_ni_ecrivain_connu_n_est_declare():
     servis = {t.name: t for t in await _outils()}
     for nom in ("email_send", "slack_post_message", "gmail", "gmail_act", "outlook",

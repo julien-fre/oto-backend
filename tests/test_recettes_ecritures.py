@@ -53,3 +53,14 @@ def test_les_declarables_et_les_envois():
     assert "folk_record:delete" not in ec.declarables()
     assert ec.envoient(["folk_record:create", "lemlist_create_lead"]) == [
         "lemlist_create_lead"]
+
+
+def test_une_recette_lit_les_comptes_et_les_exports_d_une_campagne_lemlist_sans_rien_ecrire():
+    """Comparer les leads d'un tableau à ceux des campagnes avant de pousser : des
+    lectures, sans déclaration. Créer, mettre en pause, envoyer un export par mail :
+    refusé — rien de `lemlist_campaign` ne se déclare."""
+    for op in ("reports", "batch_stats", "export_status", "export_leads"):
+        assert ec.juger("lemlist_campaign", {"op": op}) == ("lire", None), op
+    for op in ("create", "update", "pause", "duplicate", "export_email", "export_start"):
+        assert ec.juger("lemlist_campaign", {"op": op})[0] == "refus", op
+    assert not any(d.startswith("lemlist_campaign") for d in ec.declarables())

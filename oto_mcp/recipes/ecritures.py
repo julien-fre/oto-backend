@@ -48,6 +48,11 @@ ECRITURES: dict[str, Ecriture] = {
     "salesforce_record": Ecriture(frozenset({"get"}),
                                   frozenset({"create", "update", "upsert"})),
     "lemlist_create_lead": Ecriture(envoie=True),
+    # Multiplexé avec des ops qui écrivent (create, pause, export_email…) : il ne peut
+    # pas se déclarer `LECTURE` en entier. Ses comptes et ses exports se LISENT — ce
+    # qu'une recette compare aux leads d'un tableau avant de pousser. Rien à déclarer.
+    "lemlist_campaign": Ecriture(frozenset({"reports", "batch_stats", "export_status",
+                                            "export_leads"}), frozenset()),
 }
 
 #: Ce qu'aucune op permise ne peut être : détruire, fusionner, une op `bulk_*` (un lot
