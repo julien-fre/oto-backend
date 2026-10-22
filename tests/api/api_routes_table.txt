@@ -841,6 +841,8 @@ POST /api/admin/runner/workers -> _handler
 OPTIONS /api/admin/runner/workers -> options_handler
 POST /api/me/functions -> _handler
 OPTIONS /api/me/functions -> options_handler
+GET,HEAD /api/orgs/{id}/recipes -> _handler
+OPTIONS /api/orgs/{id}/recipes -> options_handler
 POST /api/billing/webhook -> webhook
 OPTIONS /api/billing/webhook -> options_handler
 GET,HEAD /api/me/billing/invoices/{id}/pdf -> invoice_pdf

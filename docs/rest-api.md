@@ -527,6 +527,11 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 - CORS : les origines que l'instance déclare (`OTO_MCP_CORS_ORIGINS`, sans défaut — cf. § CORS). `account.oto.zone` retiré (surface compte décommissionnée → dashboard.oto.ninja)
 - Même `JWTVerifier` que `/mcp` — partage l'audience `https://mcp.oto.ninja/mcp`
 
+## Recettes d'une org (PROVISOIRE) — `GET /api/orgs/{id}/recipes`
+
+Les fiches des recettes de l'org, sans corps, membre de l'org (`capabilities/recipes.py`,
+`org.recipes`, REST seule) : `docs/recettes.md` §Lecture REST.
+
 ## Surface nœuds (PROVISOIRE) — `/api/me/shell`, `/api/me/nodes/{id}`, `/api/me/nodes/{id}/rows`
 
 Trois lectures précoces du modèle de nœuds (`capabilities/shell.py`, `node_view.py`,

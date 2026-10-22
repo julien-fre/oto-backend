@@ -245,6 +245,16 @@ en Python. Une recette-code se range comme les autres (mêmes tables, même cycl
   porteur est refusée, `org_out_of_job`) et ses droits sur le tableau. Les refus du
   contrat valent pour tous. Aucune règle propre aux agents, comme pour `oto_call`.
 
+## Lecture REST : les recettes d'une org (PROVISOIRE)
+
+`GET /api/orgs/{id}/recipes` (capacité `org.recipes`, REST seule, membre de l'org,
+`x-oto-provisoire`) rend les fiches de l'org SANS corps — le corps d'une recette-code est
+du code : `slug`, `title`, `description`, `status` (`published` dès qu'une version est en
+service, sinon `proposed`), `published_version`, `latest_version`, `updated_at`. C'est ce
+qu'une page de processus lit pour savoir quelles recettes l'org possède et si chacune
+tourne. Les étapes qu'une page montre au lecteur ne sont stockées nulle part encore : où
+elles vivent (le corps versionné, la fiche, ou dérivées) reste à décider.
+
 ## Ce qui vient ensuite
 
 Le bloc `async` (soumettre puis collecter : Dropcontact, FullEnrich, Apify), le mode par

@@ -30,8 +30,8 @@ from .. import access, session_org, tool_alias, tool_registry
 from ..db import recipes as db_recipes
 from ..functions import executor as bac
 from ..recipes import code, contrat, moteur
-from ._authz import BY_OP, ORG_MEMBER_OPT, SUB_ONLY
-from ._types import AuthzDenied, Capability, ResolvedCtx
+from ._authz import BY_OP, ORG_MEMBER_OF, ORG_MEMBER_OPT, SUB_ONLY
+from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 _PORTEE = BY_OP({None: ORG_MEMBER_OPT("org"), "org": ORG_MEMBER_OPT("org"),
@@ -375,5 +375,53 @@ CAPABILITIES += [
             "it declares (`writes`), at most `limits.max_writes` per run (default 50), in "
             "the run's org, with the caller's own connector account. PROVISIONAL surface."),
         mcp="oto_recipe",
+    ),
+]
+
+
+# ── Lecture REST : les recettes d'une org, pour qu'une page les nomme ────────────
+#
+# La face MCP (`oto_recipe op=list`) sert l'agent ; une page de processus a besoin
+# de savoir, sans session MCP, quelles recettes l'org possède et si chacune est en
+# service. Lecture seule, fiches sans corps (le corps d'une recette-code est du
+# code), membre de l'org. Provisoire : la forme suivra ce que la page affiche.
+
+
+class OrgRecipesInput(BaseModel):
+    org_id: int
+
+
+class OrgRecipe(BaseModel):
+    slug: str
+    title: str
+    description: str
+    status: Literal["published", "proposed"] = Field(description=(
+        "`published` when a version is in service (`published_version`), else "
+        "`proposed`: only a published version runs."))
+    published_version: Optional[int] = None
+    latest_version: Optional[int] = None
+    updated_at: Optional[str] = None
+
+
+class OrgRecipes(BaseModel):
+    recipes: list[OrgRecipe]
+
+
+async def _org_recipes(ctx: ResolvedCtx, inp: OrgRecipesInput) -> dict:
+    fiches = await run_in_threadpool(db_recipes.list_recipes, [("org", str(inp.org_id))])
+    return {"recipes": [{
+        "slug": f["slug"], "title": f["title"], "description": f["description"] or "",
+        "status": "published" if f["published_version"] else "proposed",
+        "published_version": f["published_version"], "latest_version": f["latest_version"],
+        "updated_at": str(f["updated_at"]) if f.get("updated_at") is not None else None,
+    } for f in fiches]}
+
+
+CAPABILITIES += [
+    Capability(
+        key="org.recipes", handler=_org_recipes, Input=OrgRecipesInput, Output=OrgRecipes,
+        authz=ORG_MEMBER_OF("org_id"), mcp=None,
+        rest=RestBinding("GET", "/api/orgs/{id}/recipes", {"id": "org_id"}, provisoire=True),
+        description="The org's recipes (no bodies): slug, title, whether one is in service.",
     ),
 ]
