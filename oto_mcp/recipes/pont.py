@@ -170,7 +170,7 @@ def appeleur_de_recette(fastmcp, sub: Optional[str], *, datastore: Any, ecrire: 
                     "message": f"A write lands in the run's org: leave {hors} out."}
         if fiches is None or not 1 <= fiches <= MAX_FICHES_PAR_APPEL:
             return {"ok": False, "code": "invalid_call",
-                    "message": f"A batch (`items` / `ids`) is a list of 1 to "
+                    "message": f"A batch (`items` / `ids` / `entries`) is a list of 1 to "
                                f"{MAX_FICHES_PAR_APPEL} records. Nothing was called."}
         reste = max_ecritures - etat["total"]
         if fiches > reste:
@@ -186,14 +186,15 @@ def appeleur_de_recette(fastmcp, sub: Optional[str], *, datastore: Any, ecrire: 
 
 
 #: Ce qu'un appel EN LOT peut porter de fiches : la borne des outils CRM de la liste
-#: (`items` / `ids`, 50 au plus).
+#: (`items` / `ids` / `entries`, 50 au plus).
 MAX_FICHES_PAR_APPEL = 50
 
 
 def _fiches(arguments: dict) -> Optional[int]:
     """Combien de fiches touche un appel qui écrit : la longueur de son lot (`items`,
-    sinon `ids`), 1 sans lot. `None` = un lot qui n'est pas une liste."""
-    for cle in ("items", "ids"):
+    sinon `ids`, sinon `entries` — les numéros ajoutés à une file d'Allo), 1 sans lot.
+    `None` = un lot qui n'est pas une liste."""
+    for cle in ("items", "ids", "entries"):
         lot = arguments.get(cle)
         if lot is not None:
             return len(lot) if isinstance(lot, list) else None

@@ -53,3 +53,19 @@ def test_les_declarables_et_les_envois():
     assert "folk_record:delete" not in ec.declarables()
     assert ec.envoient(["folk_record:create", "lemlist_create_lead"]) == [
         "lemlist_create_lead"]
+
+
+def test_allo_act_ecrit_la_fiche_et_la_file_jamais_un_envoi():
+    assert ec.juger("allo_act", {"op": "create_person"}) == ("ecrire", "allo_act:create_person")
+    assert ec.juger("allo_act", {"op": "add_queue_numbers"}) == (
+        "ecrire", "allo_act:add_queue_numbers")
+    for op in ("send_sms", "create_queue", "remove_queue_numbers"):
+        assert ec.juger("allo_act", {"op": op})[0] == "refus", op
+    assert ec.envoient(["allo_act:create_person"]) == []
+
+
+def test_les_numeros_d_une_file_se_comptent_un_par_un():
+    from oto_mcp.recipes.pont import _fiches
+    assert _fiches({"op": "add_queue_numbers", "entries": [{"number": "+33"}] * 3}) == 3
+    assert _fiches({"op": "add_queue_numbers", "entries": "x"}) is None
+    assert _fiches({"op": "create_person"}) == 1

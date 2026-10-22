@@ -13,7 +13,7 @@ chacun avec SES ops :
 
 Jamais `delete`, `merge` ni une op `bulk_*` : une recette relancée repart du début, ses
 écritures doivent être sans dégât. Un LOT d'une op permise (`items` / `ids` de l'outil,
-50 fiches au plus) passe : le pont le compte fiche par fiche dans `max_writes`
+50 fiches au plus) passe (`entries` pour la file d'Allo) : le pont le compte fiche par fiche dans `max_writes`
 (`pont._fiches`). Un outil multiplexé par `op` exige une
 `op` LITTÉRALE dans l'appel (son défaut est une lecture, jamais présumé). Un outil sans
 `op` (`ops=None`) est une écriture en entier. Un outil qui peut déclencher un ENVOI (une
@@ -48,6 +48,13 @@ ECRITURES: dict[str, Ecriture] = {
     "salesforce_record": Ecriture(frozenset({"get"}),
                                   frozenset({"create", "update", "upsert"})),
     "lemlist_create_lead": Ecriture(envoie=True),
+    # Allo (#Klark, 22/10/2026, décidé par Julien) : la fiche CRM et la file du Power
+    # Dialer, rien qui envoie (`send_sms` reste dehors) ni qui remplace une file
+    # (`create_queue`). Ses lectures sont l'outil `allo`, déjà en lecture.
+    # `add_queue_numbers` ne dédoublonne pas chez Allo : la recette lit la file avant.
+    "allo_act": Ecriture(frozenset(), frozenset({"create_person", "update_person",
+                                                 "create_company", "update_company",
+                                                 "add_queue_numbers"})),
 }
 
 #: Ce qu'aucune op permise ne peut être : détruire, fusionner, une op `bulk_*` (un lot
