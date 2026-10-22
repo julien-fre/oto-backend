@@ -16,14 +16,17 @@ session, and a runner opens one per call.
 - `verdict` — the rule, one connector at a time: `usable` | `not_usable` | `unknown`.
 - `plan` — PURE: what to activate, what to pause, given the snapshot and the selection.
 - `reconcile` — reads, plans, writes in ONE transaction, sets the marker.
-- `due` / `invalidate` — the throttle: a marker per `(sub, org)`, dropped by every write
+- `claim` / `run_if_due` / `invalidate` — the throttle: a marker per `(sub, org)`,
+  claimed before computing (one session per burst), dropped by every write
   to the vault (`credentials_store._upsert/_delete`) so a new key shows at the next
   session, and aged out after `TTL` for what the vault doesn't see (a platform grant).
 
 ⚠️ **Fail inert, never fail closed.** No snapshot, an exception, an entry that is
 missing or still pending (`pending_action`: a hosted channel whose account isn't
-linked yet, an authorisation left half-way) ⟹ the row is left as it is. A transient
-must never pause someone's tools.
+linked yet, an authorisation left half-way) ⟹ the row is left as it is. A pass whose
+team read failed pauses nothing. One narrow window remains (the snapshot degrading
+after that read): a team-keyed connector can then be paused for at most `TTL`, and the
+next pass reactivates it.
 
 ⚠️ A refused key (`health_ko`) still counts as usable: it is there to be fixed, and the
 agent should see the failure rather than not see the tool.
@@ -143,6 +146,51 @@ def due(sub: str, org_id: int) -> bool:
     return row is None or not row["fresh"]
 
 
+def claim(sub: str, org_id: int) -> bool:
+    """Takes this `(sub, org)`'s turn, in ONE statement: True when the caller must
+    reconcile now, False when the marker is fresh — or another session just took it.
+
+    Claimed BEFORE computing, not stamped after: on a first deploy (no marker anywhere)
+    or after a key write that clears every marker, a fleet of hosted runs for the same
+    person opens its sessions together, and each would otherwise pay its own snapshot
+    (~seconds of database work) for the same answer. One wins; the others mount what
+    the table already holds. The winner gives the turn back if it fails
+    (`release`), so the next session retries."""
+    from .. import db
+
+    with db._connect() as conn:
+        row = conn.execute(
+            "INSERT INTO connector_selection_reconciled (sub, org_id) VALUES (%s, %s) "
+            "ON CONFLICT (sub, org_id) DO UPDATE SET reconciled_at = NOW() "
+            "WHERE connector_selection_reconciled.reconciled_at <= NOW() - %s "
+            "RETURNING 1 AS won",
+            (sub, org_id, TTL),
+        ).fetchone()
+    return row is not None
+
+
+def release(sub: str, org_id: int) -> None:
+    """Gives a claimed turn back (the reconciliation failed): the next session retries."""
+    from .. import db
+
+    with db._connect() as conn:
+        conn.execute("DELETE FROM connector_selection_reconciled WHERE sub = %s AND org_id = %s",
+                     (sub, org_id))
+
+
+def run_if_due(sub: str, org_id: int, group_id: Optional[int]) -> Optional[tuple[list[str], list[str]]]:
+    """The handshake's entry point: claim, reconcile, give the turn back on failure.
+    Returns `None` when it wasn't this session's turn. Raises what `reconcile` raised
+    (the caller logs and mounts what the table holds)."""
+    if not claim(sub, org_id):
+        return None
+    try:
+        return reconcile(sub, org_id, group_id)
+    except Exception:
+        release(sub, org_id)
+        raise
+
+
 def invalidate(conn, entity_type: str, entity_id: str) -> None:
     """A vault row was written or deleted: the members it can reach are reconciled at
     their next session. Receives the WRITE's `conn` — same transaction, a write that
@@ -173,13 +221,27 @@ def reconcile(sub: str, org_id: int, group_id: Optional[int]) -> tuple[list[str]
 
     Raises on a snapshot or exposure read error — the CALLER decides (the handshake
     logs and mounts what is already there): nothing is written in that case."""
-    from .. import access, db, providers
+    from .. import access, db, group_store, providers
     from . import activation, selection as sel
 
+    # `status_for` is fail-open INSIDE: a hiccup reading the member's teams leaves them
+    # out, and a key held only by a team then reads `forbidden`. Pausing on that would be
+    # the "pause on a transient" this module refuses. The teams are read here first: if
+    # that read fails, this pass ACTIVATES what it can but PAUSES nothing. (A failure
+    # landing between this read and the snapshot's own can still slip through — the next
+    # pass, at most `TTL` later, puts it back.)
+    try:
+        group_store.list_groups_for_user(sub, org_id)
+        trusted = True
+    except Exception as e:
+        logger.warning("teams unreadable for %s in org %s: no pause this pass: %s", sub, org_id, e)
+        trusted = False
     snapshot = access.status_for(sub, org=org_id, group=group_id)["providers"]
     exposed = activation.exposed_for(org_id, group_id)
     current = sel.list_selection(sub, org_id)
     to_activate, to_pause = plan(snapshot, current, exposed, providers.REGISTRY)
+    if not trusted:
+        to_pause = []
     with db._connect() as conn:
         for name in to_activate:
             conn.execute(

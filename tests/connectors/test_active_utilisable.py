@@ -231,8 +231,7 @@ def test_la_session_ne_tombe_pas_si_la_reconciliation_echoue(monkeypatch):
     def _boum(*a, **k):
         raise RuntimeError("panne")
 
-    monkeypatch.setattr(SV.connector_usable, "due", lambda *a: True)
-    monkeypatch.setattr(SV.connector_usable, "reconcile", _boum)
+    monkeypatch.setattr(SV.connector_usable, "run_if_due", _boum)
     monkeypatch.setattr(SV.connector_selection, "is_seeded", lambda *a: True)
     monkeypatch.setattr(SV.connector_selection, "list_selection",
                         lambda *a: {"hunter": "active"})
@@ -270,3 +269,49 @@ def test_a_la_session_le_kit_sans_cle_passe_en_pause_et_l_open_data_s_active(liv
     assert _ligne(sub, org, "kaspr") == {"state": "paused", "origin": "kit"}
     assert _ligne(sub, org, "droit")["origin"] == U.ORIGIN
     assert "kaspr_x" in caches and "droit_x" not in caches
+
+
+def test_une_rafale_ne_calcule_qu_une_fois(live, monkeypatch):
+    """Premier déploiement, ou une clé posée : la flotte d'une même personne ouvre ses
+    sessions ensemble — le tour est PRIS avant le calcul, un seul le gagne."""
+    sub = "membre-rafale"
+    org = _org("org-rafale", sub)
+    assert U.claim(sub, org) is True
+    assert U.claim(sub, org) is False
+    assert not U.due(sub, org)
+
+
+def test_un_echec_rend_le_tour(live, monkeypatch):
+    from oto_mcp import access
+    sub = "membre-echec"
+    org = _org("org-echec", sub)
+
+    def _boum(*a, **k):
+        raise RuntimeError("instantané illisible")
+
+    monkeypatch.setattr(access, "status_for", _boum)
+    with pytest.raises(RuntimeError):
+        U.run_if_due(sub, org, None)
+    assert U.due(sub, org)                      # la session suivante réessaie
+    _instantane(monkeypatch, {})
+    assert U.run_if_due(sub, org, None) is not None
+    assert U.run_if_due(sub, org, None) is None  # pas son tour
+
+
+def test_equipes_illisibles_aucune_pause(live, monkeypatch):
+    """`status_for` retombe sur « aucune équipe » quand leur lecture échoue : une clé
+    d'équipe y lirait `forbidden`. Cette passe active ce qu'elle peut, ne pause rien."""
+    from oto_mcp import group_store
+    from oto_mcp.connectors import selection as sel
+    sub = "membre-equipes"
+    org = _org("org-equipes", sub)
+    sel.set_state(sub, "kaspr", sel.ACTIVE, org)
+    _instantane(monkeypatch, {"kaspr": {"mode": "forbidden"}, "hunter": {"mode": "org"}})
+
+    def _boum(*a, **k):
+        raise RuntimeError("équipes illisibles")
+
+    monkeypatch.setattr(group_store, "list_groups_for_user", _boum)
+    activated, paused = U.reconcile(sub, org, None)
+    assert "hunter" in activated and paused == []
+    assert _ligne(sub, org, "kaspr")["state"] == "active"

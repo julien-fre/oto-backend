@@ -114,7 +114,7 @@ def _0_etat_global_rendu(request: pytest.FixtureRequest) -> Iterator[None]:
 # seule — ils installent un connecteur sans lui donner de clé et attendent ses outils.
 # La règle a son banc (`tests/connectors/test_active_utilisable.py`, marqueur
 # `reconciliation`), y compris son interaction avec le kit ; ailleurs elle est coupée
-# ici, à la seule couture `due`, et se voit.
+# ici, à la seule couture `claim` (le tour de la session), et se voit.
 _MARQUEUR_RECONCILIATION = "reconciliation"
 
 
@@ -123,7 +123,7 @@ def _sans_reconciliation(request: pytest.FixtureRequest, monkeypatch) -> None:
     if request.node.get_closest_marker(_MARQUEUR_RECONCILIATION):
         return
     from oto_mcp.connectors import usable
-    monkeypatch.setattr(usable, "due", lambda sub, org_id: False)
+    monkeypatch.setattr(usable, "claim", lambda sub, org_id: False)
 
 
 # ── L'adresse publique de l'instance, gréée pour toute la suite ──────────────

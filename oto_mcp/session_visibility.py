@@ -242,8 +242,7 @@ def _compute_couches(sub: str, active_org, prof_org, role_plateforme: str,
         # rien, journalise, et la boîte monte ce que la table porte déjà.
         if active_org is not None:
             try:
-                if connector_usable.due(sub, active_org):
-                    connector_usable.reconcile(sub, active_org, access.current_group(sub))
+                connector_usable.run_if_due(sub, active_org, access.current_group(sub))
             except Exception as e:
                 logger.warning("selection reconcile skipped for %s (fail-inert): %s", sub, e)
         _sel = connector_selection.list_selection(sub, prof_org)

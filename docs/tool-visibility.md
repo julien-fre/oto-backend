@@ -103,8 +103,15 @@ La sélection (`user_selected_connectors`) reste la vérité du montage ; elle e
   absente de l'instantané, un connecteur sans outil (une clé de modèle) ;
 - **une clé refusée** (`health_ko`) reste utilisable : elle est là pour être réparée,
   l'agent doit voir l'échec plutôt que perdre l'outil ;
+- **un seul calcul par rafale** : le tour est PRIS avant le calcul (`claim`, une
+  instruction) — au premier déploiement ou après une clé posée, la flotte de runs
+  hébergés d'une même personne ne paie qu'un instantané ; un échec rend le tour ;
 - ⚠️ **fail-INERTE** : instantané illisible, exception ⟹ rien n'est écrit, la boîte monte
-  ce que la table porte. Jamais une pause sur un hoquet.
+  ce que la table porte. Une passe dont la lecture des équipes échoue ne met RIEN en
+  pause (`status_for` retombe sinon sur « aucune équipe » et une clé d'équipe y lirait
+  `forbidden`). Reste une fenêtre étroite — l'instantané qui se dégrade APRÈS cette
+  lecture — où un connecteur à clé d'équipe peut passer en pause ≤ `TTL`, réactivé à la
+  passe suivante.
 
 **Les gestes qui contrediraient la règle sont refusés** : `connectors.pause` et
 `connectors.unselect` (REST et `oto_connector op=pause|unselect`) rendent 409
