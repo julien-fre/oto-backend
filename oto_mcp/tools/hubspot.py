@@ -280,7 +280,7 @@ def _verify(fields: dict, config: dict | None = None) -> dict:
     from oto.tools.hubspot.client import HubSpotClient
 
     if (config or {}).get("auth") == hubspot_auth.AUTH_OAUTH:
-        return _verify_oauth(fields["key"])
+        return _verify_oauth(fields["key"], config)
     client = HubSpotClient(api_key=fields["key"])
     infos = client._request("GET", "/account-info/v3/details") or {}
     if not infos.get("portalId"):
@@ -291,14 +291,20 @@ def _verify(fields: dict, config: dict | None = None) -> dict:
             "identity": _account(infos)}
 
 
-def _verify_oauth(refresh_token: str) -> dict:
+def _verify_oauth(refresh_token: str, config: dict | None = None) -> dict:
     """The probe of a "Connect HubSpot" row: the introspection of its REFRESH token.
 
     It proves the grant is alive (uninstalled or revoked ⟹ `HubSpotReauthRequired`,
     the connection's verdict), names the portal and lists the granted scopes — in one
     call, WITHOUT minting an access token, so nothing rotates (the Salesforce lesson,
-    `auth/salesforce.persist_token`)."""
-    info = hubspot_auth.introspect(refresh_token)
+    `auth/salesforce.persist_token`). Introspected with the app that minted the row
+    (`meta.app`): the other app's client does not know the token.
+
+    A personal row says who records default to (`default_owner`): the owner id found
+    at connection, or that none was — records then stay unassigned."""
+    config = config or {}
+    kind = hubspot_auth.app_of(config)
+    info = hubspot_auth.introspect(refresh_token, kind=kind)
     if not info.get("hub_id"):
         raise RuntimeError(
             "HubSpot answered without identifying a portal for this connection — "
@@ -307,7 +313,11 @@ def _verify_oauth(refresh_token: str) -> dict:
     if isinstance(granted, str):
         granted = granted.split()
     identity = {"portal_id": info.get("hub_id"), "ui_domain": info.get("hub_domain"),
-                "connected_as": info.get("user")}
+                "connected_as": info.get("user"),
+                "connection": "personal" if kind == hubspot_auth.APP_USER else "org"}
+    if kind == hubspot_auth.APP_USER:
+        identity["default_owner_id"] = config.get("owner_id") or (
+            "none: no HubSpot owner for you, created records stay unassigned")
     return {"scopes": report_from_granted(set(granted), "introspection"),
             "identity": {k: v for k, v in identity.items() if v not in (None, "")}}
 
@@ -532,7 +542,8 @@ def register(mcp: FastMCP) -> None:
             if op == "create":
                 return c.create_object(
                     _need(object_type, "object_type", op),
-                    _payload(properties, "properties", op),
+                    hubspot_auth.default_owner(
+                        object_type, _payload(properties, "properties", op)),
                     associations=_assoc_objects(associations, op))
 
             if op == "update":

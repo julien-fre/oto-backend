@@ -20,11 +20,22 @@ an access token minted from the refresh token (30 min, cached until a minute bef
 it expires). `HubSpotClient` (oto-core) still receives a plain Bearer — it does not
 know which shape it is.
 
-**Where the app comes from.** One HubSpot app published by the instance (Developer
-Platform project, `platformVersion 2026.09`): its `client_id` / `client_secret` are
-PLATFORM `connector_settings`, set by the operator — the `meta_ads` pattern, not
-the tenant (ADR 0052). Not set ⟹ `app_ready` is false and the card keeps the form
-alone, as before.
+**Two apps, chosen by the level the user connects at** (Developer Platform
+projects, `platformVersion 2026.09`). HubSpot fixes `isUserLevel` when an app is
+created, and both behaviours are wanted:
+
+- **personal** (`member`) → the USER-LEVEL app: each HubSpot user installs it for
+  themselves, every call runs as them with their HubSpot permissions, and the records
+  oto creates through it default to them as owner (`default_owner`);
+- **org / team** (`org`, `group`) → the ACCOUNT-LEVEL app: installed once per portal
+  by an admin, shared like a pasted key.
+
+Their `client_id` / `client_secret` are PLATFORM `connector_settings`, set by the
+operator — the `meta_ads` pattern, not the tenant (ADR 0052): `client_id` /
+`client_secret` for the account-level app, `user_client_id` / `user_client_secret`
+for the user-level one. A level whose app is not set keeps the form alone
+(`app_ready_scopes`). The row says which app minted it (`meta.app`): a refresh token
+only renews with the client that issued it.
 
 **Endpoints are DATED** (`/oauth/2026-09/…`): HubSpot refuses new Marketplace
 listings on the `/oauth/v1` ones. Refresh-token rotation is not documented: whatever
@@ -90,15 +101,41 @@ def _from(families: tuple[str, ...], *, write: bool) -> tuple[str, ...]:
     return tuple(out)
 
 
-REQUIRED_SCOPES: tuple[str, ...] = (
-    *_from(("contacts", "companies", "deals", "lists"), write=True),
-    *_from(("owners",), write=False),
-    "crm.schemas.contacts.read", "crm.schemas.companies.read", "crm.schemas.deals.read",
-)
-OPTIONAL_SCOPES: tuple[str, ...] = (
-    "crm.objects.tickets.read", "crm.objects.tickets.write", "crm.schemas.tickets.read",
-    "business-intelligence",
-)
+#: The two apps (`meta.app`, the `kind` of the signed state).
+APP_ACCOUNT = "account"
+APP_USER = "user"
+APPS = (APP_ACCOUNT, APP_USER)
+
+_SCHEMAS_READ = ("crm.schemas.contacts.read", "crm.schemas.companies.read",
+                 "crm.schemas.deals.read")
+_TICKETS = ("crm.objects.tickets.read", "crm.objects.tickets.write",
+            "crm.schemas.tickets.read")
+_CUSTOM = ("crm.objects.custom.read", "crm.objects.custom.write",
+           "crm.schemas.custom.read")
+
+#: Per app: (required, optional). The personal app REQUIRES less: HubSpot lets a user
+#: install it only if their own permissions cover every required scope, and a sales
+#: rep often has no list rights — lists are optional there. Field writes
+#: (`hubspot_property` create/update/delete) are an admin's job: org app only.
+SCOPES_BY_APP: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    APP_ACCOUNT: (
+        (*_from(("contacts", "companies", "deals", "lists"), write=True),
+         *_from(("owners",), write=False), *_SCHEMAS_READ),
+        (*_TICKETS, "business-intelligence",
+         "crm.schemas.contacts.write", "crm.schemas.companies.write",
+         "crm.schemas.deals.write", *_CUSTOM),
+    ),
+    APP_USER: (
+        (*_from(("contacts", "companies", "deals"), write=True),
+         *_from(("owners",), write=False), *_SCHEMAS_READ),
+        (*_from(("lists",), write=True), *_TICKETS, "business-intelligence", *_CUSTOM),
+    ),
+}
+
+
+def app_for_scope(scope: str) -> str:
+    """The app a level connects with: personal → user-level, org/team → account-level."""
+    return APP_USER if scope == "member" else APP_ACCOUNT
 
 
 class HubSpotOAuthError(RuntimeError):
@@ -111,9 +148,12 @@ class HubSpotReauthRequired(HubSpotOAuthError):
 
 # --- the app (client_id / client_secret) -------------------------------------
 
-_SETTINGS = ("client_id", "client_secret")
+_SETTINGS = {APP_ACCOUNT: ("client_id", "client_secret"),
+             APP_USER: ("user_client_id", "user_client_secret")}
+_ALL_SETTINGS = tuple(k for keys in _SETTINGS.values() for k in keys)
 _COMMAND = ('oto_admin_connector_setting(op="set", connector="hubspot", '
-            'key="<client_id|client_secret>", value="<value>")')
+            'key="<{keys}>", value="<value>")')
+_APP_LABEL = {APP_ACCOUNT: "org", APP_USER: "personal"}
 
 
 def _settings() -> dict:
@@ -124,35 +164,50 @@ def _settings() -> dict:
     return {r["key"]: (r["value"] or "").strip()
             for r in store.list_connector_settings()
             if r["scope_type"] == "platform" and r["connector"] == CONNECTOR
-            and r["key"] in _SETTINGS}
+            and r["key"] in _ALL_SETTINGS}
 
 
-def missing_settings() -> list[str]:
+def missing_settings(kind: str = APP_ACCOUNT, poses: Optional[dict] = None) -> list[str]:
+    poses = _settings() if poses is None else poses
+    return [k for k in _SETTINGS[kind] if not poses.get(k)]
+
+
+def app(kind: str = APP_ACCOUNT) -> tuple[str, str]:
+    """`(client_id, client_secret)` of one of the instance's HubSpot apps, or a refusal
+    that NAMES what is missing and who sets it."""
     poses = _settings()
-    return [k for k in _SETTINGS if not poses.get(k)]
-
-
-def app() -> tuple[str, str]:
-    """`(client_id, client_secret)` of the instance's HubSpot app, or a refusal that
-    NAMES what is missing and who sets it."""
-    poses = _settings()
-    missing = [k for k in _SETTINGS if not poses.get(k)]
+    missing = missing_settings(kind, poses)
     if missing:
         raise HubSpotOAuthError(
-            f"The HubSpot app is not configured on this instance: missing "
-            f"{', '.join(missing)}. Nothing to do on your account — the instance "
-            f"operator sets them with {_COMMAND}. Meanwhile, a service key pasted on "
-            "the connector card works.")
-    return poses["client_id"], poses["client_secret"]
+            f"The {_APP_LABEL[kind]} HubSpot app is not configured on this instance: "
+            f"missing {', '.join(missing)}. Nothing to do on your account — the "
+            f"instance operator sets them with "
+            f"{_COMMAND.format(keys='|'.join(_SETTINGS[kind]))}. Meanwhile, a service "
+            "key pasted on the connector card works.")
+    id_key, secret_key = _SETTINGS[kind]
+    return poses[id_key], poses[secret_key]
+
+
+def app_ready_scopes(sub: str) -> list[str]:
+    """The levels whose app is set — what the card offers "Connect" on. ONE settings
+    read for both apps."""
+    del sub
+    try:
+        poses = _settings()
+    except Exception as e:  # noqa: BLE001 — a settings outage must not break /api/me
+        logger.warning("hubspot: app settings unreadable (%s)", type(e).__name__)
+        return []
+    out: list[str] = []
+    if not missing_settings(APP_USER, poses):
+        out.append("member")
+    if not missing_settings(APP_ACCOUNT, poses):
+        out += ["org", "group"]
+    return out
 
 
 def app_ready(sub: str) -> bool:
-    del sub
-    try:
-        return not missing_settings()
-    except Exception as e:  # noqa: BLE001 — a settings outage must not break /api/me
-        logger.warning("hubspot: app settings unreadable (%s)", type(e).__name__)
-        return False
+    """Any level ready — the single answer of fronts that predate `app_ready_scopes`."""
+    return bool(app_ready_scopes(sub))
 
 
 # --- the signed state --------------------------------------------------------
@@ -162,7 +217,7 @@ def make_state(sub: str, org_id: int, scope: str, group_id: Optional[int] = None
     """Bound to the `hubspot` audience and single-use (`jti`, `consume_state`): the
     callback WRITES a credential, a replayed state must not write it twice."""
     payload = {"sub": sub, "org": org_id, "scope": scope, "app": return_app,
-               "jti": oauth_flow.new_jti()}
+               "kind": app_for_scope(scope), "jti": oauth_flow.new_jti()}
     if group_id is not None:
         payload["group"] = group_id
     return oauth_flow.sign_state(_AUD, payload)
@@ -178,6 +233,10 @@ def read_state(state: Optional[str]) -> Optional[dict]:
             or data.get("scope") not in ("member", "org", "group")):
         return None
     if data["scope"] == "group" and not isinstance(data.get("group"), int):
+        return None
+    # The app is the level's, never chosen apart: a state whose app does not match
+    # its level would store a user-level grant as the org's (or the reverse).
+    if data.get("kind") != app_for_scope(data["scope"]):
         return None
     if not isinstance(data.get("app"), str):
         data["app"] = ""
@@ -218,12 +277,14 @@ def build_auth_url(sub: str, scope: str = "member", return_app: str = "") -> str
         raise PermissionError(
             f"Only {who} can connect HubSpot on behalf of the whole "
             f"{'org' if scope == 'org' else 'team'}.")
-    client_id, _ = app()
+    kind = app_for_scope(scope)
+    client_id, _ = app(kind)
+    required, optional = SCOPES_BY_APP[kind]
     params = {
         "client_id": client_id,
         "redirect_uri": oauth_flow.redirect_uri(CALLBACK_PATH),
-        "scope": " ".join(REQUIRED_SCOPES),
-        "optional_scope": " ".join(OPTIONAL_SCOPES),
+        "scope": " ".join(required),
+        "optional_scope": " ".join(optional),
         "state": make_state(sub, org_id, scope, group_id,
                             oauth_flow.resolve_return_app(return_app)),
     }
@@ -243,7 +304,8 @@ def _start_flow(ctx, values: dict) -> "connector_flow.FlowStart":
         raise AuthzDenied(403, "org_admin_required", str(e))
     except HubSpotOAuthError as e:
         raise AuthzDenied(503, "oauth_misconfigured", str(e))
-    return connector_flow.FlowStart(auth_url=url, details={"scope": scope})
+    return connector_flow.FlowStart(auth_url=url, details={
+        "scope": scope, "app": app_for_scope(scope)})
 
 
 # The scope (member | org | group) is DEDUCED from the surface and passed by the caller
@@ -254,6 +316,7 @@ connector_flow.declare(
     label="Connect HubSpot",
     callback_path=CALLBACK_PATH,
     app_ready=app_ready,
+    app_ready_scopes=app_ready_scopes,
 )
 
 
@@ -264,8 +327,8 @@ def _post(url: str, data: dict) -> requests.Response:
     return requests.post(url, data=data, timeout=_TIMEOUT)
 
 
-def exchange_code(code: str) -> dict:
-    client_id, client_secret = app()
+def exchange_code(code: str, kind: str = APP_ACCOUNT) -> dict:
+    client_id, client_secret = app(kind)
     try:
         return oauth_flow.exchange_code(
             TOKEN_URL, code=code, client_id=client_id, client_secret=client_secret,
@@ -274,11 +337,11 @@ def exchange_code(code: str) -> dict:
         raise HubSpotOAuthError(str(e)) from e
 
 
-def introspect(token: str, hint: str = "refresh_token") -> dict:
+def introspect(token: str, hint: str = "refresh_token", kind: str = APP_ACCOUNT) -> dict:
     """What HubSpot says of a token: `hub_id`, `hub_domain`, `user`, `scopes`…
     Introspecting the REFRESH token proves the grant is alive and names the portal
     WITHOUT minting an access token — nothing rotates."""
-    client_id, client_secret = app()
+    client_id, client_secret = app(kind)
     r = _post(INTROSPECT_URL, {"client_id": client_id, "client_secret": client_secret,
                                "token": token, "token_type_hint": hint})
     try:
@@ -301,17 +364,41 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def connection_meta(info: dict, sub: str) -> dict:
+def connection_meta(info: dict, sub: str, kind: str = APP_ACCOUNT) -> dict:
     scopes = info.get("scopes") or []
     if isinstance(scopes, str):
         scopes = scopes.split()
     return {"auth": AUTH_OAUTH,
+            "app": kind,
             "hub_id": info.get("hub_id"),
             "hub_domain": info.get("hub_domain"),
             "user": info.get("user"),
             "scopes": " ".join(sorted(str(s) for s in scopes)),
             "installed_by": sub,
             "connected_at": _iso_now()}
+
+
+def owner_id_of(access_token: str, email: Optional[str]) -> Optional[str]:
+    """The HubSpot OWNER id of the user who consented, by their email — what records
+    created through a personal connection get as `hubspot_owner_id`. `None` when the
+    user has no owner record (no seat) or the read fails: the connection still works,
+    records simply stay unassigned."""
+    if not email or not access_token:
+        return None
+    try:
+        r = requests.get(f"{_API}/crm/v3/owners",
+                         params={"email": email, "limit": 1},
+                         headers={"Authorization": f"Bearer {access_token}"},
+                         timeout=_TIMEOUT)
+        results = (r.json() or {}).get("results") if r.status_code < 400 else None
+    except (requests.RequestException, ValueError) as e:
+        logger.warning("hubspot: owner lookup failed (%s)", type(e).__name__)
+        return None
+    if not results:
+        logger.info("hubspot: no owner record for the consenting user")
+        return None
+    owner = results[0].get("id")
+    return str(owner) if owner else None
 
 
 def persist(sub: str, org_id: int, scope: str, group_id: Optional[int],
@@ -323,8 +410,12 @@ def persist(sub: str, org_id: int, scope: str, group_id: Optional[int],
     if not refresh:
         raise HubSpotOAuthError("HubSpot did not return a refresh token: restart the "
                                 "connection.")
-    info = introspect(refresh)
-    meta = connection_meta(info, sub)
+    kind = app_for_scope(scope)
+    info = introspect(refresh, kind=kind)
+    meta = connection_meta(info, sub, kind)
+    if kind == APP_USER:
+        # With the access token the exchange gave — no refresh in the callback.
+        meta["owner_id"] = owner_id_of(tokens.get("access_token") or "", info.get("user"))
     entity_type, entity_id = credentials_store.entity_for_scope(
         scope, org_id, sub, group_id)
     credentials_store.set_credential(entity_type, entity_id, CONNECTOR, refresh,
@@ -334,7 +425,7 @@ def persist(sub: str, org_id: int, scope: str, group_id: Optional[int],
     if tokens.get("access_token") and tokens.get("expires_in"):
         _keep((entity_type, entity_id, ""), refresh, tokens["access_token"],
               int(tokens["expires_in"]))
-    return {"hub_id": meta["hub_id"], "scope": scope}
+    return {"hub_id": meta["hub_id"], "scope": scope, "app": kind}
 
 
 # --- the Bearer the tools use ------------------------------------------------
@@ -367,11 +458,12 @@ def _store_rotation(row: tuple, read: str, new: str) -> None:
                                      meta=current.get("meta") or {}, account=account)
 
 
-def refresh(refresh_token: str) -> dict:
+def refresh(refresh_token: str, kind: str = APP_ACCOUNT) -> dict:
     """`refresh_token` → `{access_token, expires_in, refresh_token?}`. A dead grant
     (`invalid_grant`) raises `HubSpotReauthRequired`; a configuration fault (wrong
-    client secret…) raises `HubSpotOAuthError` and destroys nothing (`grant_is_dead`)."""
-    client_id, client_secret = app()
+    client secret…) raises `HubSpotOAuthError` and destroys nothing (`grant_is_dead`).
+    `kind` = the app that issued the token: another app's client cannot renew it."""
+    client_id, client_secret = app(kind)
     r = _post(TOKEN_URL, {"grant_type": "refresh_token", "client_id": client_id,
                           "client_secret": client_secret, "refresh_token": refresh_token})
     if r.status_code < 400:
@@ -405,7 +497,7 @@ def access_token_for(rc) -> str:
     if cached and cached[1] > time.time() + 60:
         return cached[0]
     try:
-        grant = refresh(refresh_token)
+        grant = refresh(refresh_token, app_of(rc))
     except HubSpotReauthRequired as e:
         connector_health.mark_rejected(rc.entity_type, rc.entity_id, CONNECTOR,
                                        rc.account or "", str(e),
@@ -422,6 +514,14 @@ def is_oauth(rc) -> bool:
     return (rc.config or {}).get("auth") == AUTH_OAUTH
 
 
+def app_of(rc_or_meta) -> str:
+    """The app that minted an OAuth row (`meta.app`). Absent = account-level: the
+    only app before the personal one existed."""
+    meta = rc_or_meta if isinstance(rc_or_meta, dict) else (rc_or_meta.config or {})
+    kind = meta.get("app")
+    return kind if kind in APPS else APP_ACCOUNT
+
+
 #: Which shape served the current call — read by the scope refusal
 #: (`hubspot_scopes._scope_to_tick`): a missing scope is a checkbox on a pasted key,
 #: but a RECONNECTION on an OAuth connection (the consent asks for today's scopes).
@@ -433,6 +533,26 @@ def served_by_oauth() -> bool:
     return _SERVED_BY.get() == AUTH_OAUTH
 
 
+#: The owner id of the PERSONAL connection that served the current call, "" otherwise
+#: — read by `default_owner` on the create paths.
+_OWNER: contextvars.ContextVar[str] = contextvars.ContextVar("hubspot_owner", default="")
+
+#: The objects whose records carry `hubspot_owner_id` and get the default.
+_OWNED = frozenset({"contacts", "companies", "deals", "tickets",
+                    "0-1", "0-2", "0-3", "0-5"})
+
+
+def default_owner(object_type: Optional[str], properties: dict) -> dict:
+    """On a personal connection, a CREATED record defaults to the person who connected
+    as owner — HubSpot assigns none through the API. The call's own owner always wins
+    (even an empty one: a deliberate "unassigned"); an org connection, a pasted key or
+    an update never get one. Returns the properties to send."""
+    owner = _OWNER.get()
+    if not owner or (object_type or "") not in _OWNED or "hubspot_owner_id" in properties:
+        return properties
+    return {**properties, "hubspot_owner_id": owner}
+
+
 def bearer(account: Optional[str] = None) -> str:
     """The Bearer for the current call — what every HubSpot tool hands `HubSpotClient`.
     Same resolution as `access.resolve_api_key("hubspot")` (member > team > org, byo);
@@ -442,7 +562,10 @@ def bearer(account: Optional[str] = None) -> str:
     rc = access.resolve_credential(CONNECTOR, want="auto", account=account)
     if not is_oauth(rc):
         _SERVED_BY.set("key")
+        _OWNER.set("")
         return rc.key
     _SERVED_BY.set(AUTH_OAUTH)
+    owner = (rc.config or {}).get("owner_id") if app_of(rc) == APP_USER else None
+    _OWNER.set(str(owner) if owner else "")
     return access_token_for(rc)
 

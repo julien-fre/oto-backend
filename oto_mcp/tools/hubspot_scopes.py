@@ -66,6 +66,14 @@ SCOPES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 #: Same shape as `SCOPES`; looked up after it (`_reference`).
 OPTIONAL_SCOPES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "events": (("business-intelligence",), ()),
+    # Custom objects (`2-<n>`) and writing FIELDS (`hubspot_property` create/update/
+    # delete): asked as optional by the "Connect HubSpot" apps (`auth/hubspot.py`),
+    # never measured — most portals have no custom object, and creating fields is an
+    # admin's gesture.
+    "custom": (("crm.objects.custom.read", "crm.schemas.custom.read"),
+               ("crm.objects.custom.write",)),
+    "properties_write": ((), ("crm.schemas.contacts.write", "crm.schemas.companies.write",
+                              "crm.schemas.deals.write")),
 }
 
 #: Reading the PROPERTIES of an object type: its schema scope, or its object scope

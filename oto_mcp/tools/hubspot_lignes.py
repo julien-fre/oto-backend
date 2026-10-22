@@ -307,7 +307,8 @@ def register(mcp: FastMCP) -> None:
                 continue
             try:
                 if cible is None:
-                    rec = c.create_object(object_type, {**fixes, **props}) or {}
+                    rec = c.create_object(object_type, hubspot_auth.default_owner(
+                        object_type, {**fixes, **props})) or {}
                     cible, etat = str(rec.get("id") or ""), CREE
                     if not cible:
                         recu.echec(rid, "hubspot_not_created")

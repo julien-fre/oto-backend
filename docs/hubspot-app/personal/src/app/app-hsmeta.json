@@ -1,11 +1,11 @@
 {
-  "uid": "oto_hubspot_connector",
+  "uid": "oto_hubspot_personal",
   "type": "app",
   "config": {
-    "name": "<instance brand>",
-    "description": "Your HubSpot CRM in your agents: contacts, companies, deals, tickets, lists, properties and pipelines.",
+    "name": "<instance brand> (personal)",
+    "description": "Your own HubSpot in your agents: they act as you, with your HubSpot permissions, and the records they create are yours.",
     "distribution": "marketplace",
-    "isUserLevel": false,
+    "isUserLevel": true,
     "auth": {
       "type": "oauth",
       "redirectUrls": [
@@ -18,18 +18,21 @@
         "crm.objects.companies.write",
         "crm.objects.deals.read",
         "crm.objects.deals.write",
-        "crm.lists.read",
-        "crm.lists.write",
         "crm.objects.owners.read",
         "crm.schemas.contacts.read",
         "crm.schemas.companies.read",
         "crm.schemas.deals.read"
       ],
       "optionalScopes": [
+        "crm.lists.read",
+        "crm.lists.write",
         "crm.objects.tickets.read",
         "crm.objects.tickets.write",
         "crm.schemas.tickets.read",
-        "business-intelligence"
+        "business-intelligence",
+        "crm.objects.custom.read",
+        "crm.objects.custom.write",
+        "crm.schemas.custom.read"
       ],
       "conditionallyRequiredScopes": []
     },

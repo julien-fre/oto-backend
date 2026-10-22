@@ -70,7 +70,8 @@ def make_routes(
             return RedirectResponse(_retour(refus, return_app, org_id), status_code=302)
 
         def _echanger_et_ranger() -> dict:
-            tokens = hubspot_auth.exchange_code(code)
+            # The level's app — the state was refused if its app did not match.
+            tokens = hubspot_auth.exchange_code(code, data["kind"])
             return hubspot_auth.persist(sub, org_id, scope, group_id, tokens)
 
         try:
@@ -81,8 +82,8 @@ def make_routes(
             logger.exception("hubspot: consent return failed (sub=%s scope=%s org=%s)",
                              sub, scope, org_id)
             return RedirectResponse(_retour("error", return_app, org_id), status_code=302)
-        logger.info("hubspot: portal connected (hub_id=%s, scope=%s, org=%s)",
-                    result.get("hub_id"), scope, org_id)
+        logger.info("hubspot: portal connected (hub_id=%s, scope=%s, app=%s, org=%s)",
+                    result.get("hub_id"), scope, result.get("app"), org_id)
         return RedirectResponse(_retour("connected", return_app, org_id), status_code=302)
 
     return [Route(hubspot_auth.CALLBACK_PATH, callback, methods=["GET"])]

@@ -1,7 +1,8 @@
 """« Connect HubSpot » — the OAuth flow next to the pasted key (`auth/hubspot.py`).
 
-Checked here: the consent asks for the scopes of the reference (and the app config
-declares the same), the state is bound to its flow and single-use, the return writes
+Checked here: each level connects with ITS app (personal → user-level, org/team →
+account-level) and the consent asks for that app's scopes (and each app config
+declares the same), the state is bound to its flow, its app and single-use, the return writes
 the refresh token with `meta.auth = "oauth"`, `bearer()` hands the tools a pasted key
 as is and mints (then caches) an access token for an OAuth row, a rotated refresh
 token is written back, a dead grant marks the row, and the probe of an OAuth row
@@ -66,7 +67,9 @@ def env(monkeypatch):
                         lambda key=None, conn=None: [
                             {"scope_type": "platform", "scope_id": "platform",
                              "connector": "hubspot", "key": k, "value": v}
-                            for k, v in (("client_id", "cid"), ("client_secret", "csec"))])
+                            for k, v in (("client_id", "cid"), ("client_secret", "csec"),
+                                         ("user_client_id", "ucid"),
+                                         ("user_client_secret", "ucsec"))])
     coffre = _Coffre()
     monkeypatch.setattr(credentials_store, "get_credential_with_meta", coffre.get)
     monkeypatch.setattr(credentials_store, "set_credential", coffre.set)
@@ -91,8 +94,18 @@ def env(monkeypatch):
     # `bearer()` records which shape served the call in a ContextVar: in production a
     # call's context ends with it; a test run shares one, so it is put back here.
     jeton = hs._SERVED_BY.set("")
-    yield types.SimpleNamespace(hs=hs, coffre=coffre, appels=appels, reponses=reponses)
+    jeton_owner = hs._OWNER.set("")
+    owners: list[tuple] = []
+
+    def faux_owners(email, token):
+        owners.append((email, token))
+        return "owner-7"
+
+    monkeypatch.setattr(hs, "owner_id_of", lambda token, email: faux_owners(email, token))
+    yield types.SimpleNamespace(hs=hs, coffre=coffre, appels=appels, reponses=reponses,
+                                owners=owners)
     hs._SERVED_BY.reset(jeton)
+    hs._OWNER.reset(jeton_owner)
 
 
 def _introspection(**extra):
@@ -108,44 +121,86 @@ def test_les_scopes_viennent_de_la_reference():
     from oto_mcp.auth import hubspot as hs
     from oto_mcp.tools.hubspot_scopes import SCOPES, known_scope
 
-    for fam in ("contacts", "companies", "deals", "lists"):
+    org_req, org_opt = hs.SCOPES_BY_APP[hs.APP_ACCOUNT]
+    perso_req, perso_opt = hs.SCOPES_BY_APP[hs.APP_USER]
+    for fam in ("contacts", "companies", "deals"):
         read, write = SCOPES[fam]
-        assert read[0] in hs.REQUIRED_SCOPES and write[0] in hs.REQUIRED_SCOPES
-    assert "crm.objects.owners.read" in hs.REQUIRED_SCOPES
-    assert not set(hs.REQUIRED_SCOPES) & set(hs.OPTIONAL_SCOPES)
-    assert all(known_scope(s) for s in (*hs.REQUIRED_SCOPES, *hs.OPTIONAL_SCOPES))
-    # The events API and tickets are optional: a portal without them still installs.
-    assert "business-intelligence" in hs.OPTIONAL_SCOPES
-    assert "crm.objects.tickets.read" in hs.OPTIONAL_SCOPES
+        for req in (org_req, perso_req):
+            assert read[0] in req and write[0] in req
+    for req in (org_req, perso_req):
+        assert "crm.objects.owners.read" in req   # the personal owner lookup needs it
+    for req, opt in ((org_req, org_opt), (perso_req, perso_opt)):
+        assert not set(req) & set(opt)
+        assert all(known_scope(s) for s in (*req, *opt))
+        # Events and tickets optional: a portal without them still installs.
+        assert "business-intelligence" in opt and "crm.objects.tickets.read" in opt
+        assert "crm.objects.custom.read" in opt
+    # Lists: required for the org, optional for a person (reps often lack the right).
+    assert "crm.lists.write" in org_req and "crm.lists.write" in perso_opt
+    # Writing fields: an admin's gesture, the org app only.
+    assert "crm.schemas.contacts.write" in org_opt
+    assert not any(".write" in s and "schemas" in s for s in (*perso_req, *perso_opt))
 
 
-def test_la_config_de_l_app_declare_les_memes_scopes():
+@pytest.mark.parametrize("dossier,kind,user_level", [
+    ("org", "account", False), ("personal", "user", True)])
+def test_la_config_de_chaque_app_declare_ses_scopes(dossier, kind, user_level):
     """HubSpot refuses an authorize URL whose required scopes the app does not
-    declare: the uploaded config and the code must be the same list."""
+    declare: each uploaded config and the code must be the same lists."""
     from oto_mcp.auth import hubspot as hs
 
-    cfg = json.loads((ROOT / "docs/hubspot-app/src/app/app-hsmeta.json").read_text())
+    cfg = json.loads((ROOT / f"docs/hubspot-app/{dossier}/src/app/app-hsmeta.json")
+                     .read_text())
+    assert cfg["config"]["isUserLevel"] is user_level
     auth = cfg["config"]["auth"]
+    required, optional = hs.SCOPES_BY_APP[kind]
     assert auth["type"] == "oauth"
-    assert auth["requiredScopes"] == list(hs.REQUIRED_SCOPES)
-    assert auth["optionalScopes"] == list(hs.OPTIONAL_SCOPES)
+    assert auth["requiredScopes"] == list(required)
+    assert auth["optionalScopes"] == list(optional)
     assert all(u.endswith(hs.CALLBACK_PATH) for u in auth["redirectUrls"])
 
 
 # ── Start ───────────────────────────────────────────────────────────────────
 
-def test_le_consentement_part_avec_l_app_et_les_scopes(env):
-    url = urlparse(env.hs.build_auth_url(SUB, "member"))
-    q = {k: v[0] for k, v in parse_qs(url.query).items()}
+def _consent(env, scope):
+    url = urlparse(env.hs.build_auth_url(SUB, scope))
+    return url, {k: v[0] for k, v in parse_qs(url.query).items()}
+
+
+def test_le_consentement_perso_part_avec_l_app_user_level(env):
+    url, q = _consent(env, "member")
     assert f"{url.scheme}://{url.netloc}{url.path}" == env.hs.AUTHORIZE_URL
-    assert q["client_id"] == "cid"
+    assert q["client_id"] == "ucid"
     assert q["redirect_uri"] == "https://mcp.exemple.test/api/hubspot/oauth/callback"
-    assert q["scope"].split() == list(env.hs.REQUIRED_SCOPES)
-    assert q["optional_scope"].split() == list(env.hs.OPTIONAL_SCOPES)
+    required, optional = env.hs.SCOPES_BY_APP["user"]
+    assert q["scope"].split() == list(required)
+    assert q["optional_scope"].split() == list(optional)
     data = env.hs.read_state(q["state"])
     assert data["sub"] == SUB and data["org"] == ORG and data["scope"] == "member"
-    assert data["jti"]
-    assert "csec" not in url.query   # the secret never travels in a URL
+    assert data["kind"] == "user" and data["jti"]
+    assert "csec" not in url.query and "ucsec" not in url.query   # never in a URL
+
+
+def test_le_consentement_org_part_avec_l_app_account_level(env, monkeypatch):
+    monkeypatch.setattr("oto_mcp.roles.is_org_admin", lambda sub, org: True)
+    _, q = _consent(env, "org")
+    assert q["client_id"] == "cid"
+    required, optional = env.hs.SCOPES_BY_APP["account"]
+    assert q["scope"].split() == list(required)
+    assert q["optional_scope"].split() == list(optional)
+    assert env.hs.read_state(q["state"])["kind"] == "account"
+
+
+def test_un_state_dont_l_app_ne_suit_pas_le_niveau_est_refuse(env):
+    """A personal level signed with the org app (or the reverse) would store a grant
+    at the wrong level: refused, whatever signed it."""
+    from oto_mcp.auth import flow as oauth_flow
+
+    for scope, kind in (("member", "account"), ("org", "user"), ("member", None)):
+        payload = {"sub": SUB, "org": ORG, "scope": scope, "app": "", "jti": "j"}
+        if kind:
+            payload["kind"] = kind
+        assert env.hs.read_state(oauth_flow.sign_state("hubspot", payload)) is None
 
 
 def test_le_state_ne_vaut_que_pour_ce_flux(env):
@@ -161,13 +216,35 @@ def test_pour_l_org_il_faut_etre_admin(env):
         env.hs.build_auth_url(SUB, "org")
 
 
-def test_sans_app_le_refus_nomme_le_reglage(env, monkeypatch):
+def _reglages(monkeypatch, **valeurs):
     from oto_mcp.db import connector_settings as store
 
-    monkeypatch.setattr(store, "list_connector_settings", lambda key=None, conn=None: [])
-    with pytest.raises(env.hs.HubSpotOAuthError, match="client_id, client_secret"):
+    monkeypatch.setattr(store, "list_connector_settings", lambda key=None, conn=None: [
+        {"scope_type": "platform", "scope_id": "platform", "connector": "hubspot",
+         "key": k, "value": v} for k, v in valeurs.items()])
+
+
+def test_sans_app_le_refus_nomme_le_reglage(env, monkeypatch):
+    _reglages(monkeypatch)
+    with pytest.raises(env.hs.HubSpotOAuthError,
+                       match="personal HubSpot app.*user_client_id, user_client_secret"):
         env.hs.build_auth_url(SUB, "member")
     assert env.hs.app_ready(SUB) is False
+    assert env.hs.app_ready_scopes(SUB) == []
+
+
+def test_chaque_onglet_suit_son_app(env, monkeypatch):
+    """Only the org app set: "Connect" on the org and team tabs, the form on personal
+    — and the personal start names the missing settings."""
+    from oto_mcp.connectors import flow as connector_flow
+
+    _reglages(monkeypatch, client_id="cid", client_secret="csec")
+    assert env.hs.app_ready_scopes(SUB) == ["org", "group"]
+    assert connector_flow.readiness("hubspot", SUB) == (True, ["org", "group"])
+    with pytest.raises(env.hs.HubSpotOAuthError, match="user_client_id"):
+        env.hs.build_auth_url(SUB, "member")
+    _reglages(monkeypatch, user_client_id="ucid", user_client_secret="ucsec")
+    assert connector_flow.readiness("hubspot", SUB) == (True, ["member"])
 
 
 def test_le_flux_est_declare_avec_sa_promesse(env):
@@ -175,6 +252,9 @@ def test_le_flux_est_declare_avec_sa_promesse(env):
 
     assert connector_flow.supports("hubspot")
     assert connector_flow.entries()["hubspot"].app_ready(SUB) is True
+    assert connector_flow.readiness("hubspot", SUB) == (True, ["member", "org", "group"])
+    # A connector that does not answer per level keeps the single answer.
+    assert connector_flow.readiness("pas-un-connecteur", SUB) == (None, None)
 
 
 # ── Return ──────────────────────────────────────────────────────────────────
@@ -190,11 +270,13 @@ def _callback(query: dict):
     return asyncio.run(route.endpoint(req))
 
 
-def test_le_retour_range_le_refresh_token_et_le_portail(env, monkeypatch):
+def test_le_retour_perso_range_le_refresh_token_le_portail_et_le_owner(env, monkeypatch):
     from oto_mcp.auth import flow as oauth_flow
 
-    monkeypatch.setattr(oauth_flow, "exchange_code", lambda url, **k: {
-        "access_token": "at-1", "refresh_token": "rt-1", "expires_in": 1800})
+    echanges: list[dict] = []
+    monkeypatch.setattr(oauth_flow, "exchange_code", lambda url, **k: (
+        echanges.append(k) or {"access_token": "at-1", "refresh_token": "rt-1",
+                               "expires_in": 1800}))
     env.reponses[env.hs.INTROSPECT_URL] = [_introspection()]
     state = env.hs.make_state(SUB, ORG, "member")
     resp = _callback({"code": "c0de", "state": state})
@@ -202,10 +284,29 @@ def test_le_retour_range_le_refresh_token_et_le_portail(env, monkeypatch):
     ligne = env.coffre.lignes[("member", MEMBRE, "")]
     assert ligne["secret"] == "rt-1"
     assert ligne["meta"]["auth"] == "oauth" and ligne["meta"]["hub_id"] == 123
+    assert ligne["meta"]["app"] == "user" and ligne["meta"]["owner_id"] == "owner-7"
     assert ligne["meta"]["scopes"] == "crm.lists.read crm.objects.contacts.read"
-    # The introspection carried the client secret in the BODY.
+    # The personal app's client did the exchange and the introspection (secret in
+    # the BODY), and the owner was looked up with the exchange's access token.
+    assert echanges[0]["client_id"] == "ucid"
     url, data = env.appels[0]
-    assert url == env.hs.INTROSPECT_URL and data["client_secret"] == "csec"
+    assert url == env.hs.INTROSPECT_URL and data["client_secret"] == "ucsec"
+    assert env.owners == [("someone@example.test", "at-1")]
+
+
+def test_le_retour_org_range_l_app_account_sans_owner(env, monkeypatch):
+    from oto_mcp.auth import flow as oauth_flow
+
+    monkeypatch.setattr("oto_mcp.roles.is_org_admin", lambda sub, org: True)
+    monkeypatch.setattr(oauth_flow, "exchange_code", lambda url, **k: {
+        "access_token": "at-1", "refresh_token": "rt-1", "expires_in": 1800})
+    env.reponses[env.hs.INTROSPECT_URL] = [_introspection()]
+    resp = _callback({"code": "c0de", "state": env.hs.make_state(SUB, ORG, "org")})
+    assert resp.headers["location"].endswith("connect=connected")
+    (cle, ligne), = env.coffre.lignes.items()
+    assert cle[0] == "org"
+    assert ligne["meta"]["app"] == "account" and "owner_id" not in ligne["meta"]
+    assert env.appels[0][1]["client_id"] == "cid" and not env.owners
 
 
 def test_un_state_rejoue_n_ecrit_rien(env, monkeypatch):
@@ -250,6 +351,51 @@ def test_une_connexion_oauth_mint_un_jeton_puis_le_garde(env, monkeypatch):
     assert env.hs.bearer() == "at-1"          # cached: one refresh only
     assert len(env.appels) == 1
     assert env.appels[0][1]["grant_type"] == "refresh_token"
+    # No `meta.app`: a row from before the personal app, renewed by the org app.
+    assert env.appels[0][1]["client_id"] == "cid"
+
+
+def test_une_connexion_perso_se_renouvelle_avec_son_app(env, monkeypatch):
+    monkeypatch.setattr("oto_mcp.access.resolve_credential",
+                        lambda *a, **k: _rc("rt-1", {"auth": "oauth", "app": "user"}))
+    env.reponses[env.hs.TOKEN_URL] = [_Reponse(200, {
+        "access_token": "at-1", "expires_in": 1800})]
+    assert env.hs.bearer() == "at-1"
+    assert env.appels[0][1]["client_id"] == "ucid"
+    assert env.appels[0][1]["client_secret"] == "ucsec"
+
+
+# ── The default owner of a personal connection ─────────────────────────────
+
+def _servir(env, monkeypatch, meta):
+    monkeypatch.setattr("oto_mcp.access.resolve_credential",
+                        lambda *a, **k: _rc("rt-1" if meta else "pat-x", meta))
+    env.reponses[env.hs.TOKEN_URL] = [_Reponse(200, {
+        "access_token": "at-1", "expires_in": 1800})]
+    env.hs.bearer()
+
+
+def test_un_record_cree_en_perso_revient_a_qui_a_connecte(env, monkeypatch):
+    _servir(env, monkeypatch, {"auth": "oauth", "app": "user", "owner_id": "owner-7"})
+    d = env.hs.default_owner
+    assert d("contacts", {"email": "a@b.test"}) == {
+        "email": "a@b.test", "hubspot_owner_id": "owner-7"}
+    assert d("deals", {})["hubspot_owner_id"] == "owner-7"
+    # The call's own owner wins — even an empty one (a deliberate "unassigned").
+    assert d("contacts", {"hubspot_owner_id": "9"}) == {"hubspot_owner_id": "9"}
+    assert d("contacts", {"hubspot_owner_id": ""}) == {"hubspot_owner_id": ""}
+    # An object without owners (a custom one) is left alone.
+    assert d("2-7", {"name": "x"}) == {"name": "x"}
+
+
+@pytest.mark.parametrize("meta", [
+    {"auth": "oauth", "app": "account"},            # org connection
+    {"auth": "oauth"},                              # row from before the personal app
+    {"auth": "oauth", "app": "user"},               # personal, no owner record
+    None])                                          # pasted key
+def test_aucun_owner_par_defaut_hors_connexion_perso(env, monkeypatch, meta):
+    _servir(env, monkeypatch, meta)
+    assert env.hs.default_owner("contacts", {"email": "a@b.test"}) == {"email": "a@b.test"}
 
 
 def test_un_refresh_token_qui_tourne_est_reecrit(env, monkeypatch):
@@ -292,11 +438,26 @@ def test_la_sonde_d_une_connexion_oauth_introspecte(env):
     env.reponses[env.hs.INTROSPECT_URL] = [_introspection()]
     out = tools_hubspot._verify({"key": "rt-1"}, {"auth": "oauth"})
     assert out["identity"] == {"portal_id": 123, "ui_domain": "portal.example",
-                               "connected_as": "someone@example.test"}
+                               "connected_as": "someone@example.test",
+                               "connection": "org"}
+    assert env.appels[0][1]["client_id"] == "cid"
     assert out["scopes"]["method"] == "introspection"
     assert out["scopes"]["families"]["contacts"] == "granted"
     assert out["scopes"]["families"]["tickets"] == "missing"
     assert [u for u, _ in env.appels] == [env.hs.INTROSPECT_URL]   # no token minted
+
+
+def test_la_sonde_perso_introspecte_avec_son_app_et_dit_l_owner(env):
+    from oto_mcp.tools import hubspot as tools_hubspot
+
+    env.reponses[env.hs.INTROSPECT_URL] = [_introspection(), _introspection()]
+    out = tools_hubspot._verify({"key": "rt-1"}, {"auth": "oauth", "app": "user",
+                                                  "owner_id": "owner-7"})
+    assert env.appels[0][1]["client_id"] == "ucid"
+    assert out["identity"]["connection"] == "personal"
+    assert out["identity"]["default_owner_id"] == "owner-7"
+    out = tools_hubspot._verify({"key": "rt-1"}, {"auth": "oauth", "app": "user"})
+    assert out["identity"]["default_owner_id"].startswith("none")
 
 
 def test_la_sonde_d_une_connexion_desinstallee_echoue(env):
