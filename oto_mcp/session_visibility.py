@@ -202,7 +202,7 @@ def _compute_couches(sub: str, active_org, prof_org, role_plateforme: str,
     # masqué ». Un connecteur en PAUSE ou non-installé masque ses tools. Le seed
     # de la 1re session d'un (sub, org) installe le socle `default_active` ∩ exposé
     # — VIDE depuis le 16/07 —, plus ce qu'une clé d'org/équipe/tenant/plateforme sert
-    # déjà et le sans-clé (`_avec_credential`) ; le reste part en library, l'agent guide
+    # déjà (`_avec_credential`) ; le reste part en library, l'agent guide
     # depuis les tools spine + le catalogue injecté (bloc A). Les
     # pairs pré-0050 ont été backfillés avec leur visible d'alors (db._init).
     # Depuis peu : la baseline PLATEFORME est complétée par la baseline PROPRE à
@@ -235,8 +235,8 @@ def _compute_couches(sub: str, active_org, prof_org, role_plateforme: str,
             origins = {n: connector_selection.KIT for n in org_defaults}
             # Ce qui marche DÉJÀ pour ce membre s'installe aussi : un connecteur dont
             # une clé de son org, d'une de ses équipes, du tenant ou de la plateforme
-            # répond, et ceux qui n'en demandent aucune (open data). ∩ exposé, comme
-            # le socle — et sous sa provenance : un retrait du kit ne les sort pas.
+            # répond. ∩ exposé, comme le socle — et sous sa provenance : un retrait du
+            # kit ne les sort pas.
             socle = socle | (_avec_credential(sub, active_org) & exposed_now)
             origins.update({n: connector_selection.SOCLE for n in socle})
             connector_selection.seed_active(sub, origins, prof_org)
@@ -289,19 +289,17 @@ _PALIERS_PARTAGES = frozenset({"group", "org", "tenant", "platform", "over_quota
 def _avec_credential(sub: str, org: int) -> set[str]:
     """Connecteurs utilisables d'office par un membre qui arrive dans `org` : une clé
     d'org, d'équipe (l'active, ou une autre dont il est membre — `team_key_group`),
-    de tenant ou de plateforme résout, ou le connecteur n'en demande aucune.
+    de tenant ou de plateforme résout. Un connecteur sans clé (open data) n'en est
+    pas : le départ VIDE du 16/07 vaut pour lui.
 
     Fail-OPEN vers le semis d'avant (socle + kit) : un hoquet de lecture ne doit ni
     priver le membre de sa couche de sélection, ni le laisser non semé."""
-    sans_cle = {c.name for c in providers.REGISTRY.values()
-                if c.secret_kind == "none" and c.credential_of is None
-                and not (c.keyed or c.credential_fields)}
     try:
         snapshot = access.status_for(sub, org=org, group=access.current_group(sub))
     except Exception as e:
         logger.warning("credentialed seed skipped for %s (fail-open): %s", sub, e)
-        return sans_cle
-    return sans_cle | {
+        return set()
+    return {
         nom for nom, entree in snapshot["providers"].items()
         if entree.get("mode") in _PALIERS_PARTAGES or entree.get("team_key_group")}
 

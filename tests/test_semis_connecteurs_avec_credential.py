@@ -1,6 +1,7 @@
 """Rejoindre une org installe d'office ce qui marche déjà pour le membre : un
-connecteur dont une clé d'org, d'équipe, de tenant ou de plateforme résout, et ceux
-qui n'en demandent aucune — sous l'exposition, comme le socle."""
+connecteur dont une clé d'org, d'équipe, de tenant ou de plateforme résout — sous
+l'exposition, comme le socle. Un connecteur sans clé n'en est pas : le départ vide
+du 16/07 vaut pour lui."""
 from __future__ import annotations
 
 import pytest
@@ -34,7 +35,7 @@ def _status(monkeypatch, providers_):
                         lambda *_a, **_k: {"providers": providers_})
 
 
-def test_les_cles_partagees_et_le_sans_cle_s_installent(monkeypatch, semis):
+def test_les_cles_partagees_s_installent_pas_le_sans_cle(monkeypatch, semis):
     _status(monkeypatch, {
         "cle_org": {"mode": "org"}, "cle_equipe": {"mode": "group"},
         "cle_tenant": {"mode": "tenant"}, "cle_plateforme": {"mode": "platform"},
@@ -51,7 +52,7 @@ def test_les_cles_partagees_et_le_sans_cle_s_installent(monkeypatch, semis):
         "kit_x": selection.KIT,
         **{n: selection.SOCLE for n in ("cle_org", "cle_equipe", "cle_tenant",
                                         "cle_plateforme", "plateforme_epuisee",
-                                        "autre_equipe", SANS_CLE)},
+                                        "autre_equipe")},
     }
 
 
@@ -61,4 +62,4 @@ def test_un_hoquet_de_lecture_retombe_sur_le_semis_d_avant(monkeypatch, semis):
     monkeypatch.setattr(access, "status_for", _casse)
     monkeypatch.setattr(activation, "exposed_connectors", lambda *_a: {SANS_CLE})
     sv._compute_couches("sub-x", 7, 7, "member", set(), set(), set())
-    assert semis == {"kit_x": selection.KIT, SANS_CLE: selection.SOCLE}
+    assert semis == {"kit_x": selection.KIT}
