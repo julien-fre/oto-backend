@@ -1,3 +1,15 @@
+## setup — the one-click connection ("connect hubspot")
+
+when the instance publishes its hubspot app, the card shows **connect hubspot**: you pick the portal, approve, and you are connected — no key to create, no scope to tick. oto asks for the scopes itself: contacts, companies, deals and lists (read + write), owners and properties; tickets and website-visit page views are **optional** (a portal without them still connects, those tools then answer 403).
+
+- on your card it connects **you**; on the org's card (org admin) or the team's (team lead) it connects the portal for everyone there
+- reconnecting the same level replaces the connection; pasting a key over it replaces it too
+- "test the connection" reads the portal, who connected it and the granted scopes, without using up anything
+- if the app is uninstalled from the portal, the next call says **reconnect hubspot** and the card turns red
+- a hubspot app installs on at most 25 portals until it is listed on the hubspot marketplace
+
+no "connect hubspot" button: the instance has no hubspot app yet — the service key below works the same.
+
 ## prerequisite — your hubspot token (service key)
 
 hubspot authenticates via a **service key**. ⚠️ hubspot stops letting you create *private apps* (on 28/09/2026 for new accounts, 26/10/2026 for existing ones — [changelog](https://developers.hubspot.com/changelog/legacy-private-app-creation-sunset)); a private app made before keeps working, and its token is pasted the same way.
