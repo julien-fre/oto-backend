@@ -233,6 +233,72 @@ def valider(corps: Any) -> dict:
     return c
 
 
+#: L'affichage d'une recette (`display`) : ce qu'une page montre à l'endroit où un
+#: processus la lance. Pas d'exécution ici — des mots et des chiffres déclarés.
+MAX_ETAPES = 10
+UNITES_CREDIT = ("contact", "company", "row")
+_CLES_ETAPE = {"label", "detail", "credits", "per"}
+_CLES_AFFICHAGE = {"steps", "saves"}
+
+
+def valider_affichage(affichage: Any) -> dict:
+    """`display` normalisé, ou `RecetteInvalide` avec TOUS les défauts.
+
+    `{steps: [{label, detail?, credits?, per?}], saves?}` : 1 à 10 étapes dans l'ordre
+    où la recette les fait ; `credits` (≥ 0) ce que l'étape facture par `per`
+    (`contact` | `company` | `row`), absent = gratuite ; `saves` une phrase MESURÉE de
+    ce que la recette épargne (jamais une estimation)."""
+    probs: list[str] = []
+    if not isinstance(affichage, dict):
+        raise RecetteInvalide(["`display` must be an object {steps, saves?}"])
+    inconnues = sorted(set(affichage) - _CLES_AFFICHAGE)
+    if inconnues:
+        probs.append(f"`display`: unknown keys {inconnues} (allowed: {sorted(_CLES_AFFICHAGE)})")
+    etapes = affichage.get("steps")
+    if not isinstance(etapes, list) or not 1 <= len(etapes) <= MAX_ETAPES:
+        probs.append(f"`display.steps` must be a list of 1 to {MAX_ETAPES} steps, in the "
+                     "order the recipe runs them")
+        etapes = []
+    propres = []
+    for i, e in enumerate(etapes):
+        ou = f"`display.steps[{i}]`"
+        if not isinstance(e, dict):
+            probs.append(f"{ou} must be an object {{label, detail?, credits?, per?}}")
+            continue
+        inc = sorted(set(e) - _CLES_ETAPE)
+        if inc:
+            probs.append(f"{ou}: unknown keys {inc}")
+        label = e.get("label")
+        if not isinstance(label, str) or not 1 <= len(label.strip()) <= 60:
+            probs.append(f"{ou}.label: 1 to 60 characters (what the step does)")
+        detail = e.get("detail", "")
+        if not isinstance(detail, str) or len(detail) > 200:
+            probs.append(f"{ou}.detail: a sentence of at most 200 characters")
+        credits, per = e.get("credits"), e.get("per")
+        if credits is not None and (isinstance(credits, bool)
+                                    or not isinstance(credits, (int, float))
+                                    or not 0 <= credits <= 10_000):
+            probs.append(f"{ou}.credits: a number of credits, 0 to 10000")
+        if (credits is None) != (per is None):
+            probs.append(f"{ou}: `credits` and `per` go together (omit both for a free step)")
+        elif per is not None and per not in UNITES_CREDIT:
+            probs.append(f"{ou}.per must be one of {list(UNITES_CREDIT)}")
+        propre = {"label": label.strip() if isinstance(label, str) else label,
+                  "detail": detail.strip() if isinstance(detail, str) else detail}
+        if credits is not None:
+            propre |= {"credits": credits, "per": per}
+        propres.append(propre)
+    saves = affichage.get("saves")
+    if saves is not None and (not isinstance(saves, str) or not 1 <= len(saves.strip()) <= 160):
+        probs.append("`display.saves`: one measured sentence, at most 160 characters")
+    if probs:
+        raise RecetteInvalide(probs)
+    out: dict = {"steps": propres}
+    if saves:
+        out["saves"] = saves.strip()
+    return out
+
+
 def params_resolus(corps: dict, fournis: Any) -> dict:
     """Les paramètres d'une exécution : ceux fournis, puis les défauts déclarés. Refus
     si un paramètre requis manque ou si un inconnu est passé (une faute de frappe ne

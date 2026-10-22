@@ -125,6 +125,26 @@ def test_proposer_exige_la_derniere_version_lue(capa):
     assert [v["version"] for v in appeler(op="versions", slug=slug)["versions"]] == [2, 1]
 
 
+def test_decrire_pose_l_affichage_sans_nouvelle_version(capa):
+    """L'affichage vit sur la FICHE : le poser ne propose ni ne republie rien, `list` le
+    rend, `{}` l'efface."""
+    appeler, _ = capa
+    slug = f"acme-display-{uuid.uuid4().hex[:6]}"
+    appeler(op="create", slug=slug, title="t", recipe=CORPS,
+            display={"steps": [{"label": "Find people"}]})
+    out = appeler(op="describe", slug=slug, title="Acme people",
+                  display={"steps": [{"label": "Find people", "credits": 0.3, "per": "row"},
+                                     {"label": "Write"}],
+                           "saves": "one call a page"})
+    assert out["recipe"]["title"] == "Acme people"
+    assert out["recipe"]["display"]["steps"][0] == {
+        "label": "Find people", "detail": "", "credits": 0.3, "per": "row"}
+    assert out["recipe"]["latest_version"] == 1
+    listees = {r["slug"]: r for r in appeler(op="list")["recipes"]}
+    assert listees[slug]["display"]["saves"] == "one call a page"
+    assert appeler(op="describe", slug=slug, display={})["recipe"]["display"] is None
+
+
 def test_une_recette_fautive_est_refusee_avec_ses_defauts(capa):
     from oto_mcp.capabilities._types import AuthzDenied
     appeler, _ = capa

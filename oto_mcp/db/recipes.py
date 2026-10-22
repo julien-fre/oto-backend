@@ -12,7 +12,7 @@ le pointeur vers la version publiée.
 from __future__ import annotations
 
 import json
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 import psycopg
 
@@ -23,9 +23,19 @@ from ._conn import _connect
 _VERSION_COLS = ("v.version, v.status, v.note, v.proposed_by, v.proposed_at, "
                  "v.decided_by, v.decided_at, v.test_report")
 _RECIPE_COLS = ("r.id, r.owner_type, r.owner_id, r.slug, r.title, r.description, "
-                "r.published_version, r.created_by, r.created_at, r.updated_at")
+                "r.display, r.published_version, r.created_by, r.created_at, r.updated_at")
+# Ce qu'une page montre d'une recette à l'endroit où un processus la lance (ses étapes,
+# ce que chacune facture) : sur la FICHE, comme le titre et la description, pas dans le
+# corps versionné — la changer ne republie rien. Posée par la révision
+# `20261022_2100_recipes_display` ET par le démarrage, sous garde de catalogue — même DDL.
+COLONNE_DISPLAY = "display"
+DDL_COLONNE_DISPLAY = f"ALTER TABLE recipes ADD COLUMN IF NOT EXISTS {COLONNE_DISPLAY} JSONB"
 _LATEST = ("(SELECT MAX(version) FROM recipe_versions v WHERE v.recipe_id = r.id) "
            "AS latest_version")
+
+
+#: « Pas d'argument » pour `describe_recipe(display=…)`, distinct de None (= effacer).
+_INCHANGE: Any = object()
 
 
 class RecipeExists(Exception):
@@ -85,6 +95,27 @@ def propose_version(recipe_id: int, *, expected_version: int, body: dict,
             _insert_version(conn, recipe_id, derniere + 1, body=body, note=note,
                             proposed_by=proposed_by)
     return derniere + 1
+
+
+def describe_recipe(recipe_id: int, *, title: Optional[str] = None,
+                    description: Optional[str] = None, display: Any = _INCHANGE) -> None:
+    """Change ce que la fiche DIT d'une recette — titre, description, affichage — sans
+    toucher à ses versions. `display=None` efface l'affichage ; omis, il reste."""
+    sets, vals = [], []
+    if title is not None:
+        sets.append("title = %s")
+        vals.append(title)
+    if description is not None:
+        sets.append("description = %s")
+        vals.append(description)
+    if display is not _INCHANGE:
+        sets.append("display = %s::jsonb")
+        vals.append(json.dumps(display) if display is not None else None)
+    if not sets:
+        return
+    with _connect() as conn:
+        conn.execute(f"UPDATE recipes SET {', '.join(sets)}, updated_at = NOW() "
+                     "WHERE id = %s", (*vals, recipe_id))
 
 
 def get_recipe(owner_type: str, owner_id: str, slug: str) -> Optional[dict]:

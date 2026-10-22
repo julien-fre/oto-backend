@@ -14,7 +14,7 @@ import time
 import psycopg
 
 from . import (_prerequis, access_shadow, index_concurrent, index_releve, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions,
-               projects, revision, runner_jobs, runner_triggers, rowlock, transcription, user_subscriptions, valeurs_servies)
+               projects, recipes, revision, runner_jobs, runner_triggers, rowlock, transcription, user_subscriptions, valeurs_servies)
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
 from ._schema import _SCHEMA
@@ -670,6 +670,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # révision `0072` : ordre indifférent entre elles.
     if _colonne_absente(conn, "runner_triggers", runner_triggers.COLONNE_HOOK_SOURCES):
         conn.execute(runner_triggers.DDL_COLONNE_HOOK_SOURCES)
+    # L'affichage d'une recette (ses étapes, pour une page) — le même que pose la
+    # révision `20261022_2100_recipes_display` : ordre indifférent entre elles.
+    if _colonne_absente(conn, "recipes", recipes.COLONNE_DISPLAY):
+        conn.execute(recipes.DDL_COLONNE_DISPLAY)
     # Les surcharges du temps gagné d'une org — la même que pose la révision `0066` :
     # ordre indifférent entre elles.
     if _colonne_absente(conn, "orgs", runner_jobs.COLONNE_TEMPS_GAGNE):

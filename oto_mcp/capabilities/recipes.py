@@ -40,8 +40,8 @@ _APPELANTES = ("sample", "test", "publish", "run")
 
 
 class RecipeInput(BaseModel):
-    op: Literal["list", "get", "versions", "create", "propose", "sample", "test",
-                "publish", "run"]
+    op: Literal["list", "get", "versions", "create", "propose", "describe", "sample",
+                "test", "publish", "run"]
     slug: Optional[str] = None
     scope: Optional[Literal["org", "user"]] = None
     org: Optional[int] = None
@@ -72,6 +72,12 @@ class RecipeInput(BaseModel):
         "test, never delete/merge; a batch via `items`/`ids` (≤50) counts one write per "
         "record against `max_writes`) and returns a receipt of counts; test/publish of "
         "a code recipe are platform-only."))
+    display: Optional[dict[str, Any]] = Field(default=None, description=(
+        "create/describe: what a process page shows where a process runs this recipe — "
+        "{steps: [{label, detail?, credits?, per: contact|company|row}], saves?}: 1 to 10 "
+        "steps in the order the recipe runs them, `credits` what a step bills per `per` "
+        "(omit both on a free step), `saves` one MEASURED sentence. On the recipe, not in "
+        "a version: changing it republishes nothing. describe with `{}` clears it."))
     note: Optional[str] = None
     expected_version: Optional[int] = Field(default=None, description=(
         "propose: the latest version you read."))
@@ -101,6 +107,17 @@ def _besoin(valeur, code: str, message: str):
     if valeur is None or (isinstance(valeur, str) and not valeur.strip()):
         raise AuthzDenied(400, code, message)
     return valeur
+
+
+def _affichage(brut: dict) -> Optional[dict]:
+    """`display` validé ; `{}` = effacer (None)."""
+    if brut == {}:
+        return None
+    try:
+        return contrat.valider_affichage(brut)
+    except contrat.RecetteInvalide as e:
+        raise AuthzDenied(400, "invalid_display", str(e),
+                          details={"problems": e.problemes}) from None
 
 
 def _proprietaire(ctx: ResolvedCtx, inp: RecipeInput) -> tuple[str, str]:
@@ -161,6 +178,7 @@ def _gerer(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
         title = _besoin(inp.title, "missing_title", "`title` is required for create.")
         corps = _corps(ctx, _besoin(inp.recipe, "missing_recipe", "`recipe` is required."))
         owner = _proprietaire(ctx, inp)
+        affichage = _affichage(inp.display) if inp.display is not None else None
         try:
             fiche = db_recipes.create_recipe(
                 owner_type=owner[0], owner_id=owner[1], slug=slug, title=title.strip(),
@@ -169,12 +187,29 @@ def _gerer(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
         except db_recipes.RecipeExists:
             raise AuthzDenied(409, "recipe_exists", f"Recipe `{slug}` already exists here: "
                                                     "propose a new version.") from None
+        if affichage is not None:
+            db_recipes.describe_recipe(fiche["id"], display=affichage)
+            fiche = db_recipes.get_recipe(owner[0], owner[1], slug)
         return {"recipe": fiche, "version": {"version": 1, "status": "proposee"}}
     fiche = _fiche(ctx, inp)
     if inp.op == "versions":
         return {"recipe": fiche, "versions": db_recipes.list_versions(fiche["id"])}
     if inp.op == "get":
         return {"recipe": fiche, "version": _version(fiche, inp.version)}
+    if inp.op == "describe":
+        if inp.title is None and inp.description is None and inp.display is None:
+            raise AuthzDenied(400, "nothing_to_describe",
+                              "Pass `title`, `description` and/or `display`.")
+        if inp.title is not None and not inp.title.strip():
+            raise AuthzDenied(400, "missing_title", "`title` can't be empty.")
+        champs: dict = {}
+        if inp.display is not None:
+            champs["display"] = _affichage(inp.display)
+        db_recipes.describe_recipe(
+            fiche["id"], title=inp.title.strip() if inp.title else None,
+            description=inp.description, **champs)
+        return {"recipe": db_recipes.get_recipe(fiche["owner_type"], fiche["owner_id"],
+                                                fiche["slug"])}
     # propose
     attendue = _besoin(inp.expected_version, "missing_expected_version",
                        "`expected_version` is required: the latest version you read "
@@ -338,7 +373,8 @@ CAPABILITIES += [
     Capability(
         key="me.recipe", handler=_recipe, Input=RecipeInput, Output=RecipeOut,
         authz=BY_OP({op: _PORTEE for op in ("list", "get", "versions", "create", "propose",
-                                            "sample", "test", "publish", "run")}),
+                                            "describe", "sample", "test", "publish",
+                                            "run")}),
         description=(
             "RECIPES: move a connector tool's results into a table on the server, with no "
             "model reading or retyping the rows. Only connector tools DECLARED READ-ONLY can "
@@ -350,6 +386,10 @@ CAPABILITIES += [
             "one billed call) · op=test (slug or inline `recipe`, params → one real page, "
             "nothing written, fill rate per column) · op=create (slug, title, recipe → "
             "version 1, PROPOSED) · op=propose (slug, expected_version, recipe) · "
+            "op=describe (slug, title?, description?, display → what a process page shows "
+            "where a process runs the recipe: its steps and what each bills; on the "
+            "recipe, not a version, so nothing is republished; name the recipe in the "
+            "process flowchart's margin as `oto_recipe <slug>`) · "
             "op=publish (slug, version, params → test page, then in service) · op=run "
             "(slug of a PUBLISHED recipe, params, datastore → counts only; `max_pages` "
             "bounds each call, `resume` continues a partial run; a table without a declared "
@@ -391,6 +431,18 @@ class OrgRecipesInput(BaseModel):
     org_id: int
 
 
+class RecipeStepDisplay(BaseModel):
+    label: str
+    detail: str = ""
+    credits: Optional[float] = None
+    per: Optional[Literal["contact", "company", "row"]] = None
+
+
+class RecipeDisplay(BaseModel):
+    steps: list[RecipeStepDisplay]
+    saves: Optional[str] = None
+
+
 class OrgRecipe(BaseModel):
     slug: str
     title: str
@@ -401,6 +453,9 @@ class OrgRecipe(BaseModel):
     published_version: Optional[int] = None
     latest_version: Optional[int] = None
     updated_at: Optional[str] = None
+    display: Optional[RecipeDisplay] = Field(default=None, description=(
+        "What a process page draws where it runs this recipe (`oto_recipe op=describe`); "
+        "null when none was written."))
 
 
 class OrgRecipes(BaseModel):
@@ -414,6 +469,7 @@ async def _org_recipes(ctx: ResolvedCtx, inp: OrgRecipesInput) -> dict:
         "status": "published" if f["published_version"] else "proposed",
         "published_version": f["published_version"], "latest_version": f["latest_version"],
         "updated_at": str(f["updated_at"]) if f.get("updated_at") is not None else None,
+        "display": f.get("display"),
     } for f in fiches]}
 
 
@@ -422,6 +478,7 @@ CAPABILITIES += [
         key="org.recipes", handler=_org_recipes, Input=OrgRecipesInput, Output=OrgRecipes,
         authz=ORG_MEMBER_OF("org_id"), mcp=None,
         rest=RestBinding("GET", "/api/orgs/{id}/recipes", {"id": "org_id"}, provisoire=True),
-        description="The org's recipes (no bodies): slug, title, whether one is in service.",
+        description=("The org's recipes (no bodies): slug, title, whether one is in service, "
+                     "and the steps a process page draws where it runs one."),
     ),
 ]
