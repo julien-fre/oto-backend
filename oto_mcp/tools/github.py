@@ -192,7 +192,8 @@ def register(mcp: FastMCP) -> None:
         op: Literal["mine", "org", "user", "get", "branches", "commits",
                     "commit", "compare", "tags", "contributors", "languages",
                     "topics", "releases", "release", "latest_release",
-                    "create_release", "update_release"] = "mine",
+                    "create_release", "update_release",
+                    "create_branch"] = "mine",
         owner: Optional[str] = None,
         repo: Optional[str] = None,
         org: Optional[str] = None,
@@ -207,6 +208,7 @@ def register(mcp: FastMCP) -> None:
         release_id: Optional[str] = None,
         sort: Optional[str] = None,
         fields: Optional[dict] = None,
+        branch: Optional[str] = None,
         page: Optional[int] = None,
         per_page: int = 30,
         full: bool = False,
@@ -226,10 +228,16 @@ def register(mcp: FastMCP) -> None:
         ⚠️ `op='latest_release'` ignores drafts AND prereleases: it is
         not the last tag created.
 
+        `op='create_branch'` is how a pull request is opened without a shell:
+        create the branch, write its files with `github_files op='write'
+        branch=…`, then `github_pulls op='create'`. Writing to a branch that
+        does not exist is refused by GitHub. ⚠️ An existing branch is refused
+        (422), never moved.
+
         `op`: `mine` | `org` | `user` (repository lists) · `get` · `branches` ·
         `commits` · `commit` (with diff) · `compare` (base…head) · `tags` ·
         `contributors` · `languages` · `topics` · `releases` · `release` ·
-        `latest_release` · `create_release` · `update_release`.
+        `latest_release` · `create_release` · `update_release` · `create_branch`.
 
         Args:
             op: the operation, see above.
@@ -237,7 +245,8 @@ def register(mcp: FastMCP) -> None:
             repo: repository name.
             org: op='org' — the organization whose repositories are listed.
             username: op='user' — the account whose public repositories are listed.
-            ref: op='commit' — branch, tag or SHA.
+            ref: op='commit' — branch, tag or SHA. op='create_branch' — the
+                branch or SHA to start from (default: the default branch).
             base: op='compare' — the starting reference.
             head: op='compare' — the ending reference.
             path: op='commits' — only keep commits touching this path.
@@ -247,6 +256,7 @@ def register(mcp: FastMCP) -> None:
             release_id: op='release'/'update_release' — the targeted release.
             sort: op='mine'/'org'/'user' — created | updated | pushed | full_name.
             fields: op='create_release'/'update_release' — the body (tag_name required).
+            branch: op='create_branch' — the new branch's name (`fix/x`, not `refs/heads/…`).
             page: page number.
             per_page: rows per page (1-100, default 30).
             full: list ops only (mine | org | user | branches | commits | tags |
@@ -308,10 +318,13 @@ def register(mcp: FastMCP) -> None:
             _need(release_id, "release_id", op)
             _need(fields, "fields", op)
             return _run(lambda: c.update_release(o, r, release_id, fields))
+        if op == "create_branch":
+            _need(branch, "branch", op)
+            return _run(lambda: c.create_branch(o, r, branch, from_ref=ref))
         raise _bad_op(op, "mine | org | user | get | branches | commits | commit | "
                           "compare | tags | contributors | languages | topics | "
                           "releases | release | latest_release | create_release | "
-                          "update_release")
+                          "update_release | create_branch")
 
     # --- files ----------------------------------------------------------------
 

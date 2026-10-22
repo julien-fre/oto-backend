@@ -244,6 +244,25 @@ def test_le_declenchement_part_vraiment_quand_on_le_demande():
     assert [c[0] for c in fake.calls] == ["dispatch_workflow"]
 
 
+def test_creer_une_branche_part_de_la_ref_donnee():
+    """Sans shell, c'est la seule façon d'avoir une branche où écrire avant
+    d'ouvrir une PR : l'API contents refuse une branche inexistante."""
+    fake = _Fake()
+    with _with("oto.tools.github.client.GitHubClient", fake):
+        _call("github", "github_repos", op="create_branch", owner="o", repo="r",
+              branch="fix/x", ref="main")
+    assert fake.calls == [("create_branch", ("o", "r", "fix/x"),
+                           {"from_ref": "main"})]
+
+
+def test_creer_une_branche_sans_nom_est_refuse_avant_tout_appel():
+    fake = _Fake()
+    with _with("oto.tools.github.client.GitHubClient", fake):
+        with pytest.raises(McpError, match="branch"):
+            _call("github", "github_repos", op="create_branch", owner="o", repo="r")
+    assert fake.calls == []
+
+
 def test_aucun_autre_outil_nest_en_dry_run_par_defaut():
     """Le dry-run par défaut est une exception réservée à ce qui sort de
     l'organisation : l'étendre par mégarde rendrait des écritures ordinaires
