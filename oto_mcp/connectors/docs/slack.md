@@ -1,10 +1,16 @@
-## prerequisite — you need a Slack app installed on your workspace
+## prerequisite — the instance's published app, or your own
 
-oto does not yet have a published Slack app ("connect in one click"): you create **your** app in your workspace and paste its tokens here. A one-time task per workspace, ~5 minutes.
+Two ways to get a Slack credential, same tools behind both:
+- **"Add to Slack"** — when the instance publishes a Slack app, the card offers it first: one click, Slack's consent screen, done. The tokens land in this connector, one account per workspace (a reinstall of the same workspace replaces its account). Nothing to create at api.slack.com.
+- **your own app** — you create an app in your workspace and paste its tokens here. A one-time task per workspace, ~5 minutes. Use it when the instance publishes no app, or when you read channels a lot: Slack caps history reads (`conversations.history` / `conversations.replies`) for distributed apps not listed in its Marketplace, and an app you create for your own workspace is exempt.
+
+Whichever the path, the two tokens:
 - **bot token** (`xoxb-`): read channels, post under the app's identity. This is the default token.
 - **user token** (`xoxp-`): post **in your name**, and search (`search:read` only exists as a user token). Optional.
 - either one is enough. With **both**, oto reads with the bot and makes you **choose who writes** on each send: `author="me"` (in your name) or `author="app"` (under the app's name) — with no choice, the send is refused rather than going out under the wrong name. The response says who wrote and in which channel, and whether that channel is shared externally.
 - otherwise, an admin can grant you your org's platform key
+
+⚠️ **switching app restarts channel memberships.** Memberships belong to the app, not to the key: moving a workspace from your own app to the published one (or back) means re-inviting the new app in private channels (`/invite @<app>`).
 
 ## setup — create the app by pasting a manifest (the shortest way)
 

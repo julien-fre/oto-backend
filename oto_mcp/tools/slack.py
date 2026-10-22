@@ -9,8 +9,8 @@ An account (a workspace) carries up to two identities: the app (`xoxb-`) and a
 person (`xoxp-`). READS are routed by the client (channel → bot, DM →
 user). WRITES (post, delete, react) take `author`:
 chosen by the caller, refused if ambiguous or without a token — never inferred
-(decision of 23/09). The published app, installable in one click, remains a target:
-otomata-tech/oto#3.
+(decision of 23/09). The instance's published app, installed in one click, writes
+the same credential (`auth/slack.py`).
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access, file_content
 from ..mcp_errors import McpError
 from ..connectors import verify as connector_verify
+from ..auth import slack as _slack_auth  # noqa: F401 — declares the "Add to Slack" flow
 from .lecture import ACTE, LECTURE
 
 
