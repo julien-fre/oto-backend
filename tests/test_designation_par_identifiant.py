@@ -70,6 +70,7 @@ def test_la_charge_utile_EMPORTE_l_identifiant_que_la_campagne_garde(monkeypatch
     enfiles: list[dict] = []
     monkeypatch.setattr(cap.db, "arreter_campagnes_epuisees", lambda org: [])
     monkeypatch.setattr(cap.db, "accuser_arrets_effectifs", lambda org: [])
+    monkeypatch.setattr(cap.db, "clore_campagnes_terminees", lambda org: [])
     monkeypatch.setattr(cap.db, "campagne_a_servir", lambda org, _ordonner: {
         "id": 3, "org_id": 2, "sub": "campagne-sub", "namespace": "77",
         "procedure": "relance", "tools": ["data_rows"], "label": "vivier",

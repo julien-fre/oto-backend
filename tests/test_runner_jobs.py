@@ -96,6 +96,8 @@ def espion(monkeypatch):
     # Toute lecture de base ajoutée à `_produire_pour_une_campagne` doit être
     # doublée ici — sinon le fail-open de la production avale l'échec.
     monkeypatch.setattr(RJ.db, "accuser_arrets_effectifs", lambda org_id: [])
+    # Et la troisième du même chemin (22/10/2026), doublée pour la même raison.
+    monkeypatch.setattr(RJ.db, "clore_campagnes_terminees", lambda org_id: [])
     return vu
 
 

@@ -231,6 +231,55 @@ def test_arret_demande_ATTEND_les_travaux_encore_en_vol(org_neuve):
         "un travail encore en file interdit de déclarer l'arrêt effectif")
 
 
+def _travaux(org: int, sub: str, fleet_id: int, *statuts: str) -> None:
+    """Des travaux de la campagne, posés directement dans l'état voulu."""
+    from oto_mcp import db
+    for statut in statuts:
+        j = db.enqueue_job(org, "start", fleet_id=fleet_id, sub=sub)
+        with db._connect() as conn:
+            conn.execute("UPDATE runner_jobs SET status = %s WHERE id = %s",
+                         (statut, j["id"]))
+
+
+def test_campagne_a_sa_borne_et_sans_travail_en_vol_est_close(org_neuve):
+    """`running` → `done` : la fin naturelle que plus personne ne constatait.
+
+    Une campagne à sa borne `max_rows` n'est plus servie ; sans ce geste elle
+    restait `running` pour toujours, et un agent qui attend qu'aucune campagne ne
+    tourne avant d'en relancer une ne relançait plus rien."""
+    from oto_mcp import db
+    org, sub = org_neuve["org"], org_neuve["sub"]
+    f = _flotte(org, sub, max_rows=2)
+    db.armer(f["id"], org)
+    db.marquer_demarree(f["id"])
+    _travaux(org, sub, f["id"], "done", "failed")
+
+    assert f["id"] in db.clore_campagnes_terminees(org)
+    fin = db.get_fleet(f["id"], org)
+    assert fin["status"] == "done" and fin["stop_reason"] == "max_rows"
+    assert fin["stopped_at"] is not None
+
+
+def test_campagne_ATTEND_ses_travaux_en_vol_et_sa_borne(org_neuve):
+    """Les bords qui gardent le mot « fait » : un travail encore en vol, une borne
+    pas atteinte, ou pas de borne du tout — aucune n'est close."""
+    from oto_mcp import db
+    org, sub = org_neuve["org"], org_neuve["sub"]
+    en_vol = _flotte(org, sub, max_rows=2)
+    sous_la_borne = _flotte(org, sub, max_rows=3)
+    sans_borne = _flotte(org, sub)
+    for f in (en_vol, sous_la_borne, sans_borne):
+        db.armer(f["id"], org)
+        db.marquer_demarree(f["id"])
+    _travaux(org, sub, en_vol["id"], "done", "claimed")
+    _travaux(org, sub, sous_la_borne["id"], "done", "done")
+    _travaux(org, sub, sans_borne["id"], "done", "done")
+
+    assert db.clore_campagnes_terminees(org) == []
+    for f in (en_vol, sous_la_borne, sans_borne):
+        assert db.get_fleet(f["id"], org)["status"] == "running"
+
+
 # ── Le worker de PLATEFORME : sans organisation, il les sert toutes ──────────
 # Ce que ces bancs ferment : la file était filtrée sur l'org ACTIVE du porteur
 # du jeton, parce que la capacité était déclarée pour un membre d'organisation.

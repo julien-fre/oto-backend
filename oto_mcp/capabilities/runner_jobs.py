@@ -1097,6 +1097,12 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
         for fid in db.accuser_arrets_effectifs(org_id):
             logger.info("campagne %s arrêtée pour de bon : plus aucun travail "
                         "en attente ni en cours", fid)
+        # ⚠️ Et la fin naturelle : une campagne à sa borne `max_rows` n'est plus
+        # servie, mais sans ce geste elle resterait `running` pour toujours — et
+        # qui attend qu'elle finisse (un agent quotidien) attendrait aussi.
+        for fid in db.clore_campagnes_terminees(org_id):
+            logger.info("campagne %s terminée : max_rows atteint, plus aucun "
+                        "travail en attente ni en cours", fid)
         f = db.campagne_a_servir(org_id, _ordre_de_service.ordonner)
         if not f or not f.get("sub"):
             return None

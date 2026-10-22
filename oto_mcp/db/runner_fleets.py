@@ -275,6 +275,44 @@ def accuser_arrets_effectifs(org_id: Optional[int]) -> list[int]:
     return [int(r["id"]) for r in lignes]
 
 
+def clore_campagnes_terminees(org_id: Optional[int]) -> list[int]:
+    """`running` → `done` pour les campagnes qui ont produit leurs `max_rows`
+    travaux et dont plus AUCUN ne tourne.
+
+    ⚠️ Même trou que `accuser_arrets_effectifs`, de l'autre côté : c'était
+    l'ordonnanceur qui disait « fini », et il n'existe plus. Une campagne arrivée
+    à sa borne n'est plus servie (`_ELIGIBLE` l'écarte), mais personne ne la
+    ferme : elle reste `running` pour toujours. Mesuré le 22/10/2026 : une
+    campagne aux travaux tous faits, lue `running` le lendemain — et l'agent
+    quotidien qui la relance, qui attend qu'aucune campagne ne tourne avant
+    d'en armer une, n'a rien lancé.
+
+    `done` reste un FAIT CONSTATÉ, vérifiable sans juger du travail : la borne
+    est atteinte (aucun autre travail ne sera jamais produit) et aucun travail
+    `pending` ni `claimed` ne subsiste. Une campagne sans `max_rows` n'a pas de
+    fin déclarée — une file vide aujourd'hui peut se remplir demain — et n'est
+    jamais close ici.
+
+    Rend les ids clos, pour que l'appelant puisse le journaliser."""
+    with _connect() as conn:
+        lignes = conn.execute(
+            """
+            UPDATE runner_fleets f
+               SET status = 'done', stopped_at = NOW(),
+                   stop_reason = 'max_rows'
+             WHERE (%s::bigint IS NULL OR f.org_id = %s) AND f.status = 'running'
+               AND f.max_rows IS NOT NULL
+               AND (SELECT COUNT(*) FROM runner_jobs j
+                     WHERE j.fleet_id = f.id) >= f.max_rows
+               AND NOT EXISTS (SELECT 1 FROM runner_jobs j
+                                WHERE j.fleet_id = f.id
+                                  AND j.status IN ('pending', 'claimed'))
+            RETURNING f.id
+            """,
+            (org_id, org_id)).fetchall()
+    return [int(r["id"]) for r in lignes]
+
+
 def arreter_campagnes_epuisees(org_id: Optional[int]) -> list[int]:
     """Arrête les campagnes dont les N derniers travaux ont TOUS échoué.
 
