@@ -191,7 +191,7 @@ def test_403_with_scope_names_names_the_plain_one():
     assert isinstance(err, McpError)
     msg = err.error.message
     assert "`crm.objects.tickets.read`" in msg and "sensitive" not in msg
-    assert "token does not change" in msg
+    assert "service key" in msg and "nothing to fix in the call" in msg
     assert err.oto_detail["scope_to_add"] == "crm.objects.tickets.read"
     assert err.oto_detail["scopes_source"] == "hubspot"
     assert len(err.oto_detail["accepted_scopes"]) == 3

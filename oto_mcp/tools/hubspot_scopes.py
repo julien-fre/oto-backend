@@ -273,9 +273,16 @@ def scope_hint(e, family: Optional[str]) -> str:
     return f"add `{pick}`" if pick else "add its read scope"
 
 
-_REMEDY = ("on the HubSpot side: Settings > Integrations > Private Apps > the app "
-           "that carries this token > Scopes, tick it and save. The token does not "
-           "change — nothing to update in oto, and nothing to fix in the call.")
+# Two homes for a pasted token since HubSpot stopped creating private apps (26/10/2026
+# for existing accounts): the SERVICE KEY (Development > Keys > Service keys, or Settings >
+# Integrations > Service Keys) for new connections, the legacy PRIVATE APP for the ones
+# made before. Both take the scope as a checkbox; nothing to fix in the call.
+_REMEDY = ("on the HubSpot side, add the scope to the key that carries this token: a "
+           "service key (Development > Keys > Service keys, or Settings > Integrations "
+           "> Service Keys) or, for an older connection, the private app (Settings > "
+           "Integrations > Private Apps > Scopes), then save. If HubSpot shows a new "
+           "key value, paste it again in oto (connector hubspot); nothing to fix in "
+           "the call.")
 
 
 def _refusal(message: str, **data) -> McpError:
@@ -308,12 +315,12 @@ def _upstream_refusal(e, message: str, *, retryable=None, **data):
 
 def _scope_to_tick(names: list[str], source: str, fam: Optional[str], *,
                    object_type=None, cause: str, note: str = "") -> McpError:
-    """The refusal that names the ONE scope to tick on the private app."""
+    """The refusal that names the ONE scope to tick on the key (service key or private app)."""
     pick = recommended(names, fam, object_type)
     which = f"`{pick}`" if pick else "the read scope of this object"
     target = f"object_type={object_type!r}" if object_type else f"family={fam!r}"
     return _refusal(
-        f"HubSpot refuses this call: the private app token lacks a scope "
+        f"HubSpot refuses this call: the token lacks a scope "
         f"(403 {cause}, {target}). Scope to add: {which}. {_REMEDY}{note}",
         reason="missing_scopes", status=403, family=fam, scope_to_add=pick,
         accepted_scopes=names, scopes_source=source, remedy=_REMEDY)
@@ -373,7 +380,7 @@ def translate(e, *, object_type=None, object_id=None, family=None,
             return _upstream_refusal(
                 e, f"HubSpot refuses the events API with this token (403): it asks for "
                 f"{named}, which is not in HubSpot's published scope list — there is "
-                "nothing known to tick on the private app, and `business-intelligence`, "
+                "nothing known to tick on the key, and `business-intelligence`, "
                 "the scope HubSpot's reference names, is not enough. Treat a contact's "
                 "page views as not readable with this token; its first page, last page "
                 "and last session stay readable as properties (op='contacts')." + words,
@@ -401,11 +408,12 @@ def translate(e, *, object_type=None, object_id=None, family=None,
             reason="forbidden", status=403, family="events")
     if code == 401:
         return _upstream_refusal(
-            e, "HubSpot rejects the token (401). The expected token is the private "
-            "app's ACCESS token (`pat-<region>-…`). A long base64 value starting with "
-            "`Ci…` is an OAuth refresh token: HubSpot reads it as \"expired\" since "
-            "1970 — that means \"not an access token\", not \"too old\". Paste the "
-            "private app's access token in oto (connector hubspot).",
+            e, "HubSpot rejects the token (401). The expected token is a service key "
+            "or a private app's ACCESS token (both `pat-<region>-…`). A long base64 "
+            "value starting with `Ci…` is an OAuth refresh token: HubSpot reads it as "
+            "\"expired\" since 1970 — that means \"not an access token\", not \"too "
+            "old\". Paste the service key (or the private app's access token) in oto "
+            "(connector hubspot).",
             reason="unauthorized", status=401)
     if code == 404:
         ident = f" {object_id!r}" if object_id else ""

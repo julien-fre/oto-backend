@@ -1,6 +1,8 @@
-## prerequisite — your hubspot token (private app)
+## prerequisite — your hubspot token (service key)
 
-hubspot authenticates via a **private app token**. in your [hubspot account settings](https://app.hubspot.com), go to **integrations → private apps**, create a private app and tick the scopes (names as hubspot's [scope list](https://developers.hubspot.com/docs/apps/legacy-apps/authentication/scopes) spells them — each comes as `.read` and `.write`):
+hubspot authenticates via a **service key**. ⚠️ hubspot no longer lets you create *private apps* (switched off on 28/09/2026 for new accounts, 26/10/2026 for existing ones — [changelog](https://developers.hubspot.com/changelog/legacy-private-app-creation-sunset)); a private app made before keeps working, and its token is pasted the same way.
+
+in [hubspot](https://app.hubspot.com), open **development → keys → service keys** (on some accounts: **settings → integrations → service keys**), click **create service key** (super admin or developer tools access needed), name it and tick the scopes (names as hubspot's [scope list](https://developers.hubspot.com/docs/apps/legacy-apps/authentication/scopes) spells them — each comes as `.read` and `.write`):
 - `crm.objects.contacts.read` + `.write`, `crm.objects.companies.read` + `.write`, `crm.objects.deals.read` + `.write` — the crm itself (deal pipelines and stages come with `crm.objects.deals.read`)
 - `crm.objects.tickets.read` + `.write` — tickets. **and** `tickets` if your scope list still shows it: ticket *pipelines* and ticket *properties* still ask for that older scope
 - `crm.schemas.contacts.read`, `crm.schemas.companies.read`, `crm.schemas.deals.read` (+ `crm.schemas.tickets.read` if offered) — to discover an object's properties
@@ -10,19 +12,19 @@ hubspot authenticates via a **private app token**. in your [hubspot account sett
 
 there is no `crm.objects.tickets` scope (without `.read`/`.write`): if a guide told you to tick it, tick `crm.objects.tickets.read` instead.
 
-⚠️ if your private app predates the lists tools, it only has the `crm.objects.*` scopes and `hubspot_list` will answer **403**. that does not mean your key is wrong: reopen the private app and add the scope, the token does not change.
+⚠️ if your key (or private app) predates the lists tools, it only has the `crm.objects.*` scopes and `hubspot_list` will answer **403**. that does not mean your key is wrong: reopen it in hubspot and add the scope. a private app's token does not change; if hubspot shows a service key with a new value, paste it again.
 
 **test the connection** tells you more than "it authenticates": it reads, family by family, which scopes the token holds (`connected, tickets scope missing`). a missing family does not turn the connection red — the rest keeps working. it also names the portal the key reads (`identity`: portal id, region, account type).
 
-⚠️ the expected token is the private app's **access token** (form `pat-<region>-…`). if you paste something else — typically an oauth *refresh token*, a long base64 blob starting with `Ci…` — hubspot answers **401 `EXPIRED_AUTHENTICATION`** with a misleading message along the lines of "expired 20697 day(s) ago" and an expiry date of january 1st, 1970. nothing expired: a refresh token has no expiry field, so sent as a bearer it is read as expired since the epoch. that message means "this is not an access token", not "your token got old".
+⚠️ the expected token is the service key's value, or a private app's **access token** (both of the form `pat-<region>-…`). if you paste something else — typically an oauth *refresh token*, a long base64 blob starting with `Ci…` — hubspot answers **401 `EXPIRED_AUTHENTICATION`** with a misleading message along the lines of "expired 20697 day(s) ago" and an expiry date of january 1st, 1970. nothing expired: a refresh token has no expiry field, so sent as a bearer it is read as expired since the epoch. that message means "this is not an access token", not "your token got old".
 
-- copy the generated **access token**
+- **show** ▸ **copy** the key's value
 - paste it into oto on your account (`/account`), connector **hubspot**
 - byo only: your key or your org's shared one, no platform key
 
 ### troubleshooting — 403 `MISSING_SCOPES` on one object type
 
-contacts and deals answer, but tickets (or lists, or pipelines) answer **403 `MISSING_SCOPES`**, with hubspot's message "the scope needed for this api call isn't available for public use". that message is misleading: the scope exists, it is just not ticked on your private app. the refusal oto returns names the scope to add — tick it in the private app's **scopes** tab and save. the token does not change, nothing to update in oto.
+contacts and deals answer, but tickets (or lists, or pipelines) answer **403 `MISSING_SCOPES`**, with hubspot's message "the scope needed for this api call isn't available for public use". that message is misleading: the scope exists, it is just not ticked on your key. the refusal oto returns names the scope to add — tick it on the service key (or in the private app's **scopes** tab) and save. nothing to fix in the call.
 
 ### troubleshooting — 400 `PROPERTY_DOESNT_EXIST` on a write
 
