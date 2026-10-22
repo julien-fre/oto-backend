@@ -1580,8 +1580,9 @@ contexte transmis, délimité et nommé comme donnée (`_instruction.transmise`)
 procédure du second agent fait foi, le premier ne la réécrit pas. Toute balise
 `handoff` du contexte perd son `<` (`&lt;/handoff>`) : un maillon ne ferme pas le cadre
 pour écrire au dehors. C'est le premier
-agent qui décide — lancer ou non, et quoi passer — selon ce que sa procédure lui dit :
-pas de graphe déclaré, une chaîne se lit dans les procédures.
+agent qui décide — lancer ou non, et quoi passer — mais il ne lance que les agents
+qu'un LIEN déclaré relie au sien (§Lier des agents, 22/10/2026 : avant, aucun graphe
+n'était déclaré et une chaîne ne se lisait que dans les procédures).
 
 La lignée se range dans la charge du travail lancé (`_chaine` : `parent_job`,
 `root_job`, `depth`), écrite par le SERVEUR seul (`enqueue_job(chaine=…)`, retirée
@@ -1624,6 +1625,51 @@ courriels entrants et passe la main à un agent qui en envoie ouvre une injectio
 prompt d'un agent à l'autre. Le `handoff` est délimité et nommé comme donnée, et la
 cible exige le droit de modifier — ce sont des freins, pas une garantie : n'enchaîne
 vers un agent qui agit au dehors qu'un agent dont les lectures sont sûres.
+
+**Lier des agents** (22/10/2026, `runner_trigger_links`, `db.runner_links`) : un lien se
+DÉCLARE — `oto_trigger op=link trigger_id=A to_trigger_id=B link_kind=…
+condition=…` —, par une PERSONNE qui peut modifier les deux agents (jamais depuis un
+agent hébergé : `links_human_only`, le motif de `platform_tools_human_only`). Deux
+genres :
+
+- **`starts`** — A peut lancer B en fin de run. Le lien est la PERMISSION : un run
+  hébergé de l'agent A qui appelle `run_now` vers un agent qu'aucun lien `starts` ne
+  relie à A est refusé (`chain_not_linked`) ; un travail sans agent lanceur (flotte,
+  enfilage à la main) garde la règle d'avant. Relié, A reçoit `oto_trigger` dans ses
+  outils (s'il a une liste) et, après son instruction, la consigne de relais
+  (`_instruction.relais`) : chaque cible, et la `condition` du lien — LA phrase que
+  l'écran dessine sur la flèche, la même que l'agent lit. C'est A qui juge la
+  condition ; ne pas lancer est un résultat, pas une panne. La pose refuse ce que
+  `run_now` refuserait plus tard : une boucle du même genre (`link_cycle`), une chaîne
+  de plus de `CHAINE_MAX` passages de main (`chain_too_deep`), plus de
+  `CHAINE_ENFANTS_MAX` cibles (`chain_too_wide`).
+- **`requires`** — B part à SON heure, mais seulement si le dernier run de A depuis
+  minuit (fuseau de B) a RÉUSSI (`done`). Sinon l'horloge consomme l'échéance sans rien
+  enfiler et la motive (`refused_requires`, sur la page de B) ; la suivante revérifie.
+  Un run de A qui tourne encore ne compte pas : on saute plutôt que de partir sur ce
+  qu'il n'a pas fini d'écrire. Le garde est dans l'horloge (`runner_tick.exigence_manquee`)
+  et non dans la procédure de B, qu'une édition peut appauvrir sans bruit. Il ne garde
+  que l'horloge : un `run_now` (une personne, ou un relais) part toujours, et un agent
+  webhook n'exige rien. Un agent exigé EN PAUSE est ignoré : la pause est un choix, le
+  garde existe pour les échecs — sinon l'agent qui l'exige serait sauté chaque jour sans
+  fin. Une lecture des liens qui échoue laisse partir, comme les autres gardes du tick.
+
+Les deux bouts d'un lien sont de la même org, garanti par la TABLE (`poser` refuse
+sinon), pas seulement par la capacité. La consigne de relais nomme la cible (son
+libellé) : un lien posé quand quelqu'un pouvait modifier les deux agents continue de
+la nommer après un départage ; le LANCEMENT, lui, revérifie le droit de modifier la
+cible à chaque `run_now` (`_acces_agent.exiger` sur le porteur du jeton).
+
+`op=links` rend les liens dont l'appelant voit les deux agents ; `op=graph` y ajoute les
+chaînes de la semaine (`db.runner_links.chaines_recentes`, plus les runs des agents qui
+ont des liens `starts`), regroupées par `root_job`, avec un maillon `skipped` pour chaque
+lien qu'un run réussi n'a pas suivi, et les échéances sautées faute d'exigence
+(`skipped`, lues dans les livraisons `refused_requires` : la page d'un agent planifié ne
+lit pas ses livraisons) — c'est ce que l'écran des agents dessine. Un lien
+disparaît avec l'un de ses agents (`ON DELETE CASCADE`). ⚠️ `dernier_run_depuis` et les
+lectures de chaînes parcourent les travaux de l'org (aucun index ne sert
+`payload->>'trigger_id'`) : lus une fois par échéance d'un agent qui exige, et à
+l'ouverture de l'écran.
 
 `queue_pending`/`queue_held` comptent **exactement le prédicat de `clear_queue`**
 (`status IN ('pending','held')` pour ce déclencheur, dans cette org) — le nombre

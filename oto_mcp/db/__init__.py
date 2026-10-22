@@ -84,6 +84,9 @@ from . import (
     # NON aplati : `ACTIVE`/`MAX_ERRORS` sont trop communs pour la surface plate.
     # Les appelants écrivent `from ..db import jev_jobs as db_jev`.
     jev_jobs,
+    # NON aplati : `poser`/`retirer`/`existe` sont trop communs pour la surface plate.
+    # Les liens entre agents — `db.runner_links.<fn>`.
+    runner_links,
 )
 
 # Ré-export plat (publics + privés à un underscore). Les noms dunder restent au

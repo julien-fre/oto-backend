@@ -17,6 +17,7 @@ import asyncio
 import datetime
 import logging
 import os
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
@@ -62,12 +63,16 @@ def next_due(expr: str, tz: str,
     return croniter(expr, base).get_next(datetime.datetime)
 
 
-def _occurrence_sautee(t: dict, issue: str = db.REFUSE_SUSPENDED) -> None:
+def _occurrence_sautee(t: dict, issue: str = db.REFUSE_SUSPENDED,
+                       exige: Optional[int] = None) -> None:
     """Trace d'une échéance consommée sans rien enfiler — org suspendue, procédure
-    archivée, ou agent sans modèle : un journal, et une livraison `refused_*` (sans
-    créneau) visible sur la page de l'agent, comme pour un webhook refusé."""
+    archivée, agent sans modèle, ou agent exigé sans succès du jour : un journal, et une
+    livraison `refused_*` (sans créneau) visible sur la page de l'agent, comme pour un
+    webhook refusé."""
     if issue == db.REFUSE_PROCEDURE_ARCHIVED:
         cause = "procédure archivée"
+    elif issue == db.REFUSE_REQUIRES:
+        cause = f"l'agent {exige} qu'il exige n'a pas réussi aujourd'hui"
     elif issue == db.REFUSE_NO_MODEL:
         cause = runner_models.motif_sans_famille(t.get("model"))
     else:
@@ -78,7 +83,46 @@ def _occurrence_sautee(t: dict, issue: str = db.REFUSE_SUSPENDED) -> None:
         db.enregistrer(conn, t["id"], t["org_id"], issue, source="schedule")
 
 
-def charge_du_declencheur(t: dict, echeance, origine: str = "planifié") -> dict:
+def exigence_manquee(t: dict, maintenant: Optional[datetime.datetime] = None) -> Optional[int]:
+    """L'agent que `t` EXIGE (lien `requires`) et dont le dernier run du jour n'a pas
+    réussi — None quand toutes ses exigences sont tenues, ou qu'il n'en a aucune.
+
+    « Du jour » = depuis minuit dans le fuseau de `t` : c'est sa journée à lui qu'on
+    garde (un 09:00 Paris exige le 07:30 Paris de la même matinée). Un run de l'autre
+    qui TOURNE encore ne compte pas comme une réussite : on saute plutôt que de partir
+    sur une capacité qui n'est pas encore écrite. Un agent exigé en PAUSE est ignoré."""
+    liens = db.runner_links.vers_l_agent(t["org_id"], t["id"], db.runner_links.EXIGE)
+    if not liens:
+        return None
+    zone = ZoneInfo(t.get("tz") or "UTC")
+    minuit = (maintenant or datetime.datetime.now(datetime.timezone.utc)).astimezone(zone) \
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+    for lien in liens:
+        # Un agent exigé EN PAUSE n'exige plus rien : la pause est un choix, le garde
+        # existe pour les échecs. Sinon l'agent qui l'exige serait sauté chaque jour,
+        # sans fin, sur la foi d'un agent que quelqu'un a éteint exprès.
+        if lien.get("from_enabled") is False:
+            continue
+        dernier = db.runner_links.dernier_run_depuis(t["org_id"], lien["from_trigger_id"], minuit)
+        if not dernier or dernier["status"] != "done":
+            return int(lien["from_trigger_id"])
+    return None
+
+
+def cibles_du_relais(t: dict) -> list[dict]:
+    """Les agents que `t` peut lancer (liens `starts` qui partent de lui), pour son
+    instruction (`_instruction.relais`). Une lecture qui échoue rend [] : l'agent part
+    alors sans la consigne de relais, ce qui ne lance rien — jamais l'inverse."""
+    try:
+        return db.runner_links.depuis_l_agent(t["org_id"], t["id"], db.runner_links.DEMARRE)
+    except Exception as e:  # noqa: BLE001 — une consigne manquée ne lance rien
+        log.warning("déclencheur %s : liens de relais illisibles (%s) — part sans eux",
+                    t.get("id"), e)
+        return []
+
+
+def charge_du_declencheur(t: dict, echeance, origine: str = "planifié",
+                          relais: Optional[list[dict]] = None) -> dict:
     """La charge du travail `start` d'une occurrence de `t` — UNE définition pour
     l'horloge (`_tick`) et le lancement à la demande (`runner.triggers op=run_now`).
     Un run lancé à la main et un run lancé par l'horloge doivent être le MÊME run :
@@ -86,11 +130,19 @@ def charge_du_declencheur(t: dict, echeance, origine: str = "planifié") -> dict
 
     `echeance` = le moment que l'occurrence représente (l'échéance consommée pour
     l'horloge, maintenant pour un lancement à la main). Les champs None restent :
-    l'appelant les retire à l'enfilage."""
+    l'appelant les retire à l'enfilage.
+
+    `relais` = les agents que `t` peut lancer (`cibles_du_relais`) : la consigne s'ajoute
+    à l'instruction et `oto_trigger` rejoint ses outils — un lien déclaré par quelqu'un
+    qui peut modifier les deux agents vaut permission d'appeler `run_now` vers eux, et
+    vers eux seuls (`chain_not_linked`)."""
+    outils = list(t.get("tools") or [])
+    if relais and outils and "oto_trigger" not in outils:
+        outils.append("oto_trigger")
     return {
         "procedure": t["procedure"],
         "project_id": t["project_id"],
-        "tools": t.get("tools") or [],
+        "tools": outils,
         # ⚠️ DÉRIVÉE quand le déclencheur n'en porte pas. Sans cette ligne
         # le travail part sans instruction de départ, et le worker le refuse
         # — il exécute une instruction, il n'en compose pas (_instruction.py,
@@ -111,9 +163,9 @@ def charge_du_declencheur(t: dict, echeance, origine: str = "planifié") -> dict
         #
         # Et l'occurrence se DATE (`horodatee`) : un agent hébergé n'a pas
         # d'horloge, il apprend ici quel jour et quelle heure il représente.
-        "input": _instruction.horodatee(
+        "input": _instruction.relais(_instruction.horodatee(
             t.get("input") or _instruction.derivee(t["procedure"]),
-            echeance, t["tz"]),
+            echeance, t["tz"]), relais or []),
         "label": t.get("label") or f"{origine} — {t['procedure']}",
         "max_steps": t.get("max_steps"),
         # Les limites du run déclarées sur l'agent — seulement si déclarées.
@@ -168,7 +220,18 @@ def _tick() -> int:
         if runner_models.motif_sans_famille(t.get("model")):
             _occurrence_sautee(t, db.REFUSE_NO_MODEL)
             continue
-        payload = charge_du_declencheur(t, t["next_due"])
+        # EXIGE un autre agent (lien `requires`) dont le dernier run du jour n'a pas
+        # réussi : même trace qu'une procédure archivée, avec son motif. Une lecture
+        # qui échoue laisse partir le travail, comme les deux gardes ci-dessus.
+        try:
+            exige = exigence_manquee(t)
+        except Exception as e:  # noqa: BLE001 — voir ci-dessus
+            log.warning("déclencheur %s : exigences illisibles (%s)", t["id"], e)
+            exige = None
+        if exige is not None:
+            _occurrence_sautee(t, db.REFUSE_REQUIRES, exige=exige)
+            continue
+        payload = charge_du_declencheur(t, t["next_due"], relais=cibles_du_relais(t))
         # ⚠️ PÉRIMER AVANT D'ENFILER. Ce qui restait en attente pour ce
         # déclencheur n'a pas été pris dans son cycle : une veille quotidienne
         # exécutée treize jours plus tard ne rend pas un résultat en retard, elle

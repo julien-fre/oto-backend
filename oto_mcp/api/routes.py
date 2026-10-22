@@ -160,6 +160,7 @@ _READ_OPS = frozenset({
     "deliveries", "versions", "read", "audience", "journal", "optouts",
     "shares",   # avec qui un agent est partagé (`runner.triggers`)
     "summary",  # ce que la page Agents trace, par agent (`runner.jobs`)
+    "links", "graph",  # les liens entre agents, et les chaînes (`runner.triggers`)
 })
 
 

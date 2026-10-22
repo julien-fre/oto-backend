@@ -80,6 +80,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.usage.LIMITE_REFUS_JOUR,  # palmarès quotidien des refus des limiteurs (#1232)
     schema.connectors.LOAN_EVENTS,   # journal des prêts de compte (pose et retrait)
     schema.credits.CREDITS,          # budget d'unités : barème, soldes, réservations, mouvements
+    schema.runs.AGENT_LINKS,         # liens entre agents : qui lance qui, qui exige qui
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

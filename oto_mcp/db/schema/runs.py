@@ -702,3 +702,33 @@ CREATE TABLE IF NOT EXISTS user_model_subscription_orgs (
     PRIMARY KEY (sub, famille, org_id)
 );
 """
+
+# Les LIENS entre agents (22/10/2026) — docs/runner-et-automatisations.md §Lier des agents
+AGENT_LINKS = """
+-- Ce qu'un agent fait à un autre, DÉCLARÉ par quelqu'un qui peut modifier les deux :
+--   `starts`   — `from` passe la main à `to` en fin de run (`run_now` + `handoff`) ;
+--                un run hébergé ne lance QUE les agents auxquels un tel lien le relie.
+--   `requires` — `to` ne part à son heure que si le dernier run de `from` du jour
+--                (fuseau de `to`) a réussi ; sinon l'occurrence est sautée et motivée
+--                (`refused_requires`, sur la page de l'agent).
+-- `condition` = la phrase de la flèche (« quand des acheteurs sont vérifiés ») : ce que
+-- l'écran dessine ET ce que l'agent `from` lit dans son instruction — une seule phrase.
+-- Les deux bouts disparaissent avec l'agent (ON DELETE CASCADE) : un lien vers un agent
+-- supprimé n'a plus rien à dire.
+CREATE TABLE IF NOT EXISTS runner_trigger_links (
+    id BIGSERIAL PRIMARY KEY,
+    org_id BIGINT NOT NULL,
+    from_trigger_id BIGINT NOT NULL REFERENCES runner_triggers(id) ON DELETE CASCADE,
+    to_trigger_id BIGINT NOT NULL REFERENCES runner_triggers(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('starts', 'requires')),
+    condition TEXT,
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (from_trigger_id <> to_trigger_id),
+    UNIQUE (from_trigger_id, to_trigger_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_runner_trigger_links_org
+    ON runner_trigger_links(org_id);
+CREATE INDEX IF NOT EXISTS idx_runner_trigger_links_to
+    ON runner_trigger_links(to_trigger_id, kind);
+"""

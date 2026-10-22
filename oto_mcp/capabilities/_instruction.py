@@ -90,6 +90,31 @@ def transmise(instruction: str, contexte: str, depuis: Optional[str] = None) -> 
             f"{contexte}\n</handoff>")
 
 
+def relais(instruction: str, cibles: list[dict]) -> str:
+    """L'instruction d'un agent RELIÉ à d'autres par un lien `starts`, plus ce qu'il peut
+    lancer en fin de run.
+
+    Les liens sont DÉCLARÉS (`runner.triggers op=link`) : l'agent n'apprend pas d'une
+    procédure qu'il peut passer la main, la plateforme le lui dit, avec la phrase même
+    que l'écran dessine sur la flèche — une seule phrase pour les deux, qui ne peuvent
+    donc pas diverger. Sa procédure reste en tête et fait foi ; ceci ne dit que QUAND
+    et COMMENT appeler `run_now`. Sans cible, l'instruction est rendue intacte.
+
+    `cibles` : `[{to_trigger_id, to_label, to_procedure, condition}]`."""
+    if not cibles:
+        return instruction
+    lignes = []
+    for c in cibles:
+        nom = c.get("to_label") or c.get("to_procedure") or f"agent {c['to_trigger_id']}"
+        quand = c.get("condition") or "when your run produced something it needs"
+        lignes.append(f"- trigger_id {c['to_trigger_id']} (“{nom}”): start it {quand}.")
+    return (f"{instruction}\n\nWhen your run is over, you may start the agents linked "
+            "after this one — and only those. For each, decide from your result: if the "
+            "condition holds, call `oto_trigger` with `op=run_now`, its `trigger_id`, "
+            "and your result as `handoff`; if it does not, start nothing and say why in "
+            "your summary.\n" + "\n".join(lignes))
+
+
 def derivee(slug: str) -> str:
     """L'instruction MINIMALE : « lis l'objet, applique-le »."""
     return (f"Read the procedure `{slug}` and apply it. It is authoritative: "

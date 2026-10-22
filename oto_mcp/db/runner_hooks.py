@@ -59,6 +59,11 @@ REFUSE_PROCEDURE_ARCHIVED = "refused_procedure_archived"
 #: n'aurait pas de famille, donc aucun worker ne le servirait. Rien n'est enfilé
 #: (`runner_models.motif_sans_famille`, 21/10/2026).
 REFUSE_NO_MODEL = "refused_no_model"
+#: L'agent EXIGE le succès du jour d'un autre (`runner_trigger_links`, genre
+#: `requires`) et ne l'a pas : le dernier run de l'autre depuis minuit (fuseau de
+#: l'agent) a échoué, tourne encore, ou n'a pas eu lieu. L'échéance est consommée,
+#: rien n'est enfilé ; la suivante revérifie (22/10/2026).
+REFUSE_REQUIRES = "refused_requires"
 
 #: Ce qu'on rend du corps reçu quand on RELIT une livraison — borné parce qu'une
 #: page de livraisons en sert jusqu'à 200, et qu'un corps entier × 200 n'est plus

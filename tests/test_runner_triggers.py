@@ -44,6 +44,18 @@ def _cle_de_modele_non_exigee(monkeypatch):
 
 
 
+@pytest.fixture(autouse=True)
+def _agents_relies(monkeypatch):
+    """Ce fichier ne parle pas des LIENS entre agents — ils ont leur banc
+    (`test_liens_agents.py`). Tout lanceur y est lu relié à sa cible, aucun agent n'a de
+    relais ni d'exigence : sans cette doublure, chaque `run_now` hébergé et chaque tour
+    d'horloge iraient lire la vraie base."""
+    from oto_mcp import db
+    monkeypatch.setattr(db.runner_links, "existe", lambda *a: True)
+    monkeypatch.setattr(db.runner_links, "depuis_l_agent", lambda *a: [])
+    monkeypatch.setattr(db.runner_links, "vers_l_agent", lambda *a: [])
+
+
 def _ctx(sub="alexis", org_id=2):
     return ResolvedCtx(sub=sub, org_id=org_id)
 

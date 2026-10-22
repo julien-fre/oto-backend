@@ -78,6 +78,12 @@ CHAINE_ENFANTS_MAX = 5
 #: ⚠️ Une borne de QUANTITÉ, rien d'autre : elle ne dit pas QUI peut lancer QUI — elle
 #: compte les runs d'une lignée, quels que soient les agents et leur droit de se lancer.
 CHAINE_BUDGET = 20
+#: La phrase d'un lien entre agents (`op=link`) : ce que dit la flèche, et ce que lit
+#: l'agent qui passe la main — une condition, pas une procédure.
+CONDITION_MAX = 300
+#: Sur combien de jours `op=graph` relit les chaînes : la semaine qu'un écran montre.
+_GRAPHE_JOURS = 7
+_GRAPHE_CHAINES_MAX = 20
 
 
 class TriggerInput(BaseModel):
@@ -121,7 +127,12 @@ class TriggerInput(BaseModel):
                 # l'inscrit lui-même chez la source, avec la clé de la source dans
                 # l'org — il ne passe par personne (`_source_du_hook`). Le débrancher
                 # retire ces inscriptions chez la source (20/10/2026).
-                "connect_source", "disconnect_source"]
+                "connect_source", "disconnect_source",
+                # RELIER deux agents (22/10/2026) : `starts` (l'un lance l'autre en fin de
+                # run, et seulement s'ils sont reliés) ou `requires` (l'un ne part à son
+                # heure que si l'autre a réussi aujourd'hui). `links` les liste, `graph`
+                # y ajoute les chaînes de la semaine — ce que l'écran des agents dessine.
+                "link", "unlink", "links", "graph"]
     trigger_id: Optional[int] = None
     trigger_ids: Optional[list[int]] = Field(None, description=(
         f"update, IN BULK (≤ {_LOT_MAX}): file these agents under `folder` in one call — "
@@ -148,6 +159,20 @@ class TriggerInput(BaseModel):
         "run_now only: context handed to the run you start — typically your own "
         "result, so the next agent of a chain works from it. Appended to that agent's "
         f"instruction as data, never replacing it (≤ {HANDOFF_MAX} characters)."))
+    #: `link` : l'autre bout, le genre, la phrase ; `unlink` : le lien retiré.
+    to_trigger_id: Optional[int] = Field(default=None, description=(
+        "link only: the agent at the other end — `trigger_id` starts it (`starts`), or "
+        "must have succeeded today before it runs (`requires`)."))
+    link_kind: Optional[Literal["starts", "requires"]] = Field(default=None, description=(
+        "link only: `starts` = `trigger_id` may start `to_trigger_id` with `run_now` at "
+        "the end of its run (a hosted run starts ONLY linked agents); `requires` = "
+        "`to_trigger_id` runs at its own time only if `trigger_id`'s last run today "
+        "succeeded, else that occurrence is skipped (`refused_requires`)."))
+    condition: Optional[str] = Field(default=None, max_length=CONDITION_MAX, description=(
+        "link only: the sentence on the arrow — for `starts`, WHEN to start the next "
+        "agent (\"when buyers are verified\"); the starting agent reads it in its "
+        f"instruction (≤ {CONDITION_MAX} characters)."))
+    link_id: Optional[int] = Field(default=None, description="unlink only: the link removed.")
     label: Optional[str] = None
     folder: Optional[str] = Field(default=None, description=(
         "update: the folder the agent is shown under in lists — a free label "
@@ -460,7 +485,8 @@ class Delivery(BaseModel):
     #: `queued` | `delayed` (lissé) | `refused_paused` | `refused_secret` |
     #: `refused_too_large` | `refused_stale` (signature valide, horodatage hors
     #: fenêtre — un rejeu ou une horloge dérivée) | `refused_no_model` (l'agent ne
-    #: déclare aucun modèle : rien n'est enfilé). Un refus garde son MOTIF : c'est lui qui rend une
+    #: déclare aucun modèle : rien n'est enfilé) | `refused_requires` (un agent qu'il
+    #: exige n'a pas réussi aujourd'hui : l'échéance est sautée). Un refus garde son MOTIF : c'est lui qui rend une
     #: source mal branchée réparable plutôt que mystérieuse.
     #: ⚠️ Figé à la RÉCEPTION : `queued` = « acceptée, travail enfilé », jamais
     #: « encore en attente ». Ce que le travail est devenu depuis, c'est `job_status`.
@@ -511,6 +537,19 @@ class BulkFailure(BaseModel):
 
 class TriggerOut(BaseModel):
     trigger: Optional[Trigger] = None
+    #: `link` / `unlink` : le lien posé ou retiré ; `links` / `graph` : ceux de l'org
+    #: que l'appelant voit (les deux agents visibles). `{id, from_trigger_id,
+    #: to_trigger_id, kind, condition, created_by, created_at}`.
+    link: Optional[dict] = None
+    links: Optional[list[dict]] = None
+    #: `graph` seulement : les chaînes de la semaine, la plus récente d'abord —
+    #: `{root_job, started_at, steps: [{job_id, trigger_id, status, depth, parent_job,
+    #: due_at, finished_at}]}`. Un maillon `skipped` est un lien `starts` que le run
+    #: n'a pas suivi (il a jugé la condition fausse) : `job_id` y est None.
+    chains: Optional[list[dict]] = None
+    #: `graph` seulement : les échéances sautées de la semaine faute d'exigence tenue
+    #: (`refused_requires`) — `{trigger_id, at}`, la plus récente d'abord.
+    skipped: Optional[list[dict]] = None
     #: Le reçu d'un rangement EN LOT (`trigger_ids`) — léger, jamais N agents.
     total: Optional[int] = None
     succeeded: Optional[int] = None
@@ -915,7 +954,8 @@ def _maillon_suivant(org_id: int, trigger_id: int) -> Optional[dict]:
     lignée se lit dans SA charge en base — jamais un argument de l'appel : un agent qui
     déclarerait sa propre profondeur désarmerait la borne.
 
-    ⚠️ Cinq refus, avant tout enfilage : relancer SON PROPRE agent (`chain_self` — une
+    ⚠️ Six refus, avant tout enfilage — dont celui d'un agent qu'aucun lien `starts`
+    ne relie au lanceur (`chain_not_linked`). Les cinq autres : relancer SON PROPRE agent (`chain_self` — une
     boucle immédiate, qui n'attendrait même pas la borne), dépasser `CHAINE_MAX`
     maillons après le départ (`chain_too_deep` — la boucle par un tiers, A → B → A ; le
     départ est à la profondeur 0, la chaîne compte donc `CHAINE_MAX + 1` agents),
@@ -935,6 +975,16 @@ def _maillon_suivant(org_id: int, trigger_id: int) -> Optional[dict]:
         raise AuthzDenied(400, "chain_self",
                           "un agent hébergé ne relance pas son propre agent : la "
                           "prochaine occurrence passe par son horloge.")
+    # Le lien est la PERMISSION (22/10/2026) : un run hébergé d'un agent ne lance que
+    # les agents auxquels un lien `starts` le relie. Un travail sans agent (une flotte,
+    # un enfilage à la main) n'a pas de lien à montrer : il garde la règle d'avant.
+    de = parent.get("trigger_id")
+    if de is not None and not db.runner_links.existe(org_id, int(de), int(trigger_id),
+                                                      db.runner_links.DEMARRE):
+        raise AuthzDenied(400, "chain_not_linked",
+                          f"l'agent {de} n'est pas relié à l'agent {trigger_id} : un lien "
+                          "`starts` (`op=link`), posé par quelqu'un qui peut modifier les "
+                          "deux, est ce qui permet à l'un de lancer l'autre.")
     enfants = db.enfants_du_travail(v.job_id, org_id)
     if str(trigger_id) in enfants:
         raise AuthzDenied(400, "chain_already_started",
@@ -963,6 +1013,161 @@ def _maillon_suivant(org_id: int, trigger_id: int) -> Optional[dict]:
             "parent_label": parent.get("label") or parent.get("procedure")}
 
 
+def _lien_servi(l: dict) -> dict:
+    return {**{k: l[k] for k in ("id", "from_trigger_id", "to_trigger_id", "kind",
+                                 "condition", "created_by")},
+            "created_at": str(l["created_at"]) if l.get("created_at") else None}
+
+
+def _agents_visibles(ctx: ResolvedCtx) -> set[int]:
+    lus = db.list_triggers(ctx.org_id)
+    niveaux = _acces_agent.niveaux(ctx.sub, ctx.org_id, lus)
+    return {int(t["id"]) for t in lus if niveaux[int(t["id"])]}
+
+
+def _plus_long(arcs: list[tuple[int, int]], depart: int, sens: int) -> int:
+    """Le plus long chemin (en arcs) qui part de `depart` vers l'aval (`sens=1`) ou
+    l'amont (`sens=-1`). Les arcs posés sont sans boucle (`link_cycle`), et `vus` borne
+    quand même la marche si une base en portait une."""
+    def marche(n: int, vus: frozenset) -> int:
+        suivants = [b if sens > 0 else a for a, b in arcs if (a if sens > 0 else b) == n]
+        return max((1 + marche(m, vus | {m}) for m in suivants if m not in vus), default=0)
+    return marche(depart, frozenset({depart}))
+
+
+def _atteint(arcs: list[tuple[int, int]], depuis: int, cible: int) -> bool:
+    pile, vus = [depuis], set()
+    while pile:
+        n = pile.pop()
+        if n == cible:
+            return True
+        if n in vus:
+            continue
+        vus.add(n)
+        pile.extend(b for a, b in arcs if a == n)
+    return False
+
+
+def _chaines(ctx: ResolvedCtx, visibles: set[int], liens: list[dict]) -> list[dict]:
+    """Les chaînes de la semaine : chaque maillon enchaîné et sa racine, regroupés par
+    racine — plus, pour chaque run réussi d'un agent qui a des liens `starts`, les liens
+    qu'il n'a PAS suivis (`skipped`) : c'est le run qui juge la condition, l'écran doit
+    pouvoir dire qu'il l'a jugée fausse."""
+    depuis = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(days=_GRAPHE_JOURS))
+    lanceurs = {int(l["from_trigger_id"]) for l in liens if l["kind"] == "starts"}
+    rangs = list(db.runner_links.chaines_recentes(ctx.org_id, depuis))
+    if lanceurs:
+        rangs += db.runner_links.travaux_des_agents(ctx.org_id, sorted(lanceurs), depuis)
+    par_id: dict[int, dict] = {}
+    for r in rangs:
+        par_id.setdefault(int(r["id"]), r)
+    chaines: dict[int, list[dict]] = {}
+    for r in par_id.values():
+        if r.get("trigger_id") is None or int(r["trigger_id"]) not in visibles:
+            continue
+        racine = int(r["root_job"]) if r.get("root_job") is not None else int(r["id"])
+        chaines.setdefault(racine, []).append({
+            "job_id": int(r["id"]), "trigger_id": int(r["trigger_id"]),
+            "status": r["status"], "depth": int(r.get("depth") or 0),
+            "parent_job": int(r["parent_job"]) if r.get("parent_job") is not None else None,
+            "due_at": str(r["due_at"]) if r.get("due_at") else None,
+            "finished_at": str(r["finished_at"]) if r.get("finished_at") else None})
+    sortants: dict[int, list[int]] = {}
+    for l in liens:
+        if l["kind"] == "starts" and int(l["to_trigger_id"]) in visibles:
+            sortants.setdefault(int(l["from_trigger_id"]), []).append(int(l["to_trigger_id"]))
+    sortie = []
+    for racine, maillons in chaines.items():
+        for m in list(maillons):
+            if m["status"] != "done":
+                continue
+            lances = {x["trigger_id"] for x in maillons if x["parent_job"] == m["job_id"]}
+            for cible in sortants.get(m["trigger_id"], []):
+                if cible not in lances:
+                    maillons.append({"job_id": None, "trigger_id": cible, "status": "skipped",
+                                     "depth": m["depth"] + 1, "parent_job": m["job_id"],
+                                     "due_at": None, "finished_at": None})
+        # Une « chaîne » d'un seul run qui n'avait rien à suivre n'en est pas une.
+        if len(maillons) < 2:
+            continue
+        maillons.sort(key=lambda x: (x["depth"], x["due_at"] or ""))
+        sortie.append({"root_job": racine, "started_at": maillons[0]["due_at"],
+                       "steps": maillons})
+    sortie.sort(key=lambda c: c["started_at"] or "", reverse=True)
+    return sortie[:_GRAPHE_CHAINES_MAX]
+
+
+def _liens(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
+    """`link` / `unlink` / `links` / `graph` — les liens entre agents
+    (docs/runner-et-automatisations.md §Lier des agents)."""
+    if inp.op in ("links", "graph"):
+        visibles = _agents_visibles(ctx)
+        liens = [l for l in db.runner_links.de_l_org(ctx.org_id)
+                 if int(l["from_trigger_id"]) in visibles and int(l["to_trigger_id"]) in visibles]
+        rep: dict = {"links": [_lien_servi(l) for l in liens]}
+        if inp.op == "graph":
+            rep["chains"] = _chaines(ctx, visibles, liens)
+            depuis = (datetime.datetime.now(datetime.timezone.utc)
+                      - datetime.timedelta(days=_GRAPHE_JOURS))
+            rep["skipped"] = [{"trigger_id": int(r["trigger_id"]), "at": str(r["at"])}
+                              for r in db.runner_links.sauts_par_exigence(ctx.org_id, depuis)
+                              if int(r["trigger_id"]) in visibles]
+        return rep
+    # ⚠️ Un agent hébergé ne pose ni ne retire de lien : un lien est une PERMISSION
+    # (lancer un autre agent), et un agent qui lit des données tierces se l'accorderait
+    # sur une injection de prompt. Le motif de `platform_tools_human_only`.
+    if verrou_org.travail_de_la_requete() is not None:
+        raise AuthzDenied(403, "links_human_only",
+                          "un lien entre agents se pose ou se retire par une personne, "
+                          "jamais depuis un agent hébergé.")
+    if inp.op == "unlink":
+        if inp.link_id is None:
+            raise AuthzDenied(400, "missing_fields", "unlink exige `link_id`")
+        lien = db.runner_links.lire(ctx.org_id, inp.link_id)
+        if not lien:
+            raise AuthzDenied(404, "link_not_found", f"aucun lien {inp.link_id} ici.")
+        for bout in (lien["from_trigger_id"], lien["to_trigger_id"]):
+            _acces_agent.exiger(ctx, db.get_trigger(int(bout), ctx.org_id), _acces_agent.ECRIRE)
+        db.runner_links.retirer(ctx.org_id, inp.link_id)
+        return {"ok": True, "link": _lien_servi(lien)}
+
+    # link
+    if inp.trigger_id is None or inp.to_trigger_id is None or inp.link_kind is None:
+        raise AuthzDenied(400, "missing_fields",
+                          "link exige `trigger_id`, `to_trigger_id` et `link_kind`")
+    de, vers = int(inp.trigger_id), int(inp.to_trigger_id)
+    if de == vers:
+        raise AuthzDenied(400, "link_self", "un agent ne se relie pas à lui-même.")
+    # Modifier les DEUX : le lien change ce que fait `de` (il peut lancer) et ce qui
+    # arrive à `vers` (il peut être lancé, ou sauté) — le droit de `run_now` aussi.
+    for bout in (de, vers):
+        _acces_agent.exiger(ctx, db.get_trigger(bout, ctx.org_id), _acces_agent.ECRIRE)
+    arcs = [(int(l["from_trigger_id"]), int(l["to_trigger_id"]))
+            for l in db.runner_links.de_l_org(ctx.org_id)
+            if l["kind"] == inp.link_kind
+            and (int(l["from_trigger_id"]), int(l["to_trigger_id"])) != (de, vers)]
+    if _atteint(arcs, vers, de):
+        raise AuthzDenied(400, "link_cycle",
+                          f"l'agent {vers} mène déjà à l'agent {de} : ce lien fermerait une "
+                          "boucle.")
+    if inp.link_kind == "starts":
+        if sum(1 for a, _ in arcs if a == de) >= CHAINE_ENFANTS_MAX:
+            raise AuthzDenied(400, "chain_too_wide",
+                              f"l'agent {de} lance déjà {CHAINE_ENFANTS_MAX} agents — au plus "
+                              f"{CHAINE_ENFANTS_MAX} par run.")
+        longueur = _plus_long(arcs, de, -1) + 1 + _plus_long(arcs, vers, 1)
+        if longueur > CHAINE_MAX:
+            raise AuthzDenied(400, "chain_too_deep",
+                              f"cette chaîne compterait {longueur} passages de main — au plus "
+                              f"{CHAINE_MAX} : un run au-delà serait refusé.")
+    lien = db.runner_links.poser(ctx.org_id, de, vers, inp.link_kind,
+                                 (inp.condition or "").strip() or None, ctx.sub)
+    logger.info("lien %s : agent %s → agent %s (%s), par %s", lien["id"], de, vers,
+                inp.link_kind, ctx.sub)
+    return {"ok": True, "link": _lien_servi(lien)}
+
+
 def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     """TOUT le SQL de `runner.triggers`, en synchrone — `_triggers` l'exécute dans le
     threadpool. Rend les déclencheurs SANS leurs avertissements d'outils : ceux-là
@@ -979,6 +1184,12 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if inp.op in ("create", "update"):
         _limites_du_run.valider(inp.max_tokens, inp.max_run_seconds)
 
+    if inp.op in ("link", "unlink", "links", "graph"):
+        return _liens(ctx, inp)
+    for champ in ("to_trigger_id", "link_kind", "condition", "link_id"):
+        if getattr(inp, champ) is not None:
+            raise AuthzDenied(400, "link_fields_link_only",
+                              f"`{champ}` ne se passe qu'à `op=link`/`unlink`.")
     if inp.handoff is not None and inp.op != "run_now":
         raise AuthzDenied(400, "handoff_run_now_only",
                           "`handoff` ne se passe qu'à `op=run_now`.")
@@ -1310,7 +1521,8 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         charge = runner_tick.charge_du_declencheur(
             {**t, "tz": t.get("tz") or _TZ_DEFAUT},
             datetime.datetime.now(datetime.timezone.utc),
-            origine="enchaîné" if chaine else "à la demande")
+            origine="enchaîné" if chaine else "à la demande",
+            relais=runner_tick.cibles_du_relais({**t, "org_id": ctx.org_id}))
         if inp.handoff:
             charge["input"] = _instruction.transmise(
                 charge["input"], inp.handoff,
@@ -2012,6 +2224,17 @@ CAPABILITIES += [
                           "`create` sans `procedure`/`cron`/`tools`, ou une "
                           "opération sur une automatisation sans `trigger_id`"),
             DeclaredError(400, "bulk_unsupported", "`trigger_ids` sur un autre geste qu'`update`"),
+            DeclaredError(400, "link_fields_link_only",
+                          "`to_trigger_id`/`link_kind`/`condition`/`link_id` hors de "
+                          "`op=link`/`unlink`"),
+            DeclaredError(400, "link_self", "`link` d'un agent vers lui-même"),
+            DeclaredError(400, "link_cycle", "`link` qui fermerait une boucle du même genre"),
+            DeclaredError(403, "links_human_only",
+                          "`link`/`unlink` depuis un agent hébergé (jeton de délégation)"),
+            DeclaredError(404, "link_not_found", "`unlink` d'un lien inconnu dans cette org"),
+            DeclaredError(400, "chain_not_linked",
+                          "`run_now` depuis un agent hébergé vers un agent qu'aucun lien "
+                          "`starts` ne relie au sien"),
             DeclaredError(400, "ambiguous_target", "`trigger_id` et `trigger_ids` ensemble"),
             DeclaredError(400, "bulk_folder_only",
                           "`trigger_ids` sans `folder`, ou avec un autre champ que `folder`"),
@@ -2176,9 +2399,18 @@ CAPABILITIES += [
             "cannot relaunch itself (`chain_self`), starts each agent once per run "
             f"(`chain_already_started`), at most {CHAINE_ENFANTS_MAX} per run "
             f"(`chain_too_wide`); a chain stops after {CHAINE_MAX} links, i.e. "
-            f"{CHAINE_MAX + 1} agents counting the first (`chain_too_deep`), and "
-            f"starts at most {CHAINE_BUDGET} runs in all (`chain_budget_exhausted`)) / "
-            "take_over (org admin only, and "
+            f"{CHAINE_MAX + 1} agents counting the first (`chain_too_deep`), "
+            f"starts at most {CHAINE_BUDGET} runs in all (`chain_budget_exhausted`), "
+            "and it starts ONLY agents linked after its own by a "
+            "`starts` link (`chain_not_linked`); a linked agent gets `oto_trigger` and "
+            "the conditions in its instruction) / link (`trigger_id` → `to_trigger_id`, "
+            "`link_kind` `starts` = may start it with run_now, `condition` = when; "
+            "`requires` = `to_trigger_id` runs at its own time only if `trigger_id`'s "
+            "last run today succeeded, else that occurrence is skipped as "
+            "`refused_requires`; edit access on BOTH agents, people only, no loops) / "
+            "unlink (`link_id`) / links (the org's links you can see) / graph (links + "
+            "the week's chains, each step's status, `skipped` = a `starts` link the run "
+            "chose not to follow) / take_over (org admin only, and "
             "only when the agent's owner is no longer a member of the org — "
             "`owner_still_member` otherwise: an agent is shared, never taken. You "
             "become the agent's owner — it then acts as YOU and, on a personal "
