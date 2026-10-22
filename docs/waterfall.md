@@ -286,7 +286,10 @@ Mesuré sur une vraie société (~360 personnes en base) :
   appel).
 - **Une fiche pèse ~60 Ko** : `experiences` (descriptions et technos de chaque société) en
   fait ~90 %. `excludes` retire des champs de premier niveau (`education`, `skills`,
-  `languages`, `interests`, `summary`…) mais **ni `experiences` ni un chemin imbriqué**.
+  `languages`, `interests`, `summary`…), jamais un chemin imbriqué. ⚠️ **Ne jamais y mettre
+  `experiences`** : la liste n'est pas retirée mais TRONQUÉE (16 postes servis sur 26,
+  mesuré le 22/10/2026 — le poste actuel d'un dirigeant manquait), et c'est d'elle que se
+  lit le titre.
 - **Le titre se lit sur le poste ACTUEL** (sans `date_to`) dans la société demandée, pas sur
   le `headline` (un « … @ Autre Société » chez quelqu'un toujours en poste, mesuré). Les
   `roles` sont le filtre `currentTitle` de lemlist (mots dans le désordre, titre normalisé :

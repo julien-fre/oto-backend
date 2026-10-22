@@ -106,9 +106,10 @@ def _company_slug(url: Optional[str]) -> Optional[str]:
     return m.group(1).lower() if m else None
 
 
-#: What lemlist drops from each record when asked (`excludes`): parts no step reads. It
-#: does NOT drop `experiences` (~90 % of a record: the companies' descriptions and tech) —
-#: nor any nested path, measured.
+#: What lemlist drops from each record when asked (`excludes`): parts no step reads — never
+#: a nested path. ⚠️ Never `experiences` (~90 % of a record): it is not dropped but
+#: TRUNCATED (16 of 26 positions served, measured — the current one missing), and the
+#: title is read from it.
 _LEMLIST_EXCLUDES = ["education", "skills", "languages", "interests", "summary",
                      "shorthand_name_list", "lead_logo_url"]
 
