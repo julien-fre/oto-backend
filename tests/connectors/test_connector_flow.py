@@ -69,6 +69,9 @@ def test_les_connecteurs_a_flux_sont_ceux_quon_attend():
         # `ubersuggest` (2026-10-08) : connexion Ubersuggest de la personne (client
         # OAuth public enregistré dynamiquement), même patron.
         "ubersuggest",
+        # `slack` (2026-10-22) : l'app Slack publiée par l'instance, en un clic (OAuth v2),
+        # déclarée dans `auth/slack.py` — à côté du formulaire, pas à sa place.
+        "slack",
         # Le compte `unipile` GARDE son flux multi-canal (code de production) ; le
         # split du 2026-08-28 ajoute un flux par canal, sans paramètre — le canal
         # est dérivé du connecteur au lieu d'être choisi dans une liste.
