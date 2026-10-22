@@ -29,7 +29,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import access, session_org, tool_alias, tool_registry
 from ..db import recipes as db_recipes
 from ..functions import executor as bac
-from ..recipes import code, contrat, moteur
+from ..recipes import affichage, code, contrat, moteur
 from ._authz import BY_OP, ORG_MEMBER_OF, ORG_MEMBER_OPT, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -441,6 +441,10 @@ class RecipeStepDisplay(BaseModel):
 class RecipeDisplay(BaseModel):
     steps: list[RecipeStepDisplay]
     saves: Optional[str] = None
+    source: Literal["described", "derived"] = Field(description=(
+        "`described`: written on the recipe (`op=describe`), credits included — an "
+        "ESTIMATE, not measured. `derived`: read from the body of the version in "
+        "service (a declarative recipe), so it follows what runs; no credits."))
 
 
 class OrgRecipe(BaseModel):
@@ -454,16 +458,34 @@ class OrgRecipe(BaseModel):
     latest_version: Optional[int] = None
     updated_at: Optional[str] = None
     display: Optional[RecipeDisplay] = Field(default=None, description=(
-        "What a process page draws where it runs this recipe (`oto_recipe op=describe`); "
-        "null when none was written."))
+        "What a process page draws where it runs this recipe: the steps written by "
+        "`oto_recipe op=describe`, else those read from a declarative recipe's body; "
+        "null for a code recipe with none written."))
 
 
 class OrgRecipes(BaseModel):
     recipes: list[OrgRecipe]
 
 
+def _affichage_de(fiche: dict) -> Optional[dict]:
+    """Ce que la page dessine : l'affichage ÉCRIT s'il y en a un, sinon les étapes LUES
+    dans le corps de la version en service (ou la dernière) d'une recette déclarative.
+    Le corps ne sort jamais d'ici."""
+    if fiche.get("display"):
+        return {**fiche["display"], "source": "described"}
+    numero = fiche["published_version"] or fiche["latest_version"]
+    version = db_recipes.get_version(fiche["id"], numero) if numero else None
+    lues = affichage.etapes_lues(version["body"]) if version else None
+    return {**lues, "source": "derived"} if lues else None
+
+
+def _lister_org(org_id: int) -> list[dict]:
+    return [{**f, "display": _affichage_de(f)}
+            for f in db_recipes.list_recipes([("org", str(org_id))])]
+
+
 async def _org_recipes(ctx: ResolvedCtx, inp: OrgRecipesInput) -> dict:
-    fiches = await run_in_threadpool(db_recipes.list_recipes, [("org", str(inp.org_id))])
+    fiches = await run_in_threadpool(_lister_org, inp.org_id)
     return {"recipes": [{
         "slug": f["slug"], "title": f["title"], "description": f["description"] or "",
         "status": "published" if f["published_version"] else "proposed",

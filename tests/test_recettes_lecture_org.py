@@ -16,7 +16,12 @@ from oto_mcp.capabilities import recipes as cap
 from oto_mcp.capabilities._authz import ORG_MEMBER_OF
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 from oto_mcp.capabilities.registry import CAPABILITIES
-from oto_mcp.recipes import contrat
+from oto_mcp.recipes import affichage, contrat
+
+
+DECLARATIVE = {"tool": "acme_people", "source": {"pagination": {"type": "none"}},
+               "map": {"title": "profile.title"},
+               "key": {"column": "contact_key", "template": "{{item.id}}"}}
 
 
 def _fiche(slug: str, published: int | None, latest: int) -> dict:
@@ -37,6 +42,8 @@ def test_liste_les_recettes_de_l_org_avec_leur_statut(monkeypatch):
                 _fiche("draft-one", None, 1)]
 
     monkeypatch.setattr(cap.db_recipes, "list_recipes", list_recipes)
+    monkeypatch.setattr(cap.db_recipes, "get_version",
+                        lambda rid, v: {"version": v, "body": DECLARATIVE})
     out = asyncio.run(cap._org_recipes(ResolvedCtx(sub="u", org_id=7, role="member"),
                                        cap.OrgRecipesInput(org_id=7)))
     assert vus == [[("org", "7")]]
@@ -46,10 +53,23 @@ def test_liste_les_recettes_de_l_org_avec_leur_statut(monkeypatch):
     assert premiere["description"] == ""
     assert premiere["updated_at"] == "2026-10-02 00:00:00"
     assert premiere["display"]["steps"][0]["per"] == "company"
-    assert out["recipes"][1]["display"] is None
+    assert premiere["display"]["source"] == "described"
+    # Sans affichage écrit, une recette déclarative est LUE dans son corps.
+    lue = out["recipes"][1]["display"]
+    assert lue["source"] == "derived"
+    assert [e["label"] for e in lue["steps"]] == ["Call acme_people", "Write rows"]
     # Jamais de corps : celui d'une recette-code est du code.
     assert "body" not in premiere
     cap.OrgRecipes.model_validate(out)
+
+
+def test_une_recette_code_sans_affichage_ecrit_n_a_rien_a_dessiner(monkeypatch):
+    monkeypatch.setattr(cap.db_recipes, "list_recipes", lambda owners: [_fiche("c", 1, 1)])
+    monkeypatch.setattr(cap.db_recipes, "get_version", lambda rid, v: {
+        "version": v, "body": {"kind": "code", "sources": {}, "entrypoint": "r:run"}})
+    out = asyncio.run(cap._org_recipes(ResolvedCtx(sub="u", org_id=7, role="member"),
+                                       cap.OrgRecipesInput(org_id=7)))
+    assert out["recipes"][0]["display"] is None
 
 
 def test_route_rest_membre_seulement_et_provisoire():
@@ -124,3 +144,35 @@ def test_describe_refuse_un_affichage_mal_forme_et_un_appel_vide(monkeypatch):
     with pytest.raises(AuthzDenied) as e:
         cap._gerer(_ctx(), cap.RecipeInput(op="describe", slug="x"))
     assert e.value.code == "nothing_to_describe"
+
+
+# ── Les étapes LUES dans le corps d'une recette déclarative ─────────────────────
+
+
+def test_etapes_lues_d_une_recette_complete():
+    corps = {"tool": "serper_search",
+             "for_each": {"datastore": 12, "status_column": "news_status",
+                          "filter": {"tier": "A"}},
+             "source": {"pagination": {"type": "page", "size": 10}},
+             "where": [{"path": "date", "op": "not_empty"},
+                       {"path": "link", "op": "not_in_table", "table": 12,
+                        "column": "url"}],
+             "map": {"title": "title", "url": "link"}, "values": {"src": "news"},
+             "key": {"column": "url"}, "on_existing": "update",
+             "limits": {"max_units": 100, "max_pages": 3}}
+    assert affichage.etapes_lues(corps) == {"steps": [
+        {"label": "For each row",
+         "detail": "Rows of table #12 matching a filter whose news_status is empty"},
+        {"label": "Call serper_search", "detail": "Page by page, 10 a page, at most 3 pages"},
+        {"label": "Keep matching items",
+         "detail": "1 condition on each item; skips what table #12 already holds"},
+        {"label": "Write rows",
+         "detail": "3 columns, one row per url; rows already there are updated"}]}
+    # Même forme que `display`, et valide pour son contrat.
+    contrat.valider_affichage(affichage.etapes_lues(corps))
+
+
+def test_rien_a_lire_dans_une_recette_code_ou_un_corps_vide():
+    assert affichage.etapes_lues({"kind": "code", "sources": {}}) is None
+    assert affichage.etapes_lues({}) is None
+    assert affichage.etapes_lues(None) is None

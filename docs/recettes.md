@@ -260,7 +260,15 @@ rien (republier une recette-code coûte une épreuve facturée, pour une étique
   étapes ; `label` ≤ 60 caractères ; `detail` une phrase ≤ 200 ; `credits` (0 à 10 000)
   et `per` (`contact` | `company` | `row`) vont ensemble, absents sur une étape gratuite ;
   `saves` une phrase MESURÉE (≤ 160) de ce que la recette épargne, jamais une estimation.
-- **Lire** : `op=list` / `op=get` (la fiche), et `GET /api/orgs/{id}/recipes`.
+- **Une recette DÉCLARATIVE n'a rien à écrire** : sans `display`, la route LIT ses étapes
+  dans le corps de la version en service (`recipes/affichage.py` : pour chaque ligne,
+  l'outil et sa pagination, le filtre, les colonnes et la clé) — elles suivent ce qui
+  tourne et ne dérivent jamais. Pas de crédits : le corps n'en dit rien (`max_units` est
+  un plafond, pas un prix). Une recette-CODE n'a rien de lisible : ses étapes s'écrivent.
+- **Les crédits écrits sont une ESTIMATION** : déclarés par qui décrit la recette, pas
+  mesurés (aucun reçu d'exécution n'est gardé). La page les marque « estimated ».
+- **Lire** : `op=list` / `op=get` (la fiche), et `GET /api/orgs/{id}/recipes`, dont
+  `display.source` dit `described` (écrit) ou `derived` (lu dans le corps).
 - **Où la page la dessine** : sur l'étape du schéma du processus qui NOMME la recette —
   `oto_recipe <slug>` dans sa note de marge (guide plateforme `procedure-flowchart`).
   C'est l'agent qui dessine le processus qui la place ; la page ne devine pas.
@@ -271,7 +279,8 @@ rien (republier une recette-code coûte une épreuve facturée, pour une étique
 `x-oto-provisoire`) rend les fiches de l'org SANS corps — le corps d'une recette-code est
 du code : `slug`, `title`, `description`, `status` (`published` dès qu'une version est en
 service, sinon `proposed`), `published_version`, `latest_version`, `updated_at`, et
-`display` (null quand rien n'est écrit).
+`display` — écrit, sinon lu dans le corps d'une recette déclarative, null pour une
+recette-code sans affichage écrit.
 
 ## Ce qui vient ensuite
 
