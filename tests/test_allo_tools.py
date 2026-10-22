@@ -706,3 +706,10 @@ def test_a_thread_is_resolved_or_reopened(client):
     client.resolve_thread.assert_not_called()
     _tool("allo_act")(op="update_thread", thread_id="thr-1", resolved=True)
     client.resolve_thread.assert_called_once_with("thr-1")
+
+
+def test_the_receptionist_s_line_is_never_a_field(client):
+    with pytest.raises(McpError, match="not `fields.number`"):
+        _tool("allo_act")(op="update_receptionist", allo_number="+33199000000",
+                          fields={"number": "+33199000009"})
+    client.update_receptionist.assert_not_called()

@@ -1083,6 +1083,9 @@ def register(mcp: FastMCP) -> None:
         if op == "publish_call_flow":
             return _act(lambda: _client().publish_call_flow(allo_number, lock_version))
         if op == "update_receptionist":
+            if "number" in fields:
+                raise _bad("op='update_receptionist': the line is `allo_number`, not "
+                           "`fields.number`. Nothing was done.")
             return _act(lambda: _client().update_receptionist(allo_number, **fields))
         if op == "set_receptionist_status":
             return _act(lambda: _client().set_receptionist_status(allo_number, status))
