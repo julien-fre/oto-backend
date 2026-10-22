@@ -1,5 +1,5 @@
-"""The tech-stack cascade (`waterfall_tech`): what a company's website runs (DataForSEO's
-index, then a live Apify crawl), what the data vendors' company records list (Apollo, AI
+"""The tech-stack cascade (`waterfall_tech`): lemlist's company record first (no credits),
+then what a company's website runs (DataForSEO's index, then a live Apify crawl), what the data vendors' company records list (Apollo, AI
 Ark), then what its job postings name (TheirStack) — and, with `technologies`, a source
 counts only when it detects one of them."""
 from __future__ import annotations
@@ -8,7 +8,8 @@ import re
 from typing import Optional
 
 from .etape import Step
-from .fournisseurs import _APIFY_TIMEOUT_S, _apify_items
+from .fournisseurs import (_APIFY_TIMEOUT_S, _apify_items, _lemlist_company_args,
+                           _lemlist_company_rec)
 from .valeurs import _domain, _get, _norm_name, _pick, _same_company
 
 # Two kinds of source, measured on one domain (20/10/2026): what the WEBSITE runs (CMS,
@@ -112,6 +113,23 @@ def _aiark_tech(res, inputs):
     return None
 
 
+#: lemlist scores each detection CONFIRMED, LIKELY or POTENTIAL: a POTENTIAL one is not an
+#: answer to « does it use X? ».
+_LEMLIST_SURE = ("CONFIRMED", "LIKELY")
+
+
+def _lemlist_tech(res, inputs):
+    """lemlist's company record (`technologies`: `{name, scoring, first_seen_at}`) —
+    website detections and business tools mixed (~200 names on a 300-person company,
+    measured), kept when CONFIRMED or LIKELY."""
+    rec = _lemlist_company_rec(res, inputs)
+    if rec is None:
+        return None
+    names = [t.get("name") for t in rec.get("technologies") or ()
+             if isinstance(t, dict) and t.get("scoring") in _LEMLIST_SURE]
+    return _tech_find(names, inputs, "vendor_database")
+
+
 def _theirstack_tech(res, inputs):
     for rec in (_get(res, "data") or [])[:3]:
         if isinstance(rec, dict) and _same_company(inputs, rec.get("name"),
@@ -130,6 +148,14 @@ def _theirstack_tech_args(inputs: dict) -> dict:
 
 
 TECH_STEPS: tuple[Step, ...] = (
+    # First: a vendor record that bills no credits (one call of the key's quota).
+    Step("lemlist", "lemlist_database", (("domain",),),
+         _lemlist_company_args, _lemlist_tech,
+         "free search (no lemlist credits; one call of the key's search quota)",
+         label="lemlist database", quota_only=True,
+         explains=(
+             "lemlist's company record — website and business tools with a confidence "
+             "(confirmed and likely kept); spends no credits.")),
     Step("dataforseo", "dataforseo_technologies", (("domain",),),
          lambda i: {"op": "domain", "target": i["domain"]},
          _dataforseo_tech, "~$0.01-0.02 per domain (DataForSEO)",

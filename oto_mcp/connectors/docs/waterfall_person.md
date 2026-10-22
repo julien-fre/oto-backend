@@ -1,8 +1,8 @@
 ## prerequisite — connect the providers you want it to try
 
 this connector has no key of its own: each step calls another connector's tool, with that connector's key.
-- connect the providers you want in the cascade on their own cards, and have them activated for your org — your connected linkedin account (free), ai ark (`aiark`), apollo, forager, cognism, lusha, lemlist
-- with the default order, providers you hold your **own** key for (and the free steps) run first, the shared platform keys next; an order you write is kept as written
+- connect the providers you want in the cascade on their own cards, and have them activated for your org — your connected linkedin account (free), lemlist (its database and its enrichment), ai ark (`aiark`), apollo, forager, cognism, lusha, lemlist
+- with the default order, the free steps run first, then lemlist's database on your **own** lemlist key (no credits), then the other providers you hold your own key for, the shared platform keys next; an order you write is kept as written
 - a provider with no usable key is skipped without being called
 - each step is billed by its provider exactly as a direct call would be — the waterfall adds no cost of its own
 - in a hosted agent, list the step tools you want it to use next to `waterfall_person` — a step outside the job's tool list is skipped
@@ -17,9 +17,10 @@ set **steps** on this card: the provider keys, comma-separated, in the order you
 ## usage — a person's current role and company
 
 one person per call, stopping at the first provider that returns a title or a company.
-- `waterfall_person` — default order: linkedin (your own connected account, free) → aiark → apollo → forager → cognism → lusha → lemlist
-- give the linkedin url when you have it: it opens every step; an email or name + domain opens apollo, cognism, lusha and lemlist
-- lemlist answers asynchronously (see `pending` in the response)
+- `waterfall_person` — default order: linkedin (your own connected account, free) → lemlist_db (lemlist's people database: current title, company, seniority, location, and a pattern-guessed email marked `email_status="guessed"`) → aiark → apollo → forager → cognism → lusha → lemlist
+- give the linkedin url when you have it: it opens every step; an email or name + domain opens apollo, cognism, lusha and lemlist; name + domain opens lemlist_db
+- lemlist's enrichment (`lemlist`) answers asynchronously (see `pending` in the response)
+- lemlist's database bills no lemlist credits: each call spends one call of the lemlist key's search quota
 - `dry_run=true` shows the plan without spending anything
 
 ## usage — qualify before you spend

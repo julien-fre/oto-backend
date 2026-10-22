@@ -3,8 +3,10 @@ lemlist, FullEnrich, Dropcontact), the collect calls of the asynchronous ones, a
 bounds of an Apify run."""
 from __future__ import annotations
 
+from typing import Optional
+
 from .etape import Collect
-from .valeurs import _get, _slug
+from .valeurs import _domain, _get, _slug
 
 _NAMES_AND_DOMAIN = ("first_name", "last_name", "domain")
 _NAMES_AND_COMPANY = ("first_name", "last_name", "company_name")
@@ -147,3 +149,28 @@ def _apify_items(res) -> list:
     if isinstance(res, dict) and isinstance(res.get("items"), list):
         return res["items"]
     return []
+
+
+# lemlist's shared DATABASE (`lemlist_database`): no credits, one call of the key's search
+# quota each (measured 21/10/2026) — `Step.quota_only`. Its filters are server-side; only
+# the TEXT ones are used here: an autocomplete filter (a country, a company name) given a
+# form it does not know empties the search without an error.
+
+def _lemlist_company_args(inputs: dict) -> dict:
+    """lemlist's company database, by website. A record carries the firmographics AND the
+    technologies (with a confidence); ⚠️ also its last 6 months of job posts — ~0.5 MB on
+    a 300-person company, measured: `op="companies"` takes no `excludes`."""
+    return {"op": "companies", "page": 1, "size": 1,
+            "filters": [{"filterId": "currentCompanyWebsiteUrl", "in": [inputs["domain"]],
+                         "out": []}]}
+
+
+def _lemlist_company_rec(res, inputs) -> Optional[dict]:
+    """The record of the domain asked — a website filter may match a neighbour."""
+    for rec in (_get(res, "results") or [])[:1]:
+        if not isinstance(rec, dict):
+            continue
+        site = _domain(rec.get("company_domain") or rec.get("company_website_url"))
+        if site == inputs.get("domain"):
+            return rec
+    return None

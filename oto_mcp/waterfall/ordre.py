@@ -96,13 +96,14 @@ def _plan(ns: str, steps: tuple[Step, ...], providers_arg: Optional[list[str]],
     ordered = [by_key[k] for k in dict.fromkeys(keys)]
     modes = _key_modes(sub, [s.tool for s in ordered])
     if source == "default":
-        # A quota-only search on the caller's OWN key first (lemlist's database: names
-        # that bill nothing, on a quota that is theirs), then own keys and free steps,
-        # then shared keys — the sort is stable: each group keeps the table's order. A
-        # WRITTEN order is not re-sorted.
-        ordered.sort(key=lambda s: (0 if s.quota_only and modes.get(s.tool) in _OWN_KEY
-                                    else 1 if s.free or modes.get(s.tool) in _OWN_KEY
-                                    else 2))
+        # Free steps first (open data, the caller's own session), then a quota-only
+        # search on the caller's OWN key (lemlist's database: nothing billed, on a quota
+        # that is theirs), then their other own keys, then shared keys — the sort is
+        # stable: each group keeps the table's order. A WRITTEN order is not re-sorted.
+        ordered.sort(key=lambda s: (0 if s.free
+                                    else 1 if s.quota_only and modes.get(s.tool) in _OWN_KEY
+                                    else 2 if modes.get(s.tool) in _OWN_KEY
+                                    else 3))
     return ordered, ignored, source, modes
 
 

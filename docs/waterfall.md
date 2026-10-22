@@ -87,8 +87,12 @@ Trois couches, la plus spécifique gagne :
    nommée (`ignored_steps`) : celui qui appelle ne l'a pas écrite ;
 3. la table par défaut.
 
-Sur l'ordre PAR DÉFAUT seulement, **les fournisseurs pour lesquels l'appelant détient SA
-clé passent devant**, avec les étapes GRATUITES (`Step.free` : registre français, session
+Sur l'ordre PAR DÉFAUT seulement, quatre groupes : les étapes GRATUITES d'abord, puis
+une étape `quota_only` (la base de lemlist : aucun crédit, un appel du quota de la clé)
+sur la clé de l'APPELANT, puis ses autres clés, puis les clés partagées (22/10/2026 : la
+base de lemlist en tête des clés de l'appelant, mais derrière le registre et la session
+LinkedIn, gratuits et sans quota). **Les fournisseurs pour lesquels l'appelant détient SA
+clé passent devant** les clés partagées, derrière les étapes GRATUITES (`Step.free` : registre français, session
 LinkedIn de l'appelant — que `credential_mode_for` dit `platform` et qu'un tri par clé
 aurait placées derrière une clé payante)
 (utilisateur, équipe, org — `access.credential_mode_for`, lu une fois par
@@ -169,11 +173,14 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
 - **Téléphone** : kaspr → lusha → forager → apollo (`apollo_reveal_phone`, asynchrone,
   clé de l'appelant seulement) → lemlist → dropcontact → fullenrich. Pas d'AI Ark.
 - **Société** : `fr` (le registre français, UNE ligne à deux entrées : `fr_get` par SIREN,
-  sinon `fr_search` par nom, France seulement, gratuit) → aiark
+  sinon `fr_search` par nom, France seulement, gratuit) → lemlist (`lemlist_database
+  op=companies`, par `currentCompanyWebsiteUrl` ; voir « La base de lemlist ») → aiark
   (`linkedin_aiark_search op=companies`, domaine ou nom) → apollo (domaine) → theirstack
   (domaine) → cognism (domaine ou nom).
 - **Personne** : linkedin (`linkedin_unipile_profile`, le compte LinkedIn connecté de
-  l'appelant, gratuit) → aiark (export) → apollo → forager (`op=detail`, clé de l'appelant
+  l'appelant, gratuit) → `lemlist_db` (`lemlist_database op=people`, par
+  `leadLinkedInSlug`, sinon `username` + `currentCompanyWebsiteUrl` ; la clé `lemlist` reste
+  l'enrichissement asynchrone) → aiark (export) → apollo → forager (`op=detail`, clé de l'appelant
   seulement) → cognism →
   lusha (recherche sans `reveal`, le mode bon marché) → lemlist (`linkedin_enrichment`).
 - **Lus par des noms de clés connus, faute de forme figée par un test ici** : Kaspr,
@@ -191,7 +198,9 @@ Deux sortes de sources, mesurées sur un même domaine (20/10/2026) : ce que le 
 tourner (CMS, framework, hébergement, analytics — l'index DataForSEO, ou un crawl) — 6 à
 7 noms ; et ce que les OFFRES D'EMPLOI nomment (CRM, ERP, pile data, outils internes —
 TheirStack) — une centaine de slugs, mais plus cher et maigre sur les petites sociétés.
-D'où l'ordre : dataforseo (~0,01-0,02 \$) → apify (`kfirs/tech-stack-detector`,
+D'où l'ordre : lemlist (la fiche société de sa base, sans crédit — ~200 technologies sur
+une société de 300 personnes, scorées CONFIRMED / LIKELY / POTENTIAL : les POTENTIAL
+écartées, elles ne répondent pas à « l'utilise-t-elle ? ») → dataforseo (~0,01-0,02 \$) → apify (`kfirs/tech-stack-detector`,
 HTTP simple sans navigateur, ~0,01 \$ par site analysé, un site en échec n'est pas
 facturé ; une URL par exécution, sans `max_items` — même raison que la page LinkedIn ;
 une ligne par fournisseur, chacune avec son logo, pour qu'un écran dise QUI regarde) →
@@ -238,6 +247,13 @@ côté Apify) et un plafond de coût — un acteur coupé rend encore ses élém
   attend des URL) : le premier résultat d'une recherche par nom est souvent un homonyme ;
   gardé seulement si son site est le domaine, ou, sans domaine, si son nom est celui
   demandé.
+
+Avant elles, sa propre ligne `lemlist_linkedin` (`fills="linkedin_url"`) : la fiche
+société de la base de lemlist, sans crédit — la page manque surtout quand le registre
+français a gagné. Une ligne à part, pas une variante : les variantes d'une ligne partagent
+UN mode de clé, et celui de lemlist n'est pas celui d'Apify. `Step.same_as="lemlist"` la
+saute quand l'étape `lemlist` a déjà répondu (trouvé ou non) : un second appel paierait le
+quota pour la même réponse.
 
 Appris sur une vraie liste (un salon professionnel, octobre 2026) : ces deux étapes ont
 retrouvé les pages que les fournisseurs de données n'avaient pas, pour quelques centimes.
@@ -299,6 +315,30 @@ Mesuré sur une vraie société (~360 personnes en base) :
 - `potential_email` est un email deviné par motif : rendu avec `email_status="guessed"` (le mot d'Apollo pour la même chose).
 - `country` n'est pas envoyé : filtre à autocomplétion, une forme qu'il ne connaît pas
   (`FR`) vide la recherche sans erreur.
+
+### La base de lemlist dans les autres cascades (22/10/2026)
+
+La même base, mesurée sur une vraie société et une vraie personne :
+
+- **Société et pile technique** : `op="companies"` par `currentCompanyWebsiteUrl`, une
+  fiche (`size=1`), gardée seulement si son `company_domain` est le domaine demandé. Elle
+  porte effectifs (chiffre ET tranche), secteur à trois niveaux, siège, année, type,
+  marché (B2B/B2C), page LinkedIn, et `technologies` (`{name, scoring, first_seen_at}`).
+  ⚠️ **~0,6 Mo par fiche** dont ~0,5 Mo d'offres d'emploi des 6 derniers mois
+  (`job_post_last_6m_array`) : `op="companies"` ne prend pas d'`excludes` côté oto-core
+  (à ajouter là, si lemlist l'accepte). Les chiffres arrivent en chaînes (`"454"`).
+- **Personne** : `leadLinkedInSlug` (le slug décodé : immunisé contre `www`, l'encodage
+  pourcent d'Apollo) — `leadLinkedInUrl` répond aussi. Sans URL : `username` (nom complet)
+  + `currentCompanyWebsiteUrl`, 3 fiches, l'homonyme écarté par le nom. Le titre est le
+  poste ACTUEL chez l'employeur actuel (`current_exp_company_name`), sinon le `headline`.
+- ⚠️ `experiences` n'est jamais dans `excludes` (voir plus haut : la liste serait tronquée,
+  le poste actuel avec) — vérifié sur une fiche complète : 26 postes servis sur 26.
+- **Pas dans l'email ni le téléphone** : la base n'a pas de numéro, et `potential_email`
+  est un motif deviné — une étape « premier trouvé gagne » s'arrêterait sur une
+  devinette, devant Hunter. Il reste rendu, `email_status="guessed"`, par la personne et
+  les gens.
+- Les filtres à autocomplétion (`currentCompany`, `country`) ne sont jamais envoyés : une
+  forme inconnue vide la recherche sans erreur. Seuls des filtres texte.
 
 ## Essai réel (19/10/2026, exposants d'un salon professionnel)
 

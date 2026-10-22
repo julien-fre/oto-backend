@@ -3,12 +3,14 @@ current title or company."""
 from __future__ import annotations
 
 from typing import Optional
+from urllib.parse import unquote
 
 from .etape import Step
 from .fournisseurs import (_LEMLIST_COLLECT, _NAMES_AND_DOMAIN, _PERSON_IDS, _apollo_args,
                            _cognism_contact_args, _lemlist_args, _lemlist_first,
                            _lusha_contact, _lusha_first)
-from .valeurs import _clean, _domain, _find_key, _get, _pick, _slug
+from .gens import _LEMLIST_EXCLUDES
+from .valeurs import _clean, _domain, _find_key, _get, _norm_name, _pick, _slug
 
 def _person(**fields) -> Optional[dict]:
     """A profile is a find when it names the current title or company."""
@@ -76,6 +78,60 @@ def _lemlist_person(res, inputs):
     return _generic_person(raw if isinstance(raw, dict) else digest, inputs)
 
 
+def _plain_slug(linkedin_url: str) -> str:
+    """`…/in/jane-do%C3%A7/` → `jane-doç`: lemlist keys a profile by its slug, decoded."""
+    return unquote(_slug(linkedin_url)).lower()
+
+
+def _lemlist_db_args(i: dict) -> dict:
+    """lemlist's people database: by the LinkedIn slug (whatever the URL's form, Apollo's
+    percent-encoded one included), else the full name at the company's website."""
+    if i.get("linkedin_url"):
+        filters = [{"filterId": "leadLinkedInSlug", "in": [_plain_slug(i["linkedin_url"])],
+                    "out": []}]
+    else:
+        filters = [{"filterId": "username", "in": [i["full_name"]], "out": []},
+                   {"filterId": "currentCompanyWebsiteUrl", "in": [i["domain"]], "out": []}]
+    # By name, a few: a namesake at the same company is stepped over below.
+    return {"op": "people", "filters": filters, "excludes": _LEMLIST_EXCLUDES, "page": 1,
+            "size": 1 if i.get("linkedin_url") else 3}
+
+
+def _lemlist_db_person(res, inputs):
+    """The record of the person asked (same slug, else same name). Title: the CURRENT
+    position (no end date) at the current employer (`current_exp_company_name`) — else the
+    headline, when no position there is current (a profile not updated). Its
+    email is a pattern guess: returned as `guessed`, never as a find of its own."""
+    slug = _plain_slug(inputs["linkedin_url"]) if inputs.get("linkedin_url") else None
+    for rec in (_get(res, "results") or [])[:3]:
+        if not isinstance(rec, dict):
+            continue
+        if slug:
+            if str(rec.get("linkedin_short") or "").lower() != slug:
+                continue
+        elif _norm_name(rec.get("full_name") or "") != _norm_name(inputs.get("full_name") or ""):
+            continue
+        employer = rec.get("current_exp_company_name")
+        current = [e for e in rec.get("experiences") or []
+                   if isinstance(e, dict) and not e.get("date_to") and employer
+                   and _norm_name(e.get("company_name") or "") == _norm_name(employer)]
+        exp = min(current, key=lambda e: e.get("order_in_profile") or 99) if current else {}
+        email = rec.get("potential_email")
+        return _person(
+            full_name=rec.get("full_name"),
+            title=exp.get("title") or rec.get("headline"),
+            headline=rec.get("headline"),
+            company_name=employer,
+            company_domain=_domain(exp.get("company_domain")),
+            company_linkedin_url=exp.get("company_linkedin_url"),
+            seniority=rec.get("seniority"), department=rec.get("department"),
+            location=rec.get("location"), country=rec.get("country"),
+            linkedin_url=inputs.get("linkedin_url") or rec.get("lead_linkedin_url"),
+            email=email, email_status="guessed" if email else None,
+        )
+    return None
+
+
 PERSON_STEPS: tuple[Step, ...] = (
     Step("linkedin", "linkedin_unipile_profile", (("linkedin_url",),),
          lambda i: {"op": "person", "identifier": _slug(i["linkedin_url"])},
@@ -84,6 +140,14 @@ PERSON_STEPS: tuple[Step, ...] = (
          explains=(
              "Your own connected LinkedIn reads the profile live — free and freshest, "
              "rate-limited.")),
+    # Ahead of every paid profile: it bills no credits (one call of the key's quota).
+    Step("lemlist_db", "lemlist_database", (("linkedin_url",), _NAMES_AND_DOMAIN),
+         _lemlist_db_args, _lemlist_db_person,
+         "free search (no lemlist credits; one call of the key's search quota)",
+         label="lemlist database", quota_only=True,
+         explains=(
+             "lemlist's shared people database — current title, company, seniority, "
+             "location, with a pattern-guessed email; spends no credits.")),
     Step("aiark", "linkedin_aiark_person", (("linkedin_url",),),
          lambda i: {"op": "export", "url": i["linkedin_url"]},
          _aiark_person, "AI Ark export credits",

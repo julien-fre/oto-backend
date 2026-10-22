@@ -239,6 +239,10 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
             continue
         if isinstance(found, dict) and found.get(step.fills):
             continue    # the field is there: nothing to fill, nothing to say
+        if step.same_as and any(a["provider"] == step.same_as
+                                and a.get("status") in ("found", "no_match")
+                                for a in attempts):
+            continue    # the same question was already answered
         attempt = {"provider": step.key, "tool": step.tool,
                    "key": modes.get(step.tool, "unknown"), "fills": step.fills}
         attempts.append(attempt)

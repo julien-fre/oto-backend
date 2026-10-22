@@ -51,6 +51,10 @@ class Step:
     # A COMPLETION step: it does not compete for the find, it fills ONE field the find
     # still lacks (`linkedin_url`), after the cascade — see `moteur._run_cascade`.
     fills: str = ""
+    # A completion that asks what the step keyed `same_as` asks (lemlist's company
+    # database, for the LinkedIn page): skipped when that step already answered — found or
+    # not, a second call would spend the quota for the same answer.
+    same_as: str = ""
     # ONE row, several ways in (the French registry by SIREN, else by name): the variants
     # run in order, each when its own inputs are there, until one finds the value. The
     # receipt says which one answered (`via`). A screen shows one step.

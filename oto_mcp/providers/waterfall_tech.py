@@ -19,7 +19,7 @@ CONNECTOR = _c(
     cardinality="mono", modules=("waterfall", "waterfall_lignes"),
     credential_fields=(CredentialField(
         "steps", "Steps, in order", secret=False, required=False,
-        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: dataforseo, apify, apollo, aiark, theirstack."),),
+        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: lemlist, dataforseo, apify, apollo, aiark, theirstack."),),
     label="Tech stack waterfall",
     help="a company's tech stack, across your connected providers one after the other, stopping at the "
          "first hit",

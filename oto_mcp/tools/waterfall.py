@@ -21,8 +21,9 @@ from .lecture import LECTURE, documente
 
 _ORDER_DOC = """**Order**: your `steps` setting on this connector's card if set (an org
         default, or your own override), kept as written; else the default order above,
-        where the providers you hold your OWN key for (and the free steps) run first and
-        the shared keys next. A provider with no usable key is skipped without
+        where the free steps run first, then lemlist's database on your OWN lemlist key
+        (no credits, your own quota), then the other providers you hold your own key
+        for, and the shared keys next. A provider with no usable key is skipped without
         being called. Each step
         uses THAT provider's key and is billed by it, exactly as a direct call of its
         tool — the waterfall adds no cost. A step whose inputs are missing, or whose
@@ -171,11 +172,14 @@ def register(mcp: FastMCP) -> None:
         and stopping at the FIRST that identifies it (native waterfall).
 
         Steps (default order): fr (the French registry, free — by SIREN, else by name for a
-        French company) → aiark (domain or name) → apollo (domain) →
+        French company) → lemlist (domain — lemlist's company database: headcount, size
+        band, industry, headquarters, LinkedIn page; no credits, one call of the key's
+        search quota) → aiark (domain or name) → apollo (domain) →
         theirstack (domain) → cognism (domain or name); then, when none of them gave
-        the company's LinkedIn page: linkedin (the LinkedIn links on its own website,
-        else a LinkedIn company search by name, kept only if its website is the
-        domain). A search result counts only if
+        the company's LinkedIn page: lemlist_linkedin (lemlist's company database, when
+        the lemlist step did not already answer) → linkedin (the LinkedIn links on its
+        own website, else a LinkedIn company search by name, kept only if its website is
+        the domain). A search result counts only if
         its domain matches, or its name contains the name asked: a namesake never stops
         the cascade. `employees_band` is the INSEE size band code, not a headcount.
 
@@ -183,7 +187,7 @@ def register(mcp: FastMCP) -> None:
 
         Returns `{{found, provider, company: {{name, siren?, domain?, country?, city?,
         naf? | industry?, employees? | employees_band?, revenue?, founded?,
-        linkedin_url?}}, attempts, order_from}}` — {_RECEIPT_DOC}
+        linkedin_url?, type?, market?}}, attempts, order_from}}` — {_RECEIPT_DOC}
 
         Args:
             company_name: the company's name.
@@ -213,14 +217,18 @@ def register(mcp: FastMCP) -> None:
         title or a company (native waterfall).
 
         Steps (default order): linkedin (LinkedIn URL — your own connected LinkedIn
-        account, free) → aiark (LinkedIn URL) → apollo (LinkedIn URL, email, or name +
+        account, free) → lemlist_db (LinkedIn URL, or name + domain — lemlist's people
+        database: current title, company, seniority, location and a pattern-guessed
+        email, `email_status="guessed"`; no credits, one call of the key's search quota)
+        → aiark (LinkedIn URL) → apollo (LinkedIn URL, email, or name +
         domain / company) → forager (LinkedIn URL) → cognism (same as apollo) → lusha
         (same as apollo) → lemlist (LinkedIn URL, or name + domain — asynchronous).
 
         {_ORDER_DOC}
 
         Returns `{{found, provider, person: {{title?, company_name?, company_domain?,
-        full_name?, headline?, seniority?, city?, country?, linkedin_url?}},
+        full_name?, headline?, seniority?, department?, city?, country?, location?,
+        linkedin_url?, email?, email_status?}},
         attempts, order_from}}` — {_RECEIPT_DOC}
 
         Args:
@@ -316,7 +324,9 @@ def register(mcp: FastMCP) -> None:
         the FIRST that returns it (native waterfall) — or, with `technologies`, at the
         first that detects one of them.
 
-        Steps (default order): dataforseo (domain — what the WEBSITE runs, from
+        Steps (default order): lemlist (domain — lemlist's company record: website and
+        business tools, kept when lemlist scores them CONFIRMED or LIKELY; no credits,
+        one call of the key's search quota) → dataforseo (domain — what the WEBSITE runs, from
         DataForSEO's index: CMS, framework, hosting, analytics, e-commerce, payment) →
         apify (domain — the same, by a live crawl of the site now: for a site the index
         has not seen) → apollo (domain — Apollo's company record: website AND business

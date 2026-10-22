@@ -1,8 +1,8 @@
 ## prerequisite — connect the providers you want it to try
 
 this connector has no key of its own: each step calls another connector's tool, with that connector's key.
-- connect the providers you want in the cascade on their own cards, and have them activated for your org — the french registry (free), ai ark (`aiark`), apollo, theirstack, cognism
-- with the default order, providers you hold your **own** key for (and the free steps) run first, the shared platform keys next; an order you write is kept as written
+- connect the providers you want in the cascade on their own cards, and have them activated for your org — the french registry (free), lemlist, ai ark (`aiark`), apollo, theirstack, cognism
+- with the default order, the free steps run first, then lemlist's database on your **own** lemlist key (no credits), then the other providers you hold your own key for, the shared platform keys next; an order you write is kept as written
 - a provider with no usable key is skipped without being called
 - each step is billed by its provider exactly as a direct call would be — the waterfall adds no cost of its own
 - in a hosted agent, list the step tools you want it to use next to `waterfall_company` — a step outside the job's tool list is skipped
@@ -17,9 +17,10 @@ set **steps** on this card: the provider keys, comma-separated, in the order you
 ## usage — a company's firmographics
 
 one company per call, stopping at the first source that identifies it.
-- `waterfall_company` — default order: fr (the french registry: by siren, else by name) → aiark (domain or name) → apollo (domain) → theirstack (domain) → cognism; then, only when the company's linkedin page is still missing, linkedin (its own website, else a search by name checked against the domain)
+- `waterfall_company` — default order: fr (the french registry: by siren, else by name) → lemlist (domain — lemlist's company database: headcount, size band, industry, headquarters, linkedin page) → aiark (domain or name) → apollo (domain) → theirstack (domain) → cognism; then, only when the company's linkedin page is still missing, lemlist_linkedin (lemlist's company database, unless the lemlist step already answered) → linkedin (its own website, else a search by name checked against the domain)
 - a search result only counts if its domain matches, or its name contains the name asked — a namesake never stops the cascade
-- `employees_band` (french registry) is the insee size band code, not a headcount
+- `employees_band` is the insee size band code from the french registry, or lemlist's band (`201-500`) — not a headcount
+- lemlist's database bills no lemlist credits: each call spends one call of the lemlist key's search quota
 - `dry_run=true` shows the plan without spending anything
 
 ## usage — qualify before you spend

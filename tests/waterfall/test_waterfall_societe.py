@@ -30,8 +30,9 @@ def test_societe_homonyme_ne_stoppe_pas_la_cascade(calls):
          "link": {"linkedin": "https://linkedin.com/company/acme"},
          "location": {"headquarter": {"city": "Paris", "country": "France"}}}]})
     out = _run("waterfall_company", company_name="Acme", domain="acme.com")
-    # Le registre (une ligne) : pas de SIREN, la recherche par nom rend un homonyme.
-    assert [a["status"] for a in out["attempts"][:2]] == ["no_match", "found"]
+    # Le registre (une ligne) : pas de SIREN, la recherche par nom rend un homonyme ;
+    # lemlist n'a rien en base.
+    assert [a["status"] for a in out["attempts"][:3]] == ["no_match", "no_match", "found"]
     assert [t["via"] for t in out["attempts"][0]["tried"]] == ["fr_name"]
     assert out["provider"] == "aiark"
     assert out["company"]["employees"] == 42 and out["company"]["domain"] == "acme.com"

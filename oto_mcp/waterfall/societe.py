@@ -6,7 +6,8 @@ from __future__ import annotations
 from typing import Optional
 
 from .etape import Step
-from .fournisseurs import _APIFY_TIMEOUT_S, _apify_items
+from .fournisseurs import (_APIFY_TIMEOUT_S, _apify_items, _lemlist_company_args,
+                           _lemlist_company_rec)
 from .valeurs import _clean, _company_page, _domain, _find_key, _get, _pick, _same_company
 
 def _fr_company(ident: dict) -> Optional[dict]:
@@ -62,6 +63,35 @@ def _apollo_company(res, inputs):
         "industry": org.get("industry"),
         "founded": org.get("founded_year"),
         "linkedin_url": org.get("linkedin_url"),
+    }, ("name",))
+
+
+def _count(v) -> Optional[int]:
+    """lemlist serves its figures as strings (`"454"`)."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _lemlist_company(res, inputs):
+    rec = _lemlist_company_rec(res, inputs)
+    if rec is None:
+        return None
+    return _clean({
+        "name": rec.get("company_name"),
+        "domain": _domain(rec.get("company_domain") or rec.get("company_website_url")),
+        "country": rec.get("company_headquarters_country"),
+        "city": rec.get("company_headquarters_city"),
+        "employees": _count(rec.get("company_employee_count")),
+        # A size BAND (`201-500`), as lemlist gives it.
+        "employees_band": rec.get("company_size"),
+        "industry": (rec.get("company_subsubindustry") or rec.get("company_subindustry")
+                     or rec.get("company_industry")),
+        "founded": _count(rec.get("company_founded")),
+        "linkedin_url": rec.get("company_linkedin_url"),
+        "type": rec.get("company_type"),
+        "market": rec.get("business_business_customer"),
     }, ("name",))
 
 
@@ -208,6 +238,14 @@ COMPANY_STEPS: tuple[Step, ...] = (
             "The French company registry — legal name, SIREN, address, NAF code, size "
             "band; free, France only."),
     ),
+    # Ahead of every paid record: it bills no credits (one call of the key's quota).
+    Step("lemlist", "lemlist_database", (("domain",),),
+         _lemlist_company_args, _lemlist_company,
+         "free search (no lemlist credits; one call of the key's search quota)",
+         label="lemlist database", quota_only=True,
+         explains=(
+             "lemlist's shared company database — headcount, size band, industry, "
+             "headquarters, founding year, LinkedIn page; spends no credits.")),
     Step("aiark", "linkedin_aiark_search", (("domain",), ("company_name",)),
          _aiark_company_args, _aiark_company, "AI Ark credits per company returned",
          max_units=3,
@@ -231,8 +269,18 @@ COMPANY_STEPS: tuple[Step, ...] = (
                                       "domain": i.get("domain")}.items() if v},
          _cognism_company, "Cognism credits (per its contract)",
          explains="Cognism's company data — billed per your Cognism contract."),
-    # Completion: the LinkedIn page, when no source above returned it — from the
-    # company's own website first, then by a search on its name.
+    # Completion: the LinkedIn page, when no source above returned it (the French
+    # registry has none) — lemlist's database first (no credits), then the company's own
+    # website, then a search on its name. lemlist is its own row: a row's ways in share
+    # ONE key mode, and lemlist's is not Apify's.
+    Step("lemlist_linkedin", "lemlist_database", (("domain",),),
+         _lemlist_company_args, _lemlist_company,
+         "free search (no lemlist credits; one call of the key's search quota)",
+         label="LinkedIn page — lemlist database", quota_only=True, fills="linkedin_url",
+         same_as="lemlist",
+         explains=(
+             "Finds the LinkedIn page in lemlist's company database when no source gave "
+             "it — no credits, before any Apify run.")),
     _one_row(
         "linkedin", "LinkedIn page", "a few cents of Apify per try",
         Step("linkedin_site", "apify_run_sync", (("domain",),),
