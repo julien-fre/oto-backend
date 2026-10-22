@@ -33,8 +33,11 @@ from starlette.concurrency import run_in_threadpool
 
 from . import (_abonnement, _acces_agent, _cle_exigee, _instruction, _limites_du_run,
                _modele, _source_du_hook)
-from .. import (db, org_store, ownership, roles, runner_hook, runner_models, runner_tick,
-                session_visibility, tool_alias, tool_registry)
+from .. import (db, deprecations, org_store, outils_du_travail, ownership, roles,
+                runner_hook, runner_models, runner_tick, session_visibility, tool_alias,
+                tool_registry)
+from ..db import recipes as db_recipes
+from ..recipes import outils_cites
 from ..tools import catalogue as tool_catalogue
 from ._authz import ORG_MEMBER
 from ._dossier import FOLDER_MAX, dossier_valide
@@ -261,8 +264,13 @@ class ToolWarning(BaseModel):
     #: seulement (`oto_call` l'atteint quand même) ; `not_exposed` = derrière une
     #: garde d'APPEL — injoignable même par `oto_call` ; `unknown_tool` = ce nom
     #: n'existe dans AUCUN registre (faute de frappe, ou outil retiré depuis).
-    issue: Literal["installable", "not_exposed", "unknown_tool"]
+    #: `not_granted` = l'outil est appelé par la procédure de l'agent ou par une recette
+    #: qu'elle lance, mais n'est PAS dans `tools` : le run sera refusé
+    #: (`tool_not_in_job`) au premier appel. `needed_by` dit qui l'appelle ; le geste qui
+    #: le lève est `missing_tools` du déclencheur (un clic : `op=update`, `tools_add`).
+    issue: Literal["installable", "not_exposed", "unknown_tool", "not_granted"]
     detail: str
+    needed_by: Optional[str] = None
 
 
 class Trigger(BaseModel):
@@ -339,6 +347,11 @@ class Trigger(BaseModel):
     #: `None` = pas pu être calculé (hors serveur booté — en pratique jamais en
     #: production) ; `[]` = calculé, rien à signaler. Jamais stocké — cf. `ToolWarning`.
     tool_warnings: Optional[list[ToolWarning]] = None
+    #: Les outils que la procédure ou ses recettes appellent et que `tools` n'a pas —
+    #: la liste à AJOUTER, telle quelle (`op=update`, `tools_add=missing_tools`) : le
+    #: bouton « Autoriser » d'un écran, la phrase d'un agent. `[]` = rien ne manque ;
+    #: `None` = pas calculé. Jamais stocké, comme `tool_warnings`.
+    missing_tools: Optional[list[str]] = None
     #: Ce qui ATTEND maintenant — ce que `clear_queue` viderait. `queue_pending`
     #: part dès qu'un worker passe ; `queue_held` attend qu'on rallume l'agent.
     #: Servis sur un webhook ; `0` est un vrai zéro.
@@ -741,7 +754,54 @@ async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict,
         elif entree["state"] != "installed":
             avertis.append({"tool": nom, "issue": entree["state"],
                             "detail": tool_catalogue.LEGENDE[entree["state"]]})
-    return {**t, "tool_warnings": avertis}
+    try:
+        manque = await run_in_threadpool(_outils_non_accordes, org, t)
+    except Exception as e:  # noqa: SILENT — journalisé, un avertissement manqué n'est pas un déclencheur cassé
+        logger.warning("missing_tools indisponible pour le déclencheur %s : %s", t.get("id"), e)
+        return {**t, "tool_warnings": avertis}
+    for nom, par in manque:
+        avertis.append({"tool": nom, "issue": "not_granted", "needed_by": par,
+                        "detail": f"{par} calls it but this agent's tools do not include "
+                                  "it: the run will be refused (`tool_not_in_job`). Add "
+                                  "it (`missing_tools`)."})
+    return {**t, "tool_warnings": avertis, "missing_tools": [n for n, _ in manque]}
+
+
+def _outils_non_accordes(org: int, t: dict) -> list[tuple[str, str]]:
+    """Sync (base) : ce que la procédure de l'agent et les recettes qu'elle lance
+    appellent, hors de ce que son travail sera servi (`outils_servis`) — `[(outil, qui
+    l'appelle)]`, dans l'ordre de la procédure.
+
+    Né du 22/10/2026 : deux agents d'une même chaîne bloqués le même soir, chacun sur un
+    outil qu'une recette de sa procédure appelait (une lecture de CRM, une lecture de
+    tableau) — et un troisième la veille, sur les fournisseurs d'une cascade. Le refus
+    n'arrivait qu'au run ; il se voit maintenant sur l'agent, avant."""
+    slug = t.get("procedure")
+    if not slug:
+        return []
+    g = db.get_guide_db("org", str(org), slug)
+    corps_proc = (g or {}).get("body_md") or ""
+    servis = {deprecations.tool_canonique(n) for n in
+              (outils_du_travail.outils_servis(t) or []) if isinstance(n, str)}
+    servis |= outils_du_travail.OUTILS_DE_L_HOTE
+    cites: list[tuple[str, str]] = [(n, f"procedure `{slug}`")
+                                    for n in tool_registry.ref_names(corps_proc)]
+    for recette in outils_cites.recettes_citees(corps_proc):
+        fiche = db_recipes.get_recipe("org", str(org), recette)
+        if not fiche or not fiche.get("published_version"):
+            continue
+        version = db_recipes.get_version(fiche["id"], fiche["published_version"])
+        cites += [(n, f"recipe `{recette}`")
+                  for n in outils_cites.outils_cites((version or {}).get("body"))]
+    vus: set[str] = set()
+    manque = []
+    for nom, par in cites:
+        c = deprecations.tool_canonique(nom)
+        if c in servis or c in vus:
+            continue
+        vus.add(c)
+        manque.append((c, par))
+    return manque
 
 
 def _noms_canoniques(ctx: ResolvedCtx, inp: TriggerInput) -> TriggerInput:

@@ -91,6 +91,37 @@ def refus(name: str) -> Optional[str]:
             "`oto_call`, or from a recipe. Add the tool to the agent's `tools` to allow it.")
 
 
+def manquants(noms) -> Optional[dict]:
+    """Sync (base) : TOUS les outils de `noms` hors de la liste du travail de la requête,
+    en une lecture — `None` hors travail hébergé ou si rien ne manque. Rend
+    `{job_id, trigger_id, missing}` : de quoi refuser une fois en nommant chaque outil
+    et l'agent à compléter, plutôt qu'un refus par outil, une exécution chacun."""
+    verrou = verrou_org.travail_de_la_requete()
+    if verrou is None:
+        return None
+    permis = _permis(verrou.job_id)
+    manque = []
+    for n in noms:
+        if not isinstance(n, str):
+            continue
+        c = deprecations.tool_canonique(n)
+        if c not in OUTILS_DE_L_HOTE and c not in permis and c not in manque:
+            manque.append(c)
+    if not manque:
+        return None
+    charge = db.charge_du_travail(int(verrou.job_id)) if verrou.job_id is not None else None
+    declencheur = charge.get("trigger_id") if isinstance(charge, dict) else None
+    return {"job_id": verrou.job_id, "missing": manque,
+            "trigger_id": int(declencheur) if str(declencheur or "").isdigit() else None}
+
+
+def correctif(trigger_id: Optional[int], manque: list) -> dict:
+    """Le geste qui lève le refus, sous une forme qu'un agent relaie et qu'un écran joue
+    en un clic : ajouter ces outils à la liste de l'agent (`oto_trigger op=update`)."""
+    return {"tool": "oto_trigger", "op": "update", "trigger_id": trigger_id,
+            "tools_add": list(manque)}
+
+
 async def exiger(name: str) -> None:
     """Lève le refus nommé `tool_not_in_job` si `name` est hors de la liste du travail.
     Hors boucle : la liste se lit en base."""
