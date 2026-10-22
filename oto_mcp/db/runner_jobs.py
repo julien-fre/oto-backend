@@ -147,7 +147,8 @@ def _fragments_abonnement(abonnement: bool) -> dict:
     pour tout autre dépôt : le SQL d'un worker de clé ne nomme même pas les tables du
     pool. Ces clauses décrivent ce qu'est un forfait, pas ce qu'est une file.
 
-    **Mode personnel** (défaut d'une org) — le travail tourne sur l'abonnement de SON
+    **Voie personnelle** (mode `personnel` réglé, ou sans mode quand l'abonnement du
+    demandeur sert ici) — le travail tourne sur l'abonnement de SON
     demandeur, `rj.sub` :
 
     1. UN travail à la fois par ABONNEMENT. Le bac à sable est celui de la personne,
