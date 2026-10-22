@@ -17,6 +17,10 @@ In the Allo web app, an Admin or a Manager opens **Settings → API** and create
 - "my outbound funnel, meetings as conversions" → `allo(op="outbound", date_from="2026-10-01", date_to="2026-10-20", tags=["meeting_booked"])`
 - "add this contact to Allo" → `allo_act(op="create_person", fields={"numbers": ["+33199000001"], "name": "Marie", "last_name": "Durand"})`
 - "text them a thank-you" → `allo_act(op="send_sms", from_number="+14155550100", to="+14155550123", message="…")` — one sender: `from_number` OR `sender_id`, never both
+- "create a « Note d'appel » field on contacts" → `allo_act(op="create_attribute", entity="person", label="Note d'appel", attribute_type="TEXT")`, then write it with `allo_act(op="update_person", person_id="per-…", fields={"custom_attributes": {"note_d_appel": "…"}})` (the key is in `allo(op="attributes", entity="person")`)
+- "load these prospects in Gabriel's Power Dialer" → read `allo(op="queue", email="gabriel@…")` first (Allo does not deduplicate a queue), then `allo_act(op="add_queue_numbers", email="gabriel@…", entries=[…])`
+- "ping me on calls tagged demo" → `allo(op="webhook_events")`, then `allo_act(op="create_webhook", url="https://…", topics=["tag.added"])`
+- "change the receptionist's greeting" → `allo(op="receptionist", allo_number="+33…")`, then `allo_act(op="update_receptionist", allo_number="+33…", fields={"greeting_message": "…"})`
 
 ## note — numbers, ids, what is not served
 
@@ -25,5 +29,7 @@ In the Allo web app, an Admin or a Manager opens **Settings → API** and create
 - ⚠️ **a call carries no recording link** (`search`, `item`, `items`, `conversations`, even with `full=true`): Allo's signed links play without a login, so none is served; the audio comes only through `op="recording"`, 50 MB at most
 - lists drop by default a call's AI blobs (`extracted_data`, `data_collected`), a record's `interactions`, a note's `mentions` (named under `projection`): `full=true` returns them
 - a text (1000 characters at most) is sent at once and billed per segment by Allo: 160 characters, or 70 as soon as one is outside the standard SMS alphabet (ç, ê, an emoji); in France it goes out from a Sender ID verified by Allo
-- `create_queue` replaces the current Power Dialer queue with an empty one
-- **not served**: webhooks, call flows, the AI receptionist, summary templates, threads, custom field definitions (read-only here), partner accounts, eSIMs
+- `create_queue` replaces the current Power Dialer queue with an empty one; `add_queue` adds a named queue and keeps the current one; any queue is reached by `queue_id` (`allo(op="queues")`)
+- ⚠️ `delete_attribute` on a **company** attribute erases its values on every company (a person field keeps them, and re-creating it restores them); `publish_call_flow` makes the draft the line's live routing at once; `set_receptionist_status` puts the AI receptionist on the line or takes it off
+- a webhook's `signing_secret` comes back on `create_webhook` and `allo(op="webhook")`: it is what the receiver checks deliveries with
+- **not served**: partner accounts and eSIMs (a reseller key, not a team key), the v1 endpoints that v2 replaces

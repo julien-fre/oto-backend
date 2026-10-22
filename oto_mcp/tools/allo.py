@@ -6,10 +6,16 @@ scopes bound every call: `allo(op="me")` lists them.
 
 **Surface** (the `<ns>` / `<ns>_act` pair):
 - `allo` (read-only) — the key, members and lines; conversations, search across
-  calls and texts, one or several items, the audio of a call; tags; notes; the CRM
-  (people, companies, deals, custom fields); the Power Dialer queue; analytics;
+  calls and texts, one or several items, the audio of a call; tags; notes and
+  threads; the CRM (people, companies, deals, custom fields); the Power Dialer
+  queues and sessions; analytics; a line's call flow, AI receptionist, summary
+  templates, webhooks, calendars and voices;
 - `allo_act` — send a text, rewrite a call summary, mark or archive a
-  conversation, tags, notes, CRM people and companies, the Power Dialer queue.
+  conversation, tags, notes, threads, CRM people and companies and their custom
+  fields, the Power Dialer queues, and a line's settings (call flow draft and
+  publish, AI receptionist, summary templates, webhooks).
+
+The whole team API of Allo 1.2.0 is served; the Partner API (a reseller key) is not.
 
 **No recording address ever reaches the agent.** Allo puts on every call a signed
 link to its recording (`recording_url`, `recording_download_url`, 48 hours, plays
@@ -43,18 +49,30 @@ from .lecture import ACTE, LECTURE
 
 _NAME = "allo"
 
-_READ_OPS = ("me", "users", "numbers", "conversations", "search", "item", "items",
-             "recording", "tags", "notes", "people", "person", "companies", "company",
-             "deals", "deal", "attributes", "queue", "metrics", "outbound")
-_ACT_OPS = ("send_sms", "update_summary", "update_conversation", "create_tag", "add_tags",
-            "remove_tag", "create_note", "create_person", "update_person", "create_company",
-            "update_company", "create_queue", "update_queue", "add_queue_numbers",
-            "remove_queue_numbers")
+_READ_OPS = ("me", "users", "user", "numbers", "conversations", "search", "item", "items",
+             "recording", "tags", "notes", "note", "thread", "people", "person", "companies",
+             "company", "deals", "deal", "attributes", "queues", "queue", "dialer_session",
+             "metrics", "outbound", "summary_templates", "summary_template", "webhooks",
+             "webhook", "webhook_events", "flow", "receptionist", "calendars", "calendar",
+             "voices")
+_ACT_OPS = ("send_sms", "update_summary", "update_conversation", "create_tag", "delete_tag",
+            "add_tags", "remove_tag", "create_note", "update_note", "delete_note",
+            "create_thread", "add_comment", "update_comment", "update_thread",
+            "create_person", "update_person", "create_company",
+            "update_company", "create_attribute", "update_attribute", "delete_attribute",
+            "create_queue", "add_queue", "update_queue", "add_queue_numbers",
+            "remove_queue_numbers", "delete_queue", "set_queue_assignee",
+            "create_summary_template", "update_summary_template", "delete_summary_template",
+            "set_default_summary_template", "create_webhook", "update_webhook",
+            "delete_webhook", "update_call_flow_draft", "publish_call_flow", "update_receptionist",
+            "set_receptionist_status", "set_receptionist_prompt", "add_receptionist_website",
+            "update_receptionist_website", "delete_receptionist_website",
+            "delete_receptionist_file")
 
 _PAGED = {"page", "size"}
 #: The paged ops: a list, tightened by default (`_DROP_LISTS`), raw with `full=True`.
 _LIST_OPS = ("conversations", "search", "notes", "people", "companies", "deals", "attributes",
-             "queue", "outbound")
+             "queues", "queue", "outbound")
 _QUEUE_OWNER = {"user_id", "email"}
 _DATES = {"date_from", "date_to", "compare_from", "compare_to", "user_ids", "allo_numbers"}
 
@@ -87,8 +105,13 @@ _SMS_MAX = 1000
 
 #: What each op reads; any other argument given is refused, never dropped.
 _READ_TAKES = {
-    "me": set(), "numbers": set(), "tags": set(),
-    "users": {"role", "status"},
+    "me": set(), "numbers": set(), "tags": set(), "summary_templates": set(),
+    "webhooks": set(), "webhook_events": set(), "calendars": set(), "voices": set(),
+    "users": {"role", "status"}, "user": {"user_id"}, "note": {"note_id"},
+    "thread": {"thread_id", "entity_type", "entity_id"},
+    "summary_template": {"template_id"}, "webhook": {"webhook_id"},
+    "flow": {"allo_number", "draft"}, "receptionist": {"allo_number"},
+    "calendar": {"calendar_id"}, "dialer_session": {"session_id"},
     "conversations": {"allo_number", "last_activity_since", "unread", "transcript"} | _PAGED,
     "search": {"allo_number", "contact_number", "user_id", "direction", "item_type", "result",
                "tags", "unread", "unresponded", "search", "date_from", "date_to", "sort",
@@ -104,7 +127,8 @@ _READ_TAKES = {
     "deals": {"filters", "search", "sort"} | _PAGED,
     "deal": {"deal_id"},
     "attributes": {"entity"} | _PAGED,
-    "queue": _QUEUE_OWNER | _PAGED,
+    "queues": _PAGED,
+    "queue": _QUEUE_OWNER | {"queue_id"} | _PAGED,
     "metrics": _DATES,
     "outbound": _DATES | {"tags", "granularity", "stage"} | _PAGED,
 }
@@ -115,6 +139,10 @@ _READ_NEEDS = {
     "recording": ("item_id",), "person": ("person_id",), "company": ("company_id",),
     "deal": ("deal_id",), "attributes": ("entity",),
     "metrics": ("date_from", "date_to"), "outbound": ("date_from", "date_to"),
+    "user": ("user_id",), "note": ("note_id",), "summary_template": ("template_id",),
+    "webhook": ("webhook_id",), "flow": ("allo_number",),
+    "receptionist": ("allo_number",), "calendar": ("calendar_id",),
+    "dialer_session": ("session_id",),
 }
 
 _ACT_TAKES = {
@@ -130,9 +158,41 @@ _ACT_TAKES = {
     "create_company": {"fields"},
     "update_company": {"company_id", "fields"},
     "create_queue": {"name"} | _QUEUE_OWNER,
-    "update_queue": {"name", "voicemail_handling", "do_not_disturb"} | _QUEUE_OWNER,
-    "add_queue_numbers": {"entries"} | _QUEUE_OWNER,
-    "remove_queue_numbers": {"number", "position", "unassigned"} | _QUEUE_OWNER,
+    "add_queue": {"name"} | _QUEUE_OWNER,
+    "update_queue": {"name", "voicemail_handling", "do_not_disturb", "queue_id"} | _QUEUE_OWNER,
+    "add_queue_numbers": {"entries", "queue_id"} | _QUEUE_OWNER,
+    "remove_queue_numbers": {"number", "position", "unassigned", "queue_id"} | _QUEUE_OWNER,
+    "delete_queue": {"queue_id"} | _QUEUE_OWNER,
+    "set_queue_assignee": {"queue_id"} | _QUEUE_OWNER,
+    "delete_tag": {"tag_id"},
+    "update_note": {"note_id", "person_id", "content"},
+    "delete_note": {"note_id", "person_id"},
+    "create_thread": {"entity_type", "entity_id", "content"},
+    "add_comment": {"thread_id", "content"},
+    "update_comment": {"comment_id", "content"},
+    "update_thread": {"thread_id", "resolved"},
+    "create_attribute": {"entity", "label", "attribute_type", "options", "prompt",
+                         "should_prompt_override"},
+    "update_attribute": {"entity", "key", "label", "description", "options", "prompt",
+                         "should_prompt_override", "is_visible"},
+    "delete_attribute": {"entity", "key"},
+    "create_summary_template": {"name", "call_context", "icon", "sections"},
+    "update_summary_template": {"template_id", "name", "call_context", "icon", "sections"},
+    "delete_summary_template": {"template_id"},
+    "set_default_summary_template": {"allo_number", "template_id"},
+    "create_webhook": {"url", "topics", "description"},
+    "update_webhook": {"webhook_id", "url", "topics", "description", "enabled"},
+    "delete_webhook": {"webhook_id"},
+    "update_call_flow_draft": {"allo_number", "definition", "schema_version", "lock_version",
+                       "base_published_version", "engine_subset"},
+    "publish_call_flow": {"allo_number", "lock_version"},
+    "update_receptionist": {"allo_number", "fields"},
+    "set_receptionist_status": {"allo_number", "status"},
+    "set_receptionist_prompt": {"allo_number", "sections"},
+    "add_receptionist_website": {"allo_number", "url"},
+    "update_receptionist_website": {"allo_number", "website_id", "status"},
+    "delete_receptionist_website": {"allo_number", "website_id"},
+    "delete_receptionist_file": {"allo_number", "file_id"},
 }
 _ACT_NEEDS = {
     "send_sms": ("to", "message"), "update_summary": ("item_id", "content"),
@@ -141,12 +201,44 @@ _ACT_NEEDS = {
     "create_note": ("content",), "create_person": ("fields",),
     "update_person": ("person_id", "fields"), "create_company": ("fields",),
     "update_company": ("company_id", "fields"), "add_queue_numbers": ("entries",),
+    "delete_queue": (), "set_queue_assignee": ("queue_id",), "delete_tag": ("tag_id",),
+    "update_note": ("note_id", "content"), "delete_note": ("note_id",),
+    "create_thread": ("entity_type", "entity_id", "content"),
+    "add_comment": ("thread_id", "content"), "update_comment": ("comment_id", "content"),
+    "update_thread": ("thread_id", "resolved"),
+    "create_attribute": ("entity", "label", "attribute_type"),
+    "update_attribute": ("entity", "key"), "delete_attribute": ("entity", "key"),
+    "create_summary_template": ("name",), "update_summary_template": ("template_id", "name"),
+    "delete_summary_template": ("template_id",),
+    "set_default_summary_template": ("allo_number",),
+    "create_webhook": ("url", "topics"), "update_webhook": ("webhook_id",),
+    "delete_webhook": ("webhook_id",),
+    "update_call_flow_draft": ("allo_number", "definition", "schema_version"),
+    "publish_call_flow": ("allo_number", "lock_version"),
+    "update_receptionist": ("allo_number", "fields"),
+    "set_receptionist_status": ("allo_number", "status"),
+    "set_receptionist_prompt": ("allo_number", "sections"),
+    "add_receptionist_website": ("allo_number", "url"),
+    "update_receptionist_website": ("allo_number", "website_id", "status"),
+    "delete_receptionist_website": ("allo_number", "website_id"),
+    "delete_receptionist_file": ("allo_number", "file_id"),
 }
 
 #: The fields a CRM record takes in `fields`; any other key is refused before the call.
 _PERSON_FIELDS = {"name", "last_name", "job_title", "website", "address", "numbers", "emails",
                   "company_id", "custom_attributes"}
 _COMPANY_FIELDS = {"name", "website", "industry", "custom_attributes"}
+
+#: What a custom field takes, per op and side (`key` apart: it names the field).
+_ATTRIBUTE_TAKES = {
+    ("create_attribute", "person"): {"label", "attribute_type", "options"},
+    ("create_attribute", "company"): {"label", "attribute_type", "options", "prompt",
+                                      "should_prompt_override"},
+    ("update_attribute", "person"): {"label", "description", "options"},
+    ("update_attribute", "company"): {"label", "options", "prompt", "should_prompt_override",
+                                      "is_visible"},
+    ("delete_attribute", "person"): set(), ("delete_attribute", "company"): set(),
+}
 
 
 def _bad(msg: str) -> McpError:
@@ -292,9 +384,12 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(name="allo", annotations=LECTURE)
     def allo(
-        op: Literal["me", "users", "numbers", "conversations", "search", "item", "items",
-                    "recording", "tags", "notes", "people", "person", "companies", "company",
-                    "deals", "deal", "attributes", "queue", "metrics", "outbound"],
+        op: Literal["me", "users", "user", "numbers", "conversations", "search", "item",
+                    "items", "recording", "tags", "notes", "note", "thread", "people", "person",
+                    "companies", "company", "deals", "deal", "attributes", "queues", "queue",
+                    "dialer_session", "metrics", "outbound", "summary_templates",
+                    "summary_template", "webhooks", "webhook", "webhook_events", "flow",
+                    "receptionist", "calendars", "calendar", "voices"],
         allo_number: Optional[str] = None,
         contact_number: Optional[str] = None,
         item_id: Optional[str] = None,
@@ -326,6 +421,16 @@ def register(mcp: FastMCP) -> None:
         status: Optional[Literal["ACTIVE", "BLOCKED"]] = None,
         sort: Optional[str] = None,
         transcript: bool = False,
+        note_id: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        entity_type: Optional[Literal["CALL", "TEXT_MESSAGE", "CONVERSATION_NOTE"]] = None,
+        entity_id: Optional[str] = None,
+        queue_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        template_id: Optional[str] = None,
+        webhook_id: Optional[str] = None,
+        calendar_id: Optional[str] = None,
+        draft: bool = False,
         page: Optional[int] = None,
         size: Optional[int] = None,
         full: bool = False,
@@ -337,7 +442,8 @@ def register(mcp: FastMCP) -> None:
         `op`:
         - `me` — the API key: its scopes, the endpoints it may call, the team. Read
           it first when a call is refused for a missing scope.
-        - `users` — the members (id, name, email, role, status); `role`, `status`.
+        - `users` — the members (id, name, email, role, status); `role`, `status`;
+          `user` — one member (`user_id`).
         - `numbers` — the team's lines (E.164) and sender ids, with their members.
         - `conversations` — the conversations of one line (`allo_number`), one per
           contact, latest activity first; `unread`, `last_activity_since` (ISO 8601).
@@ -353,7 +459,10 @@ def register(mcp: FastMCP) -> None:
           no call read here carries its recording address.
         - `tags` — the team's tags (their keys are what `tags` filters take).
         - `notes` — internal notes of a person (`person_id`) or of a conversation
-          (`contact_number` + `allo_number`).
+          (`contact_number` + `allo_number`); `note` — one conversation note (`note_id`).
+        - `thread` — the comment thread on a call, text or conversation note: by
+          `thread_id`, or found from `entity_type` (CALL, TEXT_MESSAGE,
+          CONVERSATION_NOTE) + `entity_id`.
         - `people` / `companies` / `deals` — search the CRM: `search` (people,
           deals), `filters` (people: name, last_name, job_title, website, company,
           phone_number, email, deal_status; companies: name, website, industry;
@@ -361,15 +470,29 @@ def register(mcp: FastMCP) -> None:
           CREATED_DESC, CREATED_ASC).
         - `person` / `company` / `deal` — one record by id (`per-*`, `com-*`, `dea-*`).
         - `attributes` — the custom fields of `entity` ("person" or "company"), the
-          keys `custom_attributes` takes in `allo_act`.
-        - `queue` — the Power Dialer queue: its numbers by position and settings;
-          the key owner's, or a teammate's by `user_id` or `email`.
+          keys `custom_attributes` takes in `allo_act` (created there with
+          `create_attribute`).
+        - `queues` — the team's Power Dialer queues; `queue` — one queue's numbers by
+          position and settings: the current one of the key owner, of a teammate
+          (`user_id` or `email`), or any by `queue_id`; `dialer_session` — one Power
+          Dialer session (`session_id`).
         - `metrics` — team KPIs over `date_from`..`date_to` (calls, talk time, calls
           over a minute, answer rate) per member, against `compare_from`..`compare_to`.
         - `outbound` — the outbound funnel (dials → connected → conversations →
           conversions, a conversion being a call tagged with one of `tags`), time
           series by `granularity`, heatmap, leaderboard. With `stage`, the calls
           behind that stage, paged.
+        - `summary_templates` / `summary_template` (`template_id`) — the call summary
+          templates.
+        - `webhooks` / `webhook` (`webhook_id`) — the webhook endpoints;
+          `webhook_events` — the event topics they can subscribe to.
+        - `flow` — the inbound routing of a line (`allo_number`): the published
+          one, or with `draft=true` the draft and its `lock_version` (what
+          `publish_call_flow` needs).
+        - `receptionist` — the AI receptionist of a line (`allo_number`): its whole
+          configuration, to read before any change.
+        - `calendars` / `calendar` (`calendar_id`) — the connected calendars;
+          `voices` — the receptionist voices.
 
         Phone numbers are E.164 (`+33199000001`). Dates are YYYY-MM-DD. Lists page
         with `page` (from 1) and `size` (up to 100), the answer's `pagination`
@@ -411,6 +534,16 @@ def register(mcp: FastMCP) -> None:
             status: Member status filter (`users`).
             sort: Sort order (see above).
             transcript: Add the call transcripts (`conversations`, `search`, `item`).
+            note_id: A conversation note (`note`).
+            thread_id: A thread (`thread`).
+            entity_type: What a thread is on: CALL, TEXT_MESSAGE or CONVERSATION_NOTE.
+            entity_id: The id of that call, text or note.
+            queue_id: A Power Dialer queue (`pdl-*`), instead of the current one.
+            session_id: A Power Dialer session (`dialer_session`).
+            template_id: A summary template.
+            webhook_id: A webhook endpoint.
+            calendar_id: A connected calendar.
+            draft: The call flow draft instead of the published one (`call_flow`).
             page: Page number, from 1.
             size: Items per page, up to 100.
             full: Lists — the raw records instead of the tightened view.
@@ -426,7 +559,10 @@ def register(mcp: FastMCP) -> None:
                      date_to=date_to, compare_from=compare_from, compare_to=compare_to,
                      user_ids=user_ids, allo_numbers=allo_numbers, granularity=granularity,
                      stage=stage, entity=entity, role=role, status=status, sort=sort,
-                     transcript=transcript, page=page, size=size, full=full)
+                     transcript=transcript, note_id=note_id, thread_id=thread_id,
+                     entity_type=entity_type, entity_id=entity_id, queue_id=queue_id,
+                     session_id=session_id, template_id=template_id, webhook_id=webhook_id,
+                     calendar_id=calendar_id, draft=draft, page=page, size=size, full=full)
         _check_args(op, given, _READ_TAKES, _READ_NEEDS)
         extend = "transcript" if transcript else None
         paged = dict(page=page, size=size)
@@ -438,6 +574,46 @@ def register(mcp: FastMCP) -> None:
             return _read(lambda: _client().get_me())
         if op == "users":
             return _read(lambda: _client().list_users(role=role, status=status))
+        if op == "user":
+            return _read(lambda: _client().get_user(user_id))
+        if op == "note":
+            return _read(lambda: _client().get_conversation_note(note_id))
+        if op == "thread":
+            if thread_id and (entity_type or entity_id):
+                raise _bad("op='thread' reads a thread by `thread_id` OR finds it from "
+                           "`entity_type` + `entity_id`, not both. Nothing was done.")
+            if thread_id:
+                return _read(lambda: _client().get_thread(thread_id))
+            if not (entity_type and entity_id):
+                raise _bad("op='thread' needs `thread_id`, or `entity_type` and `entity_id`. "
+                           "Nothing was done.")
+            return _read(lambda: _client().find_thread(entity_type, entity_id))
+        if op == "summary_templates":
+            return _read(lambda: _client().list_summary_templates())
+        if op == "summary_template":
+            return _read(lambda: _client().get_summary_template(template_id))
+        if op == "webhooks":
+            return _read(lambda: _client().list_webhooks())
+        if op == "webhook":
+            return _read(lambda: _client().get_webhook(webhook_id))
+        if op == "webhook_events":
+            return _read(lambda: _client().list_webhook_event_types())
+        if op == "flow":
+            if draft:
+                return _read(lambda: _client().get_call_flow_draft(allo_number))
+            return _read(lambda: _client().get_call_flow(allo_number))
+        if op == "receptionist":
+            return _read(lambda: _client().get_receptionist(allo_number))
+        if op == "calendars":
+            return _read(lambda: _client().list_calendars())
+        if op == "calendar":
+            return _read(lambda: _client().get_calendar(calendar_id))
+        if op == "voices":
+            return _read(lambda: _client().list_voices())
+        if op == "queues":
+            return _read(lambda: _client().list_dialing_queues(**paged))
+        if op == "dialer_session":
+            return _read(lambda: _client().get_dialer_session(session_id))
         if op == "numbers":
             return _read(lambda: _client().list_numbers())
         if op == "conversations":
@@ -490,6 +666,11 @@ def register(mcp: FastMCP) -> None:
                 return _read(lambda: _client().list_company_attributes(**paged))
             return _read(lambda: _client().list_person_attributes(**paged))
         if op == "queue":
+            if queue_id:
+                if user_id or email:
+                    raise _bad("op='queue' reads a queue by `queue_id` OR the current one of "
+                               "`user_id` / `email`, not both. Nothing was done.")
+                return _read(lambda: _client().get_dialing_queue_by_id(queue_id, **paged))
             return _read(lambda: _client().get_dialing_queue(user_id=user_id, email=email,
                                                             **paged))
         date = _range(date_from, date_to, "date")
@@ -508,9 +689,20 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(name="allo_act", annotations=ACTE)
     def allo_act(
         op: Literal["send_sms", "update_summary", "update_conversation", "create_tag",
-                    "add_tags", "remove_tag", "create_note", "create_person", "update_person",
-                    "create_company", "update_company", "create_queue", "update_queue",
-                    "add_queue_numbers", "remove_queue_numbers"],
+                    "delete_tag", "add_tags", "remove_tag", "create_note", "update_note",
+                    "delete_note", "create_thread", "add_comment", "update_comment",
+                    "update_thread", "create_person", "update_person",
+                    "create_company", "update_company", "create_attribute",
+                    "update_attribute", "delete_attribute", "create_queue", "add_queue",
+                    "update_queue", "add_queue_numbers", "remove_queue_numbers",
+                    "delete_queue", "set_queue_assignee", "create_summary_template",
+                    "update_summary_template", "delete_summary_template",
+                    "set_default_summary_template", "create_webhook", "update_webhook",
+                    "delete_webhook", "update_call_flow_draft", "publish_call_flow",
+                    "update_receptionist", "set_receptionist_status",
+                    "set_receptionist_prompt", "add_receptionist_website",
+                    "update_receptionist_website", "delete_receptionist_website",
+                    "delete_receptionist_file"],
         to: Optional[str] = None,
         message: Optional[str] = None,
         from_number: Optional[str] = None,
@@ -536,9 +728,45 @@ def register(mcp: FastMCP) -> None:
         do_not_disturb: Optional[Literal["ENABLED", "DISABLED"]] = None,
         user_id: Optional[str] = None,
         email: Optional[str] = None,
+        queue_id: Optional[str] = None,
+        tag_id: Optional[str] = None,
+        note_id: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        comment_id: Optional[str] = None,
+        resolved: Optional[bool] = None,
+        entity_type: Optional[Literal["CALL", "TEXT_MESSAGE", "CONVERSATION_NOTE"]] = None,
+        entity_id: Optional[str] = None,
+        entity: Optional[Literal["person", "company"]] = None,
+        key: Optional[str] = None,
+        label: Optional[str] = None,
+        attribute_type: Optional[Literal["TEXT", "NUMBER", "DATE", "BOOLEAN",
+                                         "DROPDOWN"]] = None,
+        description: Optional[str] = None,
+        options: Optional[list[dict]] = None,
+        prompt: Optional[str] = None,
+        should_prompt_override: Optional[bool] = None,
+        is_visible: Optional[bool] = None,
+        template_id: Optional[str] = None,
+        call_context: Optional[str] = None,
+        icon: Optional[str] = None,
+        sections: Optional[list[dict]] = None,
+        url: Optional[str] = None,
+        topics: Optional[list[str]] = None,
+        webhook_id: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        definition: Optional[dict] = None,
+        schema_version: Optional[int] = None,
+        lock_version: Optional[int] = None,
+        base_published_version: Optional[int] = None,
+        engine_subset: Optional[Literal["NESTED_IVR", "FULL_FLOW"]] = None,
+        status: Optional[Literal["ACTIVE", "FORWARDING", "DISABLED"]] = None,
+        website_id: Optional[str] = None,
+        file_id: Optional[str] = None,
     ) -> Any:
-        """Act on Allo: send a text, change a call, a conversation, the CRM or the
-        Power Dialer queue. Each call acts once (never retried).
+        """Act on Allo: send a text, change a call, a conversation, the CRM and its
+        custom fields, the Power Dialer queues, and a line's settings (call flow, AI
+        receptionist, summary templates, webhooks). Each call acts once (never
+        retried).
 
         `op`:
         - `send_sms` — send a text NOW to `to` (E.164), `message` up to 1000
@@ -551,20 +779,40 @@ def register(mcp: FastMCP) -> None:
           `content`); `template_key` when the call has several summaries.
         - `update_conversation` — `action` READ, UNREAD, ARCHIVE or UNARCHIVE on
           the conversation with `contact_number` (on `allo_number`).
-        - `create_tag` — a team tag (`name`, `color`); its key is the slug of the name.
+        - `create_tag` — a team tag (`name`, `color`); its key is the slug of the name;
+          `delete_tag` — by `tag_id`.
         - `add_tags` / `remove_tag` — tag a call (`item_id`, `tags`: tag keys), or
           untag it (`tag`).
         - `create_note` — an internal note (`content`) on a person (`person_id`) or
           on a conversation (`contact_number`, `allo_number`, optionally written as
-          member `sender_id`); the contact never sees it.
+          member `sender_id`); the contact never sees it. `update_note` /
+          `delete_note` — a note by `note_id` (a person's: with its `person_id`; the
+          author's own only).
+        - `create_thread` — a comment thread on a call, text or conversation note
+          (`entity_type`, `entity_id`, first comment `content`); `add_comment`
+          (`thread_id`, `content`), `update_comment` (`comment_id`, `content`),
+          `update_thread` (`thread_id`, `resolved` true or false).
         - `create_person` / `update_person` — a CRM person; `fields`: name,
           last_name, job_title, website, address, numbers (E.164, at least one to
           create), emails, company_id, custom_attributes (keys from
           `allo(op="attributes")`). An update changes only the fields given.
         - `create_company` / `update_company` — a CRM company; `fields`: name
           (to create), website, industry, custom_attributes.
+        - `create_attribute` — a custom field on `entity` "person" or "company":
+          `label` (its key is derived from it: lowercase, no accents, `_`),
+          `attribute_type` TEXT, NUMBER, DATE, BOOLEAN or DROPDOWN (`options`
+          `[{"label": …}]`, required for DROPDOWN only); a company attribute also
+          takes the AI's `prompt` and `should_prompt_override`. Idempotent: the same
+          label and type return the existing field (`already_existed`).
+          `update_attribute` — by `key`: `label`, `options` (the whole list; send an
+          option's `key` to keep it), a person field's `description`, a company
+          attribute's `prompt`, `should_prompt_override`, `is_visible`.
+          `delete_attribute` — by `key`: a person field disappears but keeps its
+          values (re-creating it restores them); a company attribute's values are
+          ERASED on every company. Fields synced from a CRM cannot be deleted.
         - `create_queue` — a fresh, EMPTY Power Dialer queue (`name`): the current
-          queue is replaced.
+          queue is replaced. `add_queue` — one more named queue (`name`, assigned to
+          `user_id` / `email`), the current one kept.
         - `update_queue` — the queue's `name`, `voicemail_handling`,
           `do_not_disturb`.
         - `add_queue_numbers` — append `entries` to the queue (made if none), each
@@ -574,8 +822,34 @@ def register(mcp: FastMCP) -> None:
           (0-based), both (one occurrence), or `unassigned=true` (every entry not
           called yet).
 
-        The queue ops act on the key owner's queue, or on a teammate's by
-        `user_id` or `email`.
+        - `delete_queue` — a queue by `queue_id`, or the current one; `set_queue_assignee`
+          — give the queue `queue_id` to `user_id` / `email` (admin or manager key).
+
+        The queue ops act on the key owner's current queue, on a teammate's by
+        `user_id` or `email`, or on any queue by `queue_id` (then neither).
+        Allo does not deduplicate a queue: read it (`allo(op="queue")`) before adding.
+
+        Line settings (`allo_number` is the line):
+        - `create_summary_template` (`name`, `call_context`, `icon`, `sections`),
+          `update_summary_template` (`template_id`, the whole template),
+          `delete_summary_template`; `set_default_summary_template` — the line's
+          default (`template_id`; none clears it).
+        - `create_webhook` (https `url`, `topics` from `allo(op="webhook_events")`,
+          `description`) — the answer carries its `signing_secret`;
+          `update_webhook` (`webhook_id`, `url`, `topics`, `description`,
+          `enabled`), `delete_webhook`.
+        - `update_call_flow_draft` — the line's call flow DRAFT (`definition`,
+          `schema_version`, `lock_version` of the draft read, `engine_subset`);
+          nothing is live until `publish_call_flow` (`lock_version`), which makes it
+          the line's inbound routing AT ONCE.
+        - `update_receptionist` — the AI receptionist (`fields`: name, language,
+          voice_id, greeting_message, business_hours, transfer_rules…; a collection
+          given replaces the configured one); `set_receptionist_status` (`status`
+          ACTIVE puts it on the line, FORWARDING sends calls to the business phone);
+          `set_receptionist_prompt` (`sections`, every one);
+          `add_receptionist_website` (`url`), `update_receptionist_website`
+          (`website_id`, `status` ACTIVE or DISABLED), `delete_receptionist_website`,
+          `delete_receptionist_file` (`file_id`) — the last two for every line.
 
         Args:
             op: What to do (see above).
@@ -604,6 +878,39 @@ def register(mcp: FastMCP) -> None:
             do_not_disturb: ENABLED or DISABLED while dialing (`update_queue`).
             user_id: A teammate whose queue to act on.
             email: A teammate's email, whose queue to act on (when no `user_id`).
+            queue_id: A Power Dialer queue (`pdl-*`), instead of the current one.
+            tag_id: A tag to delete.
+            note_id: A note to change or delete.
+            thread_id: A thread.
+            comment_id: A thread comment to change.
+            resolved: Resolve the thread (true) or reopen it (false).
+            entity_type: What a new thread is on: CALL, TEXT_MESSAGE or CONVERSATION_NOTE.
+            entity_id: The id of that call, text or note.
+            entity: "person" or "company" (the attribute ops).
+            key: A custom field's key (`update_attribute`, `delete_attribute`).
+            label: A custom field's display name.
+            attribute_type: TEXT, NUMBER, DATE, BOOLEAN or DROPDOWN (`create_attribute`).
+            description: A person field's description, or a webhook's.
+            options: A DROPDOWN's options, `[{"label": …, "key"?: …}]`.
+            prompt: What the AI fills a company attribute with, from calls.
+            should_prompt_override: Whether the AI may overwrite a value already set.
+            is_visible: Show or hide a company attribute in Allo.
+            template_id: A summary template.
+            call_context: What the calls of a summary template are about.
+            icon: A summary template's icon.
+            sections: A summary template's sections, or the receptionist prompt's.
+            url: A webhook's https address, or a website for the receptionist.
+            topics: A webhook's event topics.
+            webhook_id: A webhook endpoint.
+            enabled: Turn a webhook on or off.
+            definition: A call flow definition (`update_call_flow_draft`).
+            schema_version: The call flow definition's schema version.
+            lock_version: The draft's `lock_version`, as read.
+            base_published_version: The published version the draft starts from.
+            engine_subset: NESTED_IVR or FULL_FLOW.
+            status: ACTIVE or FORWARDING (receptionist), ACTIVE or DISABLED (website).
+            website_id: A receptionist website.
+            file_id: A receptionist file.
         """
         if op not in _ACT_OPS:
             raise _bad(f"Unknown op {op!r}: expected one of {', '.join(_ACT_OPS)}. "
@@ -615,8 +922,24 @@ def register(mcp: FastMCP) -> None:
                      company_id=company_id, fields=fields, entries=entries, number=number,
                      position=position, unassigned=unassigned,
                      voicemail_handling=voicemail_handling, do_not_disturb=do_not_disturb,
-                     user_id=user_id, email=email)
+                     user_id=user_id, email=email, queue_id=queue_id, tag_id=tag_id,
+                     note_id=note_id, thread_id=thread_id, comment_id=comment_id,
+                     resolved=resolved,
+                     entity_type=entity_type, entity_id=entity_id, entity=entity, key=key,
+                     label=label, attribute_type=attribute_type, description=description,
+                     options=options, prompt=prompt,
+                     should_prompt_override=should_prompt_override, is_visible=is_visible,
+                     template_id=template_id, call_context=call_context, icon=icon,
+                     sections=sections, url=url, topics=topics, webhook_id=webhook_id,
+                     enabled=enabled, definition=definition, schema_version=schema_version,
+                     lock_version=lock_version,
+                     base_published_version=base_published_version,
+                     engine_subset=engine_subset, status=status, website_id=website_id,
+                     file_id=file_id)
         _check_args(op, given, _ACT_TAKES, _ACT_NEEDS)
+        if queue_id and (user_id or email) and op != "set_queue_assignee":
+            raise _bad(f"op='{op}' acts on the queue `queue_id` OR on the current one of "
+                       "`user_id` / `email`, not both. Nothing was done.")
         owner = dict(user_id=user_id, email=email)
 
         def _act(fn):
@@ -680,11 +1003,121 @@ def register(mcp: FastMCP) -> None:
             return _act(lambda: _client().update_company(company_id, **body))
         if op == "create_queue":
             return _act(lambda: _client().reset_dialing_queue(name=name, **owner))
+        if op == "add_queue":
+            return _act(lambda: _client().create_dialing_queue(name=name, **owner))
         if op == "update_queue":
+            if queue_id:
+                return _act(lambda: _client().update_dialing_queue_by_id(
+                    queue_id, name=name, voicemail_handling=voicemail_handling,
+                    do_not_disturb=do_not_disturb))
             return _act(lambda: _client().update_dialing_queue(
                 name=name, voicemail_handling=voicemail_handling,
                 do_not_disturb=do_not_disturb, **owner))
         if op == "add_queue_numbers":
+            if queue_id:
+                return _act(lambda: _client().add_numbers_to_queue(queue_id, entries))
             return _act(lambda: _client().add_queue_numbers(entries, **owner))
-        return _act(lambda: _client().remove_queue_numbers(
-            number=number, position=position, unassigned=unassigned or None, **owner))
+        if op == "remove_queue_numbers":
+            if queue_id:
+                return _act(lambda: _client().remove_numbers_from_queue(
+                    queue_id, number=number, position=position,
+                    unassigned=unassigned or None))
+            return _act(lambda: _client().remove_queue_numbers(
+                number=number, position=position, unassigned=unassigned or None, **owner))
+        if op == "delete_queue":
+            if queue_id:
+                return _act(lambda: _client().delete_dialing_queue(queue_id))
+            return _act(lambda: _client().delete_current_dialing_queue(**owner))
+        if op == "set_queue_assignee":
+            if not (user_id or email):
+                raise _bad("op='set_queue_assignee' needs the new assignee: `user_id` or `email`. "
+                           "Nothing was done.")
+            return _act(lambda: _client().assign_dialing_queue(queue_id, **owner))
+        if op == "delete_tag":
+            return _act(lambda: _client().delete_tag(tag_id))
+        if op == "update_note":
+            if person_id:
+                return _act(lambda: _client().update_person_note(person_id, note_id, content))
+            return _act(lambda: _client().update_conversation_note(note_id, content))
+        if op == "delete_note":
+            if person_id:
+                return _act(lambda: _client().delete_person_note(person_id, note_id))
+            return _act(lambda: _client().delete_conversation_note(note_id))
+        if op == "create_thread":
+            return _act(lambda: _client().create_thread(entity_type, entity_id, content))
+        if op == "add_comment":
+            return _act(lambda: _client().add_thread_comment(thread_id, content))
+        if op == "update_comment":
+            return _act(lambda: _client().update_thread_comment(comment_id, content))
+        if op == "update_thread":
+            if resolved:
+                return _act(lambda: _client().resolve_thread(thread_id))
+            return _act(lambda: _client().unresolve_thread(thread_id))
+        if op in ("create_attribute", "update_attribute", "delete_attribute"):
+            return _attribute(op, entity, key=key, label=label, attribute_type=attribute_type,
+                              description=description, options=options, prompt=prompt,
+                              should_prompt_override=should_prompt_override,
+                              is_visible=is_visible)
+        if op == "create_summary_template":
+            return _act(lambda: _client().create_summary_template(
+                name, call_context=call_context, icon=icon, sections=sections))
+        if op == "update_summary_template":
+            return _act(lambda: _client().update_summary_template(
+                template_id, name, call_context=call_context, icon=icon, sections=sections))
+        if op == "delete_summary_template":
+            return _act(lambda: _client().delete_summary_template(template_id))
+        if op == "set_default_summary_template":
+            return _act(lambda: _client().set_default_summary_template(
+                allo_number, summary_template_id=template_id))
+        if op == "create_webhook":
+            return _act(lambda: _client().create_webhook(url, topics, description=description))
+        if op == "update_webhook":
+            return _act(lambda: _client().update_webhook(
+                webhook_id, url=url, topics=topics, description=description, enabled=enabled))
+        if op == "delete_webhook":
+            return _act(lambda: _client().delete_webhook(webhook_id))
+        if op == "update_call_flow_draft":
+            return _act(lambda: _client().save_call_flow_draft(
+                allo_number, definition, schema_version, lock_version=lock_version,
+                base_published_version=base_published_version, engine_subset=engine_subset))
+        if op == "publish_call_flow":
+            return _act(lambda: _client().publish_call_flow(allo_number, lock_version))
+        if op == "update_receptionist":
+            return _act(lambda: _client().update_receptionist(allo_number, **fields))
+        if op == "set_receptionist_status":
+            return _act(lambda: _client().set_receptionist_status(allo_number, status))
+        if op == "set_receptionist_prompt":
+            return _act(lambda: _client().set_receptionist_prompt(allo_number, sections))
+        if op == "add_receptionist_website":
+            return _act(lambda: _client().add_receptionist_website(allo_number, url))
+        if op == "update_receptionist_website":
+            return _act(lambda: _client().update_receptionist_website(
+                allo_number, website_id, status))
+        if op == "delete_receptionist_website":
+            return _act(lambda: _client().delete_receptionist_website(allo_number, website_id))
+        return _act(lambda: _client().delete_receptionist_file(allo_number, file_id))
+
+    def _attribute(op: str, entity: str, **given) -> Any:
+        """A custom field of people or companies: each side takes its own keys, any
+        other is refused before the call."""
+        takes = _ATTRIBUTE_TAKES[(op, entity)]
+        stray = sorted(k for k, v in given.items()
+                       if v is not None and k not in takes and k != "key")
+        if stray:
+            raise _bad(f"op='{op}' on a {entity} field does not take "
+                       f"{', '.join(f'`{k}`' for k in stray)}. Nothing was done.")
+        args = {k: given[k] for k in takes - {"label", "attribute_type"}}
+        label, kind, key = given["label"], given["attribute_type"], given["key"]
+        if op == "create_attribute" and entity == "person":
+            out = _run(lambda: _client().create_person_attribute(label, kind, **args))
+        elif op == "create_attribute":
+            out = _run(lambda: _client().create_company_attribute(label, kind, **args))
+        elif op == "update_attribute" and entity == "person":
+            out = _run(lambda: _client().update_person_attribute(key, label=label, **args))
+        elif op == "update_attribute":
+            out = _run(lambda: _client().update_company_attribute(key, label=label, **args))
+        elif entity == "person":
+            out = _run(lambda: _client().delete_person_attribute(key))
+        else:
+            out = _run(lambda: _client().delete_company_attribute(key))
+        return _slim(out, _RECORDING_ADDRESSES)
