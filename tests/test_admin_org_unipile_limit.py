@@ -73,9 +73,9 @@ def test_sans_plafond_propre_l_org_suit_le_defaut_plateforme(socle, super_admin)
     assert set(out) == set(users_admin.OrgUnipileLimitView.model_fields)
 
 
-def test_le_defaut_est_celui_que_lit_la_connexion(socle, super_admin, monkeypatch):
-    """Une seule lecture de l'environnement : celle de `unipile_connect`, qui refuse
-    réellement la connexion. La recopier ici pourrait diverger d'elle."""
+def test_le_defaut_est_lu_chez_unipile_connect_mais_n_est_plus_applique(socle, super_admin, monkeypatch):
+    """Une seule lecture de l'environnement : celle de `unipile_connect`. Le défaut reste
+    affiché, mais la connexion n'applique plus aucun plafond (2026-10-23)."""
     from oto_mcp import unipile_connect
     monkeypatch.setenv("OTO_MCP_UNIPILE_DEFAULT_LIMIT", "3")
     _, out = _get()
