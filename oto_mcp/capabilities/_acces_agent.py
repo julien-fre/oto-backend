@@ -148,6 +148,23 @@ def avec_acces(t: dict, acces: Optional[str], *, ferme: bool = False) -> dict:
             "can_share": acces in GOUVERNER}
 
 
+def avec_visibilites(org_id: int, agents: list[dict]) -> list[dict]:
+    """Chaque agent servi avec `visibility` — qui le voit au-delà de son propriétaire
+    et des admins. UNE lecture de partages pour toute la liste : l'écran des agents
+    l'affiche sur chaque ligne (« Privé » / « Toute l'org »), comme les tableaux."""
+    vis = db.visibilites_d_agents([int(t["id"]) for t in agents], org_id)
+    return [{**t, "visibility": vis[int(t["id"])]} for t in agents]
+
+
+def ouvrir_a_l_org(ctx: ResolvedCtx, agent: dict) -> None:
+    """Le partage posé à la NAISSANCE d'un agent : `editor` à toute son org. Un agent
+    travaille pour l'org (clés et procédures d'org) — il naît visible et modifiable
+    par elle ; le rendre privé est le geste explicite (`private=true`, ou `unshare
+    everyone`). Ne prête PAS un abonnement personnel (cf. tête de module)."""
+    ownership.grant(KIND, str(agent["id"]), "org", str(ctx.org_id),
+                    role="editor", granted_by=ctx.sub)
+
+
 def _inconnu() -> AuthzDenied:
     # Même 404 qu'un agent qui n'existe pas : ne pas voir un agent, c'est ne pas
     # savoir qu'il existe.

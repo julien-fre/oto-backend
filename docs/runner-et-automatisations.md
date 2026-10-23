@@ -1762,11 +1762,20 @@ pas (absent de `list`, 404 sur `get`, même 404 qu'un agent inconnu).
 - **Retirer un partage ne renouvelle pas le secret du webhook** : un éditeur ne l'a
   jamais vu (rendu une fois, à qui le pose — propriétaire ou admin, seuls à pouvoir le
   renouveler).
+- **Un agent naît à son org** (23/10/2026) : `create` pose un partage `editor` à l'org
+  entière (`_acces_agent.ouvrir_a_l_org`) — un agent tourne sur les clés et les
+  procédures de l'org, pour elle. **Privé = le geste explicite** : `private=true` à la
+  création, ou `unshare everyone=true` ensuite. Ce partage ne prête pas un abonnement
+  personnel (ci-dessus). Avant cette date un agent naissait privé : la révision
+  `20261023_1000_agents_org_default` ouvre ceux-là, et pas un agent plus ancien dont le
+  partage d'org a été fermé à la main.
+- **Chaque agent servi dit qui le voit** : `visibility = {org: editor|viewer|null,
+  people: n}` sur `list`/`get`/`create` (`db.visibilites_d_agents`, une lecture pour
+  toute la liste). `org=null, people=0` = privé (propriétaire et admins seuls) ; le front
+  l'affiche sur chaque ligne, comme les tableaux.
 - **Les agents d'avant restent ouverts** : la révision `0035_agents_partages_a_l_org`
-  pose un partage `editor` à l'org sur chaque agent existant ; son propriétaire le
-  retire depuis l'écran. Un agent créé ensuite naît privé. ⚠️ **La révision se joue
-  AVANT le déploiement du code** (`oto-mcp migrer upgrade head`) : sans elle, chaque
-  agent existant devient privé d'un coup.
+  a posé un partage `editor` à l'org sur chaque agent existant au 02/10/2026 ; son
+  propriétaire le retire depuis l'écran.
 - **La file de l'org reste lisible, pas ce qu'un agent exécute** : `runner.jobs`
   (`list`, `get`) sert toujours les travaux de toute l'org, mais la charge d'un travail
   enfilé par un agent que l'appelant ne peut pas MODIFIER est réduite à de quoi le

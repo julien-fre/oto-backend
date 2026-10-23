@@ -64,6 +64,12 @@ def org(monkeypatch):
         return {7: best} if best and 7 in ids else {}
     monkeypatch.setattr(db, "partages_d_agents", _partages)
 
+    def _visibilites(ids, o):
+        org_role = partages.get(("org", str(o)))
+        gens = sum(1 for (t, _) in partages if t != "org")
+        return {int(i): {"org": org_role, "people": gens} for i in ids}
+    monkeypatch.setattr(db, "visibilites_d_agents", _visibilites)
+
     class _Scope:
         def __init__(self, sub):
             self.sub = sub
@@ -133,6 +139,49 @@ def test_partage_a_toute_l_org_le_rend_visible_et_modifiable(org):
     assert t["my_access"] == "editor"
     _appel(AUTRE, op="update", trigger_id=7, label="renommé")
     assert org["ecrit"] == {"label": "renommé"}
+
+
+def test_chaque_agent_servi_dit_qui_le_voit(org):
+    t, = _appel(PROPRIETAIRE, op="list")["triggers"]
+    assert t["visibility"] == {"org": None, "people": 2}
+    org["partages"][("org", str(ORG))] = "editor"
+    assert _appel(PROPRIETAIRE, op="get", trigger_id=7)["trigger"]["visibility"] == {
+        "org": "editor", "people": 2}
+
+
+# ── naître ───────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def creation(org, monkeypatch):
+    """Une création : la procédure se lit, rien ne tourne déjà dessus."""
+    db = RT.db
+    org["partages"].clear()
+    monkeypatch.setattr(db, "triggers_for_procedure", lambda o, p: [])
+    monkeypatch.setattr(db, "create_trigger", lambda o, sub, **k: {
+        "id": 7, "org_id": o, "sub": sub, **k})
+    return org
+
+
+def _creer(monkeypatch, **kw):
+    # Ce banc ne parle ni du modèle, ni du runner, ni des clés : seulement du partage.
+    for nom in ("famille_declaree", "exige_un_modele", "exige_un_runner", "exige_servi"):
+        monkeypatch.setattr(RT._modele, nom, lambda *a, **k: None)
+    monkeypatch.setattr(RT._cle_exigee, "exiger_a_la_pose", lambda *a, **k: None)
+    monkeypatch.setattr(RT._abonnement, "exiger_a_la_pose", lambda *a, **k: None)
+    return _appel(PROPRIETAIRE, op="create", procedure="veille", cron="0 8 * * *",
+                  tools=["a"], model="claude-sonnet-5", **kw)["trigger"]
+
+
+def test_un_agent_nait_modifiable_par_toute_son_org(creation, monkeypatch):
+    _creer(monkeypatch)
+    assert creation["partages"] == {("org", str(ORG)): "editor"}, (
+        "un agent travaille pour l'org : il naît à elle, en `editor`")
+
+
+def test_un_agent_prive_ne_s_ouvre_a_personne(creation, monkeypatch):
+    t = _creer(monkeypatch, private=True)
+    assert creation["partages"] == {}
+    assert t["visibility"] == {"org": None, "people": 0}
 
 
 # ── modifier ─────────────────────────────────────────────────────────────────

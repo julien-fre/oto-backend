@@ -19,6 +19,9 @@ from oto_mcp.capabilities import _outils_plateforme as OP
 from oto_mcp.capabilities import runner_triggers as RT
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
+# Ce banc double la base des agents et ne parle pas de leur partage (conftest).
+pytestmark = pytest.mark.usefixtures("agents_sans_partages")
+
 
 
 @pytest.fixture(autouse=True)

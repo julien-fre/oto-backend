@@ -160,6 +160,32 @@ def _forfait_prete(alias_trigger: str) -> str:
             f"  AND {PARTAGE_VIVANT_G})")
 
 
+def visibilites_d_agents(ids: list[int], org_id: int) -> dict[int, dict]:
+    """Qui VOIT chacun des agents `ids`, au-delà de son propriétaire et des admins :
+    `{"org": "editor"|"viewer"|None, "people": n}` — le rôle du partage VIVANT à
+    l'org entière, et le nombre de personnes ou d'équipes nommées. UNE requête pour
+    toute une liste ; un agent sans partage vaut `{"org": None, "people": 0}`."""
+    out = {int(i): {"org": None, "people": 0} for i in ids}
+    if not ids:
+        return out
+    from ._partage_vivant import PARTAGE_VIVANT
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT resource_id, "
+            "  max(permission) FILTER (WHERE principal_type = 'org' "
+            "                            AND principal_id = %s) AS org, "
+            "  count(*) FILTER (WHERE principal_type <> 'org') AS people "
+            "FROM resource_grants WHERE resource_type = 'runner_trigger' "
+            f"  AND resource_id = ANY(%s) AND {PARTAGE_VIVANT} GROUP BY resource_id",
+            (str(org_id), [str(i) for i in ids]),
+        ).fetchall()
+    for r in rows:
+        out[int(r["resource_id"])] = {
+            "org": {"write": "editor", "read": "viewer"}.get(r["org"] or ""),
+            "people": int(r["people"] or 0)}
+    return out
+
+
 def forfaits_pretes(ids: list[int], sub: str) -> set[int]:
     """Parmi les agents `ids`, ceux dont le propriétaire a nommé `sub` éditeur — ce
     qui lui PRÊTE son abonnement personnel pour cet agent (`_acces_agent`). UNE
