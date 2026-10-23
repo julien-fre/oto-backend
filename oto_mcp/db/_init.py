@@ -674,10 +674,6 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # révision `0072` : ordre indifférent entre elles.
     if _colonne_absente(conn, "runner_triggers", runner_triggers.COLONNE_HOOK_SOURCES):
         conn.execute(runner_triggers.DDL_COLONNE_HOOK_SOURCES)
-    # Le prêt du forfait d'un agent à son équipe — la même que pose la révision
-    # `20261023_1010_plan_shared` : ordre indifférent entre elles.
-    if _colonne_absente(conn, "runner_triggers", runner_triggers.COLONNE_PLAN_PARTAGE):
-        conn.execute(runner_triggers.DDL_COLONNE_PLAN_PARTAGE)
     # L'affichage d'une recette (ses étapes, pour une page) — le même que pose la
     # révision `20261022_2100_recipes_display` : ordre indifférent entre elles.
     if _colonne_absente(conn, "recipes", recipes.COLONNE_DISPLAY):

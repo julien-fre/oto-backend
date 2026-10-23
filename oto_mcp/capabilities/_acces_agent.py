@@ -165,23 +165,6 @@ def ouvrir_a_l_org(ctx: ResolvedCtx, agent: dict) -> None:
                     role="editor", granted_by=ctx.sub)
 
 
-def pret_du_forfait_valide(ctx: ResolvedCtx, preter: bool, actuel: dict) -> bool:
-    """`share_plan` : le PROPRIÉTAIRE prête (ou reprend) son abonnement personnel à toute
-    l'org qui peut modifier l'agent. Lui seul — c'est son forfait — et jamais sous un
-    jeton de délégation : un agent hébergé qui a `oto_trigger` ouvrirait le forfait de
-    son porteur à toute l'org sur une injection de prompt."""
-    from .. import verrou_org
-    if verrou_org.travail_de_la_requete() is not None:
-        raise AuthzDenied(403, "share_plan_human_only",
-                          "`share_plan` ne se pose pas depuis un agent hébergé : c'est "
-                          "son propriétaire qui prête son forfait, depuis son compte.")
-    if str(actuel.get("sub")) != str(ctx.sub):
-        raise AuthzDenied(403, "share_plan_owner_only",
-                          "`share_plan` prête l'abonnement du propriétaire : lui seul "
-                          "le pose.")
-    return bool(preter)
-
-
 def _inconnu() -> AuthzDenied:
     # Même 404 qu'un agent qui n'existe pas : ne pas voir un agent, c'est ne pas
     # savoir qu'il existe.

@@ -512,26 +512,3 @@ def test_apres_une_reprise_les_partages_de_l_ancien_ne_pretent_pas_le_nouveau(fo
     forfait["agent"]["sub"] = ADMIN   # repris : EDITEUR avait été nommé par l'ancien
     assert _refus(EDITEUR, op="update", trigger_id=7, input="x").code == \
         "subscription_personal_only"
-
-
-# ── prêter son forfait à l'équipe (`share_plan`) ─────────────────────────────
-
-def test_seul_le_proprietaire_prete_son_forfait_a_l_equipe(forfait):
-    for sub in (ADMIN, EDITEUR):
-        e = _refus(sub, op="update", trigger_id=7, share_plan=True)
-        assert (e.status, e.code) == (403, "share_plan_owner_only"), sub
-    _appel(PROPRIETAIRE, op="update", trigger_id=7, share_plan=True)
-    assert forfait["ecrit"] == {"plan_shared": True}
-
-
-def test_un_agent_heberge_ne_prete_pas_le_forfait_de_son_porteur(forfait, monkeypatch):
-    from oto_mcp import verrou_org
-    monkeypatch.setattr(verrou_org, "travail_de_la_requete", lambda: 1)
-    e = _refus(PROPRIETAIRE, op="update", trigger_id=7, share_plan=True)
-    assert (e.status, e.code) == (403, "share_plan_human_only")
-
-
-def test_share_plan_hors_update_est_refuse(org):
-    e = _refus(PROPRIETAIRE, op="create", procedure="veille", cron="0 8 * * *",
-               share_plan=True)
-    assert (e.status, e.code) == (400, "share_plan_update_only")
