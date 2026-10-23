@@ -55,7 +55,8 @@ stopping_at TIMESTAMPTZ,
 heartbeat_at TIMESTAMPTZ,
 taken_by TEXT,
 stopped_at TIMESTAMPTZ,
-created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+trigger_id BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_runner_fleets_org
 ON runner_fleets(org_id, status);

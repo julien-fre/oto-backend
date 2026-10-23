@@ -301,6 +301,21 @@ boot, où un `ALTER` redemanderait son verrou exclusif à chaque déploiement (A
 `docs/migrations-versionnees.md` §5.1). La colonne est additive : l'ancien code l'ignore,
 et un retour au tag précédent reste sûr.
 
+### L'agent qui a déclaré une campagne : `trigger_id` (23/10/2026)
+
+`oto_fleet op=create` appelé depuis le run d'un agent hébergé pose `runner_fleets.trigger_id`
+= cet agent. Lu dans le travail du JETON (`verrou_org.travail_de_la_requete` → sa charge
+`trigger_id`), jamais dans un argument : un agent ne se range pas sous un autre. Une
+personne, un travail de campagne, un agent d'une autre org ou supprimé → `null`. Rendu par
+`get` et par la carte de `list`.
+
+Pourquoi : l'écran des agents range un passage sous l'agent qui l'a lancé. L'appariement
+par procédure ne suffit pas quand l'agent déclare une AUTRE procédure que la sienne (Klark :
+l'agent 161 `klark-allo-daily-queue` lance chaque matin un passage `klark-allo-push`), et
+il se défait dès qu'un second agent joue la même procédure. Les passages d'avant restent à
+`null` : l'écran retombe sur l'appariement par procédure. Révision
+`20261023_0900_fleet_trigger`, posée aussi au démarrage.
+
 ### Ne pas promettre une exécution que personne n'assure (02/09/2026)
 
 Le tick ENFILE, le worker EXÉCUTE. Sans worker armé pour l'org, le job reste

@@ -518,7 +518,7 @@ def test_la_temperature_ne_se_change_PAS_en_vol():
 
 _CARTE = {"id", "label", "status", "procedure", "namespace", "row_filter", "max_rows",
           "model", "stop_reason", "armed_at", "started_at", "stopping_at", "stopped_at",
-          "created_at", "taken_by", "input_sha256"}
+          "created_at", "taken_by", "trigger_id", "input_sha256"}
 
 
 def _ligne(**surcharges) -> dict:
@@ -538,7 +538,7 @@ def _ligne(**surcharges) -> dict:
         "status": "running", "stop_reason": None,
         "armed_at": "2026-09-13 08:00:00", "started_at": "2026-09-13 08:00:05",
         "stopping_at": None, "heartbeat_at": None, "taken_by": None, "stopped_at": None,
-        "created_at": "2026-09-12 17:00:00"}
+        "created_at": "2026-09-12 17:00:00", "trigger_id": None}
     assert set(ligne) == {c.strip() for c in dbf._COLS.split(",")}, (
         "la doublure ne porte plus les colonnes du SELECT servi")
     ligne.update(surcharges)
@@ -599,3 +599,56 @@ def test_get_rend_la_declaration_telle_quelle(monkeypatch):
 
 def test_une_liste_vide_ne_fabrique_pas_de_notice(monkeypatch):
     assert _lister(monkeypatch, []) == {"fleets": [], "projection": None}
+
+
+# ── l'agent qui déclare le passage (23/10/2026) ───────────────────────────────
+
+class _Verrou:
+    def __init__(self, job_id):
+        self.job_id = job_id
+
+
+def _create_capture(monkeypatch, *, job_id, charge, agents):
+    """`create` jusqu'à l'écriture, l'écriture capturée : le travail du jeton est
+    `job_id` (None = une personne), sa charge `charge`, et `agents` les agents de
+    l'org que `get_trigger` résout."""
+    monkeypatch.setattr(RF.verrou_org, "travail_de_la_requete",
+                        lambda: None if job_id is None else _Verrou(job_id))
+    monkeypatch.setattr(RF.db, "charge_du_travail", lambda j: charge if j == job_id else None)
+    monkeypatch.setattr(RF.db, "get_trigger",
+                        lambda tid, org: {"id": tid} if (tid, org) in agents else None)
+    monkeypatch.setattr(RF, "_cible_a_la_declaration", lambda ctx, ns: ns)
+    vu = {}
+    monkeypatch.setattr(RF.db, "create_fleet", lambda *a, **kw: vu.update(kw) or {"id": 1})
+    _appel(_ctx(), op="create", label="cartes", procedure="klark-allo-push", tools=["oto_kb"])
+    return vu
+
+
+def test_un_passage_declare_par_un_agent_heberge_porte_cet_agent(monkeypatch):
+    """Klark : l'agent 161 déclare un passage d'une AUTRE procédure que la sienne —
+    seul ce lien le range sous lui."""
+    vu = _create_capture(monkeypatch, job_id=900, charge={"trigger_id": "161"},
+                         agents={(161, 2)})
+    assert vu["trigger_id"] == 161
+
+
+def test_un_passage_declare_par_une_personne_ne_porte_aucun_agent(monkeypatch):
+    assert _create_capture(monkeypatch, job_id=None, charge=None, agents=set())["trigger_id"] is None
+
+
+def test_le_travail_d_un_passage_ne_porte_aucun_agent(monkeypatch):
+    """Un travail de campagne n'a pas de `trigger_id` dans sa charge."""
+    vu = _create_capture(monkeypatch, job_id=901, charge={"fleet_id": 3}, agents=set())
+    assert vu["trigger_id"] is None
+
+
+def test_un_agent_d_une_autre_org_ou_supprime_ne_se_pose_pas(monkeypatch):
+    vu = _create_capture(monkeypatch, job_id=902, charge={"trigger_id": 161},
+                         agents={(161, 99)})
+    assert vu["trigger_id"] is None
+
+
+def test_la_carte_de_list_sert_l_agent_declarant():
+    assert "trigger_id" in RF.FleetCard.model_fields
+    from oto_mcp import db
+    assert "trigger_id" in db.runner_fleets._COLS

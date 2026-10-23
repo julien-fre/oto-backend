@@ -64,7 +64,7 @@ from . import (_abonnement, _cle_exigee, _descriptions_outils, _instruction,
                _limites_du_run, _lignes_de_campagne, _lignes_reservables, _modele,
                _ordonnanceur_de_campagne, _outils_manquants)
 from .. import (db, deprecations, output_projection, runner_models, session_org,
-               tool_alias)
+               tool_alias, verrou_org)
 
 logger = logging.getLogger(__name__)
 from ._authz import ORG_MEMBER
@@ -201,6 +201,9 @@ class Fleet(BaseModel):
     taken_by: Optional[str] = None
     stopped_at: Optional[str] = None
     created_at: Optional[str] = None
+    trigger_id: Optional[int] = Field(None, description=(
+        "The hosted agent (`oto_trigger`) whose run declared this pass — null when a "
+        "person declared it, or for a pass declared before 23/10/2026."))
 
 
 class FleetCard(BaseModel):
@@ -230,6 +233,7 @@ class FleetCard(BaseModel):
     stopped_at: Optional[str] = None
     created_at: Optional[str] = None
     taken_by: Optional[str] = None
+    trigger_id: Optional[int] = None
     input_sha256: Optional[str] = None
 
 
@@ -409,6 +413,28 @@ def _cible_a_la_declaration(ctx: ResolvedCtx, adresse: Optional[str]) -> Optiona
     return str(cle)
 
 
+def _agent_declarant(org_id: int) -> Optional[int]:
+    """L'agent hébergé dont le run DÉCLARE ce passage — None pour une personne.
+
+    Lu dans le travail du JETON (`verrou_org.travail_de_la_requete`) et dans SA charge en
+    base, jamais dans un argument de l'appel : un agent n'a pas à dire qui il est, et ne
+    doit pas pouvoir se ranger sous un autre. Un agent d'une autre org, ou supprimé
+    depuis, ne se pose pas.
+
+    ⚠️ Le lien que l'écran des agents attendait (23/10/2026) : l'agent 161 de Klark
+    déclare chaque matin un passage `klark-allo-push`, une autre procédure que la
+    sienne — l'appariement par procédure ne pouvait pas le ranger sous lui, et ses
+    passages s'affichaient comme des campagnes lancées à la main."""
+    v = verrou_org.travail_de_la_requete()
+    if v is None or v.job_id is None:
+        return None
+    try:
+        tid = int((db.charge_du_travail(v.job_id) or {}).get("trigger_id"))
+    except (TypeError, ValueError):
+        return None
+    return tid if db.get_trigger(tid, org_id) else None
+
+
 def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     if not ctx.org_id:
         raise AuthzDenied(400, "org_required", "les automatisations sont org-scopées")
@@ -482,7 +508,8 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             max_consecutive_failures=inp.max_consecutive_failures,
             max_tokens_per_row=inp.max_tokens_per_row,
             max_run_seconds=_limites_du_run.a_ecrire(inp.max_run_seconds),
-            descriptions_outils=descriptions)}
+            descriptions_outils=descriptions,
+            trigger_id=_agent_declarant(ctx.org_id))}
 
     if inp.op == "list":
         cartes, projection = _cartes(db.list_fleets(ctx.org_id, inp.status))

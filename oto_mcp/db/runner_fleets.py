@@ -38,7 +38,14 @@ _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps
          "workers, max_rows, "
          "max_tokens, max_consecutive_failures, max_tokens_per_row, status, stop_reason, "
          "armed_at, started_at, stopping_at, heartbeat_at, taken_by, stopped_at, "
-         "created_at")
+         "created_at, trigger_id")
+
+# L'agent hébergé dont un run a DÉCLARÉ le passage (23/10/2026) — NULL pour une personne,
+# et pour tout passage d'avant. Posée aussi au démarrage (`_init.py`), même DDL que la
+# révision `20261023_0900_fleet_trigger`. Sans clé étrangère : l'agent supprimé laisse
+# un numéro qui ne résout plus, comme `payload->>'trigger_id'` sur ses travaux.
+COLONNE_TRIGGER_ID = "trigger_id"
+DDL_COLONNE_TRIGGER_ID = f"ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS {COLONNE_TRIGGER_ID} BIGINT"
 
 # Ce qu'un passage a le droit de changer une fois déclaré. La CIBLE n'en est pas :
 # rediriger un passage en vol vers un autre tableau est exactement le geste que la
@@ -67,7 +74,8 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
                  max_consecutive_failures: Optional[int] = None,
                  max_tokens_per_row: Optional[int] = None,
                  max_run_seconds: Optional[int] = None,
-                 descriptions_outils: Optional[dict] = None) -> dict:
+                 descriptions_outils: Optional[dict] = None,
+                 trigger_id: Optional[int] = None) -> dict:
     with _connect() as conn:
         row = conn.execute(
             f"""
@@ -75,9 +83,9 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
                    (org_id, sub, label, procedure, project_id, tools, input,
                     max_steps, namespace, row_filter, provider, model, temperature, workers,
                     max_rows, max_tokens, max_consecutive_failures,
-                    max_tokens_per_row, max_run_seconds, descriptions_outils)
+                    max_tokens_per_row, max_run_seconds, descriptions_outils, trigger_id)
             VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
             RETURNING {_COLS}
             """,
             (org_id, sub, label, procedure, project_id,
@@ -87,7 +95,7 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
              provider, model, temperature, workers, max_rows, max_tokens,
              max_consecutive_failures, max_tokens_per_row, max_run_seconds,
              json.dumps(descriptions_outils, ensure_ascii=False)
-             if descriptions_outils is not None else None),
+             if descriptions_outils is not None else None, trigger_id),
         ).fetchone()
     return dict(row)
 

@@ -200,7 +200,10 @@ CREATE TABLE IF NOT EXISTS runner_fleets (
     -- jouée à la main — pas du boot (ADR 0065).
     taken_by TEXT,
     stopped_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- L'agent hébergé dont un run a déclaré le passage (23/10/2026). NULL = une
+    -- personne, ou un passage d'avant. Sans clé étrangère, comme les travaux.
+    trigger_id BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_runner_fleets_org
     ON runner_fleets(org_id, status);
