@@ -147,17 +147,30 @@ def partages_d_agents(ids: list[int],
 
 
 def _forfait_prete(alias_trigger: str) -> str:
-    """Le prédicat « le PROPRIÉTAIRE de cet agent a nommé l'éditeur `%s` » — un
-    partage `write` À UNE PERSONNE (ni l'org entière, ni une équipe), vivant, et
-    posé par celui sous qui l'agent tourne (`granted_by = sub`). Une seule écriture,
-    lue par `forfaits_pretes` et par la garde de `update_trigger`."""
+    """Le prédicat « l'éditeur `%s` modifie cet agent sur le forfait de son
+    propriétaire » : il tient un partage `write` VIVANT sur l'agent — à lui, à une
+    équipe dont il est membre, ou à l'org de l'agent dont il est membre. Qui l'a posé
+    ne compte pas (décidé le 23/10/2026) : un agent partagé en écriture se modifie,
+    quel que soit le modèle qui le fait tourner. Trois `%s`, tous le même éditeur
+    (`_PARAMS_FORFAIT`). Une seule écriture, lue par `forfaits_pretes` et par la garde
+    de `update_trigger`."""
     from ._partage_vivant import PARTAGE_VIVANT_G
     return ("EXISTS (SELECT 1 FROM resource_grants g "
             "WHERE g.resource_type = 'runner_trigger' "
             f"  AND g.resource_id = {alias_trigger}.id::text "
-            "  AND g.principal_type = 'user' AND g.principal_id = %s "
-            f"  AND g.permission = 'write' AND g.granted_by = {alias_trigger}.sub "
+            "  AND g.permission = 'write' "
+            "  AND ((g.principal_type = 'user' AND g.principal_id = %s) "
+            "    OR (g.principal_type = 'group' AND g.principal_id IN "
+            "        (SELECT m.group_id::text FROM org_group_members m WHERE m.sub = %s)) "
+            "    OR (g.principal_type = 'org' "
+            f"        AND g.principal_id = {alias_trigger}.org_id::text "
+            "        AND EXISTS (SELECT 1 FROM org_members om "
+            f"                    WHERE om.org_id = {alias_trigger}.org_id AND om.sub = %s))) "
             f"  AND {PARTAGE_VIVANT_G})")
+
+
+#: Combien de fois `_forfait_prete` lit l'éditeur.
+_PARAMS_FORFAIT = 3
 
 
 def visibilites_d_agents(ids: list[int], org_id: int) -> dict[int, dict]:
@@ -187,16 +200,16 @@ def visibilites_d_agents(ids: list[int], org_id: int) -> dict[int, dict]:
 
 
 def forfaits_pretes(ids: list[int], sub: str) -> set[int]:
-    """Parmi les agents `ids`, ceux dont le propriétaire a nommé `sub` éditeur — ce
-    qui lui PRÊTE son abonnement personnel pour cet agent (`_acces_agent`). UNE
-    requête pour toute une liste."""
+    """Parmi les agents `ids`, ceux que `sub` tient en écriture par un partage vivant
+    (`_forfait_prete`) — ce qui lui PRÊTE l'abonnement personnel de leur propriétaire
+    (`_acces_agent`). UNE requête pour toute une liste."""
     if not ids or not sub:
         return set()
     with _connect() as conn:
         rows = conn.execute(
             "SELECT t.id FROM runner_triggers t WHERE t.id = ANY(%s) AND "
             + _forfait_prete("t"),
-            ([int(i) for i in ids], sub),
+            ([int(i) for i in ids], *([sub] * _PARAMS_FORFAIT)),
         ).fetchall()
     return {int(r["id"]) for r in rows}
 
@@ -206,8 +219,8 @@ def outils_plateforme_du_travail(job_id: int) -> list[str]:
     porteur (`verrou_org.outils_permis`) : la liste de l'agent de sa charge
     (`payload->>'trigger_id'`) — SEULEMENT si cet agent ne peut être changé que par celui
     sous qui le travail tourne. Même org, même porteur, posé sur l'abonnement PERSONNEL
-    de ce porteur, et prêté à aucun éditeur (`_forfait_prete`, ici pour n'importe quel
-    éditeur) : un admin de l'org et un partage à l'org entière ne peuvent alors que
+    de ce porteur, et AUCUN partage en écriture (à une personne, une équipe ou l'org) :
+    personne d'autre ne peut alors le changer, un admin de l'org ne peut que
     l'éteindre (`_acces_agent`). `[]` pour un travail enfilé à la main ou d'une flotte
     (aucun agent), introuvable, dont l'agent a changé de main, ou qui ne remplit pas la
     condition — ce qui en dépend se ferme."""
@@ -220,8 +233,7 @@ def outils_plateforme_du_travail(job_id: int) -> list[str]:
             "  AND t.model = ANY(%s) "
             "  AND NOT EXISTS (SELECT 1 FROM resource_grants g "
             "    WHERE g.resource_type = 'runner_trigger' AND g.resource_id = t.id::text "
-            "      AND g.principal_type = 'user' AND g.permission = 'write' "
-            f"      AND g.granted_by = t.sub AND {PARTAGE_VIVANT_G})",
+            f"      AND g.permission = 'write' AND {PARTAGE_VIVANT_G})",
             (job_id, list(runner_models.MODELES_PERSONNELS)),
         ).fetchone()
     outils = (row or {}).get("outils_plateforme") if row else None
@@ -336,7 +348,7 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
             (*vals, trigger_id, org_id,
              *(() if hors_abonnement_d_autrui is None else
                (list(runner_models.MODELES_PERSONNELS), hors_abonnement_d_autrui,
-                hors_abonnement_d_autrui))),
+                *([hors_abonnement_d_autrui] * _PARAMS_FORFAIT)))),
         ).fetchone()
     # ⚠️ ÉTEINDRE, c'est aussi cesser de tiquer — donc cesser de périmer. Un
     # déclencheur désactivé laissait ses occurrences en attente pour toujours,

@@ -23,17 +23,14 @@ partager hors de l'org et à une adresse sans compte.
 sous son propriétaire, quel que soit celui qui l'a modifié. Partager en écriture,
 c'est confier son identité — le front le dit au moment de partager.
 
-⚠️ **Un agent posé sur l'ABONNEMENT personnel de son propriétaire** ne se modifie que
-par lui (`_abonnement.peut_agir_pour`), et par les personnes qu'IL a nommées
-éditrices de cet agent (`forfaits_pretes`) : ce qu'elles y changent s'exécute sur
-son forfait, et c'est à lui seul de le prêter. Ne prêtent donc PAS le forfait :
-- un partage à l'org entière ou à une équipe — la révision 0035 en pose un sur chaque
-  agent existant, et il rouvrirait tous les forfaits à toute l'org ;
-- un partage posé par un admin (`granted_by` ≠ propriétaire) — un admin gouverne
-  l'agent, il ne dispose pas du forfait d'autrui ; et après une reprise, les
-  partages de l'ancien propriétaire ne prêtent pas celui du nouveau.
-Le prêt vaut pour la famille où l'agent tourne DÉJÀ : poser un agent sur un
-abonnement reste au propriétaire.
+⚠️ **Un agent posé sur l'ABONNEMENT personnel de son propriétaire** se modifie par
+quiconque le tient en ÉCRITURE par un partage — à lui, à son équipe, ou à toute l'org
+dont il est membre, quel qu'en soit l'auteur (`forfaits_pretes`, décidé le 23/10/2026 :
+un agent partagé se modifie, quel que soit le modèle qui le fait tourner). Ce qui y
+change s'exécute sur le forfait du propriétaire. Sans partage en écriture — un admin
+qui gouverne l'agent sans le tenir, un lecteur — on peut seulement l'éteindre. Le prêt
+vaut pour la famille où l'agent tourne DÉJÀ : poser un agent sur un abonnement reste
+au propriétaire.
 """
 from __future__ import annotations
 
@@ -115,9 +112,9 @@ def sur_le_forfait_d_autrui(sub: str, agent: dict) -> bool:
 
 
 def forfaits_pretes(sub: str, agents: list[dict]) -> set[int]:
-    """Parmi `agents`, ceux qui tournent sur le forfait d'un autre ET dont ce
-    propriétaire a nommé `sub` éditeur. Une requête pour toute la liste, aucune
-    quand rien ne tourne sur le forfait d'autrui (le cas courant)."""
+    """Parmi `agents`, ceux qui tournent sur le forfait d'un autre ET que `sub` tient
+    en écriture par un partage (à lui, à son équipe ou à son org). Une requête pour
+    toute la liste, aucune quand rien ne tourne sur le forfait d'autrui."""
     a_lire = [int(t["id"]) for t in agents if sur_le_forfait_d_autrui(sub, t)]
     return db.forfaits_pretes(a_lire, sub) if a_lire else set()
 
@@ -128,7 +125,7 @@ def prete(sub: str, agent: dict) -> bool:
 
 def forfait_ferme(sub: str, agent: dict, pretes: Optional[set[int]] = None) -> bool:
     """`sub` ne peut rien changer à cet agent, sauf l'éteindre : il tourne sur le
-    forfait d'un autre, qui ne le lui a pas prêté. `pretes` = `forfaits_pretes`
+    forfait d'un autre, et aucun partage en écriture ne le lui prête. `pretes` = `forfaits_pretes`
     d'une liste déjà lue ; absent, il se lit pour ce seul agent."""
     if not sur_le_forfait_d_autrui(sub, agent):
         return False

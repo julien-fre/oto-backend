@@ -1737,21 +1737,17 @@ pas (absent de `list`, 404 sur `get`, même 404 qu'un agent inconnu).
   qui tourne toujours sous son propriétaire : partager en écriture, c'est confier son
   identité — l'écran de partage le dit. Le changer serait une autre décision (un agent
   qui tourne sous celui qui l'a allumé en dernier).
-- ⚠️ **Un agent d'abonnement se modifie par son propriétaire, et par les personnes
-  qu'IL a nommées éditrices** (04/10/2026). Ce qu'elles y changent s'exécute sur son
-  forfait : c'est à lui de le prêter, agent par agent, en les nommant. Ne prêtent PAS
-  le forfait — l'agent reste alors modifiable seulement pour l'éteindre, et `can_edit`
-  le dit (`false`) :
-  - un partage à l'org entière ou à une équipe : la révision 0035 en pose un sur chaque
-    agent existant, il rouvrirait tous les forfaits à toute l'org ;
-  - un partage posé par un admin (`granted_by` ≠ propriétaire) : un admin gouverne
-    l'agent, il ne dispose pas du forfait d'autrui. Reposé par un admin, un partage
-    perd le prêt (l'upsert réécrit `granted_by`) ; après une reprise, les partages de
-    l'ancien propriétaire ne prêtent pas le forfait du nouveau ;
-  - un admin lui-même, qui reste sous `peut_agir_pour`.
+- ⚠️ **Un agent d'abonnement se modifie par quiconque le tient en écriture**
+  (23/10/2026 ; du 04/10 au 23/10, seuls les éditeurs nommés PAR le propriétaire). Un
+  partage `write` vivant — à la personne, à une équipe dont elle est membre, ou à toute
+  l'org dont elle est membre, quel qu'en soit l'auteur — prête le forfait du
+  propriétaire : ce qu'elle y change s'exécute sur lui. Un agent partagé se modifie,
+  quel que soit le modèle qui le fait tourner. Sans partage en écriture — un admin qui
+  gouverne l'agent sans le tenir, un lecteur — l'agent se modifie seulement pour
+  l'éteindre, et `can_edit` le dit (`false`).
 
   Le prêt (`_acces_agent.forfaits_pretes`, prédicat `db._forfait_prete`) vaut pour la
-  famille où l'agent tourne DÉJÀ : l'éditeur nommé change sa consigne, ses outils, son
+  famille où l'agent tourne DÉJÀ : l'éditeur change sa consigne, ses outils, son
   modèle dans le forfait, le rallume, ou le sort du forfait ; POSER un agent sur un
   abonnement reste au propriétaire. Quand il rallume (ou change le modèle d'un agent
   allumé), la garde de pose se juge sur le PROPRIÉTAIRE — c'est sa connexion qui
