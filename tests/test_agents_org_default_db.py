@@ -67,6 +67,9 @@ def test_la_revision_ouvre_les_agents_nes_prives_depuis_0035(live, pg_module_dsn
     ferme = _agent(db)        # né avant 0035, son partage d'org retiré depuis
     marque = _agent(db)       # né avant 0035, toujours ouvert
     prive = _agent(db)        # né après 0035, privé
+    arme = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC",
+                             tools=["a", "oto_admin_org"], cron="0 8 * * *")
+    db.update_trigger(arme["id"], ORG, {"outils_plateforme": ["oto_admin_org"]})
     deja = _agent(db)         # né après 0035, déjà ouvert en lecture
     db.grant_resource("runner_trigger", str(marque["id"]), "org", str(ORG),
                       role="editor", granted_by=_MARQUE_0035)
@@ -77,6 +80,8 @@ def test_la_revision_ouvre_les_agents_nes_prives_depuis_0035(live, pg_module_dsn
     assert _org_de(pg_module_dsn, ferme["id"]) is None, (
         "on ne rouvre pas en silence ce que quelqu'un a fermé")
     assert _org_de(pg_module_dsn, prive["id"])[0] == "editor"
+    assert _org_de(pg_module_dsn, arme["id"]) is None, (
+        "un agent armé d'oto_admin_* reste privé : le partager le désarmerait")
     assert _org_de(pg_module_dsn, deja["id"])[0] == "viewer", "un partage posé reste"
 
     command.downgrade(_alembic(), _PRECEDENTE)

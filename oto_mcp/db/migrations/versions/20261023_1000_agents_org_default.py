@@ -11,6 +11,8 @@ PLUS GRAND que le plus grand agent marqué par 0035 — donc né après elle. Un
 ancien sans partage d'org l'a perdu par un geste (son propriétaire ou un admin a fermé
 « Everyone ») : on ne rouvre pas en silence ce que quelqu'un a fermé. Les agents nés
 après 0035 n'ont jamais eu de partage d'org à fermer : ils n'avaient pas ce choix.
+Ni un agent ARMÉ d'`oto_admin_*` : un partage en écriture le désarmerait en silence
+(`outils_plateforme_du_travail`) — il reste privé, comme son porteur l'a voulu.
 
 ⚠️ À jouer AVANT ou APRÈS le code, indifféremment : l'ancien code lit ces partages
 (`_acces_agent.niveaux`) depuis 0035, le nouveau aussi. La base est PARTAGÉE prod/preprod :
@@ -48,6 +50,7 @@ SELECT 'runner_trigger', t.id::text, 'org', t.org_id::text, 'write', 'editor', '
  WHERE t.id > COALESCE((SELECT max(g.resource_id::bigint) FROM resource_grants g
                          WHERE g.resource_type = 'runner_trigger'
                            AND g.granted_by = '{_MARQUE_0035}'), 0)
+   AND t.outils_plateforme = '[]'::jsonb
    AND NOT EXISTS (SELECT 1 FROM resource_grants g
                     WHERE g.resource_type = 'runner_trigger'
                       AND g.resource_id = t.id::text

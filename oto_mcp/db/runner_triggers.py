@@ -199,6 +199,20 @@ def visibilites_d_agents(ids: list[int], org_id: int) -> dict[int, dict]:
     return out
 
 
+def partage_en_ecriture(trigger_id: int) -> bool:
+    """L'agent est-il modifiable par quelqu'un d'autre que son porteur — un partage
+    `write` VIVANT, à qui que ce soit ? La même condition que `outils_plateforme_du_
+    travail` lit pour désarmer ses `oto_admin_*`."""
+    from ._partage_vivant import PARTAGE_VIVANT
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM resource_grants WHERE resource_type = 'runner_trigger' "
+            f"  AND resource_id = %s AND permission = 'write' AND {PARTAGE_VIVANT} "
+            "LIMIT 1", (str(trigger_id),),
+        ).fetchone()
+    return row is not None
+
+
 def forfaits_pretes(ids: list[int], sub: str) -> set[int]:
     """Parmi les agents `ids`, ceux que `sub` tient en écriture par un partage vivant
     (`_forfait_prete`) — ce qui lui PRÊTE l'abonnement personnel de leur propriétaire

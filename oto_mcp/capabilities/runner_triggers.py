@@ -107,8 +107,10 @@ class TriggerInput(BaseModel):
         f"update, OWNER and platform operator only, never from a hosted agent: the "
         f"`oto_admin_*` tools (≤ {PLATFORM_TOOLS_MAX}, each already in `tools`) this "
         "agent runs with your platform role. Every other tool runs as a member. "
-        "Kept only while the agent is on your personal subscription with no named "
-        "editor; cleared on `give`/`take_over`. `[]` clears it."))
+        "Run only while the agent is on your personal subscription and NOBODY else "
+        "can edit it (no editor share at all — agents are born shared with the org, "
+        "make it private first, else `platform_tools_agent_shared`); cleared on "
+        "`give`/`take_over`. `[]` clears it."))
     project_id: Optional[int] = None
     input: Optional[str] = None
     label: Optional[str] = None
@@ -1770,6 +1772,8 @@ CAPABILITIES += [
                           "`platform_tools` hors d'`op=update`"),
             DeclaredError(403, "platform_tools_human_only",
                           "`platform_tools` posé depuis un agent hébergé (jeton de délégation)"),
+            DeclaredError(409, "platform_tools_agent_shared",
+                          "`platform_tools` non vide sur un agent partagé en écriture"),
             DeclaredError(403, "platform_tools_owner_only",
                           "`platform_tools` posé par un autre que le propriétaire de l'agent"),
             DeclaredError(403, "platform_tools_operator_only",
