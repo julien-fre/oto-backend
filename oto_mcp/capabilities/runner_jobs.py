@@ -455,13 +455,6 @@ def _release_run_rows(run_id: Optional[str], erreur: Optional[str] = None) -> di
     return {"run_id": run_id, "rows_released": int(n), "release": "ok"}
 
 
-# Le pouvoir délégué vit un peu plus longtemps que le bail : un agent qui
-# conclut à la dernière seconde doit pouvoir écrire. Trop court couperait un
-# travail abouti juste avant sa conclusion — le pire moment, puisqu'il a déjà
-# tout coûté.
-_MARGE_JETON_S = 120
-
-
 def _identite_invalide(sub_porteur: str, org_id: int) -> Optional[str]:
     """Pourquoi ce porteur ne peut plus agir — ou None s'il le peut encore.
 
@@ -1301,13 +1294,13 @@ def _delegue(job: dict, bail_s: int, claimant: str) -> dict:
     # refusée (`verrou_org.py`). Un travail sans org est borné à la portée personnelle.
     job["delegated_token"] = db.create_api_token(
         porteur, label=f"runner job {job['id']}",
-        ttl_seconds=bail_s + _MARGE_JETON_S, kind="delegation",
+        ttl_seconds=bail_s + db.MARGE_JETON_DELEGATION_S, kind="delegation",
         job_id=job.get("id"), verrou_org=True,
         verrou_org_id=int(org_id) if org_id is not None else None)
     return job
 
 
-def _charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
+def charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
     """La charge d'un travail enfilé à la main, son modèle mis en règle.
 
     ⚠️ **La famille se DÉDUIT, elle ne se déclare pas.** C'est elle qui route le
@@ -1495,7 +1488,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         # d'appartenance, pas par la confiance faite au corps de la requête.
         if inp.fleet_id is None:
             res = db.enqueue_job(ctx.org_id, inp.kind,
-                                 payload=_charge_et_modele(ctx, inp),
+                                 payload=charge_et_modele(ctx, inp),
                                  run_id=inp.run_id, max_attempts=inp.max_attempts,
                                  sub=ctx.sub)
         else:
@@ -1508,7 +1501,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
                 _exige_flotte_servie(db.verrouiller_la_flotte(
                     conn, inp.fleet_id, ctx.org_id))
                 res = db.enqueue_job(ctx.org_id, inp.kind,
-                                     payload=_charge_et_modele(ctx, inp),
+                                     payload=charge_et_modele(ctx, inp),
                                      run_id=inp.run_id, max_attempts=inp.max_attempts,
                                      fleet_id=inp.fleet_id, sub=ctx.sub, conn=conn)
         return {"id": res["id"], "status": res["status"], "due_at": str(res["due_at"]),

@@ -732,6 +732,13 @@ paramètre « agis en tant que » (usurpation en une ligne de JSON). Le pouvoir 
 seconde doit pouvoir écrire. Couper au bail exact tuerait un travail abouti juste
 avant sa conclusion — le pire moment, puisqu'il a déjà tout coûté.
 
+⚠️ **Le jeton suit le bail** (#1333) : `extend` (`db.extend_job_lease`) porte, dans la
+même transaction et seulement si le bail a été prolongé par son claimant, l'échéance
+du jeton de délégation du travail à `bail + 2 min` — jamais plus court, jamais un
+jeton révoqué. Sans cela, un travail plus long que son bail initial perdait son jeton
+en plein vol (401), puis rejouait tout jusqu'au plafond de tentatives. Une seule marge,
+`db.MARGE_JETON_DELEGATION_S`, à l'émission comme à la prolongation.
+
 ⚠️ **`create_api_token` fait un `upsert_user`** : il CRÉE le compte s'il n'existe
 pas. L'existence se vérifie donc AVANT — sinon on ressusciterait un compte
 supprimé et on lui délivrerait un accès dans la foulée.
@@ -882,6 +889,7 @@ puisqu'elle ne juge que la famille déclarée. Deux verrous, comme la clé exig�
               launch d'un passage déclaré sans modèle   → 400 model_required, rien n'est écrit
 au DÉCLENCHEMENT (tick, webhook) d'un agent sans modèle → rien n'est enfilé, livraison
               `refused_no_model` sur la page de l'agent (webhook : 409 `trigger_no_model`)
+au LANCEMENT à la main (`run_now`)                       → 409 `trigger_no_model`, même motif
 à la RÉSERVATION (worker de plateforme)                  → travail `failed` pour de bon,
               raison écrite, rendu en `delegation_refusee`, jeton retiré
 ```
@@ -1549,6 +1557,74 @@ terminés depuis des heures passaient pour des événements en attente. D'où la
 jointe plutôt qu'une réécriture de la livraison : garder `outcome` figé préserve le
 journal de la porte, et l'état du travail n'a qu'une source.
 
+**`run_now` lance UN run tout de suite**, sans toucher à l'horloge (21/10/2026). C'est
+le bouton « Exécuter maintenant » de l'écran, servi aussi au MCP (`oto_trigger
+op=run_now trigger_id=…`). La charge est celle de l'horloge — une seule définition,
+`runner_tick.charge_du_declencheur` — datée de maintenant, puis elle passe par
+l'enfilage à la main (`runner_jobs.charge_et_modele`). Le run tourne au nom de
+l'APPELANT, se range sous l'agent (`trigger_id`), et marche agent en pause. Refusé
+comme `create` quand rien ne sert le modèle de l'agent (`no_runner_armed`,
+`model_not_served`, `model_key_required`), et quand la procédure est archivée. Un
+agent sans modèle, ou au modèle sorti du catalogue, est refusé comme au tick, sur le
+même motif (`runner_models.motif_sans_famille`) : 409 `trigger_no_model`, pas
+`model_required`, qui enverrait déclarer un modèle à qui en a déjà un. Et un travail
+de cet agent qui attend déjà un worker (`pending`) refuse le second : 409
+`run_already_queued` — il ne partirait pas plus tôt, il doublerait le run. Ce refus ne
+vaut que pour un `run_now` SANS `handoff` : un run qui reçoit un contexte n'en double
+aucun autre, et les enchaînements sont bornés par la chaîne (ci-dessous).
+
+**Enchaîner des agents** : un agent hébergé qui a `oto_trigger` dans ses outils appelle
+`run_now` en fin de run pour lancer le suivant, et lui passe son résultat en `handoff`
+(≤ 20 000 caractères). Le run suivant reçoit sa PROPRE instruction, intacte, suivie du
+contexte transmis, délimité et nommé comme donnée (`_instruction.transmise`) : la
+procédure du second agent fait foi, le premier ne la réécrit pas. Toute balise
+`handoff` du contexte perd son `<` (`&lt;/handoff>`) : un maillon ne ferme pas le cadre
+pour écrire au dehors. C'est le premier
+agent qui décide — lancer ou non, et quoi passer — selon ce que sa procédure lui dit :
+pas de graphe déclaré, une chaîne se lit dans les procédures.
+
+La lignée se range dans la charge du travail lancé (`_chaine` : `parent_job`,
+`root_job`, `depth`), écrite par le SERVEUR seul (`enqueue_job(chaine=…)`, retirée
+d'une charge reçue comme `_plateforme`). Elle se lit depuis le travail porté par le
+jeton (`verrou_org.travail_de_la_requete`), jamais depuis l'appel. Deux refus :
+relancer son propre agent (`chain_self`), et dépasser **5 maillons** après le départ
+(`chain_too_deep`, `CHAINE_MAX` ; le départ est à la profondeur 0, une chaîne compte
+donc **6 agents** au plus) — chaque maillon est un run payé par le porteur, la borne est le seul
+frein d'une boucle par un tiers (A → B → A). Le run enchaîné tourne au nom du porteur
+du premier (`ctx.sub` du jeton), qui doit avoir le droit de modifier le second agent ;
+son libellé par défaut est `enchaîné — <procédure>`.
+
+La profondeur ne borne pas la LARGEUR : un modèle qui appelle l'outil deux fois
+lancerait deux runs payés. D'où deux refus de plus, lus dans les enfants déjà lancés
+par ce run (`db.enfants_du_travail`, par la lignée) : relancer un agent déjà lancé
+(`chain_already_started`), et plus de **5 agents** par run (`chain_too_wide`).
+
+Profondeur et largeur se multiplient : 5 agents par run sur 5 maillons, c'est jusqu'à
+~3 900 runs payés pour un seul départ. D'où un **budget par départ** : **20 runs** au
+plus, le départ compris, comptés sur toute la lignée (`db.runs_de_la_chaine`, par
+`root_job`, quel que soit le statut) — au-delà, `chain_budget_exhausted`
+(`CHAINE_BUDGET`). C'est une borne de QUANTITÉ seulement : elle ne dit pas quel agent
+peut en lancer quel autre. Une flotte n'est pas bornée au-delà : chacun de ses travaux
+est un départ, la taille de la campagne est la borne qu'a posée son auteur.
+
+Les deux lectures (`enfants_du_travail`, `runs_de_la_chaine`) passent par
+`idx_runner_jobs_declencheurs` : `org_id` égal, le prédicat de l'index mot pour mot
+(`PREDICAT_DECLENCHEUR` — un travail de `run_now` porte toujours son `trigger_id`), et
+`due_at` borné par la naissance (`created_at`) du travail parent ou du départ. Un
+descendant naît après lui et son `due_at` n'avance jamais qu'en avant : la borne n'en
+perd aucun. Un ancêtre introuvable lève, plutôt que de compter zéro.
+
+`run_now` enfile TOUT DE SUITE : c'est le DERNIER geste du premier agent. Le second
+peut partir pendant que le premier écrit encore — ce qu'il lui faut voyage dans
+`handoff`, pas dans un tableau que le premier n'a pas fini de remplir.
+
+⚠️ **Donner `oto_trigger` à un agent, c'est laisser ce qu'il LIT lancer tout agent que
+son porteur peut modifier, avec un `handoff` de son choix.** Un agent qui lit des
+courriels entrants et passe la main à un agent qui en envoie ouvre une injection de
+prompt d'un agent à l'autre. Le `handoff` est délimité et nommé comme donnée, et la
+cible exige le droit de modifier — ce sont des freins, pas une garantie : n'enchaîne
+vers un agent qui agit au dehors qu'un agent dont les lectures sont sûres.
+
 `queue_pending`/`queue_held` comptent **exactement le prédicat de `clear_queue`**
 (`status IN ('pending','held')` pour ce déclencheur, dans cette org) — le nombre
 posé à côté du bouton est ce que le bouton périme. `op=list` lit ces comptes, les
@@ -1719,7 +1795,7 @@ ses connexions. Seuls les agents d'abonnement et la porte du webhook étaient ga
 les admins de l'org, et ceux avec qui il est partagé ; les autres membres ne le voient
 pas (absent de `list`, 404 sur `get`, même 404 qu'un agent inconnu).
 
-| niveau | `get`/`list`/`shares` | corps de livraison (`with_input`) | `update`, allumer/éteindre, `clear_queue` | `delete`, `share`/`unshare`, porte du webhook |
+| niveau | `get`/`list`/`shares` | corps de livraison (`with_input`) | `update`, allumer/éteindre, `clear_queue`, `run_now` | `delete`, `share`/`unshare`, porte du webhook |
 |---|---|---|---|---|
 | `owner`, `admin` | ✓ | ✓ | ✓ | ✓ |
 | `editor` | ✓ | ✓ | ✓ | — |
@@ -2526,3 +2602,43 @@ d'outils du travail le refusant de toute façon (`tool_not_in_job`).
 **Quand elle vaut.** Seulement pour un agent que son porteur SEUL peut changer : abonnement
 personnel, aucun éditeur nommé (`db.outils_plateforme_du_travail`). Ailleurs elle est lue
 vide. Chaque exercice laisse une ligne au journal, quel que soit le mode.
+
+## Outils non accordés — `missing_tools` (2026-10-22)
+
+**Le besoin.** La liste d'outils d'un agent est tenue par le serveur sur tous les chemins
+(`tool_not_in_job`, #1256) — y compris les appels qu'une recette fait pour lui. Mais rien
+ne le disait avant le run : une procédure qui lance une recette, une recette qui lit un
+CRM ou un tableau, et l'agent se bloquait au premier appel refusé, un outil par run.
+Vécu : deux agents d'une même chaîne bloqués le même soir, chacun sur un outil d'une
+recette de sa procédure.
+
+**Avant le run.** `oto_trigger op=get|list` sert, pour un agent qui porte une procédure,
+`missing_tools` : ce que la procédure cite (`<tool:…>`) et ce que citent les recettes
+PUBLIÉES qu'elle nomme (`oto_recipe … slug="x"`, lues par `recipes/outils_cites.py`), hors
+de ce que le travail sera servi (`outils_du_travail.outils_servis`, plus les outils de
+l'hôte). Chacun porte aussi un avertissement `not_granted` dans `tool_warnings`, avec
+`needed_by` (« procedure `p` », « recipe `r` »). Calculé à la lecture, jamais stocké,
+fail-soft (un calcul qui échoue rend l'agent sans `missing_tools`, jamais un refus), et
+calculé même pour un agent dont `tools` est vide. Une liste lit chaque procédure (et ses
+recettes) une fois par réponse, quel que soit le nombre d'agents qui la portent. Le geste
+qui le lève est UN `op=update` : `tools` + `missing_tools` — le bouton « Autoriser » de
+l'écran. Il n'accorde rien seul : la liste reste la borne fail-closed de #1256.
+
+**Élargir est un geste de personne (`tools_human_only`).** Sous un jeton de délégation
+(`verrou_org.travail_de_la_requete`, la même détection que `platform_tools_human_only`), un
+`op=update` dont `tools` nomme un outil absent de la liste stockée est refusé (403) : sans
+ça, un agent qui a `oto_trigger` élargirait sa propre liste — une injection de prompt
+suffirait. Réduire la liste, ou la reposer telle quelle, passe. `op=create` suit la même
+règle contre la liste du travail APPELANT (`outils_du_travail.permis_du_travail` : sa
+liste servie et les outils de l'hôte) : sinon il suffirait de créer un agent plus outillé
+que soi. La liste jugée est celle qui sera écrite — `tools` fourni, ou, s'il est omis, la
+liste par défaut, c'est-à-dire les outils que la procédure cite (`<tool:…>`,
+`_outils_de_la_procedure`). Un sous-ensemble passe.
+
+**Au run.** Une recette-code est jugée avant son premier appel
+(`outils_du_travail.manquants`) : un seul reçu `code: tool_not_in_job`, `missing_tools`
+(tous), `fix` (`{"tool": "oto_trigger", "op": "update", "trigger_id", "tools"}`, `tools` =
+la liste que le travail a reçue plus les manquants : le geste entier, que l'écran joue pour
+une personne), et un `error` qui dit à l'agent quoi faire, et seulement cela :
+`run_finish(outcome="blocked")` en les nommant.
+Un nom d'outil construit à l'exécution n'est pas lu : il reste jugé à l'appel.

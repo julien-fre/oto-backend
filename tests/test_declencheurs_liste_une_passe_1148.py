@@ -181,3 +181,35 @@ def test_les_mesures_groupees_comptent_chaque_declencheur_a_part(live):
     assert db.comptage_perime(ORG + 2, a) == pertes[a]
     assert db.comptage_livraisons(a, ORG + 2) == livraisons[a]
     assert db.comptages_perimes(ORG + 2, []) == {}, "une liste vide ne lit rien"
+
+
+def test_les_outils_non_accordes_lisent_chaque_procedure_une_fois(live, monkeypatch):
+    """`missing_tools` lit la procédure d'un agent (et ses recettes) : une fois par
+    procédure pour toute la réponse, jamais une fois par agent qui la porte."""
+    from oto_mcp import db
+    from oto_mcp.db import _conn as dbconn
+    monkeypatch.setattr("oto_mcp.db.connector_settings.get_connector_setting",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(RT.tool_registry, "bound_instance", lambda: None)
+    for org, n in ((ORG + 4, 2), (ORG + 5, 12)):
+        db.set_guide_db("org", str(org), "veille", "# Veille\n\n<tool:fr_siret>")
+        for _ in range(n):
+            db.create_trigger(org, "proprio", procedure="veille", tz="UTC",
+                              tools=["data_write"], cron="5 6 * * *",
+                              next_due="2030-01-01 00:00:00")
+
+    def _lectures(org: int) -> tuple[int, list]:
+        ctx = ResolvedCtx(sub="proprio", org_id=org)
+        rep = RT._triggers_sync(ctx, RT.TriggerInput(op="list"))
+        avant = compteur["n"]
+        out = asyncio.run(RT._ajouter_tool_warnings(ctx, rep))
+        return compteur["n"] - avant, [t.get("missing_tools") for t in out["triggers"]]
+
+    compteur = {"n": 0}
+    monkeypatch.setattr(dbconn._hors_boucle, "verifier",
+                        lambda: compteur.__setitem__("n", compteur["n"] + 1))
+
+    (courte, m2), (longue, m12) = _lectures(ORG + 4), _lectures(ORG + 5)
+    assert m2 == [["fr_siret"]] * 2 and m12 == [["fr_siret"]] * 12
+    assert courte == longue, (
+        f"2 agents : {courte} lectures, 12 agents : {longue} — la procédure se relit par agent")

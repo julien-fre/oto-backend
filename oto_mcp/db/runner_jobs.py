@@ -47,6 +47,13 @@ def _abonnement_personnel(depot: Optional[str]) -> bool:
 
 _LEASE_DEFAULT_S = 600  # ~3× la ligne la plus lente mesurée (180 s) — le tour d'un run
 
+# Le pouvoir délégué vit un peu plus longtemps que le bail : un agent qui
+# conclut à la dernière seconde doit pouvoir écrire. Trop court couperait un
+# travail abouti juste avant sa conclusion — le pire moment, puisqu'il a déjà
+# tout coûté. Une seule marge, à l'émission (`capabilities.runner_jobs._delegue`)
+# comme à la prolongation (`extend_job_lease`) : le jeton suit le bail.
+MARGE_JETON_DELEGATION_S = 120
+
 # Plafond d'une page de file. Il existait déjà — enfoui dans le LIMIT, appliqué sans
 # être dit : `limit=1000` rendait 200 lignes et rien ne l'annonçait (#469). Il est
 # nommé ici parce que c'est là que le SQL le fait respecter, et déclaré au contrat
@@ -62,6 +69,11 @@ JOBS_PAGE_MAX = 200
 # seul chemin d'un travail vers ses runs passés : `runs` ne porte aucun lien vers le
 # travail, et le `bind_run` suivant écrase `run_id`. Le worker ne la lit pas.
 _CHAMP_PLATEFORME = "_plateforme"
+
+#: La LIGNÉE d'un travail lancé par un autre agent hébergé (`runner.triggers op=run_now`
+#: depuis un travail) : `{parent_job, root_job, depth}`. Écrite par le serveur seul, comme
+#: `_plateforme` : une profondeur fournie par l'appelant désarmerait la borne des chaînes.
+CHAMP_CHAINE = "_chaine"
 
 # L'entrée ajoutée à la trace — SQL évalué dans l'UPDATE de la réservation, donc sur
 # les valeurs d'AVANT (`j.run_id`, `j.attempts`). Un run déjà tracé ne l'est pas deux fois.
@@ -217,7 +229,8 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
                 delai_s: Optional[int] = None,
                 perime_apres_s: Optional[int] = None,
                 conn=None,
-                seulement_si_servable: bool = False) -> Optional[dict]:
+                seulement_si_servable: bool = False,
+                chaine: Optional[dict] = None) -> Optional[dict]:
     """Enfile un travail, éventuellement rattaché à une FLOTTE.
 
     ⚠️ `sub` = **l'identité que l'agent portera en exécutant ce travail**, pas
@@ -279,14 +292,21 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
     READ COMMITTED l'instantané d'une instruction date de son DÉBUT, donc un verrou
     pris dans le `WHERE` de l'INSERT arriverait après l'instantané et ne verrait
     pas le travail qu'un sondage concurrent vient de valider.
+
+    `chaine` : la lignée d'un travail lancé par un autre (`CHAMP_CHAINE`). Seul ce
+    paramètre l'écrit — retirée de la charge reçue pour la même raison que les deux
+    autres champs du serveur.
     """
     if payload is not None:
         payload = {k: v for k, v in payload.items()
-                  if k not in (_CHAMP_PLATEFORME, "_perime_apres_s")}
+                  if k not in (_CHAMP_PLATEFORME, "_perime_apres_s", CHAMP_CHAINE)}
     charge = dict(payload) if payload is not None else None
     if perime_apres_s:
         charge = charge or {}
         charge["_perime_apres_s"] = int(perime_apres_s)
+    if chaine:
+        charge = charge or {}
+        charge[CHAMP_CHAINE] = dict(chaine)
 
     def _poser(c):
         return c.execute(
@@ -1293,6 +1313,59 @@ def repli_disponible(org_id: Optional[int], org_ids: Optional[list], worker_sub:
     return None
 
 
+def _lignee_de(conn, job_id: int, org_id: int, cle: str, select: str) -> Any:
+    """Ce que `select` lit des travaux dont la lignée nomme `job_id` à la clé `cle`
+    (`parent_job` : ses enfants ; `root_job` : toute sa chaîne), quel que soit leur
+    statut — un run terminé a été payé autant qu'un run en attente.
+
+    ⚠️ Par `idx_runner_jobs_declencheurs` (`INDEX_DECLENCHEURS`, `(org_id, due_at)`
+    partiel) : `org_id` égal, le prédicat de l'index MOT POUR MOT (un travail de
+    `run_now` porte toujours le `trigger_id` de son agent), et `due_at` borné par la
+    NAISSANCE de l'ancêtre (`a.created_at`). Un descendant naît après lui, à
+    `due_at = NOW()`, et son `due_at` n'avance jamais qu'en avant (reports, nouvelles
+    tentatives) : la borne n'en perd aucun. Le `due_at` de l'ancêtre ne servirait pas —
+    une nouvelle tentative le repousse APRÈS les enfants de la précédente. La lignée
+    n'est qu'un filtre sur les lignes que l'index rend.
+
+    ⚠️ Un ancêtre absent LÈVE : la lignée est écrite par le serveur et la file n'est
+    pas purgée, un ancêtre introuvable est un défaut — compter zéro ouvrirait la borne."""
+    descendants = f"""
+              FROM runner_jobs
+             WHERE org_id = %(org)s AND due_at >= a.created_at
+               AND {PREDICAT_DECLENCHEUR}
+               AND payload->'{CHAMP_CHAINE}'->>'{cle}' = %(job_txt)s"""
+    row = conn.execute(
+        f"""
+        SELECT {select.format(descendants=descendants)} AS v
+          FROM runner_jobs a
+         WHERE a.id = %(job)s AND a.org_id = %(org)s
+        """,
+        {"job": int(job_id), "org": int(org_id), "job_txt": str(int(job_id))},
+    ).fetchone()
+    if row is None:
+        raise LookupError(f"travail {job_id} introuvable dans l'org {org_id} : la lignée "
+                          "d'une chaîne d'agents nomme un ancêtre qui n'existe pas")
+    return row["v"]
+
+
+def enfants_du_travail(job_id: int, org_id: int) -> list[str]:
+    """Les agents (`trigger_id`, en texte) que le travail `job_id` a déjà lancés par
+    `run_now` — un par travail enfant. Lu par la lignée que le serveur écrit
+    (`CHAMP_CHAINE`), jamais par un argument de l'appel ; voie : `_lignee_de`."""
+    with _connect() as conn:
+        return list(_lignee_de(conn, job_id, org_id, "parent_job",
+                               "ARRAY(SELECT payload->>'trigger_id' {descendants})"))
+
+
+def runs_de_la_chaine(root_job: int, org_id: int) -> int:
+    """Combien de runs la chaîne partie du travail `root_job` compte déjà, ce départ
+    compris : lui, plus chaque travail dont la lignée le nomme pour racine. Voie :
+    `_lignee_de`."""
+    with _connect() as conn:
+        return 1 + _lignee_de(conn, root_job, org_id, "root_job",
+                              "(SELECT COUNT(*)::int {descendants})")
+
+
 def charge_du_travail(job_id: int) -> Optional[dict]:
     """La charge STOCKÉE d'un travail (`payload`), ou None s'il n'existe pas — ce que la
     liste d'outils d'un travail hébergé lit à chaque appel (`outils_du_travail`). Sans
@@ -1547,17 +1620,39 @@ def bind_job_run(job_id: int, worker_sub: str, run_id: str) -> bool:
 
 def extend_job_lease(job_id: int, worker_sub: str,
                      lease_seconds: int = _LEASE_DEFAULT_S) -> bool:
-    """Prolonge le bail — le heartbeat du worker. Claimant seul."""
-    with _connect() as conn:
-        cur = conn.execute(
+    """Prolonge le bail — le heartbeat du worker. Claimant seul.
+
+    ⚠️ **Le jeton de délégation du travail suit le bail** (#1333), dans la MÊME
+    transaction et seulement si le bail a été prolongé : émis une fois au claim pour
+    `bail + marge`, il expirait sinon en plein vol d'un travail long dont le bail était
+    pourtant tenu — 401, puis le travail rejoué en entier jusqu'au plafond de
+    tentatives. Il est porté à `NOW() + bail + marge`, jamais raccourci (`GREATEST`) ;
+    un jeton révoqué n'est pas prolongé. Le filtre sur `sub` (le porteur du travail)
+    sert l'index `idx_user_api_tokens_sub` : `job_id` n'en a pas."""
+    with _connect() as conn, conn.transaction():
+        row = conn.execute(
             """
             UPDATE runner_jobs
                SET lease_until = NOW() + make_interval(secs => %s)
              WHERE id = %s AND claimed_by = %s AND status = 'claimed'
+            RETURNING sub
             """,
             (int(lease_seconds), job_id, worker_sub),
-        )
-        return bool(cur.rowcount)
+        ).fetchone()
+        if row is None:
+            return False
+        if row["sub"]:
+            conn.execute(
+                """
+                UPDATE user_api_tokens
+                   SET expires_at = GREATEST(
+                           expires_at, NOW() + make_interval(secs => %s))
+                 WHERE sub = %s AND kind = 'delegation' AND job_id = %s
+                   AND revoked_at IS NULL
+                """,
+                (int(lease_seconds) + MARGE_JETON_DELEGATION_S, row["sub"], job_id),
+            )
+        return True
 
 
 def complete_job(job_id: int, worker_sub: str, ok: bool,

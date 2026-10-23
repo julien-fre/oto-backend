@@ -24,6 +24,7 @@ les échéances : une seule vérité.
 """
 from __future__ import annotations
 
+import datetime
 import logging
 import types
 from typing import Any, Literal, Optional
@@ -32,13 +33,18 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from . import (_abonnement, _acces_agent, _cle_exigee, _instruction, _limites_du_run,
-               _modele, _portee, _source_du_hook)
-from .. import (db, org_store, ownership, roles, runner_hook, runner_models, runner_tick,
-                session_visibility, tool_alias, tool_registry)
+               _modele, _portee, _source_du_hook, runner_jobs)
+from .. import (db, deprecations, org_store, outils_du_travail, ownership,
+                procedure_retiree, roles, runner_hook, runner_models, runner_tick,
+                session_visibility, tool_alias, tool_registry, verrou_org)
+from ..db import recipes as db_recipes
+from ..recipes import outils_cites
 from ..tools import catalogue as tool_catalogue
 from ._authz import ORG_MEMBER
 from ._dossier import FOLDER_MAX, dossier_valide
-from ._outils_plateforme import PLATFORM_TOOLS_MAX, outils_plateforme_valides
+from ._outils_plateforme import (PLATFORM_TOOLS_MAX, exiger_aucun_ajout_d_agent,
+                                 exiger_aucun_outil_hors_du_travail,
+                                 outils_plateforme_valides)
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding)
 from .registry import CAPABILITIES
@@ -52,6 +58,26 @@ _TZ_DEFAUT = "Europe/Paris"
 # gardes que seul —, bornée bien en deçà des 45 s de l'invocation REST : deux à
 # trois lectures et une écriture par agent.
 _LOT_MAX = 100
+
+
+#: La taille d'un `handoff` : le résultat d'un run, pas un export — un volume se passe
+#: par un tableau ou un document, que le run suivant lit lui-même.
+HANDOFF_MAX = 20_000
+#: La profondeur d'une chaîne d'agents (`run_now` depuis un travail hébergé). Chaque
+#: maillon est un run payé par le porteur : la borne est le seul frein d'une chaîne qui
+#: se relancerait par un tiers (A → B → A …). Cinq maillons couvrent une chaîne réelle
+#: (collecter → enrichir → noter → rédiger → publier) ; au-delà, c'est une boucle.
+CHAINE_MAX = 5
+#: Combien d'agents UN run peut lancer. La profondeur ne borne pas la LARGEUR : un
+#: modèle qui appelle l'outil deux fois, ou une boucle sur une liste, lancerait autant
+#: de runs payés. Cinq suffisent à un aiguillage (« selon le résultat, B ou C ou D »).
+CHAINE_ENFANTS_MAX = 5
+#: Combien de runs UNE chaîne compte au plus, son départ compris (`root_job`). Profondeur
+#: et largeur se multiplient : 5 agents par run sur 5 maillons, c'est jusqu'à ~3 900 runs
+#: payés pour un seul départ, et un `handoff` porte une injection d'un maillon à l'autre.
+#: ⚠️ Une borne de QUANTITÉ, rien d'autre : elle ne dit pas QUI peut lancer QUI — elle
+#: compte les runs d'une lignée, quels que soient les agents et leur droit de se lancer.
+CHAINE_BUDGET = 20
 
 
 class TriggerInput(BaseModel):
@@ -73,6 +99,10 @@ class TriggerInput(BaseModel):
                 # c'est délibérément une décision de l'utilisateur : la pause,
                 # elle, ne perd plus rien (13/09/2026).
                 "clear_queue",
+                # LANCER un run MAINTENANT, sans attendre l'horloge : ce que fait le
+                # bouton « Exécuter maintenant » de l'écran, servi aussi au MCP — la
+                # charge se compose ICI, jamais chez l'appelant (21/10/2026).
+                "run_now",
                 # REPRENDRE un agent : un admin d'org en devient le propriétaire —
                 # l'identité au nom de laquelle il agit, et l'abonnement qui le
                 # paie. Verbe séparé d'`update` : le propriétaire n'est pas de la
@@ -113,6 +143,13 @@ class TriggerInput(BaseModel):
         "`give`/`take_over`. `[]` clears it."))
     project_id: Optional[int] = None
     input: Optional[str] = None
+    #: `run_now` seulement : ce que l'appelant passe au run qu'il lance — le résultat
+    #: d'un premier agent pour le second d'une chaîne. AJOUTÉ à l'instruction de l'agent,
+    #: jamais à sa place (`_instruction.transmise`).
+    handoff: Optional[str] = Field(default=None, max_length=HANDOFF_MAX, description=(
+        "run_now only: context handed to the run you start — typically your own "
+        "result, so the next agent of a chain works from it. Appended to that agent's "
+        f"instruction as data, never replacing it (≤ {HANDOFF_MAX} characters)."))
     label: Optional[str] = None
     folder: Optional[str] = Field(default=None, description=(
         "update: the folder the agent is shown under in lists — a free label "
@@ -267,8 +304,14 @@ class ToolWarning(BaseModel):
     #: seulement (`oto_call` l'atteint quand même) ; `not_exposed` = derrière une
     #: garde d'APPEL — injoignable même par `oto_call` ; `unknown_tool` = ce nom
     #: n'existe dans AUCUN registre (faute de frappe, ou outil retiré depuis).
-    issue: Literal["installable", "not_exposed", "unknown_tool"]
+    #: `not_granted` = l'outil est appelé par la procédure de l'agent ou par une recette
+    #: qu'elle lance, mais n'est PAS dans `tools` : le run sera refusé
+    #: (`tool_not_in_job`) au premier appel. `needed_by` dit qui l'appelle ; le geste qui
+    #: le lève est `missing_tools` du déclencheur (un clic : `op=update`,
+    #: `tools=tools+missing_tools`), un geste de personne (`tools_human_only`).
+    issue: Literal["installable", "not_exposed", "unknown_tool", "not_granted"]
     detail: str
+    needed_by: Optional[str] = None
 
 
 class AgentVisibility(BaseModel):
@@ -353,6 +396,12 @@ class Trigger(BaseModel):
     #: `None` = pas pu être calculé (hors serveur booté — en pratique jamais en
     #: production) ; `[]` = calculé, rien à signaler. Jamais stocké — cf. `ToolWarning`.
     tool_warnings: Optional[list[ToolWarning]] = None
+    #: Les outils que la procédure ou ses recettes appellent et que `tools` n'a pas —
+    #: la liste à AJOUTER (`op=update`, `tools=tools+missing_tools`) : le bouton
+    #: « Autoriser » d'un écran, joué par une personne — un agent hébergé n'élargit
+    #: aucune liste (`tools_human_only`). Calculé même quand `tools` est vide. `[]` = rien
+    #: ne manque ; `None` = pas calculé. Jamais stocké, comme `tool_warnings`.
+    missing_tools: Optional[list[str]] = None
     #: Ce qui ATTEND maintenant — ce que `clear_queue` viderait. `queue_pending`
     #: part dès qu'un worker passe ; `queue_held` attend qu'on rallume l'agent.
     #: Servis sur un webhook ; `0` est un vrai zéro.
@@ -490,6 +539,9 @@ class TriggerOut(BaseModel):
     #: Combien de travaux `clear_queue` a périmés. `0` est un vrai zéro (la file
     #: était vide), jamais une absence de mesure.
     cleared: Optional[int] = None
+    #: `run_now` seulement : le travail enfilé (`id`, `status`, `due_at`). Le run
+    #: se lit ensuite dans l'historique de l'agent — l'appel ne l'attend pas.
+    job: Optional[dict] = None
     #: Le secret en clair — rendu par `create` d'un webhook et par
     #: `rotate_secret`, et par RIEN D'AUTRE. Il n'est pas stocké : seul son haché
     #: l'est. Perdu, il se remplace ; il ne se relit jamais.
@@ -536,10 +588,15 @@ def _outils_de_la_procedure(ctx: ResolvedCtx, slug: str) -> list[str]:
     déclarée, et une allowlist trop large est exactement ce qu'elle existe pour
     empêcher.
     """
-    g = db.get_guide_db("org", str(ctx.org_id), slug)
-    if not g:
-        return []
-    return tool_registry.ref_names(g.get("body_md") or "")
+    return tool_registry.ref_names(_corps_de_la_procedure(ctx.org_id, slug))
+
+
+def _corps_de_la_procedure(org: int, slug: str) -> str:
+    """Sync (base) : la prose de la procédure `slug` de l'org, vide si elle n'existe pas —
+    la lecture que partagent l'allowlist déduite (`_outils_de_la_procedure`) et les outils
+    non accordés (`_outils_non_accordes`)."""
+    g = db.get_guide_db("org", str(org), slug)
+    return (g or {}).get("body_md") or ""
 
 
 _REGLAGES_WEBHOOK = ("payload_mode", "payload_fields", "max_per_hour",
@@ -734,7 +791,7 @@ async def _catalogue_par_nom(ctx: ResolvedCtx, org: int) -> Optional[dict]:
 
 
 async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict,
-                              catalogues: Optional[dict] = None) -> dict:
+                              memo: Optional[dict] = None) -> dict:
     """Le déclencheur, augmenté de ce que ses outils déclarés risquent de ne pas
     atteindre au run — jamais un refus, un signal.
 
@@ -754,20 +811,38 @@ async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict,
     dans un objet qui n'a que le seul attribut lu. `None` hors d'un serveur
     booté (les bancs légers sans base) — fail-soft, jamais un refus.
 
-    `catalogues` : `{org: catalogue}` partagé par toute une réponse. Le catalogue ne
-    dépend que de (porteur, org) : le recalculer par déclencheur coûtait, à chaque
-    ligne d'une liste, une douzaine de lectures et ~12 ms de boucle pour ~870 outils
-    (oto-backend#1148)."""
+    `memo` : ce que toute une réponse partage. Le catalogue ne dépend que de (porteur,
+    org) : le recalculer par déclencheur coûtait, à chaque ligne d'une liste, une
+    douzaine de lectures et ~12 ms de boucle pour ~870 outils (oto-backend#1148). Les
+    outils que cite une procédure (et ses recettes) ne dépendent que de (org,
+    procédure) : lus une fois par réponse, quel que soit le nombre d'agents qui la
+    portent (`_outils_non_accordes`).
+
+    `missing_tools` se calcule même quand `tools` est vide : c'est l'agent à qui il
+    manque TOUT ce que sa procédure appelle."""
     outils = t.get("tools") or []
-    if not outils:
-        return t
     org = t.get("org_id") or ctx.org_id
-    catalogues = {} if catalogues is None else catalogues
-    if org not in catalogues:
-        catalogues[org] = await _catalogue_par_nom(ctx, org)
-    par_nom = catalogues[org]
-    if par_nom is None:
-        return t
+    memo = {} if memo is None else memo
+    avertis: Optional[list] = []
+    if outils:
+        if ("catalogue", org) not in memo:
+            memo[("catalogue", org)] = await _catalogue_par_nom(ctx, org)
+        par_nom = memo[("catalogue", org)]
+        avertis = None if par_nom is None else _avertissements_du_catalogue(outils, par_nom)
+    manque = await _manque_fail_soft(org, t, memo) if t.get("procedure") else None
+    if manque is None:
+        return t if avertis is None or not outils else {**t, "tool_warnings": avertis}
+    if avertis is not None:
+        avertis += [{"tool": nom, "issue": "not_granted", "needed_by": par,
+                     "detail": f"{par} calls it but this agent's tools do not include "
+                               "it: the run will be refused (`tool_not_in_job`). Add "
+                               "it (`missing_tools`)."} for nom, par in manque]
+    return {**t, **({"tool_warnings": avertis} if avertis is not None else {}),
+            "missing_tools": [n for n, _ in manque]}
+
+
+def _avertissements_du_catalogue(outils: list, par_nom: dict) -> list[dict]:
+    """Ce que les outils DÉCLARÉS risquent de ne pas atteindre, selon le catalogue."""
     avertis = []
     for nom in outils:
         entree = par_nom.get(nom)
@@ -778,7 +853,72 @@ async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict,
         elif entree["state"] != "installed":
             avertis.append({"tool": nom, "issue": entree["state"],
                             "detail": tool_catalogue.LEGENDE[entree["state"]]})
-    return {**t, "tool_warnings": avertis}
+    return avertis
+
+
+async def _manque_fail_soft(org: int, t: dict, memo: dict) -> Optional[list[tuple[str, str]]]:
+    """`_outils_non_accordes` hors de la boucle — `None` s'il ne se calcule pas : un
+    avertissement manqué n'est pas un déclencheur cassé."""
+    try:
+        return await run_in_threadpool(_outils_non_accordes, org, t, memo)
+    except Exception as e:  # noqa: SILENT — journalisé, un avertissement manqué n'est pas un déclencheur cassé
+        logger.warning("missing_tools indisponible pour le déclencheur %s : %s", t.get("id"), e)
+        return None
+
+
+def _outils_non_accordes(org: int, t: dict,
+                         memo: Optional[dict] = None) -> list[tuple[str, str]]:
+    """Sync (base) : ce que la procédure de l'agent et les recettes qu'elle lance
+    appellent, hors de ce que son travail sera servi (`outils_servis`) — `[(outil, qui
+    l'appelle)]`, dans l'ordre de la procédure. `memo` : la lecture d'une procédure et
+    de ses recettes, partagée par toute une réponse (`_outils_cites_par_la_procedure`).
+
+    Né du 22/10/2026 : deux agents d'une même chaîne bloqués le même soir, chacun sur un
+    outil qu'une recette de sa procédure appelait (une lecture de CRM, une lecture de
+    tableau) — et un troisième la veille, sur les fournisseurs d'une cascade. Le refus
+    n'arrivait qu'au run ; il se voit maintenant sur l'agent, avant."""
+    slug = t.get("procedure")
+    if not slug:
+        return []
+    memo = {} if memo is None else memo
+    if ("procedure", org, slug) not in memo:
+        memo[("procedure", org, slug)] = _outils_cites_par_la_procedure(org, slug, memo)
+    servis = {deprecations.tool_canonique(n) for n in
+              (outils_du_travail.outils_servis(t) or []) if isinstance(n, str)}
+    servis |= outils_du_travail.OUTILS_DE_L_HOTE
+    vus: set[str] = set()
+    manque = []
+    for nom, par in memo[("procedure", org, slug)]:
+        c = deprecations.tool_canonique(nom)
+        if c in servis or c in vus:
+            continue
+        vus.add(c)
+        manque.append((c, par))
+    return manque
+
+
+def _outils_cites_par_la_procedure(org: int, slug: str,
+                                   memo: dict) -> list[tuple[str, str]]:
+    """Sync (base) : les outils que la procédure cite (`<tool:…>`, comme l'allowlist
+    déduite) puis ceux des recettes PUBLIÉES qu'elle nomme — `[(outil, qui l'appelle)]`.
+    Une recette nommée par plusieurs procédures se lit une fois par réponse (`memo`)."""
+    corps = _corps_de_la_procedure(org, slug)
+    cites = [(n, f"procedure `{slug}`") for n in tool_registry.ref_names(corps)]
+    for recette in outils_cites.recettes_citees(corps):
+        if ("recipe", org, recette) not in memo:
+            memo[("recipe", org, recette)] = _outils_de_la_recette_publiee(org, recette)
+        cites += [(n, f"recipe `{recette}`") for n in memo[("recipe", org, recette)]]
+    return cites
+
+
+def _outils_de_la_recette_publiee(org: int, recette: str) -> list[str]:
+    """Sync (base) : les outils que cite la version PUBLIÉE de la recette `recette` de
+    l'org — rien pour un slug qui n'en est pas une, ou une recette jamais publiée."""
+    fiche = db_recipes.get_recipe("org", str(org), recette)
+    if not fiche or not fiche.get("published_version"):
+        return []
+    version = db_recipes.get_version(fiche["id"], fiche["published_version"])
+    return outils_cites.outils_cites((version or {}).get("body"))
 
 
 def _noms_canoniques(ctx: ResolvedCtx, inp: TriggerInput) -> TriggerInput:
@@ -799,6 +939,62 @@ def _noms_canoniques(ctx: ResolvedCtx, inp: TriggerInput) -> TriggerInput:
     return inp.model_copy(update=maj) if maj else inp
 
 
+def _maillon_suivant(org_id: int, trigger_id: int) -> Optional[dict]:
+    """La lignée du run que `run_now` va lancer, quand l'appel vient d'un AGENT HÉBERGÉ —
+    None pour une personne (bouton de l'écran, MCP d'un humain) : rien ne s'enchaîne.
+
+    Le travail appelant est celui du JETON (`verrou_org.travail_de_la_requete`), et sa
+    lignée se lit dans SA charge en base — jamais un argument de l'appel : un agent qui
+    déclarerait sa propre profondeur désarmerait la borne.
+
+    ⚠️ Cinq refus, avant tout enfilage : relancer SON PROPRE agent (`chain_self` — une
+    boucle immédiate, qui n'attendrait même pas la borne), dépasser `CHAINE_MAX`
+    maillons après le départ (`chain_too_deep` — la boucle par un tiers, A → B → A ; le
+    départ est à la profondeur 0, la chaîne compte donc `CHAINE_MAX + 1` agents),
+    relancer un agent que ce run a déjà lancé (`chain_already_started` — l'appel répété
+    d'un modèle), en lancer plus de `CHAINE_ENFANTS_MAX` (`chain_too_wide`), et faire
+    passer la chaîne au-delà de `CHAINE_BUDGET` runs (`chain_budget_exhausted` —
+    profondeur et largeur se multiplient).
+
+    La relecture des enfants et l'enfilage ne partagent pas de verrou : deux appels
+    SIMULTANÉS d'un même run passeraient tous deux. Un agent appelle ses outils l'un
+    après l'autre ; la borne vise la répétition, pas la course."""
+    v = verrou_org.travail_de_la_requete()
+    if v is None or v.job_id is None:
+        return None
+    parent = db.charge_du_travail(v.job_id) or {}
+    if str(parent.get("trigger_id")) == str(trigger_id):
+        raise AuthzDenied(400, "chain_self",
+                          "un agent hébergé ne relance pas son propre agent : la "
+                          "prochaine occurrence passe par son horloge.")
+    enfants = db.enfants_du_travail(v.job_id, org_id)
+    if str(trigger_id) in enfants:
+        raise AuthzDenied(400, "chain_already_started",
+                          f"le job {v.job_id} a déjà lancé l'agent {trigger_id} : un run "
+                          "passe la main une fois par agent.")
+    if len(enfants) >= CHAINE_ENFANTS_MAX:
+        raise AuthzDenied(400, "chain_too_wide",
+                          f"le job {v.job_id} a déjà lancé {len(enfants)} agents — "
+                          f"au plus {CHAINE_ENFANTS_MAX} par run.")
+    lignee = parent.get(db.CHAMP_CHAINE) or {}
+    profondeur = int(lignee.get("depth") or 0) + 1
+    if profondeur > CHAINE_MAX:
+        raise AuthzDenied(400, "chain_too_deep",
+                          f"chaîne d'agents de plus de {CHAINE_MAX} maillons — "
+                          f"refusé au job {v.job_id} : c'est une boucle, pas un enchaînement.")
+    racine = int(lignee.get("root_job") or v.job_id)
+    runs = db.runs_de_la_chaine(racine, org_id)
+    if runs >= CHAINE_BUDGET:
+        raise AuthzDenied(400, "chain_budget_exhausted",
+                          f"la chaîne partie du job {racine} compte déjà {runs} runs — "
+                          f"au plus {CHAINE_BUDGET} par départ, le départ compris.")
+    return {"parent_job": v.job_id, "root_job": racine,
+            "depth": profondeur,
+            # Ce que le run suivant lit de qui l'a lancé : un numéro de job ne lui dit
+            # rien, le nom de l'agent et sa procédure si.
+            "parent_label": parent.get("label") or parent.get("procedure")}
+
+
 def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     """TOUT le SQL de `runner.triggers`, en synchrone — `_triggers` l'exécute dans le
     threadpool. Rend les déclencheurs SANS leurs avertissements d'outils : ceux-là
@@ -815,6 +1011,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if inp.op in ("create", "update"):
         _limites_du_run.valider(inp.max_tokens, inp.max_run_seconds)
 
+    if inp.handoff is not None and inp.op != "run_now":
+        raise AuthzDenied(400, "handoff_run_now_only",
+                          "`handoff` ne se passe qu'à `op=run_now`.")
     if inp.platform_tools is not None and inp.op != "update":
         raise AuthzDenied(400, "platform_tools_update_only",
                           "`platform_tools` ne se pose que par `op=update`, sur un agent "
@@ -852,6 +1051,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                 "été fourni. Un agent sans outil n'exécute rien : cite les outils "
                 "dans la procédure (marqueurs `<tool:nom>`), ou passe `tools` "
                 "explicitement.")
+        # Sous un jeton de délégation, l'agent créé n'a pas plus d'outils que le travail
+        # qui le crée — liste fournie ou déduite de la procédure (`tools_human_only`).
+        exiger_aucun_outil_hors_du_travail(outils)
         tz = inp.tz or _TZ_DEFAUT
         if not webhook:
             try:
@@ -1106,6 +1308,74 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         return {"ok": True, "cleared": vides,
                 "trigger": _avec_hook(ctx.org_id,
                                       db.get_trigger(inp.trigger_id, ctx.org_id))}
+
+    if inp.op == "run_now":
+        # ⚠️ Gardé sur le RUNNER, pas sur `enabled` : un agent en pause se lance à
+        # la main — l'essayer avant de l'armer est justement le cas d'usage. Mais
+        # sans worker pour le prendre, le travail attendrait pour toujours : même
+        # refus qu'à la pose, plutôt qu'un « lancé » qui ne part pas.
+        t = db.get_trigger(inp.trigger_id, ctx.org_id)
+        _acces_agent.exiger(ctx, t, _acces_agent.ECRIRE)
+        if procedure_retiree.archivee(ctx.org_id, t.get("sub"), t.get("procedure")):
+            raise AuthzDenied(400, "procedure_archived",
+                              f"la procédure `{t.get('procedure')}` est archivée : "
+                              "l'agent ne la déroule plus.")
+        # Sans famille (aucun modèle, ou un modèle sorti du catalogue) : le MÊME
+        # refus que le tick et le webhook, sur le même motif. `model_required`
+        # dirait « déclare un modèle » à un agent qui en déclare un, retiré depuis.
+        sans_famille = runner_models.motif_sans_famille(t.get("model"))
+        if sans_famille:
+            raise AuthzDenied(409, "trigger_no_model",
+                              f"{sans_famille}. Déclare un modèle du catalogue "
+                              "(`op=update model=…`, liste : `runner.models`).")
+        famille = runner_models.famille(t.get("model"))
+        _modele.exige_servi(_modele.exige_un_runner(ctx.org_id), famille)
+        _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
+        # Un travail de cet agent attend déjà un worker : un second ne partirait pas
+        # plus tôt, il doublerait le run. Le prédicat est celui de `clear_queue`.
+        # ⚠️ Sans `handoff` seulement : un run qui reçoit un contexte n'en double aucun
+        # autre (une flotte de A qui passe chacun son résultat à B, un éventail
+        # A → B → D et A → C → D). Ceux-là sont bornés par la chaîne (`chain_*`, dont
+        # le budget par départ), pas par la file.
+        en_attente = (0 if inp.handoff
+                      else db.file_du_declencheur(t["id"], ctx.org_id)["pending"])
+        if en_attente:
+            raise AuthzDenied(409, "run_already_queued",
+                              f"un run de cet agent attend déjà un worker ({en_attente} "
+                              "en file) : il partira dès qu'un worker passe. Suis-le "
+                              "dans l'historique de l'agent, ou vide la file "
+                              "(`op=clear_queue`) avant d'en relancer un.")
+        # La MÊME charge que l'horloge (`runner_tick.charge_du_declencheur`), datée
+        # de maintenant. Puis le chemin d'un enfilage à la main
+        # (`runner_jobs.charge_et_modele`) : outils au canonique, famille
+        # redéduite, garde d'abonnement sur l'appelant.
+        # ⚠️ L'identité est l'APPELANT (`ctx.sub`), pas le propriétaire : un run
+        # lancé à la main tourne en ton nom — comme le bouton de l'écran.
+        chaine = _maillon_suivant(ctx.org_id, inp.trigger_id)
+        charge = runner_tick.charge_du_declencheur(
+            {**t, "tz": t.get("tz") or _TZ_DEFAUT},
+            datetime.datetime.now(datetime.timezone.utc),
+            origine="enchaîné" if chaine else "à la demande")
+        if inp.handoff:
+            charge["input"] = _instruction.transmise(
+                charge["input"], inp.handoff,
+                depuis=(f"the agent “{chaine['parent_label']}” (job {chaine['parent_job']})"
+                        if chaine and chaine.get("parent_label")
+                        else f"hosted job {chaine['parent_job']}" if chaine else None))
+        charge = runner_jobs.charge_et_modele(ctx, runner_jobs.JobsInput(
+            op="enqueue", kind="start",
+            payload={k: v for k, v in charge.items() if v is not None}))
+        res = db.enqueue_job(ctx.org_id, "start", payload=charge, sub=ctx.sub,
+                             chaine=chaine)
+        logger.info("déclencheur %s (org %s) : run lancé à la demande de %s — job %s%s",
+                    inp.trigger_id, ctx.org_id, ctx.sub, res["id"],
+                    f", maillon {chaine['depth']} après le job {chaine['parent_job']}"
+                    if chaine else "")
+        return {"ok": True,
+                "job": {"id": res["id"], "status": res["status"],
+                        "due_at": str(res["due_at"]),
+                        **({"chain": chaine} if chaine else {})},
+                "trigger": _avec_hook(ctx.org_id, t)}
 
     if inp.op == "take_over":
         # ⚠️ ADMIN d'org seulement, et seulement l'agent d'un membre PARTI : c'est
@@ -1380,6 +1650,8 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     # lit donc ici, juste avant d'écrire.
     if not _actuel():
         raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
+    if "tools" in champs:
+        exiger_aucun_ajout_d_agent(_actuel(), champs["tools"])
     if inp.platform_tools is not None:
         champs["outils_plateforme"] = outils_plateforme_valides(
             ctx, inp.platform_tools, _actuel(), champs.get("tools"))
@@ -1693,11 +1965,12 @@ async def _ajouter_tool_warnings(ctx: ResolvedCtx, rep: dict) -> dict:
     Séparé du SQL (`_triggers_sync`) parce que le calcul de visibilité est asynchrone : le
     SQL part au threadpool en un bloc, les avertissements se calculent ensuite dans la
     boucle — ils ne lisent pas la base directement."""
-    catalogues: dict = {}   # un catalogue par org pour toute la réponse (#1148)
+    # Un catalogue par org (#1148), une lecture par procédure : pour toute la réponse.
+    memo: dict = {}
     if "trigger" in rep:
-        rep["trigger"] = await _avec_tool_warnings(ctx, rep["trigger"], catalogues)
+        rep["trigger"] = await _avec_tool_warnings(ctx, rep["trigger"], memo)
     if "triggers" in rep:
-        rep["triggers"] = [await _avec_tool_warnings(ctx, t, catalogues)
+        rep["triggers"] = [await _avec_tool_warnings(ctx, t, memo)
                            for t in rep["triggers"]]
     return rep
 
@@ -1794,6 +2067,10 @@ CAPABILITIES += [
                           "`platform_tools` posé depuis un agent hébergé (jeton de délégation)"),
             DeclaredError(409, "platform_tools_agent_shared",
                           "`platform_tools` non vide sur un agent partagé en écriture"),
+            DeclaredError(403, "tools_human_only",
+                          "`tools` élargi depuis un agent hébergé (jeton de délégation) : "
+                          "à `update`, un outil hors de la liste stockée ; à `create`, un "
+                          "outil hors de celle du travail appelant — un geste de personne"),
             DeclaredError(403, "platform_tools_owner_only",
                           "`platform_tools` posé par un autre que le propriétaire de l'agent"),
             DeclaredError(403, "platform_tools_operator_only",
@@ -1840,6 +2117,27 @@ CAPABILITIES += [
                           "est son credential, elle se renouvelle par l'écran (REST)"),
             DeclaredError(404, "trigger_not_found",
                           "automatisation inconnue dans l'org du porteur"),
+            DeclaredError(400, "procedure_archived",
+                          "`run_now` d'un agent dont la procédure est archivée"),
+            DeclaredError(400, "handoff_run_now_only", "`handoff` hors d'`op=run_now`"),
+            DeclaredError(400, "chain_self",
+                          "`run_now` d'un agent hébergé sur son propre agent"),
+            DeclaredError(400, "chain_too_deep",
+                          f"`run_now` au-delà de {CHAINE_MAX} maillons après l'agent de "
+                          "départ"),
+            DeclaredError(400, "chain_already_started",
+                          "`run_now` d'un agent que ce run a déjà lancé"),
+            DeclaredError(400, "chain_too_wide",
+                          f"`run_now` au-delà de {CHAINE_ENFANTS_MAX} agents lancés par un run"),
+            DeclaredError(400, "chain_budget_exhausted",
+                          f"`run_now` au-delà de {CHAINE_BUDGET} runs lancés depuis un "
+                          "même départ (`root_job`)"),
+            DeclaredError(409, "trigger_no_model",
+                          "`run_now` d'un agent sans modèle, ou au modèle sorti du "
+                          "catalogue : le même refus que le tick et le webhook"),
+            DeclaredError(409, "run_already_queued",
+                          "`run_now` sans `handoff` alors qu'un travail de cet agent "
+                          "attend déjà un worker (`pending`)"),
             DeclaredError(403, "org_admin_required",
                           "`take_over` par quelqu'un qui n'est pas admin de l'org"),
             DeclaredError(403, "owner_still_member",
@@ -1908,7 +2206,26 @@ CAPABILITIES += [
             "you mean) / list / get / update (editing cron or tz revalidates and "
             "recomputes the next due; `folder` = a display label the lists group "
             "agents under, \"\" clears it — `trigger_ids=[…]` instead of `trigger_id` "
-            "files up to 100 agents in one call, `folder` only) / delete / take_over (org admin only, and "
+            "files up to 100 agents in one call, `folder` only) / delete / run_now (start "
+            "ONE run now, without waiting for the clock — same payload as a scheduled "
+            "occurrence, stamped with the current time; works on a paused agent; needs "
+            "edit access; the run acts as YOU, the caller, and is filed under the "
+            "agent's own history; returns `job` {id, status, due_at} — the call does "
+            "not wait for the run; refused like `create` when nothing serves the "
+            "agent's model, `trigger_no_model` when it declares no catalogued model, "
+            "`run_already_queued` while one of its runs still waits for a worker (unless "
+            "you pass a `handoff`). "
+            "CHAINING: a hosted agent with `oto_trigger` in its tools calls "
+            "run_now at the end of its run to start the next agent, passing its result "
+            "as `handoff` — the next agent gets it appended to its own instruction, as "
+            "data; the run is filed with its lineage (`job.chain`: parent_job, root_job, "
+            f"depth). Call it as your LAST action: the next run may start at once. An agent "
+            "cannot relaunch itself (`chain_self`), starts each agent once per run "
+            f"(`chain_already_started`), at most {CHAINE_ENFANTS_MAX} per run "
+            f"(`chain_too_wide`); a chain stops after {CHAINE_MAX} links, i.e. "
+            f"{CHAINE_MAX + 1} agents counting the first (`chain_too_deep`), and "
+            f"starts at most {CHAINE_BUDGET} runs in all (`chain_budget_exhausted`)) / "
+            "take_over (org admin only, and "
             "only when the agent's owner is no longer a member of the org — "
             "`owner_still_member` otherwise: an agent is shared, never taken. You "
             "become the agent's owner — it then acts as YOU and, on a personal "

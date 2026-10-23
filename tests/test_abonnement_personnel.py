@@ -239,7 +239,7 @@ class TestEnfilage:
     def test_une_flotte_ne_s_enfile_pas_sur_un_abonnement(self, _abonnements):
         _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.CONNECTE, "sandbox_id": _BAC}
         with pytest.raises(Exception) as e:
-            RJ._charge_et_modele(self._ctx(), RJ.JobsInput(
+            RJ.charge_et_modele(self._ctx(), RJ.JobsInput(
                 op="enqueue", kind="start", fleet_id=9,
                 payload={"input": "vas-y", "model": "sub:sonnet"}))
         assert e.value.code == "subscription_personal_only"
@@ -247,13 +247,13 @@ class TestEnfilage:
     def test_sans_l_option_rien_ne_s_enfile(self, _abonnements, _option_ouverte):
         _option_ouverte.clear()
         with pytest.raises(Exception) as e:
-            RJ._charge_et_modele(self._ctx(), RJ.JobsInput(
+            RJ.charge_et_modele(self._ctx(), RJ.JobsInput(
                 op="enqueue", kind="start", payload={"input": "vas-y", "model": "sub:sonnet"}))
         assert e.value.code == "subscription_not_enabled"
 
     def test_connecte_et_ouvert_s_enfile(self, _abonnements):
         _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.CONNECTE, "sandbox_id": _BAC}
-        charge = RJ._charge_et_modele(self._ctx(), RJ.JobsInput(
+        charge = RJ.charge_et_modele(self._ctx(), RJ.JobsInput(
             op="enqueue", kind="start", payload={"input": "vas-y", "model": "sub:sonnet"}))
         assert charge["model_family"] == _FAMILLE
 

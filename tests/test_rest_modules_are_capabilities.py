@@ -54,6 +54,8 @@ _KNOWN: dict[str, str] = {
     # Écran d'autorisation WordPress (mot de passe d'application) : même geste de
     # navigateur, sans code à échanger.
     "/api/wordpress/connect/callback": NATURE,
+    # Installation de l'app Slack publiée par l'instance (OAuth v2).
+    "/api/slack/oauth/callback": NATURE,
     # --- Webhooks : un tiers appelle, non authentifié côté Logto.
     # (`/api/unipile/webhook` a quitté cette liste le 2026-08-29, #581 : dormant depuis
     #  la v2 du fournisseur — plus aucun appelant légitime, donc plus de route.)

@@ -66,11 +66,16 @@ def outils_servis(charge: dict):
     return outils
 
 
-def _permis(job_id: Optional[int]) -> frozenset:
-    """Sync (base) : les outils que ce travail permet, au canonique. Vide si le travail est
-    introuvable ou si sa liste n'en est pas une."""
+def _charge(job_id: Optional[int]) -> Optional[dict]:
+    """Sync (base) : la charge stockée du travail, `None` s'il est introuvable."""
     charge = db.charge_du_travail(int(job_id)) if job_id is not None else None
-    outils = outils_servis(charge) if isinstance(charge, dict) else None
+    return charge if isinstance(charge, dict) else None
+
+
+def _permis(charge: Optional[dict]) -> frozenset:
+    """Les outils que cette charge permet, au canonique. Vide si le travail est introuvable
+    ou si sa liste n'en est pas une."""
+    outils = outils_servis(charge) if charge is not None else None
     if not isinstance(outils, list):
         return frozenset()
     return frozenset(deprecations.tool_canonique(n) for n in outils if isinstance(n, str))
@@ -84,11 +89,54 @@ def refus(name: str) -> Optional[str]:
     if verrou is None:
         return None
     nom = deprecations.tool_canonique(name)
-    if nom in OUTILS_DE_L_HOTE or nom in _permis(verrou.job_id):
+    if nom in OUTILS_DE_L_HOTE or nom in _permis(_charge(verrou.job_id)):
         return None
     return (f"`{name}` is not in this hosted agent's tool list (job {verrou.job_id}). "
             "A job only calls the tools it declares, on every path — directly, through "
             "`oto_call`, or from a recipe. Add the tool to the agent's `tools` to allow it.")
+
+
+def permis_du_travail(job_id: Optional[int]) -> frozenset:
+    """Sync (base) : tout ce que le travail `job_id` peut appeler, au canonique — sa liste
+    servie et les outils de l'hôte (`exiger`). Vide hors de l'hôte si le travail est
+    introuvable : fail-closed, comme le refus à l'appel."""
+    return _permis(_charge(job_id)) | OUTILS_DE_L_HOTE
+
+
+def manquants(noms) -> Optional[dict]:
+    """Sync (base) : TOUS les outils de `noms` hors de la liste du travail de la requête,
+    en une lecture — `None` hors travail hébergé ou si rien ne manque. Rend
+    `{job_id, trigger_id, tools, missing}` (`tools` : la liste de l'agent telle que ce
+    travail l'a reçue) : de quoi refuser une fois en nommant chaque outil et l'agent à
+    compléter, plutôt qu'un refus par outil, une exécution chacun."""
+    verrou = verrou_org.travail_de_la_requete()
+    if verrou is None:
+        return None
+    charge = _charge(verrou.job_id)
+    permis = _permis(charge)
+    manque = []
+    for n in noms:
+        if not isinstance(n, str):
+            continue
+        c = deprecations.tool_canonique(n)
+        if c not in OUTILS_DE_L_HOTE and c not in permis and c not in manque:
+            manque.append(c)
+    if not manque:
+        return None
+    declencheur = (charge or {}).get("trigger_id")
+    outils = (charge or {}).get("tools")
+    return {"job_id": verrou.job_id, "missing": manque,
+            "tools": [n for n in outils if isinstance(n, str)] if isinstance(outils, list) else [],
+            "trigger_id": int(declencheur) if str(declencheur or "").isdigit() else None}
+
+
+def correctif(trigger_id: Optional[int], outils: list, manque: list) -> dict:
+    """Le geste qui lève le refus, sous une forme qu'un écran joue en un clic : la liste
+    de l'agent (`outils`) augmentée de ces outils, posée par `oto_trigger op=update` —
+    `tools` REMPLACE la liste, d'où la liste entière. Un geste de personne : sous un jeton
+    de délégation, l'élargissement est refusé (`tools_human_only`)."""
+    return {"tool": "oto_trigger", "op": "update", "trigger_id": trigger_id,
+            "tools": list(dict.fromkeys([*outils, *manque]))}
 
 
 async def exiger(name: str) -> None:

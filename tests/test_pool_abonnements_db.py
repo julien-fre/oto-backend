@@ -423,7 +423,7 @@ class TestPose:
         from oto_mcp.capabilities._types import ResolvedCtx
         oid = _org("pose-enq", "pose-enq-dem", "pose-enq-p")
         _abonne("pose-enq-p", pret_a=[oid])
-        charge = RJ._charge_et_modele(
+        charge = RJ.charge_et_modele(
             ResolvedCtx(sub="pose-enq-dem", org_id=oid),
             RJ.JobsInput(op="enqueue", kind="start", fleet_id=9,
                          payload={"input": "vas-y", "model": "sub:sonnet"}))

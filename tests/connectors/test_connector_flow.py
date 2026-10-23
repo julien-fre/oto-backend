@@ -72,6 +72,9 @@ def test_les_connecteurs_a_flux_sont_ceux_quon_attend():
         # `jefacture` (2026-10-22) : connexion jefacture.com de la personne (code
         # d'autorisation, application plateforme), même patron.
         "jefacture",
+        # `slack` (2026-10-22) : l'app Slack publiée par l'instance, en un clic (OAuth v2),
+        # déclarée dans `auth/slack.py` — à côté du formulaire, pas à sa place.
+        "slack",
         # Le compte `unipile` GARDE son flux multi-canal (code de production) ; le
         # split du 2026-08-28 ajoute un flux par canal, sans paramètre — le canal
         # est dérivé du connecteur au lieu d'être choisi dans une liste.

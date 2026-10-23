@@ -244,6 +244,17 @@ en Python. Une recette-code se range comme les autres (mêmes tables, même cycl
   (tenue par le verrou du jeton, `verrou_org.py` : une recette pour une autre org du
   porteur est refusée, `org_out_of_job`) et ses droits sur le tableau. Les refus du
   contrat valent pour tous. Aucune règle propre aux agents, comme pour `oto_call`.
+- **…mais elle n'appelle que les outils de la liste de l'agent** (`outils_du_travail`,
+  #1256), et elle le sait AVANT de commencer : `recipes/outils_cites.py` lit ce que son
+  corps cite (`source.tool`, chaque `oto.call("<nom>"` littéral), et une recette-code dont
+  un outil cité manque est refusée avant le premier appel, en un reçu qui les nomme TOUS
+  (`code: tool_not_in_job`, `missing_tools`, `fix` = l'`oto_trigger op=update` qu'une
+  personne joue : un agent hébergé n'élargit aucune liste ni ne crée un agent plus
+  outillé que lui, `tools_human_only`) —
+  plutôt qu'un outil découvert par exécution, après des écritures. Le même calcul sert
+  l'agent, avant le run : `missing_tools` et les avertissements `not_granted` de
+  `oto_trigger` (`docs/runner-et-automatisations.md`). Un nom construit à l'exécution
+  n'est pas lu : il reste jugé à l'appel.
 
 ## L'affichage d'une recette — `display`, sur la fiche
 

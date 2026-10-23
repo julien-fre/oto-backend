@@ -62,6 +62,7 @@ from . import (accords as api_routes_accords,
                hooks as api_routes_hooks,
                instagram_meta as api_routes_instagram_meta,
                meta_ads as api_routes_meta_ads,
+               slack as api_routes_slack,
                microsoft as api_routes_microsoft,
                ubersuggest as api_routes_ubersuggest,
                jefacture as api_routes_jefacture,
@@ -831,6 +832,16 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         options_handler=options_handler,
     )
 
+    # Retour d'installation de l'app Slack publiée par l'instance (OAuth v2) — même forme :
+    # le `/start` passe par le seam commun, seul le retour est une route.
+    slack_routes = api_routes_slack.make_routes(
+        verifier=verifier,
+        authenticate=_authenticate,
+        json_response=_json,
+        json_error=_json_error,
+        options_handler=options_handler,
+    )
+
     # Couche capacité (ADR 0009) : routes REST dérivées du registre (no-op tant
     # qu'il est vide — canari). Même séquence autz→validation→handler que MCP.
     capability_routes = _cap_rest_adapter.make_routes(
@@ -946,6 +957,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         *ubersuggest_routes,
         *jefacture_routes,
         *wordpress_routes,
+        *slack_routes,
         *capability_routes,
         *billing_webhook_routes,
         *hook_routes,

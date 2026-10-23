@@ -31,9 +31,12 @@ import copy
 import json
 from typing import Any, Optional
 
+from starlette.concurrency import run_in_threadpool
+
+from .. import outils_du_travail
 from ..functions import contract as contrat_fonctions
 from ..functions import pont as pont_bac
-from . import contrat, pont
+from . import contrat, outils_cites, pont
 from . import ecritures as ec
 
 KIND = "code"
@@ -110,6 +113,23 @@ def _probs_ecritures(c: dict) -> list[str]:
     return probs
 
 
+def refus_hors_liste(manque: dict) -> dict:
+    """Le reçu d'une recette-code refusée avant tout appel : les outils qu'elle cite et
+    que l'agent n'a pas, et le geste qui les lui donne (`missing_tools`, `fix`)."""
+    noms = manque["missing"]
+    agent = f"agent {manque['trigger_id']}" if manque.get("trigger_id") else "this agent"
+    return {"ok": False, "calls": 0, "units": 0, "refused": 0, "stopped": None,
+            "writes": {}, "done": False, "code": outils_du_travail.CODE,
+            "missing_tools": noms,
+            "fix": outils_du_travail.correctif(manque.get("trigger_id"),
+                                               manque.get("tools") or [], noms),
+            "error": (f"{outils_du_travail.CODE}: this recipe calls {noms}, which "
+                      f"{agent} is not allowed to use (job {manque['job_id']}). Nothing "
+                      "was called. Stop the run with run_finish(outcome=\"blocked\") "
+                      f"naming them: the owner adds them to {agent}'s tools in one "
+                      "click (the agent's page shows them).")}
+
+
 async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
                    datastore: Any = None, ecrire: bool) -> dict:
     """Joue une recette-code VALIDÉE. `ecrire=False` = l'épreuve : aucune écriture,
@@ -118,6 +138,13 @@ async def executer(corps: dict, params: dict, *, fastmcp, sub: Optional[str],
     seule la plateforme lit) ; `writes` compte les écritures chez un tiers TENTÉES, par
     nom déclaré."""
     lim = corps["limits"]
+    # Lancée par un agent hébergé : tout ce que le code CITE doit être dans la liste du
+    # travail. Jugé ici, avant le premier appel, et refusé UNE fois en nommant chaque
+    # outil manquant — sinon le code découvre un outil par exécution, après des écritures.
+    manque = await run_in_threadpool(outils_du_travail.manquants,
+                                     outils_cites.outils_cites(corps))
+    if manque:
+        return refus_hors_liste(manque)
     ecritures = pont.compteur_neuf()
     sortie = await pont_bac.executer_avec_pont(
         sources=corps["sources"], entrypoint=corps["entrypoint"], entree=params,

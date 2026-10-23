@@ -1,20 +1,68 @@
-"""Les outils d'admin qu'un agent hébergé exerce avec le rôle plateforme de son porteur
-(`platform_tools`, revue de #1274) : qui peut poser la liste, et ce qu'elle peut nommer.
+"""Ce qu'un agent hébergé ne pose pas lui-même : ses outils d'admin exercés avec le rôle
+plateforme de son porteur (`platform_tools`, revue de #1274) — qui peut poser la liste, et
+ce qu'elle peut nommer —, et tout élargissement d'une liste d'outils (`tools`), à la
+modification comme à la création d'un agent.
 
 Sorti de `runner_triggers` : la capacité des agents dépassait 1 900 lignes, et cette
-règle est un tout — les quatre refus d'auteur et de contenu, avec leur borne."""
+règle est un tout — les refus d'auteur et de contenu, avec leur borne.
+
+**Une personne, pas un agent.** Sous un jeton de délégation (`verrou_org.travail_de_la_requete`,
+posé au bord MCP et au bord REST pour un travail hébergé), un agent qui a `oto_trigger` dans
+sa liste élargirait la sienne — une injection de prompt suffirait —, ou créerait un agent
+plus outillé que lui, qui tournerait ensuite avec ces outils. Élargir reste un geste de
+personne ; réduire, reposer la même liste, ou créer un agent qui n'a que des outils du
+travail appelant reste permis."""
 from __future__ import annotations
 
 import logging
 from typing import Optional
 
-from .. import access, db, verrou_org
+from .. import access, db, deprecations, outils_du_travail, verrou_org
 from ._types import AuthzDenied, ResolvedCtx
 
 logger = logging.getLogger(__name__)
 
 #: La borne de `platform_tools` : une liste d'outils d'admin NOMMÉS, jamais tout l'admin.
 PLATFORM_TOOLS_MAX = 10
+
+
+def _depuis_un_agent_heberge() -> bool:
+    """L'appel vient d'un travail hébergé : la requête porte un jeton de délégation."""
+    return verrou_org.travail_de_la_requete() is not None
+
+
+def _refuser_l_elargissement(outils: list[str], permis: set | frozenset) -> None:
+    ajoutes = [n for n in outils if deprecations.tool_canonique(n) not in permis]
+    if ajoutes:
+        raise AuthzDenied(403, "tools_human_only",
+                          f"un agent hébergé ne donne pas d'outil à un agent ({ajoutes}) : "
+                          "c'est une personne qui l'élargit, depuis son compte.")
+
+
+def exiger_aucun_ajout_d_agent(actuel: dict, outils: list[str]) -> None:
+    """`op=update` : refuse `tools_human_only` quand un agent hébergé AJOUTE un outil à
+    la liste d'un agent (`outils` hors de celle stockée, au canonique). Réduire la liste,
+    ou la reposer telle quelle, passe : cela ne donne rien de plus. La création a sa
+    règle (`exiger_aucun_outil_hors_du_travail`). Hors jeton de délégation, rien ne
+    change — la personne qui modifie l'agent l'élargit comme avant."""
+    if not _depuis_un_agent_heberge():
+        return
+    _refuser_l_elargissement(outils, {deprecations.tool_canonique(n)
+                                      for n in (actuel.get("tools") or [])
+                                      if isinstance(n, str)})
+
+
+def exiger_aucun_outil_hors_du_travail(outils: list[str]) -> None:
+    """`op=create` : refuse `tools_human_only` quand un agent hébergé crée un agent qui
+    aurait un outil hors de ce que SON travail peut appeler (`outils_du_travail.
+    permis_du_travail`, au canonique). `outils` est la liste qui sera écrite — fournie,
+    ou déduite de la procédure quand `tools` est omis : un agent ne s'outille pas plus
+    que lui par la procédure qu'il nomme. Un sous-ensemble passe. Hors jeton de
+    délégation, rien ne change."""
+    verrou = verrou_org.travail_de_la_requete()
+    if verrou is None:
+        return
+    _refuser_l_elargissement(outils, outils_du_travail.permis_du_travail(verrou.job_id))
 
 
 def outils_plateforme_valides(ctx: ResolvedCtx, noms: list[str], actuel: dict,
@@ -29,7 +77,7 @@ def outils_plateforme_valides(ctx: ResolvedCtx, noms: list[str], actuel: dict,
     posée d'avance s'armerait le jour où il le devient. Chaque nom est un `oto_admin_*`
     déjà dans les outils de l'agent (`outils`, sinon ceux stockés) : la liste ne sort pas
     de la liste d'outils, que le serveur tient de toute façon (`outils_du_travail`)."""
-    if verrou_org.travail_de_la_requete() is not None:
+    if _depuis_un_agent_heberge():
         raise AuthzDenied(403, "platform_tools_human_only",
                           "`platform_tools` ne se pose pas depuis un agent hébergé : "
                           "c'est son propriétaire qui la pose, depuis son compte.")
