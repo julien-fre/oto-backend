@@ -12,6 +12,7 @@
         "https://<instance-host>/api/hubspot/oauth/callback"
       ],
       "requiredScopes": [
+        "oauth",
         "crm.objects.contacts.read",
         "crm.objects.contacts.write",
         "crm.objects.companies.read",

@@ -131,12 +131,19 @@ def test_les_scopes_viennent_de_la_reference():
         assert "crm.objects.owners.read" in req   # the personal owner lookup needs it
     for req, opt in ((org_req, org_opt), (perso_req, perso_opt)):
         assert not set(req) & set(opt)
-        assert all(known_scope(s) for s in (*req, *opt))
-        # Events and tickets optional: a portal without them still installs.
-        assert "business-intelligence" in opt and "crm.objects.tickets.read" in opt
+        # `oauth` is the OAuth flow's own scope, not one a private app ticks.
+        assert "oauth" in req
+        assert all(known_scope(s) for s in (*req, *opt) if s != "oauth")
+        # Tickets optional: a portal without them still installs.
+        assert "crm.objects.tickets.read" in opt
         assert "crm.objects.custom.read" in opt
-    # Lists: required for the org, optional for a person (reps often lack the right).
-    assert "crm.lists.write" in org_req and "crm.lists.write" in perso_opt
+    # Lists: required for the org; for a person, reads optional (reps often lack the
+    # right) and writes absent (HubSpot refuses crm.lists.write on a user-level app).
+    assert "crm.lists.write" in org_req and "crm.lists.read" in perso_opt
+    assert "crm.lists.write" not in (*perso_req, *perso_opt)
+    # Page views: optional for the org, absent for a person (refused on user-level apps).
+    assert "business-intelligence" in org_opt
+    assert "business-intelligence" not in (*perso_req, *perso_opt)
     # Writing fields: an admin's gesture, the org app only.
     assert "crm.schemas.contacts.write" in org_opt
     assert not any(".write" in s and "schemas" in s for s in (*perso_req, *perso_opt))

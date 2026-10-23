@@ -115,20 +115,24 @@ _CUSTOM = ("crm.objects.custom.read", "crm.objects.custom.write",
 
 #: Per app: (required, optional). The personal app REQUIRES less: HubSpot lets a user
 #: install it only if their own permissions cover every required scope, and a sales
-#: rep often has no list rights — lists are optional there. Field writes
+#: rep often has no list rights — list reads are optional there, and list WRITES are
+#: absent, like `business-intelligence` (page views): HubSpot refuses both on a
+#: user-level app. Field writes
 #: (`hubspot_property` create/update/delete) are an admin's job: org app only.
+#: `oauth` is required on both: HubSpot adds it to every app's required scopes, and
+#: the install URL must ask for every required scope.
 SCOPES_BY_APP: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     APP_ACCOUNT: (
-        (*_from(("contacts", "companies", "deals", "lists"), write=True),
+        ("oauth", *_from(("contacts", "companies", "deals", "lists"), write=True),
          *_from(("owners",), write=False), *_SCHEMAS_READ),
         (*_TICKETS, "business-intelligence",
          "crm.schemas.contacts.write", "crm.schemas.companies.write",
          "crm.schemas.deals.write", *_CUSTOM),
     ),
     APP_USER: (
-        (*_from(("contacts", "companies", "deals"), write=True),
+        ("oauth", *_from(("contacts", "companies", "deals"), write=True),
          *_from(("owners",), write=False), *_SCHEMAS_READ),
-        (*_from(("lists",), write=True), *_TICKETS, "business-intelligence", *_CUSTOM),
+        (*_from(("lists",), write=False), *_TICKETS, *_CUSTOM),
     ),
 }
 
