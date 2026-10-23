@@ -1,6 +1,6 @@
 """HubSpot CRM — contacts, companies, deals, tickets, notes (read + write).
 
-Wraps `oto.tools.hubspot.HubSpotClient` (the key: service key or private app, or an OAuth token). Token resolved per
+Wraps `oto.tools.hubspot.HubSpotClient` (a Bearer token). Token resolved per
 call via `auth.hubspot.bearer()` — byo (user key on /account or the org's shared
 credential): a pasted service key / private-app token as is, or an access token
 minted from the "Connect HubSpot" OAuth row. No platform key.
