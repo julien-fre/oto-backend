@@ -35,6 +35,14 @@ DDL_COLONNE_OUTILS_PLATEFORME = (
 COLONNE_HOOK_SOURCES = "hook_sources"
 DDL_COLONNE_HOOK_SOURCES = (f"ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS "
                             f"{COLONNE_HOOK_SOURCES} JSONB")
+# Le propriétaire PRÊTE son abonnement personnel à toute l'org qui peut modifier
+# l'agent (« let my team use my plan », `op=update share_plan`) : posée par la révision
+# `20261023_1010_plan_shared` ET par le démarrage, sous garde de catalogue — même DDL.
+# `false` (défaut) = l'état de tous les agents d'avant : seuls les éditeurs NOMMÉS par
+# le propriétaire empruntent son forfait (`_forfait_prete`).
+COLONNE_PLAN_PARTAGE = "plan_shared"
+DDL_COLONNE_PLAN_PARTAGE = (f"ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS "
+                            f"{COLONNE_PLAN_PARTAGE} BOOLEAN NOT NULL DEFAULT false")
 
 _COLS = ("id, org_id, sub, label, folder, procedure, project_id, tools, "
          "outils_plateforme AS platform_tools, "
@@ -42,7 +50,7 @@ _COLS = ("id, org_id, sub, label, folder, procedure, project_id, tools, "
          "max_tokens, max_run_seconds, model, kind, payload_mode, payload_fields, max_per_hour, fraicheur_s, "
          "cron, tz, enabled, next_due, last_enqueued_at, created_at, hook_auth, "
          "(hook_signing_secret_enc IS NOT NULL) AS signing_secret_set, "
-         "max_per_day, hook_slug, hook_sources")
+         "max_per_day, hook_slug, hook_sources, plan_shared")
 
 #: ⚠️ `hook_secret_hash` n'est PAS dans `_COLS`, et c'est la garde : un haché servi
 #: à une lecture partirait dans la réponse de `op=list`, donc dans un transcript
@@ -147,17 +155,28 @@ def partages_d_agents(ids: list[int],
 
 
 def _forfait_prete(alias_trigger: str) -> str:
-    """Le prédicat « le PROPRIÉTAIRE de cet agent a nommé l'éditeur `%s` » — un
-    partage `write` À UNE PERSONNE (ni l'org entière, ni une équipe), vivant, et
-    posé par celui sous qui l'agent tourne (`granted_by = sub`). Une seule écriture,
-    lue par `forfaits_pretes` et par la garde de `update_trigger`."""
+    """Le prédicat « le PROPRIÉTAIRE de cet agent prête son forfait à l'éditeur `%s` »,
+    vrai dans deux cas, et deux seulement :
+    - il l'a nommé éditeur : un partage `write` À UNE PERSONNE, vivant, posé par celui
+      sous qui l'agent tourne (`granted_by = sub`) ;
+    - il a prêté son forfait à son équipe (`plan_shared`, posé par LUI seul) ET l'agent
+      est modifiable par toute son org (partage `write` vivant à `org_id`). Un partage à
+      l'org sans ce geste — celui que pose la création, ou la révision 0035 — ne prête
+      rien.
+    Une seule écriture, lue par `forfaits_pretes` et par la garde de `update_trigger`."""
     from ._partage_vivant import PARTAGE_VIVANT_G
-    return ("EXISTS (SELECT 1 FROM resource_grants g "
+    return ("(EXISTS (SELECT 1 FROM resource_grants g "
             "WHERE g.resource_type = 'runner_trigger' "
             f"  AND g.resource_id = {alias_trigger}.id::text "
             "  AND g.principal_type = 'user' AND g.principal_id = %s "
             f"  AND g.permission = 'write' AND g.granted_by = {alias_trigger}.sub "
-            f"  AND {PARTAGE_VIVANT_G})")
+            f"  AND {PARTAGE_VIVANT_G}) "
+            f"OR ({alias_trigger}.plan_shared AND EXISTS (SELECT 1 FROM resource_grants g "
+            "WHERE g.resource_type = 'runner_trigger' "
+            f"  AND g.resource_id = {alias_trigger}.id::text "
+            "  AND g.principal_type = 'org' "
+            f"  AND g.principal_id = {alias_trigger}.org_id::text "
+            f"  AND g.permission = 'write' AND {PARTAGE_VIVANT_G})))")
 
 
 def visibilites_d_agents(ids: list[int], org_id: int) -> dict[int, dict]:
@@ -217,7 +236,7 @@ def outils_plateforme_du_travail(job_id: int) -> list[str]:
             "SELECT t.outils_plateforme FROM runner_jobs j JOIN runner_triggers t "
             "  ON t.id::text = j.payload->>'trigger_id' "
             "WHERE j.id = %s AND t.org_id = j.org_id AND t.sub = j.sub "
-            "  AND t.model = ANY(%s) "
+            "  AND t.model = ANY(%s) AND NOT t.plan_shared "
             "  AND NOT EXISTS (SELECT 1 FROM resource_grants g "
             "    WHERE g.resource_type = 'runner_trigger' AND g.resource_id = t.id::text "
             "      AND g.principal_type = 'user' AND g.permission = 'write' "
@@ -306,7 +325,10 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
                  # Le PLAFOND journalier (NULL = aucun). L'adresse privée
                  # (`hook_slug`) n'y est PAS : elle se pose par son verbe,
                  # `poser_adresse_de_hook`, jamais par une retouche générique.
-                 "max_per_day"}
+                 "max_per_day",
+                 # Le prêt du forfait à l'équipe : jugé par la capacité (le
+                 # propriétaire seul, `share_plan`).
+                 "plan_shared"}
     inconnu = set(champs) - autorises
     if inconnu:
         raise ValueError(f"colonnes hors contrat : {sorted(inconnu)}")

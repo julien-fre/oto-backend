@@ -126,6 +126,11 @@ class TriggerInput(BaseModel):
     # ne touche à rien ; `""` sur `update` = revenir au modèle du worker.
     model: Optional[str] = None
     enabled: Optional[bool] = None
+    share_plan: Optional[bool] = Field(default=None, description=(
+        "update, OWNER only, never from a hosted agent: `true` lets everyone who may "
+        "edit this agent through an org-wide editor share change it ON YOUR personal "
+        "Claude subscription (\"let my team use my plan\"). `false` takes it back: "
+        "only the editors you named keep it. No effect off a personal subscription."))
     private: Optional[bool] = Field(default=None, description=(
         "create: `true` = only you (and org admins) see this agent. Default: every "
         "member of the org may see and edit it — it runs as you either way. "
@@ -366,6 +371,9 @@ class Trigger(BaseModel):
     #: avec_visibilites`) : `{"org": "editor"|"viewer"|null, "people": n}`.
     #: `org=null, people=0` = privé. Absent = backend plus ancien.
     visibility: Optional[AgentVisibility] = None
+    #: Le propriétaire prête son abonnement personnel à toute l'org qui peut modifier
+    #: l'agent (`share_plan`). Absent = backend plus ancien.
+    plan_shared: Optional[bool] = None
 
 
 class RunnerArme(BaseModel):
@@ -794,6 +802,10 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if inp.op in ("create", "update"):
         _limites_du_run.valider(inp.max_tokens, inp.max_run_seconds)
 
+    if inp.share_plan is not None and inp.op != "update":
+        raise AuthzDenied(400, "share_plan_update_only",
+                          "`share_plan` ne se pose que par `op=update`, sur un agent "
+                          "existant.")
     if inp.platform_tools is not None and inp.op != "update":
         raise AuthzDenied(400, "platform_tools_update_only",
                           "`platform_tools` ne se pose que par `op=update`, sur un agent "
@@ -1361,6 +1373,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if inp.platform_tools is not None:
         champs["outils_plateforme"] = outils_plateforme_valides(
             ctx, inp.platform_tools, _actuel(), champs.get("tools"))
+    if inp.share_plan is not None:
+        champs["plan_shared"] = _acces_agent.pret_du_forfait_valide(
+            ctx, inp.share_plan, _actuel())
     if inp.model is not None and _abonnement.est_abonnement(famille) and _actuel():
         _juger(_actuel())
     eteindre = set(champs) <= {"enabled"} and champs.get("enabled") is False
@@ -1770,6 +1785,11 @@ CAPABILITIES += [
                           "`platform_tools` hors d'`op=update`"),
             DeclaredError(403, "platform_tools_human_only",
                           "`platform_tools` posé depuis un agent hébergé (jeton de délégation)"),
+            DeclaredError(400, "share_plan_update_only", "`share_plan` hors d'`op=update`"),
+            DeclaredError(403, "share_plan_human_only",
+                          "`share_plan` posé depuis un agent hébergé (jeton de délégation)"),
+            DeclaredError(403, "share_plan_owner_only",
+                          "`share_plan` posé par un autre que le propriétaire de l'agent"),
             DeclaredError(403, "platform_tools_owner_only",
                           "`platform_tools` posé par un autre que le propriétaire de l'agent"),
             DeclaredError(403, "platform_tools_operator_only",
@@ -1915,7 +1935,8 @@ CAPABILITIES += [
             "and clear the queue — the agent still runs as its owner. On an agent "
             "that runs on its owner's personal subscription, only the owner and the "
             "people the OWNER shared it with by name as editor may change it "
-            "(`can_edit` says so); everyone else may only disable it. Delete, share "
+            "(`can_edit` says so) — or every org editor once the owner set "
+            "`share_plan=true`; everyone else may only disable it. Delete, share "
             "and the webhook door stay with the owner and org admins. "
             "The tick only ENQUEUES a job at "
             "each due time; execution belongs to the worker. Floor between two "

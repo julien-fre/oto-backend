@@ -83,3 +83,33 @@ def test_la_revision_ouvre_les_agents_nes_prives_depuis_0035(live, pg_module_dsn
     assert _org_de(pg_module_dsn, prive["id"]) is None
     assert _org_de(pg_module_dsn, deja["id"])[0] == "viewer"
     assert _org_de(pg_module_dsn, marque["id"])[1] == _MARQUE_0035
+
+
+def test_le_forfait_se_prete_a_l_equipe_seulement_par_le_drapeau_et_le_partage_d_org(
+        live, pg_module_dsn):
+    """`plan_shared` + partage `write` vivant à l'org = chaque membre emprunte le
+    forfait ; l'un sans l'autre ne prête rien. La garde d'écriture lit le même prêt."""
+    from oto_mcp import db
+    t = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC", tools=["a"],
+                          cron="0 8 * * *", model="sub:sonnet")
+    tid, rid = t["id"], str(t["id"])
+    assert t["plan_shared"] is False
+    db.grant_resource("runner_trigger", rid, "org", str(ORG), role="editor",
+                      granted_by="proprio")
+    assert db.forfaits_pretes([tid], "collegue") == set(), (
+        "le partage d'org que pose la création ne prête pas le forfait")
+    assert db.update_trigger(tid, ORG, {"input": "x"},
+                             hors_abonnement_d_autrui="collegue") is None
+
+    assert db.update_trigger(tid, ORG, {"plan_shared": True},
+                             hors_abonnement_d_autrui="proprio")["plan_shared"] is True
+    assert db.forfaits_pretes([tid], "collegue") == {tid}
+    assert db.update_trigger(tid, ORG, {"input": "par l'équipe"},
+                             hors_abonnement_d_autrui="collegue")["input"] == "par l'équipe"
+
+    # En lecture seulement, l'org n'emprunte rien.
+    db.grant_resource("runner_trigger", rid, "org", str(ORG), role="viewer")
+    assert db.forfaits_pretes([tid], "collegue") == set()
+    # Sans partage d'org, le drapeau seul ne prête rien.
+    db.revoke_resource_grant("runner_trigger", rid, "org", str(ORG))
+    assert db.forfaits_pretes([tid], "collegue") == set()

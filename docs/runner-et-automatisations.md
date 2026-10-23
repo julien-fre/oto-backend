@@ -1750,6 +1750,14 @@ pas (absent de `list`, 404 sur `get`, même 404 qu'un agent inconnu).
     l'ancien propriétaire ne prêtent pas le forfait du nouveau ;
   - un admin lui-même, qui reste sous `peut_agir_pour`.
 
+  **Sauf s'il prête son forfait à son équipe** (23/10/2026) : `op=update
+  share_plan=true` (propriétaire seul, jamais sous un jeton de délégation) pose
+  `runner_triggers.plan_shared`, et le partage `editor` à l'org entière prête alors le
+  forfait à chaque membre — « let my team use my plan ». `share_plan=false` le reprend.
+  Sans partage `write` vivant à l'org, le drapeau ne prête rien. Un agent dont le forfait
+  est prêté à l'équipe n'exerce plus d'`oto_admin_*` (`outils_plateforme_du_travail`) :
+  d'autres que son porteur peuvent le changer.
+
   Le prêt (`_acces_agent.forfaits_pretes`, prédicat `db._forfait_prete`) vaut pour la
   famille où l'agent tourne DÉJÀ : l'éditeur nommé change sa consigne, ses outils, son
   modèle dans le forfait, le rallume, ou le sort du forfait ; POSER un agent sur un
