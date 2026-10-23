@@ -9,6 +9,7 @@ when the instance publishes its hubspot apps, the card shows **connect hubspot**
 - reconnecting the same level replaces the connection; pasting a key over it replaces it too
 - "test the connection" reads the portal, who connected it, the granted scopes and — on a personal connection — the owner records default to, without using up anything
 - if the app is uninstalled, the next call says **reconnect hubspot** and the card turns red
+- removing a one-click connection also uninstalls the app from the portal — unless another connection here still uses the same app in that portal (hubspot uninstalls for the whole portal, personal app included, and emails its super admins). the connection is removed either way, even if hubspot refuses or is unreachable
 - each hubspot app installs on at most 25 portals until it is listed on the hubspot marketplace
 
 no "connect hubspot" button on a tab: the instance has no hubspot app for that kind of connection yet — the service key below works the same.

@@ -656,3 +656,135 @@ def test_la_connexion_perso_reste_a_son_proprietaire(env, monkeypatch):
     assert list(env.coffre.lignes) == [("member", MEMBRE, "")]
     assert env.coffre.lignes[("member", MEMBRE, "")]["set_by"] == SUB
     assert env.coffre.ecritures == [env.conn]   # written under the row's lock
+
+
+# ── Removal: uninstall the app from the portal ──────────────────────────────
+
+AUTRE = f"{ORG}:un-collegue"
+
+
+def _oauth(app="account", hub_id=123):
+    return {"secret": "rt-1", "meta": {"auth": "oauth", "app": app, "hub_id": hub_id}}
+
+
+@pytest.fixture
+def retrait(env, monkeypatch):
+    """The vault's other rows (by `hub_id`) and the uninstall calls, both faked."""
+    from oto_mcp import credentials_store
+
+    autres: list[dict] = []
+    desinstallations: list[str] = []
+    monkeypatch.setattr(credentials_store, "holders_by_meta",
+                        lambda connector, field, value: [
+                            h for h in autres if str(h["meta"].get(field)) == value])
+    monkeypatch.setattr(env.hs, "_uninstall_call", lambda token: (
+        desinstallations.append(token) or _Reponse(204, {})))
+    env.autres, env.desinstallations = autres, desinstallations
+    return env
+
+
+@pytest.mark.parametrize("app", ["account", "user"])
+def test_le_retrait_desinstalle_l_app_quand_personne_d_autre_ne_la_tient(retrait, app):
+    retrait.coffre.lignes[("member", MEMBRE, "")] = _oauth(app)
+    retrait.autres.append({"entity_type": "member", "entity_id": MEMBRE, "account": "",
+                           "meta": _oauth(app)["meta"]})
+    retrait.reponses[retrait.hs.TOKEN_URL] = [_Reponse(200, {
+        "access_token": "at-1", "expires_in": 1800})]
+    retrait.hs.uninstall_before_clear("member", MEMBRE)
+    assert retrait.desinstallations == ["at-1"]
+    assert retrait.appels[0][1]["client_id"] == ("ucid" if app == "user" else "cid")
+
+
+@pytest.mark.parametrize("app", ["account", "user"])
+def test_le_retrait_ne_desinstalle_pas_une_app_qu_une_autre_ligne_tient(retrait, app):
+    """HubSpot uninstalls from the WHOLE portal, the personal app too: a colleague's
+    connection through the same app in the same portal keeps it installed."""
+    retrait.coffre.lignes[("member", MEMBRE, "")] = _oauth(app)
+    retrait.autres.append({"entity_type": "member", "entity_id": AUTRE, "account": "",
+                           "meta": _oauth(app)["meta"]})
+    retrait.hs.uninstall_before_clear("member", MEMBRE)
+    assert retrait.desinstallations == [] and retrait.appels == []
+
+
+def test_l_autre_app_du_meme_portail_ne_retient_pas_la_desinstallation(retrait):
+    retrait.coffre.lignes[("org", str(ORG), "")] = _oauth("account")
+    retrait.autres.append({"entity_type": "member", "entity_id": AUTRE, "account": "",
+                           "meta": _oauth("user")["meta"]})
+    retrait.reponses[retrait.hs.TOKEN_URL] = [_Reponse(200, {
+        "access_token": "at-1", "expires_in": 1800})]
+    retrait.hs.uninstall_before_clear("org", str(ORG))
+    assert retrait.desinstallations == ["at-1"]
+
+
+def test_dans_le_doute_sur_les_autres_lignes_on_ne_desinstalle_pas(retrait, monkeypatch):
+    from oto_mcp import credentials_store
+
+    def illisible(*a):
+        raise RuntimeError("vault unreachable")
+
+    monkeypatch.setattr(credentials_store, "holders_by_meta", illisible)
+    retrait.coffre.lignes[("member", MEMBRE, "")] = _oauth()
+    retrait.hs.uninstall_before_clear("member", MEMBRE)
+    assert retrait.desinstallations == []
+
+
+def test_un_grant_mort_au_retrait_ne_bloque_rien(retrait):
+    retrait.coffre.lignes[("member", MEMBRE, "")] = _oauth()
+    retrait.reponses[retrait.hs.TOKEN_URL] = [_Reponse(400, {"error": "invalid_grant"})]
+    retrait.hs.uninstall_before_clear("member", MEMBRE)
+    assert retrait.desinstallations == []
+
+
+def test_un_refus_de_desinstallation_ne_bloque_rien(retrait, monkeypatch):
+    retrait.coffre.lignes[("member", MEMBRE, "")] = _oauth()
+    retrait.reponses[retrait.hs.TOKEN_URL] = [_Reponse(200, {
+        "access_token": "at-1", "expires_in": 1800})]
+    monkeypatch.setattr(retrait.hs, "_uninstall_call",
+                        lambda token: _Reponse(403, {"message": "no"}))
+    retrait.hs.uninstall_before_clear("member", MEMBRE)
+
+
+@pytest.mark.parametrize("ligne", [None, {"secret": "pat-1", "meta": {}},
+                                   _oauth(hub_id=None)])
+def test_rien_a_desinstaller_pour_une_cle_collee_ou_sans_portail(retrait, ligne):
+    if ligne is not None:
+        retrait.coffre.lignes[("member", MEMBRE, "")] = ligne
+    retrait.hs.uninstall_before_clear("member", MEMBRE)
+    assert retrait.desinstallations == [] and retrait.appels == []
+
+
+def test_le_retrait_oublie_le_jeton_d_acces_en_cache(retrait):
+    retrait.coffre.lignes[("member", MEMBRE, "")] = _oauth()
+    retrait.hs._keep(("member", MEMBRE, ""), "rt-1", "at-cache", 1800)
+    retrait.autres.append({"entity_type": "member", "entity_id": AUTRE, "account": "",
+                           "meta": _oauth()["meta"]})
+    retrait.hs.uninstall_before_clear("member", MEMBRE)
+    assert retrait.hs._TOKENS == {}
+
+
+@pytest.mark.parametrize("surface", ["org", "group"])
+def test_les_surfaces_de_retrait_desinstallent_avant_de_retirer(monkeypatch, surface):
+    """The org and team removals call the uninstall BEFORE the row goes (it reads the
+    row to find the portal), and only for HubSpot."""
+    from oto_mcp.auth import hubspot as hs
+
+    ordre: list[tuple] = []
+    monkeypatch.setattr(hs, "uninstall_before_clear",
+                        lambda et, eid, account: ordre.append(("uninstall", et, eid, account)))
+    if surface == "org":
+        from oto_mcp.capabilities.orgs import secrets as cap
+        monkeypatch.setattr(cap.org_store, "delete_org_secret",
+                            lambda oid, p, account="": ordre.append(("clear", p)) or True)
+        inp = types.SimpleNamespace(org_id=ORG, provider="hubspot", account=" ")
+    else:
+        from oto_mcp.capabilities.groups import secrets as cap
+        monkeypatch.setattr(cap.group_store, "delete_group_secret",
+                            lambda gid, p, account="": ordre.append(("clear", p)) or True)
+        inp = types.SimpleNamespace(group_id=7, provider="hubspot", account="")
+    cap._delete_secret(None, inp)
+    assert ordre == [("uninstall", surface, str(inp.org_id if surface == "org" else 7), ""),
+                     ("clear", "hubspot")]
+    ordre.clear()
+    inp.provider = "pipedrive"
+    cap._delete_secret(None, inp)
+    assert ordre == [("clear", "pipedrive")]
