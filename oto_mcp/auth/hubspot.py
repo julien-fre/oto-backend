@@ -510,6 +510,80 @@ def access_token_for(rc) -> str:
     return grant["access_token"]
 
 
+# --- removal: uninstall the app from the portal --------------------------------
+
+UNINSTALL_URL = f"{_API}/appinstalls/v3/external-install"
+
+
+def _uninstall_call(access_token: str) -> requests.Response:
+    return requests.delete(UNINSTALL_URL,
+                           headers={"Authorization": f"Bearer {access_token}"},
+                           timeout=_TIMEOUT)
+
+
+def _install_held_elsewhere(hub_id, kind: str, row: tuple) -> bool:
+    """Does ANOTHER vault row hold this app in this portal?
+
+    HubSpot's uninstall removes the app from the WHOLE portal (and emails every Super
+    Admin of it), the user-level app included: a member removing their personal
+    connection would cut every colleague connected through the same app. So the key is
+    (`hub_id`, app), whoever connected. When in doubt (unreadable vault), YES: the row
+    goes anyway, and one uninstall too many breaks live connections."""
+    try:
+        holders = credentials_store.holders_by_meta(CONNECTOR, "hub_id", str(hub_id))
+    # noqa: SILENT — when in doubt we do not uninstall (the row goes anyway)
+    except Exception:
+        return True
+    for h in holders:
+        if (h["entity_type"], str(h["entity_id"]), h.get("account") or "") == row:
+            continue
+        meta = h.get("meta") or {}
+        if meta.get("auth") == AUTH_OAUTH and app_of(meta) == kind:
+            return True
+    return False
+
+
+def uninstall_before_clear(entity_type: str, entity_id: str, account: str = "") -> None:
+    """Removing an OAuth row also uninstalls the app from its portal, unless another
+    row holds the same install. Best-effort, like Google's revoke: a refusal, a dead
+    grant or an unreachable HubSpot never stops the removal — the row goes in any case.
+    A pasted key has nothing to uninstall. Synchronous (HTTP), outside any transaction:
+    called by the three removal capabilities (member, org, team) just before they clear
+    the row."""
+    row = (entity_type, str(entity_id), account or "")
+    try:
+        current = credentials_store.get_credential_with_meta(
+            entity_type, entity_id, CONNECTOR, account=account)
+    # noqa: SILENT — undecryptable row: removed without uninstalling
+    except Exception:
+        logger.warning("hubspot: row unreadable, removed without uninstalling the app")
+        return
+    meta = (current or {}).get("meta") or {}
+    if not current or meta.get("auth") != AUTH_OAUTH or not current.get("secret"):
+        return
+    with _LOCK:
+        _TOKENS.pop(_key(row, current["secret"]), None)
+    kind, hub_id = app_of(meta), meta.get("hub_id")
+    if hub_id is None:
+        logger.info("hubspot: OAuth row removed without uninstalling: no portal on it")
+        return
+    if _install_held_elsewhere(hub_id, kind, row):
+        logger.info("hubspot: OAuth row removed without uninstalling (hub_id=%s app=%s): "
+                    "another row holds the same install", hub_id, kind)
+        return
+    try:
+        r = _uninstall_call(refresh(current["secret"], kind)["access_token"])
+    except (HubSpotOAuthError, requests.RequestException) as e:
+        logger.warning("hubspot: uninstall skipped (hub_id=%s app=%s): %s",
+                       hub_id, kind, type(e).__name__)
+        return
+    if r.status_code >= 400:
+        logger.warning("hubspot: uninstall refused (hub_id=%s app=%s): HTTP %s",
+                       hub_id, kind, r.status_code)
+    else:
+        logger.info("hubspot: app uninstalled from portal (hub_id=%s app=%s)", hub_id, kind)
+
+
 def is_oauth(rc) -> bool:
     return (rc.config or {}).get("auth") == AUTH_OAUTH
 
