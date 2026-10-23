@@ -69,6 +69,7 @@ def org(monkeypatch):
         gens = sum(1 for (t, _) in partages if t != "org")
         return {int(i): {"org": org_role, "people": gens} for i in ids}
     monkeypatch.setattr(db, "visibilites_d_agents", _visibilites)
+    monkeypatch.setattr(RT, "_hors_de_l_org", lambda o, t: [])
 
     class _Scope:
         def __init__(self, sub):
@@ -147,6 +148,19 @@ def test_chaque_agent_servi_dit_qui_le_voit(org):
     org["partages"][("org", str(ORG))] = "editor"
     assert _appel(PROPRIETAIRE, op="get", trigger_id=7)["trigger"]["visibility"] == {
         "org": "editor", "people": 2}
+
+
+def test_get_dit_ce_que_l_org_entiere_ne_lit_pas(monkeypatch):
+    """Procédure personnelle ou d'équipe, projet non possédé par l'org : nommés."""
+    db = RT.db
+    monkeypatch.setattr(db, "get_guide_db",
+                        lambda ot, oid, slug: {"slug": slug} if slug == "d-org" else None)
+    monkeypatch.setattr(db, "get_project_by_id", lambda pid: {
+        1: {"owner_type": "org"}, 2: {"owner_type": "user"}}.get(pid))
+    assert RT._hors_de_l_org(ORG, {"procedure": "d-org", "project_id": 1}) == []
+    assert RT._hors_de_l_org(ORG, {"procedure": "perso", "project_id": 2}) == [
+        "procedure", "project"]
+    assert RT._hors_de_l_org(ORG, {"procedure": "d-org", "project_id": None}) == []
 
 
 # ── naître ───────────────────────────────────────────────────────────────────

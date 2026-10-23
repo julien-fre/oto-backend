@@ -368,6 +368,10 @@ class Trigger(BaseModel):
     #: avec_visibilites`) : `{"org": "editor"|"viewer"|null, "people": n}`.
     #: `org=null, people=0` = privé. Absent = backend plus ancien.
     visibility: Optional[AgentVisibility] = None
+    #: Sur `get` : ce que l'agent cite et que l'org entière ne lit pas —
+    #: `procedure` (personnelle ou d'équipe) et/ou `project` (non possédé par l'org).
+    #: Un agent partagé à l'org pointe alors vers ce que ses éditeurs n'ouvrent pas.
+    not_org_wide: Optional[list[Literal["procedure", "project"]]] = None
 
 
 class RunnerArme(BaseModel):
@@ -540,6 +544,21 @@ def _outils_de_la_procedure(ctx: ResolvedCtx, slug: str) -> list[str]:
 
 _REGLAGES_WEBHOOK = ("payload_mode", "payload_fields", "max_per_hour",
                      "freshness_seconds", "max_per_day", "private_address")
+
+
+def _hors_de_l_org(org_id: int, t: dict) -> list[str]:
+    """Ce que l'agent `t` cite et que toute son org ne lit pas : sa procédure quand
+    elle n'est pas une procédure d'ORG (personnelle ou d'équipe), son projet quand
+    l'org ne le possède pas. Servi sur `get` — l'écran de l'agent le dit à ses
+    éditeurs plutôt que de leur montrer des liens qui ne s'ouvrent pas."""
+    out = []
+    if t.get("procedure") and not db.get_guide_db("org", str(org_id), t["procedure"]):
+        out.append("procedure")
+    if t.get("project_id") is not None:
+        p = db.get_project_by_id(int(t["project_id"]))
+        if p and p.get("owner_type") != "org":
+            out.append("project")
+    return out
 
 
 def _exiger_projet_de_l_org(ctx: ResolvedCtx, project_id: Optional[int]) -> None:
@@ -979,8 +998,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
         n = _acces_agent.exiger(ctx, t, _acces_agent.ECRIRE + ("viewer",))
         return {"trigger": _acces_agent.avec_acces(
-                    _acces_agent.avec_visibilites(
-                        ctx.org_id, [_avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t))])[0], n,
+                    {**_acces_agent.avec_visibilites(
+                        ctx.org_id, [_avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t))])[0],
+                     "not_org_wide": _hors_de_l_org(ctx.org_id, t)}, n,
                     ferme=_acces_agent.forfait_ferme(ctx.sub, t)),
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
 

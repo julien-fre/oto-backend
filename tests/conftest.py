@@ -702,6 +702,8 @@ def agents_sans_partages(monkeypatch):
     vus: dict[str, list] = {"grants": [], "visibilites": []}
     monkeypatch.setattr(ownership, "grant",
                         lambda *a, **k: vus["grants"].append(a) or None)
+    from oto_mcp.capabilities import runner_triggers as RT
+    monkeypatch.setattr(RT, "_hors_de_l_org", lambda org, t: [])
     monkeypatch.setattr(db, "visibilites_d_agents", lambda ids, org: (
         vus["visibilites"].append(list(ids))
         or {int(i): {"org": None, "people": 0} for i in ids}))
