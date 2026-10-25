@@ -24,14 +24,18 @@ import logging
 import math
 import time
 from contextlib import contextmanager
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
+from oto.tools.common.errors import UpstreamHTTPError
 
 from .. import access, session_org
 from ..connectors import verify as connector_verify
+
+if TYPE_CHECKING:
+    from oto.tools.apify.client import ApifyClient
 
 logger = logging.getLogger(__name__)
 
@@ -226,38 +230,118 @@ def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001
     return {"quota": {"restant": restant, "unite": "usd", "limite": plafond}}
 
 
-def register(mcp: FastMCP) -> None:
+def _client() -> ApifyClient:
     from oto.tools.apify.client import ApifyClient
-    from oto.tools.common.errors import UpstreamHTTPError
 
+    key, _ = access.resolve_api_key("apify")
+    return ApifyClient(api_key=key)
+
+
+@contextmanager
+def _upstream():
+    """Turn an Apify refusal into an actionable tool error."""
+    try:
+        yield
+    except ValueError as e:
+        raise _bad(str(e))
+    except UpstreamHTTPError as e:
+        raise _bad(_upstream_message(e))
+
+
+@contextmanager
+def _upstream_du_run(run_id: str):
+    """`_upstream` for a run that already exists: the refusal names the run, and
+    says how to pick it up — never a bare error that leads to a second launch."""
+    reprise = (f" Apify run {run_id} was started: pick it up with "
+               f"`apify_run_status(run_id=\"{run_id}\")`, then `apify_dataset_items`.")
+    try:
+        yield
+    except ValueError as e:
+        raise _bad(str(e) + reprise)
+    except UpstreamHTTPError as e:
+        raise _bad(_upstream_message(e) + reprise)
+
+
+def lancer_acteur(
+    actor_id: str,
+    run_input: Optional[dict],
+    *,
+    outil: str,
+    max_items: Optional[int] = None,
+    limit: Optional[int] = None,
+    fields: Optional[list[str]] = None,
+    timeout_secs: Optional[int] = None,
+    memory_mbytes: Optional[int] = None,
+    max_total_charge_usd: Optional[float] = None,
+) -> Any:
+    """Run `actor_id`, wait for it up to 300 s, bill it once finished, return its items.
+
+    The body of `apify_run_sync`, shared with the dedicated actor tools
+    (`tools/apify_actors.py`): `outil` is the tool that answers, named in the cost
+    warnings. Returns the LIST of items — or `{error, run_id, status, items}` for a
+    run that ended other than SUCCEEDED, or whose output could not be read.
+    """
+    # Not the synchronous endpoint: it answers with the items only — no run id,
+    # no cost — so a run through it could never be billed. Start the run, wait
+    # for it by slices, then read its dataset: the finished run carries its cost.
+    debut = _maintenant()
+    client = _client()
+    with _upstream():
+        out = client.run(
+            actor_id, run_input=run_input, max_items=max_items,
+            timeout_secs=timeout_secs, memory_mbytes=memory_mbytes,
+            max_total_charge_usd=max_total_charge_usd,
+            wait_for_finish=_WAIT_SLICE_S)
+    run = _run_of(out)
+    run_id = run.get("id") if run else None
+    if not isinstance(run_id, str) or not run_id:
+        raise _bad(f"Apify started {actor_id} without a readable run id — "
+                   "find the run with `apify_actors` / the Apify console.")
+    # From here the run EXISTS: every refusal names it, so the agent can pick it
+    # up with `apify_run_status` instead of launching (and paying for) it again.
+    with _upstream_du_run(run_id):
+        while run.get("status") not in _TERMINAL:
+            reste = _SYNC_BUDGET_S - (_maintenant() - debut)
+            if reste < 1:
+                # Never aborted behind the agent's back, never billed here: the
+                # run is still going, `apify_run_status` records its cost once
+                # it has finished.
+                _gratuit()
+                raise _bad(
+                    f"Apify run {run_id} ({actor_id}) is still {run.get('status')} "
+                    f"after {_SYNC_BUDGET_S} s. It keeps running: poll it with "
+                    f"`apify_run_status(run_id=\"{run_id}\")`, then read its output "
+                    "with `apify_dataset_items`.")
+            out = client.run_status(
+                run_id, wait_for_finish=min(_WAIT_SLICE_S, int(reste)))
+            run = _run_of(out) or {}
+    # Finished: billed NOW, before reading the output — a dataset that cannot be
+    # read must not leave a finished run unbilled. Only an ANSWERED call is billed
+    # (`tool_calls.ok`), so from here nothing is raised: a failed run or an
+    # unreadable dataset is answered, with the run, never thrown.
+    _releve(out, run_id, outil=outil)
+    status = run.get("status")
+    dataset_id = run.get("defaultDatasetId")
+    try:
+        items = client.dataset_items(dataset_id, limit=limit, fields=fields)
+    except (ValueError, UpstreamHTTPError) as e:
+        detail = (_upstream_message(e) if isinstance(e, UpstreamHTTPError)
+                  else str(e))
+        return {"error": f"Apify run {run_id} ({actor_id}) ended {status}, but its "
+                         f"output could not be read: {detail} Read it with "
+                         f"`apify_dataset_items(dataset_id=\"{dataset_id}\")` — the "
+                         "run is billed, do not launch it again.",
+                "run_id": run_id, "status": status, "dataset_id": dataset_id,
+                "items": None}
+    if status != "SUCCEEDED":
+        return {"error": f"Apify run {run_id} ({actor_id}) ended {status}. Its log: "
+                         f"`apify_run_status(run_id=\"{run_id}\")`.",
+                "run_id": run_id, "status": status, "items": items}
+    return items
+
+
+def register(mcp: FastMCP) -> None:
     connector_verify.register("apify", _verify, couvre=connector_verify.AUTH_QUOTA)
-
-    def _client() -> ApifyClient:
-        key, _ = access.resolve_api_key("apify")
-        return ApifyClient(api_key=key)
-
-    @contextmanager
-    def _upstream():
-        """Turn an Apify refusal into an actionable tool error."""
-        try:
-            yield
-        except ValueError as e:
-            raise _bad(str(e))
-        except UpstreamHTTPError as e:
-            raise _bad(_upstream_message(e))
-
-    @contextmanager
-    def _upstream_du_run(run_id: str):
-        """`_upstream` for a run that already exists: the refusal names the run, and
-        says how to pick it up — never a bare error that leads to a second launch."""
-        reprise = (f" Apify run {run_id} was started: pick it up with "
-                   f"`apify_run_status(run_id=\"{run_id}\")`, then `apify_dataset_items`.")
-        try:
-            yield
-        except ValueError as e:
-            raise _bad(str(e) + reprise)
-        except UpstreamHTTPError as e:
-            raise _bad(_upstream_message(e) + reprise)
 
     # --- find the actor -----------------------------------------------------
 
@@ -346,63 +430,10 @@ def register(mcp: FastMCP) -> None:
             timeout_secs / memory_mbytes: run budget on Apify's side.
             max_total_charge_usd: hard cost ceiling for this run.
         """
-        # Not the synchronous endpoint: it answers with the items only — no run id,
-        # no cost — so a run through it could never be billed. Start the run, wait
-        # for it by slices, then read its dataset: the finished run carries its cost.
-        debut = _maintenant()
-        client = _client()
-        with _upstream():
-            out = client.run(
-                actor_id, run_input=run_input, max_items=max_items,
-                timeout_secs=timeout_secs, memory_mbytes=memory_mbytes,
-                max_total_charge_usd=max_total_charge_usd,
-                wait_for_finish=_WAIT_SLICE_S)
-        run = _run_of(out)
-        run_id = run.get("id") if run else None
-        if not isinstance(run_id, str) or not run_id:
-            raise _bad(f"Apify started {actor_id} without a readable run id — "
-                       "find the run with `apify_actors` / the Apify console.")
-        # From here the run EXISTS: every refusal names it, so the agent can pick it
-        # up with `apify_run_status` instead of launching (and paying for) it again.
-        with _upstream_du_run(run_id):
-            while run.get("status") not in _TERMINAL:
-                reste = _SYNC_BUDGET_S - (_maintenant() - debut)
-                if reste < 1:
-                    # Never aborted behind the agent's back, never billed here: the
-                    # run is still going, `apify_run_status` records its cost once
-                    # it has finished.
-                    _gratuit()
-                    raise _bad(
-                        f"Apify run {run_id} ({actor_id}) is still {run.get('status')} "
-                        f"after {_SYNC_BUDGET_S} s. It keeps running: poll it with "
-                        f"`apify_run_status(run_id=\"{run_id}\")`, then read its output "
-                        "with `apify_dataset_items`.")
-                out = client.run_status(
-                    run_id, wait_for_finish=min(_WAIT_SLICE_S, int(reste)))
-                run = _run_of(out) or {}
-        # Finished: billed NOW, before reading the output — a dataset that cannot be
-        # read must not leave a finished run unbilled. Only an ANSWERED call is billed
-        # (`tool_calls.ok`), so from here nothing is raised: a failed run or an
-        # unreadable dataset is answered, with the run, never thrown.
-        _releve(out, run_id, outil="apify_run_sync")
-        status = run.get("status")
-        dataset_id = run.get("defaultDatasetId")
-        try:
-            items = client.dataset_items(dataset_id, limit=limit, fields=fields)
-        except (ValueError, UpstreamHTTPError) as e:
-            detail = (_upstream_message(e) if isinstance(e, UpstreamHTTPError)
-                      else str(e))
-            return {"error": f"Apify run {run_id} ({actor_id}) ended {status}, but its "
-                             f"output could not be read: {detail} Read it with "
-                             f"`apify_dataset_items(dataset_id=\"{dataset_id}\")` — the "
-                             "run is billed, do not launch it again.",
-                    "run_id": run_id, "status": status, "dataset_id": dataset_id,
-                    "items": None}
-        if status != "SUCCEEDED":
-            return {"error": f"Apify run {run_id} ({actor_id}) ended {status}. Its log: "
-                             f"`apify_run_status(run_id=\"{run_id}\")`.",
-                    "run_id": run_id, "status": status, "items": items}
-        return items
+        return lancer_acteur(
+            actor_id, run_input, outil="apify_run_sync", max_items=max_items,
+            limit=limit, fields=fields, timeout_secs=timeout_secs,
+            memory_mbytes=memory_mbytes, max_total_charge_usd=max_total_charge_usd)
 
     @mcp.tool()
     def apify_run(

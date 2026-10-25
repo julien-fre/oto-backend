@@ -16,8 +16,10 @@ CONNECTOR = _c(
     default_quota=0, platform_key_open=False,  # platform key on explicit grant (data bought by credit)
     secret_kind="api_key",
     label="Apify",
-    help="ready-to-use hosted scrapers (Google Maps, LinkedIn, Amazon…) via the Store",
+    help="hosted scrapers: LinkedIn profiles, employees and posts, job boards, websites, Google Maps — and the whole Apify Store",
     href="https://apify.com",
+    # `apify_actors`: the actors we run most, each as its own tool.
+    modules=("apify", "apify_actors"),
 )
 
 CATEGORY = "Prospecting"
@@ -25,8 +27,10 @@ PUBLISHER = "Apify"
 LOGO_DOMAIN = "apify.com"
 
 DESCRIPTION = (
-    "The Apify Store: launch a ready-to-use hosted scraper (Google Maps, "
-    "LinkedIn, Amazon…) with a JSON input, then read its result "
-    "(dataset). Platform access is restricted (explicit grant); each run is "
-    "billed by usage on the connected account."
+    "Ready-to-use hosted scrapers. Dedicated tools for the ones used most: "
+    "LinkedIn profiles, company employees, company pages and posts; job postings "
+    "from LinkedIn, Indeed and Welcome to the Jungle; contacts and content of "
+    "websites; Google Maps places and reviews. Any other actor of the Apify "
+    "Store runs with a JSON input. Platform access is restricted (explicit "
+    "grant); each run is billed by usage on the connected account."
 )

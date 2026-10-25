@@ -66,6 +66,10 @@ SANS_DEBIT = frozenset({
     # connectors whose platform key never debited the quota.
     "apify_store_search", "apify_actors", "apify_actor", "apify_run_sync", "apify_run",
     "apify_run_status", "apify_abort_run", "apify_dataset_items",
+    "apify_linkedin_profiles", "apify_linkedin_company_employees",
+    "apify_linkedin_companies", "apify_linkedin_posts", "apify_linkedin_jobs",
+    "apify_indeed_jobs", "apify_welcome_to_the_jungle_jobs", "apify_website_contacts",
+    "apify_website_crawl", "apify_google_maps_places", "apify_google_maps_reviews",
     "dataforseo_keywords", "dataforseo_domain", "dataforseo_backlinks",
     "dataforseo_account", "dataforseo_ai_visibility", "dataforseo_site_audit",
     "dataforseo_technologies", "dataforseo_web_mentions",

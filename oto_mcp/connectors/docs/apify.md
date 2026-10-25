@@ -3,7 +3,19 @@
 get the API token from [Apify](https://console.apify.com/settings/integrations) (it starts with `apify_api_`), then paste it into oto.
 - byo-only: runs are billed to the org's Apify account
 
-## usage — run a ready-made scraper (the "actors")
+## usage — the actors we run most, one tool each
+
+reach for these first: a name that says what it does, typed arguments, the actor's input built for you, `max_items` and a $5 ceiling (`max_total_charge_usd`) set by default.
+- "full LinkedIn profiles of these people" → `apify_linkedin_profiles(urls)` (`with_email=true` adds an email search)
+- "who works at this company" → `apify_linkedin_company_employees(companies, job_titles, locations)` — `profile_mode="short"` to pick people, enrich only those you keep
+- "the LinkedIn page of this company" / "find its LinkedIn URL from its name" → `apify_linkedin_companies(urls | names)` — check `website` against the domain
+- "posts about X" / "what does this person post" → `apify_linkedin_posts(queries | author_urls)`
+- "who is hiring" → `apify_linkedin_jobs`, `apify_indeed_jobs`, `apify_welcome_to_the_jungle_jobs`
+- "emails, phones, LinkedIn link of these websites" → `apify_website_contacts(urls)`
+- "read this whole site" → `apify_website_crawl(urls, max_pages)` (one page: `web_read`)
+- "businesses on Google Maps in this area" → `apify_google_maps_places(search_terms, location)`; their reviews → `apify_google_maps_reviews(place_ids | place_urls)`
+
+## usage — any other actor of the Store
 
 apify is a catalog of ready-to-use scrapers — Google Maps, LinkedIn, Instagram, Amazon, Booking, TikTok… — that you launch with a JSON input and whose output you read.
 - "scrape the Google Maps reviews of bakeries in Marseille" → `apify_store_search("google maps")` to find the actor, then `apify_run_sync` with its input
