@@ -7,6 +7,7 @@ importer ce paquet ne crée aucune table.
 from __future__ import annotations
 
 from . import (
+    apps,
     billing,
     connectors,
     credits,
@@ -38,6 +39,7 @@ from . import (
 )
 
 __all__ = [
+    "apps",
     "billing",
     "connectors",
     "credits",

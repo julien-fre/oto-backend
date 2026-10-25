@@ -84,6 +84,7 @@ ECRITURES = {
     "admin.tenant_disablement": {"disable", "enable"},
     "service.org.suspension": {"suspend", "resume"},
     "admin.outreach": {"test", "send", "optout_clear"},
+    "me.app": {"create", "update", "archive", "unarchive", "restore"},
     "me.doc": {"create", "bulk_create", "update", "patch", "delete", "move", "revert",
                "set_public", "archive", "unarchive", "verify"},
     "me.function": {"create", "propose", "run", "test", "publish", "refuse"},

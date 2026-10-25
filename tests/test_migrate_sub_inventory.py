@@ -402,6 +402,9 @@ def test_toute_colonne_jsonb_est_triee_pour_la_fusion():
         ("credit_holds", "job"),
         ("datastore_rows", "data"), ("datastore_row_revisions", "diff"),
         ("doctrine_library", "slots"), ("function_versions", "sources"),
+        # Une app : ses tableaux, champs, agents et sa vignette — des ids, jamais un sub.
+        ("apps", "manifest"), ("apps", "thumbnail"),
+        ("app_revisions", "manifest"), ("app_revisions", "thumbnail"),
         ("function_versions", "test_report"), ("grants", "constraints"),
         ("jev_jobs", "counters"), ("jev_jobs", "errors"), ("jev_jobs", "params"),
         ("nodes", "data"), ("nodes", "props"), ("org_instructions", "slots"),

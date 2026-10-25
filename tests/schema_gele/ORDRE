@@ -55,3 +55,4 @@ usage.LIMITE_REFUS_JOUR
 connectors.LOAN_EVENTS
 credits.CREDITS
 runs.AGENT_LINKS
+apps.APPS

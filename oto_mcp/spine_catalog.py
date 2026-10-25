@@ -97,6 +97,12 @@ SPINE_FAMILIES: tuple[SpineFamily, ...] = (
         "ce qui est lisible",
     ),
     SpineFamily(
+        "oto_apps",
+        ("oto_apps",),
+        "apps : les écrans bâtis sur Tulina — tableaux de bord, files de revue, "
+        "formulaires — rangés dans un projet, sur ses tableaux et ses agents",
+    ),
+    SpineFamily(
         "oto_resource* / oto_account_access",
         ("oto_resource", "oto_account_access"),
         "gouvernance d'une ressource possédée (ADR 0030) : propriétaire, TRANSFERT à une "

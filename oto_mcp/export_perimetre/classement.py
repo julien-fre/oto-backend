@@ -109,6 +109,7 @@ def exclue(regle: Regle, raison: str) -> Table:
 _ORG_OU_COMPTE = Ou((ParOrg(), ParSubSansOrg()))
 _COMMERCE = "notre commerce (ADR 0070 §3.1) : repris par oto-commerce, jamais embarqué"
 _DOCS = Via("docs", ("doc_id",))
+_APPS = Via("apps", ("app_id",))
 _PROJETS = Via("projects", ("project_id",))
 _TABLEAUX = Via("user_datastores", ("ns_id",))
 
@@ -146,6 +147,8 @@ CLASSEMENT: dict[str, Table] = {
     "project_file_texts": indirecte(Via("project_files", ("file_id",))),
     "docs": indirecte(_PROJETS),
     "doc_revisions": indirecte(_DOCS),
+    "apps": indirecte(_PROJETS),
+    "app_revisions": indirecte(_APPS),
     "doc_links": indirecte(Via("docs", ("from_doc",))),
     "doc_change_requests": indirecte(_DOCS),
     "doc_embeddings": indirecte(_DOCS),

@@ -88,6 +88,8 @@ from . import (
     # NON aplati : `poser`/`retirer`/`lire` sont trop communs pour la surface plate.
     # Les liens entre agents — `db.runner_links.<fn>`.
     runner_links,
+    # NON aplati : `create`/`get`/`update` sont trop communs — `db.apps.<fn>`.
+    apps,
 )
 
 # Ré-export plat (publics + privés à un underscore). Les noms dunder restent au

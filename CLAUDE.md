@@ -253,6 +253,8 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
   univers côte à côte, l'arrêt de la recopie
 - `fonctions.md` — `oto_function` : code pur versionné, publié sous la garde de ses tests,
   exécuté dans un bac à sable Pyodide/Deno sans réseau (ADR 0073)
+- `apps.md` — `oto_apps` : écrans bâtis sur Tulina, rangés dans un projet (manifeste jugé à l'écriture
+  contre les droits de l'auteur, HTML jamais exécuté côté serveur, révisions) — pas des pages de mémoire
 - `recettes.md` — `oto_recipe` : un outil de connecteur vers un tableau sans modèle —
   recette versionnée, pages appelées par le corps d'`oto_call`, reçu en comptes, `for_each` sur
   les lignes d'un tableau, dérive surveillée ; un agent hébergé la lance comme tout client

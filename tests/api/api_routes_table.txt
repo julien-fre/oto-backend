@@ -756,6 +756,8 @@ GET,HEAD /api/me/nodes/{node_id}/rows -> _handler
 OPTIONS /api/me/nodes/{node_id}/rows -> options_handler
 POST /api/me/docs -> _handler
 OPTIONS /api/me/docs -> options_handler
+POST /api/me/apps -> _handler
+OPTIONS /api/me/apps -> options_handler
 POST /api/me/upload-url -> _handler
 OPTIONS /api/me/upload-url -> options_handler
 POST /api/me/import -> _handler

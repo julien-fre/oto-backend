@@ -586,6 +586,7 @@ _SUB_COLUMNS = [
     #   (PK `(org_id|group_id, tool_name)` pour les masquages), sans FK ni unicité :
     #   UPDATE nu. Laissées, elles désignaient un compte disparu (« inconnu ») ;
     ("docs", "updated_by"), ("docs", "verified_by"), ("doc_revisions", "edited_by"),
+    ("apps", "created_by"), ("apps", "updated_by"), ("app_revisions", "edited_by"),
     ("platform_instructions", "updated_by"),
     ("org_disabled_tools", "disabled_by"), ("group_disabled_tools", "disabled_by"),
     # - le journal : la CIBLE d'un « voir en tant que » est une personne, et la

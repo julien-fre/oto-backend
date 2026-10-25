@@ -80,6 +80,8 @@ PAR_LOTS: dict[str, tuple[str, ...]] = {
     "tool_calls": ("effective_sub", "view_as_sub"),
     "nodes": ("owner_id",),
     "doc_revisions": ("edited_by",),
+    "apps": ("created_by", "updated_by"),
+    "app_revisions": ("edited_by",),
     "docs": ("created_by", "updated_by", "verified_by"),
     "project_activity": ("sub",),
     "usage_signals": ("sub", "resolved_by"),

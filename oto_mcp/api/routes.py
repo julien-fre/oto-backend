@@ -163,6 +163,7 @@ _READ_OPS = frozenset({
     "summary",  # ce que la page Agents trace, par agent (`runner.jobs`)
     "links", "graph",  # les liens entre agents, et les chaînes (`runner.triggers`)
     "outline",  # le plan d'une page, ses titres sans son corps (`me.doc`, #1266)
+    "validate",  # juger un manifeste d'app sans rien écrire (`me.app`)
 })
 
 
