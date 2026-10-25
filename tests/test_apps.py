@@ -184,3 +184,26 @@ def test_list_ne_rend_que_les_projets_lisibles(seams):
 def test_list_exige_des_projets(seams):
     e = _refus(lambda: A._app(CTX, A.AppInput(op="list")))
     assert e.code == "missing_project"
+
+
+def test_vignette_image_seulement_sur_notre_stockage(seams, monkeypatch):
+    from oto_mcp import media_store
+    monkeypatch.setattr(media_store, "public_base", lambda: "https://media.example")
+    A._app(CTX, A.AppInput(op="update", app_id=5, thumbnail={"image": "https://media.example/a.png"}))
+    e = _refus(lambda: A._app(CTX, A.AppInput(op="update", app_id=5,
+                                              thumbnail={"image": "https://tiers.example/a.png"})))
+    assert e.code == "invalid_thumbnail"
+    e = _refus(lambda: A._app(CTX, A.AppInput(op="update", app_id=5,
+                                              thumbnail={"image": "https://media.example.tiers.example/a.png"})))
+    assert e.code == "invalid_thumbnail"
+
+
+def test_vignette_image_refusee_sans_stockage_declare(seams, monkeypatch):
+    from oto_mcp import media_store
+
+    def _absente():
+        raise RuntimeError("OTO_MCP_S3_ENDPOINT")
+    monkeypatch.setattr(media_store, "public_base", _absente)
+    e = _refus(lambda: A._app(CTX, A.AppInput(op="update", app_id=5,
+                                              thumbnail={"image": "https://media.example/a.png"})))
+    assert e.code == "invalid_thumbnail"

@@ -99,7 +99,7 @@ SPINE_FAMILIES: tuple[SpineFamily, ...] = (
     SpineFamily(
         "oto_apps",
         ("oto_apps",),
-        "apps : les écrans bâtis sur Tulina — tableaux de bord, files de revue, "
+        "apps : les écrans bâtis sur la plateforme — tableaux de bord, files de revue, "
         "formulaires — rangés dans un projet, sur ses tableaux et ses agents",
     ),
     SpineFamily(

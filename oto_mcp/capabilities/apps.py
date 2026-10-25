@@ -112,9 +112,14 @@ def _thumbnail(raw: Optional[dict]) -> Optional[dict]:
     _require(isinstance(raw, dict) and set(raw) <= _THUMB_KEYS, "invalid_thumbnail",
              f"A thumbnail takes only: {', '.join(sorted(_THUMB_KEYS))}.")
     image = raw.get("image")
-    _require(image is None or (isinstance(image, str) and image.startswith("https://")
-                               and len(image) <= 2000),
-             "invalid_thumbnail", "`thumbnail.image` must be an https address.")
+    # La liste des apps affiche la vignette HORS du cadre isolé : une adresse libre
+    # ferait appeler un hôte tiers par chaque lecteur. Seul le stockage média de
+    # CETTE instance est permis ; base non déclarée = aucune image (fail-closed).
+    _require(image is None or (isinstance(image, str) and len(image) <= 2000
+                               and _media_base() is not None
+                               and image.startswith(_media_base() + "/")),
+             "invalid_thumbnail",
+             "`thumbnail.image` must be a file published on this instance's media store.")
     for k, cap in (("color", 24), ("emoji", 16)):
         v = raw.get(k)
         _require(v is None or (isinstance(v, str) and len(v) <= cap), "invalid_thumbnail",
@@ -122,6 +127,14 @@ def _thumbnail(raw: Optional[dict]) -> Optional[dict]:
     _require(raw.get("design") is None or isinstance(raw.get("design"), dict),
              "invalid_thumbnail", "`thumbnail.design` must be an object.")
     return {k: v for k, v in raw.items() if v is not None}
+
+
+def _media_base() -> Optional[str]:
+    from .. import media_store
+    try:
+        return media_store.public_base()
+    except RuntimeError:  # noqa: SILENT — instance sans stockage média : aucune image permise
+        return None
 
 
 def _checked_manifest(ctx: ResolvedCtx, raw: Optional[dict]) -> dict:
@@ -228,12 +241,12 @@ CAPABILITIES += [
     Capability(
         key="me.app", handler=_app, Input=AppInput, Output=AppOut, authz=SUB_ONLY,
         description=(
-            "Apps: screens people build on Tulina — dashboards, review queues, forms — "
+            "Apps: screens people build on the platform — dashboards, review queues, forms — "
             "kept in a project and opened with the project's access. An app is a "
             "manifest (the tables and fields it reads, the field values it may set, "
             "the columns a form may add, the agents it may read or start with "
             "`run: true`, `files: true` to upload) plus HTML that runs sandboxed and "
-            "talks to Tulina through `window.tulina`. Not a memory page.\n"
+            "talks to the platform through its `window` bridge. Not a memory page.\n"
             "op=list (`project_ids`; cards, no HTML) / get (`app_id`; with manifest, "
             "HTML and `rev`) / create (`project_id`, `title`, `manifest`, `html`, "
             "optional `thumbnail`) / update (`app_id`, any of those; pass "

@@ -1,4 +1,4 @@
-# Apps — des écrans bâtis sur Tulina, rangés dans un projet
+# Apps — des écrans bâtis sur la plateforme, rangés dans un projet
 
 Une **app** est un écran qu'un utilisateur (ou un agent, pour lui) bâtit sur ses
 tableaux et ses agents : tableau de bord, file de revue, formulaire, dépôt de fichier
@@ -13,9 +13,11 @@ qui lance un agent. Capacité `me.app` : outil MCP `oto_apps`, REST `POST /api/m
   passer un texte) —, `files: true` pour déposer des fichiers dans le projet.
 - **Du HTML**, exécuté par le front dans un cadre isolé (origine opaque, sans réseau,
   derrière un document-garde qui interdit toute navigation sortante), qui ne parle à
-  Tulina que par `window.tulina`. Le serveur ne l'exécute jamais.
+  la plateforme que par le pont exposé sur `window`. Le serveur ne l'exécute jamais.
 - **Une vignette** (image publiée sur le stockage média, ou couleur + emoji, et les
-  réglages du dessin qui l'a produite).
+  réglages du dessin qui l'a produite). ⚠️ L'image doit être sous la base publique
+  du stockage média de l'instance (`media_store.public_base()`) : la liste l'affiche
+  hors du cadre isolé, une adresse libre ferait appeler un tiers par chaque lecteur.
 
 Elle **appartient à un projet** et en hérite l'accès (`ownership.can_access`), comme une
 page — mais ce **n'est pas une page de mémoire** : ni dans l'arbre des pages, ni dans
@@ -34,7 +36,8 @@ page — mais ce **n'est pas une page de mémoire** : ni dans l'arbre des pages,
   règle « droits d'une app = droits de son auteur ∩ droits de son lecteur », à
   l'appel — **pas encore appliquée** : le front ne transmet pas l'app à chaque lecture.
   Tant qu'elle ne l'est pas, les apps restent ouvertes à une population choisie
-  (`oto_apps` dans `BETA_TOOLS`, côté front un réglage d'org).
+  : `oto_apps` est dans `BETA_TOOLS` (face MCP) ; la face REST n'est pas gardée,
+  c'est le front qui borne qui EXÉCUTE une app.
 
 ## Révisions et conflits
 
