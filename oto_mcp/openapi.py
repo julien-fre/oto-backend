@@ -426,7 +426,7 @@ def _operation(cap: Capability, binding: RestBinding,
     # La 200 porte un schéma dès que la capacité DÉCLARE sa sortie (`Output`). Sans
     # lui, on ne peut qu'annoncer « OK » — ce qui suffit à appeler, jamais à écrire
     # le client qui consomme. Cf. `Capability.Output` et le garde-fou de dette.
-    ok = _reponse_heureuse(cap.Output, defs)
+    ok = _reponse_heureuse(cap.Output, defs, binding.media)
 
     op: dict = {
         "operationId": operation_id,

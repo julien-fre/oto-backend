@@ -9,6 +9,7 @@ from __future__ import annotations
 from . import (
     billing,
     connectors,
+    copilot,
     credits,
     datastore,
     emails,
@@ -40,6 +41,7 @@ from . import (
 __all__ = [
     "billing",
     "connectors",
+    "copilot",
     "credits",
     "datastore",
     "emails",

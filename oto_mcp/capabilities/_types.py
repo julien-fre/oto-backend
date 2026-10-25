@@ -114,6 +114,20 @@ class NotModified:
         self.rev = rev
 
 
+class EventStream:
+    """Une réponse EN FLUX (`text/event-stream`) rendue par un handler : `events` est un
+    itérable ASYNC d'octets, déjà au format SSE. L'adaptateur REST la sert telle quelle
+    (CORS compris, `api/base._file_stream`) au lieu d'un JSON.
+
+    ⚠️ Le corps s'écoule APRÈS la sortie du handler : les ContextVars que l'adaptateur
+    pose autour de lui (geste, empreinte client, run) sont DÉJÀ retirées quand il tourne.
+    Le flux pose lui-même ce dont il a besoin, et rend ses échecs DANS le flux — l'en-tête
+    200 est parti. Un seul usage aujourd'hui : l'agent intégré (`capabilities/copilot`)."""
+
+    def __init__(self, events):
+        self.events = events
+
+
 @dataclass(frozen=True)
 class DeclaredError:
     """Un refus que la capacité DÉCLARE, pour que `/openapi.json` le porte.
@@ -215,6 +229,9 @@ class RestBinding:
     # servir tôt : un consommateur qui s'y branche sait qu'il s'y branche à ses frais,
     # et personne n'a à déduire d'une absence de mention que la forme est gravée.
     provisoire: bool = False
+    # Type de média de la réponse heureuse. `text/event-stream` pour une route dont le
+    # handler rend un `EventStream` : le document le publie tel quel.
+    media: str = "application/json"
 
 
 @dataclass(frozen=True)

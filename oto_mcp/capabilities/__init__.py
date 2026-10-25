@@ -216,5 +216,6 @@ from . import runner_fleets  # noqa: F401 — runner.fleets (MCP oto_fleet + RES
 from . import runner_workers  # noqa: F401 — platform.runner.worker (REST seule, super admin) — workers = secrets de machine
 from . import functions  # noqa: F401 — me.function (MCP oto_function + REST) — ADR 0073, code pur exécuté par Oto
 from . import recipes  # noqa: F401 — me.recipe (MCP oto_recipe) — recettes connecteur → tableau, sans modèle
+import oto_mcp.capabilities.copilot.routes  # noqa: F401 — copilot.{turn,client_result,approval,revert} (REST seule) — l'agent intégré
 
 __all__ = ["registry", "_mcp_adapter", "_rest_adapter"]

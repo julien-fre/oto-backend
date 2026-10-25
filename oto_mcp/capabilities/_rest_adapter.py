@@ -20,7 +20,7 @@ import dataclasses
 import logging
 import types
 import typing
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Optional
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from pydantic import ValidationError
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 from .. import client_trace, deprecations, geste
 from ..json_body import InvalidJsonBody, read_json_body
 from ._authz import accepts_service, refus_hors_vue
-from ._types import AuthzDenied, Capability, NotModified, RawCtx
+from ._types import AuthzDenied, Capability, EventStream, NotModified, RawCtx
 from ._execution import execute
 
 # Le principal que l'authentification REST dépose dans le scope (`api.base`). Nom
@@ -74,7 +74,8 @@ def _champs_liste(model) -> frozenset:
                      if _porte_une_liste(f.annotation))
 
 
-def _make_handler(cap: Capability, binding, verifier, authenticate, json_response, json_error):
+def _make_handler(cap: Capability, binding, verifier, authenticate, json_response, json_error,
+                  stream_response=None):
     champs_liste = _champs_liste(cap.Input)
     # Une identité de service n'est acceptée qu'ici, et seulement pour une capacité
     # dont la règle la LIT (`_authz.SERVICE_ROLE`, oto-backend#1068). Calculé au montage.
@@ -294,6 +295,12 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
             # garde ce qu'il a en cache. Un 200 portant « rien n'a changé » ferait
             # ranger CE message à la place des données.
             return Response(status_code=304, headers=_cors_of(request, json_response))
+        if isinstance(result, EventStream):
+            # Un flux (SSE) : servi par la fabrique de `api/base` (CORS compris), le corps
+            # s'écoule après ce handler — cf. `EventStream`.
+            return stream_response(request, result.events, media_type=binding.media,
+                                   headers={"Cache-Control": "no-cache",
+                                            "X-Accel-Buffering": "no"})
         reponse = json_response(request, result, status=binding.status)
         # Un tableau adressé par son NOM dans le chemin : servi, et daté. La face MCP
         # dit la même chose dans la réponse (`session_org.noter_avis`).
@@ -330,6 +337,7 @@ def make_routes(
     json_error: Callable[..., JSONResponse],
     options_handler: Callable[[Request], Awaitable[Response]],
     capabilities: list[Capability],
+    stream_response: Optional[Callable[..., Response]] = None,
 ) -> list[Route]:
     """Une Route (+ OPTIONS) par capacité REST. Liste vide si rien (canari)."""
     routes: list[Route] = []
@@ -337,7 +345,8 @@ def make_routes(
         if not cap.is_exposed():
             continue
         for binding in cap.rest_bindings():
-            h = _make_handler(cap, binding, verifier, authenticate, json_response, json_error)
+            h = _make_handler(cap, binding, verifier, authenticate, json_response, json_error,
+                              stream_response)
             routes.append(Route(binding.path, h, methods=[binding.verb]))
             routes.append(Route(binding.path, options_handler, methods=["OPTIONS"]))
     return routes

@@ -83,6 +83,7 @@ from . import base as api_base
 from .base import (  # noqa: F401 — ré-export de compatibilité
     AuthFn, _allowed_origins, _authenticate, _cors_headers, _json, _json_error,
     _maybe_view_as, bind, options_handler)
+from .base import _file_stream
 # Handlers par DOMAINE (découpe du 2026-08-27) : chaque module porte des fonctions
 # de module, testables seules ; la table de routes ci-dessous reste ici.
 from . import alias_routes, public
@@ -858,7 +859,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     # qu'il est vide — canari). Même séquence autz→validation→handler que MCP.
     capability_routes = _cap_rest_adapter.make_routes(
         verifier, _authenticate, _json, _json_error, options_handler,
-        _cap_registry.CAPABILITIES,
+        _cap_registry.CAPABILITIES, stream_response=_file_stream,
     )
 
     # Billing écrit à la main (ADR 0043, #488) : le webhook Mollie (non authentifié)

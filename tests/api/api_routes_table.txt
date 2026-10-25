@@ -845,6 +845,14 @@ POST /api/me/functions -> _handler
 OPTIONS /api/me/functions -> options_handler
 GET,HEAD /api/orgs/{id}/recipes -> _handler
 OPTIONS /api/orgs/{id}/recipes -> options_handler
+POST /api/copilot/turns -> _handler
+OPTIONS /api/copilot/turns -> options_handler
+POST /api/copilot/threads/{thread_id}/client-results -> _handler
+OPTIONS /api/copilot/threads/{thread_id}/client-results -> options_handler
+POST /api/copilot/threads/{thread_id}/approvals/{approval_id} -> _handler
+OPTIONS /api/copilot/threads/{thread_id}/approvals/{approval_id} -> options_handler
+POST /api/copilot/actions/{revert_id}/revert -> _handler
+OPTIONS /api/copilot/actions/{revert_id}/revert -> options_handler
 POST /api/billing/webhook -> webhook
 OPTIONS /api/billing/webhook -> options_handler
 GET,HEAD /api/me/billing/invoices/{id}/pdf -> invoice_pdf

@@ -331,6 +331,8 @@ comptage avant l'appel) : ils se règlent `exceeded: true`. Échéance :
 Le rapprochement avec le relevé d'Anthropic se fait en jetons, au total et par modèle
 (`oto_admin_model_spend`, `by_model`).
 
+**Les appels au modèle de l'agent intégré** (`capabilities/copilot/cle.py`, `docs/copilot.md`) : le même chemin que les tours d'un agent hébergé (`reserver_tour` avant, `regler_tour` après), clé `copilot:<conversation>:<rang>` (lue `call_id` au rapprochement). Deux différences : une réservation que le registre n'a pas tenue hors du mode `off` (barème sans les lignes du modèle en `report`) REFUSE l'appel au lieu de le servir ; une erreur HTTP du fournisseur LIBÈRE la réservation (rien n'a été consommé).
+
 **Les échéances** (`credits_echeances.py`, boucle de fond, `OTO_CREDITS_ECHEANCES_ENABLED`) :
 toutes les 60 s, les réservations ouvertes passées leur échéance se règlent au montant
 réservé, état `expired`, mouvement marqué `hold_expired: true` — un processus arrêté en

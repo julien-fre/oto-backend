@@ -279,6 +279,7 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `mcp-apps.md` — `prefab_ui`, convention `*_app`
 - `mcp-spec-watch.md` — les SEP, pas les specs
 - `runner-et-automatisations.md` — l'état ici, la boucle ailleurs
+- `copilot.md` — l'agent intégré à l'application : routes SSE nées capacités, outils de la personne en interne, porte d'approbation sur déclarations, annulation par le journal, appels au modèle réservés puis réglés (`OTO_COPILOT_SUBS`)
 - `usage-loop.md` — calllog, feedback, déroulés
 - `monitoring.md` — enquête, rétention, Sentry
 - `event-loop-perf.md` — les gels mono-loop, et la garde « pas de SQL dans la boucle » (`db/_hors_boucle.py`, stock gelé qui ne fait que rétrécir)

@@ -81,6 +81,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.connectors.LOAN_EVENTS,   # journal des prêts de compte (pose et retrait)
     schema.credits.CREDITS,          # budget d'unités : barème, soldes, réservations, mouvements
     schema.runs.AGENT_LINKS,         # liens entre agents : qui lance qui, qui exige qui
+    schema.copilot.COPILOT,          # l'agent intégré à l'application : conversations, annulations
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

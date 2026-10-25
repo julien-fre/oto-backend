@@ -94,3 +94,23 @@ def bilan_de_ligne(ns_id: int, row_id: str) -> dict:
             f"ORDER BY id DESC LIMIT 1", params).fetchone()
     bilan["suppression"] = dict(derniere) if derniere and derniere["suppression"] else None
     return bilan
+
+
+def dernier_id() -> int:
+    """L'`id` de la révision la plus récente (0 sur un journal vide) : un repère posé
+    AVANT un geste, pour relire ensuite ses seules révisions par la clé primaire."""
+    with _connect() as conn:
+        row = conn.execute(f"SELECT COALESCE(max(id), 0) AS id FROM {TABLE}").fetchone()
+    return int(row["id"])
+
+
+def revisions_du_geste(geste_id: str, depuis_id: int, *, limit: int = 1001) -> list[dict]:
+    """Les révisions qu'un GESTE a laissées après le repère `depuis_id`, dans l'ordre
+    d'écriture : `ns_id`, `row_id`, `rev`, `diff`, `suppression`. Lu par l'agent intégré
+    pour défaire ce qu'il a écrit (`capabilities/copilot/annulation.py`). Parcours par
+    la clé primaire depuis le repère, borné : le geste vient d'avoir lieu."""
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            f"SELECT id, ns_id, row_id, rev, diff, suppression FROM {TABLE} "
+            f"WHERE id > %s AND geste_id = %s ORDER BY id LIMIT %s",
+            (int(depuis_id), str(geste_id), int(limit))).fetchall()]

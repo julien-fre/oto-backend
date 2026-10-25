@@ -337,6 +337,12 @@ _REGLAGES: tuple[Variable, ...] = (
              "journalise ce qui serait retiré et ne retire rien, `off` le coupe. Une "
              "valeur inconnue vaut `report`. Indépendant d'`OTO_VERROU_ORG_DELEGATION`.",
              ("oto_mcp/verrou_org.py:226",)),
+    Variable("OTO_COPILOT_SUBS", Classe.REGLAGE, "",
+             "L'agent intégré à l'application (`capabilities/copilot`, docs/copilot.md) : "
+             "les `sub` autorisés, séparés par des virgules. Vide (défaut) = personne — les "
+             "quatre routes `/api/copilot/*` répondent 403 `copilot_not_enabled`. Lu à "
+             "chaque requête.",
+             ("oto_mcp/capabilities/copilot/routes.py:51",)),
     Variable("OTO_CREDITS_MODE", Classe.REGLAGE, "report",
              "Budget d'unités au moment de l'appel (`access/credits.py`) : `report` "
              "(défaut) réserve et règle sans jamais refuser, et journalise ce "
