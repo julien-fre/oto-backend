@@ -236,7 +236,7 @@ CLASSEMENT: dict[str, Table] = {
     "runner_hook_deliveries": possedee(ParOrg()),
     "runner_trigger_links": possedee(ParOrg(), comptes=("created_by",)),
     "copilot_threads": exclue(ParOrg(), "conversation de l'agent intégré : un état de travail éphémère (le journal des appels, lui, part)"),
-    "copilot_undos": exclue(Via("copilot_threads", ("thread_id",), ("id",)), "annulation offerte, valable une heure"),
+    "copilot_undos": exclue(ParSub(), "annulation offerte, valable une heure"),
     "runner_workers": possedee(ParOrg()),
     "runner_platform_workers": instance("les exécutants de plateforme : l'infrastructure "
                                         "de l'instance"),
