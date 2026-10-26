@@ -90,6 +90,18 @@ def _peut_ecrire(sub: str, scope: str) -> bool:
     return org_id is not None and roles.is_org_admin(sub, org_id)
 
 
+def _page_du_process(sub: str, slug: str) -> str | None:
+    """The process page in the front that hosts the caller's org (it opens on the graph
+    when there is one) — the same address as the readers digest (`digest_lecteurs`).
+    `None` when no front is known: no link rather than a guessed one."""
+    from .. import access, config, org_store
+    org_id = access.current_org(sub)
+    if not org_id:
+        return None
+    base = org_store.org_front(org_id)[0] or config.dashboard_url_for(sub)
+    return f"{base.rstrip('/')}/org/{org_id}/processes/{slug}" if base else None
+
+
 def _aux_noms_du_produit(sub: str, texte: str) -> str:
     """Les outils cités, au nom que CE compte voit dans sa liste (`guides._get`)."""
     from .. import tool_alias
@@ -216,11 +228,21 @@ def register(mcp: FastMCP) -> None:
         if not client_affiche_les_apps():
             # A text client (Claude Code, a runner job) paints nothing and hands
             # structuredContent to the MODEL: no drawing, no roster, no drawing orders —
-            # the steps are what it needs, and they are one call away.
-            texte = (f"{title} (`{slug}`, v{version}) — this client does not display the "
-                     f"graph. Its steps: oto_procedure op=get slug={slug}.")
-            return ToolResult(content=[TextContent(type="text", text=_aux_noms_du_produit(sub, texte))],
-                              structured_content={"slug": slug, "title": title, "version": version})
+            # the steps are what it needs, and they are one call away. The sentence rides
+            # in `message` too: that channel is the only one such a client reads, and a
+            # model handed `{slug, title, version}` alone told the user the graph was shown.
+            url = _page_du_process(sub, slug)
+            texte = (f"{title} (`{slug}`, v{version}) — this client does NOT display the "
+                     f"graph: the user sees nothing. Say so, explain the process in text "
+                     f"from its steps (oto_procedure op=get slug={slug})"
+                     + (f" and give the link to its page, where the graph is: {url}" if url
+                        else "") + ". Do not draw it yourself.")
+            message = _aux_noms_du_produit(sub, texte)
+            rendu = {"slug": slug, "title": title, "version": version, "message": message}
+            if url:
+                rendu["url"] = url
+            return ToolResult(content=[TextContent(type="text", text=message)],
+                              structured_content=rendu)
         trace = le_trace(row.get("body_md") or "")
         casse = (diagram_check(row.get("body_md") or "")["diagram_warning"]
                  if trace else None)

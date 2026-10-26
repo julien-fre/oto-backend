@@ -386,7 +386,8 @@ def test_un_client_texte_ne_recoit_ni_trace_ni_consigne(monkeypatch):
     _stub_backend(monkeypatch, {("org", 42, "veille"): {
         "slug": "veille", "title": "Veille", "version": 3, "body_md": CORPS},
         ("org", 42, "prose"): PROSE})
-    from oto_mcp import procedure_diagram
+    from oto_mcp import org_store, procedure_diagram
+    monkeypatch.setattr(org_store, "org_front", lambda org_id: ("https://app.example.com/", None))
     # The REAL detection: the test client advertises no MCP Apps extension.
     monkeypatch.setattr(procedure_diagram, "client_affiche_les_apps", _VRAIE_DETECTION)
 
@@ -397,10 +398,34 @@ def test_un_client_texte_ne_recoit_ni_trace_ni_consigne(monkeypatch):
     for slug in ("veille", "prose"):
         r = asyncio.run(appel(slug))
         texte = "".join(getattr(b, "text", "") for b in r.content)
-        assert set(r.structured_content) == {"slug", "title", "version"}
-        assert "does not display the graph" in texte
+        assert set(r.structured_content) == {"slug", "title", "version", "message", "url"}
+        # Such a client hands structuredContent to the MODEL: the sentence must be there.
+        assert "does NOT display the graph" in r.structured_content["message"]
+        assert r.structured_content["url"] == f"https://app.example.com/org/42/processes/{slug}"
+        assert r.structured_content["url"] in r.structured_content["message"]
         assert "┌" not in texte and "REQUIRED" not in texte
     assert procedure_diagram.indice_du_graphe("sub1", "veille") is None
+
+
+def test_un_client_texte_sans_front_connu_n_a_pas_de_lien(monkeypatch):
+    """Aucun front connu pour l'org ni pour le compte : pas de lien deviné."""
+    pytest.importorskip("fastmcp.apps")
+    monkeypatch.setenv("OTO_PROCEDURE_APP_BUNDLE", BUNDLE)
+    pa = _module(monkeypatch)
+    m = _banc(monkeypatch, pa)
+    _stub_backend(monkeypatch, {("org", 42, "veille"): {
+        "slug": "veille", "title": "Veille", "version": 3, "body_md": CORPS}}, ui=False)
+    from oto_mcp import config, org_store
+    monkeypatch.setattr(org_store, "org_front", lambda org_id: (None, None))
+    monkeypatch.setattr(config, "dashboard_url_for", lambda sub: "")
+
+    async def appel():
+        async with Client(m) as c:
+            return await c.call_tool("oto_procedure_app", {"slug": "veille"}, raise_on_error=False)
+
+    r = asyncio.run(appel())
+    assert set(r.structured_content) == {"slug", "title", "version", "message"}
+    assert "http" not in r.structured_content["message"]
 
 
 def test_la_detection_lit_l_extension_annoncee_par_le_client(monkeypatch):
