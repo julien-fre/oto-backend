@@ -192,9 +192,11 @@ async def _etape(fil: dict, b, avant) -> Any:
         yield ev("done")
         return
     fil["_verrou"] = jeton
+    relu = False
     try:
         frais = await run_in_threadpool(store.lire, fil["id"], fil["sub"])
         fil.update(_fil(frais or {}))
+        relu = frais is not None
         erreur = avant(fil)
         if erreur:
             yield ev("error", message=erreur)
@@ -211,7 +213,16 @@ async def _etape(fil: dict, b, avant) -> Any:
         async for e in boucle.conduire(fil, b, cle):
             yield e
     finally:
+        # A closed tab cancels the leg at a `yield`: what was decided before it (a card
+        # now waiting, a result of a call that ran) is written back anyway, or the next
+        # answer would find nothing waiting — and a write that ran would be replayed.
         with anyio.CancelScope(shield=True):
+            if relu:
+                try:
+                    await boucle.sauver(fil)
+                except Exception:
+                    logger.exception("copilot : état de la conversation %s non enregistré",
+                                     fil["id"])
             await run_in_threadpool(store.rendre, fil["id"], jeton)
 
 

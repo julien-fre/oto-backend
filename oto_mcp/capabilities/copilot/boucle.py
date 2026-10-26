@@ -110,14 +110,18 @@ async def _lancer_outil(fil: dict, b: Boite, bloc: dict) -> AsyncIterator[dict]:
             "table": str(table) if table is not None else None,
             "schema": bool(re.search(r"schema|column|create|datastore", target)),
             "scope": carte.portee(target)}.items() if v is not None}
-    yield ev("tool_result", id=bloc["id"], ok=ok, summary=carte.resume(texte),
-             changed=change, revert_id=revert_id)
     note = bloc.get("_edits")
     contenu = couper(texte)
     if note:
         contenu = (f"[The person edited the call on the card before applying it: "
                    f"{', '.join(note)}.]\n{contenu}")
+    # Recorded BEFORE the event goes out: a leg cancelled at this `yield` still keeps
+    # the result of a call that ran (the caller writes it back).
+    if fil["queue"] and fil["queue"][0].get("id") == bloc["id"]:
+        fil["queue"].pop(0)
     fil["results"].append(_resultat(bloc["id"], contenu, not ok))
+    yield ev("tool_result", id=bloc["id"], ok=ok, summary=carte.resume(texte),
+             changed=change, revert_id=revert_id)
 
 
 async def drainer(fil: dict, b: Boite, etat: dict) -> AsyncIterator[dict]:
@@ -161,7 +165,6 @@ async def drainer(fil: dict, b: Boite, etat: dict) -> AsyncIterator[dict]:
                      editable=carte.champs_modifiables(name, args),
                      rememberable=sorte == classement.ECRITURE)
             return
-        fil["queue"].pop(0)
         async for e in _lancer_outil(fil, b, bloc):
             yield e
         await sauver(fil)
