@@ -72,6 +72,15 @@ def get(app_id: int) -> Optional[dict]:
     return with_rev(row)
 
 
+def get_for_call(app_id: int) -> Optional[dict]:
+    """L'app SANS son HTML — ce qu'un appel d'app ouverte relit à chaque fois
+    (`capabilities/apps_appel.py`) : le manifeste, le projet, l'auteur. Le HTML
+    (jusqu'à 512 Ko) n'est servi qu'à l'ouverture (`op=get`)."""
+    with _connect() as conn:
+        return conn.execute(
+            f"SELECT {_CARTE}, manifest FROM apps WHERE id = %s", (app_id,)).fetchone()
+
+
 def list_for_projects(project_ids: Iterable[int], *, archived: bool = False) -> list[dict]:
     """Les apps des projets donnés, cartes seules (sans manifeste ni HTML), les plus
     récemment changées d'abord. L'appelant a déjà vérifié l'accès à chaque projet."""

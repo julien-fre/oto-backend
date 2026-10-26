@@ -129,6 +129,16 @@ ROUTES_LOURDES: tuple[RouteLourde, ...] = (
                   "jeton) laisse une navigation rapide passer ; la concurrence est plus "
                   "large que les autres lentilles parce que tous les comptes la lisent.")),
     RouteLourde(
+        "POST", "/api/me/apps/{app_id}/call", par_minute=240, concurrence=8,
+        pourquoi=("Une app OUVERTE (`me.app.call`) : chaque lecture, écriture et lancement "
+                  "d'agent d'un écran bâti par un utilisateur, ET la relecture de fond "
+                  "qui le garde à jour (jusqu'à 10 lectures toutes les 15 s, plus le "
+                  "suivi de ses runs). Ce sont des agrégats et des pages de lignes sur "
+                  "des tableaux de toute taille, appelés par un tableau de bord laissé "
+                  "ouvert : sans borne, quelques onglets sur un grand tableau "
+                  "reproduiraient #1141. Le débit couvre une page active (60/min) et sa "
+                  "relecture sur plusieurs onglets ; la concurrence garde le pool.")),
+    RouteLourde(
         "POST", "/api/me/projects", par_minute=240, concurrence=8,
         pourquoi=("Console projets (op=list/get/runs/inventory/… ET les écritures) : "
                   "13 s au p95 avant #1145, lectures de runs d'un projet reconstruites "

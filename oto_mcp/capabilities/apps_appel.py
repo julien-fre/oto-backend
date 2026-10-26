@@ -96,7 +96,7 @@ def _refus(status: int, code: str, msg: str) -> AuthzDenied:
 
 
 def _app_pour(ctx: ResolvedCtx, app_id: int) -> dict:
-    app = db.apps.get(int(app_id))
+    app = db.apps.get_for_call(int(app_id))
     if (app is None or app.get("archived_at") is not None
             or not ownership.can_access(ctx.sub, PROJECT_RTYPE, str(app["project_id"]), "read")):
         raise _refus(404, "unknown_app", f"App {app_id} doesn't exist or isn't shared with you.")

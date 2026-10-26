@@ -41,7 +41,7 @@ def seams(monkeypatch):
         return droits.get((sub, rid, want), False)
 
     monkeypatch.setattr(ownership, "can_access", can_access)
-    monkeypatch.setattr(db.apps, "get", lambda i: dict(APP) if i == 5 else None)
+    monkeypatch.setattr(db.apps, "get_for_call", lambda i: dict(APP) if i == 5 else None)
     monkeypatch.setattr(db, "get_trigger", lambda tid, org: {"id": tid, "sub": AUTEUR} if tid in (9, 10) else None)
     monkeypatch.setattr(_acces_agent, "niveau", lambda sub, org, t: niveaux.get(sub))
     monkeypatch.setattr(R, "_list_rows", lambda ctx, inp: rec["list"].append((ctx.sub, inp)) or {
@@ -104,7 +104,7 @@ def test_ecrire_exige_que_l_auteur_puisse_ecrire(seams):
 
 
 def test_auteur_inconnu_refuse(seams, monkeypatch):
-    monkeypatch.setattr(db.apps, "get", lambda i: dict(APP, updated_by=None))
+    monkeypatch.setattr(db.apps, "get_for_call", lambda i: dict(APP, updated_by=None))
     assert refus(action="read_rows", table="leads").code == "app_author_unknown"
 
 
