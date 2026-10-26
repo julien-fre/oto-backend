@@ -217,6 +217,9 @@ bg_install() {
   # version. Se termine par une exécution de contrôle. Un échec arrête l'installation :
   # une couleur qui servirait `sandbox_unavailable` en silence est une divergence muette.
   # Le service ne l'écrit jamais (l'arbre appartient à root) : elle reste en lecture seule.
+  # L'exécution de contrôle passe par l'isolement déclaré (`OTO_FUNCTIONS_ISOLATION`, défaut
+  # `systemd` : l'utilisateur dédié doit exister) : un hôte où il ne s'applique pas ne
+  # sort pas d'ici en succès (docs/fonctions.md).
   if [ -f scripts/installer_bac_a_sable.py ]; then
     .venv/bin/python scripts/installer_bac_a_sable.py "${tree}/.bac-a-sable" || {
       bg_log "ERREUR : pose du bac à sable dans ${tree}/.bac-a-sable en échec"

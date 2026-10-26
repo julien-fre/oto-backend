@@ -26,6 +26,11 @@ Environment=MCP_TRANSPORT=streamable_http
 Environment=HOST=127.0.0.1
 Environment=LOG_LEVEL=INFO
 Environment=HOME=/var/lib/@UNITE@-%i
+# Le bac à sable des fonctions : ce service n'a aucun privilège, il ne peut pas lancer
+# une unité sous un autre uid — l'isolement passe par un espace de noms utilisateur
+# non privilégié (`oto_mcp/functions/isolement.py`, docs/fonctions.md). Ne pas poser
+# `RestrictNamespaces=` ici : il l'empêcherait.
+Environment=OTO_FUNCTIONS_ISOLATION=bwrap
 StateDirectory=@UNITE@-%i
 LoadCredential=scw:@CLE_SCW@
 ExecStart=@ARBRE@-%i/.venv/bin/python @ARBRE@-%i/deploy/lanceur_secrets.py

@@ -405,6 +405,24 @@ def get_org_member_by_email(org_id: int, email: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def membres_par_email(org_id: int, email: str) -> list[str]:
+    """Les `sub` de TOUS les membres réels de l'org (`org_members` : ni l'escalade
+    plateforme de `roles.effective_org_role`, ni le compte de service) dont le compte
+    porte cet email, comparé en minuscules après strip — tous, pour qu'une adresse
+    portée par deux comptes se refuse au lieu de se deviner. Pour l'agent Slack de
+    l'org (`slack_events.membre`) : l'email Slack désigne qui le run incarne."""
+    email = (email or "").strip().lower()
+    if "@" not in email:
+        return []
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT m.sub FROM org_members m JOIN users u ON u.sub = m.sub "
+            "WHERE m.org_id = %s AND lower(u.email) = %s ORDER BY m.sub",
+            (org_id, email),
+        ).fetchall()
+        return [r["sub"] for r in rows]
+
+
 @lecture_d_appel
 def get_org_role(org_id: int, sub: str) -> Optional[str]:
     with _connect() as conn:

@@ -70,9 +70,15 @@ jobs:
           path: uv.lock
       - name: Bac à sable des fonctions (ADR 0073)
         # Comme `test` : sans lui, les bancs de l'exécuteur échouent.
+        # Le conteneur de CI n'a ni systemd ni utilisateur dédié : l'isolement système
+        # s'y DEMANDE à `direct` (`functions/isolement.py`) ; les permissions de Deno,
+        # que ces bancs éprouvent, restent les mêmes.
+        env:
+          OTO_FUNCTIONS_ISOLATION: direct
         run: |
           python scripts/installer_bac_a_sable.py "$RUNNER_TEMP/bac-a-sable"
           echo "OTO_FUNCTIONS_SANDBOX_DIR=$RUNNER_TEMP/bac-a-sable" >> "$GITHUB_ENV"
+          echo "OTO_FUNCTIONS_ISOLATION=direct" >> "$GITHUB_ENV"
       - name: Tests
         env:
           OTO_TEST_PG_PLACES: "4"

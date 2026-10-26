@@ -1886,6 +1886,14 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     # lit donc ici, juste avant d'écrire.
     if not _actuel():
         raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
+    if (_actuel().get("hook_auth") == runner_hook.SLACK
+            and (set(champs) - _RETOUCHES_LIBRES_SLACK or inp.platform_tools is not None)):
+        # ⚠️ L'agent Slack tourne sous l'identité de CHAQUE membre qui lui écrit : ce
+        # qu'il exécute (instruction, procédure, outils, modèle, projet) est un geste
+        # d'admin d'org, comme sa pose — sinon un éditeur réécrirait l'instruction que
+        # les connexions d'un autre membre exécuteront.
+        _exiger_l_admin_du_slack(ctx)
+        _valide_l_agent_slack({**_actuel(), **champs})
     if "tools" in champs:
         exiger_aucun_ajout_d_agent(_actuel(), champs["tools"])
     if inp.platform_tools is not None:
@@ -2002,7 +2010,7 @@ class HookAuthInput(BaseModel):
     # `lemlist` : l'ANCIEN nom de `body_secret`, admis par le schéma pour être
     # REFUSÉ en le nommant (`hook_auth_renamed`), jamais traduit en silence.
     hook_auth: Literal["bearer", "standard_webhooks", "body_secret", "lemlist",
-                       "none"] = Field(
+                       "none", "slack"] = Field(
         description=(
         "How the sender proves who it is. `bearer`: the sender posts "
         "`Authorization: Bearer otoh_…`, a secret the platform generates. "
@@ -2020,7 +2028,12 @@ class HookAuthInput(BaseModel):
         "at all — anyone who has the agent's private address can start it. Needs a "
         "`max_per_day` cap; mints a NEW private address, returned once as "
         "`hook_url` (served masked everywhere else); the agent is told its input "
-        "is unauthenticated."))
+        "is unauthenticated. `slack`: this agent answers direct messages to "
+        "the instance's published Slack app in the org's Slack — one agent per "
+        "org, set by an org admin, with an ORG procedure, and only an org admin "
+        "changes what it runs; each run carries the identity of the member who "
+        "asked (matched by confirmed email), and the agent's address no longer "
+        "opens."))
     signing_secret: Optional[str] = Field(default=None, description=(
         "`standard_webhooks` only: the signing secret the SENDER generated "
         "(starts with `whsec_`). Required when switching to `standard_webhooks`; "
@@ -2090,6 +2103,8 @@ def _valide_l_authentification(inp: HookAuthInput, actuel: Optional[dict]) -> No
                 400, "daily_cap_required",
                 "`none` exige un plafond `max_per_day` : quiconque voit l'adresse "
                 "peut déclencher l'agent. Pose-le d'abord (op=update).")
+    if inp.hook_auth == runner_hook.SLACK:
+        _valide_l_agent_slack(actuel)
     if secret is not None and inp.hook_auth != runner_hook.STANDARD_WEBHOOKS:
         raise AuthzDenied(
             400, "not_signature_mode",
@@ -2110,6 +2125,43 @@ def _valide_l_authentification(inp: HookAuthInput, actuel: Optional[dict]) -> No
                 "secret de signature ne peut pas être stocké.")
 
 
+#: Ce qu'un éditeur NON admin retouche encore sur l'agent Slack : le ranger, le
+#: renommer, le mettre en pause ou le rallumer. Tout le reste change ce qui tourne
+#: sous l'identité des membres (`_exiger_l_admin_du_slack`).
+_RETOUCHES_LIBRES_SLACK = frozenset({"enabled", "label", "folder"})
+
+
+def _exiger_l_admin_du_slack(ctx: ResolvedCtx) -> None:
+    """⚠️ The org's Slack, not the agent's: an ADMIN gesture, even for the owner —
+    every member's DM to the app starts this agent, as that member."""
+    if not roles.is_org_admin(ctx.sub, ctx.org_id):
+        raise AuthzDenied(
+            403, "org_admin_required",
+            "the agent that answers in the org's Slack runs as every member who writes "
+            "to it: choosing it, or changing what it runs, is an org admin gesture.")
+
+
+def _valide_l_agent_slack(actuel: dict) -> None:
+    """The Slack agent runs as WHOEVER asks in Slack, not as its owner — so what it
+    reads must be readable by every member: an ORG procedure. A personal one would
+    resolve for its owner alone (`procedure_retiree.archivee`: user, then org), and
+    every other member's run would start without its instructions."""
+    if actuel.get("model") in runner_models.MODELES_PERSONNELS:
+        # A personal subscription is its owner's: a run as another member would
+        # have to borrow it (or theirs), and fail with nobody told.
+        raise AuthzDenied(
+            400, "slack_agent_on_personal_subscription",
+            "the Slack agent runs as the member who asks, so it can't run on a "
+            "personal subscription. Pick a model on the org's key first.")
+    slug = actuel.get("procedure")
+    if not slug or not org_store.get_instruction("org", int(actuel["org_id"]), slug):
+        raise AuthzDenied(
+            400, "slack_agent_needs_org_procedure",
+            "the Slack agent runs as the member who asks, so its procedure must be "
+            "an ORG procedure every member can read — this one is personal or "
+            "unknown. Move it to the org first.")
+
+
 def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
     """Pose le mode d'authentification d'un webhook, et/ou son secret de signature.
 
@@ -2128,7 +2180,21 @@ def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
     mode = inp.hook_auth
     porteur = adresse_neuve = None
     vise = runner_hook.prereglage(mode)
-    if vise.schema == runner_hook.STANDARD_WEBHOOKS:
+    if vise.schema == runner_hook.SLACK:
+        _exiger_l_admin_du_slack(ctx)
+        deja = db.trigger_slack_de_l_org(ctx.org_id)
+        if deja and deja["id"] != inp.trigger_id:
+            raise AuthzDenied(
+                409, "slack_agent_exists",
+                f"agent {deja['id']} already answers in this org's Slack. Switch it "
+                "to another mode first: one agent per org.")
+        # No proof of OURS survives: the app's signature is the only door, and a
+        # dormant bearer or signing secret would reopen `/api/hooks/{id}` later.
+        db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, mode, effacer_le_secret=True)
+        db.poser_secret_de_hook(inp.trigger_id, ctx.org_id, None)
+        logger.warning("webhook %s (org %s) : répond dans Slack (`slack`), posé par %s",
+                       inp.trigger_id, ctx.org_id, ctx.sub)
+    elif vise.schema == runner_hook.STANDARD_WEBHOOKS:
         enveloppe = (runner_hook.chiffrer_secret_de_signature(
                          inp.trigger_id, inp.signing_secret)
                      if inp.signing_secret else None)
@@ -2432,6 +2498,14 @@ CAPABILITIES += [
                           "`share` vers le propriétaire de l'agent"),
             DeclaredError(400, "ambiguous_email",
                           "l'adresse désigne plusieurs comptes de l'org"),
+            DeclaredError(403, "org_admin_required",
+                          "`update` de ce qui tourne sur l'agent Slack de l'org "
+                          "(`hook_auth=slack`) sans être admin de l'org"),
+            DeclaredError(400, "slack_agent_on_personal_subscription",
+                          "`update` qui pose l'agent Slack sur un abonnement personnel"),
+            DeclaredError(400, "slack_agent_needs_org_procedure",
+                          "`update` qui donne à l'agent Slack une procédure qui n'est pas "
+                          "une procédure d'org"),
         ),
         rest=RestBinding(verb="POST", path="/api/me/runner/triggers"),
         description=(
@@ -2578,6 +2652,17 @@ CAPABILITIES += [
             DeclaredError(403, "trigger_owner_or_admin_required",
                           "la porte d'un webhook ne se change que par son propriétaire "
                           "ou un admin de l'org"),
+            DeclaredError(403, "org_admin_required",
+                          "`slack` : choisir l'agent qui répond dans le Slack de l'org "
+                          "est un geste d'admin d'org"),
+            DeclaredError(409, "slack_agent_exists",
+                          "`slack` : un autre agent répond déjà dans le Slack de l'org"),
+            DeclaredError(400, "slack_agent_on_personal_subscription",
+                          "`slack` : l'agent tourne sur un abonnement personnel, que les "
+                          "autres membres ne peuvent pas porter"),
+            DeclaredError(400, "slack_agent_needs_org_procedure",
+                          "`slack` : la procédure de l'agent doit être une procédure "
+                          "d'org, lisible par chaque membre"),
         ),
         rest=RestBinding("PUT", "/api/me/runner/triggers/{trigger_id}/hook-auth"),
         description=(
@@ -2592,7 +2677,9 @@ CAPABILITIES += [
             "its former name, is refused (`hook_auth_renamed`). `none`: "
             "no proof, opt-in, only with a `max_per_day` cap; it mints a new "
             "private address, returned once. Switching to `bearer` or `body_secret` erases the signing secret and "
-            "returns a fresh `hook_secret`, once. REST only: a raw secret never goes through a "
+            "returns a fresh `hook_secret`, once. `slack`: the agent answers DMs to the app "
+            "in the org's Slack (org admin, one per org, ORG procedure); each run "
+            "carries the identity of the member who asked. REST only: a raw secret never goes through a "
             "tool call. Only the agent's owner or an org admin may change it: the "
             "agent runs as its owner."),
     ),

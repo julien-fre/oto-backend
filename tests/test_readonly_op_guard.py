@@ -87,6 +87,8 @@ ECRITURES = {
     "me.doc": {"create", "bulk_create", "update", "patch", "delete", "move", "revert",
                "set_public", "archive", "unarchive", "verify"},
     "me.function": {"create", "propose", "run", "test", "publish", "refuse"},
+    # `sample` appelle un outil facturé, `describe` écrit l'affichage de la recette.
+    "me.recipe": {"create", "propose", "describe", "sample", "test", "publish", "run"},
     "me.kb": {"create", "ensure"},
     "me.node.edit": {"create", "update", "move", "delete"},
     # oto#106 : frapper un lien de dépôt prépare une ÉCRITURE (la cible est scellée).

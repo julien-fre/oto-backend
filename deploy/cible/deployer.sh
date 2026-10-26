@@ -69,6 +69,12 @@ bg_garde_avant_retour() {
   return 1
 }
 
+# --- le bac à sable des fonctions : l'exécution de contrôle de l'installation passe par
+# --- l'isolement que l'unité du rôle déclare (`instance@.service` : `bwrap`, l'unité n'a
+# --- aucun privilège). Sans cela, elle prendrait le défaut `systemd`, qui n'est pas celui
+# --- du service.
+export OTO_FUNCTIONS_ISOLATION=bwrap
+
 # shellcheck source=deploy/oto-mcp-bluegreen.sh
 . "$ICI/../oto-mcp-bluegreen.sh"
 

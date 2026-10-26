@@ -7,9 +7,10 @@ ligne de sa sortie, le serveur la juge et l'exécute, puis répond sur l'entrée
 processus (`sandbox_pont.ts`, `harness_pont.pyodide`).
 
 **Le bac à sable ne change pas** : ni réseau, ni secret, ni écriture, mêmes permissions
-Deno que l'aller simple (`executor.commande`). Tout ce que le code peut faire passe donc
-par le pont, et le pont ne fait qu'une chose : passer chaque demande à `appeler`, la
-fonction que l'appelant lui donne et qui porte TOUTES les gardes (quels outils, sous
+Deno et même isolement que l'aller simple (`executor.lancement`). Tout ce que le code
+peut faire passe donc par le pont, et le pont ne fait qu'une chose : passer chaque
+demande à `appeler`, la fonction que l'appelant lui donne et qui porte TOUTES les
+gardes (quels outils, sous
 quelle identité, dans quelle org — `recipes/pont.py` pour la lecture). Ce module ne
 décide d'aucun droit ; il borne seulement l'exécution (`Budget`).
 
@@ -93,12 +94,14 @@ async def executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appeler
     # d'attendre la fin du code (`GRACE_S` plus tard) pour qu'il puisse rendre son reçu.
     fin = debut + budget.delai_s
     fin_dure = fin + GRACE_S
+    lance = executor.lancement(racine, _SCRIPT, budget.delai_s + GRACE_S)
     proc = await asyncio.create_subprocess_exec(
-        *executor.commande(racine, _SCRIPT), stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env=executor.environnement(racine), cwd=str(racine), limit=executor.MAX_REPONSE)
-    # Vidée en parallèle : un processus qui remplit sa sortie d'erreur bloquerait sinon.
-    erreurs = asyncio.ensure_future(proc.stderr.read())
+        *lance.argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE, env=lance.env, cwd=lance.cwd,
+        limit=executor.MAX_REPONSE)
+    # Vidée en parallèle, BORNÉE : un processus qui remplit sa sortie d'erreur bloquerait
+    # sinon, et la lire en entier la garderait toute en mémoire.
+    erreurs = asyncio.ensure_future(_queue_erreurs(proc.stderr))
     try:
         await _envoyer(proc, tache)
         while True:
@@ -110,6 +113,11 @@ async def executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appeler
             except asyncio.TimeoutError:
                 raise executor.ExecutionEchouee(
                     f"délai dépassé ({budget.delai_s:g} s)") from None
+            except ValueError:
+                # `readline` au-delà de `limit` : une ligne plus longue que le plafond.
+                raise executor.ReponseTropLongue(
+                    f"ligne de plus de {executor.MAX_REPONSE} octets : processus "
+                    "arrêté") from None
             if not brut:
                 raise executor.ExecutionEchouee(
                     f"le bac à sable n'a rendu aucune réponse : "
@@ -132,13 +140,27 @@ async def executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appeler
     finally:
         if proc.returncode is None:
             proc.kill()
+            await asyncio.to_thread(lance.arreter)
         await proc.wait()
-        erreurs.cancel()
+        # Fermés sur la boucle, pas laissés au ramasse-miettes (qui les fermerait après
+        # elle) : l'entrée, puis la sortie d'erreur attendue jusqu'à sa fin — un processus
+        # isolé peut la tenir un instant après la fin de celui qu'on a lancé.
+        proc.stdin.close()
+        await _fin_erreurs(erreurs)
 
 
 async def _envoyer(proc, objet: dict) -> None:
     proc.stdin.write((json.dumps(objet) + "\n").encode())
     await proc.stdin.drain()
+
+
+async def _queue_erreurs(flux) -> bytes:
+    """La FIN de la sortie d'erreur (`executor.QUEUE_ERREURS` octets), lue jusqu'au bout."""
+    queue = bytearray()
+    while bloc := await flux.read(64 * 1024):
+        queue.extend(bloc)
+        del queue[:-executor.QUEUE_ERREURS]
+    return bytes(queue)
 
 
 async def _fin_erreurs(erreurs) -> str:

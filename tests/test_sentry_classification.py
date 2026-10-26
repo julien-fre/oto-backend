@@ -147,3 +147,187 @@ def test_pydantic_validation_error_is_expected():
     assert _is_expected_error(wrapped)
     # une vraie exception code reste reportée
     assert not _is_expected_error(KeyError("sub"))
+
+
+def test_upstream_outage_is_a_grouped_warning():
+    """2026-10-19/20 : Apollo / Serper / Google / Unipile qui toussent ouvraient
+    chacun une issue « error » sur #bug-report. Panne amont = warning ; un
+    timeout de notre code reste une erreur."""
+    import requests
+    import httpx
+    from oto_mcp.sentry_setup import upstream_level
+
+    assert upstream_level(_Upstream(500)) == "upstream_5xx"
+    assert upstream_level(_HTTPStatusError(502)) == "upstream_5xx"
+    assert upstream_level(_Upstream(504)) == "upstream_timeout"
+    assert upstream_level(_chained(RuntimeError("Error calling tool"),
+                                   requests.exceptions.ReadTimeout("read timeout=60"))) \
+        == "upstream_timeout"
+    assert upstream_level(_chained(RuntimeError("Unipile: network error (ReadTimeout)"),
+                                   httpx.ReadTimeout("timed out"))) == "upstream_timeout"
+    # Not an outage: 4xx, our own timeouts, plain bugs.
+    assert upstream_level(_Upstream(422)) is None
+    assert upstream_level(TimeoutError("statement timeout")) is None
+    assert upstream_level(KeyError("x")) is None
+
+
+def test_middleware_tags_upstream_outage_as_warning(monkeypatch, pannes_neuves):
+    import asyncio
+
+    import requests
+    import sentry_sdk
+    from oto_mcp import sentry_setup
+
+    seen = {}
+
+    def fake_capture(e):
+        scope = sentry_sdk.get_current_scope()
+        seen.update(level=scope._level, fingerprint=scope._fingerprint)
+        return "evt"
+
+    monkeypatch.setattr(sentry_setup.sentry_sdk, "capture_exception", fake_capture)
+    monkeypatch.setattr(sentry_setup, "current_user_sub_from_token", lambda: None)
+    monkeypatch.setattr(sentry_setup, "current_client_id_from_token", lambda: None)
+
+    class _Msg:
+        name = "apollo_search_people"
+
+    class _Ctx:
+        message = _Msg()
+
+    async def boom(_ctx):
+        raise requests.exceptions.ReadTimeout("read timeout=60")
+
+    try:
+        asyncio.run(sentry_setup.SentryToolErrorMiddleware().on_call_tool(_Ctx(), boom))
+    except requests.exceptions.ReadTimeout:
+        pass
+    assert seen == {"level": "warning",
+                    "fingerprint": ["upstream", "apollo_search_people", "upstream_timeout"]}
+
+
+# --- Reprise : groupée mais pas muette, et jamais une erreur à nous -------------------
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture()
+def pannes_neuves(monkeypatch):
+    """Compteur de pannes vide et horloge à la main, pour chaque test."""
+    from oto_mcp import sentry_setup
+    horloge = {"t": 1000.0}
+    monkeypatch.setattr(sentry_setup, "_PANNES", {})
+    monkeypatch.setattr(sentry_setup, "_ESCALADEES", {})
+    monkeypatch.setattr(sentry_setup, "_horloge", lambda: horloge["t"])
+    return horloge
+
+
+def _appeler(monkeypatch, outil, exc):
+    """Fait échouer `outil` par `exc` à travers le middleware ; rend ce que le scope
+    portait au moment de la capture."""
+    import asyncio
+
+    import sentry_sdk
+    from oto_mcp import sentry_setup
+
+    vu = {}
+
+    def fake_capture(e):
+        scope = sentry_sdk.get_current_scope()
+        vu.update(level=scope._level, fingerprint=scope._fingerprint,
+                  tags=dict(scope._tags), extras=dict(scope._extras))
+        return "evt"
+
+    monkeypatch.setattr(sentry_setup.sentry_sdk, "capture_exception", fake_capture)
+    monkeypatch.setattr(sentry_setup, "current_user_sub_from_token", lambda: None)
+    monkeypatch.setattr(sentry_setup, "current_client_id_from_token", lambda: None)
+
+    class _Msg:
+        name = outil
+
+    class _Ctx:
+        message = _Msg()
+
+    async def boom(_ctx):
+        raise exc
+
+    with pytest.raises(type(exc)):
+        asyncio.run(sentry_setup.SentryToolErrorMiddleware().on_call_tool(_Ctx(), boom))
+    return vu
+
+
+def test_panne_groupee_garde_son_compte(monkeypatch, pannes_neuves):
+    """Trois échecs de Serper : trois événements `warning`, une seule empreinte, et
+    chacun dit combien d'échecs la panne compte déjà."""
+    vus = [_appeler(monkeypatch, "web_read", _Upstream(500)) for _ in range(3)]
+    assert {v["level"] for v in vus} == {"warning"}
+    assert {tuple(v["fingerprint"]) for v in vus} == {("upstream", "web_read", "upstream_5xx")}
+    assert [v["extras"]["upstream.failures_in_window"] for v in vus] == [1, 2, 3]
+    assert {v["tags"]["upstream"] for v in vus} == {"upstream_5xx"}
+
+
+def test_panne_qui_dure_remonte_en_erreur_avec_son_compte(monkeypatch, pannes_neuves, caplog):
+    """Une panne qui dure n'est pas muette : au seuil, un événement `error` « panne
+    durable » (son compte en extra) et une ligne au journal ; puis de nouveau des
+    warnings, et une nouvelle escalade si elle dure encore une fenêtre plus tard."""
+    import logging
+
+    from oto_mcp import sentry_setup
+    seuil = sentry_setup._SEUIL_PANNE_DURABLE
+    caplog.set_level(logging.WARNING, logger="oto_mcp")
+    vus = []
+    for _ in range(seuil + 1):
+        vus.append(_appeler(monkeypatch, "apollo_search_people", _Upstream(503)))
+        pannes_neuves["t"] += 30
+    assert [v["level"] for v in vus[:seuil - 1]] == ["warning"] * (seuil - 1)
+    durable = vus[seuil - 1]
+    assert durable["level"] == "error"
+    assert durable["fingerprint"] == ["upstream-durable", "apollo_search_people", "upstream_5xx"]
+    assert durable["tags"]["upstream.durable"] == "true"
+    assert durable["extras"]["upstream.failures_in_window"] == seuil
+    assert vus[seuil]["level"] == "warning", "une escalade par fenêtre, pas une par échec"
+    lignes = [r.getMessage() for r in caplog.records if "panne amont durable" in r.getMessage()]
+    assert lignes == [f"panne amont durable : apollo_search_people (upstream_5xx), "
+                      f"{seuil} échecs en 15 min"]
+
+    # La panne dure encore une fenêtre plus tard : elle escalade de nouveau.
+    pannes_neuves["t"] += sentry_setup._FENETRE_PANNE_S
+    for _ in range(seuil):
+        dernier = _appeler(monkeypatch, "apollo_search_people", _Upstream(503))
+        pannes_neuves["t"] += 30
+    assert dernier["level"] == "error"
+
+
+def test_des_echecs_espaces_ne_font_pas_une_panne_durable(monkeypatch, pannes_neuves):
+    from oto_mcp import sentry_setup
+    for _ in range(sentry_setup._SEUIL_PANNE_DURABLE + 2):
+        vu = _appeler(monkeypatch, "gmail", _Upstream(502))
+        pannes_neuves["t"] += sentry_setup._FENETRE_PANNE_S + 1
+    assert vu["level"] == "warning" and vu["extras"]["upstream.failures_in_window"] == 1
+
+
+def test_une_erreur_a_nous_n_est_pas_une_panne_amont(monkeypatch, pannes_neuves):
+    """Un 5xx porté par NOS exceptions (stockage absent, chiffrement indisponible) et un
+    défaut de code levé en traitant la réponse d'un tiers restent des erreurs, hors
+    du groupe des pannes amont."""
+    import requests
+
+    from oto_mcp import sentry_setup
+    from oto_mcp.capabilities._types import AuthzDenied
+    from oto_mcp.media_store import MediaError
+
+    assert sentry_setup.upstream_level(MediaError(500, "unknown_prefix", "x")) is None
+    assert sentry_setup.upstream_level(
+        AuthzDenied(503, "encryption_unavailable", "x")) is None
+    # notre bug dans le `except` qui traitait un 500 / un timeout de Serper
+    assert sentry_setup.upstream_level(_chained(KeyError("organic"), _Upstream(500))) is None
+    assert sentry_setup.upstream_level(
+        _chained(AttributeError("json"), requests.exceptions.ReadTimeout("t"))) is None
+    # mais une erreur à nous qui ENVELOPPE une vraie panne reste une panne
+    assert sentry_setup.upstream_level(
+        _chained(MediaError(502, "upstream", "x"), _Upstream(500))) == "upstream_5xx"
+
+    vu = _appeler(monkeypatch, "web_read", _chained(KeyError("organic"), _Upstream(500)))
+    assert vu["level"] is None and vu["fingerprint"] is None, "erreur normale, non groupée"
+    assert "upstream" not in vu["tags"]
+    assert sentry_setup._PANNES == {}, "notre bug ne compte pas comme un échec amont"

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Optional
 
 from .. import runner_models
@@ -31,8 +32,52 @@ logger = logging.getLogger(__name__)
 
 # Backoff linéaire simple : un échec renvoie le job dans la file à +30 s × tentatives.
 # Pas d'exponentiel en V1 — les échecs attendus (amont LLM en vrac) se lissent, et un
-# job vraiment cassé atteint son plafond en minutes, pas en heures.
+# job vraiment cassé atteint son plafond en minutes, pas en heures. Une exception, juste
+# en dessous : le refus passager du fournisseur.
 _BACKOFF_S = 30
+# ⚠️ Un REFUS PASSAGER du fournisseur (429 rate limit, 529 surcharge, 5xx) ne se lisse
+# pas en une minute : le 20/10/2026, trois travaux d'un agent webhook sont morts en quatre
+# minutes, leurs trois tentatives (à +30 s puis +60 s) toutes tombées dans la même
+# fenêtre de refus de six minutes sur la clé de son org. Ces échecs-là reculent plus
+# loin : 2 min, puis 10 min (×5 à chaque tentative), PLAFONNÉ à 10 min — `max_attempts`
+# se pose à l'enfilage sans borne haute, et un ×5 libre tiendrait la 6e tentative six
+# heures et la 10e des années. Tout autre échec garde le linéaire. La relance reste une
+# tentative comptée : le plafond `max_attempts` ne bouge pas.
+_BACKOFF_PASSAGER_S = 120
+_FACTEUR_PASSAGER = 5
+_BACKOFF_PASSAGER_MAX_S = 600
+# Lu sur le motif tel que le runner l'écrit : `fin_anormale (rate_limit, HTTP 429 : …)`
+# (voie abonnement) ou `RateLimitError : HTTP 429 rate_limit_error — …` (API directe).
+# ⚠️ 5xx = les seuls statuts d'indisponibilité (500, 502, 503, 504, 529) : un 501 ou un
+# 505 dit que le fournisseur ne sait pas faire, attendre n'y change rien.
+_REFUS_PASSAGER = re.compile(
+    r"\bHTTP (?:429|500|502|503|504|529)\b|\b(?:rate_limit|overloaded|server_error)",
+    re.IGNORECASE)
+# ⚠️ Le motif porte aussi le CORPS de la réponse du fournisseur (`HTTP 429 : {…}`) : un
+# refus DÉFINITIF y passe sous un statut ou un mot passager — OpenAI rend le quota
+# épuisé (`insufficient_quota`) en HTTP 429, un 400 peut citer `rate_limit` dans son
+# message. Un marqueur définitif l'emporte toujours : ce motif-là garde le linéaire,
+# comme avant. Se tromper dans ce sens ne coûte que l'ancien recul ; dans l'autre, il
+# tiendrait une clé morte dix minutes de plus par tentative.
+_REFUS_DEFINITIF = re.compile(
+    r"\bHTTP (?:4(?:[0-1]\d|2[0-8]|[3-9]\d))\b"
+    r"|quota|credit|crédit|billing|insufficient|authenticat|permission|forbidden"
+    r"|unauthori[sz]ed|invalid_request|invalid_api|invalid x-api-key|not_found"
+    r"|cle_sans_workspace",
+    re.IGNORECASE)
+
+
+def refus_passager(motif: Optional[str]) -> bool:
+    """Le motif d'échec nomme-t-il un refus PASSAGER du fournisseur (limite de débit,
+    surcharge, erreur serveur) — et RIEN de définitif ? Une clé refusée (401, 403),
+    un quota ou un crédit épuisé, un argument invalide (400) n'en sont pas : attendre
+    plus longtemps ne les répare pas, et un marqueur définitif l'emporte sur un
+    marqueur passager dans le même motif."""
+    if not motif:
+        return False
+    return bool(_REFUS_PASSAGER.search(motif)) and not _REFUS_DEFINITIF.search(motif)
+
+
 #: Les familles servies par un ABONNEMENT personnel (OTO-130) — lues du catalogue,
 #: jamais recopiées. `runner_models` est PUR : la base peut le lire sans remonter
 #: d'une couche (c'est déjà ce que fait la capacité).
@@ -1739,8 +1784,9 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
             ).fetchone()
         else:
             # Échec : au plafond → failed VISIBLE ; sinon retour en file, backoff
-            # linéaire, la trace d'erreur conservée pour l'audit. `result` s'écrit
-            # comme au succès — la conclusion suivante l'écrase, rien ne s'additionne.
+            # linéaire (2 min puis 10 sur un refus passager, `refus_passager`), la trace
+            # d'erreur conservée pour l'audit. `result` s'écrit comme au succès — la
+            # conclusion suivante l'écrase, rien ne s'additionne.
             #
             # ⚠️ `attempt_errors` s'AJOUTE (`||`), là où `last_error` écrase : les
             # tentatives d'un même travail échouent parfois pour des raisons
@@ -1755,7 +1801,9 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                                        THEN 'failed' ELSE 'pending' END,
                        finished_at = CASE WHEN attempts >= max_attempts
                                           THEN NOW() ELSE NULL END,
-                       due_at   = NOW() + make_interval(secs => %s * attempts),
+                       due_at   = NOW() + make_interval(secs => CASE WHEN %s
+                                          THEN LEAST(%s, %s * power(%s, attempts - 1))
+                                          ELSE %s * attempts END),
                        lease_until = NULL, claimed_by = NULL,
                        last_error = %s,
                        {_AJOUT_A_ATTEMPT_ERRORS},
@@ -1764,7 +1812,9 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                 RETURNING status, run_id, org_id, sub, attempts,
                           payload->'_plateforme'->'cle_partagee' AS cle_partagee
                 """,
-                (_BACKOFF_S, motif, motif,
+                (refus_passager(motif), _BACKOFF_PASSAGER_MAX_S, _BACKOFF_PASSAGER_S,
+                 _FACTEUR_PASSAGER, _BACKOFF_S,
+                 motif, motif,
                  json.dumps(result) if result is not None else None,
                  job_id, worker_sub),
             ).fetchone()

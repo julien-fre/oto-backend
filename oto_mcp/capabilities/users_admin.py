@@ -299,7 +299,8 @@ def _unipile_limit_view(org_id: int) -> dict:
         "org_id": org_id,
         "limit": limit,
         "default_limit": default,
-        "effective_limit": limit if limit is not None else default,
+        # Lu chez la connexion : la vue dit le plafond qu'elle applique, sans le recalculer.
+        "effective_limit": unipile_connect.plafond_de_comptes(org_id),
         "accounts": db.count_unipile_accounts_for_org(org_id),
     }
 

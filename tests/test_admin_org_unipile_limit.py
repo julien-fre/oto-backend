@@ -152,3 +152,25 @@ def test_rest_seule_jamais_en_mcp():
     assert lire.mcp is None and poser.mcp is None
     assert (lire.rest.verb, lire.rest.path) == ("GET", "/api/admin/orgs/{id}/unipile-limit")
     assert (poser.rest.verb, poser.rest.path) == ("PUT", "/api/admin/orgs/{id}/unipile-limit")
+
+
+# --- Reprise : une seule source du plafond appliqué ---------------------------
+
+def test_le_plafond_effectif_est_celui_que_la_connexion_applique(socle, super_admin, monkeypatch):
+    """`effective_limit` n'est pas recalculé par la vue : il est lu chez
+    `unipile_connect.plafond_de_comptes`, la fonction même que la connexion applique
+    (et que lit le commerce). Si l'une change de règle, la vue suit sans divergence."""
+    from oto_mcp import unipile_connect
+    monkeypatch.setattr(unipile_connect, "plafond_de_comptes", lambda oid: 7)
+    _, out = _get()
+    assert out["effective_limit"] == 7
+    assert (out["limit"], out["default_limit"]) == (None, 5), "les champs bruts restent lus tels quels"
+
+
+def test_l_inventaire_dit_ce_que_regle_le_defaut():
+    """La description servie par l'inventaire parlait d'une « taille de page » : la variable
+    est le plafond de sièges hébergés par org, garde de coût."""
+    from oto_mcp.env_inventory import par_nom
+    var = par_nom()["OTO_MCP_UNIPILE_DEFAULT_LIMIT"]
+    assert "page" not in var.description.lower()
+    assert "plafond" in var.description.lower() and "`0` = sans plafond" in var.description

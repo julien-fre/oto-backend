@@ -271,6 +271,8 @@ _LECTURES_VUE_BORNEE: dict[tuple[str, str], frozenset | None] = {
     ("GET", "/api/me/nodes/{node_id}"): None,
     ("GET", "/api/me/nodes/{node_id}/rows"): None,
     ("POST", "/api/me/functions"): frozenset({"list", "get", "versions"}),
+    # Les recettes de O : la face REST n'en sert que list/get/run, et `run` écrit.
+    ("POST", "/api/me/recipes"): frozenset({"list", "get"}),
     ("POST", "/api/me/kb"): frozenset({"get"}),
     # Runner et fils de runs de O.
     ("POST", "/api/me/runner/fleets"): frozenset({"list", "get", "state"}),

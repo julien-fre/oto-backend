@@ -47,7 +47,7 @@ https://app.forager.ai.
 """
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
@@ -165,7 +165,8 @@ def register(mcp: FastMCP) -> None:
 
     connector_verify.register("forager", _verify)
 
-    def _client(tool: str, op: Optional[str] = None):
+    def _client(tool: str, op: Optional[str] = None
+                ) -> tuple[ForagerClient, Callable[[Any], Any]]:
         """`(client, served)`. The cascade runs whole (own key > platform grant); on the
         platform key, an op this instance does not serve (`platform_ops`) is refused
         BEFORE a credit is spent, naming what the shared key serves.

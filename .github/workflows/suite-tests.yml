@@ -92,9 +92,15 @@ jobs:
         # que sur un poste qui n'en a pas posé) : un banc de sécurité muet en CI serait
         # le pire des verts. Posé dans CHAQUE part : la répartition ne sait pas, et n'a pas
         # à savoir, où tombent ces bancs.
+        # Le conteneur de CI n'a ni systemd ni utilisateur dédié : l'isolement système
+        # s'y DEMANDE à `direct` (`functions/isolement.py`) ; les permissions de Deno,
+        # que ces bancs éprouvent, restent les mêmes.
+        env:
+          OTO_FUNCTIONS_ISOLATION: direct
         run: |
           python scripts/installer_bac_a_sable.py "$RUNNER_TEMP/bac-a-sable"
           echo "OTO_FUNCTIONS_SANDBOX_DIR=$RUNNER_TEMP/bac-a-sable" >> "$GITHUB_ENV"
+          echo "OTO_FUNCTIONS_ISOLATION=direct" >> "$GITHUB_ENV"
       - name: Fichiers de cette part, sa collecte, son nombre de workers
         # LE NOMBRE DE WORKERS SE DÉRIVE DE CETTE MACHINE. Le 07/09, quatre workers
         # calibrés sur un poste à 28 cœurs ont fait tuer `pytest` par l'OOM killer sept fois
@@ -270,9 +276,15 @@ jobs:
       # Le même environnement que les parts : un module qui se saute à l'import faute de
       # bac à sable compterait 0 ici et N là-bas — un faux écart.
       - name: Bac à sable des fonctions (ADR 0073)
+        # Le conteneur de CI n'a ni systemd ni utilisateur dédié : l'isolement système
+        # s'y DEMANDE à `direct` (`functions/isolement.py`) ; les permissions de Deno,
+        # que ces bancs éprouvent, restent les mêmes.
+        env:
+          OTO_FUNCTIONS_ISOLATION: direct
         run: |
           python scripts/installer_bac_a_sable.py "$RUNNER_TEMP/bac-a-sable"
           echo "OTO_FUNCTIONS_SANDBOX_DIR=$RUNNER_TEMP/bac-a-sable" >> "$GITHUB_ENV"
+          echo "OTO_FUNCTIONS_ISOLATION=direct" >> "$GITHUB_ENV"
       - name: Collecter ce que l'ancien job jouait
         env:
           CIBLE: ${{ inputs.cible }}

@@ -17,7 +17,16 @@ remplissage par colonne est gardé avec la version. **Seule une version publiée
 recette se juge comme pour une personne : l'identité du porteur, son org (tenue par le
 verrou du jeton, `verrou_org.py`) et ses droits sur le tableau ; les refus du contrat
 valent pour tous (outils de la plateforme et outils à modèle exclus, outil déclaré en
-lecture seulement). Aucune règle propre aux agents.
+lecture seulement). Une seule règle propre aux agents : éprouver ou publier une
+recette-CODE est un geste de personne (`_code_humain`) — c'est exécuter du code non
+publié.
+
+**La face REST (`POST /api/me/recipes`) sert trois ops : `list`, `get` et `run`** —
+ce qu'une page fait d'un geste (nommer les recettes, en lancer une). Écrire, éprouver
+ou publier une recette reste un travail d'agent, sur l'outil MCP `oto_recipe` : toute
+autre op reçue en REST est refusée nommément (400 `op_not_served_over_rest`), jamais
+servie. Le filtre vit dans le handler, sur `ctx.channel == "rest"` EXPLICITE (même
+motif que `_publication.refuser_si_agent`) : un appel interne sans canal passe.
 """
 from __future__ import annotations
 
@@ -30,13 +39,22 @@ from .. import access, session_org, tool_alias, tool_registry
 from ..db import recipes as db_recipes
 from ..functions import executor as bac
 from ..recipes import affichage, code, contrat, moteur
+from . import _code_humain
 from ._authz import BY_OP, ORG_MEMBER_OF, ORG_MEMBER_OPT, SUB_ONLY
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 _PORTEE = BY_OP({None: ORG_MEMBER_OPT("org"), "org": ORG_MEMBER_OPT("org"),
                  "user": SUB_ONLY}, fields=("scope",))
 _APPELANTES = ("sample", "test", "publish", "run")
+
+#: Les ops que la face REST (`POST /api/me/recipes`) sert ; les autres restent à l'outil
+#: MCP `oto_recipe`. Cf. la docstring du module.
+OPS_REST = ("list", "get", "run")
+_REFUS_HORS_REST = DeclaredError(
+    400, "op_not_served_over_rest",
+    "`POST /api/me/recipes` ne sert que `op` = list, get ou run ; create, propose, "
+    "describe, sample, test, publish et versions passent par l'outil MCP `oto_recipe`")
 
 
 class RecipeInput(BaseModel):
@@ -71,7 +89,7 @@ class RecipeInput(BaseModel):
         "CRM writes it declares in `writes`, e.g. \"folk_record:create\" — never in a "
         "test, never delete/merge; a batch via `items`/`ids` (≤50) counts one write per "
         "record against `max_writes`) and returns a receipt of counts; test/publish of "
-        "a code recipe are platform-only."))
+        "a code recipe are platform-only, by a person (never from a hosted agent)."))
     display: Optional[dict[str, Any]] = Field(default=None, description=(
         "create/describe: what a process page shows where a process runs this recipe — "
         "{steps: [{label, detail?, credits?, per: contact|company|row}], saves?}: 1 to "
@@ -258,10 +276,13 @@ BORNES_D_EPREUVE = frozenset({None, "max_pages", "spend_cap", "time_budget"})
 
 
 async def _plateforme_pour_le_code(ctx: ResolvedCtx, corps: dict, op: str) -> None:
-    """Éprouver ou publier une recette-CODE : la plateforme seule, comme une fonction.
-    Le code tourne avec les droits de qui l'exécute, pas de qui l'a écrit (#1202)."""
-    if code.est_code(corps) and not await run_in_threadpool(access.is_platform_operator,
-                                                            ctx.sub):
+    """Éprouver ou publier une recette-CODE : la plateforme seule, comme une fonction, et
+    une personne, jamais un agent hébergé (`_code_humain`). Le code tourne avec les
+    droits de qui l'exécute, pas de qui l'a écrit (#1202)."""
+    if not code.est_code(corps):
+        return
+    _code_humain.exiger_une_personne(op)
+    if not await run_in_threadpool(access.is_platform_operator, ctx.sub):
         raise AuthzDenied(403, "platform_only",
                           f"op={op} on a code recipe is reserved to the platform: the code "
                           "runs with the rights of whoever runs it. `create` / `propose` "
@@ -297,6 +318,12 @@ async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: 
 
 
 async def _recipe(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
+    if ctx.channel == "rest" and inp.op not in OPS_REST:
+        raise AuthzDenied(
+            400, "op_not_served_over_rest",
+            f"`op={inp.op}` is not served over REST: `POST /api/me/recipes` serves "
+            f"{', '.join(OPS_REST)} only. Writing, testing or publishing a recipe goes "
+            "through the MCP tool `oto_recipe`.")
     if inp.op not in _APPELANTES:
         return await run_in_threadpool(_gerer, ctx, inp)
     if inp.op == "sample":
@@ -417,6 +444,15 @@ CAPABILITIES += [
             "it declares (`writes`), at most `limits.max_writes` per run (default 50), in "
             "the run's org, with the caller's own connector account. PROVISIONAL surface."),
         mcp="oto_recipe",
+        # La même capacité sur la face REST, pour qu'une page nomme les recettes et en
+        # lance une d'un geste (un tableau, une ligne) sans session MCP : même garde par
+        # op, même reçu. Le corps est l'`Input` entier (`{op, slug, params, datastore…}`),
+        # comme `POST /api/me/runner/jobs`. Trois ops seulement (`OPS_REST` : list, get,
+        # run) ; toute autre est refusée nommément (`_REFUS_HORS_REST`). Provisoire comme
+        # la capacité ; déclarée lourde (`routes_lourdes`) : un `run` appelle un outil
+        # page après page et tient la requête jusqu'à son reçu.
+        rest=RestBinding(verb="POST", path="/api/me/recipes", provisoire=True),
+        errors=(_REFUS_HORS_REST, _code_humain.REFUS),
     ),
 ]
 
@@ -489,14 +525,25 @@ def _lister_org(org_id: int) -> list[dict]:
     return [{**f, "display": _affichage_de(f, corps.get(f["id"]))} for f in fiches]
 
 
+def _iso(quand: Any) -> Optional[str]:
+    """Une date de la base en ISO 8601. ⚠️ La fabrique de lignes (`db/_conn.py`,
+    `_str_dict_row`) rend les dates en TEXTE (« 2026-10-02 00:00:00 », UTC) : un
+    `.isoformat()` sur ce texte levait, et la route répondait 500 pour toute org
+    qui a une recette (prod, 25 octobre 2026)."""
+    if quand is None:
+        return None
+    if hasattr(quand, "isoformat"):
+        return quand.isoformat()
+    return str(quand).replace(" ", "T", 1)
+
+
 async def _org_recipes(ctx: ResolvedCtx, inp: OrgRecipesInput) -> dict:
     fiches = await run_in_threadpool(_lister_org, inp.org_id)
     return {"recipes": [{
         "slug": f["slug"], "title": f["title"], "description": f["description"] or "",
         "status": "published" if f["published_version"] else "proposed",
         "published_version": f["published_version"], "latest_version": f["latest_version"],
-        "updated_at": f["updated_at"].isoformat() if f.get("updated_at") is not None
-        else None,
+        "updated_at": _iso(f.get("updated_at")),
         "display": f.get("display"),
     } for f in fiches]}
 

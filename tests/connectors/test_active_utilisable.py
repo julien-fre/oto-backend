@@ -338,6 +338,14 @@ def test_un_echec_a_la_session_se_dit_en_erreur_et_la_session_tient(monkeypatch)
         raise RuntimeError("panne")
 
     erreurs = []
+    # Sans base : la première moitié du calcul (toggles perso, rôle) lit PG et, sur
+    # erreur, retombe sur « aucune org » — `run_if_due` n'est alors jamais joué. Le test
+    # ne doit pas dépendre d'un `DATABASE_URL` laissé par la fixture `live` du module :
+    # sous `--dist loadgroup` (CI), il tourne seul sur son worker, hors de ce groupe.
+    monkeypatch.setattr(SV.db, "list_user_disabled_tools", lambda *a: [])
+    monkeypatch.setattr(SV.db, "list_user_enabled_tools", lambda *a: [])
+    monkeypatch.setattr(SV.access, "get_user_role", lambda *a: "member")
+    monkeypatch.setattr(SV.access, "current_group", lambda *a: None)
     monkeypatch.setattr(SV.connector_usable, "run_if_due", _boum)
     monkeypatch.setattr(SV.connector_selection, "is_seeded", lambda *a: True)
     monkeypatch.setattr(SV.connector_selection, "list_selection",

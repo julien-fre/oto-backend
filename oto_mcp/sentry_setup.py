@@ -23,11 +23,21 @@ ou `httpx`/`requests` HTTPError, ou erreur connecteur typée portant un statut) 
 ne la reporte pas. Deux chemins de capture à neutraliser : le middleware explicite
 (qui ne capture pas) et la LoggingIntegration sur le `logger.error` de fastmcp (le
 `before_send` la droppe). Les 5xx et les vraies exceptions code restent reportées.
+
+**Panne amont** (5xx d'une API tierce, ou timeout RÉSEAU vers elle) : reportée,
+mais en `warning` et regroupée par outil (`upstream_level`) — une issue par
+outil et nature de panne, pas une issue par message. Groupée, pas muette : une
+panne qui DURE (`compter_panne`) remonte en `error` « panne durable », avec son
+compte, et au journal. Un timeout de NOTRE code (base, boucle), un 5xx levé par
+nos propres exceptions, ou un défaut de code levé en traitant la panne restent
+des erreurs.
 """
 from __future__ import annotations
 
 import logging
 import os
+import time
+from collections import deque
 from contextvars import ContextVar
 from typing import Optional
 
@@ -49,6 +59,7 @@ from .error_taxonomy import (  # noqa: F401
     _is_managed_connector_error,
     _is_user_input_error,
     _upstream_status,
+    _chain,
 )
 
 logger = logging.getLogger("oto_mcp")
@@ -68,6 +79,81 @@ def current_tool_event_id() -> Optional[str]:
     # noqa: SILENT — hors contexte de requête : pas d'event_id à corréler
     except Exception:
         return None
+
+
+# Timeouts RÉSEAU vers un tiers, reconnus par TYPE (nom + module) : un
+# `TimeoutError` nu ou un timeout de base (psycopg) reste un défaut de code.
+_NETWORK_TIMEOUT_MODULES = ("requests", "httpx", "urllib3", "httpcore")
+
+# Les exceptions de NOTRE code : le statut 5xx qu'elles portent est le nôtre
+# (`MediaError(500, "unknown_prefix")`, `AuthzDenied(503, "encryption_unavailable")`),
+# pas celui d'un tiers. Une erreur à nous qui enveloppe une vraie panne amont la garde :
+# la panne est lue plus bas dans la chaîne, sur l'exception du client HTTP.
+_NOS_MODULES = ("oto_mcp", "starlette", "fastapi")
+
+# Un défaut de programmation dans la chaîne AU-DESSUS de la panne : notre code a cassé en
+# la traitant (un `KeyError` levé dans un `except HTTPError` a la panne pour `__context__`).
+# C'est notre bug, il reste une erreur.
+_DEFAUTS_DE_CODE = (AttributeError, LookupError, TypeError, NameError, AssertionError,
+                    ArithmeticError, ImportError, NotImplementedError, RecursionError)
+
+
+def _du_module(e, prefixes) -> bool:
+    mod = type(e).__module__ or ""
+    return any(mod == p or mod.startswith(p + ".") for p in prefixes)
+
+
+def upstream_level(exc) -> Optional[str]:
+    """`upstream_5xx` / `upstream_timeout` quand l'erreur est une panne d'un
+    fournisseur tiers (reportée en warning, regroupée), sinon None.
+
+    La chaîne se lit de haut en bas, et le premier verdict gagne : un défaut de
+    code rencontré d'abord ⟹ None ; une exception de notre code est traversée sans
+    que son statut compte ; le premier statut d'un tiers décide (5xx = panne, autre
+    = pas une panne) ; un timeout réseau d'un client HTTP = panne."""
+    for e in _chain(exc):
+        if isinstance(e, _DEFAUTS_DE_CODE):
+            return None
+        if _du_module(e, _NOS_MODULES):
+            continue
+        sc = _upstream_status(e)
+        if sc is not None:
+            if 500 <= sc < 600:
+                return "upstream_timeout" if sc == 504 else "upstream_5xx"
+            return None
+        if "Timeout" in type(e).__name__ and _du_module(e, _NETWORK_TIMEOUT_MODULES):
+            return "upstream_timeout"
+    return None
+
+
+# Une panne groupée n'est pas muette. Chaque échec reste un événement `warning` de
+# l'issue de son outil (Sentry en tient le compte) ; et une panne qui DURE —
+# `_SEUIL_PANNE_DURABLE` échecs du même outil, de même nature, dans la fenêtre —
+# envoie un événement `error` (« panne durable », son compte en extra) et une ligne
+# au journal, au plus une fois par fenêtre et tant qu'elle dure. Compte par
+# processus : deux instances comptent chacune les leurs.
+_FENETRE_PANNE_S = 900.0
+_SEUIL_PANNE_DURABLE = 10
+_horloge = time.monotonic
+_PANNES: dict[tuple[str, str], deque] = {}
+_ESCALADEES: dict[tuple[str, str], float] = {}
+
+
+def compter_panne(outil: str, nature: str) -> tuple[int, bool]:
+    """Compte un échec amont de `outil` : (échecs dans la fenêtre, escalader ?)."""
+    t = _horloge()
+    cle = (outil, nature)
+    vus = _PANNES.setdefault(cle, deque(maxlen=10_000))
+    while vus and t - vus[0] > _FENETRE_PANNE_S:
+        vus.popleft()
+    vus.append(t)
+    n = len(vus)
+    derniere = _ESCALADEES.get(cle)
+    escalader = n >= _SEUIL_PANNE_DURABLE and (derniere is None
+                                               or t - derniere > _FENETRE_PANNE_S)
+    if escalader:
+        _ESCALADEES[cle] = t
+    return n, escalader
 
 
 def _before_send(event, hint):
@@ -283,6 +369,22 @@ class SentryToolErrorMiddleware(Middleware):
                         client = current_client_id_from_token()
                         if client:
                             scope.set_tag("mcp.client", client)
+                        panne = upstream_level(e)
+                        if panne:
+                            outil = context.message.name
+                            n, durable = compter_panne(outil, panne)
+                            scope.set_tag("upstream", panne)
+                            scope.set_extra("upstream.failures_in_window", n)
+                            if durable:
+                                scope.set_level("error")
+                                scope.set_tag("upstream.durable", "true")
+                                scope.fingerprint = ["upstream-durable", outil, panne]
+                                logger.warning(
+                                    "panne amont durable : %s (%s), %d échecs en %d min",
+                                    outil, panne, n, int(_FENETRE_PANNE_S // 60))
+                            else:
+                                scope.set_level("warning")
+                                scope.fingerprint = ["upstream", outil, panne]
                         # Hors boucle : construction de l'event (pile, in-app,
                         # linecache) sur un thread du pool. L'id retourné (None si
                         # Sentry est off ou l'event droppé par `before_send`)

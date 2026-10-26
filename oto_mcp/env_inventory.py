@@ -272,7 +272,22 @@ _REGLAGES: tuple[Variable, ...] = (
              "déploiement bleu/vert pose dans l'arbre de chaque couleur ; s'il n'existe "
              "pas non plus, l'instance n'exécute pas de fonction — `oto_function` et les "
              "recettes-code rendent 503 `sandbox_unavailable`, le reste répond.",
-             ("oto_mcp/functions/executor.py:66",)),
+             ("oto_mcp/functions/executor.py:92",)),
+    Variable("OTO_FUNCTIONS_ISOLATION", Classe.REGLAGE, "systemd",
+             "Isolement du processus du bac à sable des fonctions (`functions/isolement.py`). "
+             "`systemd` (défaut) : unité transitoire durcie sous l'utilisateur dédié "
+             "`OTO_FUNCTIONS_USER`, pour un service qui peut lancer une unité sous un autre "
+             "uid. `bwrap` : espace de noms utilisateur non privilégié, pour un service "
+             "sans privilège. "
+             "`direct` : sans isolement système, à DEMANDER (poste de dev, CI) — jamais en "
+             "prod. Une autre valeur, ou un outil ou un utilisateur absent, lève : 503 "
+             "`sandbox_unavailable`, jamais de repli.",
+             ("oto_mcp/functions/isolement.py:99",)),
+    Variable("OTO_FUNCTIONS_USER", Classe.REGLAGE, "oto-fonctions",
+             "L'utilisateur dédié, non privilégié, sous lequel le mode `systemd` lance le "
+             "bac à sable. Absent de la machine, ou privilégié : refus (503 "
+             "`sandbox_unavailable`).",
+             ("oto_mcp/functions/isolement.py:126",)),
     Variable("OTO_ABONNEMENT_OUVERT_A_TOUS", Classe.REGLAGE, "",
              "Agents sur l'abonnement Claude de la personne : ouverts à TOUT compte "
              "de l'instance (`1`, `true`, `yes`, `on`). Absente, vide ou un non = "
@@ -427,7 +442,9 @@ _REGLAGES: tuple[Variable, ...] = (
              "Illisible (pas un entier ≥ 1), la réservation LÈVE.",
              ("oto_mcp/db/rowabandon.py:67",)),
     Variable("OTO_MCP_UNIPILE_DEFAULT_LIMIT", Classe.REGLAGE, "5",
-             "Taille de page par défaut des lectures Unipile.",
+             "Plafond par défaut de comptes hébergés (clé plateforme) par org, quand "
+             "l'org ne pose pas le sien (`orgs.unipile_account_limit`) : garde contre "
+             "l'emballement des sièges que la plateforme paie. `0` = sans plafond.",
              ("oto_mcp/unipile_connect.py:49",)),
     Variable("OTO_MCP_UPLOAD_MAX_BYTES", Classe.REGLAGE, "26214400",
              "Plafond dur (octets) d'un contenu poussé par jeton de téléversement — "

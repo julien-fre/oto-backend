@@ -70,6 +70,23 @@ def test_liste_les_recettes_de_l_org_avec_leur_statut(monkeypatch):
     cap.OrgRecipes.model_validate(out)
 
 
+def test_les_dates_telles_que_la_base_les_rend(monkeypatch):
+    """La base rend ses dates en TEXTE (`_str_dict_row`), pas en `datetime` : la liste
+    répondait 500 sur tout org ayant une recette (prod, 25 octobre 2026)."""
+    from oto_mcp.db._conn import _normalize_value
+
+    texte = _normalize_value(dt.datetime(2026, 10, 2, 9, 30))
+    assert isinstance(texte, str)
+    fiche = {**_fiche("find-people", 2, 2), "created_at": _normalize_value(dt.datetime(2026, 10, 1)),
+             "updated_at": texte}
+    monkeypatch.setattr(cap.db_recipes, "list_recipes", lambda owners: [fiche])
+    monkeypatch.setattr(cap.db_recipes, "get_bodies", lambda versions: {1: DECLARATIVE})
+    out = asyncio.run(cap._org_recipes(ResolvedCtx(sub="u", org_id=7, role="member"),
+                                       cap.OrgRecipesInput(org_id=7)))
+    assert out["recipes"][0]["updated_at"] == "2026-10-02T09:30:00"
+    cap.OrgRecipes.model_validate(out)
+
+
 def test_une_recette_code_sans_affichage_ecrit_n_a_rien_a_dessiner(monkeypatch):
     monkeypatch.setattr(cap.db_recipes, "list_recipes", lambda owners: [_fiche("c", 1, 1)])
     monkeypatch.setattr(cap.db_recipes, "get_bodies", lambda versions: {

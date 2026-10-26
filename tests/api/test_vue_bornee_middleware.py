@@ -148,6 +148,19 @@ def test_l_org_admin_n_ecrit_jamais(client):
     assert (r.status_code, r.json()["error"]) == (403, "view_as_write_forbidden")
 
 
+def test_les_recettes_se_lisent_mais_ne_se_lancent_pas_en_consultation(client):
+    """`POST /api/me/recipes` sert list/get/run : en vue bornée, list et get passent,
+    `run` (une écriture) est refusé comme toute écriture."""
+    c = client(ADMIN)
+    assert _post(c, "/api/me/recipes", {"op": "list"}) == (200, None)
+    assert vu["borne"] == ORG
+    assert _post(c, "/api/me/recipes", {"op": "get", "slug": "x"}) == (200, None)
+    assert _post(c, "/api/me/recipes", {"op": "run", "slug": "x"}) == (
+        403, "view_as_read_only")
+    assert _post(c, "/api/me/recipes", {"op": "run", "slug": "x"},
+                 {**VUE, "X-Oto-View-As-Write": "1"}) == (403, "view_as_write_forbidden")
+
+
 # ── Liste fermée et épinglage ───────────────────────────────────────────────
 
 @pytest.mark.parametrize("chemin", [

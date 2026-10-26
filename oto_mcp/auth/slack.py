@@ -55,7 +55,8 @@ _COMMANDE = ('oto_admin_connector_setting(op="set", connector="slack", '
 
 #: The scopes asked at install — exactly the manifest of `connectors/docs/slack.md`,
 #: what the tools use, nothing for an in-Slack assistant (no mentions, no `assistant:`,
-#: no slash commands: decision of 22/10).
+#: no slash commands: decision of 22/10). The bot of `slack_events.py` answers DMs only:
+#: `im:history` covers them; a channel `@<app>` would need `app_mentions:read`, not asked.
 #: ⚠️ Adding one later means EVERY connected workspace reinstalls: this list moves
 #: with the app's declared scopes, never ahead of them.
 BOT_SCOPES = (
@@ -110,6 +111,22 @@ def app() -> dict:
             f"Nothing to do on your account — paste your own app's tokens instead, or "
             f"ask the operator to set them with {_COMMANDE}.")
     return _reglages()
+
+
+#: The app's Events API signing secret — same platform scope, separate from
+#: `_REGLAGES` on purpose: the install works without it, only the bot needs it.
+SIGNING_SECRET = "signing_secret"
+
+
+def signing_secret() -> Optional[str]:
+    """The signing secret of the published app, or None — read on EACH event (one
+    row, platform scope): rotating it in the console takes effect at once."""
+    from ..db import connector_settings as store
+
+    for r in store.list_connector_settings(SIGNING_SECRET):
+        if r["scope_type"] == "platform" and r["connector"] == CONNECTOR:
+            return (r["value"] or "").strip() or None
+    return None
 
 
 def app_disponible(sub: str) -> bool:

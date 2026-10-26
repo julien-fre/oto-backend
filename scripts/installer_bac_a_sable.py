@@ -32,10 +32,10 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-DENO_VERSION = "2.1.4"
+DENO_VERSION = "2.9.7"
 DENO_URL = (f"https://github.com/denoland/deno/releases/download/v{DENO_VERSION}/"
             "deno-x86_64-unknown-linux-gnu.zip")
-DENO_SHA256 = "54a81939cccb2af114c4d0a68a554cf4a04b1f08728e70f663f83781de19d785"
+DENO_SHA256 = "c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490"
 
 ROUES = {
     "openpyxl-3.1.5-py2.py3-none-any.whl": (

@@ -66,15 +66,41 @@ fichiers EN MÉMOIRE de Pyodide.
 | secrets du serveur | environnement du processus VIDÉ (`DENO_DIR`, `NO_COLOR`, `PATH`) | lu sur l'appel |
 | réponse forgée | la réponse porte un nonce gardé hors de `globalThis` ; sans lui, échec | `test_une_reponse_forgee_sans_nonce…` |
 | boucle sans fin | délai (`DELAI_S`), processus tué | `test_une_boucle_sans_fin…` |
+| sortie sans fin | lue EN FLUX, plafond `MAX_REPONSE` : au-delà, processus tué, `ReponseTropLongue` | `test_une_sortie_au_dela_du_plafond…` |
+| identité, réseau, mémoire du serveur | l'isolement système déclaré (`functions/isolement.py`, ci-dessous) | lu sur la commande lancée |
+
+### L'isolement du processus
+
+Les permissions de Deno sont une barrière ; le processus en a une seconde, posée par le
+système, qui ne dépend pas d'elles. Le mode se DÉCLARE par `OTO_FUNCTIONS_ISOLATION` :
+
+| mode | pour | ce qu'il pose |
+|---|---|---|
+| `systemd` (défaut) | un service qui peut lancer une unité sous un autre uid | une unité transitoire `systemd-run` (`oto-fn-<hasard>.service`) sous l'utilisateur dédié `OTO_FUNCTIONS_USER` (défaut `oto-fonctions`, jamais privilégié) : `PrivateNetwork`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`, aucune capacité, `SystemCallFilter=@system-service @pkey`, `RestrictAddressFamilies=AF_UNIX`, `MemoryMax`, `TasksMax`, `RuntimeMaxSec` (délai de l'appelant + marge). L'entrée et la sortie passent par `--pipe` : le pont parle toujours par ses deux flux. |
+| `bwrap` | un service sans privilège | `bwrap --unshare-all` dans un espace de noms utilisateur non privilégié : ni réseau, ni processus, ni IPC de l'hôte ; un système de fichiers qui ne montre que `/usr`, le bac à sable et les scripts, en lecture seule, plus un `/tmp` vide ; environnement vidé ; aucune capacité ; mémoire bornée par `prlimit --data`. Le processus garde l'uid du service mais ne voit aucun de ses fichiers. |
+| `direct` | poste de dev, CI — à DEMANDER | Deno lancé tel quel : seules ses permissions bornent le code. |
+
+Une valeur inconnue, un outil absent (`systemd-run`, `bwrap`, `prlimit`) ou un
+utilisateur dédié absent ou privilégié lèvent : 503 `sandbox_unavailable`. **Jamais de
+repli** vers un mode plus faible. Le mode `systemd` ne s'ouvre pas à un service sans
+privilège par une règle polkit : une règle qui autorise un uid à démarrer des unités
+transitoires ne borne ni l'uid ni les propriétés de l'unité démarrée — c'est le cas du
+mode `bwrap`.
 
 ⚠️ **Les tests prouvent la non-régression d'un code HONNÊTE, pas l'innocuité d'un code
 hostile** : le code tourne dans le même interpréteur que le harnais et pourrait le
 tromper. C'est la relecture avant publication, réservée à la plateforme, qui garde ce
 point — et la raison pour laquelle `test`/`publish` n'ont pas été ouverts aux orgs.
 
-⚠️ **Pas de plafond mémoire propre au processus** : `--max-old-space-size` borne le tas
-V8, pas la mémoire WASM de Pyodide. Un code qui alloue sans fin est coupé par le délai.
-Plafonds chiffrés : à mesurer sur le pilote (ADR 0073 §5).
+⚠️ **La mémoire** : `--max-old-space-size` borne le tas V8, pas la mémoire WASM de
+Pyodide ; c'est l'isolement qui borne le processus entier (`isolement.MEMOIRE_MO` :
+`MemoryMax` en mode `systemd`, `prlimit --data` en mode `bwrap`). En mode `direct`, rien
+ne la borne. Plafonds chiffrés : à mesurer sur le pilote (ADR 0073 §5).
+
+⚠️ **Tester, publier, refuser sont des gestes de PERSONNE** : sous un jeton de délégation
+(un agent hébergé), ils sont refusés en 403 `code_human_only`, comme l'épreuve et la
+publication d'une recette-code (`capabilities/_code_humain.py`). Ce sont les seuls gestes
+qui exécutent ou décident du code non publié.
 
 ⚠️ **Pyodide 0.26 tourne sous Deno par la compatibilité Node**, donc en `npm:` : importé
 depuis un fichier local, il se croit sous Node et appelle `require`. Le cache npm se
@@ -100,7 +126,9 @@ code (#1202) : `oto_recipe` le sert aux recettes `kind: "code"` (`docs/recettes.
   ne forge ni appel ni fin (`test_le_code_ne_forge_ni_un_appel_ni_une_fin`). Aucun import
   Deno de plus (`--cached-only --frozen`) : le lecteur de lignes est écrit à la main.
 - **Le bac à sable ne change pas** : mêmes permissions (`executor.commande`), même
-  environnement vidé. Tout ce que le code peut faire passe donc par le pont.
+  environnement vidé, même isolement (`executor.lancement`). Tout ce que le code peut
+  faire passe donc par le pont. Une ligne au-delà de `MAX_REPONSE` arrête le processus
+  (`ReponseTropLongue`) ; de sa sortie d'erreur, seule la fin est gardée.
 - **Le pont ne décide d'aucun droit** : il passe chaque demande à `appeler`, que
   l'appelant lui donne. Dans ce lot, le seul est `recipes/pont.appeleur_en_lecture` :
   les outils DÉCLARÉS EN LECTURE, sous les gardes d'`oto_call` (`meta.executer_cible`),
@@ -142,9 +170,13 @@ l'exécuteur prend ce répertoire s'il existe (`executor.DEFAUT`). Rejouable : l
 sert qu'à la première pose dans une couleur et à un changement de version. Un échec
 (réseau, empreinte, exécution de contrôle) **arrête l'installation** — la couleur n'est
 pas démarrée, l'ancienne reste en service : une couleur qui rendrait
-`sandbox_unavailable` en silence est une divergence muette. L'arbre appartient à root,
-le service le lit sans pouvoir l'écrire (vérifié : le bac à sable s'exécute en lecture
-seule). ⚠️ La box doit joindre `github.com` (Deno), `registry.npmjs.org` (Pyodide) et
+`sandbox_unavailable` en silence est une divergence muette. L'exécution de contrôle
+passe par l'isolement déclaré : une machine où il ne s'applique pas (utilisateur dédié
+absent, outil manquant) ne sort pas de l'installation en succès. Le processus du bac à
+sable ne peut pas écrire le répertoire : il tourne sous un autre utilisateur que son
+propriétaire et sur un système de fichiers en lecture seule (mode `systemd`), ou dans
+un montage en lecture seule (mode `bwrap`) ; l'utilisateur dédié doit seulement pouvoir
+LIRE l'arbre de la couleur (le bac à sable et `oto_mcp/functions/`). ⚠️ La box doit joindre `github.com` (Deno), `registry.npmjs.org` (Pyodide) et
 `files.pythonhosted.org` (roues) au moment du déploiement, et être en `x86_64`.
 
 Absent (ni variable ni `<arbre>/.bac-a-sable`), l'instance n'exécute pas de fonction :

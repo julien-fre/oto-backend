@@ -298,6 +298,27 @@ service, sinon `proposed`), `published_version`, `latest_version`, `updated_at` 
 `display` — écrit, sinon lu dans le corps d'une recette déclarative, null pour une
 recette-code sans affichage écrit.
 
+## La capacité en REST : `POST /api/me/recipes` (PROVISOIRE)
+
+La même capacité `me.recipe` que `oto_recipe`, servie aussi en REST pour qu'une page nomme
+les recettes et en lance une d'un geste, sans session MCP : le corps est l'`Input` entier
+(`{op, slug, params, datastore, …}`), comme `POST /api/me/runner/jobs` ; même garde par op,
+même reçu.
+
+**Trois ops seulement : `list`, `get` et `run`.** Écrire, éprouver ou publier une recette
+(`create`, `propose`, `describe`, `sample`, `test`, `publish`, et `versions`) reste un
+travail d'agent sur l'outil MCP `oto_recipe` : en REST, ces ops reçoivent un refus nommé et
+déclaré, 400 `op_not_served_over_rest`, jamais un service partiel. Le filtre vit dans le
+handler, sur le canal `rest` explicite : un appel interne sans canal n'est pas concerné.
+
+En consultation (« voir en tant que »), la route sert `list` et `get` ; `run` est une
+écriture, refusée comme toute écriture (`view_as_read_only`).
+
+Déclarée **lourde** (`api/routes_lourdes.py`) : un `run` appelle un outil page après page
+et **tient la requête HTTP jusqu'à son reçu**, plusieurs secondes à plusieurs minutes ;
+quatre en cours à la fois par processus laissent le pool aux autres routes. Provisoire
+comme la capacité (`x-oto-provisoire`).
+
 ## Ce qui vient ensuite
 
 Le bloc `async` (soumettre puis collecter : Dropcontact, FullEnrich, Apify), le mode par

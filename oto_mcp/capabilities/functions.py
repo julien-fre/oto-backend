@@ -7,7 +7,8 @@ Elle remplace le micro-service qu'on montait à côté pour 200 lignes de calcul
 **Proposer est ouvert, publier ne l'est pas** (0073 §D3). Un membre de l'org — ou son
 agent — crée une fonction ou en propose une version. **Tester, publier et refuser sont
 réservés à la plateforme** tant que le bac à sable n'a pas fait ses preuves : ce sont les
-seuls gestes qui exécutent du code non publié. **Exécuter** (`run`) ne joue que la
+seuls gestes qui exécutent du code non publié — et une PERSONNE les fait, jamais un agent
+hébergé (`_code_humain`). **Exécuter** (`run`) ne joue que la
 version PUBLIÉE, et c'est ouvert à qui lit la fonction.
 
 L'exécution passe par `functions/executor.py` (Pyodide sous Deno, sans réseau), toujours
@@ -24,6 +25,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import db, media_store, ownership
 from ..db import functions as db_functions
 from ..functions import contract, executor
+from . import _code_humain
 from ._authz import BY_OP, ORG_MEMBER_OPT, PLATFORM_ADMIN, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -337,7 +339,14 @@ def _dispatch(ctx: ResolvedCtx, inp: FunctionInput) -> dict:
     return rapport
 
 
+#: Les gestes qui exécutent ou décident du code non publié : une personne, jamais un
+#: agent hébergé (`_code_humain`).
+_OPS_HUMAINES = ("test", "publish", "refuse")
+
+
 async def _function(ctx: ResolvedCtx, inp: FunctionInput) -> dict:
+    if inp.op in _OPS_HUMAINES:
+        _code_humain.exiger_une_personne(inp.op)
     return await run_in_threadpool(_dispatch, ctx, inp)
 
 
@@ -375,9 +384,11 @@ CAPABILITIES += [
             "PROPOSED). `sources` is {filename: content} — flat `.py` modules (tests are "
             "`test_*.py`, plain functions named `test_*`) and `.json` data. A proposed "
             "version never runs until the platform tests and publishes it "
-            "(op=test/publish/refuse, platform only). Scope: your active org (default) or "
+            "(op=test/publish/refuse, platform only, by a person: never from a hosted "
+            "agent). Scope: your active org (default) or "
             "`scope='user'`. PROVISIONAL surface."),
         mcp="oto_function",
         rest=RestBinding(verb="POST", path="/api/me/functions"),
+        errors=(_code_humain.REFUS,),
     ),
 ]

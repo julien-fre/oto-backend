@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from oto_mcp.functions import executor
+from oto_mcp.functions import executor, isolement
 
 RACINE = Path(__file__).resolve().parents[1]
 
@@ -99,13 +99,14 @@ def test_le_processus_n_a_que_la_lecture_du_runtime_et_aucun_secret(bac, monkeyp
     le sien, quoi que porte le processus). On les prouve sur ce qui est réellement lancé :
     une seule permission, la lecture ; et aucune variable du serveur transmise."""
     monkeypatch.setenv("OTO_TEMOIN_SECRET", "ne-doit-pas-sortir")
+    monkeypatch.setenv(isolement.ENV_MODE, "direct")
     vues = []
-    vrai = subprocess.run
+    vrai = subprocess.Popen
 
     def _espion(commande, **kw):
         vues.append((commande, kw["env"]))
         return vrai(commande, **kw)
-    monkeypatch.setattr(executor.subprocess, "run", _espion)
+    monkeypatch.setattr(executor.subprocess, "Popen", _espion)
     _run("def executer(entree):\n    return {'result': 1}\n")
     [(commande, env)] = vues
     permissions = [a for a in commande if a.startswith("--allow")]
@@ -136,3 +137,16 @@ def test_la_version_de_pyodide_est_la_meme_partout():
     [importee] = re.findall(r'npm:pyodide@([0-9.]+)', script)
     assert importee == executor.PYODIDE
     assert f'"pyodide@{executor.PYODIDE}"' in verrou
+
+
+def test_une_sortie_au_dela_du_plafond_arrete_le_processus(bac, monkeypatch):
+    """La sortie se lit en flux : au-delà du plafond, le processus est tué et le refus
+    est nommé — sans que toute la sortie ait été lue en mémoire."""
+    monkeypatch.setattr(executor, "MAX_REPONSE", 1024 * 1024)
+    code = ("import js\n\ndef executer(entree):\n"
+            "    bloc = js.TextEncoder.new().encode('x' * 65536)\n"
+            "    for _ in range(200):\n"
+            "        js.Deno.stdout.writeSync(bloc)\n"
+            "    return {}\n")
+    with pytest.raises(executor.ReponseTropLongue):
+        _run(code)

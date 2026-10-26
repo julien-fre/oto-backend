@@ -13,7 +13,14 @@ pas exécuter de fonction, et le dire vaut mieux que chercher un `deno` au hasar
 Rien d'autre — ni réseau, ni écriture, ni environnement, ni sous-processus. Deno ne
 résout ses paquets que dans le cache (`--cached-only`) : rien ne se télécharge au moment
 d'exécuter. L'environnement du processus est vidé : il n'hérite d'aucun secret du
-serveur. Le répertoire peut être en lecture seule pour l'utilisateur du service.
+serveur. Le répertoire est en lecture seule pour le processus.
+
+**Sous quelle identité, avec quelles bornes système** : `isolement.py` (le mode déclaré
+par `OTO_FUNCTIONS_ISOLATION`). Deno refuse au code ce que ses permissions n'accordent
+pas ; l'isolement borne le processus lui-même.
+
+**La sortie se lit en flux** et s'arrête à `MAX_REPONSE` : au-delà, le processus est tué
+et l'exécution lève `ReponseTropLongue`, sans avoir tout lu en mémoire.
 """
 from __future__ import annotations
 
@@ -21,11 +28,12 @@ import json
 import os
 import secrets
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Optional
 
-from . import contract
+from . import contract, isolement
 
 ENV_DIR = "OTO_FUNCTIONS_SANDBOX_DIR"
 _ICI = Path(__file__).resolve().parent
@@ -42,6 +50,9 @@ _PYODIDE_REL = f"deno_dir/npm/registry.npmjs.org/pyodide/{PYODIDE}"
 DELAI_S = 60
 MAX_REPONSE = 30 * 1024 * 1024
 TAS_V8_MO = 512
+#: Ce qu'on garde de la sortie d'erreur du processus (la fin), pour dire une panne.
+QUEUE_ERREURS = 64 * 1024
+_BLOC = 64 * 1024
 
 # La roue qui accompagne chaque dépendance de la liste blanche. `et_xmlfile` suit
 # `openpyxl` : c'est sa dépendance, jamais une demande d'auteur.
@@ -54,6 +65,21 @@ class BacASableAbsent(RuntimeError):
 
 class ExecutionEchouee(RuntimeError):
     """Le bac à sable n'a pas rendu de réponse exploitable (délai, plantage, protocole)."""
+
+
+class ReponseTropLongue(ExecutionEchouee):
+    """Le processus a écrit plus que `MAX_REPONSE` : il a été tué avant la fin."""
+
+
+def lancement(racine: Path, script: Path, duree_max_s: float) -> isolement.Lancement:
+    """La ligne de Deno pour `script`, enveloppée par le mode d'isolement déclaré. Un
+    mode qui ne peut pas s'appliquer lève `BacASableAbsent` : jamais de repli."""
+    try:
+        return isolement.preparer(commande(racine, script), environnement(racine), racine,
+                                  [racine / _PYODIDE_REL, racine / "wheels", _ICI],
+                                  duree_max_s)
+    except isolement.IsolementIndisponible as e:
+        raise BacASableAbsent(str(e)) from None
 
 
 #: Où le DÉPLOIEMENT pose le bac à sable, dans l'arbre de la couleur qu'il installe
@@ -141,30 +167,76 @@ def executer(*, sources: dict, entrypoint: str, requirements: list[str], mode: s
                 "input": entree if entree is not None else {}},
     }
     debut = time.monotonic()
-    try:
-        fini = subprocess.run(commande(racine, _SCRIPT), input=json.dumps(tache).encode(),
-                              env=environnement(racine), capture_output=True,
-                              timeout=DELAI_S, cwd=str(racine))
-    except subprocess.TimeoutExpired:
-        raise ExecutionEchouee(f"délai dépassé ({DELAI_S} s)") from None
+    code, sortie, erreurs = _jouer(lancement(racine, _SCRIPT, DELAI_S),
+                                   json.dumps(tache).encode())
     duree = int((time.monotonic() - debut) * 1000)
-    reponse = _lire_reponse(fini.stdout, nonce)
+    reponse = _lire_reponse(sortie, nonce)
     if reponse is None:
         raise ExecutionEchouee(
-            f"le bac à sable n'a rendu aucune réponse (code {fini.returncode}) : "
-            f"{fini.stderr.decode(errors='replace')[-1500:]}")
+            f"le bac à sable n'a rendu aucune réponse (code {code}) : "
+            f"{erreurs.decode(errors='replace')[-1500:]}")
     if not reponse.get("ok"):
         raise ExecutionEchouee(reponse.get("erreur") or "échec sans message")
-    sortie = dict(reponse["sortie"])
-    sortie["journal"] = reponse.get("journal") or ""
-    sortie["duree_ms"] = duree
-    return sortie
+    rendu = dict(reponse["sortie"])
+    rendu["journal"] = reponse.get("journal") or ""
+    rendu["duree_ms"] = duree
+    return rendu
+
+
+def _jouer(lance: isolement.Lancement, entree: bytes) -> tuple[int, bytes, bytes]:
+    """Lance le processus, lui donne `entree`, et lit ses deux sorties EN FLUX : la
+    sortie standard jusqu'à `MAX_REPONSE` (au-delà : processus tué, `ReponseTropLongue`),
+    la fin de la sortie d'erreur. Au-delà de `DELAI_S` : tué, `ExecutionEchouee`."""
+    sortie, erreurs = bytearray(), bytearray()
+    deborde = threading.Event()
+    with subprocess.Popen(lance.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, env=lance.env, cwd=lance.cwd) as proc:
+        def _tuer() -> None:
+            proc.kill()
+            lance.arreter()
+
+        def _ecrire() -> None:
+            try:
+                proc.stdin.write(entree)
+                proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                # Le processus s'est arrêté avant d'avoir tout lu : sa sortie (absente)
+                # le dira, en `ExecutionEchouee`.
+                pass
+
+        def _lire_sortie() -> None:
+            for bloc in iter(lambda: proc.stdout.read1(_BLOC), b""):
+                if len(sortie) + len(bloc) > MAX_REPONSE:
+                    deborde.set()
+                    _tuer()
+                    return
+                sortie.extend(bloc)
+
+        def _lire_erreurs() -> None:
+            for bloc in iter(lambda: proc.stderr.read1(_BLOC), b""):
+                erreurs.extend(bloc)
+                del erreurs[:-QUEUE_ERREURS]
+
+        fils = [threading.Thread(target=f, daemon=True)
+                for f in (_ecrire, _lire_sortie, _lire_erreurs)]
+        for fil in fils:
+            fil.start()
+        try:
+            proc.wait(timeout=DELAI_S)
+        except subprocess.TimeoutExpired:
+            _tuer()
+            raise ExecutionEchouee(f"délai dépassé ({DELAI_S} s)") from None
+        finally:
+            for fil in fils:
+                fil.join(timeout=5)
+    if deborde.is_set():
+        raise ReponseTropLongue(f"réponse de plus de {MAX_REPONSE} octets : processus "
+                                "arrêté")
+    return proc.returncode, bytes(sortie), bytes(erreurs)
 
 
 def _lire_reponse(stdout: bytes, nonce: str) -> Optional[dict]:
     """La DERNIÈRE ligne qui porte le nonce — et aucune autre."""
-    if len(stdout) > MAX_REPONSE:
-        raise ExecutionEchouee(f"réponse de {len(stdout)} octets : au plus {MAX_REPONSE}")
     for ligne in reversed(stdout.decode(errors="replace").splitlines()):
         if ligne.startswith(nonce):
             return json.loads(ligne[len(nonce):])
