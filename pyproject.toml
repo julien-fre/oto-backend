@@ -495,6 +495,10 @@ dependencies = [
     # consommé par oto_mcp/loop_watch.py (warn journal ≥1s, event Sentry ≥10s).
     "aiodebug>=2.3.0",
     "starlette>=0.37",
+    # Imported by the in-app agent (`capabilities/copilot`): a shielded cancel scope
+    # so a closed tab still writes back what a leg decided. Starlette runs on it;
+    # what we import, we declare.
+    "anyio>=4.0,<5",
     "uvicorn>=0.30",
     # Les DEUX clients HTTP du dépôt, importés au top-level par du code SERVI —
     # `requests` par les flux OAuth et la Management API, `httpx` par le client de

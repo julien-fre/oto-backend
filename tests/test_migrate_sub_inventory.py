@@ -111,6 +111,11 @@ def test_migrate_sub_sub_bearing_columns_are_triaged():
 
     # Hors inventaire, chacune pour une raison STRUCTURELLE (pas un oubli) :
     allow = {
+        # The in-app agent's conversations and undo entries are SHORT-LIVED (an idle
+        # thread closes after 30 min, an undo expires after an hour) and bound to the
+        # sub that opened them: after a merge the old ones read "not found" and the
+        # person starts a new one. Nothing to carry over.
+        ("copilot_threads", "sub"), ("copilot_undos", "sub"),
         # Le COMPTE DE SERVICE d'une org (clés d'org, #1188) n'est pas une identité Logto :
         # aucune bascule de tenant ni fusion de comptes ne le vise, il n'a rien à suivre.
         ("org_service_accounts", "sub"),
@@ -395,6 +400,14 @@ def test_toute_colonne_jsonb_est_triee_pour_la_fusion():
     # Ne nomme personne : configuration, structure, contenu opaque des utilisateurs ou
     # d'un tiers. Le code n'y lit aucune référence de principal.
     sans_personne = {
+        # The in-app agent's transcript and pending state (messages, queue, results,
+        # the page actions offered, the kinds remembered) and an undo's payload: the
+        # content of a conversation, read by no principal check — ownership is the
+        # `sub` column, not these.
+        ("copilot_threads", "client_tools"), ("copilot_threads", "messages"),
+        ("copilot_threads", "pending"), ("copilot_threads", "queue"),
+        ("copilot_threads", "remembered"), ("copilot_threads", "results"),
+        ("copilot_undos", "payload"),
         ("apollo_phone_reveals", "payload"), ("blocks", "props"),
         ("connector_instances", "config"), ("connector_schemas", "schema"),
         # La relève d'un travail asynchrone : sa fonction et l'id du travail chez le
