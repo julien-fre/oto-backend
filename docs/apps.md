@@ -32,12 +32,34 @@ page — mais ce **n'est pas une page de mémoire** : ni dans l'arbre des pages,
   agent existe dans l'org. Un manifeste qui nomme ce que l'auteur ne voit pas est
   refusé, 400 `invalid_manifest`, chaque problème listé ; `op=validate` rend la liste
   sans rien écrire.
-- **Le dernier auteur** est la colonne `updated_by` : c'est sur lui que s'appuiera la
-  règle « droits d'une app = droits de son auteur ∩ droits de son lecteur », à
-  l'appel — **pas encore appliquée** : le front ne transmet pas l'app à chaque lecture.
-  Tant qu'elle ne l'est pas, les apps restent ouvertes à une population choisie
-  : `oto_apps` est dans `BETA_TOOLS` (face MCP) ; la face REST n'est pas gardée,
-  c'est le front qui borne qui EXÉCUTE une app.
+- **Chaque tableau déclaré est rangé par son NUMÉRO** (résolu à l'écriture pour
+  l'auteur) : un nom résoudrait dans l'org active de qui le lit.
+
+## Une app ouverte — auteur ∩ lecteur (`me.app.call`)
+
+Une app ouverte ne parle qu'à `POST /api/me/apps/{app_id}/call` (face REST seule, pas
+d'outil MCP : un agent n'est jamais le lecteur d'une app). Actions : `read_rows`,
+`read_aggregate`, `write_cell`, `add_row`, `start_agent`, `agent_runs`, `run_result`.
+
+- **Droits d'une app = droits de son auteur ∩ droits de son lecteur.** L'auteur est
+  `updated_by` ; il est jugé par l'ownership SEUL (numéro du tableau, niveau sur
+  l'agent), jamais par sa session. Le lecteur est jugé en exécutant POUR LUI les
+  capacités existantes (lignes, agrégat, écriture, `run_now`). Auteur inconnu ou qui
+  a perdu l'accès : 403 `app_author_unknown` / `app_author_lost_access`.
+- **Borné au manifeste, côté serveur** : projection aux champs déclarés (plus `_id`,
+  `_revision`, les dates), filtre / tri / regroupement / mesure sur ces champs seuls,
+  recherche plein texte seulement sans liste de champs, valeurs posables, colonnes
+  d'ajout, agents lisibles ou lançables (`run: true`), entrée d'au plus 300
+  caractères marquée comme venue de l'app. Une écriture exige le `_revision` montré.
+- **Résultats d'agent** : `agent_runs` et `run_result` rendent statut, dates, erreur
+  et ce que l'agent a conclu (`runs.outcome`, `runs.note`, tronquée à 4 000
+  caractères) — pour un agent déclaré, et un travail qui est un run de cet agent.
+- **Ce qui n'y est pas** : les lignes changées PAR un run (le journal des révisions
+  porte le `run_id`, mais sans index sur cette colonne ; à poser en index concurrent
+  avant de le servir).
+
+L'outil MCP `oto_apps` reste dans `BETA_TOOLS` ; la face REST des apps n'est pas
+gardée, le front borne qui ouvre une app.
 
 ## Révisions et conflits
 

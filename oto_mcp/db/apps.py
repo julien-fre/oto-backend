@@ -171,3 +171,30 @@ def project_owners(project_ids: Iterable[int]) -> dict[str, tuple[str, str]]:
             (ids,),
         ).fetchall()
     return {str(r["id"]): (r["owner_type"], str(r["owner_id"])) for r in rows}
+
+
+# ── Ce qu'une app lit des runs de ses agents (`capabilities/apps_appel.py`) ─────
+
+def job_of_org(org_id: int, job_id: int) -> Optional[dict]:
+    """Un travail de l'org, avec l'agent dont il est un run (`trigger_id`, texte tel
+    que posé par le serveur dans sa charge ; NULL hors agent)."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT id, status, run_id, created_at, finished_at, last_error, "
+            "payload->>'trigger_id' AS trigger_id "
+            "FROM runner_jobs WHERE id = %s AND org_id = %s",
+            (job_id, org_id),
+        ).fetchone()
+
+
+def run_results(run_ids: Iterable[str]) -> dict[str, dict]:
+    """`{run_id: {outcome, note}}` — ce que l'agent a conclu (`run_finish`), en une
+    requête sur la clé primaire."""
+    ids = sorted({r for r in run_ids if r})
+    if not ids:
+        return {}
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT run_id, outcome, note FROM runs WHERE run_id = ANY(%s)", (ids,)
+        ).fetchall()
+    return {r["run_id"]: {"outcome": r["outcome"], "note": r["note"]} for r in rows}

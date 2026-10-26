@@ -101,3 +101,19 @@ def test_migration_aller_retour(live, pg_module_dsn):
     command.stamp(_alembic(), _PRECEDENTE)
     command.upgrade(_alembic(), _REVISION)
     assert tables() == {"apps", "app_revisions"}
+
+
+def test_le_run_d_un_travail_et_ce_que_l_agent_a_conclu(live, pg_module_dsn):
+    import psycopg
+
+    with psycopg.connect(pg_module_dsn, autocommit=True) as c:
+        c.execute("INSERT INTO runs (run_id, label, outcome, note) VALUES ('run-apps-1', 'x', 'done', 'Enriched 3 leads.')")
+        job = c.execute(
+            "INSERT INTO runner_jobs (org_id, kind, run_id, payload, status) "
+            "VALUES (4242, 'start', 'run-apps-1', '{\"trigger_id\": \"9\"}', 'done') RETURNING id"
+        ).fetchone()[0]
+    j = db.apps.job_of_org(4242, job)
+    assert j["trigger_id"] == "9" and j["run_id"] == "run-apps-1"
+    assert db.apps.job_of_org(4243, job) is None          # borné à l'org
+    assert db.apps.run_results(["run-apps-1", None, "absent"]) == {
+        "run-apps-1": {"outcome": "done", "note": "Enriched 3 leads."}}

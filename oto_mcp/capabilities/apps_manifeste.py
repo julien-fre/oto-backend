@@ -9,9 +9,10 @@ chaque appel. Le serveur, ici, le juge À L'ÉCRITURE :
   active, chaque champ déclaré exister dans son schéma, chaque agent exister dans
   l'org. Un éditeur ne peut donc pas déclarer un tableau qu'il ne voit pas lui-même.
 
-Ce n'est pas encore la règle « droits = auteur ∩ lecteur » à l'APPEL (le front ne
-transmet pas l'app à chaque lecture) ; c'est ce qui la rend possible : l'auteur est
-connu du serveur et le manifeste qu'il pose est déjà borné par ses droits.
+**Chaque tableau est RÉSOLU à l'écriture et rangé par son numéro** (`table` devient
+le `ns_id`) : un nom résout dans l'org active de qui le lit, et à l'APPEL l'app sert
+un lecteur qui n'est pas l'auteur — le même nom y désignerait un autre tableau. À
+l'appel (`apps_appel.py`), la règle « droits = auteur ∩ lecteur » juge ce numéro.
 """
 from __future__ import annotations
 
@@ -112,7 +113,8 @@ def forme(raw: Any) -> tuple[dict, list[str]]:
 
 
 def auteur(sub: str, org_id: Optional[int], clean: dict) -> list[str]:
-    """Ce que l'AUTEUR ne peut pas toucher parmi ce que le manifeste déclare."""
+    """Ce que l'AUTEUR ne peut pas toucher parmi ce que le manifeste déclare. Range au
+    passage le numéro de chaque tableau résolu dans `clean` (`table`)."""
     from .. import db
     from ..datastore.core import DatastoreAmbigu, DatastoreNotFound, make_store
 
@@ -120,12 +122,13 @@ def auteur(sub: str, org_id: Optional[int], clean: dict) -> list[str]:
     store = make_store(sub)
     for alias, t in clean["tables"].items():
         try:
-            store._resolve(t["table"])
+            ns_id = store._resolve(t["table"])
             schema = store.get_schema(t["table"])
         except (DatastoreNotFound, DatastoreAmbigu):
             # Même phrase qu'un tableau absent ou invisible : rien ne dit lequel.
             problems.append(f"tables.{alias}: table `{t['table']}` isn't one you can read here.")
             continue
+        t["table"] = str(ns_id)
         declared = {f.get("key") for f in (schema or {}).get("fields") or [] if isinstance(f, dict)}
         if not declared:
             continue
