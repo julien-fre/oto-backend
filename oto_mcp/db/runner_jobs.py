@@ -15,6 +15,10 @@ Quatre invariants, gravés ici parce qu'une réécriture distraite les casserait
 4. **Seul le claimant conclut** : `complete`/`extend`/`bind_run` sont scopés
    `claimed_by = worker` (le patron de `finish_run`) — un pair ne peut ni fermer
    ni prolonger le job d'un autre.
+5. **Part équitable entre orgs** (27/10/2026) : un worker de plateforme sert d'abord
+   l'org qui a le moins de travaux en vol, puis le plus ancien dû — une org qui
+   enfile une rafale ne retient plus les autres derrière elle, et garde toute la
+   capacité tant qu'elle est seule à attendre.
 """
 from __future__ import annotations
 
@@ -887,7 +891,21 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                    -- (`_servi_par_ce_worker`).
                    AND {_servi_par_ce_worker("rj", de_la_famille_ferme)}
                    {frag['clause_abonnement']}
-                 ORDER BY due_at
+                 -- ⚠️ PART ÉQUITABLE entre orgs (27/10/2026) : d'abord l'org qui a le
+                 -- MOINS de travaux en vol, puis le plus ancien dû. Trié sur `due_at`
+                 -- seul, une org qui enfilait 200 travaux à 7 h tenait toutes les
+                 -- places des workers jusqu'à épuisement, et l'occurrence horaire
+                 -- d'une autre org, due à 7 h 05, attendait derrière — jusqu'à
+                 -- périmer. Aucune borne : une org seule prend toutes les places ;
+                 -- elle n'en prend plus quand une autre attend. Le comptage passe
+                 -- par `idx_runner_jobs_live` (org_id en tête, `claimed` couvert) :
+                 -- quelques lignes vivantes par org, jamais l'historique.
+                 ORDER BY (SELECT COUNT(*) FROM runner_jobs en_vol
+                            WHERE en_vol.org_id = rj.org_id
+                              AND en_vol.status IN ('pending', 'claimed')
+                              AND en_vol.status = 'claimed'
+                              AND en_vol.lease_until >= NOW()),
+                          due_at
                    FOR UPDATE {frag['verrou_de']}SKIP LOCKED
                  LIMIT 1
             ), clos AS (

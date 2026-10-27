@@ -1923,6 +1923,17 @@ box (sans `ANTHROPIC_API_KEY`), puis `runner.org_key_required=true` pour
 `anthropic` — qui fait refuser la pose d'un agent Claude sans clé, au moment où
 l'on peut encore la déposer, plutôt qu'à la réservation.
 
+### Part équitable entre orgs au claim (27/10/2026)
+
+Un worker de plateforme sert d'abord **l'org qui a le moins de travaux en vol** (bail
+vivant), puis le plus ancien dû. Trié sur `due_at` seul, une org qui enfilait une rafale
+(une passe sur 200 lignes à 7 h) tenait toutes les places jusqu'à épuisement, et
+l'occurrence d'une autre org due quelques minutes plus tard attendait derrière — jusqu'à
+périmer à l'occurrence suivante. Les orgs prennent maintenant leur tour, une place à la
+fois. **Aucune borne** : une org seule à attendre prend toutes les places. Le comptage
+passe par `idx_runner_jobs_live` (aucune migration). Un bail mort ne compte pas comme en
+vol.
+
 ### Un worker peut ne servir que certaines orgs : `org_ids` (25/09/2026)
 
 `op=claim` accepte `org_ids` (1 à 50 identifiants) : le worker ne réserve QUE les
