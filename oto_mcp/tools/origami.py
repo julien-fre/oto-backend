@@ -440,13 +440,16 @@ def register(mcp: FastMCP) -> None:
         table_id: Optional[str] = None,
         dry_run: bool = False,
     ) -> dict:
-        """Create an Origami TABLE from a CSV (or append CSV rows to an existing
-        table) — the ingest verb `POST /workspaces/{id}/documents`, JSON with the
-        file base64-encoded (never multipart). WRITE.
+        """Create an Origami TABLE from a CSV — the ingest verb
+        `POST /workspaces/{id}/documents`, JSON with the file base64-encoded (never
+        multipart). WRITE.
 
         `mode="table"` (default): the CSV becomes a NEW table in `workspace_id`,
-        its header row = the input columns. `mode="append"`: the rows join
-        `table_id` (header = input-column slugs). `dry_run=True` parses the CSV and
+        its header row = the input columns. `mode="append"` is REFUSED: Origami
+        does not bind the CSV header to the table's columns and creates new ones
+        on every call — rows go into an existing table with
+        `origami_rows(op="upsert", table_id=…, match_columns=[…])`, which checks
+        the column slugs. `dry_run=True` parses the CSV and
         returns `{dry_run: true, would_upload: {filename, mode, columns, rows,
         preview}}` (first rows) without uploading. The real call returns the per-file
         `results[]` (an entry may be `kind: "error"`); the new table then appears in
@@ -456,31 +459,35 @@ def register(mcp: FastMCP) -> None:
             workspace_id: target workspace (`origami_workspaces`).
             filename: name ending in `.csv` (e.g. "grossistes-fr.csv").
             csv_text: the CSV content, header row first, UTF-8.
-            mode: "table" (new table, default) | "append" (into `table_id`).
-            table_id: required when mode="append".
+            mode: "table" (new table, default); "append" is refused (see above).
+            table_id: only named back in the refusal of mode="append".
             dry_run: preview the parsed CSV, upload nothing.
         """
         if not workspace_id:
             raise _bad("`workspace_id` is required.")
         if not filename or not filename.lower().endswith(".csv"):
-            raise _bad("`filename` must end with .csv (a CSV in table/append mode).")
+            raise _bad("`filename` must end with .csv.")
         if not csv_text or not csv_text.strip():
             raise _bad("`csv_text` is empty.")
-        if mode not in ("table", "append"):
-            raise _bad(f"Invalid `mode`: {mode!r} (table | append).")
-        if mode == "append" and not table_id:
-            raise _bad("mode='append': `table_id` is required.")
+        if mode == "append":
+            # Measured (#1349): Origami ignores the binding and adds as many NEW
+            # columns as the header carries, answering 200 — 8 columns became 64.
+            raise _bad(
+                "mode='append' is refused: Origami does not bind a CSV header to the "
+                "table's columns, it creates new ones on every upload (nothing was "
+                "sent). Add rows to an existing table with origami_rows(op='upsert', "
+                f"table_id={table_id or '<id>'!r}, rows=[…], match_columns=[…]): "
+                "its keys are the column slugs of origami_tables(op='get').")
+        if mode != "table":
+            raise _bad(f"Invalid `mode`: {mode!r} (table).")
         parsed = _parse_csv_preview(csv_text)
         if parsed["rows"] == 0:
             raise _bad("`csv_text` has only the header: no data rows.")
         spec: dict = {"filename": filename, "mode": mode,
                       "content": base64.b64encode(csv_text.encode("utf-8")).decode("ascii")}
-        if mode == "append":
-            spec["tableId"] = table_id
         if dry_run:
             return {"dry_run": True, "workspace_id": workspace_id,
-                    "would_upload": {"filename": filename, "mode": mode,
-                                     "table_id": table_id, **parsed}}
+                    "would_upload": {"filename": filename, "mode": mode, **parsed}}
         result = _run(lambda: _client().upload_documents(workspace_id, [spec]))
         # The id of the created table is WHAT the caller wants: it conditions the next
         # call (upsert, campaign). Surfaced at the top level rather than left at
@@ -490,11 +497,11 @@ def register(mcp: FastMCP) -> None:
         first = first if isinstance(first, dict) else {}
         created = first.get("table") if isinstance(first.get("table"), dict) else {}
         # Shape measured on 17/08/2026: `results[0].table.{id,slug}`; a flat `tableId`
-        # is accepted too, in case the API returns it as in append mode.
+        # is accepted too.
         new_id = created.get("id") or first.get("tableId")
         out = {"workspace_id": workspace_id, "filename": filename, "mode": mode,
                "rows_sent": parsed["rows"], "columns": parsed["columns"],
-               "table_id": new_id or (table_id if mode == "append" else None),
+               "table_id": new_id,
                "table_slug": created.get("slug"), "result": result}
         if isinstance(first, dict) and first.get("kind") == "error":
             out["error"] = first.get("error") or first.get("message") or "upload refused (kind=error)"
