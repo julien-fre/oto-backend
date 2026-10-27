@@ -363,3 +363,47 @@ def test_maintenance_purge_a_trente_jours(monde):
                             "day < (NOW() AT TIME ZONE 'UTC')::date - 30", (B,)).fetchone()
     assert fils == {frais} and undos == {"rv_" + frais} and anciens["n"] == 0
     assert "copilot" in maintenance._ALL
+
+
+def test_reponse_dite_par_le_chemin_normal_d_un_appel(monde, modele, monkeypatch):
+    """`speak`: the final answer, as prose, synthesised ONCE by the real `elevenlabs_act`
+    (only ElevenLabs and the storage are doubled), journaled as an `elevenlabs_act`
+    call with its credits in `quantity`, and the `audio` event goes out before `done`."""
+    from unittest.mock import MagicMock
+    from oto_mcp.db import _conn as dbconn
+    from oto.tools.elevenlabs import ElevenLabsClient
+    el = MagicMock()
+    el.create_speech.return_value = {"content": b"ID3", "content_type": "audio/mpeg",
+                                     "extension": "mp3", "output_format": "mp3_44100_128",
+                                     "character_count": 13}
+    # The catalogue is built once per module: its tool holds the class, not the name.
+    monkeypatch.setattr(ElevenLabsClient, "create_speech",
+                        lambda self, *a, **k: el.create_speech(*a, **k))
+    monkeypatch.setattr("oto_mcp.access.resolve_api_key",
+                        lambda provider, account=None, units=1: ("org-key", False))
+    monkeypatch.setattr("oto_mcp.media_store.upload_private",
+                        lambda *a, **k: "https://media.test/speech.mp3?sig=x")
+    modele.script = [_fin("All **done**: [table](https://x.test/t).\n<next>Next</next>")]
+    page = {"path": "/", "orgId": monde["org"], "page": "home", "params": {}}
+    r = monde["client"].post("/api/copilot/turns", headers=_h(A, monde["org"]), json={
+        "text": "status?", "page_context": page, "speak": True})
+    evs = _evs(r)
+    types = [e["type"] for e in evs]
+    assert types[-2:] == ["audio", "done"], evs
+    assert evs[-2] == {"type": "audio", "url": "https://media.test/speech.mp3?sig=x",
+                       "content_type": "audio/mpeg", "chars": len("All done: table.")}
+    el.create_speech.assert_called_once()
+    args, kw = el.create_speech.call_args
+    assert args[1] == "All done: table." and kw["model_id"] == "eleven_flash_v2_5"
+    import time
+    for _ in range(50):
+        with dbconn._connect() as c:
+            row = c.execute("SELECT tool, quantity, org_id FROM tool_calls WHERE sub = %s "
+                            "AND tool = 'elevenlabs_act' ORDER BY id DESC LIMIT 1",
+                            (A,)).fetchone()
+        if row:
+            break
+        time.sleep(0.1)
+    assert row is not None, "the spoken answer must be journaled as an elevenlabs_act call"
+    assert row["quantity"] == 7, "eleven_flash_v2_5: 13 characters → ceil(6.5) credits"
+    assert row["org_id"] == monde["org"]

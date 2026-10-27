@@ -1,8 +1,10 @@
 """Text plumbing of the loop: a served tool result as text for the model, the announced
-cut, and the `<next>…</next>` chips taken out of the streamed answer."""
+cut, the `<next>…</next>` chips taken out of the streamed answer, and the final answer
+as plain prose for the voice."""
 from __future__ import annotations
 
 import json
+import re
 
 #: A tool result is cut here, and the model is TOLD so — never a silent fragment.
 PLAFOND_RESULTAT = 80_000
@@ -83,3 +85,57 @@ class FiltreSuite:
             if m:
                 items.append(m)
         return items[:3]
+
+
+#: The spoken answer is cut here, at the last sentence end before it.
+PLAFOND_PAROLE = 1500
+_SUITE = re.compile(r"<next>.*?(?:</next>|$)", re.S)
+_BLOC_CODE = re.compile(r"```.*?(?:```|$)", re.S)
+_IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_LIEN = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_URL = re.compile(r"<?https?://\S+>?")
+_CODE = re.compile(r"`([^`]*)`")
+_TITRE = re.compile(r"^\s{0,3}#{1,6}\s*", re.M)
+_CITATION = re.compile(r"^\s{0,3}>\s?", re.M)
+_PUCE = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+", re.M)
+_REGLE = re.compile(r"^\s*(?:[-*_]\s*){3,}$", re.M)
+_TABLEAU = re.compile(r"^\s*\|?\s*:?-{2,}.*$", re.M)
+_EMPHASE = re.compile(r"(\*\*|__|\*|_|~~)(?=\S)(.+?)(?<=\S)\1")
+_FIN_DE_PHRASE = re.compile(r"[.!?…](?:[\"'»)\]]*)(?=\s|$)")
+
+
+def texte_a_dire(contenu) -> str:
+    """The final answer as plain prose for the voice: the assistant message's text
+    blocks, without the `<next>` chips, code, links' targets, bare URLs, nor markdown
+    marks; at most `PLAFOND_PAROLE` characters, cut at the last sentence end before
+    (else at a word). '' when nothing is left to say."""
+    if isinstance(contenu, str):
+        brut = contenu
+    else:
+        brut = "\n".join(b.get("text") or "" for b in contenu or []
+                         if isinstance(b, dict) and b.get("type") == "text")
+    t = _SUITE.sub(" ", brut)
+    t = _BLOC_CODE.sub(" ", t)
+    t = _IMAGE.sub(r"\1", t)
+    t = _LIEN.sub(r"\1", t)
+    t = _URL.sub(" ", t)
+    t = _CODE.sub(r"\1", t)
+    t = _REGLE.sub(" ", t)
+    t = _TABLEAU.sub(" ", t)
+    t = _TITRE.sub("", t)
+    t = _CITATION.sub("", t)
+    t = _PUCE.sub("", t)
+    for _ in range(2):
+        t = _EMPHASE.sub(r"\2", t)
+    t = t.replace("|", " ")
+    # A line that ends without punctuation (a title, a list item) still reads as a pause.
+    lignes = [l.strip() for l in t.splitlines() if l.strip()]
+    t = " ".join(l if re.search(r"[.!?:;…,]$", l) else f"{l}." for l in lignes)
+    t = re.sub(r"\s+", " ", t).strip()
+    if len(t) <= PLAFOND_PAROLE:
+        return t
+    tete = t[:PLAFOND_PAROLE]
+    fins = [m.end() for m in _FIN_DE_PHRASE.finditer(tete)]
+    if fins and fins[-1] >= PLAFOND_PAROLE // 3:
+        return tete[:fins[-1]].strip()
+    return tete.rsplit(" ", 1)[0].strip()

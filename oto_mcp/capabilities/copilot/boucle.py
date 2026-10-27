@@ -287,6 +287,12 @@ async def conduire(fil: dict, b: Boite, cle: cles.Cle) -> AsyncIterator[dict]:
             await sauver(fil)
             if sortie.get("suggestions"):
                 yield ev("suggestions", items=sortie["suggestions"])
+            if fil.get("_speak"):
+                # The answer read aloud, once, before `done` — or nothing (`voix.py`).
+                from . import voix
+                audio = await voix.dire(fil, message["content"])
+                if audio:
+                    yield audio
             yield ev("done")
             return
         fil["queue"] = [{"id": u["id"], "name": u["name"], "input": u.get("input") or {}}

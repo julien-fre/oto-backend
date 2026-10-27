@@ -22,9 +22,9 @@ de développement du front en était la spécification exécutable.
 
 | route | réponse |
 | --- | --- |
-| `POST /api/copilot/turns` `{thread_id, text, input, mode, page_context, client_tools}` | flux SSE |
-| `POST /api/copilot/threads/{id}/client-results` `{call_id, ok, result, error, client_tools}` | flux SSE |
-| `POST /api/copilot/threads/{id}/approvals/{approval_id}` `{decision, edits, remember}` | flux SSE |
+| `POST /api/copilot/turns` `{thread_id, text, input, mode, page_context, client_tools, speak}` | flux SSE |
+| `POST /api/copilot/threads/{id}/client-results` `{call_id, ok, result, error, client_tools, speak}` | flux SSE |
+| `POST /api/copilot/threads/{id}/approvals/{approval_id}` `{decision, edits, remember, speak}` | flux SSE |
 | `POST /api/copilot/actions/{revert_id}/revert` | JSON `{ok, undone, skipped}` |
 
 - **Nées capacités** : un handler qui rend un `EventStream` est servi par l'adaptateur REST
@@ -56,6 +56,25 @@ réflexion repartent tels quels, un tour interrompu se solde en AJOUTANT des ré
 « interrompu ». `<next>a | b</next>` en fin de réponse devient `suggestions`, jamais du
 texte. Un résultat d'outil est coupé à 80 000 caractères, et la coupe est dite au modèle.
 30 étapes au plus par étape de la personne.
+
+## La réponse dite (`voix.py`)
+
+`speak: true` sur la requête (défaut `false`, pour CETTE étape seulement, jamais enregistré) :
+quand l'étape finit sur une réponse, le serveur la lit UNE fois avec ElevenLabs et émet,
+avant `done`, `{"type": "audio", "url", "content_type": "audio/mpeg", "chars"}`. Le texte dit
+est la réponse en prose (sans `<next>`, code, cibles de liens, URL ni marques markdown),
+coupée à 1 500 caractères sur une fin de phrase. Modèle `eleven_flash_v2_5` (FR + EN, un
+demi-crédit par caractère), voix `OTO_COPILOT_VOICE_ID` (défaut : « Sarah »,
+`EXAVITQu4vr4xnSDxMaL`).
+
+Une action du SERVEUR, pas un outil du modèle (ni `tool_use` ni carte), mais par le chemin
+normal d'un appel (`outils.executer` → `meta.executer_cible`) comme la personne, dans l'org
+consultée, sous le run de la conversation : clé ElevenLabs de l'org d'abord, sinon la clé
+plateforme si elle est octroyée ; ligne `tool_calls` en `elevenlabs_act`, `quantity` = les
+crédits dépensés ; `units` sur la clé plateforme. Aucune clé, pas d'octroi, plus de crédits,
+une erreur amont ou plus de 15 s → aucun événement `audio`, un avertissement au journal, et
+l'étape finit normalement (le panneau lit alors avec la voix du navigateur). Une synthèse
+qui dépasse le délai n'est pas annulée : elle est réglée comme tout appel.
 
 ## Les outils (`outils.py`, `classement.py`)
 

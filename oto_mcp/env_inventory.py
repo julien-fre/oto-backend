@@ -366,6 +366,12 @@ _REGLAGES: tuple[Variable, ...] = (
              "nommé dans le flux avant l'appel suivant. Lu à chaque appel ; une valeur "
              "qui n'est pas un montant positif lève (jamais le défaut en silence).",
              ("oto_mcp/capabilities/copilot/depense.py:59",)),
+    Variable("OTO_COPILOT_VOICE_ID", Classe.REGLAGE, "EXAVITQu4vr4xnSDxMaL",
+             "L'agent intégré à l'application : la voix ElevenLabs qui lit ses réponses "
+             "quand le panneau demande `speak` (`capabilities/copilot/voix.py`, modèle "
+             "`eleven_flash_v2_5`, par la clé ElevenLabs de l'org ou la clé plateforme "
+             "octroyée). Absente ou vide : la voix prédéfinie « Sarah ». Lu à chaque tour.",
+             ("oto_mcp/capabilities/copilot/voix.py:47",)),
     Variable("OTO_CREDITS_MODE", Classe.REGLAGE, "report",
              "Budget d'unités au moment de l'appel (`access/credits.py`) : `report` "
              "(défaut) réserve et règle sans jamais refuser, et journalise ce "

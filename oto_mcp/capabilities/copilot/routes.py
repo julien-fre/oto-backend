@@ -87,6 +87,9 @@ class TurnInput(BaseModel):
     mode: Literal["ask", "act"] = "ask"
     page_context: dict = Field(default_factory=dict)
     client_tools: list[ClientTool] = Field(default_factory=list, max_length=40)
+    #: Read the final answer aloud: one `audio` event before `done` (`voix.py`), or
+    #: none when it cannot be — the panel then uses the browser's voice.
+    speak: bool = False
 
 
 class ClientResultInput(BaseModel):
@@ -96,6 +99,8 @@ class ClientResultInput(BaseModel):
     result: Any = None
     error: Optional[str] = Field(default=None, max_length=4000)
     client_tools: Optional[list[ClientTool]] = Field(default=None, max_length=40)
+    #: As on the turn: read the answer this leg ends with aloud.
+    speak: bool = False
 
 
 class ApprovalInput(BaseModel):
@@ -104,6 +109,8 @@ class ApprovalInput(BaseModel):
     decision: Literal["approve", "reject"]
     edits: Optional[dict[str, str]] = None
     remember: Optional[bool] = None
+    #: As on the turn: read the answer this leg ends with aloud.
+    speak: bool = False
 
 
 class RevertInput(BaseModel):
@@ -113,8 +120,10 @@ class RevertInput(BaseModel):
 class CopilotEvent(BaseModel):
     """ONE event of the stream (`data: <json>`, blank line between two). `type` ∈
     thread, text_delta, progress, tool_call, tool_result, approval_required,
-    client_tool_call, suggestions, done, error; the other fields per type, as the front's
-    `CopilotEvent` declares them. `thread` comes first on a turn; `done` comes last."""
+    client_tool_call, suggestions, audio, done, error; the other fields per type, as the
+    front's `CopilotEvent` declares them. `thread` comes first on a turn; `done` comes
+    last. `audio` (only when the request asked `speak`): the final answer read aloud —
+    `url` (signed, temporary), `content_type`, `chars` (characters read)."""
     type: str
     thread_id: Optional[str] = None
     text: Optional[str] = None
@@ -134,6 +143,9 @@ class CopilotEvent(BaseModel):
     args: Optional[dict] = None
     items: Optional[list[str]] = None
     message: Optional[str] = None
+    url: Optional[str] = None
+    content_type: Optional[str] = None
+    chars: Optional[int] = None
 
 
 class RevertOut(BaseModel):
@@ -270,6 +282,8 @@ async def _tour(ctx: ResolvedCtx, inp: TurnInput):
     yield ev("thread", thread_id=fil["id"])
 
     def avant(f: dict) -> Optional[str]:
+        # Per leg, never written back (`boucle.sauver` keeps a fixed list of fields).
+        f["_speak"] = inp.speak
         f["mode"] = inp.mode
         f["client_tools"] = [t.model_dump() for t in inp.client_tools]
         if projet is not None:
@@ -297,6 +311,12 @@ async def _reprise(ctx: ResolvedCtx, thread_id: str, avant):
         yield e
 
 
+def _parler(fil: dict, speak: bool, erreur: Optional[str]) -> Optional[str]:
+    """A resumed leg: `speak` for this leg only, then what the answer to apply said."""
+    fil["_speak"] = speak
+    return erreur
+
+
 async def _plafond(ctx: ResolvedCtx) -> None:
     """Refused before the stream opens when the account has reached today's ceiling
     (the loop checks again before each model call)."""
@@ -315,15 +335,17 @@ async def _client_result(ctx: ResolvedCtx, inp: ClientResultInput) -> EventStrea
     await _plafond(ctx)
     outils_client = ([t.model_dump() for t in inp.client_tools]
                      if inp.client_tools is not None else None)
-    return EventStream(_sse(_reprise(ctx, inp.thread_id, lambda f: boucle.repondre_page(
-        f, inp.call_id, inp.ok, inp.result, inp.error, outils_client))))
+    return EventStream(_sse(_reprise(ctx, inp.thread_id, lambda f: _parler(
+        f, inp.speak, boucle.repondre_page(f, inp.call_id, inp.ok, inp.result, inp.error,
+                                           outils_client)))))
 
 
 async def _approval(ctx: ResolvedCtx, inp: ApprovalInput) -> EventStream:
     _garde(ctx)
     await _plafond(ctx)
-    return EventStream(_sse(_reprise(ctx, inp.thread_id, lambda f: boucle.repondre_carte(
-        f, inp.approval_id, inp.decision == "approve", inp.edits, bool(inp.remember)))))
+    return EventStream(_sse(_reprise(ctx, inp.thread_id, lambda f: _parler(
+        f, inp.speak, boucle.repondre_carte(f, inp.approval_id, inp.decision == "approve",
+                                            inp.edits, bool(inp.remember))))))
 
 
 def _revert(ctx: ResolvedCtx, inp: RevertInput) -> dict:
