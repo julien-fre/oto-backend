@@ -3,7 +3,8 @@
 create a key in ElevenLabs (Developers → API Keys → *Create key*) and paste it into oto. Reference: [ElevenLabs authentication](https://elevenlabs.io/docs/api-reference/authentication).
 - a key can be **restricted** when it is created: the generations need *Text to Speech*, *Music* and *Sound Effects*; the reads need *User* read (the credits), *Voices* read and *Models* read. A missing permission is named in the refusal
 - a key can carry its own **credit limit** in ElevenLabs: a good way to give a teammate or an agent a budget
-- byo-only: every generation spends **your** ElevenLabs credits; each organization or person sets its own key
+- your own key first: every generation then spends **your** ElevenLabs credits; each organization or person sets its own key
+- the **shared key**, when oto grants it to your org, covers speech (`create_speech`) only, unless the instance opens more; music, sound effects and voice design need your own key. Each spoken call counts the ElevenLabs credits it spent (half a credit per character on the flash and turbo models, one otherwise). The voice and model reads are free on it; the balance (`get_subscription`) is not served on it — it is the instance's
 
 ## usage — a voice, a track, a sound
 

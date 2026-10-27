@@ -329,7 +329,8 @@ _DECLARATIONS: tuple[str, ...] = (
     # never an org's — here the tenant's, never ours.
     "jev",
     # --- audio and video media — wired 2026-10-19 ----------------------------
-    # Voice, music and sound generated with the customer's ElevenLabs credits.
+    # Voice, music and sound generated with the customer's ElevenLabs credits, or
+    # speech on the platform key when it is granted.
     "elevenlabs",
     # Neighbour of `elevenlabs` by situation (media production): video hosting
     # and streaming on the customer's Mux account.

@@ -1,7 +1,22 @@
 """ElevenLabs — voices and models, the credit balance, and audio generation.
 
 Wraps `oto.tools.elevenlabs.ElevenLabsClient` (`xi-api-key` header), key resolved
-per call via `access.resolve_api_key("elevenlabs")` (BYOK, user or org).
+per call via `access.resolve_api_key("elevenlabs")`: the customer's own (user or org)
+first, else the SHARED (platform) key when it is granted to the org.
+
+**The shared key** serves the generations THIS INSTANCE chose (`platform_ops`, the
+`platform.ops` connector setting); unset, speech only. Any other generation is refused
+BEFORE a credit is spent, naming what the shared key serves. The reads (voices, one
+voice, models) are served on it, free; `get_subscription` never is: on the shared key,
+that account is ours.
+
+**Metering.** Every generation notes the ElevenLabs credits it spent:
+`quantity` (the `tool_calls.quantity` column, which the instance's billing prices per
+unit, on the customer's own key too — it filters on `key_mode`) and, on the shared key
+only, `units` (the grant's quota axis). Speech: `ceil(characters × the model's rate)`,
+characters from ElevenLabs' `x-character-count` header (else the text's length), rate
+0.5 for the flash and turbo models, 1 otherwise — the API's default model when
+`model_id` is omitted (`eleven_multilingual_v2`) included. The reads note 0.
 
 **Surface** (the `<ns>` / `<ns>_act` pair):
 - `elevenlabs` (read-only) — the account's credits, its voices, one voice, the
@@ -14,21 +29,25 @@ Audio never travels inline: it is deposited in private temporary storage and
 served as a signed URL (`media_store.upload_private`), valid
 `media_store.presign_expiry()` seconds and deleted after a day.
 
-Calls to the client are written out in full (`_client().create_speech(…)`): this is
-what makes them verifiable by the version-skew probe
+Calls to the client are written out in full (`client, served = _client(…)` then
+`client.create_speech(…)`): this is what makes them verifiable by the version-skew probe
 (`test_tools_client_methods_exist`).
 """
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+import logging
+import math
+from typing import Any, Callable, Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, session_org
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 from .lecture import ACTE, LECTURE
+
+logger = logging.getLogger(__name__)
 
 _NAME = "elevenlabs"
 _PREFIX = "elevenlabs-audio"
@@ -47,6 +66,90 @@ _DROP_VOICES = frozenset({
 _DROP_MODELS = frozenset({"languages", "concurrency_group", "model_rates",
                           "requires_alpha_access", "serves_pro_voices"})
 _HINT = "full=true returns the raw records."
+
+# What OUR shared (platform) ElevenLabs key generates is a choice of the INSTANCE, not of
+# the code (same device as `tools/forager.py`): the `platform.ops` setting
+# (`connector_settings`, platform scope, `oto_admin_connector_setting`) lists them,
+# comma-separated, `elevenlabs_act:<op>` or `elevenlabs_act` for every op. Unset: speech
+# only — music, sound and voice design spend far more per call and are opened on purpose.
+OPS: dict[str, frozenset[str]] = {"elevenlabs_act": frozenset(_ACT_OPS)}
+PLATFORM_OPS_KEY = "platform.ops"
+PLATFORM_OPS_DEFAULT = "elevenlabs_act:create_speech"
+
+# Speech models billed half a credit per character (ElevenLabs' price list). Any other
+# model — and the API's default when `model_id` is omitted, `eleven_multilingual_v2` —
+# bills one credit per character.
+HALF_RATE_MODELS = frozenset({"eleven_flash_v2", "eleven_flash_v2_5",
+                              "eleven_turbo_v2", "eleven_turbo_v2_5"})
+
+
+def parse_platform_ops(value: str) -> frozenset[tuple[str, Optional[str]]]:
+    """`platform.ops` as `(tool, op)` pairs, `op=None` for every op of the tool.
+    Raises `ValueError` naming what it does not know — the admin console refuses the
+    value with it, rather than storing a list that would silently serve less."""
+    out = set()
+    for item in (x.strip() for x in value.split(",")):
+        if not item:
+            continue
+        tool, _, op = item.partition(":")
+        tool, op = tool.strip(), op.strip() or None
+        if tool not in OPS:
+            raise ValueError(f"{tool!r} is not an ElevenLabs tool the shared key can serve "
+                             f"(one of: {', '.join(sorted(OPS))})")
+        if op is not None and op not in OPS[tool]:
+            raise ValueError(f"{tool} has no op {op!r} (one of: {', '.join(sorted(OPS[tool]))})")
+        out.add((tool, op))
+    return frozenset(out)
+
+
+def platform_ops() -> frozenset[tuple[str, Optional[str]]]:
+    """What the shared key generates on this instance, read at each call. Unset: the
+    default. A stored value the tool no longer understands RAISES rather than serving
+    the default in its place (same rule as `tools/forager.platform_ops`)."""
+    from ..db import connector_settings
+    value = connector_settings.get_connector_setting(
+        "platform", "platform", _NAME, PLATFORM_OPS_KEY)
+    if value is None:
+        return parse_platform_ops(PLATFORM_OPS_DEFAULT)
+    try:
+        return parse_platform_ops(value)
+    except ValueError as e:
+        raise RuntimeError(f"elevenlabs: the instance setting `{PLATFORM_OPS_KEY}` "
+                           f"({value!r}) is not understood: {e} — fix it with "
+                           "oto_admin_connector_setting") from e
+
+
+def _served(tool: str, op: Optional[str], ops) -> bool:
+    return (tool, None) in ops or (tool, op) in ops
+
+
+def rate(model_id: Optional[str]) -> float:
+    """Credits per character of a speech model."""
+    return 0.5 if model_id in HALF_RATE_MODELS else 1.0
+
+
+def speech_credits(text: str, model_id: Optional[str],
+                   character_count: Optional[int] = None) -> int:
+    """The ElevenLabs credits one speech call spends: the characters ElevenLabs counted
+    (`x-character-count`), else the text's length, times the model's rate, rounded UP —
+    a whole number, which is all the journal's `quantity` keeps."""
+    chars = character_count if isinstance(character_count, int) and character_count >= 0 \
+        else len(text or "")
+    return int(math.ceil(chars * rate(model_id)))
+
+
+def generation_credits(op: str, audio: Any, fallback_text: Optional[str]) -> int:
+    """Credits of a music, sound or voice-design call, served on the shared key only
+    when the instance opened it. ElevenLabs' `x-character-count` when it sent one;
+    else an ESTIMATE (the prompt's length, at least 1), logged — no price list here
+    says what these cost per second. Check the header before opening these ops."""
+    count = audio.get("character_count") if isinstance(audio, dict) else None
+    if isinstance(count, int) and count >= 0:
+        return count
+    estimate = max(1, len(fallback_text or ""))
+    logger.info("elevenlabs : %s sans x-character-count — %d crédits estimés", op,
+                   estimate)
+    return estimate
 
 
 class ElevenLabsASec(RuntimeError):
@@ -226,9 +329,46 @@ def register(mcp: FastMCP) -> None:
 
     connector_verify.register(_NAME, _verify, couvre=connector_verify.AUTH_QUOTA)
 
-    def _client() -> ElevenLabsClient:
-        key, _is_platform = access.resolve_api_key(_NAME)
-        return ElevenLabsClient(api_key=key)
+    def _client(tool: str, op: str, units: int = 1
+                ) -> tuple[ElevenLabsClient, Callable[[int], None]]:
+        """`(client, served)`. The cascade runs whole (own key > platform grant), the
+        grant's quota checked for `units`; on the platform key, a generation this
+        instance does not serve (`platform_ops`), or the balance read, is refused
+        BEFORE a credit is spent, naming what the shared key serves.
+
+        `served(credits)` notes what the call spent, once ElevenLabs has answered: a
+        call that raises notes nothing. `quantity` on every generation (the journal's
+        billed quantity, any key), `units` on the platform key (the quota axis; 0 for
+        a read)."""
+        key, is_platform = access.resolve_api_key(_NAME, units=units)
+        if is_platform:
+            if tool == _NAME:
+                refused = op == "get_subscription"
+            else:
+                ops = platform_ops()
+                refused = tool not in OPS or not _served(tool, op, ops)
+            if refused:
+                from ..auth.hooks import current_user_sub_from_token
+                from .. import links
+                sub = current_user_sub_from_token()
+                what = ("the balance read" if tool == _NAME else ", ".join(sorted(
+                    t if o is None else f"{t} op={o!r}" for t, o in ops)) or "nothing")
+                covers = ("the voices and models, never the balance" if tool == _NAME
+                          else what)
+                raise _bad(
+                    f"{tool} op={op!r} needs your own ElevenLabs key: the shared key "
+                    f"here covers {covers}. Set your own key"
+                    f"{links.ou_poser_la_cle(sub, org=access.current_org(sub), connecteur=_NAME)}.")
+        client = ElevenLabsClient(api_key=key)
+        generation = tool == "elevenlabs_act"
+
+        def served(credits: int) -> None:
+            if is_platform:
+                session_org.note_call_trace(
+                    units=credits, **({"quantity": credits} if generation else {}))
+            elif generation:
+                session_org.note_call_trace(quantity=credits)
+        return client, served
 
     def _run(fn):
         restricted = None
@@ -283,6 +423,9 @@ def register(mcp: FastMCP) -> None:
         and the answer's `projection` names what was removed: `full=true` returns
         the raw records.
 
+        On the SHARED key (granted by oto, no key of your own) the reads are free, and
+        `get_subscription` is refused: that balance is the instance's, not yours.
+
         A restricted key may lack the permission a read needs (`user_read`,
         `voices_read`, `models_read`) even when it can generate.
 
@@ -305,16 +448,20 @@ def register(mcp: FastMCP) -> None:
             _refuse_ignored(op, voice_id=voice_id)
         if op not in ("list_voices", "list_models"):
             _refuse_ignored(op, full=full)
+        vid = _need(voice_id, "voice_id", op) if op == "get_voice" else None
+        client, served = _client(_NAME, op)
         if op == "get_subscription":
-            return _run(lambda: _client().get_subscription())
-        if op == "list_models":
-            return _view(_run(lambda: _client().list_models()), full, _DROP_MODELS)
-        if op == "get_voice":
-            vid = _need(voice_id, "voice_id", op)
-            return _run(lambda: _client().get_voice(vid))
-        return _view(_run(lambda: _client().list_voices(
-            search=search, voice_type=voice_type, category=category,
-            page_size=page_size, next_page_token=next_page_token)), full, _DROP_VOICES)
+            out = _run(lambda: client.get_subscription())
+        elif op == "list_models":
+            out = _view(_run(lambda: client.list_models()), full, _DROP_MODELS)
+        elif op == "get_voice":
+            out = _run(lambda: client.get_voice(vid))
+        else:
+            out = _view(_run(lambda: client.list_voices(
+                search=search, voice_type=voice_type, category=category,
+                page_size=page_size, next_page_token=next_page_token)), full, _DROP_VOICES)
+        served(0)
+        return out
 
     @mcp.tool(name="elevenlabs_act", annotations=ACTE)
     def elevenlabs_act(
@@ -343,6 +490,10 @@ def register(mcp: FastMCP) -> None:
         """Generate audio with ElevenLabs. EVERY call spends the account's credits
         (characters for speech, seconds for music and sound) and is not retried:
         read `elevenlabs` op='get_subscription' before a batch.
+
+        On the SHARED key (granted by oto, no key of your own), only the generations
+        this instance serves run — by default `create_speech`; the others ask for your
+        own ElevenLabs key.
 
         The audio comes back as a signed URL (`url`, valid `expires_in` seconds,
         deleted after a day), never inline: download it right away.
@@ -410,11 +561,14 @@ def register(mcp: FastMCP) -> None:
         if op == "create_speech":
             _refuse_ignored(op, **music, **sound, **design)
             vid, line = _need(voice_id, "voice_id", op), _need(text, "text", op)
-            audio = _run(lambda: _client().create_speech(
+            client, served = _client("elevenlabs_act", op,
+                                     units=max(1, speech_credits(line, model_id)))
+            audio = _run(lambda: client.create_speech(
                 vid, line, model_id=model_id, voice_settings=voice_settings,
                 previous_text=previous_text, next_text=next_text, seed=seed,
                 language_code=language_code, output_format=output_format,
                 timestamps=timestamps))
+            served(speech_credits(line, model_id, audio.get("character_count")))
             out = _deposit(audio, "speech", sub)
             if timestamps:
                 out["words"] = words_of(audio.get("alignment"))
@@ -423,28 +577,34 @@ def register(mcp: FastMCP) -> None:
 
         if op == "create_music":
             _refuse_ignored(op, text=text, **speech, **sound, **design)
-            audio = _run(lambda: _client().create_music(
+            client, served = _client("elevenlabs_act", op)
+            audio = _run(lambda: client.create_music(
                 prompt=prompt, composition_plan=composition_plan,
                 music_length_ms=music_length_ms, model_id=model_id, seed=seed,
                 force_instrumental=force_instrumental,
                 respect_sections_durations=respect_sections_durations,
                 output_format=output_format))
+            served(generation_credits(op, audio, prompt))
             return _deposit(audio, "music", sub)
 
         if op == "create_sound":
             _refuse_ignored(op, seed=seed, **speech, **music, **design)
             what = _need(text, "text", op)
-            audio = _run(lambda: _client().create_sound(
+            client, served = _client("elevenlabs_act", op)
+            audio = _run(lambda: client.create_sound(
                 what, duration_seconds=duration_seconds, prompt_influence=prompt_influence,
                 loop=loop, model_id=model_id, output_format=output_format))
+            served(generation_credits(op, audio, what))
             return _deposit(audio, "sound", sub)
 
         # op == "create_voice_design" — the only one left (guard above).
         _refuse_ignored(op, **speech, **music, **sound)
         described = _need(voice_description, "voice_description", op)
-        result = _run(lambda: _client().create_voice_design(
+        client, served = _client("elevenlabs_act", op)
+        result = _run(lambda: client.create_voice_design(
             described, text=text, auto_generate_text=auto_generate_text,
             model_id=model_id, seed=seed, output_format=output_format))
+        served(generation_credits(op, result, text or described))
         previews = []
         for i, preview in enumerate(result.get("previews") or [], start=1):
             served = _deposit(preview, f"voice-preview-{i}", sub)

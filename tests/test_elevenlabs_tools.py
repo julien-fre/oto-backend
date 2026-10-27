@@ -78,11 +78,13 @@ def test_surface_is_the_pair(client):
     assert tools["elevenlabs_act"].annotations.readOnlyHint is False
 
 
-def test_registry_declares_one_key_byok():
+def test_registry_declares_one_key_byo_or_a_granted_platform_key():
     from oto_mcp import providers
     c = providers.REGISTRY["elevenlabs"]
     assert c.kind == "tools" and c.secret_kind == "api_key" and c.keyed
-    assert c.auth_modes == frozenset({"byo_user", "byo_org"})
+    assert c.auth_modes == frozenset({"byo_user", "byo_org", "platform"})
+    assert c.platform_key_open is False, "the shared key needs a grant"
+    assert c.default_quota == 0
 
 
 def test_the_key_is_passed_as_is(client):
@@ -298,3 +300,156 @@ def test_model_list_is_a_list_and_stays_one_under_projection(client):
 def test_full_belongs_to_the_lists(client):
     with pytest.raises(McpError, match="does not use `full`"):
         _tool("elevenlabs")(op="get_subscription", full=True)
+
+
+# --- the platform key: speech by default, metered in ElevenLabs credits --------------
+
+@pytest.fixture
+def platform(monkeypatch, client):
+    """The shared key wins the cascade; `quota` = the `units` the resolver was asked to
+    cover."""
+    quota: list = []
+
+    def resolve(provider, account=None, units=1):
+        quota.append(units)
+        return ("platform-key", True)
+    monkeypatch.setattr("oto_mcp.access.resolve_api_key", resolve)
+    monkeypatch.setattr("oto_mcp.auth.hooks.current_user_sub_from_token", lambda: "user-sub")
+    monkeypatch.setattr("oto_mcp.access.current_org", lambda sub: 1)
+    monkeypatch.setattr("oto_mcp.links.ou_poser_la_cle", lambda *a, **k: "")
+    return quota
+
+
+@pytest.fixture
+def trace(monkeypatch):
+    seen: list = []
+    monkeypatch.setattr("oto_mcp.session_org.note_call_trace", lambda **kw: seen.append(kw))
+    return seen
+
+
+@pytest.fixture
+def setting(monkeypatch):
+    """The `platform.ops` row of `connector_settings`: None = unset."""
+    row = {"value": None}
+
+    def _get(scope_type, scope_id, connector, key, *a, **kw):
+        assert (scope_type, scope_id, connector, key) == (
+            "platform", "platform", "elevenlabs", "platform.ops")
+        return row["value"]
+    monkeypatch.setattr("oto_mcp.db.connector_settings.get_connector_setting", _get)
+    return row
+
+
+@pytest.mark.parametrize("model_id, chars, credits", [
+    ("eleven_flash_v2_5", 11, 6),          # half rate, rounded UP to a whole credit
+    ("eleven_turbo_v2", 10, 5),
+    ("eleven_flash_v2", 1, 1),
+    ("eleven_turbo_v2_5", 0, 0),
+    ("eleven_multilingual_v2", 11, 11),
+    ("eleven_v3", 11, 11),
+    (None, 11, 11),                        # the API's default model: full rate
+    ("some_future_model", 7, 7),
+])
+def test_speech_credits(model_id, chars, credits):
+    from oto_mcp.tools import elevenlabs as E
+    assert E.speech_credits("x" * 99, model_id, chars) == credits
+    assert isinstance(E.speech_credits("x", model_id, chars), int)
+
+
+def test_speech_credits_fall_back_on_the_texts_length():
+    from oto_mcp.tools import elevenlabs as E
+    assert E.speech_credits("Hello there", "eleven_flash_v2_5") == 6
+    assert E.speech_credits("Hello there", None, None) == 11
+
+
+def test_platform_speech_runs_and_notes_credits_both_axes(client, platform, trace, setting):
+    client.create_speech.return_value = _audio(character_count=11)
+    out = _tool("elevenlabs_act")(op="create_speech", voice_id="v1", text="Hello there",
+                                  model_id="eleven_flash_v2_5")
+    assert out["url"].startswith("https://media.test/")
+    assert client.built == [{"api_key": "platform-key"}]
+    assert platform == [6], "the grant's quota is checked for the call's credits"
+    assert trace == [{"units": 6, "quantity": 6}]
+
+
+def test_platform_speech_without_the_header_counts_the_text(client, platform, trace, setting):
+    client.create_speech.return_value = _audio()
+    _tool("elevenlabs_act")(op="create_speech", voice_id="v1", text="Hello there")
+    assert trace == [{"units": 11, "quantity": 11}]
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"op": "create_music", "prompt": "calm piano"},
+    {"op": "create_sound", "text": "a soft click"},
+    {"op": "create_voice_design", "voice_description": "calm", "text": "Hi."},
+])
+def test_unset_the_platform_key_refuses_every_other_generation(
+        client, platform, trace, setting, kwargs):
+    with pytest.raises(McpError, match="needs your own ElevenLabs key"):
+        _tool("elevenlabs_act")(**kwargs)
+    assert not client.method_calls, "a refused op must not reach ElevenLabs (no credit spent)"
+    assert trace == []
+
+
+def test_the_setting_opens_another_generation(client, platform, trace, setting):
+    setting["value"] = "elevenlabs_act:create_sound"
+    client.create_sound.return_value = _audio(character_count=40)
+    _tool("elevenlabs_act")(op="create_sound", text="a soft click")
+    assert trace == [{"units": 40, "quantity": 40}]
+    with pytest.raises(McpError, match="needs your own ElevenLabs key"):
+        _tool("elevenlabs_act")(op="create_speech", voice_id="v1", text="Hi")
+    setting["value"] = "elevenlabs_act"
+    client.create_music.return_value = _audio(character_count=500)
+    _tool("elevenlabs_act")(op="create_music", prompt="calm piano")
+    assert trace[-1] == {"units": 500, "quantity": 500}
+
+
+def test_platform_reads_are_free_but_the_balance_is_never_served(
+        client, platform, trace, setting):
+    client.list_voices.return_value = {"voices": []}
+    _tool("elevenlabs")(op="list_voices")
+    assert trace == [{"units": 0}], "a read: no quantity, 0 units"
+    with pytest.raises(McpError, match="needs your own ElevenLabs key"):
+        _tool("elevenlabs")(op="get_subscription")
+    client.get_subscription.assert_not_called()
+
+
+def test_own_key_notes_the_quantity_only_and_ignores_the_setting(client, trace, setting):
+    setting["value"] = "elevenlabs_act:create_sound"
+    client.create_speech.return_value = _audio(character_count=10)
+    _tool("elevenlabs_act")(op="create_speech", voice_id="v1", text="0123456789")
+    assert trace == [{"quantity": 10}]
+    client.list_voices.return_value = {"voices": []}
+    _tool("elevenlabs")(op="list_voices")
+    assert trace == [{"quantity": 10}], "a read on the own key notes nothing"
+
+
+def test_a_failed_generation_notes_nothing(client, platform, trace, setting):
+    client.create_speech.side_effect = _upstream(500)
+    with pytest.raises(McpError):
+        _tool("elevenlabs_act")(op="create_speech", voice_id="v1", text="Hi")
+    assert trace == []
+
+
+@pytest.mark.parametrize("value, error", [
+    ("elevenlabs", "not an ElevenLabs tool"),
+    ("elevenlabs_act:nope", "has no op"),
+    ("forager_person", "not an ElevenLabs tool"),
+])
+def test_the_setting_refuses_what_the_tool_would_not_understand(value, error):
+    from oto_mcp.tools import elevenlabs as E
+    with pytest.raises(ValueError, match=error):
+        E.parse_platform_ops(value)
+
+
+def test_the_default_is_speech_only():
+    from oto_mcp.tools import elevenlabs as E
+    assert E.parse_platform_ops(E.PLATFORM_OPS_DEFAULT) == {("elevenlabs_act", "create_speech")}
+
+
+def test_an_unreadable_setting_RAISES_rather_than_serving_the_default(monkeypatch):
+    from oto_mcp.tools import elevenlabs as E
+    monkeypatch.setattr("oto_mcp.db.connector_settings.get_connector_setting",
+                        lambda *a, **kw: "elevenlabs_act:gone")
+    with pytest.raises(RuntimeError, match="not understood"):
+        E.platform_ops()
