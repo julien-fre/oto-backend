@@ -92,6 +92,18 @@ class RowComments(BaseModel):
         "Pass as `before_id` to read the older page. `null` = nothing older."))
 
 
+class CommentCountsInput(EntreeDatastore):
+    datastore: Adresse
+
+
+class CommentCounts(BaseModel):
+    datastore: Optional[str] = None
+    ns_id: Optional[int] = Field(default=None, description=identite.DESCRIPTION)
+    counts: dict[str, int] = Field(description=(
+        "`{row_id: n}` live comments per existing row; rows without any are omitted."))
+    total: int
+
+
 class Deleted(BaseModel):
     deleted: bool
 
@@ -146,6 +158,21 @@ def _row_comments(ctx: ResolvedCtx, inp: RowCommentsInput) -> dict:
     }
 
 
+def _comment_counts(ctx: ResolvedCtx, inp: CommentCountsInput) -> dict:
+    ns, _ = _adresse(inp.datastore)
+    store = make_store(ctx.sub)
+    try:
+        ns_id = store.resolve_ns_id(ns)
+    except DatastoreNotFound:
+        raise ns_not_found(ctx.sub, ns)
+    counts = db.datastore_commentaires.comptes(ns_id)
+    return {
+        **identite.de_releve(store.dernier_tableau, ns),
+        "counts": counts,
+        "total": sum(counts.values()),
+    }
+
+
 def _row_comment(ctx: ResolvedCtx, inp: RowCommentInput) -> dict:
     _, _, ns_id, row_id, gouverne, _ = _ligne(ctx, inp, ecrire=True)
     c = db.datastore_commentaires.ajouter(ns_id, row_id, auteur_sub=ctx.sub, body=inp.body)
@@ -188,6 +215,22 @@ CAPABILITIES += [
             "Read the comments people left on ONE datastore row, oldest first within a "
             "page; `before_id` (= the previous `next_before_id`) reads older ones. "
             "Comments are not row values: they never change the row or its history."
+        ),
+    ),
+    # REST seule : le front la lit une fois par chargement de tableau (icônes, colonne
+    # « Commentaires ») ; un agent lit le fil d'une ligne, il n'a pas besoin du compte.
+    Capability(
+        key="me.datastore.comment_counts",
+        handler=_comment_counts,
+        Input=CommentCountsInput,
+        Output=CommentCounts,
+        authz=SUB_ONLY,
+        rest=RestBinding(verb="GET", path="/api/datastores/{datastore}/comments/counts",
+                         provisoire=True),
+        errors=(_TABLEAU_INCONNU, _JETON_MAL_PLACE),
+        description=(
+            "Count the live comments per row of a datastore (rows that still exist; "
+            "rows without comments omitted)."
         ),
     ),
     Capability(

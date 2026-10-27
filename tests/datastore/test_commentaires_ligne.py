@@ -177,6 +177,29 @@ def test_ligne_supprimee_inconnue_et_tableau_hors_perimetre(rest):
     assert (r.status_code, r.json()["error"]) == (404, "datastore_not_found")
 
 
+# ── 3 bis. les comptes par ligne ───────────────────────────────────────────────
+
+def test_les_comptes_par_ligne_ne_gardent_que_le_vivant(rest):
+    from oto_mcp import db
+    ns, ns_id, r1 = _table_et_ligne(rest)
+    r2 = rest.post(f"/api/datastores/{ns}/rows", headers=_h(), json={"n": 2}).json()["_id"]
+    r3 = rest.post(f"/api/datastores/{ns}/rows", headers=_h(), json={"n": 3}).json()["_id"]
+    rest.post(f"/api/datastores/{ns}/rows", headers=_h(), json={"n": 4})
+    _poster(rest, ns, r1, "a")
+    _poster(rest, ns, r1, "b")
+    retire = _poster(rest, ns, r2, "retiré").json()
+    rest.delete(f"{_url(ns, r2)}/{retire['id']}", headers=_h())
+    _poster(rest, ns, r3, "ligne partie")
+    assert rest.delete(f"/api/datastores/{ns}/rows/{r3}", headers=_h()).status_code == 200
+
+    _partager(ns_id, B)
+    out = rest.get(f"/api/datastores/{ns_id}/comments/counts", headers=_h(B)).json()
+    assert (out["counts"], out["total"], out["ns_id"]) == ({r1: 2}, 2, ns_id)
+    r = rest.get(f"/api/datastores/{ns_id}/comments/counts", headers=_h(C))
+    assert (r.status_code, r.json()["error"]) == (404, "datastore_not_found")
+    assert db.datastore_commentaires.comptes(ns_id) == {r1: 2}
+
+
 # ── 4. la face agent ───────────────────────────────────────────────────────────
 
 def test_les_outils_sont_les_memes_capacites():
@@ -186,6 +209,9 @@ def test_les_outils_sont_les_memes_capacites():
         "me.datastore.row_comment": ("data_row_comment", [("POST", "/comments")]),
         "me.datastore.delete_row_comment": (None, [("DELETE", "/comments/{comment_id}")]),
     }
+    cap = registry.by_key("me.datastore.comment_counts")
+    assert (cap.mcp, [(b.verb, b.path) for b in cap.rest_bindings()]) == (
+        None, [("GET", "/api/datastores/{datastore}/comments/counts")])
     for cle, (mcp, chemins) in attendu.items():
         cap = registry.by_key(cle)
         assert cap.mcp == mcp

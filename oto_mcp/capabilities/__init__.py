@@ -210,7 +210,7 @@ import oto_mcp.capabilities.datastore.columns  # noqa: F401 — me.datastore.dro
 # Mise à jour PAR FILTRE — une règle posée côté serveur, sans `_id` dans le contexte.
 import oto_mcp.capabilities.datastore.update_where  # noqa: F401 — me.datastore.update_where (MCP data_update_where + REST)
 import oto_mcp.capabilities.datastore.history  # noqa: F401 — me.datastore.row_history (MCP data_row_history + REST)
-import oto_mcp.capabilities.datastore.comments  # noqa: F401 — me.datastore.{row_comments,row_comment,delete_row_comment}
+import oto_mcp.capabilities.datastore.comments  # noqa: F401 — me.datastore.{row_comments,comment_counts,row_comment,delete_row_comment}
 import oto_mcp.capabilities.connectors.waterfall_plan  # noqa: F401 — me.waterfall_plan (REST only: the cascade a screen shows)
 from . import automation  # noqa: F401 — me.automation.fire (MCP routine_fire + REST)
 from . import run_thread  # noqa: F401 — runs.thread append/read (MCP oto_run_thread + REST) — chantier runner R1

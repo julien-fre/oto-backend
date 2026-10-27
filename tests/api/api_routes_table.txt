@@ -826,6 +826,8 @@ GET,HEAD /api/datastores/{datastore}/rows/{row_id}/history -> _handler
 OPTIONS /api/datastores/{datastore}/rows/{row_id}/history -> options_handler
 GET,HEAD /api/datastores/{datastore}/rows/{row_id}/comments -> _handler
 OPTIONS /api/datastores/{datastore}/rows/{row_id}/comments -> options_handler
+GET,HEAD /api/datastores/{datastore}/comments/counts -> _handler
+OPTIONS /api/datastores/{datastore}/comments/counts -> options_handler
 POST /api/datastores/{datastore}/rows/{row_id}/comments -> _handler
 OPTIONS /api/datastores/{datastore}/rows/{row_id}/comments -> options_handler
 DELETE /api/datastores/{datastore}/rows/{row_id}/comments/{comment_id} -> _handler
@@ -918,6 +920,8 @@ POST /api/datastore/namespaces/{namespace}/rows/batch -> alias_deprecie
 OPTIONS /api/datastore/namespaces/{namespace}/rows/batch -> options_handler
 POST /api/datastore/namespaces/{namespace}/drop_column -> alias_deprecie
 OPTIONS /api/datastore/namespaces/{namespace}/drop_column -> options_handler
+GET,HEAD /api/datastore/namespaces/{namespace}/comments/counts -> alias_deprecie
+OPTIONS /api/datastore/namespaces/{namespace}/comments/counts -> options_handler
 POST /api/datastore/namespaces/{namespace}/rows/update_where -> alias_deprecie
 OPTIONS /api/datastore/namespaces/{namespace}/rows/update_where -> options_handler
 GET,HEAD /api/datastore/namespaces/{namespace}/rows/{row_id} -> alias_deprecie

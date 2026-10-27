@@ -31,6 +31,18 @@ def lister(ns_id: int, row_id: str, *, avant_id: Optional[int] = None,
             (*params, int(limit) + 1)).fetchall()]
 
 
+def comptes(ns_id: int) -> dict[str, int]:
+    """`{row_id: n}` des commentaires vivants d'un tableau, sur ses lignes qui existent
+    encore ; une ligne sans commentaire n'a pas de clé. Une seule agrégation, servie
+    par l'index `(ns_id, row_id, id)`."""
+    with _connect() as conn:
+        return {r["row_id"]: int(r["n"]) for r in conn.execute(
+            "SELECT c.row_id, count(*) AS n FROM datastore_row_comments c "
+            "JOIN datastore_rows r ON r.ns_id = c.ns_id AND r.row_id = c.row_id "
+            "WHERE c.ns_id = %s AND c.deleted_at IS NULL GROUP BY c.row_id",
+            (int(ns_id),)).fetchall()}
+
+
 def ajouter(ns_id: int, row_id: str, *, auteur_sub: Optional[str], body: str) -> dict:
     with _connect() as conn:
         return dict(conn.execute(
