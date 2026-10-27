@@ -148,7 +148,8 @@ COMMENTAIRES = """
 -- agent qui surveille ses écritures. Pas de FK vers la LIGNE, comme le journal : les
 -- commentaires d'une ligne supprimée restent, lisibles par qui gouverne le tableau.
 -- FK vers le TABLEAU, en cascade : un tableau supprimé emporte ses commentaires.
--- `deleted_at` : un commentaire retiré ne se sert plus, il ne se détruit pas. L'index
+-- `deleted_at` : un commentaire retiré ne se sert plus, il ne se détruit pas : toute
+-- lecture le filtre, l'index des lignes est donc PARTIEL (le vivant seul). L'index
 -- sur `auteur_sub` sert la fusion de comptes (`migrate_sub` repointe la colonne).
 CREATE TABLE IF NOT EXISTS datastore_row_comments (
     id BIGSERIAL PRIMARY KEY,
@@ -160,7 +161,7 @@ CREATE TABLE IF NOT EXISTS datastore_row_comments (
     deleted_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_datastore_row_comments_ligne
-    ON datastore_row_comments (ns_id, row_id, id);
+    ON datastore_row_comments (ns_id, row_id, id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_datastore_row_comments_auteur
     ON datastore_row_comments (auteur_sub);
 """

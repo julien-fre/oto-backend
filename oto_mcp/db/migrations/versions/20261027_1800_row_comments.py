@@ -4,7 +4,7 @@
 Une table NEUVE, née entière, et son index — le DDL est le fragment
 `db/schema/datastore.py::COMMENTAIRES`, exécuté tel quel (une seule écriture) :
 `datastore_row_comments (id, ns_id → user_datastores ON DELETE CASCADE, row_id,
-auteur_sub, body, created_at, deleted_at)`, index `(ns_id, row_id, id)` et
+auteur_sub, body, created_at, deleted_at)`, index partiel `(ns_id, row_id, id) WHERE deleted_at IS NULL` et
 `(auteur_sub)` (la fusion de comptes repointe cette colonne).
 
 **Verrous.** `AccessExclusiveLock` sur la table neuve (vide, instantané) ; la clé

@@ -179,31 +179,82 @@ def test_ligne_supprimee_inconnue_et_tableau_hors_perimetre(rest):
 
 # ── 3 bis. les comptes par ligne ───────────────────────────────────────────────
 
-def test_les_comptes_par_ligne_ne_gardent_que_le_vivant(rest):
+def _comptes(rest, ns, ids, sub=A):
+    return rest.get(f"/api/datastores/{ns}/comments/counts", headers=_h(sub),
+                    params={"row_ids": ",".join(ids)})
+
+
+def test_les_comptes_ne_gardent_que_le_vivant_des_lignes_demandees(rest):
     from oto_mcp import db
     ns, ns_id, r1 = _table_et_ligne(rest)
-    r2 = rest.post(f"/api/datastores/{ns}/rows", headers=_h(), json={"n": 2}).json()["_id"]
-    r3 = rest.post(f"/api/datastores/{ns}/rows", headers=_h(), json={"n": 3}).json()["_id"]
-    rest.post(f"/api/datastores/{ns}/rows", headers=_h(), json={"n": 4})
+    r2, r3, r4, r5 = (rest.post(f"/api/datastores/{ns}/rows", headers=_h(),
+                                json={"n": n}).json()["_id"] for n in (2, 3, 4, 5))
     _poster(rest, ns, r1, "a")
-    _poster(rest, ns, r1, "b")
+    _poster(rest, ns, r1, "b" * 300)
     retire = _poster(rest, ns, r2, "retiré").json()
     rest.delete(f"{_url(ns, r2)}/{retire['id']}", headers=_h())
     _poster(rest, ns, r3, "ligne partie")
     assert rest.delete(f"/api/datastores/{ns}/rows/{r3}", headers=_h()).status_code == 200
+    _poster(rest, ns, r5, "pas demandée")
 
     _partager(ns_id, B)
-    out = rest.get(f"/api/datastores/{ns_id}/comments/counts", headers=_h(B)).json()
+    out = _comptes(rest, str(ns_id), [r1, r2, r3, r4, "inconnue", r1], sub=B).json()
     assert (out["counts"], out["total"], out["ns_id"]) == ({r1: 2}, 2, ns_id)
     assert list(out["latest"]) == [r1]
     dernier = out["latest"][r1]
-    assert (dernier["body"], dernier["author"], dernier["author_email"]) == (
-        "b", A, f"{A}@commentaires.invalid")
+    assert (dernier["body"], dernier["body_truncated"]) == ("b" * 280, True)
+    assert (dernier["author"], dernier["author_email"]) == (A, f"{A}@commentaires.invalid")
     assert dernier["id"] and dernier["at"]
-    r = rest.get(f"/api/datastores/{ns_id}/comments/counts", headers=_h(C))
+
+    # La forme répétée vaut la forme à virgules.
+    r = rest.get(f"/api/datastores/{ns}/comments/counts", headers=_h(),
+                 params=[("row_ids", r1), ("row_ids", r5)])
+    court = r.json()
+    assert court["counts"] == {r1: 2, r5: 1}
+    assert (court["latest"][r5]["body"], court["latest"][r5]["body_truncated"]) == (
+        "pas demandée", False)
+
+    r = _comptes(rest, str(ns_id), [r1], sub=C)
     assert (r.status_code, r.json()["error"]) == (404, "datastore_not_found")
-    assert [(l["row_id"], l["n"], l["body"]) for l in
-            db.datastore_commentaires.comptes(ns_id)] == [(r1, 2, "b")]
+    assert [(l["row_id"], l["n"]) for l in
+            db.datastore_commentaires.comptes(ns_id, [r1, r2])] == [(r1, 2)]
+
+
+def test_les_comptes_exigent_des_lignes_et_en_bornent_le_nombre(rest):
+    ns, _, rid = _table_et_ligne(rest)
+    assert rest.get(f"/api/datastores/{ns}/comments/counts",
+                    headers=_h()).status_code == 400
+    assert _comptes(rest, ns, [" ", ""]).status_code == 400
+    assert _comptes(rest, ns, [f"l{i}" for i in range(101)]).status_code == 400
+    assert _comptes(rest, ns, [f"l{i}" for i in range(99)] + [rid]).status_code == 200
+
+
+def test_le_plan_des_comptes_sonde_l_index_partiel_sans_parcours_complet(rest):
+    """Un tableau aux milliers de commentaires, une page de 100 lignes demandée : le
+    plan passe par l'index partiel, jamais par un parcours complet des commentaires ni
+    par un tri. `enable_seqscan` coupé : sur une table de banc, le planificateur
+    préfère parfois un parcours séquentiel PARCE QUE la table est petite — c'est
+    l'index qu'on éprouve ici, pas l'estimation de coût."""
+    from oto_mcp import db
+    from oto_mcp.db._conn import _connect
+    ns, ns_id, _ = _table_et_ligne(rest)
+    ids = [f"r{i}" for i in range(2000)]
+    with _connect() as conn:
+        conn.execute("INSERT INTO datastore_rows (ns_id, row_id, data) "
+                     "SELECT %s, x, '{}'::jsonb FROM unnest(%s::text[]) x", (ns_id, ids))
+        conn.execute("INSERT INTO datastore_row_comments (ns_id, row_id, auteur_sub, body) "
+                     "SELECT %s, ids[1 + (g %% 2000)], %s, 'c' "
+                     "FROM generate_series(1, 20000) g, (SELECT %s::text[] AS ids) t",
+                     (ns_id, A, ids))
+        conn.execute("ANALYZE datastore_row_comments")
+    with _connect() as conn:
+        plan = "\n".join(r["QUERY PLAN"] for r in conn.execute(
+            "EXPLAIN " + db.datastore_commentaires.SQL_COMPTES,
+            db.datastore_commentaires.params_comptes(ns_id, ids[:100])).fetchall())
+    assert "idx_datastore_row_comments_ligne" in plan, plan
+    assert "Seq Scan on datastore_row_comments" not in plan, plan
+    assert "Sort" not in plan, plan
+    assert len(db.datastore_commentaires.comptes(ns_id, ids[:100])) == 100
 
 
 # ── 4. la face agent ───────────────────────────────────────────────────────────

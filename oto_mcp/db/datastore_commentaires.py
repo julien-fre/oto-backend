@@ -31,21 +31,40 @@ def lister(ns_id: int, row_id: str, *, avant_id: Optional[int] = None,
             (*params, int(limit) + 1)).fetchall()]
 
 
-def comptes(ns_id: int) -> list[dict]:
-    """Par ligne commentée d'un tableau (ligne qui existe encore) : `n`, le nombre de
-    ses commentaires vivants, et son plus récent (`id`, `auteur_sub`, `body`,
-    `created_at`). Une ligne sans commentaire n'est pas rendue. Une seule requête,
-    servie par l'index `(ns_id, row_id, id)`."""
+APERCU = 280
+
+
+def comptes(ns_id: int, row_ids: list[str]) -> list[dict]:
+    """Pour chaque `row_id` demandé qui existe encore ET porte des commentaires
+    vivants : `n`, leur nombre, et le plus récent (`id`, `auteur_sub`, `created_at`,
+    `apercu` = les `APERCU` premiers caractères de son corps, `tronque`). Les autres
+    ne sont pas rendus.
+
+    Une sonde PAR LIGNE demandée (`LATERAL`, au plus une page de grille) plutôt
+    qu'une agrégation du tableau : chacune est un parcours de l'index partiel
+    `(ns_id, row_id, id)`, le plus récent lu en remontant l'index (`LIMIT 1`), sans
+    tri. Le coût suit les lignes AFFICHÉES, jamais la taille du tableau."""
     with _connect() as conn:
-        return [dict(r) for r in conn.execute(
-            "SELECT DISTINCT ON (c.row_id) c.row_id, "
-            "       count(*) OVER (PARTITION BY c.row_id) AS n, "
-            "       c.id, c.auteur_sub, c.body, c.created_at "
-            "FROM datastore_row_comments c "
-            "JOIN datastore_rows r ON r.ns_id = c.ns_id AND r.row_id = c.row_id "
-            "WHERE c.ns_id = %s AND c.deleted_at IS NULL "
-            "ORDER BY c.row_id, c.id DESC",
-            (int(ns_id),)).fetchall()]
+        return [dict(r) for r in conn.execute(SQL_COMPTES, params_comptes(ns_id, row_ids))]
+
+
+# La requête des comptes, exposée pour que le banc lise son PLAN (`EXPLAIN`) sur le
+# texte même qu'exécute `comptes`, pas sur une copie.
+SQL_COMPTES = (
+    "SELECT x.row_id, cnt.n, d.id, d.auteur_sub, d.created_at, "
+    "       left(d.body, %(apercu)s) AS apercu, length(d.body) > %(apercu)s AS tronque "
+    "FROM unnest(%(ids)s::text[]) AS x(row_id) "
+    "JOIN datastore_rows r ON r.ns_id = %(ns)s AND r.row_id = x.row_id "
+    "CROSS JOIN LATERAL (SELECT count(*) AS n FROM datastore_row_comments c "
+    "    WHERE c.ns_id = %(ns)s AND c.row_id = x.row_id AND c.deleted_at IS NULL) cnt "
+    "JOIN LATERAL (SELECT c.id, c.auteur_sub, c.created_at, c.body "
+    "    FROM datastore_row_comments c "
+    "    WHERE c.ns_id = %(ns)s AND c.row_id = x.row_id AND c.deleted_at IS NULL "
+    "    ORDER BY c.id DESC LIMIT 1) d ON true")
+
+
+def params_comptes(ns_id: int, row_ids: list[str]) -> dict:
+    return {"apercu": APERCU, "ids": list(dict.fromkeys(row_ids)), "ns": int(ns_id)}
 
 
 def ajouter(ns_id: int, row_id: str, *, auteur_sub: Optional[str], body: str) -> dict:

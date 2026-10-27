@@ -8,6 +8,6 @@ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 deleted_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_datastore_row_comments_ligne
-ON datastore_row_comments (ns_id, row_id, id);
+ON datastore_row_comments (ns_id, row_id, id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_datastore_row_comments_auteur
 ON datastore_row_comments (auteur_sub);

@@ -3919,7 +3919,9 @@ du front y montre un fil. `GET|POST /api/datastores/{datastore}/rows/{row_id}/co
   révisions, ni réveil d'un agent qui surveille les écritures. Une colonne `comments`
   aurait fait de chaque mot une révision, et refusé le geste à qui ne peut qu'y lire.
 - **Lire et écrire = l'accès de LECTURE** de la ligne : un client à qui l'on partage un
-  tableau en lecture en commente les lignes. C'est l'usage visé.
+  tableau en lecture en commente les lignes. C'est l'usage visé. ⚠️ **Aucune limite de
+  débit** : tout lecteur poste autant qu'il veut (5 000 caractères par commentaire).
+  Question produit ouverte — faut-il un plafond, ou réserver l'écriture aux éditeurs ?
 - **Retirer** : l'auteur, ou qui gouverne le tableau (`ownership.can_govern`) ; sinon
   `403 comment_not_yours`. Retrait doux (`deleted_at`), plus jamais servi.
 - **Ligne supprimée** : la règle de l'historique — ses commentaires restent, lisibles par
@@ -3928,8 +3930,12 @@ du front y montre un fil. `GET|POST /api/datastores/{datastore}/rows/{row_id}/co
   fil) ; `before_id` = le `next_before_id` précédent lit la page plus ancienne.
 - `author` est le sub, `author_email` se résout à la lecture (comme le parcours d'une
   ligne) ; `mine` et `can_delete` sont calculés pour l'appelant.
-- `GET /api/datastores/{datastore}/comments/counts` (REST seule) : `{row_id: n}` des
-  commentaires vivants sur les lignes qui existent encore, lignes à zéro omises,
-  `total`, et `latest` : `{row_id: {id, body, author, author_email, at}}`, le plus
-  récent de chaque ligne comptée (corps entier) — une seule agrégation, lue par le front une fois par chargement de tableau.
+- `GET /api/datastores/{datastore}/comments/counts?row_ids=a,b,c` (REST seule, `row_ids`
+  OBLIGATOIRE, 100 au plus — virgules et/ou paramètre répété, la forme de `fields`) :
+  `{row_id: n}` des commentaires vivants de ces lignes, qui existent encore, lignes à
+  zéro omises, `total`, et `latest` : `{row_id: {id, body, body_truncated, author,
+  author_email, at}}`, le plus récent de chaque ligne comptée, corps ramené à 280
+  caractères (le texte entier se lit dans le fil). Bornée aux lignes AFFICHÉES : une
+  sonde d'index par ligne (`LATERAL … ORDER BY id DESC LIMIT 1`), jamais une
+  agrégation du tableau entier — une seule agrégation, lue par le front une fois par chargement de tableau.
 - Surface REST **provisoire** (`x-oto-provisoire`) tant que le front n'a pas tranché.

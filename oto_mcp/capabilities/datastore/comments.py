@@ -92,13 +92,35 @@ class RowComments(BaseModel):
         "Pass as `before_id` to read the older page. `null` = nothing older."))
 
 
+MAX_IDS = 100
+
+
 class CommentCountsInput(EntreeDatastore):
     datastore: Adresse
+    # Même forme que `fields`/`versions` des lignes (#367) : une URL ne transporte que
+    # des chaînes — `?row_ids=a,b` et/ou `?row_ids=a&row_ids=b`, les deux se combinent.
+    row_ids: list[str] | str = Field(description=(
+        f"The rows to count, at most {MAX_IDS}: comma-separated, or the parameter "
+        "repeated."))
+
+    @field_validator("row_ids", mode="after")
+    @classmethod
+    def _ids_en_liste(cls, v):
+        brut = v if isinstance(v, list) else str(v).split(",")
+        ids = list(dict.fromkeys(m for m in (str(x).strip() for x in brut) if m))
+        if not ids:
+            raise ValueError("`row_ids` is empty: name the rows to count")
+        if len(ids) > MAX_IDS:
+            raise ValueError(f"`row_ids` names {len(ids)} rows, at most {MAX_IDS}")
+        return ids
 
 
 class LatestComment(BaseModel):
     id: int
-    body: str
+    body: str = Field(description=(
+        f"The first {db.datastore_commentaires.APERCU} characters; the whole text is "
+        "served by the row's comment list."))
+    body_truncated: bool
     author: Optional[str] = None
     author_email: Optional[str] = None
     at: Optional[str] = Field(default=None, description=HORODATAGE)
@@ -108,7 +130,8 @@ class CommentCounts(BaseModel):
     datastore: Optional[str] = None
     ns_id: Optional[int] = Field(default=None, description=identite.DESCRIPTION)
     counts: dict[str, int] = Field(description=(
-        "`{row_id: n}` live comments per existing row; rows without any are omitted."))
+        "`{row_id: n}` live comments per requested row that still exists; rows "
+        "without any are omitted."))
     total: int
     latest: dict[str, LatestComment] = Field(description=(
         "`{row_id: comment}` each counted row's newest live comment."))
@@ -175,14 +198,15 @@ def _comment_counts(ctx: ResolvedCtx, inp: CommentCountsInput) -> dict:
         ns_id = store.resolve_ns_id(ns)
     except DatastoreNotFound:
         raise ns_not_found(ctx.sub, ns)
-    lignes = db.datastore_commentaires.comptes(ns_id)
+    lignes = db.datastore_commentaires.comptes(ns_id, inp.row_ids)
     emails = db.emails_by_subs([l["auteur_sub"] for l in lignes])
     return {
         **identite.de_releve(store.dernier_tableau, ns),
         "counts": {l["row_id"]: int(l["n"]) for l in lignes},
         "total": sum(int(l["n"]) for l in lignes),
         "latest": {l["row_id"]: {
-            "id": l["id"], "body": l["body"], "author": l["auteur_sub"],
+            "id": l["id"], "body": l["apercu"], "body_truncated": l["tronque"],
+            "author": l["auteur_sub"],
             "author_email": emails.get(l["auteur_sub"]), "at": l["created_at"],
         } for l in lignes},
     }
@@ -244,8 +268,9 @@ CAPABILITIES += [
                          provisoire=True),
         errors=(_TABLEAU_INCONNU, _JETON_MAL_PLACE),
         description=(
-            "Count the live comments per row of a datastore, with each row's newest "
-            "(rows that still exist; rows without comments omitted)."
+            "Count the live comments of the named rows of a datastore (`row_ids`, at "
+            f"most {MAX_IDS}), with each row's newest as a preview; rows that no longer "
+            "exist or have no comment are omitted."
         ),
     ),
     Capability(
