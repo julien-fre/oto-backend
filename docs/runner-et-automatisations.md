@@ -2607,8 +2607,13 @@ passe AVANT l'alerte.
   (`file_du_declencheur`), jamais au-delà de `AGE_MAX` (24 h). La trace s'écrit sur
   l'épisode AVANT l'enfilage, sous garde SQL (deux processus : un seul relance), et un
   refus de la trace n'enfile rien. Une relance que personne ne prend périme à
-  l'occurrence suivante (#814) : relancer ne fabrique pas d'arriéré. Au plafond, l'épisode
-  passe `escalade` — chez nous.
+  l'occurrence suivante (#814) : relancer ne fabrique pas d'arriéré. Au plafond (refus
+  passager seulement), l'épisode passe `escalade` — chez nous. ⚠️ Une famille qui reste
+  non servie n'atteint JAMAIS ce plafond (rien n'est relancé) : son épisode reste
+  `ouvert`, le courriel du titulaire est tu, et c'est l'agent médecin qui l'escalade
+  passé une heure. ⚠️ La relance automatique ne lit pas `result.tool_counts` : un refus
+  passager après une écriture est relancé comme la file le relance déjà
+  (`complete_job`) ; l'agent médecin, lui, refuse de relancer un run qui a écrit.
 - **Ce qu'il ne fait jamais** : toucher une clé, une identité, une procédure, un horaire
   ou une donnée ; relancer une panne `inconnu` (un run qui a agi avant de mourir
   referait ses effets). Un épisode du titulaire passe `escalade` sans geste : c'est
