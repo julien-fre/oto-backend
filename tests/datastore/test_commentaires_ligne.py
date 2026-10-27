@@ -195,9 +195,15 @@ def test_les_comptes_par_ligne_ne_gardent_que_le_vivant(rest):
     _partager(ns_id, B)
     out = rest.get(f"/api/datastores/{ns_id}/comments/counts", headers=_h(B)).json()
     assert (out["counts"], out["total"], out["ns_id"]) == ({r1: 2}, 2, ns_id)
+    assert list(out["latest"]) == [r1]
+    dernier = out["latest"][r1]
+    assert (dernier["body"], dernier["author"], dernier["author_email"]) == (
+        "b", A, f"{A}@commentaires.invalid")
+    assert dernier["id"] and dernier["at"]
     r = rest.get(f"/api/datastores/{ns_id}/comments/counts", headers=_h(C))
     assert (r.status_code, r.json()["error"]) == (404, "datastore_not_found")
-    assert db.datastore_commentaires.comptes(ns_id) == {r1: 2}
+    assert [(l["row_id"], l["n"], l["body"]) for l in
+            db.datastore_commentaires.comptes(ns_id)] == [(r1, 2, "b")]
 
 
 # ── 4. la face agent ───────────────────────────────────────────────────────────

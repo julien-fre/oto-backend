@@ -3929,6 +3929,7 @@ du front y montre un fil. `GET|POST /api/datastores/{datastore}/rows/{row_id}/co
 - `author` est le sub, `author_email` se résout à la lecture (comme le parcours d'une
   ligne) ; `mine` et `can_delete` sont calculés pour l'appelant.
 - `GET /api/datastores/{datastore}/comments/counts` (REST seule) : `{row_id: n}` des
-  commentaires vivants sur les lignes qui existent encore, lignes à zéro omises, et
-  `total` — une seule agrégation, lue par le front une fois par chargement de tableau.
+  commentaires vivants sur les lignes qui existent encore, lignes à zéro omises,
+  `total`, et `latest` : `{row_id: {id, body, author, author_email, at}}`, le plus
+  récent de chaque ligne comptée (corps entier) — une seule agrégation, lue par le front une fois par chargement de tableau.
 - Surface REST **provisoire** (`x-oto-provisoire`) tant que le front n'a pas tranché.

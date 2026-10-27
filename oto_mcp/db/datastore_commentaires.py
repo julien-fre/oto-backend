@@ -31,16 +31,21 @@ def lister(ns_id: int, row_id: str, *, avant_id: Optional[int] = None,
             (*params, int(limit) + 1)).fetchall()]
 
 
-def comptes(ns_id: int) -> dict[str, int]:
-    """`{row_id: n}` des commentaires vivants d'un tableau, sur ses lignes qui existent
-    encore ; une ligne sans commentaire n'a pas de clé. Une seule agrégation, servie
-    par l'index `(ns_id, row_id, id)`."""
+def comptes(ns_id: int) -> list[dict]:
+    """Par ligne commentée d'un tableau (ligne qui existe encore) : `n`, le nombre de
+    ses commentaires vivants, et son plus récent (`id`, `auteur_sub`, `body`,
+    `created_at`). Une ligne sans commentaire n'est pas rendue. Une seule requête,
+    servie par l'index `(ns_id, row_id, id)`."""
     with _connect() as conn:
-        return {r["row_id"]: int(r["n"]) for r in conn.execute(
-            "SELECT c.row_id, count(*) AS n FROM datastore_row_comments c "
+        return [dict(r) for r in conn.execute(
+            "SELECT DISTINCT ON (c.row_id) c.row_id, "
+            "       count(*) OVER (PARTITION BY c.row_id) AS n, "
+            "       c.id, c.auteur_sub, c.body, c.created_at "
+            "FROM datastore_row_comments c "
             "JOIN datastore_rows r ON r.ns_id = c.ns_id AND r.row_id = c.row_id "
-            "WHERE c.ns_id = %s AND c.deleted_at IS NULL GROUP BY c.row_id",
-            (int(ns_id),)).fetchall()}
+            "WHERE c.ns_id = %s AND c.deleted_at IS NULL "
+            "ORDER BY c.row_id, c.id DESC",
+            (int(ns_id),)).fetchall()]
 
 
 def ajouter(ns_id: int, row_id: str, *, auteur_sub: Optional[str], body: str) -> dict:

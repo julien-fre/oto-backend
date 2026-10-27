@@ -96,12 +96,22 @@ class CommentCountsInput(EntreeDatastore):
     datastore: Adresse
 
 
+class LatestComment(BaseModel):
+    id: int
+    body: str
+    author: Optional[str] = None
+    author_email: Optional[str] = None
+    at: Optional[str] = Field(default=None, description=HORODATAGE)
+
+
 class CommentCounts(BaseModel):
     datastore: Optional[str] = None
     ns_id: Optional[int] = Field(default=None, description=identite.DESCRIPTION)
     counts: dict[str, int] = Field(description=(
         "`{row_id: n}` live comments per existing row; rows without any are omitted."))
     total: int
+    latest: dict[str, LatestComment] = Field(description=(
+        "`{row_id: comment}` each counted row's newest live comment."))
 
 
 class Deleted(BaseModel):
@@ -165,11 +175,16 @@ def _comment_counts(ctx: ResolvedCtx, inp: CommentCountsInput) -> dict:
         ns_id = store.resolve_ns_id(ns)
     except DatastoreNotFound:
         raise ns_not_found(ctx.sub, ns)
-    counts = db.datastore_commentaires.comptes(ns_id)
+    lignes = db.datastore_commentaires.comptes(ns_id)
+    emails = db.emails_by_subs([l["auteur_sub"] for l in lignes])
     return {
         **identite.de_releve(store.dernier_tableau, ns),
-        "counts": counts,
-        "total": sum(counts.values()),
+        "counts": {l["row_id"]: int(l["n"]) for l in lignes},
+        "total": sum(int(l["n"]) for l in lignes),
+        "latest": {l["row_id"]: {
+            "id": l["id"], "body": l["body"], "author": l["auteur_sub"],
+            "author_email": emails.get(l["auteur_sub"]), "at": l["created_at"],
+        } for l in lignes},
     }
 
 
@@ -229,8 +244,8 @@ CAPABILITIES += [
                          provisoire=True),
         errors=(_TABLEAU_INCONNU, _JETON_MAL_PLACE),
         description=(
-            "Count the live comments per row of a datastore (rows that still exist; "
-            "rows without comments omitted)."
+            "Count the live comments per row of a datastore, with each row's newest "
+            "(rows that still exist; rows without comments omitted)."
         ),
     ),
     Capability(
