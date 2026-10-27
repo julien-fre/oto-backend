@@ -1,0 +1,193 @@
+"""Les commentaires d'une ligne, par les VRAIES routes sur une VRAIE base.
+
+1. écrire puis lire : le fil, du plus ancien au plus récent, `mine`/`can_delete` pour
+   l'appelant ; la pagination par `before_id` ;
+2. commenter n'écrit pas la ligne : sa `rev` et son journal ne bougent pas ;
+3. l'accès : un LECTEUR lit et écrit ; retirer = l'auteur ou qui gouverne ; une ligne
+   supprimée ne se lit que par qui gouverne et ne se commente plus ;
+4. la face agent : les deux outils sont les mêmes capacités.
+"""
+from __future__ import annotations
+
+import uuid
+
+import pytest
+
+A = "sub-commentaires-a"
+B = "sub-commentaires-b"
+C = "sub-commentaires-c"
+
+
+class _Claims:
+    def __init__(self, sub: str):
+        self.claims = {"sub": sub, "email": f"{sub}@commentaires.invalid", "name": sub}
+
+
+class _Verifier:
+    async def verify_token(self, token: str):
+        return _Claims(token)
+
+
+@pytest.fixture(scope="module")
+def rest(live):
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+
+    from oto_mcp import db
+    from oto_mcp.api import routes as api_routes
+    for sub in (A, B, C):
+        db.upsert_user(sub, email=f"{sub}@commentaires.invalid", name=sub)
+    app = Starlette(routes=api_routes.make_routes(_Verifier(), mcp_instance=None))
+    return TestClient(api_routes.RestCallLogger(app))
+
+
+def _h(sub: str = A) -> dict:
+    return {"Authorization": f"Bearer {sub}"}
+
+
+def _table_et_ligne(rest) -> tuple[str, int, str]:
+    from oto_mcp import db
+    ns = f"commentaires-{uuid.uuid4().hex[:6]}"
+    ns_id = db.create_datastore("user", A, ns)
+    db.set_datastore_schema(ns_id, {"fields": [{"key": "n"}]})
+    r = rest.post(f"/api/datastores/{ns}/rows", headers=_h(), json={"n": 1})
+    assert r.status_code == 201, r.text
+    return ns, ns_id, r.json()["_id"]
+
+
+def _partager(ns_id: int, sub: str) -> None:
+    from oto_mcp import ownership
+    ownership.grant(ownership.TYPE_RESSOURCE_DATASTORE, str(ns_id), "user", sub, "read",
+                    granted_by=A)
+
+
+def _url(ns, rid) -> str:
+    return f"/api/datastores/{ns}/rows/{rid}/comments"
+
+
+def _poster(rest, ns, rid, body, sub=A):
+    return rest.post(_url(ns, rid), headers=_h(sub), json={"body": body})
+
+
+# ── 1. le fil ──────────────────────────────────────────────────────────────────
+
+def test_ecrire_puis_lire_le_fil(rest):
+    ns, ns_id, rid = _table_et_ligne(rest)
+    r = _poster(rest, ns, rid, "  premier  ")
+    assert r.status_code == 201, r.text
+    c = r.json()
+    assert (c["body"], c["author"], c["mine"], c["can_delete"]) == ("premier", A, True, True)
+    assert c["author_email"] == f"{A}@commentaires.invalid"
+    assert c["at"]
+    _poster(rest, ns, rid, "second")
+
+    out = rest.get(_url(ns, rid), headers=_h()).json()
+    assert [x["body"] for x in out["comments"]] == ["premier", "second"]
+    assert (out["row_id"], out["ns_id"], out["next_before_id"]) == (rid, ns_id, None)
+
+
+def test_corps_vide_ou_trop_long_refuse(rest):
+    ns, _, rid = _table_et_ligne(rest)
+    assert _poster(rest, ns, rid, "   ").status_code == 400
+    assert _poster(rest, ns, rid, "x" * 5001).status_code == 400
+    assert _poster(rest, ns, rid, "x" * 5000).status_code == 201
+
+
+def test_la_pagination_couvre_tout_sans_doublon(rest):
+    ns, _, rid = _table_et_ligne(rest)
+    for i in range(5):
+        _poster(rest, ns, rid, f"c{i}")
+    page = rest.get(_url(ns, rid), headers=_h(), params={"limit": 2}).json()
+    assert [x["body"] for x in page["comments"]] == ["c3", "c4"]
+    vus = [x["body"] for x in page["comments"]]
+    while page["next_before_id"]:
+        page = rest.get(_url(ns, rid), headers=_h(),
+                        params={"limit": 2, "before_id": page["next_before_id"]}).json()
+        vus = [x["body"] for x in page["comments"]] + vus
+    assert vus == [f"c{i}" for i in range(5)]
+
+
+# ── 2. pas une écriture de la ligne ────────────────────────────────────────────
+
+def test_commenter_ne_change_ni_la_ligne_ni_son_journal(rest):
+    ns, ns_id, rid = _table_et_ligne(rest)
+    avant = rest.get(f"/api/datastores/{ns}/rows/{rid}", headers=_h()).json()["_revision"]
+    histo = rest.get(f"/api/datastores/{ns}/rows/{rid}/history", headers=_h()).json()
+    _poster(rest, ns, rid, "un mot")
+    apres = rest.get(f"/api/datastores/{ns}/rows/{rid}", headers=_h()).json()["_revision"]
+    assert apres == avant
+    assert rest.get(f"/api/datastores/{ns}/rows/{rid}/history",
+                    headers=_h()).json()["revisions"] == histo["revisions"]
+
+
+# ── 3. l'accès ─────────────────────────────────────────────────────────────────
+
+def test_un_lecteur_lit_et_ecrit_et_ne_retire_que_le_sien(rest):
+    ns, ns_id, rid = _table_et_ligne(rest)
+    _partager(ns_id, B)
+    _partager(ns_id, C)
+    du_proprio = _poster(rest, ns, rid, "du propriétaire").json()
+    r = _poster(rest, str(ns_id), rid, "du lecteur", sub=B)
+    assert r.status_code == 201, r.text
+    du_lecteur = r.json()
+
+    vu_par_b = rest.get(_url(ns_id, rid), headers=_h(B)).json()["comments"]
+    assert [(x["body"], x["mine"], x["can_delete"]) for x in vu_par_b] == [
+        ("du propriétaire", False, False), ("du lecteur", True, True)]
+
+    r = rest.delete(f"{_url(ns_id, rid)}/{du_proprio['id']}", headers=_h(B))
+    assert (r.status_code, r.json()["error"]) == (403, "comment_not_yours")
+    r = rest.delete(f"{_url(ns_id, rid)}/{du_lecteur['id']}", headers=_h(C))
+    assert (r.status_code, r.json()["error"]) == (403, "comment_not_yours")
+    assert rest.delete(f"{_url(ns_id, rid)}/{du_lecteur['id']}",
+                       headers=_h(B)).json() == {"deleted": True}
+    r = rest.delete(f"{_url(ns_id, rid)}/{du_lecteur['id']}", headers=_h(B))
+    assert (r.status_code, r.json()["error"]) == (404, "comment_not_found")
+    assert [x["body"] for x in rest.get(_url(ns, rid), headers=_h()).json()["comments"]] \
+        == ["du propriétaire"]
+
+
+def test_qui_gouverne_retire_le_commentaire_d_un_autre(rest):
+    ns, ns_id, rid = _table_et_ligne(rest)
+    _partager(ns_id, B)
+    c = _poster(rest, str(ns_id), rid, "à retirer", sub=B).json()
+    vu = rest.get(_url(ns, rid), headers=_h()).json()["comments"][0]
+    assert (vu["mine"], vu["can_delete"]) == (False, True)
+    assert rest.delete(f"{_url(ns, rid)}/{c['id']}", headers=_h()).status_code == 200
+    assert rest.get(_url(ns, rid), headers=_h()).json()["comments"] == []
+
+
+def test_ligne_supprimee_inconnue_et_tableau_hors_perimetre(rest):
+    ns, ns_id, rid = _table_et_ligne(rest)
+    _partager(ns_id, B)
+    _poster(rest, ns, rid, "reste")
+    assert rest.delete(f"/api/datastores/{ns}/rows/{rid}", headers=_h()).status_code == 200
+
+    r = rest.get(_url(ns_id, rid), headers=_h(B))
+    assert (r.status_code, r.json()["error"]) == (404, "row_not_found")
+    assert [x["body"] for x in rest.get(_url(ns, rid), headers=_h()).json()["comments"]] \
+        == ["reste"], "qui gouverne lit encore"
+    r = _poster(rest, ns, rid, "trop tard")
+    assert (r.status_code, r.json()["error"]) == (404, "row_not_found")
+
+    r = rest.get(_url(ns, "pas-une-ligne"), headers=_h())
+    assert (r.status_code, r.json()["error"]) == (404, "row_not_found")
+    ns2, _, rid2 = _table_et_ligne(rest)
+    r = rest.get(_url(ns2, rid2), headers=_h(C))
+    assert (r.status_code, r.json()["error"]) == (404, "datastore_not_found")
+
+
+# ── 4. la face agent ───────────────────────────────────────────────────────────
+
+def test_les_outils_sont_les_memes_capacites():
+    from oto_mcp.capabilities import registry
+    attendu = {
+        "me.datastore.row_comments": ("data_row_comments", [("GET", "/comments")]),
+        "me.datastore.row_comment": ("data_row_comment", [("POST", "/comments")]),
+        "me.datastore.delete_row_comment": (None, [("DELETE", "/comments/{comment_id}")]),
+    }
+    for cle, (mcp, chemins) in attendu.items():
+        cap = registry.by_key(cle)
+        assert cap.mcp == mcp
+        assert [(b.verb, b.path.split("{row_id}")[1]) for b in cap.rest_bindings()] \
+            == chemins

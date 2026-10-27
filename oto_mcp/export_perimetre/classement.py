@@ -161,6 +161,7 @@ CLASSEMENT: dict[str, Table] = {
     "user_datastores": possedee(ParEntite()),
     "datastore_rows": indirecte(_TABLEAUX),
     "datastore_row_revisions": indirecte(_TABLEAUX),
+    "datastore_row_comments": indirecte(_TABLEAUX),
     "datastore_row_embeddings": indirecte(
         Via("datastore_rows", ("ns_id", "row_id"), ("ns_id", "row_id"))),
     "nodes": possedee(ParEntite(), "les nœuds `platform`/`tenant` (guides semés au "

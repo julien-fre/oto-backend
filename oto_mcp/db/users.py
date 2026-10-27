@@ -587,6 +587,9 @@ _SUB_COLUMNS = [
     #   UPDATE nu. Laissées, elles désignaient un compte disparu (« inconnu ») ;
     ("docs", "updated_by"), ("docs", "verified_by"), ("doc_revisions", "edited_by"),
     ("apps", "created_by"), ("apps", "updated_by"), ("app_revisions", "edited_by"),
+    # - qui a écrit un commentaire de ligne : une signature d'auteur (`mine`, le droit
+    #   de retirer le sien se lisent par elle), hors PK, indexée, UPDATE nu.
+    ("datastore_row_comments", "auteur_sub"),
     ("platform_instructions", "updated_by"),
     ("org_disabled_tools", "disabled_by"), ("group_disabled_tools", "disabled_by"),
     # - le journal : la CIBLE d'un « voir en tant que » est une personne, et la

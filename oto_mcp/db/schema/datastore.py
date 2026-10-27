@@ -139,3 +139,28 @@ CREATE TABLE IF NOT EXISTS datastore_row_revisions (
     suppression BOOLEAN NOT NULL DEFAULT false
 );
 """
+
+# commentaires de ligne : la conversation des personnes sur une ligne
+COMMENTAIRES = """
+-- COMMENTAIRES d'une ligne : ce que les personnes qui la lisent en disent, à côté de
+-- ses valeurs (`docs/datastore.md` §Commentaires). Ce n'est PAS une colonne de la
+-- ligne : commenter ne fait avancer ni sa `rev` ni son journal, et ne réveille aucun
+-- agent qui surveille ses écritures. Pas de FK vers la LIGNE, comme le journal : les
+-- commentaires d'une ligne supprimée restent, lisibles par qui gouverne le tableau.
+-- FK vers le TABLEAU, en cascade : un tableau supprimé emporte ses commentaires.
+-- `deleted_at` : un commentaire retiré ne se sert plus, il ne se détruit pas. L'index
+-- sur `auteur_sub` sert la fusion de comptes (`migrate_sub` repointe la colonne).
+CREATE TABLE IF NOT EXISTS datastore_row_comments (
+    id BIGSERIAL PRIMARY KEY,
+    ns_id BIGINT NOT NULL REFERENCES user_datastores(id) ON DELETE CASCADE,
+    row_id TEXT NOT NULL,
+    auteur_sub TEXT,
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_datastore_row_comments_ligne
+    ON datastore_row_comments (ns_id, row_id, id);
+CREATE INDEX IF NOT EXISTS idx_datastore_row_comments_auteur
+    ON datastore_row_comments (auteur_sub);
+"""

@@ -291,6 +291,7 @@ _LECTURES_VUE_BORNEE: dict[tuple[str, str], frozenset | None] = {
     ("GET", "/api/datastores/{datastore}/rows/{row_id}"): None,
     ("GET", "/api/datastores/{datastore}/rows/{row_id}/history"): None,
     ("GET", "/api/datastores/{datastore}/rows/{row_id}/activity"): None,
+    ("GET", "/api/datastores/{datastore}/rows/{row_id}/comments"): None,
     ("GET", "/api/datastores/{datastore}/schema"): None,
     ("GET", "/api/datastores/{datastore}/activity"): None,
     ("GET", "/api/datastores/{datastore}/aggregate"): None,

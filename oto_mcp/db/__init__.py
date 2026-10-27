@@ -90,6 +90,9 @@ from . import (
     runner_links,
     # NON aplati : `create`/`get`/`update` sont trop communs — `db.apps.<fn>`.
     apps,
+    # NON aplati : `lister`/`ajouter`/`retirer` sont trop communs —
+    # `db.datastore_commentaires.<fn>`.
+    datastore_commentaires,
 )
 
 # Ré-export plat (publics + privés à un underscore). Les noms dunder restent au

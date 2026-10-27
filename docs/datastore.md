@@ -3907,3 +3907,25 @@ cursor)` — capacité `me.datastore.update_where`, REST
 - **Réponse en comptes**, jamais en lignes : `matched` (après le curseur quand il est
   passé), `updated/unchanged/conflicts/refused`, au plus 20 exemples de refus, de
   conflits et de `valeurs_ecartees` (total dans `valeurs_ecartees_total`), et `ns_id`.
+
+## Commentaires d'une ligne (27/10/2026)
+
+Les personnes qui lisent une ligne en parlent À CÔTÉ de ses valeurs : le panneau de ligne
+du front y montre un fil. `GET|POST /api/datastores/{datastore}/rows/{row_id}/comments`,
+`DELETE …/comments/{comment_id}`, et sur la face agent `data_row_comments` /
+`data_row_comment` (`capabilities/datastore/comments.py`, table `datastore_row_comments`).
+
+- **Pas une colonne.** Commenter n'écrit pas la ligne : ni `rev`, ni journal des
+  révisions, ni réveil d'un agent qui surveille les écritures. Une colonne `comments`
+  aurait fait de chaque mot une révision, et refusé le geste à qui ne peut qu'y lire.
+- **Lire et écrire = l'accès de LECTURE** de la ligne : un client à qui l'on partage un
+  tableau en lecture en commente les lignes. C'est l'usage visé.
+- **Retirer** : l'auteur, ou qui gouverne le tableau (`ownership.can_govern`) ; sinon
+  `403 comment_not_yours`. Retrait doux (`deleted_at`), plus jamais servi.
+- **Ligne supprimée** : la règle de l'historique — ses commentaires restent, lisibles par
+  qui gouverne le tableau seulement ; personne n'y écrit plus (`404 row_not_found`).
+- **Ordre** : une page rend les plus récents, rangés du plus ancien au plus récent (un
+  fil) ; `before_id` = le `next_before_id` précédent lit la page plus ancienne.
+- `author` est le sub, `author_email` se résout à la lecture (comme le parcours d'une
+  ligne) ; `mine` et `can_delete` sont calculés pour l'appelant.
+- Surface REST **provisoire** (`x-oto-provisoire`) tant que le front n'a pas tranché.
