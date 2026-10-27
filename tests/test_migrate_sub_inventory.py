@@ -452,6 +452,8 @@ def test_toute_colonne_jsonb_est_triee_pour_la_fusion():
         ("run_messages", "provider_raw"), ("runner_jobs", "payload"),
         ("runner_jobs", "result"), ("runner_jobs", "attempt_errors"),
         ("access_shadow_l7", "sample"), ("credential_disparitions", "agents"),
+        # Qui a soigné un agent (`medecin`, ou le sub de l'opérateur) : un journal du geste.
+        ("agent_episodes", "reparations"),
         ("portee_elargissements", "destinataires"),
         # Un transfert de solde entre deux comptes fusionnés nomme les deux payeurs.
         ("credit_movements", "meta"),

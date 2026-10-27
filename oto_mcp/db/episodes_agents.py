@@ -1,0 +1,212 @@
+"""Les ÉPISODES de panne d'un agent hébergé — relevé, ouverture, guérison, réparations.
+
+Un épisode = les travaux morts (`failed`) d'un agent ALLUMÉ depuis son dernier travail
+réussi (`done`), donc consécutifs — la même définition que l'alerte au titulaire
+(`db/alertes_agents.py`), mais dès le PREMIER travail mort : soigner commence avant
+d'annoncer. La ligne `agent_episodes` est la source unique de la panne : la boucle
+`medecin_agents` l'ouvre et la range, l'agent médecin (`oto_admin_agent_repair`) la lit
+et la soigne, l'alerte au titulaire la consulte pour se taire quand la panne est la
+nôtre.
+
+⚠️ Une réparation s'écrit sur l'épisode (`reparations`, ajout seul) AVANT d'être
+considérée comme faite par l'appelant : un travail relancé sans trace serait un second
+mécanisme invisible sur le même objet — exactement ce que la décision du bail refuse.
+"""
+from __future__ import annotations
+
+import json
+from typing import Any, Optional
+
+from ._conn import _connect
+from .alertes_agents import FENETRE_JOURS, MOTIF_TETE, _DU_DECLENCHEUR
+
+#: Les statuts d'un épisode qui n'est pas clos — lus par l'index unique partiel.
+VIVANTS = ("ouvert", "en_soin", "escalade")
+
+_COLONNES = ("id, org_id, trigger_id, classe, cote, statut, motif, dernier_job_id, "
+             "travaux_morts, reparations, diagnostic, ouvert_at, vu_at, clos_at, "
+             "resolution")
+
+
+def pannes_en_cours() -> list[dict[str, Any]]:
+    """Les agents ALLUMÉS qui ont au moins un travail mort depuis leur dernier succès,
+    dans la fenêtre de l'alerte. Une ligne par agent : org, libellé, modèle, le compte,
+    le DERNIER travail mort (id, motif, genre, charge, identité) — de quoi le classer et
+    le relancer sans relire."""
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            f"""
+            SELECT t.id AS trigger_id, t.org_id, t.model,
+                   COALESCE(NULLIF(t.label, ''), t.procedure) AS libelle,
+                   f.travaux, d.id AS job_id, LEFT(d.last_error, %(tete)s) AS motif,
+                   d.kind, d.payload, d.sub, d.finished_at AS dernier
+              FROM runner_triggers t
+              CROSS JOIN LATERAL (
+                    SELECT MAX(j.finished_at) AS dernier_succes
+                      FROM runner_jobs j
+                     WHERE {_DU_DECLENCHEUR} AND j.status = 'done') s
+              CROSS JOIN LATERAL (
+                    SELECT COUNT(*)::int AS travaux
+                      FROM runner_jobs j
+                     WHERE {_DU_DECLENCHEUR} AND j.status = 'failed'
+                       AND j.finished_at > NOW() - make_interval(days => %(fenetre)s)
+                       AND (s.dernier_succes IS NULL
+                            OR j.finished_at > s.dernier_succes)) f
+              CROSS JOIN LATERAL (
+                    SELECT j.id, j.last_error, j.kind, j.payload, j.sub, j.finished_at
+                      FROM runner_jobs j
+                     WHERE {_DU_DECLENCHEUR} AND j.status = 'failed'
+                     ORDER BY j.finished_at DESC LIMIT 1) d
+             WHERE t.enabled AND f.travaux >= 1
+             ORDER BY t.org_id, t.id
+            """,
+            {"fenetre": FENETRE_JOURS, "tete": MOTIF_TETE},
+        ).fetchall()]
+
+
+def ouvrir_ou_rafraichir(*, org_id: int, trigger_id: int, classe: str, cote: str,
+                         motif: Optional[str], job_id: Optional[int],
+                         travaux: int) -> dict[str, Any]:
+    """L'épisode vivant de l'agent, ouvert s'il n'existe pas, rafraîchi sinon (dernier
+    travail, motif, compte, `vu_at`). La classe suit le DERNIER motif : une panne qui
+    change de cause change de remède. Rend la ligne."""
+    with _connect() as conn:
+        return dict(conn.execute(
+            f"""
+            INSERT INTO agent_episodes (org_id, trigger_id, classe, cote, motif,
+                                        dernier_job_id, travaux_morts)
+            VALUES (%(org)s, %(trigger)s, %(classe)s, %(cote)s, %(motif)s, %(job)s,
+                    %(travaux)s)
+            ON CONFLICT (trigger_id) WHERE statut <> 'clos' DO UPDATE
+               SET classe = EXCLUDED.classe, cote = EXCLUDED.cote,
+                   motif = EXCLUDED.motif, dernier_job_id = EXCLUDED.dernier_job_id,
+                   travaux_morts = EXCLUDED.travaux_morts, vu_at = NOW()
+            RETURNING {_COLONNES}
+            """,
+            {"org": int(org_id), "trigger": int(trigger_id), "classe": classe,
+             "cote": cote, "motif": motif, "job": job_id, "travaux": int(travaux)},
+        ).fetchone())
+
+
+def clore_les_gueris() -> list[dict[str, Any]]:
+    """Clôt les épisodes vivants dont l'agent a réussi un travail APRÈS l'ouverture
+    (`gueri`), ou qui a été éteint ou supprimé (`agent_eteint`). Rend les épisodes clos —
+    ceux qui avaient une réparation disent qu'elle a marché."""
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            f"""
+            UPDATE agent_episodes e
+               SET statut = 'clos', clos_at = NOW(),
+                   resolution = CASE WHEN t.id IS NULL OR NOT t.enabled
+                                     THEN 'agent_eteint' ELSE 'gueri' END
+              FROM agent_episodes e2
+              LEFT JOIN runner_triggers t ON t.id = e2.trigger_id
+             WHERE e.id = e2.id AND e.statut <> 'clos'
+               AND (t.id IS NULL OR NOT t.enabled OR EXISTS (
+                     SELECT 1 FROM runner_jobs j
+                      WHERE j.org_id = t.org_id
+                        AND j.payload->>'trigger_id' ~ '^[0-9]+$'
+                        AND j.payload->>'trigger_id' = t.id::text
+                        AND j.status = 'done' AND j.finished_at > e.ouvert_at))
+            RETURNING {", ".join("e." + c.strip() for c in _COLONNES.split(","))}
+            """).fetchall()]
+
+
+def noter_reparation(episode_id: int, *, action: str, acteur: str,
+                     job_id: Optional[int] = None, detail: Optional[str] = None,
+                     maximum: Optional[int] = None) -> Optional[dict[str, Any]]:
+    """Ajoute un geste à l'épisode et le passe `en_soin` — sous garde : un épisode clos
+    ne reçoit rien, et `maximum` borne le nombre de gestes de cette `action` (deux
+    processus qui soignent le même épisode : un seul gagne). Rend la ligne, ou None si
+    la garde a refusé — l'appelant ne fait alors PAS le geste."""
+    geste = {"action": action, "acteur": acteur, "job_id": job_id,
+             "detail": (detail or "")[:500] or None}
+    with _connect() as conn:
+        row = conn.execute(
+            f"""
+            UPDATE agent_episodes
+               SET reparations = reparations || jsonb_build_array(
+                       %(geste)s::jsonb || jsonb_build_object(
+                           'at', to_char(NOW() AT TIME ZONE 'UTC',
+                                         'YYYY-MM-DD"T"HH24:MI:SSZ'))),
+                   statut = 'en_soin', vu_at = NOW()
+             WHERE id = %(id)s AND statut <> 'clos'
+               AND (%(max)s::int IS NULL OR (
+                     SELECT COUNT(*) FROM jsonb_array_elements(reparations) r
+                      WHERE r->>'action' = %(action)s) < %(max)s::int)
+            RETURNING {_COLONNES}
+            """,
+            {"geste": json.dumps(geste, ensure_ascii=False), "id": int(episode_id),
+             "max": maximum, "action": action},
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def poser(episode_id: int, *, statut: Optional[str] = None,
+          diagnostic: Optional[str] = None, classe: Optional[str] = None,
+          cote: Optional[str] = None,
+          resolution: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Le geste d'un humain ou de l'agent médecin sur un épisode : son diagnostic, sa
+    classe corrigée, l'escalade ou la clôture. Un champ absent ne change pas."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"""
+            UPDATE agent_episodes
+               SET statut = COALESCE(%(statut)s, statut),
+                   diagnostic = COALESCE(%(diag)s, diagnostic),
+                   classe = COALESCE(%(classe)s, classe),
+                   cote = COALESCE(%(cote)s, cote),
+                   resolution = COALESCE(%(resolution)s, resolution),
+                   clos_at = CASE WHEN %(statut)s = 'clos' THEN NOW() ELSE clos_at END,
+                   vu_at = NOW()
+             WHERE id = %(id)s
+            RETURNING {_COLONNES}
+            """,
+            {"statut": statut, "diag": diagnostic, "classe": classe, "cote": cote,
+             "resolution": resolution, "id": int(episode_id)},
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def lister(*, statut: Optional[str] = None, org_id: Optional[int] = None,
+           cote: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:
+    """Les épisodes, les plus récemment vus d'abord. `statut='vivants'` = tout sauf
+    `clos`."""
+    filtres, params = [], {"limit": max(1, min(int(limit), 200))}
+    if statut == "vivants":
+        filtres.append("statut <> 'clos'")
+    elif statut:
+        filtres.append("statut = %(statut)s")
+        params["statut"] = statut
+    if org_id is not None:
+        filtres.append("org_id = %(org)s")
+        params["org"] = int(org_id)
+    if cote:
+        filtres.append("cote = %(cote)s")
+        params["cote"] = cote
+    where = f"WHERE {' AND '.join(filtres)}" if filtres else ""
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            f"SELECT {_COLONNES} FROM agent_episodes {where} "
+            "ORDER BY vu_at DESC LIMIT %(limit)s", params).fetchall()]
+
+
+def lire(episode_id: int) -> Optional[dict[str, Any]]:
+    with _connect() as conn:
+        row = conn.execute(f"SELECT {_COLONNES} FROM agent_episodes WHERE id = %s",
+                           (int(episode_id),)).fetchone()
+    return dict(row) if row else None
+
+
+def agents_soignes_par_nous(trigger_ids: list) -> set[int]:
+    """Parmi ces agents, ceux dont l'épisode vivant est du côté PLATEFORME, tant qu'il n'est pas
+    clos — escaladé compris : une panne plateforme qui résiste s'escalade chez NOUS. Leur
+    titulaire ne peut rien y faire, l'alerte se tait pour eux."""
+    if not trigger_ids:
+        return set()
+    with _connect() as conn:
+        return {int(r["trigger_id"]) for r in conn.execute(
+            "SELECT trigger_id FROM agent_episodes "
+            "WHERE trigger_id = ANY(%s) AND cote = 'plateforme' "
+            "AND statut <> 'clos'",
+            ([int(i) for i in trigger_ids],)).fetchall()}

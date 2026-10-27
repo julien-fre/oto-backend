@@ -180,6 +180,9 @@ PLANCHERS = {
     "oto_admin_set_plan": "super",
     "oto_admin_set_contract": "super",
     "oto_admin_cancel_contract": "super",
+    # Épisodes de panne des agents de TOUTES les orgs, et leurs soins (relance) : un
+    # geste d'exploitation de la plateforme, jamais d'une org.
+    "oto_admin_agent_repair": "operator",
     # #863 — sonder la session d'un TIERS. `operator` (PLATFORM_ADMIN) et pas
     # `org_admin` : sonder l'accès de quelqu'un n'est pas un geste d'org, sinon un
     # admin d'org sonderait les instances de ses membres. Ce qui rend le régime

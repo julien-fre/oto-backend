@@ -15,6 +15,8 @@ escalade. Ce module en est une, et la plus petite possible :
 - **un courriel par org**, quel que soit le nombre d'agents bloqués ;
 - **où** : seulement la PRODUCTION — la boucle se déclare `tiers=True` dans
   `boucles_de_fond.py`, la préprod (même base) et le développement ne la composent pas ;
+- ⚠️ **un agent dont la panne est la NÔTRE est écarté** (`medecin_agents.py`) : un
+  épisode du côté plateforme ne s'annonce pas au titulaire, qui n'y peut rien ;
 - ⚠️ **une org d'un tenant tiers est ÉCARTÉE** (`db.org_tenant_slug`, fermé sur
   erreur) : on ne s'adresse pas aux clients d'un partenaire dans son produit sans une
   règle que le tenant aurait déclarée — il n'en existe aucune pour ce courrier
@@ -123,6 +125,19 @@ def _courriel(to: str, agents: list[dict], *, brand: Optional[str],
         mention=_charte.mention_transactionnelle(m, locale), locale=locale))
 
 
+def _soignes_par_nous(trigger_ids: list) -> set[int]:
+    """Les agents dont la panne est du côté PLATEFORME (`medecin_agents.py`) : leur
+    titulaire n'y peut rien, on ne lui écrit pas. Ouvert sur erreur — une lecture ratée
+    laisse partir le courriel : prévenir pour rien vaut mieux que se taire à tort."""
+    from .db import episodes_agents
+    try:
+        return episodes_agents.agents_soignes_par_nous(trigger_ids)
+    except Exception:  # noqa: BLE001
+        log.warning("alerte agents bloqués : épisodes illisibles — aucun agent écarté",
+                    exc_info=True)
+        return set()
+
+
 def balayer(maintenant: Optional[datetime] = None) -> dict:
     """Un passage : relève les épisodes à annoncer, écrit un courriel par org, marque ce
     qui est parti. Synchrone (la boucle le pousse hors de l'event loop)."""
@@ -133,8 +148,12 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
     maintenant = maintenant or datetime.now(timezone.utc)
     if _heures_calmes(maintenant):
         return {"heures_calmes": True}
+    bloques = alertes_agents.agents_bloques(SEUIL)
+    soignes = _soignes_par_nous([a["trigger_id"] for a in bloques])
     par_org: dict[int, list[dict]] = {}
-    for a in alertes_agents.agents_bloques(SEUIL):
+    for a in bloques:
+        if int(a["trigger_id"]) in soignes:
+            continue
         par_org.setdefault(int(a["org_id"]), []).append(a)
     envoyes, marques, ecartees, sans_destinataire = 0, 0, 0, 0
     for org_id, agents in sorted(par_org.items()):

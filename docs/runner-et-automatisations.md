@@ -2577,6 +2577,58 @@ escalade.* La lentille `agents_en_echec` rendait la panne lisible ; rien ne l'an
 - Bancs : `tests/test_alerte_agents_bloques.py` (sans base), `tests/test_alertes_agents_db.py`
   (l'épisode en SQL), `tests/test_migration_20261023_echec_annonce.py`.
 
+### Soigner un agent avant qu'on le remarque (27/10/2026)
+
+L'alerte ci-dessus prévient le titulaire au troisième travail mort. Relevé sur une
+semaine de production, une bonne part des pannes étaient les NÔTRES — aucun worker ne
+servait la famille du modèle, un refus passager du fournisseur — et le titulaire
+recevait un courriel sur une panne qu'il ne pouvait pas réparer. Le médecin des agents
+passe AVANT l'alerte.
+
+- **L'épisode** (`agent_episodes`, `db/episodes_agents.py`) = la même définition que
+  l'alerte (travaux morts d'un agent allumé depuis son dernier succès), mais ouvert dès
+  le PREMIER travail mort. Un seul épisode vivant par agent (index unique partiel),
+  rafraîchi à chaque passage ; clos au premier succès postérieur (`gueri`) ou quand
+  l'agent est éteint ou supprimé (`agent_eteint`). Aucune FK : il survit à l'agent.
+  `classe` + `cote` (`plateforme` · `proprietaire` · `inconnu`) disent QUI peut réparer ;
+  `statut` `ouvert → en_soin → escalade | clos` ; `reparations` = chaque geste, son
+  auteur et sa date, en ajout seul.
+- **La classe** (`medecin_agents.classer`) se lit sur le motif : famille non servie →
+  plateforme ; clé refusée (`cle_sans_workspace`, 401/403, clé invalide, quota, crédit)
+  et identité invalide → titulaire ; refus PASSAGER → plateforme, par la règle même de
+  la file (`refus_passager`), donc un 429 de quota épuisé reste du côté du titulaire.
+  ⚠️ `fin_anormale (success)` n'est PAS un défaut du runner : c'était un refus du
+  fournisseur mal libellé par un runner d'avant le 22/10 — il tombe en `inconnu`.
+- **Le soin automatique** (boucle `medecin_agents`, toutes les 5 min) : relancer le
+  dernier travail mort, et SEULEMENT pour un refus passager, ou une famille non servie
+  quand un worker vivant la sert de nouveau pour cette org (`runner_arme.families`).
+  Gardes, toutes dans `medecin_agents.relancer` : une relance par travail mort,
+  `RELANCES_MAX` (2) par épisode, jamais quand une occurrence de l'agent attend déjà
+  (`file_du_declencheur`), jamais au-delà de `AGE_MAX` (24 h). La trace s'écrit sur
+  l'épisode AVANT l'enfilage, sous garde SQL (deux processus : un seul relance), et un
+  refus de la trace n'enfile rien. Une relance que personne ne prend périme à
+  l'occurrence suivante (#814) : relancer ne fabrique pas d'arriéré. Au plafond, l'épisode
+  passe `escalade` — chez nous.
+- **Ce qu'il ne fait jamais** : toucher une clé, une identité, une procédure, un horaire
+  ou une donnée ; relancer une panne `inconnu` (un run qui a agi avant de mourir
+  referait ses effets). Un épisode du titulaire passe `escalade` sans geste : c'est
+  l'alerte qui le lui dit.
+- **L'alerte se tait pour nos pannes** : `alerte_agents_bloques.balayer` écarte un agent
+  dont l'épisode vivant est côté plateforme (`agents_soignes_par_nous`, escaladé
+  compris). Ouvert sur erreur : des épisodes illisibles laissent partir le courriel.
+- **L'agent médecin** : `oto_admin_agent_repair` (capacité `admin.agent_repair`,
+  plateforme, MCP seul) — `list` / `get` (l'épisode, l'agent, le dernier travail mort
+  avec chaque tentative) / `rerun` (les mêmes gardes que la boucle, plus : épisode clos,
+  agent éteint, panne du titulaire ; un refus revient dans `refus`, pas en erreur) /
+  `diagnose` / `escalate` / `close`. Prêté à un agent hébergé de la plateforme par
+  `platform_tools` : sans lui, un agent de notre org lit les pannes d'une autre org sans
+  pouvoir rien y faire (`oto_trigger` agit en membre).
+- **Où** : boucle `tiers=True` (une relance refait agir un agent chez des tiers),
+  ÉTEINTE tant que `OTO_MEDECIN_AGENTS_ENABLED=1` n'est pas déclaré — production seule.
+- Bancs : `tests/test_medecin_agents.py` (sans base), `tests/test_episodes_agents_db.py`
+  (le SQL), `tests/test_migration_20261027_agent_episodes.py`,
+  `tests/test_alerte_agents_bloques.py` (le silence).
+
 ### `op=list` : la page dit ce qu'elle laisse dehors (#469, 01/09/2026)
 
 **Mesuré le 28/08** : `POST /api/me/runner/jobs {op: list, limit: 1000}` rendait

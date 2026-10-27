@@ -25,12 +25,15 @@ def _agent(tid, org):
 @pytest.fixture()
 def bureau(monkeypatch):
     from oto_mcp import db, email_templates, org_store, tenancy
-    from oto_mcp.db import alertes_agents
+    from oto_mcp.db import alertes_agents, episodes_agents
     from oto_mcp.db import users as U
 
     etat = {"lettres": [], "marques": [], "envoi_ok": True,
             "agents": [_agent(1, 7), _agent(2, 7), _agent(3, 9), _agent(4, 11)]}
     monkeypatch.setattr(M, "_ECARTEES_DITES", set())
+    etat["soignes"] = set()
+    monkeypatch.setattr(episodes_agents, "agents_soignes_par_nous",
+                        lambda ids: {i for i in ids if i in etat["soignes"]})
     monkeypatch.setattr(alertes_agents, "agents_bloques", lambda seuil: list(etat["agents"]))
     monkeypatch.setattr(alertes_agents, "marquer_annonces",
                         lambda ids: etat["marques"].extend(ids) or len(ids))
@@ -95,3 +98,23 @@ def test_la_boucle_est_declaree_tierce():
     b = next(b for b in boucles_de_fond.BOUCLES if b.nom == "alerte_agents_bloques")
     assert b.tiers is True
     assert b.fonction() is M.run_alerte_agents_loop
+
+
+def test_une_panne_de_la_plateforme_ne_s_annonce_pas_au_titulaire(bureau):
+    # L'agent 2 a un épisode côté plateforme (`medecin_agents`) : son titulaire n'y peut
+    # rien, il n'est ni nommé ni marqué ; l'agent 1, de la même org, part seul.
+    bureau["soignes"] = {2}
+    M.balayer(_JOUR)
+    html = bureau["lettres"][0][2]
+    assert "agent 1" in html and "agent 2" not in html
+    assert 2 not in bureau["marques"]
+
+
+def test_des_episodes_illisibles_laissent_partir_le_courriel(bureau, monkeypatch):
+    from oto_mcp.db import episodes_agents
+
+    def _casse(ids):
+        raise RuntimeError("base indisponible")
+    monkeypatch.setattr(episodes_agents, "agents_soignes_par_nous", _casse)
+    M.balayer(_JOUR)
+    assert "agent 2" in bureau["lettres"][0][2]

@@ -737,3 +737,44 @@ CREATE INDEX IF NOT EXISTS idx_runner_trigger_links_org
 CREATE INDEX IF NOT EXISTS idx_runner_trigger_links_to
     ON runner_trigger_links(to_trigger_id, kind);
 """
+
+# Les ÉPISODES de panne d'un agent (27/10/2026) — docs/runner-et-automatisations.md
+# §Soigner un agent avant qu'on le remarque
+AGENT_EPISODES = """
+-- Une panne d'un agent hébergé, de son premier travail mort à sa guérison : ce que la
+-- boucle `medecin_agents` a vu, à quelle CLASSE elle l'a rangée, et ce qu'elle a fait.
+-- UNE source pour la panne : l'alerte au titulaire, la relance et l'agent médecin
+-- lisent cette ligne, aucun ne tient sa propre idée de « bloqué ».
+--   `cote`   — qui peut réparer : `plateforme` (nous : worker, routage, refus passager,
+--              défaut du runner), `proprietaire` (sa clé, son identité), `inconnu`.
+--   `statut` — `ouvert` (vu, rien tenté) · `en_soin` (une réparation est partie, on
+--              attend le passage suivant) · `escalade` (rendu à un humain) · `clos`.
+--   `reparations` — `[{at, action, job_id, acteur, detail}]`, dans l'ordre : chaque
+--              geste fait, par qui (`medecin` = la boucle, sinon le `sub` de l'agent
+--              médecin ou de l'opérateur). Rien ne s'y efface.
+-- ⚠️ Aucune FK vers `runner_triggers` : un épisode documente un état passé, il survit à
+-- la suppression de l'agent (même règle que `credential_disparitions`).
+CREATE TABLE IF NOT EXISTS agent_episodes (
+    id BIGSERIAL PRIMARY KEY,
+    org_id BIGINT NOT NULL,
+    trigger_id BIGINT NOT NULL,
+    classe TEXT NOT NULL,
+    cote TEXT NOT NULL CHECK (cote IN ('plateforme', 'proprietaire', 'inconnu')),
+    statut TEXT NOT NULL DEFAULT 'ouvert'
+        CHECK (statut IN ('ouvert', 'en_soin', 'escalade', 'clos')),
+    motif TEXT,
+    dernier_job_id BIGINT,
+    travaux_morts INTEGER NOT NULL DEFAULT 0,
+    reparations JSONB NOT NULL DEFAULT '[]'::jsonb,
+    diagnostic TEXT,
+    ouvert_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    vu_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    clos_at TIMESTAMPTZ,
+    resolution TEXT
+);
+-- Un seul épisode VIVANT par agent : la boucle rafraîchit, elle ne duplique pas.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_episodes_vivant
+    ON agent_episodes(trigger_id) WHERE statut <> 'clos';
+CREATE INDEX IF NOT EXISTS idx_agent_episodes_statut
+    ON agent_episodes(statut, vu_at DESC);
+"""

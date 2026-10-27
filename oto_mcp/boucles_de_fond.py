@@ -127,6 +127,11 @@ def _alerte_agents() -> Fonction:
     return alerte_agents_bloques.run_alerte_agents_loop
 
 
+def _medecin_agents() -> Fonction:
+    from . import medecin_agents
+    return medecin_agents.run_medecin_agents_loop
+
+
 def _runner_tick_arme() -> bool:
     from . import runner_tick
     return runner_tick.enabled()
@@ -210,6 +215,12 @@ BOUCLES: tuple[Boucle, ...] = (
     # (`alerte_agents_bloques.py`, signal 1168) : ENVOIE un courriel à un client.
     Boucle(nom="alerte_agents_bloques", tiers=True,
            armee=_allumee_si_declaree("OTO_ALERTE_AGENTS_ENABLED"), fonction=_alerte_agents),
+    # Soigne un agent hébergé avant que son titulaire ne le remarque
+    # (`medecin_agents.py`) : RELANCE un travail mort quand la panne est la nôtre —
+    # l'agent relancé agit chez des tiers. Éteinte tant qu'elle n'est pas déclarée.
+    Boucle(nom="medecin_agents", tiers=True,
+           armee=_allumee_si_declaree("OTO_MEDECIN_AGENTS_ENABLED"),
+           fonction=_medecin_agents),
     # Échéances d'abonnement, relances, réconciliation, factures (ADR 0043) : PRÉLÈVE
     # via Mollie. Armée par le drapeau billing ET son interrupteur propre.
     Boucle(nom="billing_runner", tiers=True,

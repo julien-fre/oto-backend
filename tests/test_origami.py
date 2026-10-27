@@ -358,16 +358,15 @@ def test_upload_csv_surfaces_table_id_from_flat_shape_and_error_kind():
     assert out["error"] == "Unsupported encoding"
 
 
-def test_upload_csv_append_est_refuse_et_renvoie_vers_upsert():
-    """#1349 : Origami ne lie pas l'en-tête aux colonnes de la table, il en crée de
-    neuves à chaque appel (8 colonnes devenues 64), en répondant 200. Rien ne part ;
-    le refus nomme `origami_rows op=upsert`, qui valide les slugs."""
+def test_upload_csv_append_requires_table_id_and_carries_it():
     with patch("oto.tools.origami.client.OrigamiClient") as cls:
-        with pytest.raises(McpError) as e:
+        inst = cls.return_value
+        with pytest.raises(McpError):
             _tool("origami_upload_csv").fn(workspace_id="ws-1", filename="l.csv",
-                                           csv_text=_CSV, mode="append", table_id="t-1")
-        assert "origami_rows(op='upsert'" in str(e.value) and "'t-1'" in str(e.value)
-    cls.return_value.upload_documents.assert_not_called()
+                                           csv_text=_CSV, mode="append")
+        _tool("origami_upload_csv").fn(workspace_id="ws-1", filename="l.csv",
+                                       csv_text=_CSV, mode="append", table_id="t-1")
+        assert inst.upload_documents.call_args.args[1][0]["tableId"] == "t-1"
 
 
 def test_upload_csv_rejects_non_csv_or_headerless():

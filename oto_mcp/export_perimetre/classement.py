@@ -238,6 +238,9 @@ CLASSEMENT: dict[str, Table] = {
                                 comptes=("sub",)),
     "runner_hook_deliveries": possedee(ParOrg()),
     "runner_trigger_links": possedee(ParOrg(), comptes=("created_by",)),
+    "agent_episodes": exclue(ParOrg(), "état d'exploitation de la PLATEFORME sur les agents "
+                             "de l'org (pannes, relances, diagnostics d'opérateur) : la "
+                             "boucle le reconstruit sur la cible à partir de `runner_jobs`"),
     "copilot_threads": exclue(ParOrg(), "conversation de l'agent intégré : un état de travail éphémère (le journal des appels, lui, part)"),
     "copilot_undos": exclue(ParSub(), "annulation offerte, valable une heure"),
     "copilot_spend": exclue(ParSub(), "dépense du jour de l'agent intégré : le plafond ne lit que le jour courant"),

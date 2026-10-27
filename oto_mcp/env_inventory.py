@@ -665,6 +665,12 @@ _REGLAGES: tuple[Variable, ...] = (
              "(courriel), donc production seulement. ÉTEINTE par défaut : `1` "
              "l'allume, chaque instance le décide.",
              ("oto_mcp/boucles_de_fond.py:212",)),
+    Variable("OTO_MEDECIN_AGENTS_ENABLED", Classe.REGLAGE, "0",
+             "Boucle de fond : soigne un agent hébergé en panne quand la panne est la "
+             "nôtre — relance un travail mort (`medecin_agents.py`) ; AGIT sur un tiers "
+             "(l'agent relancé), donc production seulement. ÉTEINTE par défaut : `1` "
+             "l'allume, chaque instance le décide.",
+             ("oto_mcp/boucles_de_fond.py:222",)),
     Variable("OTO_BILLING_RUNNER_ENABLED", Classe.REGLAGE, "1",
              "Boucle de fond : runner de facturation — AGIT sur un tiers "
              "(prélèvement), donc lu aussi par `est_la_production()`.",
