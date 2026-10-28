@@ -39,9 +39,7 @@ for an asynchronous job, the job (`meta.job_id`).
 
 **Modes** (`OTO_CREDITS_MODE`): `report` (DEFAULT) runs the whole ledger and refuses
 nothing — it logs what `enforce` would refuse; `enforce` refuses with a named code;
-`off` reserves nothing. A scale function may run in its own mode
-(`OTO_CREDITS_MODE_FUNCTIONS`, `mode_de`): the model calls (`anthropic.messages:*`) in
-`enforce` while the rest stays in `report`. Named refusals: `insufficient_credits`, `credits_unpriced`
+`off` reserves nothing. Named refusals: `insufficient_credits`, `credits_unpriced`
 (the function has no line in the scale), `spend_ledger_unavailable` (the ledger could
 not be written: retryable). An unreadable setting refuses to start
 (`verifier_reglages`).
@@ -64,6 +62,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import bornes_processus, error_taxonomy, geste, limite_refus_top, session_org, tenancy
 from ..db import credits as db_credits
 from ..mcp_errors import McpError
+from . import credits_modes as modes
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +71,6 @@ SANS_BAREME = "credits_unpriced"
 INDISPONIBLE = "spend_ledger_unavailable"
 
 _ENV_MODE = "OTO_CREDITS_MODE"
-_ENV_MODE_FONCTIONS = "OTO_CREDITS_MODE_FUNCTIONS"
-_ENV_PLANCHER = "OTO_CREDITS_JOB_FLOOR"
 _ENV_HOLD_MAX = "OTO_CREDITS_HOLD_MAX_S"
 _ENV_MARGE = "OTO_CREDITS_SYNC_MARGIN_S"
 _MODES = ("enforce", "report", "off")
@@ -100,59 +97,6 @@ def mode() -> str:
         raise ValueError(f"{_ENV_MODE}={lu!r}: unreadable value, expected one of "
                          f"{', '.join(_MODES)}")
     return m
-
-
-def modes_par_fonction() -> dict[tuple[str, str], str]:
-    """`OTO_CREDITS_MODE_FUNCTIONS`, read on each call: `{(connector, function): mode}`.
-    The value is a comma list of `<connector>.<function>=<mode>`; a function ending in
-    `*` names every function that starts with what precedes it (`anthropic.messages:*`).
-    Absent or empty: none. Unreadable: raises, naming the item."""
-    lu = os.environ.get("OTO_CREDITS_MODE_FUNCTIONS", "")
-    out: dict[tuple[str, str], str] = {}
-    for item in (x.strip() for x in lu.split(",")):
-        if not item:
-            continue
-        cle, _, m = item.partition("=")
-        connector, _, function = cle.strip().partition(".")
-        m = m.strip().lower()
-        if not connector or not function or m not in _MODES:
-            raise ValueError(f"{_ENV_MODE_FONCTIONS}: {item!r} is not "
-                             f"`<connector>.<function>=<mode>`, mode one of "
-                             f"{', '.join(_MODES)}")
-        out[(connector, function.strip())] = m
-    return out
-
-
-def mode_de(connector: str, function: Optional[str]) -> str:
-    """The mode of ONE scale function: its own (`OTO_CREDITS_MODE_FUNCTIONS`, the
-    longest matching name wins), else the instance's (`mode`)."""
-    retenu, longueur = None, -1
-    for (c, f), m in modes_par_fonction().items():
-        if c != connector or function is None:
-            continue
-        prefixe = f[:-1] if f.endswith("*") else None
-        if (f == function or (prefixe is not None and function.startswith(prefixe))) \
-                and len(f) > longueur:
-            retenu, longueur = m, len(f)
-    return retenu if retenu is not None else mode()
-
-
-def plancher_travail() -> int:
-    """`OTO_CREDITS_JOB_FLOOR`: the balance, in budget units, a hosted agent's job must
-    have available before it starts on a re-billed key — it covers the first turn's
-    input, which is never reserved (`credits_tours.sous_le_plancher`). Absent or 0: no
-    floor. Unreadable or negative: raises."""
-    lu = os.environ.get("OTO_CREDITS_JOB_FLOOR", "")
-    if not lu.strip():
-        return 0
-    try:
-        n = int(lu.strip())
-    except ValueError:
-        n = -1
-    if n < 0:
-        raise ValueError(f"{_ENV_PLANCHER}={lu!r}: unreadable value, expected a whole "
-                         "number of budget units (0 or more)")
-    return n
 
 
 def _secondes(raw: Optional[str], defaut: int, nom: str) -> int:
@@ -184,9 +128,7 @@ def marge_sync_s() -> int:
 def verifier_reglages() -> None:
     """The startup guard: every `OTO_CREDITS_*` setting is read once, and an unreadable
     one refuses to start, naming it."""
-    mode()
-    modes_par_fonction()
-    plancher_travail()
+    modes.verifier()  # the instance's mode, and the per-function ones (`credits_modes`)
     hold_max_s()
     marge_sync_s()
     if mode() != "off" and bornes_processus.reglages().outil_s <= 0:
@@ -367,8 +309,7 @@ def reserver(sub: str, org: Optional[int], key_mode: str) -> None:
     if appel is None or "hold" in appel or "refus" in appel:
         return
     c = _PERIMETRE[appel["outil"]]
-    m = mode_de(c.connector, c.function)
-    if m == "off":
+    if (m := modes.mode_de(c.connector, c.function)) == "off":
         return
     from oto.connectors import cost
     try:
@@ -484,7 +425,7 @@ def solder_reussite(releve: Optional[dict]) -> None:
         logger.warning("crédits : %s n'a pas noté ses réponses — réglé au pire cas",
                        appel["outil"])
         limite_refus_top.noter_credits(f"unreported:{appel['outil']}", hold["payer"],
-                                       mode_de(c, f), time.time())
+                                       modes.mode_de(c, f), time.time())
         _regler(appel["uid"], hold, hold["quantity"], {"from": "unreported",
                                                        "exceeded": False})
         return

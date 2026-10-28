@@ -378,16 +378,16 @@ _REGLAGES: tuple[Variable, ...] = (
              "qu'`enforce` refuserait ; `enforce` refuse (`insufficient_credits`, "
              "`credits_unpriced`, `spend_ledger_unavailable`) ; `off` ne réserve rien. "
              "Illisible : LÈVE au boot.",
-             ("oto_mcp/access/credits.py:97",)),
+             ("oto_mcp/access/credits.py:94",)),
     Variable("OTO_CREDITS_MODE_FUNCTIONS", Classe.REGLAGE, None,
              "Budget d'unités : le mode PAR FONCTION du barème, qui l'emporte sur "
-             "`OTO_CREDITS_MODE` pour elle (`access/credits.mode_de`) — liste "
+             "`OTO_CREDITS_MODE` pour elle (`access/credits_modes.mode_de`) — liste "
              "`<connecteur>.<fonction>=<mode>` séparée par des virgules, `*` final = toute "
              "fonction qui commence ainsi ; le nom le plus long gagne. Ex. "
              "`anthropic.messages:*=enforce` : les appels au modèle (agents hébergés, "
              "agent intégré) refusent, le reste reste en `report` (#1376, E). Absente ou "
              "vide : aucune. Illisible : LÈVE au boot.",
-             ("oto_mcp/access/credits.py:110",)),
+             ("oto_mcp/access/credits_modes.py:31",)),
     Variable("OTO_CREDITS_JOB_FLOOR", Classe.REGLAGE, None,
              "Budget d'unités : le solde disponible (solde − réservations ouvertes), en "
              "unités, qu'un travail d'agent hébergé sur une clé REFACTURÉE doit avoir pour "
@@ -396,7 +396,7 @@ _REGLAGES: tuple[Variable, ...] = (
              "fonction du modèle : `enforce` arrête le travail, raison écrite "
              "(`insufficient_credits`) ; `report` journalise. Absente ou 0 : aucun "
              "plancher. Illisible ou négative : LÈVE au boot.",
-             ("oto_mcp/access/credits.py:145",)),
+             ("oto_mcp/access/credits_modes.py:64",)),
     Variable("OTO_CREDITS_HOLD_MAX_S", Classe.REGLAGE, None,
              "Durée maximale d'une réservation sans échéance connue (travail "
              "asynchrone sans `within_s`, tranche de fond `jev_rows`, appel synchrone "

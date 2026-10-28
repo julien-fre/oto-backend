@@ -282,7 +282,7 @@ tenant→org (son quota) est vérifiée d'abord : son refus ne laisse aucune ré
 
 **Un mode par fonction** (`OTO_CREDITS_MODE_FUNCTIONS`, #1376 E) : une fonction du barème
 peut tourner dans son propre mode, qui l'emporte sur `OTO_CREDITS_MODE` pour elle
-(`credits.mode_de`). Liste `<connecteur>.<fonction>=<mode>` séparée par des virgules ; un
+(`credits_modes.mode_de`). Liste `<connecteur>.<fonction>=<mode>` séparée par des virgules ; un
 `*` final nomme toute fonction qui commence ainsi ; le nom le plus long gagne. Le cas pour
 lequel il existe : `anthropic.messages:*=enforce` — les appels au modèle d'un agent
 hébergé ou de l'agent intégré refusent (`credits_tours.mode_du_modele`), pendant que les

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp.access import credits, credits_tours as tours
+from oto_mcp.access import credits, credits_modes as modes, credits_tours as tours
 from oto_mcp.db import credits as db_credits
 
 
@@ -28,31 +28,31 @@ def _propre(monkeypatch):
 
 def test_sans_reglage_chaque_fonction_a_le_mode_de_l_instance(monkeypatch):
     monkeypatch.setenv("OTO_CREDITS_MODE", "report")
-    assert credits.mode_de("anthropic", "messages:claude-sonnet-5") == "report"
-    assert credits.mode_de("fullenrich", "submit") == "report"
+    assert modes.mode_de("anthropic", "messages:claude-sonnet-5") == "report"
+    assert modes.mode_de("fullenrich", "submit") == "report"
 
 
 def test_les_appels_au_modele_en_enforce_les_outils_en_report(monkeypatch):
     monkeypatch.setenv("OTO_CREDITS_MODE", "report")
     monkeypatch.setenv("OTO_CREDITS_MODE_FUNCTIONS", "anthropic.messages:*=enforce")
-    assert credits.mode_de("anthropic", "messages:claude-opus-5-5") == "enforce"
-    assert credits.mode_de("anthropic", "messages:") == "enforce"
-    assert credits.mode_de("fullenrich", "submit") == "report"
-    assert credits.mode_de("anthropic", "batches:x") == "report", "un autre préfixe"
-    assert credits.mode_de("anthropic", None) == "report", "sans fonction : l'instance"
+    assert modes.mode_de("anthropic", "messages:claude-opus-5-5") == "enforce"
+    assert modes.mode_de("anthropic", "messages:") == "enforce"
+    assert modes.mode_de("fullenrich", "submit") == "report"
+    assert modes.mode_de("anthropic", "batches:x") == "report", "un autre préfixe"
+    assert modes.mode_de("anthropic", None) == "report", "sans fonction : l'instance"
 
 
 def test_le_nom_le_plus_long_gagne(monkeypatch):
     monkeypatch.setenv("OTO_CREDITS_MODE_FUNCTIONS",
                        "anthropic.messages:*=enforce, anthropic.messages:claude-haiku-4-5=off")
-    assert credits.mode_de("anthropic", "messages:claude-haiku-4-5") == "off"
-    assert credits.mode_de("anthropic", "messages:claude-sonnet-5") == "enforce"
+    assert modes.mode_de("anthropic", "messages:claude-haiku-4-5") == "off"
+    assert modes.mode_de("anthropic", "messages:claude-sonnet-5") == "enforce"
 
 
 def test_un_nom_sans_etoile_est_exact(monkeypatch):
     monkeypatch.setenv("OTO_CREDITS_MODE_FUNCTIONS", "fullenrich.submit=enforce")
-    assert credits.mode_de("fullenrich", "submit") == "enforce"
-    assert credits.mode_de("fullenrich", "submit2") == "report"
+    assert modes.mode_de("fullenrich", "submit") == "enforce"
+    assert modes.mode_de("fullenrich", "submit2") == "report"
 
 
 def test_le_tour_lit_le_mode_de_son_modele(monkeypatch):

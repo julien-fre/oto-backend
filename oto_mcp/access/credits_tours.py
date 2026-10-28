@@ -25,6 +25,7 @@ from typing import Optional
 from .. import limite_refus_top
 from ..db import credits as db_credits
 from . import credits as budget
+from . import credits_modes as modes
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ def fonction_du_modele(model: Optional[str]) -> Optional[str]:
 def mode_du_modele(model: Optional[str]) -> str:
     """The budget mode of a call to `model` (`credits.mode_de` on its scale function); a
     job that names no model reads the mode of `messages:` itself."""
-    return budget.mode_de(MODELE_CONNECTOR, fonction_du_modele(model) or PREFIXE_DES_MODELES)
+    return modes.mode_de(MODELE_CONNECTOR, fonction_du_modele(model) or PREFIXE_DES_MODELES)
 
 
 def sous_le_plancher(sub: Optional[str], org: Optional[int],
@@ -93,7 +94,7 @@ def sous_le_plancher(sub: Optional[str], org: Optional[int],
     None when the job may start, else `{needed, available}` — in `enforce` only: `report`
     logs what it would refuse and returns None, and so does `off` or a floor of 0. A
     ledger that cannot be read refuses in `enforce` (`available: None`)."""
-    plancher = budget.plancher_travail()
+    plancher = modes.plancher_travail()
     m = mode_du_modele(model)
     if plancher <= 0 or m == "off":
         return None
