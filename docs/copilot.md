@@ -25,6 +25,7 @@ de développement du front en était la spécification exécutable.
 | `POST /api/copilot/turns` `{thread_id, text, input, mode, page_context, client_tools, speak}` | flux SSE |
 | `POST /api/copilot/threads/{id}/client-results` `{call_id, ok, result, error, client_tools, speak}` | flux SSE |
 | `POST /api/copilot/threads/{id}/approvals/{approval_id}` `{decision, edits, remember, speak}` | flux SSE |
+| `POST /api/copilot/dictations` `{audio_base64, mime_type, duration_ms, language}` | JSON `{text}` |
 | `POST /api/copilot/actions/{revert_id}/revert` | JSON `{ok, undone, skipped}` |
 
 - **Nées capacités** : un handler qui rend un `EventStream` est servi par l'adaptateur REST
@@ -75,6 +76,20 @@ crédits dépensés ; `units` sur la clé plateforme. Aucune clé, pas d'octroi,
 une erreur amont ou plus de 15 s → aucun événement `audio`, un avertissement au journal, et
 l'étape finit normalement (le panneau lit alors avec la voix du navigateur). Une synthèse
 qui dépasse le délai n'est pas annulée : elle est réglée comme tout appel.
+
+## La dictée (`dictee.py`)
+
+Le panneau enregistre la personne (`MediaRecorder`) et envoie le clip en base64, son type
+et sa durée ; le serveur le transcrit avec ElevenLabs (Scribe) — **jamais** la
+reconnaissance du navigateur. Le clip est déposé en transit sous la personne
+(`copilot-dictation`, `tmp/` purgé en un jour), puis `elevenlabs_act op=create_transcript`
+reçoit la seule référence de transit — l'audio n'entre jamais dans les arguments, que le
+journal garde. Même chemin que la réponse dite : la personne, l'org consultée, clé de l'org
+puis clé plateforme octroyée, quota et `quantity` en crédits ElevenLabs (~330 par minute
+d'audio, la plus longue de la durée déclarée et de la fin du dernier mot). Clip refusé
+(vide, pas audio, > 4 Mo ou > 120 s) → 422 `dictation_invalid` ; refus de l'appel (pas de
+clé, pas d'octroi, quota épuisé, ElevenLabs indisponible) → 409 `dictation_unavailable`,
+avec ses mots.
 
 ## Les outils (`outils.py`, `classement.py`)
 

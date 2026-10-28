@@ -41,7 +41,7 @@ PREFIXES_DURABLES = frozenset({"project-files", "transcription-jobs"})
 # Les préfixes de TRANSIT (`upload_transit`) : la liste FERMÉE de ce qu'une référence de
 # transit peut ouvrir (`oto_mcp/transit.py`), sous `tmp/` comme `upload_private`.
 PREFIXES_TRANSIT = frozenset({"threecx-recordings", "aircall-recordings",
-                              "allo-recordings"})
+                              "allo-recordings", "copilot-dictation"})
 _ENTETES_PUBLICS = {"ACL": "public-read",
                     "CacheControl": "public, max-age=31536000, immutable"}
 

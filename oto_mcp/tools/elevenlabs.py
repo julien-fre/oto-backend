@@ -23,7 +23,8 @@ characters from ElevenLabs' `x-character-count` header (else the text's length),
   models;
 - `elevenlabs_act` — the four generations, each of which spends credits:
   speech (optionally with each word's start and end), music, a sound effect,
-  and previews of a voice described in words.
+  and previews of a voice described in words; and transcription (Scribe), billed
+  per second of audio.
 
 Audio never travels inline: it is deposited in private temporary storage and
 served as a signed URL (`media_store.upload_private`), valid
@@ -53,7 +54,8 @@ _NAME = "elevenlabs"
 _PREFIX = "elevenlabs-audio"
 
 _READ_OPS = ("get_subscription", "list_voices", "get_voice", "list_models")
-_ACT_OPS = ("create_speech", "create_music", "create_sound", "create_voice_design")
+_ACT_OPS = ("create_speech", "create_music", "create_sound", "create_voice_design",
+            "create_transcript")
 
 # Keys removed from the LISTS by default, at any depth: a voice's training data
 # (samples, fine-tuning state), its library sharing record, verification and safety
@@ -71,10 +73,11 @@ _HINT = "full=true returns the raw records."
 # the code (same device as `tools/forager.py`): the `platform.ops` setting
 # (`connector_settings`, platform scope, `oto_admin_connector_setting`) lists them,
 # comma-separated, `elevenlabs_act:<op>` or `elevenlabs_act` for every op. Unset: speech
-# only — music, sound and voice design spend far more per call and are opened on purpose.
+# and transcription — music, sound and voice design spend far more per call and are
+# opened on purpose.
 OPS: dict[str, frozenset[str]] = {"elevenlabs_act": frozenset(_ACT_OPS)}
 PLATFORM_OPS_KEY = "platform.ops"
-PLATFORM_OPS_DEFAULT = "elevenlabs_act:create_speech"
+PLATFORM_OPS_DEFAULT = "elevenlabs_act:create_speech,elevenlabs_act:create_transcript"
 
 # Speech models billed half a credit per character (ElevenLabs' price list). Any other
 # model — and the API's default when `model_id` is omitted, `eleven_multilingual_v2` —
@@ -89,6 +92,18 @@ HALF_RATE_MODELS = frozenset({"eleven_flash_v2", "eleven_flash_v2_5",
 # into lines, read one call each (`previous_text` / `next_text` keep them continuous).
 MAX_TEXT_CHARS = 5_000
 TEXT_TOO_LONG = "text_too_long"
+
+# Speech to text (Scribe) is billed per second of audio, not per character: ElevenLabs'
+# credit-cost table puts it at 330 credits a minute of audio. ⚠️ Read off ElevenLabs'
+# pricing page (28/10), not measured: check it against the subscription's credits after
+# one real call before trusting it. The quota and `quantity` stay in ElevenLabs credits,
+# the grant's one unit.
+TRANSCRIBE_CREDITS_PER_MINUTE = 330
+# The longest clip one transcription takes ON THE SHARED KEY, in seconds (a dictation is
+# a sentence or two; the customer's own key is not bounded here), and in bytes.
+MAX_TRANSCRIBE_SECONDS = 300
+MAX_TRANSCRIBE_BYTES = 10 * 1024 * 1024
+AUDIO_TOO_LONG = "audio_too_long"
 
 
 def parse_platform_ops(value: str) -> frozenset[tuple[str, Optional[str]]]:
@@ -144,6 +159,21 @@ def speech_credits(text: str, model_id: Optional[str],
     chars = character_count if isinstance(character_count, int) and character_count >= 0 \
         else len(text or "")
     return int(math.ceil(chars * rate(model_id)))
+
+
+def transcribe_credits(seconds: Optional[float]) -> int:
+    """The ElevenLabs credits a transcription of `seconds` of audio spends, rounded UP
+    (at least 1)."""
+    s = seconds if isinstance(seconds, (int, float)) and seconds > 0 else 0
+    return max(1, int(math.ceil(s * TRANSCRIBE_CREDITS_PER_MINUTE / 60)))
+
+
+def heard_seconds(result: Any) -> float:
+    """Where the last word ends in a transcription (`words[].end`, seconds), 0 when
+    nothing was heard — a floor on the clip's length, not its length."""
+    words = result.get("words") if isinstance(result, dict) else None
+    ends = [w.get("end") for w in words or [] if isinstance(w, dict)]
+    return max([e for e in ends if isinstance(e, (int, float))], default=0.0)
 
 
 def generation_credits(op: str, audio: Any, fallback_text: Optional[str]) -> int:
@@ -412,6 +442,45 @@ def register(mcp: FastMCP) -> None:
         # walks (`error_taxonomy`), and the key would be painted red.
         raise _bad(restricted)
 
+    def _transcribe(source: Any, language_code: Optional[str],
+                    audio_seconds: Optional[float], model_id: Optional[str]) -> dict:
+        """Speech to text. The file is read server-side (`file_source`) BEFORE the key
+        is resolved: a source that cannot be read spends nothing. On the shared key, a
+        clip over `MAX_TRANSCRIBE_SECONDS` is refused first; the quota is checked
+        against `audio_seconds`, and the call bills the longer of `audio_seconds` and
+        where the last word ends (a missing or understated length cannot bill less
+        than what was heard)."""
+        from .. import file_source
+        if audio_seconds is not None and (isinstance(audio_seconds, bool) or not isinstance(
+                audio_seconds, (int, float)) or audio_seconds <= 0):
+            raise _bad("`audio_seconds` must be a positive number of seconds.")
+        try:
+            rf = file_source.resolve(source, max_bytes=MAX_TRANSCRIBE_BYTES)
+        except file_source.FileSourceError as e:
+            raise _bad(f"ElevenLabs: the audio could not be read ({e}). Nothing was done.")
+        key, is_platform = access.resolve_api_key(_NAME, units=transcribe_credits(audio_seconds))
+        if is_platform:
+            if audio_seconds is not None and audio_seconds > MAX_TRANSCRIBE_SECONDS:
+                raise _bad(f"{AUDIO_TOO_LONG}: {audio_seconds:.0f} s of audio, at most "
+                           f"{MAX_TRANSCRIBE_SECONDS} s per call on the shared key. Cut "
+                           "the clip, or set your own ElevenLabs key. Nothing was done.")
+            if not _served("elevenlabs_act", "create_transcript", platform_ops()):
+                raise _bad("elevenlabs_act op='create_transcript' needs your own "
+                           "ElevenLabs key: the shared key here does not transcribe.")
+        client = ElevenLabsClient(api_key=key)
+        result = _run(lambda: client.transcribe_speech(
+            rf.data, filename=rf.filename, content_type=rf.mime,
+            model_id=model_id or "scribe_v2", language_code=language_code))
+        credits = transcribe_credits(max(audio_seconds or 0, heard_seconds(result)))
+        session_org.note_call_trace(quantity=credits,
+                                    **({"units": credits} if is_platform else {}))
+        return {"text": result.get("text") or "", "language_code": result.get("language_code"),
+                "language_probability": result.get("language_probability"),
+                "words": [{"word": w.get("text"), "start": w.get("start"), "end": w.get("end")}
+                          for w in result.get("words") or []
+                          if isinstance(w, dict) and w.get("type", "word") == "word"],
+                "credits": credits}
+
     @mcp.tool(name="elevenlabs", annotations=LECTURE)
     def elevenlabs(
         op: Literal["get_subscription", "list_voices", "get_voice", "list_models"],
@@ -486,7 +555,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(name="elevenlabs_act", annotations=ACTE)
     def elevenlabs_act(
-        op: Literal["create_speech", "create_music", "create_sound", "create_voice_design"],
+        op: Literal["create_speech", "create_music", "create_sound", "create_voice_design",
+                    "create_transcript"],
         text: Optional[str] = None,
         voice_id: Optional[str] = None,
         model_id: Optional[str] = None,
@@ -503,6 +573,8 @@ def register(mcp: FastMCP) -> None:
         duration_seconds: Optional[float] = None,
         prompt_influence: Optional[float] = None,
         loop: Optional[bool] = None,
+        source: Optional[dict] = None,
+        audio_seconds: Optional[float] = None,
         voice_description: Optional[str] = None,
         auto_generate_text: Optional[bool] = None,
         seed: Optional[int] = None,
@@ -536,6 +608,12 @@ def register(mcp: FastMCP) -> None:
         - `create_sound` — a sound effect described in `text`;
           `duration_seconds` (0.5 to 30, else the model decides),
           `prompt_influence` (0 to 1), `loop` optional.
+        - `create_transcript` — the words said in an audio file (Scribe): `source`
+          designates the file (a `{"kind": "transit", "ref"}` an oto tool returned, a
+          project file, a URL…), `language_code` pins the language (else detected),
+          `audio_seconds` its length. Returns `text`, `language_code` and `words`
+          (each with its start and end, seconds). Billed per second of audio
+          (~330 credits a minute); at most 300 seconds per call on the shared key.
         - `create_voice_design` — up to three previews of a voice described in
           `voice_description`, each reading `text` (or a text the model writes with
           `auto_generate_text=true`); each preview has its `generated_voice_id` and
@@ -552,7 +630,7 @@ def register(mcp: FastMCP) -> None:
             voice_settings: Speech only: {stability, similarity_boost, style, use_speaker_boost, speed}, each optional.
             previous_text: Speech only: the line before this one, for continuity.
             next_text: Speech only: the line after this one, for continuity.
-            language_code: Speech only: ISO 639-1 code to force the language, when the model supports it.
+            language_code: Speech and transcription: ISO 639-1 code to force the language, when the model supports it.
             timestamps: Speech only: also return each word's start and end.
             prompt: Music only: the track described in words.
             composition_plan: Music only: {positive_global_styles, negative_global_styles, sections: [{section_name, duration_ms, positive_local_styles, negative_local_styles, lines}]}.
@@ -562,6 +640,8 @@ def register(mcp: FastMCP) -> None:
             duration_seconds: Sound only: 0.5 to 30 seconds.
             prompt_influence: Sound only: how literally to follow the text, 0 to 1.
             loop: Sound only: make it loop seamlessly.
+            source: Transcription only: the audio file, e.g. {"kind": "transit", "ref": "..."} or {"kind": "url", "url": "https://..."}.
+            audio_seconds: Transcription only: the clip's length in seconds — what the quota is checked against before the call.
             voice_description: Voice design only: the voice in words, e.g. age, accent, tone, pace.
             auto_generate_text: Voice design only: let the model write the preview's line.
             seed: 0 to 4294967295, to make a take reproducible as far as the model allows.
@@ -579,10 +659,19 @@ def register(mcp: FastMCP) -> None:
         sound = dict(duration_seconds=duration_seconds, prompt_influence=prompt_influence,
                      loop=loop)
         design = dict(voice_description=voice_description, auto_generate_text=auto_generate_text)
+        heard = dict(source=source, audio_seconds=audio_seconds)
         sub = access.current_user_sub_or_raise()
 
+        if op == "create_transcript":
+            _refuse_ignored(op, text=text, seed=seed, output_format=output_format,
+                            voice_id=voice_id, voice_settings=voice_settings,
+                            previous_text=previous_text, next_text=next_text,
+                            timestamps=timestamps, **music, **sound, **design)
+            return _transcribe(_need(source, "source", op), language_code, audio_seconds,
+                               model_id)
+
         if op == "create_speech":
-            _refuse_ignored(op, **music, **sound, **design)
+            _refuse_ignored(op, **music, **sound, **design, **heard)
             vid, line = _need(voice_id, "voice_id", op), _need(text, "text", op)
             client, served = _client("elevenlabs_act", op,
                                      units=max(1, speech_credits(line, model_id)), text=line)
@@ -599,7 +688,7 @@ def register(mcp: FastMCP) -> None:
             return out
 
         if op == "create_music":
-            _refuse_ignored(op, text=text, **speech, **sound, **design)
+            _refuse_ignored(op, text=text, **speech, **sound, **design, **heard)
             client, served = _client("elevenlabs_act", op)
             audio = _run(lambda: client.create_music(
                 prompt=prompt, composition_plan=composition_plan,
@@ -611,7 +700,7 @@ def register(mcp: FastMCP) -> None:
             return _deposit(audio, "music", sub)
 
         if op == "create_sound":
-            _refuse_ignored(op, seed=seed, **speech, **music, **design)
+            _refuse_ignored(op, seed=seed, **speech, **music, **design, **heard)
             what = _need(text, "text", op)
             client, served = _client("elevenlabs_act", op, text=what)
             audio = _run(lambda: client.create_sound(
@@ -621,7 +710,7 @@ def register(mcp: FastMCP) -> None:
             return _deposit(audio, "sound", sub)
 
         # op == "create_voice_design" — the only one left (guard above).
-        _refuse_ignored(op, **speech, **music, **sound)
+        _refuse_ignored(op, **speech, **music, **sound, **heard)
         described = _need(voice_description, "voice_description", op)
         client, served = _client("elevenlabs_act", op, text=text)
         result = _run(lambda: client.create_voice_design(

@@ -4,7 +4,7 @@ create a key in ElevenLabs (Developers → API Keys → *Create key*) and paste 
 - a key can be **restricted** when it is created: the generations need *Text to Speech*, *Music* and *Sound Effects*; the reads need *User* read (the credits), *Voices* read and *Models* read. A missing permission is named in the refusal
 - a key can carry its own **credit limit** in ElevenLabs: a good way to give a teammate or an agent a budget
 - your own key first: every generation then spends **your** ElevenLabs credits; each organization or person sets its own key
-- the **shared key**, when oto grants it to your org, covers speech (`create_speech`) only, unless the instance opens more; music, sound effects and voice design need your own key. Each spoken call counts the ElevenLabs credits it spent (half a credit per character on the flash and turbo models, one otherwise). The voice and model reads are free on it; the balance (`get_subscription`) is not served on it — it is the instance's
+- the **shared key**, when oto grants it to your org, covers speech (`create_speech`) and transcription (`create_transcript`) only, unless the instance opens more; music, sound effects and voice design need your own key. Each spoken call counts the ElevenLabs credits it spent (half a credit per character on the flash and turbo models, one otherwise). The voice and model reads are free on it; the balance (`get_subscription`) is not served on it — it is the instance's
 - granting the shared key (`oto_admin_key_grant op=grant`) **requires** a `daily_quota` > 0, counted in **ElevenLabs credits** per day (absent or 0, which would be unlimited, is refused with `grant_quota_required`); the gestures that carry no quota (platform access, option gift) are refused for this connector
 
 ## usage — a voice, a track, a sound
@@ -12,6 +12,7 @@ create a key in ElevenLabs (Developers → API Keys → *Create key*) and paste 
 - "how many credits are left?" → `elevenlabs(op="get_subscription")`: `character_count` used against `character_limit`, and when it resets
 - "which voices can I use?" → `elevenlabs(op="list_voices", search="warm")`; one voice's details → `op="get_voice", voice_id=…`
 - "read this line" → `elevenlabs_act(op="create_speech", voice_id=…, text="…")`; add `timestamps=true` for each word's start and end (captions, cutting a video on a word)
+- "what is said in this recording" → `elevenlabs_act(op="create_transcript", source={…}, audio_seconds=…)`; billed per second of audio (~330 credits a minute), at most 300 seconds per call on the shared key
 - a script read line by line sounds continuous when each call passes the neighbouring lines as `previous_text` and `next_text`
 - "a 45-second track" → `elevenlabs_act(op="create_music", prompt="…", music_length_ms=45000)`, or a `composition_plan` that sets each section's length and styles, including what must NOT happen (`negative_global_styles`)
 - "a soft click" → `elevenlabs_act(op="create_sound", text="…", duration_seconds=1)`

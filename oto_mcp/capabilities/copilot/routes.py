@@ -1,4 +1,4 @@
-"""The in-app agent's four routes (REST only — the front's panel; an MCP client has its own
+"""The in-app agent's five routes (REST only — the front's panel; an MCP client has its own
 agent). Three answer with an event stream (`EventStream`, `text/event-stream`), one —
 undo — with JSON. Contract: the front's `src/lib/copilot/protocol.ts` and `transport.ts`.
 
@@ -35,7 +35,7 @@ from .._authz import ORG_MEMBER
 from .._types import (AuthzDenied, Capability, DeclaredError, EventStream, ResolvedCtx,
                       RestBinding)
 from ..registry import CAPABILITIES
-from . import annulation, boucle, cle as cles, consigne, depense, outils
+from . import annulation, boucle, cle as cles, consigne, depense, dictee, outils
 from .boucle import ev
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,20 @@ class ApprovalInput(BaseModel):
 
 class RevertInput(BaseModel):
     revert_id: str = Field(max_length=80)
+
+
+class DictationInput(BaseModel):
+    #: The clip the panel recorded (`MediaRecorder`), base64. 4 MB of audio at most.
+    audio_base64: str = Field(min_length=1, max_length=6_000_000)
+    mime_type: str = Field(max_length=100)
+    #: How long the person spoke, as the panel timed it: what the quota is checked
+    #: against before ElevenLabs is called.
+    duration_ms: int = Field(gt=0, le=dictee.MAX_SECONDES * 1000)
+    language: Optional[Literal["en", "fr"]] = None
+
+
+class DictationOut(BaseModel):
+    text: str
 
 
 class CopilotEvent(BaseModel):
@@ -370,6 +384,22 @@ def _revert(ctx: ResolvedCtx, inp: RevertInput) -> dict:
     return {"ok": True, "undone": ligne.get("label") or "", "skipped": int(out["skipped"])}
 
 
+async def _dictation(ctx: ResolvedCtx, inp: DictationInput) -> dict:
+    _garde(ctx)
+    try:
+        data, mime = dictee.decoder(inp.audio_base64, inp.mime_type)
+    except dictee.DicteeRefusee as e:
+        raise AuthzDenied(422, "dictation_invalid", str(e)) from None
+    out = await dictee.transcrire(ctx.sub, ctx.org_id, data, mime, inp.duration_ms / 1000,
+                                  inp.language)
+    if not out["ok"]:
+        # The call's own words: no key, no grant, quota spent, ElevenLabs down. The
+        # panel shows them; nothing falls back to the browser's recognition.
+        raise AuthzDenied(409, "dictation_unavailable",
+                          out["message"] or "Dictation is not available here.")
+    return {"text": out["text"]}
+
+
 _PORTE = (DeclaredError(403, "api_token_forbidden",
                         "an API or delegated token, not an interactive session"),
           DeclaredError(403, "copilot_not_enabled",
@@ -407,6 +437,21 @@ CAPABILITIES += [
                     "fields edited on the card (only those it offered), and whether to stop "
                     "asking for this kind of change in this conversation (plain writes "
                     "only). Resumes the stream."),
+    Capability(
+        key="copilot.dictation", handler=_dictation, Input=DictationInput,
+        Output=DictationOut, authz=ORG_MEMBER, mcp=None,
+        errors=(*_PORTE,
+                DeclaredError(422, "dictation_invalid",
+                              "the clip is empty, not audio, or over the limits"),
+                DeclaredError(409, "dictation_unavailable",
+                              "ElevenLabs refused or could not be reached: no key, no "
+                              "grant, quota spent, or the service down")),
+        rest=RestBinding("POST", "/api/copilot/dictations", provisoire=True,
+                         allow_api_token=False),
+        description="The words of a clip the person recorded in the panel, transcribed "
+                    "by ElevenLabs (Scribe) on the org's key or the granted shared key, "
+                    "metered like any `elevenlabs_act` call. Never the browser's own "
+                    "recognition."),
     Capability(
         key="copilot.revert", handler=_revert, Input=RevertInput, Output=RevertOut,
         authz=ORG_MEMBER, mcp=None,

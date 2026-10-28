@@ -445,9 +445,10 @@ def test_the_setting_refuses_what_the_tool_would_not_understand(value, error):
         E.parse_platform_ops(value)
 
 
-def test_the_default_is_speech_only():
+def test_the_default_is_speech_and_transcription_only():
     from oto_mcp.tools import elevenlabs as E
-    assert E.parse_platform_ops(E.PLATFORM_OPS_DEFAULT) == {("elevenlabs_act", "create_speech")}
+    assert E.parse_platform_ops(E.PLATFORM_OPS_DEFAULT) == {
+        ("elevenlabs_act", "create_speech"), ("elevenlabs_act", "create_transcript")}
 
 
 def test_an_unreadable_setting_RAISES_rather_than_serving_the_default(monkeypatch):
@@ -681,3 +682,94 @@ def test_the_grant_tools_say_the_unit():
     for key in ("admin.key_grant", "platform.key.grant", "platform.org.grant_key",
                 "platform.group.grant_key"):
         assert "`elevenlabs` (ElevenLabs credits)" in by_key(key).description, key
+
+
+# --- transcription (Scribe): billed per second of audio, in ElevenLabs credits ---------
+
+@pytest.fixture
+def clip(monkeypatch):
+    """`file_source.resolve` returns a fixed clip; `seen` = the sources asked for."""
+    from oto_mcp import file_source
+    seen: list = []
+
+    def resolve(source, *, max_bytes=None, **kw):
+        seen.append((source, max_bytes))
+        return file_source.ResolvedFile(b"webm-bytes", "dictation.webm", "audio/webm")
+    monkeypatch.setattr("oto_mcp.file_source.resolve", resolve)
+    return seen
+
+
+_SRC = {"kind": "transit", "ref": "copilot-dictation/" + "a" * 32}
+
+
+@pytest.mark.parametrize("seconds, credits", [(None, 1), (0.1, 1), (6, 33), (60, 330),
+                                              (10.01, 56)])
+def test_transcribe_credits(seconds, credits):
+    from oto_mcp.tools import elevenlabs as E
+    assert E.transcribe_credits(seconds) == credits
+
+
+def test_transcribe_on_the_platform_key_bills_the_longer_of_length_and_words(
+        client, platform, trace, setting, clip):
+    client.transcribe_speech.return_value = {
+        "text": "Bonjour Tulina", "language_code": "fra",
+        "words": [{"text": "Bonjour", "start": 0.1, "end": 0.6, "type": "word"},
+                  {"text": " ", "start": 0.6, "end": 0.7, "type": "spacing"},
+                  {"text": "Tulina", "start": 0.7, "end": 12.0, "type": "word"}]}
+    out = _tool("elevenlabs_act")(op="create_transcript", source=_SRC, audio_seconds=6,
+                                  language_code="fr")
+    assert clip == [(_SRC, 10 * 1024 * 1024)]
+    assert platform == [33], "the quota is checked against the declared length"
+    client.transcribe_speech.assert_called_once_with(
+        b"webm-bytes", filename="dictation.webm", content_type="audio/webm",
+        model_id="scribe_v2", language_code="fr")
+    assert trace == [{"quantity": 66, "units": 66}], "12 s heard beats 6 s declared"
+    assert out["text"] == "Bonjour Tulina"
+    assert [w["word"] for w in out["words"]] == ["Bonjour", "Tulina"]
+
+
+def test_transcribe_on_the_customers_key_notes_quantity_only(client, trace, setting, clip):
+    client.transcribe_speech.return_value = {"text": "Hi", "words": []}
+    _tool("elevenlabs_act")(op="create_transcript", source=_SRC, audio_seconds=2)
+    assert trace == [{"quantity": 11}]
+
+
+def test_transcribe_too_long_on_the_shared_key_is_refused_before_elevenlabs(
+        client, platform, trace, setting, clip):
+    with pytest.raises(McpError, match="audio_too_long"):
+        _tool("elevenlabs_act")(op="create_transcript", source=_SRC, audio_seconds=301)
+    assert not client.method_calls and trace == []
+
+
+def test_transcribe_closed_by_the_setting(client, platform, trace, setting, clip):
+    setting["value"] = "elevenlabs_act:create_speech"
+    with pytest.raises(McpError, match="does not transcribe"):
+        _tool("elevenlabs_act")(op="create_transcript", source=_SRC, audio_seconds=3)
+    assert not client.method_calls and trace == []
+
+
+def test_transcribe_unreadable_source_spends_nothing(client, platform, trace, monkeypatch):
+    from oto_mcp import file_source
+
+    def refuse(source, **kw):
+        raise file_source.FileSourceError("expired")
+    monkeypatch.setattr("oto_mcp.file_source.resolve", refuse)
+    with pytest.raises(McpError, match="could not be read"):
+        _tool("elevenlabs_act")(op="create_transcript", source=_SRC, audio_seconds=3)
+    assert platform == [] and trace == []
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"source": None},
+    {"source": _SRC, "voice_id": "v1"},
+    {"source": _SRC, "audio_seconds": -1},
+])
+def test_transcribe_intent_refusals(client, clip, kwargs):
+    with pytest.raises(McpError):
+        _tool("elevenlabs_act")(op="create_transcript", **kwargs)
+    assert not client.method_calls
+
+
+def test_speech_refuses_a_source(client):
+    with pytest.raises(McpError, match="does not use `source`"):
+        _tool("elevenlabs_act")(op="create_speech", voice_id="v1", text="Hi", source=_SRC)
