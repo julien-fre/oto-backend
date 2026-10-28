@@ -96,3 +96,22 @@ CREATE TABLE IF NOT EXISTS app_projects (
 );
 CREATE INDEX IF NOT EXISTS app_projects_project_idx ON app_projects (project_id);
 """
+
+FICHIERS = """
+-- Les fichiers qu'un LECTEUR dépose dans une app (un PDF, une image, un tableur) pour
+-- qu'un agent les traite. Liés à l'app ET à qui les a déposés : seul lui — et les runs
+-- qu'il lance, qui tournent en son nom — les lit. Les octets sont sur le stockage
+-- média (`app-files/`), jamais en base.
+CREATE TABLE IF NOT EXISTS app_files (
+    id BIGSERIAL PRIMARY KEY,
+    app_id BIGINT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    sub TEXT NOT NULL,
+    s3_key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    size BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS app_files_app_sub_idx ON app_files (app_id, sub, id DESC);
+CREATE INDEX IF NOT EXISTS app_files_sub_idx ON app_files (sub);
+"""

@@ -149,6 +149,7 @@ CLASSEMENT: dict[str, Table] = {
     "doc_revisions": indirecte(_DOCS),
     "apps": possedee(ParEntite()),
     "app_projects": indirecte(_APPS),
+    "app_files": indirecte(_APPS, hors_base=("s3_key",), comptes=("sub",)),
     "app_revisions": indirecte(_APPS),
     "app_consents": indirecte(_APPS, "le journal des gestes d'app part avec son app",
                               comptes=("sub",)),

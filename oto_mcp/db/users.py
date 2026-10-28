@@ -595,6 +595,9 @@ _SUB_COLUMNS = [
     ("app_consents", "sub"),
     # qui a rangé une app dans un projet : attribution, hors PK, UPDATE nu.
     ("app_projects", "filed_by"),
+    # qui a déposé un fichier dans une app : c'est aussi qui le LIT (lui seul, et ses
+    # runs) — il suit la personne, sinon ses fichiers lui deviendraient illisibles.
+    ("app_files", "sub"),
     # - qui a écrit un commentaire de ligne : une signature d'auteur (`mine`, le droit
     #   de retirer le sien se lisent par elle), hors PK, indexée, UPDATE nu.
     ("datastore_row_comments", "auteur_sub"),

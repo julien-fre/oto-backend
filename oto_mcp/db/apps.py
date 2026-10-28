@@ -365,3 +365,38 @@ def run_results(run_ids: Iterable[str]) -> dict[str, dict]:
             "SELECT run_id, outcome, note FROM runs WHERE run_id = ANY(%s)", (ids,)
         ).fetchall()
     return {r["run_id"]: {"outcome": r["outcome"], "note": r["note"]} for r in rows}
+
+
+# ── Fichiers déposés dans une app ────────────────────────────────────────────
+
+_FICHIER = "id, app_id, sub, s3_key, name, media_type, size, created_at"
+
+
+def file_add(app_id: int, sub: str, s3_key: str, name: str, media_type: str,
+             size: int) -> dict:
+    with _connect() as conn:
+        return conn.execute(
+            f"INSERT INTO app_files (app_id, sub, s3_key, name, media_type, size) "
+            f"VALUES (%s, %s, %s, %s, %s, %s) RETURNING {_FICHIER}",
+            (app_id, sub, s3_key, name, media_type, size),
+        ).fetchone()
+
+
+def files_of(app_id: int, sub: str, limit: int) -> list[dict]:
+    """Les fichiers que `sub` a déposés dans l'app, du plus récent au plus ancien."""
+    with _connect() as conn:
+        return conn.execute(
+            f"SELECT {_FICHIER} FROM app_files WHERE app_id = %s AND sub = %s "
+            "ORDER BY id DESC LIMIT %s",
+            (app_id, sub, limit),
+        ).fetchall()
+
+
+def file_of(app_id: int, sub: str, file_id: int) -> Optional[dict]:
+    """UN fichier de l'app, déposé par `sub` — None sinon (inconnu, d'une autre app ou
+    d'un autre lecteur : la même réponse)."""
+    with _connect() as conn:
+        return conn.execute(
+            f"SELECT {_FICHIER} FROM app_files WHERE id = %s AND app_id = %s AND sub = %s",
+            (file_id, app_id, sub),
+        ).fetchone()

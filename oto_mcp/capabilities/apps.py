@@ -63,7 +63,7 @@ _ECRITURES = frozenset({"create", "update", "archive", "unarchive", "restore", "
 
 class AppInput(BaseModel):
     op: Literal["list", "get", "create", "update", "archive", "unarchive",
-                "revisions", "restore", "validate", "file", "unfile"]
+                "revisions", "restore", "validate", "file", "unfile", "read_file"]
     project_id: Optional[int] = Field(
         default=None, description="create: also file the new app in this project. "
         "file / unfile: the project. list: only the apps filed in it.")
@@ -79,6 +79,9 @@ class AppInput(BaseModel):
     expected_rev: Optional[str] = None
     revision_id: Optional[int] = None
     archived: Optional[bool] = None
+    file_id: Optional[int] = Field(
+        default=None, description="read_file: a file a person dropped in the app (its id "
+        "comes with the run's input).")
 
 
 class AppCard(BaseModel):
@@ -118,6 +121,8 @@ class AppOut(BaseModel):
     # validate : vide = le manifeste passe.
     problems: Optional[list[str]] = None
     ok: Optional[bool] = None
+    # read_file : le fichier rendu pour un agent (`file_content.render_for_agent`).
+    file: Optional[dict] = None
 
 
 def _require(cond, code: str, msg: str, status: int = 400) -> None:
@@ -302,13 +307,30 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
                             granted_by=db.MARQUE_PARTAGE_PAR_DEFAUT)
         return {"app": _view(sub, row)}
 
-    row = _app_or_404(sub, inp.app_id, "read" if inp.op in ("get", "revisions") else "write")
+    row = _app_or_404(sub, inp.app_id,
+                      "read" if inp.op in ("get", "revisions", "read_file") else "write")
 
     if inp.op == "get":
         return {"app": _view(sub, row)}
 
     if inp.op == "revisions":
         return {"revisions": db.apps.revisions(row["id"])}
+
+    if inp.op == "read_file":
+        # Le lecteur qui l'a déposé, ou un run qu'il a lancé (qui tourne en son nom).
+        _require(inp.file_id is not None, "missing_file_id", "`file_id` is required.")
+        f = db.apps.file_of(int(row["id"]), sub, int(inp.file_id))
+        _require(f is not None, "unknown_file",
+                 f"No file {inp.file_id} of yours in app {row['id']}.", 404)
+        from .. import file_content, media_store
+        try:
+            data = media_store.fetch_object(f["s3_key"])
+            rendu = file_content.render_for_agent(data, f["name"], f["media_type"],
+                                                  sub=sub, prefix="app-files")
+        except (media_store.MediaError, file_content.MediaUnavailable) as e:
+            raise AuthzDenied(503, "file_unavailable",
+                              f"The file can't be read right now: {e}") from None
+        return {"file": {"id": int(f["id"]), **rendu}}
 
     if inp.op in ("file", "unfile"):
         _require(inp.project_id is not None, "missing_project", "`project_id` is required.")
@@ -387,7 +409,9 @@ CAPABILITIES += [
             "op=list (no project: your active org's apps; `project_ids`: those filed "
             "there; cards, no HTML) / get (`app_id`; with manifest, HTML and `rev`) / "
             "create (`title`, `manifest`, `html`, optional `thumbnail`, optional "
-            "`project_id` to file it) / update (`app_id`, any of those; pass "
+            "`project_id` to file it) / read_file (`app_id`, `file_id`: a file a person "
+            "dropped in the app, for the run they started — PDF text, a sheet as CSV, "
+            "text inline, plus a signed link to the original) / update (`app_id`, any of those; pass "
             "`expected_rev` from get → 409 if it changed) / archive / unarchive / "
             "revisions / restore (`revision_id`) / file / unfile (`app_id`, "
             "`project_id`) / validate (`manifest`, and `app_id` for an existing app: "
