@@ -39,6 +39,14 @@ from oto_mcp.tools.lecture import ACTE, LECTURE, SIMULATION
     ("oto_org_settings", {"op": "set"}, None, c.DESTRUCTIF),
     ("data_share", {"datastore": 1}, None, c.DESTRUCTIF),
     ("oto_project", {"op": "publish_mcp"}, None, c.DESTRUCTIF),
+    # A question the agent could not answer, flagged to the team: no card...
+    ("feedback", {"signal": "gap", "kind": "missing_doctrine", "target": "group a table"},
+     None, c.LECTURE),
+    # ... unless it carries a link, and a review of a tool is not a gap.
+    ("feedback", {"signal": "gap", "kind": "other", "target": "x", "text": "https://x.test"},
+     None, c.DESTRUCTIF),
+    ("feedback", {"signal": "tool_feedback", "kind": "bug", "target": "fr_search"},
+     None, c.DESTRUCTIF),
     # An undeclared tool is never presumed a reader.
     ("someconnector_search", {"q": "x"}, None, c.DESTRUCTIF),
     ("oto_doc", {"op": "some_new_op"}, None, c.ECRITURE),
@@ -99,3 +107,9 @@ def test_rouge_seulement_pour_une_suppression():
     assert c.rouge("data_delete_row", {})
     assert c.rouge("oto_doc", {"op": "archive"})
     assert not c.rouge("oto_trigger", {"op": "run_now"})
+
+
+def test_le_signal_de_manque_est_a_portee_de_main():
+    # Seen directly, not through `oto_call`: the prompt asks for it by name.
+    assert "feedback" in c.CORE_TOOLS
+    assert not c.interdit("feedback")

@@ -27,6 +27,7 @@ CORE_TOOLS = (
     "oto_doc", "oto_procedure", "oto_trigger", "oto_project", "oto_guide", "oto_fleet",
     "data_list_datastores", "data_get_schema", "data_rows", "data_aggregate",
     "data_write", "data_update_where", "data_patch_schema", "data_create_datastore",
+    "feedback",
 )
 
 #: Never from the in-app agent, even for a person entitled to them: platform and tenant
@@ -117,6 +118,11 @@ def classer(target: str, args: dict, annotations=None) -> str:
     if getattr(annotations, "readOnlyHint", None) is True:
         return LECTURE
     if not op and target in OUTILS_EN_LECTURE:
+        return LECTURE
+    # A question the agent could not answer, flagged to the team behind the product: no
+    # card, or every miss would cost the person a click. A link in it still asks.
+    if target == "feedback" and args.get("signal") == "gap" \
+            and not _URL.search(json.dumps(args, ensure_ascii=False, default=str)):
         return LECTURE
     if op and op in OPS_EN_LECTURE.get(target, ()):
         return LECTURE
