@@ -89,8 +89,8 @@ d'`ownership` (`apps.owner_type/owner_id`, partages dans `resource_grants`,
 
 Une app ouverte ne parle qu'à `POST /api/me/apps/{app_id}/call` (face REST seule, pas
 d'outil MCP : un agent n'est jamais le lecteur d'une app). **Actions servies :**
-`read_rows`, `read_aggregate` (lire), `write_cell`, `add_row`, `start_agent` (gestes,
-avec consentement), `agent_runs`, `run_result` (suivre les runs).
+`read_rows`, `read_aggregate` (lire), `write_cell`, `add_row`, `start_agent`,
+`upload_file` (gestes, avec consentement), `list_files`, `agent_runs`, `run_result`.
 
 - **Droits d'une app = droits de son auteur ∩ droits de son lecteur.** L'auteur est
   `updated_by` ; il est jugé par l'ownership SEUL (numéro du tableau), jamais par sa
@@ -144,6 +144,37 @@ geste qui écrit ou lance (`write_cell`, `add_row`, `start_agent`) exige donc un
   quelle action, quand, le `geste_id` des révisions écrites
   (`datastore_row_revisions.geste_id`), le travail lancé (`job_id`). C'est là, pas
   dans `tool_calls` (route réduite), que se lit « cette écriture vient de l'app N ».
+
+### Des fichiers pour les agents (`files: true`)
+
+Une équipe dépose un PDF, un tableur, une image dans une app, et un agent le traite.
+
+- **Déposer est un geste** : le cadre parent demande un consentement
+  (`POST …/consent`, `action=upload_file`, `file={name, size, media_type}`), puis envoie
+  le fichier en multipart à **`POST /api/me/apps/{app_id}/files`** (`file` + `consent`,
+  route de nature `api/apps_files.py`, session interactive seule). Ce qui arrive doit
+  répondre à ce qui a été annoncé (même nom, même taille, même type déclaré).
+- **Le type se juge sur les octets** (`media_store.type_servi`) : PDF, PNG/JPEG/GIF/WEBP,
+  texte, CSV, Markdown, JSON, Word, Excel, PowerPoint ; 20 Mo au plus. Un fichier qui
+  n'est pas ce qu'il dit, ou que le stockage neutraliserait (HTML, SVG, exécutable…),
+  est refusé 415 `file_type`.
+- **Rangé à part** : `app_files` (app, déposant, clé, nom, type, taille), octets sous
+  `app-files/<app_id>/…` (clé propre à chaque dépôt). **Seul celui qui l'a déposé le
+  lit**, et les runs qu'il lance — ils tournent en son nom. `list_files` (appel d'app)
+  rend les siens.
+- **Remis à un run** : `start_agent` prend `files` (5 au plus, de CETTE app, déposés par
+  CE lecteur). Le run reçoit, après l'entrée de l'app, chaque fichier — nom, type,
+  taille — et son TEXTE quand on sait l'extraire (PDF, Word, tableur, texte :
+  `file_extract`), borné pour que tout tienne dans le `handoff` (20 000 caractères).
+  Une URL signée n'y figure pas : un run peut attendre une place au-delà de son heure.
+- **Lu en entier par l'agent** : `oto_apps op=read_file` (`app_id`, `file_id`) rend le
+  fichier comme les pièces jointes Gmail ou Drive (`file_content.render_for_agent`) :
+  texte d'un PDF ou tableur en CSV inline, plus un lien signé vers l'original.
+  ⚠️ `oto_apps` est un outil bêta : l'agent doit l'avoir dans ses `tools`, sinon il
+  n'a que le texte remis (borné) — `missing_tools` le dit à la pose.
+- **Rétention** : aucune purge automatique aujourd'hui ; les fichiers partent avec leur
+  app (`ON DELETE CASCADE`, objets restant sur le stockage). Même famille que les
+  pièces jointes du copilote (oto-backend#1420, `copilot/pieces.py`) : à converger.
 
 ### Suivre les runs
 
