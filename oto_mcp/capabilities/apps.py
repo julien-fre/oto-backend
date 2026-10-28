@@ -433,6 +433,8 @@ CAPABILITIES += [
         key="me.app", handler=_app, Input=AppInput, Output=AppOut, authz=SUB_ONLY,
         description=(
             "Apps: screens people build on the platform — dashboards, review queues. "
+            "Before building or changing one, read the guide: oto_guide op=read "
+            "slug=build-apps. "
             "An app is a manifest (the tables, fields and agents it touches) plus HTML "
             "that runs sandboxed and talks to the platform through its `window` "
             "bridge. Not a memory page. An app has its OWN owner and shares, like a "
