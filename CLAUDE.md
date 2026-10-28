@@ -232,7 +232,7 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `org-context.md` — session / maison / consultation ; jeton de délégation borné à l'org de son travail
 - `ownership.md` — `can_access`/`can_govern`, partages
 - `demandes-d-acces.md` — une personne bloquée demande, qui peut accorder approuve d'un geste : le geste
-  ordinaire rejoué sous l'identité de qui approuve, quatre `kind`, une demande en attente par cible, 14 jours
+  ordinaire rejoué sous l'identité de qui approuve, cinq `kind`, une demande en attente par cible, 14 jours
 - `tool-visibility.md` — denylist, `PROTECTED_TOOLS`
 - `auth-logto.md` — Logto, inscription CIMD, jetons `oto_`
 - `tenants.md` — l'identité au-dessus des orgs

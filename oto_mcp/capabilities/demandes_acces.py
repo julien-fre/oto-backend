@@ -40,7 +40,7 @@ from ._types import AuthzDenied, Capability, DeclaredError, RawCtx, ResolvedCtx,
 from .registry import CAPABILITIES, by_key
 from .resources_contract import KIND_OF
 
-KINDS = ("resource_access", "connector_activation", "agent_tools", "team_join")
+KINDS = ("resource_access", "connector_activation", "agent_access", "agent_tools", "team_join")
 NOTE_MAX = 1000
 OUTILS_MAX = 50
 _ROLES = ("viewer", "editor", "manager")
@@ -56,15 +56,18 @@ def _note(v: Optional[str]) -> Optional[str]:
 
 
 class CreateRequestInput(BaseModel):
-    kind: Literal["resource_access", "connector_activation", "agent_tools", "team_join"]
+    kind: Literal["resource_access", "connector_activation", "agent_access", "agent_tools",
+                  "team_join"]
     resource_type: Optional[Literal["project", "datastore_namespace", "procedure", "doc"]] = Field(
         default=None, description="`resource_access`: the family of the resource.")
     resource_id: Optional[str] = Field(default=None, description="`resource_access`: its id.")
     role: Optional[Literal["viewer", "editor", "manager"]] = Field(default=None, description=(
-        "`resource_access`: the role asked for (default `viewer`)."))
+        "`resource_access`: the role asked for (default `viewer`). `agent_access`: "
+        "`viewer` or `editor` (default `editor`)."))
     connector: Optional[str] = Field(default=None, description=(
         "`connector_activation`: the connector to turn on for the org."))
-    trigger_id: Optional[int] = Field(default=None, description="`agent_tools`: the agent.")
+    trigger_id: Optional[int] = Field(default=None, description=(
+        "`agent_access` / `agent_tools`: the agent."))
     tools: Optional[list[str]] = Field(default=None, description=(
         f"`agent_tools`: the tools the agent should be allowed (at most {OUTILS_MAX})."))
     group_id: Optional[int] = Field(default=None, description="`team_join`: the team.")
@@ -89,7 +92,8 @@ class _UneDemande(BaseModel):
 
 class ApproveRequestInput(_UneDemande):
     role: Optional[Literal["viewer", "editor", "manager"]] = Field(default=None, description=(
-        "`resource_access`: grant this role instead of the one asked (less, or more)."))
+        "`resource_access` / `agent_access`: grant this role instead of the one asked "
+        "(an agent takes `viewer` or `editor` only)."))
     tools: Optional[list[str]] = Field(default=None, description=(
         "`agent_tools`: allow only these tools, among those asked."))
     note: Optional[str] = None
@@ -187,13 +191,23 @@ def _exige(champ: str, valeur):
 
 # resource_access — un projet, un tableau, une procédure, une page
 
+def _org_de_la_ressource(kind: str, rid: str) -> Optional[int]:
+    """L'org où vit la ressource. Une page n'a pas d'org à elle : elle vit dans celle de
+    son projet (`governed_by`), même règle que sa gouvernance."""
+    k = ownership.RESOURCE_KINDS.get(kind)
+    if k is not None and k.governed_by is not None:
+        parent = k.governed_by(rid)
+        return _org_de_la_ressource(*parent) if parent else None
+    return ownership.org_ou_vit(kind, rid)[0]
+
+
 def _ressource_poser(ctx: ResolvedCtx, inp: CreateRequestInput):
     rtype = _exige("resource_type", inp.resource_type)
     rid = str(_exige("resource_id", inp.resource_id)).strip()
     kind = KIND_OF[rtype]
     # Une cible inconnue et une cible d'une AUTRE org se refusent pareil : la demande
     # ne dit pas ce qui existe ailleurs.
-    if ownership.owner_of(kind, rid) is None or ownership.org_ou_vit(kind, rid)[0] != ctx.org_id:
+    if ownership.owner_of(kind, rid) is None or _org_de_la_ressource(kind, rid) != ctx.org_id:
         raise AuthzDenied(404, "target_not_found", "No such resource in this organization.")
     role = inp.role or "viewer"
     if role == "manager":
@@ -229,7 +243,9 @@ def _ressource_libelle(sub: str, d: dict) -> Optional[str]:
             or ownership.can_govern(sub, kind, c["resource_id"])):
         return None
     row = _OPS[c["resource_type"]]["get_by_id"](int(c["resource_id"]))
-    return (row.get("name") or row.get("title") or row.get("slug")) if row else None
+    if not row:
+        return None
+    return row.get("name") or row.get("title") or row.get("datastore") or row.get("slug")
 
 
 # connector_activation — un connecteur coupé pour l'org
@@ -288,6 +304,43 @@ def _agent_poser(ctx: ResolvedCtx, inp: CreateRequestInput):
     return {"trigger_id": tid}, f"agent:{tid}", {"tools": manquants}
 
 
+def _agent_acces_poser(ctx: ResolvedCtx, inp: CreateRequestInput):
+    tid = int(_exige("trigger_id", inp.trigger_id))
+    role = inp.role or "editor"
+    if role not in ("viewer", "editor"):
+        raise AuthzDenied(400, "invalid_role", "An agent is shared as `viewer` or `editor`.")
+    agent = _agent(ctx.org_id, tid)
+    if agent is None:
+        raise AuthzDenied(404, "target_not_found", "No such agent in this organization.")
+    n = _acces_agent.niveau(ctx.sub, ctx.org_id, agent)
+    if n in _acces_agent.ECRIRE or (role == "viewer" and n == "viewer"):
+        raise _deja()
+    return {"trigger_id": tid}, f"agent_access:{tid}", {"role": role}
+
+
+def _agent_gouverne(sub: str, d: dict) -> bool:
+    """Ce que `runner.triggers` op=share exige : gouverner l'agent (propriétaire, admin)."""
+    agent = _agent(d["org_id"], d["cible"]["trigger_id"])
+    return agent is not None and _acces_agent.niveau(
+        sub, int(d["org_id"]), agent) in _acces_agent.GOUVERNER
+
+
+def _agent_acces_accorder(d: dict, accorde: dict):
+    from .runner_triggers import TriggerInput
+    return "runner.triggers", TriggerInput(
+        op="share", trigger_id=int(d["cible"]["trigger_id"]),
+        share_with_sub=d["requester_sub"], role=accorde["role"])
+
+
+def _agent_libelle_lisible(sub: str, d: dict) -> Optional[str]:
+    """Le nom de l'agent à qui le voit déjà : un agent PRIVÉ ne se nomme pas au seul
+    demandeur (même règle que `_ressource_libelle`)."""
+    agent = _agent(d["org_id"], d["cible"]["trigger_id"])
+    if agent is None or _acces_agent.niveau(sub, int(d["org_id"]), agent) is None:
+        return None
+    return agent.get("label")
+
+
 def _agent_peut(sub: str, d: dict) -> bool:
     agent = _agent(d["org_id"], d["cible"]["trigger_id"])
     return agent is not None and _peut_ecrire_l_agent(sub, d["org_id"], agent)
@@ -338,6 +391,8 @@ GESTES: dict[str, _Geste] = {
     "connector_activation": _Geste(
         _connecteur_poser, lambda sub, d: roles.is_org_admin(sub, int(d["org_id"])),
         _connecteur_accorder, lambda sub, d: d["cible"]["connector"]),
+    "agent_access": _Geste(_agent_acces_poser, _agent_gouverne, _agent_acces_accorder,
+                           _agent_libelle_lisible),
     "agent_tools": _Geste(_agent_poser, _agent_peut, _agent_accorder, _agent_libelle),
     "team_join": _Geste(_equipe_poser,
                         lambda sub, d: roles.can_admin_group(sub, int(d["cible"]["group_id"])),
@@ -392,6 +447,8 @@ def _create(ctx: ResolvedCtx, inp: CreateRequestInput) -> dict:
         cible, cle, demande = _ressource_poser(ctx, inp)
     elif inp.kind == "connector_activation":
         cible, cle, demande = _connecteur_poser(ctx, inp)
+    elif inp.kind == "agent_access":
+        cible, cle, demande = _agent_acces_poser(ctx, inp)
     elif inp.kind == "agent_tools":
         cible, cle, demande = _agent_poser(ctx, inp)
     else:
@@ -442,6 +499,11 @@ def _accorde(d: dict, inp: ApproveRequestInput) -> dict:
     demande = d.get("demande") or {}
     if d["kind"] == "resource_access":
         return {"role": inp.role or demande.get("role") or "viewer"}
+    if d["kind"] == "agent_access":
+        role = inp.role or demande.get("role") or "editor"
+        if role not in ("viewer", "editor"):
+            raise AuthzDenied(400, "invalid_role", "An agent is shared as `viewer` or `editor`.")
+        return {"role": role}
     if d["kind"] == "agent_tools":
         voulus = list(demande.get("tools") or [])
         if inp.tools is None:
@@ -539,6 +601,7 @@ CAPABILITIES += [
         errors=(
             DeclaredError(400, "missing_fields", "un champ que ce `kind` exige manque"),
             DeclaredError(400, "too_many_tools", f"`tools` de plus de {OUTILS_MAX} outils"),
+            DeclaredError(400, "invalid_role", "`agent_access` : un rôle autre que viewer/editor"),
             DeclaredError(404, "target_not_found",
                           "la cible n'existe pas, ou ne vit pas dans l'org de l'appel"),
             DeclaredError(409, "already_granted", "l'appelant a déjà ce qu'il demande"),
@@ -551,7 +614,8 @@ CAPABILITIES += [
         description=(
             "Ask for access you are blocked on, in the active organization: a role on a "
             "project, table, procedure or page (`resource_access`), a connector turned on "
-            "for the org (`connector_activation`), tools for an agent (`agent_tools`), or "
+            "for the org (`connector_activation`), access to an agent (`agent_access`), "
+            "tools for an agent (`agent_tools`), or "
             "a place in a team (`team_join`). The people who can grant it see it in their "
             "requests and approve it in one step. Asking again returns the pending one."
         ),
@@ -582,6 +646,7 @@ CAPABILITIES += [
                           "l'appelant ne peut pas accorder ce geste (ou c'est sa propre demande)"),
             DeclaredError(400, "tools_not_asked", "`tools` nomme un outil qui n'était pas demandé"),
             DeclaredError(400, "missing_fields", "`tools` vide : accorder au moins un outil, ou refuser"),
+            DeclaredError(400, "invalid_role", "`agent_access` : un rôle autre que viewer/editor"),
         ),
         description=(
             "Approve a pending request: grants it as the caller, through the same action "

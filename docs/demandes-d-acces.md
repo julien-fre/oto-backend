@@ -25,6 +25,7 @@ Capacité : `capabilities/demandes_acces.py`. Store : `db/demandes_acces.py`, ta
 |---|---|---|---|
 | `resource_access` | `resource_type` ∈ project, datastore_namespace, procedure, doc + `resource_id`, `role` (viewer par défaut) | qui **gouverne** la ressource (`ownership.can_govern` : propriétaire, gérant, escalade `roles.py`) | `resources.govern` op=share, audience person |
 | `connector_activation` | `connector` | un admin de l'org | `connectors.activation.set_org` enabled=true |
+| `agent_access` | `trigger_id`, `role` viewer/editor (editor par défaut) | qui **gouverne** l'agent (propriétaire, admin de l'org) | `runner.triggers` op=share |
 | `agent_tools` | `trigger_id` + `tools` | propriétaire, admin ou éditeur de l'agent | `runner.triggers` op=update, outils actuels + accordés |
 | `team_join` | `group_id` | le chef de l'équipe (ou l'admin de l'org) | `group.member.add` |
 
@@ -36,7 +37,7 @@ Capacité : `capabilities/demandes_acces.py`. Store : `db/demandes_acces.py`, ta
   peut pas approuver, et le refus est celui du geste (un connecteur coupé au-dessus de
   l'org reste coupé).
 - **L'org de l'appel.** Une demande naît dans l'org active du demandeur, sur une cible
-  qui vit dans cette org ; une cible d'une autre org se refuse comme une cible inconnue
+  qui vit dans cette org (une page vit dans l'org de son projet) ; une cible d'une autre org se refuse comme une cible inconnue
   (404 `target_not_found`). Elle ne se lit ni ne se décide que depuis cette org.
 - **On ne demande pas ce qu'on a** (409 `already_granted`), ni ce qu'on peut se donner
   (`agent_tools` : 409 `you_can_grant`). On ne décide pas sa propre demande.
@@ -50,7 +51,12 @@ Capacité : `capabilities/demandes_acces.py`. Store : `db/demandes_acces.py`, ta
   indécidable) ; la redemander la passe `expired` en base et en crée une neuve.
 - **Une décision, une seule** : chaque transition est un `UPDATE … WHERE status =
   'pending'` conditionnel. Deux approbations croisées accordent deux fois (le geste est
-  idempotent) et ne closent qu'une fois.
+  idempotent) et ne closent qu'une fois. Approuver accorde PUIS clôt : un refus qui se
+  glisse entre les deux clôt la demande `declined` alors que l'accès est accordé — rare,
+  et le refus reste lisible dans `decision_note`.
+- **Les refus du geste rejoué traversent** `approve` tels quels (`forbidden`,
+  `trigger_edit_forbidden`, `platform_disabled`…), non déclarés ici : l'écran affiche
+  `error` et son `detail`.
 - **Pas d'escalade « admin en secours »** : qui décide est qui peut déjà accorder. Un
   admin de l'org ne voit donc pas la demande d'accès au projet PERSONNEL d'un membre —
   il ne pourrait pas le partager à la main non plus.
@@ -64,6 +70,8 @@ Capacité : `capabilities/demandes_acces.py`. Store : `db/demandes_acces.py`, ta
 
 ## Pas encore
 
+- `remind` ne fait qu'horodater : rien n'est envoyé tant qu'il n'y a pas de
+  notification. L'écran ne montre pas de bouton « Relancer » d'ici là.
 - Prévenir : aucune notification ne part à la demande ni à la décision, en dehors de
   celle du geste rejoué (un partage de ressource écrit déjà au destinataire). L'écran
   lit `box=review` pour son badge.

@@ -253,3 +253,58 @@ def test_une_demande_ne_se_lit_que_depuis_son_org(client, monde):
                              _boite(client, monde, MOI, "sent", org=monde["b"])["requests"]]
     r = _geste(client, monde, req["id"], "cancel", MOI, org=monde["b"])
     assert (r.status_code, r.json().get("error")) == (404, "request_not_found")
+
+
+# ── 5. les autres familles de ressource, et l'accès à un agent ──────────────────────
+
+def _approuver_ressource(client, monde, rtype, rid, decideur=PROPRIO):
+    r = _demander(client, monde, {"kind": "resource_access", "resource_type": rtype,
+                                  "resource_id": str(rid)})
+    assert r.status_code == 201, r.text
+    req = r.json()["request"]
+    vu = {x["id"]: x for x in _boite(client, monde, decideur)["requests"]}
+    assert req["id"] in vu, vu
+    r = _geste(client, monde, req["id"], "approve", decideur)
+    assert r.status_code == 200, r.text
+    return vu[req["id"]]
+
+
+def test_un_tableau_personnel_d_un_collegue(client, monde):
+    from oto_mcp import ownership
+    ns = "t-" + uuid.uuid4().hex[:6]
+    ns_id = monde["db"].create_datastore("user", PROPRIO, ns, context_org_id=monde["a"])
+    vu = _approuver_ressource(client, monde, "datastore_namespace", ns_id)
+    assert vu["target_label"] == ns
+    assert ownership.can_access(MOI, ownership.TYPE_RESSOURCE_DATASTORE, str(ns_id), "read")
+
+
+def test_une_page_d_un_projet_personnel(client, monde):
+    from oto_mcp import ownership
+    pid = _projet(monde)
+    doc = monde["db"].create_doc(pid, "page-" + uuid.uuid4().hex[:6], created_by=PROPRIO)
+    vu = _approuver_ressource(client, monde, "doc", doc)
+    assert vu["target_label"].startswith("page-")
+    assert ownership.can_access(MOI, "doc", str(doc), "read")
+
+
+def test_acces_a_un_agent_le_proprietaire_partage(client, monde):
+    from oto_mcp import ownership
+    db = monde["db"]
+    tid = db.create_trigger(monde["a"], PROPRIO, procedure="p", tz="Europe/Paris",
+                            tools=["oto_whoami"], cron="0 9 * * *", label="privé")
+    tid = int(tid["id"] if isinstance(tid, dict) else tid)
+    r = _demander(client, monde, {"kind": "agent_access", "trigger_id": tid})
+    assert r.status_code == 201, r.text
+    req = r.json()["request"]
+    assert (req["asked"], req["target_label"]) == ({"role": "editor"}, None)
+    # Gouverner l'agent : son propriétaire et l'admin, pas un simple membre.
+    assert req["id"] in [x["id"] for x in _boite(client, monde, ADMIN)["requests"]]
+    assert req["id"] not in [x["id"] for x in _boite(client, monde, AUTRE)["requests"]]
+    r = _geste(client, monde, req["id"], "approve", PROPRIO, {"role": "manager"})
+    assert (r.status_code, r.json().get("error")) == (400, "invalid_role")
+    r = _geste(client, monde, req["id"], "approve", PROPRIO)
+    assert r.status_code == 200, r.text
+    assert r.json()["decision"] == {"role": "editor"}
+    assert ownership.can_access(MOI, "runner_trigger", str(tid), "write")
+    r = _demander(client, monde, {"kind": "agent_access", "trigger_id": tid})
+    assert (r.status_code, r.json().get("error")) == (409, "already_granted")
