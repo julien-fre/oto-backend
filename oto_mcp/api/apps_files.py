@@ -62,7 +62,7 @@ app_files_upload.contrat = ContratDeRoute(
     description=(
         "Dépose un fichier dans une app ouverte, pour que ses agents le traitent "
         "(manifeste `files: true`). Corps multipart : `file` (le fichier ; son type est "
-        "jugé sur les octets — PDF, images, texte, CSV, JSON, Word, Excel, PowerPoint ; "
+        "jugé sur les octets — PDF, Word, Excel, texte, CSV, JSON ; "
         "20 Mo au plus) et `consent`, le jeton que `POST /api/me/apps/{app_id}/consent` "
         "a rendu pour `action=upload_file` et `file={name, size, media_type}` — ce qui "
         "arrive doit y répondre. Seul le lecteur qui l'a déposé lit le fichier, et les "
@@ -77,6 +77,7 @@ app_files_upload.contrat = ContratDeRoute(
         DeclaredError(403, "files_not_allowed", "l'app ne déclare pas `files: true`"),
         DeclaredError(404, "unknown_app", "app inconnue ou illisible pour l'appelant"),
         DeclaredError(413, "file_too_large", "plus de 20 Mo"),
+        DeclaredError(413, "app_storage_full", "le lecteur garde déjà 1 Go de fichiers dans l'app"),
         DeclaredError(415, "file_type", "type refusé, ou octets qui ne sont pas ce qu'ils disent"),
     ),
     corps={"POST": {"multipart/form-data": {

@@ -396,6 +396,14 @@ def files_text(file_ids: Iterable[int]) -> dict[int, Optional[str]]:
     return {int(r["id"]): r["text"] for r in rows}
 
 
+def bytes_of(app_id: int, sub: str) -> int:
+    """Ce que `sub` garde dans l'app, en octets (la purge de 30 jours borne la fenêtre)."""
+    with _connect() as conn:
+        return int(conn.execute(
+            "SELECT COALESCE(sum(size), 0) AS n FROM app_files WHERE app_id = %s AND sub = %s",
+            (app_id, sub)).fetchone()["n"])
+
+
 def files_of(app_id: int, sub: str, limit: int) -> list[dict]:
     """Les fichiers que `sub` a déposés dans l'app, du plus récent au plus ancien."""
     with _connect() as conn:

@@ -70,6 +70,8 @@ def s(monkeypatch):
         return rec["files"][i]
     monkeypatch.setattr(db.apps, "file_add", file_add)
     monkeypatch.setattr(db.apps, "files_text", lambda ids: {i: rec["files"][i]["text"] for i in ids})
+    monkeypatch.setattr(db.apps, "bytes_of", lambda a, sub: sum(
+        f["size"] for f in rec["files"].values() if f["app_id"] == a and f["sub"] == sub))
     # Lancer un run ne relit aucun objet : le texte a été extrait au dépôt.
     rec["fetches"] = 0
     monkeypatch.setattr(db.apps, "file_of", lambda a, sub, i: (
@@ -147,10 +149,25 @@ def test_le_type_annonce_et_le_type_recu_se_comparent_normalises(s):
     assert C.deposer(CTX, 5, jeton, "a.pdf", "application/pdf; charset=binary", PDF)["file"]
 
 
-def test_une_image_n_a_pas_de_texte_et_le_dit(s):
-    png = b"\x89PNG\r\n\x1a\n" + b"x" * 100
-    f = deposer(data=png, name="photo.png", mt="image/png")["file"]
-    assert f["text_status"] == "unsupported"
+def test_ni_images_ni_powerpoint(s):
+    """Sans OCR ni extracteur, l'agent n'en lirait rien : refusés, avant tout octet."""
+    for name, mt in (("photo.png", "image/png"), ("deck.pptx",
+                     "application/vnd.openxmlformats-officedocument.presentationml.presentation")):
+        assert refus(C._consent, CTX, C.AppCallInput(app_id=5, action="upload_file", file={
+            "name": name, "size": 10, "media_type": mt})).code == "file_type"
+
+
+def test_un_lecteur_garde_1_go_par_app(s, monkeypatch):
+    monkeypatch.setattr(db.apps, "bytes_of", lambda a, sub: C.MAX_FILES_BYTES_PER_VIEWER - 10)
+    e = refus(C._consent, CTX, C.AppCallInput(app_id=5, action="upload_file", file={
+        "name": "a.pdf", "size": 11, "media_type": "application/pdf"}))
+    assert (e.status, e.code) == (413, "app_storage_full")
+
+
+def test_le_jeton_d_un_depot_vaut_15_minutes(s):
+    out = C._consent(CTX, C.AppCallInput(app_id=5, action="upload_file", file={
+        "name": "a.pdf", "size": 10, "media_type": "application/pdf"}))
+    assert out["expires_in"] == 15 * 60
 
 
 def test_le_run_recoit_le_texte_du_fichier(s, monkeypatch):

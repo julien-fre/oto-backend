@@ -80,20 +80,26 @@ _JOB_DONE = frozenset({"done", "failed", "expired"})
 # Ce qui écrit, lance ou dépose : servi seulement avec un consentement du lecteur.
 GESTES = frozenset({"write_cell", "add_row", "start_agent", "upload_file"})
 CONSENT_TTL = 120
+# Un dépôt brûle son jeton APRÈS avoir reçu les octets : 20 Mo sur un lien lent
+# dépassent deux minutes. Le jeton reste à usage unique et lié à CE fichier.
+CONSENT_TTL_UPLOAD = 15 * 60
 
 # Les fichiers qu'un lecteur dépose dans une app pour ses agents : ce qu'un agent sait
-# lire (`file_content.render_for_agent` : texte d'un PDF, tableur en CSV, texte), et
-# les images. Le type se juge sur les OCTETS (`media_store.type_servi`), jamais sur le
-# nom : un type que le stockage neutraliserait est refusé.
+# LIRE (`file_extract` : PDF, Word, Excel, texte). Ni images ni PowerPoint : sans OCR ni
+# extracteur, l'agent n'en aurait qu'un lien qu'il ne sait pas ouvrir (décidé avec Julien
+# le 28/10/2026). Le type se juge sur les OCTETS (`media_store.type_servi`), jamais sur
+# le nom : un type que le stockage neutraliserait est refusé.
 FILE_TYPES = frozenset({
-    "application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp",
+    "application/pdf",
     "text/plain", "text/csv", "text/markdown", "text/tab-separated-values",
     "application/json",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 })
 MAX_FILE_BYTES = 20 * 1024 * 1024
+# Ce qu'un lecteur garde dans UNE app sur la fenêtre de rétention (30 jours,
+# `maintenance.app_files`) : 1 Go, décidé avec Julien le 28/10/2026.
+MAX_FILES_BYTES_PER_VIEWER = 1024 * 1024 * 1024
 MAX_FILES_PER_RUN = 5
 # La part d'un fichier dans le texte remis à l'agent : le `handoff` d'un run est borné
 # à 20 000 caractères (`TriggerInput.handoff`), l'entrée et les en-têtes compris.
@@ -146,7 +152,7 @@ class AppFile(BaseModel):
     media_type: str
     size: int
     # Le texte extrait au dépôt : `ok`, `empty` (un scan sans texte), `unsupported`
-    # (une image), `encrypted`, `failed`.
+    # (un format sans extracteur), `encrypted`, `failed`.
     text_status: Optional[str] = None
     created_at: Optional[Any] = None
 
@@ -326,7 +332,8 @@ def _geste(ctx: ResolvedCtx, app: dict, inp: AppCallInput):
         return faire
 
     if inp.action == "upload_file":
-        _annonce(app, inp.file)
+        _, size, _ = _annonce(app, inp.file)
+        _place(app, ctx.sub, size)
 
         def faire(_consent_id: int) -> dict:
             # Les octets n'arrivent pas par l'appel JSON : par la route de dépôt.
@@ -396,9 +403,16 @@ def _annonce(app: dict, file: Optional[dict]) -> tuple[str, int, str]:
         raise _refus(413, "file_too_large", f"A file is at most {MAX_FILE_BYTES // (1024 * 1024)} MB.")
     if _type_normal(media_type) not in FILE_TYPES:
         raise _refus(415, "file_type",
-                     "This kind of file isn't taken: PDF, images, text, CSV, JSON, Word, "
-                     "Excel or PowerPoint.")
+                     "This kind of file isn't taken: PDF, Word, Excel, text, CSV or JSON.")
     return name, size, media_type
+
+
+def _place(app: dict, sub: str, size: int) -> None:
+    """Le plafond d'un lecteur dans une app : ce qu'il y garde, plus ce fichier."""
+    deja = db.apps.bytes_of(int(app["id"]), sub)
+    if deja + size > MAX_FILES_BYTES_PER_VIEWER:
+        raise _refus(413, "app_storage_full",
+                     "You keep 1 GB of files in this app at most; files go after 30 days.")
 
 
 def _fichiers_du_run(ctx: ResolvedCtx, app: dict, ids: Optional[list[int]]) -> list[dict]:
@@ -457,6 +471,7 @@ def deposer(ctx: ResolvedCtx, app_id: int, consent: Optional[str], name: str,
     annonce = {"name": name, "size": len(data), "media_type": _type_normal(declared_type)}
     inp = AppCallInput(app_id=app_id, action="upload_file", file=annonce)
     _annonce(app, annonce)
+    _place(app, ctx.sub, len(data))
     servi = media_store.type_servi(data, declared_type)
     if servi.attachment or servi.content_type not in FILE_TYPES:
         raise _refus(415, "file_type",
@@ -478,11 +493,8 @@ def deposer(ctx: ResolvedCtx, app_id: int, consent: Optional[str], name: str,
         raise _refus(e.status, e.code, str(e)) from None
     # Extrait UNE fois, ici, quand les octets sont en main : un run reçoit ce texte
     # sans relire l'objet, et l'app sait tout de suite qu'un scan n'en a pas.
-    if servi.content_type.startswith("image/"):
-        texte, statut = None, file_extract.UNSUPPORTED
-    else:
-        ex = file_extract.extract(data, name, servi.content_type)
-        texte, statut = (ex.text if ex.ok else None), ex.status
+    ex = file_extract.extract(data, name, servi.content_type)
+    texte, statut = (ex.text if ex.ok else None), ex.status
     row = db.apps.file_add(int(app["id"]), ctx.sub, key, name, servi.content_type, len(data),
                            text=texte, text_status=statut)
     return {"file": _fichier(row)}
@@ -495,9 +507,10 @@ def _consent(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
     app = _app_pour(ctx, inp.app_id)
     _geste(ctx, app, inp)
     jeton = secrets.token_urlsafe(32)
+    ttl = CONSENT_TTL_UPLOAD if inp.action == "upload_file" else CONSENT_TTL
     db.apps.consent_issue(int(app["id"]), ctx.sub, inp.action, _empreinte(inp),
-                          _hash_jeton(jeton), CONSENT_TTL)
-    return {"consent": jeton, "expires_in": CONSENT_TTL}
+                          _hash_jeton(jeton), ttl)
+    return {"consent": jeton, "expires_in": ttl}
 
 
 def _call(ctx: ResolvedCtx, inp: AppCallInput) -> dict:

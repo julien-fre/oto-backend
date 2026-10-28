@@ -159,3 +159,4 @@ def test_les_fichiers_de_plus_de_30_jours_sont_purges(projet, monkeypatch):
     assert supprimes == ["app-files/x/vieux.pdf"]
     assert db.apps.file_of(app["id"], MOI, vieux["id"]) is None
     assert db.apps.file_of(app["id"], MOI, neuf["id"]) is not None
+    assert db.apps.bytes_of(app["id"], MOI) == 3

@@ -147,17 +147,20 @@ geste qui écrit ou lance (`write_cell`, `add_row`, `start_agent`) exige donc un
 
 ### Des fichiers pour les agents (`files: true`)
 
-Une équipe dépose un PDF, un tableur, une image dans une app, et un agent le traite.
+Une équipe dépose un PDF, un tableur, un document Word dans une app, et un agent le traite.
 
 - **Déposer est un geste** : le cadre parent demande un consentement
   (`POST …/consent`, `action=upload_file`, `file={name, size, media_type}`), puis envoie
   le fichier en multipart à **`POST /api/me/apps/{app_id}/files`** (`file` + `consent`,
   route de nature `api/apps_files.py`, session interactive seule). Ce qui arrive doit
   répondre à ce qui a été annoncé (même nom, même taille, même type déclaré).
-- **Le type se juge sur les octets** (`media_store.type_servi`) : PDF, PNG/JPEG/GIF/WEBP,
-  texte, CSV, Markdown, JSON, Word, Excel, PowerPoint ; 20 Mo au plus. Un fichier qui
-  n'est pas ce qu'il dit, ou que le stockage neutraliserait (HTML, SVG, exécutable…),
-  est refusé 415 `file_type`.
+- **Le type se juge sur les octets** (`media_store.type_servi`) : ce qu'un agent sait
+  LIRE — PDF, Word, Excel, texte, CSV, Markdown, JSON ; ni images ni PowerPoint (pas
+  d'OCR, pas d'extracteur : décidé le 28/10/2026). 20 Mo au plus par fichier, **1 Go par
+  lecteur et par app** (413 `app_storage_full`). Un fichier qui n'est pas ce qu'il dit,
+  ou que le stockage neutraliserait (HTML, SVG, exécutable…), est refusé 415 `file_type`.
+- Le jeton d'un dépôt vaut **15 minutes** (deux pour les autres gestes) : il se brûle
+  quand les octets sont arrivés, et 20 Mo sur un lien lent dépassent deux minutes.
 - **Rangé à part** : `app_files` (app, déposant, clé, nom, type, taille), octets sous
   `app-files/<app_id>/…` (clé propre à chaque dépôt). **Seul celui qui l'a déposé le
   lit**, et les runs qu'il lance — ils tournent en son nom. `list_files` (appel d'app)
