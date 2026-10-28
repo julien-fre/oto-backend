@@ -34,6 +34,17 @@ Rebrancher une source déjà branchée est donc la ROTATION du porteur d'un agen
 branché : `rotate_secret`, `rotate_address` et le changement de mode sont refusés
 sur un agent branché (`source_connected`), parce qu'ils couperaient la source sans
 qu'oto puisse lui donner la nouvelle porte.
+
+## Allo : la source SIGNE
+
+Allo ne renvoie pas de secret qu'on lui donne : il SIGNE chaque livraison avec un
+secret `whsec_…` qu'IL fabrique (Standard Webhooks, en-têtes `webhook-*`) et ne rend
+qu'à la création de l'endpoint. Le même geste, autre porte : UN endpoint pour tous
+les événements (Allo prend une liste de `topics`), dont la réponse porte le secret ;
+il est chiffré pour SA ligne et posé avec le mode `standard_webhooks`, dans la même
+transaction que le reste. Le secret va de la réponse d'Allo à la base, chiffré —
+jamais dans une réponse, un journal ou un transcript. Le client d'oto-core le retire
+de ses réponses (lu dans Allo) : l'inscription passe donc par son transport, ici seul.
 """
 from __future__ import annotations
 
@@ -48,7 +59,11 @@ logger = logging.getLogger(__name__)
 
 #: Les sources qu'oto sait brancher. Une source de plus = un client qui sait
 #: inscrire et retirer un webhook, et le préréglage par lequel elle prouve.
-SOURCES = ("lemlist",)
+SOURCES = ("lemlist", "allo")
+
+#: Les sources qui SIGNENT (préréglage `standard_webhooks`) : leur secret est le
+#: leur, rendu à la création de l'endpoint. Les autres reçoivent notre porteur.
+SOURCES_QUI_SIGNENT = ("allo",)
 
 #: Combien d'événements un branchement inscrit, au plus : un webhook par
 #: événement chez Lemlist, et chaque inscription est un appel au tiers.
@@ -77,7 +92,6 @@ def _client(ctx: ResolvedCtx, source: str) -> Any:
     from .. import access, session_org
     from ..auth import hooks as auth_hooks
     from ..mcp_errors import McpError
-    from oto.tools.lemlist import LemlistClient
 
     try:
         with auth_hooks.sub_override(ctx.sub):
@@ -90,6 +104,10 @@ def _client(ctx: ResolvedCtx, source: str) -> Any:
     except McpError as e:
         # `from e` : la face MCP rend l'erreur d'origine, déjà actionnable.
         raise AuthzDenied(400, "credential_unavailable", e.error.message) from e
+    if source == "allo":
+        from oto.tools.allo import AlloClient
+        return AlloClient(api_key=rc.key)
+    from oto.tools.lemlist import LemlistClient
     return LemlistClient(api_key=rc.key)
 
 
@@ -148,7 +166,7 @@ def _compenser(ctx: ResolvedCtx, t: dict, client: Any, source: str, inscrites: l
         "that opens nothing; remove them in the sender's settings.")
 
 
-def _evenements(events: Optional[list]) -> list:
+def _evenements(source: str, events: Optional[list]) -> list:
     vus = []
     for ev in events or []:
         ev = (ev or "").strip() if isinstance(ev, str) else ""
@@ -163,6 +181,14 @@ def _evenements(events: Optional[list]) -> list:
     if len(vus) > EVENEMENTS_MAX:
         raise AuthzDenied(400, "too_many_events",
                           f"`events`: at most {EVENEMENTS_MAX} per wiring.")
+    if source == "allo":
+        # Refusé ICI, par son nom, plutôt que par Allo après un aller-retour.
+        from oto.tools.allo.const import WEBHOOK_TOPICS
+        inconnus = [ev for ev in vus if ev not in WEBHOOK_TOPICS]
+        if inconnus:
+            raise AuthzDenied(400, "unknown_event",
+                              f"`events`: `{inconnus[0]}` is not an Allo topic — one of "
+                              f"{', '.join(WEBHOOK_TOPICS)}.")
     return vus
 
 
@@ -201,6 +227,47 @@ def _inscrire(ctx: ResolvedCtx, t: dict, client: Any, source: str, url: str,
     return inscrites
 
 
+def _inscrire_allo(ctx: ResolvedCtx, t: dict, client: Any, url: str,
+                   evenements: list) -> tuple[list, str]:
+    """UN endpoint Allo pour tous les événements ; rend l'inscription et le secret de
+    signature qu'Allo vient de fabriquer. ⚠️ Par le transport du client : ses
+    méthodes retirent `signing_secret` de leurs réponses, et il n'est rendu qu'ici.
+    Une réponse sans identifiant, ou sans secret utilisable, est un échec : retiré
+    chez Allo s'il y a de quoi, et refusé par son nom."""
+    try:
+        r = client._request("POST", "/v2/api/webhooks", body={
+            "url": url, "topics": evenements,
+            "description": f"Tulina agent {t['id']}"})
+    except Exception as e:  # noqa: SILENT — journalisé, et refusé par son nom
+        motif = _motif(e)
+        logger.warning("webhook %s : inscription chez allo refusée (%s)", t["id"], motif)
+        raise AuthzDenied(
+            502, "source_registration_failed",
+            f"allo refused to register the webhook ({motif}): nothing changed on the "
+            "agent. Check the sender's key (an admin key can manage webhooks).") from None
+    donnees = (r or {}).get("data") if isinstance(r, dict) else None
+    donnees = donnees if isinstance(donnees, dict) else {}
+    remote_id = donnees.get("id")
+    secret = donnees.get("signing_secret")
+    if not remote_id:
+        logger.error("webhook %s : allo a inscrit l'endpoint SANS rendre d'identifiant — "
+                     "un webhook peut rester chez allo, à vérifier à la main", t["id"])
+        raise AuthzDenied(
+            502, "source_registration_failed",
+            "allo answered without a webhook id: nothing changed on the agent. Check "
+            "Allo's webhook settings for an endpoint to this agent's address.")
+    inscrite = {"source": "allo", "remote_id": remote_id,
+                "event": ", ".join(evenements), "campaign_id": None}
+    if not (isinstance(secret, str) and runner_hook.cle_de_signature(secret)):
+        _compenser(ctx, t, client, "allo", [inscrite],
+                   "no usable signing secret returned")
+        raise AuthzDenied(
+            502, "source_registration_failed",
+            "allo answered without a usable signing secret (`whsec_…`): the endpoint "
+            "was removed, nothing changed on the agent.")
+    return [inscrite], secret
+
+
 def connecter(ctx: ResolvedCtx, t: dict, *, source: Optional[str],
               events: Optional[list], campaign_id: Optional[str],
               is_first: Optional[bool]) -> dict:
@@ -210,7 +277,12 @@ def connecter(ctx: ResolvedCtx, t: dict, *, source: Optional[str],
     if source not in SOURCES:
         raise AuthzDenied(400, "unknown_source",
                           f"`source`: one of {', '.join(SOURCES)}.")
-    evenements = _evenements(events)
+    signe = source in SOURCES_QUI_SIGNENT
+    if signe and (campaign_id or is_first is not None):
+        raise AuthzDenied(400, "option_not_supported",
+                          f"`campaign_id` and `is_first` are Lemlist's; {source} "
+                          "subscribes to whole event topics.")
+    evenements = _evenements(source, events)
     # L'adresse privée AVANT l'inscription, mais en MÉMOIRE : la source garde l'URL
     # qu'on lui donne, et une adresse numérique se parcourt. Posée en base avec le
     # reste (`brancher_la_source`) : un branchement refusé ne la pose pas — elle
@@ -218,14 +290,30 @@ def connecter(ctx: ResolvedCtx, t: dict, *, source: Optional[str],
     slug = t.get("hook_slug") or runner_hook.nouvelle_adresse()
     url = _url_publique(slug)
     client = _client(ctx, source)
+    # Un porteur NEUF dans les deux cas : en mode signature il n'ouvre rien (le
+    # porteur y est refusé), mais l'ancien, s'il traînait quelque part, cesse de valoir.
     porteur, hache = runner_hook.nouveau_secret()
-    inscrites = _inscrire(ctx, t, client, source, url, porteur, evenements,
-                          campaign_id, is_first)
+    secret_enc = None
+    if signe:
+        inscrites, secret = _inscrire_allo(ctx, t, client, url, evenements)
+        try:
+            secret_enc = runner_hook.chiffrer_secret_de_signature(t["id"], secret)
+        except Exception as e:
+            _compenser(ctx, t, client, source, inscrites,
+                       f"secret encryption failed ({type(e).__name__})")
+            raise
+        finally:
+            del secret
+    else:
+        inscrites = _inscrire(ctx, t, client, source, url, porteur, evenements,
+                              campaign_id, is_first)
 
     anciennes = list(t.get("hook_sources") or [])
     try:
         ecrit = db.brancher_la_source(
-            t["id"], ctx.org_id, hook_auth=runner_hook.BODY_SECRET, secret_hash=hache,
+            t["id"], ctx.org_id,
+            hook_auth=runner_hook.STANDARD_WEBHOOKS if signe else runner_hook.BODY_SECRET,
+            secret_hash=hache, signing_secret_enc=secret_enc,
             hook_slug=slug, sources=inscrites, sources_avant=anciennes or None)
     except Exception as e:
         logger.error("webhook %s (org %s) : écriture du branchement en échec (%s) — "
@@ -245,8 +333,10 @@ def connecter(ctx: ResolvedCtx, t: dict, *, source: Optional[str],
             "The agent was changed or deleted while being wired: the registrations "
             "just made were removed at the sender. Read it again, then retry.")
     logger.warning("webhook %s (org %s) : source %s BRANCHÉE par %s — %d événement(s), "
-                   "porteur neuf posé chez la source", t["id"], ctx.org_id, source,
-                   ctx.sub, len(inscrites))
+                   "%s", t["id"], ctx.org_id, source,
+                   ctx.sub, len(evenements),
+                   "secret de signature chiffré posé" if signe
+                   else "porteur neuf posé chez la source")
     restees = _retirer(client, [a for a in anciennes if a.get("remote_id")])
     return {"connected": inscrites, "remote_cleanup_failed": restees}
 

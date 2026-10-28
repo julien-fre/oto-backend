@@ -598,11 +598,14 @@ def poser_sources_de_hook(trigger_id: int, org_id: int, sources: Optional[list],
 
 def brancher_la_source(trigger_id: int, org_id: int, *, hook_auth: str,
                        secret_hash: str, hook_slug: str, sources: list,
-                       sources_avant: Optional[list]) -> bool:
+                       sources_avant: Optional[list],
+                       signing_secret_enc: Optional[str] = None) -> bool:
     """Le BRANCHEMENT d'une source, en UNE transaction : l'adresse privée, le mode, le
     porteur neuf et les webhooks inscrits. ⚠️ Séparées, une panne entre deux écritures
     laisserait un porteur que la source ne détient pas, ou des inscriptions qu'aucun
-    porteur n'ouvre. Le secret de signature est effacé, comme à tout passage au porteur.
+    porteur n'ouvre. Le secret de signature est effacé, comme à tout passage au porteur
+    — sauf pour une source qui SIGNE (Allo) : `signing_secret_enc` = le sien, DÉJÀ
+    chiffré pour cette ligne, posé dans la même transaction.
 
     ⚠️ Écrit SEULEMENT si la ligne porte encore `sources_avant` (ce que le branchement
     a lu, et retirera chez la source) : un branchement concurrent écrasé en silence
@@ -611,11 +614,11 @@ def brancher_la_source(trigger_id: int, org_id: int, *, hook_auth: str,
     with _connect() as conn:
         cur = conn.execute(
             "UPDATE runner_triggers SET hook_slug = %s, hook_auth = %s, "
-            "hook_secret_hash = %s, hook_signing_secret_enc = NULL, "
+            "hook_secret_hash = %s, hook_signing_secret_enc = %s, "
             f"hook_sources = %s::jsonb, {_DATE_DU_CHANGEMENT} "
             f"WHERE id = %s AND org_id = %s AND kind = 'webhook' AND {_SOURCES_INCHANGEES}",
-            (hook_slug, hook_auth, secret_hash, json.dumps(sources), trigger_id, org_id,
-             json.dumps(sources_avant or [])),
+            (hook_slug, hook_auth, secret_hash, signing_secret_enc, json.dumps(sources),
+             trigger_id, org_id, json.dumps(sources_avant or [])),
         )
         return bool(cur.rowcount)
 

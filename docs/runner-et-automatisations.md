@@ -1445,6 +1445,18 @@ jamais par `str(e)`, qui peut recopier la requête.
 | source | événements | ce qui est inscrit |
 |---|---|---|
 | `lemlist` | `events=[…]`, **exigé** (un webhook par événement, ≤ 10) | `POST /hooks` : `targetUrl` = l'adresse privée, `secret` = le porteur, `campaignId`/`isFirst` facultatifs (`LemlistClient.add_webhook`/`delete_webhook`, oto-core) |
+| `allo` | `events=[…]`, **exigé** (≤ 10 topics, vérifiés contre `WEBHOOK_TOPICS` d'oto-core ; `campaign_id`/`is_first` refusés, `400 option_not_supported`) | `POST /v2/api/webhooks` : UN endpoint, `url` = l'adresse privée, `topics` = les événements ; Allo rend son secret `whsec_…`, chiffré pour la ligne et posé avec le mode **`standard_webhooks`** (`AlloClient._request` : les méthodes du client retirent ce secret de leurs réponses) ; retrait par `AlloClient.delete_webhook` |
+
+**Une source qui SIGNE (Allo, 28/10/2026).** Le même geste, l'autre porte : la source
+fabrique son secret et signe chaque livraison (en-têtes `webhook-*`, HMAC-SHA256
+base64 sur `{id}.{timestamp}.{corps}`, la vérification déjà servie par
+`runner_hook.verifier_signature`). Le secret ne sort de la réponse d'Allo que chiffré
+(`chiffrer_secret_de_signature`, lié à la ligne), écrit dans la MÊME transaction que
+le reste (`brancher_la_source(signing_secret_enc=…)`) ; une réponse sans identifiant
+ou sans secret utilisable est refusée (`502 source_registration_failed`), l'endpoint
+retiré s'il existe. Un porteur neuf est quand même posé : il n'ouvre rien en mode
+signature, mais l'ancien cesse de valoir. Rebrancher = nouvel endpoint, nouveau
+secret, l'ancien endpoint retiré.
 
 - **L'ordre fait la sûreté.** Inscrire d'abord, porteur ET adresse neuve encore en
   mémoire ; une inscription refusée (ou rendue sans identifiant) retire celles déjà

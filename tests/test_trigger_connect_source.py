@@ -15,6 +15,9 @@ prouve en SQL dans `test_declencheur_webhook_db.py`) :
 5. **Un agent branché garde sa porte** : `rotate_secret`, `rotate_address` et le
    changement de mode sont refusés (`source_connected`).
 6. **Débrancher et supprimer retirent chez la source**, et rendent ce qui résiste.
+7. **Allo SIGNE** : un endpoint pour tous les topics, son secret `whsec_` chiffré
+   pour la ligne en mode `standard_webhooks` — ni rendu, ni journalisé ; une réponse
+   sans secret utilisable retire l'endpoint et n'écrit rien.
 """
 from __future__ import annotations
 
@@ -78,14 +81,15 @@ def base(monkeypatch):
             "panne": None, "concurrent": False}
 
     def _brancher(tid, org, *, hook_auth, secret_hash, hook_slug, sources,
-                  sources_avant):
+                  sources_avant, signing_secret_enc=None):
         if etat["panne"]:
             raise etat["panne"]
         if etat["concurrent"] or (ligne["hook_sources"] or []) != (sources_avant or []):
             return False
         ligne.update(hook_auth=hook_auth, hook_sources=sources, hook_slug=hook_slug,
-                     signing_secret_set=False)
+                     signing_secret_set=signing_secret_enc is not None)
         etat["hash"] = secret_hash
+        etat["secret_enc"] = signing_secret_enc
         return True
 
     def _poser_sources(tid, org, sources, *, sources_avant):
@@ -415,3 +419,131 @@ def test_supprimer_SANS_cle_de_la_source_supprime_quand_meme_et_le_dit(base, mon
     out = _appel(op="delete")
     assert base["supprime"]
     assert {x["error"] for x in out["remote_cleanup_failed"]} == {"credential_unavailable"}
+
+
+# ── 7. Allo : la source signe ─────────────────────────────────────────────────
+
+_WHSEC = "whsec_" + "QUxMT19TSUdOSU5HX1NFQ1JFVF9URVNUXzMyQg=="
+
+
+class _Allo:
+    """Le client Allo : son transport rend l'endpoint créé AVEC son secret."""
+
+    def __init__(self, secret=_WHSEC, sans_id=False, refuse=False):
+        self.creations, self.retraits = [], []
+        self.secret, self.sans_id, self.refuse = secret, sans_id, refuse
+        self.refuse_retrait: set = set()
+
+    def _request(self, method, path, body=None, **kw):
+        assert (method, path) == ("POST", "/v2/api/webhooks")
+        if self.refuse:
+            raise RuntimeError(f"upstream 403 for {body}")
+        self.creations.append(body)
+        data = {"url": body["url"], "topics": body["topics"], "enabled": True}
+        if not self.sans_id:
+            data["id"] = f"ep_{len(self.creations)}"
+        if self.secret is not None:
+            data["signing_secret"] = self.secret
+        return {"data": data}
+
+    def delete_webhook(self, hook_id):
+        if hook_id in self.refuse_retrait:
+            raise RuntimeError("upstream 500")
+        self.retraits.append(hook_id)
+        return {}
+
+
+@pytest.fixture
+def allo(base, monkeypatch):
+    base["client"] = _Allo()
+    monkeypatch.setattr(runner_hook, "chiffrer_secret_de_signature",
+                        lambda tid, secret: f"enc[{tid}]:{secret}")
+    return base
+
+
+def _brancher_allo(**kw):
+    kw.setdefault("events", ["call.completed"])
+    return _appel(op="connect_source", source="allo", **kw)
+
+
+def test_allo_UN_endpoint_tous_les_topics_et_le_mode_signature(allo, monkeypatch):
+    monkeypatch.setattr(RT.db, "poser_auth_de_hook", allo["interdit"])
+    out = _brancher_allo(events=["call.completed", "summary.updated"])
+    c = allo["client"]
+    assert c.creations == [{"url": "https://mcp.example/api/hooks/h_privee",
+                            "topics": ["call.completed", "summary.updated"],
+                            "description": "Tulina agent 5"}]
+    assert allo["ligne"]["hook_auth"] == runner_hook.STANDARD_WEBHOOKS
+    assert allo["secret_enc"] == f"enc[5]:{_WHSEC}", "le secret d'ALLO, chiffré pour SA ligne"
+    assert out["connected"] == [{"source": "allo", "remote_id": "ep_1",
+                                 "event": "call.completed, summary.updated",
+                                 "campaign_id": None}]
+    assert out["trigger"]["signing_secret_set"] is True
+
+
+def test_allo_le_secret_n_est_NI_rendu_NI_journalise(allo, caplog):
+    caplog.set_level(logging.DEBUG)
+    out = _brancher_allo()
+    assert _WHSEC not in repr(out) and not out.get("hook_secret")
+    assert _WHSEC not in caplog.text
+
+
+@pytest.mark.parametrize("kw, code", [
+    ({"events": ["call.finished"]}, "unknown_event"),
+    ({"campaign_id": "cam_1"}, "option_not_supported"),
+    ({"is_first": True}, "option_not_supported"),
+])
+def test_allo_refuse_avant_tout_appel(allo, kw, code):
+    with pytest.raises(AuthzDenied) as e:
+        _brancher_allo(**kw)
+    assert e.value.code == code and not allo["client"].creations
+    _porte_intacte(allo)
+
+
+def test_allo_qui_REFUSE_n_ecrit_rien_et_ne_recopie_pas_la_requete(allo, caplog):
+    allo["client"].refuse = True
+    with pytest.raises(AuthzDenied) as e:
+        _brancher_allo()
+    assert e.value.code == "source_registration_failed"
+    assert "mcp.example" not in str(e.value) and "mcp.example" not in caplog.text
+    _porte_intacte(allo)
+
+
+@pytest.mark.parametrize("secret", [None, "", "otoh_pas_un_secret", "whsec_%%%"])
+def test_allo_SANS_secret_utilisable_retire_l_endpoint(allo, secret):
+    allo["client"].secret = secret
+    with pytest.raises(AuthzDenied) as e:
+        _brancher_allo()
+    assert e.value.code == "source_registration_failed"
+    assert allo["client"].retraits == ["ep_1"]
+    _porte_intacte(allo)
+
+
+def test_allo_SANS_identifiant_est_refuse(allo):
+    allo["client"].sans_id = True
+    with pytest.raises(AuthzDenied) as e:
+        _brancher_allo()
+    assert e.value.code == "source_registration_failed"
+    _porte_intacte(allo)
+
+
+def test_allo_la_base_qui_CASSE_retire_l_endpoint(allo):
+    allo["panne"] = RuntimeError("db down")
+    with pytest.raises(RuntimeError):
+        _brancher_allo()
+    assert allo["client"].retraits == ["ep_1"]
+
+
+def test_allo_REBRANCHER_cree_un_endpoint_neuf_et_retire_l_ancien(allo):
+    _brancher_allo()
+    _brancher_allo()
+    assert [x["remote_id"] for x in allo["ligne"]["hook_sources"]] == ["ep_2"]
+    assert allo["client"].retraits == ["ep_1"]
+
+
+def test_allo_DEBRANCHER_retire_l_endpoint(allo):
+    _brancher_allo()
+    out = _appel(op="disconnect_source")
+    assert allo["client"].retraits == ["ep_1"]
+    assert out["disconnected"][0]["remote_id"] == "ep_1"
+    assert not allo["ligne"]["hook_sources"]

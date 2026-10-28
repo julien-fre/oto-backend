@@ -942,6 +942,28 @@ def test_brancher_la_source_ecrit_TOUT_en_une_fois_et_rend_hook_sources(live):
     assert db.trigger_par_secret(t["id"], hache, runner_hook.BODY_SECRET)
 
 
+def test_brancher_une_source_qui_SIGNE_pose_son_secret_chiffre(live):
+    """Allo : mode signature et secret chiffré dans la même écriture ; la route le
+    retrouve (`trigger_signe`), et un rebranchement Lemlist l'efface."""
+    from oto_mcp import db, runner_hook
+    t, _ = _webhook(db)
+    _, hache = runner_hook.nouveau_secret()
+    allo = [{"source": "allo", "remote_id": "ep_a", "event": "call.completed",
+             "campaign_id": None}]
+    assert db.brancher_la_source(t["id"], ORG, hook_auth=runner_hook.STANDARD_WEBHOOKS,
+                                 secret_hash=hache, hook_slug=runner_hook.nouvelle_adresse(),
+                                 sources=allo, sources_avant=None,
+                                 signing_secret_enc="enveloppe")
+    lu = db.get_trigger(t["id"], ORG)
+    assert lu["hook_auth"] == runner_hook.STANDARD_WEBHOOKS and lu["signing_secret_set"]
+    assert "hook_signing_secret_enc" not in lu
+    assert db.trigger_signe(t["id"])["hook_signing_secret_enc"] == "enveloppe"
+    assert db.brancher_la_source(t["id"], ORG, hook_auth=runner_hook.BODY_SECRET,
+                                 secret_hash=hache, hook_slug=lu["hook_slug"],
+                                 sources=[], sources_avant=allo)
+    assert not db.get_trigger(t["id"], ORG)["signing_secret_set"]
+
+
 def test_brancher_sur_une_ligne_qui_a_CHANGE_n_ecrit_rien(live):
     """La garde du branchement concurrent : la ligne ne porte plus ce que le geste a
     lu → `False`, et rien ne bouge (ni porteur, ni adresse, ni inscriptions)."""

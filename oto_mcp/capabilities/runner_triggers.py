@@ -276,24 +276,27 @@ class TriggerInput(BaseModel):
         "clear its queue; `viewer` only reads it. Neither may delete it, share it "
         "or change its webhook door — owner and org admins only."))
     # connect_source —
-    source: Optional[Literal["lemlist"]] = Field(default=None, description=(
-        "op=connect_source: the sender to wire to this webhook agent. oto mints the "
-        "agent's token and registers the webhook AT the sender itself, with the "
-        "sender's key that resolves for you in this org (yours, your team's or the "
-        "org's — never a shared platform key) — the token is never "
-        "returned, logged or passed to anyone. Switches the agent to "
-        "`hook_auth=body_secret` and gives it a private address if it has none."))
+    source: Optional[Literal["lemlist", "allo"]] = Field(default=None, description=(
+        "op=connect_source: the sender to wire to this webhook agent. oto registers "
+        "the webhook AT the sender itself, with the sender's key that resolves for "
+        "you in this org (yours, your team's or the org's — never a shared platform "
+        "key), and gives the agent a private address if it has none. `lemlist`: oto "
+        "mints the agent's token and hands it to Lemlist as the hook's secret "
+        "(`hook_auth=body_secret`). `allo`: Allo SIGNS each delivery with its own "
+        "secret, which oto stores encrypted (`hook_auth=standard_webhooks`). Either "
+        "way the secret is never returned, logged or passed to anyone."))
     events: Optional[list[str]] = Field(default=None, description=(
-        "op=connect_source: the sender's event names, one webhook each (Lemlist: "
-        "`emailsReplied`, `linkedinReplied`, `linkedinInviteAccepted`…). Required: "
-        "no default, subscribing to everything would start the agent on every "
-        "email open. At most 10."))
+        "op=connect_source: the sender's event names (Lemlist: one webhook each, "
+        "`emailsReplied`, `linkedinReplied`, `linkedinInviteAccepted`…; Allo: one "
+        "endpoint for all, topics `call.completed`, `summary.updated`, "
+        "`sms.received`…). Required: no default, subscribing to everything would "
+        "start the agent on every email open or every call. At most 10."))
     campaign_id: Optional[str] = Field(default=None, description=(
-        "op=connect_source, optional: only this campaign's events (Lemlist "
-        "`cam_…`). Omitted = every campaign."))
+        "op=connect_source, Lemlist only: only this campaign's events (`cam_…`). "
+        "Omitted = every campaign."))
     is_first: Optional[bool] = Field(default=None, description=(
-        "op=connect_source, optional: only the first occurrence of each event per "
-        "lead."))
+        "op=connect_source, Lemlist only: only the first occurrence of each event "
+        "per lead."))
     #: `deliveries` : combien de livraisons rendre.
     limit: Optional[int] = None
     with_input: Optional[bool] = Field(
@@ -2640,6 +2643,11 @@ CAPABILITIES += [
             DeclaredError(400, "unknown_source", "`connect_source` without a known `source`"),
             DeclaredError(400, "events_required", "`connect_source` without `events`"),
             DeclaredError(400, "too_many_events", "`connect_source` with more than 10 `events`"),
+            DeclaredError(400, "unknown_event",
+                          "`connect_source` with an event the sender does not publish"),
+            DeclaredError(400, "option_not_supported",
+                          "`connect_source`: `campaign_id` / `is_first` for a sender "
+                          "other than Lemlist"),
             DeclaredError(400, "credential_unavailable",
                           "`connect_source`: no key of the sender resolves for the caller "
                           "in this org"),
@@ -2733,12 +2741,14 @@ CAPABILITIES += [
             "org becomes the owner — the agent then acts as THEM, and its queued jobs "
             "move with it; an agent switched ON on your personal subscription is "
             "refused unless they can run it — disable it first, they re-enable it). "
-            "op=connect_source (webhook agent, owner or org admin; `source=lemlist`, "
-            "`events=[…]`, optional `campaign_id`, `is_first`): oto registers the "
-            "webhook AT the sender with a fresh token it never returns — the agent "
-            "is wired end to end in one call, no secret pasted anywhere. Calling it "
-            "again re-wires (new token, new registrations, old ones removed): that is "
-            "how a wired agent rotates. While wired, `rotate_secret`, "
+            "op=connect_source (webhook agent, owner or org admin; `source=lemlist` or "
+            "`allo`, `events=[…]`, Lemlist only: optional `campaign_id`, `is_first`): "
+            "oto registers the webhook AT the sender — with a fresh token it never "
+            "returns (Lemlist), or keeping, encrypted, the signing secret the sender "
+            "makes (Allo) — the agent is wired end to end in one call, no secret "
+            "pasted anywhere. Calling it again re-wires (new secret, new "
+            "registrations, old ones removed): that is how a wired agent rotates. "
+            "While wired, `rotate_secret`, "
             "`rotate_address` and an auth-mode change are REFUSED "
             "(`source_connected`). op=disconnect_source removes the registrations at "
             "the sender; `delete` does it too. Both return `remote_cleanup_failed` "
