@@ -121,7 +121,12 @@ geste qui écrit ou lance (`write_cell`, `add_row`, `start_agent`) exige donc un
    l'activation utilisateur du navigateur, transmise par l'iframe à la fenêtre parente
    et que l'app ne peut pas fabriquer. **Le clic est l'accord** (décision du
    28/10/2026). Un geste que l'app tente SEULE (à l'ouverture, sur un minuteur), ou
-   au-delà de 20 gestes sur un même clic, demande d'abord confirmation au lecteur ;
+   au-delà de 20 gestes sur un même clic, demande d'abord confirmation au lecteur.
+   Un clic dans l'écran de TULINA (« Ouvrir l'app », Annuler, la barre latérale) active
+   aussi la fenêtre : il n'approuve rien — pendant 5 s après lui, un geste demande
+   (d'où une confirmation pour le premier geste juste après l'ouverture ou une réponse
+   à une confirmation : voulu). Et un lancement d'agent qui porte une **entrée écrite
+   par l'app** la montre et demande TOUJOURS : le run tourne au nom du lecteur ;
 2. le serveur juge le geste exactement comme l'appel le jugera (manifeste, auteur ∩
    lecteur, valeur déclarée, révision présente…), puis rend un jeton
    (`secrets.token_urlsafe(32)`, stocké en SHA-256 dans `app_consents`), valable
@@ -144,6 +149,17 @@ geste qui écrit ou lance (`write_cell`, `add_row`, `start_agent`) exige donc un
   quelle action, quand, le `geste_id` des révisions écrites
   (`datastore_row_revisions.geste_id`), le travail lancé (`job_id`). C'est là, pas
   dans `tool_calls` (route réduite), que se lit « cette écriture vient de l'app N ».
+
+### Ce que le cadre isolé laisse sortir
+
+Le cadre de l'app n'appelle rien (`connect-src 'none'`, formulaires et navigations
+fermés par le document-garde). Fermé en plus, avant toute ligne de l'auteur, parce
+qu'aucune directive CSP ne le fait dans les trois moteurs (mesuré le 28/10/2026) :
+WebRTC (constructeurs retirés — `webrtc 'block'` est ignoré, une requête STUN sortait),
+le prefetch DNS, et `<link rel=preconnect>` (WebKit ouvrait une connexion). Restent,
+par construction : les chemins de requête vers les CDN permis et Google Fonts (une
+requête peut y porter des données, mais vers le CDN seul), et ce qu'un LECTEUR tape
+dans un faux formulaire d'une app — seule donnée que l'auteur n'a pas déjà.
 
 ### Suivre les runs
 
