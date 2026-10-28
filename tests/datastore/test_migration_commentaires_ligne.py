@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 RACINE = Path(__file__).resolve().parents[2]
-_PRECEDENTE = "20261026_1337_copilot"
+_PRECEDENTE = "20261027_1300_agent_episodes"
 _REVISION = "20261027_1800_row_comments"
 
 
