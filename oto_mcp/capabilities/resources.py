@@ -207,14 +207,20 @@ def _resource_name(resource_type: str, rid: str) -> Optional[str]:
 
 def _lien_d_app(dest_sub: Optional[str], rid: str) -> Optional[str]:
     """L'adresse d'une app pour CE destinataire (`/org/<org>/apps/<id>` chez Tulina),
-    ou None : l'org de l'app inconnue, ou un front qui n'a pas cette vue."""
-    from .. import links
+    ou None : aucune org où l'ouvrir, ou un front qui n'a pas cette vue.
+
+    L'org de l'URL est celle où le DESTINATAIRE l'ouvre : l'org de l'app s'il en est
+    membre, sinon son org active — le front envoie l'org de l'URL comme org active, et
+    une app partagée à une personne d'ailleurs se lit par son numéro, d'où qu'on soit."""
+    from .. import links, roles
     from .apps_manifeste import org_de_l_app
     try:
         row = db.apps.owner(int(rid))
     except (TypeError, ValueError):
         return None
     org = org_de_l_app(row) if row else None
+    if dest_sub and (org is None or not roles.is_org_member(dest_sub, int(org))):
+        org = org_store.get_active_org(dest_sub)
     return links.link_for("app", sub=dest_sub, org=org, id=rid) if org is not None else None
 
 

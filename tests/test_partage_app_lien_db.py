@@ -70,6 +70,35 @@ def test_l_invitee_sans_compte_arrive_sur_l_app(monde):
     db.upsert_user(sub, email=m["invitee"])
     r = invites._invite_accept(ResolvedCtx(sub=sub, org_id=None),
                                invites.InviteAcceptInput(token=token))
-    assert (r["resource_type"], r["resource_id"], r["resource_org_id"]) == (
-        "app", str(m["app"]), m["org"])
+    # Pas membre de l'org de l'app : on l'ouvre depuis son org à elle.
+    assert (r["resource_type"], r["resource_id"]) == ("app", str(m["app"]))
+    assert r["resource_org_id"] == r["active_org"] and r["resource_org_id"] != m["org"]
     assert ownership.can_access(sub, "app", str(m["app"]))
+
+
+def test_une_membre_de_l_org_l_ouvre_depuis_l_org_de_l_app(monde):
+    from oto_mcp import db, org_store
+    from oto_mcp.capabilities._types import ResolvedCtx
+    from oto_mcp.capabilities.orgs import invites
+    m = monde
+    _partager(m, email=m["invitee"], role="viewer")
+    token = m["envois"][0]["app_url"].rsplit("/", 1)[1]
+    sub = f"membre_{m['u']}"
+    db.upsert_user(sub, email=m["invitee"])
+    org_store.add_org_member(m["org"], sub, "org_member")
+    r = invites._invite_accept(ResolvedCtx(sub=sub, org_id=None),
+                               invites.InviteAcceptInput(token=token))
+    assert r["resource_org_id"] == m["org"]
+
+
+def test_hors_de_l_org_de_l_app_le_lien_prend_son_org(monde):
+    """Une personne d'une AUTRE org : l'URL porte SON org, celle d'où elle l'ouvre."""
+    from oto_mcp import config, db, org_store
+    m = monde
+    dehors = f"dehors_{m['u']}"
+    db.upsert_user(dehors, email=f"{dehors}@example.test")
+    chez_elle = org_store.create_org(f"b_{m['u']}", created_by=dehors)
+    org_store.add_org_member(chez_elle, dehors, "org_admin")
+    org_store.set_active_org(dehors, chez_elle)
+    _partager(m, email=f"{dehors}@example.test", role="viewer")
+    assert m["envois"][0]["app_url"] == f"{config.dashboard_url()}/org/{chez_elle}/apps/{m['app']}"

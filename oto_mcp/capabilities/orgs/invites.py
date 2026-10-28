@@ -214,9 +214,10 @@ class InvitationAccepted(BaseModel):
     resource_type: Optional[str] = None
     resource_id: Optional[str] = None
     resource_role: Optional[str] = None
-    # L'org où vit cet objet (celle de son propriétaire ; pour une app, son org), pour
-    # que le front y mène — `/org/<resource_org_id>/apps/<resource_id>`. Null quand
-    # elle n'est pas connue.
+    # L'org d'où l'invité OUVRE cet objet, pour que le front y mène —
+    # `/org/<resource_org_id>/apps/<resource_id>` : celle où l'objet vit s'il en est
+    # membre, sinon son org active (un objet partagé à une personne se lit par son
+    # numéro, d'où qu'elle soit). Null quand aucune n'est connue.
     resource_org_id: Optional[int] = None
 
 
@@ -353,8 +354,8 @@ def _invite_accept(ctx: ResolvedCtx, inp: InviteAcceptInput) -> dict:
         return {"ok": True, "resource_type": res["resource_type"],
                 "resource_id": res.get("resource_id"),
                 "resource_role": res.get("resource_role"),
-                "resource_org_id": _org_de_la_ressource(res["resource_type"],
-                                                        res.get("resource_id")),
+                "resource_org_id": _org_ou_l_ouvrir(ctx.sub, res["resource_type"],
+                                                    res.get("resource_id")),
                 "name": res.get("resource_name"),
                 "active_org": org_store.get_active_org(ctx.sub)}
     org = org_store.get_org(res["org_id"]) if res.get("org_id") else None
@@ -388,6 +389,14 @@ def _org_de_la_ressource(resource_type: Optional[str], rid) -> Optional[int]:
         logger.warning("org d'un objet partagé illisible (%s %s)", resource_type, rid,
                        exc_info=True)
         return None
+
+
+def _org_ou_l_ouvrir(sub: str, resource_type: Optional[str], rid) -> Optional[int]:
+    from ... import roles
+    org = _org_de_la_ressource(resource_type, rid)
+    if org is not None and roles.is_org_member(sub, int(org)):
+        return int(org)
+    return org_store.get_active_org(sub)
 
 
 def _invite_reject(ctx: ResolvedCtx, inp: InviteRejectInput) -> dict:
