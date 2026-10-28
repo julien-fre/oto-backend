@@ -205,6 +205,19 @@ def _resource_name(resource_type: str, rid: str) -> Optional[str]:
     return None
 
 
+def _lien_d_app(dest_sub: Optional[str], rid: str) -> Optional[str]:
+    """L'adresse d'une app pour CE destinataire (`/org/<org>/apps/<id>` chez Tulina),
+    ou None : l'org de l'app inconnue, ou un front qui n'a pas cette vue."""
+    from .. import links
+    from .apps_manifeste import org_de_l_app
+    try:
+        row = db.apps.owner(int(rid))
+    except (TypeError, ValueError):
+        return None
+    org = org_de_l_app(row) if row else None
+    return links.link_for("app", sub=dest_sub, org=org, id=rid) if org is not None else None
+
+
 def _notify_grant(sharer_sub: str, resource_type: str, rid: str, to_email: str,
                   dest_sub: Optional[str] = None,
                   *, event: str, permission: Optional[str] = None,
@@ -233,6 +246,11 @@ def _notify_grant(sharer_sub: str, resource_type: str, rid: str, to_email: str,
         locale = dest_user.get("locale")
         base, marque = lien or config.front_for(dest_sub)
         app_url = base or config.dashboard_url()
+        if lien is None and resource_type == "app":
+            # Une app s'ouvre en plein écran à son adresse : le lien y mène quand le
+            # front du DESTINATAIRE déclare cette vue (`links`, kind `app`) ; sinon la
+            # racine du produit, comme avant.
+            app_url = _lien_d_app(dest_sub, rid) or app_url
         brand = marque
         sharer = _owner_label("user", sharer_sub)
         name = _resource_name(resource_type, rid)
