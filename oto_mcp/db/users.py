@@ -385,6 +385,11 @@ _UNIQUE_INDEX_SUB_TABLES = (
     # `org_id` est NULL pour une ligne de la personne partout : l'unicité étant NULLS NOT
     # DISTINCT, la comparaison du dédoublonnage l'est aussi (`IS NOT DISTINCT FROM`).
     ("org_entitlements", "sub", ("org_id", "right_key", "source"), None),
+    # Les demandes d'accès EN ATTENTE : `uq_access_requests_en_attente` =
+    # `(requester_sub, kind, cle_cible) WHERE status = 'pending'`. Les deux comptes ont
+    # demandé la même chose ⟹ celle du compte survivant reste, l'autre tombe (une
+    # demande en attente n'accorde rien ; la personne en garde une).
+    ("access_requests", "requester_sub", ("kind", "cle_cible"), "{a}.status = 'pending'"),
 )
 
 # Colonnes JSONB qui NOMMENT une personne (`user:<sub>`) et la SUIVENT à la fusion :
@@ -590,6 +595,10 @@ _SUB_COLUMNS = [
     # - qui a écrit un commentaire de ligne : une signature d'auteur (`mine`, le droit
     #   de retirer le sien se lisent par elle), hors PK, indexée, UPDATE nu.
     ("datastore_row_comments", "auteur_sub"),
+    # - qui a demandé un accès, et qui l'a décidé : des signatures (la boîte « envoyées »
+    #   se lit par la première), hors PK, indexées. Le demandeur est sous index unique
+    #   partiel : dédoublonné d'abord par `_UNIQUE_INDEX_SUB_TABLES`, puis repointé ici.
+    ("access_requests", "requester_sub"), ("access_requests", "decided_by"),
     ("platform_instructions", "updated_by"),
     ("org_disabled_tools", "disabled_by"), ("group_disabled_tools", "disabled_by"),
     # - le journal : la CIBLE d'un « voir en tant que » est une personne, et la

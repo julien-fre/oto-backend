@@ -93,6 +93,8 @@ from . import (
     # NON aplati : `lister`/`ajouter`/`retirer` sont trop communs —
     # `db.datastore_commentaires.<fn>`.
     datastore_commentaires,
+    # NON aplati : `creer`/`lire`/`decider` sont trop communs — `db.demandes_acces.<fn>`.
+    demandes_acces,
 )
 
 # Ré-export plat (publics + privés à un underscore). Les noms dunder restent au

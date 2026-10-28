@@ -410,6 +410,11 @@ def test_toute_colonne_jsonb_est_triee_pour_la_fusion():
         ("copilot_threads", "pending"), ("copilot_threads", "queue"),
         ("copilot_threads", "remembered"), ("copilot_threads", "results"),
         ("copilot_undos", "payload"),
+        # Une demande d'accès : sa cible (ids d'objets), ce qui est demandé et ce qui a
+        # été accordé (un rôle, des noms d'outils) — le demandeur et le décideur sont
+        # des colonnes TEXT (`requester_sub`, `decided_by`), suivies à part.
+        ("access_requests", "cible"), ("access_requests", "demande"),
+        ("access_requests", "decision"),
         ("apollo_phone_reveals", "payload"), ("blocks", "props"),
         ("connector_instances", "config"), ("connector_schemas", "schema"),
         # La relève d'un travail asynchrone : sa fonction et l'id du travail chez le
