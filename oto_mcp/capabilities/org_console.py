@@ -117,7 +117,7 @@ class OrgSettingsInput(BaseModel):
     # time_saved (set) : minutes par type de résultat — {"record": 2, …} ; une
     # valeur null rend le défaut à ce type, `{}` les rend tous.
     minutes: Optional[dict[str, Optional[float]]] = None
-    # partage_par_defaut (set) : par type d'objet neuf — {"agent": "aucun"|"lecture"}.
+    # partage_par_defaut (set) : par type d'objet neuf — {"agent": "aucun"|"lecture"|"ecriture"}.
     partage: Optional[dict[str, str]] = None
 
 
@@ -388,10 +388,11 @@ CAPABILITIES += [
             "each kind's default and applied minutes; set takes "
             "`minutes` {kind: 0..240 | null} — null restores that kind's default, `{}` all) "
             "| partage_par_defaut (what a NEW object of the org is shared with by "
-            "default, per type: set takes `partage` {agent: aucun|lecture}; default "
-            "`aucun` = born private; `lecture` = the whole org may see new agents, not "
-            "edit them; their creator may still keep one private. `ecriture` is refused "
-            "for agents: a scheduled run runs as its owner). "
+            "default, per type: set takes `partage` {agent: aucun|lecture|ecriture}; "
+            "default `aucun` = born private; `lecture` = the whole org may see new agents, "
+            "not edit them; `ecriture` = the whole org may edit them, and the creator's "
+            "personal subscription is lent for them — a scheduled run still runs as its "
+            "owner, with their connections; their creator may still keep one private). "
             "op=get is member, set is org admin."),
         mcp="oto_org_settings",
     ),

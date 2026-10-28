@@ -2,26 +2,26 @@
 
 **Privé par défaut, toujours.** Le code ne partage jamais d'office un objet neuf : seul
 ce réglage, posé par un admin de l'org, le fait. Une valeur par type d'objet,
-`{"agent": "aucun" | "lecture"}` ; générique dans sa forme, lu aujourd'hui par les seuls
-agents (`oto_trigger op=create`). Sans réglage : `aucun` pour chaque type.
+`{"agent": "aucun" | "lecture" | "ecriture"}` ; générique dans sa forme, lu aujourd'hui
+par les seuls agents (`oto_trigger op=create`). Sans réglage : `aucun` pour chaque type.
 
-⚠️ **`ecriture` est REFUSÉ pour un agent** (`default_sharing_write_unsupported`). Un agent
-tourne sous l'identité de son propriétaire à chaque run d'horloge ou de webhook
-(`runner_tick` et `runner_hook` enfilent avec `sub=t["sub"]`) : un membre qui le modifie
-ferait exécuter SES consignes avec les connexions personnelles du propriétaire au
-prochain run, sans personne qui « lance ». Seul `oto_trigger op=run` tourne sous celui
-qui lance (`sub=ctx.sub`). Tant qu'un run planifié n'a pas d'autre identité que le
-propriétaire, une écriture accordée d'office à toute l'org confierait son identité sans
-qu'il l'ait voulu — le partage en écriture reste un geste nommé (`op=share`).
+⚠️ **`ecriture` pour un agent, c'est confier l'identité de son propriétaire** (28/10/2026,
+décision Julien). Un agent tourne sous son propriétaire à chaque run d'horloge ou de
+webhook (`runner_tick` et `runner_hook` enfilent avec `sub=t["sub"]`) : un membre qui le
+modifie fait exécuter SES consignes avec les connexions personnelles du propriétaire au
+prochain run. C'est le choix d'une org qui travaille à plusieurs sur ses agents (Klark) :
+l'admin le pose en connaissance de cause, et le créateur le voit à la création — il
+peut garder l'agent privé (`private=true`). Le partage né de `ecriture` PRÊTE aussi le
+forfait personnel du propriétaire pour cet agent (`db._forfait_prete`) : sans lui, un
+éditeur d'un agent sur abonnement ne pourrait que l'éteindre.
 
 **Une valeur stockée illisible LÈVE** (`default_sharing_unreadable`) : un réglage qu'on ne
 sait pas lire n'est ni `aucun` ni autre chose — le deviner ouvrirait ou fermerait en
 silence. L'admin le repose.
 
 Le partage né du réglage est MARQUÉ (`db.MARQUE_PARTAGE_PAR_DEFAUT` en `granted_by`) : il
-se retire sans toucher aux partages faits à la main. Il ne prête jamais un forfait
-personnel (`db._forfait_prete` ne lit que les partages À UNE PERSONNE posés par le
-propriétaire).
+se retire sans toucher aux partages faits à la main. En `lecture`, il ne prête rien ; en
+`ecriture`, il prête le forfait comme un partage à l'org posé par le propriétaire.
 
 MCP seul, par la console `oto_org_settings domain=partage_par_defaut` (`org_console.py`) :
 `get` membre, `set` admin de l'org.
@@ -36,10 +36,8 @@ from .._types import AuthzDenied
 AUCUN, LECTURE, ECRITURE = "aucun", "lecture", "ecriture"
 VALEURS = (AUCUN, LECTURE, ECRITURE)
 
-#: Par type d'objet : les valeurs qu'il accepte. `ecriture` est une valeur CONNUE du
-#: réglage, refusée pour un agent (tête de module) — d'où un refus nommé, pas
-#: « valeur inconnue ».
-TYPES: dict[str, tuple[str, ...]] = {"agent": (AUCUN, LECTURE)}
+#: Par type d'objet : les valeurs qu'il accepte.
+TYPES: dict[str, tuple[str, ...]] = {"agent": (AUCUN, LECTURE, ECRITURE)}
 
 #: Le rôle du partage posé à la naissance, par valeur.
 ROLES = {LECTURE: "viewer", ECRITURE: "editor"}
@@ -79,20 +77,13 @@ def poser(org_id: int, partage: Optional[dict]) -> dict[str, str]:
     réglage appliqué. Rien n'est écrit si une seule valeur est refusée."""
     if not partage:
         raise AuthzDenied(400, "missing_default_sharing",
-                          "`partage` requis pour set : {type: aucun|lecture}, "
+                          "`partage` requis pour set : {type: aucun|lecture|ecriture}, "
                           f"types : {', '.join(TYPES)}.")
     for t, v in partage.items():
         if t not in TYPES:
             raise AuthzDenied(400, "unknown_type",
                               f"Type inconnu : {t} — connus : {', '.join(TYPES)}. "
                               "Rien n'a été modifié.")
-        if t == "agent" and v == ECRITURE:
-            raise AuthzDenied(
-                400, "default_sharing_write_unsupported",
-                "Un agent ne naît pas partagé en écriture : à chaque run planifié, il "
-                "tourne sous l'identité de son propriétaire, et un membre qui le modifie "
-                "agirait avec ses connexions. Partage en écriture un agent nommément "
-                "(`oto_trigger op=share`). Rien n'a été modifié.")
         if v not in TYPES[t]:
             raise AuthzDenied(400, "invalid_default_sharing",
                               f"`{t}` vaut {' | '.join(TYPES[t])} (reçu {v!r}). "

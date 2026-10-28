@@ -1504,7 +1504,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             # `update` juste après — donc une fenêtre où il pouvait tourner.
             enabled=inp.enabled is not False)
         # Un agent NAÎT privé ; seul le réglage de son org (`partage_par_defaut`, posé
-        # par un admin) l'ouvre d'office, et jamais en écriture. Le créateur peut rester
+        # par un admin) l'ouvre d'office, en lecture ou en écriture. Le créateur peut rester
         # privé (`private=true`), jamais ouvrir au-delà du réglage (`role`, lu avant
         # la création).
         if role and not inp.private:
@@ -2113,7 +2113,8 @@ def _transferer(ctx: ResolvedCtx, t: dict, nouveau_sub: str, geste: str) -> dict
     n'est écrit, et l'agent reste à son propriétaire ; éteint, il se transfère
     librement, le rallumage rejugeant le propriétaire stocké. Les partages restent
     en place, mais ceux de l'ancien propriétaire ne prêtent pas le forfait du
-    nouveau (`_forfait_prete` exige `granted_by` = propriétaire courant)."""
+    nouveau (`_forfait_prete` exige `granted_by` = propriétaire courant ; celui né du
+    réglage passe à l'ancien, `db.reprendre_trigger`)."""
     famille = runner_models.famille(t.get("model"))
     if t.get("enabled") and _abonnement.est_abonnement(famille):
         _abonnement.exiger_a_la_pose(nouveau_sub, None, famille, org_id=ctx.org_id)

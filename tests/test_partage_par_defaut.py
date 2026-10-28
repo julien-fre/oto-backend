@@ -1,9 +1,9 @@
 """Le partage par défaut d'une org (`capabilities/orgs/partage_par_defaut.py`).
 
 Privé par défaut, toujours : seul ce réglage, posé par un admin de l'org, ouvre d'office
-un objet neuf — `{agent: aucun|lecture}`. `ecriture` est refusé pour un agent (un run
-planifié tourne sous son propriétaire), une valeur stockée illisible lève, et un membre
-qui n'est pas admin ne le pose pas. La naissance d'un agent sous ce réglage :
+un objet neuf — `{agent: aucun|lecture|ecriture}` (`ecriture` depuis le 28/10/2026 : il
+prête le forfait, cf. `test_agents_org_default_db.py`), une valeur stockée illisible
+lève, et un membre qui n'est pas admin ne le pose pas. La naissance d'un agent sous ce réglage :
 `test_partage_agents.py` ; en base : `test_agents_org_default_db.py`.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ def _console(op, **kw):
 
 def test_sans_reglage_tout_type_vaut_aucun(stockage):
     assert _console("get") == {"org_id": ORG, "partage_par_defaut": {"agent": "aucun"},
-                               "values": {"agent": ["aucun", "lecture"]}}
+                               "values": {"agent": ["aucun", "lecture", "ecriture"]}}
     assert P.role_a_la_naissance(ORG, "agent") is None
 
 
@@ -54,8 +54,14 @@ def test_lecture_se_pose_et_aucun_le_retire(stockage):
     assert stockage["v"] is None, "`aucun` partout = rien de stocké, comme avant"
 
 
+def test_ecriture_se_pose_pour_un_agent(stockage):
+    assert _console("set", partage={"agent": "ecriture"})["partage_par_defaut"] == {
+        "agent": "ecriture"}
+    assert stockage["v"] == {"agent": "ecriture"}
+    assert P.role_a_la_naissance(ORG, "agent") == "editor"
+
+
 @pytest.mark.parametrize("partage,code", [
-    ({"agent": "ecriture"}, "default_sharing_write_unsupported"),
     ({"agent": "tous"}, "invalid_default_sharing"),
     ({"tableau": "lecture"}, "unknown_type"),
     ({}, "missing_default_sharing"),
@@ -68,7 +74,7 @@ def test_set_refuse_avant_toute_ecriture(stockage, partage, code):
     assert stockage["ecrit"] == 0, "rien n'est écrit sur un refus"
 
 
-@pytest.mark.parametrize("stocke", [{"agent": "ecriture"}, {"agent": "tous"},
+@pytest.mark.parametrize("stocke", [{"agent": "tous"},
                                     {"tableau": "lecture"}, ["agent"], "lecture", 3])
 def test_une_valeur_stockee_illisible_leve_sans_repli(stockage, stocke):
     stockage["v"] = stocke

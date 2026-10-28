@@ -191,17 +191,36 @@ def partages_d_agents(ids: list[int],
     return {int(r["resource_id"]): r["permission"] for r in rows}
 
 
+def _pret_a_l_org(alias_trigger: str, alias_grant: str = "g") -> str:
+    """Le prédicat « ce partage `write` à l'ORG ENTIÈRE de l'agent prête son forfait » :
+    posé par le propriétaire lui-même, ou né du réglage `partage_par_defaut = ecriture`
+    (`MARQUE_PARTAGE_PAR_DEFAUT`) — que le propriétaire a vu à la création, et pouvait
+    refuser (`private=true`). ⚠️ Ni celui de la révision 0035 (posé sur chaque agent
+    existant, il rouvrirait tous les forfaits d'un coup), ni celui d'un admin : un
+    admin gouverne l'agent, il ne dispose pas du forfait d'autrui."""
+    g = alias_grant
+    return (f"({g}.principal_type = 'org' AND {g}.principal_id = {alias_trigger}.org_id::text "
+            f" AND {g}.granted_by IN ({alias_trigger}.sub, '{MARQUE_PARTAGE_PAR_DEFAUT}'))")
+
+
 def _forfait_prete(alias_trigger: str) -> str:
-    """Le prédicat « le PROPRIÉTAIRE de cet agent a nommé l'éditeur `%s` » — un
-    partage `write` À UNE PERSONNE (ni l'org entière, ni une équipe), vivant, et
-    posé par celui sous qui l'agent tourne (`granted_by = sub`). Une seule écriture,
-    lue par `forfaits_pretes` et par la garde de `update_trigger`."""
+    """Le prédicat « le PROPRIÉTAIRE de cet agent a prêté son forfait à l'éditeur
+    `%s` » — un partage `write` vivant, soit À CETTE PERSONNE et posé par celui sous
+    qui l'agent tourne (`granted_by = sub`), soit à l'org entière de l'agent
+    (`_pret_a_l_org`). Une équipe ne prête pas. Une seule écriture, lue par
+    `forfaits_pretes` et par la garde de `update_trigger`.
+
+    Le partage à l'org ne vérifie pas que `%s` en est membre : ses deux lecteurs ne
+    jugent que des appelants qui ont DÉJÀ un niveau d'écriture sur l'agent
+    (`_acces_agent.exiger`, `niveaux`) — un étranger à l'org n'en voit aucun."""
     from ._partage_vivant import PARTAGE_VIVANT_G
     return ("EXISTS (SELECT 1 FROM resource_grants g "
             "WHERE g.resource_type = 'runner_trigger' "
             f"  AND g.resource_id = {alias_trigger}.id::text "
-            "  AND g.principal_type = 'user' AND g.principal_id = %s "
-            f"  AND g.permission = 'write' AND g.granted_by = {alias_trigger}.sub "
+            "  AND g.permission = 'write' "
+            "  AND ((g.principal_type = 'user' AND g.principal_id = %s "
+            f"        AND g.granted_by = {alias_trigger}.sub) "
+            f"       OR {_pret_a_l_org(alias_trigger)}) "
             f"  AND {PARTAGE_VIVANT_G})")
 
 
@@ -232,9 +251,9 @@ def visibilites_d_agents(ids: list[int], org_id: int) -> dict[int, dict]:
 
 
 def forfaits_pretes(ids: list[int], sub: str) -> set[int]:
-    """Parmi les agents `ids`, ceux dont le propriétaire a nommé `sub` éditeur — ce
-    qui lui PRÊTE son abonnement personnel pour cet agent (`_acces_agent`). UNE
-    requête pour toute une liste."""
+    """Parmi les agents `ids`, ceux dont le propriétaire a prêté son abonnement
+    personnel à `sub` — en le nommant éditeur, ou en ouvrant l'agent en écriture à
+    toute l'org (`_forfait_prete`). UNE requête pour toute une liste."""
     if not ids or not sub:
         return set()
     with _connect() as conn:
@@ -252,8 +271,8 @@ def outils_plateforme_du_travail(job_id: int) -> list[str]:
     (`payload->>'trigger_id'`) — SEULEMENT si cet agent ne peut être changé que par celui
     sous qui le travail tourne. Même org, même porteur, posé sur l'abonnement PERSONNEL
     de ce porteur, et prêté à aucun éditeur (`_forfait_prete`, ici pour n'importe quel
-    éditeur) : un admin de l'org et un partage à l'org entière ne peuvent alors que
-    l'éteindre (`_acces_agent`). `[]` pour un travail enfilé à la main ou d'une flotte
+    éditeur, l'org entière comprise) : un admin de l'org et un partage à l'org qui ne
+    prête pas ne peuvent alors que l'éteindre (`_acces_agent`). `[]` pour un travail enfilé à la main ou d'une flotte
     (aucun agent), introuvable, dont l'agent a changé de main, ou qui ne remplit pas la
     condition — ce qui en dépend se ferme."""
     from ._partage_vivant import PARTAGE_VIVANT_G
@@ -265,8 +284,9 @@ def outils_plateforme_du_travail(job_id: int) -> list[str]:
             "  AND t.model = ANY(%s) "
             "  AND NOT EXISTS (SELECT 1 FROM resource_grants g "
             "    WHERE g.resource_type = 'runner_trigger' AND g.resource_id = t.id::text "
-            "      AND g.principal_type = 'user' AND g.permission = 'write' "
-            f"      AND g.granted_by = t.sub AND {PARTAGE_VIVANT_G})",
+            "      AND g.permission = 'write' "
+            "      AND ((g.principal_type = 'user' AND g.granted_by = t.sub) "
+            f"           OR {_pret_a_l_org('t')}) AND {PARTAGE_VIVANT_G})",
             (job_id, list(runner_models.MODELES_PERSONNELS)),
         ).fetchone()
     outils = (row or {}).get("outils_plateforme") if row else None
@@ -316,6 +336,15 @@ def reprendre_trigger(trigger_id: int, org_id: int,
             f"RETURNING {_COLS}",
             (nouveau_sub, trigger_id, org_id),
         ).fetchone()
+        # ⚠️ Le partage né du réglage (`MARQUE_PARTAGE_PAR_DEFAUT`) prête le forfait du
+        # propriétaire COURANT (`_pret_a_l_org`) : laissé tel quel, il prêterait celui du
+        # nouveau sans qu'il l'ait voulu. Il passe à l'ancien propriétaire, comme un
+        # partage posé de sa main — il ouvre toujours l'agent, il ne prête plus rien.
+        conn.execute(
+            "UPDATE resource_grants SET granted_by = %s "
+            "WHERE resource_type = 'runner_trigger' AND resource_id = %s "
+            "  AND granted_by = %s",
+            (avant["sub"], str(trigger_id), MARQUE_PARTAGE_PAR_DEFAUT))
         repris = conn.execute(
             """
             UPDATE runner_jobs SET sub = %s

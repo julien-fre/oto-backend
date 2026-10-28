@@ -25,10 +25,13 @@ c'est confier son identité — le front le dit au moment de partager.
 
 ⚠️ **Un agent posé sur l'ABONNEMENT personnel de son propriétaire** ne se modifie que
 par lui (`_abonnement.peut_agir_pour`), et par les personnes qu'IL a nommées
-éditrices de cet agent (`forfaits_pretes`) : ce qu'elles y changent s'exécute sur
-son forfait, et c'est à lui seul de le prêter. Ne prêtent donc PAS le forfait :
-- un partage à l'org entière ou à une équipe — la révision 0035 en pose un sur chaque
-  agent existant, et il rouvrirait tous les forfaits à toute l'org ;
+éditrices de cet agent, ou par toute l'org quand il l'y a ouvert en écriture
+(`forfaits_pretes`) : ce qu'elles y changent s'exécute sur son forfait, et c'est à lui
+seul de le prêter. Prête le forfait un partage `write` à l'org entière posé par le
+propriétaire, ou né du réglage `partage_par_defaut = ecriture` à la création de SON
+agent (il pouvait le garder privé). Ne prêtent PAS le forfait :
+- un partage à une équipe, et celui que la révision 0035 a posé sur chaque agent
+  existant — il rouvrirait tous les forfaits à toute l'org ;
 - un partage posé par un admin (`granted_by` ≠ propriétaire) — un admin gouverne
   l'agent, il ne dispose pas du forfait d'autrui ; et après une reprise, les
   partages de l'ancien propriétaire ne prêtent pas celui du nouveau.
@@ -160,7 +163,8 @@ def ouvrir_a_l_org(ctx: ResolvedCtx, agent: dict, role: str) -> None:
     """Le partage posé à la NAISSANCE d'un agent par le réglage de son org
     (`orgs/partage_par_defaut`) : `role` à toute l'org. MARQUÉ
     (`db.MARQUE_PARTAGE_PAR_DEFAUT`) : il se retire sans toucher aux partages faits à la
-    main. Ne prête PAS un abonnement personnel (cf. tête de module)."""
+    main. En `editor`, il prête l'abonnement personnel du créateur (cf. tête de
+    module) ; une reprise le lui rend (`db.reprendre_trigger`)."""
     ownership.grant(KIND, str(agent["id"]), "org", str(ctx.org_id),
                     role=role, granted_by=db.MARQUE_PARTAGE_PAR_DEFAUT)
 

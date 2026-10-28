@@ -46,7 +46,10 @@ def test_supprimer_un_agent_retire_ses_partages(live):
     assert db.list_resource_grants("runner_trigger", str(t["id"])) == []
 
 
-def test_le_forfait_ne_se_prete_que_par_son_proprietaire_a_une_personne(live, pg_module_dsn):
+def test_le_forfait_ne_se_prete_que_par_son_proprietaire(live, pg_module_dsn):
+    """Le propriétaire prête son forfait à une personne nommée ; un partage posé par un
+    admin, en lecture, ou à l'org par la révision 0035 ne prête rien. (Ouvert par le
+    propriétaire à toute l'org en écriture, il prête : `test_agents_org_default_db.py`.)"""
     from oto_mcp import db
     t = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC", tools=["a"],
                           cron="0 8 * * *", model="sub:sonnet")
@@ -59,7 +62,7 @@ def test_le_forfait_ne_se_prete_que_par_son_proprietaire_a_une_personne(live, pg
     db.grant_resource("runner_trigger", rid, "user", "lecteur", role="viewer",
                       granted_by="proprio")
     db.grant_resource("runner_trigger", rid, "org", str(ORG), role="editor",
-                      granted_by="proprio")
+                      granted_by="migration:0035_agents_partages_a_l_org")
     assert db.forfaits_pretes([tid, autre["id"]], "nomme") == {tid}
     for sub in ("par-admin", "lecteur", "quelqu-un-de-l-org"):
         assert db.forfaits_pretes([tid], sub) == set(), sub
@@ -86,8 +89,8 @@ def test_les_outils_plateforme_ne_valent_que_pour_l_agent_au_seul_proprietaire(l
     """Ce qui permet à un travail d'exercer des `oto_admin_*` avec le rôle plateforme de
     son porteur (`verrou_org.outils_permis`) : la liste de son agent, SEULEMENT si cet agent
     n'est modifiable que par son porteur — abonnement personnel, aucun éditeur nommé par
-    lui. Un partage à l'org entière ou posé par un admin ne prête rien. La liste ne suit
-    pas l'agent à un transfert."""
+    lui ni ouvert par lui à toute l'org en écriture. Le partage de la révision 0035 ou
+    posé par un admin ne prête rien. La liste ne suit pas l'agent à un transfert."""
     from oto_mcp import db
     liste = ["oto_admin_org", "oto_admin_signal"]
 
@@ -104,10 +107,19 @@ def test_les_outils_plateforme_ne_valent_que_pour_l_agent_au_seul_proprietaire(l
     assert db.outils_plateforme_du_travail(travail(seul)) == []
     assert arme(seul)["platform_tools"] == liste
     db.grant_resource("runner_trigger", str(seul["id"]), "org", str(ORG), role="editor",
-                      granted_by="proprio")
+                      granted_by="migration:0035_agents_partages_a_l_org")
     db.grant_resource("runner_trigger", str(seul["id"]), "user", "par-admin",
                       role="editor", granted_by="un-admin")
     assert db.outils_plateforme_du_travail(travail(seul)) == liste
+
+    for pose_par in ("proprio", db.MARQUE_PARTAGE_PAR_DEFAUT):
+        ouvert = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC",
+                                   tools=["a", *liste], cron="0 8 * * *", model="sub:sonnet")
+        arme(ouvert)
+        db.grant_resource("runner_trigger", str(ouvert["id"]), "org", str(ORG),
+                          role="editor", granted_by=pose_par)
+        assert db.outils_plateforme_du_travail(travail(ouvert)) == [], (
+            f"ouvert à l'org en écriture ({pose_par}) : le forfait est prêté")
 
     prete = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC",
                               tools=["a", *liste], cron="0 8 * * *", model="sub:sonnet")

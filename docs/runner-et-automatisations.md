@@ -2052,25 +2052,29 @@ pas (absent de `list`, 404 sur `get`, même 404 qu'un agent inconnu).
 - **Retirer un partage ne renouvelle pas le secret du webhook** : un éditeur ne l'a
   jamais vu (rendu une fois, à qui le pose — propriétaire ou admin, seuls à pouvoir le
   renouveler).
-- **Un agent naît privé ; l'org peut l'ouvrir d'office en lecture** (23/10/2026). Le
-  code ne partage jamais d'office un objet neuf. Un admin de l'org pose
-  `oto_org_settings domain=partage_par_defaut` (`{agent: aucun|lecture}`, colonne
-  `orgs.default_sharing`, défaut `aucun`, révision `20261024_1101_default_sharing`) ;
-  en `lecture`, `create` pose un partage `viewer` à l'org entière
-  (`_acces_agent.ouvrir_a_l_org`), sauf `private=true`. Le créateur ne peut pas ouvrir
-  au-delà. Le partage né du réglage est MARQUÉ (`granted_by = 'reglage:partage_par_defaut'`)
-  et se retire sans toucher aux partages faits à la main ; il ne prête pas un abonnement
-  personnel (ci-dessus). Une valeur stockée illisible lève `default_sharing_unreadable`,
-  avant toute création.
-  - ⚠️ **`ecriture` est refusé pour un agent** (`default_sharing_write_unsupported`).
-    `oto_trigger op=run` enfile sous l'APPELANT (`sub=ctx.sub`), mais l'horloge
-    (`runner_tick`) et le webhook (`runner_hook`) enfilent sous le PROPRIÉTAIRE
-    (`sub=t["sub"]`), et le jeton de délégation est émis au porteur du travail
-    (`runner_jobs._delegue`). Un membre qui modifierait l'agent d'un collègue ferait donc
-    exécuter ses consignes, au prochain run planifié, avec les connexions personnelles du
-    propriétaire — sans « lanceur » à qui rattacher ce run. Une écriture d'office à toute
-    l'org confierait cette identité sans geste du propriétaire ; elle reste un partage
-    nommé (`op=share`).
+- **Un agent naît privé ; l'org peut l'ouvrir d'office en lecture ou en écriture**
+  (23/10/2026, écriture le 28/10/2026). Le code ne partage jamais d'office un objet neuf.
+  Un admin de l'org pose `oto_org_settings domain=partage_par_defaut`
+  (`{agent: aucun|lecture|ecriture}`, colonne `orgs.default_sharing`, défaut `aucun`,
+  révision `20261024_1101_default_sharing`) ; `create` pose alors un partage `viewer`
+  ou `editor` à l'org entière (`_acces_agent.ouvrir_a_l_org`), sauf `private=true`. Le
+  créateur ne peut pas ouvrir au-delà. Le partage né du réglage est MARQUÉ
+  (`granted_by = 'reglage:partage_par_defaut'`) et se retire sans toucher aux partages
+  faits à la main. Une valeur stockée illisible lève `default_sharing_unreadable`, avant
+  toute création.
+  - ⚠️ **`ecriture` confie l'identité du propriétaire.** `oto_trigger op=run` enfile sous
+    l'APPELANT (`sub=ctx.sub`), mais l'horloge (`runner_tick`) et le webhook
+    (`runner_hook`) enfilent sous le PROPRIÉTAIRE (`sub=t["sub"]`), et le jeton de
+    délégation est émis au porteur du travail (`runner_jobs._delegue`). Un membre qui
+    modifie l'agent d'un collègue fait donc exécuter ses consignes, au prochain run
+    planifié, avec les connexions personnelles du propriétaire. C'est le choix d'une org
+    qui travaille à plusieurs sur ses agents ; l'admin le pose, le créateur le voit et
+    peut rester privé.
+  - **Le partage `editor` né du réglage PRÊTE le forfait** du créateur pour cet agent,
+    comme un partage `write` à l'org posé par le propriétaire (`db._pret_a_l_org`). Ni
+    celui de la révision 0035, ni celui d'un admin ne prêtent. Une reprise
+    (`take_over`/`give`) le restampe au nom de l'ancien propriétaire : il ouvre toujours
+    l'agent, il ne prête pas le forfait du nouveau.
   - Les agents d'avant restent tels quels : rien ne les ouvre rétroactivement.
 - **Chaque agent servi dit qui le voit** : `visibility = {org: editor|viewer|null,
   people: n}` sur `list`/`get`/`create` (`db.visibilites_d_agents`, une lecture pour

@@ -206,19 +206,29 @@ def test_en_lecture_l_org_voit_l_agent_sans_pouvoir_le_modifier(creation, monkey
     assert (e.status, e.code) == (403, "trigger_edit_forbidden")
 
 
-def test_private_l_emporte_sur_le_reglage(creation, monkeypatch):
-    creation["reglage"] = {"agent": "lecture"}
+@pytest.mark.parametrize("valeur", ["lecture", "ecriture"])
+def test_private_l_emporte_sur_le_reglage(creation, monkeypatch, valeur):
+    creation["reglage"] = {"agent": valeur}
     t = _creer(monkeypatch, private=True)
     assert creation["partages"] == {}
     assert t["visibility"] == {"org": None, "people": 0}
 
 
-@pytest.mark.parametrize("stocke", [{"agent": "ecriture"}, {"agent": "tous"},
+def test_en_ecriture_l_org_modifie_l_agent(creation, monkeypatch):
+    creation["reglage"] = {"agent": "ecriture"}
+    t = _creer(monkeypatch)
+    assert creation["partages"] == {("org", str(ORG)): "editor"}
+    assert creation["auteurs"] == {("org", str(ORG)): RT.db.MARQUE_PARTAGE_PAR_DEFAUT}
+    assert t["visibility"] == {"org": "editor", "people": 0}
+    vu, = _appel(AUTRE, op="list")["triggers"]
+    assert (vu["my_access"], vu["can_edit"]) == ("editor", True)
+
+
+@pytest.mark.parametrize("stocke", [{"agent": "tous"},
                                     {"tableau": "lecture"}, ["agent"], "lecture"])
 def test_un_reglage_illisible_leve_avant_toute_creation(creation, monkeypatch, stocke):
     """Ni `aucun` ni autre chose : un réglage qu'on ne sait pas lire ne se devine pas —
-    et aucun agent n'est créé derrière le refus. `ecriture` stocké pour un agent est
-    illisible : rien ne peut l'avoir posé."""
+    et aucun agent n'est créé derrière le refus."""
     creation["reglage"] = stocke
     with pytest.raises(AuthzDenied) as e:
         _creer(monkeypatch)
