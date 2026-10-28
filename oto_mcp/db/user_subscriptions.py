@@ -204,8 +204,14 @@ def poser_limite(sub: str, famille: str, limite_pct: Optional[int]) -> Optional[
     """Pose (ou retire, `None`) le plafond PERSO d'une personne sur SA ligne. Ne crée
     rien : sans abonnement, il n'y a rien à plafonner — rend `None`.
 
-    Ne touche ni au statut ni à l'échéance : le plafond s'applique au PROCHAIN
-    rapport de forfait (`_abonnement.noter_rapport`), jamais au run en cours."""
+    Le plafond s'applique au PROCHAIN rapport de forfait (`_abonnement.noter_rapport`),
+    jamais au run en cours — sauf pour LEVER une pause qu'il ne justifie plus
+    (28/10/2026) : posée par le seul seuil (`limit_epuise` faux) à une charge que le
+    nouveau plafond tolère, elle attendait sinon l'échéance de la fenêtre, sept jours
+    pour la semaine (mesuré : 27 % sous un plafond de 25 %, relevé à 75 %, en pause
+    jusqu'à la réinitialisation hebdomadaire). Un refus du fournisseur, lui, reste :
+    le plafond n'y peut rien. Retirer le plafond perso (`None`) ne lève rien — le
+    seuil retombe sur celui de l'org, que cette écriture ne lit pas."""
     with _connect() as conn:
         row = conn.execute(
             f"""UPDATE user_model_subscriptions
@@ -214,6 +220,20 @@ def poser_limite(sub: str, famille: str, limite_pct: Optional[int]) -> Optional[
              RETURNING {_CHAMPS}""",
             (limite_pct, sub, famille),
         ).fetchone()
+        if row and limite_pct is not None:
+            levee = conn.execute(
+                f"""UPDATE user_model_subscriptions
+                       SET statut = '{CONNECTE}', limit_reset_at = NULL,
+                           limit_epuise = FALSE, limit_utilisation = NULL,
+                           limit_fenetre = NULL, updated_at = NOW()
+                     WHERE sub = %s AND famille = %s
+                       AND statut = '{PLAFOND}' AND NOT limit_epuise
+                       AND limit_utilisation IS NOT NULL
+                       AND limit_utilisation < LEAST(%s, {LIMITE_PERSO_MAX}) / 100.0
+                 RETURNING {_CHAMPS}""",
+                (sub, famille, limite_pct),
+            ).fetchone()
+            row = levee or row
     return dict(row) if row else None
 
 

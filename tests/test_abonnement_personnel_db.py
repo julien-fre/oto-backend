@@ -287,6 +287,32 @@ def test_le_plafond_de_L_ORG_DU_TRAVAIL_se_lit_en_base(live, org_pct, perso_pct,
     assert statut == (US.PLAFOND if en_pause else US.CONNECTE), (org_pct, perso_pct)
 
 
+@pytest.mark.parametrize("epuise,utilisation,nouveau,levee", [
+    (False, 0.27, 75, True),    # mesuré le 28/10 : 27 % sous 25 %, relevé à 75 %
+    (False, 0.27, 26, False),   # relevé, mais pas assez : la pause tient
+    (True, 0.27, 75, False),    # le fournisseur a refusé : le plafond n'y peut rien
+    (False, 0.27, None, False),  # retirer le perso ne lit pas l'org : rien ne bouge
+])
+def test_relever_SON_plafond_leve_la_pause_qu_il_ne_justifie_plus(
+        live, epuise, utilisation, nouveau, levee):
+    from datetime import datetime, timedelta, timezone
+    from oto_mcp.db import user_subscriptions as US
+    p = _personne(f"abo-releve-{epuise}-{nouveau}")
+    US.upsert_sandbox(p, _FAMILLE, f"sandbox-{p}")
+    US.poser_limite(p, _FAMILLE, 25)
+    US.marquer_statut(p, _FAMILLE, US.PLAFOND,
+                      limit_reset_at=datetime.now(timezone.utc) + timedelta(days=6),
+                      epuise=epuise, utilisation=utilisation, fenetre="seven_day")
+
+    ligne = US.poser_limite(p, _FAMILLE, nouveau)
+
+    assert ligne["limite_pct"] == nouveau
+    assert ligne["statut"] == (US.CONNECTE if levee else US.PLAFOND)
+    assert US.get_subscription(p, _FAMILLE)["statut"] == ligne["statut"]
+    if levee:
+        assert ligne["limit_reset_at"] is None
+
+
 def test_un_travail_EN_VOL_ne_reconnecte_PAS_qui_vient_de_se_deconnecter(live):
     """La personne se déconnecte pendant qu'un de ses travaux tourne. La conclusion
     de ce travail — succès, ou plafond rapporté — ne doit PAS la remettre en
