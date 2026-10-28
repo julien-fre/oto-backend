@@ -51,7 +51,6 @@ Capacité : `capabilities/demandes_acces.py`. Store : `db/demandes_acces.py`, ta
 - **Une décision, une seule** : chaque transition est un `UPDATE … WHERE status =
   'pending'` conditionnel. Deux approbations croisées accordent deux fois (le geste est
   idempotent) et ne closent qu'une fois.
-
 - **Pas d'escalade « admin en secours »** : qui décide est qui peut déjà accorder. Un
   admin de l'org ne voit donc pas la demande d'accès au projet PERSONNEL d'un membre —
   il ne pourrait pas le partager à la main non plus.
