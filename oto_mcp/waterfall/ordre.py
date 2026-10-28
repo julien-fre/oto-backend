@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 from typing import Optional
 
 from ..mcp_errors import McpError
@@ -72,6 +73,14 @@ def _key_modes(sub: Optional[str], tools: list[str]) -> dict[str, str]:
     return out
 
 
+def _opened(step: Step) -> Step:
+    """`step`, its `own_key_only` lifted for this call when the instance opens it on its
+    shared key (`Step.shared_serves`). SYNC (settings): off the loop, with the key modes."""
+    if step.own_key_only and step.shared_serves is not None and step.shared_serves():
+        return replace(step, own_key_only=False)
+    return step
+
+
 def _plan(ns: str, steps: tuple[Step, ...], providers_arg: Optional[list[str]],
           sub: Optional[str]) -> tuple[list[Step], list[str], str, dict[str, str]]:
     """(ordered steps, ignored setting keys, where the order came from, key modes)."""
@@ -93,7 +102,7 @@ def _plan(ns: str, steps: tuple[Step, ...], providers_arg: Optional[list[str]],
         source = "setting" if keys else "default"
         if not keys:
             keys = list(by_key)
-    ordered = [by_key[k] for k in dict.fromkeys(keys)]
+    ordered = [_opened(by_key[k]) for k in dict.fromkeys(keys)]
     modes = _key_modes(sub, [s.tool for s in ordered])
     if source == "default":
         # Free steps first (open data, the caller's own session), then a quota-only

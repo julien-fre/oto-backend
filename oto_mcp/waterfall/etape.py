@@ -67,6 +67,11 @@ class Step:
     # gesture: Apollo's phone reveal, a Forager email lookup): on any other key it is
     # skipped BEFORE the call, and a screen lists it with the ones to connect.
     own_key_only: bool = False
+    # …unless the instance opens that gesture on its shared key after all (Forager's
+    # `platform.ops` setting, `tools/forager.py::platform_ops`): SYNC (it reads the
+    # instance's settings), asked once per call by `ordre._plan`, off the loop — True
+    # lifts `own_key_only` for that call.
+    shared_serves: Optional[Callable[[], bool]] = None
     # The tool that turns ONE of this step's (masked) finds into a usable one, billed per
     # person (Apollo: `apollo_match_person` by id). With `qualify=`, the cascade judges
     # the free finds first and reveals only those that pass (`vivier._reveal_qualified`).

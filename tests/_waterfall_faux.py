@@ -17,7 +17,7 @@ import asyncio
 import pytest
 from fastmcp import FastMCP
 
-from oto_mcp.tools import meta
+from oto_mcp.tools import forager, meta
 from oto_mcp.tools import waterfall as outils
 from oto_mcp.tools.meta import IssueCible
 from oto_mcp.waterfall import appel, moteur, ordre
@@ -42,8 +42,11 @@ def _servi(issue):
 @pytest.fixture
 def calls(monkeypatch):
     """Réponses par outil (`IssueCible`, liste d'`IssueCible` servies tour à tour, ou
-    exception), réglage `steps`, modes de clé — et le relevé des appels faits."""
-    state = {"answers": {}, "made": [], "setting": None, "modes": {}}
+    exception), réglage `steps`, modes de clé, ce que la clé partagée de Forager sert
+    (`forager_ops`, le réglage `platform.ops` de l'instance) — et le relevé des appels
+    faits."""
+    state = {"answers": {}, "made": [], "setting": None, "modes": {},
+             "forager_ops": forager.PLATFORM_OPS_DEFAULT}
 
     async def resoudre(_mcp, name):
         return name
@@ -63,6 +66,8 @@ def calls(monkeypatch):
     monkeypatch.setattr(ordre, "_configured_steps", lambda ns: state["setting"])
     monkeypatch.setattr(ordre, "_key_modes", lambda sub, tools: {
         t: state["modes"].get(t, "platform") for t in tools})
+    monkeypatch.setattr(forager, "platform_ops",
+                        lambda: forager.parse_platform_ops(state["forager_ops"]))
     monkeypatch.setattr(appel, "POLL_FIRST_S", 0)
     monkeypatch.setattr(appel, "POLL_EVERY_S", 0)
     return state

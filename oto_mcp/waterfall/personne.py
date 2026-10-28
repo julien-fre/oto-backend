@@ -7,8 +7,8 @@ from urllib.parse import unquote
 
 from .etape import Step
 from .fournisseurs import (_LEMLIST_COLLECT, _LEMLIST_EXCLUDES, _NAMES_AND_DOMAIN,
-                           _PERSON_IDS, _apollo_args, _cognism_contact_args, _lemlist_args,
-                           _lemlist_first, _lemlist_lead, _lusha_contact, _lusha_first)
+                           _PERSON_IDS, _apollo_args, _cognism_contact_args,
+                           _forager_shared, _lemlist_args, _lemlist_first, _lemlist_lead, _lusha_contact, _lusha_first)
 from .valeurs import _clean, _domain, _find_key, _get, _norm_name, _pick, _slug
 
 def _person(**fields) -> Optional[dict]:
@@ -157,8 +157,8 @@ PERSON_STEPS: tuple[Step, ...] = (
     Step("forager", "forager_person", (("linkedin_url",),),
          lambda i: {"op": "detail",
                     "linkedin_public_identifier": _slug(i["linkedin_url"])},
-         _generic_person, "1 Forager credit (own key only)", own_key_only=True,
-         asks="detail",
+         _generic_person, "Forager credits", own_key_only=True,
+         shared_serves=_forager_shared("detail"), asks="detail",
          explains="Forager's profile, from a LinkedIn profile."),
     Step("cognism", "cognism_enrich_contact", _PERSON_IDS + (("email",),),
          _cognism_contact_args,

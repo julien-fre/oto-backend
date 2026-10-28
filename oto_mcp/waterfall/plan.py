@@ -67,7 +67,8 @@ def plan(ns: str, sub: Optional[str]) -> dict:
     and every step the waterfall offers (`available`, the table's order), so a screen
     can show the cascade and let someone remove, reorder or add back a step. SYNC (it
     reads the vault and the cascade): off the loop."""
-    steps = STEPS_BY_NAMESPACE[ns]
+    # Each step as THIS call sees it (`ordre._opened`: the instance's settings read once).
+    steps = tuple(ordre._opened(s) for s in STEPS_BY_NAMESPACE[ns])
     order, ignored, source, modes = ordre._plan(ns, steps, None, sub)
     out = {"connector": ns, "order_from": source, "ignored_steps": ignored,
            "steps": [_step_row(s, modes.get(s.tool, "unknown")) for s in order],

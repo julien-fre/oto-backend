@@ -3,14 +3,34 @@ lemlist, FullEnrich, Dropcontact), the collect calls of the asynchronous ones, a
 bounds of an Apify run."""
 from __future__ import annotations
 
+import logging
 from typing import Callable, Optional
 
 from .etape import Collect
 from .valeurs import _domain, _get, _slug
 
+logger = logging.getLogger(__name__)
+
 _NAMES_AND_DOMAIN = ("first_name", "last_name", "domain")
 _NAMES_AND_COMPANY = ("first_name", "last_name", "company_name")
 _PERSON_IDS = (("linkedin_url",), _NAMES_AND_DOMAIN, _NAMES_AND_COMPANY)
+
+
+def _forager_shared(op: str) -> Callable[[], bool]:
+    """`Step.shared_serves` of a Forager step asking `forager_person op=<op>`: whether
+    THIS instance opens that op on its shared key (`platform.ops`). A setting the tool no
+    longer understands, or a read that fails, serves nothing here — said in the log: the
+    tool itself would refuse the call."""
+    def serves() -> bool:
+        from ..tools import forager
+        try:
+            ops = forager.platform_ops()
+        except Exception:  # noqa: BLE001 — a probe: the step stays on the caller's own key
+            logger.warning("waterfall: forager platform.ops unreadable, %s stays own-key "
+                           "only", op, exc_info=True)
+            return False
+        return forager._served("forager_person", op, ops)
+    return serves
 
 
 def _apollo_args(inputs: dict) -> dict:

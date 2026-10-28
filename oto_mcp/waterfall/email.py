@@ -5,7 +5,7 @@ from __future__ import annotations
 from .etape import Step
 from .fournisseurs import (_DROPCONTACT_COLLECT, _DROPCONTACT_IDS, _FULLENRICH_COLLECT,
                            _FULLENRICH_IDS, _LEMLIST_COLLECT, _NAMES_AND_DOMAIN,
-                           _PERSON_IDS, _apollo_args, _dropcontact_args,
+                           _PERSON_IDS, _apollo_args, _forager_shared, _dropcontact_args,
                            _dropcontact_profile, _fullenrich_args, _fullenrich_profile,
                            _lemlist_args, _lemlist_first, _lusha_contact, _lusha_first)
 from .valeurs import _deep, _email_find, _emails_in, _get, _not_input, _slug
@@ -108,14 +108,15 @@ EMAIL_STEPS: tuple[Step, ...] = (
          _lusha_email, "Lusha credits per revealed email",
          explains="Lusha's database — from a LinkedIn profile, or name and company."),
     # The shared key serves Forager's phone lookups by default (`tools/forager.py::
-    # platform_ops`, an instance setting): the cascade keeps an email lookup on the
-    # caller's own key whatever the instance opens.
+    # platform_ops`, an instance setting): an email lookup runs on it only when the
+    # instance opens `forager_person:work_emails` — else on the caller's own key only.
     Step("forager", "forager_person", (("linkedin_url",),),
          lambda i: {"op": "work_emails",
                     "linkedin_public_identifier": _slug(i["linkedin_url"])},
-         _forager_email, "1 Forager credit (own key only)", own_key_only=True,
-         asks="work_emails",
-         explains="Forager's database, from a LinkedIn profile — your own key only."),
+         _forager_email, "Forager credits on a hit only", own_key_only=True,
+         shared_serves=_forager_shared("work_emails"), asks="work_emails",
+         explains=("Forager's database, from a LinkedIn profile — your own key, or the "
+                   "shared one where this instance opens email lookups.")),
     # The asynchronous ones: each may wait up to `appel.POLL_BUDGET_S` for its answer.
     Step("dropcontact", "dropcontact_enrich", _DROPCONTACT_IDS,
          _dropcontact_args, _dropcontact_email,
