@@ -115,6 +115,9 @@ CREATE TABLE IF NOT EXISTS app_files (
     -- relire l'objet, et l'app peut dire tout de suite qu'un scan n'a pas de texte.
     text TEXT,
     text_status TEXT,
+    -- `upload` : déposé par le lecteur dans l'app ; `agent` : rendu par un agent qu'il a
+    -- lancé (`oto_apps op=put_file`), pour qu'il le récupère dans l'app.
+    origin TEXT NOT NULL DEFAULT 'upload',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS app_files_app_sub_idx ON app_files (app_id, sub, id DESC);

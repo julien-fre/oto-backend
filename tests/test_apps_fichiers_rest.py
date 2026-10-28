@@ -25,9 +25,14 @@ PDF = b"%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>
 class _S3:
     def __init__(self):
         self.objets = {}
+        self.signes = []
 
     def put_object(self, *, Key, Body, **kw):
         self.objets[Key] = Body
+
+    def generate_presigned_url(self, op, Params, ExpiresIn):
+        self.signes.append((op, Params, ExpiresIn))
+        return f"https://s3.test/{Params['Key']}?sig=1"
 
 
 class _Verifier:
@@ -106,3 +111,22 @@ def test_un_jeton_api_est_refuse(client, app_id):
     r = client.post(f"/api/me/apps/{app_id}/files", headers={"Authorization": "Bearer oto_deadbeef"},
                     files={"file": ("a.pdf", PDF, "application/pdf")})
     assert (r.status_code, r.json()["error"]) == (403, "api_token_forbidden")
+
+
+
+def test_un_agent_rend_un_fichier_que_le_lecteur_telecharge(client, app_id):
+    """`oto_apps op=put_file` (ici par la face REST, en session : un run hébergé tourne
+    au nom du lecteur), puis l'app le liste et rend un lien qui TÉLÉCHARGE."""
+    r = client.post("/api/me/apps", json={"op": "put_file", "app_id": app_id, "name": "Totaux é.csv",
+                                          "content": "client,total\nAcme,1200\n", "media_type": "text/csv"})
+    assert r.status_code == 200, r.text
+    fid = r.json()["file"]["id"]
+    assert r.json()["file"]["origin"] == "agent"
+    r = client.post(f"/api/me/apps/{app_id}/call", json={"action": "list_files"})
+    assert [(f["id"], f["origin"]) for f in r.json()["files"]] == [(fid, "agent")]
+    r = client.post(f"/api/me/apps/{app_id}/call", json={"action": "file_url", "file_id": fid})
+    assert r.status_code == 200, r.text
+    assert r.json()["expires_in"] == 300 and r.json()["name"] == "Totaux é.csv"
+    (op, params, ttl), = client.s3.signes
+    assert op == "get_object" and ttl == 300
+    assert params["ResponseContentDisposition"].startswith("attachment; filename*=UTF-8''Totaux%20%C3%A9.csv")

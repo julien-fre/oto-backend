@@ -62,11 +62,11 @@ def s(monkeypatch):
         return rec["objects"][key]
     monkeypatch.setattr(media_store, "fetch_object", fetch)
 
-    def file_add(app_id, sub, key, name, mt, size, text=None, text_status=None):
+    def file_add(app_id, sub, key, name, mt, size, text=None, text_status=None, origin="upload"):
         i = len(rec["files"]) + 1
         rec["files"][i] = {"id": i, "app_id": app_id, "sub": sub, "s3_key": key, "name": name,
                            "media_type": mt, "size": size, "created_at": "t", "text": text,
-                           "text_status": text_status}
+                           "text_status": text_status, "origin": origin}
         return rec["files"][i]
     monkeypatch.setattr(db.apps, "file_add", file_add)
     monkeypatch.setattr(db.apps, "files_text", lambda ids: {i: rec["files"][i]["text"] for i in ids})
@@ -214,3 +214,72 @@ def test_l_agent_lit_le_fichier_en_entier(s, monkeypatch):
     assert out["file"]["id"] == fid and out["file"]["format"] == "pdf-text" and out["file"]["sub"] == LECTEUR
     e = refus(A._app, ResolvedCtx(sub=AUTRE, org_id=ORG), A.AppInput(op="read_file", app_id=5, file_id=fid))
     assert e.code == "unknown_file"
+
+
+
+# ── Un agent rend un fichier à l'app ──────────────────────────────────────
+
+def test_l_agent_rend_un_fichier_au_lecteur(s):
+    out = A._app(CTX, A.AppInput(op="put_file", app_id=5, name="totaux.csv",
+                                 content="client,total\nAcme,1200\n", media_type="text/csv"))
+    f = out["file"]
+    assert f["origin"] == "agent" and f["media_type"] == "text/csv" and f["name"] == "totaux.csv"
+    vus = C._call(CTX, C.AppCallInput(app_id=5, action="list_files"))["files"]
+    assert [(x["name"], x["origin"]) for x in vus] == [("totaux.csv", "agent")]
+    # Un autre lecteur ne le voit pas.
+    assert C._call(ResolvedCtx(sub=AUTRE, org_id=ORG), C.AppCallInput(app_id=5, action="list_files"))["files"] == []
+
+
+def test_l_agent_rend_un_pdf_en_base64(s):
+    import base64
+    out = A._app(CTX, A.AppInput(op="put_file", app_id=5, name="rapport.pdf",
+                                 content_base64=base64.b64encode(PDF).decode(), media_type="application/pdf"))
+    assert out["file"]["media_type"] == "application/pdf"
+
+
+@pytest.mark.parametrize("kw,code", [
+    (dict(name="a.csv"), "invalid_file"),                                     # ni content ni base64
+    (dict(name="a.csv", content="x", content_base64="eA=="), "invalid_file"),  # les deux
+    (dict(name="a.pdf", content_base64="pas du base64!"), "invalid_file"),
+    (dict(name="", content="x", media_type="text/plain"), "invalid_file"),
+    (dict(name="x.html", content="<html><script>1</script></html>", media_type="text/html"), "file_type"),
+])
+def test_rendre_refuse(s, kw, code):
+    assert refus(A._app, CTX, A.AppInput(op="put_file", app_id=5, **kw)).code == code
+
+
+def test_rendre_dans_une_app_sans_fichiers_ou_illisible(s, monkeypatch):
+    s["manifest"] = {**MANIFEST, "files": False}
+    assert refus(A._app, CTX, A.AppInput(op="put_file", app_id=5, name="a.txt", content="x",
+                                         media_type="text/plain")).code == "files_not_allowed"
+    s["manifest"] = MANIFEST
+    monkeypatch.setattr(ownership, "can_access", lambda *a, **k: False)
+    assert refus(A._app, CTX, A.AppInput(op="put_file", app_id=5, name="a.txt", content="x",
+                                         media_type="text/plain")).code == "unknown_app"
+
+
+def test_rendre_respecte_le_plafond(s, monkeypatch):
+    monkeypatch.setattr(db.apps, "bytes_of", lambda a, sub: C.MAX_FILES_BYTES_PER_VIEWER)
+    assert refus(A._app, CTX, A.AppInput(op="put_file", app_id=5, name="a.txt", content="x",
+                                         media_type="text/plain")).code == "app_storage_full"
+
+
+def test_le_lien_de_telechargement_est_au_lecteur_seul(s, monkeypatch):
+    vus = []
+    monkeypatch.setattr(media_store, "presign_get",
+                        lambda key, expiry=None, download_as=None: vus.append((key, expiry, download_as)) or "https://signed")
+    fid = deposer()["file"]["id"]
+    out = C._call(CTX, C.AppCallInput(app_id=5, action="file_url", file_id=fid))
+    assert out == {"url": "https://signed", "name": "devis.pdf", "media_type": "application/pdf",
+                   "expires_in": C.FILE_URL_TTL}
+    assert vus[0][1] == C.FILE_URL_TTL and vus[0][2] == "devis.pdf"
+    e = refus(C._call, ResolvedCtx(sub=AUTRE, org_id=ORG), C.AppCallInput(app_id=5, action="file_url", file_id=fid))
+    assert e.code == "unknown_file"
+    assert refus(C._call, CTX, C.AppCallInput(app_id=5, action="file_url")).code == "missing_file_id"
+
+
+def test_le_texte_garde_est_borne(s, monkeypatch):
+    monkeypatch.setattr(file_extract, "extract", lambda data, name, mt: file_extract.Extraction(
+        file_extract.OK, "y" * 1_000_000))
+    fid = deposer()["file"]["id"]
+    assert len(s["files"][fid]["text"]) == C.STORED_TEXT_CHARS

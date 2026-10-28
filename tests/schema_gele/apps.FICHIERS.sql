@@ -8,6 +8,7 @@ media_type TEXT NOT NULL,
 size BIGINT NOT NULL,
 text TEXT,
 text_status TEXT,
+origin TEXT NOT NULL DEFAULT 'upload',
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS app_files_app_sub_idx ON app_files (app_id, sub, id DESC);

@@ -101,12 +101,18 @@ MAX_FILE_BYTES = 20 * 1024 * 1024
 # `maintenance.app_files`) : 1 Go, décidé avec Julien le 28/10/2026.
 MAX_FILES_BYTES_PER_VIEWER = 1024 * 1024 * 1024
 MAX_FILES_PER_RUN = 5
+# Le texte gardé en base pour l'extrait d'un run — pas le document entier (jusqu'à
+# 2 Mo de texte par fichier), que `read_file` relit sur l'objet.
+STORED_TEXT_CHARS = 64 * 1024
+# Un lien de téléchargement d'un fichier de l'app : le temps d'un clic.
+FILE_URL_TTL = 300
 # La part d'un fichier dans le texte remis à l'agent : le `handoff` d'un run est borné
 # à 20 000 caractères (`TriggerInput.handoff`), l'entrée et les en-têtes compris.
 HANDOFF_FILES_BUDGET = 18_000
 
 Action = Literal["read_rows", "read_aggregate", "write_cell", "add_row",
-                 "start_agent", "agent_runs", "run_result", "upload_file", "list_files"]
+                 "start_agent", "agent_runs", "run_result", "upload_file", "list_files",
+                 "file_url"]
 
 
 class AppCallInput(BaseModel):
@@ -126,6 +132,8 @@ class AppCallInput(BaseModel):
     job_id: Optional[int] = None
     # start_agent : les fichiers de l'app à remettre au run (déposés par le lecteur).
     files: Optional[list[int]] = None
+    # file_url : un fichier du lecteur dans cette app.
+    file_id: Optional[int] = None
     # upload_file : ce que le cadre parent annonce AVANT d'envoyer les octets ; la
     # route de dépôt vérifie que ce qui arrive y correspond.
     file: Optional[dict] = None
@@ -151,6 +159,8 @@ class AppFile(BaseModel):
     name: str
     media_type: str
     size: int
+    # `upload` (déposé par le lecteur) ou `agent` (rendu par un run qu'il a lancé).
+    origin: Optional[str] = None
     # Le texte extrait au dépôt : `ok`, `empty` (un scan sans texte), `unsupported`
     # (un format sans extracteur), `encrypted`, `failed`.
     text_status: Optional[str] = None
@@ -166,6 +176,11 @@ class AppCallOut(BaseModel):
     runs: Optional[list[AppRun]] = None
     run: Optional[AppRun] = None
     files: Optional[list[AppFile]] = None
+    # file_url : un lien signé, court, qui télécharge le fichier.
+    url: Optional[str] = None
+    name: Optional[str] = None
+    media_type: Optional[str] = None
+    expires_in: Optional[int] = None
 
 
 class AppConsentOut(BaseModel):
@@ -385,7 +400,7 @@ def _type_normal(media_type) -> str:
 def _fichier(r: dict) -> dict:
     return {"id": int(r["id"]), "name": r["name"], "media_type": r["media_type"],
             "size": int(r["size"]), "text_status": r.get("text_status"),
-            "created_at": r.get("created_at")}
+            "origin": r.get("origin") or "upload", "created_at": r.get("created_at")}
 
 
 def _annonce(app: dict, file: Optional[dict]) -> tuple[str, int, str]:
@@ -463,19 +478,12 @@ def deposer(ctx: ResolvedCtx, app_id: int, consent: Optional[str], name: str,
     jugement est ICI, la route n'adapte que le multipart. L'annonce (nom, taille, type
     déclaré) est ce que le consentement a signé ; les octets reçus doivent y répondre,
     et leur type se juge sur eux (`type_servi`)."""
-    from .. import media_store
-
-    from .. import file_extract
-
     app = _app_pour(ctx, app_id)
     annonce = {"name": name, "size": len(data), "media_type": _type_normal(declared_type)}
     inp = AppCallInput(app_id=app_id, action="upload_file", file=annonce)
     _annonce(app, annonce)
     _place(app, ctx.sub, len(data))
-    servi = media_store.type_servi(data, declared_type)
-    if servi.attachment or servi.content_type not in FILE_TYPES:
-        raise _refus(415, "file_type",
-                     "This file isn't what it says it is, or isn't a kind of file taken here.")
+    media_type = _type_pris(data, declared_type)
     if not consent:
         raise _refus(403, "consent_required",
                      "This gesture needs the viewer's consent: ask "
@@ -485,19 +493,55 @@ def deposer(ctx: ResolvedCtx, app_id: int, consent: Optional[str], name: str,
                             _hash_jeton(consent), g.geste_id if g else None) is None:
         raise _refus(403, "consent_invalid",
                      "This consent is used, expired, or for another file: ask again.")
+    return {"file": _ranger(app, ctx.sub, name, media_type, data, "upload")}
+
+
+def _type_pris(data: bytes, declared_type: Optional[str]) -> str:
+    """Le type des octets (`type_servi`), s'il est de ceux qu'on prend — sinon 415."""
+    from .. import media_store
+
+    servi = media_store.type_servi(data, declared_type)
+    if servi.attachment or servi.content_type not in FILE_TYPES:
+        raise _refus(415, "file_type",
+                     "This file isn't what it says it is, or isn't a kind of file taken here.")
+    return servi.content_type
+
+
+def _ranger(app: dict, sub: str, name: str, media_type: str, data: bytes,
+            origin: str) -> dict:
+    """Stocke un fichier JUGÉ (type, taille, plafond) pour `sub` dans l'app : l'objet
+    sous `app-files/`, son texte extrait UNE fois (borné : il ne nourrit que l'extrait
+    remis à un run), la ligne. Commun au dépôt du lecteur et au rendu d'un agent."""
+    from .. import file_extract, media_store
+
     try:
-        key = media_store.upload_object("app-files", str(app["id"]), data,
-                                        servi.content_type, name, max_bytes=MAX_FILE_BYTES,
-                                        propre_au_depot=True)
+        key = media_store.upload_object("app-files", str(app["id"]), data, media_type, name,
+                                        max_bytes=MAX_FILE_BYTES, propre_au_depot=True)
     except media_store.MediaError as e:
         raise _refus(e.status, e.code, str(e)) from None
-    # Extrait UNE fois, ici, quand les octets sont en main : un run reçoit ce texte
-    # sans relire l'objet, et l'app sait tout de suite qu'un scan n'en a pas.
-    ex = file_extract.extract(data, name, servi.content_type)
-    texte, statut = (ex.text if ex.ok else None), ex.status
-    row = db.apps.file_add(int(app["id"]), ctx.sub, key, name, servi.content_type, len(data),
-                           text=texte, text_status=statut)
-    return {"file": _fichier(row)}
+    ex = file_extract.extract(data, name, media_type)
+    texte, statut = (ex.text[:STORED_TEXT_CHARS] if ex.ok else None), ex.status
+    row = db.apps.file_add(int(app["id"]), sub, key, name, media_type, len(data),
+                           text=texte, text_status=statut, origin=origin)
+    return _fichier(row)
+
+
+def rendre(sub: str, app: dict, name: str, media_type: Optional[str], data: bytes) -> dict:
+    """Un fichier qu'un AGENT rend à l'app (`oto_apps op=put_file`), pour le lecteur au
+    nom duquel il tourne : mêmes types, même taille, même plafond que le dépôt du
+    lecteur, rangé à SON nom (`origin='agent'`). Pas de consentement : un run hébergé
+    n'a pas de lecteur devant l'écran, et ce fichier n'est lisible que par celui qui a
+    lancé le run (il tourne en son nom). L'appelant a déjà jugé la LECTURE de l'app."""
+    if not app["manifest"].get("files"):
+        raise _refus(403, "files_not_allowed", "This app doesn't take files.")
+    if not isinstance(name, str) or not name.strip() or len(name) > 255:
+        raise _refus(400, "invalid_file", "A file needs a name (at most 255 characters).")
+    if not data:
+        raise _refus(400, "missing_file", "The file is empty.")
+    if len(data) > MAX_FILE_BYTES:
+        raise _refus(413, "file_too_large", f"A file is at most {MAX_FILE_BYTES // (1024 * 1024)} MB.")
+    _place(app, sub, len(data))
+    return _ranger(app, sub, name.strip(), _type_pris(data, media_type), data, "agent")
 
 
 def _consent(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
@@ -546,6 +590,22 @@ def _call(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
         rows = db.apps.files_of(int(app["id"]), ctx.sub,
                                 min(max(_entier(o, "limit", 50), 1), MAX_ROWS))
         return {"files": [_fichier(r) for r in rows]}
+
+    if inp.action == "file_url":
+        # Un des fichiers du lecteur (déposé, ou rendu par un de ses runs) : un lien
+        # signé de cinq minutes qui le TÉLÉCHARGE. Une lecture : pas de consentement.
+        from .. import media_store
+        if inp.file_id is None:
+            raise _refus(400, "missing_file_id", "`file_id` is required.")
+        f = db.apps.file_of(int(app["id"]), ctx.sub, int(inp.file_id))
+        if f is None:
+            raise _refus(404, "unknown_file", f"No file {inp.file_id} of yours in this app.")
+        try:
+            url = media_store.presign_get(f["s3_key"], expiry=FILE_URL_TTL, download_as=f["name"])
+        except media_store.MediaError as e:
+            raise _refus(503, "file_unavailable", f"The file can't be fetched right now: {e}") from None
+        return {"url": url, "name": f["name"], "media_type": f["media_type"],
+                "expires_in": FILE_URL_TTL}
 
     if inp.action == "agent_runs":
         org = org_de_l_app(app)

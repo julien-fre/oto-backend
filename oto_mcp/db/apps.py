@@ -373,16 +373,18 @@ def run_results(run_ids: Iterable[str]) -> dict[str, dict]:
 
 # ── Fichiers déposés dans une app ────────────────────────────────────────────
 
-_FICHIER = "id, app_id, sub, s3_key, name, media_type, size, text_status, created_at"
+_FICHIER = "id, app_id, sub, s3_key, name, media_type, size, text_status, origin, created_at"
 
 
 def file_add(app_id: int, sub: str, s3_key: str, name: str, media_type: str,
-             size: int, text: Optional[str] = None, text_status: Optional[str] = None) -> dict:
+             size: int, text: Optional[str] = None, text_status: Optional[str] = None,
+             origin: str = "upload") -> dict:
     with _connect() as conn:
         return conn.execute(
             f"INSERT INTO app_files (app_id, sub, s3_key, name, media_type, size, text, "
-            f"text_status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING {_FICHIER}",
-            (app_id, sub, s3_key, name, media_type, size, text, text_status),
+            f"text_status, origin) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"RETURNING {_FICHIER}",
+            (app_id, sub, s3_key, name, media_type, size, text, text_status, origin),
         ).fetchone()
 
 

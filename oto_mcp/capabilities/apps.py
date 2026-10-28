@@ -63,7 +63,8 @@ _ECRITURES = frozenset({"create", "update", "archive", "unarchive", "restore", "
 
 class AppInput(BaseModel):
     op: Literal["list", "get", "create", "update", "archive", "unarchive",
-                "revisions", "restore", "validate", "file", "unfile", "read_file"]
+                "revisions", "restore", "validate", "file", "unfile", "read_file",
+                "put_file"]
     project_id: Optional[int] = Field(
         default=None, description="create: also file the new app in this project. "
         "file / unfile: the project. list: only the apps filed in it.")
@@ -82,6 +83,17 @@ class AppInput(BaseModel):
     file_id: Optional[int] = Field(
         default=None, description="read_file: a file a person dropped in the app (its id "
         "comes with the run's input).")
+    name: Optional[str] = Field(
+        default=None, description="put_file: the file's name, with its extension "
+        "(`summary.csv`, `report.docx`).")
+    content: Optional[str] = Field(
+        default=None, description="put_file: the file's TEXT (CSV, Markdown, text, JSON). "
+        "Exactly one of `content` or `content_base64`.")
+    content_base64: Optional[str] = Field(
+        default=None, description="put_file: the file's bytes in base64 (PDF, Word, Excel).")
+    media_type: Optional[str] = Field(
+        default=None, description="put_file: its type (`text/csv`, `application/pdf`…); "
+        "judged on the bytes anyway.")
 
 
 class AppCard(BaseModel):
@@ -308,7 +320,7 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
         return {"app": _view(sub, row)}
 
     row = _app_or_404(sub, inp.app_id,
-                      "read" if inp.op in ("get", "revisions", "read_file") else "write")
+                      "read" if inp.op in ("get", "revisions", "read_file", "put_file") else "write")
 
     if inp.op == "get":
         return {"app": _view(sub, row)}
@@ -331,6 +343,28 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
             raise AuthzDenied(503, "file_unavailable",
                               f"The file can't be read right now: {e}") from None
         return {"file": {"id": int(f["id"]), **rendu}}
+
+    if inp.op == "put_file":
+        # Un AGENT rend un fichier à l'app, pour le lecteur au nom duquel il tourne (un
+        # run hébergé tourne au nom de qui l'a lancé) : le lecteur le retrouve dans
+        # l'app (`tulina.files()`, `tulina.download`). Hors de la porte bêta des
+        # écritures (`_ECRITURES`) : elle borne qui ÉCRIT une app ; ceci est le geste
+        # d'un lecteur de l'app, borné par sa lecture, `files: true` et son plafond.
+        _require((inp.content is None) != (inp.content_base64 is None), "invalid_file",
+                 "Give exactly one of `content` (text) or `content_base64` (bytes).")
+        _require(row.get("archived_at") is None, "unknown_app",
+                 f"App {row['id']} doesn't exist or isn't shared with you.", 404)
+        if inp.content is not None:
+            data = inp.content.encode("utf-8")
+        else:
+            import base64
+            import binascii
+            try:
+                data = base64.b64decode(inp.content_base64 or "", validate=True)
+            except (binascii.Error, ValueError):
+                raise AuthzDenied(400, "invalid_file", "`content_base64` isn't valid base64.") from None
+        from . import apps_appel
+        return {"file": apps_appel.rendre(sub, row, inp.name or "", inp.media_type, data)}
 
     if inp.op in ("file", "unfile"):
         _require(inp.project_id is not None, "missing_project", "`project_id` is required.")
@@ -411,7 +445,10 @@ CAPABILITIES += [
             "create (`title`, `manifest`, `html`, optional `thumbnail`, optional "
             "`project_id` to file it) / read_file (`app_id`, `file_id`: a file a person "
             "dropped in the app, for the run they started — PDF text, a sheet as CSV, "
-            "text inline, plus a signed link to the original) / update (`app_id`, any of those; pass "
+            "text inline, plus a signed link to the original) / put_file (`app_id`, `name`, "
+            "`content` or `content_base64`, `media_type`: hand a RESULT file back to the "
+            "app, for the person whose run this is — they get it with tulina.files() / "
+            "tulina.download; PDF, Word, Excel, text, CSV, JSON, 20 MB) / update (`app_id`, any of those; pass "
             "`expected_rev` from get → 409 if it changed) / archive / unarchive / "
             "revisions / restore (`revision_id`) / file / unfile (`app_id`, "
             "`project_id`) / validate (`manifest`, and `app_id` for an existing app: "
@@ -423,7 +460,8 @@ CAPABILITIES += [
             "aggregate(table, {groupBy, metrics, filter}) / set(table, rowId, field, value) / "
             "add(table, values) / upload(file) → {id, name, mediaType, size} (manifest "
             "`files: true`; PDF, Word, Excel, text, CSV, JSON; 20 MB a file, 1 GB per "
-            "viewer per app, kept 30 days) / files() / "
+            "viewer per app, kept 30 days) / files() → each with origin upload or agent / "
+            "download(fileId) (opens the viewer's own file) / "
             "runAgent(agent, {input, files: [ids]}) → {jobId} — the run gets each file's "
             "text and reads it in full with op=read_file / job(jobId) / runs(agent) / "
             "go(route). A click in the app approves what it does — act right after it "

@@ -175,6 +175,13 @@ Une équipe dépose un PDF, un tableur, un document Word dans une app, et un age
   taille — et son TEXTE quand on sait l'extraire (PDF, Word, tableur, texte :
   `file_extract`), borné pour que tout tienne dans le `handoff` (20 000 caractères).
   Une URL signée n'y figure pas : un run peut attendre une place au-delà de son heure.
+- **Rendu par l'agent** : `oto_apps op=put_file` (`app_id`, `name`, `content` texte ou
+  `content_base64`, `media_type`) range un fichier RÉSULTAT dans l'app pour le lecteur au
+  nom duquel le run tourne (`origin='agent'`, mêmes types, taille et plafond, pas de
+  consentement : personne devant l'écran, et lui seul le lira). L'app le liste
+  (`list_files`, `origin`) et le fait télécharger : action `file_url` → lien signé de
+  5 minutes, `Content-Disposition: attachment`. Hors de la porte bêta des écritures :
+  elle borne qui écrit une app, pas ce qu'un de ses lecteurs y range.
 - **Lu en entier par l'agent** : `oto_apps op=read_file` (`app_id`, `file_id`) rend le
   fichier comme les pièces jointes Gmail ou Drive (`file_content.render_for_agent`) :
   texte d'un PDF ou tableur en CSV inline, plus un lien signé vers l'original.
