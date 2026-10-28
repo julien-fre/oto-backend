@@ -172,9 +172,12 @@ Une équipe dépose un PDF, un tableur, une image dans une app, et un agent le t
   texte d'un PDF ou tableur en CSV inline, plus un lien signé vers l'original.
   ⚠️ `oto_apps` est un outil bêta : l'agent doit l'avoir dans ses `tools`, sinon il
   n'a que le texte remis (borné) — `missing_tools` le dit à la pose.
-- **Rétention** : aucune purge automatique aujourd'hui ; les fichiers partent avec leur
-  app (`ON DELETE CASCADE`, objets restant sur le stockage). Même famille que les
-  pièces jointes du copilote (oto-backend#1420, `copilot/pieces.py`) : à converger.
+- **Rétention : 30 jours** (décidé le 28/10/2026, comme les pièces jointes du copilote,
+  oto-backend#1420) — `oto-mcp maintenance app-files`, dans le timer quotidien : l'objet
+  du stockage d'abord, puis la ligne, 5 000 au plus par passage. Un run déjà lancé a
+  reçu le texte ; un `read_file` après la purge rend `unknown_file`. Supprimer l'app
+  retire aussi les lignes (`ON DELETE CASCADE`). Même famille que `copilot/pieces.py` :
+  à converger.
 
 ### Suivre les runs
 

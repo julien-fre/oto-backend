@@ -139,3 +139,23 @@ def test_proprietaire_partages_et_rangement(projet):
     assert b["id"] in {r["id"] for r in db.apps.list_for_projects([projet])}
     assert db.apps.unfile(b["id"], projet) is True
     assert db.apps.projects_of([b["id"]]) == {b["id"]: []}
+
+
+def test_les_fichiers_de_plus_de_30_jours_sont_purges(projet, monkeypatch):
+    from oto_mcp import maintenance, media_store
+    from oto_mcp.db._conn import _connect
+
+    app = db.apps.create(("user", MOI), None, title="F", manifest={"files": True}, html="",
+                         thumbnail=None, by=MOI)
+    vieux = db.apps.file_add(app["id"], MOI, "app-files/x/vieux.pdf", "vieux.pdf", "application/pdf", 3)
+    neuf = db.apps.file_add(app["id"], MOI, "app-files/x/neuf.pdf", "neuf.pdf", "application/pdf", 3)
+    with _connect() as conn:
+        conn.execute("UPDATE app_files SET created_at = now() - interval '31 days' WHERE id = %s",
+                     (vieux["id"],))
+    supprimes = []
+    monkeypatch.setattr(media_store, "delete_by_key", supprimes.append)
+    assert maintenance.app_files(dry_run=True)["purgeables"] == 1
+    assert maintenance.app_files()["purged"] == 1
+    assert supprimes == ["app-files/x/vieux.pdf"]
+    assert db.apps.file_of(app["id"], MOI, vieux["id"]) is None
+    assert db.apps.file_of(app["id"], MOI, neuf["id"]) is not None

@@ -406,6 +406,33 @@ def files_of(app_id: int, sub: str, limit: int) -> list[dict]:
         ).fetchall()
 
 
+def files_older_than(days: int, limit: int) -> list[dict]:
+    """Les fichiers déposés il y a plus de `days` jours — les plus anciens d'abord,
+    `limit` au plus : de quoi purger par tranches sans charger la table."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT id, s3_key FROM app_files WHERE created_at < now() - make_interval(days => %s) "
+            "ORDER BY id LIMIT %s",
+            (days, limit),
+        ).fetchall()
+
+
+def count_files_older_than(days: int) -> int:
+    with _connect() as conn:
+        return int(conn.execute(
+            "SELECT count(*) AS n FROM app_files WHERE created_at < now() - make_interval(days => %s)",
+            (days,),
+        ).fetchone()["n"])
+
+
+def delete_files(file_ids: Iterable[int]) -> int:
+    ids = sorted({int(i) for i in file_ids})
+    if not ids:
+        return 0
+    with _connect() as conn:
+        return conn.execute("DELETE FROM app_files WHERE id = ANY(%s)", (ids,)).rowcount
+
+
 def file_of(app_id: int, sub: str, file_id: int) -> Optional[dict]:
     """UN fichier de l'app, déposé par `sub` — None sinon (inconnu, d'une autre app ou
     d'un autre lecteur : la même réponse)."""
