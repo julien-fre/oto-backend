@@ -418,7 +418,15 @@ CAPABILITIES += [
             "the problems a create would refuse, nothing written). Every declared "
             "table and agent must be within YOUR reach and in the app's organization: "
             "otherwise 400 invalid_manifest, each problem listed. Writing apps is open "
-            "to beta accounts only."
+            "to beta accounts only.\n"
+            "In the HTML, `window.tulina`: rows(table, {filter, orderBy, limit}) / "
+            "aggregate(table, {groupBy, metrics, filter}) / set(table, rowId, field, value) / "
+            "add(table, values) / upload(file) → {id, name, mediaType, size} (manifest "
+            "`files: true`; PDF, images, text, CSV, Word, Excel, PowerPoint) / files() / "
+            "runAgent(agent, {input, files: [ids]}) → {jobId} — the run gets each file's "
+            "text and reads it in full with op=read_file / job(jobId) / runs(agent) / "
+            "go(route). A click in the app approves what it does; anything the app does on "
+            "its own asks the viewer first."
         ),
         mcp="oto_apps",
         rest=RestBinding("POST", "/api/me/apps", allow_api_token=False),
