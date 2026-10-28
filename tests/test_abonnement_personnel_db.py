@@ -167,27 +167,35 @@ def test_une_pause_ANCIENNE_n_est_servie_qu_au_worker_qui_SONDE(live):
     assert pris and pris["id"] == travail, "pause ANCIENNE : la sonde tranchera"
 
 
-def test_une_pause_de_fenetre_CONNUE_n_est_jamais_sondee(live):
-    """Le fournisseur a nommé la fenêtre qui a refusé, et donné son échéance : on s'y
-    fie. Même ancienne, la pause freine le worker qui sonde — la sonder ne coûterait que
-    des jetons, chaque fois que la revérification échoit."""
+@pytest.mark.parametrize("fenetre,org,sondee", [
+    ("seven_day", 9407, True),        # mesuré le 28/10 : 27 % sous 25 %, relevé à 75 %
+    ("five_hour", 9408, True),
+    ("seven_day_opus", 9409, False),  # propre à un modèle : la sonde n'en mesure rien
+])
+def test_une_pause_ANCIENNE_du_COMPTE_est_sondee_meme_de_fenetre_connue(
+        live, fenetre, org, sondee):
+    """Fenêtre connue ou non (28/10/2026) : la sonde lit la capacité réelle sous le
+    plafond du moment. Seule une fenêtre propre à un modèle garde son échéance."""
     from oto_mcp import db
     from oto_mcp.db import user_subscriptions as US
     from oto_mcp.db._conn import _connect
-    s = _personne("abo-nomme")
-    US.upsert_sandbox(s, _FAMILLE, "sandbox-n")
+    s = _personne(f"abo-nomme-{fenetre}")
+    US.upsert_sandbox(s, _FAMILLE, f"sandbox-{fenetre}")
     with _connect() as conn:
         futur = conn.execute("SELECT NOW() + interval '5 days' AS t").fetchone()["t"]
     US.marquer_statut(s, _FAMILLE, US.PLAFOND, limit_reset_at=futur, epuise=True,
-                      fenetre="five_hour")
-    assert US.get_subscription(s, _FAMILLE)["limit_fenetre"] == "five_hour"
-    _travail(9407, s)
+                      fenetre=fenetre)
+    assert US.get_subscription(s, _FAMILLE)["limit_fenetre"] == fenetre
+    travail = _travail(org, s)
+    prise = lambda: db.claim_next_job(org, "w-sonde", lease_seconds=60, depot=_FAMILLE,
+                                      famille_seule=True, sonde=True)
+    assert prise() is None, "pause FRAÎCHE : elle freine, même pour qui sonde"
     with _connect() as conn:
         conn.execute("UPDATE user_model_subscriptions SET updated_at = NOW() - "
                      "make_interval(secs => %s) WHERE sub = %s",
                      (US.VERIFICATION_S + 60, s))
-    assert db.claim_next_job(9407, "w-sonde", lease_seconds=60, depot=_FAMILLE,
-                             famille_seule=True, sonde=True) is None
+    pris = prise()
+    assert (pris and pris["id"]) == (travail if sondee else None), fenetre
     US.marquer_statut(s, _FAMILLE, US.CONNECTE, observe=True)
     assert US.get_subscription(s, _FAMILLE)["limit_fenetre"] is None, (
         "la fenêtre ne survit pas à la pause")

@@ -69,9 +69,10 @@ def propre_a_un_modele(fenetre: Optional[str]) -> bool:
 #: forfait (`forfait_sonde` à la réservation). Au-delà, le travail est servi et la sonde
 #: tranche : une pause posée par un rapport faux ou ancien ne fige plus le forfait
 #: jusqu'à sa réinitialisation — sans travail servi, aucun rapport ne venait la corriger.
-#: Une pause dont la fenêtre est CONNUE (`limit_fenetre`) n'est jamais sondée : son
-#: échéance est celle que le fournisseur a donnée pour cette fenêtre, et la sonder ne
-#: coûterait que des jetons.
+#: Fenêtre connue ou non (28/10/2026) : une pause posée par NOTRE seuil dépend d'un
+#: réglage qui bouge (plafond perso, plafond d'org), et se fier à son échéance a figé
+#: une semaine un forfait à 27 % dont le plafond venait de passer de 25 à 75 %. Seule
+#: une fenêtre PROPRE À UN MODÈLE n'est pas sondée : la sonde n'en mesure rien.
 VERIFICATION_S = 600
 
 #: Le délai d'un travail rendu à la file en mode POOL quand le prêteur choisi est au
@@ -85,13 +86,14 @@ def pause_en_vigueur(ab: str, sonde: bool = False) -> str:
     """SQL : la ligne `ab` est-elle en pause qui FREINE la réservation ? Jamais NULL.
 
     `sonde` : le worker sondera le forfait avant de lancer — une pause plus vieille que
-    `VERIFICATION_S` ne freine plus, SAUF si sa fenêtre est connue (`limit_fenetre`) :
-    on se fie alors à l'échéance que le fournisseur a donnée. Seules les pauses dont la
-    cause est inconnue se sondent. ⚠️ L'horloge est `updated_at` : toute autre écriture
+    `VERIFICATION_S` ne freine plus, que sa fenêtre soit connue ou non : la sonde lit la
+    capacité RÉELLE sous le plafond du moment. Seule exception, une fenêtre propre à un
+    modèle (`propre_a_un_modele`), que la sonde ne mesure pas. ⚠️ L'horloge est `updated_at` : toute autre écriture
     de la ligne (plafond perso, sandbox, connexion) la rajeunit, ce qui ne fait que
     retarder la revérification — le sens sûr. Ne pas la « corriger » en colonne dédiée
     sans raison."""
-    fraiche = (f" AND ({ab}.{COLONNE_FENETRE} IS NOT NULL OR {ab}.updated_at > "
+    du_compte = ", ".join(f"'{f}'" for f in FENETRES_DU_COMPTE)
+    fraiche = (f" AND ({ab}.{COLONNE_FENETRE} NOT IN ({du_compte}) OR {ab}.updated_at > "
                f"NOW() - make_interval(secs => {int(VERIFICATION_S)}))"
                if sonde else "")
     return (f"COALESCE({ab}.statut = '{PLAFOND}' AND {ab}.limit_reset_at > NOW()"

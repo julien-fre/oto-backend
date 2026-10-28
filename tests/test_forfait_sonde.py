@@ -178,12 +178,14 @@ def test_une_fenetre_inconnue_est_propre_a_un_modele():
 
 
 # ── 4. coût : ne sonder que les pauses anciennes, se fier à un refus nommé ──────
-def test_seule_une_pause_ANCIENNE_et_de_fenetre_INCONNUE_cede_a_la_sonde():
+def test_une_pause_ANCIENNE_cede_a_la_sonde_SAUF_fenetre_propre_a_un_modele():
+    """Fenêtre connue ou non (28/10/2026) : seule une fenêtre propre à un modèle tient."""
     assert "updated_at" not in US.pause_en_vigueur("ab")
     assert "limit_fenetre" not in US.pause_en_vigueur("ab")
     sonde = US.pause_en_vigueur("ab", sonde=True)
     assert f"make_interval(secs => {US.VERIFICATION_S})" in sonde
-    assert "ab.limit_fenetre IS NOT NULL OR ab.updated_at" in sonde
+    assert ("ab.limit_fenetre NOT IN ('five_hour', 'seven_day') OR ab.updated_at"
+            in sonde)
     assert sonde.startswith("COALESCE(") and sonde.endswith(", false)")
 
 

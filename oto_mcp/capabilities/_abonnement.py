@@ -580,8 +580,7 @@ def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
         fenetres = rapport.get("fenetres") or {}
         plafond = seuil(porteur, conclu.get("org_id"), famille) if fenetres else None
         # (échéance, fenêtre) : la fenêtre part avec la pause (`limit_fenetre`) — une
-        # pause dont on connaît la fenêtre n'est pas revérifiée par la sonde, et une
-        # fenêtre propre à un modèle n'est pas levée par la sonde d'un autre.
+        # fenêtre propre à un modèle n'est ni revérifiée ni levée par la sonde d'un autre.
         echeances = [
             (f["resetsAt"], nom) for nom, f in fenetres.items()
             if isinstance(f, dict)
