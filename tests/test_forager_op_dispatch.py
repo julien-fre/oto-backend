@@ -395,7 +395,7 @@ def test_platform_key_runs_phone_numbers_and_meters_it(
     out = _tool("forager_person")(op="phone_numbers", person_id=7)
     assert out == [{"phone_number": "+33100000000"}]
     assert trace == {"found_work_emails": 0, "found_personal_emails": 0,
-                     "found_phones": 1, "quantity": 1}
+                     "found_phones": 1, "quantity": 15}
     assert platform_usage == [("forager", 1)]
 
 
@@ -413,7 +413,8 @@ def test_a_totals_count_debits_nothing(client, key_mode, setting, trace, platfor
     key_mode["platform"] = True
     setting["value"] = "forager_job_post"
     _tool("forager_job_post")(op="totals")
-    assert trace == {} and platform_usage == [], "units=0: served, nothing debited"
+    assert trace == {"quantity": 0} and platform_usage == [], (
+        "units=0: served, nothing debited, and a traced 0 bills nothing")
 
 
 def test_free_tools_note_no_units(client, key_mode, setting, platform_usage):
@@ -572,3 +573,47 @@ def test_the_console_refuses_a_list_the_tool_would_not_serve(monkeypatch, value,
     with pytest.raises(AuthzDenied) as e:
         _set(monkeypatch, value, org_id)
     assert e.value.code == "invalid_setting"
+
+
+# --- the billing fact: the Forager credits each served call consumed ---------
+
+def test_every_paid_op_has_its_cost():
+    """An op added to `OPS` and served on the shared key without a line would raise at
+    its first hit: the grid has a line for every op that is neither free nor a count."""
+    from oto_mcp.tools import forager as F
+    paid = {(t, op) for t, ops in F.OPS.items() if t not in F.FREE_TOOLS
+            for op in ops if not op.endswith("totals")}
+    assert paid == set(F.FORAGER_CREDITS)
+
+
+@pytest.mark.parametrize("tool, kwargs, method, credits", [
+    ("forager_person", {"op": "detail", "person_id": 1}, "lookup_person_detail", 1),
+    ("forager_person", {"op": "work_emails", "person_id": 1},
+     "lookup_person_work_emails", 5),
+    ("forager_person", {"op": "personal_emails", "person_id": 1},
+     "lookup_person_personal_emails", 5),
+    ("forager_person", {"op": "reverse_by_email", "email": "a@b.c"},
+     "lookup_person_by_email", 5),
+    ("forager_person", {"op": "reverse_by_phone", "phone_number": "+33100000000"},
+     "lookup_person_by_phone_number", 15),
+    ("forager_person", {"op": "role_search"}, "search_person_roles", 1),
+    ("forager_organization", {"op": "website", "domain": "example.com"},
+     "lookup_website", 1),
+    ("forager_organization", {"op": "search"}, "search_organizations", 1),
+    ("forager_job_post", {"op": "search"}, "search_job_posts", 2),
+])
+def test_a_served_call_traces_the_forager_credits_it_consumed(
+        client, key_mode, setting, trace, tool, kwargs, method, credits):
+    key_mode["platform"] = True
+    setting["value"] = "forager_person, forager_organization, forager_job_post"
+    getattr(client, method).return_value = [{"id": 1}]
+    _tool(tool)(**kwargs)
+    assert trace["quantity"] == credits
+
+
+def test_a_contact_miss_traces_zero_credits(client, key_mode, setting, trace):
+    key_mode["platform"] = True
+    setting["value"] = "forager_person"
+    client.lookup_person_work_emails.return_value = []
+    _tool("forager_person")(op="work_emails", person_id=1)
+    assert trace["quantity"] == 0
