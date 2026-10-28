@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .. import access
+from .. import access, geste
 from ..capabilities import apps_appel
 from ..capabilities._types import AuthzDenied, ContratDeRoute, DeclaredError, ResolvedCtx
 from .base import _authenticate, _json, _json_error
@@ -39,12 +39,20 @@ async def app_files_upload(request: Request, *, verifier: JWTVerifier) -> JSONRe
     if not data:
         return _json_error(request, 400, "missing_file")
     consent = form.get("consent")
-    ctx = ResolvedCtx(sub=sub, org_id=access.current_org(sub), role=access.get_user_role(sub))
+
+    def _deposer():
+        # Tout ce qui lit la base tourne ICI, hors de la boucle (le serveur est
+        # mono-loop : `docs/event-loop-perf.md`) — l'org active et le rôle compris.
+        ctx = ResolvedCtx(sub=sub, org_id=access.current_org(sub), role=access.get_user_role(sub))
+        # Le GESTE de la requête, comme `_rest_adapter` le pose : le consentement brûlé
+        # porte son `geste_id`, le journal des gestes d'app sait d'où vient le dépôt.
+        with geste.portee(geste.CONSOLE, sub):
+            return apps_appel.deposer(ctx, app_id, str(consent) if consent else None,
+                                      getattr(upload, "filename", None) or "file",
+                                      getattr(upload, "content_type", None), data)
+
     try:
-        out = await run_in_threadpool(
-            apps_appel.deposer, ctx, app_id, str(consent) if consent else None,
-            getattr(upload, "filename", None) or "file",
-            getattr(upload, "content_type", None), data)
+        out = await run_in_threadpool(_deposer)
     except AuthzDenied as e:
         return _json_error(request, e.status, e.code, e.message)
     return _json(request, out)

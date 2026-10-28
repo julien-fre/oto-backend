@@ -110,6 +110,11 @@ CREATE TABLE IF NOT EXISTS app_files (
     name TEXT NOT NULL,
     media_type TEXT NOT NULL,
     size BIGINT NOT NULL,
+    -- Le texte extrait AU DÉPÔT (`file_extract`, borné) et son statut (`ok`, `empty`
+    -- pour un scan sans texte, `unsupported` pour une image…) : un run le reçoit sans
+    -- relire l'objet, et l'app peut dire tout de suite qu'un scan n'a pas de texte.
+    text TEXT,
+    text_status TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS app_files_app_sub_idx ON app_files (app_id, sub, id DESC);

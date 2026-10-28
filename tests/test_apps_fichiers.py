@@ -57,14 +57,21 @@ def s(monkeypatch):
         rec["objects"][key] = data
         return key
     monkeypatch.setattr(media_store, "upload_object", upload_object)
-    monkeypatch.setattr(media_store, "fetch_object", lambda key, max_bytes=None: rec["objects"][key])
+    def fetch(key, max_bytes=None):
+        rec["fetches"] += 1
+        return rec["objects"][key]
+    monkeypatch.setattr(media_store, "fetch_object", fetch)
 
-    def file_add(app_id, sub, key, name, mt, size):
+    def file_add(app_id, sub, key, name, mt, size, text=None, text_status=None):
         i = len(rec["files"]) + 1
         rec["files"][i] = {"id": i, "app_id": app_id, "sub": sub, "s3_key": key, "name": name,
-                           "media_type": mt, "size": size, "created_at": "t"}
+                           "media_type": mt, "size": size, "created_at": "t", "text": text,
+                           "text_status": text_status}
         return rec["files"][i]
     monkeypatch.setattr(db.apps, "file_add", file_add)
+    monkeypatch.setattr(db.apps, "files_text", lambda ids: {i: rec["files"][i]["text"] for i in ids})
+    # Lancer un run ne relit aucun objet : le texte a été extrait au dépôt.
+    rec["fetches"] = 0
     monkeypatch.setattr(db.apps, "file_of", lambda a, sub, i: (
         f if (f := rec["files"].get(i)) and f["app_id"] == a and f["sub"] == sub else None))
     monkeypatch.setattr(db.apps, "files_of", lambda a, sub, limit: [
@@ -125,12 +132,25 @@ def test_seul_qui_a_depose_le_voit(s):
     assert autre["files"] == []
 
 
-def test_l_appel_json_ne_depose_rien(s):
-    jeton = C._consent(CTX, C.AppCallInput(app_id=5, action="upload_file", file={
-        "name": "a.pdf", "size": 3, "media_type": "application/pdf"}))["consent"]
-    e = refus(C._call, CTX, C.AppCallInput(app_id=5, action="upload_file", consent=jeton,
-                                           file={"name": "a.pdf", "size": 3, "media_type": "application/pdf"}))
+def test_l_appel_json_ne_depose_rien_et_ne_brule_pas_le_jeton(s):
+    annonce = {"name": "a.pdf", "size": len(PDF), "media_type": "application/pdf"}
+    jeton = C._consent(CTX, C.AppCallInput(app_id=5, action="upload_file", file=annonce))["consent"]
+    e = refus(C._call, CTX, C.AppCallInput(app_id=5, action="upload_file", consent=jeton, file=annonce))
     assert e.code == "upload_route_required"
+    # Le jeton sert encore à la route de dépôt.
+    assert C.deposer(CTX, 5, jeton, "a.pdf", "application/pdf", PDF)["file"]["name"] == "a.pdf"
+
+
+def test_le_type_annonce_et_le_type_recu_se_comparent_normalises(s):
+    jeton = C._consent(CTX, C.AppCallInput(app_id=5, action="upload_file", file={
+        "name": "a.pdf", "size": len(PDF), "media_type": "Application/PDF"}))["consent"]
+    assert C.deposer(CTX, 5, jeton, "a.pdf", "application/pdf; charset=binary", PDF)["file"]
+
+
+def test_une_image_n_a_pas_de_texte_et_le_dit(s):
+    png = b"\x89PNG\r\n\x1a\n" + b"x" * 100
+    f = deposer(data=png, name="photo.png", mt="image/png")["file"]
+    assert f["text_status"] == "unsupported"
 
 
 def test_le_run_recoit_le_texte_du_fichier(s, monkeypatch):
@@ -144,6 +164,7 @@ def test_le_run_recoit_le_texte_du_fichier(s, monkeypatch):
     assert "Extract the total" in inp.handoff and "devis.pdf" in inp.handoff
     assert "Total: 1 200 € HT" in inp.handoff and f"file_id=<id>" in inp.handoff
     assert len(inp.handoff) <= 20_000
+    assert s["fetches"] == 0
 
 
 def test_le_handoff_reste_borne(s, monkeypatch):

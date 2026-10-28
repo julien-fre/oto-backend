@@ -425,8 +425,11 @@ CAPABILITIES += [
             "`files: true`; PDF, images, text, CSV, Word, Excel, PowerPoint) / files() / "
             "runAgent(agent, {input, files: [ids]}) → {jobId} — the run gets each file's "
             "text and reads it in full with op=read_file / job(jobId) / runs(agent) / "
-            "go(route). A click in the app approves what it does; anything the app does on "
-            "its own asks the viewer first."
+            "go(route). A click in the app approves what it does — act right after it "
+            "(the browser keeps a click about 5 s; a write after a long wait asks the "
+            "viewer); anything the app does on its own asks the viewer first. One run of "
+            "an agent waits at a time (`run_already_queued`): collect files, then one "
+            "runAgent with files: [...]."
         ),
         mcp="oto_apps",
         rest=RestBinding("POST", "/api/me/apps", allow_api_token=False),

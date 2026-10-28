@@ -373,17 +373,27 @@ def run_results(run_ids: Iterable[str]) -> dict[str, dict]:
 
 # ── Fichiers déposés dans une app ────────────────────────────────────────────
 
-_FICHIER = "id, app_id, sub, s3_key, name, media_type, size, created_at"
+_FICHIER = "id, app_id, sub, s3_key, name, media_type, size, text_status, created_at"
 
 
 def file_add(app_id: int, sub: str, s3_key: str, name: str, media_type: str,
-             size: int) -> dict:
+             size: int, text: Optional[str] = None, text_status: Optional[str] = None) -> dict:
     with _connect() as conn:
         return conn.execute(
-            f"INSERT INTO app_files (app_id, sub, s3_key, name, media_type, size) "
-            f"VALUES (%s, %s, %s, %s, %s, %s) RETURNING {_FICHIER}",
-            (app_id, sub, s3_key, name, media_type, size),
+            f"INSERT INTO app_files (app_id, sub, s3_key, name, media_type, size, text, "
+            f"text_status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING {_FICHIER}",
+            (app_id, sub, s3_key, name, media_type, size, text, text_status),
         ).fetchone()
+
+
+def files_text(file_ids: Iterable[int]) -> dict[int, Optional[str]]:
+    """`{id: texte extrait au dépôt}` — lu à part : il peut peser des centaines de Ko."""
+    ids = sorted({int(i) for i in file_ids})
+    if not ids:
+        return {}
+    with _connect() as conn:
+        rows = conn.execute("SELECT id, text FROM app_files WHERE id = ANY(%s)", (ids,)).fetchall()
+    return {int(r["id"]): r["text"] for r in rows}
 
 
 def files_of(app_id: int, sub: str, limit: int) -> list[dict]:
