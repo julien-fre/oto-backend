@@ -91,6 +91,7 @@ from . import datastore_export
 from . import media
 from . import projects
 from . import transcription as api_transcription
+from . import copilot as api_copilot
 from . import uploads
 from . import pennylane_firm as api_pennylane_firm
 from . import wttj as api_wttj
@@ -916,6 +917,10 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # `POST …/transcriptions`, est une capacité (`capabilities/transcription.py`).
         Route("/api/me/projects/{project_id:int}/transcriptions/upload", bind(api_transcription.transcription_upload, verifier=verifier), methods=["POST"]),
         Route("/api/me/projects/{project_id:int}/transcriptions/upload", options_handler, methods=["OPTIONS"]),
+        # Dépôt d'un fichier joint à un message de l'agent intégré (multipart) — son `GET`
+        # (ce qui est accepté) est une capacité (`capabilities/copilot/routes.py`).
+        Route("/api/copilot/attachments", bind(api_copilot.piece_depot, verifier=verifier), methods=["POST"]),
+        Route("/api/copilot/attachments", options_handler, methods=["OPTIONS"]),
         Route("/api/public/docs/{token}", public.public_doc, methods=["GET"]),
         Route("/api/public/docs/{token}", options_handler, methods=["OPTIONS"]),
         # Réception d'un upload signé out-of-bande (#105) — jeton dans l'URL, pas de JWT.

@@ -245,6 +245,7 @@ CLASSEMENT: dict[str, Table] = {
     "copilot_threads": exclue(ParOrg(), "conversation de l'agent intégré : un état de travail éphémère (le journal des appels, lui, part)"),
     "copilot_undos": exclue(ParSub(), "annulation offerte, valable une heure"),
     "copilot_spend": exclue(ParSub(), "dépense du jour de l'agent intégré : le plafond ne lit que le jour courant"),
+    "copilot_attachments": exclue(ParOrg(), "fichier joint à un message de l'agent intégré : montré au modèle le temps d'un tour, purgé avec les conversations"),
     "runner_workers": possedee(ParOrg()),
     "runner_platform_workers": instance("les exécutants de plateforme : l'infrastructure "
                                         "de l'instance"),

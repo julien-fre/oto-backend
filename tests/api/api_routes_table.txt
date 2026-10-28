@@ -18,6 +18,8 @@ POST /api/me/projects/{project_id:int}/files -> project_files_upload
 OPTIONS /api/me/projects/{project_id:int}/files -> options_handler
 POST /api/me/projects/{project_id:int}/transcriptions/upload -> transcription_upload
 OPTIONS /api/me/projects/{project_id:int}/transcriptions/upload -> options_handler
+POST /api/copilot/attachments -> piece_depot
+OPTIONS /api/copilot/attachments -> options_handler
 GET,HEAD /api/public/docs/{token} -> public_doc
 OPTIONS /api/public/docs/{token} -> options_handler
 POST,PUT /api/upload/{token} -> upload_receive
@@ -868,6 +870,8 @@ POST /api/copilot/threads/{thread_id}/client-results -> _handler
 OPTIONS /api/copilot/threads/{thread_id}/client-results -> options_handler
 POST /api/copilot/threads/{thread_id}/approvals/{approval_id} -> _handler
 OPTIONS /api/copilot/threads/{thread_id}/approvals/{approval_id} -> options_handler
+GET,HEAD /api/copilot/attachments -> _handler
+OPTIONS /api/copilot/attachments -> options_handler
 POST /api/copilot/actions/{revert_id}/revert -> _handler
 OPTIONS /api/copilot/actions/{revert_id}/revert -> options_handler
 POST /api/billing/webhook -> webhook

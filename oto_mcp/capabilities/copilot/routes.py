@@ -23,7 +23,7 @@ import logging
 import os
 import re
 import uuid
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 import anyio
 from pydantic import BaseModel, Field
@@ -35,7 +35,7 @@ from .._authz import ORG_MEMBER
 from .._types import (AuthzDenied, Capability, DeclaredError, EventStream, ResolvedCtx,
                       RestBinding)
 from ..registry import CAPABILITIES
-from . import annulation, boucle, cle as cles, consigne, depense, outils
+from . import annulation, boucle, cle as cles, consigne, depense, outils, pieces
 from .boucle import ev
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,10 @@ class TurnInput(BaseModel):
     #: Read the final answer aloud: one `audio` event before `done` (`voix.py`), or
     #: none when it cannot be — the panel then uses the browser's voice.
     speak: bool = False
+    #: Files attached to this message (`att_…` ids from `POST /api/copilot/attachments`),
+    #: the caller's own in this org — else 400 `unknown_attachment` (`pieces.py`).
+    attachments: list[Annotated[str, Field(max_length=80)]] = Field(
+        default_factory=list, max_length=pieces.MAX_PAR_TOUR)
 
 
 class ClientResultInput(BaseModel):
@@ -146,6 +150,13 @@ class CopilotEvent(BaseModel):
     url: Optional[str] = None
     content_type: Optional[str] = None
     chars: Optional[int] = None
+
+
+class AttachmentTypes(BaseModel):
+    #: Media type → largest accepted file, in bytes.
+    types: dict[str, int]
+    #: Files one message may carry.
+    max_per_turn: int
 
 
 class RevertOut(BaseModel):
@@ -249,7 +260,7 @@ async def _etape(fil: dict, b, avant) -> Any:
             await run_in_threadpool(store.rendre, fil["id"], jeton)
 
 
-async def _tour(ctx: ResolvedCtx, inp: TurnInput):
+async def _tour(ctx: ResolvedCtx, inp: TurnInput, marques: list[dict]):
     sub, org = ctx.sub, ctx.org_id
     await run_in_threadpool(_fermer_inactives, sub)
     ligne = None
@@ -293,6 +304,8 @@ async def _tour(ctx: ResolvedCtx, inp: TurnInput):
             {"type": "text", "text": "<page_context>" + json.dumps(
                 inp.page_context, ensure_ascii=False, default=str)[:60_000]
              + "</page_context>"},
+            # The files: a small marker each, resolved per request (`pieces.resoudre`).
+            *marques,
             {"type": "text", "text": inp.text}]})
         return None
 
@@ -327,7 +340,23 @@ async def _plafond(ctx: ResolvedCtx) -> None:
 async def _turn(ctx: ResolvedCtx, inp: TurnInput) -> EventStream:
     _garde(ctx)
     await _plafond(ctx)
-    return EventStream(_sse(_tour(ctx, inp)))
+    marques: list[dict] = []
+    if inp.attachments:
+        marques = await run_in_threadpool(pieces.marques, inp.attachments, ctx.sub,
+                                          ctx.org_id)
+        if marques is None:
+            raise AuthzDenied(400, "unknown_attachment",
+                              "An attached file was not found: attach it again.")
+    return EventStream(_sse(_tour(ctx, inp, marques)))
+
+
+def _attachment_types(ctx: ResolvedCtx, inp: BaseModel) -> dict:
+    _garde(ctx)
+    return pieces.types_acceptes()
+
+
+class _Rien(BaseModel):
+    pass
 
 
 async def _client_result(ctx: ResolvedCtx, inp: ClientResultInput) -> EventStream:
@@ -382,7 +411,11 @@ _PLAFOND = DeclaredError(429, "copilot_daily_cap",
 CAPABILITIES += [
     Capability(
         key="copilot.turn", handler=_turn, Input=TurnInput, Output=CopilotEvent,
-        authz=ORG_MEMBER, mcp=None, errors=(*_PORTE, _PLAFOND),
+        authz=ORG_MEMBER, mcp=None,
+        errors=(*_PORTE, _PLAFOND,
+                DeclaredError(400, "unknown_attachment",
+                              "an id of `attachments` is not the caller's in this org, or "
+                              "does not exist")),
         rest=RestBinding("POST", "/api/copilot/turns", media=_SSE, provisoire=True,
                          allow_api_token=False),
         description="The in-app agent: one message of the person, answered as an event "
@@ -407,6 +440,14 @@ CAPABILITIES += [
                     "fields edited on the card (only those it offered), and whether to stop "
                     "asking for this kind of change in this conversation (plain writes "
                     "only). Resumes the stream."),
+    Capability(
+        key="copilot.attachment_types", handler=_attachment_types, Input=_Rien,
+        Output=AttachmentTypes, authz=ORG_MEMBER, mcp=None, errors=_PORTE,
+        rest=RestBinding("GET", "/api/copilot/attachments", provisoire=True,
+                         allow_api_token=False),
+        description="What a file attached to a message of the in-app agent may be: "
+                    "media type → largest size in bytes, and how many one message may "
+                    "carry. The upload itself is `POST` on the same path (multipart)."),
     Capability(
         key="copilot.revert", handler=_revert, Input=RevertInput, Output=RevertOut,
         authz=ORG_MEMBER, mcp=None,

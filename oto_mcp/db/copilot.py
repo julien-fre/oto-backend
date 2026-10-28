@@ -11,6 +11,8 @@ Trois règles tenues ici plutôt qu'en prose :
    un processus mort en pleine étape ne bloque pas la conversation à jamais.
 3. **Une annulation se consomme UNE fois** (`consommer`), atomiquement, et pas après
    son échéance.
+4. **Une pièce jointe est à son `sub` DANS son org** (`pieces`) : un autre compte, ou le
+   même dans une autre org, ne la voit pas — même réponse qu'une pièce qui n'existe pas.
 """
 from __future__ import annotations
 
@@ -171,6 +173,45 @@ def depense_du_jour(sub: str) -> int:
             "SELECT usd_micros FROM copilot_spend WHERE sub = %s "
             "AND day = (NOW() AT TIME ZONE 'UTC')::date", (sub,)).fetchone()
     return int(row["usd_micros"]) if row else 0
+
+
+def creer_piece(piece_id: str, sub: str, org_id: Optional[int], s3_key: str, name: str,
+                media_type: str, size: int) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO copilot_attachments (id, sub, org_id, s3_key, name, media_type, size) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (piece_id, sub, org_id, s3_key, name, media_type, int(size)))
+
+
+def pieces(ids: list[str], sub: str, org_id: Optional[int]) -> dict[str, dict]:
+    """Les pièces de `ids` qui sont à `sub` dans `org_id`, par identifiant. Celles d'un
+    autre (compte ou org) manquent, exactement comme celles qui n'existent pas."""
+    if not ids:
+        return {}
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, s3_key, name, media_type, size FROM copilot_attachments "
+            "WHERE id = ANY(%s) AND sub = %s AND org_id IS NOT DISTINCT FROM %s",
+            (list(ids), sub, org_id)).fetchall()
+    return {r["id"]: r for r in rows}
+
+
+def pieces_purgeables(jours: int, limite: int = 5000) -> list[dict]:
+    """Les pièces déposées il y a plus de `jours` (leur clé, pour retirer l'objet)."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT id, s3_key FROM copilot_attachments "
+            "WHERE created_at < NOW() - make_interval(days => %s) ORDER BY created_at "
+            "LIMIT %s", (int(jours), int(limite))).fetchall()
+
+
+def oublier_pieces(ids: list[str]) -> int:
+    if not ids:
+        return 0
+    with _connect() as conn:
+        return int(conn.execute("DELETE FROM copilot_attachments WHERE id = ANY(%s)",
+                                (list(ids),)).rowcount)
 
 
 def compter_purgeables(jours: int) -> dict:

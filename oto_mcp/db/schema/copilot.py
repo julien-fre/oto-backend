@@ -14,7 +14,12 @@ Trois tables, et seulement l'état d'une conversation en cours et la dépense du
 - `copilot_spend` : ce que chaque compte a fait dépenser au modèle, par jour UTC, en
   millionièmes de dollar — le plafond quotidien (`capabilities/copilot/depense.py`).
 
-Les trois se purgent à 30 jours par la maintenance (`oto-mcp maintenance copilot`).
+Et, à part (`PIECES`), `copilot_attachments` : un fichier que la personne joint à un
+message (image, PDF, petit texte). Ses octets sont dans le stockage objet, sous
+`copilot-attachments/` ; la ligne dit à qui il est — `sub` ET `org_id` : personne
+d'autre ne peut s'en servir.
+
+Toutes se purgent à 30 jours par la maintenance (`oto-mcp maintenance copilot`).
 Ce n'est PAS le journal : chaque appel d'outil est déjà dans `tool_calls`, sous le run
 de la conversation. Ces tables se purgent sans rien amputer.
 """
@@ -70,4 +75,22 @@ CREATE TABLE IF NOT EXISTS copilot_spend (
     usd_micros BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (sub, day)
 );
+"""
+
+PIECES = """
+-- Un fichier joint par la personne à un message de l'agent intégré. `id` = `att_<hex>`.
+-- Les octets sont dans le stockage objet (`s3_key`) ; n'en usent que `sub` dans `org_id`.
+-- Aucune clé étrangère vers une conversation : la pièce est déposée AVANT le message.
+CREATE TABLE IF NOT EXISTS copilot_attachments (
+    id TEXT PRIMARY KEY,
+    sub TEXT NOT NULL,
+    org_id BIGINT,
+    s3_key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    size BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_copilot_attachments_created
+    ON copilot_attachments (created_at);
 """

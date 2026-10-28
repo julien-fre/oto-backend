@@ -600,15 +600,22 @@ COPILOT_RETENTION_JOURS = 30
 def copilot(*, dry_run: bool = False) -> dict:
     """Purge l'état de l'agent intégré (`docs/copilot.md`) : les conversations sans vie
     depuis `COPILOT_RETENTION_JOURS` jours — leurs annulations partent avec elles — et
-    les jours de dépense plus anciens (le plafond ne lit que le jour courant). Rien du
+    les jours de dépense plus anciens (le plafond ne lit que le jour courant), et les
+    fichiers joints du même âge — l'objet stocké d'abord, la ligne ensuite. Rien du
     journal : chaque appel d'outil reste dans `tool_calls`. Ici et pas au boot : son
     coût suit la taille des tables."""
+    from . import media_store
     from .db import copilot as store
+    pieces = store.pieces_purgeables(COPILOT_RETENTION_JOURS)
     if dry_run:
         return {"retention_days": COPILOT_RETENTION_JOURS,
-                **store.compter_purgeables(COPILOT_RETENTION_JOURS)}
+                **store.compter_purgeables(COPILOT_RETENTION_JOURS),
+                "attachments": len(pieces)}
+    for p in pieces:
+        media_store.delete_by_key(p["s3_key"])     # best-effort : un orphelin ne bloque rien
     return {"retention_days": COPILOT_RETENTION_JOURS,
-            **store.purger(COPILOT_RETENTION_JOURS)}
+            **store.purger(COPILOT_RETENTION_JOURS),
+            "attachments": store.oublier_pieces([p["id"] for p in pieces])}
 
 
 def digest_lecteurs(*, dry_run: bool = False) -> dict:
