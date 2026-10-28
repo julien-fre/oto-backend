@@ -617,3 +617,18 @@ def test_a_contact_miss_traces_zero_credits(client, key_mode, setting, trace):
     client.lookup_person_work_emails.return_value = []
     _tool("forager_person")(op="work_emails", person_id=1)
     assert trace["quantity"] == 0
+
+
+def test_the_ledger_row_carries_the_forager_credits_the_billing_reads(
+        client, key_mode, setting, trace):
+    """End to end on our side: the trace of a served call becomes the `tool_calls` row
+    the billing lens (`org.usage.calls`) serves — `quantity` = the Forager credits,
+    `key_mode` = platform. What tulina-backend multiplies by its rate."""
+    from oto_mcp.calllog import apply_call_trace
+
+    key_mode["platform"] = True
+    setting["value"] = "forager_person:work_emails"
+    client.lookup_person_work_emails.return_value = [{"email": "a@example.com"}]
+    _tool("forager_person")(op="work_emails", linkedin_public_identifier="someone")
+    row = apply_call_trace({}, {**trace, "key_mode": "platform"}, ())
+    assert row == {"quantity": 5, "key_mode": "platform"}
