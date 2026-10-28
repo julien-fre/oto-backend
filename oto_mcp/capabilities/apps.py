@@ -214,12 +214,14 @@ def _content(inp: AppInput, *, creating: bool) -> None:
                  f"An app's HTML is at most {MAX_HTML} characters.")
 
 
-def _cards(sub: str, rows: list[dict]) -> list[dict]:
+def _cards(sub: str, rows: list[dict], writable: Optional[set[int]] = None) -> list[dict]:
     """Les cartes servies : de quoi dessiner la tuile, où l'app est rangée, et si
-    l'appelant peut la modifier."""
+    l'appelant peut la modifier. `writable` : les apps que la liste SAIT modifiables
+    (possédées, ou partagées en écriture) — sans lui, chaque carte se juge."""
     filed = db.apps.projects_of(r["id"] for r in rows)
     return [{**r, "project_ids": filed.get(int(r["id"]), []),
-             "can_edit": _can(sub, r["id"], "write")} for r in rows]
+             "can_edit": (int(r["id"]) in writable if writable is not None
+                          else _can(sub, r["id"], "write"))} for r in rows]
 
 
 def _view(sub: str, row: dict) -> dict:
@@ -227,21 +229,27 @@ def _view(sub: str, row: dict) -> dict:
     return {k: row[k] for k in AppView.model_fields if k in row}
 
 
-def _org_list(ctx: ResolvedCtx, archived: bool) -> list[dict]:
+def _org_list(ctx: ResolvedCtx, archived: bool) -> tuple[list[dict], set[int]]:
     """Les apps de l'org active : possédées par l'org ou ses équipes, mes apps perso
     créées ici, et celles partagées à l'un des principals de la liste — les mêmes
-    seams que la liste des projets (« listé ⇔ lisible »)."""
+    seams que la liste des projets (« listé ⇔ lisible »). Rend aussi celles que
+    l'appelant peut modifier, SANS une lecture par carte : une app possédée par ma
+    portée l'est (comme un tableau de l'org pour ses membres), une partagée l'est si
+    le meilleur partage est en écriture."""
     sub, org = ctx.sub, ctx.org_id
     if org is None:
-        return []
+        return [], set()
     owned = db.apps.list_for_owners(ownership.project_list_owners(sub, org), archived=archived,
                                     createur=ownership.mes_objets_ici(sub, org))
-    seen = {int(r["id"]) for r in owned}
-    granted = [r for r in db.apps.list_granted_to(ownership.principaux_de_liste(sub, org),
-                                                  archived=archived)
-               if int(r["id"]) not in seen]
+    writable = {int(r["id"]) for r in owned}
+    granted = []
+    for r in db.apps.list_granted_to(ownership.principaux_de_liste(sub, org), archived=archived):
+        if r.get("permission") == "write":
+            writable.add(int(r["id"]))
+        if not any(int(o["id"]) == int(r["id"]) for o in owned):
+            granted.append({k: v for k, v in r.items() if k != "permission"})
     rows = sorted(owned + granted, key=lambda r: (r["updated_at"], r["id"]), reverse=True)
-    return ownership.borner_a_la_vue(sub, APP_RTYPE, rows, lambda r: r["id"])
+    return ownership.borner_a_la_vue(sub, APP_RTYPE, rows, lambda r: r["id"]), writable
 
 
 def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
@@ -250,7 +258,8 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
     if inp.op == "list":
         ids = list(inp.project_ids or ([] if inp.project_id is None else [inp.project_id]))
         if not ids:
-            return {"apps": _cards(sub, _org_list(ctx, inp.archived is True))}
+            rows, writable = _org_list(ctx, inp.archived is True)
+            return {"apps": _cards(sub, rows, writable)}
         _require(len(ids) <= MAX_PROJECTS, "too_many_projects",
                  f"At most {MAX_PROJECTS} projects per list.")
         owners = db.apps.project_owners(ids)
@@ -328,8 +337,20 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
 
     # update
     _content(inp, creating=False)
-    manifest = (_checked_manifest(ctx, org_de_l_app(row), inp.manifest)
-                if inp.manifest is not None else None)
+    if inp.manifest is not None:
+        manifest = _checked_manifest(ctx, org_de_l_app(row), inp.manifest)
+    else:
+        manifest = None
+        # Toute écriture fait de son auteur celui de l'app (`updated_by`), dont les
+        # droits bornent chaque lecteur. Changer le titre ou la vignette sans pouvoir
+        # lire ce que l'app déclare la casserait pour tous : rejugé, refusé nommé.
+        if row.get("updated_by") != ctx.sub:
+            _, problems = _problemes(ctx.sub, org_de_l_app(row), row["manifest"])
+            if problems:
+                raise AuthzDenied(
+                    403, "would_break_app",
+                    "Saving would make you this app's author, and you can't reach "
+                    "everything it uses: " + " ".join(problems))
     thumb: Any = ...
     if inp.clear_thumbnail:
         thumb = None

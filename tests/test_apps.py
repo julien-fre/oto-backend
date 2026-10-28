@@ -306,6 +306,20 @@ def test_get_inconnue_et_illisible_meme_404(seams):
     assert (e1.status, e1.code) == (e2.status, e2.code) == (404, "unknown_app")
 
 
+def test_changer_la_vignette_sans_lire_ce_que_l_app_declare_est_refuse(seams, monkeypatch):
+    """Écrire fait de soi l'auteur : un éditeur qui ne lit pas le tableau déclaré
+    casserait l'app pour tous ses lecteurs en changeant seulement la vignette."""
+    monkeypatch.setattr(db.apps, "get", lambda i: dict(
+        ROW, id=i, updated_by="autre", manifest={"tables": {"t": {"table": "99"}}}))
+    e = _refus(lambda: A._app(CTX, A.AppInput(op="update", app_id=5, title="y")))
+    assert (e.status, e.code) == (403, "would_break_app") and seams["update"] == []
+    # Déjà l'auteur : rien ne change de mains, rien à rejuger.
+    monkeypatch.setattr(db.apps, "get", lambda i: dict(
+        ROW, id=i, updated_by="u1", manifest={"tables": {"t": {"table": "99"}}}))
+    A._app(CTX, A.AppInput(op="update", app_id=5, title="y"))
+    assert len(seams["update"]) == 1
+
+
 def test_update_lecteur_seul_refuse(seams):
     seams["rights"]["write"] = False
     e = _refus(lambda: A._app(CTX, A.AppInput(op="update", app_id=5, title="y")))
@@ -355,9 +369,15 @@ def test_list_sans_projet_rend_les_apps_de_l_org(seams, monkeypatch):
         return [dict(ROW, id=1, updated_at="2"), dict(ROW, id=2, updated_at="1")]
     monkeypatch.setattr(db.apps, "list_for_owners", possedees)
     monkeypatch.setattr(db.apps, "list_granted_to", lambda pr, archived=False: [
-        dict(ROW, id=2, updated_at="1"), dict(ROW, id=3, updated_at="3")])
+        dict(ROW, id=2, updated_at="1", permission="read"),
+        dict(ROW, id=3, updated_at="3", permission="read"),
+        dict(ROW, id=4, updated_at="0", permission="write")])
+    # La liste sait qui modifie quoi : aucune lecture par carte.
+    monkeypatch.setattr(ownership, "can_access", lambda *a, **k: pytest.fail("per-card check"))
     out = A._app(CTX, A.AppInput(op="list"))
-    assert [a["id"] for a in out["apps"]] == [3, 1, 2]
+    assert [a["id"] for a in out["apps"]] == [3, 1, 2, 4]
+    assert {a["id"]: a["can_edit"] for a in out["apps"]} == {3: False, 1: True, 2: True, 4: True}
+    assert all("permission" not in a for a in out["apps"])
     assert vus == {"owners": [("org", "42")], "createur": ("u1", 42, False)}
 
 

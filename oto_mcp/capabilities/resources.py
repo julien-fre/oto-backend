@@ -859,6 +859,14 @@ TRANSFER_PROCEDURE = (
     "into the target (see DELIVER A FULL PROJECT below).")
 
 
+# Une APP (`oto_apps`) se gouverne comme un tableau — servi aux deux surfaces.
+APP_DESCRIPTION = (
+    "APPS (resource_type=app): an app has its OWN owner and shares — viewer opens and "
+    "uses it, editor changes it, manager re-shares it; op=transfer moves it to a person, "
+    "a team or an org. The projects it is filed in give no access. No `cascade`, no "
+    "`credentials`: an open app acts as its viewer, bounded by its author.")
+
+
 # #480 — le texte servi aux deux surfaces (héritée et stricte), écrit une fois.
 PUBLICATION_DESCRIPTION = (
     "PUBLISHING (`public`/`secret`) also takes being a member of the org that owns the "
@@ -929,7 +937,7 @@ CAPABILITIES += [
             + " " + PENDING_DESCRIPTION
             + " resource_type ∈ {datastore_namespace, "
             "project, procedure, doc} — it is the discriminant, and it also decides which shape "
-            "comes back. " + TRANSFER_PROCEDURE + " " + page.DESCRIPTION
+            "comes back. " + TRANSFER_PROCEDURE + " " + page.DESCRIPTION + " " + APP_DESCRIPTION
             + " ⚠️ KNOWN DEFECT, kept for backward compatibility: resource_type "
             "DEFAULTS to `datastore_namespace`. Omitting it does NOT mean « any type » — the "
             "call silently targets a datastore namespace, so op=get/list answer about the "

@@ -139,19 +139,21 @@ def list_for_owners(owners: list[tuple[str, str]], *, archived: Optional[bool] =
 
 
 def list_granted_to(principals: list[tuple[str, str]], *, archived: bool = False) -> list[dict]:
-    """Les apps PARTAGÉES à l'un des `principals` (partage vivant), cartes seules."""
+    """Les apps PARTAGÉES à l'un des `principals` (partage vivant), cartes seules, avec
+    la meilleure permission (`permission` : `write` > `read`)."""
     from ._partage_vivant import PARTAGE_VIVANT_G
 
     if not principals:
         return []
     with _connect() as conn:
+        cols = ', '.join('a.' + c.strip() for c in _CARTE.split(','))
         return conn.execute(
-            f"SELECT DISTINCT {', '.join('a.' + c.strip() for c in _CARTE.split(','))} "
+            f"SELECT {cols}, max(g.permission) AS permission "
             "FROM resource_grants g JOIN apps a ON a.id::text = g.resource_id "
             f"WHERE g.resource_type = 'app' AND {PARTAGE_VIVANT_G} "
             "AND (g.principal_type, g.principal_id) IN "
             "(SELECT * FROM unnest(%s::text[], %s::text[])) "
-            f"AND {_archives(archived)} ORDER BY a.updated_at DESC, a.id DESC",
+            f"AND {_archives(archived)} GROUP BY a.id ORDER BY a.updated_at DESC, a.id DESC",
             ([p[0] for p in principals], [str(p[1]) for p in principals]),
         ).fetchall()
 
