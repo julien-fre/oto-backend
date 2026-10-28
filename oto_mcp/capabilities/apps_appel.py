@@ -101,6 +101,9 @@ MAX_FILE_BYTES = 20 * 1024 * 1024
 # `maintenance.app_files`) : 1 Go, décidé avec Julien le 28/10/2026.
 MAX_FILES_BYTES_PER_VIEWER = 1024 * 1024 * 1024
 MAX_FILES_PER_RUN = 5
+# Le texte gardé en base pour l'extrait d'un run — pas le document entier (jusqu'à
+# 2 Mo de texte par fichier), que `read_file` relit sur l'objet.
+STORED_TEXT_CHARS = 64 * 1024
 # La part d'un fichier dans le texte remis à l'agent : le `handoff` d'un run est borné
 # à 20 000 caractères (`TriggerInput.handoff`), l'entrée et les en-têtes compris.
 HANDOFF_FILES_BUDGET = 18_000
@@ -494,7 +497,9 @@ def deposer(ctx: ResolvedCtx, app_id: int, consent: Optional[str], name: str,
     # Extrait UNE fois, ici, quand les octets sont en main : un run reçoit ce texte
     # sans relire l'objet, et l'app sait tout de suite qu'un scan n'en a pas.
     ex = file_extract.extract(data, name, servi.content_type)
-    texte, statut = (ex.text if ex.ok else None), ex.status
+    # Gardé BORNÉ : il ne sert qu'à l'extrait remis au run (18 000 caractères au plus) ;
+    # la lecture entière passe par l'objet (`read_file`, `render_for_agent`).
+    texte, statut = (ex.text[:STORED_TEXT_CHARS] if ex.ok else None), ex.status
     row = db.apps.file_add(int(app["id"]), ctx.sub, key, name, servi.content_type, len(data),
                            text=texte, text_status=statut)
     return {"file": _fichier(row)}

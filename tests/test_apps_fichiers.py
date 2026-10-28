@@ -184,6 +184,13 @@ def test_le_run_recoit_le_texte_du_fichier(s, monkeypatch):
     assert s["fetches"] == 0
 
 
+def test_le_texte_garde_est_borne(s, monkeypatch):
+    monkeypatch.setattr(file_extract, "extract", lambda data, name, mt: file_extract.Extraction(
+        file_extract.OK, "y" * 1_000_000))
+    fid = deposer()["file"]["id"]
+    assert len(s["files"][fid]["text"]) == C.STORED_TEXT_CHARS
+
+
 def test_le_handoff_reste_borne(s, monkeypatch):
     monkeypatch.setattr(file_extract, "extract", lambda data, name, mt: file_extract.Extraction(
         file_extract.OK, "x" * 100_000))
