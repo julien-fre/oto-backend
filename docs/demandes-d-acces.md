@@ -52,6 +52,17 @@ Capacité : `capabilities/demandes_acces.py`. Store : `db/demandes_acces.py`, ta
   'pending'` conditionnel. Deux approbations croisées accordent deux fois (le geste est
   idempotent) et ne closent qu'une fois.
 
+- **Pas d'escalade « admin en secours »** : qui décide est qui peut déjà accorder. Un
+  admin de l'org ne voit donc pas la demande d'accès au projet PERSONNEL d'un membre —
+  il ne pourrait pas le partager à la main non plus.
+- **Le nom de la cible** (`target_label`) d'une ressource ne se sert qu'à qui peut déjà
+  la lire ou décider : demander par id ne lit pas, un à un, les noms des objets privés
+  des collègues. Le demandeur le reçoit une fois l'accès accordé.
+- **Connecteur fermé au-dessus de l'org** (plateforme, hôte) : refusé à la demande
+  (409 `cut_above_org`) — personne dans l'org ne pourrait l'accorder.
+- **Coût de `box=review`** : chaque demande en attente de l'org est jugée (`peut_decider`,
+  quelques lectures) à chaque lecture. Un badge se relit sans hâte.
+
 ## Pas encore
 
 - Prévenir : aucune notification ne part à la demande ni à la décision, en dehors de

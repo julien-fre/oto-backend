@@ -94,7 +94,10 @@ def test_demander_puis_redemander_rend_la_meme(client, monde):
     req = d["request"]
     assert (req["status"], req["mine"], req["can_decide"]) == ("pending", True, False)
     assert req["asked"] == {"role": "editor"} and req["note"] == "pour la démo"
-    assert req["target"]["resource_id"] == str(pid) and req["target_label"].startswith("p-")
+    # Le nom d'un projet privé ne se lit pas en demandant : à qui décide seulement.
+    assert req["target"]["resource_id"] == str(pid) and req["target_label"] is None
+    vu = {x["id"]: x for x in _boite(client, monde, PROPRIO)["requests"]}
+    assert vu[req["id"]]["target_label"].startswith("p-")
     again = _demander(client, monde, body).json()
     assert again["created"] is False and again["request"]["id"] == req["id"]
     sent = _boite(client, monde, MOI, "sent")
@@ -142,6 +145,9 @@ def test_ressource_le_proprietaire_decide_et_l_acces_est_accorde(client, monde):
         "approved", {"role": "viewer"}, PROPRIO)
     assert ownership.can_access(MOI, "project", str(pid), "read")
     assert not ownership.can_access(MOI, "project", str(pid), "write")
+    # Accordé : le demandeur lit maintenant le nom dans ses demandes.
+    sent = {x["id"]: x for x in _boite(client, monde, MOI, "sent")["requests"]}
+    assert sent[req["id"]]["target_label"].startswith("p-")
     # Close : ne se décide plus.
     r = _geste(client, monde, req["id"], "approve", PROPRIO)
     assert (r.status_code, r.json().get("error")) == (409, "request_closed")
@@ -151,15 +157,17 @@ def test_connecteur_l_admin_l_active_pour_l_org(client, monde):
     from oto_mcp import providers
     from oto_mcp.connectors import activation as connector_activation
     a = monde["a"]
-    nom = sorted(providers.REGISTRY)[0]
-    connector_activation.set_activation(nom, False, org_id=a, set_by=ADMIN)
+    nom, ferme = sorted(providers.REGISTRY)[:2]
+    connector_activation.set_activation(nom, True, set_by=ADMIN)       # la plateforme l'ouvre
+    connector_activation.set_activation(nom, False, org_id=a, set_by=ADMIN)  # l'org le coupe
+    connector_activation.set_activation(ferme, False, set_by=ADMIN)    # la plateforme le ferme
+    r = _demander(client, monde, {"kind": "connector_activation", "connector": ferme})
+    assert (r.status_code, r.json().get("error")) == (409, "cut_above_org"), r.text
     req = _demander(client, monde, {"kind": "connector_activation", "connector": nom}).json()
     req = req["request"]
     assert req["id"] not in [x["id"] for x in _boite(client, monde, PROPRIO)["requests"]]
     assert req["id"] in [x["id"] for x in _boite(client, monde, ADMIN)["requests"]]
     r = _geste(client, monde, req["id"], "approve", ADMIN)
-    if r.status_code == 409 and r.json().get("error") in ("master_disabled", "tenant_disabled"):
-        pytest.skip(f"`{nom}` est coupé au-dessus de l'org sur cette base")
     assert r.status_code == 200, r.text
     assert connector_activation.is_exposed(nom, a)
 
@@ -178,6 +186,9 @@ def test_outils_d_un_agent_son_proprietaire_les_ajoute(client, monde):
     req = r.json()["request"]
     assert req["asked"] == {"tools": ["serper_search", "web_read"]}
     assert req["target_label"] == "veille"
+    # Un éditeur de l'agent décide aussi.
+    ownership.grant("runner_trigger", str(tid), "user", AUTRE, "write", granted_by=PROPRIO)
+    assert req["id"] in [x["id"] for x in _boite(client, monde, AUTRE)["requests"]]
     r = _geste(client, monde, req["id"], "approve", PROPRIO, {"tools": ["nope"]})
     assert (r.status_code, r.json().get("error")) == (400, "tools_not_asked")
     r = _geste(client, monde, req["id"], "approve", PROPRIO, {"tools": ["serper_search"]})

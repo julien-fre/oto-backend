@@ -218,9 +218,15 @@ def _ressource_accorder(d: dict, accorde: dict):
 
 
 def _ressource_libelle(sub: str, d: dict) -> Optional[str]:
+    """Le nom, à qui peut DÉJÀ le lire ou décider seulement : demander par id ne doit pas
+    servir à lire, un à un, les noms des objets privés des collègues. Le demandeur le
+    reçoit une fois l'accès accordé (l'écran d'où il a demandé le connaît déjà)."""
     from .resources import _OPS
     c = d["cible"]
-    if not str(c["resource_id"]).isdigit():
+    kind = KIND_OF[c["resource_type"]]
+    if not str(c["resource_id"]).isdigit() or not (
+            ownership.can_access(sub, kind, c["resource_id"], "read")
+            or ownership.can_govern(sub, kind, c["resource_id"])):
         return None
     row = _OPS[c["resource_type"]]["get_by_id"](int(c["resource_id"]))
     return (row.get("name") or row.get("title") or row.get("slug")) if row else None
@@ -232,8 +238,15 @@ def _connecteur_poser(ctx: ResolvedCtx, inp: CreateRequestInput):
     name = str(_exige("connector", inp.connector)).strip()
     if name not in providers.REGISTRY:
         raise AuthzDenied(404, "target_not_found", f"Connector `{name}` unknown.")
-    if connector_activation.is_exposed(name, ctx.org_id):
+    cran = connector_activation.cran_qui_coupe(name, ctx.org_id)
+    if cran is None:
         raise _deja()
+    # Coupé par l'hôte, ou fermé par la plateforme : personne dans l'org ne le rouvre,
+    # une demande n'aurait personne pour l'accorder (`_org_set` le refuserait).
+    if cran == "tenant" or not connector_activation.is_exposed(name, org_id=None):
+        raise AuthzDenied(409, "cut_above_org",
+                          f"Connector `{name}` is closed above your organization: no one "
+                          "in it can turn it on.")
     return {"connector": name}, f"connector:{name}", {}
 
 
@@ -245,7 +258,11 @@ def _connecteur_accorder(d: dict, accorde: dict):
 
 # agent_tools — des outils qu'un agent appelle sans en avoir le droit
 
-_DECIDE_UN_AGENT = frozenset({"owner", "admin", "editor"})
+def _peut_ecrire_l_agent(sub: str, org_id: int, agent: dict) -> bool:
+    """Ce que `runner.triggers` op=update exige : écrire l'agent (`ECRIRE`), et qu'il ne
+    tourne pas sur le forfait personnel d'un autre qui ne le lui a pas prêté."""
+    return (_acces_agent.niveau(sub, int(org_id), agent) in _acces_agent.ECRIRE
+            and not _acces_agent.forfait_ferme(sub, agent))
 
 
 def _agent(org_id: int, trigger_id: int) -> Optional[dict]:
@@ -262,7 +279,7 @@ def _agent_poser(ctx: ResolvedCtx, inp: CreateRequestInput):
     agent = _agent(ctx.org_id, tid)
     if agent is None or _acces_agent.niveau(ctx.sub, ctx.org_id, agent) is None:
         raise AuthzDenied(404, "target_not_found", "No such agent in this organization.")
-    if _acces_agent.niveau(ctx.sub, ctx.org_id, agent) in _DECIDE_UN_AGENT:
+    if _peut_ecrire_l_agent(ctx.sub, ctx.org_id, agent):
         raise AuthzDenied(409, "you_can_grant",
                           "You can change this agent's tools yourself.")
     manquants = [t for t in voulus if t not in (agent.get("tools") or [])]
@@ -273,7 +290,7 @@ def _agent_poser(ctx: ResolvedCtx, inp: CreateRequestInput):
 
 def _agent_peut(sub: str, d: dict) -> bool:
     agent = _agent(d["org_id"], d["cible"]["trigger_id"])
-    return agent is not None and _acces_agent.niveau(sub, int(d["org_id"]), agent) in _DECIDE_UN_AGENT
+    return agent is not None and _peut_ecrire_l_agent(sub, d["org_id"], agent)
 
 
 def _agent_accorder(d: dict, accorde: dict):
@@ -525,6 +542,9 @@ CAPABILITIES += [
             DeclaredError(404, "target_not_found",
                           "la cible n'existe pas, ou ne vit pas dans l'org de l'appel"),
             DeclaredError(409, "already_granted", "l'appelant a déjà ce qu'il demande"),
+            DeclaredError(409, "cut_above_org",
+                          "`connector_activation` : connecteur fermé au-dessus de l'org "
+                          "(plateforme ou hôte), que personne dans l'org ne rouvre"),
             DeclaredError(409, "you_can_grant",
                           "`agent_tools` : l'appelant peut changer lui-même les outils de cet agent"),
         ),
@@ -561,6 +581,7 @@ CAPABILITIES += [
             DeclaredError(403, "cannot_decide",
                           "l'appelant ne peut pas accorder ce geste (ou c'est sa propre demande)"),
             DeclaredError(400, "tools_not_asked", "`tools` nomme un outil qui n'était pas demandé"),
+            DeclaredError(400, "missing_fields", "`tools` vide : accorder au moins un outil, ou refuser"),
         ),
         description=(
             "Approve a pending request: grants it as the caller, through the same action "
