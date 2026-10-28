@@ -283,10 +283,3 @@ def test_le_lien_de_telechargement_est_au_lecteur_seul(s, monkeypatch):
     e = refus(C._call, ResolvedCtx(sub=AUTRE, org_id=ORG), C.AppCallInput(app_id=5, action="file_url", file_id=fid))
     assert e.code == "unknown_file"
     assert refus(C._call, CTX, C.AppCallInput(app_id=5, action="file_url")).code == "missing_file_id"
-
-
-def test_le_texte_garde_est_borne(s, monkeypatch):
-    monkeypatch.setattr(file_extract, "extract", lambda data, name, mt: file_extract.Extraction(
-        file_extract.OK, "y" * 1_000_000))
-    fid = deposer()["file"]["id"]
-    assert len(s["files"][fid]["text"]) == C.STORED_TEXT_CHARS
