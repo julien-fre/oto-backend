@@ -462,3 +462,16 @@ def test_tableau_de_l_org(monkeypatch):
     assert M.tableau_de_l_org("1", None) is False
     assert M.tableau_de_l_org("2", 4) is False
     assert M.tableau_de_l_org("3", 4) is False
+
+
+def test_donner_l_app_a_une_personne_la_range_dans_une_org_ou_elle_est(monkeypatch):
+    from oto_mcp import org_store, roles
+    vus = []
+    monkeypatch.setattr(db.apps, "owner", lambda i: {"owner_type": "org", "owner_id": "42"})
+    monkeypatch.setattr(db.apps, "reparent", lambda i, t, o, context_org_id=None: vus.append((t, o, context_org_id)))
+    monkeypatch.setattr(org_store, "ensure_personal_org", lambda sub: 900)
+    monkeypatch.setattr(roles, "is_org_member", lambda sub, org: sub == "membre" and org == 42)
+    A._reparenter("5", "user", "membre")
+    A._reparenter("5", "user", "dehors")
+    A._reparenter("5", "org", "7")
+    assert vus == [("user", "membre", 42), ("user", "dehors", 900), ("org", "7", None)]
