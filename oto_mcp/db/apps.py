@@ -170,10 +170,14 @@ def owner(app_id: int) -> Optional[dict]:
             (app_id,)).fetchone()
 
 
-def reparent(app_id: int, owner_type: str, owner_id: str) -> None:
+def reparent(app_id: int, owner_type: str, owner_id: str,
+             context_org_id: Optional[int] = None) -> None:
+    """Change le propriétaire ; `context_org_id` (donné pour un propriétaire personne)
+    dit dans quelle org l'app vit désormais."""
     with _connect() as conn:
-        conn.execute("UPDATE apps SET owner_type = %s, owner_id = %s WHERE id = %s",
-                     (owner_type, str(owner_id), app_id))
+        conn.execute("UPDATE apps SET owner_type = %s, owner_id = %s, "
+                     "context_org_id = COALESCE(%s, context_org_id) WHERE id = %s",
+                     (owner_type, str(owner_id), context_org_id, app_id))
 
 
 def projects_of(app_ids: Iterable[int]) -> dict[int, list[int]]:
