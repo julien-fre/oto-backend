@@ -355,9 +355,10 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("OTO_COPILOT_SUBS", Classe.REGLAGE, "",
              "L'agent intégré à l'application (`capabilities/copilot`, docs/copilot.md) : "
              "les `sub` autorisés, séparés par des virgules. Vide (défaut) = personne — les "
-             "quatre routes `/api/copilot/*` répondent 403 `copilot_not_enabled`. Lu à "
-             "chaque requête.",
-             ("oto_mcp/capabilities/copilot/routes.py:56",)),
+             "quatre routes `/api/copilot/*` répondent 403 `copilot_not_enabled`. `*` = "
+             "tout compte (session console, membre de l'org, jamais en « voir en tant "
+             "que »). Lu à chaque requête.",
+             ("oto_mcp/capabilities/copilot/routes.py:61",)),
     Variable("OTO_COPILOT_DAILY_CAP_USD", Classe.REGLAGE, "20",
              "L'agent intégré à l'application : plafond de dépense au modèle PAR COMPTE ET "
              "PAR JOUR UTC, en dollars (prix publics du fournisseur × jetons rapportés, "

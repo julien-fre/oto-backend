@@ -4,7 +4,7 @@ undo — with JSON. Contract: the front's `src/lib/copilot/protocol.ts` and `tra
 
 Who may use it: an org member, in the org they view (`X-Oto-Org`), whose `sub` is in the
 instance's allowlist `OTO_COPILOT_SUBS` — empty by default, so nobody until an operator
-names someone. Never while viewing as someone else. **An interactive session only**: an
+names someone; `*` admits every account (the other gates below still apply). Never while viewing as someone else. **An interactive session only**: an
 `oto_` token — a person's, a delegated one, an org key —, a worker secret or a service
 identity is refused (403 `api_token_forbidden`), twice: by the authentication
 (`RestBinding.allow_api_token=False`) and here, on the request's source (`geste`). A
@@ -50,11 +50,22 @@ MAX_HISTOIRE_CARACTERES = 4_000_000
 _SSE = "text/event-stream"
 
 
+#: In `OTO_COPILOT_SUBS`: every account (still a console session, a member of the org,
+#: never viewing as someone else).
+TOUS = "*"
+
+
 def autorises() -> frozenset:
     """The subs allowed to use the in-app agent (`OTO_COPILOT_SUBS`, comma-separated).
-    Read on each call. Empty = nobody."""
+    Read on each call. Empty = nobody; `*` among them = everyone (`admis`)."""
     brut = os.environ.get("OTO_COPILOT_SUBS", "")
     return frozenset(s.strip() for s in brut.split(",") if s.strip())
+
+
+def admis(sub: str) -> bool:
+    """Is `sub` in the allowlist — named, or by `*`?"""
+    liste = autorises()
+    return TOUS in liste or sub in liste
 
 
 def _garde(ctx: ResolvedCtx) -> None:
@@ -67,7 +78,7 @@ def _garde(ctx: ResolvedCtx) -> None:
     if session_org.current_view_as_bound_org() is not None:
         raise AuthzDenied(403, "copilot_view_as",
                           "The in-app agent is off while viewing as someone else.")
-    if ctx.sub not in autorises():
+    if not admis(ctx.sub):
         raise AuthzDenied(403, "copilot_not_enabled",
                           "The in-app agent is not enabled for this account.")
 

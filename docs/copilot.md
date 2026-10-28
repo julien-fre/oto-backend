@@ -7,7 +7,7 @@ description: >-
   une porte d'approbation bâtie sur les DÉCLARATIONS des outils, des conversations en base
   liées à leur compte, une annulation lue dans le journal des révisions, et des appels au
   modèle réservés puis réglés au budget d'unités, sous un plafond de dépense par compte et par
-  jour. Session interactive seulement. Fermé par défaut (`OTO_COPILOT_SUBS`).
+  jour. Session interactive seulement. Fermé par défaut (`OTO_COPILOT_SUBS`, `*` = tous).
 ---
 
 # L'agent intégré à l'application (copilot)
@@ -32,7 +32,8 @@ de développement du front en était la spécification exécutable.
   publie dans `/openapi.json`. ⚠️ Le corps s'écoule APRÈS le handler : le flux pose lui-même
   identité, org et geste, et rend ses échecs DANS le flux (`error` puis `done`).
 - **Qui** : membre de l'org consultée (`X-Oto-Org`), et `sub` dans `OTO_COPILOT_SUBS`
-  (vide = personne → 403 `copilot_not_enabled`). Jamais en « voir en tant que » (403).
+  (vide = personne → 403 `copilot_not_enabled` ; `*` = tout compte, les autres gardes
+  restant les mêmes). Jamais en « voir en tant que » (403).
 - **Une session interactive, jamais un jeton** : un jeton `oto_` (d'une personne, délégué,
   clé d'org), un secret de worker ou une identité de service est refusé, 403
   `api_token_forbidden`, deux fois — à l'authentification (`RestBinding.allow_api_token=False`)
@@ -146,15 +147,50 @@ appel peut franchir le plafond, le suivant est refusé. Table `copilot_spend`.
 
 ## Ouvrir à quelqu'un
 
-L'allowlist reste VIDE au tag. Avant d'y poser un `sub` sur une instance :
+L'allowlist reste VIDE au tag. **Toutes les orgs** se servent de l'agent sans code propre à
+lui : sur la clé de l'org, ou sur la clé Anthropic de plateforme **accordée org par org** par
+le commerce, qui la refacture et la RETIRE quand l'org n'a plus de crédits. Le retrait arrête
+l'agent intégré (`no_model_key`) comme les agents hébergés (`raison_sans_acces`), et l'accord
+revient avec les crédits.
 
-1. **lire `OTO_CREDITS_MODE` de l'instance** (`report` par défaut) et le barème : en
-   `enforce` sans les quatre lignes `anthropic/messages:claude-opus-5-5`, chaque appel sur
-   une clé refacturée est refusé (`credits_unpriced`) ; en `report` sans elles, aussi (la
-   règle propre à l'agent intégré, plus haut) ; en `off`, rien n'est mesuré au budget
-   d'unités — seul le plafond quotidien borne la dépense ;
-2. vérifier `OTO_COPILOT_DAILY_CAP_USD` (absente = 20 $ par compte et par jour) ;
-3. poser `OTO_COPILOT_SUBS`.
+⚠️ **Ne jamais ouvrir la ligne plateforme `anthropic` à tous** (`share_mode='open'`,
+`share_down` vide) : `anthropic` n'est pas dans `grants_chain.CHAIN_CONNECTORS`, et une clé
+ouverte hors chaîne ne se coupe plus org par org — le retrait d'accord, seul frein par org,
+ne mordrait plus. ⚠️ **Ne pas passer `OTO_CREDITS_MODE=enforce` tant que le registre
+d'unités n'est pas alimenté** (aucun versement) : chaque appel facturé de chaque org serait
+refusé `insufficient_credits`.
+
+Avant d'ouvrir l'agent sur une instance :
+
+1. **les quatre lignes `anthropic/messages:claude-opus-5-5`** (`input_tokens`,
+   `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`) posées au
+   barème par le commerce (`PUT /api/service/credits/scales/{version}`) : sans elles,
+   l'agent intégré refuse chaque appel sur une clé refacturée (`credits_unpriced`), **en
+   `report` aussi** (la règle propre à l'agent intégré, plus haut). Vérifier :
+
+   ```sql
+   SELECT unit, budget, per_n FROM credit_scale_lines
+   WHERE version = (SELECT max(version) FROM credit_scales)
+     AND connector = 'anthropic' AND function = 'messages:claude-opus-5-5';
+   -- quatre lignes
+   ```
+
+2. **garder `OTO_CREDITS_MODE=report`** (le défaut) tant que le registre n'est pas
+   alimenté : il réserve et règle chaque appel, le commerce relit les mouvements réglés, et
+   c'est le retrait de l'accord — pas un refus du registre — qui coupe une org épuisée ;
+3. **la clé Anthropic de plateforme reste FERMÉE**, accordée org par org par le commerce
+   (qui l'inscrit parmi les clés qu'il accorde à l'achat de crédits, et retire l'accord à
+   100 % de consommation) ;
+4. pour les **agents hébergés** en plus : un worker du runner qui déclare
+   `meters_usage` au claim (il réserve et rapporte chaque appel). Sans lui, un travail sur
+   une clé refacturée retourne à la file, en attente (`runner_jobs._avec_cle`) ; la ferme
+   (Claude Code) ne reçoit jamais une clé refacturée. L'agent intégré n'en a pas besoin :
+   il réserve et règle lui-même chaque appel ;
+5. vérifier `OTO_COPILOT_DAILY_CAP_USD` (absente = 20 $ par compte et par jour) ;
+6. poser `OTO_COPILOT_SUBS` : des `sub`, ou `*` pour tout compte.
+
+La voix (`voix.py`) emprunte la clé **ElevenLabs** de plateforme, une autre ligne et un
+autre accord : accorder la clé Anthropic ne la donne pas.
 
 ## L'état (`db/copilot.py`, révision `20261026_1337_copilot`)
 
