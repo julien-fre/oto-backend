@@ -82,9 +82,13 @@ Le serveur ne distingue pas un clic du lecteur d'un appel que l'app fait seule. 
 geste qui écrit ou lance (`write_cell`, `add_row`, `start_agent`) exige donc un
 **jeton de consentement** :
 
-1. le cadre PARENT (le front, hors de l'iframe, qui n'a pas de réseau) montre le geste
-   au lecteur ; s'il l'approuve, il demande `POST /api/me/apps/{app_id}/consent` avec
-   le MÊME corps que l'appel ;
+1. le cadre PARENT (le front, hors de l'iframe, qui n'a pas de réseau) demande
+   `POST /api/me/apps/{app_id}/consent` avec le MÊME corps que l'appel quand le
+   lecteur vient d'agir dans l'app — un clic, une frappe, un fichier déposé :
+   l'activation utilisateur du navigateur, transmise par l'iframe à la fenêtre parente
+   et que l'app ne peut pas fabriquer. **Le clic est l'accord** (décision du
+   28/10/2026). Un geste que l'app tente SEULE (à l'ouverture, sur un minuteur), ou
+   au-delà de 20 gestes sur un même clic, demande d'abord confirmation au lecteur ;
 2. le serveur juge le geste exactement comme l'appel le jugera (manifeste, auteur ∩
    lecteur, valeur déclarée, révision présente…), puis rend un jeton
    (`secrets.token_urlsafe(32)`, stocké en SHA-256 dans `app_consents`), valable

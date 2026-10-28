@@ -10,8 +10,12 @@ déclarée (`write_cell`), ajouter une ligne (`add_row`), lancer un agent
 
 **Un geste qui écrit ou lance exige le CONSENTEMENT du lecteur** (oto-backend#1386).
 Le serveur ne distingue pas un clic du lecteur d'un appel que l'app fait seule à son
-ouverture : le cadre PARENT, hors de l'iframe, montre le geste au lecteur, et s'il
-l'approuve demande un jeton (`POST …/consent`, même corps que l'appel). Le jeton vaut
+ouverture : c'est le cadre PARENT, hors de l'iframe, qui le sait. Il demande un jeton
+(`POST …/consent`, même corps que l'appel) quand le lecteur vient d'agir dans l'app —
+l'activation utilisateur du navigateur (`navigator.userActivation`), qu'un clic dans
+l'iframe transmet à la fenêtre parente et que l'app ne peut pas fabriquer : le clic
+EST l'accord (décidé avec Julien le 28/10/2026) — et sinon après avoir demandé
+confirmation au lecteur. Une rafale de gestes sur un seul clic est bornée côté front. Le jeton vaut
 pour CE geste — app, lecteur, action, empreinte des arguments calculée ici aux deux
 bouts — une fois, deux minutes. L'appel le brûle avant d'agir ; brûlé, il reste comme
 journal des gestes d'app (`app_consents` : qui, quelle app, quoi, le `geste_id` des
