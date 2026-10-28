@@ -150,7 +150,6 @@ geste qui écrit ou lance (`write_cell`, `add_row`, `start_agent`) exige donc un
   (`datastore_row_revisions.geste_id`), le travail lancé (`job_id`). C'est là, pas
   dans `tool_calls` (route réduite), que se lit « cette écriture vient de l'app N ».
 
-<<<<<<< HEAD
 ### Des fichiers pour les agents (`files: true`)
 
 Une équipe dépose un PDF, un tableur, un document Word dans une app, et un agent le traite.
@@ -187,7 +186,7 @@ Une équipe dépose un PDF, un tableur, un document Word dans une app, et un age
   reçu le texte ; un `read_file` après la purge rend `unknown_file`. Supprimer l'app
   retire aussi les lignes (`ON DELETE CASCADE`). Même famille que `copilot/pieces.py` :
   à converger.
-=======
+
 ### Ce que le cadre isolé laisse sortir
 
 Le cadre de l'app n'appelle rien (`connect-src 'none'`, formulaires et navigations
@@ -198,7 +197,6 @@ le prefetch DNS, et `<link rel=preconnect>` (WebKit ouvrait une connexion). Rest
 par construction : les chemins de requête vers les CDN permis et Google Fonts (une
 requête peut y porter des données, mais vers le CDN seul), et ce qu'un LECTEUR tape
 dans un faux formulaire d'une app — seule donnée que l'auteur n'a pas déjà.
->>>>>>> feat/apps-standalone
 
 ### Suivre les runs
 
