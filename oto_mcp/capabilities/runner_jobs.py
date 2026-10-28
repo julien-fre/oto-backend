@@ -741,6 +741,14 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
                                "qui ne mesure pas chaque appel — rendu à la file",
                                job.get("id"), job["org_id"], depot, appelant)
                 return None
+            if payeur is not None:
+                # LE PLANCHER (#1376, B) : l'entrée du premier tour ne se réserve pas ;
+                # un travail que le solde ne couvre pas ne part pas pour mourir au
+                # premier appel. AVANT l'estampille : refusé, il n'a rien consommé.
+                manque = tours.sous_le_plancher(job.get("sub"), job["org_id"],
+                                                (job.get("payload") or {}).get("model"))
+                if manque is not None:
+                    return _refuser_sans_cle(job, appelant, _SOUS_LE_PLANCHER)
             if payeur is not None and not db.estampiller_cle_partagee(
                     job["id"], appelant, depot, payeur):
                 # Plus à ce worker (course) : rien n'est servi sur une clé qu'on ne
@@ -884,7 +892,7 @@ def _regler_un_tour(ctx: ResolvedCtx, job_id: int, tour: int, usage: dict) -> di
              **({"cache_non_declare": True} if cache_non_declare else {})},
             prise.get("model"))
     except Exception:
-        enforce = budget.mode() == "enforce"
+        enforce = tours.mode_du_modele(prise.get("model")) == "enforce"
         logger.exception("travail %s : tour %s NON réglé (clé partagée `%s`) — %s", job_id,
                          tour, est.get("depot"), "refusé" if enforce else "le worker continue")
         if enforce:
@@ -1089,6 +1097,10 @@ _CLE_DEPOSEE_ILLISIBLE = (
     "clé (Connecteurs).")
 
 
+_SOUS_LE_PLANCHER = (
+    f"{budget.INSUFFISANT} : le solde de crédits ne couvre pas le démarrage d'un agent "
+    "sur la clé partagée. Recharge des crédits, ou dépose ta propre clé (Connecteurs) ; "
+    "l'agent repartira à sa prochaine échéance.")
 _ATTEND_UN_WORKER_QUI_MESURE = (
     "en attente d'un worker qui mesure chaque appel au modèle : la clé partagée n'est "
     "servie qu'à lui.")

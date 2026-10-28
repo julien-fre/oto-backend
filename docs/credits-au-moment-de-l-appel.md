@@ -280,6 +280,25 @@ tenant→org (son quota) est vérifiée d'abord : son refus ne laisse aucune ré
 | `enforce` | oui | `insufficient_credits` (non rejouable), `credits_unpriced` (fonction sans ligne au barème, non rejouable), `spend_ledger_unavailable` (registre illisible ou non écrit, rejouable) |
 | `off` | non | jamais |
 
+**Un mode par fonction** (`OTO_CREDITS_MODE_FUNCTIONS`, #1376 E) : une fonction du barème
+peut tourner dans son propre mode, qui l'emporte sur `OTO_CREDITS_MODE` pour elle
+(`credits.mode_de`). Liste `<connecteur>.<fonction>=<mode>` séparée par des virgules ; un
+`*` final nomme toute fonction qui commence ainsi ; le nom le plus long gagne. Le cas pour
+lequel il existe : `anthropic.messages:*=enforce` — les appels au modèle d'un agent
+hébergé ou de l'agent intégré refusent (`credits_tours.mode_du_modele`), pendant que les
+outils du périmètre restent en `report`. Illisible : refuse le démarrage.
+
+**Le plancher d'un travail** (`OTO_CREDITS_JOB_FLOOR`, #1376 B) : avant qu'un travail
+d'agent hébergé parte sur une clé refacturée, son payeur doit avoir ce disponible, en
+unités (solde − réservations ouvertes, `credits_tours.sous_le_plancher`) — l'entrée du
+premier tour ne se réserve pas, et un travail ne doit pas partir pour mourir au premier
+appel. Lu à la réservation du travail, APRÈS les gardes ferme et mesure, AVANT
+l'estampille (`capabilities/runner_jobs._avec_cle`) : en `enforce` (mode de la fonction du
+modèle), le travail s'arrête, raison écrite `insufficient_credits` ; en `report`, journalisé.
+Un solde illisible refuse en `enforce`. Absent ou 0 : aucun plancher. Un dépassement d'un
+tour sous zéro reste admis (l'entrée et le cache se règlent `exceeded: true`), visible au
+grand livre.
+
 Le TEXTE de `insufficient_credits` ne porte aucun montant : l'unité de budget est celle de
 l'instance, et un nombre nu tromperait le lecteur. Le pire cas réservé et le disponible
 restent dans les données du refus (`needed`, `available`), en unités de budget, à traduire

@@ -189,6 +189,37 @@ def test_la_ferme_ne_recoit_jamais_la_cle_partagee(remise):
     assert remise["estampilles"] == []
 
 
+def test_sous_le_plancher_le_travail_s_arrete_AVANT_l_estampille(remise, monkeypatch):
+    """#1376 B : l'entrée du premier tour ne se réserve pas ; un travail que le solde ne
+    couvre pas ne part pas pour mourir au premier appel — arrêté, raison nommée, sans
+    estampille (il n'a rien consommé)."""
+    from oto_mcp.access import credits_tours as tours
+    vu = {}
+    monkeypatch.setattr(tours, "sous_le_plancher", lambda sub, org, model:
+                        vu.update(demande=(sub, org, model))
+                        or {"needed": 500, "available": 10})
+    rendu = RJ._avec_cle(_travail(payload={"model_family": "anthropic",
+                                           "model": "claude-sonnet-5"}),
+                         "anthropic", "worker:banc", worker=True, metre=True)
+    assert "model_key" not in rendu and "insufficient_credits" in rendu["delegation_refusee"]
+    assert remise["estampilles"] == [] and "insufficient_credits" in remise["arret"]
+    assert vu["demande"] == ("alexis", ORG, "claude-sonnet-5"), "le payeur, au modèle du travail"
+
+
+def test_au_dessus_du_plancher_la_cle_partagee_part(remise, monkeypatch):
+    from oto_mcp.access import credits_tours as tours
+    monkeypatch.setattr(tours, "sous_le_plancher", lambda sub, org, model: None)
+    assert _reserver()["model_key"] == "sk-partagee"
+
+
+def test_la_cle_de_l_org_ne_lit_jamais_le_plancher(remise, monkeypatch):
+    from oto_mcp.access import credits_tours as tours
+    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: ("sk-de-l-org", None))
+    monkeypatch.setattr(tours, "sous_le_plancher",
+                        lambda *a: pytest.fail("l'org paie son fournisseur"))
+    assert _reserver()["model_key"] == "sk-de-l-org"
+
+
 def test_la_cle_du_tenant_PRIMAIRE_se_refacture_comme_celle_de_la_plateforme(
         remise, monkeypatch):
     monkeypatch.setenv("OTO_TENANT_PRIMAIRE_SLUG", "oto")

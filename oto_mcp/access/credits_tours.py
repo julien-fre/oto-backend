@@ -8,8 +8,11 @@ and the cache are not reserved (no token count before the call) and settle as
 `exceeded` — then settled at the four token counts the provider answered, under the
 scale lines of `anthropic.messages:<model>`, one per unit. The MODEL is in the scale
 key: models are not priced alike, and a turn is reserved at the price of the model its
-job names (`fonction_du_modele`). The mode, the scale and the payer are the budget's
-(`access/credits`). A turn's hold is keyed `runner:<job>:<attempt>:<turn>`
+job names (`fonction_du_modele`). The scale and the payer are the budget's
+(`access/credits`); the mode is that of the model's function (`mode_du_modele`), so
+model calls can be enforced while the tools stay in `report`. Before a job starts on a
+re-billed key, its payer must have the floor available (`sous_le_plancher`): the first
+turn's input is never reserved. A turn's hold is keyed `runner:<job>:<attempt>:<turn>`
 (`cle_du_tour`), which every settlement of it says back (`appariement`).
 """
 from __future__ import annotations
@@ -77,6 +80,39 @@ def fonction_du_modele(model: Optional[str]) -> Optional[str]:
     return f"{PREFIXE_DES_MODELES}{cle_du_modele(model)}"
 
 
+def mode_du_modele(model: Optional[str]) -> str:
+    """The budget mode of a call to `model` (`credits.mode_de` on its scale function); a
+    job that names no model reads the mode of `messages:` itself."""
+    return budget.mode_de(MODELE_CONNECTOR, fonction_du_modele(model) or PREFIXE_DES_MODELES)
+
+
+def sous_le_plancher(sub: Optional[str], org: Optional[int],
+                     model: Optional[str]) -> Optional[dict]:
+    """Before a hosted agent's job starts on a re-billed key: does its payer have the
+    floor (`credits.plancher_travail`) available — balance minus open holds? Returns
+    None when the job may start, else `{needed, available}` — in `enforce` only: `report`
+    logs what it would refuse and returns None, and so does `off` or a floor of 0. A
+    ledger that cannot be read refuses in `enforce` (`available: None`)."""
+    plancher = budget.plancher_travail()
+    m = mode_du_modele(model)
+    if plancher <= 0 or m == "off":
+        return None
+    try:
+        qui = budget.payeur(sub, org, budget._relire()["personnes"])
+        s = db_credits.solde(qui)
+        disponible = int(s["balance"]) - int(s["holds_open"])
+    except Exception:
+        logger.exception("crédits (%s) : solde illisible au plancher (org %s) — %s", m,
+                         org, "refusé" if m == "enforce" else "servi")
+        return {"needed": plancher, "available": None} if m == "enforce" else None
+    if disponible >= plancher:
+        return None
+    logger.warning("crédits (%s) : %s à %d disponibles, sous le plancher %d d'un travail "
+                   "— %s", m, qui, disponible, plancher,
+                   "refusé" if m == "enforce" else "servi")
+    return {"needed": plancher, "available": disponible} if m == "enforce" else None
+
+
 def _lignes_du_modele(lignes: dict, fonction: Optional[str]) -> Optional[dict]:
     """`{unit: (budget, per_n)}` for the four units, or None if one is missing (or the
     job names no model)."""
@@ -93,7 +129,7 @@ def reserver_tour(uid: str, sub: str, org: Optional[int], max_tokens: int,
     worker that asks again gets the same answer). Returns `{held, reserved}`; `enforce`
     raises `TourRefuse`, `report` reserves anyway (forced) and logs what it would refuse
     — a model without its four lines is `credits_unpriced` —, `off` holds nothing."""
-    m = budget.mode()
+    m = mode_du_modele(model)
     if m == "off":
         return {"held": False, "reserved": 0}
     try:
@@ -153,7 +189,7 @@ def regler_tour(uid: str, sub: str, org: Optional[int], tokens: dict,
     hold = db_credits.reservation(uid)
     if hold is not None and hold["state"] != db_credits.OUVERTE:
         return {"settled": False, "amount": 0, "exceeded": False}
-    if hold is None and budget.mode() == "off":
+    if hold is None and mode_du_modele(model) == "off":
         return None
     lu = budget._relire()
     # The lines of the version the turn was reserved under, not today's.
