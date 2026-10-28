@@ -55,9 +55,9 @@ page — mais ce **n'est pas une page de mémoire** : ni dans l'arbre des pages,
 ## Une app ouverte — auteur ∩ lecteur (`me.app.call`)
 
 Une app ouverte ne parle qu'à `POST /api/me/apps/{app_id}/call` (face REST seule, pas
-d'outil MCP : un agent n'est jamais le lecteur d'une app). **Actions servies :
-`read_rows` et `read_aggregate`, rien d'autre** — une autre action est une entrée
-invalide (400).
+d'outil MCP : un agent n'est jamais le lecteur d'une app). **Actions servies :**
+`read_rows`, `read_aggregate` (lire), `write_cell`, `add_row`, `start_agent` (gestes,
+avec consentement), `agent_runs`, `run_result` (suivre les runs).
 
 - **Droits d'une app = droits de son auteur ∩ droits de son lecteur.** L'auteur est
   `updated_by` ; il est jugé par l'ownership SEUL (numéro du tableau), jamais par sa
@@ -76,12 +76,46 @@ invalide (400).
   mais la route y est réduite (`/api/me/apps/:id/call`) : le numéro de l'app et le
   tableau lu n'y sont pas. Aucun journal d'audit des lectures n'existe à ce jour.
 
-### Ce qui n'est pas servi — et viendra avec un consentement
+### Écrire, ajouter, lancer — le consentement du lecteur (`me.app.consent`, #1386)
 
-Écrire une valeur (`set`), ajouter une ligne (`add`), lancer un agent, lire ses runs
-et ce qu'il a conclu : une app agirait au nom d'un lecteur qui ne l'a pas demandé.
-Ces gestes viendront avec un jeton de consentement du lecteur (oto-backend#1386).
-Le manifeste les déclare déjà, jugés à l'écriture, inertes à l'appel.
+Le serveur ne distingue pas un clic du lecteur d'un appel que l'app fait seule. Un
+geste qui écrit ou lance (`write_cell`, `add_row`, `start_agent`) exige donc un
+**jeton de consentement** :
+
+1. le cadre PARENT (le front, hors de l'iframe, qui n'a pas de réseau) montre le geste
+   au lecteur ; s'il l'approuve, il demande `POST /api/me/apps/{app_id}/consent` avec
+   le MÊME corps que l'appel ;
+2. le serveur juge le geste exactement comme l'appel le jugera (manifeste, auteur ∩
+   lecteur, valeur déclarée, révision présente…), puis rend un jeton
+   (`secrets.token_urlsafe(32)`, stocké en SHA-256 dans `app_consents`), valable
+   **deux minutes, une fois, pour CE geste** : app, lecteur, action et empreinte des
+   arguments, calculée au serveur aux deux bouts ;
+3. l'appel porte `consent` ; le serveur rejuge, BRÛLE le jeton en une écriture
+   (`consent_invalid` s'il est brûlé, expiré, d'un autre lecteur ou d'autres
+   arguments ; `consent_required` sans jeton), puis agit.
+
+- `write_cell` : un champ déclaré (`set`), à une valeur déclarée, avec la `_revision`
+  montrée (sinon 400 `revision_required`) ; l'auteur doit pouvoir ÉCRIRE le tableau.
+- `add_row` : colonnes déclarées (`add`) seules.
+- `start_agent` : un agent déclaré `run: true`, dans l'org du PROJET de l'app, au nom
+  du lecteur par `run_now` (accès en écriture du lecteur, abonnement, modèle, clé) ;
+  l'auteur doit pouvoir écrire l'agent. L'entrée (`input: true`, ≤ 300 caractères)
+  arrive au run comme donnée venue de l'app, après sa consigne. **Dédupliqué même
+  avec une entrée** (409 `run_already_queued`), ce que `run_now` ne fait pas pour un
+  `handoff`.
+- **Journal** : la ligne de `app_consents` reste une fois brûlée — qui, quelle app,
+  quelle action, quand, le `geste_id` des révisions écrites
+  (`datastore_row_revisions.geste_id`), le travail lancé (`job_id`). C'est là, pas
+  dans `tool_calls` (route réduite), que se lit « cette écriture vient de l'app N ».
+
+### Suivre les runs
+
+- `agent_runs` : les derniers runs d'un agent déclaré que l'auteur et le lecteur voient
+  tous deux — statut, dates, erreur, comme l'écran de l'agent les montre au lecteur.
+  Ce que l'agent a conclu (`outcome`, `note`) seulement pour les runs que le LECTEUR a
+  lancés (`mine`).
+- `run_result` : un run que le lecteur a lancé, d'un agent déclaré ; sinon 404
+  `unknown_run`.
 
 ## Révisions et conflits
 
