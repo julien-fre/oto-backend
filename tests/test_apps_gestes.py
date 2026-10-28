@@ -27,7 +27,7 @@ MANIFEST = {
     "agents": {"enrich": {"id": 9, "run": True, "input": True},
                "watch": {"id": 10, "run": False, "input": False}},
 }
-APP = {"id": 5, "project_id": 7, "title": "Leads", "manifest": MANIFEST,
+APP = {"id": 5, "owner_type": "user", "owner_id": "auteur", "context_org_id": 42, "title": "Leads", "manifest": MANIFEST,
        "thumbnail": None, "updated_by": AUTEUR, "archived_at": None}
 
 
@@ -37,17 +37,17 @@ def s(monkeypatch):
            "niveaux": {(AUTEUR, 9): "editor", (LECTEUR, 9): "editor",
                        (AUTEUR, 10): "viewer", (LECTEUR, 10): "viewer"},
            "jobs": [], "results": {}}
-    droits = {(LECTEUR, "project"): True, (AUTEUR, "12", "read"): True,
+    droits = {(LECTEUR, "app"): True, (AUTEUR, "12", "read"): True,
               (AUTEUR, "12", "write"): True}
 
     def can_access(sub, rtype, rid, want="read"):
-        if rtype == "project":
-            return droits.get((sub, "project"), False)
+        if rtype == "app":
+            return droits.get((sub, "app"), False)
         return droits.get((sub, rid, want), False)
 
     monkeypatch.setattr(ownership, "can_access", can_access)
     monkeypatch.setattr(db.apps, "get_for_call", lambda i: dict(APP) if i == 5 else None)
-    monkeypatch.setattr(C, "org_du_projet", lambda pid: ORG)
+    monkeypatch.setattr(C, "org_de_l_app", lambda app: ORG)
     monkeypatch.setattr(C, "tableau_de_l_org", lambda ns, org: org == ORG)
     monkeypatch.setattr(R, "_update_row", lambda ctx, inp: rec["update"].append((ctx.sub, inp)) or {
         "_id": inp.row_id, "_revision": "2", "name": "A", "status": inp.patch["status"], "email": "x"})
@@ -135,7 +135,7 @@ def test_le_consentement_ne_vaut_que_pour_ses_arguments(s):
 
 
 def test_le_consentement_d_un_autre_lecteur_ne_sert_pas(s):
-    s["droits"][(AUTRE, "project")] = True
+    s["droits"][(AUTRE, "app")] = True
     jeton = consent(**ECRIRE)
     assert refus(call, ResolvedCtx(sub=AUTRE, org_id=ORG), consent=jeton, **ECRIRE).code == "consent_invalid"
 

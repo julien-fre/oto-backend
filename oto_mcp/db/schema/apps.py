@@ -71,3 +71,28 @@ CREATE TABLE IF NOT EXISTS app_consents (
 CREATE INDEX IF NOT EXISTS app_consents_app_idx ON app_consents (app_id, id DESC);
 CREATE INDEX IF NOT EXISTS app_consents_sub_idx ON app_consents (sub);
 """
+
+PROPRIETE = """
+-- Une app a son PROPRIÉTAIRE, comme un tableau : une personne, une équipe ou une org
+-- (`ownership`, kind `app`), et ses partages (`resource_grants`, resource_type `app`).
+-- `context_org_id` : l'org où une app PERSO a été créée — là où vivent ses tableaux et
+-- ses agents, là où elle se liste. `project_id` n'est plus lu : il ne donne plus
+-- d'accès ; un projet RANGE une app (`app_projects`), sans rien ouvrir.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS owner_type TEXT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS owner_id TEXT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS context_org_id BIGINT REFERENCES orgs(id) ON DELETE SET NULL;
+ALTER TABLE apps ALTER COLUMN project_id DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS apps_owner_idx ON apps (owner_type, owner_id);
+CREATE INDEX IF NOT EXISTS apps_context_org_idx ON apps (context_org_id);
+
+-- Les projets où une app est RANGÉE (0..n) : elle s'affiche sur leur page. Ranger ne
+-- donne aucun accès — ni à l'app, ni au projet.
+CREATE TABLE IF NOT EXISTS app_projects (
+    app_id BIGINT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    filed_by TEXT,
+    filed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (app_id, project_id)
+);
+CREATE INDEX IF NOT EXISTS app_projects_project_idx ON app_projects (project_id);
+"""

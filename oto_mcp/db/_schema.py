@@ -86,6 +86,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.runs.AGENT_EPISODES,      # épisodes de panne d'un agent hébergé, et leurs réparations
     schema.datastore.COMMENTAIRES,   # commentaires des personnes sur une ligne de tableau
     schema.apps.CONSENTEMENTS,       # consentements d'un lecteur aux gestes d'une app, et leur journal
+    schema.apps.PROPRIETE,           # une app a son propriétaire et ses partages ; un projet la range
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

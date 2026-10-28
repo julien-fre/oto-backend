@@ -29,7 +29,7 @@ MANIFEST = {
                "all": {"table": "13", "fields": None, "set": {}, "add": []}},
     "agents": {"enrich": {"id": 9, "run": True, "input": True}},
 }
-APP = {"id": 5, "project_id": 7, "title": "Leads", "manifest": MANIFEST,
+APP = {"id": 5, "owner_type": "user", "owner_id": "auteur", "context_org_id": 42, "title": "Leads", "manifest": MANIFEST,
        "thumbnail": None, "updated_by": AUTEUR, "archived_at": None}
 
 
@@ -37,18 +37,18 @@ APP = {"id": 5, "project_id": 7, "title": "Leads", "manifest": MANIFEST,
 def seams(monkeypatch):
     rec = {"list": [], "agg": []}
     # Ce que chacun peut : par défaut, tout ; un test retire ce qu'il éprouve.
-    droits = {(LECTEUR, "project"): True, (AUTEUR, "12", "read"): True,
+    droits = {(LECTEUR, "app"): True, (AUTEUR, "12", "read"): True,
               (AUTEUR, "13", "read"): True}
     org_des_tableaux = {"12": ORG_DU_PROJET, "13": ORG_DU_PROJET}
 
     def can_access(sub, rtype, rid, want="read"):
-        if rtype == "project":
-            return droits.get((sub, "project"), False)
+        if rtype == "app":
+            return droits.get((sub, "app"), False)
         return droits.get((sub, rid, want), False)
 
     monkeypatch.setattr(ownership, "can_access", can_access)
     monkeypatch.setattr(db.apps, "get_for_call", lambda i: dict(APP) if i == 5 else None)
-    monkeypatch.setattr(C, "org_du_projet", lambda pid: ORG_DU_PROJET if pid == 7 else None)
+    monkeypatch.setattr(C, "org_de_l_app", lambda app: ORG_DU_PROJET if app.get("id") == 5 else None)
     monkeypatch.setattr(C, "tableau_de_l_org",
                         lambda ns, org: org is not None and org_des_tableaux.get(ns) == org)
     monkeypatch.setattr(R, "_list_rows", lambda ctx, inp: rec["list"].append((ctx.sub, inp)) or {
@@ -88,7 +88,7 @@ def test_le_lecteur_lit_comme_lui_et_seulement_les_champs_declares(seams):
 
 
 def test_app_illisible_pour_le_lecteur_meme_404_qu_inconnue(seams):
-    seams["droits"][(LECTEUR, "project")] = False
+    seams["droits"][(LECTEUR, "app")] = False
     assert refus(action="read_rows", table="leads").code == "unknown_app"
     with pytest.raises(AuthzDenied) as e:
         C._call(CTX, C.AppCallInput(app_id=404, action="read_rows", table="leads"))
@@ -119,7 +119,7 @@ def test_tableau_sorti_de_l_org_du_projet_refuse(seams):
 
 
 def test_projet_sans_org_ne_sert_aucun_tableau(seams, monkeypatch):
-    monkeypatch.setattr(C, "org_du_projet", lambda pid: None)
+    monkeypatch.setattr(C, "org_de_l_app", lambda app: None)
     assert refus(action="read_rows", table="leads").code == "table_outside_project_org"
 
 

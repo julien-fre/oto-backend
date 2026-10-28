@@ -32,14 +32,14 @@ L'auteur (`apps.updated_by`, le dernier à avoir écrit l'app) choisit ce qu'ell
 touche ; le lecteur l'ouvre avec ses propres droits. Sans la règle, quelqu'un qui peut
 éditer l'app sans lire un tableau le déclarerait et le ferait lire par la session d'un
 collègue. Chaque appel juge donc, sur le tableau DÉCLARÉ au manifeste :
-- **l'org du projet** de l'app : le tableau doit y vivre (`apps_manifeste.
+- **l'org de l'app** (`org_de_l_app`, celle de son propriétaire) : le tableau doit y vivre (`apps_manifeste.
   tableau_de_l_org`) — ni l'org active de l'auteur, ni celle du lecteur ;
 - **l'auteur**, par l'ownership seul (`ownership.can_access` sur le NUMÉRO du
   tableau) — jamais par sa session : il n'est pas là, et une résolution par nom se
   ferait dans SON org active (ADR 0023) ;
 - **le lecteur**, en exécutant pour lui les capacités existantes (`_list_rows`,
   `_aggregate`, `_update_row`, `_append_row`, `run_now`) : leurs règles, pas une copie.
-Un agent se juge pareil, dans l'org du projet : l'auteur par `_acces_agent.niveau`
+Un agent se juge pareil, dans l'org de l'app : l'auteur par `_acces_agent.niveau`
 (écrire pour lancer), le lecteur par `run_now` lui-même.
 Auteur inconnu ou qui a perdu l'accès : refus nommé, rien n'est servi.
 
@@ -63,10 +63,10 @@ from .. import db, geste, ownership
 from . import _acces_agent
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
-from .apps_manifeste import org_du_projet, tableau_de_l_org
+from .apps_manifeste import org_de_l_app, tableau_de_l_org
 from .registry import CAPABILITIES
 
-PROJECT_RTYPE = "project"
+APP_RTYPE = "app"
 MAX_ROWS = 200
 # Ce qu'une ligne porte toujours, en plus des champs déclarés : de quoi la désigner
 # et la dater.
@@ -139,7 +139,7 @@ def _refus(status: int, code: str, msg: str) -> AuthzDenied:
 def _app_pour(ctx: ResolvedCtx, app_id: int) -> dict:
     app = db.apps.get_for_call(int(app_id))
     if (app is None or app.get("archived_at") is not None
-            or not ownership.can_access(ctx.sub, PROJECT_RTYPE, str(app["project_id"]), "read")):
+            or not ownership.can_access(ctx.sub, APP_RTYPE, str(app["id"]), "read")):
         raise _refus(404, "unknown_app", f"App {app_id} doesn't exist or isn't shared with you.")
     if not app.get("updated_by"):
         raise _refus(403, "app_author_unknown",
@@ -152,9 +152,9 @@ def _table(app: dict, alias: Optional[str], want: str = "read") -> tuple[str, di
     if not isinstance(t, dict) or not str(t.get("table") or "").isdigit():
         raise _refus(400, "undeclared_table", f"This app doesn't declare a table named “{alias}”.")
     ns = str(t["table"])
-    if not tableau_de_l_org(ns, org_du_projet(app["project_id"])):
+    if not tableau_de_l_org(ns, org_de_l_app(app)):
         raise _refus(403, "table_outside_project_org",
-                     f"Table {ns} no longer lives in this app's project organization.")
+                     f"Table {ns} no longer lives in this app's organization.")
     if not ownership.can_access(app["updated_by"], ownership.TYPE_RESSOURCE_DATASTORE, ns, want):
         raise _refus(403, "app_author_lost_access",
                      f"This app's author can no longer {want} table {ns}: the app can't either.")
@@ -199,7 +199,7 @@ def _projeter(t: dict, row: dict) -> dict:
 
 def _agent(app: dict, alias: Optional[str], org: Optional[int], viewer: str, *,
            run: bool) -> dict:
-    """L'agent DÉCLARÉ sous `alias`, vu dans l'org du projet de l'app : le lecteur doit
+    """L'agent DÉCLARÉ sous `alias`, vu dans l'org de l'app : le lecteur doit
     le voir, l'auteur le voir (lire ses runs) ou l'écrire (le lancer)."""
     a = (app["manifest"].get("agents") or {}).get(alias or "")
     if not isinstance(a, dict) or not str(a.get("id") or "").isdigit():
@@ -288,7 +288,7 @@ def _geste(ctx: ResolvedCtx, app: dict, inp: AppCallInput):
     # start_agent
     from .runner_triggers import TriggerInput, _triggers_sync
 
-    org = org_du_projet(app["project_id"])
+    org = org_de_l_app(app)
     a = _agent(app, inp.agent, org, ctx.sub, run=True)
     handoff = None
     if inp.input:
@@ -309,7 +309,7 @@ def _geste(ctx: ResolvedCtx, app: dict, inp: AppCallInput):
             raise _refus(409, "run_already_queued",
                          "A run of this agent is already waiting for a worker: it will "
                          "start as soon as one is free.")
-        # Lancé dans l'org du PROJET de l'app, au nom du lecteur : `run_now` juge son
+        # Lancé dans l'org de l'app, au nom du lecteur : `run_now` juge son
         # accès en écriture à l'agent, son abonnement, le modèle, la clé.
         out = _triggers_sync(ResolvedCtx(sub=ctx.sub, org_id=int(org)),
                              TriggerInput(op="run_now", trigger_id=int(a["id"]),
@@ -354,7 +354,7 @@ def _call(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
         return faire(consent_id)
 
     if inp.action == "agent_runs":
-        org = org_du_projet(app["project_id"])
+        org = org_de_l_app(app)
         a = _agent(app, inp.agent, org, ctx.sub, run=False)
         jobs = db.apps.agent_jobs(int(org), int(a["id"]),
                                   min(max(_entier(o, "limit", 10), 1), MAX_RUNS))
@@ -364,7 +364,7 @@ def _call(ctx: ResolvedCtx, inp: AppCallInput) -> dict:
     if inp.action == "run_result":
         if inp.job_id is None:
             raise _refus(400, "missing_job_id", "`job_id` is required.")
-        org = org_du_projet(app["project_id"])
+        org = org_de_l_app(app)
         job = db.apps.job_of_org(int(org), int(inp.job_id)) if org is not None else None
         declares = {str(a.get("id")): alias
                     for alias, a in (app["manifest"].get("agents") or {}).items()
@@ -428,7 +428,7 @@ CAPABILITIES += [
             "declared field to a declared value (with the row's `_revision`), add a "
             "row with declared columns, start a declared agent, follow its runs. "
             "Allowed only when BOTH the app's author and its viewer may do it, on "
-            "tables and agents of the app's project organization. Writing and "
+            "tables and agents of the app's organization. Writing and "
             "starting need `consent`, from `POST /api/me/apps/{app_id}/consent`. "
             "Interactive sessions only (no API token)."
         ),

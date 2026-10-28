@@ -1,4 +1,4 @@
-# Apps — des écrans bâtis sur la plateforme, rangés dans un projet
+# Apps — des écrans bâtis sur la plateforme
 
 Une **app** est un écran qu'un utilisateur (ou un agent, pour lui) bâtit sur ses
 tableaux et ses agents : tableau de bord, file de revue, formulaire, dépôt de fichier
@@ -19,10 +19,45 @@ qui lance un agent. Capacité `me.app` : outil MCP `oto_apps`, REST `POST /api/m
   du stockage média de l'instance (`media_store.public_base()`) : la liste l'affiche
   hors du cadre isolé, une adresse libre ferait appeler un tiers par chaque lecteur.
 
-Elle **appartient à un projet** et en hérite l'accès (`ownership.can_access`), comme une
-page — mais ce **n'est pas une page de mémoire** : ni dans l'arbre des pages, ni dans
-`oto_search`, ni dans la base de connaissance. Tables `apps` et `app_revisions`
-(`db/schema/apps.py`) ; lectures et écritures dans `db/apps.py` (`db.apps.<fn>`).
+Ce **n'est pas une page de mémoire** : ni dans l'arbre des pages, ni dans
+`oto_search`, ni dans la base de connaissance. Tables `apps`, `app_revisions`,
+`app_projects`, `app_consents` (`db/schema/apps.py`) ; lectures et écritures dans
+`db/apps.py` (`db.apps.<fn>`).
+
+## À qui est une app, qui l'ouvre
+
+**Une app a son propriétaire et ses partages, comme un tableau** — kind `app`
+d'`ownership` (`apps.owner_type/owner_id`, partages dans `resource_grants`,
+`resource_type='app'`). Décidé avec Julien le 28/10/2026 :
+
+- **Une app neuve appartient à qui la crée, dans l'org active** (`context_org_id`),
+  **privée** — sauf si un admin de l'org a réglé le partage par défaut des apps
+  (`oto_org_settings domain=partage_par_defaut`, type `app` : `aucun` | `lecture` |
+  `ecriture`) ; ce partage d'office est MARQUÉ et se retire seul. `ecriture` est
+  permis pour une app (refusé pour un agent) : une app n'a pas d'identité à elle,
+  chaque geste agit au nom de son lecteur, borné par son auteur.
+- **Lecteur / éditeur / gérant**, les rôles d'ADR 0048, par `oto_resource`
+  (`resource_type=app` : `get`, `share`, `unshare`, `transfer`) — la même surface et le
+  même écran « Partager » qu'un projet. Lire l'app = `can_access` lecture (l'ouvrir,
+  s'en servir) ; la modifier = écriture ; la repartager = gouvernance (propriétaire,
+  admin, gérant). Transférer l'app à l'org ou à une équipe la rend à tous leurs
+  membres.
+- **L'org d'une app** (`apps_manifeste.org_de_l_app`) est celle de son propriétaire :
+  l'org, l'org de l'équipe, et pour une app perso l'org où elle a été créée (sinon
+  l'org perso de la personne). C'est là que vivent ses tableaux et ses agents, et là
+  qu'elle se liste.
+- **Un projet RANGE une app, il ne l'ouvre pas** (`app_projects`, 0..n projets) :
+  `op=file` / `op=unfile` (écrire l'app ET le projet) l'affichent sur la page du
+  projet ; une app rangée dans un projet qu'on lit reste invisible si elle n'est pas
+  partagée.
+- **`op=list`** sans projet : les apps de l'org active — possédées par l'org ou ses
+  équipes, mes apps perso créées ici, partagées à l'un des principals de la liste
+  (mêmes seams que la liste des projets, « listé ⇔ lisible »). Avec `project_ids` :
+  celles qui y sont rangées et que je lis. Chaque carte porte `project_ids` et
+  `can_edit`.
+- **Migration** (`20261028_1900_apps_owned`) : les apps d'avant prennent le
+  propriétaire et l'org de leur projet, y restent rangées, et reçoivent une copie des
+  partages du projet — personne ne perd l'accès qu'il avait.
 
 ## Ce que le serveur juge
 
@@ -30,24 +65,22 @@ page — mais ce **n'est pas une page de mémoire** : ni dans l'arbre des pages,
   `restore` : la forme du manifeste (mêmes règles que le front, au plus 32 000
   caractères de JSON), puis que chaque tableau déclaré se résout **pour l'auteur**,
   que chaque champ déclaré existe dans son schéma, et que chaque tableau et chaque
-  agent **vivent dans l'org du projet de l'app** (`org_du_projet` ; un projet perso
-  sans org de rangement vit dans l'org perso de son propriétaire) — jamais dans l'org
-  active de l'auteur ni du lecteur. Un manifeste qui nomme ce que l'auteur ne voit pas,
+  agent **vivent dans l'org de l'app** (`org_de_l_app`) — jamais dans l'org active de
+  l'auteur ni du lecteur. Un manifeste qui nomme ce que l'auteur ne voit pas,
   ou ce qui vit ailleurs, est refusé, 400 `invalid_manifest`, chaque problème listé ;
-  `op=validate` (`project_id` ou `app_id`) rend la liste sans rien écrire.
+  `op=validate` (`app_id`, sinon l'org active) rend la liste sans rien écrire.
 - **Chaque tableau déclaré est rangé par son NUMÉRO** (résolu à l'écriture pour
   l'auteur) : un nom résoudrait dans l'org active de qui le lit.
-- **`set`, `add`, `agents`, `files` sont jugés mais inertes** : rien ne les sert
-  encore (cf. plus bas).
+- **`set`, `add`, `agents` bornent les gestes** de l'appel d'une app (plus bas).
 
 ## Qui écrit une app
 
 - **La population bêta seule** : `create`, `update`, `archive`, `unarchive`,
-  `restore` exigent l'option `beta` (`access.has_option`, dans l'org de l'appel) — la
+  `restore`, `file`, `unfile` exigent l'option `beta` (`access.has_option`, dans l'org de l'appel) — la
   même population que `oto_apps` (`BETA_TOOLS`) et l'écran du front. Les autres :
   403 `apps_beta_only`, sur les deux faces ; une panne du seam des options refuse
   (fail-closed). Lire (`list`, `get`, `revisions`, `validate`) reste ouvert à qui
-  lit le projet.
+  lit l'app.
 - **REST : session interactive seule** (`allow_api_token=False` sur `/api/me/apps`
   et sur l'appel) : un jeton `oto_`, délégation d'agent hébergé comprise, est refusé
   en 403 `api_token_forbidden`. Un agent écrit une app par `oto_apps`, en MCP.

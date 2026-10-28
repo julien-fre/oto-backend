@@ -27,8 +27,8 @@ from ._conn import _connect
 
 # Ce qu'une LISTE rend : de quoi dessiner une carte, jamais le HTML (une app pèse
 # des dizaines de Ko ; la liste d'une org en servait sinon des centaines).
-_CARTE = ("id, project_id, title, thumbnail, created_by, created_at, updated_by, "
-          "updated_at, archived_at")
+_CARTE = ("id, owner_type, owner_id, context_org_id, title, thumbnail, created_by, "
+          "created_at, updated_by, updated_at, archived_at")
 _TOUT = _CARTE + ", manifest, html"
 # Les révisions gardées par app — autant que `revisions()` en liste.
 MAX_REVISIONS = 50
@@ -59,15 +59,22 @@ def with_rev(row: Optional[dict]) -> Optional[dict]:
     return {**row, "rev": app_rev(row["title"], row["manifest"], row["html"], row["thumbnail"])}
 
 
-def create(project_id: int, *, title: str, manifest: dict, html: str,
-           thumbnail: Optional[dict], by: str) -> dict:
+def create(owner: tuple[str, str], context_org_id: Optional[int], *, title: str,
+           manifest: dict, html: str, thumbnail: Optional[dict], by: str,
+           project_id: Optional[int] = None) -> dict:
+    """Une app neuve, à `owner`, créée dans l'org `context_org_id` — et rangée dans
+    `project_id` s'il est donné, dans la même transaction."""
     with _connect() as conn:
         row = conn.execute(
-            f"INSERT INTO apps (project_id, title, manifest, html, thumbnail, created_by, "
-            f"updated_by) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING {_TOUT}",
-            (project_id, title, Jsonb(manifest), html,
+            f"INSERT INTO apps (owner_type, owner_id, context_org_id, title, manifest, html, "
+            f"thumbnail, created_by, updated_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"RETURNING {_TOUT}",
+            (owner[0], str(owner[1]), context_org_id, title, Jsonb(manifest), html,
              Jsonb(thumbnail) if thumbnail is not None else None, by, by),
         ).fetchone()
+        if project_id is not None:
+            conn.execute("INSERT INTO app_projects (app_id, project_id, filed_by) "
+                         "VALUES (%s, %s, %s)", (row["id"], project_id, by))
     return with_rev(row)
 
 
@@ -86,19 +93,112 @@ def get_for_call(app_id: int) -> Optional[dict]:
             f"SELECT {_CARTE}, manifest FROM apps WHERE id = %s", (app_id,)).fetchone()
 
 
+def _archives(archived: bool) -> str:
+    return "a.archived_at IS NOT NULL" if archived else "a.archived_at IS NULL"
+
+
 def list_for_projects(project_ids: Iterable[int], *, archived: bool = False) -> list[dict]:
-    """Les apps des projets donnés, cartes seules (sans manifeste ni HTML), les plus
-    récemment changées d'abord. L'appelant a déjà vérifié l'accès à chaque projet."""
+    """Les apps RANGÉES dans les projets donnés, cartes seules, les plus récemment
+    changées d'abord. Ranger ne donne aucun accès : l'appelant filtre ce qu'il lit."""
     ids = sorted({int(p) for p in project_ids})
     if not ids:
         return []
-    clause = "archived_at IS NOT NULL" if archived else "archived_at IS NULL"
     with _connect() as conn:
         return conn.execute(
-            f"SELECT {_CARTE} FROM apps WHERE project_id = ANY(%s) AND {clause} "
-            "ORDER BY updated_at DESC, id DESC",
+            f"SELECT DISTINCT {', '.join('a.' + c.strip() for c in _CARTE.split(','))} "
+            f"FROM apps a JOIN app_projects f ON f.app_id = a.id "
+            f"WHERE f.project_id = ANY(%s) AND {_archives(archived)} "
+            "ORDER BY a.updated_at DESC, a.id DESC",
             (ids,),
         ).fetchall()
+
+
+def list_for_owners(owners: list[tuple[str, str]], *, archived: Optional[bool] = False,
+                    createur: Optional[tuple[str, int, bool]] = None) -> list[dict]:
+    """Les apps POSSÉDÉES par `owners` (paires collectives : org, équipes), plus — avec
+    `createur` (`ownership.mes_objets_ici`) — les apps PERSO de `sub` créées dans cette
+    org (et, dans son org perso, celles sans org de création). `archived=None` : toutes."""
+    clauses, params = [], []
+    if owners:
+        clauses.append("(a.owner_type, a.owner_id) IN (SELECT * FROM unnest(%s::text[], %s::text[]))")
+        params += [[o[0] for o in owners], [str(o[1]) for o in owners]]
+    if createur is not None:
+        csub, corg, sans_org = createur
+        clauses.append("(a.owner_type = 'user' AND a.owner_id = %s AND (a.context_org_id = %s"
+                       + (" OR a.context_org_id IS NULL" if sans_org else "") + "))")
+        params += [csub, corg]
+    if not clauses:
+        return []
+    arch = "" if archived is None else f" AND {_archives(archived)}"
+    with _connect() as conn:
+        return conn.execute(
+            f"SELECT {', '.join('a.' + c.strip() for c in _CARTE.split(','))} FROM apps a "
+            f"WHERE ({' OR '.join(clauses)}){arch} ORDER BY a.updated_at DESC, a.id DESC",
+            tuple(params),
+        ).fetchall()
+
+
+def list_granted_to(principals: list[tuple[str, str]], *, archived: bool = False) -> list[dict]:
+    """Les apps PARTAGÉES à l'un des `principals` (partage vivant), cartes seules."""
+    from ._partage_vivant import PARTAGE_VIVANT_G
+
+    if not principals:
+        return []
+    with _connect() as conn:
+        return conn.execute(
+            f"SELECT DISTINCT {', '.join('a.' + c.strip() for c in _CARTE.split(','))} "
+            "FROM resource_grants g JOIN apps a ON a.id::text = g.resource_id "
+            f"WHERE g.resource_type = 'app' AND {PARTAGE_VIVANT_G} "
+            "AND (g.principal_type, g.principal_id) IN "
+            "(SELECT * FROM unnest(%s::text[], %s::text[])) "
+            f"AND {_archives(archived)} ORDER BY a.updated_at DESC, a.id DESC",
+            ([p[0] for p in principals], [str(p[1]) for p in principals]),
+        ).fetchall()
+
+
+def list_all() -> list[dict]:
+    with _connect() as conn:
+        return conn.execute(f"SELECT {_CARTE} FROM apps ORDER BY id").fetchall()
+
+
+def owner(app_id: int) -> Optional[dict]:
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT owner_type, owner_id, context_org_id FROM apps WHERE id = %s",
+            (app_id,)).fetchone()
+
+
+def reparent(app_id: int, owner_type: str, owner_id: str) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE apps SET owner_type = %s, owner_id = %s WHERE id = %s",
+                     (owner_type, str(owner_id), app_id))
+
+
+def projects_of(app_ids: Iterable[int]) -> dict[int, list[int]]:
+    """`{app_id: [project_id, …]}` — où chaque app est rangée."""
+    ids = sorted({int(a) for a in app_ids})
+    if not ids:
+        return {}
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT app_id, project_id FROM app_projects WHERE app_id = ANY(%s) "
+            "ORDER BY filed_at", (ids,)).fetchall()
+    out: dict[int, list[int]] = {i: [] for i in ids}
+    for r in rows:
+        out[int(r["app_id"])].append(int(r["project_id"]))
+    return out
+
+
+def file(app_id: int, project_id: int, by: str) -> None:
+    with _connect() as conn:
+        conn.execute("INSERT INTO app_projects (app_id, project_id, filed_by) "
+                     "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (app_id, project_id, by))
+
+
+def unfile(app_id: int, project_id: int) -> bool:
+    with _connect() as conn:
+        return conn.execute("DELETE FROM app_projects WHERE app_id = %s AND project_id = %s",
+                            (app_id, project_id)).rowcount > 0
 
 
 def update(app_id: int, *, by: str, expected_rev: Optional[str] = None,
