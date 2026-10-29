@@ -2021,32 +2021,63 @@ pas (absent de `list`, 404 sur `get`, même 404 qu'un agent inconnu).
   dans `ownership` par `_acces_agent`). Verbes : `op=shares|share|unshare` sur
   `oto_trigger` — pas `oto_resource`, qui partage hors de l'org et à une adresse sans
   compte. **Un agent ne se partage qu'à l'intérieur de son org** (`share_not_org_member`) :
-  une personne de l'org (`share_with_sub`/`share_with_email`), ou l'org entière
-  (`everyone=true`, stocké `principal_type='org'`, servi `everyone`).
+  une personne de l'org (`share_with_sub`/`share_with_email`), une équipe de l'org
+  (`share_with_group`, 29/10/2026 ; `share_group_not_in_org` pour celle d'une autre org),
+  ou l'org entière (`everyone=true`, stocké `principal_type='org'`, servi `everyone`). Un
+  seul bénéficiaire par geste (`share_target_ambiguous`). Le palier `editor` vaut pour les
+  trois : partager en écriture à une personne, une équipe ou l'org est UN geste du
+  propriétaire (ou d'un admin).
 - ⚠️ **Le partage ne change pas l'identité d'exécution.** Un éditeur modifie un agent
   qui tourne toujours sous son propriétaire : partager en écriture, c'est confier son
   identité — l'écran de partage le dit. Le changer serait une autre décision (un agent
   qui tourne sous celui qui l'a allumé en dernier).
-- ⚠️ **Un agent d'abonnement se modifie par son propriétaire, et par les personnes
-  qu'IL a nommées éditrices** (04/10/2026). Ce qu'elles y changent s'exécute sur son
-  forfait : c'est à lui de le prêter, agent par agent, en les nommant. Ne prêtent PAS
-  le forfait — l'agent reste alors modifiable seulement pour l'éteindre, et `can_edit`
-  le dit (`false`) :
-  - un partage à l'org entière ou à une équipe : la révision 0035 en pose un sur chaque
-    agent existant, il rouvrirait tous les forfaits à toute l'org ;
-  - un partage posé par un admin (`granted_by` ≠ propriétaire) : un admin gouverne
-    l'agent, il ne dispose pas du forfait d'autrui. Reposé par un admin, un partage
-    perd le prêt (l'upsert réécrit `granted_by`) ; après une reprise, les partages de
-    l'ancien propriétaire ne prêtent pas le forfait du nouveau ;
-  - un admin lui-même, qui reste sous `peut_agir_pour`.
-
-  Le prêt (`_acces_agent.forfaits_pretes`, prédicat `db._forfait_prete`) vaut pour la
-  famille où l'agent tourne DÉJÀ : l'éditeur nommé change sa consigne, ses outils, son
-  modèle dans le forfait, le rallume, ou le sort du forfait ; POSER un agent sur un
-  abonnement reste au propriétaire. Quand il rallume (ou change le modèle d'un agent
-  allumé), la garde de pose se juge sur le PROPRIÉTAIRE — c'est sa connexion qui
-  servira. La garde d'écriture (`update_trigger`, `hors_abonnement_d_autrui`) lit le
-  même prêt : retiré entre la lecture et l'écriture, il n'ouvre plus rien.
+- ⚠️ **Un agent d'abonnement se modifie par son propriétaire, et par ceux à qui IL prête
+  son forfait pour cet agent.** Ce qu'ils y changent s'exécute sur son forfait : c'est à
+  lui de le prêter, agent par agent. Sans prêt, l'agent n'est modifiable par personne
+  d'autre que pour l'éteindre, et `can_edit` le dit (`false`). Deux prêts (prédicat
+  `db._forfait_prete` = nommé OR collectif) :
+  - **Le prêt NOMMÉ** (04/10/2026, inchangé, `_forfait_prete_nomme`) : un partage en
+    écriture À UNE PERSONNE posé par le propriétaire. Nommer est le geste : ni
+    `op=lend`, ni lien au modèle ; l'éditeur nommé change sa consigne, ses outils, son
+    modèle dans la famille, le rallume, ou le sort du forfait.
+  - **Le prêt COLLECTIF** (29/10/2026, `_forfait_prete_collectif`) : un partage en
+    écriture posé par le propriétaire à une ÉQUIPE (dont l'éditeur est membre) ou à
+    l'ORG entière (dont il est membre) ne prête QUE sous `oto_trigger op=lend`. Stocké
+    dans `runner_triggers.forfait_prete_model` (révision `20261029_1200_pret_du_forfait`),
+    le MODÈLE de l'agent au moment du geste ; NULL = aucun. Vivant tant que l'agent
+    tourne sur ce modèle (`db._pret_vivant`) : un autre modèle le rend caduc sans rien
+    écrire, jusqu'à un nouveau geste (fail-closed). Qui emprunte PAR CE prêt ne pose pas
+    un autre modèle d'abonnement (`subscription_personal_only`) ; il peut sortir l'agent
+    du forfait. Servi `subscription_lent`. L'appartenance est relue en base au moment
+    d'écrire.
+  - Ne prêtent jamais : un partage posé par un admin (`granted_by` ≠ propriétaire ;
+    reposé par un admin, un partage perd le prêt — l'upsert réécrit `granted_by`), ceux
+    de la révision 0035 et du réglage `partage_par_defaut` (marqués), ceux d'un ancien
+    propriétaire.
+  - **Qui** : le propriétaire SEUL pose (`lend`) et retire (`unlend`) le prêt collectif —
+    un admin d'org, un éditeur ou un admin de plateforme reçoit `403
+    trigger_owner_required` ; qui ne voit pas l'agent, `404 trigger_not_found` ; un agent
+    hors abonnement personnel, `400 lend_not_on_subscription` ; un transfert ou un
+    changement de modèle glissé entre la lecture et l'écriture, `409 trigger_changed`.
+  - **Jamais rétroactif** : la révision ne remplit rien ; un partage d'équipe ou d'org
+    posé avant ne prête qu'après le geste. Aucun réglage d'admin ne prête
+    (`partage_par_defaut` refuse toujours `ecriture`, ci-dessous).
+  - **Le transfert efface le prêt collectif** (`reprendre_trigger`, `take_over` comme
+    `give`), et les partages de l'ancien ne prêtent plus (`granted_by`) : le repreneur
+    prête le sien par son propre geste, ou pas.
+  - **L'identité d'exécution ne change pas** : l'agent tourne toujours sous son
+    propriétaire (horloge, webhook, jeton de délégation) ; `run_now` sous qui le lance.
+    Quand un éditeur rallume (ou change le modèle d'un agent allumé), la garde de pose
+    se juge sur le PROPRIÉTAIRE — c'est sa connexion qui servira. La garde d'écriture
+    (`update_trigger`, `hors_abonnement_d_autrui`) lit le même prêt : retiré entre la
+    lecture et l'écriture, il n'ouvre plus rien.
+  - **Les `oto_admin_*` d'un agent** (`outils_plateforme_du_travail`) ne s'exercent que
+    sans éditeur nommé par le propriétaire ET sans prêt collectif vivant : dès le geste,
+    la liste se ferme, qu'un partage atteigne déjà quelqu'un ou non.
+  - **Qui a modifié** : chaque retouche (`update`) écrit son auteur dans
+    `runner_triggers.updated_by` avec `updated_at` — servi sur `get`/`list`, c'est ce que
+    le propriétaire lit pour savoir quel éditeur a changé son agent (§Dater un
+    changement).
 - **Lancer à la main** (`runner.jobs op=enqueue`) n'est pas gardé par le partage : le
   travail porte l'identité de QUI l'enfile (`ctx.sub`), jamais celle du propriétaire.
 - **Retirer un partage ne renouvelle pas le secret du webhook** : un éditeur ne l'a
@@ -2060,8 +2091,8 @@ pas (absent de `list`, 404 sur `get`, même 404 qu'un agent inconnu).
   (`_acces_agent.ouvrir_a_l_org`), sauf `private=true`. Le créateur ne peut pas ouvrir
   au-delà. Le partage né du réglage est MARQUÉ (`granted_by = 'reglage:partage_par_defaut'`)
   et se retire sans toucher aux partages faits à la main ; il ne prête pas un abonnement
-  personnel (ci-dessus). Une valeur stockée illisible lève `default_sharing_unreadable`,
-  avant toute création.
+  personnel (ci-dessus) — prêter reste le geste du titulaire. Une valeur stockée illisible
+  lève `default_sharing_unreadable`, avant toute création.
   - ⚠️ **`ecriture` est refusé pour un agent** (`default_sharing_write_unsupported`).
     `oto_trigger op=run` enfile sous l'APPELANT (`sub=ctx.sub`), mais l'horloge
     (`runner_tick`) et le webhook (`runner_hook`) enfilent sous le PROPRIÉTAIRE
@@ -2113,8 +2144,9 @@ ces identifiants. D'où trois conséquences lisibles dans le code :
 propriétaire seul. Une connexion d'abonnement s'administrera peut-être comme les autres
 connecteurs — partagée avec des personnes nommées, qui pourront alors modifier ses
 agents (arbitré le 21/09/2026) ; ce jour-là, la règle change dans CETTE fonction. Au
-niveau d'un AGENT, le propriétaire prête déjà son forfait en nommant un éditeur
-(04/10/2026, voir « Un agent est à son propriétaire »). Hors de ces deux cas, retoucher
+niveau d'un AGENT, le propriétaire prête son forfait en nommant un éditeur (04/10/2026),
+ou à une équipe ou à l'org par `op=lend` (29/10/2026, voir « Un agent est à son
+propriétaire »). Hors de ces deux cas, retoucher
 l'agent d'un autre est refusé, **sauf l'éteindre** : personne ne doit avoir besoin du
 propriétaire pour arrêter un agent.
 
@@ -2565,6 +2597,13 @@ pouvait que BORNER ces événements, en comparant son empreinte de la veille.
 - ⚠️ **Le tick ne l'écrit JAMAIS** (`consume_due`) : enfiler une occurrence n'est pas
   changer l'agent, et un agent quotidien se lirait sinon « changé ce matin » chaque matin.
   C'est `last_enqueued_at` qui date le tick. Banc : `tests/test_trigger_updated_at_db.py`.
+- **Et qui** (29/10/2026) : `runner_triggers.updated_by`, l'auteur du dernier changement
+  quand c'est une RETOUCHE (`update_trigger(par=…)`, la seule écriture ouverte à un
+  éditeur). Les autres écritures (porte du webhook, transfert — gestes de propriétaire
+  ou d'admin, journalisés par ailleurs) la remettent à NULL avec la date : une date
+  servie avec l'auteur d'un changement précédent dirait faux. Colonne-compte, repointée
+  par la fusion (`_SUB_COLUMNS`). Une seule ligne par agent, pas un journal : l'histoire
+  complète reste au journal d'appels (`tool_calls`).
 - `null` = aucun changement depuis la création — ou depuis la révision
   `20261023_1033_trigger_updated_at` pour un agent plus ancien. La colonne n'a pas de
   `DEFAULT NOW()` exprès : il aurait daté chaque agent existant du jour de la migration,

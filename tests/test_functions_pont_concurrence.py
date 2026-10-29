@@ -10,8 +10,10 @@ qui parle le même protocole (une ligne JSON préfixée du nonce par message, r�
 Le même cas sur le vrai bac à sable vit dans `test_functions_pont_live.py`.
 """
 import asyncio
+import logging
 import os
 import sys
+import threading
 import time
 
 import pytest
@@ -22,7 +24,8 @@ from oto_mcp.functions import executor, isolement, pont
 # lit autant de réponses, dans l'ordre où elles arrivent, et les rend. `abandonne` : il
 # finit sans attendre ses réponses (un appel lancé et jamais attendu par le code).
 # `lire` : il n'en attend que tant, puis finit — en erreur si `ok` est faux (un appel
-# d'un `gather` a levé, les autres volent encore).
+# d'un `gather` a levé, les autres volent encore). `meurt` : il sort aussitôt ses demandes
+# écrites, sans réponse ni fin (un bac à sable tué en vol).
 _FAUX_BAC = r'''
 import json, sys
 tache = json.loads(sys.stdin.readline())
@@ -32,6 +35,10 @@ def ecrire(o):
     sys.stdout.flush()
 for i, args in enumerate(plan["calls"], 1):
     ecrire({"type": "call", "id": i, "tool": "acme_search", "args": args})
+if plan.get("meurt"):
+    import time
+    time.sleep(0.3)  # le serveur a lu les demandes et lancé leurs appels
+    sys.exit(0)
 recues = []
 if not plan.get("abandonne"):
     for _ in range(plan.get("lire", len(plan["calls"]))):
@@ -191,3 +198,68 @@ def test_chaque_appel_garde_son_contexte_sous_concurrence(faux_bac):
     assert len(vus) == 5 and all(n == lu for n, lu in vus)
     assert sorted(r["result"] for r in sortie["result"]) == [f"compte-{i}" for i in range(5)]
     assert cv.get() is None
+
+
+# ── Un outil synchrone dans un fil : la borne rend la main (28/10/2026) ──────────
+#
+# Un outil `def` joue dans un fil (`anyio.to_thread.run_sync`) que Python n'interrompt
+# pas : la borne ne doit attendre ni lui ni sa tâche annulée au-delà de son délai. Le fil d'ici dort sur un `Event`
+# (30 s au plus) plutôt que `time.sleep(30)` : même blocage, mais le banc le libère après
+# sa mesure — sinon `asyncio.run`, qui attend ses tâches en fermant, tiendrait 30 s.
+
+
+def _outil_dans_un_fil(libere: threading.Event):
+    async def appeler(outil, arguments):
+        import anyio
+        await anyio.to_thread.run_sync(libere.wait, 30)
+        return {"ok": True, "result": "trop tard"}
+    return appeler
+
+
+def _mesurer(demandes: list, appeler, libere: threading.Event, plan: dict | None = None,
+             **budget):
+    """`(sortie | exception, durée jusqu'au reçu)`, le fil libéré APRÈS la mesure."""
+    async def scenario():
+        debut = time.monotonic()
+        try:
+            sortie = await pont.executer_avec_pont(
+                sources={"r.py": ""}, entrypoint="r:run", appeler=appeler,
+                budget=pont.Budget(**budget), entree={"calls": demandes, **(plan or {})})
+        except executor.ExecutionEchouee as e:
+            sortie = e
+        finally:
+            duree = time.monotonic() - debut
+            libere.set()
+        return sortie, duree
+    return asyncio.run(scenario())
+
+
+def test_un_outil_bloque_dans_un_fil_rend_le_refus_de_duree_a_l_echeance(
+        faux_bac, monkeypatch):
+    """Le code attend la réponse d'un outil qui bloque son fil 30 s : à l'échéance du
+    budget, il reçoit `budget_exhausted` SANS attendre le fil, et rend son reçu ; la fin
+    ne laisse au fil abandonné que `GRACE_S`."""
+    monkeypatch.setattr(pont, "GRACE_S", 1.0)
+    libere = threading.Event()
+    sortie, duree = _mesurer([{"n": 1}], _outil_dans_un_fil(libere), libere, delai_s=1.0)
+    assert duree < 1.0 + pont.GRACE_S + 2
+    assert sortie["ok"] and sortie["stopped"] == "time_budget"
+    assert [r["code"] for r in sortie["result"]] == ["budget_exhausted"]
+
+
+def test_la_fin_n_attend_pas_un_fil_au_dela_de_la_grace(faux_bac, monkeypatch, caplog):
+    """Le bac à sable meurt pendant qu'un outil bloque son fil, loin de l'échéance : la
+    fin annule l'appel, l'attend au plus `GRACE_S` et lève — au lieu de tenir jusqu'à la
+    fin du fil. Ce qui vole encore après la grâce se journalise sans ses arguments ;
+    qu'il en reste dépend de la vitesse à laquelle la tâche cède (`anyio` 4 la rend
+    aussitôt), d'où l'absence d'exigence sur le nombre de lignes."""
+    monkeypatch.setattr(pont, "GRACE_S", 1.0)
+    libere = threading.Event()
+    with caplog.at_level(logging.WARNING, logger=pont.__name__):
+        sortie, duree = _mesurer([{"secret": "valeur-d-argument"}],
+                                 _outil_dans_un_fil(libere), libere,
+                                 plan={"meurt": True}, delai_s=30.0)
+    assert isinstance(sortie, executor.ExecutionEchouee)
+    # La grâce, plus la sortie d'erreur attendue 2 s au plus (`_fin_erreurs`).
+    assert duree < pont.GRACE_S + 2 + 1
+    assert not any("valeur-d-argument" in r.getMessage() for r in caplog.records)

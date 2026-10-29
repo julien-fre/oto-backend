@@ -27,10 +27,13 @@ def test_full_est_exactement_le_consentement_d_avant():
         "zohodesk": ("Desk.articles.READ", "Desk.basic.READ", "Desk.search.READ",
                      "Desk.tickets.READ", "Desk.contacts.READ"),
         "zohoanalytics": ("ZohoAnalytics.data.read", "ZohoAnalytics.metadata.read"),
+        # Né avec ses niveaux : pas de consentement d'avant, son `full` est celui déclaré.
+        "zohosign": ("ZohoSign.documents.READ", "ZohoSign.documents.CREATE",
+                     "ZohoSign.documents.UPDATE", "ZohoSign.templates.READ"),
     }
     # Une seule source : les scopes `full` des OUTILS sont ceux de la déclaration ; le
     # consentement y ajoute les scopes de vérification (cf. le banc figé ci-dessous).
-    for c in ("zoho", "zohodesk"):
+    for c in ("zoho", "zohodesk", "zohosign"):
         assert zoho_oauth.SCOPES[c] is al.DECLARED[c].levels[al.FULL]
         assert zoho_oauth.consent_scopes(c, al.FULL)[:len(zoho_oauth.SCOPES[c])] \
             == zoho_oauth.SCOPES[c]
@@ -45,7 +48,7 @@ def test_les_scopes_du_consentement_sont_figes():
     évolution de cette liste passe par ce banc, et par une annonce aux admins."""
     assert {(c, n): zoho_oauth.consent_scopes(c, n) for c, n in (
         ("zoho", "read"), ("zoho", "full"), ("zohodesk", "read"), ("zohodesk", "full"),
-        ("zohoanalytics", "full"))} == {
+        ("zohoanalytics", "full"), ("zohosign", "read"), ("zohosign", "full"))} == {
         ("zoho", "read"): ("ZohoCRM.modules.READ", "ZohoCRM.settings.modules.READ",
                            "ZohoCRM.org.READ"),
         ("zoho", "full"): ("ZohoCRM.modules.ALL", "ZohoCRM.settings.modules.READ",
@@ -57,7 +60,23 @@ def test_les_scopes_du_consentement_sont_figes():
                                "Desk.tickets.READ", "Desk.contacts.READ"),
         ("zohoanalytics", "full"): ("ZohoAnalytics.data.read",
                                     "ZohoAnalytics.metadata.read"),
+        # Zoho Sign : aucun scope de vérification (aucune lecture d'organisation documentée).
+        ("zohosign", "read"): ("ZohoSign.documents.READ", "ZohoSign.templates.READ"),
+        ("zohosign", "full"): ("ZohoSign.documents.READ", "ZohoSign.documents.CREATE",
+                               "ZohoSign.documents.UPDATE", "ZohoSign.templates.READ"),
     }
+
+
+def test_zohosign_read_ne_sert_que_les_lectures():
+    """`read` sert les six lectures et aucune action ; `full` couvre tout, sans `ALL` ni
+    suppression, et aucune implication n'est devinée."""
+    sign = al.DECLARED["zohosign"]
+    assert sign.covered_ops("read", "zohosign") == set(sign.tools["zohosign"])
+    assert sign.covered_ops("read", "zohosign_act") == set()
+    assert sign.covered_ops(al.FULL, "zohosign_act") == {"send_from_template", "remind",
+                                                         "cancel"}
+    assert sign.scope_implies == {}
+    assert not any(s.endswith((".ALL", ".DELETE")) for s in sign.levels[al.FULL])
 
 
 def test_la_verification_n_ouvre_aucun_outil():

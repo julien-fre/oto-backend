@@ -183,7 +183,7 @@ def test_export_without_format_derives_the_default_from_the_source_type(
 
 def test_export_refuses_an_unknown_format_and_lists_the_accepted_ones(client):
     with pytest.raises(McpError, match="markdown"):
-        _call("drive_file", op="export", file_id="f1", format="docx")
+        _call("drive_file", op="export", file_id="f1", format="epub")
     client.export_file_bytes.assert_not_called()
 
 
@@ -421,3 +421,25 @@ def test_export_xlsx_sert_une_url_signee_et_ne_rend_pas_le_contenu(client, monke
                    "encoding": "url", "url": "https://s/x", "expires_in": 3600}
     assert depose == {"prefix": "drive-exports", "sub": "sub-1", "mime": D._XLSX,
                       "name": "BP v6.xlsx", "n": 4}
+
+
+@pytest.mark.parametrize("fmt,ext", [("pptx", ".pptx"), ("docx", ".docx")])
+def test_export_pptx_docx_sert_une_url_signee_comme_xlsx(client, monkeypatch, fmt, ext):
+    """Un deck Slides ou un Doc en fichier Office : le modèle d'un client dont l'agent
+    part pour bâtir un nouveau deck. Même chemin que l'xlsx — une URL, jamais un rendu."""
+    from oto_mcp.tools import drive as D
+
+    depose = {}
+    monkeypatch.setattr(D.file_content, "render_for_agent",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("rendu inline")))
+    import oto_mcp.media_store as ms
+    monkeypatch.setattr(ms, "upload_private",
+                        lambda prefix, sub, data, mime, name: depose.update(
+                            mime=mime, name=name) or "https://s/x")
+    monkeypatch.setattr(ms, "presign_expiry", lambda: 3600)
+    client.export_file_bytes.return_value = {"data": b"PK\x03\x04", "filename": "Modèle"}
+    out = _call("drive_file", op="export", file_id="f1", format=fmt)
+    mime = D._EXPORT_MIME[fmt]
+    assert client.export_file_bytes.call_args.args == ("f1", mime)
+    assert out["encoding"] == "url" and out["filename"] == f"Modèle{ext}"
+    assert depose == {"mime": mime, "name": f"Modèle{ext}"}

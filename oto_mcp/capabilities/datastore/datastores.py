@@ -222,7 +222,11 @@ def _list_datastores(ctx: ResolvedCtx, inp: ListDatastoresInput) -> dict:
     # Seule réponse FILTRÉE plutôt que refusée pour un jeton porté : sans le catalogue,
     # une intégration n'a pas le schéma de son tableau (`page_rows` ne le rend pas) —
     # elle ne pourrait pas peindre ses colonnes. No-op pour un JWT ou un jeton non porté.
-    rows = token_scopes.filter_datastores(make_store(ctx.sub).list_datastores())
+    # UN emprunt au pool pour toute la liste (`db.reuse_connection`, comme
+    # `connectors.me`) : le chemin ne fait que lire, gardé par un banc
+    # (`tests/datastore/test_liste_tableaux_lectures_groupees.py`).
+    with db.reuse_connection():
+        rows = token_scopes.filter_datastores(make_store(ctx.sub).list_datastores())
     return {"datastores": rows}
 
 

@@ -43,6 +43,14 @@ déjà PARTIS : au plus `en_vol` appels, un seul quand le code appelle en série
 qui ont leur place vont à leur terme (bornés par la durée) ; seuls ceux encore en file
 sont annulés, sans partir ni compter ; puis l'exécution lève.
 
+**Rien n'attend un appel au-delà de sa borne** : une tâche annulée peut tenir jusqu'à la
+fin de ce qu'elle attend (un fil protégé de l'annulation, un `finally` qui attend), et
+Python n'interrompt pas un fil. `asyncio.wait_for` puis le `gather` de la fin attendaient
+la tâche annulée sans délai ; l'appel échu est désormais ABANDONNÉ (annulé, pas attendu) et le code
+reçoit tout de suite son refus de durée ; la fin attend au plus `GRACE_S` ce qui vole
+encore, puis le journalise (outil, durée — jamais ses arguments) et l'abandonne. Le fil
+finit seul ; sa ligne de `tool_calls` s'écrit quand il finit.
+
 **Pas de SQL ici** et rien de bloquant : un sous-processus asyncio, lu ligne à ligne sur
 la boucle. `appeler` est une coroutine (`meta.executer_cible` l'est), qui joue elle-même
 hors de la boucle ce qui doit l'être.
@@ -80,6 +88,11 @@ EN_VOL = 5
 #: `appeler(outil, arguments)` → `{ok, result?, code?, message?, quantity?}`. Ne lève
 #: pas : un refus ou un échec est une réponse `ok: false` avec son `code`.
 Appeler = Callable[[str, dict], Awaitable[dict]]
+
+#: Les appels ABANDONNÉS de toutes les exécutions, tenus jusqu'à leur fin : la boucle ne
+#: garde qu'une référence faible sur une tâche, et une tâche abandonnée dont le fil tourne
+#: encore ne doit pas être ramassée en vol (elle écrit sa ligne de `tool_calls` en finissant).
+_ORPHELINS: set[asyncio.Task] = set()
 
 
 @dataclass(frozen=True)
@@ -125,6 +138,9 @@ async def executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appeler
     # Les appels en vol, leurs places, et UN écrivain à la fois sur l'entrée du processus.
     en_vol: set[asyncio.Task] = set()
     partis: set[asyncio.Task] = set()   # ceux qui ont leur place : l'appel est parti
+    # Les appels ABANDONNÉS (échus ou annulés en vol), avec (outil, début) : la fin les
+    # attend au plus `GRACE_S`, puis journalise ceux qui tiennent encore.
+    abandons: dict[asyncio.Task, tuple[str, float]] = {}
     places = asyncio.Semaphore(max(1, budget.en_vol))
     ecriture = asyncio.Lock()
     try:
@@ -161,7 +177,8 @@ async def executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appeler
                     await _repondre(proc, ecriture, message.get("id"), refus)
                     continue
                 tache_appel = asyncio.create_task(_servir(
-                    proc, ecriture, places, message, appeler, recu, fin, budget, partis))
+                    proc, ecriture, places, message, appeler, recu, fin, budget, partis,
+                    abandons))
                 en_vol.add(tache_appel)
                 tache_appel.add_done_callback(en_vol.discard)
                 tache_appel.add_done_callback(partis.discard)
@@ -174,6 +191,8 @@ async def executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appeler
                         tache_appel.cancel()
                 # Un appel lancé et jamais attendu par le code va à son terme, comme
                 # quand le serveur servait en série : le reçu compte ce qu'il a facturé.
+                # Un appel ABANDONNÉ n'est pas dans `en_vol` : son refus est rendu, rien
+                # ne l'attend ici (la fin lui laisse `GRACE_S`).
                 if en_vol:
                     await asyncio.wait(set(en_vol),
                                        timeout=max(0.1, fin_dure - time.monotonic()))
@@ -185,9 +204,17 @@ async def executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appeler
     finally:
         # Ce qui vole encore (délai, plantage, fin anticipée) est annulé AVANT de
         # fermer l'entrée : une réponse n'est jamais écrite dans un tube fermé.
+        # L'attente est BORNÉE (`GRACE_S`) : un appel dont l'outil tourne dans un fil ne
+        # se laisse pas annuler, et l'attendre sans délai tenait la recette autant que
+        # l'outil. Un appel annulé ici abandonne son outil dans `abandons` en traitant son
+        # annulation : l'ensemble attendu se relit à chaque tour.
         for tache_appel in list(en_vol):
             tache_appel.cancel()
-        await asyncio.gather(*en_vol, return_exceptions=True)
+        echeance = time.monotonic() + GRACE_S
+        while (en_vol or abandons) and (reste := echeance - time.monotonic()) > 0:
+            await asyncio.wait(en_vol | set(abandons), timeout=reste,
+                               return_when=asyncio.FIRST_COMPLETED)
+        _abandonner_ce_qui_vole(en_vol, abandons)
         if proc.returncode is None:
             proc.kill()
             await asyncio.to_thread(lance.arreter)
@@ -197,6 +224,34 @@ async def executer_avec_pont(*, sources: dict, entrypoint: str, appeler: Appeler
         # isolé peut la tenir un instant après la fin de celui qu'on a lancé.
         proc.stdin.close()
         await _fin_erreurs(erreurs)
+
+
+def _abandonner(tache: asyncio.Task, outil: str, debut: float, abandons: dict) -> None:
+    """Annule l'appel d'outil SANS l'attendre et le range parmi les abandons de
+    l'exécution (journalisés s'ils tiennent à la fin) et du processus (`_ORPHELINS`)."""
+    tache.cancel()
+    if tache.done():
+        return
+    abandons[tache] = (outil, debut)
+    tache.add_done_callback(lambda t: abandons.pop(t, None))
+    _ORPHELINS.add(tache)
+    tache.add_done_callback(_ORPHELINS.discard)
+
+
+def _abandonner_ce_qui_vole(en_vol: set, abandons: dict) -> None:
+    """Ce qui vole encore après `GRACE_S` est laissé à lui-même : journalisé (outil,
+    durée — jamais les arguments, qui portent des données), jamais attendu."""
+    maintenant = time.monotonic()
+    for tache, (outil, debut) in list(abandons.items()):
+        if not tache.done():
+            logger.warning("pont : l'appel `%s` vole encore après %.0f s — abandonné, son "
+                           "fil finira seul", outil, maintenant - debut)
+    for tache in en_vol:
+        if not tache.done():
+            logger.warning("pont : la réponse de `%s` n'est pas partie après %.0f s de "
+                           "grâce — abandonnée", tache.get_name(), GRACE_S)
+            _ORPHELINS.add(tache)
+            tache.add_done_callback(_ORPHELINS.discard)
 
 
 async def _envoyer(proc, objet: dict) -> None:
@@ -267,7 +322,7 @@ def _rejuger(budget: Budget, recu: dict, fin: float) -> Optional[dict]:
 
 async def _servir(proc, ecriture: asyncio.Lock, places: asyncio.Semaphore, message: dict,
                   appeler: Appeler, recu: dict, fin: float, budget: Budget,
-                  partis: set) -> None:
+                  partis: set, abandons: dict) -> None:
     """UN appel ADMIS, dans sa tâche : il attend sa place, est rejugé, joue, répond.
     Annulé avant d'être parti (fin du code en erreur), il rend sa place dans `calls`."""
     parti = False
@@ -278,7 +333,7 @@ async def _servir(proc, ecriture: asyncio.Lock, places: asyncio.Semaphore, messa
                 parti = True
                 partis.add(asyncio.current_task())
                 reponse = await _jouer(message["tool"], dict(message["args"]), appeler,
-                                       recu, fin)
+                                       recu, fin, abandons)
     except asyncio.CancelledError:
         if not parti:
             recu["calls"] -= 1
@@ -290,15 +345,27 @@ async def _servir(proc, ecriture: asyncio.Lock, places: asyncio.Semaphore, messa
 
 
 async def _jouer(outil: str, arguments: dict, appeler: Appeler, recu: dict,
-                 fin: float) -> dict:
-    """L'appel lui-même, passé à `appeler`, borné par ce qui reste de la durée."""
+                 fin: float, abandons: dict) -> dict:
+    """L'appel lui-même, passé à `appeler`, borné par ce qui reste de la durée.
+
+    Dans SA tâche, attendue par `asyncio.wait` et non `wait_for` : à l'échéance,
+    `wait_for` annule PUIS attend la tâche, sans délai si elle tarde à céder. Ici l'appel
+    échu est abandonné (`_abandonner`) et le refus
+    de durée part aussitôt ; annulé de l'extérieur (la fin de l'exécution), de même."""
+    debut = time.monotonic()
+    appel = asyncio.ensure_future(appeler(outil, dict(arguments)))
     try:
-        reponse = await asyncio.wait_for(appeler(outil, dict(arguments)),
-                                         max(0.1, fin - time.monotonic()))
-    except asyncio.TimeoutError:
+        fait, _ = await asyncio.wait({appel}, timeout=max(0.1, fin - time.monotonic()))
+    except asyncio.CancelledError:
+        _abandonner(appel, outil, debut, abandons)
+        raise
+    if not fait:
+        _abandonner(appel, outil, debut, abandons)
         recu["stopped"] = recu["stopped"] or "time_budget"
         return {"ok": False, "code": "budget_exhausted",
                 "message": "This run's time budget ran out during the call."}
+    try:
+        reponse = appel.result()
     except Exception as e:
         # `appeler` ne doit pas lever ; s'il le fait, c'est un défaut du serveur, pas du
         # code : journalisé, et le code reçoit un refus nommé plutôt qu'un pont coupé.

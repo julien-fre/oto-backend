@@ -661,16 +661,73 @@ def _has_manager_grant(sub: str, resource_type: str, resource_id: str) -> bool:
     return False
 
 
+def _gouverne(owner: Optional[tuple], transfere: Callable[[], bool],
+              gerant: Callable[[], bool]) -> bool:
+    """LA règle de gouvernance d'une ressource sans parent gouvernant (ADR 0048), écrite
+    une seule fois : un propriétaire, puis l'escalade structurelle (`transfere`, la règle
+    de `_can_transfer_owner`), puis un grant `gérant` VIVANT de l'un des principals de
+    l'acteur (`gerant`). `can_govern` (une ressource) et `can_govern_many` (une liste)
+    la servent toutes deux ; elles ne diffèrent que par la façon de LIRE ces deux faits."""
+    return owner is not None and (transfere() or gerant())
+
+
 def can_govern(sub: str, resource_type: str, resource_id: str) -> bool:
     """Plan GOUVERNANCE (ADR 0048) : re-partager / révoquer / supprimer / publier, SANS
     lire le contenu. **Grantable** = owner ∪ **grant `gérant`** ∪ escalade `roles.py`. Le
-    transfert de propriété, lui, exclut le gérant → `can_transfer`."""
+    transfert de propriété, lui, exclut le gérant → `can_transfer`. Pour une LISTE dont
+    le propriétaire est déjà lu : `can_govern_many`, même règle (`_gouverne`)."""
     if (k := RESOURCE_KINDS.get(resource_type)) and k.governed_by:  # une page → son projet
         return (cible := k.governed_by(resource_id)) is not None and can_govern(sub, *cible)
-    if owner_of(resource_type, resource_id) is None:
-        return False
-    return can_transfer(sub, resource_type, resource_id) \
-        or _has_manager_grant(sub, resource_type, resource_id)
+    return _gouverne(owner_of(resource_type, resource_id),
+                     lambda: can_transfer(sub, resource_type, resource_id),
+                     lambda: _has_manager_grant(sub, resource_type, resource_id))
+
+
+def can_govern_many(sub: str, resource_type: str,
+                    owners: dict[str, Optional[tuple[str, str]]]) -> dict[str, bool]:
+    """`can_govern` pour une LISTE dont le propriétaire est DÉJÀ lu : `owners` =
+    `{resource_id: (owner_type, owner_id) | None}` (None = sans propriétaire, comme
+    `owner_of`), rend `{resource_id: bool}`. Même règle (`_gouverne`), mêmes faits :
+    l'escalade se juge une fois par propriétaire DISTINCT (`_can_transfer_owner`, la
+    fonction même de `can_transfer`), et les grants `gérant` de tous les principals de
+    l'acteur (`accessor_scope`, celui de `_has_manager_grant`) se lisent en UNE requête
+    pour toute la liste (`db.manager_resource_grants`), au lieu d'une par principal et
+    par ressource.
+
+    ⚠️ Pourquoi elle existe : `GET /api/datastores` appelait `can_govern` tableau par
+    tableau — le propriétaire relu deux fois, l'escalade, puis une lecture par principal,
+    soit 5 à 10 emprunts au pool par tableau (`docs/event-loop-perf.md`).
+
+    Un kind gouverné par son parent (`governed_by`, une page → son projet) n'a pas de
+    propriétaire à lui : il LÈVE ici, plutôt que de juger une ressource sur le mauvais
+    propriétaire."""
+    k = _kind(resource_type)
+    if k.governed_by is not None:
+        raise ValueError(f"`{resource_type}` se gouverne par son parent : `can_govern`")
+    par_proprio: dict[tuple, bool] = {}
+
+    def transfere(owner: tuple) -> bool:
+        cle = (owner[0], owner[1])
+        if cle not in par_proprio:
+            par_proprio[cle] = _can_transfer_owner(sub, owner[0], owner[1])
+        return par_proprio[cle]
+
+    a_lire = [str(rid) for rid, o in owners.items() if o is not None and not transfere(o)]
+    gerants = (db.manager_resource_grants(resource_type, a_lire,
+                                          accessor_scope(sub).principal_pairs())
+               if a_lire else set())
+    return {str(rid): _gouverne(o, lambda o=o: transfere(o),
+                                lambda rid=rid: str(rid) in gerants)
+            for rid, o in owners.items()}
+
+
+def proprietaire_de_ligne(row: dict) -> Optional[tuple[str, str]]:
+    """Le propriétaire d'une ligne de tableau DÉJÀ lue (`owner_type`/`owner_id`), sous la
+    forme et la règle de `owner_of` : None sans `owner_id`. Source unique de
+    `_datastore_owner`, et de la liste qui juge sa gouvernance par lot."""
+    if row.get("owner_id") is None:
+        return None
+    return (row["owner_type"], row["owner_id"])
 
 
 def can_publish(sub: str, resource_type: str, resource_id: str) -> bool:
@@ -835,9 +892,7 @@ def transfer(
 
 def _datastore_owner(rid: str) -> Optional[tuple[str, str]]:
     row = db.get_datastore_owner(int(rid))
-    if row is None or row.get("owner_id") is None:
-        return None
-    return (row["owner_type"], row["owner_id"])
+    return None if row is None else proprietaire_de_ligne(row)
 
 
 def _datastore_reparent(rid: str, new_owner_type: str, new_owner_id: str) -> None:

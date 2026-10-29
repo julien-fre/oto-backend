@@ -166,7 +166,7 @@ def _start_flow(ctx, connector: str, values: dict) -> dict:
         oauth_flow.resolve_return_app(values.get("app")))
 
 
-for _c in ("zoho", "zohodesk", "zohoanalytics"):
+for _c in ("zoho", "zohodesk", "zohoanalytics", "zohosign"):
     status_hints.register(_c, _pending_action_for(_c))
     status_hints.register_state(_c, _credential_state_for(_c))
     # The consent flow, declared like the rest: the front derives a region select

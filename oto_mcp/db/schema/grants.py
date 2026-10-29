@@ -215,3 +215,47 @@ CREATE TABLE IF NOT EXISTS access_shadow_l7 (
     sample    JSONB  NOT NULL DEFAULT '{}'::jsonb
 );
 """
+
+# demandes d'accès : ce qu'une personne bloquée demande, et qui le lui accorde
+DEMANDES_D_ACCES = """
+-- DEMANDES d'accès (`docs/demandes-d-acces.md`) : une personne bloquée (« demande à un
+-- admin ») le DEMANDE, et qui peut le lui accorder l'accorde d'un geste. La demande
+-- n'accorde rien elle-même : l'approbation rejoue la capacité qui accorde déjà (partage,
+-- activation, outils d'un agent, équipe) SOUS L'IDENTITÉ de qui approuve, ses gardes
+-- comprises. `kind` = le geste demandé ; `cible` = ce qu'il vise (JSONB) ; `cle_cible`
+-- = sa forme canonique en texte, pour l'unicité : UNE demande en attente par
+-- (org, demandeur, geste, cible) — redemander relance celle qui existe. L'org est
+-- dans l'index et non dans `cle_cible` : la clé d'un connecteur (`connector:<nom>`)
+-- ne la porte pas, et une personne membre de deux orgs y demande deux choses. `demande` = ce qui
+-- est demandé (un rôle, des outils), `decision` = ce qui a été réellement accordé.
+-- Une demande en attente dont `expires_at` est passée ne se sert plus en attente ; elle
+-- passe `expired` quand la même demande est refaite (l'unicité la libère).
+-- FK vers l'ORG en cascade : une org supprimée emporte ses demandes.
+CREATE TABLE IF NOT EXISTS access_requests (
+    id BIGSERIAL PRIMARY KEY,
+    org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    requester_sub TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    cible JSONB NOT NULL,
+    cle_cible TEXT NOT NULL,
+    demande JSONB NOT NULL DEFAULT '{}'::jsonb,
+    note TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'approved', 'declined', 'cancelled', 'expired')),
+    decided_by TEXT,
+    decided_at TIMESTAMPTZ,
+    decision JSONB,
+    decision_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    reminded_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '14 days'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_access_requests_en_attente
+    ON access_requests (org_id, requester_sub, kind, cle_cible) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_access_requests_org_en_attente
+    ON access_requests (org_id, id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_access_requests_demandeur
+    ON access_requests (requester_sub, id);
+CREATE INDEX IF NOT EXISTS idx_access_requests_decideur
+    ON access_requests (decided_by);
+"""

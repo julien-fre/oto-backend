@@ -134,6 +134,19 @@ def has_option(sub: str, option: str, *, org: "int | None | object" = scope._UNS
     return org is not None and db.has_option_comp("org", str(org), option)
 
 
+def orgs_with_option(sub: str, option: str, orgs: list[int]) -> set[int]:
+    """`{o for o in orgs if has_option(sub, option, org=o)}` en deux lectures au plus,
+    quel que soit le nombre d'orgs — pour une liste d'orgs (`org.list`). Options NON
+    payantes seulement : une option payante ou une clé du catalogue lève, au lieu de
+    rendre une réponse que `has_option` ne rendrait pas."""
+    if option in _PAID_OPTIONS or catalogue.est_du_catalogue(option):
+        raise ValueError(f"orgs_with_option: {option!r} is not a population flag — "
+                         "use has_option per org")
+    if user_has_option(sub, option):
+        return set(orgs)
+    return db.orgs_with_option_comp(list(orgs), option)
+
+
 def user_has_option(sub: str, option: str) -> bool:
     """The ACCOUNT half of the seam — "does THIS ACTOR carry the mark", with no space.
 

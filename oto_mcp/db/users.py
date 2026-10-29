@@ -74,14 +74,27 @@ def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = Non
                 locale: Optional[str] = None) -> None:
     """Create the user row if missing, refresh email/name if known.
 
-    Le `(xmax = 0)` distingue insert/update sans SELECT préalable : 0 sur une ligne
-    fraîchement insérée, ≠ 0 sur un UPDATE — ce qui permet de ne déclencher les
-    effets de première inscription (réconciliation d'invitation, org maison) qu'au
-    vrai INSERT.
+    ⚠️ **N'écrit que si une colonne posée CHANGE.** Appelée à chaque requête REST
+    authentifiée et à chaque message MCP : l'ancien `INSERT … ON CONFLICT DO UPDATE`
+    réécrivait la ligne (et `updated_at`) à chaque fois, donc un verrou de ligne et un
+    COMMIT par requête — les appels parallèles d'un même compte se sérialisaient sur
+    sa ligne `users`. Une seule requête, deux CTE : l'UPDATE ne vise la ligne que si
+    `(email, name, locale)` change vraiment (`IS DISTINCT FROM`, donc NULL compris) ;
+    l'INSERT ne part que si la ligne manque. Ligne en place et rien de neuf = une
+    lecture pure, ni verrou ni écriture. Pas de `DO UPDATE … WHERE` : PostgreSQL y
+    VERROUILLE la ligne en conflit même quand la condition est fausse.
+    ⟹ `updated_at` date le dernier CHANGEMENT de la ligne, pas la dernière requête :
+    l'activité d'un compte se lit dans `tool_calls`, et rien ne la lisait ici.
+
+    `inserted` (un `EXISTS` sur ce que l'INSERT a rendu) distingue la naissance sans
+    SELECT préalable — ce qui permet de ne déclencher les effets de première
+    inscription (réconciliation d'invitation, org maison) qu'au vrai INSERT. Deux
+    premières requêtes simultanées : l'une insère, l'autre bute sur le conflit
+    (`DO NOTHING`) et rend `inserted=False`, comme l'UPDATE d'avant.
 
     `locale` (oto-backend#701) : signal DÉDUIT (`Accept-Language`, chemin REST
     interactif — cf. `api/base._authenticate`), jamais un choix. `COALESCE(users.locale,
-    EXCLUDED.locale)` — dans ce sens précis, pas celui d'email/name — pose la valeur
+    %(locale)s)` — dans ce sens précis, pas celui d'email/name — pose la valeur
     déduite UNIQUEMENT si la ligne n'en porte aucune : un `PUT /api/me/locale`
     (`me.locale.set`) reste prioritaire à vie, y compris face aux logins suivants.
     Les 14 autres sites d'appel ne passent rien (`None`) → `COALESCE(x, NULL) = x`,
@@ -90,16 +103,26 @@ def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = Non
     with _connect() as conn:
         row = conn.execute(
             """
-            INSERT INTO users (sub, email, name, locale)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT(sub) DO UPDATE SET
-                email = COALESCE(EXCLUDED.email, users.email),
-                name  = COALESCE(EXCLUDED.name,  users.name),
-                locale = COALESCE(users.locale, EXCLUDED.locale),
-                updated_at = NOW()
-            RETURNING (xmax = 0) AS inserted
+            WITH maj AS (
+                UPDATE users SET
+                    email = COALESCE(%(email)s, users.email),
+                    name  = COALESCE(%(name)s,  users.name),
+                    locale = COALESCE(users.locale, %(locale)s),
+                    updated_at = NOW()
+                 WHERE users.sub = %(sub)s
+                   AND (users.email, users.name, users.locale) IS DISTINCT FROM
+                       (COALESCE(%(email)s, users.email), COALESCE(%(name)s, users.name),
+                        COALESCE(users.locale, %(locale)s))
+            ), ins AS (
+                INSERT INTO users (sub, email, name, locale)
+                SELECT %(sub)s::text, %(email)s::text, %(name)s::text, %(locale)s::text
+                 WHERE NOT EXISTS (SELECT 1 FROM users WHERE sub = %(sub)s)
+                ON CONFLICT (sub) DO NOTHING
+                RETURNING 1
+            )
+            SELECT EXISTS (SELECT 1 FROM ins) AS inserted
             """,
-            (sub, email, name, locale),
+            {"sub": sub, "email": email, "name": name, "locale": locale},
         ).fetchone()
         # ⚠️ Une ligne qui vient de NAÎTRE peut être la résurrection d'un compte
         # qu'on a délibérément neutralisé, et le scénario n'a rien de théorique : un
@@ -385,6 +408,13 @@ _UNIQUE_INDEX_SUB_TABLES = (
     # `org_id` est NULL pour une ligne de la personne partout : l'unicité étant NULLS NOT
     # DISTINCT, la comparaison du dédoublonnage l'est aussi (`IS NOT DISTINCT FROM`).
     ("org_entitlements", "sub", ("org_id", "right_key", "source"), None),
+    # Les demandes d'accès EN ATTENTE : `uq_access_requests_en_attente` =
+    # `(org_id, requester_sub, kind, cle_cible) WHERE status = 'pending'`. Les deux
+    # comptes ont demandé la même chose DANS LA MÊME ORG ⟹ celle du compte survivant
+    # reste, l'autre tombe (une demande en attente n'accorde rien ; la personne en garde
+    # une). La même demande dans deux orgs n'est pas un doublon : les deux restent.
+    ("access_requests", "requester_sub", ("org_id", "kind", "cle_cible"),
+     "{a}.status = 'pending'"),
 )
 
 # Colonnes JSONB qui NOMMENT une personne (`user:<sub>`) et la SUIVENT à la fusion :
@@ -488,6 +518,10 @@ _SUB_COLUMNS = [
     # rattachées à un identifiant mort, donc invisibles au compte fusionné : déroulés
     # et activité perdus de vue, déclencheurs orphelins) :
     ("runs", "sub"), ("project_activity", "sub"), ("runner_triggers", "sub"),
+    # `runner_triggers.updated_by` = l'AUTEUR de la dernière retouche d'un agent,
+    # colonne d'auteur hors PK, sans FK ni unicité : UPDATE nu. Non repointée, le
+    # propriétaire lirait « modifié par » un compte disparu.
+    ("runner_triggers", "updated_by"),
     # `runner_fleets.sub` = qui a DÉCLARÉ le passage (R4). Même raison que les
     # déclencheurs : une flotte rattachée à un identifiant mort devient invisible au
     # compte fusionné, et son auteur n'est plus lisible dans l'audit d'un passage.
@@ -590,6 +624,10 @@ _SUB_COLUMNS = [
     # - qui a écrit un commentaire de ligne : une signature d'auteur (`mine`, le droit
     #   de retirer le sien se lisent par elle), hors PK, indexée, UPDATE nu.
     ("datastore_row_comments", "auteur_sub"),
+    # - qui a demandé un accès, et qui l'a décidé : des signatures (la boîte « envoyées »
+    #   se lit par la première), hors PK, indexées. Le demandeur est sous index unique
+    #   partiel : dédoublonné d'abord par `_UNIQUE_INDEX_SUB_TABLES`, puis repointé ici.
+    ("access_requests", "requester_sub"), ("access_requests", "decided_by"),
     ("platform_instructions", "updated_by"),
     ("org_disabled_tools", "disabled_by"), ("group_disabled_tools", "disabled_by"),
     # - le journal : la CIBLE d'un « voir en tant que » est une personne, et la

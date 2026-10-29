@@ -122,17 +122,23 @@ def delete_group(group_id: int) -> bool:
 def add_group_member(group_id: int, sub: str, group_role: str = "group_member") -> None:
     """Ajoute (ou met à jour le rôle d') un membre du groupe. Le caller garantit
     que `sub` est déjà membre de l'org parente (invariant ADR 0012)."""
+    with _connect() as conn:
+        add_group_member_in(conn, group_id, sub, group_role)
+
+
+def add_group_member_in(conn, group_id: int, sub: str, group_role: str) -> None:
+    """Le corps d'`add_group_member`, sur la connexion (transaction) de l'appelant —
+    l'acceptation d'une invitation d'équipe le lie à la consommation de l'invitation."""
     if group_role not in GROUP_ROLES:
         raise ValueError(f"group_role invalide {group_role!r} (attendu: {GROUP_ROLES})")
-    with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO org_group_members (group_id, sub, group_role)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (group_id, sub) DO UPDATE SET group_role = EXCLUDED.group_role
-            """,
-            (group_id, sub, group_role),
-        )
+    conn.execute(
+        """
+        INSERT INTO org_group_members (group_id, sub, group_role)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (group_id, sub) DO UPDATE SET group_role = EXCLUDED.group_role
+        """,
+        (group_id, sub, group_role),
+    )
 
 
 def remove_group_member(group_id: int, sub: str) -> bool:

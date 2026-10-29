@@ -205,7 +205,13 @@ def store(monkeypatch):
     def _fake_count(ns_id, *, q=None, filters=None, jusqua=None):
         return len(rows)
 
+    def _fake_page_mince(ns_id, *, offset=0, limit, order_by=None, order_dir="desc",
+                         filters=None):
+        return rows[offset:offset + limit]
+
     monkeypatch.setattr(D.db, "datastore_list_rows", _fake_page)
+    # Tri par défaut sans recherche : la page passe par le chemin mince.
+    monkeypatch.setattr(D.db, "datastore_page_mince", _fake_page_mince)
     monkeypatch.setattr(D.db, "datastore_count_rows", _fake_count)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 1)

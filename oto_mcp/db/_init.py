@@ -13,7 +13,7 @@ import time
 
 import psycopg
 
-from . import (_prerequis, access_shadow, alertes_agents, doc_archivage, index_concurrent, index_releve, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions,
+from . import (_prerequis, access_shadow, alertes_agents, doc_archivage, index_concurrent, index_releve, journal_calls, journal_jour, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions,
                projects, recipes, revision, runner_fleets, runner_jobs, runner_triggers, rowlock, transcription, user_subscriptions, valeurs_servies)
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
@@ -678,6 +678,15 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # `20261023_1033_trigger_updated_at` : ordre indifférent entre elles.
     if _colonne_absente(conn, "runner_triggers", runner_triggers.COLONNE_UPDATED_AT):
         conn.execute(runner_triggers.DDL_COLONNE_UPDATED_AT)
+    # L'auteur de la dernière retouche d'un agent et le prêt de son forfait — les mêmes
+    # que pose la révision `20261029_1200_pret_du_forfait` : ordre indifférent entre
+    # elles. ⚠️ Littéraux, jamais une constante : `updated_by` est une colonne-compte, et
+    # l'inventaire de la fusion (`test_migrate_sub_inventory.py`) lit CE fichier.
+    if _colonne_absente(conn, "runner_triggers", runner_triggers.COLONNE_UPDATED_BY):
+        conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS updated_by TEXT")
+    if _colonne_absente(conn, "runner_triggers", runner_triggers.COLONNE_PRET_DU_FORFAIT):
+        conn.execute(
+            "ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS forfait_prete_model TEXT")
     # L'épisode de blocage annoncé d'un agent — la même que pose la révision
     # `20261023_1040_echec_annonce` : ordre indifférent entre elles.
     if _colonne_absente(conn, "runner_triggers", alertes_agents.COLONNE_ECHEC_ANNONCE):
@@ -702,6 +711,13 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # ordre indifférent entre elles.
     if _colonne_absente(conn, "orgs", runner_jobs.COLONNE_TEMPS_GAGNE):
         conn.execute(runner_jobs.DDL_COLONNE_TEMPS_GAGNE)
+    # Les crédits déduits par le fournisseur, à côté de `quantity`, et leur somme dans
+    # les totaux par jour — les mêmes que pose la révision
+    # `20261029_1705_provider_credits` : ordre indifférent entre elles.
+    if _colonne_absente(conn, "tool_calls", journal_calls.COLONNE_CREDITS_FOURNISSEUR):
+        conn.execute(journal_calls.DDL_COLONNE_CREDITS_FOURNISSEUR)
+    if _colonne_absente(conn, "journal_totaux_jour", journal_jour.COLONNE_CREDITS_FOURNISSEUR):
+        conn.execute(journal_jour.DDL_COLONNE_CREDITS_FOURNISSEUR)
     # Lot 3 Ship 3 : propositions de CRÉATION (doc_id nullable + project_id +
     # emplacement proposé + CHECK). Le CHECK valide sur l'existant (toutes les
     # lignes ont doc_id). Idempotent.

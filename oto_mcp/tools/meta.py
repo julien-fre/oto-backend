@@ -97,7 +97,8 @@ async def resoudre_outil(fastmcp, name: str):
 # was found) also BILL: they carry the per-result price.
 # `apify_run_id` (the Apify run whose final cost the call records) BILLS too: it is
 # the job the biller counts once — on the envelope it would name a second row for it.
-_BILLING_TRACE_KEYS = ("quantity", "key_mode",
+# `provider_credits` (what the provider deducted, in its unit) BILLS like `quantity`.
+_BILLING_TRACE_KEYS = ("quantity", "provider_credits", "key_mode",
                        "found_work_emails", "found_personal_emails", "found_phones",
                        "apify_run_id")
 _UNSET = object()
@@ -146,7 +147,8 @@ async def _trace_target_call(sub: Optional[str], name: str, args: dict, ok: bool
         # row: without it, a dispatch's target would have no issuer.
         calllog.poser_emetteur(row)
         # The same rule as the middleware sink: without it, a dispatch's target
-        # had neither `key_mode` nor `quantity`, hence was never billed.
+        # had neither `key_mode` nor `quantity` (nor `provider_credits`), hence was
+        # never billed.
         # The closed list of keys poured into `args` lives in `server` (imported
         # at call time: the module is already loaded in production, and the tool
         # must not copy a second version of it).
@@ -184,6 +186,31 @@ class IssueCible:
     # What the target BILLED (`quantity` of its record, that of its
     # `tool_calls` row); None if the tool declares none. A recipe's ceiling reads it.
     quantity: Optional[float] = None
+
+
+#: Le code d'une cible qui n'a pas su QUEL compte de son connecteur opérer : plusieurs
+#: comptes sans défaut (`CompteAmbigu`), ou un compte nommé qui n'existe à aucun palier
+#: (`CompteIntrouvable`). Les deux se corrigent du même geste — nommer un compte qui
+#: existe (`_account="<name>"`) — et leur message le dit déjà.
+CODE_COMPTE_A_NOMMER = "account_required"
+
+
+def _compte_a_nommer(exc: BaseException, message: str) -> tuple[Optional[str], str]:
+    """`(account_required, message)` si la panne de la cible est un compte à nommer,
+    reconnu à sa CLASSE dans la chaîne (`cascade.CompteAmbigu` / `CompteIntrouvable`),
+    jamais à son texte ; `(None, message)` sinon. Sans lui, `error_taxonomy.classify` le
+    range en `invalid_input`, le même code qu'un argument mal formé : une recette-code ne
+    pouvait pas distinguer « corrige tes arguments » de « dis quel compte » (une org à
+    deux comptes d'un même connecteur, 28/10/2026). Le message de l'ambiguïté nomme déjà
+    `_account=` ; celui du compte introuvable le reçoit en complément."""
+    for e in error_taxonomy._chain(exc):
+        if isinstance(e, access.CompteAmbigu):
+            return CODE_COMPTE_A_NOMMER, message
+        if isinstance(e, access.CompteIntrouvable):
+            return CODE_COMPTE_A_NOMMER, (
+                f"{message} Pass `_account=\"<name>\"` on this call with an account that "
+                "exists.")
+    return None, message
 
 
 async def executer_cible(tool, sub: Optional[str], name: str, demande: str,
@@ -277,14 +304,14 @@ async def executer_cible(tool, sub: Optional[str], name: str, demande: str,
         # scrubbed (oto-backend#566).
         ok, err, echec = False, str(e)[:calllog.MAX_ERROR_CHARS], e
         info = error_taxonomy.classify(e)
-        message = info.message
+        code_compte, message = _compte_a_nommer(e, info.message)
         # Same health tracking as the envelope (`ErrorEnvelopeMiddleware`), which this
         # out-of-chain path does not cross: the key served to the TARGET is marked.
         if info.code == "quota_exhausted":
             await connector_health.suivre_appel(target_trace, message)
         elif error_taxonomy.credential_rejected_in_chain(e):
             await connector_health.suivre_appel(target_trace, None, rejet=message)
-        return IssueCible(ok=False, message=message, code=info.code,
+        return IssueCible(ok=False, message=message, code=code_compte or info.code,
                           retryable=bool(getattr(info, "retryable", False)))
     except asyncio.CancelledError as e:
         # Annulé en vol (le pont qui ferme, un délai) : l'appel n'a pas abouti. Il

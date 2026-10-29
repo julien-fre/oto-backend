@@ -235,10 +235,20 @@ si chacun de ses scopes est dans la fermeture des scopes du niveau par `scope_im
   `providers._ACCESS_LEVELS_BY_CONNECTOR`), validée et lue par `connectors/access_levels.py`.
   Premiers déclarants : `zoho` (`read` = `ZohoCRM.modules.READ` + `ZohoCRM.settings.modules.READ`,
   `ZohoCRM.modules.ALL` implique les quatre verbes) et `zohodesk` (`read` =
-  `Desk.articles.READ` + `Desk.search.READ`). `zohoanalytics` n'en déclare pas.
+  `Desk.articles.READ` + `Desk.search.READ`). `zohosign`, le 4ᵉ connecteur Zoho (signature
+  électronique), naît avec les siens : `read` = `ZohoSign.documents.READ` +
+  `ZohoSign.templates.READ` (les six lectures de l'outil `zohosign`) ; `full` = les mêmes +
+  `ZohoSign.documents.CREATE` (envoi depuis un modèle) + `ZohoSign.documents.UPDATE`
+  (relance, rappel) — les trois ops de `zohosign_act`. Ni `ALL` ni `DELETE`, `scope_implies`
+  vide : la doc Zoho classe ses scopes par groupe sans dire lequel ouvre quel endpoint, la
+  table est la lecture du client (`oto.tools.zohosign.client._SCOPE_BY_CALL`).
+  `zohoanalytics` n'en déclare pas.
   `auth/zoho.SCOPES` **dérive** de `full` (source unique). Le consentement y ajoute les
   scopes de **vérification** de l'organisation consentie (`auth/zoho.VERIFICATION_SCOPES` :
-  `ZohoCRM.org.READ` au CRM, `Desk.basic.READ` à Desk) — HORS des niveaux, qui disent quels
+  `ZohoCRM.org.READ` au CRM, `Desk.basic.READ` à Desk, aucun à Zoho Sign, qui ne documente
+  aucune lecture d'organisation : `auth/zoho.ORG_UNREADABLE`, une app qui nomme un
+  `zoho_org_id` y est refusée, sans quoi le consentement passe avec l'avertissement
+  `zoho_org_unverified`) — HORS des niveaux, qui disent quels
   outils sont servis ; la liste exacte demandée est figée par
   `test_les_scopes_du_consentement_sont_figes`. Cliquets :
   `tests/connectors/test_access_levels.py` (`full` == le consentement d'avant, à l'octet) et

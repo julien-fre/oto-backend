@@ -166,3 +166,33 @@ def test_forager_email_et_personne_exigent_la_cle_de_l_appelant(calls):
     calls["modes"] = {"forager_person": "org"}
     _run("waterfall_email", linkedin_url="https://linkedin.com/in/jane", providers=["forager"])
     assert _made(calls) == ["forager_person"]
+
+
+def test_forager_email_part_sur_la_cle_partagee_quand_l_instance_l_ouvre(calls, monkeypatch):
+    """L'instance ouvre `forager_person:work_emails` sur sa clé partagée (`platform.ops`) :
+    l'étape email n'est plus « clé de l'appelant seulement » pour cet appel — le plan le
+    dit comme l'appel. Le profil (`detail`), non ouvert, reste sauté."""
+    from oto_mcp.waterfall import ordre, plan
+    calls["forager_ops"] = "forager_person:phone_numbers,forager_person:work_emails"
+    calls["modes"] = {"forager_person": "platform"}
+    _run("waterfall_email", linkedin_url="https://linkedin.com/in/jane", providers=["forager"])
+    assert _made(calls) == ["forager_person"]
+    out = _run("waterfall_person", linkedin_url="https://linkedin.com/in/jane",
+               providers=["forager"])
+    assert out["attempts"][0]["code"] == "own_key_required"
+    monkeypatch.setattr(ordre, "_configured_steps", lambda ns: ["forager"])
+    (row,) = plan.plan("waterfall_email", "sub-test")["steps"]
+    assert row["usable"] is True and "own_key_only" not in row
+
+
+def test_un_reglage_forager_illisible_garde_l_etape_sur_la_cle_de_l_appelant(calls, monkeypatch):
+    from oto_mcp.tools import forager
+
+    def illisible():
+        raise ConnectionError("la base ne répond pas")
+    monkeypatch.setattr(forager, "platform_ops", illisible)
+    calls["modes"] = {"forager_person": "platform"}
+    out = _run("waterfall_email", linkedin_url="https://linkedin.com/in/jane",
+               providers=["forager"])
+    assert out["attempts"][0]["code"] == "own_key_required"
+    assert "forager_person" not in _made(calls)

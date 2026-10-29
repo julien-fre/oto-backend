@@ -57,6 +57,7 @@ from .datastore_ns import (  # noqa: F401
     list_datastores_granted_to,
     list_datastores_shared_to_user,
     list_resource_grants,
+    manager_resource_grants,
     principals_with_live_grant,
     rename_datastore_by_id,
     reparent_datastore,
@@ -910,6 +911,48 @@ def datastore_list_rows_after(ns_id: int, *, after_row_id: Optional[str] = None,
             "       row_number() OVER (ORDER BY row_id ASC) AS rn "
             f"FROM datastore_rows {where} ORDER BY row_id ASC LIMIT %s",
             tuple(params))["lignes"]
+
+
+def datastore_page_mince(ns_id: int, *, offset: int = 0, limit: int,
+                         order_by: Optional[str] = None, order_dir: str = "desc",
+                         filters: Optional[list] = None) -> list[dict]:
+    """Une page triée sur une colonne MÉTA (`_created_at` par défaut, `_updated_at`,
+    `_id`), sans recherche : `LIMIT`/`OFFSET` sur les seules clés, sans fonction de
+    fenêtre. Mêmes lignes, même ordre, même forme que `datastore_list_rows`.
+
+    La forme historique classe TOUT le jeu (`row_number() OVER … ORDER BY rn`) avant
+    de couper : un tri complet de lignes entières, quel que soit `limit`. Ici la
+    coupe se fait sur `(clé de tri, row_id)` — tri borné à `offset + limit`, et
+    arrêt au fil de la clé primaire pour `_id` —, puis seules les lignes retenues
+    sont relues. Le rang que `_page_en_un_message` attend vient de `WITH ORDINALITY`
+    sur le tableau ordonné des clés, pas d'une fenêtre.
+
+    `filters` sont posés tels quels (`_ds_where`) : des filtres AMINCISSABLES passent
+    par `datastore_page_with_stats`, qui ne relit `data` qu'une fois par ligne."""
+    direction = "ASC" if str(order_dir).lower() == "asc" else "DESC"
+    if order_by in (None, "", "_created_at"):
+        order_sql = f"created_at {direction}, row_id {direction}"
+    elif order_by == "_updated_at":
+        order_sql = f"updated_at {direction}, row_id {direction}"
+    elif order_by == "_id":
+        order_sql = f"row_id {direction}"
+    else:
+        raise ValueError(
+            f"datastore_page_mince: order_by={order_by!r} is not a meta column "
+            "(`_created_at`, `_updated_at`, `_id`) — use `datastore_list_rows`")
+    where, params = _ds_where(ns_id, None, filters)
+    sql = (
+        "SELECT p.rn, dr.row_id, dr.created_at, dr.updated_at, dr.data, dr.rev, "
+        "dr.claimed_by, dr.claimed_until, dr.claimed_run, dr.claims, dr.abandon_reason, "
+        "dr.abandon_run, "
+        "(dr.claimed_until IS NOT NULL AND dr.claimed_until > NOW()) AS claim_active "
+        f"FROM unnest(ARRAY(SELECT row_id FROM datastore_rows {where} "
+        f"ORDER BY {order_sql} LIMIT %s OFFSET %s)) WITH ORDINALITY AS p(row_id, rn) "
+        # ⚠️ `ns_id` dans la jointure : `row_id` n'est unique que par tableau.
+        "JOIN datastore_rows dr ON dr.row_id = p.row_id AND dr.ns_id = %s")
+    with _connect() as conn:
+        return _page_en_un_message(
+            conn, sql, tuple(params + [limit, offset, ns_id]))["lignes"]
 
 
 def datastore_mark_formula_dirty(ns_id: int) -> int:

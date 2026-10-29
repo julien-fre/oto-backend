@@ -92,8 +92,8 @@ def register(mcp: FastMCP) -> None:
 
         Steps (default order): hunter (name + domain) → aiark (LinkedIn URL) → apollo
         (LinkedIn URL, or name + domain / company) → kaspr (LinkedIn URL) → lusha (LinkedIn
-        URL, or name + domain / company) → forager (LinkedIn URL — your own Forager key
-        only) → then the asynchronous ones: dropcontact (LinkedIn URL, or name + company /
+        URL, or name + domain / company) → forager (LinkedIn URL — your own Forager key,
+        or the shared one where this instance opens email lookups) → then the asynchronous ones: dropcontact (LinkedIn URL, or name + company /
         domain) → lemlist (LinkedIn URL, or name + domain) → fullenrich (LinkedIn URL, or
         name + domain — usually 30 s to 4 min, so often `pending`). A slow step is billed
         even when its answer comes back `pending`, and a `pending` step ENDS the cascade:

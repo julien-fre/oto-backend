@@ -22,6 +22,7 @@ import secrets
 from typing import Optional
 
 from .db import _connect, _hash_token
+from . import org_store
 from .org_store import _PENDING
 
 logger = logging.getLogger(__name__)
@@ -103,10 +104,11 @@ def retirer(kind: str, resource_id: str, email: str) -> bool:
 
 
 def honorer(inv: dict, sub: str) -> Optional[dict]:
-    """Donne à `sub` l'accès que porte ce partage en attente, puis le marque consommé.
+    """Marque ce partage en attente consommé par `sub` et lui donne l'accès qu'il porte.
 
     None — et RIEN n'est accordé — quand l'émetteur ne gouverne plus l'objet (droits
-    retirés, objet supprimé) : le partage est caduc, on ne le rend pas vivant. Import
+    retirés, objet supprimé) : le partage est caduc, on ne le rend pas vivant ; None
+    aussi quand un autre appel l'a consommé entre-temps. Import
     paresseux d'`ownership` : il dépend d'`org_store`, qui nous appelle."""
     from . import ownership
     kind, rid = inv["resource_kind"], str(inv["resource_id"])
@@ -114,13 +116,18 @@ def honorer(inv: dict, sub: str) -> Optional[dict]:
         logger.warning("partage en attente #%s caduc : l'émetteur ne gouverne plus "
                        "%s %s — rien n'est accordé", inv.get("id"), kind, rid)
         return None
-    ownership.grant(kind, rid, "user", sub, role=inv.get("resource_role"),
-                    granted_by=inv.get("invited_by"),
-                    ttl_days=inv.get("resource_ttl_days"))
+    # La consommation D'ABORD, dans une transaction tenue ouverte pendant l'accès : de
+    # deux porteurs simultanés du même jeton, un seul obtient la ligne (l'autre attend
+    # son verrou, puis n'a plus rien à consommer) ; un accès qui échoue annule la
+    # consommation. `ownership.grant` écrit sur sa propre connexion : seul un échec du
+    # COMMIT, après lui, laisserait l'accès donné sans le partage consommé.
     with _connect() as conn:
-        conn.execute(
-            "UPDATE org_invitations SET accepted_at = NOW(), accepted_sub = %s "
-            "WHERE id = %s AND accepted_at IS NULL", (sub, inv["id"]))
+        with conn.transaction():
+            if not org_store._consommer(conn, inv["id"], sub):
+                return None
+            ownership.grant(kind, rid, "user", sub, role=inv.get("resource_role"),
+                            granted_by=inv.get("invited_by"),
+                            ttl_days=inv.get("resource_ttl_days"))
     return {"resource_type": inv.get("resource_type"), "resource_id": rid,
             "resource_role": inv.get("resource_role"),
             "resource_name": inv.get("resource_name")}

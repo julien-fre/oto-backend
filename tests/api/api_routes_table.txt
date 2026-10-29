@@ -18,6 +18,8 @@ POST /api/me/projects/{project_id:int}/files -> project_files_upload
 OPTIONS /api/me/projects/{project_id:int}/files -> options_handler
 POST /api/me/projects/{project_id:int}/transcriptions/upload -> transcription_upload
 OPTIONS /api/me/projects/{project_id:int}/transcriptions/upload -> options_handler
+POST /api/copilot/attachments -> piece_depot
+OPTIONS /api/copilot/attachments -> options_handler
 GET,HEAD /api/public/docs/{token} -> public_doc
 OPTIONS /api/public/docs/{token} -> options_handler
 POST,PUT /api/upload/{token} -> upload_receive
@@ -154,6 +156,8 @@ DELETE /api/orgs/{id}/invitations/{inv} -> _handler
 OPTIONS /api/orgs/{id}/invitations/{inv} -> options_handler
 POST /api/me/invitations/accept -> _handler
 OPTIONS /api/me/invitations/accept -> options_handler
+POST /api/me/orgs/{id}/invitations/claim -> _handler
+OPTIONS /api/me/orgs/{id}/invitations/claim -> options_handler
 POST /api/me/invitations/reject -> _handler
 OPTIONS /api/me/invitations/reject -> options_handler
 POST /api/admin/invitations -> _handler
@@ -832,6 +836,18 @@ POST /api/datastores/{datastore}/rows/{row_id}/comments -> _handler
 OPTIONS /api/datastores/{datastore}/rows/{row_id}/comments -> options_handler
 DELETE /api/datastores/{datastore}/rows/{row_id}/comments/{comment_id} -> _handler
 OPTIONS /api/datastores/{datastore}/rows/{row_id}/comments/{comment_id} -> options_handler
+POST /api/me/access-requests -> _handler
+OPTIONS /api/me/access-requests -> options_handler
+GET,HEAD /api/me/access-requests -> _handler
+OPTIONS /api/me/access-requests -> options_handler
+POST /api/me/access-requests/{request_id}/approve -> _handler
+OPTIONS /api/me/access-requests/{request_id}/approve -> options_handler
+POST /api/me/access-requests/{request_id}/decline -> _handler
+OPTIONS /api/me/access-requests/{request_id}/decline -> options_handler
+POST /api/me/access-requests/{request_id}/cancel -> _handler
+OPTIONS /api/me/access-requests/{request_id}/cancel -> options_handler
+POST /api/me/access-requests/{request_id}/remind -> _handler
+OPTIONS /api/me/access-requests/{request_id}/remind -> options_handler
 GET,HEAD /api/me/waterfalls/{name}/plan -> _handler
 OPTIONS /api/me/waterfalls/{name}/plan -> options_handler
 POST /api/me/automations/fire -> _handler
@@ -870,6 +886,8 @@ POST /api/copilot/threads/{thread_id}/approvals/{approval_id} -> _handler
 OPTIONS /api/copilot/threads/{thread_id}/approvals/{approval_id} -> options_handler
 POST /api/copilot/dictations -> _handler
 OPTIONS /api/copilot/dictations -> options_handler
+GET,HEAD /api/copilot/attachments -> _handler
+OPTIONS /api/copilot/attachments -> options_handler
 POST /api/copilot/actions/{revert_id}/revert -> _handler
 OPTIONS /api/copilot/actions/{revert_id}/revert -> options_handler
 POST /api/billing/webhook -> webhook

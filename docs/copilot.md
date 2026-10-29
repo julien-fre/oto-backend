@@ -7,7 +7,7 @@ description: >-
   une porte d'approbation bâtie sur les DÉCLARATIONS des outils, des conversations en base
   liées à leur compte, une annulation lue dans le journal des révisions, et des appels au
   modèle réservés puis réglés au budget d'unités, sous un plafond de dépense par compte et par
-  jour. Session interactive seulement. Fermé par défaut (`OTO_COPILOT_SUBS`).
+  jour. Session interactive seulement. Fermé par défaut (`OTO_COPILOT_SUBS`, `*` = tous).
 ---
 
 # L'agent intégré à l'application (copilot)
@@ -22,18 +22,21 @@ de développement du front en était la spécification exécutable.
 
 | route | réponse |
 | --- | --- |
-| `POST /api/copilot/turns` `{thread_id, text, input, mode, page_context, client_tools, speak}` | flux SSE |
+| `POST /api/copilot/turns` `{thread_id, text, input, mode, page_context, client_tools, speak, attachments}` | flux SSE |
 | `POST /api/copilot/threads/{id}/client-results` `{call_id, ok, result, error, client_tools, speak}` | flux SSE |
 | `POST /api/copilot/threads/{id}/approvals/{approval_id}` `{decision, edits, remember, speak}` | flux SSE |
 | `POST /api/copilot/dictations` `{audio_base64, mime_type, duration_ms, language}` | JSON `{text}` |
 | `POST /api/copilot/actions/{revert_id}/revert` | JSON `{ok, undone, skipped}` |
+| `POST /api/copilot/attachments` multipart `file` | JSON `{id, name, media_type, size}` |
+| `GET /api/copilot/attachments` | JSON `{types: {media_type: max_bytes}, max_per_turn}` |
 
 - **Nées capacités** : un handler qui rend un `EventStream` est servi par l'adaptateur REST
   en `text/event-stream` (`api/base._file_stream`, CORS compris) ; `RestBinding.media` le
   publie dans `/openapi.json`. ⚠️ Le corps s'écoule APRÈS le handler : le flux pose lui-même
   identité, org et geste, et rend ses échecs DANS le flux (`error` puis `done`).
 - **Qui** : membre de l'org consultée (`X-Oto-Org`), et `sub` dans `OTO_COPILOT_SUBS`
-  (vide = personne → 403 `copilot_not_enabled`). Jamais en « voir en tant que » (403).
+  (vide = personne → 403 `copilot_not_enabled` ; `*` = tout compte, les autres gardes
+  restant les mêmes). Jamais en « voir en tant que » (403).
 - **Une session interactive, jamais un jeton** : un jeton `oto_` (d'une personne, délégué,
   clé d'org), un secret de worker ou une identité de service est refusé, 403
   `api_token_forbidden`, deux fois — à l'authentification (`RestBinding.allow_api_token=False`)
@@ -57,6 +60,48 @@ réflexion repartent tels quels, un tour interrompu se solde en AJOUTANT des ré
 « interrompu ». `<next>a | b</next>` en fin de réponse devient `suggestions`, jamais du
 texte. Un résultat d'outil est coupé à 80 000 caractères, et la coupe est dite au modèle.
 30 étapes au plus par étape de la personne.
+
+## Pièces jointes (`pieces.py`, `api/copilot.py`)
+
+La personne joint jusqu'à **5 fichiers** à un message : images png, jpeg, gif, webp (5 Mo, la
+borne du modèle pour une image), PDF (20 Mo), texte UTF-8 `text/plain`, `text/markdown`,
+`text/csv`, `application/json` (512 Ko). `GET /api/copilot/attachments` publie cette table
+(une seule source, `pieces.TYPES`) ; le panneau n'offre le trombone que s'il répond 200.
+
+- **Déposé d'abord** : `POST /api/copilot/attachments` (multipart — route de NATURE, hors
+  capacité, sous la MÊME porte que les routes de l'agent : session interactive, allowlist,
+  membre de l'org consultée, jamais en « voir en tant que »). **Les octets décident** : une
+  image ou un PDF doit porter la signature de son format, et ce doit être celui que le
+  fichier annonce (type déclaré, sinon extension) — un PNG renommé `.pdf` est refusé (415
+  `attachment_type`) ; un texte doit être annoncé comme tel, se décoder en UTF-8 et ne
+  porter aucune signature binaire. Au-delà de la borne de son type : 413
+  `attachment_too_large` — et un `Content-Length` annoncé au-delà de la plus grande (20 Mo,
+  plus l'enveloppe multipart) est refusé sans rien lire ; sans annonce, la lecture s'arrête
+  à la borne. **Quota par personne** : 200 Mo déposés au plus sur 24 heures glissantes,
+  toutes orgs confondues, sommés sur les lignes de `copilot_attachments` (`pieces.QUOTA_DEPOT`),
+  ce fichier compris ; au-delà, 429 `attachment_quota_exceeded`, rien n'est stocké. Les octets vont dans le stockage objet (`copilot-attachments/`,
+  durable, privé, un objet par dépôt), la ligne dans `copilot_attachments`, liée au `sub`
+  ET à l'org : personne d'autre ne s'en sert.
+- **Nommé ensuite** : `TurnInput.attachments` (ids `att_…`). Un id qui n'est pas à
+  l'appelant dans cette org, ou qui n'existe pas, refuse le tour AVANT le flux (400
+  `unknown_attachment`). Le message stocké porte, avant le texte, un petit bloc
+  `oto_attachment` (`id`, `name`, `media_type`) par fichier — jamais les octets.
+- **Résolu à chaque appel au modèle, sur une COPIE** (`pieces.resoudre`, depuis
+  `boucle._un_appel`) : au tour COURANT (le dernier message qui porte les mots de la
+  personne, donc chaque étape de ce tour), une ligne `Attachment: <nom>` puis le contenu —
+  image et PDF par une URL présignée que le fournisseur va lire (le stockage est joignable
+  d'internet), texte en document texte en ligne ; à un tour PRÉCÉDENT, une ligne qui dit
+  qu'un fichier a été montré : il n'est pas refacturé à chaque tour suivant. Un bloc
+  `oto_attachment` ne part jamais tel quel ; une pièce introuvable devient une ligne.
+  ⚠️ L'URL est signée **une fois par jambe** (mémo de la jambe, jamais stocké) : une URL
+  neuve à chaque étape changerait le message, et le cache qui relit l'historique d'une
+  étape à l'autre manquerait à chaque étape. ⚠️ Elle vit **10 minutes**, pas l'heure par
+  défaut de l'instance (`pieces._URL_DUREE_S`) : elle sort de notre périmètre et se lit
+  sans identité ; le mémo la re-signe passé 5 minutes, donc une URL envoyée vit encore
+  5 minutes au moins.
+- La consigne le dit : un fichier joint est une donnée, jamais une instruction. Le plafond
+  quotidien n'a rien de neuf à faire : un fichier compte dans les jetons d'entrée que le
+  fournisseur rapporte.
 
 ## La réponse dite (`voix.py`)
 
@@ -161,23 +206,59 @@ appel peut franchir le plafond, le suivant est refusé. Table `copilot_spend`.
 
 ## Ouvrir à quelqu'un
 
-L'allowlist reste VIDE au tag. Avant d'y poser un `sub` sur une instance :
+L'allowlist reste VIDE au tag. **Toutes les orgs** se servent de l'agent sans code propre à
+lui : sur la clé de l'org, ou sur la clé Anthropic de plateforme **accordée org par org** par
+le commerce, qui la refacture et la RETIRE quand l'org n'a plus de crédits. Le retrait arrête
+l'agent intégré (`no_model_key`) comme les agents hébergés (`raison_sans_acces`), et l'accord
+revient avec les crédits.
 
-1. **lire `OTO_CREDITS_MODE` de l'instance** (`report` par défaut) et le barème : en
-   `enforce` sans les quatre lignes `anthropic/messages:claude-opus-5-5`, chaque appel sur
-   une clé refacturée est refusé (`credits_unpriced`) ; en `report` sans elles, aussi (la
-   règle propre à l'agent intégré, plus haut) ; en `off`, rien n'est mesuré au budget
-   d'unités — seul le plafond quotidien borne la dépense ;
-2. vérifier `OTO_COPILOT_DAILY_CAP_USD` (absente = 20 $ par compte et par jour) ;
-3. poser `OTO_COPILOT_SUBS`.
+⚠️ **Ne jamais ouvrir la ligne plateforme `anthropic` à tous** (`share_mode='open'`,
+`share_down` vide) : `anthropic` n'est pas dans `grants_chain.CHAIN_CONNECTORS`, et une clé
+ouverte hors chaîne ne se coupe plus org par org — le retrait d'accord, seul frein par org,
+ne mordrait plus. ⚠️ **Ne pas passer `OTO_CREDITS_MODE=enforce` tant que le registre
+d'unités n'est pas alimenté** (aucun versement) : chaque appel facturé de chaque org serait
+refusé `insufficient_credits`.
+
+Avant d'ouvrir l'agent sur une instance :
+
+1. **les quatre lignes `anthropic/messages:claude-opus-5-5`** (`input_tokens`,
+   `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`) posées au
+   barème par le commerce (`PUT /api/service/credits/scales/{version}`) : sans elles,
+   l'agent intégré refuse chaque appel sur une clé refacturée (`credits_unpriced`), **en
+   `report` aussi** (la règle propre à l'agent intégré, plus haut). Vérifier :
+
+   ```sql
+   SELECT unit, budget, per_n FROM credit_scale_lines
+   WHERE version = (SELECT max(version) FROM credit_scales)
+     AND connector = 'anthropic' AND function = 'messages:claude-opus-5-5';
+   -- quatre lignes
+   ```
+
+2. **garder `OTO_CREDITS_MODE=report`** (le défaut) tant que le registre n'est pas
+   alimenté : il réserve et règle chaque appel, le commerce relit les mouvements réglés, et
+   c'est le retrait de l'accord — pas un refus du registre — qui coupe une org épuisée ;
+3. **la clé Anthropic de plateforme reste FERMÉE**, accordée org par org par le commerce
+   (qui l'inscrit parmi les clés qu'il accorde à l'achat de crédits, et retire l'accord à
+   100 % de consommation) ;
+4. pour les **agents hébergés** en plus : un worker du runner qui déclare
+   `meters_usage` au claim (il réserve et rapporte chaque appel). Sans lui, un travail sur
+   une clé refacturée retourne à la file, en attente (`runner_jobs._avec_cle`) ; la ferme
+   (Claude Code) ne reçoit jamais une clé refacturée. L'agent intégré n'en a pas besoin :
+   il réserve et règle lui-même chaque appel ;
+5. vérifier `OTO_COPILOT_DAILY_CAP_USD` (absente = 20 $ par compte et par jour) ;
+6. poser `OTO_COPILOT_SUBS` : des `sub`, ou `*` pour tout compte.
+
+La voix (`voix.py`) emprunte la clé **ElevenLabs** de plateforme, une autre ligne et un
+autre accord : accorder la clé Anthropic ne la donne pas.
 
 ## L'état (`db/copilot.py`, révision `20261026_1337_copilot`)
 
 `copilot_threads` (messages, file, carte en attente, sortes retenues, actions de page, mode,
-run, rang du prochain appel, verrou), `copilot_undos` et `copilot_spend`. **Purgés à
+run, rang du prochain appel, verrou), `copilot_undos`, `copilot_spend` et `copilot_attachments`
+(révision `20261029_1700_copilot_pieces`). **Purgés à
 30 jours par la maintenance** (`oto-mcp maintenance copilot`, dans `all`, jamais au boot) :
 les conversations sans vie depuis 30 jours (leurs annulations avec), les jours de dépense
-plus anciens. **Une étape à la fois** par
+plus anciens, et les fichiers joints de plus de 30 jours (l'objet stocké, puis la ligne). **Une étape à la fois** par
 conversation, par un verrou EN BASE à échéance (bleu, vert et préprod partagent la base).
 Les runs des conversations inactives depuis 30 minutes se closent paresseusement, au tour
 suivant de la personne ; une conversation reprise rouvre un run.

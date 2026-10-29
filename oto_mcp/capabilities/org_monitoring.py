@@ -152,6 +152,10 @@ class CallRow(BaseModel):
     # (résultats rendus) et `fullenrich_enrich_linkedin` (contacts soumis) —
     # voir `tool_calls.quantity`'s DDL comment pour la liste vivante.
     quantity: Optional[int] = None
+    # Les crédits que le FOURNISSEUR a déduits pour l'appel, dans son unité — à côté
+    # de `quantity`, jamais dedans. `None` = non tracé : ni 1 ni 0 (cf. le commentaire
+    # DDL de `tool_calls.provider_credits`).
+    provider_credits: Optional[int] = None
     # Sous quelle clé l'appel est passé (`user|group|org|tenant|platform`).
     # `None` = aucun credential résolu, ou ligne antérieure à la colonne.
     key_mode: Optional[str] = None
@@ -699,6 +703,11 @@ class BillableCallRow(BaseModel):
     # Items réellement traités. `None` = ce tool ne trace pas de compte, à lire
     # comme 1 — JAMAIS comme 0 (cf. le commentaire DDL de `tool_calls.quantity`).
     quantity: Optional[int] = None
+    # Les crédits que le FOURNISSEUR a déduits pour l'appel, dans son unité (crédits
+    # Forager…) : ce que le fournisseur a pris, là où `quantity` dit ce qui a été traité.
+    # `None` = non tracé par cet outil — ni 1 ni 0 (cf. le commentaire DDL de
+    # `tool_calls.provider_credits`).
+    provider_credits: Optional[int] = None
     # `user|group|org|tenant|platform`. `None` = aucun credential résolu ou ligne
     # antérieure à la colonne : non attribuable, donc à NE PAS facturer.
     key_mode: Optional[str] = None
@@ -842,7 +851,9 @@ def _billable_calls(ctx: ResolvedCtx, inp: OrgBillableCallsInput) -> dict:
         # si la requête gagne des colonnes demain.
         "calls": [{"call_id": r["id"], "call_uid": r.get("call_uid"), "tool": r["tool"],
                    "created_at": r["created_at"],
-                   "quantity": r.get("quantity"), "key_mode": r.get("key_mode"),
+                   "quantity": r.get("quantity"),
+                   "provider_credits": r.get("provider_credits"),
+                   "key_mode": r.get("key_mode"),
                    "job_id": r.get("job_id"), "found": r.get("found"),
                    "run_id": r.get("run_id")}
                   for r in page["calls"]],
@@ -877,6 +888,9 @@ class BillableToolRow(BaseModel):
     calls: int
     # Somme des quantités, un appel sans compte valant 1 — jamais 0.
     quantity: int
+    # Somme des crédits déduits par le fournisseur, dans son unité : un appel non tracé
+    # n'y compte pour rien (ni 1 ni 0). `None` = aucun appel du groupe ne l'a tracée.
+    provider_credits: Optional[int] = None
     # Jobs fournisseur DISTINCTS relevés (un job relevé deux fois compte une fois) ;
     # 0 pour un outil sans job.
     jobs: int

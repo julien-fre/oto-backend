@@ -68,9 +68,11 @@ def _shared_with_me(ctx: ResolvedCtx, inp: SharedWithMeInput) -> dict:
     store = make_store(ctx.sub)
     recus = db.list_datastores_shared_to_user(ctx.sub)
     noms = db_shell.names_of(r.get("granted_by") for r in recus)
+    gouverne = store._gouvernance(recus)
     out = []
     for r in recus:
-        entree = store._entry(r, shared=True, permission=r.get("permission"))
+        entree = store._entry(r, shared=True, permission=r.get("permission"),
+                              can_govern=gouverne[int(r["id"])])
         entree["shared_by"] = noms.get(r.get("granted_by"))
         out.append(entree)
     return {"datastores": out}

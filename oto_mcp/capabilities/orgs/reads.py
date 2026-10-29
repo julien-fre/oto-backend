@@ -240,22 +240,21 @@ def _members(org_id: int, *, exposer_operateur: bool) -> list[dict]:
     """`exposer_operateur` : servir `is_platform_operator` (org_admin ou opérateur
     plateforme qui lit cette fiche) ou le taire (`None`, simple membre — cf. le
     docstring d'`OrgMemberEntry`). ZÉRO requête ajoutée pour ce champ : le rôle
-    plateforme (`users.role`) est DÉJÀ dans `u`, lu ci-dessous pour email/name/avatar —
-    une seule requête, `org_store.list_org_members`, tient toute la liste ; le
-    `db.get_user` par membre est PRÉEXISTANT (pas ajouté par oto#270 suite), et c'est
-    la ligne qu'il rend qui sert aussi ce verdict, via le MÊME prédicat qu'utilise
+    plateforme (`users.role`) est DÉJÀ dans la ligne, lue pour email/name/avatar — une
+    seule requête, `org_store.list_org_members_with_users` (jointure `users`), tient
+    toute la liste, là où un `db.get_user` par membre la suivait ; et c'est cette ligne
+    qui sert aussi ce verdict, via le MÊME prédicat qu'utilise
     `_juger_vue_bornee` pour refuser une cible opératrice (`access.is_operator_role`,
     équivalent d'`access.is_platform_operator` sur un rôle déjà en main)."""
     out = []
-    for m in org_store.list_org_members(org_id):
-        u = db.get_user(m["sub"]) or {}
-        out.append({"sub": m["sub"], "email": u.get("email"), "name": u.get("name"),
-                    "avatar_url": u.get("avatar_url"),
+    for m in org_store.list_org_members_with_users(org_id):
+        out.append({"sub": m["sub"], "email": m["email"], "name": m["name"],
+                    "avatar_url": m["avatar_url"],
                     "role": m["org_role"], "active": m["is_active"],
-                    # Gratuit : la ligne `users` est déjà lue juste au-dessus.
-                    "suspended": bool(u.get("suspended_at")),
+                    # Gratuit : la ligne `users` vient de la même jointure.
+                    "suspended": bool(m["suspended_at"]),
                     "is_platform_operator": (
-                        access.is_operator_role(m["sub"], u.get("role"))
+                        access.is_operator_role(m["sub"], m["user_role"])
                         if exposer_operateur else None)})
     return out
 
@@ -263,37 +262,47 @@ def _members(org_id: int, *, exposer_operateur: bool) -> list[dict]:
 logger = logging.getLogger(__name__)
 
 
-def _beta_dans(sub: str, org_id: int) -> bool:
-    """`beta` par org — fail-CLOSED et TRACÉ. C'est l'appel d'amorçage du front :
-    une panne du seam des options ne doit pas blanchir le sélecteur d'espaces,
-    et une bêta qui s'ouvrirait sur un hoquet ne se verrait pas."""
+def _beta_dans(sub: str, org_ids: list[int]) -> set[int]:
+    """Les orgs où `sub` est `beta` — fail-CLOSED et TRACÉ. C'est l'appel d'amorçage
+    du front : une panne du seam des options ne doit pas blanchir le sélecteur
+    d'espaces, et une bêta qui s'ouvrirait sur un hoquet ne se verrait pas. Une
+    lecture pour toutes les orgs (`access.orgs_with_option`), pas une par org."""
     try:
-        return access.has_option(sub, BETA_OPTION, org=org_id)
+        return access.orgs_with_option(sub, BETA_OPTION, org_ids)
     except Exception:
-        logger.warning("beta lookup fail-CLOSED for %s in org %s", sub, org_id,
+        logger.warning("beta lookup fail-CLOSED for %s in orgs %s", sub, org_ids,
                        exc_info=True)
-        return False
+        return set()
 
 
 def _list_my_orgs(ctx: ResolvedCtx, inp: NoInput) -> dict:
-    orgs, active = [], None
     # Vue bornée à O (oto#270) : la cible n'est vue que dans O — ses autres orgs n'y
     # figurent pas, et O n'est « active » que si c'est bien sa maison.
     borne = session_org.current_view_as_bound_org()
-    for o in org_store.list_orgs_for_user(ctx.sub):
-        if borne is not None and int(o["org_id"]) != borne:
-            continue
+    # Lecture seule de bout en bout : UNE connexion pour l'appel, et le compte des
+    # membres comme la bêta lus pour toutes les orgs d'un coup — jamais par org.
+    with db.reuse_connection():
+        return _list_my_orgs_lu(ctx, borne)
+
+
+def _list_my_orgs_lu(ctx: ResolvedCtx, borne: Optional[int]) -> dict:
+    orgs, active = [], None
+    lignes = [o for o in org_store.list_orgs_for_user(ctx.sub)
+              if borne is None or int(o["org_id"]) == borne]
+    ids = [o["org_id"] for o in lignes]
+    membres = org_store.count_org_members(ids)
+    beta = _beta_dans(ctx.sub, ids)
+    for o in lignes:
         if o["is_active"]:
             active = o["org_id"]
         orgs.append({  # superset REST(id/member_count/my_role) + MCP(org_id/role/active)
             "id": o["org_id"], "org_id": o["org_id"], "name": o["name"],
             # logo EFFECTIF : upload sinon dérivé logo.dev du domaine déclaré.
             "logo_url": org_store.effective_logo_url(o),
-            "member_count": len(org_store.list_org_members(o["org_id"])),
+            "member_count": membres.get(o["org_id"], 0),
             "my_role": o["org_role"], "role": o["org_role"], "active": o["is_active"],
-            # `org=` EXPLICITE : calcul contre CETTE org, jamais contre current_org
-            # (le seam le prévoit pour la fiche admin — même besoin ici).
-            "beta": _beta_dans(ctx.sub, o["org_id"]),
+            # Calcul contre CETTE org (orgs explicites), jamais contre current_org.
+            "beta": o["org_id"] in beta,
             # Lu dans la même requête que la liste (`list_orgs_for_user`), jamais
             # par org : même étiquette que la fiche (`is_personal_org`).
             "personal": o["personal"],
@@ -323,6 +332,8 @@ def _org_detail(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
     # (déjà au courant, `org.admin.get`) — pas à un simple membre. Une requête, pas
     # une par membre (cf. `_members`).
     exposer_operateur = my_role == "org_admin" or access.is_platform_operator(ctx.sub)
+    # La liste des membres est lue UNE fois : elle donne aussi `member_count`.
+    membres = _members(inp.org_id, exposer_operateur=exposer_operateur)
     # `logo_url` = EFFECTIF (upload > logo.dev du domaine) ; `logo_custom` dit
     # au front si un upload existe (gate du bouton « remove logo »).
     brief = {"id": org["id"], "name": org["name"],
@@ -334,13 +345,13 @@ def _org_detail(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
              "location": org.get("location") or "",
              # espace perso : non supprimable (gate du bouton « supprimer l'org »).
              "personal": org_store.is_personal_org(org["id"]),
-             "member_count": len(org_store.list_org_members(org["id"])),
+             "member_count": len(membres),
              "trial_ends_at": org_store.get_trial_ends_at(org["id"])}
     if my_role is not None:
         brief["my_role"] = my_role
     return {
         "org": brief,
-        "members": _members(inp.org_id, exposer_operateur=exposer_operateur),
+        "members": membres,
         "secrets": org_store.list_org_secrets(inp.org_id),
         # Options payantes offertes (comp admin) au niveau ORG (couche abonnement).
         "option_comps": db.list_option_comps("org", str(inp.org_id)),

@@ -185,7 +185,7 @@ def base(monkeypatch):
         ligne.update(kw)
         return dict(ligne)
 
-    def _update(t, o, champs, hors_abonnement_d_autrui=None):
+    def _update(t, o, champs, hors_abonnement_d_autrui=None, par=None):
         etat["ecrit"].append(dict(champs))
         ligne.update(champs)
         return dict(ligne)

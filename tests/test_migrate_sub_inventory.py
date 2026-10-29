@@ -118,6 +118,10 @@ def test_migrate_sub_sub_bearing_columns_are_triaged():
         # of the current UTC day under the sub that spent it: after a merge, the new sub
         # starts its day at zero — at most one day's ceiling more, never a lost record.
         ("copilot_threads", "sub"), ("copilot_undos", "sub"), ("copilot_spend", "sub"),
+        # A file attached to one of its messages lives as long as the conversation that
+        # carries it (30 days at most) and is shown to the model only on the turn it
+        # came with: after a merge, the person attaches it again.
+        ("copilot_attachments", "sub"),
         # Le COMPTE DE SERVICE d'une org (clés d'org, #1188) n'est pas une identité Logto :
         # aucune bascule de tenant ni fusion de comptes ne le vise, il n'a rien à suivre.
         ("org_service_accounts", "sub"),
@@ -410,6 +414,11 @@ def test_toute_colonne_jsonb_est_triee_pour_la_fusion():
         ("copilot_threads", "pending"), ("copilot_threads", "queue"),
         ("copilot_threads", "remembered"), ("copilot_threads", "results"),
         ("copilot_undos", "payload"),
+        # Une demande d'accès : sa cible (ids d'objets), ce qui est demandé et ce qui a
+        # été accordé (un rôle, des noms d'outils) — le demandeur et le décideur sont
+        # des colonnes TEXT (`requester_sub`, `decided_by`), suivies à part.
+        ("access_requests", "cible"), ("access_requests", "demande"),
+        ("access_requests", "decision"),
         ("apollo_phone_reveals", "payload"), ("blocks", "props"),
         ("connector_instances", "config"), ("connector_schemas", "schema"),
         # La relève d'un travail asynchrone : sa fonction et l'id du travail chez le

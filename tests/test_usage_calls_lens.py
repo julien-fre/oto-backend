@@ -51,13 +51,14 @@ def test_la_lentille_ne_rend_QUE_ce_qu_un_metrage_somme(monkeypatch):
     _fake(monkeypatch, total=1, calls=[{
         "id": 9, "call_uid": "u-9", "tool": "linkedin_aiark_search",
         "created_at": "2026-09-01T09:00:00.000000Z",
-        "quantity": 47, "key_mode": "platform",
+        "quantity": 47, "provider_credits": 47, "key_mode": "platform",
         # ce que le store pourrait laisser fuiter, et que la projection doit ignorer
         "sub": "acme:abc", "email": "x@y.z", "error": "boom"}])
     out = om._billable_calls(CTX, om.OrgBillableCallsInput(org_id=7, tool="linkedin_aiark_search"))
     assert out["calls"] == [{"call_id": 9, "call_uid": "u-9", "tool": "linkedin_aiark_search",
                              "created_at": "2026-09-01T09:00:00.000000Z",
-                             "quantity": 47, "key_mode": "platform", "job_id": None,
+                             "quantity": 47, "provider_credits": 47,
+                             "key_mode": "platform", "job_id": None,
                              "found": None, "run_id": None}]
     assert not {"sub", "email", "error"} & set(out["calls"][0])
 
@@ -75,7 +76,8 @@ def test_la_lentille_rend_le_job_d_un_releve_et_rien_d_autre_des_args(monkeypatc
     out = om._billable_calls(CTX, om.OrgBillableCallsInput(org_id=7, tool="fullenrich_result"))
     assert out["calls"] == [{"call_id": 11, "call_uid": None, "tool": "fullenrich_result",
                              "created_at": "2026-09-01T09:05:00.000000Z",
-                             "quantity": 14, "key_mode": "platform", "job_id": "enr-0001",
+                             "quantity": 14, "provider_credits": None,
+                             "key_mode": "platform", "job_id": "enr-0001",
                              "found": trouve, "run_id": None}]
     assert not {"args", "contacts", "found_phones"} & set(out["calls"][0])
 
@@ -256,7 +258,7 @@ def test_le_releve_agrege_transmet_les_outils_et_la_fenetre(monkeypatch):
         vu.update(org_id=org_id, **kw)
         return {"since_effectif": "s", "until_effectif": "u",
                 "tools": [{"tool": "t", "key_mode": "org", "calls": 2, "quantity": 5,
-                           "jobs": 0}]}
+                           "provider_credits": 30, "jobs": 0}]}
 
     monkeypatch.setattr(om.db, "billable_usage_by_tool_for_org", faux)
     out = om._billable_tools(CTX, om.OrgBillableToolsInput(
@@ -264,6 +266,7 @@ def test_le_releve_agrege_transmet_les_outils_et_la_fenetre(monkeypatch):
     assert vu == {"org_id": 7, "tools": ["a", "b"], "since": "2026-09-01T00:00:00Z",
                   "until": None}
     assert om.OrgBillableTools(**out).tools[0].quantity == 5
+    assert om.OrgBillableTools(**out).tools[0].provider_credits == 30
     trop = [f"t{i}" for i in range(om.MAX_BILLABLE_TOOLS + 1)]
     with pytest.raises(AuthzDenied) as e:
         om._billable_tools(CTX, om.OrgBillableToolsInput(org_id=7, tool=trop))

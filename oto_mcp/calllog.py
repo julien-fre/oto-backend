@@ -45,6 +45,9 @@ def apply_call_trace(row: dict, trace: Optional[dict], traced_args: tuple) -> di
     - `quantity` (items TRAITÉS — métrage/facturation) : sa propre colonne, posée si
       c'est un entier `>= 0`. ⚠️ `>= 0`, pas `> 0` : un zéro TRACÉ (recherche vide)
       n'est pas un appel non tracé, que le consommateur lit comme 1 ;
+    - `provider_credits` (crédits déduits par le FOURNISSEUR, dans son unité) : sa
+      propre colonne, même règle d'entier `>= 0` — à côté de `quantity`, jamais versé
+      dedans : les deux grandeurs ne se confondent pas ;
     - `key_mode` (SOUS QUELLE clé : `user|group|org|tenant|platform`, posé au seul
       résolveur) : sa propre colonne si c'est une chaîne non vide. NULL = aucune clé
       résolue → rien à facturer.
@@ -59,6 +62,9 @@ def apply_call_trace(row: dict, trace: Optional[dict], traced_args: tuple) -> di
     quantity = trace.get("quantity")
     if isinstance(quantity, int) and quantity >= 0:
         row["quantity"] = quantity
+    credits = trace.get("provider_credits")
+    if isinstance(credits, int) and credits >= 0:
+        row["provider_credits"] = credits
     key_mode = trace.get("key_mode")
     if isinstance(key_mode, str) and key_mode:
         row["key_mode"] = key_mode

@@ -69,9 +69,10 @@ def propre_a_un_modele(fenetre: Optional[str]) -> bool:
 #: forfait (`forfait_sonde` à la réservation). Au-delà, le travail est servi et la sonde
 #: tranche : une pause posée par un rapport faux ou ancien ne fige plus le forfait
 #: jusqu'à sa réinitialisation — sans travail servi, aucun rapport ne venait la corriger.
-#: Une pause dont la fenêtre est CONNUE (`limit_fenetre`) n'est jamais sondée : son
-#: échéance est celle que le fournisseur a donnée pour cette fenêtre, et la sonder ne
-#: coûterait que des jetons.
+#: Fenêtre connue ou non (28/10/2026) : une pause posée par NOTRE seuil dépend d'un
+#: réglage qui bouge (plafond perso, plafond d'org), et se fier à son échéance a figé
+#: une semaine un forfait à 27 % dont le plafond venait de passer de 25 à 75 %. Seule
+#: une fenêtre PROPRE À UN MODÈLE n'est pas sondée : la sonde n'en mesure rien.
 VERIFICATION_S = 600
 
 #: Le délai d'un travail rendu à la file en mode POOL quand le prêteur choisi est au
@@ -85,13 +86,20 @@ def pause_en_vigueur(ab: str, sonde: bool = False) -> str:
     """SQL : la ligne `ab` est-elle en pause qui FREINE la réservation ? Jamais NULL.
 
     `sonde` : le worker sondera le forfait avant de lancer — une pause plus vieille que
-    `VERIFICATION_S` ne freine plus, SAUF si sa fenêtre est connue (`limit_fenetre`) :
-    on se fie alors à l'échéance que le fournisseur a donnée. Seules les pauses dont la
-    cause est inconnue se sondent. ⚠️ L'horloge est `updated_at` : toute autre écriture
+    `VERIFICATION_S` ne freine plus, que sa fenêtre soit connue ou non : la sonde lit la
+    capacité RÉELLE sous le plafond du moment. Deux exceptions : une fenêtre propre à un
+    modèle (`propre_a_un_modele`), que la sonde ne mesure pas, et un refus du
+    fournisseur sur une fenêtre connue, dont l'échéance est la sienne. ⚠️ L'horloge est `updated_at` : toute autre écriture
     de la ligne (plafond perso, sandbox, connexion) la rajeunit, ce qui ne fait que
     retarder la revérification — le sens sûr. Ne pas la « corriger » en colonne dédiée
     sans raison."""
-    fraiche = (f" AND ({ab}.{COLONNE_FENETRE} IS NOT NULL OR {ab}.updated_at > "
+    du_compte = ", ".join(f"'{f}'" for f in FENETRES_DU_COMPTE)
+    # Un refus du FOURNISSEUR (`limit_epuise`) sur une fenêtre connue garde son
+    # échéance : c'est la sienne, et la sonder ne coûterait que des appels — seule une
+    # pause de NOTRE seuil dépend d'un réglage qui bouge.
+    fraiche = (f" AND ({ab}.{COLONNE_FENETRE} NOT IN ({du_compte}) "
+               f"OR ({ab}.limit_epuise AND {ab}.{COLONNE_FENETRE} IS NOT NULL) "
+               f"OR {ab}.updated_at > "
                f"NOW() - make_interval(secs => {int(VERIFICATION_S)}))"
                if sonde else "")
     return (f"COALESCE({ab}.statut = '{PLAFOND}' AND {ab}.limit_reset_at > NOW()"
@@ -204,8 +212,14 @@ def poser_limite(sub: str, famille: str, limite_pct: Optional[int]) -> Optional[
     """Pose (ou retire, `None`) le plafond PERSO d'une personne sur SA ligne. Ne crée
     rien : sans abonnement, il n'y a rien à plafonner — rend `None`.
 
-    Ne touche ni au statut ni à l'échéance : le plafond s'applique au PROCHAIN
-    rapport de forfait (`_abonnement.noter_rapport`), jamais au run en cours."""
+    Le plafond s'applique au PROCHAIN rapport de forfait (`_abonnement.noter_rapport`),
+    jamais au run en cours — sauf pour LEVER une pause qu'il ne justifie plus
+    (28/10/2026) : posée par le seul seuil (`limit_epuise` faux) à une charge que le
+    nouveau plafond tolère, elle attendait sinon l'échéance de la fenêtre, sept jours
+    pour la semaine (mesuré : 27 % sous un plafond de 25 %, relevé à 75 %, en pause
+    jusqu'à la réinitialisation hebdomadaire). Un refus du fournisseur, lui, reste :
+    le plafond n'y peut rien. Retirer le plafond perso (`None`) ne lève rien — le
+    seuil retombe sur celui de l'org, que cette écriture ne lit pas."""
     with _connect() as conn:
         row = conn.execute(
             f"""UPDATE user_model_subscriptions
@@ -214,6 +228,20 @@ def poser_limite(sub: str, famille: str, limite_pct: Optional[int]) -> Optional[
              RETURNING {_CHAMPS}""",
             (limite_pct, sub, famille),
         ).fetchone()
+        if row and limite_pct is not None:
+            levee = conn.execute(
+                f"""UPDATE user_model_subscriptions
+                       SET statut = '{CONNECTE}', limit_reset_at = NULL,
+                           limit_epuise = FALSE, limit_utilisation = NULL,
+                           limit_fenetre = NULL, updated_at = NOW()
+                     WHERE sub = %s AND famille = %s
+                       AND statut = '{PLAFOND}' AND NOT limit_epuise
+                       AND limit_utilisation IS NOT NULL
+                       AND limit_utilisation < LEAST(%s, {LIMITE_PERSO_MAX}) / 100.0
+                 RETURNING {_CHAMPS}""",
+                (sub, famille, limite_pct),
+            ).fetchone()
+            row = levee or row
     return dict(row) if row else None
 
 

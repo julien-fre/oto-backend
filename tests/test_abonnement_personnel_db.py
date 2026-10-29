@@ -167,27 +167,37 @@ def test_une_pause_ANCIENNE_n_est_servie_qu_au_worker_qui_SONDE(live):
     assert pris and pris["id"] == travail, "pause ANCIENNE : la sonde tranchera"
 
 
-def test_une_pause_de_fenetre_CONNUE_n_est_jamais_sondee(live):
-    """Le fournisseur a nommé la fenêtre qui a refusé, et donné son échéance : on s'y
-    fie. Même ancienne, la pause freine le worker qui sonde — la sonder ne coûterait que
-    des jetons, chaque fois que la revérification échoit."""
+@pytest.mark.parametrize("fenetre,epuise,org,sondee", [
+    ("seven_day", False, 9407, True),        # mesuré le 28/10 : 27 % sous 25 %, relevé à 75 %
+    ("five_hour", False, 9408, True),
+    ("seven_day_opus", False, 9409, False),  # propre à un modèle : la sonde n'en mesure rien
+    ("seven_day", True, 9420, False),        # refus du FOURNISSEUR : son échéance fait foi
+])
+def test_une_pause_ANCIENNE_du_COMPTE_est_sondee_meme_de_fenetre_connue(
+        live, fenetre, epuise, org, sondee):
+    """Fenêtre connue ou non (28/10/2026) : une pause de NOTRE seuil se sonde, la sonde lit
+    la capacité réelle sous le plafond du moment. Gardent leur échéance : une fenêtre
+    propre à un modèle, et un refus du fournisseur sur une fenêtre connue."""
     from oto_mcp import db
     from oto_mcp.db import user_subscriptions as US
     from oto_mcp.db._conn import _connect
-    s = _personne("abo-nomme")
-    US.upsert_sandbox(s, _FAMILLE, "sandbox-n")
+    s = _personne(f"abo-nomme-{fenetre}-{epuise}")
+    US.upsert_sandbox(s, _FAMILLE, f"sandbox-{fenetre}-{epuise}")
     with _connect() as conn:
         futur = conn.execute("SELECT NOW() + interval '5 days' AS t").fetchone()["t"]
-    US.marquer_statut(s, _FAMILLE, US.PLAFOND, limit_reset_at=futur, epuise=True,
-                      fenetre="five_hour")
-    assert US.get_subscription(s, _FAMILLE)["limit_fenetre"] == "five_hour"
-    _travail(9407, s)
+    US.marquer_statut(s, _FAMILLE, US.PLAFOND, limit_reset_at=futur, epuise=epuise,
+                      fenetre=fenetre)
+    assert US.get_subscription(s, _FAMILLE)["limit_fenetre"] == fenetre
+    travail = _travail(org, s)
+    prise = lambda: db.claim_next_job(org, "w-sonde", lease_seconds=60, depot=_FAMILLE,
+                                      famille_seule=True, sonde=True)
+    assert prise() is None, "pause FRAÎCHE : elle freine, même pour qui sonde"
     with _connect() as conn:
         conn.execute("UPDATE user_model_subscriptions SET updated_at = NOW() - "
                      "make_interval(secs => %s) WHERE sub = %s",
                      (US.VERIFICATION_S + 60, s))
-    assert db.claim_next_job(9407, "w-sonde", lease_seconds=60, depot=_FAMILLE,
-                             famille_seule=True, sonde=True) is None
+    pris = prise()
+    assert (pris and pris["id"]) == (travail if sondee else None), fenetre
     US.marquer_statut(s, _FAMILLE, US.CONNECTE, observe=True)
     assert US.get_subscription(s, _FAMILLE)["limit_fenetre"] is None, (
         "la fenêtre ne survit pas à la pause")
@@ -285,6 +295,32 @@ def test_le_plafond_de_L_ORG_DU_TRAVAIL_se_lit_en_base(live, org_pct, perso_pct,
 
     statut = US.get_subscription(p, _FAMILLE)["statut"]
     assert statut == (US.PLAFOND if en_pause else US.CONNECTE), (org_pct, perso_pct)
+
+
+@pytest.mark.parametrize("epuise,utilisation,nouveau,levee", [
+    (False, 0.27, 75, True),    # mesuré le 28/10 : 27 % sous 25 %, relevé à 75 %
+    (False, 0.27, 26, False),   # relevé, mais pas assez : la pause tient
+    (True, 0.27, 75, False),    # le fournisseur a refusé : le plafond n'y peut rien
+    (False, 0.27, None, False),  # retirer le perso ne lit pas l'org : rien ne bouge
+])
+def test_relever_SON_plafond_leve_la_pause_qu_il_ne_justifie_plus(
+        live, epuise, utilisation, nouveau, levee):
+    from datetime import datetime, timedelta, timezone
+    from oto_mcp.db import user_subscriptions as US
+    p = _personne(f"abo-releve-{epuise}-{nouveau}")
+    US.upsert_sandbox(p, _FAMILLE, f"sandbox-{p}")
+    US.poser_limite(p, _FAMILLE, 25)
+    US.marquer_statut(p, _FAMILLE, US.PLAFOND,
+                      limit_reset_at=datetime.now(timezone.utc) + timedelta(days=6),
+                      epuise=epuise, utilisation=utilisation, fenetre="seven_day")
+
+    ligne = US.poser_limite(p, _FAMILLE, nouveau)
+
+    assert ligne["limite_pct"] == nouveau
+    assert ligne["statut"] == (US.CONNECTE if levee else US.PLAFOND)
+    assert US.get_subscription(p, _FAMILLE)["statut"] == ligne["statut"]
+    if levee:
+        assert ligne["limit_reset_at"] is None
 
 
 def test_un_travail_EN_VOL_ne_reconnecte_PAS_qui_vient_de_se_deconnecter(live):

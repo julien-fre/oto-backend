@@ -66,6 +66,9 @@ OUVERTES = frozenset({
     # se repérer, changer d'org, en partir
     "me.get", "me.context", "me.leave_org",
     "org.list", "org.get", "org.use_org", "org.set_home", "org.clear",
+    # rejoindre une AUTRE org par l'invitation qui y attend : l'appel résout sous
+    # l'org maison, mais l'org rejointe est `{id}` — c'est elle que la capacité juge.
+    "org.invite.claim",
     # le compte lui-même
     "me.legal.get", "me.legal.accept", "me.avatar.clear",
     "me.token.list", "me.token.create", "me.token.delete",

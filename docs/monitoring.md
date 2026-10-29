@@ -180,7 +180,8 @@ le dispatch n'était facturée sous aucune org. Désormais :
 
 - `oto_call` pose un relevé **propre à la cible** autour de `tool.run`, et lit l'org et le
   run de la cible **avant** de défaire ses axes ;
-- **une seule ligne facture — celle de la cible** : `quantity` et `key_mode` y restent ;
+- **une seule ligne facture — celle de la cible** : `quantity`, `provider_credits` et
+  `key_mode` y restent ;
   le reste du relevé (`resolved_account`, `resolved_connector`) est recopié dans le
   relevé enveloppe, pour que l'écho du compte rendu à l'agent survive au dispatch ;
 - les deux écrivains appliquent **la même règle** (`calllog.apply_call_trace`, avec la
@@ -590,12 +591,31 @@ comptés (`kind='mcp'`, sous l'org, réussis, dans la fenêtre) :
 | route | ce qu'elle rend |
 |---|---|
 | `GET /api/orgs/{id}/usage/calls?tool=…` ou `?run_id=…` | les appels, page par page, avec `total` de la fenêtre et curseur — le détail (job, trouvé, run) |
-| `GET /api/orgs/{id}/usage/tools[?tool=a&tool=b]` | par outil × mode de clé : `calls`, `quantity` (NULL compté 1), `jobs` distincts — **une** lecture pour tous les outils |
+| `GET /api/orgs/{id}/usage/tools[?tool=a&tool=b]` | par outil × mode de clé : `calls`, `quantity` (NULL compté 1), `provider_credits` (NULL ignoré, `null` si rien de tracé), `jobs` distincts — **une** lecture pour tous les outils |
 
 La somme des `calls` d'un outil égale le `total` de `usage/calls` sur la même fenêtre.
 Le consommateur qui relisait chaque outil à chaque rafraîchissement (une requête par
 outil, toutes dans la même seconde) lit `usage/tools`, puis `usage/calls` pour le
 seul outil dont il veut le détail.
+
+### Ce que le journal facture : `quantity` et `provider_credits`, deux colonnes (29/10/2026)
+
+Deux grandeurs, jamais l'une dans l'autre, posées par le même seam
+(`session_org.note_call_trace`) et servies côte à côte sur chaque lecture du journal qui
+sert `quantity` (liste `op=calls`, fiche `op=call`, `usage/calls`, `usage/tools`) :
+
+| colonne | ce qu'elle dit | NULL |
+|---|---|---|
+| `quantity` | les ITEMS que l'appel a traités (résultats rendus, contacts soumis, destinataires…) | non tracé : **compté 1** |
+| `provider_credits` | ce que le FOURNISSEUR a déduit pour l'appel, dans SON unité (crédits Forager…) | non tracé : **ni 1 ni 0** — on ne sait pas ; 0 = tracé, rien déduit |
+
+Pourquoi deux : un consommateur de facturation somme déjà `quantity` par outil. Y
+verser les crédits du fournisseur aurait changé l'unité de ses sommes **en silence**,
+d'un déploiement à l'autre, sans qu'aucun champ ne l'annonce. Une grandeur neuve prend
+une colonne neuve, que le consommateur lit explicitement. Écrivains aujourd'hui : les
+outils `forager_*` servis sur la clé partagée (la grille `tools/forager.FORAGER_CREDITS`),
+et la recherche de téléphones Forager sur toute clé. Sur une ligne `oto_call`, la clé
+reste sur la ligne de la cible (`tools/meta._BILLING_TRACE_KEYS`).
 
 **Le job d'une ligne** (`job_id`) se lit dans les args journalisés, pour la liste
 fermée `db.usage.BILLABLE_JOB_ARGS` : `enrichment_id` (l'argument de `fullenrich_result`)
@@ -692,7 +712,7 @@ lignes, `args` compris) pour chaque fenêtre de 30 ou 90 jours. Trois tables
 | table | ce qu'elle porte |
 |---|---|
 | `journal_jours_consolides` | le registre : un jour y figure = ses totaux sont COMPLETS (un jour sans appel y figure aussi) |
-| `journal_totaux_jour` | par jour × `kind` × `org_id` × `sub` × `tool` × `ok` × `key_mode` × émetteur : `appels`, `quantite` (NULL compté 1), durées et tailles (nombre, somme, et les VALEURS en `int[]`), `dernier_at` |
+| `journal_totaux_jour` | par jour × `kind` × `org_id` × `sub` × `tool` × `ok` × `key_mode` × émetteur : `appels`, `quantite` (NULL compté 1), `credits_fournisseur` (somme de `provider_credits`, NULL ignoré ; NULL = rien de tracé — et sur tout jour consolidé avant la colonne), durées et tailles (nombre, somme, et les VALEURS en `int[]`), `dernier_at` |
 | `journal_jobs_jour` | les jobs fournisseur distincts relevés par les appels facturables, par jour × org × outil × mode de clé |
 
 **Exact, pas approché.** Les dimensions sont celles que lisent les écrans, et rien de
@@ -739,6 +759,7 @@ réponse à l'ancienne lecture du journal, recopiée dans le banc.
 | `connector_failure_stats` | `monitoring.connectors`, `org.monitoring.connectors`, `op=connectors` | oui |
 | `org_adoption` | `org.monitoring.adoption`, `op=adoption` | oui — le dernier appel sur tout l'historique consolidé |
 | `list_tenants_overview`, `get_tenant_overview` | `admin.tenants`, `admin.tenant`, console de tenant | oui |
+| `count_org_mcp_calls` | `billing.status` (usage inclus du mois), fiche d'org `org.get`, `org.admin.get` | oui |
 | `list_billable_calls_for_org`, `list_tool_calls`, `list_runs`, `export_tool_calls_for_org`, activité d'un tableau | `usage/calls`, `calls`, `runs`, `export`… | non — des LISTES, ligne à ligne |
 | `rest_call_stats`, `list_rest_calls`, `transport_refusal_stats`, `activation_funnel` | `monitoring.{rest,rest_calls,transport,funnel}` | non — le REST n'est pas agrégé (vues plateforme, vers Grafana) |
 | `instruction_usage`, `instructions_usage_by_slug` | `org.instruction.usage`, `me/instructions-usage` | non — la procédure vient d'`args`, servie par l'index partiel `(org_id, tool) WHERE ok` sur deux verbes |

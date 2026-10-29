@@ -85,14 +85,25 @@ class RegistreMixin:
             self._org_liens_memo = memo
         return memo
 
-    def _entry(self, n: dict, *, shared: bool, permission: Optional[str] = None) -> dict:
+    def _gouvernance(self, lignes: list[dict]) -> dict[int, bool]:
+        """`{ns_id: can_govern}` de ces tableaux, DÉJÀ lus (leur propriétaire est dans la
+        ligne) : `ownership.can_govern_many`, la règle de `can_govern` jugée pour toute
+        la liste en lectures groupées — plus 5 à 10 lectures par tableau.
+
+        Agissant-org (sub-less) : pas de gouvernance via l'endpoint (create/delete/
+        rename/share restent réservés à un user identifié)."""
+        if self.acting_org is not None:
+            return {int(n["id"]): False for n in lignes}
+        verdicts = ownership.can_govern_many(
+            self.sub, ownership.TYPE_RESSOURCE_DATASTORE,
+            {str(n["id"]): ownership.proprietaire_de_ligne(n) for n in lignes})
+        return {int(rid): v for rid, v in verdicts.items()}
+
+    def _entry(self, n: dict, *, shared: bool, can_govern: bool,
+               permission: Optional[str] = None) -> dict:
         ns_id = int(n["id"])
         perso = (self.sub is not None
                  and n.get("owner_type") == "user" and n.get("owner_id") == self.sub)
-        # Agissant-org (sub-less) : pas de gouvernance via l'endpoint (create/delete/
-        # rename/share restent réservés à un user identifié).
-        can_govern = (False if self.acting_org is not None
-                      else ownership.can_govern(self.sub, ownership.TYPE_RESSOURCE_DATASTORE, str(ns_id)))
         return {
             "id": ns_id,
             # ⚠️ **Le numéro sort sous les DEUX noms, et `identite` est la source du
@@ -155,27 +166,31 @@ class RegistreMixin:
         org_ids, group_ids = self._active_scope()
         owned = proprios + [("group", str(g)) for g in group_ids
                             if ("group", str(g)) not in proprios]
-        out: dict[int, dict] = {}
+        # `(ligne, shared, permission)` par id, dans l'ordre de la liste.
+        out: dict[int, tuple[dict, bool, Optional[str]]] = {}
         for n in db.list_datastores_for_owners(owned):
-            out[int(n["id"])] = self._entry(n, shared=False)
+            out[int(n["id"])] = (n, False, None)
         for n in ownership.mes_tableaux_ici(createur):
-            out.setdefault(int(n["id"]), self._entry(n, shared=False))
+            out.setdefault(int(n["id"]), (n, False, None))
         recus = db.list_datastores_granted_to(self.sub, org_ids, group_ids)
         if moi:
             # Org perso : ce qui est partagé à MOI en personne s'y liste aussi.
             recus += db.list_datastores_shared_to_user(self.sub)
         for n in recus:
-            if int(n["id"]) in out:
-                continue
-            out[int(n["id"])] = self._entry(n, shared=True, permission=n.get("permission"))
-        # Scope dur d'endpoint partagé : ne lister QUE les tableaux liés au projet.
+            out.setdefault(int(n["id"]), (n, True, n.get("permission")))
+        lignes = list(out.values())
         if self.allowed_ns_ids is not None:
-            return [e for e in out.values() if int(e["id"]) in self.allowed_ns_ids]
-        if self.acting_org is not None:
-            return list(out.values())
-        # Vue bornée (oto#270) : le partage reçu en propre n'est pas de O.
-        return ownership.borner_a_la_vue(self.sub, ownership.TYPE_RESSOURCE_DATASTORE,
-                                         list(out.values()), rid=lambda e: e["id"])
+            # Scope dur d'endpoint partagé : ne lister QUE les tableaux liés au projet.
+            lignes = [l for l in lignes if int(l[0]["id"]) in self.allowed_ns_ids]
+        elif self.acting_org is None:
+            # Vue bornée (oto#270) : le partage reçu en propre n'est pas de O.
+            lignes = ownership.borner_a_la_vue(self.sub, ownership.TYPE_RESSOURCE_DATASTORE,
+                                               lignes, rid=lambda l: l[0]["id"])
+        # La gouvernance des seuls tableaux rendus, jugée pour toute la liste d'un coup.
+        gouverne = self._gouvernance([n for n, _, _ in lignes])
+        return [self._entry(n, shared=shared, permission=permission,
+                            can_govern=gouverne[int(n["id"])])
+                for n, shared, permission in lignes]
 
     def _default_owner(self) -> tuple[str, str]:
         """Owner d'un datastore créé sans précision = **la personne** (ADR 0068).
@@ -300,12 +315,16 @@ class RegistreMixin:
         n = db.get_datastore_by_id(ns_id)
         if n is None:          # supprimé entre la résolution et la lecture
             raise DatastoreNotFound(datastore)
+        # UN tableau : `can_govern` tel quel (la liste, elle, juge par lot).
+        gouverne = (self.acting_org is None and ownership.can_govern(
+            self.sub, ownership.TYPE_RESSOURCE_DATASTORE, str(ns_id)))
         if ownership.owner_in_scope(self.sub, access.current_org(self.sub),
                                     (n["owner_type"], str(n["owner_id"]))):
-            return self._entry(n, shared=False)
+            return self._entry(n, shared=False, can_govern=gouverne)
         ecrit = ownership.can_access(self.sub, ownership.TYPE_RESSOURCE_DATASTORE,
                                      str(ns_id), "write")
-        return self._entry(n, shared=True, permission="write" if ecrit else "read")
+        return self._entry(n, shared=True, can_govern=gouverne,
+                           permission="write" if ecrit else "read")
 
     def resolve_ns_id(self, datastore: str) -> int:
         """ns_id d'un datastore visible par l'acteur (lève `DatastoreNotFound`).

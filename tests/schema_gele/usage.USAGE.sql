@@ -31,7 +31,8 @@ error_kind TEXT,
 token_id BIGINT,
 token_kind TEXT,
 quantity INTEGER,
-key_mode TEXT
+key_mode TEXT,
+provider_credits INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at ON tool_calls(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_sub ON tool_calls(sub);

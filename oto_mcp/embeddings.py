@@ -13,8 +13,10 @@ inerte (la recherche reste lexicale). Aucune dépendance oto-core (interne backe
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import weakref
 from typing import Optional
 
 import httpx
@@ -103,17 +105,48 @@ def embed_texts(texts: list[str], *, timeout: float = 30.0) -> list[list[float]]
     return out
 
 
-async def embed_query(text: str, *, timeout: float = 8.0) -> Optional[list[float]]:
+# Le client du chemin requête est PARTAGÉ : un client neuf par appel payait une poignée de
+# main TLS à chaque recherche. Un par boucle d'événements, créé à la première requête : un
+# `AsyncClient` lie son pool de connexions à la boucle qui l'a servi, et deux boucles (tests,
+# processus annexes) ne doivent jamais se le passer. Le module ne crée rien à l'import —
+# le registre est vide ; fermé à l'arrêt par le lifespan (`server.main`, `fermer_client`).
+_DELAI_REQUETE_S = 8.0
+_CLIENTS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = (
+    weakref.WeakKeyDictionary())
+
+
+def _nouveau_client() -> httpx.AsyncClient:
+    """Le client neuf — la couture où les tests montent un transport bouchon."""
+    return httpx.AsyncClient(timeout=_DELAI_REQUETE_S)
+
+
+def _client() -> httpx.AsyncClient:
+    """Le client partagé de la boucle courante, créé au premier appel."""
+    boucle = asyncio.get_running_loop()
+    c = _CLIENTS.get(boucle)
+    if c is None or c.is_closed:
+        c = _CLIENTS[boucle] = _nouveau_client()
+    return c
+
+
+async def fermer_client() -> None:
+    """Ferme le client partagé de la boucle courante (arrêt du serveur). Sans client, rien."""
+    c = _CLIENTS.pop(asyncio.get_running_loop(), None)
+    if c is not None:
+        await c.aclose()
+
+
+async def embed_query(text: str, *, timeout: float = _DELAI_REQUETE_S) -> Optional[list[float]]:
     """Un texte, ASYNC (chemin requête). None si désactivé ou en échec — la recherche
     retombe alors sur le lexical seul (jamais d'erreur remontée à l'agent)."""
     text = (text or "").strip()
     if not text or not enabled():
         return None
     try:
-        async with httpx.AsyncClient(timeout=timeout) as c:
-            r = await c.post(_URL, headers=_headers(), json={"model": MODEL, "input": [_cap(text)]})
-            r.raise_for_status()
-            return r.json()["data"][0]["embedding"]
+        r = await _client().post(_URL, headers=_headers(), timeout=timeout,
+                                 json={"model": MODEL, "input": [_cap(text)]})
+        r.raise_for_status()
+        return r.json()["data"][0]["embedding"]
     except Exception as e:  # noqa: BLE001 — dégradation gracieuse vers le lexical
         logger.warning("embed_query échec (fallback lexical) : %s", e)
         return None

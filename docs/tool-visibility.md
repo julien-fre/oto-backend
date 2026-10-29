@@ -196,7 +196,7 @@ dans une toolbox sans avoir été demandé.
 ## Niveau d'accès d'un connecteur : la couche `access_level` (14/10/2026)
 
 Un connecteur OAuth qui déclare des niveaux (`docs/connector-model.md` §Niveau d'accès)
-peut être restreint par l'org, puis par l'équipe active (`read` pour `zoho`, `zohodesk`).
+peut être restreint par l'org, puis par l'équipe active (`read` pour `zoho`, `zohodesk`, `zohosign`).
 **Sous un niveau autre que `full`, et seulement là** :
 
 - **couche `access_level`** de `session_visibility` (`access_level_gate.hidden_tools`) : un

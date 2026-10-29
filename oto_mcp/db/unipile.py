@@ -304,7 +304,8 @@ def clear_option_comp(entity_type: str, entity_id: str, option: str) -> bool:
 def has_option_comp(entity_type: str, entity_id: str, option: str) -> bool:
     """Un don VIVANT accorde-t-il cette option ? Une ligne échue (`expires_at` passé)
     ne compte pas — c'est ICI que l'échéance mord, une fois, pour tout le monde :
-    `access.has_option` est le seul lecteur de cette fonction, et toutes les surfaces
+    `access.has_option` est le seul lecteur de cette fonction (sa version groupée,
+    `orgs_with_option_comp`, porte la même règle), et toutes les surfaces
     d'entitlement passent par lui. Le filtre est en SQL (`NOW()`), pas en Python :
     l'horloge de la base est la même pour les trois processus qui la lisent."""
     with _connect() as conn:
@@ -313,6 +314,21 @@ def has_option_comp(entity_type: str, entity_id: str, option: str) -> bool:
             "AND option=%s AND (expires_at IS NULL OR expires_at > NOW())",
             (entity_type, str(entity_id), option),
         ).fetchone() is not None
+
+
+def orgs_with_option_comp(org_ids: list[int], option: str) -> set[int]:
+    """`has_option_comp("org", o, option)` pour plusieurs orgs, en UNE requête :
+    même règle d'échéance, lue au même endroit. Lecteur unique : `access.orgs_with_option`."""
+    ids = sorted({str(int(o)) for o in org_ids})
+    if not ids:
+        return set()
+    with _connect() as conn:
+        return {int(r["entity_id"]) for r in conn.execute(
+            "SELECT entity_id FROM option_comps WHERE entity_type='org' "
+            "AND entity_id = ANY(%s) AND option=%s "
+            "AND (expires_at IS NULL OR expires_at > NOW())",
+            (ids, option),
+        )}
 
 
 def list_option_comps(entity_type: str, entity_id: str) -> list[str]:

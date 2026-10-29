@@ -355,9 +355,10 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("OTO_COPILOT_SUBS", Classe.REGLAGE, "",
              "L'agent intégré à l'application (`capabilities/copilot`, docs/copilot.md) : "
              "les `sub` autorisés, séparés par des virgules. Vide (défaut) = personne — les "
-             "quatre routes `/api/copilot/*` répondent 403 `copilot_not_enabled`. Lu à "
-             "chaque requête.",
-             ("oto_mcp/capabilities/copilot/routes.py:56",)),
+             "quatre routes `/api/copilot/*` répondent 403 `copilot_not_enabled`. `*` = "
+             "tout compte (session console, membre de l'org, jamais en « voir en tant "
+             "que »). Lu à chaque requête.",
+             ("oto_mcp/capabilities/copilot/routes.py:61",)),
     Variable("OTO_COPILOT_DAILY_CAP_USD", Classe.REGLAGE, "20",
              "L'agent intégré à l'application : plafond de dépense au modèle PAR COMPTE ET "
              "PAR JOUR UTC, en dollars (prix publics du fournisseur × jetons rapportés, "
@@ -378,7 +379,30 @@ _REGLAGES: tuple[Variable, ...] = (
              "qu'`enforce` refuserait ; `enforce` refuse (`insufficient_credits`, "
              "`credits_unpriced`, `spend_ledger_unavailable`) ; `off` ne réserve rien. "
              "Illisible : LÈVE au boot.",
-             ("oto_mcp/access/credits.py:83",)),
+             ("oto_mcp/access/credits.py:94",)),
+    Variable("OTO_CREDITS_MODE_FUNCTIONS", Classe.REGLAGE, None,
+             "Budget d'unités : le mode PAR FONCTION du barème, qui l'emporte sur "
+             "`OTO_CREDITS_MODE` pour elle (`access/credits_modes.mode_de`) — liste "
+             "`<connecteur>.<fonction>=<mode>` séparée par des virgules, `*` final = "
+             "toute fonction qui commence ainsi ; un nom exact l'emporte toujours sur "
+             "un motif, et entre motifs le préfixe le plus long. Ex. "
+             "`anthropic.messages:*=enforce` : les appels au modèle (agents hébergés, "
+             "agent intégré) refusent, le reste reste en `report` (#1376, E). Absente "
+             "ou vide : aucune. Illisible, nommée deux fois, ou qui ne nomme aucune "
+             "fonction tarifable (coût déclaré d'un connecteur, modèle du catalogue) : "
+             "LÈVE au boot.",
+             ("oto_mcp/access/credits_modes.py:39",)),
+    Variable("OTO_CREDITS_JOB_FLOOR", Classe.REGLAGE, None,
+             "Budget d'unités : le solde disponible (solde − réservations ouvertes), "
+             "en unités, qu'un travail d'agent hébergé sur une clé REFACTURÉE doit "
+             "avoir pour démarrer — il couvre l'entrée du premier tour, jamais "
+             "réservée (`access/credits_tours.sous_le_plancher`, #1376, B). Mord dans "
+             "le mode de la fonction du modèle : `enforce` arrête le travail, raison "
+             "écrite (`insufficient_credits`), et rend à la file un travail dont le "
+             "solde est illisible (`spend_ledger_unavailable`, rejouable) ; `report` "
+             "journalise. Absente ou 0 : aucun plancher. Illisible ou négative : LÈVE "
+             "au boot.",
+             ("oto_mcp/access/credits_modes.py:119",)),
     Variable("OTO_CREDITS_HOLD_MAX_S", Classe.REGLAGE, None,
              "Durée maximale d'une réservation sans échéance connue (travail "
              "asynchrone sans `within_s`, tranche de fond `jev_rows`, appel synchrone "
@@ -473,6 +497,13 @@ _REGLAGES: tuple[Variable, ...] = (
              "Relais d'upload Pennylane (cabinet) simultanés par processus ; au-delà, "
              "503 `relay_busy` réessayable.",
              ("oto_mcp/tools/pennylane_firm_relais.py:55",)),
+    Variable("OTO_HIGGSFIELD_MAX_USD_PAR_APPEL", Classe.REGLAGE, "5",
+             "Connecteur Higgsfield : plafond, en dollars, du `max_usd` qu'une génération "
+             "peut déclarer (`higgsfield_act` op=create_generation). Au-dessus : refus "
+             "nommé `max_usd_above_cap`, avant tout appel à Higgsfield. Lu à chaque "
+             "appel ; une valeur qui n'est pas un montant positif lève (jamais le défaut "
+             "en silence).",
+             ("oto_mcp/tools/higgsfield.py:82",)),
     Variable("MIN_TOKEN_IAT", Classe.REGLAGE, "0",
              "Horodatage Unix plancher : un jeton émis avant est refusé (révocation "
              "globale par date).",

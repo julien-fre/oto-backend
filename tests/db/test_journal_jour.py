@@ -91,6 +91,27 @@ def test_un_jour_consolide_porte_exactement_son_journal():
             ("outil_a", "org", "job-1"), ("outil_a", None, "job-1")]
 
 
+def test_les_credits_du_fournisseur_se_somment_sans_jamais_compter_un_non_trace():
+    """`credits_fournisseur` = la somme de `provider_credits`, NULL ignoré : un groupe où
+    rien n'est tracé rend NULL (pas 0, pas son nombre d'appels), un 0 tracé compte 0."""
+    _vider()
+    with _c() as c:
+        _appel(c, 2, "09:00", tool="outil_a", provider_credits=5)
+        _appel(c, 2, "10:00", tool="outil_a", provider_credits=None)
+        _appel(c, 2, "11:00", tool="outil_a", provider_credits=15)
+        _appel(c, 2, "09:00", tool="outil_b", provider_credits=0)
+        _appel(c, 2, "09:00", tool="outil_c")
+        jour = _jour(c, 2)
+    journal_jour.consolider_jour(jour)
+    with _c() as c:
+        tot = c.execute("SELECT tool, appels, quantite, credits_fournisseur "
+                        "FROM journal_totaux_jour WHERE jour = %s ORDER BY tool",
+                        (jour,)).fetchall()
+    assert [(t["tool"], t["appels"], t["quantite"], t["credits_fournisseur"])
+            for t in tot] == [("outil_a", 3, 3, 20), ("outil_b", 1, 1, 0),
+                              ("outil_c", 1, 1, None)]
+
+
 def test_rejouer_un_jour_ne_change_rien_et_suit_le_journal():
     _vider()
     with _c() as c:

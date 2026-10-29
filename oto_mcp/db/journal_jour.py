@@ -68,6 +68,9 @@ DIMENSIONS: dict[str, str] = {
 MESURES: dict[str, str] = {
     "appels": "count(*)::int",
     "quantite": "sum(COALESCE(l.quantity, 1))::bigint",
+    # Les crédits du fournisseur : `sum` SANS repli — une ligne non tracée n'y compte
+    # pour rien (ni 1 ni 0), et un groupe sans aucune ligne tracée rend NULL.
+    "credits_fournisseur": f"sum(l.{journal_calls.COLONNE_CREDITS_FOURNISSEUR})::bigint",
     "duree_n": "count(l.duration_ms)::int",
     "duree_somme": "COALESCE(sum(l.duration_ms), 0)::bigint",
     "durees": ("COALESCE(array_agg(l.duration_ms) FILTER "
@@ -78,6 +81,15 @@ MESURES: dict[str, str] = {
                 "(WHERE l.result_size IS NOT NULL), '{}')"),
     "dernier_at": "max(l.created_at)",
 }
+
+#: La colonne de `credits_fournisseur` sur une base existante — le même DDL pour le
+#: démarrage (`_init`, sous garde de catalogue) et pour la révision
+#: `20261029_1705_provider_credits`. Nullable sans défaut : un jour consolidé avant elle
+#: la porte à NULL (rien de tracé), pas à 0.
+COLONNE_CREDITS_FOURNISSEUR = "credits_fournisseur"
+DDL_COLONNE_CREDITS_FOURNISSEUR = (
+    f"ALTER TABLE journal_totaux_jour ADD COLUMN IF NOT EXISTS "
+    f"{COLONNE_CREDITS_FOURNISSEUR} BIGINT")
 
 #: La borne d'un jour UTC `%s` (une date), en instant : son premier instant.
 DEBUT_DU_JOUR = "(%s::date::timestamp AT TIME ZONE 'UTC')"

@@ -284,7 +284,7 @@ def base(monkeypatch):
 
     monkeypatch.setattr(RT.db, "get_trigger", lambda t, o: dict(ligne))
     monkeypatch.setattr(RT.db, "update_trigger",
-                        lambda t, o, champs, hors_abonnement_d_autrui=None:
+                        lambda t, o, champs, hors_abonnement_d_autrui=None, par=None:
                         ligne.update(champs) or dict(ligne))
     monkeypatch.setattr(RT.db, "poser_auth_de_hook", _poser_auth)
     monkeypatch.setattr(RT.db, "poser_secret_de_hook",

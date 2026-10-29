@@ -87,9 +87,9 @@ def insert_tool_call(row: dict) -> None:
                  run_id, org_id, client_id, sentry_event_id,
                  request_id, call_uid, effective_sub, error_kind,
                  token_id, token_kind, result_size, result_shape, quantity, key_mode,
-                 view_as_sub)
+                 view_as_sub, provider_credits)
             VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 row.get("server") or "oto", row.get("kind") or "mcp",
@@ -123,6 +123,9 @@ def insert_tool_call(row: dict) -> None:
                 # `RestCallLogger` seul la pose). NULL = pas de consultation en
                 # cours, ou ligne antérieure à cette colonne (non reconstructible).
                 row.get("view_as_sub"),
+                # Crédits déduits par le fournisseur, dans son unité — NULL = non tracé,
+                # ni 1 ni 0 ; à côté de `quantity`, qui garde son sens.
+                row.get("provider_credits"),
             ),
         )
 
@@ -1269,7 +1272,8 @@ def list_tool_calls(
             SELECT l.id, l.sub, u.email, u.name, l.tool AS tool_name, l.created_at AS called_at,
                    l.duration_ms, l.ok, l.error, l.session_id, l.run_id, l.org_id,
                    l.sentry_event_id, {journal_calls.ARG_KEYS_SQL} AS arg_keys,
-                   l.result_shape, l.quantity, l.key_mode, {journal_calls.EMITTER_SQL}
+                   l.result_shape, l.quantity, l.provider_credits, l.key_mode,
+                   {journal_calls.EMITTER_SQL}
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
             {where}
@@ -1295,8 +1299,8 @@ def get_tool_call(call_id: int) -> Optional[dict]:
                    u.name, l.tool, l.args, l.ok, l.error, l.error_kind, l.duration_ms,
                    l.created_at,
                    l.session_id, l.run_id, l.org_id, o.name AS org_name, l.client_id,
-                   l.sentry_event_id, l.result_shape, l.quantity, l.key_mode,
-                   {journal_calls.EMITTER_SQL}, l.token_id
+                   l.sentry_event_id, l.result_shape, l.quantity, l.provider_credits,
+                   l.key_mode, {journal_calls.EMITTER_SQL}, l.token_id
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
             LEFT JOIN orgs o ON o.id = l.org_id
@@ -1581,7 +1585,8 @@ def list_billable_calls_for_org(
             page_params += [before[0], int(before[1])]
         rows = conn.execute(
             f"""
-            SELECT l.id, l.call_uid, l.tool, l.quantity, l.key_mode, l.run_id,
+            SELECT l.id, l.call_uid, l.tool, l.quantity, l.provider_credits, l.key_mode,
+                   l.run_id,
                    {_BILLABLE_JOB_ID_SQL} AS job_id,
                    {_BILLABLE_FOUND_SQL},
                    {_AUDIT_KEYSET_AT} AS created_at
@@ -1631,12 +1636,16 @@ def billable_usage_by_tool_for_org(
 
     - `quantity` : la somme des quantités, une ligne sans compte valant 1 (cf. le
       commentaire DDL de `tool_calls.quantity` : NULL se lit 1, jamais 0) ;
+    - `provider_credits` : la somme des crédits déduits par le fournisseur, dans son
+      unité — une ligne non tracée n'y compte pour RIEN (ni 1 ni 0, cf. le commentaire
+      DDL de `tool_calls.provider_credits`) ; `None` = aucun appel du groupe ne l'a
+      tracée ;
     - `key_mode` : `None` = non attribuable, à NE PAS facturer ;
     - `jobs` : les jobs fournisseur DISTINCTS relevés (`BILLABLE_JOB_ARGS`) — un job
       relevé plusieurs fois compte une fois ici ; 0 pour un outil sans job.
 
     Rend `{since_effectif, until_effectif, tools: [{tool, key_mode, calls, quantity,
-    jobs}]}`, trié par outil puis mode de clé.
+    provider_credits, jobs}]}`, trié par outil puis mode de clé.
 
     **Lu sur les totaux par jour** (oto-backend#1147) : les jours entiers de la fenêtre
     que le registre porte, plus le journal direct pour le reste (les bouts de jour aux
@@ -1649,7 +1658,8 @@ def billable_usage_by_tool_for_org(
         since, until = _fenetre_du_releve(conn, since, until)
         fenetre = {"depuis": since, "jusqu_a": until, "haute_incluse": True}
         src, params = journal_jour.source(
-            conn, objet, kinds=("mcp",), mesures=("appels", "quantite"),
+            conn, objet, kinds=("mcp",),
+            mesures=("appels", "quantite", "credits_fournisseur"),
             filtres={"org_id": int(org_id), "ok": True,
                      "tools": list(tools) if tools else None}, **fenetre)
         jobs, pj = journal_jour.source_jobs(
@@ -1660,10 +1670,12 @@ def billable_usage_by_tool_for_org(
             WITH s AS ({src}),
                  j AS ({jobs}),
                  g AS (SELECT tool, key_mode, sum(appels)::bigint AS calls,
-                              sum(quantite)::bigint AS quantity
+                              sum(quantite)::bigint AS quantity,
+                              sum(credits_fournisseur)::bigint AS provider_credits
                          FROM s GROUP BY tool, key_mode),
                  nj AS (SELECT tool, key_mode, count(*) AS jobs FROM j GROUP BY tool, key_mode)
-            SELECT g.tool, g.key_mode, g.calls, g.quantity, COALESCE(nj.jobs, 0) AS jobs
+            SELECT g.tool, g.key_mode, g.calls, g.quantity, g.provider_credits,
+                   COALESCE(nj.jobs, 0) AS jobs
               FROM g LEFT JOIN nj ON nj.tool = g.tool
                                  AND nj.key_mode IS NOT DISTINCT FROM g.key_mode
              ORDER BY g.tool, g.key_mode NULLS LAST
@@ -1673,6 +1685,8 @@ def billable_usage_by_tool_for_org(
     return {"since_effectif": since, "until_effectif": until,
             "tools": [{"tool": r["tool"], "key_mode": r["key_mode"],
                        "calls": int(r["calls"]), "quantity": int(r["quantity"]),
+                       "provider_credits": (None if r["provider_credits"] is None
+                                            else int(r["provider_credits"])),
                        "jobs": int(r["jobs"])} for r in rows]}
 
 
@@ -2738,20 +2752,35 @@ def datastore_activity(ns_id: int, namespace: Optional[str] = None,
     `data_write("160")` et `data_write("slot:vivier")` retombent sur la même ligne, et
     un renommage de tableau n'orpheline plus son historique.
 
-    ⚠️ L'axe NOM subsiste en **repli, uniquement pour l'historique** écrit avant que le
-    ns_id ne soit journalisé (il s'éteint de lui-même avec la rétention 30 j du calllog).
-    Il est **BORNÉ AU PROPRIÉTAIRE, jamais matché nu** (`_owner_clause`) : un nom n'est
-    unique que par propriétaire (`uq_user_datastores_owner_ns`), deux orgs ont chacune le
-    droit d'avoir un `leads`, et un `args->>'namespace' = 'leads'` sans borne ferait lire
-    à l'org B les gestes de l'org A. Résiduel de ce repli, borné dans le temps : un
-    homonyme DANS le même tenant reste indistinguable (même tenant, pas une fuite).
+    ⚠️ L'axe NOM subsiste pour les gestes journalisés **sans** `ns_id` : l'historique
+    d'avant le 31/07/2026 (v1.39.0) est sorti de la rétention 30 j, mais des écrivains
+    vivants posent encore le nom seul — `data_create_datastore` (la création ne passe
+    pas par `_resolve`), un appel refusé par une garde de `_resolve` (le relevé n'est
+    posé qu'APRÈS les gardes), une mutation REST dont le relevé est resté vide
+    (`journal.from_trace`). Il est **BORNÉ AU PROPRIÉTAIRE, jamais matché nu**
+    (`_owner_clause`) : un nom n'est unique que par propriétaire
+    (`uq_user_datastores_owner_ns`), deux orgs ont chacune le droit d'avoir un `leads`,
+    et un `args->>'namespace' = 'leads'` sans borne ferait lire à l'org B les gestes de
+    l'org A. Résiduel : un homonyme DANS le même tenant reste indistinguable (même
+    tenant, pas une fuite).
+
+    Deux axes, deux branches en `UNION ALL`, chacune avec sa propre page — **jamais un
+    OU** (29/10/2026 : le OU entre `ns_id` et le nom empêchait tout usage de
+    `idx_tool_calls_ns`, le plan parcourait `tool_calls` à rebours par `created_at`
+    jusqu'à remplir la page, et la route saturait sa concurrence bornée en 503
+    `route_busy`). Même forme que `datastore_row_activity` :
+    - **`ns_id`** : `idx_tool_calls_ns`, une lecture directe ;
+    - **nom** : sur la borne de propriétaire (`idx_tool_calls_org` ou
+      `idx_tool_calls_sub`), et **seulement les lignes SANS `ns_id`** — une ligne qui
+      porte un `ns_id` a été résolue serveur : elle est à la première branche si c'est
+      ce tableau, à un autre tableau sinon (homonyme renommé). Les deux branches sont
+      donc disjointes : aucun doublon.
     """
     limit = max(1, min(int(limit), 200))
     ns_id = int(ns_id)
-    match = ["l.args->>'ns_id' = %s"]
-    params: list[Any] = [str(ns_id)]
-    # Repli historique : les formes sous lesquelles un agent a pu nommer CE tableau
-    # avant que le ns_id résolu ne soit journalisé — son id en texte et son nom canonique.
+    branches: list[tuple[str, list[Any]]] = [("l.args->>'ns_id' = %s", [str(ns_id)])]
+    # Les formes sous lesquelles un agent a pu nommer CE tableau sans que le serveur
+    # n'ait journalisé son ns_id : son id en texte et son nom canonique.
     names = [str(ns_id)]
     name = (namespace or "").strip()
     if name and name != str(ns_id):
@@ -2769,16 +2798,22 @@ def datastore_activity(ns_id: int, namespace: Optional[str] = None,
         # exactement le symptôme qu'on cherchait à corriger sur cette route.
         # Cette ligne n'a pas de date de péremption : elle en aura une le jour où la
         # rétention aura effacé le dernier appel écrit sous l'ancien nom.
-        match.append(
-            f"(COALESCE(l.args->>'datastore', l.args->>'namespace') = ANY(%s) "
-            f"AND {sql})")
-        params += [names, bound]
+        branches.append((
+            "l.args->>'ns_id' IS NULL "
+            f"AND COALESCE(l.args->>'datastore', l.args->>'namespace') = ANY(%s) "
+            f"AND {sql}",
+            [names, bound]))
+    pages, params = [], []
+    for axe, valeurs in branches:
+        pages.append(f"(SELECT l.id FROM tool_calls l WHERE {_DS_ACTIVITY_KINDS} "
+                     f"AND l.tool LIKE 'data\\_%%' AND {axe} "
+                     "ORDER BY l.created_at DESC LIMIT %s)")
+        params += [*valeurs, limit]
     params.append(limit)
     with _agregat("activité d'un tableau") as conn:
         rows = conn.execute(
             f"""{_DS_ACTIVITY_SELECT}
-            WHERE {_DS_ACTIVITY_KINDS} AND l.tool LIKE 'data\\_%%'
-                  AND ({' OR '.join(match)})
+            WHERE l.id IN ({' UNION ALL '.join(pages)})
             ORDER BY l.created_at DESC LIMIT %s
             """,
             tuple(params),

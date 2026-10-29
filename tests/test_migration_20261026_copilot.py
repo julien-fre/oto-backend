@@ -28,7 +28,7 @@ def _tables(dsn):
     with psycopg.connect(dsn) as c:
         return sorted(r[0] for r in c.execute(
             "SELECT table_name FROM information_schema.tables "
-            "WHERE table_name LIKE 'copilot_%'").fetchall())
+            "WHERE table_name = ANY(%s)", (_TABLES,)).fetchall())
 
 
 @pytest.fixture(scope="module")

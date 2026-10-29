@@ -109,6 +109,12 @@ utilisateur, équipe ou org. Ni la clé du tenant, ni celle de la plateforme, ni
 illisible (`unknown` : pas d'appelant, ou la lecture a échoué) : l'étape est sautée sans
 appel (`own_key_required`), et le plan la dit `usable: false`.
 
+Sauf si l'instance ouvre ce geste sur sa clé partagée (`Step.shared_serves`) : pour Forager,
+le réglage `platform.ops` (`tools/forager.py::platform_ops`, `oto_admin_connector_setting`)
+— `forager_person:work_emails` ouvre l'étape email, `forager_person:detail` l'étape profil.
+`ordre._plan` le lit une fois par appel, hors boucle, et lève `own_key_only` pour cet appel :
+le plan et la cascade disent la même chose. Un réglage illisible n'ouvre rien.
+
 ## Ce qu'une étape qui échoue fait : rien d'autre que passer la main
 
 Une garde qui refuse (`McpError` levée par `executer_cible` : connecteur coupé, hors
@@ -165,7 +171,7 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
 
 - **Email** : hunter → aiark (sur une vraie liste, les mêmes emails qu'Apollo, qui facture
   sa correspondance même sans email) → apollo → kaspr → lusha → forager (clé de l'appelant
-  seulement : la clé partagée de Forager ne sert que les numéros d'une personne) →
+  seulement, sauf si l'instance ouvre `forager_person:work_emails` sur sa clé partagée) →
   dropcontact → lemlist → fullenrich (les asynchrones en dernier).
 - **Téléphone** : kaspr → lusha → forager → apollo (`apollo_reveal_phone`, asynchrone,
   clé de l'appelant seulement) → lemlist → dropcontact → fullenrich. Pas d'AI Ark.
@@ -178,7 +184,7 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
   l'appelant, gratuit) → `lemlist_db` (`lemlist_database op=people`, par
   `leadLinkedInSlug`, sinon `username` + `currentCompanyWebsiteUrl` ; la clé `lemlist` reste
   l'enrichissement asynchrone) → aiark (export) → apollo → forager (`op=detail`, clé de l'appelant
-  seulement) → cognism →
+  seulement, sauf `forager_person:detail` ouvert sur la clé partagée) → cognism →
   lusha (recherche sans `reveal`, le mode bon marché) → lemlist (`linkedin_enrichment`).
 - **Lus par des noms de clés connus, faute de forme figée par un test ici** : Kaspr,
   Forager, Lusha (email/téléphone par extraction profonde), et pour la personne et la

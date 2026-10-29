@@ -28,7 +28,7 @@ from .registry import CAPABILITIES
 
 class ZohoConnectInput(BaseModel):
     op: Literal["start", "modes"] = "start"
-    connector: str                      # zoho | zohodesk | zohoanalytics
+    connector: str                      # zoho | zohodesk | zohoanalytics | zohosign
     # Region of the Zoho account — REQUIRED for `start`: the OAuth app and the token are
     # tied to their data center, an `.eu` client on `accounts.zoho.com` is rejected
     # with an opaque `invalid_client`. Unguessable, hence explicit — except under an app

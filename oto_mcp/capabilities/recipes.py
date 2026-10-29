@@ -40,6 +40,8 @@ toute autre : identité, org et droits sur le tableau de QUI la lance.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -48,12 +50,15 @@ from starlette.concurrency import run_in_threadpool
 from .. import access, session_org, tool_alias, tool_registry
 from ..db import recipes as db_recipes
 from ..functions import executor as bac
+from ..functions import pont as pont_bac
 from ..recipes import affichage, code, contrat, moteur
 from . import _code_humain
 from ._authz import (BY_OP, CODE_PLATEFORME_SEULE, ORG_MEMBER_OF, ORG_MEMBER_OPT,
                      PLATFORM_OPERATOR_OPT, SUB_ONLY)
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
+
+logger = logging.getLogger(__name__)
 
 _PORTEE = {None: ORG_MEMBER_OPT("org"), "org": ORG_MEMBER_OPT("org"), "user": SUB_ONLY}
 #: Lire et lancer : une recette de la plateforme est ouverte à tout compte, dans l'org de
@@ -73,6 +78,20 @@ _REFUS_PLATEFORME = DeclaredError(
     "`scope='platform'`: create, propose, describe, test and publish are reserved to "
     "platform operators; list, get, versions and run stay open to everyone")
 _APPELANTES = ("sample", "test", "publish", "run")
+#: Une recette-code qui dépasse sa borne de DERNIER RECOURS (`_borne_s`) : le pont n'a
+#: pas rendu la main à sa propre échéance. 504 : c'est nous qui avons cessé d'attendre.
+_REFUS_DELAI = DeclaredError(
+    504, "recipe_timeout",
+    "test, publish or run of a code recipe still running past `limits.max_seconds` plus "
+    "its grace: the server stopped waiting, calls already made may have completed")
+#: Ce que la borne de dernier recours laisse AU-DELÀ de `max_seconds + GRACE_S` (l'échéance
+#: où le pont cesse d'attendre le code) : la grâce de sa fin (`GRACE_S` encore, pour ce qui
+#: vole), l'arrêt du bac à sable, la lecture de la liste du travail. Large exprès : elle ne
+#: doit jamais mordre avant le pont, seulement quand lui ne rend pas la main.
+_MARGE_S = 15.0
+#: Les exécutions abandonnées par la borne, tenues jusqu'à leur fin (la boucle ne garde
+#: qu'une référence faible sur une tâche).
+_ABANDONNEES: set = set()
 
 #: Les ops que la face REST (`POST /api/me/recipes`) sert ; les autres restent à l'outil
 #: MCP `oto_recipe`. Cf. la docstring du module.
@@ -348,8 +367,35 @@ async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: 
     jeton = _epingler_org(ctx)
     try:
         if code.est_code(corps):
-            return await code.executer(corps, _params(corps, inp.params), fastmcp=fastmcp,
-                                       sub=ctx.sub, datastore=inp.datastore, ecrire=ecrire)
+            # Borne de DERNIER RECOURS, test comme run : le pont borne déjà sa durée, mais
+            # une attente sans délai au-dessus de lui (un fil d'outil, une fin qui attend)
+            # tenait la requête autant que l'outil. Une tâche à part, attendue par
+            # `asyncio.wait` — ni `wait_for` ni `asyncio.timeout` (3.11+, et la box
+            # tourne en 3.10), qui ATTENDENT la tâche annulée, sans délai si elle tarde.
+            # Échue, elle est annulée sans être attendue (son `finally` tue le bac à sable
+            # quand elle en a la main) et l'appelant reçoit le refus tout de suite.
+            # Copiée à sa création, elle garde l'org épinglée ci-dessus.
+            tache = asyncio.ensure_future(code.executer(
+                corps, _params(corps, inp.params), fastmcp=fastmcp, sub=ctx.sub,
+                datastore=inp.datastore, ecrire=ecrire))
+            borne = _borne_s(corps)
+            try:
+                fait, _ = await asyncio.wait({tache}, timeout=borne)
+            except asyncio.CancelledError:
+                tache.cancel()
+                raise
+            if not fait:
+                tache.cancel()
+                _ABANDONNEES.add(tache)
+                tache.add_done_callback(_ABANDONNEES.discard)
+                logger.warning("recette-code : pas de reçu après %.0f s (borne de dernier "
+                               "recours) — exécution abandonnée", borne)
+                raise AuthzDenied(
+                    504, "recipe_timeout",
+                    f"The code recipe did not return its receipt within {borne:g} s "
+                    "(`limits.max_seconds` plus grace): the server stopped waiting. Calls "
+                    "already made may have completed — check before running it again.")
+            return tache.result()
         return await moteur.executer(corps, _params(corps, inp.params), fastmcp=fastmcp,
                                      sub=ctx.sub, datastore=inp.datastore,
                                      reprise=inp.resume, ecrire=ecrire, pages_max=pages_max,
@@ -364,6 +410,11 @@ async def _executer(ctx: ResolvedCtx, inp: RecipeInput, corps: dict, *, ecrire: 
     finally:
         if jeton is not None:
             session_org.reset_call_org(jeton)
+
+
+def _borne_s(corps: dict) -> float:
+    """La borne de dernier recours d'une recette-code VALIDÉE (`max_seconds` posé)."""
+    return float(corps["limits"]["max_seconds"]) + pont_bac.GRACE_S + _MARGE_S
 
 
 async def _recipe(ctx: ResolvedCtx, inp: RecipeInput) -> dict:
@@ -504,7 +555,7 @@ CAPABILITIES += [
         # la capacité ; déclarée lourde (`routes_lourdes`) : un `run` appelle un outil
         # page après page et tient la requête jusqu'à son reçu.
         rest=RestBinding(verb="POST", path="/api/me/recipes", provisoire=True),
-        errors=(_REFUS_HORS_REST, _REFUS_PLATEFORME, _code_humain.REFUS),
+        errors=(_REFUS_HORS_REST, _REFUS_PLATEFORME, _code_humain.REFUS, _REFUS_DELAI),
     ),
 ]
 

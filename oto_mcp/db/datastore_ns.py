@@ -548,6 +548,27 @@ def best_resource_grants(resource_type: str, resource_ids: list[str],
     return {str(r["resource_id"]): r["permission"] for r in rows}
 
 
+def manager_resource_grants(resource_type: str, resource_ids: list[str],
+                            principals: list[tuple[str, str]]) -> set[str]:
+    """Les `resource_id` de ces ressources dont l'un de ces principals tient un partage
+    VIVANT de rôle `manager` (gérant, ADR 0048) — la question de
+    `ownership._has_manager_grant` (`get_resource_grant` par principal, puis le rôle)
+    pour une LISTE, en une requête (`ownership.can_govern_many`)."""
+    if not resource_ids or not principals:
+        return set()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT g.resource_id FROM resource_grants g "
+            "JOIN unnest(%s::text[], %s::text[]) AS pr(t, i) "
+            "  ON g.principal_type = pr.t AND g.principal_id = pr.i "
+            "WHERE g.resource_type = %s AND g.resource_id = ANY(%s) "
+            f"AND g.role = 'manager' AND {PARTAGE_VIVANT_G}",
+            ([p[0] for p in principals], [str(p[1]) for p in principals], resource_type,
+             [str(r) for r in resource_ids]),
+        ).fetchall()
+    return {str(r["resource_id"]) for r in rows}
+
+
 def principals_with_live_grant(resource_type: str, resource_id: str) -> set[tuple[str, str]]:
     """Les principals `(type, id)` qui tiennent un partage VIVANT de cette ressource —
     ce que l'héritage des clés d'un projet (`access/heritage.evaluer`) croise avec ses

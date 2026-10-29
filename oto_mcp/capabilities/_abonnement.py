@@ -186,8 +186,8 @@ def peut_agir_pour(sub: str, proprietaire: Optional[str], famille: str) -> bool:
     `proprietaire` ? **LA couture du partage** (arbitré le 21/09/2026).
 
     Le propriétaire seul, au niveau de la PERSONNE. Le prêt existe aussi, au niveau
-    d'un AGENT : son propriétaire en nomme un éditeur, qui le modifie alors sur son
-    forfait (`_acces_agent.forfaits_pretes`, 04/10/2026). Il ne passe pas par ici —
+    d'un AGENT : son propriétaire prête son forfait aux éditeurs qu'il a nommés de cet
+    agent (`op=lend`, `_acces_agent.forfaits_pretes`). Il ne passe pas par ici —
     il ne vaut que pour cet agent-là — mais par `prete` sur la retouche, et par la
     garde d'écriture (`db.update_trigger`). Demain, une connexion d'abonnement
     s'administrera peut-être comme les autres connecteurs, partagée à des personnes
@@ -197,22 +197,28 @@ def peut_agir_pour(sub: str, proprietaire: Optional[str], famille: str) -> bool:
 
 
 def exiger_le_droit_de_modifier(sub: str, agent: dict, famille: Optional[str],
-                                champs: dict, *, prete: bool = False) -> None:
+                                champs: dict, *, prete: bool = False,
+                                collectif: bool = False) -> None:
     """Retoucher l'agent d'un AUTRE posé sur un abonnement : refusé, sauf l'éteindre
-    — ou si son propriétaire a nommé `sub` éditeur de cet agent (`prete`).
+    — ou si son propriétaire prête son forfait à `sub` pour cet agent (`prete`).
 
     Changer sa procédure, sa consigne ou ses outils, c'est faire exécuter SES
     instructions sur le forfait d'un autre — la même faute que changer son modèle,
     par une autre porte. Le propriétaire qui nomme un éditeur y consent pour cet
-    agent ; le prêt vaut pour la famille où l'agent tourne DÉJÀ — le poser sur une
-    autre famille d'abonnement reste à lui seul. ÉTEINDRE reste ouvert à qui
+    agent ; le prêt vaut pour la famille où l'agent tourne DÉJÀ. `collectif` : `sub`
+    n'emprunte QUE par le prêt collectif (équipe, org entière, `op=lend`), consenti
+    SOUS LE MODÈLE du moment — il n'y pose pas un autre modèle d'abonnement (l'agent
+    tournerait sur le forfait sous un modèle que personne n'a prêté) ; il peut l'en
+    sortir. Poser l'agent sur une autre famille d'abonnement reste au propriétaire. ÉTEINDRE reste ouvert à qui
     administre l'org : personne ne doit avoir besoin du propriétaire pour arrêter
     un agent qui dérape (la suppression, elle, ne passe pas par ici)."""
     if not est_abonnement(famille):
         return
     if peut_agir_pour(sub, agent.get("sub"), famille):
         return
-    if prete and famille == runner_models.famille(agent.get("model")):
+    if (prete and famille == runner_models.famille(agent.get("model"))
+            and (not collectif
+                 or champs.get("model", agent.get("model")) == agent.get("model"))):
         return
     if set(champs) <= {"enabled"} and champs.get("enabled") is False:
         return
@@ -220,7 +226,8 @@ def exiger_le_droit_de_modifier(sub: str, agent: dict, famille: Optional[str],
         400, "subscription_personal_only",
         f"cet agent tourne sur l'abonnement `{famille}` de quelqu'un d'autre : ce que "
         "tu y changerais s'exécuterait sur SON forfait. Tu peux l'éteindre ; pour le "
-        "modifier, il faut que son propriétaire te nomme éditeur de cet agent.")
+        "modifier, il faut que son propriétaire te nomme éditeur de cet agent, ou qu'il "
+        "prête son forfait (`op=lend`) à l'équipe ou à l'org avec qui il l'a partagé.")
 
 
 def servable(sub: Optional[str], famille: str) -> tuple[bool, Optional[str], Optional[str]]:
@@ -580,8 +587,7 @@ def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
         fenetres = rapport.get("fenetres") or {}
         plafond = seuil(porteur, conclu.get("org_id"), famille) if fenetres else None
         # (échéance, fenêtre) : la fenêtre part avec la pause (`limit_fenetre`) — une
-        # pause dont on connaît la fenêtre n'est pas revérifiée par la sonde, et une
-        # fenêtre propre à un modèle n'est pas levée par la sonde d'un autre.
+        # fenêtre propre à un modèle n'est ni revérifiée ni levée par la sonde d'un autre.
         echeances = [
             (f["resetsAt"], nom) for nom, f in fenetres.items()
             if isinstance(f, dict)

@@ -473,7 +473,9 @@ _SERVER_INSTRUCTIONS = instructions.render()
 #
 # `quantity` (21/08, facturation du partenaire) utilise le MÊME seam (`note_call_trace`) mais
 # N'EST PAS dans cette liste : elle a SA PROPRE colonne (`tool_calls.quantity`),
-# posée directement par `_calllog_sink` ci-dessous — voir ce bloc, pas ici.
+# posée directement par `_calllog_sink` ci-dessous — voir ce bloc, pas ici. Même chose
+# pour `provider_credits` (crédits déduits par le fournisseur, dans son unité) : sa
+# colonne `tool_calls.provider_credits`, à côté de `quantity`, jamais dedans.
 #
 # `found_work_emails` / `found_personal_emails` / `found_phones` (11/09/2026, facturation
 # du partenaire) — sur un relevé FullEnrich TERMINÉ, le nombre de CONTACTS du job où au moins
@@ -896,8 +898,8 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
             trace = session_org.current_call_trace()
             # Règle UNIQUE partagée avec le traçage de la cible d'`oto_call`
             # (`calllog.apply_call_trace`) : entités résolues dans `args`, `quantity`
-            # (entier >= 0, un zéro tracé n'est pas un appel non tracé) et `key_mode`
-            # dans leurs propres colonnes. Le contexte est copié par create_task → le
+            # et `provider_credits` (entiers >= 0, un zéro tracé n'est pas un appel non
+            # tracé) et `key_mode` dans leurs propres colonnes. Le contexte est copié par create_task → le
             # holder est le même objet que celui muté par le handler.
             from .calllog import apply_call_trace
             apply_call_trace(row, trace, _TRACED_ARGS)
@@ -1226,6 +1228,13 @@ def main():
                 for t in tasks:
                     with contextlib.suppress(asyncio.CancelledError):
                         await t
+                # Le client HTTP partagé de l'embedding de requête (créé à la 1ʳᵉ
+                # recherche, sur cette boucle) : ses connexions se ferment ici.
+                from . import embeddings
+                try:
+                    await embeddings.fermer_client()
+                except Exception as e:
+                    logger.warning("embeddings client close at shutdown failed: %s", e)
 
         app.router.lifespan_context = _lifespan
 

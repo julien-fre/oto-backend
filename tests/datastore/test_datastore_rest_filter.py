@@ -126,6 +126,13 @@ def test_le_store_convertit_le_filtre_en_clauses():
             return []
 
         @staticmethod
+        def datastore_page_mince(ns_id, **kw):
+            # Tri par défaut, sans recherche : la page passe par le chemin mince
+            # (`tests/datastore/test_page_mince_rows.py`), mêmes filtres.
+            captured["list"] = kw
+            return []
+
+        @staticmethod
         def datastore_count_rows(ns_id, **kw):
             captured["count"] = kw
             return 0

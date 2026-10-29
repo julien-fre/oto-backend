@@ -31,7 +31,8 @@ SUB = "invitee"
 
 
 class _RowConn:
-    """Connexion factice : `execute(...).fetchone()` rend toujours la même ligne."""
+    """Connexion factice : `execute(...).fetchone()` rend toujours la même ligne — y
+    compris au `RETURNING` de la consommation, qui est donc gagnée."""
 
     def __init__(self, row):
         self._row = row
@@ -41,6 +42,9 @@ class _RowConn:
 
     def __exit__(self, *a):
         return False
+
+    def transaction(self):
+        return self
 
     def execute(self, sql, params=None):
         return type("R", (), {"fetchone": lambda s: self._row})()
@@ -56,17 +60,21 @@ def _patch(monkeypatch, *, org_role=None, group_role=None):
     Rend le journal des écritures réellement tentées sur les deux stores."""
     written = {"org": [], "group": []}
     monkeypatch.setattr(org_store, "get_org_role", lambda oid, sub: org_role)
-    monkeypatch.setattr(org_store, "add_org_member",
-                        lambda oid, sub, role, *, actor: written["org"].append((oid, sub, role)))
+    # L'adhésion s'écrit dans la transaction de la consommation (29/10/2026).
+    monkeypatch.setattr(org_store, "_connect", lambda: _RowConn({"id": 94}))
+    monkeypatch.setattr(org_store, "upsert_user", lambda sub: None)
+    monkeypatch.setattr(org_store, "_sync_mfa_mirror", lambda oid: None)
+    monkeypatch.setattr(org_store, "add_org_member_in",
+                        lambda conn, oid, sub, role, *, actor:
+                        written["org"].append((oid, sub, role)))
     monkeypatch.setattr(org_store, "set_active_org", lambda sub, oid: None)
     # La maison est LUE depuis oto#161 (le palier équipe ne pose le groupe actif que
     # si la maison est bien l'org du groupe) : sans ce stub, ce banc sans PG tomberait
     # sur `DATABASE_URL not set` au lieu de mesurer les rôles.
     monkeypatch.setattr(org_store, "get_active_org", lambda sub: ORG_ID)
-    monkeypatch.setattr(org_store, "_mark_invitation_accepted", lambda i, sub: None)
     monkeypatch.setattr(group_store, "get_group_role", lambda gid, sub: group_role)
-    monkeypatch.setattr(group_store, "add_group_member",
-                        lambda gid, sub, role: written["group"].append((gid, sub, role)))
+    monkeypatch.setattr(group_store, "add_group_member_in",
+                        lambda conn, gid, sub, role: written["group"].append((gid, sub, role)))
     monkeypatch.setattr(group_store, "set_active_group", lambda sub, gid: None)
     return written
 

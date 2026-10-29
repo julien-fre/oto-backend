@@ -44,8 +44,34 @@ DDL_COLONNE_HOOK_SOURCES = (f"ALTER TABLE runner_triggers ADD COLUMN IF NOT EXIS
 COLONNE_UPDATED_AT = "updated_at"
 DDL_COLONNE_UPDATED_AT = (f"ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS "
                           f"{COLONNE_UPDATED_AT} TIMESTAMPTZ")
+# L'AUTEUR du dernier changement d'un agent quand ce changement est une RETOUCHE
+# (`update_trigger`, le seul geste de configuration ouvert à un éditeur) — docs/
+# runner-et-automatisations.md §Dater un changement. Posée par la révision
+# `20261029_1200_pret_du_forfait` ET par le démarrage, sous garde de catalogue, en
+# LITTÉRAL dans `_init.py` (l'inventaire des colonnes-compte de la fusion,
+# `test_migrate_sub_inventory.py`, lit ce fichier-là). NULL = auteur non enregistré :
+# un agent d'avant, ou un dernier changement qui n'était pas une retouche (porte du
+# webhook, transfert — gestes de propriétaire ou d'admin, journalisés à part). Une
+# colonne-compte : repointée par la fusion (`db/users._SUB_COLUMNS`).
+COLONNE_UPDATED_BY = "updated_by"
 #: Le fragment que TOUTE écriture de configuration ajoute à son `SET`, et elles seules.
-_DATE_DU_CHANGEMENT = f"{COLONNE_UPDATED_AT} = NOW()"
+#: ⚠️ Il REMET l'auteur à NULL : une date de changement servie avec l'auteur d'un
+#: changement PRÉCÉDENT dirait faux. `update_trigger` seul pose l'auteur
+#: (`_CHANGEMENT_PAR`).
+_DATE_DU_CHANGEMENT = f"{COLONNE_UPDATED_AT} = NOW(), {COLONNE_UPDATED_BY} = NULL"
+_CHANGEMENT_PAR = f"{COLONNE_UPDATED_AT} = NOW(), {COLONNE_UPDATED_BY} = %s"
+
+# Le PRÊT COLLECTIF du forfait d'un agent (docs/runner-et-automatisations.md §Un agent
+# est à son propriétaire) : le MODÈLE sous lequel son propriétaire a prêté son
+# abonnement personnel aux équipes et à l'org entière qu'il a partagées en écriture
+# (`op=lend`). NULL = aucun prêt collectif — l'état de tous les agents d'avant : aucun
+# partage d'équipe ou d'org existant ne prête sans ce geste. Le prêt NOMMÉ (partage à
+# une personne posé par le propriétaire) n'en dépend pas (`_forfait_prete_nomme`). Le prêt ne vaut que tant que l'agent tourne sur CE modèle (`_pret_vivant`) :
+# un changement de modèle le rend caduc sans rien écrire. Un modèle, pas un compte :
+# le prêteur est toujours le propriétaire courant (`sub`), et le transfert efface la
+# colonne (`reprendre_trigger`). Posée par la révision `20261029_1200_pret_du_forfait`
+# ET par le démarrage, sous garde de catalogue — même DDL, littéral dans `_init.py`.
+COLONNE_PRET_DU_FORFAIT = "forfait_prete_model"
 
 # --- Le partage par défaut d'une org (`capabilities/orgs/partage_par_defaut.py`) ----
 # Ce qu'un objet NEUF de l'org reçoit d'office, par type : `{"agent": "lecture"}`.
@@ -87,7 +113,11 @@ _COLS = ("id, org_id, sub, label, folder, procedure, project_id, tools, "
          "max_tokens, max_run_seconds, model, kind, payload_mode, payload_fields, max_per_hour, fraicheur_s, "
          "cron, tz, enabled, next_due, last_enqueued_at, created_at, updated_at, hook_auth, "
          "(hook_signing_secret_enc IS NOT NULL) AS signing_secret_set, "
-         "max_per_day, hook_slug, hook_sources")
+         "max_per_day, hook_slug, hook_sources, updated_by, "
+         # Le prêt VIVANT, pas la colonne : un prêt caduc (modèle changé) se sert
+         # `false`, comme aucun prêt.
+         "(forfait_prete_model IS NOT NULL AND forfait_prete_model = model) "
+         "AS subscription_lent")
 
 #: ⚠️ `hook_secret_hash` n'est PAS dans `_COLS`, et c'est la garde : un haché servi
 #: à une lecture partirait dans la réponse de `op=list`, donc dans un transcript
@@ -191,18 +221,59 @@ def partages_d_agents(ids: list[int],
     return {int(r["resource_id"]): r["permission"] for r in rows}
 
 
-def _forfait_prete(alias_trigger: str) -> str:
-    """Le prédicat « le PROPRIÉTAIRE de cet agent a nommé l'éditeur `%s` » — un
-    partage `write` À UNE PERSONNE (ni l'org entière, ni une équipe), vivant, et
-    posé par celui sous qui l'agent tourne (`granted_by = sub`). Une seule écriture,
-    lue par `forfaits_pretes` et par la garde de `update_trigger`."""
+def _pret_vivant(alias_trigger: str) -> str:
+    """Le prédicat « le propriétaire a prêté son forfait pour cet agent, sous le modèle
+    où il tourne ENCORE » (`COLONNE_PRET_DU_FORFAIT`). Une seule écriture, lue par
+    `_forfait_prete` et par `outils_plateforme_du_travail`."""
+    a = alias_trigger
+    return (f"({a}.{COLONNE_PRET_DU_FORFAIT} IS NOT NULL "
+            f"AND {a}.{COLONNE_PRET_DU_FORFAIT} = {a}.model)")
+
+
+def _forfait_prete_nomme(alias_trigger: str) -> str:
+    """Le prêt NOMMÉ (le contrat d'avant, inchangé, 04/10/2026) : un partage `write`
+    vivant À `%s`, posé par celui sous qui l'agent tourne (`granted_by = sub`). Nommer
+    une personne éditrice est en soi le geste du titulaire, agent par agent : il prête
+    sans `op=lend` et sans lien au modèle. UN paramètre (le sub jugé)."""
     from ._partage_vivant import PARTAGE_VIVANT_G
+    a = alias_trigger
     return ("EXISTS (SELECT 1 FROM resource_grants g "
             "WHERE g.resource_type = 'runner_trigger' "
-            f"  AND g.resource_id = {alias_trigger}.id::text "
+            f"  AND g.resource_id = {a}.id::text "
             "  AND g.principal_type = 'user' AND g.principal_id = %s "
-            f"  AND g.permission = 'write' AND g.granted_by = {alias_trigger}.sub "
+            f"  AND g.permission = 'write' AND g.granted_by = {a}.sub "
             f"  AND {PARTAGE_VIVANT_G})")
+
+
+def _forfait_prete_collectif(alias_trigger: str) -> str:
+    """Le prêt COLLECTIF (29/10/2026) : un prêt VIVANT (`_pret_vivant`, le geste
+    `op=lend`, sous le modèle courant) ET un partage `write` vivant posé par le
+    propriétaire à une ÉQUIPE de l'org de l'agent dont `%s` est membre, ou à l'ORG
+    entière dont il est membre. L'appartenance se relit ici, au moment d'écrire. Ne
+    prêtent jamais : un partage d'admin, ceux de la révision 0035 et du réglage
+    `partage_par_defaut` (marqués), ceux d'un ancien propriétaire. UN paramètre."""
+    from ._partage_vivant import PARTAGE_VIVANT_G
+    a = alias_trigger
+    return (f"({_pret_vivant(a)} AND EXISTS (SELECT 1 "
+            "FROM (SELECT %s::text AS qui) q, resource_grants g "
+            "WHERE g.resource_type = 'runner_trigger' "
+            f"  AND g.resource_id = {a}.id::text "
+            f"  AND g.permission = 'write' AND g.granted_by = {a}.sub "
+            f"  AND {PARTAGE_VIVANT_G} "
+            "  AND ((g.principal_type = 'group' AND EXISTS (SELECT 1 "
+            "          FROM org_group_members m JOIN org_groups og ON og.id = m.group_id "
+            f"         WHERE m.group_id::text = g.principal_id AND og.org_id = {a}.org_id "
+            "            AND m.sub = q.qui)) "
+            f"    OR (g.principal_type = 'org' AND g.principal_id = {a}.org_id::text "
+            "        AND EXISTS (SELECT 1 FROM org_members om "
+            f"                   WHERE om.org_id = {a}.org_id AND om.sub = q.qui)))))")
+
+
+def _forfait_prete(alias_trigger: str) -> str:
+    """Le prédicat « le PROPRIÉTAIRE de cet agent prête son forfait à `%s` » : prêt
+    NOMMÉ OR prêt COLLECTIF. DEUX paramètres, le même sub deux fois. Une seule
+    écriture, lue par `forfaits_pretes` et par la garde de `update_trigger`."""
+    return f"({_forfait_prete_nomme(alias_trigger)} OR {_forfait_prete_collectif(alias_trigger)})"
 
 
 def visibilites_d_agents(ids: list[int], org_id: int) -> dict[int, dict]:
@@ -231,17 +302,18 @@ def visibilites_d_agents(ids: list[int], org_id: int) -> dict[int, dict]:
     return out
 
 
-def forfaits_pretes(ids: list[int], sub: str) -> set[int]:
-    """Parmi les agents `ids`, ceux dont le propriétaire a nommé `sub` éditeur — ce
-    qui lui PRÊTE son abonnement personnel pour cet agent (`_acces_agent`). UNE
-    requête pour toute une liste."""
+def forfaits_pretes(ids: list[int], sub: str, *, nomme: bool = False) -> set[int]:
+    """Parmi les agents `ids`, ceux dont le propriétaire PRÊTE son abonnement personnel
+    à `sub` (`_forfait_prete` : nommé, ou collectif sous `op=lend`). `nomme=True` : le
+    seul prêt NOMMÉ — ce qui distingue l'éditeur nommé (droits d'avant) de qui emprunte
+    par le prêt collectif (lié au modèle). UNE requête pour toute une liste."""
     if not ids or not sub:
         return set()
     with _connect() as conn:
         rows = conn.execute(
             "SELECT t.id FROM runner_triggers t WHERE t.id = ANY(%s) AND "
-            + _forfait_prete("t"),
-            ([int(i) for i in ids], sub),
+            + (_forfait_prete_nomme("t") if nomme else _forfait_prete("t")),
+            ([int(i) for i in ids], sub, *(() if nomme else (sub,))),
         ).fetchall()
     return {int(r["id"]) for r in rows}
 
@@ -251,9 +323,11 @@ def outils_plateforme_du_travail(job_id: int) -> list[str]:
     porteur (`verrou_org.outils_permis`) : la liste de l'agent de sa charge
     (`payload->>'trigger_id'`) — SEULEMENT si cet agent ne peut être changé que par celui
     sous qui le travail tourne. Même org, même porteur, posé sur l'abonnement PERSONNEL
-    de ce porteur, et prêté à aucun éditeur (`_forfait_prete`, ici pour n'importe quel
-    éditeur) : un admin de l'org et un partage à l'org entière ne peuvent alors que
-    l'éteindre (`_acces_agent`). `[]` pour un travail enfilé à la main ou d'une flotte
+    de ce porteur, prêté à aucun éditeur NOMMÉ (`_forfait_prete_nomme`, ici pour
+    n'importe quel éditeur) et SANS prêt collectif vivant (`_pret_vivant`) : un admin de
+    l'org et un partage à l'org entière ne peuvent alors que l'éteindre
+    (`_acces_agent`). ⚠️ Le prêt collectif ferme la liste dès qu'il est posé, qu'un
+    partage atteigne déjà quelqu'un ou non : la liste se ferme du côté sûr. `[]` pour un travail enfilé à la main ou d'une flotte
     (aucun agent), introuvable, dont l'agent a changé de main, ou qui ne remplit pas la
     condition — ce qui en dépend se ferme."""
     from ._partage_vivant import PARTAGE_VIVANT_G
@@ -266,7 +340,8 @@ def outils_plateforme_du_travail(job_id: int) -> list[str]:
             "  AND NOT EXISTS (SELECT 1 FROM resource_grants g "
             "    WHERE g.resource_type = 'runner_trigger' AND g.resource_id = t.id::text "
             "      AND g.principal_type = 'user' AND g.permission = 'write' "
-            f"      AND g.granted_by = t.sub AND {PARTAGE_VIVANT_G})",
+            f"      AND g.granted_by = t.sub AND {PARTAGE_VIVANT_G}) "
+            f"  AND NOT {_pret_vivant('t')}",
             (job_id, list(runner_models.MODELES_PERSONNELS)),
         ).fetchone()
     outils = (row or {}).get("outils_plateforme") if row else None
@@ -309,9 +384,12 @@ def reprendre_trigger(trigger_id: int, org_id: int,
             return None
         # ⚠️ La liste d'outils d'admin ne SUIT PAS l'agent : posée par l'ancien
         # propriétaire pour SON rôle, elle s'éteint au transfert (`outils_plateforme`).
+        # ⚠️ Le PRÊT du forfait non plus : c'était l'abonnement de l'ancien, et le
+        # nouveau n'a rien prêté. Les partages restent ; le repreneur prête le sien
+        # par son propre geste (`op=lend`), ou pas.
         row = conn.execute(
             f"UPDATE runner_triggers SET sub = %s, outils_plateforme = '[]'::jsonb, "
-            f"{_DATE_DU_CHANGEMENT} "
+            f"{COLONNE_PRET_DU_FORFAIT} = NULL, {_DATE_DU_CHANGEMENT} "
             f"WHERE id = %s AND org_id = %s "
             f"RETURNING {_COLS}",
             (nouveau_sub, trigger_id, org_id),
@@ -327,17 +405,42 @@ def reprendre_trigger(trigger_id: int, org_id: int,
     return dict(row), avant["sub"], repris
 
 
+def poser_pret_du_forfait(trigger_id: int, org_id: int, proprietaire: str,
+                          modele: Optional[str]) -> Optional[dict]:
+    """Pose (`modele` = le modèle de l'agent, lu par la capacité) ou retire (`None`) le
+    PRÊT du forfait de `proprietaire` pour cet agent. N'écrit QUE si `proprietaire`
+    l'est encore et, pour un prêt, si l'agent tourne encore sur `modele` : un transfert
+    ou un changement de modèle glissé entre la lecture et l'écriture ne prête rien
+    (None, à l'appelant de le dire). Ni la date ni l'auteur du changement : prêter
+    n'est pas changer ce que l'agent exécute."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"UPDATE runner_triggers SET {COLONNE_PRET_DU_FORFAIT} = %s "
+            "WHERE id = %s AND org_id = %s AND sub = %s"
+            + ("" if modele is None else " AND model = %s")
+            + f" RETURNING {_COLS}",
+            (modele, trigger_id, org_id, proprietaire,
+             *(() if modele is None else (modele,))),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
-                   hors_abonnement_d_autrui: Optional[str] = None) -> Optional[dict]:
+                   hors_abonnement_d_autrui: Optional[str] = None,
+                   par: Optional[str] = None) -> Optional[dict]:
     """Mise à jour partielle, org-scopée. `champs` ne contient QUE des colonnes
     déjà validées par la capacité (jamais de SQL construit sur l'entrée brute).
 
     `hors_abonnement_d_autrui=<sub>` : n'écrit PAS un déclencheur posé sur l'abonnement
     d'une autre personne que `<sub>` (rend None, comme un déclencheur inconnu) — sauf
-    si cette personne a nommé `<sub>` éditeur de l'agent (`_forfait_prete`). La
+    si cette personne lui prête son forfait pour cet agent (`_forfait_prete`). La
     garde vit dans l'écriture pour qu'une retouche ordinaire ne relise rien : c'est
     l'appelant qui relit, et seulement quand rien n'a été écrit. Le prêt s'y juge
-    aussi : retiré entre la lecture et l'écriture, il n'ouvre plus rien."""
+    aussi : retiré entre la lecture et l'écriture, il n'ouvre plus rien.
+
+    `par` = l'AUTEUR de la retouche, écrit dans `updated_by` avec la date : ce que le
+    propriétaire lit pour savoir quel éditeur a changé son agent. La capacité le
+    passe toujours ; None écrit « auteur non enregistré », jamais un auteur deviné."""
     autorises = {"label", "folder", "procedure", "project_id", "tools", "input", "max_steps",
                  # Les `oto_admin_*` exercés avec le rôle plateforme : jugés par la
                  # capacité (`capabilities/_outils_plateforme`), jamais par cette
@@ -371,9 +474,11 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
         else:
             sets.append(f"{k} = %s")
             vals.append(v)
+    sets.append(_CHANGEMENT_PAR)
+    vals.append(par)
     with _connect() as conn:
         row = conn.execute(
-            f"UPDATE runner_triggers SET {', '.join([*sets, _DATE_DU_CHANGEMENT])} "
+            f"UPDATE runner_triggers SET {', '.join(sets)} "
             f"WHERE id = %s AND org_id = %s"
             + ("" if hors_abonnement_d_autrui is None else
                " AND (model IS NULL OR NOT (model = ANY(%s)) OR sub = %s OR "
@@ -382,7 +487,7 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
             (*vals, trigger_id, org_id,
              *(() if hors_abonnement_d_autrui is None else
                (list(runner_models.MODELES_PERSONNELS), hors_abonnement_d_autrui,
-                hors_abonnement_d_autrui))),
+                hors_abonnement_d_autrui, hors_abonnement_d_autrui))),
         ).fetchone()
     # ⚠️ ÉTEINDRE, c'est aussi cesser de tiquer — donc cesser de périmer. Un
     # déclencheur désactivé laissait ses occurrences en attente pour toujours,

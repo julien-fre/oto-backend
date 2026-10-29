@@ -47,6 +47,26 @@ def serveur(compte, monkeypatch):
         return {"posted": True}
 
     @m.tool(annotations=LECTURE)
+    def acme_comptes() -> dict:
+        """Un connecteur à DEUX comptes, sans défaut : la résolution lève comme
+        `access.resolve._pick_account` — ambigu sans `_account`, introuvable pour un nom
+        qu'il n'a pas. Synchrone, comme un outil de connecteur : il joue dans un fil."""
+        from mcp.types import INVALID_PARAMS, ErrorData
+
+        from oto_mcp import session_org
+        appels.append("acme_comptes")
+        nomme = session_org.current_call_account()
+        if nomme is None:
+            raise access.CompteAmbigu(ErrorData(
+                code=INVALID_PARAMS, message="Multiple comptes `acme` (`un`, `deux`), with "
+                "no single default — pass `_account=\"<name>\"` on this call."))
+        if nomme not in ("un", "deux"):
+            raise access.CompteIntrouvable(ErrorData(
+                code=INVALID_PARAMS, message=f"Compte `{nomme}` not found for `acme`."),
+                nomme)
+        return {"compte": nomme}
+
+    @m.tool(annotations=LECTURE)
     async def acme_lent(marque: str = "") -> dict:
         appels.append("acme_lent")
         await asyncio.sleep(5)
@@ -424,3 +444,23 @@ def test_un_appel_annule_en_vol_n_est_ni_regle_ni_journalise_comme_un_succes(ser
             "SELECT ok FROM tool_calls WHERE sub = %s AND tool = 'acme_lent' "
             "AND args->>'marque' = %s", (SUB, marque)).fetchall()
     assert [r["ok"] for r in lignes] == [False]
+
+
+def test_un_compte_a_nommer_est_un_refus_nomme_dans_une_recette(serveur, monkeypatch):
+    """Deux comptes, aucun nommé : le code de la recette reçoit `account_required` (la
+    CLASSE `CompteAmbigu`, plus un `invalid_input` générique) et le message dit le geste ;
+    un nom absent, de même ; `_account=` d'un compte qui existe passe."""
+    from oto_mcp import call_axes
+    d_origine = call_axes.accepts_account_axis
+    monkeypatch.setattr(call_axes, "accepts_account_axis",
+                        lambda name: name == "acme_comptes" or d_origine(name))
+    m, appels = serveur
+    ambigu = _appeler(m, "acme_comptes", {})
+    assert (ambigu["ok"], ambigu["code"]) == (False, "account_required")
+    assert "_account=" in ambigu["message"]
+    introuvable = _appeler(m, "acme_comptes", {"_account": "trois"})
+    assert (introuvable["ok"], introuvable["code"]) == (False, "account_required")
+    assert "_account=" in introuvable["message"]
+    nomme = _appeler(m, "acme_comptes", {"_account": "deux"})
+    assert nomme["ok"] and nomme["result"] == {"compte": "deux"}
+    assert appels == ["acme_comptes"] * 3

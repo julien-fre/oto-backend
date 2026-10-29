@@ -85,6 +85,7 @@ SCOPES = {
     "zoho": access_levels.scopes_for("zoho", access_levels.FULL),
     "zohodesk": access_levels.scopes_for("zohodesk", access_levels.FULL),
     "zohoanalytics": ("ZohoAnalytics.data.read", "ZohoAnalytics.metadata.read"),
+    "zohosign": access_levels.scopes_for("zohosign", access_levels.FULL),
 }
 
 CONNECTORS = tuple(SCOPES)
@@ -100,7 +101,15 @@ VERIFICATION_SCOPES = {
     "zoho": ("ZohoCRM.org.READ",),
     "zohodesk": ("Desk.basic.READ",),
     "zohoanalytics": (),
+    # Zoho Sign documents no read of the account's organization: nothing to ask for, and
+    # nothing a consent can compare (`ORG_UNREADABLE`).
+    "zohosign": (),
 }
+
+#: The Zoho connectors whose consented organization cannot be read. A brought app
+#: without `zoho_org_id` consents with the `ORG_UNVERIFIED` warning and no organization
+#: shown; an app that names one is refused (`ZohoOrgUnverifiable`), never stored unchecked.
+ORG_UNREADABLE = frozenset({"zohosign"})
 
 
 def consent_scopes(connector: str, level: str) -> tuple[str, ...]:
@@ -446,6 +455,8 @@ def _read_to_show(connector: str, data_center: str, tokens: dict,
     hangs on this read: a failure revokes nothing, refuses nothing, keeps the warning
     alone, and is LOGGED under its name (`zoho_consented_org_unread`, exception type
     only — never a token nor a response body)."""
+    if connector in ORG_UNREADABLE:
+        return ()
     try:
         return tuple(consented_orgs(connector, data_center, tokens, app))
     except Exception as e:  # noqa: BLE001 — logged, the consent goes on with its warning
@@ -459,6 +470,10 @@ def consented_orgs(connector: str, data_center: str, tokens: dict,
     """The organizations the new token reaches (`ConsentedOrg`). Every identifier Zoho
     shows an admin counts (CRM: `id`, `zgid`, `domain_name`)."""
     dc = normalize_region(data_center)
+    if connector in ORG_UNREADABLE:
+        raise ZohoOrgUnverifiable(
+            f"{connector} exposes no read of the consented Zoho organization: an app "
+            "that names one (`zoho_org_id`) cannot be checked, nothing was stored.")
     if connector == "zohoanalytics":
         return [ConsentedOrg(frozenset({o["org_id"]}), o.get("name") or "", str(o["org_id"]))
                 for o in analytics_orgs({**app, **tokens, "data_center": dc})]

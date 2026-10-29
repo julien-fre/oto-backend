@@ -172,62 +172,71 @@ def add_org_member(org_id: int, sub: str, org_role: str = "org_member", *,
     non-perso, ce qui est sans effet : active=None → elle devient maison de toute
     façon.)
     """
-    if org_role not in ORG_ROLES:
-        raise ValueError(f"org_role invalide {org_role!r} (attendu: {ORG_ROLES})")
     upsert_user(sub)
     with _connect() as conn:
         with conn.transaction():
-            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (sub,))
-            existing = conn.execute(
-                "SELECT org_role FROM org_members WHERE org_id = %s AND sub = %s",
-                (org_id, sub),
-            ).fetchone()
-            if existing:
-                conn.execute(
-                    "UPDATE org_members SET org_role = %s WHERE org_id = %s AND sub = %s",
-                    (org_role, org_id, sub),
-                )
-                if existing["org_role"] != org_role:
-                    _journaliser(conn, org_id, sub, "role_changed",
-                                 existing["org_role"], org_role, actor)
-            else:
-                active = conn.execute(
-                    """
-                    SELECT m.org_id, (o.personal_of IS NOT NULL) AS personal
-                      FROM org_members m JOIN orgs o ON o.id = m.org_id
-                     WHERE m.sub = %s AND m.is_active
-                    """,
-                    (sub,),
-                ).fetchone()
-                jp = conn.execute(
-                    "SELECT (personal_of IS NOT NULL) AS p FROM orgs WHERE id = %s",
-                    (org_id,),
-                ).fetchone()
-                joining_personal = bool(jp and jp["p"])
-                # L'org perso reste perso quand d'autres membres la rejoignent (décision
-                # d'Alexis du 29/09/2026) : `personal_of` est une ÉTIQUETTE — l'org créée
-                # à l'inscription —, pas un état qui change à l'invitation. Le retirer
-                # ici laissait son propriétaire sans org perso jusqu'au prochain boot,
-                # et ses projets personnels hors de toute liste.
-                if active is None:
-                    make_active = True
-                elif not joining_personal and active["personal"]:
-                    conn.execute(
-                        "UPDATE org_members SET is_active = FALSE WHERE sub = %s AND org_id = %s",
-                        (sub, active["org_id"]),
-                    )
-                    make_active = True
-                else:
-                    make_active = False
-                conn.execute(
-                    """
-                    INSERT INTO org_members (org_id, sub, org_role, is_active)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (org_id, sub, org_role, make_active),
-                )
-                _journaliser(conn, org_id, sub, "added", None, org_role, actor)
+            add_org_member_in(conn, org_id, sub, org_role, actor=actor)
     _sync_mfa_mirror(org_id)   # pousse le nouveau membre dans l'org Logto miroir si MFA
+
+
+def add_org_member_in(conn, org_id: int, sub: str, org_role: str, *,
+                      actor: Optional[str]) -> None:
+    """Le corps d'`add_org_member`, sur la transaction OUVERTE de l'appelant : pour
+    lier l'adhésion à une écriture qui doit réussir ou échouer avec elle (la
+    consommation d'une invitation, `invitations._accept_invitation_row`). La ligne
+    `users` et le miroir MFA restent à l'appelant, hors de la transaction."""
+    if org_role not in ORG_ROLES:
+        raise ValueError(f"org_role invalide {org_role!r} (attendu: {ORG_ROLES})")
+    conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (sub,))
+    existing = conn.execute(
+        "SELECT org_role FROM org_members WHERE org_id = %s AND sub = %s",
+        (org_id, sub),
+    ).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE org_members SET org_role = %s WHERE org_id = %s AND sub = %s",
+            (org_role, org_id, sub),
+        )
+        if existing["org_role"] != org_role:
+            _journaliser(conn, org_id, sub, "role_changed",
+                         existing["org_role"], org_role, actor)
+    else:
+        active = conn.execute(
+            """
+            SELECT m.org_id, (o.personal_of IS NOT NULL) AS personal
+              FROM org_members m JOIN orgs o ON o.id = m.org_id
+             WHERE m.sub = %s AND m.is_active
+            """,
+            (sub,),
+        ).fetchone()
+        jp = conn.execute(
+            "SELECT (personal_of IS NOT NULL) AS p FROM orgs WHERE id = %s",
+            (org_id,),
+        ).fetchone()
+        joining_personal = bool(jp and jp["p"])
+        # L'org perso reste perso quand d'autres membres la rejoignent (décision
+        # d'Alexis du 29/09/2026) : `personal_of` est une ÉTIQUETTE — l'org créée
+        # à l'inscription —, pas un état qui change à l'invitation. Le retirer
+        # ici laissait son propriétaire sans org perso jusqu'au prochain boot,
+        # et ses projets personnels hors de toute liste.
+        if active is None:
+            make_active = True
+        elif not joining_personal and active["personal"]:
+            conn.execute(
+                "UPDATE org_members SET is_active = FALSE WHERE sub = %s AND org_id = %s",
+                (sub, active["org_id"]),
+            )
+            make_active = True
+        else:
+            make_active = False
+        conn.execute(
+            """
+            INSERT INTO org_members (org_id, sub, org_role, is_active)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (org_id, sub, org_role, make_active),
+        )
+        _journaliser(conn, org_id, sub, "added", None, org_role, actor)
 
 
 def remove_org_member(org_id: int, sub: str, *, actor: Optional[str] = None) -> bool:
@@ -363,6 +372,39 @@ def list_org_members(org_id: int) -> list[dict]:
             (org_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def list_org_members_with_users(org_id: int) -> list[dict]:
+    """`list_org_members`, plus ce que la fiche d'org lit de la ligne `users` de chaque
+    membre (`email`, `name`, `avatar_url`, `suspended_at`, `user_role`), en UNE
+    requête : la fiche faisait un `db.get_user` par membre. `None` pour un membre sans
+    ligne `users`, comme le `get_user(...) or {}` qu'elle remplace."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT m.sub, m.org_role, m.is_active, m.joined_at, u.email, u.name, "
+            "u.avatar_url, u.suspended_at, u.role AS user_role "
+            "FROM org_members m LEFT JOIN users u ON u.sub = m.sub "
+            "WHERE m.org_id = %s ORDER BY m.joined_at",
+            (org_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def count_org_members(org_ids: list[int]) -> dict[int, int]:
+    """`len(list_org_members(o))` pour chaque org, en UNE requête : les mêmes lignes
+    (`org_members` seul, ni compte de service ni filtre), comptées. Une org sans
+    membre vaut 0. Sert la liste des orgs d'un compte, qui comptait org par org."""
+    ids = sorted({int(o) for o in org_ids})
+    if not ids:
+        return {}
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT org_id, count(*) AS n FROM org_members "
+            "WHERE org_id = ANY(%s) GROUP BY org_id",
+            (ids,),
+        ).fetchall()
+    comptes = {r["org_id"]: r["n"] for r in rows}
+    return {o: comptes.get(o, 0) for o in ids}
 
 
 def list_member_events(org_id: int, *, limit: int,

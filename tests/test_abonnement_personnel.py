@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 
+from oto_mcp import runner_models
 from oto_mcp.capabilities import _abonnement, runner_jobs as RJ
 from oto_mcp.capabilities._types import AuthzDenied
 from oto_mcp.db import user_subscriptions as US
@@ -685,6 +686,23 @@ class TestRetoucheParUnAutre:
                 "un-collegue", self._AGENT, "un_autre_abonnement",
                 {"model": "autre:modele"}, prete=True)
         assert e.value.code == "subscription_personal_only"
+
+    def test_le_pret_COLLECTIF_ne_vaut_que_pour_le_modele_ou_l_agent_tourne(self):
+        """Prêté à une équipe ou à l'org sous un modèle (`op=lend`, 29/10/2026) : qui
+        emprunte par lui n'en pose pas un autre dans le forfait ; le reposer tel quel
+        passe. L'éditeur NOMMÉ garde ses droits d'avant."""
+        autre = next(m for m in runner_models.MODELES_PERSONNELS
+                     if m != self._AGENT["model"])
+        with pytest.raises(Exception) as e:
+            _abonnement.exiger_le_droit_de_modifier(
+                "un-collegue", self._AGENT, _FAMILLE, {"model": autre}, prete=True,
+                collectif=True)
+        assert e.value.code == "subscription_personal_only"
+        _abonnement.exiger_le_droit_de_modifier(
+            "un-collegue", self._AGENT, _FAMILLE, {"model": self._AGENT["model"]},
+            prete=True, collectif=True)
+        _abonnement.exiger_le_droit_de_modifier(
+            "un-collegue", self._AGENT, _FAMILLE, {"model": autre}, prete=True)
 
     def test_la_couture_du_partage_est_UNIQUE(self, monkeypatch):
         """Le jour où une connexion se partage, UNE fonction change — et les trois

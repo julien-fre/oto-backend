@@ -93,6 +93,9 @@ _DECLARATIONS: tuple[str, ...] = (
     # Neighbour of `pennylane`/`finkare` (Finance): e-invoicing, read-only — wired
     # 2026-10-22. The person signs in with jefacture.com (OAuth, platform application).
     "jefacture",
+    # Neighbour of `pennylane`/`jefacture` (Finance): business banking, read-only —
+    # wired 2026-10-29. The organization's API key, one field `login:secret-key`.
+    "qonto",
     "slack",
     "fullenrich",
     "waterfall_email",
@@ -212,6 +215,8 @@ _DECLARATIONS: tuple[str, ...] = (
     "zoho",
     "zohodesk",
     "zohoanalytics",
+    # The fourth Zoho connector: e-signature, on the same Zoho OAuth (`auth/zoho.py`).
+    "zohosign",
     "salesforce",
     "pipedrive",
     "sellsy",
@@ -335,6 +340,9 @@ _DECLARATIONS: tuple[str, ...] = (
     # Neighbour of `elevenlabs` by situation (media production): video hosting
     # and streaming on the customer's Mux account.
     "mux",
+    # Neighbour of `elevenlabs` by situation (media production): images and video
+    # clips generated on the customer's prepaid Higgsfield balance — wired 2026-10-28.
+    "higgsfield",
     # --- document management (GED), read-only — wired 2026-10-20 -------------
     # The documents a company keeps indexed in Zeendoc (supplier invoices…): a
     # Zeendoc user's login and password and the cabinet id travel together.

@@ -59,6 +59,9 @@ def _wire(monkeypatch, rec, *, org=99, groups=({"group_id": 5, "org_id": 99, "na
     monkeypatch.setattr(D.db, "list_datastores_for_owners", fake_owned)
     monkeypatch.setattr(D.db, "list_datastores_granted_to", fake_granted)
     monkeypatch.setattr(D.ownership, "can_govern", lambda sub, t, rid: False)
+    # La liste juge sa gouvernance par lot (`can_govern_many`, même règle).
+    monkeypatch.setattr(D.ownership, "can_govern_many",
+                        lambda sub, t, owners: {rid: False for rid in owners})
 
 
 def test_list_datastores_scopes_groups_on_active_org(monkeypatch):

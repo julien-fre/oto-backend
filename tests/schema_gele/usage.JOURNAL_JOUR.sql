@@ -20,7 +20,8 @@ durees INTEGER[] NOT NULL,
 taille_n INTEGER NOT NULL,
 taille_somme BIGINT NOT NULL,
 tailles INTEGER[] NOT NULL,
-dernier_at TIMESTAMPTZ NOT NULL
+dernier_at TIMESTAMPTZ NOT NULL,
+credits_fournisseur BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_journal_totaux_jour_jour ON journal_totaux_jour (jour);
 CREATE INDEX IF NOT EXISTS idx_journal_totaux_jour_org ON journal_totaux_jour (org_id, jour);

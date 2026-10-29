@@ -41,7 +41,7 @@ def org(monkeypatch):
     monkeypatch.setattr(db, "get_trigger",
                         lambda i, o: dict(agent) if (i, o) == (7, ORG) else None)
 
-    def _maj(i, o, champs, hors_abonnement_d_autrui=None):
+    def _maj(i, o, champs, hors_abonnement_d_autrui=None, par=None):
         etat["ecrit"] = champs
         return {**agent, **champs}
     monkeypatch.setattr(db, "update_trigger", _maj)
@@ -277,8 +277,8 @@ def test_le_proprietaire_partage_a_un_membre_par_son_adresse(org):
     rep = _appel(PROPRIETAIRE, op="share", trigger_id=7,
                  share_with_email="autre@x.test", role="viewer")
     assert org["partages"][("user", AUTRE)] == "viewer"
-    assert {"principal_type": "user", "sub": AUTRE, "email": "autre@x.test",
-            "role": "viewer", "granted_at": None} in rep["shares"]
+    assert {"principal_type": "user", "sub": AUTRE, "group_id": None,
+            "email": "autre@x.test", "role": "viewer", "granted_at": None} in rep["shares"]
 
 
 def test_le_role_par_defaut_est_editeur(org):
@@ -401,20 +401,22 @@ def test_on_retire_par_son_adresse_le_partage_d_un_membre_parti(org):
 # Un agent posé sur l'abonnement Claude de son propriétaire ne se modifiait que par
 # lui : un éditeur ne pouvait que l'éteindre, et seule la reprise (`take_over`)
 # ouvrait l'agent. Désormais le propriétaire PRÊTE son forfait pour cet agent en
-# nommant un éditeur. Ne le prêtent pas : un partage à l'org entière (la révision
-# 0035 en pose un sur chaque agent existant), ni un partage posé par un admin.
+# nommant un éditeur ; à une équipe ou à l'org entière, seulement par `op=lend`
+# (29/10/2026). Ne le prêtent pas : la révision 0035, un partage posé par un admin.
 
 NOMME_PAR_ADMIN = "nomme-par-admin"
 
 
 @pytest.fixture
 def forfait(org, monkeypatch):
-    """L'agent tourne sur l'abonnement de PROPRIETAIRE. EDITEUR est nommé par lui ;
-    NOMME_PAR_ADMIN est éditeur nommé, mais par un admin ; AUTRE ne l'est que par
-    le partage à toute l'org."""
+    """L'agent tourne sur l'abonnement de PROPRIETAIRE, sans prêt collectif. EDITEUR
+    est nommé par lui ; NOMME_PAR_ADMIN est éditeur nommé, mais par un admin ;
+    AUTRE ne l'est que par le partage à toute l'org de la révision 0035 ; EQUIPIER est
+    membre de l'équipe 12."""
     from oto_mcp import runner_models
     agent = org["agent"]
     agent["model"] = "sub:sonnet"
+    agent["forfait_prete_model"] = None
     partages = org["partages"]
     partages[("user", NOMME_PAR_ADMIN)] = "editor"
     partages[("org", str(ORG))] = "editor"
@@ -428,22 +430,53 @@ def forfait(org, monkeypatch):
         poses_par[(ptype, pid)] = granted_by
     monkeypatch.setattr(ownership, "grant", _grant)
 
-    def _pretes(ids, sub):
-        # `_forfait_prete` en base : un partage `write` À LA PERSONNE, posé par le
-        # propriétaire de l'agent.
-        nomme = (partages.get(("user", sub)) == "editor"
-                 and poses_par.get(("user", sub)) == agent["sub"])
-        return {7} if nomme and 7 in ids else set()
+    equipes = {EQUIPIER: "12"}
+
+    def _par_lui(c):
+        return partages.get(c) == "editor" and poses_par.get(c) == agent["sub"]
+
+    def _pretes(ids, sub, nomme=False):
+        # `_forfait_prete` en base : le prêt NOMMÉ (partage `write` à la personne posé
+        # par le propriétaire), OR le prêt COLLECTIF (prêt vivant sous le modèle
+        # courant, et partage posé par lui à son équipe ou à toute l'org).
+        atteint = _par_lui(("user", sub))
+        if not nomme and agent.get("forfait_prete_model") == agent["model"]:
+            cibles = [("org", str(ORG))] + ([("group", equipes[sub])] if sub in equipes else [])
+            atteint = atteint or any(_par_lui(c) for c in cibles)
+        return {7} if atteint and 7 in ids else set()
     monkeypatch.setattr(RT.db, "forfaits_pretes", _pretes)
 
-    def _maj(i, o, champs, hors_abonnement_d_autrui=None):
+    def _maj(i, o, champs, hors_abonnement_d_autrui=None, par=None):
         h = hors_abonnement_d_autrui
         if (h and agent["model"] in runner_models.MODELES_PERSONNELS
                 and agent["sub"] != h and 7 not in _pretes([7], h)):
             return None   # la garde d'écriture, comme en base
         org["ecrit"] = champs
+        org["par"] = par
         return {**agent, **champs}
     monkeypatch.setattr(RT.db, "update_trigger", _maj)
+
+    def _preter(i, o, proprietaire, modele):
+        # `poser_pret_du_forfait` en base : n'écrit que si le propriétaire l'est
+        # encore et, pour un prêt, si le modèle n'a pas bougé.
+        if agent["sub"] != proprietaire or (modele is not None and agent["model"] != modele):
+            return None
+        agent["forfait_prete_model"] = modele
+        return dict(agent)
+    monkeypatch.setattr(RT.db, "poser_pret_du_forfait", _preter)
+
+    class _Scope:
+        def __init__(self, sub):
+            self.sub = sub
+
+        def principal_pairs(self):
+            # Comme le vrai `accessor_scope` : l'org n'est une paire que d'un membre.
+            pairs = [("user", self.sub)] + ([("org", str(ORG))] if self.sub != DEHORS else [])
+            return pairs + ([("group", equipes[self.sub])] if self.sub in equipes else [])
+    monkeypatch.setattr(ownership, "accessor_scope", _Scope)
+    from oto_mcp import group_store
+    monkeypatch.setattr(group_store, "get_group",
+                        lambda g: {"id": g, "org_id": ORG} if g == 12 else None)
 
     # Rallumer : seule la garde de pose d'un abonnement parle ici — et l'on note
     # AU NOM DE QUI elle se juge.
@@ -554,3 +587,97 @@ def test_apres_une_reprise_les_partages_de_l_ancien_ne_pretent_pas_le_nouveau(fo
     forfait["agent"]["sub"] = ADMIN   # repris : EDITEUR avait été nommé par l'ancien
     assert _refus(EDITEUR, op="update", trigger_id=7, input="x").code == \
         "subscription_personal_only"
+
+
+# ── le prêt, un geste du titulaire (29/10/2026) ──────────────────────────────
+
+EQUIPIER = "equipier"
+
+
+def _equipe_et_org_par_le_proprietaire():
+    _appel(PROPRIETAIRE, op="share", trigger_id=7, share_with_group=12)
+    _appel(PROPRIETAIRE, op="share", trigger_id=7, everyone=True)
+
+
+def test_sans_pret_l_org_entiere_et_l_equipe_restent_fermees(forfait):
+    """Partagés en écriture par le propriétaire, AVANT tout geste : ni l'équipe ni l'org
+    n'empruntent. L'éditeur nommé emprunte comme avant."""
+    _equipe_et_org_par_le_proprietaire()
+    for sub in (EQUIPIER, AUTRE):
+        assert _refus(sub, op="update", trigger_id=7, input="x").code == \
+            "subscription_personal_only", sub
+        t, = _appel(sub, op="list")["triggers"]
+        assert t["can_edit"] is False
+    _appel(EDITEUR, op="update", trigger_id=7, input="par le nommé")
+    assert forfait["ecrit"] == {"input": "par le nommé"}
+
+
+def test_le_titulaire_prete_a_l_equipe_et_a_l_org(forfait):
+    _equipe_et_org_par_le_proprietaire()
+    t = _appel(PROPRIETAIRE, op="lend", trigger_id=7)["trigger"]
+    assert forfait["agent"]["forfait_prete_model"] == "sub:sonnet"
+    assert t["sub"] == PROPRIETAIRE, "l'identité d'exécution ne bouge pas"
+    for sub in (EQUIPIER, AUTRE, EDITEUR):
+        _appel(sub, op="update", trigger_id=7, input=f"par {sub}")
+        assert forfait["ecrit"] == {"input": f"par {sub}"}
+        assert forfait["par"] == sub, "l'auteur de la retouche est enregistré"
+
+
+def test_qui_emprunte_par_le_pret_collectif_ne_change_pas_de_modele(forfait):
+    """Le prêt collectif vaut pour le modèle du geste ; l'éditeur nommé, lui, garde
+    ses droits d'avant."""
+    _equipe_et_org_par_le_proprietaire()
+    _appel(PROPRIETAIRE, op="lend", trigger_id=7)
+    e = _refus(EQUIPIER, op="update", trigger_id=7, model="sub:opus")
+    assert (e.status, e.code) == (400, "subscription_personal_only")
+    assert forfait["ecrit"] is None
+    _appel(EDITEUR, op="update", trigger_id=7, model="sub:opus")
+    assert forfait["ecrit"] == {"model": "sub:opus"}
+
+
+def test_le_partage_a_une_equipe_d_une_autre_org_est_refuse(forfait):
+    e = _refus(PROPRIETAIRE, op="share", trigger_id=7, share_with_group=99)
+    assert (e.status, e.code) == (404, "share_group_not_in_org")
+    e = _refus(PROPRIETAIRE, op="share", trigger_id=7, share_with_group=12, everyone=True)
+    assert e.code == "share_target_ambiguous"
+
+
+@pytest.mark.parametrize("op", ["lend", "unlend"])
+@pytest.mark.parametrize("sub", [ADMIN, EDITEUR, AUTRE])
+def test_un_non_titulaire_ne_prete_ni_ne_reprend(forfait, sub, op):
+    avant = forfait["agent"]["forfait_prete_model"]
+    e = _refus(sub, op=op, trigger_id=7)
+    assert (e.status, e.code) == (403, "trigger_owner_required")
+    assert forfait["agent"]["forfait_prete_model"] == avant
+
+
+def test_qui_ne_voit_pas_l_agent_ne_prete_pas_et_n_apprend_rien(forfait):
+    e = _refus(DEHORS, op="lend", trigger_id=7)
+    assert (e.status, e.code) == (404, "trigger_not_found")
+
+
+def test_un_agent_hors_abonnement_n_a_rien_a_preter(forfait):
+    forfait["agent"]["model"] = "claude-sonnet-5"
+    assert _refus(PROPRIETAIRE, op="lend", trigger_id=7).code == "lend_not_on_subscription"
+
+
+def test_un_changement_de_modele_rend_le_pret_caduc(forfait):
+    _equipe_et_org_par_le_proprietaire()
+    _appel(PROPRIETAIRE, op="lend", trigger_id=7)
+    forfait["agent"]["model"] = "sub:opus"   # le propriétaire l'a changé
+    assert _refus(AUTRE, op="update", trigger_id=7, input="x").code == \
+        "subscription_personal_only"
+    _appel(PROPRIETAIRE, op="lend", trigger_id=7)   # un nouveau geste, sous opus
+    _appel(AUTRE, op="update", trigger_id=7, input="x")
+    assert forfait["ecrit"] == {"input": "x"}
+
+
+def test_retirer_le_pret_referme_l_equipe_pas_le_nomme(forfait):
+    _equipe_et_org_par_le_proprietaire()
+    _appel(PROPRIETAIRE, op="lend", trigger_id=7)
+    _appel(PROPRIETAIRE, op="unlend", trigger_id=7)
+    assert forfait["agent"]["forfait_prete_model"] is None
+    assert _refus(EQUIPIER, op="update", trigger_id=7, input="x").code == \
+        "subscription_personal_only"
+    _appel(EDITEUR, op="update", trigger_id=7, input="y")
+    assert forfait["ecrit"] == {"input": "y"}

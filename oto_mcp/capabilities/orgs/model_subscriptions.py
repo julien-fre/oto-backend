@@ -25,8 +25,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from ... import org_store
-from ...db import org_subscription_limits, org_subscription_pool
+from ... import org_store, roles
+from ...db import org_subscription_limits, org_subscription_pool, user_subscriptions
 from .. import _abonnement
 from .._authz import ORG_ADMIN_OF, ORG_MEMBER_OF
 from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
@@ -42,17 +42,26 @@ _PATH_REPLI = "/api/orgs/{id}/model-subscriptions/{family}/api-fallback"
 class Preteur(BaseModel):
     """Un membre qui prête son abonnement au pool de l'org — et RIEN de plus.
 
-    ⚠️ Ni palier, ni état de connexion, ni échéance, ni plafond perso : un abonnement
+    ⚠️ Ni palier, ni état de connexion, ni échéance, ni usage : un abonnement
     appartient à qui le paie (`capabilities/me_abonnements.py`), et prêter partage sa
     CAPACITÉ, pas son état. « Au plafond jusqu'à … » dirait à toute l'org l'usage
     TOTAL d'un compte, usage personnel compris. Même forme pour un admin d'org
-    (décision d'Alexis, 08/10/2026)."""
+    (décision d'Alexis, 08/10/2026), à UNE exception près (décision d'Alexis,
+    29/10/2026) : l'org_admin SEUL lit `limit_pct`, le plafond effectif du prêteur —
+    un RÉGLAGE qu'il a choisi (ou celui de l'org), jamais son usage. Il dit à qui
+    gouverne le pool quelle part de chaque forfait les agents peuvent prendre ; un
+    membre ne le lit pas."""
     sub: str
     usable_now: bool = Field(
         description=("Whether this subscription is usable right now (connected, or at a "
                      "cap that has already lifted). It does not promise the job queue "
                      "will pick it: one job in flight per lender, and only while the "
                      "org runs in `pool` mode."))
+    limit_pct: Optional[int] = Field(
+        default=None,
+        description=("Org admins only (absent for members): the lender's effective cap "
+                     "in % of their account's TOTAL usage — their own if they set one, "
+                     "else the org's. A setting, never usage."))
 
 
 class OrgPlafond(BaseModel):
@@ -89,7 +98,8 @@ class OrgPlafond(BaseModel):
         default_factory=list,
         description=("One entry per member who lends this org their subscription, in "
                      "either mode: who (`sub`) and whether it is usable right now "
-                     "(`usable_now`) — never their tier, state, reset time or usage."))
+                     "(`usable_now`) — never their tier, state, reset time or usage. "
+                     "An org admin also reads each one's effective cap (`limit_pct`)."))
     api_fallback: bool = Field(
         default=False,
         description=("`true`: a job whose subscription (the requester's, or the whole "
@@ -142,10 +152,21 @@ def _exiger(org_id: int, famille: str) -> None:
             f"({', '.join(sorted(_abonnement.FAMILLES))}).")
 
 
-def _servi(org_id: int, famille: str) -> dict:
+def _servi(org_id: int, famille: str, admin: bool) -> dict:
+    """`admin` : le lecteur gouverne l'org — lui seul lit le plafond de chaque prêteur."""
     repli = {"api_fallback": org_subscription_pool.repli_api_actif(org_id, famille)}
-    preteurs = [{"sub": p["sub"], "usable_now": bool(p["servable"])}
-                for p in org_subscription_pool.preteurs(org_id, famille)]
+    ligne = org_subscription_limits.get_limite(org_id, famille)
+    de_l_org = ligne["limite_pct"] if ligne else _abonnement.DEFAUT_LIMITE_PCT
+    preteurs = []
+    for p in org_subscription_pool.preteurs(org_id, famille):
+        entree = {"sub": p["sub"], "usable_now": bool(p["servable"])}
+        if admin:
+            # LA règle est `_abonnement.seuil` : le perso s'il est posé (borné), sinon
+            # celui de l'org. Relue ici sur la ligne déjà lue, sans requête par prêteur.
+            perso = p.get("limite_pct")
+            entree["limit_pct"] = (min(perso, user_subscriptions.LIMITE_PERSO_MAX)
+                                   if perso is not None else de_l_org)
+        preteurs.append(entree)
     # `pool_size` se DÉDUIT de `lenders` : une seule lecture, aucun écart possible
     # entre le compte et la liste montrés sur le même écran.
     # Sans mode CHOISI, l'écran dit `personnel` comme avant, et `mode_chosen: false` :
@@ -155,7 +176,6 @@ def _servi(org_id: int, famille: str) -> dict:
             "mode_chosen": regle is not None,
             "pool_size": sum(p["usable_now"] for p in preteurs),
             "lenders": preteurs}
-    ligne = org_subscription_limits.get_limite(org_id, famille)
     if not ligne:
         return {"org_id": org_id, "family": famille,
                 "limit_pct": _abonnement.DEFAUT_LIMITE_PCT, "default": True,
@@ -171,7 +191,7 @@ def _servi(org_id: int, famille: str) -> dict:
 # (`docs/event-loop-perf.md`).
 def _get_plafond(ctx: ResolvedCtx, inp: GetOrgPlafondInput) -> dict:
     _exiger(inp.org_id, inp.family)
-    return _servi(inp.org_id, inp.family)
+    return _servi(inp.org_id, inp.family, roles.is_org_admin(ctx.sub, inp.org_id))
 
 
 def _set_plafond(ctx: ResolvedCtx, inp: SetOrgPlafondInput) -> dict:
@@ -182,7 +202,7 @@ def _set_plafond(ctx: ResolvedCtx, inp: SetOrgPlafondInput) -> dict:
     else:
         org_subscription_limits.poser_limite(inp.org_id, inp.family, inp.limit_pct,
                                              ctx.sub)
-    return _servi(inp.org_id, inp.family)
+    return _servi(inp.org_id, inp.family, True)
 
 
 def _set_mode(ctx: ResolvedCtx, inp: SetOrgModeInput) -> dict:
@@ -192,7 +212,7 @@ def _set_mode(ctx: ResolvedCtx, inp: SetOrgModeInput) -> dict:
     est nul."""
     _exiger(inp.org_id, inp.family)
     org_subscription_pool.poser_mode(inp.org_id, inp.family, inp.mode, ctx.sub)
-    return _servi(inp.org_id, inp.family)
+    return _servi(inp.org_id, inp.family, True)
 
 
 def _set_repli(ctx: ResolvedCtx, inp: SetOrgRepliInput) -> dict:
@@ -203,7 +223,7 @@ def _set_repli(ctx: ResolvedCtx, inp: SetOrgRepliInput) -> dict:
     _exiger(inp.org_id, inp.family)
     org_subscription_pool.set_repli_api(inp.org_id, inp.family, inp.api_fallback,
                                         ctx.sub)
-    return _servi(inp.org_id, inp.family)
+    return _servi(inp.org_id, inp.family, True)
 
 
 _ERREURS = (
@@ -224,7 +244,8 @@ CAPABILITIES += [
                      "Also returns the org's `mode` (`personnel` | `pool`), its "
                      "`pool_size` (members lending a usable subscription) and "
                      "`lenders` (who lends, and whether each is usable right now — "
-                     "never their tier, state or usage)."),
+                     "never their tier, state or usage; an org admin also reads each "
+                     "lender's effective cap, `limit_pct`)."),
         rest=RestBinding("GET", _PATH, _ID),
     ),
     Capability(

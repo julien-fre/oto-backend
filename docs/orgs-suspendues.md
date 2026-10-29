@@ -41,7 +41,9 @@ de l'org visée.
 ## 3. Ce qui reste ouvert
 
 `org_suspension.OUVERTES` : se voir, lister ses orgs, lire l'org, en changer, la
-quitter ; les gestes de COMPTE (jetons, CGU, avatar) ; ce qui lit ou RETIRE un accès
+quitter ; rejoindre une AUTRE org par l'invitation qui y attend (`org.invite.claim`,
+qui juge elle-même l'org rejointe `{id}` et refuse `org_suspended` si c'est elle qui
+est suspendue) ; les gestes de COMPTE (jetons, CGU, avatar) ; ce qui lit ou RETIRE un accès
 (statut d'une connexion, déconnexion, effacer une clé) — jamais ce qui en ouvre un ni
 ce qui consomme. Raison : les `me.*` résolvent l'org par défaut du compte, et un
 membre dont l'espace perso est suspendu ne doit pas perdre ses réglages de compte

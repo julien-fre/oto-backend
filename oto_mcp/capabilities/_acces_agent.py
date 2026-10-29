@@ -6,7 +6,7 @@ Désormais un agent est à son propriétaire ; il le PARTAGE nommément :
 
 - `owner`  — celui au nom de qui l'agent tourne (`runner_triggers.sub`) ;
 - `admin`  — un admin de l'org de l'agent : tout, comme le propriétaire ;
-- `editor` — un partage `write` (personne de l'org, ou l'org entière) : le modifie,
+- `editor` — un partage `write` (personne ou équipe de l'org, ou l'org entière) : le modifie,
   l'allume, l'éteint, vide sa file. Il ne le supprime pas, ne change pas sa porte de
   webhook et ne le partage pas : ce sont des gestes de propriétaire ;
 - `viewer` — un partage `read` : le lit, sans les corps de livraison (des données
@@ -24,22 +24,28 @@ sous son propriétaire, quel que soit celui qui l'a modifié. Partager en écrit
 c'est confier son identité — le front le dit au moment de partager.
 
 ⚠️ **Un agent posé sur l'ABONNEMENT personnel de son propriétaire** ne se modifie que
-par lui (`_abonnement.peut_agir_pour`), et par les personnes qu'IL a nommées
-éditrices de cet agent (`forfaits_pretes`) : ce qu'elles y changent s'exécute sur
-son forfait, et c'est à lui seul de le prêter. Ne prêtent donc PAS le forfait :
-- un partage à l'org entière ou à une équipe — la révision 0035 en pose un sur chaque
-  agent existant, et il rouvrirait tous les forfaits à toute l'org ;
-- un partage posé par un admin (`granted_by` ≠ propriétaire) — un admin gouverne
-  l'agent, il ne dispose pas du forfait d'autrui ; et après une reprise, les
-  partages de l'ancien propriétaire ne prêtent pas celui du nouveau.
-Le prêt vaut pour la famille où l'agent tourne DÉJÀ : poser un agent sur un
-abonnement reste au propriétaire.
+par lui (`_abonnement.peut_agir_pour`), et par ceux à qui IL prête son forfait pour cet
+agent (`forfaits_pretes`) — c'est à lui seul de le prêter, agent par agent. Deux prêts :
+- NOMMÉ (04/10/2026, inchangé) : un partage en écriture À UNE PERSONNE posé par lui.
+  Nommer est le geste ; ni `op=lend`, ni lien au modèle ;
+- COLLECTIF (29/10/2026) : un partage en écriture posé par lui à une ÉQUIPE ou à
+  l'ORG entière ne prête QUE sous `op=lend`, qui mémorise le modèle du moment — un
+  autre modèle le rend caduc (fail-closed), qui emprunte par lui n'y pose pas un autre
+  modèle d'abonnement, et le transfert l'efface (`db.reprendre_trigger`). Il ne se pose
+  ni ne se retire que par le titulaire (ni admin d'org, ni éditeur, ni admin de
+  plateforme), et n'est jamais rétroactif.
+Ne prêtent jamais : un partage posé par un admin (`granted_by` ≠ propriétaire), ceux de
+la révision 0035 et du réglage `partage_par_defaut` (marqués), ceux d'un ancien
+propriétaire.
+⚠️ Le prêt ne change PAS l'identité d'exécution : l'agent tourne toujours sous son
+propriétaire, à l'horloge comme au webhook. POSER un agent sur un abonnement reste au
+propriétaire.
 """
 from __future__ import annotations
 
 from typing import Literal, Optional
 
-from .. import db, ownership, roles, runner_models
+from .. import db, group_store, ownership, roles, runner_models
 from ._types import AuthzDenied, ResolvedCtx
 
 KIND = "runner_trigger"
@@ -116,7 +122,7 @@ def sur_le_forfait_d_autrui(sub: str, agent: dict) -> bool:
 
 def forfaits_pretes(sub: str, agents: list[dict]) -> set[int]:
     """Parmi `agents`, ceux qui tournent sur le forfait d'un autre ET dont ce
-    propriétaire a nommé `sub` éditeur. Une requête pour toute la liste, aucune
+    propriétaire prête le forfait à `sub` (`db._forfait_prete`). Une requête pour toute la liste, aucune
     quand rien ne tourne sur le forfait d'autrui (le cas courant)."""
     a_lire = [int(t["id"]) for t in agents if sur_le_forfait_d_autrui(sub, t)]
     return db.forfaits_pretes(a_lire, sub) if a_lire else set()
@@ -124,6 +130,14 @@ def forfaits_pretes(sub: str, agents: list[dict]) -> set[int]:
 
 def prete(sub: str, agent: dict) -> bool:
     return int(agent["id"]) in forfaits_pretes(sub, [agent])
+
+
+def prete_nommement(sub: str, agent: dict) -> bool:
+    """`sub` emprunte-t-il par le prêt NOMMÉ (le contrat d'avant, sans lien au
+    modèle) ? Sinon il n'emprunte que par le prêt collectif, lié au modèle."""
+    if not sur_le_forfait_d_autrui(sub, agent):
+        return False
+    return int(agent["id"]) in db.forfaits_pretes([int(agent["id"])], sub, nomme=True)
 
 
 def forfait_ferme(sub: str, agent: dict, pretes: Optional[set[int]] = None) -> bool:
@@ -207,21 +221,33 @@ def lister(org_id: int, agent_id: int) -> list[dict]:
             continue   # un partage hors de l'org ne donne rien ici : on ne le sert pas
         out.append({"principal_type": "everyone" if ptype == "org" else ptype,
                     "sub": pid if ptype == "user" else None,
+                    "group_id": int(pid) if ptype == "group" and pid.isdigit() else None,
                     "email": g.get("email"), "role": g.get("role"),
                     "granted_at": g.get("granted_at")})
     return out
 
 
 def principal(ctx: ResolvedCtx, *, everyone: bool, sub: Optional[str],
-              email: Optional[str], strict: bool = True) -> tuple[str, str]:
-    """Le bénéficiaire d'un partage : l'org de l'agent entière, ou UN membre de
-    cette org — par son `sub` ou son adresse. `strict=False` (retrait) ne vérifie pas
-    l'appartenance : on doit pouvoir retirer le partage d'un membre parti."""
+              email: Optional[str], group_id: Optional[int] = None,
+              strict: bool = True) -> tuple[str, str]:
+    """Le bénéficiaire d'un partage : l'org de l'agent entière, UNE équipe de cette org
+    (`group_id`), ou UN membre de cette org — par son `sub` ou son adresse.
+    `strict=False` (retrait) ne vérifie pas l'appartenance : on doit pouvoir retirer le
+    partage d'un membre parti."""
+    if sum(map(bool, (everyone, group_id is not None, sub or email))) > 1:
+        raise AuthzDenied(400, "share_target_ambiguous",
+                          "UN bénéficiaire : `everyone`, `share_with_group` OU "
+                          "`share_with_sub`/`share_with_email`.")
     if everyone:
-        if sub or email:
-            raise AuthzDenied(400, "share_target_ambiguous",
-                              "`everyone` OU `share_with_sub`/`share_with_email`, pas les deux.")
         return "org", str(ctx.org_id)
+    if group_id is not None:
+        # Une équipe d'une AUTRE org ouvrirait l'agent hors de la sienne. Le retrait
+        # ne relit pas l'équipe : on retire le partage d'une équipe supprimée.
+        if strict and (group_store.get_group(int(group_id)) or {}).get("org_id") != ctx.org_id:
+            raise AuthzDenied(404, "share_group_not_in_org",
+                              "cette équipe n'est pas une équipe de l'org de l'agent : un "
+                              "agent ne se partage qu'à l'intérieur de son org.")
+        return "group", str(int(group_id))
     if bool(sub) == bool(email):
         raise AuthzDenied(400, "share_target_required",
                           "nomme UN bénéficiaire : `share_with_sub` ou "

@@ -47,6 +47,8 @@ def test_les_connecteurs_a_flux_sont_ceux_quon_attend():
     """
     assert set(connector_flow.entries()) == {
         "zoho", "zohodesk", "zohoanalytics", "salesforce", "google",
+        # zohosign (2026-10-28) : quatrième connecteur Zoho, même flux.
+        "zohosign",
         # Split google (2026-09-26) : un flux par service, ses scopes seulement.
         "gmail", "drive", "sheets", "calendar", "tasks", "chat",
         # bigquery (2026-10-02) : septième service, même flux.

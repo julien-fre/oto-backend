@@ -18,7 +18,9 @@ import pathlib
 import oto_mcp
 
 RACINE = pathlib.Path(oto_mcp.__file__).resolve().parent
-GESTES = {"add_org_member", "remove_org_member"}
+# `add_org_member_in` : le même geste sur la transaction de l'appelant (l'acceptation
+# d'une invitation y lie la consommation, 29/10/2026).
+GESTES = {"add_org_member", "add_org_member_in", "remove_org_member"}
 # Les modules par lesquels le code atteint le store d'appartenance. `tools/github.py`
 # appelle un `remove_org_member` HOMONYME sur le client GitHub : il n'est pas visé.
 PORTEURS = {"org_store", "members"}

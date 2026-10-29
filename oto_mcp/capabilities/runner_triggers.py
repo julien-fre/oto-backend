@@ -134,7 +134,12 @@ class TriggerInput(BaseModel):
                 # run, et seulement s'ils sont reliés) ou `requires` (l'un ne part à son
                 # heure que si l'autre a réussi aujourd'hui). `links` les liste, `graph`
                 # y ajoute les chaînes de la semaine — ce que l'écran des agents dessine.
-                "link", "unlink", "links", "graph"]
+                "link", "unlink", "links", "graph",
+                # PRÊTER son forfait personnel aux équipes et à l'org avec qui CET agent
+                # est partagé en écriture, sous son modèle du moment (le prêt nommé, à
+                # une personne, n'en a pas besoin), et le reprendre — un geste du TITULAIRE seul, jamais d'un
+                # réglage ni d'un admin (`_acces_agent`, tête de module ; 29/10/2026).
+                "lend", "unlend"]
     trigger_id: Optional[int] = None
     trigger_ids: Optional[list[int]] = Field(None, description=(
         f"update, IN BULK (≤ {_LOT_MAX}): file these agents under `folder` in one call — "
@@ -271,6 +276,9 @@ class TriggerInput(BaseModel):
         "(`give_not_org_member` otherwise)."))
     everyone: Optional[bool] = Field(default=None, description=(
         "op=share/unshare: true = every member of the org, instead of one person."))
+    share_with_group: Optional[int] = Field(default=None, description=(
+        "op=share/unshare: a team of THIS org, by id, instead of one person "
+        "(`share_group_not_in_org` otherwise)."))
     role: Optional[Literal["viewer", "editor"]] = Field(default=None, description=(
         "op=share: `editor` (default) may change, enable, disable the agent and "
         "clear its queue; `viewer` only reads it. Neither may delete it, share it "
@@ -392,6 +400,14 @@ class Trigger(BaseModel):
     #: aucun depuis la création, ou depuis le 23/10/2026 pour un agent plus ancien.
     #: Une suppression ne se date pas ici : la ligne disparaît avec elle.
     updated_at: Optional[str] = None
+    #: QUI a fait ce changement, quand c'était une retouche (`update`) — le geste d'un
+    #: éditeur : ce que le propriétaire lit pour savoir qui a changé son agent. `null`
+    #: = non enregistré (agent d'avant, ou dernier changement de porte ou de propriétaire).
+    updated_by: Optional[str] = None
+    #: Le prêt COLLECTIF (`op=lend`) est-il vivant — le forfait prêté aux équipes et à
+    #: l'org partagées en écriture, sous le modèle actuel ? `false` dès que le modèle a
+    #: changé. Le prêt nommé (à une personne) ne s'y lit pas : `can_edit` le dit.
+    subscription_lent: Optional[bool] = None
     #: Ce que ce déclencheur a PERDU : des occurrences enfilées que personne n'est
     #: venu prendre dans leur cycle, et que le tick a périmées.
     #: ⚠️ Servi avec le déclencheur parce que c'est là qu'on le cherche. Compté à
@@ -548,6 +564,7 @@ class AgentShare(BaseModel):
     """Un partage d'agent. `principal_type=everyone` = toute l'org de l'agent."""
     principal_type: Literal["user", "everyone", "group"]
     sub: Optional[str] = None
+    group_id: Optional[int] = None
     email: Optional[str] = None
     role: Optional[str] = None
     granted_at: Optional[str] = None
@@ -1792,6 +1809,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if inp.op in ("shares", "share", "unshare"):
         return _partager(ctx, inp)
 
+    if inp.op in ("lend", "unlend"):
+        return _preter(ctx, inp)
+
     if inp.op == "delete":
         # Supprimer est un geste de PROPRIÉTAIRE : un éditeur le modifie, il ne le
         # fait pas disparaître.
@@ -2003,9 +2023,13 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # tombait sur le 404 d'un agent inconnu.
         visee = (famille if inp.model is not None and not stockee
                  else runner_models.famille(actuel.get("model")))
+        prete = _pose_pour(visee) != ctx.sub
+        # Le lien au modèle ne vaut que pour qui emprunte par le prêt COLLECTIF ;
+        # l'éditeur nommé garde ses droits d'avant. Lu seulement quand ça décide.
+        collectif = (prete and "model" in champs
+                     and not _acces_agent.prete_nommement(ctx.sub, actuel))
         _abonnement.exiger_le_droit_de_modifier(
-            ctx.sub, actuel, visee, champs,
-            prete=_pose_pour(visee) != ctx.sub)
+            ctx.sub, actuel, visee, champs, prete=prete, collectif=collectif)
 
     # ⚠️ Aucune retouche ne s'écrit sans avoir LU le déclencheur : c'est lui qui dit
     # à qui l'agent appartient et avec qui il est partagé (`_actuel` juge le droit de
@@ -2053,7 +2077,8 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         _juger(_actuel())
     eteindre = set(champs) <= {"enabled"} and champs.get("enabled") is False
     t = db.update_trigger(inp.trigger_id, ctx.org_id, champs,
-                          hors_abonnement_d_autrui=None if eteindre else ctx.sub)
+                          hors_abonnement_d_autrui=None if eteindre else ctx.sub,
+                          par=ctx.sub)
     if not t:
         lu.pop("t", None)   # relu APRÈS l'écriture refusée : l'état qui l'a refusée
         lu.pop("juge", None)
@@ -2084,10 +2109,11 @@ def _destinataire_du_don(ctx: ResolvedCtx, inp: TriggerInput) -> str:
     """Le `sub` à qui `give` transfère l'agent : UNE personne, membre RÉEL de l'org
     (`org_members`), comme `take_over` — le rôle effectif ferait d'un super admin hors
     de l'org un destinataire valable."""
-    if inp.everyone or bool(inp.share_with_sub) == bool(inp.share_with_email):
+    if (inp.everyone or inp.share_with_group is not None
+            or bool(inp.share_with_sub) == bool(inp.share_with_email)):
         raise AuthzDenied(400, "give_target_required",
                           "un agent se donne à UNE personne : `share_with_sub` ou "
-                          "`share_with_email`, pas les deux, pas `everyone`.")
+                          "`share_with_email`, pas les deux, ni `everyone` ni une équipe.")
     if inp.share_with_email:
         membres = [u["sub"] for u in db.get_users_by_email(inp.share_with_email.strip())
                    if org_store.get_org_role(ctx.org_id, u["sub"]) is not None]
@@ -2113,7 +2139,8 @@ def _transferer(ctx: ResolvedCtx, t: dict, nouveau_sub: str, geste: str) -> dict
     n'est écrit, et l'agent reste à son propriétaire ; éteint, il se transfère
     librement, le rallumage rejugeant le propriétaire stocké. Les partages restent
     en place, mais ceux de l'ancien propriétaire ne prêtent pas le forfait du
-    nouveau (`_forfait_prete` exige `granted_by` = propriétaire courant)."""
+    nouveau (`_forfait_prete` exige `granted_by` = propriétaire courant), et le prêt
+    de l'ancien s'efface (`db.reprendre_trigger`) : le nouveau prête le sien, ou pas."""
     famille = runner_models.famille(t.get("model"))
     if t.get("enabled") and _abonnement.est_abonnement(famille):
         _abonnement.exiger_a_la_pose(nouveau_sub, None, famille, org_id=ctx.org_id)
@@ -2137,7 +2164,8 @@ def _partager(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     _acces_agent.exiger(ctx, t, _acces_agent.GOUVERNER)
     ptype, pid = _acces_agent.principal(
         ctx, everyone=bool(inp.everyone), sub=inp.share_with_sub,
-        email=inp.share_with_email, strict=inp.op == "share")
+        email=inp.share_with_email, group_id=inp.share_with_group,
+        strict=inp.op == "share")
     rid = str(inp.trigger_id)
     if inp.op == "share":
         if ptype == "user" and pid == t["sub"]:
@@ -2150,6 +2178,42 @@ def _partager(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     logger.info("agent %s (org %s) : %s %s:%s par %s", inp.trigger_id, ctx.org_id,
                 inp.op, ptype, pid, ctx.sub)
     return {"ok": True, "shares": _acces_agent.lister(ctx.org_id, inp.trigger_id)}
+
+
+def _preter(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
+    """`lend` / `unlend` — le TITULAIRE du forfait (le propriétaire de l'agent) prête son
+    abonnement personnel aux équipes et à l'org entière qu'il a partagées en écriture,
+    pour CET agent et sous son modèle du moment, ou le reprend (`_acces_agent`, tête de module).
+
+    ⚠️ Le propriétaire SEUL : un admin d'org gouverne l'agent sans disposer du forfait
+    d'autrui, un éditeur ne se prête rien à lui-même, et le rôle de plateforme n'y
+    change rien — la garde compare le `sub`, pas un niveau. Qui ne voit pas l'agent
+    reçoit le 404 d'un agent inconnu. L'identité d'exécution ne bouge pas : l'agent
+    tourne toujours sous son propriétaire."""
+    t = db.get_trigger(inp.trigger_id, ctx.org_id)
+    if not t or _acces_agent.niveau(ctx.sub, ctx.org_id, t) is None:
+        # Ne pas voir un agent, c'est ne pas savoir qu'il existe (comme `give`).
+        raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
+    if t.get("sub") != ctx.sub:
+        raise AuthzDenied(403, "trigger_owner_required",
+                          "seul le propriétaire de l'agent prête son forfait, ou le "
+                          "reprend : c'est son abonnement.")
+    modele = None
+    if inp.op == "lend":
+        modele = t.get("model")
+        if modele not in runner_models.MODELES_PERSONNELS:
+            raise AuthzDenied(400, "lend_not_on_subscription",
+                              "cet agent ne tourne pas sur ton abonnement personnel : il "
+                              "n'y a pas de forfait à prêter. Rien n'a été modifié.")
+    ecrit = db.poser_pret_du_forfait(int(t["id"]), ctx.org_id, ctx.sub, modele)
+    if ecrit is None:
+        # Transféré, ou passé à un autre modèle, entre la lecture et l'écriture.
+        raise AuthzDenied(409, "trigger_changed",
+                          "l'agent a changé entre-temps (propriétaire ou modèle) : rien "
+                          "n'a été prêté ni repris. Relis-le, puis recommence.")
+    logger.info("agent %s (org %s) : %s par %s (modèle %s)", t["id"], ctx.org_id,
+                inp.op, ctx.sub, modele)
+    return {"trigger": _avec_hook(ctx.org_id, _acces_agent.avec_acces(ecrit, "owner"))}
 
 
 # ── L'AUTHENTIFICATION d'un webhook — REST seulement ──────────────────────────
@@ -2671,9 +2735,19 @@ CAPABILITIES += [
             DeclaredError(400, "share_target_required",
                           "`share`/`unshare` sans bénéficiaire, ou avec les deux formes"),
             DeclaredError(400, "share_target_ambiguous",
-                          "`everyone` avec une personne nommée"),
+                          "plus d'un bénéficiaire (`everyone`, une équipe, une personne)"),
             DeclaredError(400, "share_with_owner",
                           "`share` vers le propriétaire de l'agent"),
+            DeclaredError(404, "share_group_not_in_org",
+                          "`share` vers une équipe qui n'est pas de l'org de l'agent"),
+            DeclaredError(403, "trigger_owner_required",
+                          "`lend`/`unlend` par quelqu'un qui n'est pas le propriétaire "
+                          "de l'agent (admin d'org, éditeur, admin de plateforme compris)"),
+            DeclaredError(400, "lend_not_on_subscription",
+                          "`lend` d'un agent qui ne tourne pas sur un abonnement personnel"),
+            DeclaredError(409, "trigger_changed",
+                          "`lend`/`unlend` : propriétaire ou modèle changé entre la lecture "
+                          "et l'écriture ; rien n'est écrit"),
             DeclaredError(400, "ambiguous_email",
                           "l'adresse désigne plusieurs comptes de l'org"),
             DeclaredError(403, "org_admin_required",
@@ -2761,12 +2835,15 @@ CAPABILITIES += [
             "org admin; each carries `my_access` (owner/admin/editor/viewer), "
             "`can_edit`, `can_share`, and `visibility` ({org: editor|viewer|null, "
             "people: n}; org null and people 0 = private). op=share (owner or org admin; `share_with_email` "
-            "or `share_with_sub` of a member of THIS org, or `everyone=true`; `role` "
+            "or `share_with_sub` of a member of THIS org, `share_with_group` (a team of it), "
+            "or `everyone=true`; `role` "
             "editor|viewer) / unshare / shares. An editor may update, enable, disable "
             "and clear the queue — the agent still runs as its owner. On an agent "
-            "that runs on its owner's personal subscription, only the owner and the "
-            "people the OWNER shared it with by name as editor may change it "
-            "(`can_edit` says so); everyone else may only disable it. Delete, share "
+            "that runs on its owner's personal subscription, only the owner may change "
+            "it, plus the people the OWNER shared it with by name as editor (`can_edit` "
+            "says so); everyone else may only disable it. op=lend (owner only) also lends "
+            "it to the team or whole org the owner shared it with as editor, at its "
+            "current model only (another model ends it); op=unlend ends it. Delete, share "
             "and the webhook door stay with the owner and org admins. "
             "The tick only ENQUEUES a job at "
             "each due time; execution belongs to the worker. Floor between two "

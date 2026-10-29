@@ -33,6 +33,8 @@ def test_rest_routes_preserved():
         # Le pendant NÉGATIF de l'invité (#654) — la révocation, elle, est le geste
         # de l'émetteur et vit sur `/api/orgs/{id}/invitations/{inv}`.
         ("POST", "/api/me/invitations/reject"),
+        # L'invité déjà inscrit qui ouvre l'org plutôt que le mail : sans token.
+        ("POST", "/api/me/orgs/{id}/invitations/claim"),
         ("POST", "/api/orgs/{id}/invitations"),
         ("GET", "/api/orgs/{id}/invitations"),
         # Cascade équipe + plateforme.

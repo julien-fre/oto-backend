@@ -248,6 +248,10 @@ résolution des `[[…]]` (`db/backlinks`). Pour un tableau, il est écrit et pl
 > **transfert** reste `can_transfer = owner ∪ escalade` (jamais un gérant). Surface unique
 > `oto_resource op=share` : axe **audience** (person/team/org→grant ; public/secret→publication
 > projet ; private→dépublier) × **rôle**. Rétro-compat `permission` en entrée.
+> Une LISTE dont le propriétaire est déjà lu juge sa gouvernance par **`can_govern_many`** :
+> même règle que `can_govern` (`_gouverne`, écrite une fois), escalade jugée une fois par
+> propriétaire distinct, partages `gérant` lus en une requête (`db.manager_resource_grants`)
+> — c'est ce que sert `GET /api/datastores` (`docs/event-loop-perf.md`).
 
 ### Publier exige d'appartenir au propriétaire (#1176)
 

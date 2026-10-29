@@ -1322,6 +1322,20 @@ Mesuré sur le jeu, aller-retour simulé à 3,14 ms, médiane de 20 appels : lis
 `oto_connector op=list` et `oto_list_my_tools`) 159 et 617 ms → 25 et 102 ms. Réponses
 identiques octet pour octet. Preuves : `tests/test_connecteurs_me_rapide_1148.py`.
 
+### La gouvernance de la liste des tableaux, par lot (29/10/2026)
+
+`GET /api/datastores` jugeait `ownership.can_govern` tableau par tableau : propriétaire
+relu deux fois, escalade, puis une lecture des partages par principal de l'acteur — 5 à
+10 lectures par tableau, chacune sur son propre emprunt au pool. La liste juge désormais
+toute la page par `ownership.can_govern_many` (la règle de `can_govern`, partagée, pas
+recopiée) : le propriétaire vient de la ligne listée, l'escalade se juge une fois par
+propriétaire distinct, les partages `gérant` se lisent en une requête
+(`db.manager_resource_grants`) ; le handler tient UN emprunt (`db.reuse_connection`, le
+chemin ne fait que lire). `GET /api/me/datastores/shared` juge par le même lot. Réponses
+inchangées. Preuves : `tests/datastore/test_liste_tableaux_lectures_groupees.py`
+(requêtes constantes de 4 à 20 tableaux, un emprunt, aucune écriture, parité avec
+`can_govern` cas par cas).
+
 ## Le convoi du GIL, encore : douze fils sur le même compte (#1108, 20/10/2026)
 
 Une semaine de relevés (la pile de tous les fils, ci-dessus) : 850 gels de 1 à 2,2 s, la
@@ -1348,3 +1362,52 @@ Critère d'observation après la prod : plus aucun relevé de gel où 8 fils ou 
 cette chaîne. Preuves : `tests/test_lignes_reservables_un_seul_calcul_1108.py` (douze fils
 ratent le cache ensemble, un seul calcul — douze sans le verrou), et
 `tests/test_ownership.py` (l'appartenance ne lit ni ne sélectionne le schéma).
+
+## Avant le handler : une écriture par requête, deux authentifications par appel (29/10/2026)
+
+Une requête REST empruntait la base 8 à 11 fois avant son handler, sur un pool de 24
+connexions, dont des ÉCRITURES. Deux causes, sur le chemin de toutes les requêtes :
+
+- **`upsert_user` réécrivait la ligne `users` à chaque requête authentifiée** (REST,
+  JWT) et à chaque message MCP : `INSERT … ON CONFLICT DO UPDATE SET …, updated_at =
+  NOW()`, donc un verrou de ligne et un COMMIT, même à valeurs égales — les appels
+  parallèles d'un même compte se sérialisaient sur sa ligne. Il n'écrit plus que si
+  `(email, name, locale)` change (`IS DISTINCT FROM`), en UNE requête à deux CTE
+  (l'UPDATE conditionnel, l'INSERT si la ligne manque) ; sinon c'est une lecture pure.
+  ⚠️ Pas `ON CONFLICT DO UPDATE … WHERE` : PostgreSQL y verrouille la ligne en conflit
+  même quand la condition est fausse. ⚠️ `users.updated_at` date désormais le dernier
+  changement de la ligne, plus la dernière requête : aucun lecteur ne la lisait comme
+  activité (l'activité se lit dans `tool_calls` — relance, entonnoir, adoption) ; son
+  seul lecteur, la liste d'admin `GET /api/admin/users`, la sert telle quelle. Les
+  gardes de naissance (chaîne d'alias vers un compte en pause, tenant désactivé) sont
+  sous le même gate `inserted`, inchangées.
+- **`ViewAsMiddleware` authentifiait, puis le handler ré-authentifiait** dès qu'un
+  en-tête de consultation (`X-Oto-Org`, `X-Oto-Group`, `X-Oto-View-As`) était posé —
+  c'est-à-dire sur presque chaque appel du tableau de bord. Le premier `_authenticate`
+  dépose le porteur dans le `scope` (`api.base.CLE_PORTEUR`), après toutes ses gardes ;
+  le second le reprend à options IDENTIQUES seulement, repose les variables de contexte
+  (portée du jeton, verrou d'org) depuis cette mémoire, et n'applique que la vue. Un
+  refus ne se mémorise pas.
+
+Preuves : `tests/test_upsert_user_n_ecrit_que_ce_qui_change_live.py` (version de ligne
+inchangée sans changement, appel qui aboutit pendant qu'une autre transaction tient la
+ligne) et `tests/api/test_une_authentification_par_requete.py` (une vérification, une
+garde, un upsert par requête ; pause, appartenance, options plus strictes et verrou de
+délégation éprouvés à l'envers).
+
+## La liste de mes orgs, une lecture par fait et non par org (29/10/2026)
+
+`org.list` (`GET /api/me/orgs`) relisait pour chaque org tous ses membres pour un `len`, plus la bêta
+(deux lectures) : 3 requêtes par org. Le compte des membres (`org_store.count_org_members`, mêmes
+lignes `org_members` que `list_org_members`) et la bêta (`access.orgs_with_option`, même règle
+d'échéance que `has_option_comp`) se lisent désormais pour toutes les orgs d'un coup, sous
+`db.reuse_connection()`. Preuve : `tests/orgs/test_list_orgs_lectures_groupees.py` (mêmes valeurs
+que le calcul org par org, requêtes constantes, un emprunt, aucune écriture).
+
+## L'embedding de requête sur un client partagé (29/10/2026)
+
+`embeddings.embed_query` (chemin de `/api/me/search`) ouvrait un `httpx.AsyncClient` neuf à chaque
+recherche, donc une poignée de main TLS par appel vers le fournisseur. Le client est partagé, créé à la
+première requête, **un par boucle d'événements** (un client lie ses connexions à sa boucle), fermé
+à l'arrêt par le lifespan ; même délai (8 s, posé sur la requête), même repli lexical en cas d'échec.
+Preuve : `tests/test_embeddings_client_partage.py` (deux appels, un client ; deux boucles, deux).

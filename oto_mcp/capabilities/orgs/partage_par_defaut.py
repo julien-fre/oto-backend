@@ -20,8 +20,10 @@ silence. L'admin le repose.
 
 Le partage né du réglage est MARQUÉ (`db.MARQUE_PARTAGE_PAR_DEFAUT` en `granted_by`) : il
 se retire sans toucher aux partages faits à la main. Il ne prête jamais un forfait
-personnel (`db._forfait_prete` ne lit que les partages À UNE PERSONNE posés par le
-propriétaire).
+personnel : prêter est un geste du TITULAIRE, agent par agent (nommer un éditeur, ou
+`oto_trigger op=lend` pour une équipe ou l'org), et `db._forfait_prete` ne lit que les
+partages posés par le propriétaire. Aucun réglage
+d'admin ne partage en écriture ni ne prête un forfait à sa place.
 
 MCP seul, par la console `oto_org_settings domain=partage_par_defaut` (`org_console.py`) :
 `get` membre, `set` admin de l'org.

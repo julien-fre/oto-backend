@@ -367,6 +367,35 @@ def test_une_session_au_debut_illisible_rend_as_of_nul(live, monkeypatch):
             conn.execute(f"DROP ROLE {role}")
 
 
+
+def test_une_session_lisible_qui_demarre_borne_as_of_sans_le_rendre_nul(live):
+    """Une connexion que le pool ouvre pendant la lecture : lisible (le rôle lit toutes
+    les sessions), `state` encore NULL. Elle ne rend plus l'horizon nul : son
+    `backend_start` le borne. Une session illisible (`backend_start` NULL aussi) et une
+    au suivi coupé le rendent toujours indéterminable. `pg_stat_activity` est doublé par
+    une vue temporaire, que la session lit avant `pg_catalog`."""
+    from oto_mcp.db import credits as mod
+    with _connect() as conn:
+        def lire(state, backend_start):
+            conn.execute("DROP VIEW IF EXISTS pg_temp.pg_stat_activity")
+            conn.execute(
+                "CREATE TEMP VIEW pg_stat_activity AS SELECT current_database() AS datname, "
+                "0 AS pid, (SELECT oid FROM pg_roles WHERE rolname = current_user) "
+                "AS usesysid, 'client backend'::text AS backend_type, "
+                f"({state})::text AS state, NULL::timestamptz AS xact_start, "
+                "NULL::timestamptz AS query_start, "
+                f"({backend_start})::timestamptz AS backend_start")
+            return conn.execute(mod._SESSIONS_ECRIVANTES, (mod._MARGE_S,)).fetchone()
+        s = lire("NULL", "NOW() - interval '1 hour'")
+        assert s["illisibles"] == s["sans_suivi"] == 0
+        assert datetime.fromisoformat(s["borne"]) <= datetime.now(timezone.utc) - timedelta(minutes=59)
+        s = lire("NULL", "NULL")
+        assert s["illisibles"] == 1
+        s = lire("'disabled'", "NOW()")
+        assert s["sans_suivi"] == 1
+        conn.execute("DROP VIEW pg_temp.pg_stat_activity")
+        conn.rollback()
+
 # ── settled_as_of : l'horizon des appels réglés ──────────────────────────────
 
 def _horizons(apres=None) -> tuple[datetime, datetime]:
@@ -414,6 +443,36 @@ def test_une_reservation_ouverte_la_veille_tient_settled_as_of_jusqu_a_sa_clotur
     as_of, regle = _horizons()
     assert regle == as_of > lendemain
 
+
+
+def test_settled_as_of_par_payeur_n_attend_pas_la_reservation_d_un_autre(live):
+    """`payer` : la réservation ouverte d'un payeur ne retient que SON horizon. Celui
+    d'un autre payeur suit `as_of` ; celui du flux entier (sans `payer`) l'attend."""
+    retenu, libre = f"org:{_org()}", f"org:{_org()}"
+    call_uid = f"autre-{uuid.uuid4().hex[:8]}"
+    assert db_credits.reserver(
+        call_uid=call_uid, payer=retenu, connector="fullenrich", function="submit",
+        unit="credits", scale_version=1, quantity=1, reserved=3, deadline_s=24 * 3600,
+        forcer=True).posee
+    try:
+        with _connect() as conn:
+            posee = datetime.fromisoformat(conn.execute(
+                "UPDATE credit_holds SET created_at = NOW() - interval '25 hours' "
+                "WHERE call_uid = %s RETURNING created_at", (call_uid,)
+            ).fetchone()["created_at"]).replace(tzinfo=timezone.utc)
+
+        def horizons(payer=None):
+            page = _appel("service.credits.movements", limit=1000, payer=payer)
+            return (datetime.fromisoformat(page["as_of"]),
+                    datetime.fromisoformat(page["settled_as_of"]))
+        assert _attendre(lambda: (lambda h: h[1] == h[0])(horizons(libre))), \
+            "l'horizon d'un payeur sans réservation suit as_of"
+        as_of, regle = horizons(retenu)
+        assert regle == posee < as_of, "le payeur qui attend reste à sa réservation"
+        assert horizons()[1] <= posee, "sans payer : tous payeurs, comme avant"
+    finally:
+        assert db_credits.liberer(call_uid)
+    assert _refus("service.credits.movements", payer="pas-un-payeur").code == "invalid_payer"
 
 def test_un_reglement_que_l_horizon_retient_tient_settled_as_of(live, pg_dsn):
     """La réservation est réglée, sa transaction validée, mais un xid plus ancien — d'une

@@ -45,6 +45,9 @@ def jeu(live):
     """Le jeu de données, posé une fois pour le module. Rend les instants remarquables
     (ISO) dont les fenêtres de facturation se servent."""
     rnd = random.Random(1147)
+    # Un tirage À PART pour les crédits du fournisseur : le jeu des autres colonnes reste
+    # celui de la graine 1147, à l'identique.
+    rnd_credits = random.Random(1029)
     with _c() as c:
         for t in ("journal_jours_consolides", "tool_calls", "org_members", "orgs", "users"):
             c.execute(f"DELETE FROM {t}")
@@ -85,15 +88,19 @@ def jeu(live):
                 args[journal_calls.ARGS_CLIENT_KEY] = {"name": rnd.choice(("cli-a", "cli-b"))}
             c.execute(
                 """INSERT INTO tool_calls (created_at, kind, org_id, sub, tool, ok, duration_ms,
-                                           result_size, quantity, key_mode, args)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                                           result_size, quantity, key_mode, args,
+                                           provider_credits)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (created_at, kind, rnd.choice(ORGS), rnd.choice(SUBS), outil,
                  rnd.random() < 0.85,
                  None if rnd.random() < 0.1 else rnd.randint(1, 5000),
                  None if rnd.random() < 0.4 else rnd.randint(0, 20000),
                  None if rnd.random() < 0.6 else rnd.randint(1, 5),
                  rnd.choice((None, "org", "platform", "user")),
-                 psycopg.types.json.Jsonb(args) if args else None))
+                 psycopg.types.json.Jsonb(args) if args else None,
+                 # Les crédits du fournisseur : NULL le plus souvent (non tracé), 0 parfois
+                 # — un groupe sans aucune ligne tracée doit rendre `None`, pas 0.
+                 None if rnd_credits.random() < 0.7 else rnd_credits.randint(0, 15)))
         exact = c.execute(
             "SELECT created_at FROM tool_calls WHERE kind = 'mcp' AND ok AND org_id = 1 "
             "ORDER BY created_at LIMIT 1 OFFSET 100").fetchone()["created_at"]
@@ -194,13 +201,17 @@ def _ref_billable(org_id, tools=None, since=None, until=None):
         rows = conn.execute(
             f"""SELECT l.tool, l.key_mode, count(*) AS calls,
                        sum(COALESCE(l.quantity, 1)) AS quantity,
+                       sum(l.provider_credits) AS provider_credits,
                        count(DISTINCT {usage._BILLABLE_JOB_ID_SQL}) AS jobs
                   FROM tool_calls l WHERE {' AND '.join(clauses)}
                  GROUP BY l.tool, l.key_mode ORDER BY l.tool, l.key_mode NULLS LAST""",
             tuple(params)).fetchall()
     return {"since_effectif": since, "until_effectif": until,
             "tools": [{"tool": r["tool"], "key_mode": r["key_mode"], "calls": int(r["calls"]),
-                       "quantity": int(r["quantity"]), "jobs": int(r["jobs"])} for r in rows]}
+                       "quantity": int(r["quantity"]),
+                       "provider_credits": (None if r["provider_credits"] is None
+                                            else int(r["provider_credits"])),
+                       "jobs": int(r["jobs"])} for r in rows]}
 
 
 def _ref_usage_by_person(org_id, since, until):
@@ -358,6 +369,26 @@ def test_tenants(registre, jours):
     prim = db.get_tenant_overview(primaire, days=jours)
     assert {c["sub"]: (c["appels"], c["last_seen_at"]) for c in prim["comptes_recents"]
             if c["appels"]} == nus
+
+
+def _ref_usage_inclus(org_id, since):
+    with _connect() as conn:
+        return int(conn.execute(
+            "SELECT count(*) AS n FROM tool_calls l "
+            "WHERE l.kind = 'mcp' AND l.org_id = %s AND l.created_at >= %s",
+            (int(org_id), since)).fetchone()["n"])
+
+
+@pytest.mark.parametrize("decalage", [timedelta(0), timedelta(days=1), timedelta(days=2),
+                                      timedelta(days=5), timedelta(days=11),
+                                      timedelta(days=5, hours=7)])
+@pytest.mark.parametrize("org_id", [1, 2, 3])
+def test_usage_inclus_du_mois(registre, jeu, decalage, org_id):
+    """Le compteur de la fiche d'org (`billing.status`) : un début de mois est minuit
+    pile ; un début au milieu d'un jour vérifie le morceau direct d'avant les totaux."""
+    since = jeu["minuit"] - decalage
+    assert journal_calls.count_org_mcp_calls(org_id, since=since) == \
+        _ref_usage_inclus(org_id, since)
 
 
 # ── les refus : jamais une somme fausse, jamais le journal en silence ──────────────

@@ -234,3 +234,43 @@ def test_oto_recipe_declare_ses_deux_refus_de_porte():
     pour le code. Un rebase qui garderait l'une sans l'autre rougit ici."""
     codes = {e.code for e in _capacite("me.recipe").errors}
     assert {cap.CODE_PLATEFORME_SEULE, "code_human_only"} <= codes
+
+
+# ── Borne de dernier recours d'une recette-code (`recipe_timeout`) ──────────────
+
+
+def test_une_recette_code_qui_ne_rend_pas_la_main_est_refusee_sans_attendre_son_fil(
+        monkeypatch):
+    """Le pont ne rend pas la main (un fil d'outil qui bloque) : la capacité cesse
+    d'attendre à sa borne et refuse en 504 `recipe_timeout` — sans attendre le fil, que
+    le banc libère après sa mesure (sinon `asyncio.run` l'attendrait en fermant)."""
+    import threading
+    import time
+
+    import anyio
+
+    from oto_mcp.recipes import code
+    libere = threading.Event()
+
+    async def executer_qui_bloque(*a, **kw):
+        await anyio.to_thread.run_sync(libere.wait, 30)
+        return {"ok": True}
+
+    monkeypatch.setattr(cap, "_instance", lambda: object())
+    monkeypatch.setattr(cap, "_borne_s", lambda corps: 0.5)
+    monkeypatch.setattr(code, "executer", executer_qui_bloque)
+
+    async def scenario():
+        debut = time.monotonic()
+        try:
+            with pytest.raises(AuthzDenied) as e:
+                await cap._executer(ResolvedCtx(sub="u"), cap.RecipeInput(op="test"),
+                                    {"kind": "code", "limits": {"max_seconds": 10}},
+                                    ecrire=False)
+            return e.value, time.monotonic() - debut
+        finally:
+            libere.set()
+
+    refus, duree = asyncio.run(scenario())
+    assert (refus.status, refus.code) == (504, "recipe_timeout")
+    assert duree < 2

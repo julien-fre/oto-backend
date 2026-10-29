@@ -59,6 +59,12 @@ def _need(value, name: str, op: str):
 
 
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+# Office exports are FILES to pass on (a workbook to send, a deck or a document to
+# build on), never content to read: served as a signed URL, with their extension.
+_OFFICE_EXT = {_XLSX: ".xlsx", _PPTX: ".pptx", _DOCX: ".docx"}
 
 # Export formats offered to the agent (a single word, not a mime to copy out).
 _EXPORT_MIME = {
@@ -72,6 +78,10 @@ _EXPORT_MIME = {
     # A Sheets workbook with ALL its tabs (csv exports the first one only). Binary:
     # served as a signed URL, never rendered inline (signal #1376, 10/10/2026).
     "xlsx": _XLSX,
+    # A Slides deck / a Doc as an editable Office file, e.g. a customer's template an
+    # agent builds new decks from, then uploads back with op="upload" convert=true.
+    "pptx": _PPTX,
+    "docx": _DOCX,
 }
 
 # Default per SOURCE type: a spreadsheet has no markdown, nor does a presentation.
@@ -83,15 +93,16 @@ _DEFAULT_EXPORT_BY_SOURCE = {
 }
 
 
-def _xlsx_url(data: bytes, filename: str, sub: str) -> dict:
-    """An exported workbook, deposited privately and served as a signed URL."""
+def _office_file_url(data: bytes, filename: str, sub: str, mime: str) -> dict:
+    """An exported Office file, deposited privately and served as a signed URL."""
     from .. import media_store
-    name = filename if filename.lower().endswith(".xlsx") else f"{filename}.xlsx"
+    ext = _OFFICE_EXT[mime]
+    name = filename if filename.lower().endswith(ext) else f"{filename}{ext}"
     try:
-        url = media_store.upload_private("drive-exports", sub, data, _XLSX, name)
+        url = media_store.upload_private("drive-exports", sub, data, mime, name)
     except media_store.MediaError as e:
-        raise _bad(f"xlsx export: temporary storage unavailable ({e}).") from None
-    return {"filename": name, "mimeType": _XLSX, "size": len(data),
+        raise _bad(f"{ext[1:]} export: temporary storage unavailable ({e}).") from None
+    return {"filename": name, "mimeType": mime, "size": len(data),
             "encoding": "url", "url": url, "expires_in": media_store.presign_expiry()}
 
 
@@ -188,10 +199,14 @@ def register(mcp: FastMCP) -> None:
           download (403 "Only files with binary content can be downloaded"), its
           content comes out of an EXPORT — that's this op. Use it to actually READ
           meeting notes ("… - Notes par Gemini"), specs, or any Doc you found with
-          op="list". `format` = markdown | text | html | pdf | csv | xlsx ; omit it for a
-          sensible default per type (Doc→markdown, Sheet→csv (first sheet),
-          Slides→text). Returns {filename, mimeType, encoding, content|url, …}:
-          text formats come back INLINE, `pdf` as its extracted text + `raw_url`.
+          op="list". `format` = markdown | text | html | pdf | csv | xlsx | pptx |
+          docx ; omit it for a sensible default per type (Doc→markdown, Sheet→csv
+          (first sheet), Slides→text). Returns {filename, mimeType, encoding,
+          content|url, …}: text formats come back INLINE, `pdf` as its extracted
+          text + `raw_url`. `xlsx` (a Sheet, every tab), `pptx` (a Slides deck) and
+          `docx` (a Doc) are FILES, served as a signed URL: e.g. take a customer's
+          deck as a `.pptx` template, build a new deck from it, and put that back
+          with op="upload" convert=true.
         - **"upload"**: Deposit a file oto fetches itself from `source` (e.g.
           `{"kind": "http", "path": "/export.xlsx"}` through your `http` connector,
           `{"kind": "url", "url": …}`, `{"kind": "project_file", …}`) — the bytes
@@ -221,8 +236,8 @@ def register(mcp: FastMCP) -> None:
             query: op="list" — raw Drive query (e.g. "name contains 'report'",
                 "mimeType='application/pdf'").
             page_size: op="list" — max results (paginates).
-            format: op="export" — markdown | text | html | pdf | csv | xlsx. Omit for a
-                sensible default per type (Doc→markdown, Sheet→csv (first sheet),
+            format: op="export" — markdown | text | html | pdf | csv | xlsx | pptx |
+                docx. Omit for a sensible default per type (Doc→markdown, Sheet→csv (first sheet),
                 Slides→text).
             name: op="create_folder" — the folder name ; op="upload" — the file's
                 name in Drive (the source's if omitted).
@@ -292,11 +307,12 @@ def register(mcp: FastMCP) -> None:
             except Exception as e:
                 raise _bad(str(e))
             sub = access.current_user_sub_or_raise()
-            if mime == _XLSX:
-                # The agent asked for a FILE to pass on (a workbook to send), not for
-                # its content: the generic renderer would read it back as CSV. Signed
-                # URL, with the extension the receiver expects.
-                return await asyncio.to_thread(_xlsx_url, f["data"], f["filename"], sub)
+            if mime in _OFFICE_EXT:
+                # The agent asked for a FILE to pass on (a workbook to send, a deck to
+                # build on), not for its content: the generic renderer would read an
+                # .xlsx back as CSV. Signed URL, with the extension the receiver expects.
+                return await asyncio.to_thread(_office_file_url, f["data"], f["filename"],
+                                               sub, mime)
             try:
                 return await asyncio.to_thread(
                     file_content.render_for_agent, f["data"], f["filename"], mime,

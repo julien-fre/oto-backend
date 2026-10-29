@@ -126,7 +126,7 @@ def agent(monkeypatch):
     monkeypatch.setattr(RT.db, "poser_auth_de_hook",
                         lambda *a, **k: ecrit.append("auth") or True)
     monkeypatch.setattr(RT.db, "update_trigger",
-                        lambda t, o, champs, hors_abonnement_d_autrui=None:
+                        lambda t, o, champs, hors_abonnement_d_autrui=None, par=None:
                         ecrit.append("update") or dict(ligne, **champs))
     monkeypatch.setattr(RT.db, "runner_arme",
                         lambda org: {"armed": True, "workers": 1, "last_seen": None,

@@ -142,7 +142,20 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     -- sur NULL : contrairement à `quantity` (NULL = 1), ici l'absence signifie
     -- « on ne sait pas à qui attribuer », et on ne facture pas ce qu'on ne sait
     -- pas attribuer. Non reconstructible sur l'historique.
-    key_mode TEXT
+    key_mode TEXT,
+    -- Les crédits que le FOURNISSEUR a déduits pour cet appel, dans SON unité (crédits
+    -- Forager…) — un fait sur le fournisseur, pas un compte d'items : `quantity` dit
+    -- combien d'items l'appel a traités, cette colonne ce que le fournisseur a pris
+    -- pour les traiter. Deux grandeurs, deux colonnes : verser l'une dans l'autre
+    -- changerait en silence le sens de `quantity` pour un consommateur qui la somme
+    -- déjà par outil. Posée via le même seam
+    -- (`session_org.note_call_trace(provider_credits=N)`), par les seuls outils qui
+    -- la connaissent. NULL = non tracé (l'outil ne la connaît pas, ou ligne antérieure
+    -- à la colonne) — ⚠️ un consommateur ne doit lire NULL NI comme 1 (la règle de
+    -- `quantity` ne vaut pas ici) NI comme 0 : on ne sait pas. 0 = tracé, rien déduit.
+    -- Posée sur une base existante par la révision `20261029_1705_provider_credits`.
+    -- PAS d'index : même raisonnement que `quantity`.
+    provider_credits INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at ON tool_calls(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_sub ON tool_calls(sub);
@@ -311,7 +324,11 @@ CREATE TABLE IF NOT EXISTS journal_totaux_jour (
     taille_n INTEGER NOT NULL,
     taille_somme BIGINT NOT NULL,
     tailles INTEGER[] NOT NULL,
-    dernier_at TIMESTAMPTZ NOT NULL
+    dernier_at TIMESTAMPTZ NOT NULL,
+    -- somme de `provider_credits`, NULL ignoré : NULL = aucune ligne du groupe ne
+    -- l'a tracée, jamais lu 0 ni 1. Posée sur une base existante par la révision
+    -- `20261029_1705_provider_credits` ; un jour consolidé sans elle la porte à NULL.
+    credits_fournisseur BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_journal_totaux_jour_jour ON journal_totaux_jour (jour);
 CREATE INDEX IF NOT EXISTS idx_journal_totaux_jour_org ON journal_totaux_jour (org_id, jour);

@@ -236,15 +236,17 @@ CLASSEMENT: dict[str, Table] = {
     "runner_jobs": possedee(ParOrg(), comptes=("sub",)),
     "runner_fleets": possedee(ParOrg(), comptes=("sub",)),
     "runner_triggers": possedee(ParOrg(), secrets=("hook_signing_secret_enc",),
-                                comptes=("sub",)),
+                                comptes=("sub", "updated_by")),
     "runner_hook_deliveries": possedee(ParOrg()),
     "runner_trigger_links": possedee(ParOrg(), comptes=("created_by",)),
     "agent_episodes": exclue(ParOrg(), "état d'exploitation de la PLATEFORME sur les agents "
                              "de l'org (pannes, relances, diagnostics d'opérateur) : la "
                              "boucle le reconstruit sur la cible à partir de `runner_jobs`"),
+    "access_requests": possedee(ParOrg()),
     "copilot_threads": exclue(ParOrg(), "conversation de l'agent intégré : un état de travail éphémère (le journal des appels, lui, part)"),
     "copilot_undos": exclue(ParSub(), "annulation offerte, valable une heure"),
     "copilot_spend": exclue(ParSub(), "dépense du jour de l'agent intégré : le plafond ne lit que le jour courant"),
+    "copilot_attachments": exclue(ParOrg(), "fichier joint à un message de l'agent intégré : montré au modèle le temps d'un tour, purgé avec les conversations"),
     "runner_workers": possedee(ParOrg()),
     "runner_platform_workers": instance("les exécutants de plateforme : l'infrastructure "
                                         "de l'instance"),

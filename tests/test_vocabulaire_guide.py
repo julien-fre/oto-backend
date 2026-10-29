@@ -121,6 +121,9 @@ PLAFONDS: dict[str, int] = {
     #  tombé à 0 du même geste.)
     # — Valeur d'énumération servie `missing_doctrine` (contrainte CHECK en base).
     "oto_mcp/capabilities/usage.py": 2,
+    # — La même valeur, nommée à l'agent intégré pour qu'il la passe à `feedback` :
+    #   la renommer ici seul ferait refuser son signalement par le CHECK (lot D).
+    "oto_mcp/capabilities/copilot/consigne.py": 1,
     # — DDL et migration de colonne : le SEUL endroit qui nomme encore la table. La
     #   vue `guide_library` porte le nom d'aujourd'hui et tout le code passe par elle
     #   (garde : `tests/test_guide_library_view.py`).

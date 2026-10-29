@@ -114,6 +114,15 @@ s'ÉLARGIT, aucun appelant existant ne casse — mais tout appel de PRODUCTION l
 explicitement (garde `tests/test_journal_membres_145.py`). `_accept_invitation_row`
 le reçoit sans défaut : ses deux seuls appelants distinguent le clic (la personne) de
 la réconciliation au signup (le système).
+
+⚠️ **Mise à jour du 29/10/2026 (réclamation d'invitation par l'adresse)** —
+`_accept_invitation_row` rend `Optional[dict]` au lieu de `dict`. Il consomme désormais
+l'invitation D'ABORD, par un `UPDATE … WHERE <en attente> RETURNING`, dans la même
+transaction que l'adhésion : la lecture qui l'a précédé (par token, par email) peut
+avoir été dépassée par un autre appel, et celui qui perd rend None sans rien écrire.
+Ses appelants en tirent chacun leur conclusion (succès idempotent du même compte,
+410, rien au signup). Deux noms s'AJOUTENT, sans rien retirer : `_consommer` et
+`add_org_member_in` (le corps d'`add_org_member` sur la transaction de l'appelant).
 """
 from __future__ import annotations
 
@@ -186,7 +195,7 @@ FROZEN = (
 # nom -> str(inspect.signature(...)) relevé sur le même commit.
 FROZEN_SIGNATURES = {
     'LibrarySlugTaken': '?',
-    '_accept_invitation_row': "(inv: 'dict', sub: 'str', *, actor: 'Optional[str]') -> 'dict'",
+    '_accept_invitation_row': "(inv: 'dict', sub: 'str', *, actor: 'Optional[str]') -> 'Optional[dict]'",
     '_connect': "() -> 'Iterator[psycopg.Connection]'",
     '_email_connectors_in_order': "(settings: 'dict') -> 'list[str]'",
     # #681 : la clé est la paire propriétaire, plus l'org — cf. l'en-tête.

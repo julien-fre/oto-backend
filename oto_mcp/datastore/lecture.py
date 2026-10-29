@@ -29,6 +29,10 @@ from .outils import (
 )
 
 
+# Les tris qui ne lisent pas `data` : ceux que `db.datastore_page_mince` sert.
+_TRIS_META = (None, "", "_created_at", "_updated_at", "_id")
+
+
 class LectureMixin:
     """Les lectures du store. Composé par `DatastorePg`."""
 
@@ -321,8 +325,8 @@ class LectureMixin:
         otype, oopts = dsv2.order_spec(sch, order_by)
         # Page + total + compteurs d'écart en UNE requête quand la lecture est
         # amincissable (oto-backend#980, suite) — `None` = pas amincissable
-        # (ex. recherche plein texte `q`), on retombe alors sur les trois appels
-        # historiques, inchangés.
+        # (ex. recherche plein texte `q`), on retombe alors sur des appels séparés :
+        # page mince au tri méta sans `q`, sinon les trois appels historiques.
         combined = db.datastore_page_with_stats(
             ns_id, offset=offset, limit=limit, order_by=order_by,
             order_dir=order_dir, q=cherche, filters=clauses,
@@ -331,6 +335,18 @@ class LectureMixin:
             rows, total, off_type, empty = combined
             health = ({"off_type": off_type, "empty": empty}
                       if (off_type or empty) else None)
+        elif not cherche and not otype and order_by in _TRIS_META:
+            # Tri méta sans recherche (le défaut du tableau, sans filtre amincissable) :
+            # la page se coupe sur les clés, sans fenêtre sur tout le jeu — mêmes
+            # lignes que `datastore_list_rows`. Le total reste celui d'en dessous :
+            # exact par défaut, borné par `total_max`.
+            rows = db.datastore_page_mince(
+                ns_id, offset=offset, limit=limit, order_by=order_by,
+                order_dir=order_dir, filters=clauses)
+            total = db.datastore_count_rows(
+                ns_id, filters=clauses,
+                jusqua=None if total_max is None else total_max + 1)
+            health = None
         else:
             rows = db.datastore_list_rows(
                 ns_id, offset=offset, limit=limit, order_by=order_by,

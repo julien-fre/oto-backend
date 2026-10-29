@@ -16,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ... import geste
 from ...db import copilot as store
-from . import annulation, carte, classement, cle as cles, depense, modele
+from . import annulation, carte, classement, cle as cles, depense, modele, pieces
 from .outils import Boite, executer
 from .texte import FiltreSuite, couper
 
@@ -201,7 +201,11 @@ async def _un_appel(fil: dict, b: Boite, cle: cles.Cle, sortie: dict) -> AsyncIt
     filtre = FiltreSuite(lambda t: tampon.append(ev("text_delta", text=t)))
     progres, regle, rien_recu = "", False, True
     releve: dict = {}
-    corps = modele.corps_de_requete(fil["system"], _outils_du_modele(fil, b), fil["messages"])
+    # The attached files resolved on a COPY (`pieces.resoudre`): the current turn's as
+    # content, presigned once per leg (`_pieces`, never stored), earlier ones as a line.
+    envoyes = await run_in_threadpool(pieces.resoudre, fil["messages"], fil["sub"],
+                                      fil["org_id"], fil.setdefault("_pieces", {}))
+    corps = modele.corps_de_requete(fil["system"], _outils_du_modele(fil, b), envoyes)
     try:
         async for quoi, val in modele.flux(cle.secret, cle.workspace, corps, releve=releve):
             rien_recu = False

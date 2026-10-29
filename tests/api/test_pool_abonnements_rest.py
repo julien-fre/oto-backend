@@ -137,11 +137,13 @@ def test_la_lecture_dit_QUI_prete_et_dans_quel_etat(client, org, abonne, option)
     client.patch(f"{_ME}/{_F}", json={"lent_to": [o["id"]]}, headers=_h(o["membre"]))
 
     lu = client.get(o["route"], headers=_h(o["admin"])).json()
-    assert lu["lenders"] == [{"sub": o["membre"], "usable_now": True}]
+    # l'org_admin lit le plafond effectif de chaque prêteur (un réglage, pas l'usage)
+    assert lu["lenders"] == [{"sub": o["membre"], "usable_now": True,
+                              "limit_pct": lu["limit_pct"]}]
     assert lu["pool_size"] == 1
-    # même forme pour un membre que pour l'admin : personne ne lit l'abonnement d'autrui
+    # un membre ne lit que qui prête et s'il est utilisable — jamais le plafond d'autrui
     assert client.get(o["route"], headers=_h(o["membre"])).json()["lenders"] == \
-        lu["lenders"]
+        [{"sub": o["membre"], "usable_now": True}]
 
     US.marquer_statut(o["membre"], _F, US.DECONNECTE)
     lu = client.get(o["route"], headers=_h(o["membre"])).json()
@@ -151,6 +153,29 @@ def test_la_lecture_dit_QUI_prete_et_dans_quel_etat(client, org, abonne, option)
 
     client.patch(f"{_ME}/{_F}", json={"lent_to": []}, headers=_h(o["membre"]))
     assert client.get(o["route"], headers=_h(o["admin"])).json()["lenders"] == []
+
+
+def test_l_admin_lit_le_plafond_perso_du_preteur_le_membre_non(client, abonne, option):
+    """Le plafond PERSO remplace celui de l'org, plus haut OU plus bas
+    (`_abonnement.seuil`) : l'admin lit l'effectif ; retiré, celui de l'org revient."""
+    o = abonne
+    option.add(o["membre"])
+    client.put(o["route"], json={"limit_pct": 60}, headers=_h(o["admin"]))
+    client.patch(f"{_ME}/{_F}", json={"lent_to": [o["id"]]}, headers=_h(o["membre"]))
+    try:
+        lu = client.get(o["route"], headers=_h(o["admin"])).json()
+        assert lu["lenders"][0]["limit_pct"] == 60, "sans réglage perso : celui de l'org"
+
+        client.patch(f"{_ME}/{_F}", json={"limit_pct": 90}, headers=_h(o["membre"]))
+        lu = client.get(o["route"], headers=_h(o["admin"])).json()
+        assert lu["lenders"][0]["limit_pct"] == 90, "le perso remplace, même plus haut"
+
+        assert "limit_pct" not in \
+            client.get(o["route"], headers=_h(o["membre"])).json()["lenders"][0]
+    finally:
+        client.patch(f"{_ME}/{_F}", json={"lent_to": [], "limit_pct": None},
+                     headers=_h(o["membre"]))
+        client.put(o["route"], json={"limit_pct": None}, headers=_h(o["admin"]))
 
 
 def test_au_plafond_l_echeance_decide_sans_etre_servie(client, org, abonne, option):
@@ -172,7 +197,7 @@ def test_au_plafond_l_echeance_decide_sans_etre_servie(client, org, abonne, opti
 
         hier = datetime.now(timezone.utc) - timedelta(hours=1)
         US.marquer_statut(o["membre"], _F, US.PLAFOND, limit_reset_at=hier)
-        lu = client.get(o["route"], headers=_h(o["admin"])).json()
+        lu = client.get(o["route"], headers=_h(o["membre"])).json()
         assert lu["lenders"] == [{"sub": o["membre"], "usable_now": True}]
         assert lu["pool_size"] == 1
     finally:

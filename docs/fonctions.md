@@ -141,6 +141,14 @@ code (#1202) : `oto_recipe` le sert aux recettes `kind: "code"` (`docs/recettes.
   son reçu ; au-delà il est tué et l'exécution lève. Pas de reprise au milieu d'une
   fonction : une relance repart du début, d'où des écritures idempotentes le jour où il y
   en aura. Un résultat au-delà de `MAX_RESULTAT` est refusé APRÈS l'appel (facturé).
+  ⚠️ **La durée n'attend aucun appel au-delà de sa borne** : un outil synchrone joue
+  dans un fil que Python n'interrompt pas, et une tâche annulée peut tarder à céder ;
+  l'appel échu est donc abandonné (annulé, pas attendu) et le code
+  reçoit aussitôt `budget_exhausted`, la fin attend au plus `GRACE_S` ce qui vole encore
+  puis le journalise et l'abandonne. Au-dessus, `oto_recipe` borne une recette-code à
+  `max_seconds + GRACE_S + 15 s` (504 `recipe_timeout`). Un compte de connecteur à
+  nommer (plusieurs comptes sans défaut, ou nom introuvable) revient au code sous
+  `account_required`, et non `invalid_input` (`meta.executer_cible`).
 - **Des appels en parallèle sont servis en parallèle** (`asyncio.gather` dans le code),
   au plus `Budget.en_vol` à la fois (`EN_VOL`, 5) : chaque demande est jugée par le
   budget à sa lecture, sans `await` entre le compte et la décision (`max_calls` exact),

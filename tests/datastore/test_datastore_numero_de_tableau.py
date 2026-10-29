@@ -320,6 +320,8 @@ def registre(monkeypatch):
     monkeypatch.setattr(D.db, "list_datastores_shared_to_user", lambda sub: [])
     monkeypatch.setattr(D.ownership, "can_govern", lambda sub, t, rid: True)
     monkeypatch.setattr(ownership, "can_govern", lambda sub, t, rid: True)
+    monkeypatch.setattr(ownership, "can_govern_many",
+                        lambda sub, t, owners: {rid: True for rid in owners})
     monkeypatch.setattr(D.db, "create_datastore",
                         lambda ot, oid, nom, *, context_org_id: CATALOGUE_NS)
     monkeypatch.setattr(D.db, "rename_datastore_by_id", lambda ns, nom: None)
