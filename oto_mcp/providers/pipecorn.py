@@ -9,7 +9,9 @@ from ._model import CredentialField, _c
 
 # pipecorn: waterfall contact enrichment — a person's mobile phone, professional
 # email or personal email, from a LinkedIn profile (or, for an email, a name and a
-# company), Pipecorn running its own cascade of providers behind ONE synchronous call.
+# company), Pipecorn running its own cascade of providers (asynchronous: submitted,
+# then read back) — plus a person's profile, a company's firmographics, technologies
+# and open job postings.
 # The client lives in the connector library (`oto.tools.pipecorn.PipecornClient`),
 # the tool in `tools/pipecorn.py` (one read tool, `pipecorn`: a lookup changes
 # nothing at Pipecorn, it spends credits).
@@ -19,10 +21,9 @@ from ._model import CredentialField, _c
 # BYO (user OR org: the customer's own Pipecorn credits) or a platform key on explicit
 # grant (`platform_key_open=False`, `default_quota=0`: an org without a grant never
 # reaches it). No per-org cap on the grant: the org's Tulina credits bound what it
-# spends. The platform key serves a PHONE lookup only — the first step of
-# `waterfall_phone`; emails, the personal email (its consent belongs to the key's owner)
-# and the balance ask for the customer's own key. A lookup is ASYNCHRONOUS (submitted,
-# then read back); the finished result notes the Pipecorn credits it spent
+# spends. The platform key serves everything but the personal email (its consent belongs
+# to the key's owner) and the balance; it is a step of the phone, email, person,
+# company and tech waterfalls. Each lookup notes the Pipecorn credits it spent
 # (`quantity`, any key).
 CONNECTOR = _c(
     "pipecorn", ["pipecorn"], auth_modes={"byo_user", "byo_org", "platform"},
@@ -35,9 +36,9 @@ CONNECTOR = _c(
                  "with sample data and spends nothing."),
     ),
     label="Pipecorn",
-    help="waterfall contact enrichment: a person's mobile phone, work email or "
-         "personal email from their LinkedIn profile; the shared key, when granted, "
-         "covers phone lookups",
+    help="contact enrichment (mobile phone, work email), profiles, company data, "
+         "technologies and job postings; the shared key, when granted, covers all but "
+         "the personal email",
     href="https://www.pipecorn.com",
 )
 
@@ -47,8 +48,9 @@ LOGO_DOMAIN = "pipecorn.com"
 
 DESCRIPTION = (
     "Find a person's mobile phone, work email or personal email with Pipecorn, which "
-    "queries many data providers one after the other in a single call. A LinkedIn "
-    "profile is enough; an email can also be found from a name and a company. You "
-    "only pay for what is found. Your own API key, or the shared key when it is "
-    "granted to your org: it covers phone lookups; emails need your own key."
+    "queries many data providers one after the other. A LinkedIn profile is enough; "
+    "an email can also be found from a name and a company. Also reads a person's "
+    "profile, a company's data, the technologies it uses and its open job postings. "
+    "You only pay for what is found. Your own API key, or the shared key when it is "
+    "granted to your org: it covers everything but the personal email."
 )

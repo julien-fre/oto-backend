@@ -201,8 +201,9 @@ def test_personne_sur_sa_cle_lemlist_suit_son_propre_linkedin(calls, mode):
 def test_personne_lemlist_avant_les_profils_payants_sur_la_cle_partagee(calls):
     out = _run("waterfall_person", linkedin_url="https://www.linkedin.com/in/jane",
                dry_run=True)
-    assert [a["provider"] for a in out["attempts"]][:3] == ["linkedin", "lemlist_db",
-                                                            "aiark"]
+    # Then the paid profiles by cost: Pipecorn, then AI Ark (29/10).
+    assert [a["provider"] for a in out["attempts"]][:4] == ["linkedin", "lemlist_db",
+                                                            "pipecorn", "aiark"]
 
 
 def test_personne_le_poste_d_ordre_zero_passe_en_premier(calls):

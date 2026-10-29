@@ -180,14 +180,16 @@ personne alors que Pipecorn nous la débite s'il trouve : c'est le prix du repli
 
 ## Les étapes
 
-- **Email** : hunter → aiark (sur une vraie liste, les mêmes emails qu'Apollo, qui facture
+- **Email** : pipecorn (`pipecorn op=enrich find=["email"]`, par le profil LinkedIn, sinon
+  prénom + nom + domaine ou société : sa propre cascade, ASYNCHRONE comme au téléphone —
+  20 s au plus puis repli, en tête par décision du 29/10) → hunter → aiark (sur une vraie liste, les mêmes emails qu'Apollo, qui facture
   sa correspondance même sans email) → apollo → kaspr → lusha → forager (clé de l'appelant
   seulement, sauf si l'instance ouvre `forager_person:work_emails` sur sa clé partagée) →
   dropcontact → lemlist → fullenrich (les asynchrones en dernier).
 - **Téléphone** : pipecorn (`pipecorn op=enrich find=["phone"] phone_type="mobile"`,
   depuis un profil LinkedIn : sa propre cascade de fournisseurs, ASYNCHRONE, attendue
   20 s au plus puis repli sur la suite — voir « Les étapes asynchrones » ; facturée au
-  seul mobile trouvé, à la relève ; la clé partagée, sur octroi, ne sert que ce geste ;
+  seul mobile trouvé, à la relève ; la clé partagée, sur octroi, sert tout sauf l'email perso et le solde ;
   absente du mode tableau comme toute étape asynchrone) → kaspr →
   lusha → forager → apollo (`apollo_reveal_phone`, asynchrone, clé de l'appelant
   seulement) → lemlist → dropcontact → fullenrich. Pas d'AI Ark. En tête de la table, mais
@@ -196,12 +198,14 @@ personne alors que Pipecorn nous la débite s'il trouve : c'est le prix du repli
 - **Société** : `fr` (le registre français, UNE ligne à deux entrées : `fr_get` par SIREN,
   sinon `fr_search` par nom, France seulement, gratuit) → lemlist (`lemlist_database
   op=companies`, par `currentCompanyWebsiteUrl` ; voir « La base de lemlist ») → aiark
-  (`linkedin_aiark_search op=companies`, domaine ou nom) → apollo (domaine) → theirstack
+  (`linkedin_aiark_search op=companies`, domaine ou nom) → pipecorn (`op=company`, domaine,
+  sinon nom vérifié contre la société demandée) → apollo (domaine) → theirstack
   (domaine) → cognism (domaine ou nom).
 - **Personne** : linkedin (`linkedin_unipile_profile`, le compte LinkedIn connecté de
   l'appelant, gratuit) → `lemlist_db` (`lemlist_database op=people`, par
   `leadLinkedInSlug`, sinon `username` + `currentCompanyWebsiteUrl` ; la clé `lemlist` reste
-  l'enrichissement asynchrone) → aiark (export) → apollo → forager (`op=detail`, clé de l'appelant
+  l'enrichissement asynchrone) → pipecorn (`op=person`, profil LinkedIn, sinon prénom + nom
+  + société) → aiark (export) → apollo → forager (`op=detail`, clé de l'appelant
   seulement, sauf `forager_person:detail` ouvert sur la clé partagée) → cognism →
   lusha (recherche sans `reveal`, le mode bon marché) → lemlist (`linkedin_enrichment`).
 - **Lus par des noms de clés connus, faute de forme figée par un test ici** : Kaspr,
@@ -221,7 +225,9 @@ tourner (CMS, framework, hébergement, analytics — l'index DataForSEO, ou un c
 TheirStack) — une centaine de slugs, mais plus cher et maigre sur les petites sociétés.
 D'où l'ordre : lemlist (la fiche société de sa base, sans crédit — ~200 technologies sur
 une société de 300 personnes, scorées CONFIRMED / LIKELY / POTENTIAL : les POTENTIAL
-écartées, elles ne répondent pas à « l'utilise-t-elle ? ») → dataforseo (~0,01-0,02 \$) → apify (`kfirs/tech-stack-detector`,
+écartées, elles ne répondent pas à « l'utilise-t-elle ? ») → pipecorn (`op=stack`, sa fiche
+technologies avec une confiance, 3 crédits Pipecorn — le premier payant par coût, 29/10) →
+dataforseo (~0,01-0,02 \$) → apify (`kfirs/tech-stack-detector`,
 HTTP simple sans navigateur, ~0,01 \$ par site analysé, un site en échec n'est pas
 facturé ; une URL par exécution, sans `max_items` — même raison que la page LinkedIn ;
 une ligne par fournisseur, chacune avec son logo, pour qu'un écran dise QUI regarde) →

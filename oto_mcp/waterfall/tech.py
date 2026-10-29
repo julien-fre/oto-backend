@@ -52,6 +52,16 @@ def _tech_find(names: list, inputs: dict, source: str, by_category=None) -> Opti
     return found
 
 
+def _pipecorn_tech(res, inputs):
+    """`technologies` (names), else the names of `technologies_with_confidence`."""
+    if not isinstance(res, dict):
+        return None
+    names = res.get("technologies") or [
+        t.get("name") for t in res.get("technologies_with_confidence") or []
+        if isinstance(t, dict)]
+    return _tech_find(list(names), inputs, "vendor_database")
+
+
 def _dataforseo_tech(res, inputs):
     """`technologies` is `{group: {category: [names]}}` — flattened by category."""
     groups = _get(res, "technologies")
@@ -156,6 +166,16 @@ TECH_STEPS: tuple[Step, ...] = (
          explains=(
              "lemlist's company record — website and business tools with a confidence "
              "(confirmed and likely kept); spends no credits.")),
+    # First of the paid ones (Julien, 29/10, by cost): 3 Pipecorn credits per company,
+    # ~€0.013-0.019 — under TheirStack (~€0.03-0.05) and Apollo (~€0.019); only
+    # lemlist's free search runs ahead of it.
+    Step("pipecorn", "pipecorn", (("domain",),),
+         lambda i: {"op": "stack", "domain": i["domain"]},
+         _pipecorn_tech, "3 Pipecorn credits per company", label="Pipecorn stack",
+         asks="technologies", max_units=3,
+         explains=(
+             "Pipecorn's technology record for the company — website and business tools, "
+             "with a confidence.")),
     Step("dataforseo", "dataforseo_technologies", (("domain",),),
          lambda i: {"op": "domain", "target": i["domain"]},
          _dataforseo_tech, "~$0.01-0.02 per domain (DataForSEO)",

@@ -216,3 +216,25 @@ def _lemlist_company_rec(res, inputs) -> Optional[dict]:
         if site == inputs.get("domain"):
             return rec
     return None
+
+
+# --- Pipecorn: its contact lookup is asynchronous ----------------------------------
+
+#: Pipecorn's own wait (`Step.poll`): first read after 2 s, then every 3 s (its reads are
+#: free and exempt from its rate limit), 20 s at most (Julien, 29/10) — then the cascade
+#: falls back on the next providers (`Step.falls_through`), with their full budget: at
+#: worst 20 + 40 s, under the 120 s of an MCP call.
+PIPECORN_POLL = (2.0, 3.0, 20.0)
+
+
+def _pipecorn_collect(find: str) -> Collect:
+    """The submission answers with an `enrichment_id`, read back (free) by the same tool
+    with `op="result"` — and the same `find`, which bounds what the read bills."""
+    return Collect(
+        "pipecorn",
+        lambda submitted: ({"op": "result", "enrichment_id": submitted["enrichment_id"],
+                            "find": [find]}
+                           if isinstance(submitted, dict) and submitted.get("enrichment_id")
+                           else None),
+        lambda res: isinstance(res, dict) and bool(res.get("done")),
+    )

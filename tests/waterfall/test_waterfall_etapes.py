@@ -327,3 +327,86 @@ def test_pipecorn_sur_la_cle_partagee_passe_derriere_les_cles_de_l_appelant(call
                dry_run=True)
     order = [a["provider"] for a in out["attempts"]]
     assert order[:2] == ["kaspr", "pipecorn"]
+
+
+# --- pipecorn ailleurs : email (asynchrone, en tête), personne, société, techno -------
+
+def test_pipecorn_ouvre_l_email_par_le_nom_et_le_domaine(calls, horloge):
+    calls["answers"]["pipecorn"] = [
+        SOUMIS, IssueCible(ok=True, result={"done": True, "status": "finished",
+                                             "email": "Jane@Acme.com",
+                                             "email_status": "deliverable"})]
+    out = _run("waterfall_email", first_name="Jane", last_name="Doe", domain="acme.com")
+    assert out["provider"] == "pipecorn"
+    assert out["email"] == {"email": "jane@acme.com", "all": ["jane@acme.com"],
+                            "status": "deliverable"}
+    assert calls["made"][0] == ("pipecorn", {"op": "enrich", "find": ["email"],
+                                             "firstname": "Jane", "lastname": "Doe",
+                                             "domain": "acme.com"})
+    assert calls["made"][1][1] == {"op": "result", "enrichment_id": PID, "find": ["email"]}
+
+
+def test_pipecorn_email_sans_reponse_passe_la_main_a_hunter(calls, horloge):
+    calls["answers"]["pipecorn"] = [SOUMIS, IssueCible(ok=True, result={"done": False})]
+    calls["answers"]["hunter_email_finder"] = IssueCible(
+        ok=True, result={"data": {"email": "jane@acme.com"}})
+    out = _run("waterfall_email", first_name="Jane", last_name="Doe", domain="acme.com")
+    assert out["provider"] == "hunter"
+    assert out["pending"][0]["provider"] == "pipecorn"
+
+
+_PROFIL = {"found": True, "full_name": "Jane Doe", "title": "VP Sales",
+           "lk_headline": "VP Sales at Acme", "location": "Paris, France",
+           "linkedin_profile_url": "https://www.linkedin.com/in/jane-doe",
+           "positions": [{"title": "Head of Sales", "current": False, "company_name": "Old"},
+                         {"title": "VP Sales", "current": True, "company_name": "Acme",
+                          "company_domain": "acme.com"}]}
+
+
+def test_pipecorn_personne_lit_le_poste_en_cours(calls):
+    calls["answers"]["pipecorn"] = IssueCible(ok=True, result=_PROFIL)
+    out = _run("waterfall_person", linkedin_url="https://www.linkedin.com/in/jane-doe/",
+               providers=["pipecorn"])
+    assert out["provider"] == "pipecorn"
+    assert out["person"]["title"] == "VP Sales" and out["person"]["company_name"] == "Acme"
+    assert out["person"]["company_domain"] == "acme.com"
+    assert calls["made"][0][1] == {"op": "person",
+                                   "linkedin_url": "https://www.linkedin.com/in/jane-doe/"}
+
+
+def test_pipecorn_personne_introuvable_passe_la_main(calls):
+    calls["answers"]["pipecorn"] = IssueCible(ok=True, result={"found": False})
+    out = _run("waterfall_person", linkedin_url="https://www.linkedin.com/in/jane-doe/",
+               providers=["pipecorn", "apollo"])
+    assert out["attempts"][0]["status"] == "no_match"
+
+
+_SOCIETE = {"found": True, "company_name": "Acme", "domain": "acme.com",
+            "industry": "Software", "employee_count": 248, "employee_range": "201-500",
+            "headquarters": {"country": "France", "city": "Paris"},
+            "linkedin_url": "https://www.linkedin.com/company/acme"}
+
+
+def test_pipecorn_societe_par_domaine(calls):
+    calls["answers"]["pipecorn"] = IssueCible(ok=True, result=_SOCIETE)
+    out = _run("waterfall_company", domain="acme.com", providers=["pipecorn"])
+    assert out["provider"] == "pipecorn"
+    assert out["company"]["employees"] == 248 and out["company"]["city"] == "Paris"
+    assert calls["made"][0][1] == {"op": "company", "domain": "acme.com"}
+
+
+def test_pipecorn_societe_par_nom_ecarte_l_homonyme(calls):
+    calls["answers"]["pipecorn"] = IssueCible(ok=True, result={**_SOCIETE,
+                                                                "company_name": "Zenith"})
+    out = _run("waterfall_company", company_name="Acme", country="US",
+               providers=["pipecorn"])
+    assert out["found"] is False
+
+
+def test_pipecorn_techno_noms_ou_confiance(calls):
+    calls["answers"]["pipecorn"] = IssueCible(ok=True, result={
+        "found": True, "technologies_with_confidence": [
+            {"name": "HubSpot", "confidence": "high"}, {"name": "React", "confidence": 0.9}]})
+    out = _run("waterfall_tech", domain="acme.com", providers=["pipecorn"])
+    assert out["provider"] == "pipecorn"
+    assert out["tech"]["technologies"] == ["HubSpot", "React"]

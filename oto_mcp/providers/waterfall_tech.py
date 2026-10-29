@@ -19,7 +19,7 @@ CONNECTOR = _c(
     cardinality="mono", modules=("waterfall", "waterfall_lignes"),
     credential_fields=(CredentialField(
         "steps", "Steps, in order", secret=False, required=False,
-        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: lemlist, dataforseo, apify, apollo, aiark, theirstack."),),
+        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: lemlist, pipecorn, dataforseo, apify, apollo, aiark, theirstack."),),
     label="Tech stack waterfall",
     help="a company's tech stack, across your connected providers one after the other, stopping at the "
          "first hit",
@@ -32,5 +32,5 @@ SANS_LOGO_DE_MARQUE = True
 CATEGORY = "Prospecting"
 
 DESCRIPTION = (
-    "Finds what a company's website runs and what its job postings name — DataForSEO, a live Apify crawl of the site, Apollo and AI Ark's company records, then TheirStack — stopping at the first match, or at the first that detects the tools you ask about."
+    "Finds what a company's website runs and what its job postings name — Pipecorn's company record, DataForSEO, a live Apify crawl of the site, Apollo and AI Ark's company records, then TheirStack — stopping at the first match, or at the first that detects the tools you ask about."
 )

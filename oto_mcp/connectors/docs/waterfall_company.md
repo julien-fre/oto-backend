@@ -17,7 +17,7 @@ set **steps** on this card: the provider keys, comma-separated, in the order you
 ## usage — a company's firmographics
 
 one company per call, stopping at the first source that identifies it.
-- `waterfall_company` — default order: fr (the french registry: by siren, else by name) → lemlist (domain — lemlist's company database: headcount, size band, industry, headquarters, linkedin page) → aiark (domain or name) → apollo (domain) → theirstack (domain) → cognism; then, only when the company's linkedin page is still missing, lemlist_linkedin (lemlist's company database, unless the lemlist step already answered) → linkedin (its own website, else a search by name checked against the domain)
+- `waterfall_company` — default order: fr (the french registry: by siren, else by name) → lemlist (domain — lemlist's company database: headcount, size band, industry, headquarters, linkedin page) → aiark (domain or name) → pipecorn (domain, else name checked against the company asked) → apollo (domain) → theirstack (domain) → cognism; then, only when the company's linkedin page is still missing, lemlist_linkedin (lemlist's company database, unless the lemlist step already answered) → linkedin (its own website, else a search by name checked against the domain)
 - a search result only counts if its domain matches, or its name contains the name asked — a namesake never stops the cascade
 - `employees_band` is the insee size band code from the french registry, or lemlist's band (`201-500`) — not a headcount
 - lemlist's database bills no lemlist credits: each call spends one call of the lemlist key's search quota

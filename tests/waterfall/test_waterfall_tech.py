@@ -30,10 +30,12 @@ _THEIRSTACK_TECH = {"metadata": {}, "data": [{
 def test_tech_l_index_du_site_d_abord_et_par_categorie(calls):
     calls["answers"]["dataforseo_technologies"] = IssueCible(ok=True, result=_DATAFORSEO_TECH)
     out = _run("waterfall_tech", domain="https://www.acme.com/")
-    # lemlist d'abord (aucun crédit) : rien en base ici, l'index du site prend le relais.
+    # lemlist d'abord (aucun crédit), puis Pipecorn, le premier payant par coût : rien
+    # ici, l'index du site prend le relais.
     assert out["provider"] == "dataforseo"
-    assert _made(calls) == ["lemlist_database", "dataforseo_technologies"]
-    assert calls["made"][1][1] == {"op": "domain", "target": "acme.com"}
+    assert _made(calls) == ["lemlist_database", "pipecorn", "dataforseo_technologies"]
+    assert calls["made"][1][1] == {"op": "stack", "domain": "acme.com"}
+    assert calls["made"][2][1] == {"op": "domain", "target": "acme.com"}
     t = out["tech"]
     assert t["source"] == "website" and t["technologies"] == ["Next.js", "React", "Vercel",
                                                                "Storyblok"]
@@ -67,7 +69,7 @@ def test_tech_cherchee_ne_stoppe_que_si_detectee(calls):
     out = _run("waterfall_tech", domain="acme.com", technologies="HubSpot, Spendesk")
     assert out["provider"] == "theirstack" and out["tech"]["source"] == "job_postings"
     assert out["tech"]["matched"] == ["HubSpot", "Spendesk"]
-    assert [a["status"] for a in out["attempts"]] == ["no_match"] * 5 + ["found"]
+    assert [a["status"] for a in out["attempts"]] == ["no_match"] * 6 + ["found"]
 
     calls["made"].clear()
     out = _run("waterfall_tech", domain="acme.com", technologies=["nextjs"])
@@ -79,7 +81,7 @@ def test_tech_jamais_detectee_rend_un_non_trouve(calls):
     calls["answers"]["apify_run_sync"] = IssueCible(ok=True, result=_APIFY_TECH)
     calls["answers"]["theirstack_companies_search"] = IssueCible(ok=True, result=_THEIRSTACK_TECH)
     out = _run("waterfall_tech", domain="acme.com", technologies=["Shopify"])
-    assert out["found"] is False and len(out["attempts"]) == 6
+    assert out["found"] is False and len(out["attempts"]) == 7
 
 
 def test_tech_par_nom_seulement_theirstack_et_l_homonyme_ecarte(calls):

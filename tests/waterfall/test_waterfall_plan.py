@@ -22,7 +22,7 @@ def test_le_plan_dit_l_ordre_les_cles_et_tout_ce_qui_est_offert(monkeypatch):
     assert [(s["key"], s["key_mode"], s["usable"]) for s in out["steps"]] == [
         ("lusha", "org", True), ("hunter", "forbidden", False)]
     assert [s["key"] for s in out["available"]] == [s.key for s in email.EMAIL_STEPS]
-    first = out["available"][0]
+    first = next(s for s in out["available"] if s["key"] == "hunter")
     assert first["connector"] == "hunter" and first["needs"] == "first_name+last_name+domain"
     assert first["requires"] == [["first_name", "last_name", "domain"]]
     labels = [s["label"] for s in plan.plan("waterfall_company", "sub-test")["available"]]

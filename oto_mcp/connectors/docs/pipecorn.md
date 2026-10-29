@@ -3,7 +3,7 @@
 create a key in Pipecorn (Settings → API keys) and paste it into oto. Reference: [Pipecorn authentication](https://docs.pipecorn.com/essentials/authentication).
 - a **test key** (`pc_test_…`) answers every lookup with sample data and spends nothing: a good way to try the connector before your live key
 - your own key first: every lookup then spends **your** Pipecorn credits; each organization or person sets its own key
-- the **shared key**, when oto grants it to your org, covers **phone lookups** only — the first step of `waterfall_phone`; emails, the personal email and the balance need your own key
+- the **shared key**, when oto grants it to your org, covers everything but the **personal email** and the **balance**: phones, work emails, profiles, companies, technologies, job postings
 - the shared key carries **no per-org daily cap**: your Tulina credits bound what you spend
 
 ## usage — a phone, an email
@@ -14,11 +14,15 @@ create a key in Pipecorn (Settings → API keys) and paste it into oto. Referenc
 - both at once → `find=["email", "phone"]`: one lookup, each result billed when found
 - phones from some countries only → `phone_country_codes=["FR", "BE"]`
 - "how many credits are left?" → `pipecorn(op="credits")`: `credits.enrichment` is what lookups spend
-- for a person's phone, prefer `waterfall_phone`: Pipecorn first (submitted and read for you, up to 20 s), then your other providers. Its table mode `waterfall_phone_act(op="update_rows")` leaves Pipecorn out, like every asynchronous step
+- "what does Jane do now?" → `pipecorn(op="person", linkedin_url=…)`: current title and company (with its domain), past positions, tenure — no email or phone
+- "tell me about acme.com" → `pipecorn(op="company", domain="acme.com")`: industry, headcount and its growth, department headcount, revenue range, headquarters, funding, web traffic
+- "what does acme.com run?" → `pipecorn(op="stack", domain="acme.com")`: technologies with a confidence
+- "is acme.com hiring salespeople in France?" → `pipecorn(op="jobs", domain="acme.com", job_title_keywords=["sales"], job_country_codes=["FR"], limit=20)`: open postings with their hiring team — billed per job, so bound `limit`; cheaper per job than TheirStack
+- for a contact, prefer the waterfalls: Pipecorn is the first step of `waterfall_phone` and `waterfall_email` (submitted and read for you, up to 20 s, then your other providers), and a step of `waterfall_person`, `waterfall_company`, `waterfall_tech`. Their table modes leave the asynchronous phone and email lookups out
 
 ## note — what can mislead
 
-- you pay **per result found**, in Pipecorn credits, when the lookup finishes: 3 a work email, 9 a personal email, 30 a phone — and a phone only when a **mobile** is found; a miss costs nothing. The finished result says what it cost (`pipecorn_credits`); reading it again costs nothing more
+- you pay **per result found**, in Pipecorn credits: 3 a work email, 9 a personal email, 30 a phone (only a **mobile**), 1 a profile or a company, 1 per job posting; a technology stack is 3 per request. A miss costs nothing. A contact lookup is billed when it finishes. The finished result says what it cost (`pipecorn_credits`); reading it again costs nothing more
 - pass the same `find` to `op="result"` as to the submission: only what was asked is counted
 - a lookup can end `failed` when the credits ran out while it ran: nothing found, nothing billed
 - a miss is **not an error**: empty fields, `phone_status: "not_found"`

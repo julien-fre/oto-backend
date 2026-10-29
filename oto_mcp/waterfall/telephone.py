@@ -2,13 +2,14 @@
 each provider's answer is read. No AI Ark: it sells no phone."""
 from __future__ import annotations
 
-from .etape import Collect, Step
+from .etape import Step
 from .fournisseurs import (_APOLLO_REVEAL_COLLECT, _DROPCONTACT_COLLECT,
                            _DROPCONTACT_IDS, _FULLENRICH_COLLECT, _FULLENRICH_IDS,
                            _LEMLIST_COLLECT, _NAMES_AND_DOMAIN, _PERSON_IDS, _apollo_args,
                            _dropcontact_args, _dropcontact_profile, _fullenrich_args,
                            _fullenrich_profile, _lemlist_args, _lemlist_first,
-                           _lusha_contact, _lusha_first)
+                           _lusha_contact, _lusha_first, PIPECORN_POLL,
+                           _pipecorn_collect)
 from .valeurs import _deep, _get, _phone_find, _phones_in, _slug
 
 def _pipecorn_phone(res, inputs):
@@ -19,18 +20,6 @@ def _pipecorn_phone(res, inputs):
         return None
     numbers = [d.get("number") for d in res.get("phone_details") or [] if isinstance(d, dict)]
     return _phone_find(_phones_in(numbers or res.get("phone") or res.get("phones") or []))
-
-
-#: Pipecorn's lookup is asynchronous: the submission answers with an `enrichment_id`,
-#: read back (free) by the same tool with `op="result"` until `done`.
-_PIPECORN_COLLECT = Collect(
-    "pipecorn",
-    lambda submitted: ({"op": "result", "enrichment_id": submitted["enrichment_id"],
-                        "find": ["phone"]}
-                       if isinstance(submitted, dict) and submitted.get("enrichment_id")
-                       else None),
-    lambda res: isinstance(res, dict) and bool(res.get("done")),
-)
 
 
 def _kaspr_phone(res, inputs):
@@ -75,12 +64,6 @@ def _lemlist_phone(res, inputs):
     return isinstance(found, dict) and _phone_find(_phones_in(found.get("phone")))
 
 
-#: Pipecorn's own wait (`Step.poll`): first read after 2 s, then every 3 s (its reads
-#: are free and exempt from its rate limit), 20 s at most (Julien, 29/10) — then the
-#: cascade falls back on the next providers (`Step.falls_through`), with their full
-#: budget: at worst 20 + 40 s, under the 120 s of an MCP call.
-PIPECORN_POLL = (2.0, 3.0, 20.0)
-
 #: Synchronous steps first, by provider cost and yield; the asynchronous ones last (a
 #: `pending` one stops the cascade): Apollo's reveal on the caller's own key, then the
 #: slow ones — FullEnrich, 30 s to 4 min, at the end. EXCEPT Pipecorn, which heads the
@@ -96,7 +79,7 @@ PHONE_STEPS: tuple[Step, ...] = (
                     "linkedin_url": i["linkedin_url"], "phone_type": "mobile"},
          _pipecorn_phone,
          "30 Pipecorn credits per mobile found, nothing on a miss (asynchronous)",
-         collect=_PIPECORN_COLLECT, asks="phones", poll=PIPECORN_POLL,
+         collect=_pipecorn_collect("phone"), asks="phones", poll=PIPECORN_POLL,
          falls_through=True,
          explains=("Pipecorn runs its own cascade of phone providers — mobiles only, "
                    "from a LinkedIn profile; waited up to 20 s, then the other "

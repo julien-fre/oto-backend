@@ -19,7 +19,7 @@ CONNECTOR = _c(
     cardinality="mono", modules=("waterfall", "waterfall_lignes"),
     credential_fields=(CredentialField(
         "steps", "Steps, in order", secret=False, required=False,
-        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: fr, lemlist, aiark, apollo, theirstack, cognism, lemlist_linkedin, linkedin."),),
+        help="Provider keys, comma-separated, in the order to try. Empty = default order. Available: fr, lemlist, aiark, pipecorn, apollo, theirstack, cognism, lemlist_linkedin, linkedin."),),
     label="Company waterfall",
     help="a company's firmographics, across your connected providers one after the other, stopping at the "
          "first hit",
@@ -32,5 +32,5 @@ SANS_LOGO_DE_MARQUE = True
 CATEGORY = "Prospecting"
 
 DESCRIPTION = (
-    "Finds a company's legal name, SIREN, size, industry and revenue — the free French registry first, then AI Ark, Apollo, TheirStack, Cognism — stopping at the first match."
+    "Finds a company's legal name, SIREN, size, industry and revenue — the free French registry first, then AI Ark, Pipecorn, Apollo, TheirStack, Cognism — stopping at the first match."
 )

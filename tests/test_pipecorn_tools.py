@@ -119,12 +119,13 @@ def test_un_envoi_sans_identifiant_est_un_refus(key, trace, client):
 
 
 @pytest.mark.parametrize("kwargs", [
-    {"find": ["email"], "linkedin_url": URL},
+    {"find": ["personal_email"], "linkedin_url": URL},
     {"find": ["phone", "personal_email"], "linkedin_url": URL},
     {"op": "credits"},
     {"op": "account"},
 ])
-def test_cle_partagee_refuse_tout_sauf_le_telephone_avant_depense(key, trace, client, kwargs):
+def test_cle_partagee_refuse_l_email_perso_et_le_solde_avant_depense(key, trace, client,
+                                                                    kwargs):
     key["platform"] = True
     with pytest.raises(McpError, match="needs your own Pipecorn key"):
         _fn()(**kwargs)
@@ -249,3 +250,70 @@ def test_une_releve_inconnue_le_dit(key, trace, client):
     client.return_value.get_enrichment.side_effect = _upstream(404, {"error": "Resource not found"})
     with pytest.raises(McpError, match="no such lookup"):
         _fn()(op="result", enrichment_id=ID)
+
+
+def test_cle_partagee_sert_l_email_pro(key, trace, client):
+    key["platform"] = True
+    _fn()(find=["email"], linkedin_url=URL)
+    client.return_value.submit_enrichment.assert_called_once()
+
+
+# --- person / company / stack / jobs : synchrones, facturés à l'appel ----------------
+
+@pytest.mark.parametrize("op, method, answer, credits", [
+    ("person", "enrich_person", {"full_name": "Jane Doe", "positions": []}, 1),
+    ("company", "enrich_account", {"company_name": "Acme", "domain": "acme.com"}, 1),
+    ("stack", "company_stack", {"technologies": ["HubSpot"]}, 3),
+    ("jobs", "company_hiring", {"total_jobs": 2, "jobs": [{"job_title": "AE"}] * 2}, 2),
+])
+def test_une_recherche_synchrone_note_ses_credits(key, trace, client, op, method, answer,
+                                                 credits):
+    getattr(client.return_value, method).return_value = answer
+    kwargs = {"linkedin_url": URL} if op == "person" else {"domain": "acme.com"}
+    out = _fn()(op=op, **kwargs)
+    assert trace == {"quantity": credits}
+    if op in ("person", "company"):
+        assert out["found"] is True
+
+
+@pytest.mark.parametrize("op, method, miss", [
+    ("person", "enrich_person", {"found": False}),
+    ("company", "enrich_account", {"found": False}),
+    ("jobs", "company_hiring", {"jobs": []}),
+])
+def test_introuvable_ne_coute_rien(key, trace, client, op, method, miss):
+    getattr(client.return_value, method).side_effect = _upstream(404, {"error": "not found"})
+    kwargs = {"linkedin_url": URL} if op == "person" else {"domain": "acme.com"}
+    assert _fn()(op=op, **kwargs) == miss
+    assert trace == {"quantity": 0}
+
+
+def test_une_recherche_synchrone_sur_la_cle_partagee_compte_une_recherche(key, trace,
+                                                                          client):
+    key["platform"] = True
+    client.return_value.enrich_account.return_value = {"company_name": "Acme"}
+    _fn()(op="company", domain="acme.com")
+    assert trace == {"quantity": 1, "units": 1}
+
+
+def test_les_offres_passent_leurs_filtres(key, trace, client):
+    client.return_value.company_hiring.return_value = {"jobs": []}
+    _fn()(op="jobs", company_name="Acme", posted_within_days=90, limit=10,
+          job_title_keywords=["sales"], job_country_codes=["FR"])
+    kw = client.return_value.company_hiring.call_args.kwargs
+    assert kw["name"] == "Acme" and kw["posted_within_days"] == 90 and kw["limit"] == 10
+    assert kw["job_title_keywords"] == ["sales"] and kw["job_country_codes"] == ["FR"]
+
+
+def test_un_filtre_d_offres_hors_de_jobs_est_refuse(key, client):
+    with pytest.raises(McpError, match="does not take `limit`"):
+        _fn()(op="company", domain="acme.com", limit=5)
+
+
+def test_les_offres_sans_description_par_defaut(key, trace, client):
+    client.return_value.company_hiring.return_value = {
+        "total_jobs": 1, "jobs": [{"job_title": "AE", "description": "long text"}]}
+    out = _fn()(op="jobs", domain="acme.com")
+    assert out["jobs"] == [{"job_title": "AE"}]
+    out = _fn()(op="jobs", domain="acme.com", full_description=True)
+    assert out["jobs"][0]["description"] == "long text"

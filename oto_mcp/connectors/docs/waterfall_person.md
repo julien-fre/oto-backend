@@ -17,7 +17,7 @@ set **steps** on this card: the provider keys, comma-separated, in the order you
 ## usage — a person's current role and company
 
 one person per call, stopping at the first provider that returns a title or a company.
-- `waterfall_person` — default order: linkedin (your own connected account, free) → lemlist_db (lemlist's people database: current title, company, seniority, location, and a pattern-guessed email marked `email_status="guessed"`) → aiark → apollo → forager → cognism → lusha → lemlist
+- `waterfall_person` — default order: linkedin (your own connected account, free) → lemlist_db (lemlist's people database: current title, company, seniority, location, and a pattern-guessed email marked `email_status="guessed"`) → pipecorn (linkedin url, or name + company) → aiark → apollo → forager → cognism → lusha → lemlist
 - give the linkedin url when you have it: it opens every step; an email or name + domain opens apollo, cognism, lusha and lemlist; name + domain opens lemlist_db
 - lemlist's enrichment (`lemlist`) answers asynchronously (see `pending` in the response)
 - lemlist's database bills no lemlist credits: each call spends one call of the lemlist key's search quota

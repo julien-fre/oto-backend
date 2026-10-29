@@ -7,8 +7,27 @@ from .fournisseurs import (_DROPCONTACT_COLLECT, _DROPCONTACT_IDS, _FULLENRICH_C
                            _FULLENRICH_IDS, _LEMLIST_COLLECT, _NAMES_AND_DOMAIN,
                            _PERSON_IDS, _apollo_args, _forager_shared, _dropcontact_args,
                            _dropcontact_profile, _fullenrich_args, _fullenrich_profile,
-                           _lemlist_args, _lemlist_first, _lusha_contact, _lusha_first)
+                           _lemlist_args, _lemlist_first, _lusha_contact, _lusha_first,
+                           PIPECORN_POLL, _pipecorn_collect)
 from .valeurs import _deep, _email_find, _emails_in, _get, _not_input, _slug
+
+def _pipecorn_email_args(i: dict) -> dict:
+    """By the LinkedIn profile when there is one (enough on its own), else the names at
+    the company — its domain, else its name."""
+    args = {"op": "enrich", "find": ["email"]}
+    if i.get("linkedin_url"):
+        return {**args, "linkedin_url": i["linkedin_url"]}
+    company = ({"domain": i["domain"]} if i.get("domain")
+               else {"company_name": i["company_name"]})
+    return {**args, "firstname": i["first_name"], "lastname": i["last_name"], **company}
+
+
+def _pipecorn_email(res, inputs):
+    if not isinstance(res, dict):
+        return None
+    return _email_find(_not_input(_emails_in(res.get("email")), inputs, "email"),
+                       res.get("email_status"))
+
 
 def _hunter_email(res, inputs):
     data = _get(res, "data") or {}
@@ -78,6 +97,18 @@ def _lemlist_email(res, inputs):
 #: Synchronous steps first, by provider cost and yield; the asynchronous ones last (a
 #: `pending` one stops the cascade), the slowest — FullEnrich, 30 s to 4 min — at the end.
 EMAIL_STEPS: tuple[Step, ...] = (
+    # First although asynchronous (Julien, 29/10): its own cascade of providers, billed
+    # only on an email found; waited 20 s at most, then the next steps run
+    # (`falls_through`) and it is read once more at the end.
+    Step("pipecorn", "pipecorn", _PERSON_IDS,
+         _pipecorn_email_args, _pipecorn_email,
+         "3 Pipecorn credits per email found, nothing on a miss (asynchronous)",
+         collect=_pipecorn_collect("email"), asks="work_emails", poll=PIPECORN_POLL,
+         falls_through=True,
+         explains=(
+             "Pipecorn runs its own cascade of email providers and checks deliverability "
+             "— from a LinkedIn profile, or name and company; waited up to 20 s, then the "
+             "other providers are tried.")),
     Step("hunter", "hunter_email_finder", (_NAMES_AND_DOMAIN,),
          lambda i: {"domain": i["domain"], "first_name": i["first_name"],
                     "last_name": i["last_name"]},
