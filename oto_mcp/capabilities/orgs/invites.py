@@ -7,7 +7,9 @@ RETIRÉ le 15/09/2026 (oto-backend#560 : 7 caractères, ~34 bits, brute-forçabl
 le token long est désormais l'UNIQUE façon d'entrer.
 
 create/list/revoke gatés `ORG_ADMIN_OF` (platform-admin par escalade) ; accept en
-`SUB_ONLY` (modèle bearer : le token suffit, cf. `org_store.accept_invitation`).
+`SUB_ONLY` (modèle bearer : le token suffit, cf. `org_store.accept_invitation`) ;
+claim en `SUB_ONLY` sans token — l'adresse du compte désigne l'invitation, pour
+l'invité déjà inscrit qui ouvre un lien vers l'org plutôt que le mail.
 
 Deux gestes NÉGATIFS, à ne pas confondre — c'est la distinction que #654 a fait
 naître : la **révocation** (`ORG_ADMIN_OF`) est l'émetteur qui retire ce qu'il a
@@ -235,6 +237,10 @@ class InviteAcceptInput(BaseModel):
     token: str | None = None
 
 
+class InviteClaimInput(BaseModel):
+    org_id: int
+
+
 class InviteRejectInput(BaseModel):
     """Même façon de désigner l'invitation que l'acceptation — c'est la symétrie
     que le front tiers demandait (#654). Rien de plus : le refus ne prend pas
@@ -342,6 +348,36 @@ def _invite_accept(ctx: ResolvedCtx, inp: InviteAcceptInput) -> dict:
     res = org_store.accept_invitation(inp.token, ctx.sub)
     if not res:
         raise AuthzDenied(410, "invalid_or_expired", "Invitation invalide, expirée ou déjà utilisée.")
+    return _accepted(ctx, res)
+
+
+def _invite_claim(ctx: ResolvedCtx, inp: InviteClaimInput) -> dict:
+    """Rejoint une org par l'invitation qui y attend l'adresse du compte appelant,
+    SANS token : c'est la porte d'un invité déjà inscrit qui ouvre un lien vers
+    l'org au lieu du lien du mail (le front l'appelle avant de renvoyer un
+    non-membre à l'accueil).
+
+    **Pas bearer, comme le refus** : il n'y a pas de secret, c'est l'adresse du
+    compte — vérifiée par l'annuaire, la même que la réconciliation de signup lit —
+    qui désigne l'invitation. Une invitation ANONYME (sans email) ne se réclame donc
+    pas ainsi ; elle n'a que son lien.
+
+    Déjà membre → succès idempotent (double clic, deux onglets) : l'org est rejointe,
+    c'est ce que l'appelant demandait."""
+    role = org_store.get_org_role(inp.org_id, ctx.sub)
+    if role:
+        return _accepted(ctx, {"org_id": inp.org_id, "org_role": role})
+    email = (db.get_user(ctx.sub) or {}).get("email")
+    res = org_store.claim_invitation_for_org(ctx.sub, email, inp.org_id) if email else None
+    if not res:
+        raise AuthzDenied(404, "no_pending_invitation",
+                          "Aucune invitation en attente pour ton adresse dans cette org.")
+    return _accepted(ctx, res)
+
+
+def _accepted(ctx: ResolvedCtx, res: dict) -> dict:
+    """La réponse `InvitationAccepted`, commune à l'acceptation par token et par
+    adresse."""
     if res.get("resource_type"):  # partage en attente d'UN objet : aucune org rejointe
         return {"ok": True, "resource_type": res["resource_type"],
                 "resource_id": res.get("resource_id"),
@@ -437,6 +473,18 @@ CAPABILITIES += [
                      "in the answer) gives access to that resource only, and joins "
                      "nothing."),
         rest=RestBinding("POST", "/api/me/invitations/accept"),
+    ),
+    Capability(
+        key="org.invite.claim", handler=_invite_claim, Input=InviteClaimInput,
+        authz=SUB_ONLY, Output=InvitationAccepted,
+        errors=(DeclaredError(404, "no_pending_invitation",
+                              "aucune invitation en attente (ni expirée, ni refusée) "
+                              "n'est adressée à l'adresse de ton compte dans cette org"),),
+        description=(
+            "Join an org through the pending invitation addressed to YOUR account's "
+            "email there — no token needed. For someone already signed up who opens a "
+            "link to the org instead of the invitation email. Already a member = ok."),
+        rest=RestBinding("POST", "/api/me/orgs/{id}/invitations/claim", _ID),
     ),
     Capability(
         key="org.invite.reject", handler=_invite_reject, Input=InviteRejectInput,

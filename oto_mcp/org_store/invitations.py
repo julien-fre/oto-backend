@@ -418,6 +418,32 @@ def reconcile_signup_with_invitation(sub: str, email: str) -> Optional[dict]:
     Les partages en attente d'UN objet (`resource_kind`) en sont exclus : ils ne
     rejoignent rien et se comptent par objet — `partage_en_attente.honorer_au_signup`
     les honore tous, à côté de cette invitation d'org."""
+    row = _pending_for_email(email)
+    if not row:
+        return None
+    # Aucun clic : c'est le système qui honore l'invitation au signup.
+    return _accept_invitation_row(row, sub, actor=None)
+
+
+def claim_invitation_for_org(sub: str, email: str, org_id: int) -> Optional[dict]:
+    """Honore, pour un compte DÉJÀ inscrit, l'invitation en attente adressée à son
+    email pour CETTE org — la même correspondance d'email vérifié que la
+    réconciliation de signup, mais déclenchée par un geste : la personne ouvre un
+    lien vers l'org. Cas vécu (29/10/2026) : invité par mail, l'invité reçoit
+    ensuite un lien vers la page de l'org, clique celui-là sans avoir ouvert le
+    mail, et se fait renvoyer à l'accueil — l'invitation l'attendait pourtant.
+
+    Bornée à UNE org, jamais « toutes mes invitations » : rejoindre une org reste
+    un acte voulu, et l'org ouverte est ce vouloir. None si aucune invitation."""
+    row = _pending_for_email(email, org_id=org_id)
+    if not row:
+        return None
+    return _accept_invitation_row(row, sub, actor=sub)
+
+
+def _pending_for_email(email: str, *, org_id: Optional[int] = None) -> Optional[dict]:
+    """La plus récente invitation d'org/équipe en attente adressée à `email` (et à
+    `org_id` si donné). Les partages d'UN objet (`resource_kind`) en sont exclus."""
     email = (email or "").strip().lower()
     if "@" not in email:
         return None
@@ -427,12 +453,10 @@ def reconcile_signup_with_invitation(sub: str, email: str) -> Optional[dict]:
             SELECT id, org_id, org_role, group_id, group_role, invited_by
               FROM org_invitations
              WHERE {_PENDING} AND lower(email) = %s AND resource_kind IS NULL
+               AND (%s::bigint IS NULL OR org_id = %s)
              ORDER BY created_at DESC
              LIMIT 1
             """,
-            (email,),
+            (email, org_id, org_id),
         ).fetchone()
-    if not row:
-        return None
-    # Aucun clic : c'est le système qui honore l'invitation au signup.
-    return _accept_invitation_row(dict(row), sub, actor=None)
+    return dict(row) if row else None
