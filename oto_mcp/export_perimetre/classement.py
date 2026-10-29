@@ -239,6 +239,7 @@ CLASSEMENT: dict[str, Table] = {
                                 comptes=("sub", "updated_by")),
     "runner_hook_deliveries": possedee(ParOrg()),
     "runner_trigger_links": possedee(ParOrg(), comptes=("created_by",)),
+    "slack_agent_posts": possedee(ParOrg()),
     "agent_episodes": exclue(ParOrg(), "état d'exploitation de la PLATEFORME sur les agents "
                              "de l'org (pannes, relances, diagnostics d'opérateur) : la "
                              "boucle le reconstruit sur la cible à partir de `runner_jobs`"),

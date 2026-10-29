@@ -1910,18 +1910,25 @@ Un agent hébergé qui poste **en tant que l'app** (`slack_post_message(author="
 interrupteur (décision du 29/10). Même route que les DM (`POST /api/slack/events`,
 `slack_events.py`).
 
-- **Noter** : `slack_post_message` (`tools/slack.py`), après l'envoi, si l'auteur est
-  l'app et qu'aucun `thread_ts` n'est passé. L'agent est celui du **travail de la
-  requête** (`verrou_org.travail_de_la_requete` → `db.agent_du_travail`), jamais un
-  argument : un appelant ne range pas un message sous l'agent d'un autre. Hors d'un run
-  hébergé (une personne dans une conversation, un travail enfilé à la main), rien n'est
-  noté. Une écriture qui échoue est journalisée : le message est parti, il n'est jamais
-  changé en erreur. Table `slack_agent_posts` (`channel`, `ts`, `org_id`, `trigger_id` →
-  `runner_triggers` ON DELETE CASCADE, `job_id`, `text` borné à 8 000 caractères).
+- **Noter** : `slack_post_message` (`tools/slack.py`), juste après l'envoi, note **tout**
+  message d'un run hébergé — son auteur (`app`/`me`), son fil, chaque partie d'un texte
+  découpé. Seul le message de l'agent lui-même (l'app, hors fil) recevra des réponses
+  (`slack_agent_posts.lire`) ; les autres disent seulement à la route que l'événement
+  est **à nous** (`est_note`) : posté avec un jeton utilisateur, il n'a pas de `bot_id`,
+  et un agent qui répond dans son propre fil en ton nom se relancerait à chaque
+  réponse. L'agent est celui du **travail de la requête**
+  (`verrou_org.travail_de_la_requete` → `db.agent_du_travail`), jamais un argument : un
+  appelant ne range pas un message sous l'agent d'un autre. Hors d'un run hébergé (une
+  personne dans une conversation, un travail enfilé à la main), rien n'est noté. Une
+  écriture qui échoue est journalisée : le message est parti, il n'est jamais changé en
+  erreur. Table `slack_agent_posts` (`channel`, `ts`, `org_id`, `trigger_id` →
+  `runner_triggers` ON DELETE CASCADE, `job_id`, `author`, `thread_ts`, `text` borné à
+  8 000 caractères).
 - **Retrouver** : l'événement ne nomme que `channel` et `thread_ts`. `demande_de` ne garde,
   hors DM, qu'une **réponse dans un fil** (`thread_ts` ≠ `ts`, sans `bot_id`, sous-type
-  absent ou `thread_broadcast`/`file_share`). Après l'accusé, `traiter` lit
-  `slack_agent_posts` **avant tout credential** : chaque réponse en fil de chaque canal
+  absent ou `thread_broadcast`/`file_share`). Après l'accusé, `traiter` écarte d'abord
+  les messages de nos agents (`est_note`), puis lit `slack_agent_posts` **avant tout
+  credential** : chaque réponse en fil de chaque canal
   où siège le bot arrive ici, et presque aucune n'est sous un des nôtres. Trouvé dans
   l'org de l'installation → cet agent. Pas trouvé : un DM continue vers l'agent Slack de
   l'org comme avant, une réponse en canal est ignorée. Au-delà de 30 jours, la ligne ne

@@ -46,6 +46,10 @@ A hosted agent that posts as the app outside a thread (`slack_post_message(autho
 from the job of the request). A reply in THAT thread — DM, channel, private channel or
 group DM — starts THAT agent, every agent, no switch (decision of 29/10/2026):
 
+0. **Never its own messages**: every message a hosted run posts is noted, whatever its
+   author — one posted with a user token carries no `bot_id`, and an agent answering
+   in its own thread in someone's name would otherwise restart itself.
+
 1. **Which message**: `(channel, thread_ts)` in `slack_agent_posts`, younger than 30
    days, of the org that installed the app in this workspace. Read BEFORE any
    credential: every thread reply of every channel the bot sits in arrives here, and
@@ -443,6 +447,11 @@ def traiter(d: Demande) -> dict:
 
     # Read FIRST, before any credential: every thread reply of every channel the bot
     # sits in arrives here, and almost none is under one of ours.
+    # ⚠️ One of OUR agents' own messages is never a request: posted in someone's name
+    # (a user token), it carries no `bot_id` — an agent answering in its own thread
+    # would restart itself, run after run.
+    if db.slack_agent_posts.est_note(d.channel, d.ts):
+        return {"ok": True, "ignored": "agent_post"}
     message = (db.slack_agent_posts.lire(d.channel, d.thread_ts)
                if d.reponse else None)
     if message is None and not d.dm:

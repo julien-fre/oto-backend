@@ -452,6 +452,8 @@ sources = [
   "oto_mcp/routine_fire.py",
   # Les événements de l'app Slack publiée : un déclencheur d'agent (`runner_hook.enfiler`).
   "oto_mcp/slack_events.py",
+  # Les messages qu'un agent y poste, à qui une réponse dans leur fil revient.
+  "oto_mcp/db/slack_agent_posts.py",
   "oto_mcp/anthropic_usage.py",
   "oto_mcp/time_saved.py",
   "oto_mcp/capabilities/runner_*.py",
@@ -471,6 +473,8 @@ tests = [
   "tests/**/test_*abonnement*.py",
   "tests/**/test_declencheur*.py",
   "tests/**/test_slack_events.py",
+  "tests/**/test_slack_agent_posts_db.py",
+  "tests/**/test_slack_post_note_l_agent.py",
   "tests/**/test_portee_runner.py",
   "tests/**/test_trigger*.py",
   "tests/**/test_time_saved.py",

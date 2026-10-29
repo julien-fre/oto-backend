@@ -4,6 +4,8 @@ ts TEXT NOT NULL,
 org_id BIGINT NOT NULL,
 trigger_id BIGINT NOT NULL REFERENCES runner_triggers(id) ON DELETE CASCADE,
 job_id BIGINT,
+author TEXT NOT NULL DEFAULT 'app' CHECK (author IN ('app', 'me')),
+thread_ts TEXT,
 text TEXT NOT NULL DEFAULT '',
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 PRIMARY KEY (channel, ts)

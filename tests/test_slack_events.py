@@ -8,8 +8,9 @@ What the bot guarantees:
    the `slack` preset — at most one per org, chosen by an org admin, with an ORG
    procedure.
 3. **As whom**: the REAL member (`org_members`) whose confirmed email the Slack user
-   carries — exactly one; the run
-   carries THAT member's identity, never the agent owner's. Guests, other
+   carries — exactly one; a DM's run
+   carries THAT member's identity, never the agent owner's (a reply in an agent's
+   thread runs as the agent's owner — section 7). Guests, other
    workspaces and unknown emails are told why, in Slack, and nothing runs.
 4. **DMs, and replies in an agent's thread**: a channel `@<app>` needs a scope the
    app does not ask; a reply in the thread of a message an agent posted as the app
@@ -88,7 +89,9 @@ def slack(monkeypatch):
           "membres": {"ada-sub"}, "enfile": None, "supprimes": [],
           # The agents' messages noted for replies (`db.slack_agent_posts`), and the
           # agents they name.
-          "posts": {}, "agents": {}, "installs_lus": 0}
+          "posts": {}, "agents": {}, "installs_lus": 0,
+          # EVERY message our agents posted, whatever its author (`est_note`).
+          "notes": set()}
     monkeypatch.setattr(slack_events.slack_auth, "signing_secret", lambda: SECRET)
     def _installs(team, app):
         vu["installs_lus"] += 1
@@ -98,6 +101,9 @@ def slack(monkeypatch):
                         _installs)
     monkeypatch.setattr(slack_events.db.slack_agent_posts, "lire",
                         lambda channel, ts: vu["posts"].get((channel, ts)))
+    monkeypatch.setattr(slack_events.db.slack_agent_posts, "est_note",
+                        lambda channel, ts: (channel, ts) in vu["notes"]
+                        or (channel, ts) in vu["posts"])
     monkeypatch.setattr(slack_events.db, "get_trigger",
                         lambda tid, org: dict(vu["agents"][tid])
                         if tid in vu["agents"] and vu["agents"][tid]["org_id"] == org
@@ -749,3 +755,12 @@ def test_l_agent_Slack_de_l_org_garde_SA_regle_la_reponse_porte_qui_parle(poste,
     e = poste["enfile"]
     assert e["t"]["id"] == 5 and e["sub"] == "ada-sub" and vus == ["ada-sub"]
     assert "you act with their rights" in e["entree"]
+
+
+def test_un_message_de_l_agent_EN_SON_NOM_dans_son_propre_fil_ne_le_relance_pas(poste):
+    """Posté avec un jeton utilisateur, il n'a pas de `bot_id` : c'est la ligne notée par
+    `slack_post_message` qui dit qu'il est À NOUS — sans elle, l'agent qui répond dans
+    son fil en ton nom se relancerait à chaque réponse."""
+    poste["notes"].add(("C0GTM", "1700.05"))
+    assert _recevoir(_reponse())["ignored"] == "agent_post"
+    assert poste["enfile"] is None and poste["installs_lus"] == 0

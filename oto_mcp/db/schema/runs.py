@@ -783,11 +783,16 @@ CREATE INDEX IF NOT EXISTS idx_agent_episodes_statut
 """
 
 SLACK_AGENT_POSTS = """
--- Les messages qu'un agent hébergé a postés dans Slack EN TANT QUE L'APP
--- (`slack_post_message(author="app")` pendant un run de cet agent, hors fil) : ce qui
--- fait d'une réponse dans LEUR fil une demande à CET agent (`slack_events.py`).
--- L'événement de Slack ne nomme que `channel` et `thread_ts` : sans cette ligne, rien
--- ne dit qui a posté, ni quoi — et le fil ne se relit pas (`conversations.replies`,
+-- Les messages qu'un agent hébergé a postés dans Slack pendant un de ses runs
+-- (`slack_post_message`, l'agent lu sur le travail de la requête). DEUX usages :
+--   - le message de l'agent lui-même — EN TANT QUE L'APP, hors fil (`author = 'app'`,
+--     `thread_ts` NULL) : une réponse dans SON fil est une demande à CET agent
+--     (`slack_events.py`) ;
+--   - tous les autres (en son nom à une personne, ou dans un fil) disent seulement à la
+--     route que l'événement est À NOUS : posté avec un jeton utilisateur, il ne porte
+--     pas de `bot_id`, et un agent qui répond dans son propre fil se relancerait.
+-- L'événement de Slack ne nomme que `channel`, `ts` et `thread_ts` : sans cette ligne,
+-- rien ne dit qui a posté, ni quoi — et le fil ne se relit pas (`conversations.replies`,
 -- un appel par minute hors Marketplace), d'où `text`, le message tel que posté, borné.
 -- Clé `(channel, ts)` : un `ts` est unique dans son canal ; l'org de la ligne est
 -- confrontée, à la lecture, à celle de l'installation qui reçoit l'événement.
@@ -799,6 +804,8 @@ CREATE TABLE IF NOT EXISTS slack_agent_posts (
     org_id BIGINT NOT NULL,
     trigger_id BIGINT NOT NULL REFERENCES runner_triggers(id) ON DELETE CASCADE,
     job_id BIGINT,
+    author TEXT NOT NULL DEFAULT 'app' CHECK (author IN ('app', 'me')),
+    thread_ts TEXT,
     text TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (channel, ts)
