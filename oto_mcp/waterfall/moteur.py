@@ -31,7 +31,7 @@ def _receipt(kind, found, provider, value, attempts, source, ignored, pending) -
 
 async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
                     dry_run: bool, deadline: float, attempt: dict, pending: list,
-                    budget: Optional[dict] = None):
+                    budget: Optional[dict] = None, submit_only: bool = False):
     """Run ONE step and record what happened on `attempt`; return its find, or None."""
     if step.variants:
         if not _runnable(step, inputs):
@@ -108,6 +108,18 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
             and isinstance(result, dict)):
         result = await vivier._every_free_page(mcp, sub, step, args, result, inputs,
                                                deadline, attempt)
+    if step.collect is not None and submit_only:
+        # The table's submit pass (`waterfall_lignes`, `asynchronous=True`): submitted,
+        # never waited for — the row keeps the collect call, `collect_rows` reads it.
+        collect_args = step.collect.args(result)
+        if not collect_args:
+            attempt.update(status="no_match")   # no handle: nothing was ordered
+            return None
+        collect = {"tool": step.collect.tool, "arguments": collect_args}
+        attempt.update(status="pending", collect=collect,
+                       message="submitted — collect it later; the cascade stops here")
+        pending.append({"provider": step.key, **collect})
+        return None
     if step.collect is not None:
         collected, collect_args, finished = await appel._poll(mcp, sub, step, result,
                                                              deadline)
@@ -156,7 +168,8 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
                        dry_run: bool, limits: Optional[dict] = None,
                        qualify: Optional[dict] = None,
                        deadline_at: Optional[float] = None,
-                       synchronous_only: bool = False) -> dict:
+                       synchronous_only: bool = False,
+                       submit_only: bool = False) -> dict:
     """The cascade: the first step that finds the value wins. Then the COMPLETION
     steps (`Step.fills`, e.g. a company's LinkedIn page): each runs only while the
     value still lacks the field it fills, and merges what it finds — a page found
@@ -164,7 +177,12 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
 
     A step left `pending` (asynchronous, not done in time) STOPS the cascade: its answer
     is paid and still coming, so no later step — completion included — is paid for the
-    same lookup; the receipt carries the collect call."""
+    same lookup; the receipt carries the collect call. `submit_only` (the table's
+    submit pass): an asynchronous step is submitted and NOT waited for — it is pending
+    at once, its handle in the receipt (`pending`), and the cascade stops there.
+
+    With `submit_only` the synchronous twins (`Step.sync`) are not used: the asynchronous
+    step itself runs, since its answer is collected later."""
     # The identity seam and the plan read the database: off the loop
     # (`docs/event-loop-perf.md`).
     sub = await run_in_threadpool(current_user_sub_from_token)
@@ -205,7 +223,7 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
         attempts.append(attempt)
         started = time.monotonic()
         got = await _run_step(mcp, sub, step, attempt["key"], inputs, dry_run,
-                              deadline, attempt, pending, budget)
+                              deadline, attempt, pending, budget, submit_only)
         if step.poll is not None and not dry_run:
             # A step with its own wait (`Step.poll`) spends none of the steps after it.
             deadline += time.monotonic() - started

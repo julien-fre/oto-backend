@@ -116,24 +116,27 @@ def tableau(datastore: Any, *, ecrire: bool) -> tuple[Any, str]:
 
 
 def ouvrir(datastore: Any, *, row_ids: Optional[list], filter: Optional[dict],
-           colonne_etat: Optional[str], limite: int) -> Lot:
+           colonne_etat: Optional[str], limite: int, etat: Optional[str] = None,
+           plafond: int = MAX_LIGNES) -> Lot:
     """Résout le tableau, vérifie le droit d'y ÉCRIRE, et lit le lot.
 
     Exactement un de `row_ids` / `filter`. `filter` a la grammaire de `data_rows`
     (`{}` = toutes les lignes) ; avec `colonne_etat`, le lot n'y retient que les
-    lignes dont cette colonne est vide."""
+    lignes dont cette colonne est vide — ou, avec `etat`, celles où elle vaut `etat`
+    (les lignes en attente d'une relève). `plafond` : les lignes d'un appel, `MAX_LIGNES`
+    par défaut — plus haut pour une passe dont chaque ligne coûte un appel bref."""
     if (row_ids is None) == (filter is None):
         raise refus("push_rows_selection", "passe exactement un de `row_ids` (les lignes "
                     "nommées) ou `filter` (la grammaire de data_rows, `{}` = toutes).")
-    if not isinstance(limite, int) or not 1 <= limite <= MAX_LIGNES:
-        raise refus("push_rows_limit", f"`batch_size` va de 1 à {MAX_LIGNES}.")
+    if not isinstance(limite, int) or isinstance(limite, bool) or not 1 <= limite <= plafond:
+        raise refus("push_rows_limit", f"`batch_size` va de 1 à {plafond}.")
     ids: list[str] = []
     if row_ids is not None:
         if not isinstance(row_ids, list) or not row_ids:
             raise refus("push_rows_selection", "`row_ids` doit être une liste non vide.")
         ids = [str(r) for r in row_ids]
-        if len(ids) > MAX_LIGNES:
-            raise refus("push_rows_limit", f"au plus {MAX_LIGNES} `row_ids` par appel "
+        if len(ids) > plafond:
+            raise refus("push_rows_limit", f"au plus {plafond} `row_ids` par appel "
                         f"({len(ids)} reçus) — découpe le lot.")
     if filter is not None and not isinstance(filter, dict):
         raise refus("push_rows_selection", "`filter` doit être un objet (grammaire de "
@@ -146,8 +149,9 @@ def ouvrir(datastore: Any, *, row_ids: Optional[list], filter: Optional[dict],
             page = store.cursor_rows(adresse, filter={"_id": {"in": ids}}, limit=len(ids))
         else:
             filtre = filter or None
-            filtres = ([{"field": colonne_etat, "op": "empty", "value": True}]
-                       if colonne_etat else [])
+            filtres = ([] if not colonne_etat
+                       else [{"field": colonne_etat, "op": "eq", "value": etat}] if etat
+                       else [{"field": colonne_etat, "op": "empty", "value": True}])
             page = store.cursor_rows(adresse, filter=filtre, filters=filtres or None,
                                      limit=limite)
     except jetons.JetonMalPlace as e:

@@ -30,7 +30,7 @@ a recipe runs `op="find"` for every row of a contacts table and writes one row p
 - `"key": {"column": "contact_key", "template": "{{row.linkedin|linkedin_slug}}::{{item.kind}}::{{item.value}}"}`
 - `"limits": {"max_units": …}` counts **Pipecorn credits** (33 for a mobile and an email): at the cap the run stops cleanly; a new run carries on without paying the rows already done
 - each run has a 30 s clock: a large table takes several runs (`resume`), each one picking up where the last stopped
-- to write back into the SAME table, use `waterfall_phone_act` / `waterfall_email_act` (`op="update_rows"`): there Pipecorn runs synchronously too
+- to write back into the SAME table, use `waterfall_phone_act` / `waterfall_email_act`: `op="update_rows"` runs Pipecorn synchronously; for hundreds of rows, `update_rows` with `asynchronous=true` submits them all in a call or two (up to 200 rows a call), then `op="collect_rows"` reads the answers back — the fastest way at scale
 
 ## note — what can mislead
 

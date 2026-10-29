@@ -36,17 +36,27 @@ class _Store:
 
 @pytest.fixture()
 def table(monkeypatch):
-    etat = {"lignes": [], "store": _Store({"fields": [
+    etat_ = {"lignes": [], "store": _Store({"fields": [
         {"key": "first_name"}, {"key": "last_name"}, {"key": "website"},
         {"key": "linkedin"}, {"key": "employees", "type": "number"}]})}
 
-    def ouvrir(datastore, *, row_ids, filter, colonne_etat, limite):
-        lignes = [r for r in etat["lignes"] if not r.get(colonne_etat)]
-        return pr.Lot(etat["store"], "t", lignes[:limite], [], filter or {},
-                      [{"field": colonne_etat, "op": "empty", "value": True}])
+    def etat_lignes():
+        return etat_["lignes"]
+
+    def ouvrir(datastore, *, row_ids, filter, colonne_etat, limite, etat=None,
+               plafond=pr.MAX_LIGNES):
+        if not 1 <= limite <= plafond:      # the real refusal (`pr.ouvrir`)
+            raise pr.refus("push_rows_limit", f"`batch_size` va de 1 à {plafond}.")
+        lignes = [r for r in etat_lignes() if (r.get(colonne_etat) or None) == etat]
+        return pr.Lot(etat_["store"], "t", lignes[:limite], [], filter or {},
+                      [{"field": colonne_etat, "op": "eq" if etat else "empty",
+                        "value": etat or True}])
 
     def ecrire(lot, rid, patch):
-        etat["store"].ecrites.setdefault(rid, {}).update(patch)
+        etat_["store"].ecrites.setdefault(rid, {}).update(patch)
+        for r in etat_["lignes"]:
+            if str(r.get("_id")) == str(rid):
+                r.update(patch)
         return None
 
     monkeypatch.setattr(pr, "ouvrir", ouvrir)
@@ -54,7 +64,7 @@ def table(monkeypatch):
     monkeypatch.setattr(pr, "ecrire", ecrire)
     monkeypatch.setattr(pr, "tenue_ailleurs", lambda ligne: bool(ligne.get("_held")))
     monkeypatch.setattr(pr.identite, "numero", lambda t: {"datastore": 42})
-    return etat
+    return etat_
 
 
 def _act(ns, **kw):

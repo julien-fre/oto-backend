@@ -61,7 +61,7 @@ VERBES_EFFET = re.compile(
     r"^(send|reply|forward|publish|broadcast|invite|remind|trash|archive|move|delete|"
     r"remove|rm|create|update|upsert|set|add|cancel|trigger|activate|post|react|"
     r"comment|review|push|upload|share|unshare|lend|revoke|disable|enable|call|request|"
-    r"import|accept|decline|endorse)(_|$)")
+    r"import|accept|decline|endorse|collect)(_|$)")
 #: Les ops qui SIMULENT : elles écrivent ce que personne ne voit et que rien ne détruit.
 SIMULATIONS = frozenset({"draft"})
 #: Les paramètres qui feraient agir l'outil qui lit.

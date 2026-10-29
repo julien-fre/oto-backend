@@ -41,8 +41,8 @@ def _servi(issue):
 
 @pytest.fixture
 def calls(monkeypatch):
-    """Réponses par outil (`IssueCible`, liste d'`IssueCible` servies tour à tour, ou
-    exception), réglage `steps`, modes de clé, ce que la clé partagée de Forager sert
+    """Réponses par outil (`IssueCible`, liste d'`IssueCible` servies tour à tour,
+    fonction des arguments, ou exception), réglage `steps`, modes de clé, ce que la clé partagée de Forager sert
     (`forager_ops`, le réglage `platform.ops` de l'instance) — et le relevé des appels
     faits."""
     state = {"answers": {}, "made": [], "setting": None, "modes": {},
@@ -54,6 +54,8 @@ def calls(monkeypatch):
     async def executer(tool, sub, name, demande, args):
         state["made"].append((name, args))
         answer = state["answers"].get(name, IssueCible(ok=True, result={}))
+        if callable(answer) and not isinstance(answer, IssueCible):
+            answer = answer(args)       # an answer per arguments (a job per row…)
         if isinstance(answer, list):
             answer = answer.pop(0) if len(answer) > 1 else answer[0]
         if isinstance(answer, Exception):

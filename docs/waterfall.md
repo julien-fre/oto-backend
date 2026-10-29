@@ -533,14 +533,31 @@ de `datastore/par_reference` (`docs/donnees-par-reference.md`), comme `lemlist_p
   TYPE de sa colonne (un nombre dans `number`, une liste jointe dans `text`), une valeur
   qui ne s'y range pas reste vide. `output_fields_never_found` nomme un champ qui n'a
   rien écrit (une faute de frappe).
-- ⚠️ **Les étapes asynchrones sont laissées de côté** (lemlist, FullEnrich, Dropcontact,
-  la révélation de téléphone Apollo) : payées maintenant, elles répondraient après
-  l'écriture de la ligne. Le reçu les nomme (`left_out_async_steps`). Suite naturelle :
-  écrire la poignée de collecte sur la ligne et une op `collect_rows`. Exception : une
-  étape qui a un jumeau SYNCHRONE (`Step.sync` — Pipecorn au téléphone et à l'email, par
-  `pipecorn op=find`) tourne sous ce jumeau (`etape.for_table`).
+- ⚠️ **Par défaut, les étapes asynchrones sont laissées de côté** (lemlist, FullEnrich,
+  Dropcontact, la révélation de téléphone Apollo) : payées maintenant, elles répondraient
+  après l'écriture de la ligne. Le reçu les nomme (`left_out_async_steps`). Exception :
+  une étape qui a un jumeau SYNCHRONE (`Step.sync` — Pipecorn au téléphone et à l'email,
+  par `pipecorn op=find`) tourne sous ce jumeau (`etape.for_table`).
+- **`asynchronous=true` + `collect_rows` : l'asynchrone à l'échelle** (29/10/2026).
+  `update_rows(asynchronous=true)` SOUMET les étapes asynchrones sans les attendre
+  (`moteur._run_cascade(submit_only=True)` : pas de jumeau, pas d'attente, la cascade
+  s'arrête à la soumission) et écrit la ligne `pending`, l'appel de relève dans
+  `<status_column>_job` (json, déclarée au besoin ; le commentaire d'état nomme le
+  fournisseur). `op="collect_rows"` (`tools/waterfall_releve.py`) relit les lignes
+  `pending` : UNE lecture par travail (des lignes aux mêmes entrées partagent le leur) ;
+  finie avec une trouvaille → `found`, la relève effacée ; finie sans → la cascade
+  reprend À L'ÉTAPE SUIVANTE dans le même appel (`ordre._plan`, les `providers` de
+  l'appel), et soumet à nouveau si elle atteint une autre asynchrone ; pas finie →
+  laissée `pending` (`still_pending`) ; échec passager (`retryable`) → laissée ;
+  échec définitif (le travail a échoué, crédits épuisés en cours) → REMISE EN FILE,
+  état et relève effacés, le prochain `update_rows` la reprend. Ces deux passes prennent
+  jusqu'à `LOT_ASYNC_MAX` = 200 lignes par appel (100 par défaut), `PARALLELE_ASYNC` =
+  16 à la fois : une soumission et une lecture sont brèves, et le fournisseur travaille
+  en parallèle. Mesuré sur un vrai store : 150 lignes soumises en un appel, relevées en
+  un (`tests/test_waterfall_releve_live.py`). Ce qu'une passe écrit sur une ligne vit
+  dans `tools/waterfall_ecriture.py`, une seule copie pour les trois.
 - **Pas encore de travail de fond** : un appel traite ce qui tient dans sa fenêtre
-  (jusqu'à `batch_size` lignes, 50 au plus) ; l'agent rappelle avec les mêmes arguments.
+  (jusqu'à `batch_size` lignes, 50 au plus ; 200 en asynchrone) ; l'agent rappelle avec les mêmes arguments.
   Un travail de fond sur le modèle de `jev_rows(background=true)` se justifiera si la
   mesure des lignes par appel ne suffit pas.
 - `qualify` (company, person, people) juge par recherche — un appel Jev par recherche.

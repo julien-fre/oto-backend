@@ -22,11 +22,14 @@ What makes it cheaper than N calls, beyond the tokens:
   opens the cheap URL-based steps.
 - **Parallel**, `PARALLELE` rows at a time, inside one REST call.
 
-⚠️ **The asynchronous steps are left out** (lemlist, FullEnrich, Dropcontact, the
-Apollo phone reveal): they would be paid now and answer after the row is written, so
-their find would be lost. The receipt names them (`left_out_async_steps`); for those,
-the one-contact tools collect them. A step with a synchronous twin (`Step.sync`:
-Pipecorn's phone and email) runs as that twin instead (`etape.for_table`).
+⚠️ **The asynchronous steps are left out by default** (lemlist, FullEnrich,
+Dropcontact, the Apollo phone reveal): they would be paid now and answer after the row
+is written. The receipt names them (`left_out_async_steps`). A step with a synchronous
+twin (`Step.sync`: Pipecorn's phone and email) runs as that twin (`etape.for_table`).
+**With `asynchronous=true`** they are SUBMITTED, not waited for: the row is written
+`pending` with its collect call (`<status_column>_job`), and `collect_rows`
+(`waterfall_releve.py`) reads it back — the way to hundreds of rows in a few calls.
+What the passes write on a row lives in `waterfall_ecriture.py`, one copy.
 """
 from __future__ import annotations
 
@@ -47,6 +50,8 @@ from ..waterfall.etape import _runnable, for_table
 from ..waterfall.moteur import _limits, _run_cascade
 from ..waterfall.plan import STEPS_BY_NAMESPACE
 from .lecture import ACTE, documente
+from .waterfall_ecriture import (ECHEC, EN_ATTENTE, _Ecriture, _preparer,
+                                 colonne_poignee)
 
 #: Rows judged at once. Each runs a whole cascade; providers see this many in flight.
 PARALLELE = 8
@@ -56,6 +61,12 @@ DEPART_S = 12.0
 CASCADE_S = 34.0
 #: Rows per call by `filter` (each costs at least one provider call).
 LOT_DEFAUT = 25
+#: The ASYNCHRONOUS passes (`update_rows` with `asynchronous`, `collect_rows`): each row
+#: costs one brief call — a submission, a free read — so a call takes more rows, more at
+#: once. Hundreds of rows go in a few calls: the provider works on them in parallel.
+PARALLELE_ASYNC = 16
+LOT_ASYNC_DEFAUT = 100
+LOT_ASYNC_MAX = 200
 
 #: What a row can feed, per waterfall — the parameters of its one-contact tool.
 ENTREES = {
@@ -69,44 +80,6 @@ ENTREES = {
     "waterfall_people": ("domain", "company_name", "company_linkedin_url", "country"),
     "waterfall_tech": ("domain", "company_name"),
 }
-#: The status written on a row, so the next call never pays it again.
-TROUVE, SANS, ECARTE, ECHEC = "found", "no_match", "unqualified", "failed"
-#: What a find carries besides its own fields.
-PROVIDER = "provider"
-#: The fields whose value is a LIST: a missing column for them is declared `json`.
-CHAMPS_LISTE = frozenset({"all", "people", "technologies", "matched", "by_category"})
-
-
-def _a_declarer(sorties: dict, status_column: str, champs: dict) -> list[dict]:
-    """The output and status columns the table does not declare yet — a column is
-    declared before it is written (an undeclared one is refused)."""
-    new = [{"key": status_column, "type": "text"}] if status_column not in champs else []
-    for champ, col in sorties.items():
-        if col not in champs and all(f["key"] != col for f in new):
-            new.append({"key": col, "type": "json" if champ in CHAMPS_LISTE else "text"})
-    return new
-
-
-def _au_type(v: Any, type_: Optional[str]) -> Any:
-    """A found value in the shape its column takes (the declared format is a contract)."""
-    if type_ in ("json", "list"):
-        return v if type_ == "json" or isinstance(v, list) else [v]
-    if type_ == "number":
-        if isinstance(v, bool):
-            return None
-        if isinstance(v, (int, float)):
-            return v
-        try:
-            return float(str(v).replace(",", "").strip())
-        except ValueError:
-            return None     # « 11-50 » in a number column: left empty, never guessed
-    if isinstance(v, list):
-        return ", ".join(str(x) for x in v if not isinstance(x, (dict, list)))
-    if isinstance(v, dict):
-        return json.dumps(v, ensure_ascii=False, default=str)
-    return v if isinstance(v, str) else str(v)
-
-
 def _entrees(ns: str, valeurs: dict, appel: dict) -> dict:
     """A row's inputs, through the SAME builder as the one-contact tool (its checks:
     a 9-digit SIREN, a LinkedIn company page…). Raises the tool's refusal."""
@@ -127,22 +100,6 @@ def _entrees(ns: str, valeurs: dict, appel: dict) -> dict:
                                   v.get("full_name"), v.get("domain"),
                                   v.get("company_name"), v.get("linkedin_url"),
                                   v.get("email") if ns == "waterfall_person" else None)
-
-
-def _cellule(kind: str, champ: str, trouve: dict, fournisseur: Optional[str]) -> Any:
-    if champ == PROVIDER:
-        return fournisseur
-    v = trouve.get(champ)
-    if kind == "people" and champ == "people" and isinstance(v, list):
-        # A cell, not a dossier: who, their title, their profile — and Jev's answers.
-        return [{k: x for k, x in {
-            "full_name": p.get("full_name"), "title": p.get("title"),
-            "linkedin_url": p.get("linkedin_url"),
-            "fit": {n: a.get("noul", a.get("choice", a.get("score")))
-                    for n, a in ((p.get("qualification") or {}).get("answers")
-                                 or {}).items() if isinstance(a, dict)} or None,
-        }.items() if x} for p in v if isinstance(p, dict)]
-    return v
 
 
 def _valider(ns: str, inputs: Any, output: Any, status_column: Any) -> tuple[dict, dict]:
@@ -169,20 +126,6 @@ def _valider(ns: str, inputs: Any, output: Any, status_column: Any) -> tuple[dic
         raise pr.refus("waterfall_rows_status", "`status_column` cannot also be an "
                        "`output` column. Nothing was sent.")
     return colonnes, sorties
-
-
-def _hors_liste(attempts: list[dict]) -> list[str]:
-    """Les outils des étapes refusées parce qu'un travail hébergé ne les a pas dans sa
-    liste (`tool_not_in_job`) — variantes comprises. Une telle étape est SAUTÉE par la
-    cascade (`appel._call`), comme une garde : sans ce relevé, la ligne revenait
-    `no_step_answered`, et l'agent concluait à un quota épuisé (vécu le 26/10/2026)."""
-    noms: list[str] = []
-    for a in attempts:
-        for p in [a, *(a.get("tried") or [])]:
-            if (p.get("code") == outils_du_travail.CODE and isinstance(p.get("tool"), str)
-                    and p["tool"] not in noms):
-                noms.append(p["tool"])
-    return noms
 
 
 def _planifies(plan: Optional[dict]) -> list[str]:
@@ -224,45 +167,28 @@ def _outils_a_donner(refuses: list[str], *, dry_run: bool = False) -> dict:
                           "them).")}
 
 
-def _pas_un_verdict(out: dict, trouve: Any, attempts: list[dict],
-                   qualify: Optional[dict]) -> Optional[str]:
-    """Why a cascade's outcome is NOT a verdict to write on its row — None when it is: a
-    find Jev was asked to judge and did not; a miss where no step ANSWERED without
-    finding, or one failed (a refused key, a provider error, a withheld result), or a
-    limit cut the cascade — the row is left to retry."""
-    if trouve:
-        q = out.get("qualification")
-        if qualify and (q or {}).get("status") != "done":
-            return "qualification_skipped"
-        return None
-    if any(a.get("status") == "unqualified" for a in attempts):
-        return None
-    if any(a.get("status") == "skipped" and a.get("code") == "time_budget"
-           for a in attempts):
-        return "time_budget"
-    if _hors_liste(attempts):
-        # Un fournisseur n'a pas tourné parce que l'agent n'a pas son outil : un `no_match`
-        # écrit ici ne serait jamais repris une fois l'outil donné.
-        return outils_du_travail.CODE
-    if any(a.get("status") in ("failed", "withheld") for a in attempts):
-        return "step_failed"
-    if any(a.get("code") == "max_paid_steps" for a in attempts):
-        return "max_paid_steps"
-    if not any(a.get("status") == "no_match" for a in attempts):
-        return "no_step_answered"
-    return None
+def _taille(batch_size: Optional[int], asynchrone: bool) -> tuple[int, int]:
+    """`(rows this call, ceiling)`: an asynchronous pass costs one brief call per row
+    (a submission, a free read), so it takes more rows than a synchronous one."""
+    if asynchrone:
+        return (LOT_ASYNC_DEFAUT if batch_size is None else batch_size), LOT_ASYNC_MAX
+    return (LOT_DEFAUT if batch_size is None else batch_size), pr.MAX_LIGNES
 
 
 async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: dict,
                     status_column: str, row_ids: Optional[list], filter: Optional[dict],
-                    batch_size: int, providers: Optional[list[str]], limits: dict,
-                    qualify: Optional[dict], appel: dict, dry_run: bool) -> dict:
-    """The table pass behind the `waterfall_<x>_act(op="update_rows")`."""
+                    batch_size: Optional[int], providers: Optional[list[str]],
+                    limits: dict, qualify: Optional[dict], appel: dict, dry_run: bool,
+                    asynchronous: bool = False) -> dict:
+    """The table pass behind the `waterfall_<x>_act(op="update_rows")`. With
+    `asynchronous`, an asynchronous step is SUBMITTED, not waited for: the row is
+    written `pending` with its collect call, read later by `collect_rows`."""
     kind = qualification._QUALIFIABLE.get(ns) or ns.split("_", 1)[1]
     steps = STEPS_BY_NAMESPACE[ns]
     colonnes, sorties = _valider(ns, inputs, output, status_column)
-    # What can run HERE: the synchronous steps, among `providers` if given — a row is
-    # judged against these, never against a step the table mode leaves out.
+    # What can run HERE: the synchronous steps (or every step, asynchronous ones
+    # submitted, with `asynchronous`), among `providers` if given — a row is judged
+    # against these, never against a step the table mode leaves out.
     voulus = {str(p).strip().lower() for p in providers or []}
     inconnus = sorted(voulus - {s.key for s in steps})
     if inconnus:
@@ -270,42 +196,26 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
         raise pr.refus("waterfall_rows_providers",
                        f"`providers`: {', '.join(inconnus)} — not a step of {ns}; one of "
                        f"{', '.join(s.key for s in steps)}. Nothing was sent.")
-    actifs = [t for t in (for_table(s) for s in steps)
-              if t is not None and (not voulus or t.key in voulus)]
+    candidats = steps if asynchronous else [t for t in (for_table(s) for s in steps)
+                                            if t is not None]
+    actifs = [t for t in candidats if not voulus or t.key in voulus]
     if not actifs:
         raise pr.refus("waterfall_rows_no_step",
                        "no synchronous step to run: the asynchronous ones ("
                        + ", ".join(sorted(s.key for s in steps if for_table(s) is None))
-                       + ") are left out on a table. Nothing was sent.")
+                       + ") are left out on a table — pass `asynchronous=true` to submit "
+                       "them and `collect_rows` to read them. Nothing was sent.")
     if qualify:
         # Jev unusable: refused before a row is read — never rows written unjudged.
         sub = await run_in_threadpool(current_user_sub_from_token)
         await run_in_threadpool(qualification._require_qualification, sub, ns)
+    limite, plafond = _taille(batch_size, asynchronous)
     # The table is read (and the write right checked) off the loop: it is the database.
     lot = await run_in_threadpool(pr.ouvrir, datastore, row_ids=row_ids, filter=filter,
-                                  colonne_etat=status_column, limite=batch_size)
-    inconnues = await run_in_threadpool(pr.colonnes_inconnues, lot, colonnes.values())
-    if inconnues:
-        raise pr.refus("push_rows_unknown_columns",
-                       f"columns missing from the table: {', '.join(inconnues)}. "
-                       "Nothing was sent.", columns=inconnues)
-    from . import jev_rows as jr
-    schema = await run_in_threadpool(lot.store.get_schema, lot.adresse)
-    champs = jr.fields_of(schema)
-    fermees = sorted(set(sorties.values()) & set(jr.closed_of(schema)))
-    if fermees or status_column in jr.closed_of(schema):
-        raise pr.refus("waterfall_rows_closed_columns",
-                       f"columns agents cannot write: "
-                       f"{', '.join(fermees or [status_column])}. Nothing was sent.")
-    a_creer = _a_declarer(sorties, status_column, champs)
-    if a_creer and not dry_run:
-        try:
-            await run_in_threadpool(lot.store.patch_schema, lot.adresse, fields=a_creer)
-        except ValueError as e:
-            raise pr.refus("waterfall_rows_columns",
-                           f"could not declare the columns: {e}. Nothing was sent.")
-    types = {**{k: f.get("type", "text") for k, f in champs.items()},
-             **{f["key"]: f["type"] for f in a_creer}}
+                                  colonne_etat=status_column, limite=limite,
+                                  plafond=plafond)
+    types, a_creer = await _preparer(lot, colonnes, sorties, status_column, dry_run,
+                                     poignee=asynchronous)
 
     recu = pr.Recu()
     # One lookup per distinct set of inputs: `signature → (inputs, [row ids, revision])`.
@@ -333,20 +243,22 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
         sig = json.dumps(entree, sort_keys=True, default=str)
         groupes.setdefault(sig, (entree, []))[1].append(rid)
 
-    gauche = sorted({s.key for s in steps if for_table(s) is None})
+    gauche = [] if asynchronous else sorted({s.key for s in steps if for_table(s) is None})
     extra = {("would_create_columns" if dry_run else "created_columns"):
              [f["key"] for f in a_creer],
              "unique_lookups": len(groupes),
              "rows_sharing_a_lookup": sum(len(r) - 1 for _, r in groupes.values()),
              "left_out_async_steps": gauche,
-             "written_back": {"output": sorties, "status_column": status_column}}
+             "written_back": {"output": sorties, "status_column": status_column,
+                              **({"job_column": colonne_poignee(status_column)}
+                                 if asynchronous else {})}}
 
     if dry_run:
         plan = None
         if groupes:
             premiere = next(iter(groupes.values()))[0]
             plan = await _run_cascade(mcp, ns, kind, steps, premiere, providers, True,
-                                      limits, qualify, synchronous_only=True)
+                                      limits, qualify, synchronous_only=not asynchronous)
             # The plan, never its arguments: they are the row's values.
             plan = {**plan, "attempts": [
                 {k: v for k, v in a.items() if k != "arguments"}
@@ -361,13 +273,10 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
                                 traitees=len(lot.lignes), first_lookup_plan=plan, **extra))
 
     debut = time.monotonic()
-    porte = asyncio.Semaphore(PARALLELE)
-    vides = {champ: True for champ in sorties}
-    qualif = {"calls": 0, "not_qualified": 0, "cost_usd": 0.0}
+    porte = asyncio.Semaphore(PARALLELE_ASYNC if asynchronous else PARALLELE)
+    ecr = _Ecriture(lot, recu, kind, sorties, types, status_column, qualify)
     #: Rows of `groupes` whose cascade did not START (time): left pending.
     attente = {"rows": 0}
-    #: Step tools the hosted job refused (`_hors_liste`), across every row.
-    refuses: list[str] = []
 
     async def _une(sig: str, entree: dict, rids: list[str]) -> None:
         async with porte:
@@ -377,72 +286,35 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
             try:
                 out = await _run_cascade(
                     mcp, ns, kind, steps, entree, providers, False, limits, qualify,
-                    deadline_at=debut + CASCADE_S, synchronous_only=True)
+                    deadline_at=debut + CASCADE_S, synchronous_only=not asynchronous,
+                    submit_only=asynchronous)
             except McpError:
                 for rid in rids:
                     recu.echec(rid, "invalid_input")
                     await run_in_threadpool(pr.ecrire, lot, rid, {
                         status_column: ECHEC, f"{status_column}.comment": "invalid_input"})
                 return
-        q = out.get("qualification") or {}
-        if q.get("status") == "done":
-            qualif["calls"] += q.get("calls", 1)
-            qualif["not_qualified"] += q.get("not_qualified") or 0
-            qualif["cost_usd"] += q.get("cost_usd") or 0
-        trouve = out.get(kind) if out.get("found") else None
-        attempts = out.get("attempts") or []
-        refuses.extend(n for n in _hors_liste(attempts) if n not in refuses)
-        motif = _pas_un_verdict(out, trouve, attempts, qualify)
-        if motif:
-            # Not a verdict (out of time, a step failed, Jev did not judge): nothing
-            # written, the receipt names why, and the next call tries the row again.
-            for rid in rids:
-                recu.ecarter(rid, motif)
-            return
-        if trouve:
-            patch = {}
-            for champ, col in sorties.items():
-                v = _cellule(kind, champ, trouve, out.get("provider"))
-                if v not in (None, "", []):
-                    v = _au_type(v, types.get(col))
-                if v not in (None, "", []):
-                    patch[col] = v
-            for champ, col in sorties.items():
-                if col in patch:
-                    vides[champ] = False
-            patch.update({status_column: TROUVE,
-                          f"{status_column}.comment": out.get("provider")})
-            cle = "found"
-        elif any(a.get("status") == "unqualified" for a in attempts):
-            patch, cle = {status_column: ECARTE}, "unqualified"
-        else:
-            # A step answered without finding and none failed: a verdict, kept, so the
-            # next call doesn't pay for it again.
-            patch, cle = {status_column: SANS}, "no_match"
-        for rid in rids:
-            code = await run_in_threadpool(pr.ecrire, lot, rid, patch)
-            if code:
-                recu.echec(rid, f"writeback_{code}")
-            else:
-                recu.compter(cle)
+        await ecr.issue(out, rids)
 
     await asyncio.gather(*(_une(sig, e, r) for sig, (e, r) in groupes.items()))
     pas_partis = attente["rows"]
     if pas_partis or recu.comptes.get("skipped_time_budget"):
         recu.arret = "time_budget"
-    if recu.comptes.get("found"):
-        # A typo in `output` writes nothing, silently: named, never guessed.
-        extra["output_fields_never_found"] = sorted(c for c, v in vides.items() if v)
-    if qualif["calls"]:
-        extra["qualification"] = {**qualif, "cost_usd": round(qualif["cost_usd"], 8)}
-    if refuses:
-        extra.update(await run_in_threadpool(_outils_a_donner, refuses))
+    ecr.fin(recu, extra)
+    if ecr.refuses:
+        extra.update(await run_in_threadpool(_outils_a_donner, ecr.refuses))
+    if recu.comptes.get("submitted"):
+        extra["next_step"] = (f"{recu.comptes['submitted']} row(s) submitted, written "
+                              f"`{EN_ATTENTE}`: call op=collect_rows with the same "
+                              "datastore, inputs, output and status_column in a minute, "
+                              "then again until its `remaining` is 0.")
     return await run_in_threadpool(
         lambda: recu.rendre(lot, selectionnees=len(lot.lignes), dry_run=False,
                             traitees=len(lot.lignes) - max(pas_partis, 0), **extra))
 
 
-_DOC = """Run the {label} waterfall over a TABLE's rows, on the server — op `update_rows`.
+_DOC = """Run the {label} waterfall over a TABLE's rows, on the server — ops `update_rows`
+        and `collect_rows`.
         Nothing personal goes through this call, and nothing found comes back: name the
         rows and the columns once, oto reads each row, runs the same cascade as
         `{ns}` and writes the find into the row.
@@ -455,8 +327,16 @@ _DOC = """Run the {label} waterfall over a TABLE's rows, on the server — op `u
         failed: a row whose steps failed or never ran stays empty, its code in `errors`. Rows
         with the same inputs share ONE lookup. Up to {par} rows run in parallel; a call
         that runs out of time says `stopped: "time_budget"` and leaves the rest pending.
-        ⚠️ The asynchronous steps ({asynchrones}) are left out here — they would answer
-        after the row is written; the one-contact tool collects them.
+        Asynchronous steps ({asynchrones}): left out by default (they answer after the
+        row is written) — except where a synchronous twin exists (Pipecorn's phone and
+        email run synchronously). With `asynchronous=true` they are SUBMITTED instead,
+        not waited for: the row is written `pending`, its collect call in
+        `<status_column>_job` — up to {lot_async_max} rows a call, {par_async} at once,
+        so hundreds of rows go in a few calls. Then op `collect_rows` (same datastore,
+        inputs, output, status_column) reads the pending rows back — free reads, one per
+        job: a find is written `found`; a job done without one goes on to the next steps
+        in the same call; one not done yet stays `pending`. Call it until its
+        `remaining` is 0.
         The answer is counts plus `errors: [{{row_id, code}}]`; `dry_run` reads the rows,
         counts the lookups and returns the first one's plan, calling nothing.
         From a hosted agent, a step whose tool the agent may not call is skipped and
@@ -464,7 +344,8 @@ _DOC = """Run the {label} waterfall over a TABLE's rows, on the server — op `u
         them (`missing_tools`) with the owner's one-click `fix`.
 
         Args:
-            op: `update_rows`.
+            op: `update_rows` (look up the rows not yet treated) or `collect_rows` (read
+                back the rows an asynchronous `update_rows` left `pending`).
             datastore: the table, by name or number.
             inputs: {{input: column}} — inputs are {entrees}. Map every column
                 you have: more inputs open more (and cheaper) steps.
@@ -472,7 +353,11 @@ _DOC = """Run the {label} waterfall over a TABLE's rows, on the server — op `u
             status_column: where found | no_match{unq_short} | failed is written.
             row_ids: the rows to run (at most 50). Exclusive with `filter`.
             filter: data_rows filter grammar; `{{}}` = every row not yet treated.
-            batch_size: rows per call with `filter` (1-50, default {lot}).
+            batch_size: rows per call with `filter` — 1-50 (default {lot}); with
+                `asynchronous` or `collect_rows`, 1-{lot_async_max} (default {lot_async}).
+            asynchronous: `update_rows` only — submit the asynchronous steps instead
+                of leaving them out (or running their synchronous twin), for
+                `collect_rows` to read.
             providers: the steps to try, in order, for these rows (see `{ns}`).
             max_paid_steps / apify_max_usd: as on `{ns}`, per row.{extra_args}
             dry_run: read and plan only — nothing called, nothing written.
@@ -514,6 +399,8 @@ def register(mcp: FastMCP) -> None:
         qualifiable = ns in qualification._QUALIFIABLE
         doc = _DOC.format(
             label=_LABELS[ns], ns=ns, par=PARALLELE, lot=LOT_DEFAUT,
+            par_async=PARALLELE_ASYNC, lot_async=LOT_ASYNC_DEFAUT,
+            lot_async_max=LOT_ASYNC_MAX,
             asynchrones=asynchrones, entrees=", ".join(f"`{e}`" for e in ENTREES[ns]),
             champs=_CHAMPS[ns],
             unqualified="(`unqualified` when nobody passes `qualify_min`) "
@@ -526,20 +413,21 @@ def register(mcp: FastMCP) -> None:
         @mcp.tool(name=f"{ns}_act", annotations=ACTE)
         @documente(doc)
         async def acte(
-            op: Literal["update_rows"],
+            op: Literal["update_rows", "collect_rows"],
             datastore: str,
             inputs: dict[str, str],
             output: dict[str, str],
             status_column: str,
             row_ids: Optional[list[str]] = None,
             filter: Optional[dict] = None,
-            batch_size: int = LOT_DEFAUT,
+            batch_size: Optional[int] = None,
             providers: Optional[list[str]] = None,
             max_paid_steps: Optional[int] = None, apify_max_usd: Optional[float] = None,
             qualify: Optional[dict] = None, qualify_min: Optional[float] = None,
             roles: Optional[list[str]] = None, people_per_row: int = 10,
             technologies: Optional[list[str]] = None,
             dry_run: bool = False,
+            asynchronous: bool = False,
         ) -> dict:
             if (qualify is not None or qualify_min is not None) and not qualifiable:
                 raise pr.refus("waterfall_rows_qualify",
@@ -554,15 +442,27 @@ def register(mcp: FastMCP) -> None:
                 raise pr.refus("waterfall_rows_tech_args",
                                "`technologies` belongs to waterfall_tech_act. "
                                "Nothing was sent.")
+            qualif = (qualification._qualify_args(qualify, qualify_min)
+                      if qualifiable else None)
+            appel = {"roles": roles, "limit": people_per_row, "technologies": technologies}
+            if op == "collect_rows":
+                if asynchronous:
+                    raise pr.refus("waterfall_rows_collect_args",
+                                   "`asynchronous` belongs to update_rows: collect_rows "
+                                   "reads what it submitted. Nothing was sent.")
+                from .waterfall_releve import collect_rows
+                return await collect_rows(
+                    mcp, ns, datastore=datastore, inputs=inputs, output=output,
+                    status_column=status_column, row_ids=row_ids, filter=filter,
+                    batch_size=batch_size, providers=providers,
+                    limits=_limits(max_paid_steps, apify_max_usd), qualify=qualif,
+                    appel_args=appel, dry_run=dry_run)
             return await fill_rows(
                 mcp, ns, datastore=datastore, inputs=inputs, output=output,
                 status_column=status_column, row_ids=row_ids, filter=filter,
                 batch_size=batch_size, providers=providers,
-                limits=_limits(max_paid_steps, apify_max_usd),
-                qualify=(qualification._qualify_args(qualify, qualify_min)
-                         if qualifiable else None),
-                appel={"roles": roles, "limit": people_per_row,
-                       "technologies": technologies}, dry_run=dry_run)
+                limits=_limits(max_paid_steps, apify_max_usd), qualify=qualif,
+                appel=appel, dry_run=dry_run, asynchronous=asynchronous)
 
         return acte
 

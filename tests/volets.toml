@@ -726,5 +726,6 @@ nom = "waterfalls"
 # Un domaine pour six connecteurs (`waterfall_email|phone|company|person|people|tech`) : la
 # famille « connecteur » le rate, son nom n'est celui d'aucun.
 sources = ["oto_mcp/waterfall/**", "oto_mcp/tools/waterfall.py",
-           "oto_mcp/tools/waterfall_lignes.py"]
+           "oto_mcp/tools/waterfall_lignes.py", "oto_mcp/tools/waterfall_ecriture.py",
+           "oto_mcp/tools/waterfall_releve.py"]
 tests = ["tests/**/test_waterfall*.py"]
