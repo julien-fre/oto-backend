@@ -236,11 +236,12 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
                      "You can't read this project.", 403)
             pid = int(inp.project_id)
         clean, problems = _problemes(sub, pid, inp.manifest)
-        # Le HTML se juge contre le manifeste passé, sinon contre celui de l'app.
+        # Le HTML se juge contre le manifeste passé, sinon contre celui de l'app — et
+        # pas contre un manifeste à corriger : chaque appel y paraîtrait hors manifeste.
         html = inp.html if inp.html is not None else (app or {}).get("html")
         out: dict = {"ok": not problems, "problems": problems}
-        warnings = avertissements(clean if inp.manifest is not None else (app or {}).get("manifest") or {},
-                                  html)
+        warnings = [] if problems else avertissements(
+            clean if inp.manifest is not None else (app or {}).get("manifest") or {}, html)
         if warnings:
             out["warnings"] = warnings
         return out

@@ -395,3 +395,8 @@ def test_ecrire_rend_les_avertissements_du_html(seams):
 def test_validate_juge_le_html(seams):
     out = A._app(CTX, A.AppInput(op="validate", project_id=7, manifest=GOOD, html=_TRI))
     assert out["ok"] is True and out["warnings"]
+
+
+def test_validate_ne_juge_pas_le_html_d_un_manifeste_a_corriger(seams):
+    out = A._app(CTX, A.AppInput(op="validate", project_id=7, manifest={"tables": "leads"}, html=_TRI))
+    assert out["ok"] is False and "warnings" not in out
