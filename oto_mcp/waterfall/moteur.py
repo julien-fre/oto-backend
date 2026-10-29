@@ -111,6 +111,15 @@ async def _run_step(mcp: FastMCP, sub, step: Step, mode: str, inputs: dict,
     if step.collect is not None:
         collected, collect_args, finished = await appel._poll(mcp, sub, step, result,
                                                              deadline)
+        if not finished and step.falls_through:
+            # Not done within its own wait: the cascade goes on, and reads it once
+            # more at the end (`_late_reads`).
+            waited = int(step.poll[2] if step.poll else appel.POLL_BUDGET_S)
+            attempt.update(status="pending", falls_through=True,
+                           collect={"tool": step.collect.tool, "arguments": collect_args},
+                           message=f"not finished within {waited} s — the cascade went "
+                                   "on to the next providers")
+            return None
         if not finished:
             collect = {"tool": step.collect.tool, "arguments": collect_args}
             attempt.update(status="pending", collect=collect,
@@ -193,8 +202,12 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
         attempt = {"provider": step.key, "tool": step.tool,
                    "key": modes.get(step.tool, "unknown")}
         attempts.append(attempt)
+        started = time.monotonic()
         got = await _run_step(mcp, sub, step, attempt["key"], inputs, dry_run,
                               deadline, attempt, pending, budget)
+        if step.poll is not None and not dry_run:
+            # A step with its own wait (`Step.poll`) spends none of the steps after it.
+            deadline += time.monotonic() - started
         if (got is not None and step.weak is not None and step.weak(got) and step.reveal
                 and qualify and not dry_run):
             # Masked names, but titles: judged for free, then only the ones that pass
@@ -226,6 +239,10 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
                 continue    # nobody here passes: the next provider is tried
         found = got
         winner = step.key if found is not None else None
+    late_pending: list[dict] = []
+    if not dry_run:
+        found, winner = await _late_reads(mcp, sub, order, inputs, attempts, found,
+                                          winner, late_pending)
     if found is None and fallback is not None:
         found, winner = fallback, fallback_step
         if not dry_run and qualification._per_step(kind, qualify):
@@ -270,7 +287,7 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
         found = {**found, "people": people[:inputs["limit"]],
                  "count": min(len(people), inputs["limit"])}
     out = _receipt(kind, found is not None, winner, found, attempts, source, ignored,
-                   pending)
+                   pending + late_pending)
     if tally.reports:
         out["qualification"] = tally.receipt(qualify)
         if (qualification._per_step(kind, qualify) and found
@@ -281,6 +298,35 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
             # second, billed cascade. The full records on demand.
             out["unqualified"] = tally.rejected if qualify.get("show") else tally.compact()
     return out
+
+
+async def _late_reads(mcp: FastMCP, sub, order: list[Step], inputs: dict,
+                      attempts: list[dict], found, winner, late_pending: list[dict]):
+    """The steps that fell through still pending (`Step.falls_through`): read ONCE more,
+    free, when the cascade ends. Finished, the read is what bills the lookup (its tool
+    notes what it cost), and its find answers if nothing else did. Still running, it
+    stays in the receipt's `pending`, with the call that collects it."""
+    by_key = {s.key: s for s in order}
+    for attempt in attempts:
+        if not attempt.get("falls_through") or attempt.get("status") != "pending":
+            continue
+        step, collect = by_key[attempt["provider"]], attempt["collect"]
+        issue = await appel.collect_once(mcp, sub, step, collect["arguments"])
+        if issue is None or not issue.ok or issue.retenu \
+                or not step.collect.done(_payload(issue)):
+            late_pending.append({"provider": step.key, **collect})
+            continue
+        attempt.pop("collect", None)
+        late = step.extract(_payload(issue), inputs)
+        if not late:
+            attempt.update(status="no_match", message="finished after the fallback")
+        elif found is None:
+            attempt.update(status="found", message="finished after the fallback")
+            found, winner = late, step.key
+        else:
+            attempt.update(status="found_late", found=late,
+                           message="finished after another provider answered")
+    return found, winner
 
 
 def _continue_with(out: dict, order: list[Step], winner: Optional[str], inputs: dict,

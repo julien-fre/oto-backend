@@ -15,6 +15,8 @@ from .etape import Step, _payload
 POLL_BUDGET_S = 25.0
 POLL_FIRST_S = 8.0
 POLL_EVERY_S = 6.0
+#: The wait between two reads — a seam, so that a test runs a long wait in no time.
+_sleep = asyncio.sleep
 
 
 async def _poll(mcp: FastMCP, sub, step: Step, submitted, deadline: float):
@@ -26,16 +28,35 @@ async def _poll(mcp: FastMCP, sub, step: Step, submitted, deadline: float):
     tool = await meta.resoudre_outil(mcp, step.collect.tool)
     if tool is None:
         return None, args, False
-    stop = min(time.monotonic() + POLL_BUDGET_S, deadline)
-    await asyncio.sleep(max(0.0, min(POLL_FIRST_S, stop - time.monotonic())))
+    if step.poll is not None:
+        # Its own wait, outside the cascade's budget (`Step.poll`).
+        first, every, most = step.poll
+        stop = time.monotonic() + most
+    else:
+        first, every = POLL_FIRST_S, POLL_EVERY_S
+        stop = min(time.monotonic() + POLL_BUDGET_S, deadline)
+    await _sleep(max(0.0, min(first, stop - time.monotonic())))
     while True:
         issue = await meta.executer_cible(tool, sub, step.collect.tool,
                                           step.collect.tool, dict(args))
         if not issue.ok or issue.retenu or step.collect.done(_payload(issue)):
             return issue, args, True
-        if time.monotonic() + POLL_EVERY_S > stop:
+        if time.monotonic() + every > stop:
             return issue, args, False
-        await asyncio.sleep(POLL_EVERY_S)
+        await _sleep(every)
+
+
+async def collect_once(mcp: FastMCP, sub, step: Step, args: dict):
+    """One more read of a step left pending (free): its `IssueCible`, or None."""
+    from ..tools import meta
+    tool = await meta.resoudre_outil(mcp, step.collect.tool)
+    if tool is None:
+        return None
+    try:
+        return await meta.executer_cible(tool, sub, step.collect.tool,
+                                         step.collect.tool, dict(args))
+    except McpError:
+        return None
 
 
 async def _call(mcp: FastMCP, sub, tool_name: str, args: dict, attempt: dict):

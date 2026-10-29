@@ -17,7 +17,7 @@ set **steps** on this card: the provider keys, comma-separated, in the order you
 ## usage — a person's phone number
 
 one person per call, stopping at the first provider that returns a number.
-- `waterfall_phone` — default order: pipecorn (mobiles only, from the linkedin url) → kaspr → lusha → forager → apollo (reveal, your own key) → lemlist → dropcontact → fullenrich; the linkedin url opens the most steps; an asynchronous step still `pending` ends the cascade
+- `waterfall_phone` — default order: pipecorn (mobiles only, from the linkedin url; waited up to 20 s, then the next providers are tried) → kaspr → lusha → forager → apollo (reveal, your own key) → lemlist → dropcontact → fullenrich; the linkedin url opens the most steps; an asynchronous step still `pending` ends the cascade
 - phone credits cost more than email credits: narrow the steps to the provider you want to spend on
 - apollo's reveal, lemlist, dropcontact and fullenrich answer asynchronously: each waits up to ~25 s, otherwise it is `pending` (see `pending` in the response) — fullenrich usually takes 30 s to 4 min
 - `dry_run=true` shows the plan without spending anything

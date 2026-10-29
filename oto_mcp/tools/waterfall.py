@@ -130,8 +130,9 @@ def register(mcp: FastMCP) -> None:
     @documente(f"""Find ONE person's phone number, trying providers in turn and stopping at
         the FIRST that returns one (native waterfall).
 
-        Steps (default order): pipecorn (LinkedIn URL; its own cascade of providers in
-        one call, mobiles only, billed only when one is found) → kaspr (LinkedIn URL) →
+        Steps (default order): pipecorn (LinkedIn URL; its own cascade of providers,
+        mobiles only, billed only when one is found — asynchronous, waited up to 20 s,
+        then the next steps run and it is read once more at the end) → kaspr (LinkedIn URL) →
         lusha (LinkedIn URL, or name + domain / company) → forager (LinkedIn URL) → then
         the asynchronous ones: apollo
         (phone reveal, your own Apollo key; LinkedIn URL, or name + domain / company) →

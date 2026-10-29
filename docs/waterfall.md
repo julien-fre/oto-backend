@@ -152,6 +152,17 @@ encore, aucune étape suivante n'est payée pour la même recherche — pas mêm
 complétion.
 lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans appel.
 
+**L'exception qui passe la main : Pipecorn** (en tête du téléphone, Julien 29/10/2026).
+`pipecorn op=enrich` soumet, `pipecorn op=result` relève (gratuit). L'étape a SA propre
+attente (`Step.poll` : première relève à 2 s, puis toutes les 3 s, **20 s au plus**), qui
+ne compte pas dans le budget de la cascade (`DEADLINE_S` repart d'autant : 20 + 40 s au
+pire, sous les 120 s d'un appel MCP — au-delà des 45 s de la face REST). Pas finie à
+temps, elle **n'arrête pas** la cascade (`Step.falls_through`) : les fournisseurs suivants
+sont essayés, puis elle est relue UNE fois en fin de cascade — finie, cette relecture la
+facture et sa trouvaille sert si rien d'autre n'a trouvé (`found_late` sinon) ; toujours
+en cours, elle reste dans `pending[]`. ⚠️ Une recherche jamais relue n'est facturée à
+personne alors que Pipecorn nous la débite s'il trouve : c'est le prix du repli.
+
 ## Ce que le waterfall refuse d'être
 
 - **Un appel d'outil arbitraire** : `providers` et `steps` ne nomment que des clés de la
@@ -174,8 +185,10 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
   seulement, sauf si l'instance ouvre `forager_person:work_emails` sur sa clé partagée) →
   dropcontact → lemlist → fullenrich (les asynchrones en dernier).
 - **Téléphone** : pipecorn (`pipecorn op=enrich find=["phone"] phone_type="mobile"`,
-  depuis un profil LinkedIn : une cascade de fournisseurs en UN appel synchrone, facturée
-  au seul mobile trouvé ; la clé partagée, sur octroi, ne sert que ce geste) → kaspr →
+  depuis un profil LinkedIn : sa propre cascade de fournisseurs, ASYNCHRONE, attendue
+  20 s au plus puis repli sur la suite — voir « Les étapes asynchrones » ; facturée au
+  seul mobile trouvé, à la relève ; la clé partagée, sur octroi, ne sert que ce geste ;
+  absente du mode tableau comme toute étape asynchrone) → kaspr →
   lusha → forager → apollo (`apollo_reveal_phone`, asynchrone, clé de l'appelant
   seulement) → lemlist → dropcontact → fullenrich. Pas d'AI Ark. En tête de la table, mais
   l'ordre par défaut reste trié (propres clés d'abord, `ordre._plan`) : sur la clé
@@ -530,6 +543,7 @@ Une ligne `Step(...)` dans la table : la clé, l'outil (déjà monté — vérif
 résultat SERVI, après rédaction), une note de coût, et `collect` si le fournisseur répond
 plus tard ; `asks`, `max_units`, `per_item` si l'outil facture ce qu'on lui demande ou
 par résultat (le plan les sert). Une étape asynchrone se range APRÈS les synchrones
-(`tests/test_waterfall.py`). Un test de son extraction sur une réponse réelle du
+(`tests/test_waterfall.py`), sauf si elle passe la main (`falls_through`, avec son
+attente bornée `poll`). Un test de son extraction sur une réponse réelle du
 fournisseur, anonymisée (`tests/waterfall/`).
 La clé devient aussitôt utilisable dans le réglage `steps` de la carte.

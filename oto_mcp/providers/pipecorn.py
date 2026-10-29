@@ -18,15 +18,15 @@ from ._model import CredentialField, _c
 #
 # BYO (user OR org: the customer's own Pipecorn credits) or a platform key on explicit
 # grant (`platform_key_open=False`, `default_quota=0`: an org without a grant never
-# reaches it). The platform key serves a PHONE lookup only — the first step of
-# `waterfall_phone`; emails, the personal email (its consent belongs to the key's
-# owner) and the balance ask for the customer's own key. Each call notes the Pipecorn
-# credits it spent (`quantity`, any key; `units` on the platform key). Every grant
-# carries a daily quota in those credits (`grant_quota_unit`): the default, 0, would
-# be unlimited on our account.
+# reaches it). No per-org cap on the grant: the org's Tulina credits bound what it
+# spends. The platform key serves a PHONE lookup only — the first step of
+# `waterfall_phone`; emails, the personal email (its consent belongs to the key's owner)
+# and the balance ask for the customer's own key. A lookup is ASYNCHRONOUS (submitted,
+# then read back); the finished result notes the Pipecorn credits it spent
+# (`quantity`, any key).
 CONNECTOR = _c(
     "pipecorn", ["pipecorn"], auth_modes={"byo_user", "byo_org", "platform"},
-    default_quota=0, platform_key_open=False, grant_quota_unit="Pipecorn credits",
+    default_quota=0, platform_key_open=False,
     keyed=True, secret_kind="api_key",
     credential_fields=(
         CredentialField(

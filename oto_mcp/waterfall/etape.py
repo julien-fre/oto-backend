@@ -34,6 +34,14 @@ class Step:
     # not say it (an internal flag is not something a caller can give).
     needs: str = ""
     collect: Optional[Collect] = None
+    # An asynchronous step's OWN wait, `(first poll, then every, at most)` seconds, in
+    # place of `appel.POLL_*` — and the time it takes does not count against the
+    # cascade's budget (`moteur.DEADLINE_S`): the steps after it keep theirs.
+    poll: Optional[tuple[float, float, float]] = None
+    # Still not finished after its wait: the cascade goes on to the next steps (the
+    # fallback) instead of stopping there. The step is listed `pending` all the same,
+    # with its collect call, and read once more when the cascade ends (`moteur`).
+    falls_through: bool = False
     # Costs the caller nothing (open data, their own session): ranks with their own keys.
     free: bool = False
     # Bills no credits but spends the KEY's call quota (lemlist's database search): never

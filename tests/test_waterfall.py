@@ -98,9 +98,15 @@ def test_la_carte_liste_les_etapes_dans_l_ordre_par_defaut(ns):
 def test_les_etapes_synchrones_passent_avant_les_asynchrones(ns):
     """Une étape `pending` arrête la cascade : une étape synchrone rangée après elle ne
     tournerait jamais. L'ordre par défaut ne doit rien à une grille de prix d'instance
-    (une instance pose le sien par le réglage `steps`)."""
-    asynchrones = [s.collect is not None for s in plan.STEPS_BY_NAMESPACE[ns]]
-    assert asynchrones == sorted(asynchrones), ns
+    (une instance pose le sien par le réglage `steps`). Une étape qui, en attente, passe
+    la main (`falls_through` : Pipecorn en tête du téléphone, Julien 29/10/2026)
+    n'arrête rien : elle peut précéder les synchrones, avec sa propre attente bornée."""
+    bloquantes = [s.collect is not None for s in plan.STEPS_BY_NAMESPACE[ns]
+                  if not s.falls_through]
+    assert bloquantes == sorted(bloquantes), ns
+    for s in plan.STEPS_BY_NAMESPACE[ns]:
+        if s.falls_through:
+            assert s.collect is not None and s.poll is not None, (ns, s.key)
 
 
 def test_fullenrich_la_plus_lente_ferme_la_marche():

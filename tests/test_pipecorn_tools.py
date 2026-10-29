@@ -5,10 +5,10 @@ servie, la paire lire/agir et la jointure au client oto-core. Ce fichier verroui
 ce qui est PROPRE à ce module :
 
 - un seul outil `pipecorn` (LECTURE), le verbe dans `op` ;
-- chaque op appelle la BONNE méthode, avec les bons arguments, borné en temps ;
-- ce que l'appel a coûté (`quantity`, toute clé ; `units` sur la clé partagée) ;
-- la clé partagée ne sert QUE le téléphone, refusé AVANT toute dépense sinon, et son
-  quota est réservé pour le pire cas de l'appel ;
+- l'enrichissement est ASYNCHRONE : `enrich` soumet, `result` relève ;
+- ce qu'il a coûté, noté à la relève terminée seulement (`quantity`, toute clé), et une
+  recherche comptée à l'envoi sur la clé partagée (`units`) — sans plafond par org ;
+- la clé partagée ne sert QUE le téléphone, refusé AVANT toute dépense sinon ;
 - la traduction des refus Pipecorn (402 sur la clé partagée ≠ sur la sienne) et la sonde.
 
 Ne tournent qu'après installation d'oto-core avec `oto.tools.pipecorn`. Toutes les
@@ -24,19 +24,18 @@ from oto_mcp.mcp_errors import McpError
 
 KEY = "pc_test_fake"
 URL = "https://www.linkedin.com/in/jane-doe/"
-MOBILE = {"status": "finished", "phones": ["+33612345678"],
-          "phone_details": [{"number": "+33612345678", "type": "mobile"}],
-          "phone_status": "valid"}
+ID = "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a"
+FINI = {"enrichment_id": ID, "status": "finished", "phone": ["+33612345678"],
+        "phone_details": [{"number": "+33612345678", "type": "mobile"}]}
 
 
 @pytest.fixture()
 def key(monkeypatch):
-    """`(mode partagé ?, unités réservées)` — la clé que rend la cascade."""
-    state = {"platform": False, "units": []}
+    """`mode partagé ?` — la clé que rend la cascade."""
+    state = {"platform": False}
 
     def resolve(provider, account=None, units=1):
         assert provider == "pipecorn"
-        state["units"].append(units)
         return KEY, state["platform"]
     monkeypatch.setattr("oto_mcp.access.resolve_api_key", resolve)
     monkeypatch.setattr("oto_mcp.access.current_org", lambda sub: None)
@@ -68,7 +67,9 @@ def _fn():
 @pytest.fixture()
 def client():
     with patch("oto.tools.pipecorn.PipecornClient") as cls:
-        cls.return_value.enrich_contact.return_value = MOBILE
+        cls.return_value.submit_enrichment.return_value = {
+            "enrichment_id": ID, "status": "pending"}
+        cls.return_value.get_enrichment.return_value = FINI
         cls.return_value.get_credits.return_value = {"credits": {"enrichment": 2500}}
         cls.return_value.get_account_info.return_value = {"account": {"plan": "growth"}}
         yield cls
@@ -82,45 +83,39 @@ def test_un_seul_outil_en_lecture():
     assert tools["pipecorn"].annotations.readOnlyHint is True
 
 
-def test_registre_cle_partagee_sur_octroi_avec_quota_en_credits():
+def test_registre_cle_partagee_sur_octroi_sans_plafond_par_org():
+    # Julien, 29/10 : pas de limite par org, les crédits Tulina bornent la dépense.
     c = providers.REGISTRY["pipecorn"]
     assert c.auth_modes == {"byo_user", "byo_org", "platform"}
     assert c.platform_key_open is False and c.default_quota == 0
-    assert c.grant_quota_unit == "Pipecorn credits"
+    assert c.grant_quota_unit == ""
 
 
-# --- enrich -----------------------------------------------------------------
+# --- enrich : l'envoi asynchrone -----------------------------------------------
 
-def test_telephone_par_defaut_borne_en_temps(key, trace, client):
+def test_enrich_soumet_et_rend_l_identifiant_a_relever(key, trace, client):
     out = _fn()(linkedin_url=URL, phone_type="mobile")
     client.assert_called_once_with(api_key=KEY)
-    kwargs = client.return_value.enrich_contact.call_args
-    assert kwargs.args == (["phone"],)
-    assert kwargs.kwargs["linkedin_url"] == URL and kwargs.kwargs["phone_type"] == "mobile"
-    assert kwargs.kwargs["timeout"] == (10, 30)
-    assert out["phones"] == ["+33612345678"] and out["pipecorn_credits"] == 30
-    # Sa propre clé : la quantité facturable est notée, pas le quota d'un octroi.
-    assert trace == {"quantity": 30}
-    assert key["units"] == [30]
+    sent = client.return_value.submit_enrichment.call_args
+    assert sent.args == (["phone"],)
+    assert sent.kwargs["linkedin_url"] == URL and sent.kwargs["phone_type"] == "mobile"
+    client.return_value.enrich_contact.assert_not_called()
+    assert out["enrichment_id"] == ID and out["status"] == "pending"
+    assert out["find"] == ["phone"] and "op='result'" in out["next_step"]
+    # Rien n'est dépensé avant la fin : un zéro TRACÉ.
+    assert trace == {"quantity": 0}
 
 
-def test_un_echec_ne_coute_rien(key, trace, client):
-    client.return_value.enrich_contact.return_value = {
-        "status": "finished", "phones": [], "phone_details": [], "phone_status": "not_found"}
-    out = _fn()(linkedin_url=URL)
-    assert out["pipecorn_credits"] == 0 and trace == {"quantity": 0}
-
-
-def test_email_et_telephone_reservent_le_pire_cas(key, trace, client):
-    client.return_value.enrich_contact.return_value = {**MOBILE, "email": "jane@acme.com"}
-    out = _fn()(find=["email", "phone"], linkedin_url=URL)
-    assert key["units"] == [33] and out["pipecorn_credits"] == 33
-
-
-def test_cle_partagee_telephone_note_quantite_et_unites(key, trace, client):
+def test_enrich_sur_la_cle_partagee_compte_une_recherche(key, trace, client):
     key["platform"] = True
-    _fn()(linkedin_url=URL, phone_type="mobile")
-    assert trace == {"quantity": 30, "units": 30}
+    _fn()(linkedin_url=URL)
+    assert trace == {"quantity": 0, "units": 1}
+
+
+def test_un_envoi_sans_identifiant_est_un_refus(key, trace, client):
+    client.return_value.submit_enrichment.return_value = {"status": "pending"}
+    with pytest.raises(McpError, match="no enrichment_id"):
+        _fn()(linkedin_url=URL)
 
 
 @pytest.mark.parametrize("kwargs", [
@@ -133,7 +128,7 @@ def test_cle_partagee_refuse_tout_sauf_le_telephone_avant_depense(key, trace, cl
     key["platform"] = True
     with pytest.raises(McpError, match="needs your own Pipecorn key"):
         _fn()(**kwargs)
-    client.return_value.enrich_contact.assert_not_called()
+    client.return_value.submit_enrichment.assert_not_called()
     client.return_value.get_credits.assert_not_called()
     assert trace == {}
 
@@ -145,6 +140,55 @@ def test_une_entree_manquante_est_un_refus_nomme(key, trace):
     assert trace == {}
 
 
+# --- result : la relève, qui facture ----------------------------------------------
+
+def test_en_cours_rien_n_est_facture(key, trace, client):
+    client.return_value.get_enrichment.return_value = {"status": "pending"}
+    out = _fn()(op="result", enrichment_id=ID, find=["phone"])
+    client.return_value.get_enrichment.assert_called_once_with(ID)
+    assert out["done"] is False and trace == {"quantity": 0}
+
+
+def test_fini_facture_ce_qui_a_ete_trouve_et_demande(key, trace, client):
+    # Le bac à sable rend aussi un email non demandé : il ne compte pas.
+    client.return_value.get_enrichment.return_value = {**FINI, "email": "jane@acme.com"}
+    out = _fn()(op="result", enrichment_id=ID, find=["phone"])
+    assert out["done"] is True and out["pipecorn_credits"] == 30
+    assert out["phone_details"] == FINI["phone_details"]
+    assert trace == {"quantity": 30}
+
+
+def test_fini_sans_mobile_ne_coute_rien(key, trace, client):
+    client.return_value.get_enrichment.return_value = {
+        "status": "finished", "phone": [], "phone_details": []}
+    out = _fn()(op="result", enrichment_id=ID)
+    assert out["pipecorn_credits"] == 0 and trace == {"quantity": 0}
+
+
+def test_la_releve_sur_la_cle_partagee_ne_compte_aucune_recherche(key, trace, client):
+    key["platform"] = True
+    client.return_value.get_enrichment.return_value = FINI
+    _fn()(op="result", enrichment_id=ID, find=["phone"])
+    assert trace == {"quantity": 30, "units": 0}
+
+
+@pytest.mark.parametrize("code, match", [
+    ("insufficient_credits", "balance ran out"),
+    ("workspace_limit_exceeded", "weekly credit limit"),
+    ("", "no reason given"),
+])
+def test_un_echec_dit_pourquoi_et_ne_facture_rien(key, trace, client, code, match):
+    client.return_value.get_enrichment.return_value = {"status": "failed", "code": code}
+    with pytest.raises(McpError, match=match):
+        _fn()(op="result", enrichment_id=ID)
+    assert trace == {"quantity": 0}
+
+
+def test_la_releve_exige_l_identifiant(key, client):
+    with pytest.raises(McpError, match="enrichment_id"):
+        _fn()(op="result")
+
+
 # --- credits / account ------------------------------------------------------
 
 def test_solde_et_compte(key, client):
@@ -152,9 +196,14 @@ def test_solde_et_compte(key, client):
     assert _fn()(op="account") == {"account": {"plan": "growth"}}
 
 
-def test_aucun_argument_ignore_en_silence(key, client):
-    with pytest.raises(McpError, match="does not take `linkedin_url`"):
-        _fn()(op="credits", linkedin_url=URL)
+@pytest.mark.parametrize("kwargs, name", [
+    ({"op": "credits", "linkedin_url": URL}, "linkedin_url"),
+    ({"op": "result", "enrichment_id": ID, "linkedin_url": URL}, "linkedin_url"),
+    ({"enrichment_id": ID, "linkedin_url": URL}, "enrichment_id"),
+])
+def test_aucun_argument_ignore_en_silence(key, client, kwargs, name):
+    with pytest.raises(McpError, match=f"does not take `{name}`"):
+        _fn()(**kwargs)
 
 
 # --- refus de Pipecorn ------------------------------------------------------
@@ -174,7 +223,7 @@ def _upstream(status, body):
 ])
 def test_traduction_des_refus(key, trace, client, platform, status, body, match):
     key["platform"] = platform
-    client.return_value.enrich_contact.side_effect = _upstream(status, body)
+    client.return_value.submit_enrichment.side_effect = _upstream(status, body)
     with pytest.raises(McpError, match=match):
         _fn()(linkedin_url=URL)
     assert trace == {}
