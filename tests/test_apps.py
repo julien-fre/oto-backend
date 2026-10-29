@@ -202,6 +202,7 @@ def test_validate_exige_le_projet(seams):
 _ECRITURES = [
     dict(op="create", project_id=7, title="x", manifest={}),
     dict(op="update", app_id=5, title="y"),
+    dict(op="patch", app_id=5, edits=[{"find": "x", "replace": "y"}]),
     dict(op="archive", app_id=5),
     dict(op="unarchive", app_id=5),
     dict(op="restore", app_id=5, revision_id=3),
@@ -400,3 +401,34 @@ def test_validate_juge_le_html(seams):
 def test_validate_ne_juge_pas_le_html_d_un_manifeste_a_corriger(seams):
     out = A._app(CTX, A.AppInput(op="validate", project_id=7, manifest={"tables": "leads"}, html=_TRI))
     assert out["ok"] is False and "warnings" not in out
+
+
+# ── op=patch : changer une ligne sans renvoyer le HTML ──────────────────────
+
+def test_patch_remplace_et_rend_un_recu_sans_html(seams):
+    out = A._app(CTX, A.AppInput(op="patch", app_id=5, expected_rev="abc",
+                                 edits=[{"find": "<p>x</p>", "replace": "<p>y</p>"}]))
+    assert out == {"rev": "abc", "replaced": 1}
+    (app_id, by, fields), = seams["update"]
+    assert (app_id, by, fields["html"]) == (5, "u1", "<p>y</p>")
+    assert set(fields) == {"html"}
+
+
+def test_patch_refuse_tout_et_n_ecrit_rien(seams):
+    e = _refus(lambda: A._app(CTX, A.AppInput(op="patch", app_id=5, edits=[
+        {"find": "<p>", "replace": "<div>"}, {"find": "absent", "replace": "z"}])))
+    assert (e.status, e.code) == (400, "invalid_edits")
+    assert seams["update"] == []
+
+
+def test_patch_rend_les_avertissements(seams, monkeypatch):
+    monkeypatch.setattr(A.db.apps, "get", lambda i: dict(ROW, id=i, manifest=GOOD, html=_TRI))
+    out = A._app(CTX, A.AppInput(op="patch", app_id=5, edits=[
+        {"find": "<script>", "replace": "<script>/* v2 */"}]))
+    assert out["replaced"] == 1 and any('"score"' in w for w in out["warnings"])
+
+
+def test_patch_conflit(seams):
+    e = _refus(lambda: A._app(CTX, A.AppInput(op="patch", app_id=5, expected_rev="old",
+                                              edits=[{"find": "x", "replace": "y"}])))
+    assert (e.status, e.code) == (409, "conflict")

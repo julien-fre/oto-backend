@@ -38,6 +38,7 @@ from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .apps_html import avertissements
 from .apps_manifeste import auteur, forme, org_du_projet
+from .remplacements import RemplacementRefuse, appliquer
 from .registry import CAPABILITIES
 
 logger = logging.getLogger(__name__)
@@ -47,11 +48,11 @@ MAX_HTML = 512_000
 MAX_TITLE = 200
 MAX_PROJECTS = 200
 _THUMB_KEYS = {"image", "color", "emoji", "design"}
-_ECRITURES = frozenset({"create", "update", "archive", "unarchive", "restore"})
+_ECRITURES = frozenset({"create", "update", "patch", "archive", "unarchive", "restore"})
 
 
 class AppInput(BaseModel):
-    op: Literal["list", "get", "create", "update", "archive", "unarchive",
+    op: Literal["list", "get", "create", "update", "patch", "archive", "unarchive",
                 "revisions", "restore", "validate"]
     project_id: Optional[int] = None
     project_ids: Optional[list[int]] = Field(
@@ -63,6 +64,10 @@ class AppInput(BaseModel):
     thumbnail: Optional[dict] = None
     clear_thumbnail: Optional[bool] = None
     expected_rev: Optional[str] = None
+    edits: Optional[list[dict]] = Field(default=None, description=(
+        "patch: exact replacements in the app's HTML, applied in order, all or nothing — "
+        "`[{\"find\": \"…\", \"replace\": \"…\"}]`; `find` must appear exactly once "
+        "(or pass `\"all\": true`)."))
     revision_id: Optional[int] = None
     archived: Optional[bool] = None
 
@@ -102,6 +107,9 @@ class AppOut(BaseModel):
     # create, update, restore, validate : ce que le HTML demande hors du manifeste
     # (`apps_html.py`) — un avertissement, l'app est écrite quand même.
     warnings: Optional[list[str]] = None
+    # patch : un reçu, jamais le HTML — l'op existe pour ne pas le faire transiter.
+    rev: Optional[str] = None
+    replaced: Optional[int] = None
 
 
 def _require(cond, code: str, msg: str, status: int = 400) -> None:
@@ -282,6 +290,24 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
         db.log_project_activity(row["project_id"], sub, "app.restore", row["title"])
         return _ecrite(changed)
 
+    if inp.op == "patch":
+        # Changer une ligne sans renvoyer 40 000 caractères : un agent qui réécrit tout
+        # le HTML pour un tri y laisse un tour de modèle entier, ou s'y fait couper.
+        try:
+            html, n = appliquer(row.get("html") or "", inp.edits)
+        except RemplacementRefuse as e:
+            raise AuthzDenied(400, "invalid_edits", str(e)) from None
+        _require(len(html) <= MAX_HTML, "html_too_large",
+                 f"An app's HTML is at most {MAX_HTML} characters.")
+        changed = _update(sub, row, inp.expected_rev, html=html)
+        db.log_project_activity(row["project_id"], sub, "app.patch", changed["title"])
+        out: dict = {"rev": changed["rev"], "replaced": n}
+        # Le manifeste, un patch n'y touche pas : celui de l'app lue.
+        warnings = avertissements(row.get("manifest") or {}, html)
+        if warnings:
+            out["warnings"] = warnings
+        return out
+
     # update
     _content(inp, creating=False)
     manifest = (_checked_manifest(ctx, row["project_id"], inp.manifest)
@@ -321,7 +347,10 @@ CAPABILITIES += [
             "op=list (`project_ids`; cards, no HTML) / get (`app_id`; with manifest, "
             "HTML and `rev`) / create (`project_id`, `title`, `manifest`, `html`, "
             "optional `thumbnail`) / update (`app_id`, any of those; pass "
-            "`expected_rev` from get → 409 if it changed) / archive / unarchive / "
+            "`expected_rev` from get → 409 if it changed) / patch (`app_id`, `edits`: "
+            "exact find → replace in the HTML, each `find` unique, all or nothing; "
+            "returns `rev`, `replaced` and `warnings`, never the HTML — prefer it to "
+            "update for any change smaller than the whole page) / archive / unarchive / "
             "revisions / restore (`revision_id`) / validate (`manifest` and "
             "`project_id` or `app_id`, optional `html`: the problems a create would "
             "refuse, nothing written). create, update, restore and validate also "
