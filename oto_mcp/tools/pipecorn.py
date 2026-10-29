@@ -88,6 +88,9 @@ def _upstream_message(e, is_platform: bool = False) -> str:
                 "keys; a rotated key stops working at once.")
     if status == 403:
         return f"Pipecorn refused this call (403): {_error(e)}"
+    if status == 404:
+        return ("Pipecorn has no such lookup for this key (404): check the "
+                "`enrichment_id` — a lookup is read with the key that submitted it.")
     if status in (400, 422):
         return f"Pipecorn rejected the request ({status}): {_error(e)}"
     if status == 429:

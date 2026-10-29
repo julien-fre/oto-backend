@@ -243,3 +243,9 @@ def test_sonde(client):
     client.return_value.probe.side_effect = _upstream(401, {"error": "Invalid API key"})
     with pytest.raises(verify.NonAutorise):
         pipecorn._verify({"key": KEY})
+
+
+def test_une_releve_inconnue_le_dit(key, trace, client):
+    client.return_value.get_enrichment.side_effect = _upstream(404, {"error": "Resource not found"})
+    with pytest.raises(McpError, match="no such lookup"):
+        _fn()(op="result", enrichment_id=ID)
