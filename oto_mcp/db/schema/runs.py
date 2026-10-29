@@ -781,3 +781,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_episodes_vivant
 CREATE INDEX IF NOT EXISTS idx_agent_episodes_statut
     ON agent_episodes(statut, vu_at DESC);
 """
+
+SLACK_AGENT_POSTS = """
+-- Les messages qu'un agent hébergé a postés dans Slack EN TANT QUE L'APP
+-- (`slack_post_message(author="app")` pendant un run de cet agent, hors fil) : ce qui
+-- fait d'une réponse dans LEUR fil une demande à CET agent (`slack_events.py`).
+-- L'événement de Slack ne nomme que `channel` et `thread_ts` : sans cette ligne, rien
+-- ne dit qui a posté, ni quoi — et le fil ne se relit pas (`conversations.replies`,
+-- un appel par minute hors Marketplace), d'où `text`, le message tel que posté, borné.
+-- Clé `(channel, ts)` : un `ts` est unique dans son canal ; l'org de la ligne est
+-- confrontée, à la lecture, à celle de l'installation qui reçoit l'événement.
+-- L'agent supprimé emporte ses lignes (ON DELETE CASCADE) ; au-delà de 30 jours la
+-- lecture ne sert plus rien, et la maintenance `slack-agent-posts` les retire.
+CREATE TABLE IF NOT EXISTS slack_agent_posts (
+    channel TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    org_id BIGINT NOT NULL,
+    trigger_id BIGINT NOT NULL REFERENCES runner_triggers(id) ON DELETE CASCADE,
+    job_id BIGINT,
+    text TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (channel, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_slack_agent_posts_created
+    ON slack_agent_posts(created_at);
+"""

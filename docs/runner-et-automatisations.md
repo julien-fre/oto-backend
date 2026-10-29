@@ -1892,7 +1892,8 @@ comme `api/hooks.py`), logique dans `slack_events.py`, sans HTTP.
   espace écrites par cette app sont supprimées.
 - **Côté Slack** (geste d'opérateur, rien dans le manifeste de la fiche) : URL
   `/api/slack/events` de l'instance, événements `message.im`, `app_uninstalled`,
-  `tokens_revoked`, et l'onglet Messages de l'App Home ouvert aux utilisateurs (sans
+  `tokens_revoked` (et, pour les réponses dans le fil d'un agent, `message.channels`,
+  `message.groups`, `message.mpim` — section suivante), et l'onglet Messages de l'App Home ouvert aux utilisateurs (sans
   lui, `message.im` n'arrive jamais).
 - **Les outils du MEMBRE** : le run voit la boîte à outils de qui demande, pas celle
   du propriétaire ; un connecteur qu'il n'a pas activé y est masqué. Vérifié avant
@@ -1900,6 +1901,55 @@ comme `api/hooks.py`), logique dans `slack_events.py`, sans HTTP.
 - **Pas d'abonnement personnel** : un agent sur un modèle d'abonnement personnel ne
   peut pas passer en `slack` (`slack_agent_on_personal_subscription`) — chaque run
   porte un autre membre.
+
+### Une réponse dans le fil d'un agent : cet agent, sous l'identité de son propriétaire (29/10/2026)
+
+Un agent hébergé qui poste **en tant que l'app** (`slack_post_message(author="app")`),
+**hors d'un fil**, voit son message noté sous lui. Une réponse d'un membre **dans ce fil**
+— DM, canal, canal privé ou DM de groupe — relance **cet agent**. Tous les agents, sans
+interrupteur (décision du 29/10). Même route que les DM (`POST /api/slack/events`,
+`slack_events.py`).
+
+- **Noter** : `slack_post_message` (`tools/slack.py`), après l'envoi, si l'auteur est
+  l'app et qu'aucun `thread_ts` n'est passé. L'agent est celui du **travail de la
+  requête** (`verrou_org.travail_de_la_requete` → `db.agent_du_travail`), jamais un
+  argument : un appelant ne range pas un message sous l'agent d'un autre. Hors d'un run
+  hébergé (une personne dans une conversation, un travail enfilé à la main), rien n'est
+  noté. Une écriture qui échoue est journalisée : le message est parti, il n'est jamais
+  changé en erreur. Table `slack_agent_posts` (`channel`, `ts`, `org_id`, `trigger_id` →
+  `runner_triggers` ON DELETE CASCADE, `job_id`, `text` borné à 8 000 caractères).
+- **Retrouver** : l'événement ne nomme que `channel` et `thread_ts`. `demande_de` ne garde,
+  hors DM, qu'une **réponse dans un fil** (`thread_ts` ≠ `ts`, sans `bot_id`, sous-type
+  absent ou `thread_broadcast`/`file_share`). Après l'accusé, `traiter` lit
+  `slack_agent_posts` **avant tout credential** : chaque réponse en fil de chaque canal
+  où siège le bot arrive ici, et presque aucune n'est sous un des nôtres. Trouvé dans
+  l'org de l'installation → cet agent. Pas trouvé : un DM continue vers l'agent Slack de
+  l'org comme avant, une réponse en canal est ignorée. Au-delà de 30 jours, la ligne ne
+  sert plus (maintenance `slack-agent-posts`, timer quotidien).
+- **Qui répond** : la même vérification qu'un DM (exactement un membre réel, email
+  confirmé). En canal, un refus est **éphémère** (`chat.postEphemeral`, vu de la seule
+  personne) ; un invité ou une personne d'une autre entreprise (Slack Connect) n'a pas
+  de réponse du tout — sous un message d'un canal partagé, il ne nous demande rien.
+- **Sous quelle identité** (décision du 29/10) : le **propriétaire** de l'agent, ses
+  outils et ses connexions — l'agent poursuit son propre travail (`enfiler` sans `sub=`).
+  Les outils manquants sont ceux du propriétaire ; la personne qui répond l'apprend.
+  ⚠️ La réponse est présentée au run comme la réponse d'un coéquipier à son message, à
+  traiter **dans** sa procédure, jamais comme une instruction qui l'élargit : qui peut
+  répondre dans un canal n'est pas qui peut modifier l'agent.
+  ⚠️ **Sauf l'agent Slack de l'org** (`hook_auth=slack`) : chacun de ses runs porte qui
+  parle, une réponse aussi — jamais son propriétaire, un admin d'org dont une réponse
+  emprunterait sinon les connexions.
+- **Ce que le run reçoit** : l'instruction de l'agent, puis « ce n'est pas un de tes runs
+  programmés », son message tel que posté (le fil ne se relit pas), la réponse et son
+  auteur, puis comment répondre dans le fil (`slack_post_message`, `_instance=` de l'org)
+  — ou réagir quand la réponse n'appelle rien. 👀 sur la réponse à l'enfilage.
+- **Par la file des webhooks** comme un DM : pause, plafond journalier, lissage, journal
+  des livraisons (`source=slack`), `event_id` comme identifiant de livraison. Un agent
+  programmé passe par là aussi : `enfiler` ne regarde pas le genre de l'agent.
+- **Côté Slack** : abonner l'app aux événements `message.channels`, `message.groups` et
+  `message.mpim`, à côté de `message.im`. Leurs scopes (`channels:history`,
+  `groups:history`, `mpim:history`) sont déjà demandés : aucun espace ne réinstalle.
+  Le bot reçoit les messages des canaux où il siège — il y siège dès qu'il y poste.
 
 ### Un worker sans clé propre : ouvrir une famille aux clés clients (13/09/2026)
 

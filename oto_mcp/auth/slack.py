@@ -55,8 +55,10 @@ _COMMANDE = ('oto_admin_connector_setting(op="set", connector="slack", '
 
 #: The scopes asked at install — exactly the manifest of `connectors/docs/slack.md`,
 #: what the tools use, nothing for an in-Slack assistant (no mentions, no `assistant:`,
-#: no slash commands: decision of 22/10). The bot of `slack_events.py` answers DMs only:
-#: `im:history` covers them; a channel `@<app>` would need `app_mentions:read`, not asked.
+#: no slash commands: decision of 22/10). The bot of `slack_events.py` answers DMs and
+#: replies in the thread of an agent's message: `im:history`, `channels:history`,
+#: `groups:history` and `mpim:history` cover them; a channel `@<app>` would need
+#: `app_mentions:read`, not asked.
 #: ⚠️ Adding one later means EVERY connected workspace reinstalls: this list moves
 #: with the app's declared scopes, never ahead of them.
 BOT_SCOPES = (

@@ -87,6 +87,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.datastore.COMMENTAIRES,   # commentaires des personnes sur une ligne de tableau
     schema.grants.DEMANDES_D_ACCES,  # demandes d'accès d'une personne bloquée, et leur décision
     schema.copilot.PIECES,           # fichiers joints aux messages de l'agent intégré
+    schema.runs.SLACK_AGENT_POSTS,   # messages postés dans Slack par un agent : à qui va une réponse
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

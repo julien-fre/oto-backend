@@ -33,6 +33,8 @@ Ils sont ici, chacun nommé, chacun jouable seul :
                                           veille et les jours clos qui suivent le dernier
                                           consolidé, au plus 7 (#1147) — l'historique se
                                           rattrape à la main (scripts/rattraper_journal_jour.py)
+    oto-mcp maintenance slack-agent-posts  retire les messages Slack notés sous un agent
+                                          au-delà de trente jours
     oto-mcp maintenance copilot       purge des conversations de l'agent intégré sans vie
                                           depuis 30 jours (leurs annulations avec) et de
                                           ses jours de dépense de plus de 30 jours
@@ -593,6 +595,18 @@ def apollo_phones(*, dry_run: bool = False) -> dict:
     return {"purged": apollo_reveals.purger()}
 
 
+def slack_agent_posts(*, dry_run: bool = False) -> dict:
+    """Retire les messages Slack notés sous un agent au-delà de trente jours.
+
+    La lecture filtre déjà l'âge (`db/slack_agent_posts.lire`) : une réponse plus
+    tardive n'atteint plus l'agent. Ce travail retire ce qu'on ne sert plus — le texte
+    d'un message gardé ne servirait qu'à le garder."""
+    from .db import slack_agent_posts as db_posts
+    if dry_run:
+        return {"purgeables": db_posts.compter_purgeables()}
+    return {"purged": db_posts.purger()}
+
+
 #: Ce que l'agent intégré garde d'une conversation sans vie, et de sa dépense d'un jour.
 COPILOT_RETENTION_JOURS = 30
 
@@ -658,6 +672,7 @@ _TRAVAUX: dict[str, Callable[..., dict]] = {
     "activation": activation,
     "digest-lecteurs": digest_lecteurs,
     "copilot": copilot,
+    "slack-agent-posts": slack_agent_posts,
 }
 # Travaux dont l'écriture est un ACTE, pas une routine : à blanc par défaut, et
 # c'est `--apply` qui écrit. Ils ne sont dans aucun timer et jamais dans `all`.
@@ -679,7 +694,8 @@ _ACTES = ("journal-tokens", "residu-projete", "cles-plateforme-au-format")
 # ⚠️ `journal-jour` est EN TÊTE de `_ALL` : la veille doit être consolidée tôt, avant
 # qu'un travail plus long (re-projection, index) ne consomme la fenêtre du timer.
 _ALL = ("journal-jour", "retention", "revisions", "blocks", "key-indexes", "alertes-credential",
-        "instagram-tokens", "unipile-fin-de-droit", "apollo-phones", "activation", "digest-lecteurs", "copilot")
+        "instagram-tokens", "unipile-fin-de-droit", "apollo-phones", "activation", "digest-lecteurs", "copilot",
+        "slack-agent-posts")
 
 
 def run(noms: list[str], *, dry_run: bool = False, strict: bool = False) -> int:

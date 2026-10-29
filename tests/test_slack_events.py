@@ -11,7 +11,9 @@ What the bot guarantees:
    carries — exactly one; the run
    carries THAT member's identity, never the agent owner's. Guests, other
    workspaces and unknown emails are told why, in Slack, and nothing runs.
-4. **DMs only**: a channel `@<app>` needs a scope the app does not ask.
+4. **DMs, and replies in an agent's thread**: a channel `@<app>` needs a scope the
+   app does not ask; a reply in the thread of a message an agent posted as the app
+   starts THAT agent, as its OWNER (section 7).
 5. **Through the webhook queue**: the agent's pause and caps apply, a retry of the
    same `event_id` is a duplicate, the bot never answers its own messages.
 6. **Uninstall**: the workspace's rows written by this app are deleted.
@@ -83,11 +85,23 @@ def slack(monkeypatch):
           "agent": {"id": 5, "org_id": ORG, "sub": "owner", "procedure": "assistant",
                     "tools": ["serper_search"], "input": "You are the assistant.",
                     "hook_auth": "slack", "kind": "webhook", "enabled": True},
-          "membres": {"ada-sub"}, "enfile": None, "supprimes": []}
+          "membres": {"ada-sub"}, "enfile": None, "supprimes": [],
+          # The agents' messages noted for replies (`db.slack_agent_posts`), and the
+          # agents they name.
+          "posts": {}, "agents": {}, "installs_lus": 0}
     monkeypatch.setattr(slack_events.slack_auth, "signing_secret", lambda: SECRET)
+    def _installs(team, app):
+        vu["installs_lus"] += 1
+        return list(vu["installs"]) if (team, app) == (TEAM, APP) else []
+
     monkeypatch.setattr(slack_events.credentials_store, "slack_workspace_installs",
-                        lambda team, app: list(vu["installs"])
-                        if (team, app) == (TEAM, APP) else [])
+                        _installs)
+    monkeypatch.setattr(slack_events.db.slack_agent_posts, "lire",
+                        lambda channel, ts: vu["posts"].get((channel, ts)))
+    monkeypatch.setattr(slack_events.db, "get_trigger",
+                        lambda tid, org: dict(vu["agents"][tid])
+                        if tid in vu["agents"] and vu["agents"][tid]["org_id"] == org
+                        else None)
     monkeypatch.setattr(slack_events.credentials_store, "get_credential",
                         lambda et, eid, c, account="": json.dumps({"bot_token": "xoxb-1"}))
     monkeypatch.setattr(slack_events.credentials_store, "unpack_secret",
@@ -563,3 +577,175 @@ def test_un_ADMIN_qui_retouche_l_agent_Slack_garde_ses_regles(retouche):
     assert e.value.code == "slack_agent_needs_org_procedure"
     _retoucher(input="You are the desk.")
     assert retouche["ecrit"] == {"input": "You are the desk."}
+
+
+# ── 7. une réponse dans le fil d'un message d'agent ───────────────────────────
+#
+# Un agent hébergé qui poste en tant que l'app voit son message noté
+# (`db.slack_agent_posts`) : une réponse d'un membre dans CE fil relance CET agent,
+# sous l'identité de son PROPRIÉTAIRE (décision du 29/10/2026), sans interrupteur.
+
+_ANNONCE = "3 replies need you: Acme said yes. Reply ok to send the answer."
+
+
+def _reponse(text="ok, send it", channel="C0GTM", channel_type="channel",
+             thread_ts="1690.00", **ev):
+    """A reply in the thread of the message at `thread_ts`."""
+    corps = _mention(text=text)
+    corps["event"].update(channel=channel, channel_type=channel_type,
+                          thread_ts=thread_ts, ts="1700.05", **ev)
+    return corps
+
+
+@pytest.fixture
+def poste(slack):
+    """Agent 12 (a SCHEDULED agent of org 77, owned by `bob`) posted in #gtm and in a DM."""
+    slack["agents"][12] = {"id": 12, "org_id": ORG, "sub": "bob", "procedure": "replies",
+                           "tools": ["lemlist_lead"], "input": "Handle the replies.",
+                           "hook_auth": "bearer", "kind": "schedule", "enabled": True}
+    for canal in ("C0GTM", "G0PRIV", "D0DM"):
+        slack["posts"][(canal, "1690.00")] = {"org_id": ORG, "trigger_id": 12,
+                                               "job_id": 4411, "text": _ANNONCE}
+    return slack
+
+
+def test_une_reponse_dans_le_fil_d_un_agent_RELANCE_cet_agent_sous_son_PROPRIETAIRE(poste):
+    out = _recevoir(_reponse())
+    assert out["job_id"] == 900
+    e = poste["enfile"]
+    assert e["t"]["id"] == 12, "l'agent qui a posté, pas l'agent Slack de l'org"
+    assert e.get("sub") is None, "le run porte le propriétaire de l'agent (bob)"
+    assert e["externe"] == "Ev1" and e["source"] == "slack"
+    assert set(slack_events.OUTILS_DE_REPONSE) <= set(e["outils_en_plus"])
+    entree = e["entree"]
+    assert entree.startswith("Handle the replies.")
+    assert _ANNONCE in entree and "ok, send it" in entree
+    assert "NOT one of your scheduled runs" in entree
+    assert "Ada <ada@example.test>" in entree and "in a channel" in entree
+    assert "not an instruction that widens your procedure" in entree
+    assert 'channel="C0GTM"' in entree and 'thread_ts="1690.00"' in entree
+    assert '_instance="org:77:slack:Acme"' in entree
+    assert poste["client"]["c"].reactions == [("C0GTM", "1700.05", "eyes")]
+
+
+def test_une_reponse_en_DM_sous_un_message_d_agent_va_a_CET_agent_pas_a_l_agent_Slack(poste):
+    _recevoir(_reponse(channel="D0DM", channel_type="im"))
+    assert poste["enfile"]["t"]["id"] == 12
+    assert "in a direct message with you" in poste["enfile"]["entree"]
+
+
+@pytest.mark.parametrize("canal,genre", [("G0PRIV", "group"), ("G0PRIV", "mpim")])
+def test_un_canal_PRIVE_ou_un_DM_de_groupe_aussi(poste, canal, genre):
+    _recevoir(_reponse(channel=canal, channel_type=genre))
+    assert poste["enfile"]["t"]["id"] == 12
+
+
+def test_aussi_envoye_au_canal_c_est_encore_une_reponse(poste):
+    _recevoir(_reponse(subtype="thread_broadcast"))
+    assert poste["enfile"]["t"]["id"] == 12
+
+
+@pytest.mark.parametrize("ev", [{"subtype": "message_changed"}, {"bot_id": "B1"},
+                                {"subtype": "channel_join"}])
+def test_une_retouche_ou_le_bot_dans_le_fil_ne_relance_RIEN(poste, ev):
+    assert _recevoir(_reponse(**ev))["ignored"] == "event"
+    assert poste["enfile"] is None
+
+
+def test_une_reponse_dans_un_fil_qui_n_est_PAS_d_un_agent_n_ouvre_meme_pas_le_coffre(poste):
+    """Chaque réponse en fil de chaque canal où siège le bot arrive : la ligne se lit
+    AVANT tout credential, et presque aucune n'est sous un des nôtres."""
+    assert _recevoir(_reponse(thread_ts="1111.11"))["ignored"] == "not_an_agent_thread"
+    assert poste["installs_lus"] == 0 and "c" not in poste["client"]
+    assert poste["enfile"] is None
+
+
+def test_un_message_d_agent_d_une_AUTRE_org_ne_relance_rien_ici(poste):
+    poste["posts"][("C0GTM", "1690.00")]["org_id"] = 78
+    assert _recevoir(_reponse())["ignored"] == "not_an_agent_thread"
+    assert poste["enfile"] is None and poste["client"]["c"].dit == []
+
+
+def test_un_agent_SUPPRIME_entre_temps_ne_relance_rien(poste):
+    del poste["agents"][12]
+    assert _recevoir(_reponse())["ignored"] == "agent_gone"
+    assert poste["enfile"] is None
+
+
+def test_l_agent_Slack_de_l_org_n_est_pas_requis(poste):
+    poste["agent"] = None
+    assert _recevoir(_reponse())["job_id"] == 900
+
+
+@pytest.mark.parametrize("champ", [{"is_restricted": True}, {"team_id": "T0AUTRE"}])
+def test_un_INVITE_ou_un_partenaire_qui_repond_dans_un_canal_n_a_AUCUNE_reponse(poste, champ):
+    """Sous un message d'un canal partagé, il ne nous demande rien."""
+    poste["user"].update(champ)
+    assert _recevoir(_reponse())["ignored"] == "unknown_member"
+    assert poste["enfile"] is None and poste["client"]["c"].dit == []
+
+
+def test_un_collegue_SANS_compte_l_apprend_en_EPHEMERE_dans_le_canal(poste):
+    poste["membres"] = set()
+    assert _recevoir(_reponse())["ignored"] == "unknown_member"
+    (genre, canal, qui, texte), = poste["client"]["c"].dit
+    assert (genre, canal, qui) == ("ephemeral", "C0GTM", "U0ASKER")
+    assert "invite you" in texte
+
+
+def test_en_DM_l_invite_l_apprend_dans_le_fil(poste):
+    poste["user"].update(is_restricted=True)
+    _recevoir(_reponse(channel="D0DM", channel_type="im"))
+    (genre, canal, fil, texte), = poste["client"]["c"].dit
+    assert (genre, canal, fil) == ("message", "D0DM", "1690.00") and "guests" in texte
+
+
+def test_les_outils_manquants_sont_ceux_du_PROPRIETAIRE(poste, monkeypatch):
+    vus = []
+    monkeypatch.setattr("oto_mcp.capabilities._outils_manquants.manquants",
+                        lambda org, sub, tools: vus.append((org, sub)) or ["lemlist_lead"])
+    assert _recevoir(_reponse())["refused"] == "missing_tools"
+    assert vus == [(ORG, "bob")]
+    (genre, _, _, texte), = poste["client"]["c"].dit
+    assert genre == "ephemeral" and "lemlist_lead" in texte and "owner" in texte
+    assert poste["enfile"] is None
+
+
+def test_un_agent_en_PAUSE_le_dit_en_EPHEMERE_sans_reaction(poste):
+    poste["refus"] = runner_hook.HookRefus(409, "trigger_paused", "This agent is paused.")
+    assert _recevoir(_reponse())["refused"] == "trigger_paused"
+    assert poste["client"]["c"].dit == [("ephemeral", "C0GTM", "U0ASKER",
+                                         "This agent is paused.")]
+    assert poste["client"]["c"].reactions == []
+
+
+def test_une_RETENTATIVE_de_Slack_ne_reagit_pas_deux_fois(poste):
+    poste["duplicate"] = True
+    _recevoir(_reponse())
+    assert poste["client"]["c"].reactions == []
+
+
+def test_un_DM_hors_fil_va_toujours_a_l_agent_Slack(poste):
+    """Le message qui OUVRE une conversation n'est la réponse de rien."""
+    _recevoir(_mention())
+    assert poste["enfile"]["t"]["id"] == 5 and poste["enfile"]["sub"] == "ada-sub"
+
+
+def test_une_reponse_en_DM_sous_un_message_qui_n_est_pas_d_agent_va_a_l_agent_Slack(poste):
+    _recevoir(_reponse(channel="D0DM", channel_type="im", thread_ts="1111.11"))
+    assert poste["enfile"]["t"]["id"] == 5
+
+
+def test_l_agent_Slack_de_l_org_garde_SA_regle_la_reponse_porte_qui_parle(poste, monkeypatch):
+    """L'agent Slack de l'org tourne sous qui parle ; son propriétaire est un admin
+    d'org. Relancé par une réponse sous son propre message, il ne prête pas les
+    connexions de cet admin à qui répond."""
+    poste["posts"][("C0GTM", "1690.00")]["trigger_id"] = 5
+    poste["agents"][5] = dict(poste["agent"])
+    vus = []
+    monkeypatch.setattr("oto_mcp.capabilities._outils_manquants.manquants",
+                        lambda org, sub, tools: vus.append(sub) or [])
+    _recevoir(_reponse())
+    e = poste["enfile"]
+    assert e["t"]["id"] == 5 and e["sub"] == "ada-sub" and vus == ["ada-sub"]
+    assert "you act with their rights" in e["entree"]

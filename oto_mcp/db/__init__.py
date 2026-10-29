@@ -94,7 +94,8 @@ from . import (
     # `db.datastore_commentaires.<fn>`.
     datastore_commentaires,
     # NON aplati : `creer`/`lire`/`decider` sont trop communs — `db.demandes_acces.<fn>`.
-    demandes_acces,
+    demandes_acces,    # NON aplati : `noter`/`lire`/`purger` sont trop communs — `db.slack_agent_posts.<fn>`.
+    slack_agent_posts,
 )
 
 # Ré-export plat (publics + privés à un underscore). Les noms dunder restent au
