@@ -22,6 +22,10 @@ def _pipecorn_phone(res, inputs):
     return _phone_find(_phones_in(numbers or res.get("phone") or res.get("phones") or []))
 
 
+def _pipecorn_phone_args(i: dict) -> dict:
+    return {"find": ["phone"], "linkedin_url": i["linkedin_url"], "phone_type": "mobile"}
+
+
 def _kaspr_phone(res, inputs):
     return _phone_find(_deep(res, "phone", _phones_in))
 
@@ -75,12 +79,17 @@ def _lemlist_phone(res, inputs):
 #: ahead of a shared one (`ordre._plan`).
 PHONE_STEPS: tuple[Step, ...] = (
     Step("pipecorn", "pipecorn", (("linkedin_url",),),
-         lambda i: {"op": "enrich", "find": ["phone"],
-                    "linkedin_url": i["linkedin_url"], "phone_type": "mobile"},
+         lambda i: {"op": "enrich", **_pipecorn_phone_args(i)},
          _pipecorn_phone,
          "30 Pipecorn credits per mobile found, nothing on a miss (asynchronous)",
          collect=_pipecorn_collect("phone"), asks="phones", poll=PIPECORN_POLL,
          falls_through=True,
+         # On a table: the same lookup, synchronous (`op="find"`).
+         sync=Step("pipecorn", "pipecorn", (("linkedin_url",),),
+                   lambda i: {"op": "find", **_pipecorn_phone_args(i)},
+                   _pipecorn_phone, "30 Pipecorn credits per mobile found, nothing on a miss",
+                   asks="phones",
+                   explains="Pipecorn's phone cascade, synchronous (table mode)."),
          explains=("Pipecorn runs its own cascade of phone providers — mobiles only, "
                    "from a LinkedIn profile; waited up to 20 s, then the other "
                    "providers are tried.")),

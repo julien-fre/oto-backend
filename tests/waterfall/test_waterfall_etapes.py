@@ -355,12 +355,13 @@ def test_pipecorn_email_sans_reponse_passe_la_main_a_hunter(calls, horloge):
     assert out["pending"][0]["provider"] == "pipecorn"
 
 
-_PROFIL = {"found": True, "full_name": "Jane Doe", "title": "VP Sales",
+_PROFIL_BRUT = {"full_name": "Jane Doe", "title": "VP Sales",
            "lk_headline": "VP Sales at Acme", "location": "Paris, France",
            "linkedin_profile_url": "https://www.linkedin.com/in/jane-doe",
            "positions": [{"title": "Head of Sales", "current": False, "company_name": "Old"},
                          {"title": "VP Sales", "current": True, "company_name": "Acme",
                           "company_domain": "acme.com"}]}
+_PROFIL = {"found": True, "results": [_PROFIL_BRUT]}
 
 
 def test_pipecorn_personne_lit_le_poste_en_cours(calls):
@@ -381,10 +382,11 @@ def test_pipecorn_personne_introuvable_passe_la_main(calls):
     assert out["attempts"][0]["status"] == "no_match"
 
 
-_SOCIETE = {"found": True, "company_name": "Acme", "domain": "acme.com",
-            "industry": "Software", "employee_count": 248, "employee_range": "201-500",
-            "headquarters": {"country": "France", "city": "Paris"},
-            "linkedin_url": "https://www.linkedin.com/company/acme"}
+_SOCIETE_BRUTE = {"company_name": "Acme", "domain": "acme.com",
+                  "industry": "Software", "employee_count": 248, "employee_range": "201-500",
+                  "headquarters": {"country": "France", "city": "Paris"},
+                  "linkedin_url": "https://www.linkedin.com/company/acme"}
+_SOCIETE = {"found": True, "results": [_SOCIETE_BRUTE]}
 
 
 def test_pipecorn_societe_par_domaine(calls):
@@ -396,8 +398,8 @@ def test_pipecorn_societe_par_domaine(calls):
 
 
 def test_pipecorn_societe_par_nom_ecarte_l_homonyme(calls):
-    calls["answers"]["pipecorn"] = IssueCible(ok=True, result={**_SOCIETE,
-                                                                "company_name": "Zenith"})
+    calls["answers"]["pipecorn"] = IssueCible(ok=True, result={
+        "found": True, "results": [{**_SOCIETE_BRUTE, "company_name": "Zenith"}]})
     out = _run("waterfall_company", company_name="Acme", country="US",
                providers=["pipecorn"])
     assert out["found"] is False

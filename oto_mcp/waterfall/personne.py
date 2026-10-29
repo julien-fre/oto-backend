@@ -90,6 +90,9 @@ def _pipecorn_person(res, inputs):
     company and its domain."""
     if not isinstance(res, dict) or not res.get("found"):
         return None
+    res = (res.get("results") or [{}])[0]
+    if not isinstance(res, dict):
+        return None
     current = next((p for p in res.get("positions") or []
                     if isinstance(p, dict) and p.get("current")), {})
     return _person(

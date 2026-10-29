@@ -10,7 +10,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..auth.hooks import current_user_sub_from_token
 from . import appel, ordre, qualification, vivier
-from .etape import Step, _bills, _missing, _payload, _runnable
+from .etape import Step, _bills, _missing, _payload, _runnable, for_table
 from .valeurs import _bad
 
 #: The whole cascade answers within this — under the 45 s of the REST tool-invoke path
@@ -173,7 +173,8 @@ async def _run_cascade(mcp: FastMCP, ns: str, kind: str, steps: tuple[Step, ...]
     if synchronous_only:
         # Table mode: an asynchronous step would be paid now and answer after the
         # call has written its row — its find would be lost (`waterfall_lignes.py`).
-        order = [s for s in order if s.collect is None]
+        # One with a synchronous twin runs as that twin (`etape.for_table`).
+        order = [t for t in (for_table(s) for s in order) if t is not None]
     if not any(_runnable(s, inputs) for s in order):
         raise _bad(
             f"No provider of this {kind} waterfall can run on these inputs. Each needs: "

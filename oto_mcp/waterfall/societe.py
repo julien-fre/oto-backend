@@ -135,8 +135,12 @@ def _aiark_company(res, inputs):
 
 
 def _pipecorn_company(res, inputs):
-    """Pipecorn's account. By name, it must BE the company asked (namesake guard)."""
+    """Pipecorn's account (`results[0]`). By name, it must BE the company asked
+    (namesake guard)."""
     if not isinstance(res, dict) or not res.get("found"):
+        return None
+    res = (res.get("results") or [{}])[0]
+    if not isinstance(res, dict):
         return None
     name = res.get("company_name")
     domain = _domain(res.get("domain") or res.get("website"))

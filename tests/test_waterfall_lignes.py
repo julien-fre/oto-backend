@@ -354,3 +354,19 @@ def test_le_plan_d_un_dry_run_dit_l_etape_que_le_travail_refusera(calls, table, 
     assert out["missing_tools"] == ["hunter_email_finder"]
     assert out["fix"]["tools"][-1] == "hunter_email_finder"
     assert "will be skipped" in out["next_step"]
+
+
+def test_pipecorn_tourne_en_synchrone_sur_un_tableau(calls, table):
+    """Son étape asynchrone a un jumeau synchrone (`Step.sync`) : sur un tableau, la même
+    recherche part par `op="find"`, et la ligne reçoit le mobile."""
+    table["lignes"] = [{"_id": "r1", "linkedin": "https://www.linkedin.com/in/jane"}]
+    calls["answers"]["pipecorn"] = IssueCible(ok=True, result={
+        "status": "finished", "phone_details": [{"number": "+33612345678", "type": "mobile"}]})
+    out = _act("waterfall_phone", datastore="42", inputs={"linkedin_url": "linkedin"},
+               output={"phone": "phone"}, status_column="phone_status",
+               providers=["pipecorn"])
+    assert calls["made"] == [("pipecorn", {"op": "find", "find": ["phone"],
+                                           "linkedin_url": "https://www.linkedin.com/in/jane",
+                                           "phone_type": "mobile"})]
+    assert table["store"].ecrites["r1"]["phone"] == "+33612345678"
+    assert "pipecorn" not in out["left_out_async_steps"]

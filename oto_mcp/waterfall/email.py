@@ -105,6 +105,12 @@ EMAIL_STEPS: tuple[Step, ...] = (
          "3 Pipecorn credits per email found, nothing on a miss (asynchronous)",
          collect=_pipecorn_collect("email"), asks="work_emails", poll=PIPECORN_POLL,
          falls_through=True,
+         # On a table: the same lookup, synchronous (`op="find"`).
+         sync=Step("pipecorn", "pipecorn", _PERSON_IDS,
+                   lambda i: {**_pipecorn_email_args(i), "op": "find"}, _pipecorn_email,
+                   "3 Pipecorn credits per email found, nothing on a miss",
+                   asks="work_emails",
+                   explains="Pipecorn's email cascade, synchronous (table mode)."),
          explains=(
              "Pipecorn runs its own cascade of email providers and checks deliverability "
              "— from a LinkedIn profile, or name and company; waited up to 20 s, then the "

@@ -25,7 +25,8 @@ What makes it cheaper than N calls, beyond the tokens:
 ⚠️ **The asynchronous steps are left out** (lemlist, FullEnrich, Dropcontact, the
 Apollo phone reveal): they would be paid now and answer after the row is written, so
 their find would be lost. The receipt names them (`left_out_async_steps`); for those,
-the one-contact tools collect them.
+the one-contact tools collect them. A step with a synchronous twin (`Step.sync`:
+Pipecorn's phone and email) runs as that twin instead (`etape.for_table`).
 """
 from __future__ import annotations
 
@@ -42,7 +43,7 @@ from ..auth.hooks import current_user_sub_from_token
 from ..datastore import par_reference as pr
 from ..mcp_errors import McpError
 from ..waterfall import entrees, qualification
-from ..waterfall.etape import _runnable
+from ..waterfall.etape import _runnable, for_table
 from ..waterfall.moteur import _limits, _run_cascade
 from ..waterfall.plan import STEPS_BY_NAMESPACE
 from .lecture import ACTE, documente
@@ -269,11 +270,12 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
         raise pr.refus("waterfall_rows_providers",
                        f"`providers`: {', '.join(inconnus)} — not a step of {ns}; one of "
                        f"{', '.join(s.key for s in steps)}. Nothing was sent.")
-    actifs = [s for s in steps if s.collect is None and (not voulus or s.key in voulus)]
+    actifs = [t for t in (for_table(s) for s in steps)
+              if t is not None and (not voulus or t.key in voulus)]
     if not actifs:
         raise pr.refus("waterfall_rows_no_step",
                        "no synchronous step to run: the asynchronous ones ("
-                       + ", ".join(sorted(s.key for s in steps if s.collect is not None))
+                       + ", ".join(sorted(s.key for s in steps if for_table(s) is None))
                        + ") are left out on a table. Nothing was sent.")
     if qualify:
         # Jev unusable: refused before a row is read — never rows written unjudged.
@@ -331,7 +333,7 @@ async def fill_rows(mcp: FastMCP, ns: str, *, datastore, inputs: dict, output: d
         sig = json.dumps(entree, sort_keys=True, default=str)
         groupes.setdefault(sig, (entree, []))[1].append(rid)
 
-    gauche = sorted({s.key for s in steps if s.collect is not None})
+    gauche = sorted({s.key for s in steps if for_table(s) is None})
     extra = {("would_create_columns" if dry_run else "created_columns"):
              [f["key"] for f in a_creer],
              "unique_lookups": len(groupes),

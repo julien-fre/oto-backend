@@ -189,8 +189,9 @@ personne alors que Pipecorn nous la débite s'il trouve : c'est le prix du repli
 - **Téléphone** : pipecorn (`pipecorn op=enrich find=["phone"] phone_type="mobile"`,
   depuis un profil LinkedIn : sa propre cascade de fournisseurs, ASYNCHRONE, attendue
   20 s au plus puis repli sur la suite — voir « Les étapes asynchrones » ; facturée au
-  seul mobile trouvé, à la relève ; la clé partagée, sur octroi, sert tout sauf l'email perso et le solde ;
-  absente du mode tableau comme toute étape asynchrone) → kaspr →
+  seul mobile trouvé, à la relève ; la clé partagée, sur octroi, sert toute recherche (email perso compris), pas le solde ;
+  sur un tableau, son jumeau SYNCHRONE `op="find"` la remplace (`Step.sync`,
+  `etape.for_table`) — le mode tableau ne la perd pas) → kaspr →
   lusha → forager → apollo (`apollo_reveal_phone`, asynchrone, clé de l'appelant
   seulement) → lemlist → dropcontact → fullenrich. Pas d'AI Ark. En tête de la table, mais
   l'ordre par défaut reste trié (propres clés d'abord, `ordre._plan`) : sur la clé
@@ -535,7 +536,9 @@ de `datastore/par_reference` (`docs/donnees-par-reference.md`), comme `lemlist_p
 - ⚠️ **Les étapes asynchrones sont laissées de côté** (lemlist, FullEnrich, Dropcontact,
   la révélation de téléphone Apollo) : payées maintenant, elles répondraient après
   l'écriture de la ligne. Le reçu les nomme (`left_out_async_steps`). Suite naturelle :
-  écrire la poignée de collecte sur la ligne et une op `collect_rows`.
+  écrire la poignée de collecte sur la ligne et une op `collect_rows`. Exception : une
+  étape qui a un jumeau SYNCHRONE (`Step.sync` — Pipecorn au téléphone et à l'email, par
+  `pipecorn op=find`) tourne sous ce jumeau (`etape.for_table`).
 - **Pas encore de travail de fond** : un appel traite ce qui tient dans sa fenêtre
   (jusqu'à `batch_size` lignes, 50 au plus) ; l'agent rappelle avec les mêmes arguments.
   Un travail de fond sur le modèle de `jev_rows(background=true)` se justifiera si la

@@ -22,14 +22,20 @@ stack (per request), 1 per job posting returned. `quantity` = those credits:
   result (`credits_spent`, bounded by the `find` asked — echoed by the submission and
   passed back); the billing keeps one line per `enrichment_id` (the result read's
   argument, `db.usage.BILLABLE_JOB_ARGS`), so a result read again bills nothing more;
-- a synchronous lookup: its own credits, on its call.
+- a synchronous lookup (`find`, `person`, `company`, `stack`, `jobs`): its own
+  credits, on its call.
 Any key: the billing filters on the key mode. `units` (the shared key's count — no
 per-org cap, the org's credits bound it): 1 per submission or synchronous lookup, 0 on a
 result read.
 
-**The shared key** serves everything but the personal email (its consent is given by
-the key's owner, in Pipecorn's settings) and the balance (ours), both refused BEFORE
-anything is spent. A result is read with the key that submitted it.
+**The shared key** serves every lookup, the personal email included (Julien, 29/10:
+Pipecorn wants the key owner's consent to it, in its settings — given on Tulina's
+account), but not the balance nor the account (ours), refused BEFORE anything is spent.
+A result is read with the key that submitted it.
+
+**At scale** (a recipe, a waterfall's table mode): `op="find"` is the SAME contact
+lookup on Pipecorn's synchronous endpoint — one call, billed on that call (no job). Every
+lookup answers its finds as a LIST, `results`, which a recipe's `source.items` reads.
 
 Client calls are written out (`client.submit_enrichment(…)`) so the version-skew
 probe (`test_tools_client_methods_exist`) can check them.
@@ -50,7 +56,11 @@ _NAME = "pipecorn"
 
 #: What a lookup may ask for, and what the shared key serves of it.
 FINDS = ("phone", "email", "personal_email")
-PLATFORM_FINDS = frozenset({"phone", "email"})
+PLATFORM_FINDS = frozenset({"phone", "email", "personal_email"})
+
+#: (connect, read) of a SYNCHRONOUS contact lookup (`op="find"`): Pipecorn runs its own
+#: cascade inside the call; a waterfall's table mode gives a row's whole cascade 40 s.
+FIND_TIMEOUT = (10, 30)
 
 #: Why a lookup ended `failed`: credits ran out while it ran, nothing was found.
 _FAILED = {
@@ -123,6 +133,26 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
         raise connector_verify.QuotaEpuise("Pipecorn: no enrichment credits left.")
 
 
+def _finds_of(answer, finds) -> list[dict]:
+    """What a contact lookup found, as a LIST — one entry per value, `kind` `phone`
+    (with its line `type`), `email` or `personal_email` (with its `status`) — bounded by
+    what was asked. A recipe writes one row per entry (`source.items: "results"`); a
+    number the workspace suppressed ("Contacts not shared") is not one."""
+    if not isinstance(answer, dict):
+        return []
+    out: list[dict] = []
+    if "phone" in finds:
+        for d in answer.get("phone_details") or []:
+            number = d.get("number") if isinstance(d, dict) else None
+            if isinstance(number, str) and number.startswith("+"):
+                out.append({"kind": "phone", "value": number, "type": d.get("type")})
+    for kind in ("email", "personal_email"):
+        if kind in finds and answer.get(kind):
+            out.append({"kind": kind, "value": answer[kind],
+                        "status": answer.get(f"{kind}_status")})
+    return out
+
+
 def _resolved(answer, *keys) -> bool:
     """A profile or an account was found: the answer names it."""
     return isinstance(answer, dict) and any(answer.get(k) for k in keys)
@@ -135,22 +165,18 @@ def register(mcp: FastMCP) -> None:
     connector_verify.register(_NAME, _verify, couvre=connector_verify.AUTH_QUOTA)
 
     def _client(op: str, finds: list[str]) -> tuple[PipecornClient, bool]:
-        """`(client, is_platform)`. On the platform key, a personal email and the
-        balance are refused BEFORE a credit is spent, naming what the shared key
-        serves."""
+        """`(client, is_platform)`. On the platform key, the balance and the account are
+        refused (they are ours), naming what the shared key serves."""
         key, is_platform = access.resolve_api_key(_NAME)
-        refused = (op == "enrich" and not set(finds) <= PLATFORM_FINDS) or \
+        refused = (op in ("enrich", "find") and not set(finds) <= PLATFORM_FINDS) or \
             op in ("credits", "account")
         if is_platform and refused:
             from ..auth.hooks import current_user_sub_from_token
             from .. import links
             sub = current_user_sub_from_token()
-            what = "the balance" if op != "enrich" else \
-                ", ".join(f for f in finds if f not in PLATFORM_FINDS)
             raise _bad(
-                f"pipecorn op={op!r} ({what}) needs your own Pipecorn key: the shared key "
-                "here covers phones, work emails, profiles, companies, technologies and "
-                "job postings. Set your own key"
+                f"pipecorn op={op!r} (the balance) needs your own Pipecorn key: the shared "
+                "key here covers every lookup, not the account's balance. Set your own key"
                 f"{links.ou_poser_la_cle(sub, org=access.current_org(sub), connecteur=_NAME)}.")
         return PipecornClient(api_key=key), is_platform
 
@@ -175,7 +201,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(name="pipecorn", annotations=LECTURE)
     def pipecorn(
-        op: Literal["enrich", "result", "person", "company", "stack", "jobs",
+        op: Literal["enrich", "result", "find", "person", "company", "stack", "jobs",
                     "credits", "account"] = "enrich",
         find: Optional[list[Literal["phone", "email", "personal_email"]]] = None,
         linkedin_url: Optional[str] = None,
@@ -195,8 +221,8 @@ def register(mcp: FastMCP) -> None:
         full_description: Optional[bool] = None,
     ) -> dict:
         """Pipecorn — a person's mobile phone, work email or personal email
-        (asynchronous: submit, then read the result); a person's profile; a company's
-        firmographics, technologies and open job postings; the account's balance.
+        (asynchronous: submit then read; or synchronous: `find`); a person's profile; a
+        company's firmographics, technologies and open job postings; the balance.
 
         You only pay for what is found, in Pipecorn credits: 3 a work email, 9 a personal
         email, 30 a phone (only when a MOBILE is found), 1 a profile or a company
@@ -212,11 +238,15 @@ def register(mcp: FastMCP) -> None:
         op="result" — read it back: `enrichment_id`, and the same `find`. `done: false`
           while Pipecorn is still looking — read again in a few seconds (reads are
           free). Done: `email`, `email_status`, `phone`, `phone_details` [{number,
-          type}], `personal_email`, and `pipecorn_credits`, what it cost.
-        op="person" — a profile: title, positions with each company's domain,
-          headline, location, tenure. `linkedin_url`, or `firstname` + `lastname` +
-          `company_name`. No email or phone (that is `enrich`).
-        op="company" — firmographics: industry, headcount and its growth, department
+          type}], `personal_email`, `pipecorn_credits` (what it cost) and `results`.
+        op="find" — the SAME lookup, synchronous: one call, the answer holds it (up to
+          ~30 s). Same arguments as `enrich`. For a recipe or a table: `results` lists
+          each value found — {kind: phone | email | personal_email, value, type or
+          status} — one row each (`source.items: "results"`).
+        op="person" — a profile in `results[0]`: title, positions with each company's
+          domain, headline, location, tenure. `linkedin_url`, or `firstname` +
+          `lastname` + `company_name`. No email or phone (that is `enrich` / `find`).
+        op="company" — firmographics in `results[0]`: industry, headcount and its growth, department
           headcount, revenue range, headquarters, funding, web traffic. `domain`,
           `company_name` and/or `company_linkedin_url`; `country_code` narrows a name.
         op="stack" — the technologies a company uses, with a confidence. Same company
@@ -229,8 +259,8 @@ def register(mcp: FastMCP) -> None:
         op="credits" — the balance: `credits.enrichment` is what lookups spend.
         op="account" — the plan and the email behind the key.
 
-        A profile or company not found answers `found: false`. On the shared key (when
-        it is granted to your org), everything but the personal email and the balance.
+        Not found: `found: false`, `results` empty. On the shared key (when it is
+        granted to your org), every lookup — not the balance.
         For a contact, prefer the waterfalls (`waterfall_phone`, `waterfall_email`,
         `waterfall_person`, `waterfall_company`, `waterfall_tech`): Pipecorn is one of
         their steps.
@@ -239,6 +269,7 @@ def register(mcp: FastMCP) -> None:
           pipecorn(find=["phone"], linkedin_url="https://www.linkedin.com/in/jane-doe/",
                    phone_type="mobile")
           pipecorn(op="result", enrichment_id="…", find=["phone"])
+          pipecorn(op="find", find=["phone", "personal_email"], linkedin_url="…")
           pipecorn(op="jobs", domain="acme.com", limit=20, job_country_codes=["FR"])
         """
         given = {"find": find, "linkedin_url": linkedin_url, "firstname": firstname,
@@ -250,8 +281,9 @@ def register(mcp: FastMCP) -> None:
                  "job_country_codes": job_country_codes,
                  "full_description": full_description}
         company = {"domain", "company_name", "company_linkedin_url"}
-        takes = {"enrich": {"find", "linkedin_url", "firstname", "lastname", "domain",
-                            "company_name", "phone_type", "phone_country_codes"},
+        contact = {"find", "linkedin_url", "firstname", "lastname", "domain",
+                   "company_name", "phone_type", "phone_country_codes"}
+        takes = {"enrich": contact, "find": contact,
                  "result": {"enrichment_id", "find"},
                  "person": {"linkedin_url", "firstname", "lastname", "company_name"},
                  "company": company | {"country_code"},
@@ -277,14 +309,14 @@ def register(mcp: FastMCP) -> None:
                 company_name=company_name), is_platform, miss={})
             found = _resolved(answer, "full_name", "title", "positions")
             _spent(1 if found else 0, is_platform)
-            return {**answer, "found": True} if found else {"found": False}
+            return {"found": found, "results": [answer] if found else []}
         if op == "company":
             answer = _run(lambda: client.enrich_account(
                 domain=domain, name=company_name, linkedin_url=company_linkedin_url,
                 country_code=country_code), is_platform, miss={})
             found = _resolved(answer, "company_name", "domain", "linkedin_url")
             _spent(1 if found else 0, is_platform)
-            return {**answer, "found": True} if found else {"found": False}
+            return {"found": found, "results": [answer] if found else []}
         if op == "stack":
             answer = _run(lambda: client.company_stack(
                 domain=domain, name=company_name, linkedin_url=company_linkedin_url),
@@ -306,6 +338,19 @@ def register(mcp: FastMCP) -> None:
             # place, date, link and hiring team are what a list is read for.
             return output_projection.project(answer, items_path="jobs",
                                              item_drop=("description",))
+
+        if op == "find":
+            answer = _run(lambda: client.enrich_contact(
+                finds, linkedin_url=linkedin_url, firstname=firstname,
+                lastname=lastname, domain=domain, company_name=company_name,
+                phone_type=phone_type, phone_country_codes=phone_country_codes,
+                timeout=FIND_TIMEOUT), is_platform)
+            # Synchronous: no job — billed on this call, what it found (`credits_spent`).
+            spent = credits_spent(answer, finds)
+            _spent(spent, is_platform)
+            results = _finds_of(answer, finds)
+            return {**answer, "found": bool(results), "results": results,
+                    "pipecorn_credits": spent}
 
         if op == "enrich":
             submitted = _run(lambda: client.submit_enrichment(
@@ -347,4 +392,6 @@ def register(mcp: FastMCP) -> None:
             session_org.note_call_trace(quantity=spent, units=0)
         else:
             session_org.note_call_trace(quantity=spent)
-        return {**answer, "done": True, "pipecorn_credits": spent}
+        results = _finds_of(answer, finds)
+        return {**answer, "done": True, "found": bool(results), "results": results,
+                "pipecorn_credits": spent}

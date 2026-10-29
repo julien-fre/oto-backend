@@ -42,6 +42,10 @@ class Step:
     # fallback) instead of stopping there. The step is listed `pending` all the same,
     # with its collect call, and read once more when the cascade ends (`moteur`).
     falls_through: bool = False
+    # The SYNCHRONOUS twin of an asynchronous step (Pipecorn: its sync endpoint), run
+    # where an asynchronous step cannot be — the table mode, which writes each row before
+    # it returns (`for_table`). Same key, same extraction; no collect.
+    sync: Optional["Step"] = None
     # Costs the caller nothing (open data, their own session): ranks with their own keys.
     free: bool = False
     # Bills no credits but spends the KEY's call quota (lemlist's database search): never
@@ -102,6 +106,15 @@ class Step:
     asks: str = ""
     max_units: Optional[int] = None
     per_item: bool = False
+
+
+def for_table(step: Step) -> Optional[Step]:
+    """What runs in the table mode for `step`: itself when synchronous, its synchronous
+    twin (`Step.sync`) when it has one, else nothing — an asynchronous step would be
+    paid now and answer after the row is written."""
+    if step.collect is None:
+        return step
+    return step.sync
 
 
 def _bills(step: Step) -> bool:

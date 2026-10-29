@@ -118,14 +118,9 @@ def test_un_envoi_sans_identifiant_est_un_refus(key, trace, client):
         _fn()(linkedin_url=URL)
 
 
-@pytest.mark.parametrize("kwargs", [
-    {"find": ["personal_email"], "linkedin_url": URL},
-    {"find": ["phone", "personal_email"], "linkedin_url": URL},
-    {"op": "credits"},
-    {"op": "account"},
-])
-def test_cle_partagee_refuse_l_email_perso_et_le_solde_avant_depense(key, trace, client,
-                                                                    kwargs):
+@pytest.mark.parametrize("kwargs", [{"op": "credits"}, {"op": "account"}])
+def test_cle_partagee_refuse_le_solde_et_le_compte_avant_depense(key, trace, client,
+                                                                  kwargs):
     key["platform"] = True
     with pytest.raises(McpError, match="needs your own Pipecorn key"):
         _fn()(**kwargs)
@@ -252,9 +247,11 @@ def test_une_releve_inconnue_le_dit(key, trace, client):
         _fn()(op="result", enrichment_id=ID)
 
 
-def test_cle_partagee_sert_l_email_pro(key, trace, client):
+@pytest.mark.parametrize("find", [["email"], ["personal_email"], ["phone", "personal_email"]])
+def test_cle_partagee_sert_l_email_pro_et_perso(key, trace, client, find):
+    # Julien, 29/10 : l'email perso aussi, consentement donné sur le compte de Tulina.
     key["platform"] = True
-    _fn()(find=["email"], linkedin_url=URL)
+    _fn()(find=find, linkedin_url=URL)
     client.return_value.submit_enrichment.assert_called_once()
 
 
@@ -273,12 +270,12 @@ def test_une_recherche_synchrone_note_ses_credits(key, trace, client, op, method
     out = _fn()(op=op, **kwargs)
     assert trace == {"quantity": credits}
     if op in ("person", "company"):
-        assert out["found"] is True
+        assert out == {"found": True, "results": [answer]}
 
 
 @pytest.mark.parametrize("op, method, miss", [
-    ("person", "enrich_person", {"found": False}),
-    ("company", "enrich_account", {"found": False}),
+    ("person", "enrich_person", {"found": False, "results": []}),
+    ("company", "enrich_account", {"found": False, "results": []}),
     ("jobs", "company_hiring", {"jobs": []}),
 ])
 def test_introuvable_ne_coute_rien(key, trace, client, op, method, miss):
@@ -317,3 +314,57 @@ def test_les_offres_sans_description_par_defaut(key, trace, client):
     assert out["jobs"] == [{"job_title": "AE"}]
     out = _fn()(op="jobs", domain="acme.com", full_description=True)
     assert out["jobs"][0]["description"] == "long text"
+
+
+# --- find : la même recherche, synchrone — pour une recette ou un tableau ----------------
+
+SYNC = {"enrichment_id": ID, "status": "finished", "email": "jane@acme.com",
+        "email_status": "deliverable", "personal_email": "jane@gmail.com",
+        "personal_email_status": "catch-all", "phones": ["+33612345678", "+33145678901"],
+        "phone_details": [{"number": "+33612345678", "type": "mobile"},
+                          {"number": "+33145678901", "type": "fixed_line"},
+                          {"number": "Contacts not shared", "type": "mobile"}]}
+
+
+def test_find_appelle_l_endpoint_synchrone_et_facture_a_l_appel(key, trace, client):
+    client.return_value.enrich_contact.return_value = SYNC
+    out = _fn()(op="find", find=["phone", "email", "personal_email"], linkedin_url=URL,
+                phone_type="mobile")
+    kw = client.return_value.enrich_contact.call_args
+    assert kw.args == (["phone", "email", "personal_email"],)
+    assert kw.kwargs["timeout"] == (10, 30)
+    client.return_value.submit_enrichment.assert_not_called()
+    assert out["pipecorn_credits"] == 30 + 3 + 9 and trace == {"quantity": 42}
+    # Une entrée par valeur trouvée — ce qu'une recette lit (`source.items: "results"`).
+    assert out["results"] == [
+        {"kind": "phone", "value": "+33612345678", "type": "mobile"},
+        {"kind": "phone", "value": "+33145678901", "type": "fixed_line"},
+        {"kind": "email", "value": "jane@acme.com", "status": "deliverable"},
+        {"kind": "personal_email", "value": "jane@gmail.com", "status": "catch-all"}]
+    assert out["found"] is True
+
+
+def test_find_borne_les_resultats_a_ce_qui_est_demande(key, trace, client):
+    client.return_value.enrich_contact.return_value = SYNC
+    out = _fn()(op="find", find=["phone"], linkedin_url=URL)
+    assert {r["kind"] for r in out["results"]} == {"phone"}
+    assert trace == {"quantity": 30}
+
+
+def test_find_sans_resultat(key, trace, client):
+    client.return_value.enrich_contact.return_value = {
+        "status": "finished", "phones": [], "phone_details": [], "phone_status": "not_found"}
+    out = _fn()(op="find", linkedin_url=URL)
+    assert out["found"] is False and out["results"] == [] and trace == {"quantity": 0}
+
+
+def test_find_sur_la_cle_partagee(key, trace, client):
+    key["platform"] = True
+    client.return_value.enrich_contact.return_value = SYNC
+    _fn()(op="find", find=["personal_email"], linkedin_url=URL)
+    assert trace == {"quantity": 9, "units": 1}
+
+
+def test_la_releve_rend_aussi_ses_resultats_en_liste(key, trace, client):
+    out = _fn()(op="result", enrichment_id=ID, find=["phone"])
+    assert out["results"] == [{"kind": "phone", "value": "+33612345678", "type": "mobile"}]
