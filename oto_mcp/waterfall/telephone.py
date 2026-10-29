@@ -11,6 +11,15 @@ from .fournisseurs import (_APOLLO_REVEAL_COLLECT, _DROPCONTACT_COLLECT,
                            _lusha_contact, _lusha_first)
 from .valeurs import _deep, _get, _phone_find, _phones_in, _slug
 
+def _pipecorn_phone(res, inputs):
+    # Asked with `phone_type="mobile"`: every number left is a mobile (or a number that
+    # cannot be told from one), and one the workspace suppressed reads "Contacts not
+    # shared" — `_phone` drops it.
+    details = res.get("phone_details") if isinstance(res, dict) else None
+    numbers = [d.get("number") for d in details or [] if isinstance(d, dict)]
+    return _phone_find(_phones_in(numbers or (res or {}).get("phones") or []))
+
+
 def _kaspr_phone(res, inputs):
     return _phone_find(_deep(res, "phone", _phones_in))
 
@@ -55,8 +64,17 @@ def _lemlist_phone(res, inputs):
 
 #: Synchronous steps first, by provider cost and yield; the asynchronous ones last (a
 #: `pending` one stops the cascade): Apollo's reveal on the caller's own key, then the
-#: slow ones — FullEnrich, 30 s to 4 min, at the end.
+#: slow ones — FullEnrich, 30 s to 4 min, at the end. Pipecorn heads the table: one call
+#: runs its own cascade of providers and bills only a mobile found (the default order
+#: still puts the caller's own keys ahead of a shared one, `ordre._plan`).
 PHONE_STEPS: tuple[Step, ...] = (
+    Step("pipecorn", "pipecorn", (("linkedin_url",),),
+         lambda i: {"op": "enrich", "find": ["phone"],
+                    "linkedin_url": i["linkedin_url"], "phone_type": "mobile"},
+         _pipecorn_phone, "30 Pipecorn credits per mobile found, nothing on a miss",
+         asks="phones",
+         explains=("Pipecorn runs its own cascade of phone providers in one call — "
+                   "mobiles only, from a LinkedIn profile.")),
     Step("kaspr", "kaspr_enrich_linkedin", (("linkedin_url",),),
          lambda i: {"linkedin_id": i["linkedin_url"], "with_phone": True,
                     "data_to_get": ["phone"],

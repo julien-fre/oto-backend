@@ -196,3 +196,54 @@ def test_un_reglage_forager_illisible_garde_l_etape_sur_la_cle_de_l_appelant(cal
                providers=["forager"])
     assert out["attempts"][0]["code"] == "own_key_required"
     assert "forager_person" not in _made(calls)
+
+
+# --- pipecorn, en tête du téléphone ----------------------------------------------------
+
+def _pipecorn(details):
+    return IssueCible(ok=True, result={
+        "status": "finished", "phones": [d["number"] for d in details],
+        "phone_details": details, "phone_status": "valid" if details else "not_found",
+        "pipecorn_credits": 30 if details else 0})
+
+
+def test_pipecorn_ouvre_le_telephone_et_ne_demande_qu_un_mobile(calls):
+    calls["answers"]["pipecorn"] = _pipecorn([{"number": "+33612345678", "type": "mobile"}])
+    out = _run("waterfall_phone", linkedin_url="https://www.linkedin.com/in/jane-doe/")
+    assert out["found"] is True and out["provider"] == "pipecorn"
+    assert out["phone"] == {"phone": "+33612345678", "all": ["+33612345678"]}
+    assert calls["made"] == [("pipecorn", {
+        "op": "enrich", "find": ["phone"],
+        "linkedin_url": "https://www.linkedin.com/in/jane-doe/", "phone_type": "mobile"})]
+
+
+def test_pipecorn_sans_mobile_passe_la_main(calls):
+    calls["answers"]["pipecorn"] = _pipecorn([])
+    calls["answers"]["kaspr_enrich_linkedin"] = IssueCible(
+        ok=True, result={"profile": {"phone": "+33 6 11 22 33 44"}})
+    out = _run("waterfall_phone", linkedin_url="https://www.linkedin.com/in/jane-doe/")
+    assert out["provider"] == "kaspr"
+    assert _made(calls)[:2] == ["pipecorn", "kaspr_enrich_linkedin"]
+
+
+def test_pipecorn_un_numero_masque_n_est_pas_un_trouve(calls):
+    calls["answers"]["pipecorn"] = _pipecorn(
+        [{"number": "Contacts not shared", "type": "mobile"}])
+    out = _run("waterfall_phone", linkedin_url="https://www.linkedin.com/in/jane-doe/",
+               providers=["pipecorn"])
+    assert out["found"] is False
+
+
+def test_pipecorn_sans_profil_linkedin_est_saute(calls):
+    out = _run("waterfall_phone", full_name="Jane Doe", domain="acme.com", dry_run=True)
+    by = {a["provider"]: a for a in out["attempts"]}
+    assert by["pipecorn"]["status"] == "skipped"
+    assert "pipecorn" not in _made(calls)
+
+
+def test_pipecorn_sur_la_cle_partagee_passe_derriere_les_cles_de_l_appelant(calls):
+    calls["modes"] = {"kaspr_enrich_linkedin": "user"}
+    out = _run("waterfall_phone", linkedin_url="https://www.linkedin.com/in/jane-doe/",
+               dry_run=True)
+    order = [a["provider"] for a in out["attempts"]]
+    assert order[:2] == ["kaspr", "pipecorn"]

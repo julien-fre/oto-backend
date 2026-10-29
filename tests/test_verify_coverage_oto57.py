@@ -87,6 +87,8 @@ QUOTA_AUTORISE = {
     "apify",
     # `tests/test_elevenlabs_tools.py::test_probe_empty_account`
     "elevenlabs",
+    # `tests/test_pipecorn_tools.py::test_sonde` (un solde `credits.enrichment` à 0)
+    "pipecorn",
 }
 
 

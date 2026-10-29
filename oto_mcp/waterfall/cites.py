@@ -47,7 +47,7 @@ PROPOSABLES = frozenset({
     "cognism_enrich_contact", "dataforseo_technologies", "dropcontact_enrich",
     "dropcontact_result", "forager_person", "fr_get", "fr_search", "fullenrich_enrich_linkedin",
     "fullenrich_result", "hunter_email_finder", "kaspr_enrich_linkedin", "lemlist_database",
-    "lemlist_enrich", "lemlist_enrich_result", "linkedin_aiark_person",
+    "lemlist_enrich", "lemlist_enrich_result", "linkedin_aiark_person", "pipecorn",
     "linkedin_aiark_search", "linkedin_unipile_profile", "lusha_search_and_enrich",
     "serper_search", "theirstack_companies_search",
 })

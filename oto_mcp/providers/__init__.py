@@ -123,6 +123,9 @@ _DECLARATIONS: tuple[str, ...] = (
     "routine",
     "scaleway",
     "lusha",
+    # Neighbour of `lusha` by trade (contact enrichment): a phone or an email from a
+    # LinkedIn profile, behind its own provider cascade; first step of `waterfall_phone`.
+    "pipecorn",
     # --- byo_user with multi-field credential (outside resolve_api_key) ------
     "silae",
     "forager",

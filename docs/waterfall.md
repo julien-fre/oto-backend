@@ -173,8 +173,13 @@ lemlist est BYO seulement : sans clé de l'appelant, l'étape est sautée sans a
   sa correspondance même sans email) → apollo → kaspr → lusha → forager (clé de l'appelant
   seulement, sauf si l'instance ouvre `forager_person:work_emails` sur sa clé partagée) →
   dropcontact → lemlist → fullenrich (les asynchrones en dernier).
-- **Téléphone** : kaspr → lusha → forager → apollo (`apollo_reveal_phone`, asynchrone,
-  clé de l'appelant seulement) → lemlist → dropcontact → fullenrich. Pas d'AI Ark.
+- **Téléphone** : pipecorn (`pipecorn op=enrich find=["phone"] phone_type="mobile"`,
+  depuis un profil LinkedIn : une cascade de fournisseurs en UN appel synchrone, facturée
+  au seul mobile trouvé ; la clé partagée, sur octroi, ne sert que ce geste) → kaspr →
+  lusha → forager → apollo (`apollo_reveal_phone`, asynchrone, clé de l'appelant
+  seulement) → lemlist → dropcontact → fullenrich. Pas d'AI Ark. En tête de la table, mais
+  l'ordre par défaut reste trié (propres clés d'abord, `ordre._plan`) : sur la clé
+  partagée, pipecorn passe derrière une clé Kaspr ou Lusha de l'appelant.
 - **Société** : `fr` (le registre français, UNE ligne à deux entrées : `fr_get` par SIREN,
   sinon `fr_search` par nom, France seulement, gratuit) → lemlist (`lemlist_database
   op=companies`, par `currentCompanyWebsiteUrl` ; voir « La base de lemlist ») → aiark
