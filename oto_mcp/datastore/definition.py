@@ -30,6 +30,7 @@ from typing import Optional
 
 from . import acces_agent as aga
 from . import claimable
+from . import liens
 from . import cles_inconnues
 from . import reglages
 from . import validation_complete as vc
@@ -413,6 +414,29 @@ def _conditions_sans_colonne(fields: list, anciens: list, path: str,
                                      f"{path}.{key}", errors)
 
 
+def _valider_cible(f: dict, fpath: str, errors: list[str]) -> None:
+    """`ref` exige sa `target`, et `target` n'a de sens que sur un `ref` (`liens.py`).
+
+    La FORME seule se juge ici — un numéro de tableau ; que ce tableau existe et que
+    l'auteur le lise se vérifie à la pose (`schema_ops._poser_schema`), le seul endroit
+    qui connaît l'appelant. Une `target` posée sur une autre colonne serait servie, lue
+    par un écran, et sans effet sur l'écriture : refusée, comme toute garde inerte."""
+    a_cible = "target" in f
+    if f.get("type") == "ref":
+        if not a_cible:
+            errors.append(
+                f"{fpath}: type=ref exige target — le NUMÉRO du tableau dont la cellule "
+                f"porte l'`_id` d'une ligne (`{{\"type\": \"ref\", \"target\": 123}}`)")
+        elif liens.cible_valide(f.get("target")) is None:
+            errors.append(
+                f"{fpath}: target doit être le NUMÉRO d'un tableau (un entier > 0), reçu "
+                f"{f.get('target')!r} — un nom se renomme, un numéro reste")
+    elif a_cible:
+        errors.append(
+            f"{fpath}: target ne se lit que sur une colonne type=ref (type="
+            f"{f.get('type')!r}) — une cible posée ailleurs ne contraindrait rien")
+
+
 def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
     for f in fields:
         key = f.get("key")
@@ -468,6 +492,7 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
                 f"que sous une colonne composite typée, et ceux-ci ne seraient jamais "
                 f"validés : leurs exigences resteraient inertes. Déclare "
                 f"{{\"key\": \"{key}\", {forme}}}.")
+        _valider_cible(f, fpath, errors)
         if ftype == "object":
             sub = f.get("fields")
             if not isinstance(sub, list) or not sub:
@@ -488,6 +513,7 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
                 elif of.get("type") is not None and \
                         of["type"] not in SCALAR_TYPES + COMPOSITE_TYPES:
                     errors.append(f"{fpath}.of: type inconnu {of.get('type')!r}")
+                _valider_cible(of, f"{fpath}.of", errors)
             else:
                 errors.append(f"{fpath}: of doit être un objet field-def")
         rw = f.get("required_when")

@@ -41,6 +41,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from . import couches as dsl
+from . import liens
 from .couches import unwrap
 from . import charge_a_renvoyer as car
 from .declaration import _fields
@@ -50,7 +51,8 @@ from .phrases_de_refus import gabarit
 #: avant d'entrer ici — on ne branche pas une règle sans savoir ce qu'elle refusera.
 #: `phone` (oto#103, 24/09/2026) entre armé d'emblée : type neuf, aucune colonne du parc
 #: ne le porte encore, donc rien d'existant à refuser.
-TYPES_ARMES = ("number", "bool", "date", "datetime", "email", "phone")
+#: `ref` (cellule de lien, `liens.py`) entre armé d'emblée pour la même raison : type neuf.
+TYPES_ARMES = ("number", "bool", "date", "datetime", "email", "phone", "ref")
 
 #: Ce qu'il faut faire, par type — la DESTINATION du refus, pas seulement sa cause.
 _OU_METTRE_QUOI = {
@@ -69,6 +71,14 @@ _OU_METTRE_QUOI = {
                  "`+02:00`), or the date alone `YYYY-MM-DD` at its precision"),
     "bool": "write `true` or `false`, not their text",
 }
+
+
+def _destination(f: dict) -> str:
+    """Où va ce qui n'est pas la valeur. Un lien (`ref`) la tire de sa DÉCLARATION :
+    l'`_id` se lit dans le tableau `target`, que la phrase nomme."""
+    if f.get("type") == "ref":
+        return liens.ou_trouver(f.get("target"))
+    return _OU_METTRE_QUOI.get(f.get("type"), "")
 
 
 def _rien_trouve(cle: str) -> str:
@@ -127,7 +137,7 @@ def types_trahis(schema: Optional[dict], merged: dict, *,
             continue
         if not _juge(valeur, ftype):
             continue
-        quoi = "; ".join(q for q in (_OU_METTRE_QUOI.get(ftype, ""), _rien_trouve(cle)) if q)
+        quoi = "; ".join(q for q in (_destination(f), _rien_trouve(cle)) if q)
         refus = f"`{cle}` is declared `{ftype}` and receives {valeur!r} — refused. To write: {quoi}"
         if written is None or cle in written:
             out.append(refus)

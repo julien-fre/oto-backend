@@ -80,6 +80,11 @@ CLES: tuple[Cle, ...] = (
     Cle("type", ("validateur", "front"),
         "le type de la valeur : " + " | ".join(SCALAR_TYPES + COMPOSITE_TYPES)),
     Cle("of", ("validateur", "front"), "le type des éléments d'une liste", True),
+    # La cible d'une cellule de lien (`liens.py`) : sans elle, `ref` ne dirait pas OÙ
+    # lire l'`_id`, ni au refus ni à l'écran qui peint la puce.
+    Cle("target", ("validateur", "front"),
+        "la table cible d'une colonne `type: \"ref\"` : son NUMÉRO (ns_id) — la "
+        "cellule porte l'`_id` d'une de ses lignes", True),
     Cle("fields", ("validateur", "front"), "les sous-champs d'un objet", True),
     # — crans de garde, lus par le validateur —
     Cle("readonly", ("validateur", "front"),
@@ -292,13 +297,14 @@ CLES_DE_SOUS_CHAMP: tuple[Cle, ...] = tuple(
 
 _COLONNE = {c.nom: c for c in CLES}
 
-#: L'élément d'une liste (`of`). Le validateur n'en lit que le type, les options et
-#: les sous-champs (`validation._type_error`) : une borne ou un motif posés ICI ne
-#: contraignent rien — ils vont sur un sous-champ.
+#: L'élément d'une liste (`of`). Le validateur n'en lit que le type (et la cible d'un
+#: lien), les options et les sous-champs (`validation._type_error`) : une borne ou un
+#: motif posés ICI ne contraignent rien — ils vont sur un sous-champ.
 CLES_D_ELEMENT: tuple[Cle, ...] = (
     Cle("key", ("validateur", "front"),
         "le sous-champ qui identifie un élément d'une liste de sous-records"),
-    _COLONNE["type"], _COLONNE["fields"], _COLONNE["of"], _COLONNE["options"],
+    _COLONNE["type"], _COLONNE["target"], _COLONNE["fields"], _COLONNE["of"],
+    _COLONNE["options"],
     _COLONNE["label"], _COLONNE["description"], _CLE_META,
 )
 

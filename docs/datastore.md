@@ -1159,6 +1159,25 @@ colonne seulement pour ne pas toucher à la case, oto#140). ⚠️ La valeur n'e
 base : la réécrire changerait son identité face à la fusion, et un même numéro remis dans
 une autre mise en forme emporterait ses couches.
 
+**Le type `ref` — une cellule de lien (29/10/2026).** Une colonne de lien porte l'`_id`
+d'une ligne d'un autre tableau : `{"type": "ref", "target": <numéro du tableau>}`, ou une
+liste de liens `{"type": "list", "of": {"type": "ref", "target": <numéro>}}` — la forme
+qu'un front lit pour peindre des puces qui ouvrent la ligne cible, et de l'autre côté le
+cumul des lignes qui pointent vers elle. Avant ce type, la colonne n'était qu'un `text`, et
+une écriture qui y posait le NOM de la ligne cible passait sans un mot. `datastore/liens.py`
+dit la forme d'un `_id` (`outils._new_id`), d'une `target` (un numéro, jamais un nom : un
+tableau se renomme) et la destination du refus — `data_rows(datastore=<target>, q=…)`.
+Armé par sa déclaration comme `phone` (`types_declares.TYPES_ARMES` ; type neuf, rien
+d'existant à refuser), et jugé à toute profondeur par la validation complète (élément de
+liste, sous-champ). À la pose : `ref` exige `target`, `target` ailleurs que sur un `ref` est
+refusée (`definition._valider_cible`), et une cible que CE geste pose doit être un tableau
+que l'auteur lit (`schema_ops._cibles_lisibles` ; « n'existe pas » et « ne t'est pas
+visible » ont la même phrase, #193). ⚠️ **L'écriture juge la FORME, pas l'existence** :
+le validateur est pur, celui qui écrit ne lit pas forcément la cible, et la suppression
+d'une ligne cible laisse de toute façon des liens pendants. Reste à faire : résoudre un
+lien par la clé métier de la cible, indexer une colonne de liens sur un gros tableau
+source, et dire les liens pendants.
+
 **Les champs que l'appelant n'écrit pas (#586, #606 ; 29/08/2026).** **Deux**
 crans de colonne sous UNE garde (`dsv2.reserved_refusals`, le geste dans
 `datastore/reserves.py`), pour deux gestes mesurés sur la même campagne contre la
@@ -2423,6 +2442,7 @@ mêmes fichiers en une semaine (gels en série, un incident de tree). Où poser 
 | `datastore/couches.py` | le vocabulaire des couches d'une cellule et leurs formes |
 | `datastore/motifs.py` | le COÛT d'un `pattern` — la garde qui empêche un motif de figer le serveur |
 | `datastore/telephone.py` | le type `phone` : la forme compacte d'un numéro (`normaliser`), que la validation juge (oto#103) |
+| `datastore/liens.py` | le type `ref` : la forme d'un `_id` de ligne, d'une `target`, et où lire l'`_id` qu'un refus demande |
 | `datastore/declaration.py` | LIRE une déclaration : « que déclare ce schéma ? » |
 | `datastore/cycle_de_vie.py` | états, transitions, terminaux, plafond de reprises, périmètre |
 | `datastore/hors_schema.py` | une clé qu'un sous-record déclaré ne nomme pas, refusée ; la couche mal écrite |

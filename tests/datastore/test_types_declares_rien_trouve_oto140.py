@@ -13,7 +13,13 @@ import pytest
 from oto_mcp.datastore.types_declares import TYPES_ARMES, types_trahis
 
 _FAUX = {"number": "non trouvé", "bool": "non trouvé", "date": "non trouvé",
-         "datetime": "non trouvé", "email": "non trouvé", "phone": "non trouvé"}
+         "datetime": "non trouvé", "email": "non trouvé", "phone": "non trouvé",
+         "ref": "non trouvé"}
+
+
+def _colonne(ftype: str, cible: int = 1) -> dict:
+    """La colonne `c` typée ; un lien (`ref`) déclare sa cible, sans quoi il ne se pose pas."""
+    return {"key": "c", "type": ftype, **({"target": cible} if ftype == "ref" else {})}
 
 
 def test_chaque_type_arme_a_une_valeur_fautive():
@@ -22,7 +28,7 @@ def test_chaque_type_arme_a_une_valeur_fautive():
 
 @pytest.mark.parametrize("ftype", TYPES_ARMES)
 def test_le_refus_dit_empty_pour_rien_trouve_et_omettre_pour_ne_pas_toucher(ftype):
-    schema = {"fields": [{"key": "c", "type": ftype}]}
+    schema = {"fields": [_colonne(ftype)]}
     [refus] = types_trahis(schema, {"c": _FAUX[ftype]})
     assert ("if nothing was found, write `@empty` with the reason in `c.comment`; "
             "to leave the cell untouched, omit the column") in refus, refus
@@ -44,6 +50,8 @@ def test_le_geste_conseille_passe_sur_chaque_type(live, ftype):
     ns = "t140-" + uuid.uuid4().hex[:6]
     db.create_datastore("user", sub, ns)
     st = make_store(sub)
-    st.set_schema(ns, {"fields": [{"key": "c", "type": ftype}]})
+    # Un lien vise un tableau que l'auteur lit : la cible est née avec la colonne.
+    cible = db.create_datastore("user", sub, ns + "-cible") if ftype == "ref" else 1
+    st.set_schema(ns, {"fields": [_colonne(ftype, cible)]})
     rid = st.append_row(ns, {"c": {"valeur": "@empty", "comment": "annuaire : rien"}})["_id"]
     assert st.get_row(ns, rid, layers="nested")["c"]["comment"] == "annuaire : rien"

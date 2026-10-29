@@ -28,7 +28,7 @@ from .options_declarees import hors_des_options, montrable, parmi, valeur_compar
 from .motifs import _pattern_re
 from .declaration import (_fields, borne_du_motif, cle_d_element, max_length_of,
                           pattern_of, status_field, validation_active)
-from . import dates, telephone
+from . import dates, liens, telephone
 from . import validation_complete as vc
 from .etats_declares import etats_trahis
 from .types_declares import types_trahis
@@ -43,10 +43,12 @@ from .phrases_de_refus import (
 _NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
 
-def _conformite_scalaire(value: Any, ftype: Optional[str], path: str) -> list[str]:
+def _conformite_scalaire(value: Any, ftype: Optional[str], path: str,
+                         cible: Any = None) -> list[str]:
     """La FORME d'une valeur scalaire, sans son appartenance à une liste — que
     `_hors_options` juge ensuite. `json` et l'absence de type n'ont pas de forme à
-    tenir : ils rendent `[]`."""
+    tenir : ils rendent `[]`. `cible` = la `target` d'un lien (`ref`), que le refus
+    nomme pour dire où lire l'`_id`."""
     if ftype == "text":
         return [] if isinstance(value, str) else [f"{path}: expected text, got {type(value).__name__}"]
     if ftype == "number":
@@ -81,6 +83,14 @@ def _conformite_scalaire(value: Any, ftype: Optional[str], path: str) -> list[st
             return []
         return [f"{path}: expected a phone number (international `+` and "
                 f"country code, or national digits), got {value!r}"]
+    if ftype == "ref":
+        # Une cellule de lien porte l'`_id` d'une ligne de sa cible — sa FORME est
+        # jugée, pas son existence (`liens.py` dit pourquoi). Le nom de la ligne est
+        # le cas qu'on attrape : il a la forme d'un texte, jamais celle d'un `_id`.
+        if liens.est_un_id_de_ligne(value):
+            return []
+        return [f"{path}: expected a row `_id` (a link), got {value!r} — "
+                f"{liens.ou_trouver(cible)}"]
     return []
 
 
@@ -236,7 +246,7 @@ def _type_error(value: Any, ftype: Optional[str], path: str,
     # d'abord la forme, puis l'appartenance, jamais les deux sur une même valeur. Deux
     # refus pour un seul relevé `hors` feraient refuser la fiche entière, là où
     # l'écriture sait écarter la valeur et écrire le reste (#667).
-    return _faute(_conformite_scalaire(value, ftype, path)
+    return _faute(_conformite_scalaire(value, ftype, path, decl.get("target"))
                   or _hors_options(value, options, path, hors))
 
 

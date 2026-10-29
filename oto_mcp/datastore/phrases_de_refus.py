@@ -45,6 +45,10 @@ def _forme_attendue(field: dict) -> str:
         bouts.append("one value among " + " | ".join(options))
     elif ftype in (None, "text"):
         bouts.append("free text")
+    elif ftype == "ref":
+        # La cible est dans la déclaration : la nommer dit où lire l'`_id`.
+        bouts.append(f"the `_id` of a row of table {field.get('target')} — never its "
+                     f"name")
     elif ftype in _FORME_DU_TYPE:
         bouts.append(_FORME_DU_TYPE[ftype])
     else:
@@ -68,7 +72,8 @@ _FORME_DU_TYPE = {
 _MOT_DU_TYPE = {None: "text", "text": "text", "number": "number", "bool": "true | false",
                 "date": "date YYYY-MM-DD", "datetime": "ISO 8601 date-time",
                 "url": "http(s) URL", "email": "email",
-                "phone": "phone, +country code preferred", "json": "json",
+                "phone": "phone, +country code preferred", "ref": "row _id",
+                "json": "json",
                 "enum": "value", "object": "object", "list": "list"}
 
 
@@ -88,6 +93,8 @@ def gabarit(field: dict) -> Any:
             return requis
     options = [str(o) for o in (field.get("options") or [])]
     bouts = [" | ".join(options) if options else _MOT_DU_TYPE.get(ftype, str(ftype))]
+    if ftype == "ref" and not options and field.get("target") is not None:
+        bouts[0] = f"row _id of table {field.get('target')}"
     ml = max_length_of(field)
     if ml:
         bouts.append(f"≤ {ml} characters")

@@ -28,11 +28,12 @@ from . import cles_inconnues
 from . import reglages
 from . import validation_complete as dsvc
 from . import formule as dsformule
+from . import liens
 from . import schema as dsv2
 from . import violations_existantes as dsve
 from .. import db
-from .errors import (ColumnAbsent, DatastoreForbidden, RowValidationError,
-                     SchemaDefinitionError)
+from .errors import (ColumnAbsent, DatastoreForbidden, DatastoreNotFound,
+                     RowValidationError, SchemaDefinitionError)
 from .columns import _META_COLS
 
 
@@ -97,6 +98,24 @@ class SchemaOpsMixin:
             return 0
         return db.datastore_mark_formula_dirty(ns_id)
 
+    def _cibles_lisibles(self, schema: Optional[dict], ancien: Optional[dict]) -> None:
+        """Une colonne de lien (`ref`) vise un tableau qui EXISTE et que l'auteur LIT.
+
+        Seules les cibles que CE geste pose se vérifient — même parti que le refus des
+        clés inconnues : une cible déjà stockée, inchangée, ne doit pas faire refuser le
+        patch d'une autre colonne le jour où son tableau a disparu. Le refus ne
+        distingue pas « n'existe pas » de « ne t'est pas visible » : le dire
+        apprendrait l'existence d'un tableau à qui ne le voit pas (#193)."""
+        neuves = liens.cibles(dsv2._fields(schema)) - liens.cibles(dsv2._fields(ancien))
+        for cible in sorted(neuves):
+            try:
+                self._resolve(str(cible))
+            except DatastoreNotFound:
+                raise SchemaDefinitionError(
+                    f"invalid schema: target {cible} — no table you can read has this "
+                    f"number; a link column points at a table of yours "
+                    f"(`data_list_datastores` lists them, each with its number)") from None
+
     def set_schema(self, datastore: str, schema: Optional[dict], *,
                    retraits_annonces: Optional[list] = None,
                    geste: str = "schema") -> dict:
@@ -140,6 +159,7 @@ class SchemaOpsMixin:
         def_errors = dsv2.validate_schema_def(schema, ancien)
         if def_errors:
             raise SchemaDefinitionError("invalid schema: " + "; ".join(def_errors))
+        self._cibles_lisibles(schema, ancien)
         new_key = (schema or {}).get("key")
         new_key = new_key if isinstance(new_key, str) and new_key else None
         ancienne_cle = (ancien or {}).get("key")

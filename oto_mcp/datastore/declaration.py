@@ -41,8 +41,9 @@ from .motifs import PATTERN_MAX_SUBJECT, pattern_refusal
 # transforme pas le datastore en base contrainte.
 # `url`, `email`, `phone` : les types MÉTIER, ceux dont le rendu et la validation
 # valent partout (arbitré le 24/09/2026, oto#103). Le reste se contraint par `pattern`.
+# `ref` : une cellule de LIEN, l'`_id` d'une ligne du tableau `target` (`liens.py`).
 SCALAR_TYPES = ("text", "number", "date", "datetime", "bool", "json",
-                "url", "email", "phone", "enum", "formula")
+                "url", "email", "phone", "ref", "enum", "formula")
 COMPOSITE_TYPES = ("object", "list")
 
 

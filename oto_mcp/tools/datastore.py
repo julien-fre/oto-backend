@@ -760,7 +760,7 @@ def register(mcp: FastMCP) -> None:
 
         A typed datastore renders as readable cards/records instead of a flat table.
         `schema` = {"fields": [{"key": str, "label"?: str, "type"?: "text|number|date|
-        datetime|bool|json|object|list|url|email|phone|enum",
+        datetime|bool|json|object|list|url|email|phone|ref|enum",
         "options"?: [str], "display"?: "title", "role"?: "status|metric|note|qualif",
         "description"?: str, "meta"?: {…}}],
         "key"?: str, "new_rows"?: "create|reject", "description"?: str,
@@ -852,6 +852,11 @@ def register(mcp: FastMCP) -> None:
           each naming why. `type: "phone"` holds a phone number: international
           (`+`, country code — E.164) preferred, national digits accepted, spaces,
           dots and dashes allowed; a sentence or an identifier is refused.
+          `type: "ref", "target": <table number>` is a LINK column: the cell holds
+          the `_id` of a row of that table (a list of links:
+          `"type": "list", "of": {"type": "ref", "target": <number>}`). A name
+          written there is refused — find the row with `data_rows` on the target
+          and write its `_id`. The target must be a table you can read.
           `field.required_layers: ["comment"]` refuses a write that leaves a
           NON-EMPTY value in that column without posting the layer — the value must
           arrive WITH its provenance, in the SAME call
