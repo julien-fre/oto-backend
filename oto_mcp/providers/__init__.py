@@ -93,6 +93,9 @@ _DECLARATIONS: tuple[str, ...] = (
     # Neighbour of `pennylane`/`finkare` (Finance): e-invoicing, read-only — wired
     # 2026-10-22. The person signs in with jefacture.com (OAuth, platform application).
     "jefacture",
+    # Neighbour of `pennylane`/`jefacture` (Finance): business banking, read-only —
+    # wired 2026-10-29. The organization's API key, one field `login:secret-key`.
+    "qonto",
     "slack",
     "fullenrich",
     "waterfall_email",
