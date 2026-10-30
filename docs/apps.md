@@ -42,12 +42,9 @@ page — mais ce **n'est pas une page de mémoire** : ni dans l'arbre des pages,
 
 ## Qui écrit une app
 
-- **La population bêta seule** : `create`, `update`, `archive`, `unarchive`,
-  `restore` exigent l'option `beta` (`access.has_option`, dans l'org de l'appel) — la
-  même population que `oto_apps` (`BETA_TOOLS`) et l'écran du front. Les autres :
-  403 `apps_beta_only`, sur les deux faces ; une panne du seam des options refuse
-  (fail-closed). Lire (`list`, `get`, `revisions`, `validate`) reste ouvert à qui
-  lit le projet.
+- **Ouvert à toute org** (sorti de la bêta le 30/10/2026) : écrire une app demande
+  le droit d'écriture sur son projet, lire (`list`, `get`, `revisions`, `validate`)
+  le droit de lecture ; aucune option.
 - **REST : session interactive seule** (`allow_api_token=False` sur `/api/me/apps`
   et sur l'appel) : un jeton `oto_`, délégation d'agent hébergé comprise, est refusé
   en 403 `api_token_forbidden`. Un agent écrit une app par `oto_apps`, en MCP.

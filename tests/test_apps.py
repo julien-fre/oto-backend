@@ -209,42 +209,15 @@ _ECRITURES = [
 
 
 @pytest.mark.parametrize("inp", _ECRITURES, ids=lambda d: d["op"])
-def test_ecrire_une_app_exige_la_beta(seams, inp):
+def test_ecrire_une_app_sans_option(seams, inp):
     seams["beta"] = False
-    e = _refus(lambda: A._app(CTX, A.AppInput(**inp)))
-    assert (e.status, e.code) == (403, "apps_beta_only")
-    assert seams["create"] == [] and seams["update"] == []
-    assert seams["options"] == [("u1", "beta", 42)]
-
-
-@pytest.mark.parametrize("inp", _ECRITURES, ids=lambda d: d["op"])
-def test_ecrire_une_app_avec_la_beta(seams, inp):
-    A._app(CTX, A.AppInput(**inp))
-
-
-def test_beta_fail_closed(seams, monkeypatch):
-    def panne(*a, **k):
-        raise RuntimeError("options en panne")
-    monkeypatch.setattr(access, "has_option", panne)
-    e = _refus(lambda: A._app(CTX, A.AppInput(op="create", project_id=7, title="x", manifest={})))
-    assert e.code == "apps_beta_only" and seams["create"] == []
-
-
-@pytest.mark.parametrize("inp", [dict(op="get", app_id=5), dict(op="revisions", app_id=5),
-                                 dict(op="list", project_ids=[7]),
-                                 dict(op="validate", project_id=7, manifest={})],
-                         ids=lambda d: d["op"])
-def test_lire_ne_demande_pas_la_beta(seams, monkeypatch, inp):
-    seams["beta"] = False
-    monkeypatch.setattr(db.apps, "revisions", lambda i: [])
     A._app(CTX, A.AppInput(**inp))
     assert seams["options"] == []
 
 
-def test_refus_beta_declare_et_route_sans_jeton_api():
+def test_route_sans_jeton_api():
     from oto_mcp.capabilities import registry
     cap = next(c for c in registry.CAPABILITIES if c.key == "me.app")
-    assert ("apps_beta_only", 403) in {(e.code, e.status) for e in cap.errors}
     (b,) = cap.rest_bindings()
     assert b.allow_api_token is False and b.allow_issuer_token is False
 

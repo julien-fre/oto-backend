@@ -16,10 +16,8 @@ sont à la portée de l'AUTEUR, et qu'ils vivent dans l'org du PROJET de l'app. 
 manifeste invalide est refusé en 400 `invalid_manifest` avec la liste de ce qui ne va
 pas ; `op=validate` rend cette liste sans rien écrire.
 
-**Écrire une app est réservé à la population bêta** (option `beta`, la même que celle
-qui ouvre `oto_apps` et l'écran du front) : `create`, `update`, `archive`,
-`unarchive`, `restore` refusent 403 `apps_beta_only` aux autres, sur les deux faces,
-fail-closed. Lire une app reste ouvert à qui lit son projet.
+**Les apps sont ouvertes à tous** (sorties de la bêta le 30/10/2026) : écrire une app
+demande le droit d'écriture sur son projet, lire le droit de lecture, rien de plus.
 
 **Face REST : session interactive seule** (`allow_api_token=False`) — aucun jeton
 `oto_`, délégation d'agent hébergé comprise : une app s'écrit par un humain ou par son
@@ -32,10 +30,9 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from .. import access, db, ownership
-from ..tool_visibility import BETA_OPTION
+from .. import db, ownership
 from ._authz import SUB_ONLY
-from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
+from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .apps_manifeste import auteur, forme, org_du_projet
 from .registry import CAPABILITIES
 
@@ -46,7 +43,6 @@ MAX_HTML = 512_000
 MAX_TITLE = 200
 MAX_PROJECTS = 200
 _THUMB_KEYS = {"image", "color", "emoji", "design"}
-_ECRITURES = frozenset({"create", "update", "archive", "unarchive", "restore"})
 
 
 class AppInput(BaseModel):
@@ -152,20 +148,6 @@ def _media_base() -> Optional[str]:
         return None
 
 
-def _beta_ou_refus(ctx: ResolvedCtx) -> None:
-    """Écrire une app : la population `beta` seule, celle du front et de `oto_apps`.
-    Fail-CLOSED : une panne du seam des options refuse, et le journal le dit."""
-    try:
-        ok = access.has_option(ctx.sub, BETA_OPTION, org=ctx.org_id)
-    except Exception:
-        logger.warning("apps beta lookup fail-CLOSED for %s in org %s", ctx.sub,
-                       ctx.org_id, exc_info=True)
-        ok = False
-    if not ok:
-        raise AuthzDenied(403, "apps_beta_only",
-                          "Writing apps is open to beta accounts only for now.")
-
-
 def _problemes(sub: str, project_id: int, raw: Optional[dict]) -> tuple[dict, list[str]]:
     clean, problems = forme(raw if raw is not None else {})
     if not problems:
@@ -206,9 +188,6 @@ def _app(ctx: ResolvedCtx, inp: AppInput) -> dict:
         readable = ownership.can_access_many(sub, PROJECT_RTYPE, owners, "read") if owners else {}
         allowed = [int(pid) for pid, ok in readable.items() if ok]
         return {"apps": db.apps.list_for_projects(allowed, archived=inp.archived is True)}
-
-    if inp.op in _ECRITURES:
-        _beta_ou_refus(ctx)
 
     if inp.op == "validate":
         # Jugé contre l'org du projet où l'app vivra : celui nommé, ou celui de l'app.
@@ -303,12 +282,9 @@ CAPABILITIES += [
             "`project_id` or `app_id`: the problems a create would refuse, nothing "
             "written). Every declared table and agent must be within YOUR reach and "
             "in the project's organization: otherwise 400 invalid_manifest, each "
-            "problem listed. Writing apps is open to beta accounts only."
+            "problem listed."
         ),
         mcp="oto_apps",
         rest=RestBinding("POST", "/api/me/apps", allow_api_token=False),
-        errors=(DeclaredError(403, "apps_beta_only",
-                              "create, update, archive, unarchive or restore by an "
-                              "account without the beta option"),),
     ),
 ]

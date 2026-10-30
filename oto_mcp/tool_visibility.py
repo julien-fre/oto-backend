@@ -109,8 +109,7 @@ DEFAULT_HIDDEN_TOOLS: frozenset[str] = frozenset(
 # n'y sera jamais (cliquet : `tests/test_resources_deux_surfaces.py`).
 BETA_TOOLS: frozenset[str] = frozenset({
     "oto_node", "oto_node_rows", "oto_node_edit",
-    # Les apps (`me.app`) : un objet neuf, ouvert d'abord à une population choisie.
-    "oto_apps",
+    # `oto_apps` en est SORTI le 30/10/2026 : les apps s'ouvrent à toute org.
     # Gouvernance de ressource au contrat d'entrée STRICT (`resources_v2`) : elle
     # double `oto_resource` au lieu de le durcir, parce que le durcir a cassé de
     # vrais appelants le 2026-09-01 (#756, reverté par #774). Le régime bêta lui
