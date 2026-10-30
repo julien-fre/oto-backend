@@ -2054,6 +2054,7 @@ pas (absent de `list`, 404 sur `get`, même 404 qu'un agent inconnu).
     reposé par un admin, un partage perd le prêt — l'upsert réécrit `granted_by`), ceux
     de la révision 0035 et du réglage `partage_par_defaut` (marqués), ceux d'un ancien
     propriétaire.
+  - **Préréglage personnel** : `oto_trigger op=default_sharing` (`private`|`shared`), par personne et par org, lu à `op=create` depuis toute face ; `shared` fait les deux gestes du propriétaire à la naissance (`capabilities/preset_agents.py`). `private=true` l'emporte, rien de rétroactif, aucun admin ne le pose pour un autre.
   - **Qui** : le propriétaire SEUL pose (`lend`) et retire (`unlend`) le prêt collectif —
     un admin d'org, un éditeur ou un admin de plateforme reçoit `403
     trigger_owner_required` ; qui ne voit pas l'agent, `404 trigger_not_found` ; un agent

@@ -163,6 +163,7 @@ def creation(org, monkeypatch):
     org["cree"] = False
     monkeypatch.setattr(db, "partage_par_defaut_stocke",
                         lambda o: org["reglage"] if o == ORG else None)
+    monkeypatch.setattr(db, "get_account_profile", lambda sub: {"profile": {}})
     monkeypatch.setattr(db, "triggers_for_procedure", lambda o, p: [])
     monkeypatch.setattr(db, "create_trigger", lambda o, sub, **k: org.update(cree=True) or {
         "id": 7, "org_id": o, "sub": sub, **k})
@@ -204,6 +205,39 @@ def test_en_lecture_l_org_voit_l_agent_sans_pouvoir_le_modifier(creation, monkey
     assert (vu["my_access"], vu["can_edit"]) == ("viewer", False)
     e = _refus(AUTRE, op="update", trigger_id=7, label="renommé")
     assert (e.status, e.code) == (403, "trigger_edit_forbidden")
+
+
+def _preset(monkeypatch, valeur):
+    profil = {"profile": {"agent_sharing": {str(ORG): valeur}}}
+    monkeypatch.setattr(RT.db, "get_account_profile", lambda sub: profil)
+
+
+def test_le_preset_shared_partage_et_prete_a_la_naissance(creation, monkeypatch):
+    _preset(monkeypatch, "shared")
+    prets = []
+    monkeypatch.setattr(RT.db, "poser_pret_du_forfait",
+                        lambda i, o, sub, m: prets.append((sub, m)) or None)
+    monkeypatch.setattr(RT.runner_models, "MODELES_PERSONNELS", {"claude-sonnet-5"})
+    _creer(monkeypatch)
+    assert creation["partages"] == {("org", str(ORG)): "editor"}
+    assert creation["auteurs"] == {("org", str(ORG)): PROPRIETAIRE}, (
+        "un geste du propriétaire, pas le partage marqué d'un réglage d'admin")
+    assert prets == [(PROPRIETAIRE, "claude-sonnet-5")]
+
+
+def test_le_preset_ne_prete_rien_hors_abonnement(creation, monkeypatch):
+    _preset(monkeypatch, "shared")
+    monkeypatch.setattr(RT.db, "poser_pret_du_forfait",
+                        lambda *a: pytest.fail("rien à prêter"))
+    monkeypatch.setattr(RT.runner_models, "MODELES_PERSONNELS", set())
+    _creer(monkeypatch)
+    assert creation["partages"] == {("org", str(ORG)): "editor"}
+
+
+def test_private_l_emporte_sur_le_preset(creation, monkeypatch):
+    _preset(monkeypatch, "shared")
+    _creer(monkeypatch, private=True)
+    assert creation["partages"] == {}
 
 
 def test_private_l_emporte_sur_le_reglage(creation, monkeypatch):

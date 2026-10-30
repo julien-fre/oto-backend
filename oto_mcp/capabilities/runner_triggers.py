@@ -32,6 +32,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from . import preset_agents
 from .orgs import partage_par_defaut
 from . import (_abonnement, _acces_agent, _cle_exigee, _instruction, _limites_du_run,
                _modele, _portee, _projet_de_l_agent, _source_du_hook, runner_jobs)
@@ -139,7 +140,9 @@ class TriggerInput(BaseModel):
                 # est partagé en écriture, sous son modèle du moment (le prêt nommé, à
                 # une personne, n'en a pas besoin), et le reprendre — un geste du TITULAIRE seul, jamais d'un
                 # réglage ni d'un admin (`_acces_agent`, tête de module ; 29/10/2026).
-                "lend", "unlend"]
+                "lend", "unlend",
+                # Comment naissent MES agents dans cette org (`preset_agents`).
+                "default_sharing"]
     trigger_id: Optional[int] = None
     trigger_ids: Optional[list[int]] = Field(None, description=(
         f"update, IN BULK (≤ {_LOT_MAX}): file these agents under `folder` in one call — "
@@ -205,7 +208,12 @@ class TriggerInput(BaseModel):
         "create: `true` = only you (and org admins) see this agent, even when the "
         "org shares new agents by default. Default: what the org's `partage_par_defaut` "
         "says — private unless an admin set it. Nothing opens it further at creation; "
-        "share it later with op=share."))
+        "share it later with op=share, or set your own `default_sharing`."))
+    default_sharing: Optional[Literal["private", "shared"]] = Field(default=None, description=(
+        "op=default_sharing: YOUR preset for the agents you create in this org, from any "
+        "client. `shared` = each new agent is shared with the whole org as editor and, on "
+        "a personal subscription, lends it (`private=true` on create still wins). "
+        "Omitted = read it. Yours only, never retroactive."))
     # ── le WEBHOOK ────────────────────────────────────────────────────────────
     #: `schedule` (défaut) ou `webhook`. Posé à la CRÉATION et jamais après : un
     #: agent ne change pas de coup d'envoi en cours de route.
@@ -1496,6 +1504,8 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # Lu AVANT la création, même pour un agent privé : un réglage illisible lève
         # (`default_sharing_unreadable`) sans laisser derrière lui un agent créé.
         role = partage_par_defaut.role_a_la_naissance(ctx.org_id, "agent")
+        ouvert = (not inp.private
+                  and preset_agents.lire(ctx.sub, ctx.org_id) == preset_agents.PARTAGE)
         t = db.create_trigger(
             ctx.org_id, ctx.sub, procedure=inp.procedure,
             cron=inp.cron or None, tz=tz,
@@ -1524,7 +1534,18 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # par un admin) l'ouvre d'office, et jamais en écriture. Le créateur peut rester
         # privé (`private=true`), jamais ouvrir au-delà du réglage (`role`, lu avant
         # la création).
-        if role and not inp.private:
+        if ouvert:
+            # Le réglage de la PERSONNE : ses propres gestes, faits d'avance
+            # (`preset_agents`). Le partage porte son `granted_by`, donc il prête.
+            ownership.grant(_acces_agent.KIND, str(t["id"]), "org", str(ctx.org_id),
+                            role="editor", granted_by=ctx.sub)
+            if t.get("model") in runner_models.MODELES_PERSONNELS:
+                t = db.poser_pret_du_forfait(int(t["id"]), ctx.org_id, ctx.sub,
+                                             t["model"]) or t
+            _portee.observer(ctx, ressource_type="runner_trigger", ressource_id=t["id"],
+                             ressource_nom=inp.label or inp.procedure, vers="org",
+                             geste="oto_trigger op=create")
+        elif role and not inp.private:
             _acces_agent.ouvrir_a_l_org(ctx, t, role)
             _portee.observer(ctx, ressource_type="runner_trigger", ressource_id=t["id"],
                              ressource_nom=inp.label or inp.procedure, vers="org",
@@ -1811,6 +1832,11 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
 
     if inp.op in ("lend", "unlend"):
         return _preter(ctx, inp)
+
+    if inp.op == "default_sharing":
+        if inp.default_sharing:
+            preset_agents.poser(ctx.sub, ctx.org_id, inp.default_sharing)
+        return {"default_sharing": preset_agents.lire(ctx.sub, ctx.org_id)}
 
     if inp.op == "delete":
         # Supprimer est un geste de PROPRIÉTAIRE : un éditeur le modifie, il ne le
@@ -2843,7 +2869,9 @@ CAPABILITIES += [
             "it, plus the people the OWNER shared it with by name as editor (`can_edit` "
             "says so); everyone else may only disable it. op=lend (owner only) also lends "
             "it to the team or whole org the owner shared it with as editor, at its "
-            "current model only (another model ends it); op=unlend ends it. Delete, share "
+            "current model only (another model ends it); op=unlend ends it. "
+            "op=default_sharing reads or sets (`default_sharing` private|shared) YOUR preset "
+            "for the agents you create in this org. Delete, share "
             "and the webhook door stay with the owner and org admins. "
             "The tick only ENQUEUES a job at "
             "each due time; execution belongs to the worker. Floor between two "
