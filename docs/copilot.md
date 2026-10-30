@@ -48,7 +48,8 @@ de développement du front en était la spécification exécutable.
 
 ## La boucle (`boucle.py`, `modele.py`)
 
-Messages Anthropic en flux (`claude-opus-5-5`, effort `medium`, réflexion adaptative
+Messages Anthropic en flux (le modèle de la conversation, §Quel modèle répond ; effort
+`medium`, réflexion adaptative
 `display: "updates"` sous la bêta `thinking-display-updates-2026-08-18` : les notes entre
 deux appels d'outils deviennent les événements `progress`), cache sur le prompt système,
 sur le dernier outil du socle et sur le DERNIER MESSAGE : l'historique se relit au cache
@@ -59,7 +60,47 @@ message passé, au-delà des quatre points de l'API). **L'historique ne se réé
 réflexion repartent tels quels, un tour interrompu se solde en AJOUTANT des résultats
 « interrompu ». `<next>a | b</next>` en fin de réponse devient `suggestions`, jamais du
 texte. Un résultat d'outil est coupé à 80 000 caractères, et la coupe est dite au modèle.
-30 étapes au plus par étape de la personne.
+30 étapes au plus par étape de la personne. Un `pause_turn` (outil serveur : la recherche
+d'outils) renvoie le message tel quel et relance l'appel. Chaque appel journalise ses
+quatre comptes de jetons par modèle (`copilot : appel au modèle — …`) : la mesure de ce que
+coûte chaque modèle.
+
+## Quel modèle répond (`palier.py`)
+
+Une conversation **commence** sur le modèle par défaut de l'instance (`OTO_COPILOT_MODEL`,
+`claude-sonnet-5-5`) et **passe** sur son modèle fort (`OTO_COPILOT_MODEL_UP`,
+`claude-opus-5-5`) sur une liste FIXE de signes que le travail est difficile — jamais en
+demandant à un modèle de se juger lui-même :
+
+- elle change ce qui fait tourner ou se conduire d'autres choses plus tard (agent,
+  planification, flotte, recette, fonction, procédure, guide, profil, réglages de l'org :
+  `classement.lourd`), ou lit simplement un agent, une planification, une flotte, une
+  recette, une fonction (`classement.automatisation`) ;
+- le modèle a refusé (`refusal`) ;
+- deux lots d'outils de suite ont échoué ;
+- la personne a refusé une carte.
+
+Quand le modèle par défaut refuse, ou s'apprête à changer un agent, une procédure… **sans
+avoir encore rien dit**, son étape est jetée (jamais écrite dans l'historique) et le fort la
+reprend ; s'il a déjà parlé, ses mots restent à l'écran et le fort prend l'étape suivante.
+**Sans retour** : une conversation montée y reste, une nouvelle repart du défaut — un
+changement de modèle refroidit le cache du fournisseur, et le fort lit les blocs de réflexion
+du défaut, pas l'inverse. Un modèle sans prix connu (`depense.PRIX_PAR_MTOK`) est écarté
+pour le défaut, et le journal le dit. ⚠️ Sur une clé refacturée, **le barème du commerce
+doit porter chaque modèle choisi** (`messages:<modèle>`), sinon chaque appel est refusé
+(`credits_unpriced`).
+
+**Outils à la demande.** Une conversation qui a un modèle envoie le socle entier mais n'en
+met devant le modèle que `classement.CORE_INLINE` (`oto_search`, `oto_call`,
+`oto_tool_schema`, `data_rows`, `feedback`) ; les autres partent avec `defer_loading` et se
+chargent par la recherche d'outils du fournisseur (`tool_search_tool_bm25`, premier outil
+envoyé, dans le préfixe en cache). Les définitions du socle faisaient l'essentiel de ce
+qu'emporte une requête. Le point de cache des outils est sur le dernier outil non différé
+(le fournisseur refuse un point de cache sur un outil différé).
+
+**Une conversation d'avant** (`model` NULL) garde le modèle (`claude-opus-5-5`) et la liste
+d'outils de son début, et ne change jamais de modèle : les changer sous elle invaliderait
+son cache et, sur ces modèles, sa réflexion antérieure.
 
 ## Pièces jointes (`pieces.py`, `api/copilot.py`)
 
@@ -155,7 +196,8 @@ pire.
   (`session_visibility.compute_hidden_tools`), moins ce que l'agent intégré n'appelle
   jamais (`oto_admin_*`, `oto_clear_*`, `oto_use_*`, `oto_shell`, `oto_account_access`,
   `oto_enable_tool`/`oto_disable_tool`, `run_start`/`run_finish`, `oto_run_thread`,
-  `oto_call` imbriqué). Un socle est offert au modèle ; le reste se joint par `oto_call`.
+  `oto_call` imbriqué). Un socle est offert au modèle (en partie à la demande, §Quel
+  modèle répond) ; le reste se joint par `oto_call`.
 - **Exécution en interne** par `tools/meta.executer_cible` : mêmes gardes, même journal,
   même rédaction, même règlement que la cible d'`oto_call` — sous `sub_override`, un
   contexte FastMCP lié à l'instance servie, et un **geste propre à l'appel**.
@@ -267,7 +309,8 @@ autre accord : accorder la clé Anthropic ne la donne pas.
 ## L'état (`db/copilot.py`, révision `20261026_1337_copilot`)
 
 `copilot_threads` (messages, file, carte en attente, sortes retenues, actions de page, mode,
-run, rang du prochain appel, verrou), `copilot_undos`, `copilot_spend` et `copilot_attachments`
+run, rang du prochain appel, modèle — révision `20261030_1000_copilot_model` —, verrou),
+`copilot_undos`, `copilot_spend` et `copilot_attachments`
 (révision `20261029_1700_copilot_pieces`). **Purgés à
 30 jours par la maintenance** (`oto-mcp maintenance copilot`, dans `all`, jamais au boot) :
 les conversations sans vie depuis 30 jours (leurs annulations avec), les jours de dépense

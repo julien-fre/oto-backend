@@ -89,6 +89,22 @@ async def boite(sub: str, org_id: Optional[int]) -> Boite:
     return Boite(frozenset(outils), outils, offerts)
 
 
+def a_la_demande(offerts: list[dict]) -> list[dict]:
+    """The core tools for a conversation that loads tools on demand (`palier`): the
+    `classement.CORE_INLINE` ones first, the cache breakpoint on the last of them, then
+    the others with `defer_loading` (the provider refuses a breakpoint on one of those).
+    COPIES: `Boite.offerts` stays as it is for the conversations of the first version."""
+    garde = [{k: v for k, v in o.items() if k != "cache_control"}
+             for o in offerts if o["name"] in classement.CORE_INLINE]
+    differes = [{**{k: v for k, v in o.items() if k != "cache_control"},
+                 "defer_loading": True}
+                for o in offerts if o["name"] not in classement.CORE_INLINE]
+    if not garde:
+        return [dict(o) for o in offerts]
+    garde[-1]["cache_control"] = {"type": "ephemeral"}
+    return [*garde, *differes]
+
+
 @dataclass
 class Issue:
     ok: bool

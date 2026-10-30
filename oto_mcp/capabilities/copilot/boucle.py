@@ -16,8 +16,8 @@ from starlette.concurrency import run_in_threadpool
 
 from ... import geste
 from ...db import copilot as store
-from . import annulation, carte, classement, cle as cles, depense, modele, pieces
-from .outils import Boite, executer
+from . import annulation, carte, classement, cle as cles, depense, modele, palier, pieces
+from .outils import Boite, a_la_demande, executer
 from .texte import FiltreSuite, couper
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,8 @@ def ev(type_: str, **champs) -> dict:
 
 async def sauver(fil: dict) -> None:
     await run_in_threadpool(store.enregistrer, fil["id"], {
-        k: fil[k] for k in (*store.CHAMPS_JSON, "project_id", "run_id", "model_calls", "mode")})
+        k: fil[k] for k in (*store.CHAMPS_JSON, "project_id", "run_id", "model_calls", "mode",
+                            *(("model",) if fil.get("model") else ()))})
 
 
 def regler_interrompus(fil: dict, raison: str) -> None:
@@ -183,7 +184,8 @@ async def drainer(fil: dict, b: Boite, etat: dict) -> AsyncIterator[dict]:
 def _outils_du_modele(fil: dict, b: Boite) -> list[dict]:
     serveur = {o["name"] for o in b.offerts}
     clients = [t for t in fil.get("client_tools") or [] if t.get("name") not in serveur]
-    return [*b.offerts, *clients]
+    coeur = a_la_demande(b.offerts) if palier.outils_a_la_demande(fil) else b.offerts
+    return [*coeur, *clients]
 
 
 async def _un_appel(fil: dict, b: Boite, cle: cles.Cle, sortie: dict) -> AsyncIterator[dict]:
@@ -193,8 +195,9 @@ async def _un_appel(fil: dict, b: Boite, cle: cles.Cle, sortie: dict) -> AsyncIt
         raise cles.SansCle(depense.CODE, depense.message_de_refus(), 429)
     rang = int(fil.get("model_calls") or 0) + 1
     uid = cles.uid_du_tour(fil["id"], rang)
+    nom = palier.modele_du_fil(fil)
     await run_in_threadpool(cles.reserver, cle, uid, fil["sub"], fil["org_id"],
-                            modele.MODELE, modele.MAX_TOKENS)
+                            nom, modele.MAX_TOKENS)
     fil["model_calls"] = rang
     await sauver(fil)
     tampon: list[dict] = []
@@ -205,7 +208,7 @@ async def _un_appel(fil: dict, b: Boite, cle: cles.Cle, sortie: dict) -> AsyncIt
     # content, presigned once per leg (`_pieces`, never stored), earlier ones as a line.
     envoyes = await run_in_threadpool(pieces.resoudre, fil["messages"], fil["sub"],
                                       fil["org_id"], fil.setdefault("_pieces", {}))
-    corps = modele.corps_de_requete(fil["system"], _outils_du_modele(fil, b), envoyes)
+    corps = modele.corps_de_requete(fil["system"], _outils_du_modele(fil, b), envoyes, nom)
     try:
         async for quoi, val in modele.flux(cle.secret, cle.workspace, corps, releve=releve):
             rien_recu = False
@@ -225,7 +228,7 @@ async def _un_appel(fil: dict, b: Boite, cle: cles.Cle, sortie: dict) -> AsyncIt
         while tampon:
             yield tampon.pop(0)
         await run_in_threadpool(cles.regler, cle, uid, fil["sub"], fil["org_id"],
-                                modele.MODELE, (sortie.get("message") or {}).get("usage") or {},
+                                nom, (sortie.get("message") or {}).get("usage") or {},
                                 fil["id"])
         regle = True
     except modele.ErreurModele as e:
@@ -237,16 +240,23 @@ async def _un_appel(fil: dict, b: Boite, cle: cles.Cle, sortie: dict) -> AsyncIt
     finally:
         # The daily ceiling counts what the provider reported, the call finished or cut.
         with anyio.CancelScope(shield=True):
-            await run_in_threadpool(_noter_depense, fil, releve.get("usage") or {})
+            await run_in_threadpool(_noter_depense, fil, nom, releve.get("usage") or {})
             if not regle:
                 await run_in_threadpool(cles.clore, cle, uid)
 
 
-def _noter_depense(fil: dict, usage: dict) -> None:
-    """Adds one call to the person's spend of the day. Logged, never raised: the call
-    has happened, and its answer must not be lost to a failed counter."""
+def _noter_depense(fil: dict, nom: str, usage: dict) -> None:
+    """Adds one call to the person's spend of the day, and says what it used — the four
+    token counts by model, the measure of what each model costs. Logged, never raised:
+    the call has happened, and its answer must not be lost to a failed counter."""
+    creation = (usage or {}).get("cache_creation") or {}
+    logger.info("copilot : appel au modèle — conversation %s, %s, entrée %s, cache écrit "
+                "%s (1 h : %s), cache lu %s, sortie %s", fil["id"], nom,
+                usage.get("input_tokens"), usage.get("cache_creation_input_tokens"),
+                creation.get("ephemeral_1h_input_tokens"),
+                usage.get("cache_read_input_tokens"), usage.get("output_tokens"))
     try:
-        depense.noter(fil["sub"], modele.MODELE, usage)
+        depense.noter(fil["sub"], nom, usage)
     except Exception:
         logger.exception("copilot : dépense de l'appel non comptée (conversation %s, "
                          "jetons %s)", fil["id"], usage)
@@ -261,6 +271,7 @@ async def conduire(fil: dict, b: Boite, cle: cles.Cle) -> AsyncIterator[dict]:
         await sauver(fil)
         return
     if fil["results"]:
+        _compter_les_echecs(fil, etat)
         fil["messages"].append({"role": "user", "content": fil["results"]})
         fil["results"] = []
     for _ in range(MAX_ETAPES):
@@ -280,7 +291,25 @@ async def conduire(fil: dict, b: Boite, cle: cles.Cle) -> AsyncIterator[dict]:
             yield ev("done")
             return
         message = sortie.get("message") or {"content": [], "stop_reason": None}
+        # The stronger model takes the step over, the weaker one's answer dropped: when it
+        # refused, or set out to change an agent, a process, a guide… before saying a word
+        # (words already on screen are kept, and the stronger one takes the next step).
+        if (message.get("stop_reason") == "refusal"
+                or (palier.ecrit_un_lourd(message, b.annotations)
+                    and not palier.a_parle(message))) \
+                and palier.monter(fil, "refus" if message.get("stop_reason") == "refusal"
+                                  else "changement d'automatisation ou de consigne"):
+            await sauver(fil)
+            continue
         fil["messages"].append({"role": "assistant", "content": message["content"]})
+        if palier.ecrit_un_lourd(message, b.annotations) \
+                or palier.touche_une_automatisation(message):
+            palier.monter(fil, "agents, processus ou consignes")
+        if message.get("stop_reason") == "pause_turn":
+            # A server tool (the tool search) paused the turn: the message goes back as
+            # it came, and the model carries on.
+            await sauver(fil)
+            continue
         if message.get("stop_reason") == "refusal":
             await sauver(fil)
             yield ev("error", message="The model declined this request.")
@@ -308,11 +337,24 @@ async def conduire(fil: dict, b: Boite, cle: cles.Cle) -> AsyncIterator[dict]:
         if etat.get("pause"):
             await sauver(fil)
             return
+        _compter_les_echecs(fil, etat)
         fil["messages"].append({"role": "user", "content": fil["results"]})
         fil["results"] = []
         await sauver(fil)
     yield ev("error", message=f"Stopped after {MAX_ETAPES} steps.")
     yield ev("done")
+
+
+def _compter_les_echecs(fil: dict, etat: dict) -> None:
+    """A batch of tool results where nothing worked counts one failure; one that worked
+    resets the count. `palier.ECHECS_DE_SUITE` in a row: the stronger model takes over."""
+    resultats = fil["results"]
+    if resultats and all(r.get("is_error") for r in resultats):
+        etat["echecs"] = int(etat.get("echecs") or 0) + 1
+        if etat["echecs"] >= palier.ECHECS_DE_SUITE:
+            palier.monter(fil, "échecs d'outils répétés")
+    elif resultats:
+        etat["echecs"] = 0
 
 
 def repondre_carte(fil: dict, approval_id: str, approuve: bool,
@@ -328,6 +370,7 @@ def repondre_carte(fil: dict, approval_id: str, approuve: bool,
     if not approuve:
         fil["queue"].pop(0)
         fil["results"].append(_resultat(approval_id, REFUS, True))
+        palier.monter(fil, "carte refusée")
         return None
     if edits:
         avant = bloc.get("input") or {}

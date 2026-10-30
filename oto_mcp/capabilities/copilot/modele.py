@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 URL = "https://api.anthropic.com/v1/messages"
 VERSION = "2023-06-01"
+#: The model of the first version, still the one of a conversation without a model
+#: (`palier.HERITE`); a new one is chosen by `palier`.
 MODELE = "claude-opus-5-5"
 EFFORT = "medium"
 #: Output bound of one call — also what a turn on a re-billed key reserves.
@@ -63,14 +65,24 @@ def _messages_en_cache(messages: list[dict]) -> list[dict]:
     return [*messages[:-1], dernier]
 
 
-def corps_de_requete(system: str, outils: list[dict], messages: list[dict]) -> dict:
+#: The provider's tool search: what loads a tool sent with `defer_loading` when the model
+#: needs it. A server tool — its blocks come back in the message and are replayed as
+#: they came; nothing to run here.
+RECHERCHE_D_OUTILS = {"type": "tool_search_tool_bm25_20251119", "name": "tool_search_tool_bm25"}
+
+
+def corps_de_requete(system: str, outils: list[dict], messages: list[dict],
+                     modele: str = MODELE) -> dict:
     """The request body: prompt caching on the system prompt, on the tools (the
-    breakpoint the caller put on the last core tool) and on the last message (the
-    history, `_messages_en_cache`) — three of the API's four breakpoints —, adaptive
-    thinking with progress notes, effort set explicitly (this model's default is the
-    same, but saying it keeps the request stable across model defaults)."""
+    breakpoint the caller put on the last core tool it sends up front) and on the last
+    message (the history, `_messages_en_cache`) — three of the API's four breakpoints —,
+    adaptive thinking with progress notes, effort set explicitly (it keeps the request
+    stable across model defaults). When a tool is sent with `defer_loading`, the tool
+    search goes first: it is part of the cached prefix, the deferred ones are not."""
+    if any(o.get("defer_loading") for o in outils):
+        outils = [RECHERCHE_D_OUTILS, *outils]
     return {
-        "model": MODELE,
+        "model": modele,
         "max_tokens": MAX_TOKENS,
         "stream": True,
         "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],

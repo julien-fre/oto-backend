@@ -35,7 +35,7 @@ from .._authz import ORG_MEMBER
 from .._types import (AuthzDenied, Capability, DeclaredError, EventStream, ResolvedCtx,
                       RestBinding)
 from ..registry import CAPABILITIES
-from . import annulation, boucle, cle as cles, consigne, depense, dictee, outils, pieces
+from . import annulation, boucle, cle as cles, consigne, depense, dictee, outils, palier, pieces
 from .boucle import ev
 
 logger = logging.getLogger(__name__)
@@ -312,7 +312,7 @@ async def _tour(ctx: ResolvedCtx, inp: TurnInput, marques: list[dict]):
             contexte = issue.texte if issue.ok else ""
         thread_id = f"thr_{uuid.uuid4().hex}"
         await run_in_threadpool(store.creer, thread_id, sub, org, projet,
-                                consigne.consigne(contexte))
+                                consigne.consigne(contexte), palier.defaut())
         fil = _fil(await run_in_threadpool(store.lire, thread_id, sub))
         await run_in_threadpool(_ouvrir_run, fil, inp.text)
         await run_in_threadpool(store.enregistrer, thread_id, {"run_id": fil["run_id"]})

@@ -23,16 +23,23 @@ from ._conn import _connect
 
 #: Les colonnes JSON d'une conversation que la boucle réécrit à chaque étape.
 CHAMPS_JSON = ("messages", "queue", "results", "pending", "remembered", "client_tools")
-_CHAMPS_SIMPLES = ("project_id", "run_id", "model_calls", "mode")
+_CHAMPS_SIMPLES = ("project_id", "run_id", "model_calls", "mode", "model")
+
+#: Le modèle qui répond à une conversation (`capabilities/copilot/palier.py`) ; NULL = une
+#: conversation d'avant, qui garde le modèle et les outils de son début. Le même DDL pour
+#: le démarrage (`_init`, sous garde de catalogue) et pour la révision
+#: `20261030_1000_copilot_model`. Nullable sans défaut : écriture de catalogue seule.
+COLONNE_MODELE = "model"
+DDL_COLONNE_MODELE = f"ALTER TABLE copilot_threads ADD COLUMN IF NOT EXISTS {COLONNE_MODELE} TEXT"
 
 
 def creer(thread_id: str, sub: str, org_id: Optional[int], project_id: Optional[int],
-          system: str) -> None:
+          system: str, model: Optional[str] = None) -> None:
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO copilot_threads (id, sub, org_id, project_id, system) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (thread_id, sub, org_id, project_id, system))
+            "INSERT INTO copilot_threads (id, sub, org_id, project_id, system, model) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (thread_id, sub, org_id, project_id, system, model))
 
 
 def lire(thread_id: str, sub: str) -> Optional[dict]:

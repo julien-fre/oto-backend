@@ -13,7 +13,7 @@ import time
 
 import psycopg
 
-from . import (_prerequis, access_shadow, alertes_agents, doc_archivage, index_concurrent, index_releve, journal_calls, journal_jour, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions,
+from . import (_prerequis, access_shadow, alertes_agents, copilot as copilot_store, doc_archivage, index_concurrent, index_releve, journal_calls, journal_jour, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions,
                projects, recipes, revision, runner_fleets, runner_jobs, runner_triggers, rowlock, transcription, user_subscriptions, valeurs_servies)
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
@@ -718,6 +718,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
         conn.execute(journal_calls.DDL_COLONNE_CREDITS_FOURNISSEUR)
     if _colonne_absente(conn, "journal_totaux_jour", journal_jour.COLONNE_CREDITS_FOURNISSEUR):
         conn.execute(journal_jour.DDL_COLONNE_CREDITS_FOURNISSEUR)
+    # Le modèle d'une conversation de l'agent intégré — la même que pose la révision
+    # `20261030_1000_copilot_model` : ordre indifférent entre elles.
+    if _colonne_absente(conn, "copilot_threads", copilot_store.COLONNE_MODELE):
+        conn.execute(copilot_store.DDL_COLONNE_MODELE)
     # Lot 3 Ship 3 : propositions de CRÉATION (doc_id nullable + project_id +
     # emplacement proposé + CHECK). Le CHECK valide sur l'existant (toutes les
     # lignes ont doc_id). Idempotent.

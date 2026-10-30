@@ -29,6 +29,10 @@ CORE_TOOLS = (
     "data_write", "data_update_where", "data_patch_schema", "data_create_datastore",
     "feedback",
 )
+#: Of the core tools, the ones the model always has in front of it. In a conversation that
+#: has a model (`palier`), the others load on demand through the provider's tool search
+#: (`defer_loading`): their definitions are most of what a request carries.
+CORE_INLINE = ("oto_search", "oto_call", "oto_tool_schema", "data_rows", "feedback")
 
 #: Never from the in-app agent, even for a person entitled to them: platform and tenant
 #: administration, raw access, session switches and wipes, the run bookkeeping (the
@@ -177,3 +181,16 @@ def epingler(args: Optional[dict], org: Optional[int], projet: Optional[int],
     if isinstance(out.get("arguments"), dict):
         out["arguments"] = pin(out["arguments"])
     return out
+
+
+def lourd(target: str) -> bool:
+    """A target whose change makes something run, or changes how other agents behave
+    later: the work the stronger model takes over (`palier`)."""
+    return target in _LANCEURS or target in _PILOTES
+
+
+def automatisation(target: str) -> bool:
+    """A target about what runs on its own (agents, schedules, fleets, recipes,
+    functions): even reading one — "why did this agent fail?" — is the stronger model's
+    work (`palier`). Guides and processes are read all the time, not this."""
+    return target in _LANCEURS
