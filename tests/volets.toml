@@ -457,6 +457,7 @@ sources = [
   "oto_mcp/capabilities/runner_*.py",
   "oto_mcp/capabilities/run_thread.py",
   "oto_mcp/capabilities/automation.py",
+  "oto_mcp/capabilities/preset_agents.py",
   "oto_mcp/capabilities/me_abonnements.py",
   "oto_mcp/db/runner_*.py",
   "oto_mcp/db/run_thread.py",
