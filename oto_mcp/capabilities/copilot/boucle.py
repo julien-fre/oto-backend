@@ -30,7 +30,8 @@ ECHEC_ARRETE = "Interrupted: the person sent a new message instead."
 #: To the model, for each tool call its own output cut short: nothing ran, write less.
 COUPE = ("Your output reached its length limit before this call was complete, so it did "
          "not run. Make the change in smaller calls: never resend a long text whole — "
-         "for a doc or a guide, op=patch on one section.")
+         "for an app, `oto_apps` op=patch with only the lines that change (exact find → "
+         "replace); for a doc or a guide, op=patch on one section.")
 #: To the person, when the model was cut again — or mid-answer.
 COUPE_ECHEC = ("The assistant's reply was too long to finish. Ask for a smaller change, or "
                "split it into steps.")

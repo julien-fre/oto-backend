@@ -544,10 +544,14 @@ sources = [
   "oto_mcp/capabilities/apps.py",
   "oto_mcp/capabilities/apps_manifeste.py",
   "oto_mcp/capabilities/apps_appel.py",
+  "oto_mcp/capabilities/apps_html.py",
+  "oto_mcp/capabilities/remplacements.py",
+  "oto_mcp/api/apps_files.py",
   "oto_mcp/db/apps.py",
   "oto_mcp/db/schema/apps.py",
 ]
-tests = ["tests/test_apps*.py", "tests/test_migrate_sub_inventory.py"]
+tests = ["tests/test_apps*.py", "tests/test_remplacements.py",
+         "tests/test_migrate_sub_inventory.py"]
 
 [[volet]]
 nom = "docs et partage"
