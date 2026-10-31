@@ -741,6 +741,10 @@ _REGLAGES: tuple[Variable, ...] = (
              "Le jeton de l'agent de la ferme (1Password « Ferme de Claude — jeton de "
              "l agent »). Même sort que OTO_FERME_URL.",
              ("oto_mcp/ferme.py:45",)),
+    Variable("OTO_RUNNER_MENAGE_S", Classe.REGLAGE, "30",
+             "Intervalle (s) du ménage de la file quand elle est vide ; dès qu'un travail "
+             "est en vue, il passe à chaque sondage.",
+             ("oto_mcp/db/runner_jobs.py:729",)),
     Variable("OTO_RUNNER_TICK_ENABLED", Classe.REGLAGE, "1",
              "Tick du runner d'agents.", ("oto_mcp/runner_tick.py:163",)),
     Variable("OTO_L7_SHADOW", Classe.REGLAGE, "1",
