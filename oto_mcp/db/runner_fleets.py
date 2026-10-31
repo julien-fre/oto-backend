@@ -251,6 +251,22 @@ def campagne_a_servir(org_id: Optional[int],
         return None
 
 
+def une_campagne_vit(org_id: Optional[int]) -> bool:
+    """Reste-t-il une campagne à faire avancer ? `armed`/`running` produisent, `stopping`
+    attend d'être accusée : aucun autre statut n'a de geste au sondage. Sans elle, une
+    file vide n'a pas à payer les quatre requêtes de `_produire_pour_une_campagne`."""
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT EXISTS (SELECT 1 FROM runner_fleets
+                            WHERE (%s::bigint IS NULL OR org_id = %s)
+                              AND status IN ('armed', 'running', 'stopping')) AS vit
+            """,
+            (org_id, org_id),
+        ).fetchone()
+    return bool(row["vit"])
+
+
 def accuser_arrets_effectifs(org_id: Optional[int]) -> list[int]:
     """`stopping` → `stopped` pour les campagnes dont plus AUCUN travail ne tourne.
 

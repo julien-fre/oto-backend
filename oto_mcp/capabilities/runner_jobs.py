@@ -1217,6 +1217,10 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
     temps, ils ne l'augmentent pas.
     """
     try:
+        # Sans campagne vivante, rien de ce qui suit n'a de geste : le sondage à vide
+        # des workers s'arrête ici, en une lecture.
+        if not db.une_campagne_vit(org_id):
+            return None
         # ⚠️ AVANT de servir : arrêter celles qui échouent en boucle. L'ordre
         # compte — une campagne épuisée doit être arrêtée, pas seulement sautée,
         # sinon elle reste `running` sans avancer et son état ment.

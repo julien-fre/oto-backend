@@ -26,7 +26,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import threading
+import time
 from typing import Any, Optional
 
 from .. import runner_models
@@ -713,6 +716,49 @@ def _touch_platform_worker_presence(worker_sub: str, depot: Optional[str],
                 )
 
 
+# L'intervalle du ménage quand la file est vide (`claim_next_job`), par org sondée.
+_MENAGE_S = 30
+_menage_passe: dict[Optional[int], float] = {}
+_menage_verrou = threading.Lock()
+
+
+def _menage_du(org_id: Optional[int]) -> bool:
+    """Le ménage d'une file vide est-il dû ? Le répondre oui l'inscrit : deux workers
+    qui sondent ensemble ne le paient qu'une fois. Par process : c'est une borne de
+    charge, pas une exclusion, le faire deux fois reste sans effet."""
+    intervalle = float(os.environ.get("OTO_RUNNER_MENAGE_S", _MENAGE_S))
+    maintenant = time.monotonic()
+    with _menage_verrou:
+        passe = _menage_passe.get(org_id)
+        if passe is not None and maintenant - passe < intervalle:
+            return False
+        _menage_passe[org_id] = maintenant
+        return True
+
+
+def _du_travail_en_vue(conn, org_id: Optional[int], orgs: Optional[list]) -> bool:
+    """Y a-t-il un travail à prendre, quel que soit le worker ? Une lecture sur
+    `idx_runner_jobs_live`. Elle ne décide pas qui le prend : un `True` mène à la prise,
+    qui garde toutes ses gardes, et un travail réservé à un autre worker ne fait que
+    rendre ce sondage aussi coûteux qu'avant. ⚠️ Mêmes prédicats que la prise sur le
+    statut, le bail et les tentatives : un `False` ici ne doit jamais cacher un travail
+    qu'elle aurait servi."""
+    row = conn.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM runner_jobs rj
+             WHERE (%s::bigint IS NULL OR rj.org_id = %s) AND rj.due_at <= NOW()
+               AND (%s::bigint[] IS NULL OR rj.org_id = ANY(%s::bigint[]))
+               AND rj.status IN ('pending', 'claimed')
+               AND (rj.status = 'pending' OR rj.lease_until < NOW())
+               AND rj.attempts < rj.max_attempts
+        ) AS en_vue
+        """,
+        (org_id, org_id, orgs, orgs),
+    ).fetchone()
+    return bool(row["en_vue"])
+
+
 def claim_next_job(org_id: Optional[int], worker_sub: str,
                    lease_seconds: int = _LEASE_DEFAULT_S,
                    depot: Optional[str] = None,
@@ -815,46 +861,58 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                 """,
                 (org_id, worker_sub),
             )
-        conn.execute(
-            """
-            UPDATE runner_jobs
-               SET status = 'failed', finished_at = NOW(),
-                   last_error = COALESCE(last_error, '') ||
-                                ' [bail expiré, tentatives épuisées]'
-             WHERE (%s::bigint IS NULL OR org_id = %s) AND status = 'claimed'
-               AND lease_until < NOW() AND attempts >= max_attempts
-            """,
-            (org_id, org_id),
-        )
-        # ⚠️ Ce qui a trop attendu PÉRIME, avant d'être servi (12/09/2026). Un
-        # travail déclenché par un webhook porte sa fraîcheur dans sa charge
-        # (`_perime_apres_s`, posé par `enqueue_job`) : au-delà, il ne part plus.
-        #
-        # Sans ça, un lissage devient un ARRIÉRÉ — une rafale retardée se
-        # déverserait le lendemain, et un agent traiterait un événement d'hier
-        # comme s'il venait d'arriver. C'est exactement la faute que les
-        # occurrences programmées ont payée (#814) : « une veille quotidienne
-        # exécutée treize jours plus tard ne rend pas un résultat en retard, elle
-        # rend un résultat FAUX ».
-        #
-        # `expired` et non `failed` : ce travail n'a jamais tourné. Et ici plutôt
-        # que dans une boucle de fond, pour la même raison que les épaves
-        # ci-dessus — le sondage est le seul rendez-vous garanti.
-        conn.execute(
-            """
-            UPDATE runner_jobs
-               SET status = 'expired', finished_at = NOW(),
-                   last_error = 'livraison périmée : le travail a attendu plus '
-                                'longtemps que la fraîcheur déclarée par son '
-                                'déclencheur. Un événement traité trop tard rend '
-                                'un résultat faux, pas un résultat tardif.'
-             WHERE (%s::bigint IS NULL OR org_id = %s) AND status = 'pending'
-               AND payload ? '_perime_apres_s'
-               AND created_at + make_interval(
-                       secs => (payload->>'_perime_apres_s')::int) < NOW()
-            """,
-            (org_id, org_id),
-        )
+        # ⚠️ Le sondage à VIDE ne coûte qu'une lecture (31/10/2026). Douze workers
+        # sondent toutes les 15 s : ~69 000 sondages par jour, presque tous sur une
+        # file vide, payaient chacun le ménage ci-dessous et la grosse prise. Dès
+        # qu'un travail est en vue, RIEN ne change : le ménage passe avant la prise,
+        # et un travail périmé ne peut donc pas partir. À vide, il passe toutes les
+        # `_MENAGE_S` secondes : une épave se constate alors un peu plus tard, sans
+        # que personne n'attende après elle.
+        orgs = [int(o) for o in org_ids] if org_ids else None
+        en_vue = _du_travail_en_vue(conn, org_id, orgs)
+        if en_vue or _menage_du(org_id):
+            conn.execute(
+                """
+                UPDATE runner_jobs
+                   SET status = 'failed', finished_at = NOW(),
+                       last_error = COALESCE(last_error, '') ||
+                                    ' [bail expiré, tentatives épuisées]'
+                 WHERE (%s::bigint IS NULL OR org_id = %s) AND status = 'claimed'
+                   AND lease_until < NOW() AND attempts >= max_attempts
+                """,
+                (org_id, org_id),
+            )
+            # ⚠️ Ce qui a trop attendu PÉRIME, avant d'être servi (12/09/2026). Un
+            # travail déclenché par un webhook porte sa fraîcheur dans sa charge
+            # (`_perime_apres_s`, posé par `enqueue_job`) : au-delà, il ne part plus.
+            #
+            # Sans ça, un lissage devient un ARRIÉRÉ — une rafale retardée se
+            # déverserait le lendemain, et un agent traiterait un événement d'hier
+            # comme s'il venait d'arriver. C'est exactement la faute que les
+            # occurrences programmées ont payée (#814) : « une veille quotidienne
+            # exécutée treize jours plus tard ne rend pas un résultat en retard, elle
+            # rend un résultat FAUX ».
+            #
+            # `expired` et non `failed` : ce travail n'a jamais tourné. Et ici plutôt
+            # que dans une boucle de fond, pour la même raison que les épaves
+            # ci-dessus — le sondage est le seul rendez-vous garanti.
+            conn.execute(
+                """
+                UPDATE runner_jobs
+                   SET status = 'expired', finished_at = NOW(),
+                       last_error = 'livraison périmée : le travail a attendu plus '
+                                    'longtemps que la fraîcheur déclarée par son '
+                                    'déclencheur. Un événement traité trop tard rend '
+                                    'un résultat faux, pas un résultat tardif.'
+                 WHERE (%s::bigint IS NULL OR org_id = %s) AND status = 'pending'
+                   AND payload ? '_perime_apres_s'
+                   AND created_at + make_interval(
+                           secs => (payload->>'_perime_apres_s')::int) < NOW()
+                """,
+                (org_id, org_id),
+            )
+        if not en_vue:
+            return None
         # ⚠️ Un `start` dont le run lié est CLOS se sert SANS run : le worker lit
         # `run_id` absent comme « ouvre un run neuf », et reprendrait sinon un fil
         # clos dont l'historique tient des lignes déjà libérées. La clôture se lit
@@ -865,7 +923,6 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
         # reprise d'un fil), jamais un bail repris sur un run ouvert. La trace
         # (`_CHAMP_PLATEFORME`) s'écrit dans la MÊME écriture que le détachement.
         from .usage import _run_closure
-        orgs = [int(o) for o in org_ids] if org_ids else None
         abonnement = _abonnement_personnel(depot)
         if abonnement:
             # Point de sauvegarde, et non un rollback : la connexion peut être

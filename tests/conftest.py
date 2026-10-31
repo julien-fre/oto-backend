@@ -147,6 +147,9 @@ def _adresse_publique_de_l_instance(monkeypatch: pytest.MonkeyPatch) -> None:
 _BASE_D_ENVIRONNEMENT = {
     "OTO_MCP_PUBLIC_URL": _ADRESSE_DE_GREEMENT,
     "OTO_PROJECT_DOMAIN": "oto.cx",
+    # Le ménage d'une file vide à chaque sondage : les bancs constatent ses effets en
+    # un claim. Son intervalle a son propre banc (`test_claim_sondage_a_vide_db.py`).
+    "OTO_RUNNER_MENAGE_S": "0",
 }
 
 

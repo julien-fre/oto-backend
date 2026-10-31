@@ -68,6 +68,7 @@ def test_la_charge_utile_EMPORTE_l_identifiant_que_la_campagne_garde(monkeypatch
     de son déclarant (`tests/test_campagne_tableau_par_cle_1067.py`) : l'enfilage ne
     résout plus rien par nom, il emporte la clé gardée."""
     enfiles: list[dict] = []
+    monkeypatch.setattr(cap.db, "une_campagne_vit", lambda org: True)
     monkeypatch.setattr(cap.db, "arreter_campagnes_epuisees", lambda org: [])
     monkeypatch.setattr(cap.db, "accuser_arrets_effectifs", lambda org: [])
     monkeypatch.setattr(cap.db, "clore_campagnes_terminees", lambda org: [])

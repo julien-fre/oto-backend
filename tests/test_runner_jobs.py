@@ -85,6 +85,7 @@ def espion(monkeypatch):
     # vraie base, lève, et le fail-open de la production avale l'échec — les
     # bancs de campagne passeraient alors sans rien exercer. Vérifié le
     # 07/09/2026 : lancés seuls ils tombaient, en groupe ils passaient.
+    monkeypatch.setattr(RJ.db, "une_campagne_vit", lambda org_id: True)
     monkeypatch.setattr(RJ.db, "arreter_campagnes_epuisees", lambda org_id: [])
     # ⚠️ MÊME raison, MÊME piège, repayé le 10/09/2026 : `accuser_arrets_effectifs`
     # est entré dans le même chemin (#« un arrêt demandé redevient un arrêt
