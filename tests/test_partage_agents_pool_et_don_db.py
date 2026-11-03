@@ -184,6 +184,32 @@ def test_en_pool_sans_partage_en_ecriture_l_admin_ne_peut_que_l_eteindre(org_ree
                   enabled=False)["trigger"]["enabled"] is False
 
 
+def test_un_editeur_ferme_par_le_forfait_demande_le_deblocage_au_proprietaire(org_reelle):
+    """Hors pool, un partage d'org marqué 0035 fait de lui un éditeur FERMÉ (pause seule).
+    Il peut demander à être nommé éditeur (ce qui prête le forfait) ; le propriétaire
+    seul l'accorde — un admin ne prête rien."""
+    from oto_mcp import db
+    from oto_mcp.capabilities import demandes_acces as D
+    org, _ = org_reelle
+    t = _creer(org, private=True)
+    db.grant_resource("runner_trigger", str(t["id"]), "org", str(org), role="editor",
+                      granted_by=MARQUE_0035)
+    ctx = ResolvedCtx(sub=MEMBRE, org_id=org)
+    cible, cle, demande = D._agent_acces_poser(ctx, D.CreateRequestInput(
+        kind="agent_access", trigger_id=t["id"], role="editor"))
+    assert (cible, cle, demande) == ({"trigger_id": t["id"]}, f"agent_access:{t['id']}",
+                                     {"role": "editor"})
+    d = {"org_id": org, "cible": cible, "requester_sub": MEMBRE}
+    assert D._agent_gouverne(PROPRIO, d) is True
+    assert D._agent_gouverne(ADMIN, d) is False, "un partage d'admin ne prêterait rien"
+    # Un éditeur qui PEUT écrire n'a rien à demander.
+    _appel(org, op="share", trigger_id=t["id"], share_with_sub=MEMBRE, role="editor")
+    with pytest.raises(AuthzDenied) as e:
+        D._agent_acces_poser(ctx, D.CreateRequestInput(
+            kind="agent_access", trigger_id=t["id"], role="editor"))
+    assert e.value.code == "already_has_access" or e.value.status == 409
+
+
 # ── 2. hors pool : la règle du prêt ─────────────────────────────────────────────────
 @pytest.mark.parametrize("mode", [None, "personnel"])
 def test_hors_pool_le_partage_du_proprietaire_sans_pret_ne_donne_que_la_pause(org_reelle,
