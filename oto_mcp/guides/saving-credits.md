@@ -61,6 +61,9 @@ Read the rates before suggesting any of these; a rate that is already tiny is no
   (people at each company…). Reach for one whenever a process pulls many rows from a connector into a
   table, or an agent's loop is just "call, copy, call, copy". Sample and test first (`op=sample`,
   `op=test` are one cheap page), then publish and run; a run reports counts, not rows.
+  The guide `save-tokens` holds the full decision table — recipes, Jev for qualifying rows,
+  `data_aggregate` for counts, bulk edits, `*_push_rows` — read it before proposing a change to any
+  process that loops over rows.
 - **Fewer, bigger calls.** Bulk tools take many items in one call; a loop of single calls bills the
   same items but costs far more model turns (see the guides `bulk-load` and `work-queue`).
 
@@ -111,3 +114,9 @@ You can change agents, but every change goes through an approval the person answ
 Never invent a cause the figures do not show. If the spend is simply the work the person asked for,
 say so: "this is what it costs to do what you set up" is a complete answer, and adding credits
 (`show_credits`) is a fair next step.
+
+## Related guides
+
+`save-tokens` (let the server do the bulk work), `recipes` (writing and running one), `processes`
+(how a process and its agent are set up), `included-tools` (what runs on Tulina's keys, and so on
+credits, versus the person's own login).
