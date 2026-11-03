@@ -496,6 +496,15 @@ _REGLAGES: tuple[Variable, ...] = (
              "sans écriture est mise de côté (`abandon_reason`, statut inchangé). "
              "Illisible (pas un entier ≥ 1), la réservation LÈVE.",
              ("oto_mcp/db/rowabandon.py:67",)),
+    Variable("OTO_ORG_CREATED_HOOK_URL", Classe.REGLAGE, "",
+             "Adresse appelée en POST quand une org est créée (`{org_id}` y est remplacé) : "
+             "un service externe pose ainsi les droits de l'org tout de suite plutôt qu'à son "
+             "prochain passage. Vide = pas de crochet. Voir `org_created_hook.py`.",
+             ("oto_mcp/org_created_hook.py:43",)),
+    Variable("OTO_ORG_CREATED_HOOK_TOKEN", Classe.REGLAGE, "",
+             "Secret envoyé en `Authorization: Bearer` au crochet de création d'org. Vide = "
+             "pas de crochet (jamais d'appel de service sans secret).",
+             ("oto_mcp/org_created_hook.py:44",)),
     Variable("OTO_MCP_UNIPILE_DEFAULT_LIMIT", Classe.REGLAGE, "5",
              "Plafond par défaut de comptes hébergés (clé plateforme) par org, quand "
              "l'org ne pose pas le sien (`orgs.unipile_account_limit`) : garde contre "

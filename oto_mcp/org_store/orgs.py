@@ -19,6 +19,7 @@ from ..db import _connect
 from ..db.billing import ABONNEMENT_QUI_PRELEVE
 from ..db.tenants import TenantDesactive, tenant_desactive_de_l_org
 from ..tenancy import primary_slug
+from .. import org_created_hook
 
 _log = logging.getLogger(__name__)
 
@@ -75,7 +76,9 @@ def create_org(name: str, created_by: Optional[str] = None,
             (name, created_by, front_base_url or None, front_brand or None,
              tenant_slug),
         ).fetchone()
-        return int(row["id"])
+        org_id = int(row["id"])
+    org_created_hook.notify(org_id, tenant_slug)  # après le commit : le service rappelle l'API
+    return org_id
 
 
 def org_front(org_id: Optional[int]) -> tuple[Optional[str], Optional[str]]:
