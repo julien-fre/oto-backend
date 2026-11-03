@@ -404,11 +404,17 @@ sources = [
   "oto_mcp/api/copilot.py",
   "oto_mcp/db/copilot.py",
   "oto_mcp/db/schema/copilot.py",
+  # The same agent answering in Slack (`@<app>`, its buttons): it drives `routes._tour`.
+  "oto_mcp/slack_copilot.py",
 ]
 tests = [
   "tests/capabilities/copilot/test_*.py",
   "tests/test_migration_20261026_copilot.py",
   "tests/test_migration_20261029_copilot_pieces.py",
+  "tests/test_migration_20261030_copilot_model.py",
+  "tests/test_migration_20261103_copilot_slack.py",
+  "tests/test_slack_copilot.py",
+  "tests/test_slack_copilot_store.py",
 ]
 
 [[volet]]
