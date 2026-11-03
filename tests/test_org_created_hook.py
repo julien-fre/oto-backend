@@ -70,6 +70,7 @@ def test_une_erreur_reseau_est_avalee(monkeypatch):
 
 def test_create_org_previent_apres_l_insert(monkeypatch):
     """L'écrivain unique appelle le crochet avec l'id qu'il vient de créer."""
+    from oto_mcp import org_store
     from oto_mcp.org_store import orgs
 
     seen = []
@@ -88,7 +89,7 @@ def test_create_org_previent_apres_l_insert(monkeypatch):
         def __exit__(self, *a):
             return False
 
-    monkeypatch.setattr(orgs, "_connect", lambda: Conn())
+    monkeypatch.setattr(org_store, "_connect", lambda: Conn())
     monkeypatch.setattr(orgs.config, "front_for", lambda x: (None, None))
     monkeypatch.setattr(orgs.config, "tenant_slug_for", lambda x: "primary")
     assert orgs.create_org("Acme", created_by="sub1") == 99

@@ -149,6 +149,7 @@ chemins = [
   "oto_mcp/auth/token_scopes.py",
   "oto_mcp/middleware/**",
   "oto_mcp/org_store/**",
+  "oto_mcp/org_created_hook.py",
   "oto_mcp/credentials_store.py",
   "oto_mcp/anthropic_cle.py",
   "oto_mcp/cles_plateforme_format.py",
