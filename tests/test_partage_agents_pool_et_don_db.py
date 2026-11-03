@@ -144,9 +144,10 @@ def test_en_pool_un_partage_d_admin_REPOSE_sur_celui_du_proprietaire_le_ferme(or
 
 
 @pytest.mark.parametrize("marque", [MARQUE_0035, "reglage:partage_par_defaut"])
-def test_en_pool_un_partage_MARQUE_n_ouvre_pas_l_ecriture(org_reelle, marque):
-    """Ni la révision 0035 (partage `editor` à l'org des agents d'avant), ni le réglage
-    `partage_par_defaut` : aucun n'est un geste du propriétaire."""
+def test_en_pool_un_partage_d_org_pose_d_avance_ouvre_l_ecriture(org_reelle, marque):
+    """La révision 0035 (partage `editor` à l'org des agents d'avant) et le réglage
+    `partage_par_defaut` sont des partages que l'ORG a posés d'avance : en pool, ils
+    ouvrent l'écriture comme celui du propriétaire (aucun forfait n'est en jeu)."""
     from oto_mcp import db
     assert marque.startswith("reglage:") is (marque == db.MARQUE_PARTAGE_PAR_DEFAUT)
     org, _ = org_reelle
@@ -155,9 +156,19 @@ def test_en_pool_un_partage_MARQUE_n_ouvre_pas_l_ecriture(org_reelle, marque):
     db.grant_resource("runner_trigger", str(t["id"]), "org", str(org), role="editor",
                       granted_by=marque)
     vu = _appel(org, sub=MEMBRE, op="get", trigger_id=t["id"])["trigger"]
+    assert (vu["my_access"], vu["can_edit"]) == ("editor", True)
+
+
+@pytest.mark.parametrize("marque", [MARQUE_0035, "reglage:partage_par_defaut"])
+def test_hors_pool_un_partage_d_org_pose_d_avance_n_ouvre_rien(org_reelle, marque):
+    """Hors pool, le forfait du propriétaire est en jeu : seul son consentement compte."""
+    from oto_mcp import db
+    org, _ = org_reelle
+    t = _creer(org, private=True)
+    db.grant_resource("runner_trigger", str(t["id"]), "org", str(org), role="editor",
+                      granted_by=marque)
+    vu = _appel(org, sub=MEMBRE, op="get", trigger_id=t["id"])["trigger"]
     assert (vu["my_access"], vu["can_edit"]) == ("editor", False)
-    assert _refus(org, MEMBRE, op="update", trigger_id=t["id"],
-                  input="x").code == "subscription_personal_only"
     assert db.forfaits_pretes([t["id"]], MEMBRE) == set()
 
 
@@ -208,6 +219,13 @@ def test_en_pool_le_partage_du_PROPRIETAIRE_ferme_les_outils_plateforme(org_reel
                       granted_by=ADMIN)
     assert db.outils_plateforme_du_travail(travail()) == liste, (
         "un partage d'admin n'ouvre pas l'écriture : la liste reste ouverte")
+    db.grant_resource("runner_trigger", str(t["id"]), "org", str(org), role="editor",
+                      granted_by=MARQUE_0035)
+    assert db.outils_plateforme_du_travail(travail()) == [], (
+        "pool + partage d'org posé d'avance : il ouvre l'écriture, la liste se ferme")
+    db.grant_resource("runner_trigger", str(t["id"]), "org", str(org), role="editor",
+                      granted_by=ADMIN)
+    assert db.outils_plateforme_du_travail(travail()) == liste, "reposé par l'admin : rouverte"
     db.grant_resource("runner_trigger", str(t["id"]), "org", str(org), role="editor",
                       granted_by=PROPRIO)
     assert db.outils_plateforme_du_travail(travail()) == [], "pool + partage du propriétaire"
