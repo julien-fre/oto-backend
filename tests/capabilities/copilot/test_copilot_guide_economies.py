@@ -27,5 +27,5 @@ def test_la_consigne_renvoie_au_guide_et_aux_deux_mesures():
 
 def test_le_guide_mesure_avant_de_conseiller_et_demande_l_accord():
     texte = GUIDE.read_text(encoding="utf-8")
-    for exigence in ("usage_report", "credit_rates", "approval", "one** change"):
+    for exigence in ("usage_report", "credit_rates", "approval", "one** change", "oto_recipe", "max_units"):
         assert exigence in texte

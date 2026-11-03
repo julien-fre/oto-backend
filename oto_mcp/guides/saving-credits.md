@@ -52,6 +52,15 @@ Read the rates before suggesting any of these; a rate that is already tiny is no
   when the page resists, since actors bill the real run cost.
 - **Do not pay twice for what the workspace already has.** Check the table or the CRM for the
   person or company before calling a paid tool, and dedupe a list before enriching it.
+- **Use a recipe for bulk reads — the biggest saving of this section.** `oto_recipe` moves the
+  results of a read-only connector tool into a table on the server: the model never reads or retypes
+  the rows, so a list of 500 companies costs the provider's own price and **no model turns at all**
+  (an agent doing the same row by row pays a turn for every few rows). A recipe pages through the
+  results itself, maps each field to a column, skips rows already there, and stops at a hard
+  `limits.max_units` cap, so the spend is bounded before it starts. `for_each` fans out over a table
+  (people at each company…). Reach for one whenever a process pulls many rows from a connector into a
+  table, or an agent's loop is just "call, copy, call, copy". Sample and test first (`op=sample`,
+  `op=test` are one cheap page), then publish and run; a run reports counts, not rows.
 - **Fewer, bigger calls.** Bulk tools take many items in one call; a loop of single calls bills the
   same items but costs far more model turns (see the guides `bulk-load` and `work-queue`).
 
@@ -80,6 +89,8 @@ This is where most surprises are: a cheap run, many times.
   running for ever. Set them a little above what a good run needs.
 - **Narrow the tools.** The `tools` allowlist is sent on every turn: exactly the tools the process
   uses, no more. It also keeps the agent from wandering into a paid connector.
+- **Replace a copying loop with a recipe.** If the process mostly moves rows from a connector into
+  a table, the agent should start the recipe and read the receipt, not carry the rows itself.
 - **Smaller context.** Read the columns and rows needed, not the table; pass a reference to a table
   rather than pasting it into the prompt; keep the process short and exact.
 - **Fix what fails first.** Failed and blocked runs still spend. An agent that errors on every run
