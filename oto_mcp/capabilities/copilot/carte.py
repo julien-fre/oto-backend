@@ -30,7 +30,7 @@ _LIBELLES = {
 }
 _VERBES = {"create": "Create", "update": "Update", "patch": "Edit", "delete": "Delete",
            "archive": "Archive", "get": "Read", "list": "List", "search": "Search",
-           "run_now": "Run now", "enable": "Turn on", "disable": "Turn off",
+           "run_now": "Run now", "rerun": "Run again", "enable": "Turn on", "disable": "Turn off",
            "share": "Share", "publish_mcp": "Publish", "move": "Move", "link": "Link",
            "unlink": "Unlink"}
 _NOMS = {"oto_doc": "doc", "oto_procedure": "process", "oto_trigger": "agent",
@@ -112,6 +112,9 @@ def _phrase(target: str, a: dict) -> tuple[str, list, bool]:
         qui = f"agent #{a['trigger_id']}" if a.get("trigger_id") is not None else "the agent"
         if op == "run_now":
             return t(f"Run {qui} now. It acts as you.", ["handoff"])
+        if op == "rerun":
+            return t(f"Run {qui} again with the brief of its run #{a.get('job_id')}. "
+                     "It acts as you.", ["job_id"])
         if op == "update":
             parts = []
             if a.get("enabled") is False:

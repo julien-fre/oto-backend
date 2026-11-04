@@ -52,7 +52,7 @@ _NOM_DESTRUCTEUR = re.compile(
     r"(delete|drop|remove|send|push|post|publish|_act$|unsubscribe|archive|invite|share|"
     r"transfer|grant|token|access|member|role|mfa|secret|webhook)")
 _OP_DESTRUCTRICE = re.compile(
-    r"^(delete|archive|send|publish|publish_mcp|set_public|share|transfer|invite|run_now|"
+    r"^(delete|archive|send|publish|publish_mcp|set_public|share|transfer|invite|run_now|rerun|"
     r"enable|resume|launch|start|push|give|take_over|rotate|connect_source|clear)")
 
 #: Every write of these is a launch: something runs outside the person's screen.

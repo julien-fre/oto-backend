@@ -645,6 +645,178 @@ def test_run_now_refuse_un_second_run_en_attente(agent_lancable, monkeypatch):
     assert not agent_lancable, "rien n'est enfilé"
 
 
+# ── rerun : relancer UN run passé, rangé sous l'agent ─────────────────────────
+
+#: La charge d'un run passé de l'agent 5 : SA procédure, SON instruction datée, SES
+#: outils — pas la configuration d'aujourd'hui (l'agent a changé depuis).
+_CHARGE_D_ORIGINE = {
+    "procedure": "veille-linkedin-v1", "project_id": 12, "tools": ["data_write", "serper_search"],
+    "input": "Read the procedure `veille-linkedin-v1` … (occurrence of 2026-11-03 06:05)",
+    "label": "à la demande — veille-linkedin-v1", "trigger_id": 5,
+    "model": "claude-sonnet-5", "model_family": "anthropic",
+    "_plateforme": {"forfait": "x"}, "_perime_apres_s": 3600,
+    "_chaine": {"parent_job": 1, "root_job": 1, "depth": 1},
+}
+
+
+@pytest.fixture
+def run_relancable(agent_lancable, monkeypatch):
+    """Le travail 30, un run FINI de l'agent 5 ; aucune relance de lui en vol. Le banc
+    d'`agent_lancable` capture ce qui est enfilé — par le VRAI `enqueue_job` pour ce qui
+    est des champs retirés, d'où la doublure qui les retire comme lui."""
+    travaux = {30: {"id": 30, "kind": "start", "status": "failed", "sub": "membre",
+                    "payload": dict(_CHARGE_D_ORIGINE)}}
+    monkeypatch.setattr(RT.db, "get_job", lambda j, o: travaux.get(j) if o == 2 else None)
+    monkeypatch.setattr(RT.db, "relances_en_vol", lambda j, t, o: 0)
+    monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: _declencheur(
+        id=i, enabled=False, sub="membre", procedure="veille-linkedin-v2",
+        tools=["data_write"], model="claude-sonnet-5"))
+    vus = {}
+    monkeypatch.setattr(RT.procedure_retiree, "archivee",
+                        lambda org, sub, slug: vus.setdefault("archivee", slug) and None)
+    agent_lancable["_vus"] = vus
+    return travaux
+
+
+def test_rerun_rejoue_la_charge_d_origine_sous_l_agent_au_nom_de_l_appelant(run_relancable,
+                                                                           agent_lancable):
+    out = _appel(_ctx(sub="alexis"), op="rerun", trigger_id=5, job_id=30)
+    assert out["ok"] is True and out["job"]["id"] == 41 and out["rerun_of"] == 30
+    assert out["trigger"]["id"] == 5
+    assert agent_lancable["sub"] == "alexis", "un run relancé tourne au nom de l'appelant"
+    charge = agent_lancable["payload"]
+    assert charge["trigger_id"] == 5, "la relance se range sous l'agent"
+    assert charge["rerun_of"] == 30
+    assert charge["procedure"] == "veille-linkedin-v1", "la procédure du run, pas de l'agent"
+    assert charge["tools"] == ["data_write", "serper_search"]
+    assert charge["input"] == _CHARGE_D_ORIGINE["input"], "la même instruction, à l'octet"
+    assert charge["project_id"] == 12
+    assert charge["model"] == "claude-sonnet-5" and charge["model_family"] == "anthropic"
+    assert agent_lancable["_vus"]["archivee"] == "veille-linkedin-v1", \
+        "l'archivage se juge sur la procédure qui va tourner"
+
+
+def test_rerun_ne_porte_aucun_champ_du_serveur_d_origine(run_relancable, agent_lancable,
+                                                          monkeypatch):
+    """Le VRAI `enqueue_job` retire `_plateforme`, `_perime_apres_s` et la lignée : une
+    relance n'hérite ni de la réservation ni de la chaîne de l'origine."""
+    from oto_mcp.db import runner_jobs as RJ
+    vu = {}
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params):
+            vu["payload"] = params
+            return types.SimpleNamespace(
+                fetchone=lambda: {"id": 41, "status": "pending", "due_at": "x"})
+    monkeypatch.setattr(RJ, "_connect", lambda: _Conn())
+    monkeypatch.setattr(RT.db, "enqueue_job", RJ.enqueue_job)
+    _appel(_ctx(sub="alexis"), op="rerun", trigger_id=5, job_id=30)
+    texte = " ".join(str(p) for p in vu["payload"])
+    assert "rerun_of" in texte and "veille-linkedin-v1" in texte
+    for champ in ("_plateforme", "_perime_apres_s", "_chaine"):
+        assert champ not in texte, champ
+
+
+def test_rerun_d_un_run_d_un_autre_agent_est_introuvable(run_relancable, agent_lancable):
+    run_relancable[30]["payload"]["trigger_id"] = 6
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="rerun", trigger_id=5, job_id=30)
+    assert (e.value.status, e.value.code) == (404, "job_not_found")
+    assert not agent_lancable.get("payload")
+
+
+def test_rerun_d_un_travail_inconnu_est_le_meme_404(run_relancable, agent_lancable):
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="rerun", trigger_id=5, job_id=999)
+    assert (e.value.status, e.value.code) == (404, "job_not_found")
+
+
+def test_rerun_refuse_une_reprise_de_fil(run_relancable, agent_lancable):
+    run_relancable[30]["kind"] = "continue"
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="rerun", trigger_id=5, job_id=30)
+    assert e.value.code == "job_not_rerunnable"
+    assert not agent_lancable.get("payload")
+
+
+@pytest.mark.parametrize("statut", ["pending", "held", "claimed"])
+def test_rerun_refuse_un_run_pas_fini(run_relancable, agent_lancable, statut):
+    run_relancable[30]["status"] = statut
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="rerun", trigger_id=5, job_id=30)
+    assert (e.value.status, e.value.code) == (409, "job_not_finished")
+    assert not agent_lancable.get("payload")
+
+
+@pytest.mark.parametrize("statut", ["done", "failed", "expired"])
+def test_rerun_d_un_run_fini(run_relancable, agent_lancable, statut):
+    run_relancable[30]["status"] = statut
+    assert _appel(_ctx(), op="rerun", trigger_id=5, job_id=30)["rerun_of"] == 30
+
+
+def test_rerun_exige_le_droit_de_modifier(run_relancable, agent_lancable, monkeypatch):
+    from oto_mcp.capabilities import _acces_agent
+    monkeypatch.setattr(_acces_agent, "niveaux",
+                        lambda sub, org_id, agents: {int(t["id"]): "viewer" for t in agents})
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="rerun", trigger_id=5, job_id=30)
+    assert e.value.status == 403
+    assert not agent_lancable.get("payload")
+
+
+def test_rerun_refuse_une_relance_deja_en_vol(run_relancable, agent_lancable, monkeypatch):
+    monkeypatch.setattr(RT.db, "relances_en_vol", lambda j, t, o: 1 if (j, t, o) == (30, 5, 2)
+                        else 0)
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="rerun", trigger_id=5, job_id=30)
+    assert (e.value.status, e.value.code) == (409, "rerun_already_queued")
+    assert not agent_lancable.get("payload")
+
+
+def test_rerun_n_est_pas_borne_par_la_file_de_l_agent(run_relancable, agent_lancable,
+                                                      monkeypatch):
+    monkeypatch.setattr(RT.db, "file_du_declencheur",
+                        lambda trigger_id, org_id: {"pending": 3, "held": 0})
+    assert _appel(_ctx(), op="rerun", trigger_id=5, job_id=30)["rerun_of"] == 30
+
+
+def test_rerun_juge_le_modele_du_run_d_origine(run_relancable, agent_lancable):
+    run_relancable[30]["payload"]["model"] = "modele-retire"
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="rerun", trigger_id=5, job_id=30)
+    assert (e.value.status, e.value.code) == (409, "trigger_no_model")
+
+
+def test_rerun_exige_job_id(run_relancable):
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="rerun", trigger_id=5)
+    assert e.value.code == "missing_fields"
+
+
+def test_job_id_hors_rerun_est_refuse():
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="run_now", trigger_id=5, job_id=30)
+    assert e.value.code == "job_id_rerun_only"
+
+
+def test_un_agent_heberge_ne_relance_pas(run_relancable, agent_lancable, monkeypatch):
+    jeton = _depuis_le_travail(monkeypatch)
+    try:
+        with pytest.raises(AuthzDenied) as e:
+            _appel(_ctx(), op="rerun", trigger_id=5, job_id=30)
+    finally:
+        from oto_mcp import verrou_org
+        verrou_org.lever(jeton)
+    assert (e.value.status, e.value.code) == (403, "rerun_human_only")
+    assert not agent_lancable.get("payload")
+
+
 # ── enchaîner : un agent hébergé lance le suivant ─────────────────────────────
 
 def _depuis_le_travail(monkeypatch, job_id=77, charge=None, enfants=(), runs=1,

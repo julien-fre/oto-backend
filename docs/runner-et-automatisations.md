@@ -1734,6 +1734,22 @@ de cet agent qui attend déjà un worker (`pending`) refuse le second : 409
 vaut que pour un `run_now` SANS `handoff` : un run qui reçoit un contexte n'en double
 aucun autre, et les enchaînements sont bornés par la chaîne (ci-dessous).
 
+**`rerun` relance UN run passé de l'agent** (`oto_trigger op=rerun trigger_id=… job_id=…`,
+04/11/2026) : le bouton « Relancer » de l'écran. Il enfilait à la main une copie de la
+charge SANS son `trigger_id` (l'enfilage à la main le refuse, `trigger_id_server_set`) : le
+run partait hors de l'agent, absent de sa file et de son historique. Désormais le serveur
+rejoue la **charge d'origine** — même procédure, même instruction (datée de l'occurrence
+d'origine : c'est CE run qu'on rejoue, pas la configuration d'aujourd'hui), mêmes outils —
+par `runner_jobs.charge_et_modele`, rangée sous l'agent, au nom de l'APPELANT, avec
+`rerun_of` = le travail d'origine dans la charge (`CHAMP_RELANCE` ; le worker l'ignore).
+Mêmes gardes que `run_now` (`_exiger_lancable`), jugées sur la procédure et le modèle de
+la charge d'origine. Seulement un `start` de CET agent (sinon 404 `job_not_found`, sans
+oracle ; un `continue` → `job_not_rerunnable`), fini (`done`/`failed`/`expired`, sinon 409
+`job_not_finished`), sans relance du même travail encore en vol (409
+`rerun_already_queued`) — pas bornée par `run_already_queued`. ⚠️ Un geste de PERSONNE
+(`rerun_human_only`) : la liste d'outils d'origine peut être plus large que celle de
+l'agent aujourd'hui, et un agent hébergé ressusciterait une liste réduite depuis.
+
 **Enchaîner des agents** : un agent hébergé qui a `oto_trigger` dans ses outils appelle
 `run_now` en fin de run pour lancer le suivant, et lui passe son résultat en `handoff`
 (≤ 20 000 caractères). Le run suivant reçoit sa PROPRE instruction, intacte, suivie du
@@ -2180,7 +2196,7 @@ ses connexions. Seuls les agents d'abonnement et la porte du webhook étaient ga
 les admins de l'org, et ceux avec qui il est partagé ; les autres membres ne le voient
 pas (absent de `list`, 404 sur `get`, même 404 qu'un agent inconnu).
 
-| niveau | `get`/`list`/`shares` | corps de livraison (`with_input`) | `update`, allumer/éteindre, `clear_queue`, `run_now` | `delete`, `share`/`unshare`, porte du webhook |
+| niveau | `get`/`list`/`shares` | corps de livraison (`with_input`) | `update`, allumer/éteindre, `clear_queue`, `run_now`, `rerun` | `delete`, `share`/`unshare`, porte du webhook |
 |---|---|---|---|---|
 | `owner`, `admin` | ✓ | ✓ | ✓ | ✓ |
 | `editor` | ✓ | ✓ | ✓ | — |

@@ -114,6 +114,10 @@ class TriggerInput(BaseModel):
                 # bouton « Exécuter maintenant » de l'écran, servi aussi au MCP — la
                 # charge se compose ICI, jamais chez l'appelant (21/10/2026).
                 "run_now",
+                # RELANCER un travail passé de l'agent (`job_id`) : la MÊME charge que ce
+                # run-là, rangée sous l'agent — le bouton « Relancer » de l'écran. Un geste
+                # de personne (04/11/2026).
+                "rerun",
                 # REPRENDRE un agent : un admin d'org en devient le propriétaire —
                 # l'identité au nom de laquelle il agit, et l'abonnement qui le
                 # paie. Verbe séparé d'`update` : le propriétaire n'est pas de la
@@ -178,6 +182,10 @@ class TriggerInput(BaseModel):
         "run_now only: context handed to the run you start — typically your own "
         "result, so the next agent of a chain works from it. Appended to that agent's "
         f"instruction as data, never replacing it (≤ {HANDOFF_MAX} characters)."))
+    #: `rerun` seulement : le travail passé de l'agent qu'on relance.
+    job_id: Optional[int] = Field(default=None, description=(
+        "rerun only: a FINISHED run of this agent (`done`/`failed`/`expired`, a `start` "
+        "job) to run again with the same payload."))
     #: `link` : l'autre bout, le genre, la phrase ; `unlink` : le lien retiré.
     to_trigger_id: Optional[int] = Field(default=None, description=(
         "link only: the agent at the other end — `trigger_id` starts it (`starts`), or "
@@ -663,6 +671,8 @@ class TriggerOut(BaseModel):
     #: `run_now` seulement : le travail enfilé (`id`, `status`, `due_at`). Le run
     #: se lit ensuite dans l'historique de l'agent — l'appel ne l'attend pas.
     job: Optional[dict] = None
+    #: `rerun` seulement : le travail d'origine que ce run relance.
+    rerun_of: Optional[int] = None
     #: Le secret en clair — rendu par `create` d'un webhook et par
     #: `rotate_secret`, et par RIEN D'AUTRE. Il n'est pas stocké : seul son haché
     #: l'est. Perdu, il se remplace ; il ne se relit jamais.
@@ -1432,6 +1442,121 @@ def _avertissements_du_lien(source: dict, genre: str) -> list[dict]:
                         "(`op=update`, `tools=tools+[\"oto_trigger\"]`).")}]
 
 
+
+def _exiger_lancable(ctx: ResolvedCtx, t: dict, procedure: Optional[str],
+                     model: Optional[str]) -> None:
+    """Ce qu'un run lancé À LA MAIN sous l'agent `t` exige avant d'être enfilé — `run_now`
+    et `rerun` : une procédure en service, un modèle du catalogue, un worker qui sert sa
+    famille, la clé de l'org quand elle est exigée.
+
+    ⚠️ Jugé sur la `procedure` et le `model` QUI VONT TOURNER, pas sur ceux de l'agent :
+    `run_now` passe ceux de l'agent (sa charge les recopie), `rerun` ceux du travail
+    d'origine — c'est sa charge qui part (#1502 : un travail ne lit que
+    `payload.procedure`), et sa famille qui route le travail (`claim_next_job`). Juger
+    l'agent d'aujourd'hui laisserait passer un modèle retiré depuis, ou refuser à tort.
+
+    ⚠️ Gardé sur le RUNNER, pas sur `enabled` : un agent en pause se lance à la main —
+    l'essayer avant de l'armer est justement le cas d'usage. Mais sans worker pour le
+    prendre, le travail attendrait pour toujours : même refus qu'à la pose, plutôt
+    qu'un « lancé » qui ne part pas."""
+    if procedure_retiree.archivee(ctx.org_id, t.get("sub"), procedure):
+        raise AuthzDenied(400, "procedure_archived",
+                          f"la procédure `{procedure}` est archivée : "
+                          "l'agent ne la déroule plus.")
+    # Sans famille (aucun modèle, ou un modèle sorti du catalogue) : le MÊME refus que
+    # le tick et le webhook, sur le même motif. `model_required` dirait « déclare un
+    # modèle » à un agent qui en déclare un, retiré depuis.
+    sans_famille = runner_models.motif_sans_famille(model)
+    if sans_famille:
+        raise AuthzDenied(409, "trigger_no_model",
+                          f"{sans_famille}. Déclare un modèle du catalogue "
+                          "(`op=update model=…`, liste : `runner.models`).")
+    famille = runner_models.famille(model)
+    _modele.exige_servi(_modele.exige_un_runner(ctx.org_id), famille)
+    _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
+
+
+#: Les statuts d'un travail qui n'est PAS fini : il attend (`pending`, `held` pour un
+#: agent en pause) ou il tourne (`claimed`). Les autres (`done`, `failed`, `expired`)
+#: se relancent.
+_TRAVAIL_EN_VOL = frozenset({"pending", "held", "claimed"})
+
+
+def _relancer(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
+    """`op=rerun` : relancer UN travail passé de l'agent, rangé sous l'agent.
+
+    Le bouton « Relancer » de l'écran enfilait à la main (`runner.jobs op=enqueue`) une
+    copie de la charge SANS son `trigger_id` — l'enfilage à la main le refuse
+    (`trigger_id_server_set`). Le run partait hors de l'agent : absent de sa file, de son
+    historique, de ses runs comptés. Le serveur le relance ici, sous l'agent.
+
+    ⚠️ **La charge d'ORIGINE, pas la configuration d'aujourd'hui** : relancer, c'est
+    rejouer CE run-là — même procédure (#1502 : un travail ne lit que
+    `payload.procedure`), même instruction (datée de l'occurrence d'origine), même
+    liste d'outils. Puis le chemin d'un enfilage à la main (`runner_jobs.charge_et_modele`) :
+    outils au canonique, famille redéduite, garde d'abonnement sur l'APPELANT. Les champs
+    que le serveur seul écrit (`_plateforme`, `_perime_apres_s`, la lignée) sont retirés
+    par `enqueue_job` : une relance n'est le maillon d'aucune chaîne.
+
+    ⚠️ **Une PERSONNE seule** : la liste d'outils d'origine peut être plus large que celle
+    de l'agent aujourd'hui, et c'est elle que le run exercera (`outils_du_travail`). Sous
+    un jeton de délégation, un agent hébergé ressusciterait ainsi une liste que son
+    propriétaire a réduite depuis — l'élargissement que `tools_human_only` refuse. Un
+    agent hébergé a `run_now`, qui part de la configuration du moment.
+
+    ⚠️ L'identité est l'APPELANT (`ctx.sub`), comme `run_now` : un run lancé à la main
+    tourne en ton nom. Pas bornée par `run_already_queued` (relancer UNE occurrence n'en
+    double aucune autre), mais par ses propres relances : une relance du même travail
+    encore en vol refuse la suivante (`rerun_already_queued`)."""
+    if verrou_org.travail_de_la_requete() is not None:
+        raise AuthzDenied(403, "rerun_human_only",
+                          "op=rerun replays a past run with the tools it had then: a person "
+                          "does it from their own account, never a hosted agent. A hosted "
+                          "agent starts an agent with `op=run_now`.")
+    if inp.job_id is None:
+        raise AuthzDenied(400, "missing_fields", "rerun exige `job_id`")
+    t = db.get_trigger(inp.trigger_id, ctx.org_id)
+    _acces_agent.exiger(ctx, t, _acces_agent.ECRIRE)
+    job = db.get_job(int(inp.job_id), ctx.org_id)
+    charge_d_origine = (job or {}).get("payload") or {}
+    # ⚠️ Comparés en TEXTE : la base les joint ainsi (`t.id::text = payload->>'trigger_id'`).
+    # Un travail d'un autre agent, ou d'une autre org : le même 404, sans oracle.
+    if not job or str(charge_d_origine.get("trigger_id")) != str(t["id"]):
+        raise AuthzDenied(404, "job_not_found",
+                          f"aucun run {inp.job_id} de cet agent dans l'org")
+    if job.get("kind") != "start" or not charge_d_origine.get("procedure"):
+        raise AuthzDenied(400, "job_not_rerunnable",
+                          f"le travail {inp.job_id} est une reprise de fil (`continue`), "
+                          "pas un run de l'agent : relance le run qu'il continue."
+                          if job.get("kind") != "start" else
+                          f"le travail {inp.job_id} ne porte pas de procédure : il ne se "
+                          "relance pas. Lance l'agent (`op=run_now`).")
+    if job.get("status") in _TRAVAIL_EN_VOL:
+        raise AuthzDenied(409, "job_not_finished",
+                          f"le run {inp.job_id} n'est pas fini (`{job.get('status')}`) : "
+                          "il se relance une fois terminé.")
+    _exiger_lancable(ctx, t, charge_d_origine.get("procedure"),
+                     charge_d_origine.get("model"))
+    en_vol = db.relances_en_vol(int(inp.job_id), t["id"], ctx.org_id)
+    if en_vol:
+        raise AuthzDenied(409, "rerun_already_queued",
+                          f"une relance du run {inp.job_id} attend ou tourne encore : "
+                          "suis-la dans l'historique de l'agent.")
+    charge = runner_jobs.charge_et_modele(ctx, runner_jobs.JobsInput(
+        op="enqueue", kind="start",
+        payload={k: v for k, v in charge_d_origine.items() if v is not None}))
+    charge["trigger_id"] = t["id"]
+    charge[db.CHAMP_RELANCE] = int(inp.job_id)
+    exiger_un_lancement_sans_role_plateforme(ctx.org_id, t["id"], ctx.sub)
+    res = db.enqueue_job(ctx.org_id, "start", payload=charge, sub=ctx.sub, chaine=None)
+    logger.info("déclencheur %s (org %s) : run %s RELANCÉ à la demande de %s — job %s",
+                t["id"], ctx.org_id, inp.job_id, ctx.sub, res["id"])
+    return {"ok": True,
+            "job": {"id": res["id"], "status": res["status"], "due_at": str(res["due_at"])},
+            "rerun_of": int(inp.job_id),
+            "trigger": _avec_hook(ctx.org_id, t)}
+
+
 def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     """TOUT le SQL de `runner.triggers`, en synchrone — `_triggers` l'exécute dans le
     threadpool. Rend les déclencheurs SANS leurs avertissements d'outils : ceux-là
@@ -1463,6 +1588,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if inp.handoff is not None and inp.op != "run_now":
         raise AuthzDenied(400, "handoff_run_now_only",
                           "`handoff` ne se passe qu'à `op=run_now`.")
+    if inp.job_id is not None and inp.op != "rerun":
+        raise AuthzDenied(400, "job_id_rerun_only",
+                          "`job_id` ne se passe qu'à `op=rerun`.")
     if inp.platform_tools is not None and inp.op != "update":
         raise AuthzDenied(400, "platform_tools_update_only",
                           "`platform_tools` ne se pose que par `op=update`, sur un agent "
@@ -1773,28 +1901,14 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                 "trigger": _avec_hook(ctx.org_id,
                                       db.get_trigger(inp.trigger_id, ctx.org_id))}
 
+    if inp.op == "rerun":
+        return _relancer(ctx, inp)
+
     if inp.op == "run_now":
-        # ⚠️ Gardé sur le RUNNER, pas sur `enabled` : un agent en pause se lance à
-        # la main — l'essayer avant de l'armer est justement le cas d'usage. Mais
-        # sans worker pour le prendre, le travail attendrait pour toujours : même
-        # refus qu'à la pose, plutôt qu'un « lancé » qui ne part pas.
+        # Gardé sur le RUNNER, pas sur `enabled` (`_exiger_lancable`).
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
         _acces_agent.exiger(ctx, t, _acces_agent.ECRIRE)
-        if procedure_retiree.archivee(ctx.org_id, t.get("sub"), t.get("procedure")):
-            raise AuthzDenied(400, "procedure_archived",
-                              f"la procédure `{t.get('procedure')}` est archivée : "
-                              "l'agent ne la déroule plus.")
-        # Sans famille (aucun modèle, ou un modèle sorti du catalogue) : le MÊME
-        # refus que le tick et le webhook, sur le même motif. `model_required`
-        # dirait « déclare un modèle » à un agent qui en déclare un, retiré depuis.
-        sans_famille = runner_models.motif_sans_famille(t.get("model"))
-        if sans_famille:
-            raise AuthzDenied(409, "trigger_no_model",
-                              f"{sans_famille}. Déclare un modèle du catalogue "
-                              "(`op=update model=…`, liste : `runner.models`).")
-        famille = runner_models.famille(t.get("model"))
-        _modele.exige_servi(_modele.exige_un_runner(ctx.org_id), famille)
-        _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
+        _exiger_lancable(ctx, t, t.get("procedure"), t.get("model"))
         # Un travail de cet agent attend déjà un worker : un second ne partirait pas
         # plus tôt, il doublerait le run. Le prédicat est celui de `clear_queue`.
         # ⚠️ Sans `handoff` seulement : un run qui reçoit un contexte n'en double aucun
@@ -2866,7 +2980,8 @@ CAPABILITIES += [
         errors=(
             DeclaredError(400, "missing_fields",
                           "`create` sans `procedure`/`cron`/`tools`, ou une "
-                          "opération sur une automatisation sans `trigger_id`"),
+                          "opération sur une automatisation sans `trigger_id`, ou "
+                          "`rerun` sans `job_id`"),
             DeclaredError(400, "bulk_unsupported", "`trigger_ids` sur un autre geste qu'`update`"),
             DeclaredError(400, "link_fields_link_only",
                           "`to_trigger_id`/`link_kind`/`condition`/`link_id` hors de "
@@ -2975,6 +3090,22 @@ CAPABILITIES += [
             DeclaredError(409, "trigger_no_model",
                           "`run_now` d'un agent sans modèle, ou au modèle sorti du "
                           "catalogue : le même refus que le tick et le webhook"),
+            DeclaredError(400, "job_id_rerun_only", "`job_id` hors d'`op=rerun`"),
+            DeclaredError(403, "rerun_human_only",
+                          "`rerun` sous le jeton de délégation d'un agent hébergé : la "
+                          "liste d'outils d'origine se rejouerait sans personne"),
+            DeclaredError(404, "job_not_found",
+                          "`rerun` d'un travail inconnu dans l'org, ou qui n'est pas un "
+                          "run de cet agent (même 404, sans oracle)"),
+            DeclaredError(400, "job_not_rerunnable",
+                          "`rerun` d'une reprise de fil (`continue`), ou d'un travail "
+                          "sans procédure"),
+            DeclaredError(409, "job_not_finished",
+                          "`rerun` d'un travail qui attend ou tourne encore "
+                          "(`pending`/`held`/`claimed`)"),
+            DeclaredError(409, "rerun_already_queued",
+                          "`rerun` alors qu'une relance du même travail attend ou tourne "
+                          "encore"),
             DeclaredError(409, "run_already_queued",
                           "`run_now` sans `handoff` alors qu'une exécution de cet "
                           "agent est déjà en file (`pending`)"),
@@ -3083,7 +3214,13 @@ CAPABILITIES += [
             "not wait for the run; refused like `create` when nothing serves the "
             "agent's model, `trigger_no_model` when it declares no catalogued model, "
             "`run_already_queued` while one of its runs still waits for a worker (unless "
-            "you pass a `handoff`). "
+            "you pass a `handoff`) / rerun (`job_id` = a FINISHED run of this agent: "
+            "runs it again with that run's own payload — same procedure, instruction "
+            "and tools, not today's config — filed under the agent like run_now, acting "
+            "as YOU; people only (`rerun_human_only`); `job_not_found` if it is not a "
+            "run of this agent, `job_not_finished` while it waits or runs, "
+            "`rerun_already_queued` while a rerun of it is still live; returns `job` "
+            "and `rerun_of`). "
             "CHAINING: a hosted agent with `oto_trigger` in its tools calls "
             "run_now at the end of its run to start the next agent, passing its result "
             "as `handoff` — the next agent gets it appended to its own instruction, as "

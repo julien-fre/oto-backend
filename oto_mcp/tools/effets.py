@@ -1239,7 +1239,7 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
     "oto_tool_schema": "lire",
     # a trigger launches agents later; connect_source registers a webhook at the sender;
     # take_over/give move an agent's ownership; rotations revoke the previous secret
-    "oto_trigger": {"lire": "list get deliveries shares links graph", "ecrire": "update link", "envoyer": "create run_now share connect_source lend", "detruire": "delete rotate_secret rotate_address clear_queue take_over give unshare disconnect_source unlink unlend default_sharing"},
+    "oto_trigger": {"lire": "list get deliveries shares links graph", "ecrire": "update link", "envoyer": "create run_now rerun share connect_source lend", "detruire": "delete rotate_secret rotate_address clear_queue take_over give unshare disconnect_source unlink unlend default_sharing"},
     "oto_upload_url": {"ecrire": "create update"},
     "oto_use_group": "ecrire",
     "oto_use_org": "ecrire",

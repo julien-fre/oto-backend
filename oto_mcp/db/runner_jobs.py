@@ -130,6 +130,12 @@ _CHAMP_PLATEFORME = "_plateforme"
 #: `_plateforme` : une profondeur fournie par l'appelant désarmerait la borne des chaînes.
 CHAMP_CHAINE = "_chaine"
 
+#: Le travail qu'un travail RELANCE (`runner.triggers op=rerun`) : l'id du travail
+#: d'origine, posé par le serveur. Le worker l'ignore (il lit la charge par `get`, champ
+#: par champ) ; il sert à lire qu'une relance du même travail est encore en vol
+#: (`relances_en_vol`) et à relier les deux dans l'historique de l'agent.
+CHAMP_RELANCE = "rerun_of"
+
 # L'entrée ajoutée à la trace — SQL évalué dans l'UPDATE de la réservation, donc sur
 # les valeurs d'AVANT (`j.run_id`, `j.attempts`). Un run déjà tracé ne l'est pas deux fois.
 _TRACE_RUN_CLOS = f"""
@@ -545,6 +551,28 @@ def files_des_declencheurs(org_id: int, trigger_ids: list[int]) -> dict[int, dic
     lus = {int(r["trigger_id"]): r for r in rows}
     return {i: {cle: lus.get(i, {}).get(cle) or 0
                 for cle in ("pending", "held", "claimed")} for i in ids}
+
+
+def relances_en_vol(job_id: int, trigger_id: int, org_id: int) -> int:
+    """Combien de RELANCES du travail `job_id` (`runner.triggers op=rerun`) attendent ou
+    tournent encore : `pending`, `held` ou `claimed`. `0` est un vrai zéro.
+
+    ⚠️ Lue sur `trigger_id` ET `CHAMP_RELANCE` ensemble : un enfilage à la main peut
+    poser `rerun_of` dans sa charge, jamais `trigger_id` (`trigger_id_server_set`). Le
+    couple n'a donc qu'un écrivain, le serveur — sans lui, un travail enfilé à la main
+    qui nommerait `rerun_of` bloquerait la relance d'un autre."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT COUNT(*)::int AS n
+              FROM runner_jobs
+             WHERE org_id = %s AND status IN ('pending', 'held', 'claimed')
+               AND payload->>'trigger_id' = %s
+               AND payload->>'{CHAMP_RELANCE}' = %s
+            """,
+            (int(org_id), str(int(trigger_id)), str(int(job_id))),
+        ).fetchone()
+    return int(row["n"]) if row else 0
 
 
 def comptage_perime(org_id: int, trigger_id: int) -> dict:
