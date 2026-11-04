@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, timedelta
-from typing import Any, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 
 import requests
 from fastmcp import FastMCP
@@ -35,6 +35,9 @@ from .. import access, file_source
 from ..auth import google as google_oauth
 from ..mcp_errors import McpError
 from .lecture import ACTE, LECTURE
+
+if TYPE_CHECKING:  # the annotation only — never evaluated at runtime
+    from oto.tools.google.youtube import YouTubeClient
 
 _SERVICE = "youtube"
 _HTTP_TIMEOUT = (10, 25)          # under the 45 s of a REST invocation, token included
@@ -105,7 +108,7 @@ def _client_for_user(account: Optional[str] = None):
     return YouTubeClient(creds.token, timeout=_HTTP_TIMEOUT)
 
 
-async def _client(account: Optional[str] = None):
+async def _client(account: Optional[str] = None) -> YouTubeClient:
     try:
         return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
                                       timeout=_TOKEN_TIMEOUT_S)
@@ -201,9 +204,9 @@ def _video(v: dict, full: bool = False) -> dict:
     return {k: v_ for k, v_ in out.items() if v_ is not None}
 
 
-def _comment(c: dict) -> dict:
-    sn = c.get("snippet") or {}
-    return {"id": c.get("id"), "author": sn.get("authorDisplayName"),
+def _comment(cm: dict) -> dict:
+    sn = cm.get("snippet") or {}
+    return {"id": cm.get("id"), "author": sn.get("authorDisplayName"),
             "author_channel_id": (sn.get("authorChannelId") or {}).get("value"),
             "text": sn.get("textDisplay") or sn.get("textOriginal"),
             "likes": sn.get("likeCount"), "published_at": sn.get("publishedAt"),
