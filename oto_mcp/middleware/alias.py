@@ -7,7 +7,7 @@ from fastmcp.server.middleware import Middleware
 from ..mcp_errors import McpError
 from mcp.types import ErrorData
 
-from .. import deprecations, handshake_log, tool_alias
+from .. import deprecations, handshake_log, tool_alias, tool_titles
 from ..auth.hooks import current_user_sub_from_token
 from . import _handshake
 
@@ -90,6 +90,13 @@ class ToolAliasMiddleware(handshake_log.JournalListesMixin, Middleware):
         middleware est le dernier à retoucher la liste (alias dépréciés ajoutés,
         préfixe de tenant appliqué), donc son compte est celui que le client reçoit."""
         tools = self._liste_servie(await call_next(context))
+        try:
+            # Le titre se pose sur le nom SERVI (préfixe de tenant appliqué) : une
+            # exigence de l'annuaire des connecteurs Anthropic, cosmétique ailleurs.
+            tools = tool_titles.avec_titres(tools)
+        except Exception:
+            logger.warning("titres d'outils non posés (fail-open, liste servie)",
+                           exc_info=True)
         handshake_log.log_list("tools/list", context, tools)
         return tools
 

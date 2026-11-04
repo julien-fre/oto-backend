@@ -13,7 +13,7 @@ même règle que les secrets d'org, pose dashboard-only).
 """
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel
 
@@ -108,7 +108,7 @@ class OrgSettingsInput(BaseModel):
     salt: Optional[str] = None               # set/preview
     unmask: Optional[list[str]] = None       # set : champs du plancher laissés en clair
     documents: Optional[bool] = None         # set : servir les documents du service
-    payload: Any = None                      # preview : échantillon réel
+    payload: Optional[Union[dict[str, Any], list[Any]]] = None  # preview : échantillon réel (objet ou liste JSON)
     # model_subscriptions :
     family: Optional[str] = None             # get/set : claude_subscription
     limit_pct: Optional[int] = None          # set : 1..100, null (EXPLICITE) = défaut
