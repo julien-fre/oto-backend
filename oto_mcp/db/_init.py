@@ -1462,6 +1462,14 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # privé mono-membre (NULL = org partagée). Unicité : 1 org perso par user.
     if _colonne_absente(conn, "orgs", "personal_of"):
         conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS personal_of TEXT")
+    # Plus d'org perso (05/11/2026) : `personal_of` n'a plus d'écrivain, il est vidé
+    # par `scripts/retirer_orgs_perso.py`. `auto_created` = l'org posée par
+    # l'inscription d'un compte qui n'en avait aucune (`org_store.ensure_home_org`) :
+    # une org ORDINAIRE, marquée pour céder la place d'active à l'org qu'il rejoint,
+    # être relâchée vide à l'acceptation d'une invitation, et rester hors quota.
+    if _colonne_absente(conn, "orgs", "auto_created"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS auto_created BOOLEAN "
+                     "NOT NULL DEFAULT FALSE")
     # SUSPENSION d'une org (`org_suspension`) : l'org ne peut plus agir — outils,
     # capacités, travaux de fond — et rien de ce qui lui appartient n'est touché.
     # Même forme que `users.suspended_*`. NULL = active.

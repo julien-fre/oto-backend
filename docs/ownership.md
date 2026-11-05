@@ -144,6 +144,38 @@ qu'ils viennent : on croyait qu'ils y vivaient.
 Banc : `tests/test_liste_s_en_tient_a_l_org.py` (base réelle : projets par la face servie,
 tableaux par la liste et par la recherche).
 
+## Plus d'org perso (décision de Julien du 05/11/2026)
+
+> Remplace les deux sections suivantes, gardées pour l'histoire.
+
+Tulina n'a plus d'« espace personnel ». Plus aucune org ne naît avec l'étiquette
+`orgs.personal_of`, et les règles qui l'accompagnaient tombent. L'invariant « tout
+compte a une org active » reste entier (`org_store.ensure_home_org`) :
+
+- **Inscription sans invitation** → une org **ordinaire**, nommée d'après le domaine
+  d'un email pro (sinon d'après la personne), avec le projet « Découverte ». Elle porte
+  `orgs.auto_created`, une marque sans règle à part, lue à trois endroits seulement :
+  elle cède la place d'org active à l'org qu'on rejoint ensuite (`add_org_member`),
+  elle est relâchée vide à l'acceptation d'une invitation (`liberer_perso_vierge`), et
+  elle ne compte pas dans le quota de créations (`count_orgs_created_by`).
+- **La maison** — où se listent un partage fait à la personne et un objet personnel
+  sans org de création (`perso_de_la_liste`, le `sans_org` de `mes_objets_ici`, la
+  maison créée par `maison_de`) — est l'**org active** (`org_store.home_org`). Elle
+  suit la bascule d'org active : c'est voulu.
+- **Plus d'org perso posée à la demande** : un partage nominatif, une procédure
+  personnelle, un nœud hors projet, une app ou un projet donnés à une personne vont
+  dans son org active. La copie d'une procédure partagée va dans l'org active si l'on
+  y est admin, sinon dans la plus ancienne de ses orgs où on l'est, sinon 403
+  `no_writable_org`.
+- **Quitter** : on ne quitte pas sa **dernière** org (409 `last_org`, qui remplace
+  `personal_org`). Retiré de sa dernière org par un admin, ou laissé sans org par un
+  archivage, un compte reçoit aussitôt une org ordinaire neuve.
+- `personal` reste servi (fiche, `oto_list_orgs`, `active_org_is_personal`), toujours
+  à `False`. La colonne `personal_of` et son index restent en base sans écrivain ;
+  `scripts/retirer_orgs_perso.py` (à la main, après déploiement) range les objets sans
+  org de création dans l'org perso qui les listait, marque ces orgs `auto_created`,
+  archive les vides dont le propriétaire a une autre org, puis vide l'étiquette.
+
 ## Une org perso est une org comme une autre (décision d'Alexis du 29/09/2026)
 
 > ⚠️ Resserré le 07/10/2026 (section précédente) : l'org perso ne liste plus les objets

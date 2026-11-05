@@ -151,15 +151,15 @@ def add_org_member(org_id: int, sub: str, org_role: str = "org_member", *,
     (garde `tests/test_journal_membres_145.py`) : le défaut ne sert qu'aux bancs.
 
     Auto-activation de l'org rejointe (`org_members.is_active`, = l'org maison lue
-    par `get_active_org`) : une org **réelle** l'emporte TOUJOURS sur l'org perso
-    silencieuse (ADR 0030/0033 : tout user a une org perso « Mon espace » créée
-    d'office → sans ça, un invité atterrit sur sa perso au lieu de sa boîte). Règle,
-    sur une **nouvelle** adhésion :
+    par `get_active_org`) : une org **choisie** l'emporte sur l'org que l'inscription
+    a posée d'office (`orgs.auto_created`, `org_store.ensure_home_org`) — sans ça, un
+    invité atterrit sur l'org de son inscription au lieu de sa boîte. Règle, sur une
+    **nouvelle** adhésion :
     - aucune org active → la nouvelle devient maison ;
-    - sinon, l'org rejointe est non-perso ET l'active courante est la perso →
-      promotion (la perso cède la place) ;
-    - sinon, l'active courante est SUSPENDUE et l'org rejointe (non-perso) ne
-      l'est pas → promotion aussi (on ne laisse personne sur un mur) ;
+    - sinon, l'org rejointe n'est pas `auto_created` ET l'active courante l'est →
+      promotion (l'org d'inscription cède la place) ;
+    - sinon, l'active courante est SUSPENDUE et l'org rejointe ne l'est pas →
+      promotion aussi (on ne laisse personne sur un mur) ;
     - sinon → non-active (on ne débarque jamais un user d'une maison réelle établie).
     Un **re-ajout** (ligne déjà présente) ne change que le rôle, jamais l'active.
 
@@ -169,10 +169,7 @@ def add_org_member(org_id: int, sub: str, org_role: str = "org_member", *,
     lecture-modification-écriture qui, sous READ COMMITTED, casserait sur deux
     adhésions concurrentes du MÊME sub (deux is_active=TRUE → IntegrityError). On
     sérialise par sub via un verrou advisory transactionnel ; `conn.transaction()`
-    seul ne donne que l'atomicité, pas cette sérialisation. (L'org perso est marquée
-    `personal_of` APRÈS son propre add_org_member — au 1er membre elle est donc vue
-    non-perso, ce qui est sans effet : active=None → elle devient maison de toute
-    façon.)
+    seul ne donne que l'atomicité, pas cette sérialisation.
     """
     upsert_user(sub)
     with _connect() as conn:
@@ -205,7 +202,7 @@ def add_org_member_in(conn, org_id: int, sub: str, org_role: str, *,
     else:
         active = conn.execute(
             """
-            SELECT m.org_id, (o.personal_of IS NOT NULL) AS personal,
+            SELECT m.org_id, o.auto_created AS personal,
                    (o.suspended_at IS NOT NULL) AS suspended
               FROM org_members m JOIN orgs o ON o.id = m.org_id
              WHERE m.sub = %s AND m.is_active
@@ -213,7 +210,7 @@ def add_org_member_in(conn, org_id: int, sub: str, org_role: str, *,
             (sub,),
         ).fetchone()
         jp = conn.execute(
-            "SELECT (personal_of IS NOT NULL) AS p, (suspended_at IS NOT NULL) AS s "
+            "SELECT auto_created AS p, (suspended_at IS NOT NULL) AS s "
             "FROM orgs WHERE id = %s",
             (org_id,),
         ).fetchone()
@@ -226,11 +223,6 @@ def add_org_member_in(conn, org_id: int, sub: str, org_role: str, *,
         cede = active is not None and (
             active["personal"]
             or (active.get("suspended") and not (jp and jp.get("s"))))
-        # L'org perso reste perso quand d'autres membres la rejoignent (décision
-        # d'Alexis du 29/09/2026) : `personal_of` est une ÉTIQUETTE — l'org créée
-        # à l'inscription —, pas un état qui change à l'invitation. Le retirer
-        # ici laissait son propriétaire sans org perso jusqu'au prochain boot,
-        # et ses projets personnels hors de toute liste.
         if active is None:
             make_active = True
         elif not joining_personal and cede:
@@ -335,19 +327,18 @@ def set_active_org(sub: str, org_id: int) -> bool:
 
 
 def list_orgs_for_user(sub: str) -> list[dict]:
-    """Orgs non archivées du compte. `personal` = étiquette d'espace personnel
-    (`personal_of` renseigné), même source que `is_personal_org`, lue dans la même
-    requête : la liste ne fait aucune lecture par org pour la servir (#1216)."""
+    """Orgs non archivées du compte. `personal` est toujours False : Tulina n'a plus
+    d'org perso (05/11/2026), le champ reste servi pour ses lecteurs."""
     with _connect() as conn:
         rows = conn.execute(
             """
             SELECT m.org_id, o.name, o.logo_url, o.domain, m.org_role, m.is_active, m.joined_at,
-                   (o.personal_of IS NOT NULL) AS personal
+                   FALSE AS personal
               FROM org_members m JOIN orgs o ON o.id = m.org_id
              WHERE m.sub = %s AND o.archived_at IS NULL
             UNION ALL
             SELECT s.org_id, o.name, o.logo_url, o.domain, 'org_member', TRUE, s.created_at,
-                   (o.personal_of IS NOT NULL)
+                   FALSE
               FROM org_service_accounts s JOIN orgs o ON o.id = s.org_id
              WHERE s.sub = %s AND o.archived_at IS NULL
              ORDER BY joined_at ASC

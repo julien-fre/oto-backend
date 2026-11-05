@@ -47,7 +47,7 @@ class _MemberConn:
             row = self._existing
         elif "m.is_active" in s:
             row = self._active
-        elif "personal_of IS NOT NULL) AS p" in s and "FROM orgs WHERE id" in s:
+        elif "auto_created AS p" in s and "FROM orgs WHERE id" in s:
             row = self._jp
         else:
             row = None
@@ -137,7 +137,7 @@ def test_readd_only_touches_role(monkeypatch):
 
 
 def test_personal_bootstrap_activates_when_no_membership(monkeypatch):
-    # ensure_personal_org : 1er add sur la perso (encore vue non-perso) sans org active.
+    # ensure_home_org : 1er add sur la perso (encore vue non-perso) sans org active.
     calls = _run_add(monkeypatch, existing=None, active=None, joining_personal=True)
     assert _inserted_active(calls) is True
 
@@ -162,7 +162,7 @@ def test_second_member_joining_a_personal_org_keeps_personal_of(monkeypatch):
 
 
 def test_first_member_bootstrap_does_not_clear_personal_of(monkeypatch):
-    # ensure_personal_org : à la création, jp lit encore False (personal_of pas
+    # ensure_home_org : à la création, jp lit encore False (personal_of pas
     # encore posé sur l'org perso à ce stade — cf. docstring add_org_member).
     calls = _run_add(monkeypatch, existing=None, active=None, joining_personal=False)
     assert not _personal_of_cleared(calls)
