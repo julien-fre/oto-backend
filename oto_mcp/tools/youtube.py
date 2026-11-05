@@ -11,7 +11,8 @@ TOOLS, not arguments:
   video (details), playlists, playlist_items, comments (one video, or the whole channel,
   moderation queue included), replies, analytics, categories — `LECTURE`;
 - `youtube_act` acts: update_video (metadata only, read-merge-write, `dry_run` diff),
-  set_thumbnail, reply, set_moderation, delete_comment, add_to_playlist — `ACTE`.
+  upload_video (a new video, resumable, private by default), set_thumbnail, reply,
+  set_moderation, delete_comment, add_to_playlist — `ACTE`.
 
 **One op, one change**: `set_thumbnail` never touches the title or description and
 `update_video` never touches the thumbnail — an argument that does not belong to the op
@@ -43,12 +44,19 @@ _SERVICE = "youtube"
 _HTTP_TIMEOUT = (10, 25)          # under the 45 s of a REST invocation, token included
 _TOKEN_TIMEOUT_S = 20
 _THUMB_MAX_BYTES = 25 * 1024 * 1024
+#: A video goes through the backend's RAM (file_source loads it whole), within the
+#: 120 s of an MCP tool call: 100 MB, the same ceiling as an audio for transcription.
+_VIDEO_MAX_BYTES = 100 * 1024 * 1024
+_VIDEO_EXT = {"mp4": "video/mp4", "m4v": "video/mp4", "mov": "video/quicktime",
+              "webm": "video/webm", "mkv": "video/x-matroska", "avi": "video/x-msvideo",
+              "mpg": "video/mpeg", "mpeg": "video/mpeg", "wmv": "video/x-ms-wmv",
+              "flv": "video/x-flv", "3gp": "video/3gpp"}
 _DEFAULT_METRICS = ("views,estimatedMinutesWatched,averageViewDuration,"
                     "subscribersGained,subscribersLost,likes,comments")
 
 _OPS = ("accounts", "channel", "videos", "video", "playlists", "playlist_items",
         "comments", "replies", "analytics", "categories")
-_ACT_OPS = ("update_video", "set_thumbnail", "reply", "set_moderation",
+_ACT_OPS = ("update_video", "upload_video", "set_thumbnail", "reply", "set_moderation",
             "delete_comment", "add_to_playlist")
 
 #: The arguments each op uses (besides `op` and `account`). Anything else given = refused.
@@ -68,13 +76,18 @@ _ARGS = {
                      "default_language", "privacy_status", "publish_at", "embeddable",
                      "license", "public_stats_viewable", "made_for_kids",
                      "contains_synthetic_media", "dry_run"},
+    "upload_video": {"video", "title", "description", "tags", "category_id",
+                     "default_language", "privacy_status", "publish_at", "embeddable",
+                     "license", "made_for_kids", "contains_synthetic_media",
+                     "notify_subscribers"},
     "set_thumbnail": {"video_id", "image"},
     "reply": {"comment_id", "text"},
     "set_moderation": {"comment_ids", "moderation_status", "ban_author"},
     "delete_comment": {"comment_id"},
     "add_to_playlist": {"playlist_id", "video_id", "position"},
 }
-_DEFAULTS = {"max_results": None, "order": "time", "dry_run": False, "ban_author": False}
+_DEFAULTS = {"max_results": None, "order": "time", "dry_run": False, "ban_author": False,
+             "notify_subscribers": True}
 
 
 def _bad(msg: str) -> McpError:
@@ -148,6 +161,9 @@ def _api_error(e) -> McpError:
         msg = ("The YouTube API quota of the platform's Google app is used up for today "
                "(it resets at midnight Pacific time) — try again later, and prefer "
                "fewer pages / fewer writes.")
+    elif e.has("uploadLimitExceeded"):
+        msg = ("This channel reached its video upload limit for now (YouTube caps uploads "
+               "per channel, more for unverified channels) — try again tomorrow.")
     elif e.has("uploadRateLimitExceeded"):
         msg = "This channel uploaded too many thumbnails recently — try again later."
     elif e.has("invalidImage", "mediaBodyRequired"):
@@ -231,6 +247,25 @@ def _image_mime(data: bytes, declared: str) -> str:
         return "image/jpeg"
     raise _bad(f"the thumbnail must be a JPEG or PNG image (got {declared or 'unknown'}) "
                "— nothing was uploaded.")
+
+
+def _video_mime(data: bytes, name: str, declared: str) -> str:
+    """The upload's media type: the declared `video/*`, else the file extension, else
+    the container's bytes (ISO MP4/MOV `ftyp`, WebM/MKV EBML), else octet-stream —
+    which Google accepts and sniffs itself. An image, audio, text or PDF is refused."""
+    if (declared or "").startswith("video/"):
+        return declared
+    ext = name.rsplit(".", 1)[-1].lower() if "." in (name or "") else ""
+    if ext in _VIDEO_EXT:
+        return _VIDEO_EXT[ext]
+    if data[4:8] == b"ftyp":
+        return "video/mp4"
+    if data[:4] == b"\x1a\x45\xdf\xa3":
+        return "video/webm"
+    if (declared or "").startswith(("image/", "audio/", "text/")) or data[:4] == b"%PDF":
+        raise _bad(f"this file is not a video (got {declared or name or 'unknown'}) "
+                   "— nothing was uploaded.")
+    return "application/octet-stream"
 
 
 def register(mcp: FastMCP) -> None:
@@ -423,7 +458,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(name="youtube_act", annotations=ACTE)
     async def youtube_act(
-        op: Literal["update_video", "set_thumbnail", "reply", "set_moderation",
+        op: Literal["update_video", "upload_video", "set_thumbnail", "reply", "set_moderation",
                     "delete_comment", "add_to_playlist"],
         video_id: Optional[str] = None,
         title: Optional[str] = None,
@@ -439,6 +474,8 @@ def register(mcp: FastMCP) -> None:
         made_for_kids: Optional[bool] = None,
         contains_synthetic_media: Optional[bool] = None,
         dry_run: bool = False,
+        video: Optional[dict] = None,
+        notify_subscribers: bool = True,
         image: Optional[dict] = None,
         comment_id: Optional[str] = None,
         comment_ids: Optional[list[str]] = None,
@@ -450,7 +487,8 @@ def register(mcp: FastMCP) -> None:
         account: Optional[str] = None,
     ) -> dict:
         """Change things on the connected YouTube channel, as its owner — each op does ONE
-        change; an argument that belongs to another op is refused. ~50 quota units each.
+        change; an argument that belongs to another op is refused. ~50 quota units each
+        (upload_video: its own bucket, 100 a day).
 
         Ops:
         - update_video: change only the metadata fields you pass (title, description,
@@ -461,6 +499,12 @@ def register(mcp: FastMCP) -> None:
           `dry_run=true` returns the exact diff {field: {from, to}} without writing.
           `publish_at` (RFC 3339, e.g. 2026-12-01T09:00:00Z) schedules a PRIVATE video.
           Does NOT change the thumbnail.
+        - upload_video: upload `video` (a file oto can reach, same shapes as `image`;
+          ≤ 100 MB) as a NEW video of the channel, with `title` (required) and the same
+          metadata fields as update_video. PRIVATE unless `privacy_status` says
+          otherwise; `publish_at` schedules it (stays private until then). Publishing it
+          public reaches the audience: confirm with the person first. 100 uploads a day
+          for the whole platform. Then set its thumbnail with set_thumbnail.
         - set_thumbnail: upload `image` as the custom thumbnail of `video_id` — JPEG or
           PNG, 1280×720 recommended, the channel must be verified. `image` is a file
           oto can reach: {"kind": "project_file", "project_id", "file_id"},
@@ -476,7 +520,8 @@ def register(mcp: FastMCP) -> None:
         Args:
             op: what to change.
             video_id: the video (update_video, set_thumbnail, add_to_playlist).
-            title: new title, ≤ 100 characters (update_video).
+            video: the video file reference, ≤ 100 MB (upload_video).
+            title: (new) title, ≤ 100 characters (update_video, upload_video).
             description: new description, ≤ 5,000 bytes (update_video).
             tags: the full new tag list — replaces the current one (update_video).
             category_id: from youtube op=categories (update_video).
@@ -489,6 +534,8 @@ def register(mcp: FastMCP) -> None:
             made_for_kids: self-declared made for kids (update_video).
             contains_synthetic_media: altered or synthetic content disclosure (update_video).
             dry_run: return the diff without writing (update_video).
+            notify_subscribers: notify subscribers of the new video, default true —
+                only matters once it is public (upload_video).
             image: the thumbnail file reference (set_thumbnail).
             comment_id: the comment (reply, delete_comment).
             comment_ids: comments to moderate (set_moderation).
@@ -508,7 +555,8 @@ def register(mcp: FastMCP) -> None:
                       public_stats_viewable=public_stats_viewable,
                       made_for_kids=made_for_kids,
                       contains_synthetic_media=contains_synthetic_media)
-        _check_args(op, dict(video_id=video_id, dry_run=dry_run, image=image,
+        _check_args(op, dict(video_id=video_id, dry_run=dry_run, image=image, video=video,
+                             notify_subscribers=notify_subscribers,
                              comment_id=comment_id, comment_ids=comment_ids, text=text,
                              moderation_status=moderation_status, ban_author=ban_author,
                              playlist_id=playlist_id, position=position, **fields))
@@ -526,6 +574,27 @@ def register(mcp: FastMCP) -> None:
             elif "video" in out:
                 res["video"] = _video(out["video"], full=True)
             return res
+
+        if op == "upload_video":
+            src = _need(video, "video", op)
+            name = _need(title, "title", op)
+            try:
+                rf = await asyncio.to_thread(file_source.resolve, src,
+                                             max_bytes=_VIDEO_MAX_BYTES)
+            except file_source.FileSourceError as e:
+                raise _bad(f"the video file cannot be read: {e} — nothing was uploaded "
+                           f"(at most {_VIDEO_MAX_BYTES // (1024 * 1024)} MB through oto).")
+            mime = _video_mime(rf.data, rf.filename, rf.mime)
+            meta = {k: v for k, v in fields.items() if k != "public_stats_viewable"}
+            meta.update(title=name, privacy_status=privacy_status or "private",
+                        category_id=category_id or "22", made_for_kids=bool(made_for_kids))
+            c = await _client(account)
+            created = await _run(lambda: c.upload_video(
+                rf.data, mime, notify_subscribers=notify_subscribers, **meta))
+            return {"video_id": created.get("id"), "uploaded": True, "bytes": len(rf.data),
+                    "video": _video(created, full=True),
+                    "note": "YouTube is processing it; set the thumbnail with "
+                            "op=set_thumbnail once it shows in op=videos."}
 
         if op == "set_thumbnail":
             vid = _need(video_id, "video_id", op)

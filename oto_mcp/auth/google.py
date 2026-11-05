@@ -117,9 +117,9 @@ SERVICE_SCOPES: dict[str, tuple[str, ...]] = {
     "google_ads": ("https://www.googleapis.com/auth/adwords",),
     # YouTube (SENSITIVE, not restricted). `youtube.force-ssl` is the only scope that
     # covers comments (`comments.insert`, `setModerationStatus`) as well as
-    # `videos.update` and `thumbnails.set`; Analytics `reports.query` requires
-    # `youtube.readonly` plus `yt-analytics.readonly`. Video upload (`youtube.upload`)
-    # is not asked for: no tool uploads a video.
+    # `videos.update`, `thumbnails.set` and video upload (`videos.insert` accepts it,
+    # so `youtube.upload` is never asked for); Analytics `reports.query` requires
+    # `youtube.readonly` plus `yt-analytics.readonly`.
     "youtube": ("https://www.googleapis.com/auth/youtube.force-ssl",
                 "https://www.googleapis.com/auth/youtube.readonly",
                 "https://www.googleapis.com/auth/yt-analytics.readonly"),

@@ -28,7 +28,7 @@ DESCRIPTION = (
     "YouTube Studio, on your Google account: list your channel's videos with their "
     "privacy, schedule and stats, read comments and the moderation queue, playlists, "
     "and YouTube Analytics reports (views, watch time, subscribers, traffic sources). "
-    "Edit a video's title, description, tags, privacy or schedule (with a dry-run "
-    "diff), set its custom thumbnail, reply to and moderate comments, add videos to "
-    "playlists. Video upload is not included."
+    "Upload a new video (private by default, up to 100 MB), edit a video's title, "
+    "description, tags, privacy or schedule (with a dry-run diff), set its custom "
+    "thumbnail, reply to and moderate comments, add videos to playlists."
 )
