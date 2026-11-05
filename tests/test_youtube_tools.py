@@ -226,3 +226,90 @@ def test_refus_nommes(google, body, attendu):
     google.handler = lambda r: (body["error"]["code"], body)
     with pytest.raises(McpError, match=attendu):
         _tool("youtube")(op="channel")
+
+
+# --- upload_video -------------------------------------------------------------------
+
+MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64
+
+
+def _resolve(monkeypatch, data, name="clip.bin", mime="application/octet-stream"):
+    from oto_mcp import file_source
+    from oto_mcp.tools import youtube as T
+
+    seen = {}
+
+    def fake(src, max_bytes=0):
+        seen["max_bytes"] = max_bytes
+        return file_source.ResolvedFile(data, name, mime)
+    monkeypatch.setattr(T.file_source, "resolve", fake)
+    return seen
+
+
+def test_upload_video_prive_par_defaut_et_reprenable(google, monkeypatch):
+    seen = _resolve(monkeypatch, MP4)
+    session = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=s1"
+
+    def h(r):
+        if r.method == "POST":
+            return 200, {}
+        return 201, {"id": "nv1", "snippet": {"title": "Demo"},
+                     "status": {"privacyStatus": "private", "uploadStatus": "uploaded"}}
+    google.handler = h
+    # the session URI travels in the Location header of the POST
+    orig = google.send
+
+    def send(request, **kw):
+        resp = orig(request, **kw)
+        if request.method == "POST":
+            resp.headers["Location"] = session
+        return resp
+    google.send = send
+
+    out = _tool("youtube_act")(op="upload_video", title="Demo",
+                               video={"kind": "project_file", "project_id": 1, "file_id": 9})
+    assert out["video_id"] == "nv1" and out["uploaded"] is True
+    assert out["video"]["privacy"] == "private"
+    assert seen["max_bytes"] == 100 * 1024 * 1024
+    init, put = google.requests
+    body = json.loads(init.body)
+    assert body["status"] == {"privacyStatus": "private", "selfDeclaredMadeForKids": False}
+    assert body["snippet"] == {"title": "Demo", "categoryId": "22"}
+    assert init.headers["X-Upload-Content-Type"] == "video/mp4"   # sniffed from `ftyp`
+    assert put.url == session and put.body == MP4
+    assert put.headers["Content-Range"] == f"bytes 0-{len(MP4) - 1}/{len(MP4)}"
+
+
+def test_upload_video_refuse_un_argument_d_une_autre_op(google):
+    with pytest.raises(McpError, match="does not take `image`"):
+        _tool("youtube_act")(op="upload_video", title="T", video={"kind": "url", "url": "u"},
+                             image={"kind": "url", "url": "u"})
+    with pytest.raises(McpError, match="does not take `video_id`"):
+        _tool("youtube_act")(op="upload_video", title="T", video_id="v1",
+                             video={"kind": "url", "url": "u"})
+    with pytest.raises(McpError, match="does not take `video`"):
+        _tool("youtube_act")(op="set_thumbnail", video_id="v1",
+                             image={"kind": "url", "url": "u"},
+                             video={"kind": "url", "url": "u"})
+    assert google.requests == []
+
+
+def test_upload_video_sans_titre_refuse(google):
+    with pytest.raises(McpError, match="requires `title`"):
+        _tool("youtube_act")(op="upload_video", video={"kind": "url", "url": "u"})
+    assert google.requests == []
+
+
+def test_upload_video_refuse_une_image(google, monkeypatch):
+    _resolve(monkeypatch, PNG, name="t.png", mime="image/png")
+    with pytest.raises(McpError, match="not a video"):
+        _tool("youtube_act")(op="upload_video", title="T", video={"kind": "url", "url": "u"})
+    assert google.requests == []
+
+
+def test_upload_video_limite_nommee(google, monkeypatch):
+    _resolve(monkeypatch, MP4, name="a.mp4")
+    google.handler = lambda r: (400, {"error": {"code": 400, "message": "x",
+                                                "errors": [{"reason": "uploadLimitExceeded"}]}})
+    with pytest.raises(McpError, match="upload limit"):
+        _tool("youtube_act")(op="upload_video", title="T", video={"kind": "url", "url": "u"})
