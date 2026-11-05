@@ -69,6 +69,10 @@ OUVERTES = frozenset({
     # rejoindre une AUTRE org par l'invitation qui y attend : l'appel résout sous
     # l'org maison, mais l'org rejointe est `{id}` — c'est elle que la capacité juge.
     "org.invite.claim",
+    # même chose par le jeton du mail (04/11/2026 : un invité dont l'espace perso a
+    # fini son essai ne pouvait plus rejoindre l'org qui l'invitait) — le handler juge
+    # l'org de l'INVITATION. Décliner une invitation n'ouvre rien.
+    "org.invite.accept", "org.invite.reject",
     # le compte lui-même
     "me.legal.get", "me.legal.accept", "me.avatar.clear",
     "me.token.list", "me.token.create", "me.token.delete",

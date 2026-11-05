@@ -353,11 +353,22 @@ def _invite_accept(ctx: ResolvedCtx, inp: InviteAcceptInput) -> dict:
     pour router, l'agent pour supposer où tombent ses appels sans axe."""
     if not inp.token:
         raise AuthzDenied(400, "missing_token", "Aucun token d'invitation fourni.")
+    _garde_org_suspendue(inp.token)
     _garde_partage_d_app(ctx, inp.token)
     res = org_store.accept_invitation(inp.token, ctx.sub)
     if not res:
         raise AuthzDenied(410, "invalid_or_expired", "Invitation invalide, expirée ou déjà utilisée.")
     return _accepted(ctx, res)
+
+
+def _garde_org_suspendue(token: str) -> None:
+    """L'org jugée est celle de l'INVITATION, pas celle sous laquelle l'appel résout
+    (la maison du compte, exemptée dans `org_suspension.OUVERTES` : sans ça un espace
+    perso suspendu interdisait de rejoindre l'org qui paie). Une invitation inconnue
+    ou consommée passe : c'est l'acceptation qui la juge (idempotence, 410)."""
+    inv = org_store.get_invitation_by_token(token)
+    if inv and inv.get("org_id") and (texte := org_suspension.refus(inv["org_id"])):
+        raise AuthzDenied(403, "org_suspended", texte)
 
 
 def _invite_claim(ctx: ResolvedCtx, inp: InviteClaimInput) -> dict:
@@ -565,7 +576,9 @@ CAPABILITIES += [
                      "nothing. A pending share of an APP is accepted only by the "
                      "account whose address it was sent to."),
         rest=RestBinding("POST", "/api/me/invitations/accept"),
-        errors=(DeclaredError(403, "not_the_invitee",
+        errors=(DeclaredError(403, "org_suspended",
+                              "l'org de l'invitation est suspendue : on ne la rejoint pas"),
+                DeclaredError(403, "not_the_invitee",
                               "partage en attente d'une app accepté depuis un compte "
                               "dont l'adresse n'est pas l'adresse invitée"),),
     ),

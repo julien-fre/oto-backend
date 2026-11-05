@@ -15,10 +15,11 @@ import oto_mcp.org_store as org_store
 class _MemberConn:
     """Sert les 3 SELECT de add_org_member et enregistre chaque exécution."""
 
-    def __init__(self, existing=None, active=None, joining_personal=False):
+    def __init__(self, existing=None, active=None, joining_personal=False,
+                 joining_suspended=False):
         self._existing = existing
         self._active = active
-        self._jp = {"p": joining_personal}
+        self._jp = {"p": joining_personal, "s": joining_suspended}
         self.calls = []
 
     def __enter__(self):
@@ -46,7 +47,7 @@ class _MemberConn:
             row = self._existing
         elif "m.is_active" in s:
             row = self._active
-        elif "personal_of IS NOT NULL) AS p FROM orgs" in s:
+        elif "personal_of IS NOT NULL) AS p" in s and "FROM orgs WHERE id" in s:
             row = self._jp
         else:
             row = None
@@ -102,6 +103,27 @@ def test_real_home_unchanged_on_second_real_org(monkeypatch):
         active={"org_id": 5, "personal": False}, joining_personal=False,
     )
     assert _inserted_active(calls) is False      # on ne débarque pas d'une maison réelle
+    assert not _demoted(calls)
+
+
+def test_suspended_real_home_yields_to_active_org(monkeypatch):
+    # Une maison réelle SUSPENDUE (essai fini) cède à l'org active qu'on rejoint :
+    # sinon chaque connexion atterrit sur le mur au lieu de l'org qui paie.
+    calls = _run_add(
+        monkeypatch, existing=None,
+        active={"org_id": 5, "personal": False, "suspended": True}, joining_personal=False,
+    )
+    assert _inserted_active(calls) is True
+    assert _demoted(calls)
+
+
+def test_suspended_home_does_not_yield_to_a_suspended_org(monkeypatch):
+    calls = _run_add(
+        monkeypatch, existing=None,
+        active={"org_id": 5, "personal": False, "suspended": True},
+        joining_personal=False, joining_suspended=True,
+    )
+    assert _inserted_active(calls) is False
     assert not _demoted(calls)
 
 
