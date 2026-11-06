@@ -83,7 +83,10 @@ DEFAULT_PATHS: dict[str, str] = {
 # names one — the "no pattern ⟹ no link" rule, applied to a view only some fronts
 # have. `app` = an app opened full screen (`oto_apps`), e.g. `/org/{org}/apps/{id}` on
 # a front that serves that view.
-DECLARED_ONLY_KINDS = frozenset({"app"})
+# `webhook` = the screen where a person gets a webhook agent's token
+# (`/org/{org}/webhook/{id}`): what an AGENT receives instead of the token itself
+# (`capabilities/_secret_par_lien.py`). Undeclared, the agent gets no token and no link.
+DECLARED_ONLY_KINDS = frozenset({"app", "webhook"})
 
 
 class InstancePathsInvalid(ValueError):

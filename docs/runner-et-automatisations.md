@@ -1311,6 +1311,16 @@ par `oto_`, donc aucun adaptateur qui teste le préfixe d'un jeton de compte ne
 confond les deux. Seul le **haché** est stocké (`_hash_token`, comme les jetons
 `oto_`), le clair n'est rendu qu'au retour de `create` et de `rotate_secret`.
 
+⚠️ **Et seulement à une PERSONNE** (`capabilities/_secret_par_lien.py`). Sur la face MCP
+(`channel == "mcp"`, explicite), `create` d'un webhook et `rotate_secret` rendent
+`hook_secret: null` et `hook_secret_url` — l'écran où la personne tire le porteur (type
+de lien `webhook`, `/org/{org}/webhook/{id}`, déclaré par instance dans
+`OTO_DASHBOARD_LINK_PATHS`). Le porteur frappé pour l'agent est JETÉ : seul son haché est
+posé, personne ne le détient, la porte reste fermée jusqu'à ce que la personne en tire
+un neuf. Rien n'est stocké en clair, rien n'expire. Sans écran déclaré : ni porteur ni
+lien, `hook_secret_missing` dit pourquoi — jamais de repli sur le clair. C'est le miroir,
+en sortie, de « un secret brut ne passe jamais en argument MCP ».
+
 ⚠️ Le haché est comparé **dans le WHERE**, avec l'id, en une requête : une lecture
 par id suivie d'une comparaison en Python distinguerait « id inconnu » de « mauvais
 secret » par le temps de réponse. Et les deux rendent le **même 404, mot pour
