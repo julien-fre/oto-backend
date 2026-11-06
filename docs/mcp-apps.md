@@ -186,3 +186,14 @@ interrupteur, par instance). Déclaré, la carte Prefab de `tools/datastore.py` 
   à les voir, rien d'autre ne les montrera.
 - **Lecture seule**, et les colonnes gardées des agents (`agent_access`) absentes comme
   partout sur la face agent ; la vue en dit le nombre (`hidden_columns`), jamais le nom.
+
+## La carte d'un webhook — `oto_webhook_app`
+
+La face visuelle de `hook_secret_url` (`tools/webhook_app.py`) : sur la face MCP, `create`
+d'un webhook et `rotate_secret` ne rendent jamais le porteur, et l'agent montre cette
+carte plutôt qu'un lien nu qu'il pourrait résumer ou perdre. Nom de l'agent, pastille
+(Waiting for its token / Receiving events / Set up on its page — lue dans le journal des
+livraisons, SANS les corps), le type de jeton de l'expéditeur, et un bouton `OpenLink` vers
+l'écran guidé (type de lien `webhook`). Mêmes lectures et mêmes droits qu'`oto_trigger
+op=get`/`deliveries` (lecteur et au-delà) ; refus en mots fixes (l'id vient du modèle) ;
+aucun nom de produit ; deux canaux.

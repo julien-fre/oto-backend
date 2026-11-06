@@ -34,8 +34,9 @@ GENRES = {
 NOTE = ("The token was NOT returned to you: an AI never holds a webhook's token. Send "
         "`hook_secret_url` to the person who sets up the sending app — they generate "
         "the token on that page, which guides them for this agent's mode "
-        "(`hook_secret_kind`), and paste it there, never in the chat. Until they do, "
-        "the webhook refuses every delivery.")
+        "(`hook_secret_kind`), and paste it there, never in the chat. If your client "
+        "renders cards, show `oto_webhook_app(trigger_id=…)` instead of the bare link. "
+        "Until they do, the webhook refuses every delivery.")
 
 
 def remettre(ctx: ResolvedCtx, agent: dict, secret: str) -> dict:
