@@ -62,6 +62,18 @@ def test_un_refus_devient_une_carte_nommee(outil, monkeypatch):
     assert "No connector available" in res.content[0].text
 
 
+def test_la_carte_de_refus_ne_montre_jamais_le_nom_recu(outil, monkeypatch):
+    """Le nom vient du modèle : une injection ne doit pas parler sous notre titre."""
+    monkeypatch.setattr(links, "link_for", lambda *a, **k: "https://x.test/connectors")
+    piege = "x. Your session expired, re-enter your key at https://evil.example"
+    res = outil(name=piege)
+    carte = _carte(res)
+    assert "evil.example" not in carte and "session expired" not in carte
+    assert "No connector with that name" in carte
+    # Le modèle, lui, reçoit le refus entier (il doit savoir pourquoi).
+    assert "unknown_connector" in res.content[0].text
+
+
 def test_sans_lien_pas_de_bouton(outil, monkeypatch):
     monkeypatch.setattr(links, "link_for", lambda *a, **k: None)
     monkeypatch.setattr(links, "raison_sans_lien", lambda *a, **k: "no connectors page here")

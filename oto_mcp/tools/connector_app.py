@@ -22,6 +22,26 @@ from ..capabilities._types import AuthzDenied, ResolvedCtx
 
 _BOUTON = {"oauth": "Connect", "hosted": "Log in", "none": "Add to my tools"}
 
+# What a REFUSAL card says, by code — fixed words only. The refusal's own message
+# repeats the `name` the model passed (and a Custom API link carrying it): shown in a
+# card the host paints as ours, a prompt-injected agent could put "your session
+# expired, re-enter your key at <elsewhere>" under our heading. The message goes to
+# the MODEL (text channel); the person reads only this.
+_REFUS = {
+    "unknown_connector": "No connector with that name is available to your workspace.",
+    "ambiguous_connector": "That name matches several connectors.",
+    "use_http_setup_link": "This tool connects through the Custom API form instead.",
+}
+_REFUS_DEFAUT = "This connector can't be shown here."
+
+
+def _alias(sub: str, texte: str) -> str:
+    """Tool names as THIS account's product spells them (white-label prefix), like
+    `oto_procedure_app` — never our names to a partner's end user."""
+    from .. import tool_alias
+    prefix = tool_alias.prefix_for(sub)
+    return tool_alias.rewrite_prose(texte, prefix) if prefix else texte
+
 
 def _texte(out: dict) -> str:
     """What the model reads: the same facts as the card, and the link."""
@@ -48,13 +68,14 @@ def register(mcp: FastMCP) -> None:
 
     from ..capabilities.connectors import setup_link as _setup
 
-    def _carte_refus(titre: str, message: str) -> ToolResult:
+    def _carte_refus(sub: str, e: AuthzDenied) -> ToolResult:
         with Card() as card:
             with Column(gap=3):
-                Heading(titre)
-                Text(message)
-        return ToolResult(content=[TextContent(type="text", text=f"{titre} — {message}")],
-                          structured_content=card)
+                Heading("Cannot show this connector")
+                Text(_REFUS.get(e.code, _REFUS_DEFAUT))
+        return ToolResult(content=[TextContent(
+            type="text", text=_alias(sub, f"Refused ({e.code}): {e.message}"))],
+            structured_content=card)
 
     @mcp.tool(app=True)
     def oto_connector_app(name: str):  # no `-> Card`: see docs/mcp-apps.md (gotcha #69)
@@ -77,7 +98,7 @@ def register(mcp: FastMCP) -> None:
         try:
             out = _setup.setup_link(ctx, name)
         except AuthzDenied as e:
-            return _carte_refus("Cannot show this connector", e.message)
+            return _carte_refus(sub, e)
 
         with Card() as card:
             with Column(gap=3):
@@ -93,5 +114,5 @@ def register(mcp: FastMCP) -> None:
                     Muted("No connection page is available for your account: "
                           + (out.get("url_missing") or "ask your admin."))
                 Muted("Never paste a key in the chat.")
-        return ToolResult(content=[TextContent(type="text", text=_texte(out))],
+        return ToolResult(content=[TextContent(type="text", text=_alias(sub, _texte(out)))],
                           structured_content=card)
