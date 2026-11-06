@@ -97,14 +97,16 @@ def setup_link(ctx: ResolvedCtx, name: str) -> dict:
             "name, base URL and auth mode: `http(op=\"setup_link\", label=…, base_url=…)`.")
     method = (card.get("auth") or {}).get("method") or "secret"
     url = links.connector_setup_link(connector, sub=ctx.sub, org=ctx.org_id)
+    geste = _GESTE.get(method, _GESTE["secret"])
     out = {
         "connector": connector,
         "label": card.get("label") or connector,
         "method": method,
         "url": url,
         "fields": _champs(card),
-        "instructions": (_GESTE.get(method, _GESTE["secret"]) + " "
-                         + _REGLE.format(name=connector)),
+        # What the PERSON does on the page — the line a card shows them.
+        "action": geste,
+        "instructions": geste + " " + _REGLE.format(name=connector),
     }
     guide = _guide(card)
     if guide:

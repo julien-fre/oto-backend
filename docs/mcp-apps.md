@@ -186,3 +186,15 @@ interrupteur, par instance). Déclaré, la carte Prefab de `tools/datastore.py` 
   à les voir, rien d'autre ne les montrera.
 - **Lecture seule**, et les colonnes gardées des agents (`agent_access`) absentes comme
   partout sur la face agent ; la vue en dit le nombre (`hidden_columns`), jamais le nom.
+
+## Une carte qui ouvre un lien — `oto_connector_app`
+
+La face visuelle d'`oto_connector(op="setup_link")` (`tools/connector_app.py`, même
+handler, mêmes refus) : le nom du connecteur, le geste de la personne, et un bouton
+`OpenLink` vers la page du connecteur dans SON produit. Le bouton n'appelle aucun outil
+et n'écrit rien : la clé se saisit sur la page, jamais dans la carte ni dans la
+conversation. Un refus (nom inconnu, ambigu, `http`) devient une carte nommée ; un lien
+absent ne dessine pas de bouton et dit pourquoi. Deux canaux, comme les autres apps : le
+modèle reçoit le lien et les champs en texte. ⚠️ `OpenLink` passe par l'hôte
+(`ui/open-link`) : qu'un hôte l'ouvre sans confirmation n'est pas vérifié — à éprouver
+en préprod sur claude.ai.
