@@ -43,14 +43,14 @@ def page(monkeypatch):
 
 def test_le_lien_ouvre_la_carte_du_connecteur(catalogue, page):
     out = SL.setup_link(_CTX, "hunter")
-    assert out["url"] == "https://app.example.test/org/7/connectors/hunter"
+    assert out["url"] == "https://app.example.test/org/7/connectors/hunter?via=agent"
     assert out["connector"] == "hunter" and out["method"] == "secret"
     # Le produit de l'APPELANT : son sub et son org.
     assert page == [("connectors", "u-lien", {"org": 7})]
-    # Les champs du formulaire, sans valeur ; aucune query sur le lien.
+    # Les champs du formulaire, sans valeur ; le lien ne porte qu'un marqueur FIXE.
     assert out["fields"] == [{"name": "key", "label": "API key", "secret": True,
                               "required": True}]
-    assert "?" not in out["url"]
+    assert out["url"].split("?", 1)[1] == "via=agent"
     assert "Never ask for a key" in out["instructions"]
     assert 'oto_connector(op="list", name="hunter")' in out["instructions"]
     assert "url_missing" not in out

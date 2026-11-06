@@ -45,7 +45,7 @@ def test_le_bouton_ouvre_la_page_du_connecteur(outil, monkeypatch):
                         f"https://app.example.test/org/{p['org']}/connectors")
     res = outil(name="hunter")
     carte = _carte(res)
-    url = "https://app.example.test/org/7/connectors/hunter"
+    url = "https://app.example.test/org/7/connectors/hunter?via=agent"
     assert "openLink" in carte and url in carte
     assert "Connect Hunter" in carte and "API key" in carte
     # Un bouton qui OUVRE, jamais un appel d'outil.

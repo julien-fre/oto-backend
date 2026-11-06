@@ -96,7 +96,9 @@ def setup_link(ctx: ResolvedCtx, name: str) -> dict:
             "The Custom API connector has its own setup link, pre-filled with the API's "
             "name, base URL and auth mode: `http(op=\"setup_link\", label=…, base_url=…)`.")
     method = (card.get("auth") or {}).get("method") or "secret"
-    url = links.connector_setup_link(connector, sub=ctx.sub, org=ctx.org_id)
+    # `via=agent` is a FIXED marker (never model text): the page shows its own
+    # "paste the key here, never in the chat" banner when it sees it.
+    url = links.connector_setup_link(connector, sub=ctx.sub, org=ctx.org_id, via="agent")
     geste = _GESTE.get(method, _GESTE["secret"])
     out = {
         "connector": connector,
