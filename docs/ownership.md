@@ -168,6 +168,16 @@ compte a une org active » reste entier (`org_store.ensure_home_org`) :
   sans org de création (`perso_de_la_liste`, le `sans_org` de `mes_objets_ici`, la
   maison créée par `maison_de`) — est l'**org active** (`org_store.home_org`). Elle
   suit la bascule d'org active : c'est voulu.
+- **Un PROJET partagé à une personne se liste là où il est rangé** (06/11/2026,
+  `ownership.projets_partages_a_moi_ici`) : l'org propriétaire, l'org de l'équipe
+  propriétaire ou l'org de création d'un projet perso (`org_de_rangement_projet`),
+  quand la personne en est membre — là seulement. La maison ne recueille que le projet
+  sans org de rangement, ou celui d'une org dont elle n'est pas membre (collaborateur
+  extérieur). Raison : la maison étant devenue une org ordinaire, le projet d'une org A
+  partagé nominativement à un membre de A et de B se listait dans B, son org active —
+  un projet d'un client affiché dans l'espace d'un autre. Cela revient sur « suit la
+  bascule d'org active » pour les partages de projets nominatifs seulement ; tableaux,
+  pages et apps partagés à la personne gardent la règle de la maison (à aligner).
 - **Plus d'org perso posée à la demande** : un partage nominatif, une procédure
   personnelle, un nœud hors projet, une app ou un projet donnés à une personne vont
   dans son org active. La copie d'une procédure partagée va dans l'org active si l'on
