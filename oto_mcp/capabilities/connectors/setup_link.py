@@ -107,6 +107,10 @@ def setup_link(ctx: ResolvedCtx, name: str) -> dict:
     out = {
         "connector": connector,
         "label": card.get("label") or connector,
+        # Public catalog data, for a card that shows the connector the way the
+        # product's own card does.
+        "description": card.get("description") or "",
+        "logo_url": card.get("logo_url"),
         "method": method,
         "url": url,
         "fields": _champs(card),

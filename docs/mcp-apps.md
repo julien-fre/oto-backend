@@ -195,6 +195,11 @@ handler, mêmes refus) : le nom du connecteur, le geste de la personne, et un bo
 et n'écrit rien : la clé se saisit sur la page, jamais dans la carte ni dans la
 conversation. Un refus (nom inconnu, ambigu, `http`) devient une carte nommée ; un lien
 absent ne dessine pas de bouton et dit pourquoi. Deux canaux, comme les autres apps : le
-modèle reçoit le lien et les champs en texte. ⚠️ `OpenLink` passe par l'hôte
+modèle reçoit le lien et les champs en texte. **Mise en page de la carte connecteur
+d'Ask Tulina** (front `connector-chat-card`) : logo, nom, pastille d'état (Not set up /
+Included / Connected / One step left, lue dans le même instantané que `op=list`), deux
+lignes de description, puis un pied avec l'action à gauche et la page complète à droite —
+sans nom de produit, un partenaire sert la même carte. Le logo ne se charge que depuis
+`img.logo.dev` (CSP de la ressource, `PrefabAppConfig`) ; ailleurs, l'initiale. ⚠️ `OpenLink` passe par l'hôte
 (`ui/open-link`) : qu'un hôte l'ouvre sans confirmation n'est pas vérifié — à éprouver
 en préprod sur claude.ai.

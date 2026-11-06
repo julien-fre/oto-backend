@@ -17,6 +17,7 @@ pytest.importorskip("prefab_ui")
 
 from oto_mcp import access, links, providers  # noqa: E402
 from oto_mcp.capabilities.connectors import selection as CS  # noqa: E402
+from oto_mcp.connectors import credential_presence  # noqa: E402
 from oto_mcp.tools import connector_app  # noqa: E402
 
 
@@ -30,9 +31,14 @@ def outil(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda sub: 7)
     monkeypatch.setattr(CS, "_visible_catalog",
                         lambda ctx: [_ligne("hunter"), _ligne("hubspot")])
+    presences: dict = {}
+    monkeypatch.setattr(credential_presence, "lire",
+                        lambda sub, org=None: (presences, "computed"))
     m = FastMCP("t")
     connector_app.register(m)
-    return asyncio.run(m.get_tool("oto_connector_app")).fn
+    fn = asyncio.run(m.get_tool("oto_connector_app")).fn
+    fn.presences = presences
+    return fn
 
 
 def _carte(res) -> str:
@@ -48,7 +54,7 @@ def test_le_bouton_ouvre_la_page_du_connecteur(outil, monkeypatch):
     carte = _carte(res)
     url = "https://app.example.test/org/7/connectors/hunter?via=agent"
     assert "openLink" in carte and url in carte
-    assert "Connect Hunter" in carte and "API key" in carte
+    assert "Hunter.io" in carte and "Not set up" in carte and "API key" in carte
     # Un bouton qui OUVRE, jamais un appel d'outil.
     assert "toolCall" not in carte and "callTool" not in carte
     texte = res.content[0].text
@@ -82,3 +88,27 @@ def test_sans_lien_pas_de_bouton(outil, monkeypatch):
     assert "openLink" not in _carte(res)
     assert "no connectors page here" in _carte(res)
     assert "No link: no connectors page here" in res.content[0].text
+
+
+@pytest.mark.parametrize("presence, pastille, bouton", [
+    (None, "Not set up", "Connect"),
+    ({"status": "connected", "level": "platform"}, "Included", "Connect"),
+    ({"status": "connected", "level": "user"}, "Connected", "Add another account"),
+    ({"status": "pending_step", "level": "user"}, "One step left", "Connect"),
+])
+def test_la_pastille_dit_qui_repond(outil, monkeypatch, presence, pastille, bouton):
+    monkeypatch.setattr(links, "link_for", lambda kind, sub=None, **p:
+                        None if kind == "connect" else "https://app.example.test/connectors")
+    if presence:
+        outil.presences["hunter"] = presence
+    carte = _carte(outil(name="hunter"))
+    assert f'"{pastille}"' in carte and f'"{bouton}"' in carte
+    # La page complète, sans le marqueur, et sans nom de produit.
+    assert "https://app.example.test/connectors/hunter\"" in carte
+    assert "Open full page" in carte and "Tulina" not in carte
+
+
+def test_le_logo_ne_vient_que_d_une_origine_admise():
+    assert connector_app._logo("https://img.logo.dev/hunter.io?token=x")
+    assert connector_app._logo("https://evil.example/x.png") is None
+    assert connector_app._logo(None) is None
