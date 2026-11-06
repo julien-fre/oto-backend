@@ -42,7 +42,8 @@ def _carte(res) -> str:
 
 def test_le_bouton_ouvre_la_page_du_connecteur(outil, monkeypatch):
     monkeypatch.setattr(links, "link_for", lambda kind, sub=None, **p:
-                        f"https://app.example.test/org/{p['org']}/connectors")
+                        None if kind == "connect"
+                        else f"https://app.example.test/org/{p['org']}/connectors")
     res = outil(name="hunter")
     carte = _carte(res)
     url = "https://app.example.test/org/7/connectors/hunter?via=agent"

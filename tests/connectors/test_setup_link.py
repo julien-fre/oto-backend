@@ -36,6 +36,8 @@ def page(monkeypatch):
 
     def _link_for(kind, sub=None, **p):
         vus.append((kind, sub, p))
+        if kind == "connect":
+            return None                  # this product has no one-connector page
         return f"https://app.example.test/org/{p.get('org')}/connectors"
     monkeypatch.setattr(links, "link_for", _link_for)
     return vus
@@ -46,7 +48,8 @@ def test_le_lien_ouvre_la_carte_du_connecteur(catalogue, page):
     assert out["url"] == "https://app.example.test/org/7/connectors/hunter?via=agent"
     assert out["connector"] == "hunter" and out["method"] == "secret"
     # Le produit de l'APPELANT : son sub et son org.
-    assert page == [("connectors", "u-lien", {"org": 7})]
+    assert page == [("connect", "u-lien", {"org": 7, "connector": "hunter"}),
+                    ("connectors", "u-lien", {"org": 7})]
     # Les champs du formulaire, sans valeur ; le lien ne porte qu'un marqueur FIXE.
     assert out["fields"] == [{"name": "key", "label": "API key", "secret": True,
                               "required": True}]
@@ -104,3 +107,21 @@ def test_la_console_route_l_op(catalogue, page):
     with pytest.raises(AuthzDenied) as e:
         asyncio.run(console._connector(_CTX, console.ConnectorInput(op="setup_link")))
     assert e.value.code == "missing_name"
+
+
+def test_la_page_d_un_seul_connecteur_quand_le_produit_la_declare(catalogue, monkeypatch):
+    def _link_for(kind, sub=None, **p):
+        if kind == "connect":
+            return f"https://app.example.test/org/{p['org']}/connect/{p['connector']}"
+        return "https://app.example.test/connectors"
+    monkeypatch.setattr(links, "link_for", _link_for)
+    assert SL.setup_link(_CTX, "hunter")["url"] == \
+        "https://app.example.test/org/7/connect/hunter"
+
+
+def test_le_patron_connect_se_declare_par_instance(monkeypatch):
+    monkeypatch.setenv(links.ENV_INSTANCE_PATHS,
+                       '{"connect": "/org/{org}/connect/{connector}"}')
+    assert links.instance_paths()["connect"] == "/org/{org}/connect/{connector}"
+    monkeypatch.delenv(links.ENV_INSTANCE_PATHS)
+    assert "connect" not in links.instance_paths()
