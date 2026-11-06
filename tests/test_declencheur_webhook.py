@@ -908,3 +908,28 @@ def test_le_type_de_lien_webhook_se_declare_par_instance(monkeypatch):
     from oto_mcp import links
     monkeypatch.setenv(links.ENV_INSTANCE_PATHS, '{"webhook": "/org/{org}/webhook/{id}"}')
     assert links.instance_paths()["webhook"] == "/org/{org}/webhook/{id}"
+
+
+@pytest.mark.parametrize("mode, genre", [(None, "bearer"), ("bearer", "bearer"),
+                                         ("body_secret", "body_secret")])
+def test_a_un_agent_le_lien_dit_le_TYPE_de_porteur(monkeypatch, pose, ecran, mode, genre):
+    """La page relit le préréglage sur le serveur ; la réponse le dit aussi au modèle,
+    pour qu'il annonce à la personne ce qu'elle va coller (en-tête ou champ `secret`)."""
+    monkeypatch.setattr(RT.db, "get_trigger",
+                        lambda i, o: {"id": i, "kind": "webhook", "org_id": o,
+                                      "sub": "alexis", "hook_auth": mode})
+    out = _appel_agent(op="rotate_secret", trigger_id=5)
+    assert out["hook_secret_kind"] == genre
+    assert out["hook_secret"] is None and out["hook_secret_url"].endswith("/webhook/5")
+
+
+def test_un_agent_signe_ne_frappe_aucun_porteur(monkeypatch, pose, ecran):
+    """Un préréglage à signature n'a pas de porteur : la rotation est refusée, rien
+    n'est frappé, aucun lien n'est promis."""
+    monkeypatch.setattr(RT.db, "get_trigger",
+                        lambda i, o: {"id": i, "kind": "webhook", "org_id": o,
+                                      "sub": "alexis", "hook_auth": "standard_webhooks"})
+    with pytest.raises(AuthzDenied) as e:
+        _appel_agent(op="rotate_secret", trigger_id=5)
+    assert e.value.code == "signature_mode"
+    assert "hash_pose" not in pose

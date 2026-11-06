@@ -1320,6 +1320,13 @@ posé, personne ne le détient, la porte reste fermée jusqu'à ce que la person
 un neuf. Rien n'est stocké en clair, rien n'expire. Sans écran déclaré : ni porteur ni
 lien, `hook_secret_missing` dit pourquoi — jamais de repli sur le clair. C'est le miroir,
 en sortie, de « un secret brut ne passe jamais en argument MCP ».
+La réponse dit aussi le TYPE de porteur frappé (`hook_secret_kind` : `bearer` = en-tête
+`Authorization`, `body_secret` = champ `secret` du message) ; l'écran, lui, relit le
+préréglage de l'agent sur le serveur, jamais dans le lien. C'est le SEUL secret qu'une
+capacité MCP fabrique : jetons d'API, clés d'org, secret de signature et adresse d'un
+webhook sans preuve n'ont pas de face MCP, et `tests/test_aucun_secret_frappe_au_modele.py`
+casse la CI si une sortie MCP gagne un champ nommé comme un secret — un nouveau type se
+remet par lien vers l'écran de son type, comme celui-ci.
 
 ⚠️ Le haché est comparé **dans le WHERE**, avec l'id, en une requête : une lecture
 par id suivie d'une comparaison en Python distinguerait « id inconnu » de « mauvais

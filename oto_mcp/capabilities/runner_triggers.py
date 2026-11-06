@@ -682,6 +682,8 @@ class TriggerOut(BaseModel):
     #: fermée jusque-là.
     hook_secret: Optional[str] = None
     hook_secret_url: Optional[str] = None
+    #: Le type de porteur frappé (`bearer` | `body_secret`) — ce que la personne en fera.
+    hook_secret_kind: Optional[str] = None
     hook_secret_note: Optional[str] = None
     hook_secret_missing: Optional[str] = None
     #: `connect_source` / `disconnect_source` / `delete` : les webhooks inscrits ou
@@ -1763,7 +1765,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             # Le secret en CLAIR, une seule fois. Il n'est pas stocké — seul son
             # haché l'est — donc ni une relecture ni un incident ne le rendront.
             return {"trigger": _avec_hook(ctx.org_id, t),
-                    **_secret_par_lien.remettre(ctx, t["id"], secret),
+                    **_secret_par_lien.remettre(ctx, t, secret),
                     **_a_ajouter(a_ajouter)}
         return {"trigger": t, **_a_ajouter(a_ajouter)}
 
@@ -1856,7 +1858,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                        inp.trigger_id, ctx.org_id, ctx.sub)
         return {"trigger": _avec_hook(ctx.org_id,
                                       db.get_trigger(inp.trigger_id, ctx.org_id)),
-                **_secret_par_lien.remettre(ctx, inp.trigger_id, secret)}
+                **_secret_par_lien.remettre(ctx, t, secret)}
 
     if inp.op in ("connect_source", "disconnect_source"):
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
