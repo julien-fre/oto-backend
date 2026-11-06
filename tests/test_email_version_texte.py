@@ -13,7 +13,7 @@ import types
 from oto_mcp import email as E
 
 _GABARIT = (
-    '<!DOCTYPE html><html><head><title>Marque</title><style>p{color:red}</style></head>'
+    '<!DOCTYPE html><html lang="en"><head><title>Marque</title><style>p{color:red}</style></head>'
     '<body><div style="display:none;max-height:0">aperçu caché&#8203;&#847;&#8203;&#847;'
     '</div><table><tr><td>Marque</td></tr><tr><td>'
     '<p style="margin:0">alice@x.fr invites you to join <strong>Projet A</strong>.</p>'

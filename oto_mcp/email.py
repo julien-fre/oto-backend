@@ -113,9 +113,12 @@ class _VersionTexte(HTMLParser):
         self._pile_cachee: list[str] = []   # balises ouvertes sous un display:none
         self._muet = 0
         self._lien: list[tuple[str, int]] = []  # (href, position du début du libellé)
+        self._sep = " : "   # typographie FR ; `<html lang="en">` ⟹ ": "
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        if tag == "html" and (a.get("lang") or "").lower().startswith("en"):
+            self._sep = ": "
         if self._pile_cachee:
             self._pile_cachee.append(tag)
             return
@@ -139,7 +142,7 @@ class _VersionTexte(HTMLParser):
             href, debut = self._lien.pop()
             libelle = "".join(self.morceaux[debut:]).strip()
             if href and not href.startswith("mailto:") and href != libelle:
-                self.morceaux.append(f": {href}" if libelle else href)
+                self.morceaux.append(f"{self._sep}{href}" if libelle else href)
         if tag in self._SAUTS:
             self.morceaux.append("\n")
 
