@@ -1,4 +1,6 @@
-"""Un projet partagé à une personne se liste dans l'org où il est rangé, pas dans sa maison.
+"""Ce qui est partagé à une personne se liste dans l'org où c'est rangé, pas dans sa maison.
+
+Projets, tableaux, pages reçues (`scope="org"`) et apps (06/11/2026).
 
 Plus d'org perso depuis le 05/11/2026 : la maison d'un compte est son org ACTIVE, une
 org ordinaire. Tout partage nominatif de projet s'y listait. Un membre de deux orgs A
@@ -52,9 +54,37 @@ def monde(live):
         "perso_a": projet("user", tiers, ctx=a),   # projet perso d'un tiers créé dans A
         "org_c": projet("org", c),                 # rangé dans C, je n'en suis pas membre
     }
+    tds = ownership.TYPE_RESSOURCE_DATASTORE
+
+    def tableau(owner_type, owner_id, ctx=None):
+        tid = db.create_datastore(owner_type, str(owner_id), _nom(), context_org_id=ctx)
+        ownership.grant(tds, str(tid), "user", moi, "read", granted_by=tiers)
+        return int(tid)
+
+    t = {"org_a": tableau("org", a), "perso_a": tableau("user", tiers, ctx=a),
+         "org_c": tableau("org", c)}
+
+    def page(pid):
+        did = int(db.create_doc(pid, _nom(), body_md="x", created_by=tiers))
+        ownership.grant("doc", str(did), "user", moi, role="viewer", granted_by=tiers)
+        return did
+
+    from oto_mcp.capabilities import apps as _apps  # noqa: F401 — enregistre `app`
+    from oto_mcp.capabilities.docs import common as _docs  # noqa: F401 — enregistre `doc`
+    # Des projets NON partagés : seule la page l'est.
+    d = {"dans_a": page(int(db.create_project("org", str(a), _nom(), created_by=tiers))),
+         "dans_c": page(int(db.create_project("org", str(c), _nom(), created_by=tiers)))}
+
+    def app(owner_type, owner_id, ctx):
+        r = db.apps.create((owner_type, str(owner_id)), ctx, title=_nom(), manifest={},
+                           html="<p>x</p>", thumbnail=None, by=tiers)
+        ownership.grant("app", str(r["id"]), "user", moi, role="viewer", granted_by=tiers)
+        return int(r["id"])
+
+    ap = {"org_a": app("org", a, a), "org_c": app("org", c, c)}
     org_store.set_active_org(moi, b)                # ma maison = B
     assert org_store.home_org(moi) == b
-    return {"moi": moi, "a": a, "b": b, "c": c, "p": p}
+    return {"moi": moi, "a": a, "b": b, "c": c, "p": p, "t": t, "d": d, "ap": ap}
 
 
 @pytest.fixture(scope="module")
@@ -136,3 +166,50 @@ def test_l_acces_par_id_ne_change_pas(monde):
     from oto_mcp import ownership
     assert ownership.visible_in_org(monde["moi"], monde["b"], "project",
                                     str(monde["p"]["org_a"]))
+
+
+# ── tableaux, pages, apps : la même règle ──────────────────────────────────────
+
+def _tableaux(client, monde, org: int) -> set[int]:
+    r = client.get("/api/datastores", headers={"Authorization": f"Bearer {monde['moi']}",
+                                               "X-Oto-Org": str(org)})
+    assert r.status_code == 200, r.text
+    return {int(x["id"]) for x in r.json()["datastores"]}
+
+
+def test_tableaux_partages_ranges_dans_leur_org(monde, client):
+    from oto_mcp import search
+    t = monde["t"]
+    dans_a, dans_b = _tableaux(client, monde, monde["a"]), _tableaux(client, monde, monde["b"])
+    assert {t["org_a"], t["perso_a"]} <= dans_a and t["org_c"] not in dans_a
+    assert not dans_b & {t["org_a"], t["perso_a"]}, "tableaux de A listés dans B"
+    assert t["org_c"] in dans_b                     # collaborateur extérieur : maison
+    for org, vus in ((monde["a"], dans_a), (monde["b"], dans_b)):
+        cherche = {int(r["id"]) for r in search._accessible_namespaces(monde["moi"], org)}
+        assert cherche & set(t.values()) == vus & set(t.values()), org
+
+
+def test_pages_recues_rangees_par_leur_projet(monde):
+    from oto_mcp.capabilities.docs import partage
+    d = monde["d"]
+
+    def recues(org):
+        return {int(x["id"]) for x in partage.recus(monde["moi"], "org", org)["docs"]}
+    assert d["dans_a"] in recues(monde["a"]) and d["dans_c"] not in recues(monde["a"])
+    assert d["dans_a"] not in recues(monde["b"]) and d["dans_c"] in recues(monde["b"])
+    # `scope="me"` et la vue historique ne changent pas : tout ce qui m'est partagé.
+    for portee in ("me", None):
+        tout = {int(x["id"]) for x in partage.recus(monde["moi"], portee, monde["b"])["docs"]}
+        assert set(d.values()) <= tout, portee
+
+
+def test_apps_partagees_rangees_dans_leur_org(monde):
+    from oto_mcp.capabilities import apps
+    from oto_mcp.capabilities._types import ResolvedCtx
+    ap = monde["ap"]
+
+    def listees(org):
+        rows, _ = apps._org_list(ResolvedCtx(sub=monde["moi"], org_id=org), False)
+        return {int(r["id"]) for r in rows}
+    assert ap["org_a"] in listees(monde["a"]) and ap["org_c"] not in listees(monde["a"])
+    assert ap["org_a"] not in listees(monde["b"]) and ap["org_c"] in listees(monde["b"])

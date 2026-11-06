@@ -143,6 +143,10 @@ def test_each_source_gets_its_predicate(monkeypatch):
                         _cap("ds_crees_ici", [{"id": 104, "datastore": "le_mien"}]))
     monkeypatch.setattr(S.db, "list_datastores_shared_to_user",
                         _cap("ds_to_me", [{"id": 103, "datastore": "recu"}]))
+    # Les partages nominatifs passent par LE rangement des listes (06/11/2026).
+    monkeypatch.setattr(S.ownership, "partages_a_moi_ici",
+                        lambda sub, org, rows, **k: rec.setdefault("range", (sub, org))
+                        and list(rows))
     monkeypatch.setattr(S.db, "list_datastores_for_owners",
                         _cap("ds_owners_a", [{"id": 101, "datastore": "prospects"}]))
     monkeypatch.setattr(S.db, "list_datastores_granted_to",
@@ -165,7 +169,7 @@ def test_each_source_gets_its_predicate(monkeypatch):
     # perso) partagés à moi
     assert rec["ds_owners_a"][0] == [("org", "7")]
     assert rec["ds_granted_a"] == ("u1", [7], [])
-    assert rec["ds_to_me"] == ("u1",)
+    assert rec["ds_to_me"] == ("u1",) and rec["range"] == ("u1", 7)
     assert rec["createur"] == ("u1", 7) and rec["ds_crees_ici"] == (("u1", 7, True),)
     # lignes (#67 V2.1) : héritent de l'accès du datastore → scope = ids des
     # datastores accessibles (owners ∪ mes tableaux créés ici ∪ grants), JAMAIS un

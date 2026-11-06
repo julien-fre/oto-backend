@@ -313,7 +313,7 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > garde que mes projets perso sans org de création (legacy) et ce qui m'est partagé en
 > personne. Détail : `docs/ownership.md` « Une liste s'en tient à l'org consultée ».
 
-> **Partage nominatif d'un projet (06/11/2026)** : il se liste dans l'org où le projet est
+> **Partage nominatif (06/11/2026, projets, tableaux, pages, apps)** : il se liste dans l'org où le projet est
 > rangé (propriétaire, org de l'équipe, org de création) si j'en suis membre, et là
 > seulement ; sinon dans ma maison (l'org active). Une source,
 > `ownership.projets_recus_ici`, lue par `op=list` et `accessible_project_ids`.
