@@ -10,6 +10,12 @@ jamais dedans.
   = l'id STABLE de la procédure (`guide_id`, survit au renommage), `version` = la version
   courante au moment du commentaire, `auteur_sub`, `body` (1 à 5 000 caractères),
   `deleted_at` (retrait doux). Lien logique sans FK, comme `process_shares`.
+- Fils à la Notion : un commentaire RACINE porte `quote`, le passage du corps qu'il
+  commente (vide = toute la procédure), et `quote_prefix` (≤ 64 caractères avant, pour
+  départager deux occurrences) ; une RÉPONSE porte `reply_to` (un seul niveau, sans
+  citation). Le passage n'est qu'une ancre d'affichage : le front le retrouve dans le
+  corps ; un corps réécrit qui ne le contient plus range le fil « sur une version
+  antérieure », sans rien bloquer. Retirer la racine retire le fil.
 - Capacités (`capabilities/commentaires_procedure.py`) :
   - `me.procedure.comments` — MCP `oto_procedure_comments`, `GET /api/me/processes/{guide_id}/comments`
     (`limit`, `before_id`, `total`) ;

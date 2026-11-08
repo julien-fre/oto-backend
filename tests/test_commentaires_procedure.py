@@ -211,3 +211,47 @@ def test_l_horodatage_suit_la_forme_des_commentaires_de_ligne(rest):
     _, gid = _procedure()
     at = _poster(rest, gid, "heure").json()["at"]
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", at), at
+
+
+# ── 6. fils et passages (à la Notion) ──────────────────────────────────────────
+
+def test_un_fil_porte_son_passage_et_ses_reponses(rest):
+    _, gid = _procedure()
+    r = rest.post(_url(gid), headers=_h(), json={
+        "body": "à préciser", "quote": "  1.   faire ", "quote_prefix": "# Étapes "})
+    assert r.status_code == 201, r.text
+    racine = r.json()
+    assert (racine["quote"], racine["quote_prefix"], racine["reply_to"]) == (
+        "1. faire", "# Étapes", None)
+    rep = rest.post(_url(gid), headers=_h(), json={"body": "d'accord",
+                                                   "reply_to": racine["id"]})
+    assert rep.status_code == 201, rep.text
+    assert (rep.json()["reply_to"], rep.json()["quote"]) == (racine["id"], None)
+    lu = rest.get(_url(gid), headers=_h()).json()["comments"]
+    assert [(c["body"], c["reply_to"]) for c in lu] == [("à préciser", None),
+                                                        ("d'accord", racine["id"])]
+
+
+def test_une_reponse_ne_cite_rien_et_ne_repond_qu_a_une_racine(rest):
+    _, gid = _procedure()
+    racine = _poster(rest, gid, "racine").json()
+    r = rest.post(_url(gid), headers=_h(), json={"body": "x", "reply_to": racine["id"],
+                                                 "quote": "faire"})
+    assert r.status_code == 400
+    rep = rest.post(_url(gid), headers=_h(), json={"body": "y", "reply_to": racine["id"]})
+    r = rest.post(_url(gid), headers=_h(), json={"body": "z",
+                                                 "reply_to": rep.json()["id"]})
+    assert (r.status_code, r.json()["error"]) == (404, "comment_not_found")
+    _, autre = _procedure()
+    r = rest.post(_url(autre), headers=_h(), json={"body": "z", "reply_to": racine["id"]})
+    assert (r.status_code, r.json()["error"]) == (404, "comment_not_found")
+
+
+def test_retirer_la_racine_retire_le_fil(rest):
+    _, gid = _procedure()
+    racine = _poster(rest, gid, "racine").json()
+    rest.post(_url(gid), headers=_h(), json={"body": "rep", "reply_to": racine["id"]})
+    _poster(rest, gid, "autre fil")
+    assert rest.delete(f"{_url(gid)}/{racine['id']}", headers=_h()).status_code == 200
+    lu = rest.get(_url(gid), headers=_h()).json()
+    assert ([c["body"] for c in lu["comments"]], lu["total"]) == (["autre fil"], 1)

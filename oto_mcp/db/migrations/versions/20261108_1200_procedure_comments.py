@@ -2,10 +2,11 @@
 
 Une table NEUVE, née entière, et ses index — le DDL est le fragment
 `db/schema/procedures.py::COMMENTAIRES`, exécuté tel quel (une seule écriture) :
-`procedure_comments (id, instruction_id, version, auteur_sub, body, created_at,
-deleted_at)`, index partiel `(instruction_id, id) WHERE deleted_at IS NULL` et
-`(auteur_sub)` (la fusion de comptes repointe cette colonne). Sans clé étrangère
-(lien logique vers `org_instructions.id`, comme `process_shares`).
+`procedure_comments (id, instruction_id, parent_id → procedure_comments, version,
+quote, quote_prefix, auteur_sub, body, created_at, deleted_at)`, index partiel
+`(instruction_id, id) WHERE deleted_at IS NULL`, `(parent_id)` partiel et `(auteur_sub)`
+(la fusion de comptes repointe cette colonne). Vers la procédure, lien logique sans clé
+étrangère (`org_instructions.id`, comme `process_shares`).
 
 **Verrous.** `AccessExclusiveLock` sur la table neuve seule (vide, instantané) ; aucune
 table existante n'est touchée. `lock_timeout` 5 s, comme les autres révisions.

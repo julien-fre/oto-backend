@@ -40,6 +40,8 @@ from .registry import CAPABILITIES
 LIMITE_DEFAUT = 50
 LIMITE_MAX = 200
 LONGUEUR_MAX = 5000
+CITATION_MAX = 1000
+PREFIXE_MAX = 64
 # Même forme que l'horodatage des commentaires de ligne : le front les lit avec le même parseur.
 HORODATAGE = ("heure locale serveur, sans offset — `YYYY-MM-DD HH:MM:SS`, "
               "à ne pas parser comme de l'ISO UTC")
@@ -71,6 +73,33 @@ class ProcedureCommentsInput(_Procedure):
 
 class ProcedureCommentInput(_Procedure):
     body: str = Field(description=f"The comment, plain text, 1 to {LONGUEUR_MAX} characters.")
+    quote: Optional[str] = Field(default=None, description=(
+        "The exact passage of the procedure body the comment is about, as it reads "
+        f"(at most {CITATION_MAX} characters). Omit to comment on the whole procedure. "
+        "Not with `reply_to`."))
+    quote_prefix: Optional[str] = Field(default=None, description=(
+        f"Up to {PREFIXE_MAX} characters right before `quote`, to tell two identical "
+        "passages apart."))
+    reply_to: Optional[int] = Field(default=None, description=(
+        "Reply to a thread: the `id` of its first comment."))
+
+    @field_validator("quote", "quote_prefix", mode="after")
+    @classmethod
+    def _passage(cls, v: Optional[str]) -> Optional[str]:
+        v = " ".join((v or "").split())
+        return v or None
+
+    @model_validator(mode="after")
+    def _ancre(self):
+        if self.quote and len(self.quote) > CITATION_MAX:
+            raise ValueError(f"`quote` is longer than {CITATION_MAX} characters")
+        if self.quote_prefix:
+            self.quote_prefix = self.quote_prefix[-PREFIXE_MAX:]
+        if self.reply_to is not None and self.quote:
+            raise ValueError("a reply has no `quote`: it belongs to its thread's passage")
+        if not self.quote:
+            self.quote_prefix = None
+        return self
 
     @field_validator("body", mode="after")
     @classmethod
@@ -89,6 +118,12 @@ class DeleteProcedureCommentInput(_Procedure):
 
 class ProcedureComment(BaseModel):
     id: int
+    reply_to: Optional[int] = Field(default=None, description=(
+        "The thread's first comment, for a reply; null for a thread's first comment."))
+    quote: Optional[str] = Field(default=None, description=(
+        "The passage of the body the thread is about (null = the whole procedure). "
+        "A passage the current body no longer contains was on an earlier version."))
+    quote_prefix: Optional[str] = None
     version: Optional[int] = Field(default=None, description=(
         "The procedure version current when the comment was written (information "
         "only: a comment never blocks or expires)."))
@@ -162,6 +197,9 @@ def _servi(c: dict, sub: Optional[str], gouverne: bool, emails: dict) -> dict:
     a_moi = auteur is not None and auteur == sub
     return {
         "id": c["id"],
+        "reply_to": c.get("parent_id"),
+        "quote": c.get("quote"),
+        "quote_prefix": c.get("quote_prefix"),
         "version": c.get("version"),
         "author": auteur,
         "author_email": emails.get(auteur),
@@ -192,8 +230,15 @@ def _procedure_comments(ctx: ResolvedCtx, inp: ProcedureCommentsInput) -> dict:
 
 def _procedure_comment(ctx: ResolvedCtx, inp: ProcedureCommentInput) -> dict:
     instr, gouverne = _procedure(ctx, inp)
-    c = db.procedure_commentaires.ajouter(int(instr["id"]), version=instr.get("version"),
-                                          auteur_sub=ctx.sub, body=inp.body)
+    if inp.reply_to is not None:
+        racine = db.procedure_commentaires.lire(int(instr["id"]), inp.reply_to)
+        if racine is None or racine.get("parent_id") is not None:
+            raise AuthzDenied(404, "comment_not_found", (
+                "`reply_to` names no live thread of this procedure (reply to the "
+                "thread's FIRST comment)."))
+    c = db.procedure_commentaires.ajouter(
+        int(instr["id"]), version=instr.get("version"), auteur_sub=ctx.sub, body=inp.body,
+        parent_id=inp.reply_to, quote=inp.quote, quote_prefix=inp.quote_prefix)
     return _servi(c, ctx.sub, gouverne, db.emails_by_subs([ctx.sub]))
 
 
@@ -243,10 +288,13 @@ CAPABILITIES += [
         authz=SUB_ONLY,
         mcp="oto_procedure_comment",
         rest=RestBinding(verb="POST", path=_CHEMIN, status=201, provisoire=True),
-        errors=(_INTROUVABLE, _HORS_TRAVAIL),
+        errors=(_INTROUVABLE, _HORS_TRAVAIL,
+                DeclaredError(404, "comment_not_found",
+                              "`reply_to` ne désigne aucun fil vivant de cette procédure")),
         description=(
             "Add a comment to ONE procedure (process), as the caller, when the person "
-            "asks you to. Anyone who can read the procedure can comment. It does not "
+            "asks you to: on a passage of its body (`quote`), on the whole procedure (no "
+            "`quote`), or as a reply in a thread (`reply_to`). Anyone who can read the procedure can comment. It does not "
             "change the procedure and creates no version: to change it, "
             "`oto_procedure op=set`."
         ),
@@ -266,6 +314,7 @@ CAPABILITIES += [
                           "seuls son auteur et qui gouverne la procédure retirent un "
                           "commentaire"),
         ),
-        description="Remove one comment from a procedure (its author or the procedure's governor).",
+        description=("Remove one comment from a procedure (its author or the procedure's "
+                     "governor); removing a thread's first comment removes its replies."),
     ),
 ]

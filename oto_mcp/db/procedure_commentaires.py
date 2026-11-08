@@ -13,7 +13,8 @@ from typing import Optional
 
 from ._conn import _connect
 
-_COLONNES = "id, instruction_id, version, auteur_sub, body, created_at"
+_COLONNES = ("id, instruction_id, parent_id, version, quote, quote_prefix, auteur_sub, body, "
+             "created_at")
 
 
 def lister(instruction_id: int, *, avant_id: Optional[int] = None,
@@ -43,12 +44,15 @@ def compter(instruction_id: int) -> int:
 
 
 def ajouter(instruction_id: int, *, version: Optional[int], auteur_sub: Optional[str],
-            body: str) -> dict:
+            body: str, parent_id: Optional[int] = None, quote: Optional[str] = None,
+            quote_prefix: Optional[str] = None) -> dict:
     with _connect() as conn:
         return dict(conn.execute(
-            f"INSERT INTO procedure_comments (instruction_id, version, auteur_sub, body) "
-            f"VALUES (%s, %s, %s, %s) RETURNING {_COLONNES}",
-            (int(instruction_id), version, auteur_sub, body)).fetchone())
+            f"INSERT INTO procedure_comments (instruction_id, parent_id, version, quote, "
+            f"quote_prefix, auteur_sub, body) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            f"RETURNING {_COLONNES}",
+            (int(instruction_id), parent_id, version, quote, quote_prefix, auteur_sub,
+             body)).fetchone())
 
 
 def lire(instruction_id: int, comment_id: int) -> Optional[dict]:
@@ -62,8 +66,10 @@ def lire(instruction_id: int, comment_id: int) -> Optional[dict]:
 
 
 def retirer(comment_id: int) -> bool:
-    """Retire un commentaire vivant ; faux s'il l'était déjà (deux retraits croisés)."""
+    """Retire un commentaire vivant ET ses réponses (retirer la racine retire le fil) ;
+    faux s'il l'était déjà (deux retraits croisés)."""
     with _connect() as conn:
         return conn.execute(
             "UPDATE procedure_comments SET deleted_at = now() "
-            "WHERE id = %s AND deleted_at IS NULL", (int(comment_id),)).rowcount == 1
+            "WHERE (id = %s OR parent_id = %s) AND deleted_at IS NULL",
+            (int(comment_id), int(comment_id))).rowcount >= 1
