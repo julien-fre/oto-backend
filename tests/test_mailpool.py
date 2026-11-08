@@ -617,3 +617,14 @@ def test_create_preview_errors_are_tool_errors(client):
     client.plan_mailboxes.side_effect = ValueError("`mailboxes` is empty.")
     assert _reason(_err("mailpool_mailboxes",
                         {"op": "create", "mailboxes": []})) == "invalid_argument"
+
+
+def test_create_partial_lists_what_exists(client):
+    from oto.tools.mailpool import MailpoolCreatePartial
+    client.create_mailboxes.side_effect = MailpoolCreatePartial(
+        [MAILBOX], ["example-outreach.test"], ["other-outreach.test"], RuntimeError("down"))
+    e = _err("mailpool_mailboxes", {"op": "create", "mailboxes": [NEW], "dry_run": False})
+    assert _reason(e) == "partially_applied"
+    assert e.data["done"] == ["example-outreach.test"]
+    assert e.data["created"][0]["email"] == MAILBOX["email"]
+    assert not [k for k in _keys(e.data) if SECRET.search(k)]

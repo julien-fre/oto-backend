@@ -235,7 +235,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
 def register(mcp: FastMCP) -> None:
     import requests
     from oto.tools.common.errors import UpstreamHTTPError
-    from oto.tools.mailpool import MailpoolCreateRefused
+    from oto.tools.mailpool import MailpoolCreatePartial, MailpoolCreateRefused
     from oto.tools.mailpool.client import MailpoolClient, MailpoolDnsWriteError, strip_secrets
 
     connector_verify.register("mailpool", _verify)
@@ -508,9 +508,11 @@ def register(mcp: FastMCP) -> None:
           free slots per type, each domain active and of the same type (an
           `unassigned` domain takes the type of its first mailbox; one domain
           = one type), addresses not taken. Re-call with `dry_run=False` to
-          create. Google/Outlook mailboxes may come back `pending` while the
-          provider provisions them. On error reason `mailbox_outcome_unknown`
-          the mailboxes may exist: `op="list"` before calling again.
+          create (one Mailpool call per domain). Google/Outlook mailboxes come
+          back `pending` while the provider provisions them, and their MX, SPF
+          and DKIM appear once provisioned. On error reason
+          `mailbox_outcome_unknown` or `partially_applied` some mailboxes may
+          exist: `op="list"` before calling again.
 
         Args:
             op: list, get or create.
@@ -548,6 +550,14 @@ def register(mcp: FastMCP) -> None:
                                "nothing was sent. Re-call with dry_run=False."}
         try:
             out = strip_secrets(c.create_mailboxes(items))
+        except MailpoolCreatePartial as e:
+            raise _after_write(
+                "partially_applied",
+                f"Partially applied: mailboxes created on {', '.join(e.done)}, not on "
+                f"{', '.join(e.not_done)} ({_cause(e.cause)}). List the mailboxes of the "
+                "domains not done before calling again with only those.",
+                created=[_slim_mailbox(m) for m in strip_secrets(e.created)],
+                done=e.done, not_done=e.not_done)
         except MailpoolCreateRefused as e:
             raise _bad(str(e), reason="create_refused")
         except UpstreamHTTPError as e:
