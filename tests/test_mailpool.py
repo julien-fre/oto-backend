@@ -607,3 +607,13 @@ def test_create_arguments_are_checked(client, args):
     with pytest.raises(Exception):
         _call("mailpool_mailboxes", args)
     client.create_mailboxes.assert_not_called()
+
+
+def test_create_preview_errors_are_tool_errors(client):
+    import requests
+    client.plan_mailboxes.side_effect = requests.Timeout()
+    assert _reason(_err("mailpool_mailboxes",
+                        {"op": "create", "mailboxes": [NEW]})) == "timeout"
+    client.plan_mailboxes.side_effect = ValueError("`mailboxes` is empty.")
+    assert _reason(_err("mailpool_mailboxes",
+                        {"op": "create", "mailboxes": []})) == "invalid_argument"

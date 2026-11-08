@@ -537,11 +537,12 @@ def register(mcp: FastMCP) -> None:
     def _create_mailboxes(c: MailpoolClient, mailboxes: List[NewMailbox], dry_run: bool) -> Any:
         items = [m.model_dump(exclude_none=True) for m in mailboxes]
         if dry_run:
-            try:
-                plan = c.plan_mailboxes(items)
-            except MailpoolCreateRefused as e:
-                raise _bad(str(e), reason="create_refused")
-            plan = _run(lambda: plan)
+            def _plan():
+                try:
+                    return c.plan_mailboxes(items)
+                except MailpoolCreateRefused as e:
+                    raise _bad(str(e), reason="create_refused")
+            plan = _run(_plan)  # upstream, timeout and input errors as tool errors
             return {"dry_run": True, **plan,
                     "message": f"Ready to create {len(plan['mailboxes'])} mailbox(es); "
                                "nothing was sent. Re-call with dry_run=False."}
