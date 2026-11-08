@@ -628,3 +628,67 @@ def test_create_partial_lists_what_exists(client):
     assert e.data["done"] == ["example-outreach.test"]
     assert e.data["created"][0]["email"] == MAILBOX["email"]
     assert not [k for k in _keys(e.data) if SECRET.search(k)]
+
+
+# --- exports --------------------------------------------------------------------
+
+EXPORT_PLAN = {"platform": "lemlist", "mailboxes": [{"id": 5301, "email": MAILBOX["email"],
+                                                     "type": "shared"}]}
+BATCH = {"id": 42, "status": "in_progress", "platform": "lemlist",
+         "exports": [{"id": 1, "mailboxId": 5301, "status": "in_progress"}], "errors": []}
+
+
+def test_export_is_a_dry_run_by_default(client):
+    client.plan_export.return_value = EXPORT_PLAN
+    out = _call("mailpool_mailboxes", {"op": "export", "platform": "lemlist",
+                                       "mailbox_ids": [5301]})
+    assert out["dry_run"] is True and out["mailboxes"] == EXPORT_PLAN["mailboxes"]
+    client.export_mailboxes.assert_not_called()
+
+
+def test_export_applies_and_returns_the_batch(client):
+    client.plan_export.return_value = EXPORT_PLAN
+    client.export_mailboxes.return_value = BATCH
+    out = _call("mailpool_mailboxes", {"op": "export", "platform": "lemlist",
+                                       "mailbox_ids": [5301], "dry_run": False})
+    client.export_mailboxes.assert_called_once_with("lemlist", [5301])
+    assert out["batch"]["id"] == 42
+
+
+def test_export_refusal_and_unknown_outcome(client):
+    import requests
+    from oto.tools.mailpool import MailpoolExportRefused
+    client.plan_export.side_effect = MailpoolExportRefused(["no lemlist login is saved"])
+    e = _err("mailpool_mailboxes", {"op": "export", "platform": "lemlist", "mailbox_ids": [1]})
+    assert _reason(e) == "export_refused"
+    client.plan_export.side_effect = None
+    client.plan_export.return_value = EXPORT_PLAN
+    client.export_mailboxes.side_effect = requests.Timeout()
+    e = _err("mailpool_mailboxes", {"op": "export", "platform": "lemlist",
+                                    "mailbox_ids": [5301], "dry_run": False})
+    assert _reason(e) == "export_outcome_unknown"
+
+
+def test_export_reads(client):
+    client.export_credentials_status.return_value = {"platform": "lemlist", "saved": False,
+                                                     "saved_at": None}
+    client.list_export_batches.return_value = {"data": [BATCH], "total": 1}
+    client.get_export_batch.return_value = BATCH
+    assert _call("mailpool_mailboxes", {"op": "export_login",
+                                        "platform": "lemlist"})["saved"] is False
+    assert _call("mailpool_mailboxes", {"op": "export_batches"})["total"] == 1
+    assert _call("mailpool_mailboxes", {"op": "export_batch", "batch_id": 42})["id"] == 42
+
+
+@pytest.mark.parametrize("args", [
+    {"op": "export", "platform": "lemlist"},
+    {"op": "export", "mailbox_ids": [1]},
+    {"op": "export", "platform": "gmail", "mailbox_ids": [1]},
+    {"op": "export_batch"},
+    {"op": "list", "platform": "lemlist"},
+    {"op": "create", "mailboxes": [NEW], "mailbox_ids": [1]},
+])
+def test_export_arguments_are_checked(client, args):
+    with pytest.raises(Exception):
+        _call("mailpool_mailboxes", args)
+    client.export_mailboxes.assert_not_called()

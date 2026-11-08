@@ -10,7 +10,8 @@ Five tools, one per business object:
   report address, tracking CNAME, single records. `dry_run=True` by default,
   with a real diff;
 - `mailpool_mailboxes` — list, read, create (on slots already paid for;
-  `dry_run=True` by default);
+  `dry_run=True` by default), export to a sending platform (Mailpool carries
+  the passwords; `dry_run=True` by default) and its batches;
 - `mailpool_spam_checks` — run (free), read, list, delete;
 - `mailpool_account` — subscription slots, warmup.
 
@@ -235,7 +236,8 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
 def register(mcp: FastMCP) -> None:
     import requests
     from oto.tools.common.errors import UpstreamHTTPError
-    from oto.tools.mailpool import MailpoolCreatePartial, MailpoolCreateRefused
+    from oto.tools.mailpool import (MailpoolCreatePartial, MailpoolCreateRefused,
+                                    MailpoolExportRefused)
     from oto.tools.mailpool.client import MailpoolClient, MailpoolDnsWriteError, strip_secrets
 
     connector_verify.register("mailpool", _verify)
@@ -485,10 +487,15 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def mailpool_mailboxes(
-        op: Literal["list", "get", "create"] = "list",
+        op: Literal["list", "get", "create", "export", "export_login",
+                    "export_batches", "export_batch"] = "list",
         mailbox_id: Optional[int] = None,
         domain_id: Optional[int] = None,
         mailboxes: Optional[List[NewMailbox]] = None,
+        platform: Optional[Literal["instantly", "smartlead", "reachinbox", "reply", "saleshandy",
+                                   "warmbox", "emelia", "lemlist", "plusvibe"]] = None,
+        mailbox_ids: Optional[List[int]] = None,
+        batch_id: Optional[int] = None,
         dry_run: bool = True,
         limit: int = 50,
         offset: int = 0,
@@ -513,17 +520,37 @@ def register(mcp: FastMCP) -> None:
           and DKIM appear once provisioned. On error reason
           `mailbox_outcome_unknown` or `partially_applied` some mailboxes may
           exist: `op="list"` before calling again.
+        - `export` — hand `mailbox_ids` to a sending `platform` (e.g. lemlist):
+          Mailpool connects them there itself, passwords included, so none
+          passes through here. `dry_run=True` (default) checks only: the
+          platform login is saved in Mailpool, each mailbox exists and is
+          `active`. Asynchronous: follow the returned batch with
+          `op="export_batch"`. Types the platform refuses are listed in
+          `errors`. On `export_outcome_unknown`, `op="export_batches"` before
+          calling again.
+        - `export_login` — is a `platform` login saved in Mailpool (never its
+          value). Saving it is done in the Mailpool dashboard.
+        - `export_batches` / `export_batch` (`batch_id`) — export progress.
 
         Args:
             op: list, get or create.
             mailbox_id: Mailpool mailbox id (op="get").
             domain_id: only the mailboxes of this domain (op="list").
             mailboxes: mailboxes to create (op="create").
-            dry_run: op="create" — preview only (default True).
+            platform: sending platform (op="export"/"export_login").
+            mailbox_ids: mailboxes to export (op="export").
+            batch_id: export batch id (op="export_batch").
+            dry_run: op="create"/"export" — preview only (default True).
             limit: page size, 1-100.
             offset: items to skip.
         """
         c = _client()
+        if op.startswith("export"):
+            _refuse_ignored(op, mailbox_id=mailbox_id, domain_id=domain_id,
+                            mailboxes=mailboxes or None)
+            return _export_op(c, op, platform, mailbox_ids, batch_id, dry_run, limit, offset)
+        _refuse_ignored(op, platform=platform, mailbox_ids=mailbox_ids or None,
+                        batch_id=batch_id)
         if op == "create":
             _refuse_ignored(op, mailbox_id=mailbox_id, domain_id=domain_id)
             return _create_mailboxes(c, _need(mailboxes, "mailboxes", op), dry_run)
@@ -573,6 +600,52 @@ def register(mcp: FastMCP) -> None:
                 "domains": out["plan"]["domains"],
                 "message": f"Created {len(created)} mailbox(es). Passwords stay in the "
                            "Mailpool dashboard; pending ones turn active on their own."}
+
+    def _export_op(c: MailpoolClient, op: str, platform, mailbox_ids, batch_id,
+                   dry_run: bool, limit: int, offset: int) -> Any:
+        if op == "export_batch":
+            _refuse_ignored(op, platform=platform, mailbox_ids=mailbox_ids or None)
+            return _run(lambda: c.get_export_batch(_need(batch_id, "batch_id", op)))
+        _refuse_ignored(op, batch_id=batch_id)
+        if op == "export_batches":
+            _refuse_ignored(op, platform=platform, mailbox_ids=mailbox_ids or None)
+            return _run(lambda: c.list_export_batches(limit=limit, offset=offset))
+        p = _need(platform, "platform", op)
+        if op == "export_login":
+            _refuse_ignored(op, mailbox_ids=mailbox_ids or None)
+            return _run(lambda: c.export_credentials_status(p))
+        ids = _need(mailbox_ids, "mailbox_ids", op)
+
+        def _plan():
+            try:
+                return c.plan_export(p, ids)
+            except MailpoolExportRefused as e:
+                raise _bad(str(e), reason="export_refused")
+        plan = _run(_plan)
+        if dry_run:
+            return {"dry_run": True, **plan,
+                    "message": f"Ready to export {len(plan['mailboxes'])} mailbox(es) to "
+                               f"{p}; nothing was sent. Re-call with dry_run=False."}
+        try:
+            batch = strip_secrets(c.export_mailboxes(p, ids))
+        except MailpoolExportRefused as e:
+            raise _bad(str(e), reason="export_refused")
+        except UpstreamHTTPError as e:
+            if e.status_code < 500:
+                raise _bad(_upstream_message(e), reason="upstream_refused")
+            raise _export_unknown(e)
+        except (requests.Timeout, requests.ConnectionError) as e:
+            raise _export_unknown(e)
+        except ValueError as e:
+            raise _bad(str(e))
+        return {"dry_run": False, "batch": batch,
+                "message": "Export scheduled: follow it with op=\"export_batch\"."}
+
+    def _export_unknown(e: Exception) -> McpError:
+        return _after_write(
+            "export_outcome_unknown",
+            f"Outcome unknown: the export got no usable answer ({_cause(e)}). A batch may "
+            "exist — read mailpool_mailboxes(op=\"export_batches\") before calling again.")
 
     def _create_unknown(e: Exception) -> McpError:
         return _after_write(
