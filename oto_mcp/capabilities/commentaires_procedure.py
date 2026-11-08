@@ -134,6 +134,9 @@ class ProcedureComment(BaseModel):
     at: Optional[str] = Field(default=None, description=HORODATAGE)
     mine: bool = Field(description="Written by the caller.")
     can_delete: bool = Field(description="The caller may remove it (author or governor).")
+    deleted: bool = Field(default=False, description=(
+        "A thread's first comment that was removed while replies remain: served without "
+        "its text or author, so the thread keeps its passage."))
 
 
 class ProcedureComments(BaseModel):
@@ -193,6 +196,11 @@ def _procedure(ctx: ResolvedCtx, inp: _Procedure) -> tuple[dict, bool]:
 
 
 def _servi(c: dict, sub: Optional[str], gouverne: bool, emails: dict) -> dict:
+    if c.get("deleted_at") is not None:
+        return {"id": c["id"], "reply_to": None, "quote": c.get("quote"),
+                "quote_prefix": c.get("quote_prefix"), "version": c.get("version"),
+                "author": None, "author_email": None, "body": "", "at": c["created_at"],
+                "mine": False, "can_delete": False, "deleted": True}
     auteur = c["auteur_sub"]
     a_moi = auteur is not None and auteur == sub
     return {
@@ -217,8 +225,9 @@ def _procedure_comments(ctx: ResolvedCtx, inp: ProcedureCommentsInput) -> dict:
     lus = db.procedure_commentaires.lister(ident, avant_id=inp.before_id, limit=limit)
     suite = lus[limit - 1]["id"] if len(lus) > limit else None
     page = list(reversed(lus[:limit]))
-    emails = db.emails_by_subs([c["auteur_sub"] for c in page])
-    total = (len(lus) if inp.before_id is None and len(lus) <= limit
+    emails = db.emails_by_subs([c["auteur_sub"] for c in page if c.get("deleted_at") is None])
+    total = (sum(1 for c in lus if c.get("deleted_at") is None)
+             if inp.before_id is None and len(lus) <= limit
              else db.procedure_commentaires.compter(ident))
     return {
         "guide_id": ident, "slug": instr["slug"], "version": int(instr["version"]),
@@ -231,7 +240,7 @@ def _procedure_comments(ctx: ResolvedCtx, inp: ProcedureCommentsInput) -> dict:
 def _procedure_comment(ctx: ResolvedCtx, inp: ProcedureCommentInput) -> dict:
     instr, gouverne = _procedure(ctx, inp)
     if inp.reply_to is not None:
-        racine = db.procedure_commentaires.lire(int(instr["id"]), inp.reply_to)
+        racine = db.procedure_commentaires.lire(int(instr["id"]), inp.reply_to, servi=True)
         if racine is None or racine.get("parent_id") is not None:
             raise AuthzDenied(404, "comment_not_found", (
                 "`reply_to` names no live thread of this procedure (reply to the "
@@ -315,6 +324,6 @@ CAPABILITIES += [
                           "commentaire"),
         ),
         description=("Remove one comment from a procedure (its author or the procedure's "
-                     "governor); removing a thread's first comment removes its replies."),
+                     "governor); a thread whose first comment is removed keeps its replies."),
     ),
 ]

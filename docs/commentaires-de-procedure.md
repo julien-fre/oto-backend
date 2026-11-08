@@ -15,7 +15,9 @@ jamais dedans.
   départager deux occurrences) ; une RÉPONSE porte `reply_to` (un seul niveau, sans
   citation). Le passage n'est qu'une ancre d'affichage : le front le retrouve dans le
   corps ; un corps réécrit qui ne le contient plus range le fil « sur une version
-  antérieure », sans rien bloquer. Retirer la racine retire le fil.
+  antérieure », sans rien bloquer. Retirer un commentaire ne retire que lui : une racine retirée dont le fil a
+  encore des réponses reste servie `deleted: true` (sans texte ni auteur), et le fil disparaît
+  avec sa dernière réponse.
 - Capacités (`capabilities/commentaires_procedure.py`) :
   - `me.procedure.comments` — MCP `oto_procedure_comments`, `GET /api/me/processes/{guide_id}/comments`
     (`limit`, `before_id`, `total`) ;

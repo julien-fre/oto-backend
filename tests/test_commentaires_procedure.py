@@ -247,11 +247,31 @@ def test_une_reponse_ne_cite_rien_et_ne_repond_qu_a_une_racine(rest):
     assert (r.status_code, r.json()["error"]) == (404, "comment_not_found")
 
 
-def test_retirer_la_racine_retire_le_fil(rest):
+def test_retirer_la_racine_garde_le_fil_tant_qu_il_a_des_reponses(rest):
     _, gid = _procedure()
-    racine = _poster(rest, gid, "racine").json()
-    rest.post(_url(gid), headers=_h(), json={"body": "rep", "reply_to": racine["id"]})
+    racine = rest.post(_url(gid), headers=_h(), json={"body": "racine",
+                                                      "quote": "faire"}).json()
+    rep = rest.post(_url(gid), headers=_h(), json={"body": "rep",
+                                                   "reply_to": racine["id"]}).json()
     _poster(rest, gid, "autre fil")
     assert rest.delete(f"{_url(gid)}/{racine['id']}", headers=_h()).status_code == 200
     lu = rest.get(_url(gid), headers=_h()).json()
-    assert ([c["body"] for c in lu["comments"]], lu["total"]) == (["autre fil"], 1)
+    vus = {c["id"]: c for c in lu["comments"]}
+    assert (vus[racine["id"]]["deleted"], vus[racine["id"]]["body"],
+            vus[racine["id"]]["quote"], vus[racine["id"]]["author"]) == (True, "", "faire", None)
+    assert rep["id"] in vus and lu["total"] == 2
+    # On répond encore dans le fil ; il disparaît avec sa dernière réponse.
+    r = rest.post(_url(gid), headers=_h(), json={"body": "encore", "reply_to": racine["id"]})
+    assert r.status_code == 201, r.text
+    for cid in (rep["id"], r.json()["id"]):
+        assert rest.delete(f"{_url(gid)}/{cid}", headers=_h()).status_code == 200
+    assert [c["body"] for c in rest.get(_url(gid), headers=_h()).json()["comments"]] == ["autre fil"]
+
+
+def test_retirer_une_reponse_ne_retire_qu_elle(rest):
+    _, gid = _procedure()
+    racine = _poster(rest, gid, "racine").json()
+    rep = rest.post(_url(gid), headers=_h(), json={"body": "rep",
+                                                   "reply_to": racine["id"]}).json()
+    assert rest.delete(f"{_url(gid)}/{rep['id']}", headers=_h()).status_code == 200
+    assert [c["body"] for c in rest.get(_url(gid), headers=_h()).json()["comments"]] == ["racine"]
