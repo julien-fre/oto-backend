@@ -33,7 +33,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .. import db, org_store, ownership
 from ._authz import SUB_ONLY
-from .datastore.common import HORODATAGE
 from ._procedure_du_travail import procedure_du_travail
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -41,6 +40,9 @@ from .registry import CAPABILITIES
 LIMITE_DEFAUT = 50
 LIMITE_MAX = 200
 LONGUEUR_MAX = 5000
+# Même forme que l'horodatage des commentaires de ligne : le front les lit avec le même parseur.
+HORODATAGE = ("heure locale serveur, sans offset — `YYYY-MM-DD HH:MM:SS`, "
+              "à ne pas parser comme de l'ISO UTC")
 _TYPE = ownership.TYPE_RESSOURCE_PROCEDURE
 
 
