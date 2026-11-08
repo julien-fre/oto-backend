@@ -16,9 +16,10 @@ C'est ce qui interdit qu'une face reparte seule : la capacité REST n'assemble p
 champs de son côté, elle rend ce que le store a rendu. Un seul vocabulaire.
 
 ⚠️ Le dernier banc CHAÎNE le remède : un avertissement qui nomme un geste que sa propre
-face refuse ne vaut pas mieux que le silence. Sur la face agent, `owner` n'existe pas —
-le message doit donc nommer `oto_resource`, et ce banc vérifie que ce geste-là existe
-vraiment, avec ces paramètres-là.
+face refuse ne vaut pas mieux que le silence. Le tableau existe déjà quand l'agent lit
+l'avertissement : le message nomme donc `oto_resource` (le transfert), et ce banc
+vérifie que ce geste-là existe vraiment, avec ces paramètres-là. Depuis le 08/11/2026
+le tool prend aussi `owner` : les derniers bancs le chargent comme la route REST.
 """
 from __future__ import annotations
 
@@ -90,13 +91,27 @@ def test_un_owner_demande_explicitement_n_avertit_pas(store, org_demandee):
 
 def test_le_remede_de_la_face_agent_ne_nomme_pas_un_parametre_qu_elle_n_a_pas(
         store, org_demandee, face_agent):
-    """`owner` est un paramètre de la ROUTE REST. Le tool MCP ne l'a pas.
-
-    Le prescrire à un agent, c'est lui faire dépenser un appel pour un refus — le
-    défaut même que ce lot répare, retourné."""
+    """Le tableau existe déjà : le remède est le TRANSFERT. `owner` (que le tool MCP
+    prend depuis le 08/11/2026) se nomme pour la prochaine création — et seulement
+    sous la forme du tool, jamais sous celle du corps REST (`owner: {…}`)."""
     message = store.create_datastore("vivier")["avertissement"]
     assert "owner:" not in message
     assert "oto_resource" in message and "new_owner_org" in message
+    assert "data_create_datastore(owner=" in message
+
+
+def test_le_tool_MCP_PREND_le_parametre_owner_que_l_avertissement_nomme():
+    """Chaîner la destination : la phrase nomme `data_create_datastore(owner=…)`, le
+    tool servi doit donc porter ce paramètre."""
+    import asyncio
+
+    from fastmcp import FastMCP
+
+    from oto_mcp.tools import datastore as surface
+    mcp = FastMCP("sonde")
+    surface.register(mcp)
+    outil = asyncio.run(mcp.get_tool("data_create_datastore"))
+    assert "owner" in outil.parameters["properties"]
 
 
 def test_le_remede_prescrit_a_l_agent_existe_vraiment(store, org_demandee, face_agent):
@@ -199,3 +214,85 @@ def test_la_face_rest_rend_exactement_ce_que_le_store_rend(monkeypatch):
     assert code == 201
     for cle, valeur in rendu.items():
         assert body[cle] == valeur
+
+
+# ── `owner` sur la face agent (08/11/2026) ───────────────────────────────────
+#
+# Le tool MCP ne prenait pas `owner` : un agent ne pouvait créer qu'un tableau privé,
+# et la description le renvoyait vers une route REST qu'il ne peut pas appeler. La
+# vérification d'appartenance est celle de la route (`proprietaire_de_naissance`),
+# la même règle sur les deux faces.
+
+
+def _tool_monte(monkeypatch, appels):
+    import asyncio
+
+    from fastmcp import FastMCP
+
+    from oto_mcp import access
+    from oto_mcp.tools import datastore as surface
+
+    def _cree(ot, oid, ns, *, context_org_id):
+        appels.append((ot, oid, ns))
+        return 42
+
+    monkeypatch.setattr(registre.db, "create_datastore", _cree)
+    monkeypatch.setattr(registre, "_ns_url", lambda ns_id, sub, org=None: f"https://d/data/{ns_id}")
+    monkeypatch.setattr(DatastorePg, "_org_de_l_appel", lambda self: None)
+    monkeypatch.setattr(access, "current_user_sub_or_raise", lambda: "u-1")
+    monkeypatch.setattr(surface, "_store_for", lambda sub: DatastorePg("u-1"))
+    mcp = FastMCP("sonde")
+    surface.register(mcp)
+    return asyncio.run(mcp.get_tool("data_create_datastore"))
+
+
+def test_le_TOOL_cree_un_tableau_D_ORG_quand_on_le_demande(monkeypatch, org_demandee,
+                                                          face_agent):
+    from oto_mcp import roles
+    from oto_mcp.tools.datastore import _ProprietaireDeNaissance
+
+    monkeypatch.setattr(roles, "is_org_member", lambda sub, org: (sub, org) == ("u-1", 35))
+    appels: list = []
+    tool = _tool_monte(monkeypatch, appels)
+    out = tool.fn(datastore="vivier", owner=_ProprietaireDeNaissance(type="org", id=35))
+    assert appels == [("org", "35", "vivier")]
+    assert (out["owner_type"], out["owner_id"], out["is_personal"]) == ("org", "35", False)
+    assert "avertissement" not in out, "l'appelant a dit ce qu'il voulait"
+
+
+def test_le_TOOL_cree_un_tableau_D_EQUIPE(monkeypatch):
+    from oto_mcp import roles
+    from oto_mcp.tools.datastore import _ProprietaireDeNaissance
+
+    monkeypatch.setattr(roles, "can_read_group", lambda sub, gid: gid == 9)
+    appels: list = []
+    tool = _tool_monte(monkeypatch, appels)
+    out = tool.fn(datastore="vivier", owner=_ProprietaireDeNaissance(type="group", id=9))
+    assert appels == [("group", "9", "vivier")] and out["owner_type"] == "group"
+
+
+@pytest.mark.parametrize("owner,code", [
+    ({"type": "org", "id": 81}, "not_org_member"),
+    ({"type": "group", "id": 81}, "not_group_member"),
+    ({"type": "org"}, "invalid_owner_id"),
+])
+def test_le_TOOL_refuse_comme_la_route_et_ne_cree_rien(monkeypatch, owner, code):
+    from oto_mcp import roles
+    from oto_mcp.mcp_errors import McpError
+    from oto_mcp.tools.datastore import _ProprietaireDeNaissance
+
+    monkeypatch.setattr(roles, "is_org_member", lambda sub, org: False)
+    monkeypatch.setattr(roles, "can_read_group", lambda sub, gid: False)
+    appels: list = []
+    tool = _tool_monte(monkeypatch, appels)
+    with pytest.raises(McpError) as e:
+        tool.fn(datastore="vivier", owner=_ProprietaireDeNaissance(**owner))
+    assert code in str(e.value)
+    assert appels == [], "rien n'est créé quand l'appartenance manque"
+
+
+def test_le_TOOL_sans_owner_reste_PRIVE(monkeypatch):
+    appels: list = []
+    tool = _tool_monte(monkeypatch, appels)
+    out = tool.fn(datastore="vivier")
+    assert appels == [("user", "u-1", "vivier")] and out["is_personal"] is True

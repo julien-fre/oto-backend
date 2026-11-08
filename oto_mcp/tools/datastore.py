@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
-from pydantic import WithJsonSchema
+from pydantic import BaseModel, Field, WithJsonSchema
 
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
@@ -24,7 +24,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access, db, ownership
 from ..datastore import claimable, couches, identite, jetons, mots_deprecies
 from ..datastore import recherche, upsert_implicite
-from ..datastore import colonnes_non_declarees
+from ..datastore import colonnes_non_declarees, proprietaire_de_naissance
 from ..datastore import validation_complete
 from ..datastore import charge_a_renvoyer
 from ..datastore import forcage as fcg
@@ -65,6 +65,17 @@ _MARQUE_Q_SCOPE = "<<recherche_q_scope>>"
 #: clés admises nommées — `options` sur une colonne, jamais dans `meta`. Décrit, pas
 #: analysé : le handler reçoit le même `dict`, `validate_schema_def` reste le seul juge.
 _SchemaDeclare = Annotated[dict, WithJsonSchema(forme_schema())]
+
+
+class _ProprietaireDeNaissance(BaseModel):
+    """Le propriétaire NOMMÉ à la création (`data_create_datastore(owner=…)`), la
+    même forme que le corps de `POST /api/datastores`. Vérifié par
+    `datastore.proprietaire_de_naissance`, partagé avec la route."""
+    type: Literal["user", "org", "group"] = Field(
+        description="`org` = every member of that org reads it; `group` = that team; "
+                    "`user` = you only (the default).")
+    id: Optional[int] = Field(
+        default=None, description="The org's or team's number. Omitted for `user`.")
 
 
 def _inserer(fn, phrases: dict):
@@ -649,7 +660,8 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     @_avec_la_creation
     def data_create_datastore(datastore: Adresse,
-                              schema: Optional[_SchemaDeclare] = None) -> dict:
+                              schema: Optional[_SchemaDeclare] = None,
+                              owner: Optional[_ProprietaireDeNaissance] = None) -> dict:
         """Create a new datastore (PG-backed), optionally WITH its typed schema.
 
         <<colonnes_non_declarees>>
@@ -658,10 +670,11 @@ def register(mcp: FastMCP) -> None:
         the other members of your org, not its admins. That is the default and it is
         never implicit (ADR 0068).
 
-        ⚠️ It used to be owned by your ACTIVE ORG, readable by every member. To share
-        a table with your org or a team, say so: the REST route takes
-        `owner: {type: "org"|"group", id: N}`. Tables created before 2026-09-04 keep
-        the owner they have.
+        ⚠️ It used to be owned by your ACTIVE ORG, readable by every member. To make
+        a table your org's or a team's, say so at creation: pass
+        `owner: {type: "org"|"group", id: N}` (you must be a member). Do it whenever
+        the table is shared work — a table other agents or colleagues will read or
+        fill. Tables created before 2026-09-04 keep the owner they have.
 
         ⚠️ **`_org=` does NOT change the owner.** It decides which org you read and
         write under — never who owns what you create. Create a table under `_org=N`
@@ -678,6 +691,9 @@ def register(mcp: FastMCP) -> None:
             datastore: kebab-case identifier, unique per owner (e.g. `timetrack`).
             schema: optional — the table's schema, the SAME object as
                 `data_set_schema(schema=…)`. Omitted (or null) = a free table.
+            owner: optional — who owns the table. Omitted = you (private).
+                `{type: "org", id: N}` or `{type: "group", id: N}` = that org's or
+                team's table, readable by its members.
         """
         sub = access.current_user_sub_or_raise()
         if not datastore or not datastore.strip():
@@ -688,9 +704,17 @@ def register(mcp: FastMCP) -> None:
                 message=("a slot binds an EXISTING table — create the datastore under its "
                          "real name, then bind it to the project "
                          "(`oto_project op=link target_type=tableau … slot='<name>'`).")))
+        # Même vérification que `POST /api/datastores` : la règle vit dans
+        # `proprietaire_de_naissance`, on ne fait ici que traduire le refus.
+        try:
+            owner_type, owner_id = proprietaire_de_naissance.resoudre(
+                sub, owner.model_dump() if owner is not None else None)
+        except proprietaire_de_naissance.ProprietaireRefuse as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"{e.code}: {e}"))
         store = _store_for(sub)
         try:
-            return store.create_datastore(datastore.strip(), schema=schema)
+            return store.create_datastore(datastore.strip(), owner_type=owner_type,
+                                          owner_id=owner_id, schema=schema)
         except DatastoreExists:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,

@@ -29,7 +29,10 @@ adr:
 > d'org par défaut »** — deux propriétaires pour un seul verbe, chaque texte affirmant
 > le contraire de sa propre face. Les deux convergent maintenant sur `user` ; partager
 > se dit (`owner: {type: "org"|"group", id: N}`), et **les tableaux existants ne
-> bougent pas**. `data_share` suit la même règle : son défaut passe de `write` à
+> bougent pas**. ⚠️ Jusqu'au 08/11/2026 seule la route REST prenait `owner` : le tool
+> MCP `data_create_datastore` ne savait créer qu'un tableau privé. Il le prend
+> désormais, vérifié par la même règle (`datastore/proprietaire_de_naissance.py` :
+> membre de l'org, lecteur de l'équipe ; mêmes codes de refus sur les deux faces). `data_share` suit la même règle : son défaut passe de `write` à
 > `read`, parce que « partager » veut dire « qu'il puisse le lire » — sur un tableau,
 > l'écriture n'ajoute pas un droit, elle en retire un à son propriétaire.
 > Garde : `tests/test_description_dit_le_proprietaire.py` lit le défaut **dans le

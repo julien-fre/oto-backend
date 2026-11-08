@@ -36,7 +36,7 @@ from ...datastore.outils import adresse_servie
 
 from ... import db, roles
 from ...auth import token_scopes
-from ...datastore import colonnes_non_declarees
+from ...datastore import colonnes_non_declarees, proprietaire_de_naissance
 from ...datastore.core import DatastoreExists, DatastoreForbidden, DatastoreNotFound, make_store
 from ...datastore.errors import SchemaDefinitionError
 from .._authz import SUB_ONLY
@@ -251,27 +251,13 @@ def _create_datastore(ctx: ResolvedCtx, inp: CreateDatastoreInput) -> dict:
     # surtout privait le store de la seule chose que la ROUTE sache : l'appelant
     # a-t-il NOMMÉ un propriétaire ? C'est ce fait-là qui décide de l'avertissement,
     # pas la valeur du propriétaire.
-    owner = inp.owner or {}
-    owner_type = ((owner.get("type") or "").strip() or None)
-    owner_id = ctx.sub
-    if owner_type == "org":
-        try:
-            org_id = int(owner.get("id"))
-        except (TypeError, ValueError):
-            raise AuthzDenied(400, "invalid_owner_id")
-        if not roles.is_org_member(ctx.sub, org_id):
-            raise AuthzDenied(403, "not_org_member")
-        owner_id = str(org_id)
-    elif owner_type == "group":
-        try:
-            group_id = int(owner.get("id"))
-        except (TypeError, ValueError):
-            raise AuthzDenied(400, "invalid_owner_id")
-        if not roles.can_read_group(ctx.sub, group_id):
-            raise AuthzDenied(403, "not_group_member")
-        owner_id = str(group_id)
-    elif owner_type is not None and owner_type != "user":
-        raise AuthzDenied(400, "invalid_owner_type")
+    # La vérification d'appartenance vit dans `proprietaire_de_naissance`, partagée
+    # avec le tool MCP (08/11/2026) ; ici on ne fait que traduire le refus. Les codes
+    # rendus sont ceux de toujours, sans message (forme historique de la route).
+    try:
+        owner_type, owner_id = proprietaire_de_naissance.resoudre(ctx.sub, inp.owner)
+    except proprietaire_de_naissance.ProprietaireRefuse as e:
+        raise AuthzDenied(e.status, e.code)
     try:
         # Le propriétaire, son identifiant, `is_personal` et l'`avertissement` sont
         # posés par le STORE et relayés tels quels — c'est ce qui interdit aux deux

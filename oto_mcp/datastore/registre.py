@@ -39,11 +39,11 @@ def _avertissement_de_portee(ns_id: int, owner_type: str, *,
     compris quand personne n'a rien demandé, et un avertissement qui se déclenche
     toujours ne se lit plus.
 
-    ⚠️ **Le remède dépend de la FACE, parce que les deux faces n'ont pas le même
-    geste.** `owner` est un paramètre de la route REST ; le tool MCP ne l'a pas.
-    Prescrire `owner` à un agent, c'est lui faire dépenser un appel pour un refus —
-    le défaut même que cette phrase répare, retourné. Ce qu'un agent PEUT faire, lui,
-    c'est transférer après coup (`oto_resource op=transfer`).
+    ⚠️ **Le remède dépend de la FACE.** Le tableau EXISTE déjà : pour un agent, la
+    sortie est le transfert (`oto_resource op=transfer`), qu'il peut appeler. Depuis le
+    08/11/2026 le tool MCP prend aussi `owner` (il ne le prenait pas, et la phrase ne
+    devait donc pas le prescrire) : on le nomme pour la PROCHAINE création, jamais
+    comme remède de celle-ci — recréer sous le même nom prendrait `datastore_exists`.
     """
     if explicite or owner_type != "user":
         return None
@@ -62,7 +62,9 @@ def _avertissement_de_portee(ns_id: int, owner_type: str, *,
     if aga.appel_d_agent():
         return (f"{tete} Pour qu'il appartienne à l'organisation : "
                 f"`oto_resource(op='transfer', resource_id='{ns_id}', "
-                f"new_owner_org={demandee})`.")
+                f"new_owner_org={demandee})`. La prochaine fois, nomme-la à la "
+                f"création : `data_create_datastore(owner={{\"type\": \"org\", "
+                f"\"id\": {demandee}}})`.")
     return (f"{tete} Pour qu'il appartienne à l'organisation : "
             f"`owner: {{\"type\": \"org\", \"id\": {demandee}}}` à la création.")
 
