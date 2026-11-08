@@ -338,6 +338,15 @@ class InstructionView(BaseModel):
     scope: Optional[Literal["org", "user"]] = Field(default=None, description=_SCOPE_ECHO)
     other_scopes: Optional[list[OtherScope]] = Field(default=None, description=_OTHER_SCOPES)
     shadow_warning: Optional[str] = Field(default=None, description=_SHADOW_WARNING)
+    # 08/11/2026 : la page montrait l'ancien dessin après un changement d'étapes, sans
+    # rien en dire. Le cœur ne redessine pas (`procedure_diagram`, pas de jumeau du
+    # parseur du front) : il dit que le dessin date d'avant les étapes servies.
+    diagram_version: Optional[int] = Field(default=None, description=(
+        "La version où le dessin servi a été posé tel qu'il est. null sans dessin."))
+    diagram_stale: Optional[bool] = Field(default=None, description=(
+        "true = les étapes (titres, items numérotés) ont changé depuis "
+        "`diagram_version` et le dessin, lui, n'a pas bougé : il peut ne plus "
+        "correspondre — à redessiner. null sans dessin."))
 
 
 class InstructionUnarchived(BaseModel):
@@ -1552,6 +1561,7 @@ def _write_instruction(ctx: ResolvedCtx, inp, must_create: bool = False) -> tupl
     # taille parce que le marqueur se remplace avant de peser — le corps qu'on pèse
     # est celui qu'on écrit. Une création n'a rien à comparer ni à rendre.
     ancien_md = ""
+    precedent = None
     if not must_create:
         try:
             precedent = org_store.get_instruction(*owner, norm)
@@ -1563,6 +1573,22 @@ def _write_instruction(ctx: ResolvedCtx, inp, must_create: bool = False) -> tupl
             logger.warning("retrait: corps précédent illisible pour %s : %s", norm, e)
     marqueur_perdu = procedure_diagram.marqueur_sans_dessin(body_md, ancien_md)
     body_md = procedure_diagram.avec_le_dessin(body_md, ancien_md)
+    # Le dessin gardé tel quel alors que les étapes ont bougé (08/11/2026) : on le DIT
+    # à qui écrit, avec la version où il a été posé. Calculé sur le corps d'avant,
+    # donc avant l'écriture ; un historique illisible ne dit rien plutôt que faux.
+    perime_depuis = None
+    if procedure_diagram.dessin_garde_etapes_changees(ancien_md, body_md):
+        try:
+            avant = precedent or {}
+            passees = [r for r in org_store.instruction_revision_bodies(*owner, norm)
+                       if r.get("version") is not None
+                       and r["version"] < (avant.get("version") or 0)]
+            perime_depuis = procedure_diagram.etat_du_dessin(
+                [{"version": avant.get("version"), "body_md": ancien_md}, *passees]
+            )["diagram_version"]
+        except Exception as e:  # noqa: BLE001 — avertissement optionnel
+            logger.warning("dessin: historique illisible pour %s : %s", norm, e)
+            perime_depuis = (precedent or {}).get("version")
     # Injecté dans le guide de base servi à chaque session → caper la taille.
     # ⚠️ La borne n'est PAS publiée dans le schéma servi de `InstrSetInput` /
     # `AdminInstrSetInput` / la création — contrairement au `body_md` des guides, qui
@@ -1643,7 +1669,8 @@ def _write_instruction(ctx: ResolvedCtx, inp, must_create: bool = False) -> tupl
             **_note_de_portee(owner), **paliers, "version": version, "set": True,
             **({"reverted_from": from_version} if from_version is not None else {}),
             **slots_mod.slots_check(body_md, effective_slots),
-            **procedure_diagram.diagram_check(body_md, marqueur_perdu=marqueur_perdu),
+            **procedure_diagram.diagram_check(body_md, marqueur_perdu=marqueur_perdu,
+                                              perime_depuis=perime_depuis),
             **procedure_retrait.retrait_check(ancien_md, body_md)}, body_md
 
 
@@ -1925,7 +1952,25 @@ def _instruction_get(ctx: ResolvedCtx, inp: InstrGetInput) -> dict:
         **_paliers_du_slug(ctx, instr["slug"], owner, "lecture",
                            instr.get("archived_at")),
         **({"scope": inp.scope} if inp.scope else {}),
+        **_etat_du_dessin(owner, instr),
     }
+
+
+def _etat_du_dessin(owner: tuple[str, str], instr: dict) -> dict:
+    """`diagram_version` / `diagram_stale` de la version SERVIE, lus dans l'historique
+    (`procedure_diagram.etat_du_dessin`). Best-effort : une lecture d'historique qui
+    échoue ne refuse jamais la procédure — elle rend « rien à dire »."""
+    if procedure_diagram.le_dessin(instr.get("body_md") or "") is None:
+        return {}
+    try:
+        servie = instr["version"]
+        passees = [r for r in org_store.instruction_revision_bodies(*owner, instr["slug"])
+                   if r.get("version") is not None and r["version"] < servie]
+        return procedure_diagram.etat_du_dessin(
+            [{"version": servie, "body_md": instr["body_md"]}, *passees])
+    except Exception as e:  # noqa: BLE001 — indice d'affichage, jamais un refus
+        logger.warning("dessin: historique illisible pour %s : %s", instr.get("slug"), e)
+        return {}
 
 
 def _unarchive_instruction(ctx: ResolvedCtx, inp) -> dict:

@@ -381,13 +381,85 @@ def _phrase(fautes: list[dict]) -> str:
             "a clean result is not a promise it renders.")
 
 
-def diagram_check(body_md: str, *, marqueur_perdu: bool = False) -> dict:
+# ── Le dessin est resté, les étapes ont bougé ────────────────────────────────
+#
+# Le cas remonté le 08/11/2026 : on enregistre une procédure dont on a changé les
+# étapes, et la page montre toujours l'ANCIEN dessin. Rien ne le redessine — ni le
+# marqueur (`avec_le_dessin` remet le tracé stocké tel quel, c'est son rôle), ni la
+# page (elle renvoie un corps complet où le bloc n'a pas bougé). Ce module ne dessine
+# pas (pas de jumeau Python de `ascii-diagram.ts`, cf. en-tête) : il DIT que le dessin
+# date d'avant les étapes, à qui écrit (`diagram_warning`) et à qui lit
+# (`diagram_stale` + `diagram_version` sur `GET /api/me/instructions/{slug}`), pour
+# que l'auteur — une IA, presque toujours — le refasse.
+#
+# ⚠️ « Les étapes », c'est le SQUELETTE du corps hors dessin : ses titres et ses
+# items numérotés. Une coquille corrigée dans un paragraphe ne dit pas que le flux a
+# changé ; une étape ajoutée, retirée, renommée ou déplacée, si. Le squelette reste
+# un indice — d'où « may no longer match », jamais « is wrong ».
+# ⚠️ Avertir, jamais refuser (ADR 0014/0035), comme le reste de ce module.
+
+_ETAPE = re.compile(r"^[ \t]*(#{1,6}[ \t]+\S.*|\d+[.)][ \t]+\S.*)$", re.M)
+
+PERIME = ("the steps changed but the flowchart did not — the stored drawing (v{v}) was "
+          "kept as it was and may no longer match. Redraw it: `op=get full=true`, edit "
+          "the drawing to the new steps, and write the body WITHOUT the "
+          "`<!-- flowchart: … -->` marker line")
+
+
+def le_dessin(body_md: str) -> str | None:
+    """Le texte du premier bloc qui dessine, fences comprises, ou `None`."""
+    etendue = trouver_le_dessin(body_md)
+    return body_md[etendue[0]:etendue[1]] if etendue else None
+
+
+def squelette(body_md: str) -> tuple[str, ...]:
+    """Les titres et items numérotés du corps HORS dessin, espaces normalisés."""
+    etendue = trouver_le_dessin(body_md or "")
+    prose = (body_md or "") if etendue is None else body_md[:etendue[0]] + body_md[etendue[1]:]
+    return tuple(" ".join(m.split()) for m in _ETAPE.findall(prose))
+
+
+def dessin_garde_etapes_changees(ancien_md: str, body_md: str) -> bool:
+    """À l'écriture : le dessin du corps écrit est celui d'avant, mot pour mot, et les
+    étapes ont changé. Faux sans dessin de part et d'autre, ou si le dessin a bougé."""
+    avant = le_dessin(ancien_md or "")
+    return (avant is not None and le_dessin(body_md or "") == avant
+            and squelette(ancien_md) != squelette(body_md))
+
+
+def etat_du_dessin(versions: list[dict]) -> dict:
+    """À la lecture : `{diagram_version, diagram_stale}` d'après l'historique
+    `[{version, body_md}]`, le plus récent d'abord (la version servie en tête).
+
+    `diagram_version` = la version où le dessin servi a été posé tel qu'il est — on
+    remonte tant que le bloc est identique. `diagram_stale` = les étapes de la version
+    servie ne sont plus celles de cette version-là. Sans dessin : les deux à `None`.
+    Un historique tronqué (borne de lecture) donne la plus ancienne version lue : au
+    pire on rate un retard, on n'en invente pas."""
+    if not versions:
+        return {"diagram_version": None, "diagram_stale": None}
+    courant = versions[0].get("body_md") or ""
+    dessin = le_dessin(courant)
+    if dessin is None:
+        return {"diagram_version": None, "diagram_stale": None}
+    pose = versions[0]
+    for v in versions[1:]:
+        if le_dessin(v.get("body_md") or "") != dessin:
+            break
+        pose = v
+    return {"diagram_version": pose.get("version"),
+            "diagram_stale": squelette(pose.get("body_md") or "") != squelette(courant)}
+
+
+def diagram_check(body_md: str, *, marqueur_perdu: bool = False,
+                  perime_depuis=None) -> dict:
     """Check croisé à l'écriture, dans la forme des autres (`slots_check`,
     `write_check`) : la clé est TOUJOURS présente, `None` = le check a tourné et
     n'a rien trouvé à dire. Best-effort — un check ne casse jamais une écriture.
 
     Aucun dessin : rien à dire — le dessin est facultatif. Le check ne parle que d'un
-    dessin présent (deux dessins, ou un tracé qui ne se dessinera pas)."""
+    dessin présent (deux dessins, un tracé qui ne se dessinera pas, ou un dessin gardé
+    tel quel quand les étapes ont changé — `perime_depuis`)."""
     try:
         combien = compter_les_dessins(body_md)
         if combien == 0:
@@ -398,7 +470,11 @@ def diagram_check(body_md: str, *, marqueur_perdu: bool = False) -> dict:
         trouve = _trace_et_offset(body_md)
         fautes = lint_du_trace(trouve[0]) if trouve else []
         if not fautes:
-            return {"diagram_warning": None}
+            # `perime_depuis` = la version du dessin gardé quand les étapes ont bougé
+            # (`dessin_garde_etapes_changees`). Dit seulement d'un dessin qui se
+            # dessine : un tracé cassé a son propre avertissement, plus urgent.
+            return {"diagram_warning": (PERIME.format(v=perime_depuis)
+                                        if perime_depuis is not None else None)}
         for f in fautes:
             f["line"] += trouve[1] - 1        # ligne du CORPS, pas du bloc
         return {"diagram_warning": _phrase(fautes)}

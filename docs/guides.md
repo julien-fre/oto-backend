@@ -240,6 +240,18 @@ réécrire sans `scope` publie chez soi une procédure sans son dessin. La ligne
 désormais « same slug and scope you read ». La perte n'est pas silencieuse
 (`diagram_warning`), mais elle est constatée APRÈS.
 
+⚠️ **Le dessin gardé quand les étapes changent** (08/11/2026). Le marqueur remet le tracé
+stocké tel quel, et la page renvoie un corps complet où le bloc n'a pas bougé : après un
+changement d'étapes, la page montrait l'ancien dessin sans rien en dire. Le cœur ne
+redessine pas (pas de jumeau du parseur du front) ; il DIT le retard. « Les étapes » =
+le squelette du corps hors dessin (titres, items numérotés) — une coquille dans un
+paragraphe ne compte pas. À l'écriture : `diagram_warning` = `PERIME`, avec la version
+où le dessin a été posé. À la lecture (`GET /api/me/instructions/{slug}`) :
+`diagram_version` + `diagram_stale`, déduits de `org_instruction_revisions` (on remonte
+tant que le bloc est identique, 50 versions au plus) — la page propose de le refaire.
+Procédures d'org et personnelles ; la face équipe (`groups/guide.py`) ne le porte pas
+encore. Banc : `tests/test_procedure_diagram_perime.py`.
+
 ⚠️ **Marqueur + vrai dessin dans le même corps = DEUX blocs dessinants.** La page n'en
 rend qu'un, le premier ; `has_diagram` répondait « oui, il y a un dessin » et se taisait.
 `procedure_diagram.compter_les_dessins` les compte, et `diagram_check` le dit

@@ -136,8 +136,8 @@ PKG = pathlib.Path(org_store.__file__).parent
 
 # Les 9 coutures, dans l'ordre du graphe (feuilles d'abord).
 MODULES = ("orgs", "members", "vault", "settings", "instructions",
-           "instructions_cycle", "instruction_ownership", "personal",
-           "invitations", "library", "essai")
+           "instructions_cycle", "instruction_ownership", "instruction_revisions",
+           "personal", "invitations", "library", "essai")
 
 # Arêtes ATTENDUES du graphe interne : module -> modules frères importés.
 EXPECTED_EDGES = {
@@ -147,6 +147,8 @@ EXPECTED_EDGES = {
     # 10/09/2026, quand le désarchivage a fait déborder `instructions.py`.
     "instructions_cycle": {"instructions"},
     "instruction_ownership": {"instructions"},
+    # Les corps des versions passées, pour juger le dessin (08/11/2026).
+    "instruction_revisions": {"instructions"},
     "personal": {"orgs", "members"},
     "invitations": {"members"},
     "library": {"instructions"},

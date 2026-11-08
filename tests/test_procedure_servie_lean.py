@@ -306,3 +306,71 @@ def test_l_essentiel_d_oto_procedure_survit_a_la_coupe_du_client():
         f"Hors des {_COUPE_CLIENT} premiers caractères servis (longueur totale "
         f"{len(d)}) : {dehors}. Claude Code ne lira pas ces phrases. N'allonge pas la "
         "tête de la description : déplace vers la fin ce qui se rattrape autrement.")
+
+
+# ── Le dessin gardé quand les étapes changent (08/11/2026) ─────────────────────
+#
+# Le marqueur remet le tracé stocké à l'identique : c'est son rôle. Mais quand l'agent
+# a changé les ÉTAPES, la page montre alors un dessin d'avant. L'écriture le dit, en
+# nommant la version où le dessin a été posé ; la lecture REST le porte
+# (`diagram_stale`, `diagram_version`) pour que la page propose de le refaire.
+
+_ETAPES = _CORPS.replace("Écris avec `data_write`.\n",
+                         "## 1. Lire\n\nÉcris avec `data_write`.\n")
+
+
+def test_op_set_etapes_changees_avec_le_marqueur_AVERTIT_et_nomme_la_version(monkeypatch):
+    _ecriture(monkeypatch, _ETAPES)
+    # v7 = le courant ; le dessin a été posé en v5 (v6 ne l'a pas touché).
+    monkeypatch.setattr(oi.org_store, "instruction_revision_bodies",
+                        lambda ot, oid, slug, limite=50: [
+                            {"version": 7, "body_md": _ETAPES},
+                            {"version": 6, "body_md": _ETAPES},
+                            {"version": 5, "body_md": _ETAPES},
+                            {"version": 4, "body_md": "# Une procédure\n"}])
+    relu = procedure_diagram.sans_le_dessin(_ETAPES, 7)
+    modifie = relu.replace("## 1. Lire", "## 1. Lire\n\n## 2. Relancer")
+    out = oi._write_instruction(ResolvedCtx(sub="u1", org_id=3),
+                                oi.ConsoleInstrSetInput(slug="p", body_md=modifie, scope="org"))[0]
+    assert out["diagram_warning"] == procedure_diagram.PERIME.format(v=5)
+
+
+def test_op_set_avec_le_dessin_refait_ne_dit_rien(monkeypatch):
+    _ecriture(monkeypatch, _ETAPES)
+    nouveau = (_ETAPES.replace("## 1. Lire", "## 1. Lire\n\n## 2. Relancer")
+               .replace("2 · Agir   ", "2 · Relance"))
+    out = oi._write_instruction(ResolvedCtx(sub="u1", org_id=3),
+                                oi.ConsoleInstrSetInput(slug="p", body_md=nouveau, scope="org"))[0]
+    assert out["diagram_warning"] is None
+
+
+def test_la_lecture_REST_dit_que_le_dessin_date_d_avant_les_etapes(monkeypatch):
+    courant = _ETAPES.replace("## 1. Lire", "## 1. Lire\n\n## 2. Relancer")
+    monkeypatch.setattr(oi, "_paliers_du_slug", lambda *a, **k: {})
+    monkeypatch.setattr(oi.org_store, "get_instruction",
+                        lambda ot, oid, slug, version=None: {
+                            "slug": "p", "title": "T", "description": "d", "version": 9,
+                            "body_md": courant, "slots": []})
+    monkeypatch.setattr(oi.org_store, "instruction_revision_bodies",
+                        lambda ot, oid, slug, limite=50: [
+                            {"version": 9, "body_md": courant},
+                            {"version": 8, "body_md": _ETAPES},
+                            {"version": 7, "body_md": "# Une procédure\n"}])
+    out = oi._instruction_get(ResolvedCtx(sub="u1", org_id=3),
+                              oi.InstrGetInput(slug="p"))
+    assert (out["diagram_version"], out["diagram_stale"]) == (8, True)
+    assert oi.InstructionView(**out).diagram_stale is True
+
+
+def test_la_lecture_REST_sans_dessin_ne_lit_pas_l_historique(monkeypatch):
+    monkeypatch.setattr(oi, "_paliers_du_slug", lambda *a, **k: {})
+    monkeypatch.setattr(oi.org_store, "get_instruction",
+                        lambda ot, oid, slug, version=None: {
+                            "slug": "p", "title": "T", "description": "d", "version": 2,
+                            "body_md": "# P\n\n## 1. A\n", "slots": []})
+
+    def _interdit(*a, **k):
+        raise AssertionError("une procédure sans dessin n'a pas à lire son historique")
+    monkeypatch.setattr(oi.org_store, "instruction_revision_bodies", _interdit)
+    out = oi._instruction_get(ResolvedCtx(sub="u1", org_id=3), oi.InstrGetInput(slug="p"))
+    assert "diagram_stale" not in out
