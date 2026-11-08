@@ -547,3 +547,63 @@ def test_ops_refuse_foreign_arguments(client):
         _call("mailpool_spam_checks", {"op": "get", "spam_check_id": 1, "mailbox_id": 2})
     with pytest.raises(Exception, match="`mailbox_id` is required"):
         _call("mailpool_mailboxes", {"op": "get"})
+
+
+# --- mailbox creation ---------------------------------------------------------
+
+NEW = {"email": "anna@example-outreach.test", "firstName": "Anna", "lastName": "Lee",
+       "type": "google", "forwardTo": "anna@example.com"}
+PLAN = {"mailboxes": [NEW], "slots": {"google": {"free": 3, "used_by_this": 1, "left_after": 2}},
+        "domains": {"example-outreach.test": {"id": 1201, "type": "unassigned",
+                                              "becomes": "google"}}}
+
+
+def test_create_is_a_dry_run_by_default(client):
+    client.plan_mailboxes.return_value = PLAN
+    out = _call("mailpool_mailboxes", {"op": "create", "mailboxes": [NEW]})
+    assert out["dry_run"] is True and out["slots"] == PLAN["slots"]
+    client.plan_mailboxes.assert_called_once_with([NEW])
+    client.create_mailboxes.assert_not_called()
+
+
+def test_create_applies_and_serves_no_credential(client):
+    client.create_mailboxes.return_value = {"created": [MAILBOX], "plan": PLAN}
+    out = _call("mailpool_mailboxes", {"op": "create", "mailboxes": [NEW], "dry_run": False})
+    client.create_mailboxes.assert_called_once_with([NEW])
+    assert out["created"][0]["email"] == MAILBOX["email"]
+    assert not [k for k in _keys(out) if SECRET.search(k)]
+    assert "domainOwner" not in out["created"][0]["domain"]
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_create_refusal_is_named(client, dry_run):
+    from oto.tools.mailpool import MailpoolCreateRefused
+    err = MailpoolCreateRefused(["2 google mailbox(es) asked, 1 google slot(s) free"])
+    client.plan_mailboxes.side_effect = err
+    client.create_mailboxes.side_effect = err
+    e = _err("mailpool_mailboxes", {"op": "create", "mailboxes": [NEW], "dry_run": dry_run})
+    assert _reason(e) == "create_refused" and "slot" in e.message
+
+
+@pytest.mark.parametrize("exc", ["timeout", "5xx"])
+def test_create_without_answer_is_an_unknown_outcome(client, exc):
+    import requests
+    from oto.tools.common.errors import UpstreamHTTPError
+    client.create_mailboxes.side_effect = (
+        requests.Timeout() if exc == "timeout"
+        else UpstreamHTTPError(503, "down", service="mailpool"))
+    e = _err("mailpool_mailboxes", {"op": "create", "mailboxes": [NEW], "dry_run": False})
+    assert _reason(e) == "mailbox_outcome_unknown"
+
+
+@pytest.mark.parametrize("args", [
+    {"op": "create"},
+    {"op": "create", "mailboxes": [NEW], "mailbox_id": 1},
+    {"op": "list", "mailboxes": [NEW]},
+    {"op": "create", "mailboxes": [dict(NEW, type="private")]},
+    {"op": "create", "mailboxes": [dict(NEW, password="x")]},
+])
+def test_create_arguments_are_checked(client, args):
+    with pytest.raises(Exception):
+        _call("mailpool_mailboxes", args)
+    client.create_mailboxes.assert_not_called()

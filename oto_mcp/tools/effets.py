@@ -650,7 +650,7 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
     # Rewrites the whole DNS record set, removes records, replaces a CNAME (dry_run=True previews).
     "mailpool_domain_fix": "detruire",
     "mailpool_domains": {"lire": "list get dns audit availability suggestions google_workspace_check microsoft_365_check owners"},
-    "mailpool_mailboxes": {"lire": "list get"},
+    "mailpool_mailboxes": {"lire": "list get", "ecrire": "create"},
     # `run` sends a real test email from the mailbox.
     "mailpool_spam_checks": {"lire": "get list", "envoyer": "run", "detruire": "delete"},
     "make_get_scenario": "lire",
@@ -1262,6 +1262,7 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
 #: on a tool with a list argument either declares its batch here or the tool declares
 #: that list as not a batch (`PAS_UN_LOT`).
 LOTS: dict[str, Lot] = {
+    "mailpool_mailboxes:create": Lot("mailboxes"),
     "lemlist_contact:list_create": Lot("contact_ids"),
     "lemlist_inbox:messages": Lot("cc"),
     "lemlist_inbox:label_create": Lot("cc"),

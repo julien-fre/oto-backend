@@ -9,7 +9,8 @@ Five tools, one per business object:
 - `mailpool_domain_fix` — the only tool that edits DNS: SPF hard fail, DMARC
   report address, tracking CNAME, single records. `dry_run=True` by default,
   with a real diff;
-- `mailpool_mailboxes` — list, read;
+- `mailpool_mailboxes` — list, read, create (on slots already paid for;
+  `dry_run=True` by default);
 - `mailpool_spam_checks` — run (free), read, list, delete;
 - `mailpool_account` — subscription slots, warmup.
 
@@ -21,8 +22,13 @@ registrant owners through allowlists of their own (an owner's name, address and
 phone are not served) — a field Mailpool adds tomorrow is not served until it
 is listed.
 
-⚠️ **Nothing billed is served**: registering, transferring or renewing a domain,
-creating a mailbox, changing slots, enrolling in warmup, inbox placement.
+⚠️ **Nothing billed is BOUGHT**: registering, transferring or renewing a domain,
+buying slots, enrolling in warmup, inbox placement are not served. Creating a
+mailbox is, because it only takes a slot the workspace already pays for: the
+client (`plan_mailboxes`) reads the slots, domains and existing addresses and
+refuses before sending anything when a slot is missing, a domain is not active
+or is of another type, or an address exists. A create that gets no answer
+(`mailbox_outcome_unknown`) may have landed: list the mailboxes before retrying.
 
 DNS behaviour (observed live on 2026-10-05, encoded in `mailpool_dns`): a DNS
 write REPLACES the whole record set — the fix tool reads, plans, and hands the
@@ -85,6 +91,18 @@ class DnsRecord(BaseModel):
     key: Optional[str] = Field(None, description="host label; null = apex")
     value: str = Field(min_length=1)
     priority: Optional[int] = Field(None, description="MX only")
+
+
+class NewMailbox(BaseModel):
+    """One mailbox to create."""
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, description="full address, on a workspace domain")
+    firstName: str = Field(min_length=1)
+    lastName: str = Field(min_length=1)
+    type: Literal["google", "outlook", "shared"]
+    forwardTo: Optional[str] = Field(None, description="address replies are forwarded to")
+    signature: Optional[str] = None
 
 
 def _refuse_ignored(op: str, **provided) -> None:
@@ -217,6 +235,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
 def register(mcp: FastMCP) -> None:
     import requests
     from oto.tools.common.errors import UpstreamHTTPError
+    from oto.tools.mailpool import MailpoolCreateRefused
     from oto.tools.mailpool.client import MailpoolClient, MailpoolDnsWriteError, strip_secrets
 
     connector_verify.register("mailpool", _verify)
@@ -466,9 +485,11 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def mailpool_mailboxes(
-        op: Literal["list", "get"] = "list",
+        op: Literal["list", "get", "create"] = "list",
         mailbox_id: Optional[int] = None,
         domain_id: Optional[int] = None,
+        mailboxes: Optional[List[NewMailbox]] = None,
+        dry_run: bool = True,
         limit: int = 50,
         offset: int = 0,
     ) -> Any:
@@ -481,15 +502,30 @@ def register(mcp: FastMCP) -> None:
         - `list` — the workspace's mailboxes, optionally of one `domain_id`.
           `limit` (1-100) / `offset` paginate.
         - `get` — one mailbox (`mailbox_id`).
+        - `create` — new mailboxes (`mailboxes`, up to 50), each taking one
+          subscription slot ALREADY PAID for (nothing is bought).
+          `dry_run=True` (the default) checks everything and sends nothing:
+          free slots per type, each domain active and of the same type (an
+          `unassigned` domain takes the type of its first mailbox; one domain
+          = one type), addresses not taken. Re-call with `dry_run=False` to
+          create. Google/Outlook mailboxes may come back `pending` while the
+          provider provisions them. On error reason `mailbox_outcome_unknown`
+          the mailboxes may exist: `op="list"` before calling again.
 
         Args:
-            op: list or get.
+            op: list, get or create.
             mailbox_id: Mailpool mailbox id (op="get").
             domain_id: only the mailboxes of this domain (op="list").
+            mailboxes: mailboxes to create (op="create").
+            dry_run: op="create" — preview only (default True).
             limit: page size, 1-100.
             offset: items to skip.
         """
         c = _client()
+        if op == "create":
+            _refuse_ignored(op, mailbox_id=mailbox_id, domain_id=domain_id)
+            return _create_mailboxes(c, _need(mailboxes, "mailboxes", op), dry_run)
+        _refuse_ignored(op, mailboxes=mailboxes or None)
         if op == "get":
             _refuse_ignored(op, domain_id=domain_id)
             return _slim_mailbox(_run(lambda: c.get_mailbox(
@@ -497,6 +533,42 @@ def register(mcp: FastMCP) -> None:
         _refuse_ignored(op, mailbox_id=mailbox_id)
         return _page(_run(lambda: c.list_mailboxes(
             limit=limit, offset=offset, domain_id=domain_id)), _slim_mailbox)
+
+    def _create_mailboxes(c: MailpoolClient, mailboxes: List[NewMailbox], dry_run: bool) -> Any:
+        items = [m.model_dump(exclude_none=True) for m in mailboxes]
+        if dry_run:
+            try:
+                plan = c.plan_mailboxes(items)
+            except MailpoolCreateRefused as e:
+                raise _bad(str(e), reason="create_refused")
+            plan = _run(lambda: plan)
+            return {"dry_run": True, **plan,
+                    "message": f"Ready to create {len(plan['mailboxes'])} mailbox(es); "
+                               "nothing was sent. Re-call with dry_run=False."}
+        try:
+            out = strip_secrets(c.create_mailboxes(items))
+        except MailpoolCreateRefused as e:
+            raise _bad(str(e), reason="create_refused")
+        except UpstreamHTTPError as e:
+            if e.status_code < 500:
+                raise _bad(_upstream_message(e), reason="upstream_refused")
+            raise _create_unknown(e)
+        except (requests.Timeout, requests.ConnectionError) as e:
+            raise _create_unknown(e)
+        except ValueError as e:
+            raise _bad(str(e))
+        created = [_slim_mailbox(m) for m in out.get("created") or []]
+        return {"dry_run": False, "created": created, "slots": out["plan"]["slots"],
+                "domains": out["plan"]["domains"],
+                "message": f"Created {len(created)} mailbox(es). Passwords stay in the "
+                           "Mailpool dashboard; pending ones turn active on their own."}
+
+    def _create_unknown(e: Exception) -> McpError:
+        return _after_write(
+            "mailbox_outcome_unknown",
+            f"Outcome unknown: the create got no usable answer ({_cause(e)}). The "
+            "mailboxes may or may not exist — list them with mailpool_mailboxes("
+            "op=\"list\", domain_id=…) before calling again.")
 
     # --- spam checks -----------------------------------------------------------
 
