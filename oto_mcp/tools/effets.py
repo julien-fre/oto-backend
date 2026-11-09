@@ -434,6 +434,7 @@ EFFETS: dict[str, Union[str, dict[str, str]]] = {
     "ga4_properties": "lire",
     "ga4_realtime": "lire",
     "ga4_report": "lire",
+    "gemini_image_act": {"ecrire": "create_image"},
     "github_act": {"ecrire": "create_branch"},
     # dispatch/rerun trigger real runs (builds, deployments)
     "github_actions": {"lire": "workflows workflow runs run jobs job logs artifacts artifact download", "envoyer": "dispatch rerun rerun_failed", "detruire": "cancel delete_run delete_artifact"},
