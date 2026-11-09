@@ -567,6 +567,12 @@ gardé), modifier, partager à une personne, une équipe ou une org. Banc :
 > ⚠️ Le défaut des surfaces d'ADMIN (`org.instruction.*`, gardées `ORG_ADMIN_OPT`)
 > restera l'org quoi qu'il arrive : leur objet EST d'écrire la procédure de l'org.
 
+## Lier à un projet privé rend privé (2026-11-09)
+
+Une procédure ou un tableau de l'org lié à un projet privé est TRANSFÉRÉ à son
+propriétaire et partagé à ses bénéficiaires — `docs/projects.md` §« Ce qu'un projet privé
+lie devient privé ». Aucune règle de `can_access` n'est ajoutée.
+
 ## Partager un agent hébergé dans son org (kind `runner_trigger`, 02/10/2026)
 
 > Un agent (`runner_triggers`) appartient à la PERSONNE sous qui il tourne

@@ -246,6 +246,9 @@ def test_link_par_slug_dune_procedure_dequipe_stocke_son_id(surface, monkeypatch
     """Projet d'ÉQUIPE : le slug vit au palier de l'équipe, pas de l'org."""
     row = dict(ROW, owner_type="group", owner_id="12")
     monkeypatch.setattr(P.db, "get_project_by_id", lambda pid: dict(row))
+    # Un projet d'équipe est PRIVÉ : la règle `_liens_prives` lirait ses partages en
+    # base. Elle a son propre banc (`test_project_link_private`) ; ici, seul l'id compte.
+    monkeypatch.setattr(P._liens_prives, "rendre_prive", lambda *a, **kw: None)
     _paliers(monkeypatch, {("group", "12", "relance-equipe"): {"id": 501}})
     vu: dict = {}
     monkeypatch.setattr(P.db, "add_project_link",

@@ -476,6 +476,47 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > (`publication_field_on_update`, rien d'écrit) plutôt qu'ignorés : ils se redéclarent
 > par `publish_mcp`.
 
+## Ce qu'un projet privé lie devient privé (2026-11-09)
+
+Le défaut constaté : un projet possédé par une personne, partagé à deux collègues, liait
+des procédures et des tableaux possédés par l'ORG. Un autre membre de l'org, sans aucun
+partage du projet, les lisait tous par le catalogue de l'org : le projet était privé, ce
+qu'il liait ne l'était pas, et rien ne le disait.
+
+La règle (`capabilities/_liens_prives.py`, appelée par `op=link`) : lier une procédure
+ou un tableau **possédé par l'org** à un projet **privé** — possédé par une personne ou
+une équipe, et partagé (partage vivant) à aucune org — le **transfère** au propriétaire
+du projet (`ownership.transfer`, même id, même historique, mêmes liens), et donne à
+chaque bénéficiaire vivant du projet un accès sur la cible : sur un tableau, le même
+(`viewer` → `viewer`, `editor`/`manager` → `editor`) ; sur une procédure, `viewer`
+toujours — une procédure personnelle ne s'écrit que par son propriétaire, aucun chemin
+servi n'édite la copie d'un autre, un `editor` y serait lettre morte. Une personne
+partagée sur le projet APRÈS le transfert ne reçoit rien sur les cibles : le geste est
+`oto_resource op=share resource_type=project cascade=true`. Un tableau devenu personnel se range dans l'org du
+projet (`context_org_id`). La réponse le dit sous `privacy` (`made_private`, `owner`,
+`shared_with`) et le journal du projet note `project.link_private`.
+
+Relier un lien déjà posé (`link_status: unchanged`) applique la même règle : c'est le
+geste qui ramène un projet d'avant la règle, sans outil à part.
+
+Ce qui reste à l'org est posé quand même et le dit (`privacy.kept_org_wide` +
+`reason`, jamais un refus) :
+
+| `reason` | pourquoi |
+|---|---|
+| `org_wide_requested` | l'appelant a passé `org_wide=true` |
+| `linked_by_other_projects` | un autre projet vivant lie la cible : la rendre privée la lui retirerait |
+| `needs_org_admin` | sortir une ressource de l'org est un transfert (`ownership.can_transfer`) |
+| `agents_depend_on_it` | un agent hébergé ACTIF de l'org exécute la procédure et ne la résoudrait plus : un agent lit par slug chez SON porteur puis à l'org, jamais à l'équipe (`_procedure_du_travail`) — donc tout agent pour un projet d'équipe, ceux des autres porteurs pour un projet personnel |
+| `slug_taken_at_owner` / `name_taken_at_owner` | le propriétaire a déjà une procédure de ce slug (le transfert la suffixerait et ses agents liraient l'autre) ou un tableau de ce nom |
+
+⚠️ **Limite connue** : une procédure atteinte par une CHAÎNE (citée entre accents graves
+par une autre procédure d'un agent) n'est pas cherchée ; l'agent d'un autre porteur qui
+l'atteint ainsi ne la lirait plus.
+
+⚠️ `can_access` ne change pas : la règle déplace la propriété, elle n'invente pas d'état
+« à l'org mais caché ». Une cible déjà personnelle ou d'équipe n'est pas touchée.
+
 ## Dossier d'affichage d'un projet — `folder` (2026-10-16)
 
 **Le besoin.** Une org de conseil tient un projet par client ; à quinze projets, la

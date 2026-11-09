@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 from .. import (config, db, deprecations, group_store, org_store, output_projection,
                 ownership, roles, session_org, url_perimeter)
 from ._authz import SUB_ONLY, refus_hors_vue
-from . import _portee, _publication
+from . import _liens_prives, _portee, _publication
 from ._dossier import FOLDER_MAX, dossier_valide
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -158,6 +158,12 @@ class ProjectInput(BaseModel):
     fields: Optional[list[str]] = Field(default=None, description=(
         "list/list_templates: output projection. Omitted returns the INDEX (no "
         "briefs); `[\"*\"]` returns whole records; a list of names picks columns."))
+    org_wide: Optional[bool] = Field(default=None, description=(
+        "link only: `true` keeps an ORG-owned procedure or table org-wide when you link "
+        "it to a PRIVATE project (owned by a person or a team, shared with no org). By "
+        "default such a link MOVES the target to the project's owner and gives the "
+        "project's sharees the same access, so org members outside the project stop "
+        "seeing it; the response says what happened under `privacy`."))
     slot: Optional[str] = None         # ADR 0035 (B2) : nom de SLOT que ce lien binde — vocabulaire DU PROJET (unicité (projet, slot) → 409 slot_taken). Fait correspondre le lien aux slots déclarés par les procédures (<slot:name>). Binder un slot TABLEAU dont la procédure déclare un `schema` cible provisionne le namespace vierge avec ce schéma (ADR 0046)
 
 
@@ -1407,6 +1413,14 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
             # Le geste reste idempotent et rejouable ; c'est son compte rendu qui cesse
             # d'être indistinct. `changed_fields` n'apparaît QUE sur une vraie réécriture.
             out["link_status"] = effet["status"]
+            # Lié à un projet privé, ce qui était à l'org devient privé (`_liens_prives`).
+            if inp.target_type in ("tableau", "procedure"):
+                privacy = _liens_prives.rendre_prive(
+                    sub, row, inp.target_type, str(target_ref),
+                    org_wide=bool(inp.org_wide))
+                if privacy is not None:
+                    out["privacy"] = privacy
+                    out["links"] = db.list_project_links(int(inp.project_id))
             if effet["changed"]:
                 out["changed_fields"] = effet["changed"]
             if effet.get("rewritten_from"):
@@ -1882,7 +1896,16 @@ CAPABILITIES += [
             "Slot names are a PROJECT-wide vocabulary (unique per project → 409 slot_taken; "
             "two linked procedures sharing `sortie` share the binding). "
             "Re-linking preserves every field you omit — label, role, config and slot; "
-            "pass a value to change one. link says WHAT IT DID in `link_status`: `created` "
+            "pass a value to change one. PRIVATE BY DEFAULT: linking an ORG-owned "
+            "procedure or table to a PRIVATE project (owned by a person or a team, shared "
+            "with no org) MOVES it to the project's owner and gives the project's sharees "
+            "the same access — org members outside the project stop seeing it; "
+            "`org_wide=true` keeps it org-wide. `privacy` in the response says what was "
+            "done, or why it stayed org-wide (`reason`: linked_by_other_projects, "
+            "needs_org_admin, agents_depend_on_it, slug_taken_at_owner, "
+            "name_taken_at_owner, org_wide_requested). Re-linking an existing link "
+            "applies the same rule. "
+            "link says WHAT IT DID in `link_status`: `created` "
             "(the binding did not exist), `unchanged` (it was already there and this call "
             "rewrote nothing) or `updated` (it existed and this call changed it — "
             "`changed_fields` then lists which of label/role/slot/config/target_ref "
