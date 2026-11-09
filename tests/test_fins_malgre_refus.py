@@ -192,3 +192,30 @@ def test_un_episode_de_travaux_morts_guerit_toujours_au_premier_succes(agent):
         motif="HTTP 529", job_id=1, travaux=1)
     _travail(agent, -0.01, refus=_PROC)
     assert ep["id"] in {g["id"] for g in episodes_agents.clore_les_gueris()}
+
+
+@pytest.mark.parametrize("classe, statut_du_travail", [
+    ("fini_malgre_refus", "done"),
+    # Toute autre classe dont le dernier travail n'est pas mort : même refus.
+    ("inconnu", "done"),
+])
+def test_op_rerun_ne_rejoue_jamais_un_travail_reussi(monkeypatch, classe,
+                                                    statut_du_travail):
+    """`oto_admin_agent_repair op=rerun` est un autre chemin que la boucle : sur un
+    épisode qui désigne un travail RÉUSSI, il refuse — rejouer referait ses effets."""
+    from types import SimpleNamespace
+
+    from oto_mcp import db, medecin_agents
+    from oto_mcp.capabilities import agent_repair as A
+
+    ep = {"id": 1, "org_id": 7, "trigger_id": 4, "classe": classe, "cote": "inconnu",
+          "statut": "ouvert", "dernier_job_id": 40, "reparations": []}
+    monkeypatch.setattr(A, "_episode", lambda inp: ep)
+    monkeypatch.setattr(db, "get_job", lambda j, o: {"id": j, "status": statut_du_travail,
+                                                     "payload": {"trigger_id": 4}})
+    monkeypatch.setattr(db, "get_trigger", lambda t, o: {"id": t, "enabled": True})
+    monkeypatch.setattr(medecin_agents, "relancer",
+                        lambda *a, **k: pytest.fail("rien ne doit être relancé"))
+    r = A._agent_repair(SimpleNamespace(sub="op"),
+                        A.AgentRepairInput(op="rerun", episode_id=1))
+    assert r["relance"] is False and "a réussi" in r["refus"]

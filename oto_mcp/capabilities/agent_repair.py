@@ -124,6 +124,14 @@ def _agent_repair(ctx: ResolvedCtx, inp: AgentRepairInput) -> dict:
         if ep["cote"] == "proprietaire":
             return {"episode": ep, "relance": False,
                     "refus": "panne du côté du titulaire : relancer ne la répare pas"}
+        # Seul un travail MORT se relance. Un épisode `fini_malgre_refus` désigne un
+        # travail RÉUSSI, qui a agi chez le titulaire : le rejouer referait ses effets
+        # (écritures, envois) une seconde fois, et la cause — le refus — resterait.
+        if ep.get("classe") == episodes_agents.FINI_MALGRE_REFUS or (
+                job is not None and job.get("status") != "failed"):
+            return {"episode": ep, "relance": False,
+                    "refus": "le dernier travail a réussi : le relancer referait ses "
+                             "effets, et le refus de capacité qui l'a amputé resterait"}
         panne = {"org_id": org_id, "trigger_id": int(ep["trigger_id"]),
                  "model": t.get("model"),
                  "job_id": job["id"] if job else None,

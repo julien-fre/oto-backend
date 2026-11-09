@@ -3028,7 +3028,8 @@ passe AVANT l'alerte.
   forme `refused(<code>)` pour un refus rendu en donnée, le reçu d'une recette). Il ouvre
   un épisode `inconnu` (le refus dit QUOI manque, pas QUI l'a retiré), le dit à
   l'exploitation une fois, à l'ouverture (même canal que l'escalade), et ne relance
-  jamais : le run a agi. ⚠️ Il guérit au premier succès SANS refus de capacité, pas au
+  jamais — ni la boucle ni `op=rerun`, qui refuse tout travail qui n'est pas mort : le
+  run a agi. ⚠️ Il guérit au premier succès SANS refus de capacité, pas au
   premier succès (`clore_les_gueris`). ⚠️ Un épisode de travaux morts garde la main : la
   ligne vivante d'une autre classe n'est pas touchée (`ouvrir_fin_malgre_refus` rend
   None). Les fragments sont jugés contre les vrais messages

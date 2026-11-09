@@ -40,7 +40,11 @@ FINI_MALGRE_REFUS = "fini_malgre_refus"
 #: - un refus RENDU en donnée (le reçu d'une recette refusée avant tout appel) : sa forme
 #:   `refused(<code>)` (`calllog.forme_servie`).
 REFUS_DE_CAPACITE_TEXTES = (
-    "%A hosted agent reads only its own job's procedure%",   # procedure_outside_job
+    # procedure_outside_job : la queue commune à tous ses refus, et la tête de celui qui
+    # nomme un slug hors du travail — le journal tronque à `calllog.MAX_ERROR_CHARS`, et
+    # deux slugs très longs pourraient pousser la queue au-delà.
+    "%A hosted agent reads only its own job's procedure%",
+    "%is neither this job's procedure%",
     "%is not in this hosted agent's tool list%",             # tool_not_in_job
 )
 REFUS_DE_CAPACITE_FORMES = ("refused(procedure_outside_job)", "refused(tool_not_in_job)")
