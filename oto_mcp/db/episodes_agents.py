@@ -24,6 +24,43 @@ from .alertes_agents import FENETRE_JOURS, MOTIF_TETE, _DU_DECLENCHEUR
 #: Les statuts d'un épisode qui n'est pas clos — lus par l'index unique partiel.
 VIVANTS = ("ouvert", "en_soin", "escalade")
 
+#: La classe d'un agent qui conclut `done` APRÈS un refus de capacité (ci-dessous) : la
+#: panne qui ne meurt pas. Un agent refusé d'une procédure ou d'un outil dont il avait
+#: besoin peut faire la partie qu'il lui reste et rendre « fait » — vécu : une chaîne de
+#: procédures coupée au premier maillon, cinq jours de runs verts qui ne faisaient que le
+#: premier tiers du travail. Aucun travail mort, donc aucun épisode, aucune alerte.
+FINI_MALGRE_REFUS = "fini_malgre_refus"
+
+#: Les refus de CAPACITÉ : ce que le travail n'a pas le droit de faire, et que l'agent ne
+#: peut pas lever lui-même (seule une personne repointe la procédure ou complète les
+#: outils). Lus sur le journal d'appels du run (`tool_calls.run_id`) sous deux formes :
+#: - un refus LEVÉ (`ok` faux) : le journal ne garde que le message (`error_kind` est la
+#:   taxonomie générique, `invalid_input`), d'où un fragment de chaque message — testé
+#:   contre le vrai message (`tests/test_fins_malgre_refus.py`), jamais recopié ;
+#: - un refus RENDU en donnée (le reçu d'une recette refusée avant tout appel) : sa forme
+#:   `refused(<code>)` (`calllog.forme_servie`).
+REFUS_DE_CAPACITE_TEXTES = (
+    "%A hosted agent reads only its own job's procedure%",   # procedure_outside_job
+    "%is not in this hosted agent's tool list%",             # tool_not_in_job
+)
+REFUS_DE_CAPACITE_FORMES = ("refused(procedure_outside_job)", "refused(tool_not_in_job)")
+
+#: La fenêtre du relevé : les travaux réussis conclus depuis six heures. Assez pour qu'une
+#: boucle arrêtée une heure ne perde rien, assez court pour rester une lecture d'index.
+FENETRE_FINS_H = 6
+
+#: Le run `j.run_id` a reçu au moins un refus de capacité.
+_RUN_REFUSE = """EXISTS (
+    SELECT 1 FROM tool_calls c
+     WHERE c.run_id = j.run_id
+       AND ((NOT c.ok AND c.error LIKE ANY(%(textes)s))
+            OR c.result_shape = ANY(%(formes)s)))"""
+
+
+def _params_refus() -> dict:
+    return {"textes": list(REFUS_DE_CAPACITE_TEXTES),
+            "formes": list(REFUS_DE_CAPACITE_FORMES)}
+
 _COLONNES = ("id, org_id, trigger_id, classe, cote, statut, motif, dernier_job_id, "
              "travaux_morts, reparations, diagnostic, classe_manuelle, ouvert_at, vu_at, "
              "clos_at, resolution")
@@ -95,10 +132,88 @@ def ouvrir_ou_rafraichir(*, org_id: int, trigger_id: int, classe: str, cote: str
         ).fetchone())
 
 
+def fins_malgre_refus() -> list[dict[str, Any]]:
+    """Les agents ALLUMÉS dont le DERNIER travail réussi de la fenêtre a reçu un refus de
+    capacité. Une ligne par agent : org, libellé, ce dernier travail (id, run, date), le
+    compte des travaux réussis-mais-refusés de la fenêtre, et le premier refus de ce run
+    (tronqué comme un motif). Le dernier seulement : un agent dont le travail suivant
+    passe sans refus est guéri, son épisode se clôt (`clore_les_gueris`) et ne se rouvre
+    pas sur l'historique."""
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            f"""
+            SELECT t.id AS trigger_id, t.org_id,
+                   COALESCE(NULLIF(t.label, ''), t.procedure) AS libelle,
+                   d.id AS job_id, d.run_id, d.finished_at AS dernier, n.travaux,
+                   (SELECT LEFT(COALESCE(c.error, c.result_shape), %(tete)s)
+                      FROM tool_calls c
+                     WHERE c.run_id = d.run_id
+                       AND ((NOT c.ok AND c.error LIKE ANY(%(textes)s))
+                            OR c.result_shape = ANY(%(formes)s))
+                     ORDER BY c.created_at LIMIT 1) AS motif
+              FROM runner_triggers t
+              CROSS JOIN LATERAL (
+                    SELECT j.id, j.run_id, j.finished_at
+                      FROM runner_jobs j
+                     WHERE {_DU_DECLENCHEUR} AND j.status = 'done'
+                       AND j.run_id IS NOT NULL
+                       AND j.finished_at > NOW() - make_interval(hours => %(fenetre)s)
+                     ORDER BY j.finished_at DESC LIMIT 1) d
+              CROSS JOIN LATERAL (
+                    SELECT COUNT(*)::int AS travaux
+                      FROM runner_jobs j
+                     WHERE {_DU_DECLENCHEUR} AND j.status = 'done'
+                       AND j.run_id IS NOT NULL
+                       AND j.finished_at > NOW() - make_interval(hours => %(fenetre)s)
+                       AND {_RUN_REFUSE}) n
+             WHERE t.enabled AND n.travaux >= 1
+               AND EXISTS (SELECT 1 FROM tool_calls c
+                            WHERE c.run_id = d.run_id
+                              AND ((NOT c.ok AND c.error LIKE ANY(%(textes)s))
+                                   OR c.result_shape = ANY(%(formes)s)))
+             ORDER BY t.org_id, t.id
+            """,
+            {"fenetre": FENETRE_FINS_H, "tete": MOTIF_TETE, **_params_refus()},
+        ).fetchall()]
+
+
+def ouvrir_fin_malgre_refus(*, org_id: int, trigger_id: int, motif: Optional[str],
+                            job_id: int, travaux: int) -> Optional[dict[str, Any]]:
+    """L'épisode `fini_malgre_refus` de l'agent, ouvert ou rafraîchi. Côté `inconnu` :
+    le refus dit QUOI manque, pas QUI l'a retiré (une procédure mal pointée par le
+    titulaire, ou un changement de la plateforme — le cas vécu). Il reste `ouvert` pour
+    l'agent médecin, jamais relancé : refaire un run qui a agi referait ses effets.
+
+    ⚠️ Un épisode vivant d'une AUTRE classe (des travaux morts) garde la main : la
+    ligne n'est pas touchée et la fonction rend None. Rend la ligne et `neuf` (vrai à
+    l'ouverture) : on n'alerte qu'une fois par épisode. `travaux_morts` porte ici le
+    compte des travaux réussis-mais-refusés."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"""
+            INSERT INTO agent_episodes (org_id, trigger_id, classe, cote, motif,
+                                        dernier_job_id, travaux_morts)
+            VALUES (%(org)s, %(trigger)s, %(classe)s, 'inconnu', %(motif)s, %(job)s,
+                    %(travaux)s)
+            ON CONFLICT (trigger_id) WHERE statut <> 'clos' DO UPDATE
+               SET motif = EXCLUDED.motif, dernier_job_id = EXCLUDED.dernier_job_id,
+                   travaux_morts = EXCLUDED.travaux_morts, vu_at = NOW()
+             WHERE agent_episodes.classe = %(classe)s
+            RETURNING {_COLONNES}, (xmax = 0) AS neuf
+            """,
+            {"org": int(org_id), "trigger": int(trigger_id), "classe": FINI_MALGRE_REFUS,
+             "motif": motif, "job": int(job_id), "travaux": int(travaux)},
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def clore_les_gueris() -> list[dict[str, Any]]:
     """Clôt les épisodes vivants dont l'agent a réussi un travail APRÈS l'ouverture
     (`gueri`), ou qui a été éteint ou supprimé (`agent_eteint`). Rend les épisodes clos —
-    ceux qui avaient une réparation disent qu'elle a marché."""
+    ceux qui avaient une réparation disent qu'elle a marché.
+
+    ⚠️ Un épisode `fini_malgre_refus` ne guérit que d'un succès SANS refus de capacité :
+    ses travaux réussissent tous, c'est justement la panne."""
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
             f"""
@@ -114,9 +229,11 @@ def clore_les_gueris() -> list[dict[str, Any]]:
                       WHERE j.org_id = t.org_id
                         AND j.payload->>'trigger_id' ~ '^[0-9]+$'
                         AND j.payload->>'trigger_id' = t.id::text
-                        AND j.status = 'done' AND j.finished_at > e.ouvert_at))
+                        AND j.status = 'done' AND j.finished_at > e.ouvert_at
+                        AND (e.classe <> %(fini)s OR (j.run_id IS NOT NULL
+                                                      AND NOT {_RUN_REFUSE}))))
             RETURNING {", ".join("e." + c.strip() for c in _COLONNES.split(","))}
-            """).fetchall()]
+            """, {"fini": FINI_MALGRE_REFUS, **_params_refus()}).fetchall()]
 
 
 def noter_reparation(episode_id: int, *, action: str, acteur: str,

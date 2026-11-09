@@ -3016,10 +3016,28 @@ passe AVANT l'alerte.
   `diagnose` / `escalate` / `close`. Prêté à un agent hébergé de la plateforme par
   `platform_tools` : sans lui, un agent de notre org lit les pannes d'une autre org sans
   pouvoir rien y faire (`oto_trigger` agit en membre).
+- **La panne qui ne meurt pas** (`fini_malgre_refus`, 09/11/2026) : un agent refusé
+  d'une procédure ou d'un outil dont il avait besoin (`procedure_outside_job`,
+  `tool_not_in_job`) peut faire la partie qu'il lui reste et conclure `done`. Vécu :
+  une chaîne de procédures coupée au premier maillon par un changement de la plateforme,
+  cinq jours de runs verts qui ne faisaient que le premier tiers du travail — aucun
+  travail mort, donc ni épisode ni alerte. Le même passage relève les agents allumés dont
+  le DERNIER travail réussi des `FENETRE_FINS_H` (6) dernières heures a reçu un tel refus
+  (`episodes_agents.fins_malgre_refus`, lu dans `tool_calls` par `run_id` : un fragment
+  du message pour un refus levé — `error_kind` n'y porte que la taxonomie générique —, la
+  forme `refused(<code>)` pour un refus rendu en donnée, le reçu d'une recette). Il ouvre
+  un épisode `inconnu` (le refus dit QUOI manque, pas QUI l'a retiré), le dit à
+  l'exploitation une fois, à l'ouverture (même canal que l'escalade), et ne relance
+  jamais : le run a agi. ⚠️ Il guérit au premier succès SANS refus de capacité, pas au
+  premier succès (`clore_les_gueris`). ⚠️ Un épisode de travaux morts garde la main : la
+  ligne vivante d'une autre classe n'est pas touchée (`ouvrir_fin_malgre_refus` rend
+  None). Les fragments sont jugés contre les vrais messages
+  (`tests/test_fins_malgre_refus.py`) : changer la phrase d'un refus sans eux rougit.
 - **Où** : boucle `tiers=True` (une relance refait agir un agent chez des tiers),
   ÉTEINTE tant que `OTO_MEDECIN_AGENTS_ENABLED=1` n'est pas déclaré — production seule.
 - Bancs : `tests/test_medecin_agents.py` (sans base), `tests/test_episodes_agents_db.py`
-  (le SQL), `tests/test_migration_20261027_agent_episodes.py`,
+  (le SQL), `tests/test_fins_malgre_refus.py` (la fin refusée, messages réels et SQL),
+  `tests/test_migration_20261027_agent_episodes.py`,
   `tests/test_alerte_agents_bloques.py` (le silence).
 
 ### `op=list` : la page dit ce qu'elle laisse dehors (#469, 01/09/2026)

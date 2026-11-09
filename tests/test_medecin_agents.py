@@ -113,6 +113,8 @@ def file(monkeypatch):
     monkeypatch.setattr(episodes_agents, "poser",
                         lambda eid, **kw: etat["poses"].append((eid, kw)) or {"id": eid})
     monkeypatch.setattr(episodes_agents, "lire", lambda eid: etat["relu"])
+    # Aucune fin refusée par défaut : chaque test qui en veut les pose.
+    monkeypatch.setattr(episodes_agents, "fins_malgre_refus", lambda: [])
     import sentry_sdk
     monkeypatch.setattr(sentry_sdk, "capture_message",
                         lambda message, level=None: etat["signaux"].append((message, level)))
@@ -230,6 +232,7 @@ def test_un_passage_ne_s_arrete_pas_sur_une_panne_illisible(monkeypatch, file, t
     bilan = M.balayer(_MAINTENANT)
     assert appels == [1, 2]
     assert bilan == {"pannes": 2, "relances": 1, "gueris": 1, "gueris_apres_soin": 1,
+                     "fins_malgre_refus": 0, "fins_malgre_refus_ouvertes": 0,
                      "erreurs": 1, "tenant_tiers_ecartes": 0}
 
 
@@ -267,3 +270,58 @@ def test_un_tenant_illisible_ecarte_l_org(monkeypatch, file):
                         lambda **kw: pytest.fail("aucun épisode sur un tenant illisible"))
     assert M.balayer(_MAINTENANT)["tenant_tiers_ecartes"] == 1
     assert file["enfiles"] == []
+
+
+def _fin(**kw):
+    return {"trigger_id": 4, "org_id": 7, "libelle": "Sourcing", "job_id": 40,
+            "run_id": "r40", "travaux": 3, "motif": "procédure refusée", **kw}
+
+
+def test_une_fin_refusee_ouvre_un_episode_et_alerte_une_seule_fois(monkeypatch, file,
+                                                                    tenants):
+    """Un agent qui conclut `done` après un refus de capacité : un épisode, une alerte à
+    l'ouverture — pas à chaque passage — et jamais de relance (le run a agi)."""
+    from oto_mcp.db import episodes_agents
+
+    monkeypatch.setattr(episodes_agents, "clore_les_gueris", lambda: [])
+    monkeypatch.setattr(episodes_agents, "pannes_en_cours", lambda: [])
+    monkeypatch.setattr(episodes_agents, "fins_malgre_refus",
+                        lambda: [_fin(), _fin(org_id=9, trigger_id=5)])
+    neuf = iter([True, False])
+    ouverts = []
+    monkeypatch.setattr(episodes_agents, "ouvrir_fin_malgre_refus",
+                        lambda **kw: ouverts.append(kw) or {"id": 11, "neuf": next(neuf)})
+    premier = M.balayer(_MAINTENANT)
+    second = M.balayer(_MAINTENANT)
+    assert [o["trigger_id"] for o in ouverts] == [4, 4], "tenant tiers écarté"
+    assert ouverts[0]["job_id"] == 40 and ouverts[0]["travaux"] == 3
+    assert (premier["fins_malgre_refus"], premier["fins_malgre_refus_ouvertes"]) == (1, 1)
+    assert (second["fins_malgre_refus"], second["fins_malgre_refus_ouvertes"]) == (1, 0)
+    assert len(file["signaux"]) == 1 and "refus de capacité" in file["signaux"][0][0]
+    assert file["enfiles"] == []
+
+
+def test_un_episode_de_travaux_morts_garde_la_main(monkeypatch, file, tenants):
+    from oto_mcp.db import episodes_agents
+
+    monkeypatch.setattr(episodes_agents, "clore_les_gueris", lambda: [])
+    monkeypatch.setattr(episodes_agents, "pannes_en_cours", lambda: [])
+    monkeypatch.setattr(episodes_agents, "fins_malgre_refus", lambda: [_fin()])
+    monkeypatch.setattr(episodes_agents, "ouvrir_fin_malgre_refus", lambda **kw: None)
+    bilan = M.balayer(_MAINTENANT)
+    assert (bilan["fins_malgre_refus"], bilan["fins_malgre_refus_ouvertes"]) == (0, 0)
+    assert file["signaux"] == []
+
+
+def test_un_releve_des_fins_en_echec_ne_tue_pas_le_passage(monkeypatch, file, tenants):
+    from oto_mcp.db import episodes_agents
+
+    def _casse():
+        raise RuntimeError("base indisponible")
+    monkeypatch.setattr(episodes_agents, "clore_les_gueris", lambda: [])
+    monkeypatch.setattr(episodes_agents, "pannes_en_cours", lambda: [_panne()])
+    monkeypatch.setattr(episodes_agents, "ouvrir_ou_rafraichir",
+                        lambda **kw: _episode(trigger_id=kw["trigger_id"]))
+    monkeypatch.setattr(episodes_agents, "fins_malgre_refus", _casse)
+    bilan = M.balayer(_MAINTENANT)
+    assert (bilan["relances"], bilan["erreurs"]) == (1, 1)

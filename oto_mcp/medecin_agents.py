@@ -45,6 +45,15 @@ pas dans la boîte du client. Elle ne se tait que tant que la boucle VOIT l'épi
 
 ⚠️ Une classe posée à la main (`diagnose`) n'est plus réécrite par `classer`
 (`agent_episodes.classe_manuelle`).
+
+**La panne qui ne meurt pas** (`fini_malgre_refus`, `relever_fins_malgre_refus`) : un
+agent refusé d'une procédure ou d'un outil dont il avait besoin (`procedure_outside_job`,
+`tool_not_in_job`) peut faire ce qu'il lui reste et conclure `done`. Aucun travail mort :
+rien de ce qui précède ne le voit. Le même passage relève donc aussi les agents dont le
+DERNIER travail réussi a reçu un tel refus (journal d'appels du run), ouvre un épisode
+`inconnu` — QUOI manque est dit, QUI l'a retiré ne l'est pas — et le dit à l'exploitation
+une fois, à l'ouverture. Jamais de relance : le run a agi. Il guérit au premier succès sans
+refus.
 """
 from __future__ import annotations
 
@@ -226,6 +235,43 @@ def _soigner(panne: dict, episode: dict, maintenant: datetime) -> Optional[str]:
     return None
 
 
+def relever_fins_malgre_refus(a_nous: dict[int, bool]) -> tuple[int, int]:
+    """Ouvre ou rafraîchit l'épisode de chaque agent dont le dernier travail réussi a
+    reçu un refus de capacité. Rend `(relevés, ouverts)`. Même écart des tenants tiers
+    que les pannes (`a_nous`, partagé avec le passage) ; un agent qui a déjà un épisode
+    de travaux morts le garde (`ouvrir_fin_malgre_refus` rend None)."""
+    from .alerte_agents_bloques import org_a_nous
+    from .db import episodes_agents
+
+    releves, ouverts = 0, 0
+    for fin in episodes_agents.fins_malgre_refus():
+        org_id = int(fin["org_id"])
+        if org_id not in a_nous:
+            a_nous[org_id] = org_a_nous(org_id, qui=QUI)
+        if not a_nous[org_id]:
+            continue
+        try:
+            episode = episodes_agents.ouvrir_fin_malgre_refus(
+                org_id=org_id, trigger_id=fin["trigger_id"], motif=fin.get("motif"),
+                job_id=fin["job_id"], travaux=fin.get("travaux") or 0)
+        except Exception as e:  # noqa: BLE001 — un agent illisible ne bloque pas les autres
+            log.warning("médecin des agents : fin refusée de l'agent %s illisible (%s)",
+                        fin.get("trigger_id"), e)
+            continue
+        if episode is None:
+            continue
+        releves += 1
+        if episode.get("neuf"):
+            ouverts += 1
+            _alerte_exploitation(
+                "médecin des agents : agent %s (org %s, « %s ») conclut « fait » après un "
+                "refus de capacité — %d travail(aux) sur %dh, dernier %s : %s (épisode %s)",
+                fin["trigger_id"], org_id, fin.get("libelle"), fin.get("travaux") or 0,
+                episodes_agents.FENETRE_FINS_H, fin["job_id"], fin.get("motif"),
+                episode["id"])
+    return releves, ouverts
+
+
 def balayer(maintenant: Optional[datetime] = None) -> dict:
     """Un passage : clôt les guéris, relève et range les pannes, soigne ce qui se soigne.
     Synchrone (la boucle le pousse hors de l'event loop). Une panne qui casse ne
@@ -263,7 +309,14 @@ def balayer(maintenant: Optional[datetime] = None) -> dict:
             erreurs += 1
             log.warning("médecin des agents : agent %s illisible (%s)",
                         panne.get("trigger_id"), e)
+    try:
+        fins, fins_ouvertes = relever_fins_malgre_refus(a_nous)
+    except Exception as e:  # noqa: BLE001 — le relevé des fins refusées ne tue pas le passage
+        erreurs += 1
+        fins, fins_ouvertes = 0, 0
+        log.warning("médecin des agents : relevé des fins refusées en échec : %s", e)
     return {"pannes": pannes, "relances": relances, "gueris": len(gueris),
+            "fins_malgre_refus": fins, "fins_malgre_refus_ouvertes": fins_ouvertes,
             "gueris_apres_soin": sum(1 for g in gueris if g.get("reparations")),
             "erreurs": erreurs, "tenant_tiers_ecartes": len(ecartees)}
 
@@ -276,7 +329,8 @@ async def run_medecin_agents_loop(interval: int = INTERVALLE_S) -> None:
     while True:
         try:
             bilan = await asyncio.to_thread(balayer)
-            if bilan.get("relances") or bilan.get("gueris") or bilan.get("erreurs"):
+            if (bilan.get("relances") or bilan.get("gueris") or bilan.get("erreurs")
+                    or bilan.get("fins_malgre_refus_ouvertes")):
                 log.info("médecin des agents : %s", bilan)
         except Exception as e:  # noqa: BLE001 — un passage raté ne tue pas la boucle
             log.warning("médecin des agents : passage en échec : %s", e)
