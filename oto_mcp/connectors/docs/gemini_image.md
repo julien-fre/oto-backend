@@ -8,7 +8,7 @@ in Google AI Studio ([aistudio.google.com](https://aistudio.google.com)) → **G
 ## usage — a picture, a product shot, an edit
 
 - "which models can I use?" → `gemini_image(op="list_models")`; the default is `gemini-nano-banana-2.1`
-- "how much at most?" → `gemini_image(op="estimate", image_size="2K", image_count=1)`: free, from the published price table; about $0.03 (1K), $0.05 (2K), $0.11 (4K) for the image itself
+- "how much at most?" → `gemini_image(op="estimate", image_size="2K", image_count=1)`: free, from the published price table; about $0.04 (1K), $0.06 (2K), $0.12 (4K) a call, thinking included (measured 09/11)
 - "make a picture" → `gemini_image_act(op="create_image", prompt="…", aspect_ratio="16:9", image_size="2K")`
 - "put this product in a scene" / "same character, new pose" → add `images=[{"kind": "url", "url": "https://…"}]` (or a `transit` / `project_file` reference), up to 14, in order, and say in the prompt what to do with each
 - "change this image" → the image in `images`, the change in `prompt` ("make the background white", "remove the text")
