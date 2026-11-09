@@ -64,10 +64,10 @@ ASPECT_RATIOS = ("1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9"
                  "1:4", "4:1", "1:8", "8:1")
 
 # What each priced model costs, in US dollars per million tokens, and how many tokens
-# its output image holds by size. ⚠️ Read off Google's pricing page on 09/11/2026 (paid
-# tier, standard): check against a real call's `usageMetadata` before trusting the
-# image-token counts — the page and the image guide disagreed on 4K (2,520 vs 3,780;
-# the higher one is kept, it is the one the published $0.113 per 4K image matches).
+# its output image holds by size. Rates read off Google's pricing page on 09/11/2026
+# (paid tier, standard). Image tokens MEASURED the same day on two real calls
+# (`candidatesTokensDetails` IMAGE): 1,120 at 1K, 3,780 at 4K — the pricing page's
+# figures (the image guide's 2,520 for 4K was wrong); 2K's 1,680 is the page's.
 # Only these models are served on the shared key: an unpriced model has no bound.
 PRICES: dict[str, dict] = {
     "gemini-nano-banana-2.1": {
@@ -77,12 +77,15 @@ PRICES: dict[str, dict] = {
         "image_tokens": {"1K": 1120, "2K": 1680, "4K": 3780},
     },
 }
-# The bound's allowance for thinking, in tokens (billed at the text output rate). The
-# image models think on every call and it cannot be turned off; Google publishes no
-# figure. ⚠️ An allowance, not a measure: replace it with a measured one.
-THINKING_ALLOWANCE_TOKENS = 4_000
-# The bound's count for one INPUT image, in tokens (Google counts an input image as a
-# fixed number of tokens; the figure for these models is not published, Pro's is 560).
+# The bound's allowance for the output that is NOT the image, in tokens, billed at the
+# text output rate: the thinking (`thoughtsTokenCount`, it cannot be turned off) and the
+# part of `candidatesTokenCount` the per-modality list leaves out. Measured 09/11/2026 on
+# a one-line prompt at the default thinking level: 433 + 183 at 1K, 847 + 236 at 4K. The
+# allowance keeps more than twice the 4K figure; a longer prompt may think longer.
+THINKING_ALLOWANCE_TOKENS = 2_500
+# The bound's count for one INPUT image, in tokens: Google counts an input image as a
+# fixed number of tokens — 1,120 measured 09/11/2026 (`promptTokensDetails` IMAGE, a
+# 1024×1024 JPEG reference).
 INPUT_IMAGE_TOKENS = 1_120
 # A prompt holds fewer tokens than characters; one per character is a bound.
 MAX_INPUT_IMAGES = 14
@@ -128,10 +131,11 @@ def cost_of(model: str, usage: Any, bound: Optional[float]) -> dict:
     """What a call cost, from Google's `usageMetadata`.
 
     Returns `{"usd": float | None, "approximate": bool, "basis": str}`. Input tokens
-    (`promptTokenCount`) at the input rate; the output's IMAGE tokens at the image rate,
-    its TEXT tokens and the thinking (`thoughtsTokenCount`) at the text rate. Without a
-    per-modality breakdown the bound is billed, `approximate`. An unpriced model has no
-    cost (None)."""
+    (`promptTokenCount`) at the input rate; the output's IMAGE tokens at the image rate;
+    every OTHER output token at the text rate — the thinking (`thoughtsTokenCount`) and
+    the rest of `candidatesTokenCount` (TEXT, and the share the per-modality list leaves
+    out: 183 of 1,303 on a measured 1K call). Without a per-modality breakdown the bound
+    is billed, `approximate`. An unpriced model has no cost (None)."""
     p = PRICES.get(model)
     if p is None:
         return {"usd": None, "approximate": False, "basis": "no price for this model"}
@@ -139,7 +143,10 @@ def cost_of(model: str, usage: Any, bound: Optional[float]) -> dict:
     prompt_t = u.get("promptTokenCount")
     details = u.get("candidatesTokensDetails")
     image_t = _tokens(details, "IMAGE")
-    text_t = _tokens(details, "TEXT") or 0
+    candidates_t = u.get("candidatesTokenCount")
+    listed_text = _tokens(details, "TEXT") or 0
+    text_t = (max(candidates_t - image_t, listed_text)
+              if isinstance(candidates_t, int) and image_t is not None else listed_text)
     thoughts_t = u.get("thoughtsTokenCount") or 0
     if not isinstance(prompt_t, int) or image_t is None or not isinstance(thoughts_t, int):
         return {"usd": bound, "approximate": True,

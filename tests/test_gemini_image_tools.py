@@ -26,9 +26,15 @@ from oto_mcp.tools import gemini_image as G
 
 _VRAIE_RESOLUTION = _access.resolve_api_key
 _NB = "gemini-nano-banana-2.1"
-_USAGE = {"promptTokenCount": 20, "candidatesTokenCount": 1300, "thoughtsTokenCount": 180,
-          "candidatesTokensDetails": [{"modality": "IMAGE", "tokenCount": 1120},
-                                      {"modality": "TEXT", "tokenCount": 0}]}
+# Google's real answers, 09/11/2026, one-line prompt, 1:1 (1K, then 4K).
+_USAGE = {"promptTokenCount": 11, "candidatesTokenCount": 1303, "totalTokenCount": 1747,
+          "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 11}],
+          "candidatesTokensDetails": [{"modality": "IMAGE", "tokenCount": 1120}],
+          "thoughtsTokenCount": 433, "serviceTier": "standard"}
+_USAGE_4K = {"promptTokenCount": 11, "candidatesTokenCount": 4016, "totalTokenCount": 4874,
+             "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 11}],
+             "candidatesTokensDetails": [{"modality": "IMAGE", "tokenCount": 3780}],
+             "thoughtsTokenCount": 847, "serviceTier": "standard"}
 
 
 @pytest.fixture
@@ -110,10 +116,19 @@ def test_the_bound_is_the_image_a_thinking_allowance_and_the_input():
     assert G.bound_usd("some-other-model", "1K", "", 0) is None
 
 
-def test_the_cost_is_what_google_counted():
+def test_the_cost_is_what_google_counted_unlisted_output_at_the_text_rate():
+    """1,303 output tokens, 1,120 listed as IMAGE: the 183 others and the 433 of thinking
+    at the text rate."""
     c = G.cost_of(_NB, _USAGE, bound=1.0)
     assert not c["approximate"]
-    assert c["usd"] == pytest.approx((20 * 1.5 + 1120 * 30.0 + 180 * 7.5) / 1e6)
+    assert c["usd"] == pytest.approx((11 * 1.5 + 1120 * 30.0 + (183 + 433) * 7.5) / 1e6,
+                                     abs=1e-6)
+
+
+@pytest.mark.parametrize("usage,size", [(_USAGE, "1K"), (_USAGE_4K, "4K")])
+def test_the_measured_calls_stay_under_their_bound(usage, size):
+    bound = G.bound_usd(_NB, size, "A red apple on a white table, studio photo", 0)
+    assert G.cost_of(_NB, usage, bound)["usd"] <= bound
 
 
 @pytest.mark.parametrize("usage", [None, {}, {"promptTokenCount": 5, "candidatesTokenCount": 9}])
