@@ -397,7 +397,8 @@ def register(mcp: FastMCP) -> None:
             prompt, m, images=inputs, aspect_ratio=aspect_ratio, image_size=image_size))
         cost = cost_of(m, result.get("usage_metadata"), bound)
         spent = microdollars(cost["usd"]) if cost["usd"] is not None else 0
-        session_org.note_call_trace(quantity=spent, **({"units": spent} if is_platform else {}))
+        # `units` (the grant's quota axis) on the shared key only; None is not noted.
+        session_org.note_call_trace(quantity=spent, units=spent if is_platform else None)
         from ..auth.hooks import current_user_sub_from_token
         sub = current_user_sub_from_token()
         stem = (result.get("response_id") or "image")[:32]

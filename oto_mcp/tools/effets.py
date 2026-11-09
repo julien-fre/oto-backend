@@ -1548,6 +1548,8 @@ PAS_UN_LOT: dict[str, str] = {
     "fullenrich_enrich_linkedin": "enrich_fields",
     "ga4_realtime": "metrics dimensions order_by",
     "ga4_report": "metrics dimensions order_by",
+    # the input images of ONE generation, not a batch of generations
+    "gemini_image_act": "images",
     "github_issues": "labels",
     "gmail": "attachments",
     "gmail_act": "message_ids attachments",
