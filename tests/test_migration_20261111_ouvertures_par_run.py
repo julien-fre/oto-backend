@@ -93,14 +93,17 @@ def _journal(conn, run_id: str, project_id, *, doctrine=None, ouvertures=1, autr
                  "started_at) VALUES (%s, 'u1', 35, %s, 'x', 0, "
                  "now() - make_interval(hours => %s))", (run_id, project_id, il_y_a_h))
     args = {"doctrine": doctrine} if doctrine else {"label": "sans procédure"}
-    for _ in range(ouvertures):
+    # Des dates distinctes : l'ordre rendu (`started_at DESC`) ne doit pas dépendre d'ex aequo.
+    for i in range(ouvertures):
         conn.execute("INSERT INTO tool_calls (server, sub, tool, args, ok, duration_ms, run_id, "
-                     "kind) VALUES ('oto', 'u1', 'run_start', %s, true, 1, %s, 'mcp')",
-                     (__import__("json").dumps(args), run_id))
-    for _ in range(autres):
+                     "kind, created_at) VALUES ('oto', 'u1', 'run_start', %s, true, 1, %s, 'mcp', "
+                     "now() - make_interval(hours => %s) + make_interval(secs => %s))",
+                     (__import__("json").dumps(args), run_id, il_y_a_h, i))
+    for i in range(autres):
         conn.execute("INSERT INTO tool_calls (server, sub, tool, args, ok, duration_ms, run_id, "
-                     "kind) VALUES ('oto', 'u1', 'data_rows', '{}', true, 1, %s, 'mcp')",
-                     (run_id,))
+                     "kind, created_at) VALUES ('oto', 'u1', 'data_rows', '{}', true, 1, %s, "
+                     "'mcp', now() - make_interval(hours => %s) + make_interval(mins => %s))",
+                     (run_id, il_y_a_h, 10 + i))
 
 
 def test_les_deux_formes_de_l_inertie_rendent_la_meme_reponse(live, monkeypatch):
@@ -129,6 +132,9 @@ def test_les_deux_formes_de_l_inertie_rendent_la_meme_reponse(live, monkeypatch)
 
     assert lire() == (4, ["prospection", "relance"], True)
     with _connect() as c:
+        # Table minuscule : sans ce réglage, un parcours séquentiel l'emporte. Ce qu'on
+        # vérifie, c'est que la sonde PEUT prendre l'index (son prédicat est impliqué).
+        c.execute("SET LOCAL enable_seqscan = off")
         plan = "\n".join(r["QUERY PLAN"] for r in c.execute(
             "EXPLAIN " + usage.sql_project_run_stats(par_run=True), (77, 4)).fetchall())
         assert OUVERTURE_PAR_RUN.nom in plan, plan
@@ -136,6 +142,70 @@ def test_les_deux_formes_de_l_inertie_rendent_la_meme_reponse(live, monkeypatch)
         c.commit()
     try:
         assert lire() == (4, ["prospection", "relance"], False)
+    finally:
+        with _connect() as c:
+            c.execute(OUVERTURE_PAR_RUN.ddl_demarrage)
+            c.commit()
+        usage.oublier_ouverture_par_run()
+
+
+def _cloture(conn, run_id: str, il_y_a_h: int, *, outcome="done", note="ok", sub="u1"):
+    import json
+    conn.execute("INSERT INTO tool_calls (server, sub, tool, args, ok, duration_ms, kind, "
+                 "created_at) VALUES ('oto', %s, 'run_finish', %s, true, 1, 'mcp', "
+                 "now() - make_interval(hours => %s) + make_interval(mins => 30))",
+                 (sub, json.dumps({"run_id": run_id, "outcome": outcome, "note": note}),
+                  il_y_a_h))
+
+
+def test_les_deux_formes_des_runs_d_un_projet_rendent_les_memes_lignes(live, monkeypatch):
+    """`project_runs` (op=runs d'un projet) : la sonde par run, servie par l'index, rend
+    les MÊMES lignes que la semi-jointure d'avant — mêmes champs, même ordre, issue et
+    dernier signe de vie compris : run clos, run ouvert, run sans procédure, run ouvert
+    deux fois, run hors de la borne des runs récents, run d'un autre projet, clôture
+    tapée par un tiers (ignorée), filtre par procédure et `limit`."""
+    from oto_mcp.db import usage
+    from oto_mcp.db._conn import _connect
+    from oto_mcp.db.index_releve import OUVERTURE_PAR_RUN
+
+    monkeypatch.setattr(usage, "PROJET_RUNS_RECENTS", 5)
+    with _connect() as c:
+        _journal(c, "p-vieux", 91, doctrine="ancienne", il_y_a_h=80)          # hors borne
+        _journal(c, "p-clos", 91, doctrine="prospection", il_y_a_h=9)
+        _cloture(c, "p-clos", 9, outcome="failed", note="quota")
+        _journal(c, "p-ouvert", 91, doctrine="relance", il_y_a_h=8)
+        _journal(c, "p-deux", 91, doctrine="prospection", ouvertures=2, il_y_a_h=7)
+        _journal(c, "p-sans", 91, il_y_a_h=6)                                  # sans procédure
+        _cloture(c, "p-sans", 6, sub="un-tiers")                                  # tiers : ignorée
+        _journal(c, "p-index", 91, doctrine="prospection", ouvertures=0, il_y_a_h=5)
+        _journal(c, "voisin-92", 92, doctrine="prospection", il_y_a_h=1)
+        c.commit()
+
+    def lire(**k):
+        usage.oublier_ouverture_par_run()
+        return usage.project_runs(91, **k), usage._ouverture_par_run_prete()
+
+    cas = ({}, {"guide": "prospection"}, {"limit": 2}, {"guide": "absente"})
+    avec = [lire(**k) for k in cas]
+    assert all(pret for _, pret in avec)
+    complet = avec[0][0]
+    assert [r["run_id"] for r in complet] == ["p-sans", "p-deux", "p-deux", "p-ouvert", "p-clos"]
+    assert {r["run_id"]: r["outcome"] for r in complet} == {
+        "p-sans": None, "p-deux": None, "p-ouvert": None, "p-clos": "failed"}
+    with _connect() as c:
+        # Table minuscule : sans ce réglage, un parcours séquentiel l'emporte. Ce qu'on
+        # vérifie, c'est que la sonde PEUT prendre l'index (son prédicat est impliqué).
+        c.execute("SET LOCAL enable_seqscan = off")
+        plan = "\n".join(r["QUERY PLAN"] for r in c.execute(
+            "EXPLAIN SELECT * FROM (" + usage._runs_from_journal(
+                ouvertures=usage._RUNS_RECENTS_DU_PROJET) + ") z", (91, 5)).fetchall())
+        assert OUVERTURE_PAR_RUN.nom in plan, plan
+        c.execute(f"DROP INDEX {OUVERTURE_PAR_RUN.nom}")
+        c.commit()
+    try:
+        sans = [lire(**k) for k in cas]
+        assert not any(pret for _, pret in sans)
+        assert [r for r, _ in sans] == [r for r, _ in avec]
     finally:
         with _connect() as c:
             c.execute(OUVERTURE_PAR_RUN.ddl_demarrage)

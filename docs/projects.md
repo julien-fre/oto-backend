@@ -536,9 +536,16 @@ d'outil : plus de 15 s). Remède en deux pièces, livrées ensemble :
   celui des 4 s de production) ; sonde par run AVEC l'index, 1 551 buffers, 0,4 ms.
 - `audit="links"` saute cette lecture : l'écran qui ouvre le projet ne la paie plus du
   tout. L'index sert les agents et tout lecteur de l'audit complet.
-- Les listes de runs d'un projet (`op=runs`, `_runs_from_journal` + `_PROJECT_SCOPE`)
-  gardent la semi-jointure et n'en profitent PAS (même parcours de toutes les ouvertures
-  au banc, avec ou sans l'index) : à traiter à part.
+- Les runs d'un projet (`op=runs` avec `project_id`, `usage.project_runs`) faisaient le même
+  parcours de toutes les ouvertures (semi-jointure `_PROJECT_SCOPE`). Ils passent à la même
+  sonde par run, sous la même garde (`_runs_from_journal(ouvertures=…)`), la clôture
+  (`idx_tool_calls_run_finish_ref`) et le dernier signe de vie (`idx_tool_calls_run`)
+  restant des sondes par run. Mêmes lignes, même ordre. Banc (mêmes proportions et
+  statistiques) : 25 964 buffers (19 808 lus), 39 ms → 6 055 buffers, 2,3 ms ; la sonde
+  sans l'index, 264 ms. Les autres listes (`recent_runs`, `list_runs`) choisissent déjà
+  leur page par les index d'ouvertures (infra#9) ; `my_runs` (mes runs, toutes orgs)
+  reconstruit tous les runs du compte, par `idx_tool_calls_run_start_sub` — borné par le
+  compte, pas par la plateforme, à traiter à part pour un compte très actif.
 
 ## Rendre privé ce qu'un projet privé lie — `make_private=true` (2026-11-09)
 
