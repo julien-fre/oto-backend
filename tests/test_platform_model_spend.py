@@ -22,7 +22,7 @@ CLES = [{"id": "apikey_plateforme", "name": "plateforme", "partial_key_hint": "s
         {"id": "apikey_poste", "name": "poste de dev", "partial_key_hint": "sk-ant-api03-ZZZ...0000"}]
 
 
-def _res(cle, model="claude-sonnet-5", entree=1_000_000, sortie=0, c5=0, c1=0, lu=0):
+def _res(cle, model="claude-sonnet-5-5", entree=1_000_000, sortie=0, c5=0, c1=0, lu=0):
     return {"api_key_id": cle, "model": model, "uncached_input_tokens": entree,
             "output_tokens": sortie, "cache_read_input_tokens": lu,
             "cache_creation": {"ephemeral_5m_input_tokens": c5, "ephemeral_1h_input_tokens": c1}}
@@ -34,7 +34,7 @@ def _jetons(entree=0, sortie=0, ecriture=0, lu=0):
 
 
 #: Les règlements d'un jour, par fonction du barème : `messages:<modèle>`.
-_S = "messages:claude-sonnet-5"
+_S = "messages:claude-sonnet-5-5"
 
 
 def _rapprocher(usage, regle, plateforme=(("principale", SECRET),), cles=CLES):
@@ -116,15 +116,15 @@ def test_le_rapprochement_se_fait_aussi_par_modele_sans_la_date():
     """Chaque modèle a ses lignes au barème : l'écart se lit par modèle, l'id daté
     d'Anthropic réduit à l'id sans date que règle le budget. Une autre clé n'y entre
     pas."""
-    usage = [_res("apikey_plateforme", model="claude-sonnet-5-20261001"),
-             _res("apikey_plateforme", model="claude-opus-5", entree=0, sortie=10),
-             _res("apikey_poste", model="claude-haiku-4-5")]
+    usage = [_res("apikey_plateforme", model="claude-sonnet-5-5-20261001"),
+             _res("apikey_plateforme", model="claude-opus-5-5", entree=0, sortie=10),
+             _res("apikey_poste", model="claude-haiku-5-5")]
     out = _rapprocher(usage, {_S: _jetons(1_000_000),
-                              "messages:claude-opus-5": _jetons(sortie=4)})
+                              "messages:claude-opus-5-5": _jetons(sortie=4)})
     assert out["by_model"] == [
-        {"model": "claude-opus-5", "anthropic_tokens": _jetons(sortie=10),
+        {"model": "claude-opus-5-5", "anthropic_tokens": _jetons(sortie=10),
          "settled_tokens": _jetons(sortie=4), "gap_tokens": _jetons(sortie=6)},
-        {"model": "claude-sonnet-5", "anthropic_tokens": _jetons(1_000_000),
+        {"model": "claude-sonnet-5-5", "anthropic_tokens": _jetons(1_000_000),
          "settled_tokens": _jetons(1_000_000), "gap_tokens": _jetons()}]
     assert out["settled_tokens"] == _jetons(1_000_000, 4)
     assert out["gap_tokens"] == _jetons(sortie=6)

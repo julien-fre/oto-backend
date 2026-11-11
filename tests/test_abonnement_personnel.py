@@ -375,7 +375,7 @@ class TestCablage:
         from oto_mcp.capabilities import runner_triggers as RT
         monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: {
             "id": 3, "org_id": 2, "sub": "le-proprietaire", "enabled": True,
-            "kind": "schedule", "model": "claude-sonnet-5", "procedure": "p"})
+            "kind": "schedule", "model": "claude-sonnet-5-5", "procedure": "p"})
         monkeypatch.setattr(RT.db, "update_trigger",
                             lambda *a, **k: pytest.fail("retouche écrite"))
         # Même PARTAGÉ en écriture avec lui : le forfait d'un autre ne se prête pas
@@ -673,7 +673,7 @@ class TestRetoucheParUnAutre:
 
     def test_un_agent_ordinaire_n_est_pas_concerne(self):
         _abonnement.exiger_le_droit_de_modifier(
-            "un-collegue", {"sub": "le-proprietaire", "model": "claude-sonnet-5"},
+            "un-collegue", {"sub": "le-proprietaire", "model": "claude-sonnet-5-5"},
             "anthropic", {"input": "x"})
 
     def test_le_PRET_du_proprietaire_ouvre_cet_agent(self):

@@ -17,7 +17,7 @@ import uuid
 import pytest
 
 SUB = "worker-modele-detache"
-OPUS = {"procedure": "p", "model": "claude-opus-5", "model_family": "anthropic"}
+OPUS = {"procedure": "p", "model": "claude-opus-5-5", "model_family": "anthropic"}
 MISTRAL = {"procedure": "p", "model": "mistral-large-latest", "model_family": "mistral"}
 MISTRAL_MEDIUM = {"procedure": "p", "model": "mistral-medium-2604",
                   "model_family": "mistral", "effort": "high", "max_output_tokens": 16000}
@@ -92,7 +92,7 @@ def test_un_run_detache_rend_le_modele_d_avant_son_detachement(live):
     from oto_mcp import db
     org = 9201
     job_id, run, avant = _vol_puis_detachement(org, OPUS)
-    assert avant == {"model": "claude-opus-5", "model_family": "anthropic"}, avant
+    assert avant == {"model": "claude-opus-5-5", "model_family": "anthropic"}, avant
     assert db.get_job(job_id, org)["run_id"] is None
     assert db.modele_du_run(run, org) == avant, (
         "« Continuer » sur l'ancien run reste sur sa voie — `{}` le lancerait sur le "
@@ -120,7 +120,7 @@ def test_le_run_courant_est_inchange_et_prime_sur_la_trace(live):
     job_id, ancien, _ = _vol_puis_detachement(org, OPUS)
     neuf = _run_ouvert(org)
     assert db.bind_job_run(job_id, SUB, neuf)
-    assert db.modele_du_run(neuf, org) == {"model": "claude-opus-5",
+    assert db.modele_du_run(neuf, org) == {"model": "claude-opus-5-5",
                                            "model_family": "anthropic"}
 
     # L'ancien run reçoit une association COURANTE : un `start` enfilé dessus, pas pris.

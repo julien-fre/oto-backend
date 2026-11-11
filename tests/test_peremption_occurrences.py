@@ -53,7 +53,7 @@ def _declencheur(**kw):
     base = {"id": 5, "org_id": 2, "cron": "5 6 * * *", "tz": "Europe/Paris",
             "next_due": "2026-08-14 04:05:00", "procedure": "veille",
             "project_id": None, "tools": ["data_write"], "input": None,
-            "label": None, "max_steps": None, "model": "claude-sonnet-5"}
+            "label": None, "max_steps": None, "model": "claude-sonnet-5-5"}
     base.update(kw)
     return base
 
@@ -179,7 +179,7 @@ def test_la_description_servie_annonce_la_peremption():
 def _trigger_db(monkeypatch, **etat):
     """Le déclencheur tel qu'il est EN BASE avant la retouche."""
     base = {"id": 6, "cron": "0 18 * * *", "tz": "Europe/Paris", "enabled": False,
-            "model": "claude-sonnet-5"}
+            "model": "claude-sonnet-5-5"}
     base.update(etat)
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: dict(base, id=i))
     monkeypatch.setattr(RT.db, "runner_arme",

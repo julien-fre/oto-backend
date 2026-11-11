@@ -50,7 +50,7 @@ def _ctx(sub="alexis", org_id=ORG):
 def _appel(**kw):
     # Un agent hébergé déclare son modèle (24/09/2026) : sa règle a son banc.
     if kw.get("op") == "create":
-        kw.setdefault("model", "claude-sonnet-5")
+        kw.setdefault("model", "claude-sonnet-5-5")
     return asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(**kw)))
 
 
@@ -263,7 +263,7 @@ def file(monkeypatch):
     t = {"id": 5, "org_id": ORG, "sub": "alexis", "procedure": "veille",
          "tools": ["a"], "input": "fais la veille", "enabled": True,
          "kind": "webhook", "payload_mode": "ignore", "payload_fields": None,
-         "max_per_hour": None, "fraicheur_s": None, "model": "claude-sonnet-5",
+         "max_per_hour": None, "fraicheur_s": None, "model": "claude-sonnet-5-5",
          "project_id": None, "max_steps": None, "label": None}
     vu["trigger"] = t
     monkeypatch.setattr(runner_hook.db, "trigger_par_secret", lambda i, h: dict(t))
@@ -369,7 +369,7 @@ def test_un_agent_SANS_modele_n_enfile_RIEN(file):
 
 
 def test_un_agent_AVEC_modele_enfile_sa_famille(file):
-    _tirer(file, model="claude-sonnet-5")
+    _tirer(file, model="claude-sonnet-5-5")
     assert file["enfile"]["payload"]["model_family"] == "anthropic"
 
 
@@ -596,7 +596,7 @@ def retouche(monkeypatch):
     """Un webhook en base, et ce qu'`update` écrit."""
     vu = {}
     stocke = {"id": 5, "org_id": ORG, "kind": "webhook", "enabled": False,
-              "cron": None, "tz": "UTC", "model": "claude-sonnet-5",
+              "cron": None, "tz": "UTC", "model": "claude-sonnet-5-5",
               "payload_mode": "ignore", "payload_fields": None}
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: dict(stocke))
     monkeypatch.setattr(RT.db, "update_trigger",
@@ -852,7 +852,7 @@ def test_la_sortie_typee_accepte_ce_qui_est_servi():
 def _appel_agent(**kw):
     """Le même appel, sur la face MCP (`channel="mcp"`) : un agent parle."""
     if kw.get("op") == "create":
-        kw.setdefault("model", "claude-sonnet-5")
+        kw.setdefault("model", "claude-sonnet-5-5")
     ctx = ResolvedCtx(sub="alexis", org_id=ORG, channel="mcp")
     return asyncio.run(RT._triggers(ctx, RT.TriggerInput(**kw)))
 
@@ -929,7 +929,7 @@ def test_la_face_REST_rend_toujours_le_porteur_a_la_personne(pose):
     ctx = ResolvedCtx(sub="alexis", org_id=ORG, channel="rest")
     out = asyncio.run(RT._triggers(ctx, RT.TriggerInput(
         op="create", kind="webhook", procedure="veille", tools=["a"],
-        model="claude-sonnet-5")))
+        model="claude-sonnet-5-5")))
     assert out["hook_secret"].startswith(runner_hook.HOOK_SECRET_PREFIX)
     assert "hook_secret_url" not in out
 

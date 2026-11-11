@@ -89,8 +89,8 @@ def test_rallumer_un_agent_pose_SANS_modele_est_refuse(monkeypatch):
     # Le même rallumage, qui déclare son modèle, passe.
     asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=3,
                                                      enabled=True,
-                                                     model="claude-sonnet-5")))
-    assert ecrit["enabled"] is True and ecrit["model"] == "claude-sonnet-5"
+                                                     model="claude-sonnet-5-5")))
+    assert ecrit["enabled"] is True and ecrit["model"] == "claude-sonnet-5-5"
 
 
 def test_lancer_un_passage_INCONNU_rend_toujours_404(monkeypatch):

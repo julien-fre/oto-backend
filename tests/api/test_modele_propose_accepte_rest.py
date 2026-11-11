@@ -1,6 +1,6 @@
 """Le modèle PROPOSÉ par défaut est un modèle ACCEPTÉ — sur la route servie.
 
-Le défaut du catalogue était posé en dur sur `claude-sonnet-5`, alors que les workers
+Le défaut du catalogue était posé en dur sur `claude-sonnet-5-5`, alors que les workers
 de production ne servent que `mistral`. Un agent qui suivait la marque `default` lue
 sur `op=list` se faisait refuser `model_not_served` par la garde qui juge ce qui est
 servi : la surface proposait ce qu'elle refusait.
@@ -149,7 +149,7 @@ def test_le_modele_propose_est_accepte_et_rien_ne_se_propose_sans_famille(
     assert propose == "mistral-large-2512", "étape 2 : la seule famille servie"
 
     # ── 3. un choix explicite non servi reste refusé, rien d'autre ne bouge ──
-    r = _declencheur(client, org, "propose-opus-explicite", model="claude-opus-5")
+    r = _declencheur(client, org, "propose-opus-explicite", model="claude-opus-5-5")
     assert _refus(r) == (400, "model_not_served"), f"étape 3 : {r.text}"
     r = _appel(client, org, TRIGGERS, op="list")
     assert r.status_code == 200, r.text

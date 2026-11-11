@@ -145,7 +145,7 @@ def flotte(client, org):
         "tools": ["oto_kb"], "namespace": "un-tableau", "row_filter": {"lot": "a"},
         # Un modèle du CATALOGUE : depuis le 12/09/2026 il part avec les travaux,
         # donc une chaîne libre est refusée à la déclaration.
-        "model": "claude-sonnet-5",
+        "model": "claude-sonnet-5-5",
         "max_rows": 10, "max_tokens": 1_000_000, "max_tokens_per_row": 50_000})
     assert r.status_code == 200, r.text
     return r.json()["fleet"]
@@ -924,7 +924,7 @@ def test_armer_un_passage_dont_personne_ne_sert_le_modele_est_refuse(client, org
     from oto_mcp.db._conn import _connect
     fid = client.post(ROUTE, headers=_h(org["membre"]), json={
         "op": "create", "label": "opus", "procedure": "p", "tools": ["oto_kb"],
-        "model": "claude-opus-5"}).json()["fleet"]["id"]
+        "model": "claude-opus-5-5"}).json()["fleet"]["id"]
     assert _refus(client, org, {"op": "launch", "fleet_id": fid}
                   ) == (400, "model_not_served")
 

@@ -112,7 +112,7 @@ def test_une_reponse_ENFILE_un_agent_PROGRAMME_sous_son_proprietaire(live):
     from oto_mcp.db._conn import _connect
     t = rt.create_trigger(ORG, "bob", procedure="replies", tz="UTC", tools=["a"],
                           cron="0 6 * * *", next_due="2999-01-01 00:00:00+00",
-                          label="Lemlist replies", model="claude-sonnet-5")
+                          label="Lemlist replies", model="claude-sonnet-5-5")
     t = rt.get_trigger(t["id"], ORG)
     assert t["kind"] == "schedule"
     res = runner_hook.enfiler(t, "EvLive1", "slack", entree="REPLY BLOCK",

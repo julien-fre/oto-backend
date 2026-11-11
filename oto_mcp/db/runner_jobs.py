@@ -1391,8 +1391,8 @@ def claim_fallback_job(job_id: int, worker_sub: str, to_model: str, to_family: s
     contre un repli en cours de décision.
 
     Réécrit la CHARGE DU MODÈLE dans la MÊME écriture que la prise
-    (`runner_models.charge(to_model)` : son effort, son plafond de sortie —
-    `claude-haiku-4-5` répond 400 à un effort) : tout ce qui lit le travail ensuite
+    (`runner_models.charge(to_model)` : son effort, son plafond de sortie, s'il en
+    déclare) : tout ce qui lit le travail ensuite
     (la clé exigée, l'usage compté à la conclusion, le rapport de forfait) doit voir
     un travail `to_family` ORDINAIRE, jamais un abonnement déguisé — sans ça,
     `noter_rapport` lèverait la pause d'un abonnement qui n'a pourtant pas tourné, et

@@ -135,9 +135,9 @@ def test_un_declencheur_garde_son_modele_et_le_rend(live):
     from oto_mcp import db
     t = db.create_trigger(9103, "alexis", procedure="p", cron="5 6 * * *", tz="UTC",
                           next_due=datetime.datetime.now(datetime.timezone.utc),
-                          tools=["a"], model="claude-opus-5")
-    assert db.get_trigger(t["id"], 9103)["model"] == "claude-opus-5"
-    assert db.due_triggers()[0]["model"] == "claude-opus-5", (
+                          tools=["a"], model="claude-opus-5-5")
+    assert db.get_trigger(t["id"], 9103)["model"] == "claude-opus-5-5"
+    assert db.due_triggers()[0]["model"] == "claude-opus-5-5", (
         "le tick lit `due_triggers` : sans la colonne, le modèle ne partirait jamais")
     db.update_trigger(t["id"], 9103, {"model": None})
     assert db.get_trigger(t["id"], 9103)["model"] is None
@@ -153,11 +153,11 @@ def test_un_continue_relit_le_modele_du_START_de_son_run(live):
                       (run_id, "alexis", 9104, "banc du modèle"))
         c.commit()
     db.enqueue_job(9104, "start", run_id="run-banc",
-                   payload={"procedure": "p", "model": "claude-opus-5",
+                   payload={"procedure": "p", "model": "claude-opus-5-5",
                             "model_family": "anthropic"})
     db.enqueue_job(9104, "start", run_id="run-sans-modele", payload={"procedure": "p"})
     assert db.modele_du_run("run-banc", 9104) == {
-        "model": "claude-opus-5", "model_family": "anthropic"}
+        "model": "claude-opus-5-5", "model_family": "anthropic"}
     assert db.modele_du_run("run-banc", 9105) == {}, "le run d'une AUTRE org ne se lit pas"
     assert db.modele_du_run("run-sans-modele", 9104) == {}
 

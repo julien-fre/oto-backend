@@ -60,7 +60,7 @@ def au_porteur(monkeypatch):
     t = {"id": 5, "org_id": ORG, "sub": PROPRIETAIRE, "procedure": "veille",
          "tools": ["a"], "input": "fais la veille", "enabled": True,
          "kind": "webhook", "payload_mode": "inline", "payload_fields": None,
-         "max_per_hour": None, "fraicheur_s": None, "model": "claude-sonnet-5",
+         "max_per_hour": None, "fraicheur_s": None, "model": "claude-sonnet-5-5",
          "project_id": None, "max_steps": None, "label": None,
          "hook_auth": "bearer", "hook_slug": None, "max_per_day": None}
     bon = runner_hook.hacher(PORTEUR)
@@ -118,7 +118,7 @@ def agent(monkeypatch):
     ligne = {"id": 5, "org_id": ORG, "sub": PROPRIETAIRE, "kind": "webhook",
              "procedure": "veille", "tools": ["a"], "enabled": True,
              "payload_mode": "ignore", "payload_fields": None,
-             "model": "claude-sonnet-5", "hook_auth": "bearer",
+             "model": "claude-sonnet-5-5", "hook_auth": "bearer",
              "signing_secret_set": False, "hook_slug": None}
     ecrit = []
     monkeypatch.setattr(RT.db, "get_trigger", lambda t, o: dict(ligne))

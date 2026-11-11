@@ -65,7 +65,7 @@ def _ctx(sub="alexis", org_id=2):
 def _appel(ctx, **kw):
     # Un agent hébergé déclare son modèle (24/09/2026) : sa règle a son banc.
     if kw.get("op") == "create":
-        kw.setdefault("model", "claude-sonnet-5")
+        kw.setdefault("model", "claude-sonnet-5-5")
     return asyncio.run(RT._triggers(ctx, RT.TriggerInput(**kw)))
 
 
@@ -183,7 +183,7 @@ def _declencheur(**kw):
     base = {"id": 5, "org_id": 2, "cron": "5 6 * * *", "tz": "Europe/Paris",
             "next_due": "2026-08-14 04:05:00", "procedure": "veille-linkedin",
             "project_id": None, "tools": ["data_write"], "input": None,
-            "label": None, "max_steps": None, "model": "claude-sonnet-5"}
+            "label": None, "max_steps": None, "model": "claude-sonnet-5-5"}
     base.update(kw)
     return base
 
@@ -545,7 +545,7 @@ def agent_lancable(monkeypatch):
     enfile, capturé."""
     enfile = {}
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: _declencheur(
-        id=i, enabled=False, sub="membre", model="claude-sonnet-5"))
+        id=i, enabled=False, sub="membre", model="claude-sonnet-5-5"))
     monkeypatch.setattr(RT.db, "runner_arme",
                         lambda org: {"armed": True, "workers": 1,
                                      "last_seen": "2026-10-21 07:00:00",
@@ -575,7 +575,7 @@ def test_run_now_enfile_la_charge_de_l_horloge_au_nom_de_l_appelant(agent_lancab
     charge = agent_lancable["payload"]
     assert charge["trigger_id"] == 5, "le run se range sous l'agent"
     assert charge["procedure"] == "veille-linkedin" and charge["tools"] == ["data_write"]
-    assert charge["model"] == "claude-sonnet-5" and charge["model_family"] == "anthropic"
+    assert charge["model"] == "claude-sonnet-5-5" and charge["model_family"] == "anthropic"
     assert charge["input"], "sans instruction, le worker refuse : elle se dérive"
     assert charge["label"] == "à la demande — veille-linkedin"
     assert "max_steps" not in charge, "les champs None ne voyagent pas"
@@ -653,7 +653,7 @@ _CHARGE_D_ORIGINE = {
     "procedure": "veille-linkedin-v1", "project_id": 12, "tools": ["data_write", "serper_search"],
     "input": "Read the procedure `veille-linkedin-v1` … (occurrence of 2026-11-03 06:05)",
     "label": "à la demande — veille-linkedin-v1", "trigger_id": 5,
-    "model": "claude-sonnet-5", "model_family": "anthropic",
+    "model": "claude-sonnet-5-5", "model_family": "anthropic",
     "_plateforme": {"forfait": "x"}, "_perime_apres_s": 3600,
     "_chaine": {"parent_job": 1, "root_job": 1, "depth": 1},
 }
@@ -670,7 +670,7 @@ def run_relancable(agent_lancable, monkeypatch):
     monkeypatch.setattr(RT.db, "relances_en_vol", lambda j, t, o: 0)
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: _declencheur(
         id=i, enabled=False, sub="membre", procedure="veille-linkedin-v2",
-        tools=["data_write"], model="claude-sonnet-5"))
+        tools=["data_write"], model="claude-sonnet-5-5"))
     vus = {}
     monkeypatch.setattr(RT.procedure_retiree, "archivee",
                         lambda org, sub, slug: vus.setdefault("archivee", slug) and None)
@@ -691,7 +691,7 @@ def test_rerun_rejoue_la_charge_d_origine_sous_l_agent_au_nom_de_l_appelant(run_
     assert charge["tools"] == ["data_write", "serper_search"]
     assert charge["input"] == _CHARGE_D_ORIGINE["input"], "la même instruction, à l'octet"
     assert charge["project_id"] == 12
-    assert charge["model"] == "claude-sonnet-5" and charge["model_family"] == "anthropic"
+    assert charge["model"] == "claude-sonnet-5-5" and charge["model_family"] == "anthropic"
     assert agent_lancable["_vus"]["archivee"] == "veille-linkedin-v1", \
         "l'archivage se juge sur la procédure qui va tourner"
 

@@ -56,7 +56,7 @@ def _ctx(sub="alexis", org_id=2):
 
 #: Un agent hébergé déclare son modèle (24/09/2026) — ce fichier ne parle pas de
 #: cette règle, elle a son propre banc (`test_agent_heberge_modele_obligatoire.py`).
-MODELE = "claude-sonnet-5"
+MODELE = "claude-sonnet-5-5"
 
 
 def _appel(ctx, **kw):

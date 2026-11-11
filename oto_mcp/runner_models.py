@@ -42,11 +42,15 @@ class Modele(NamedTuple):
 #: ⚠️ L'ORDRE est la préférence : le modèle proposé par défaut est le premier
 #: modèle SERVI de cette liste (cf. `catalogue`). Aucun n'est marqué en dur.
 MODELES: tuple[Modele, ...] = (
-    Modele("claude-sonnet-5", "Claude Sonnet 5", "anthropic"),
-    Modele("claude-opus-5", "Claude Opus 5", "anthropic"),
-    # ⚠️ `none` : Haiku 4.5 refuse `output_config.effort` (400, mesuré le 14/09/2026), que
-    # le worker Anthropic envoie sinon à chaque tour. Avec `none`, il n'en envoie aucun.
-    Modele("claude-haiku-4-5", "Claude Haiku 4.5", "anthropic", effort="none"),
+    # La génération 5.5 REMPLACE la 5 le 11/11/2026 (`REMPLACES` ci-dessous). L'ordre
+    # tient deux lectures : le défaut proposé (le premier servi) et `repli_api`, qui
+    # prend le premier modèle `anthropic` portant le tier (`sub:haiku` ->
+    # `claude-haiku-5-5`).
+    # Haiku 5.5 accepte `output_config.effort` (`low` à `max`, défaut `medium` —
+    # documentation Anthropic) : pas de `none`, contrairement à Haiku 4.5.
+    Modele("claude-sonnet-5-5", "Claude Sonnet 5.5", "anthropic"),
+    Modele("claude-opus-5-5", "Claude Opus 5.5", "anthropic"),
+    Modele("claude-haiku-5-5", "Claude Haiku 5.5", "anthropic"),
     # La voie Conversations des workers de production (cf. oto-runner).
     Modele("mistral-large-2512", "Mistral Large", "mistral", max_output_tokens=8192),
     Modele("mistral-medium-2604", "Mistral Medium", "mistral", effort="high",
@@ -65,7 +69,7 @@ MODELES: tuple[Modele, ...] = (
     #
     # ⚠️ Des ids PRÉFIXÉS, et non les ids nus du catalogue Anthropic : la famille se
     # DÉDUIT du modèle (`famille`), donc deux voies d'exécution ne peuvent pas
-    # partager un id. `claude-sonnet-5` reste la voie « clé de l'org » ;
+    # partager un id. `claude-sonnet-5-5` est la voie « clé de l'org » ;
     # `sub:sonnet` est la voie « abonnement ». Le runner retire le préfixe et passe
     # l'alias au programme, qui sert ce que le forfait de la personne autorise.
     Modele("sub:sonnet", "Claude Sonnet (abonnement)", "claude_subscription"),
@@ -74,6 +78,20 @@ MODELES: tuple[Modele, ...] = (
 )
 
 _PAR_ID = {m.id: m for m in MODELES}
+
+#: Les modèles RETIRÉS du catalogue (11/11/2026) -> leur remplaçant. La révision
+#: `20261111_1400_modeles_claude_55` a réécrit les agents en base (déclencheurs,
+#: flottes) ; un id retiré ne se POSE plus. ⚠️ Il se lit et se RÈGLE encore : un travail
+#: déjà enfilé, un tour déjà réservé, et la reprise d'un run démarré dessus
+#: (`runner_jobs.modele_du_run` reprend le modèle du départ, jamais le catalogue
+#: courant) tournent toujours sur lui — Anthropic le sert encore. Ses fonctions de
+#: barème restent donc connues de la garde de démarrage
+#: (`credits_tours.fonctions_connues`).
+REMPLACES: dict[str, str] = {
+    "claude-sonnet-5": "claude-sonnet-5-5",
+    "claude-opus-5": "claude-opus-5-5",
+    "claude-haiku-4-5": "claude-haiku-5-5",
+}
 
 #: Les familles connues — c'est-à-dire les seuls dépôts dont la présence se note.
 FAMILLES = frozenset(m.family for m in MODELES)
@@ -117,8 +135,7 @@ def motif_sans_famille(model: Optional[str]) -> Optional[str]:
 def charge(model: Optional[str]) -> dict:
     """Ce qu'un travail emporte de son modèle : `{model, model_family}`, plus
     `effort` et `max_output_tokens` (14/09/2026) SI le modèle catalogué les déclare —
-    mistral-medium-2604 tourne en effort HAUT sous 16 000 jetons de complétion,
-    claude-haiku-4-5 sans effort. Une clé que le modèle ne déclare pas ne part pas.
+    mistral-medium-2604 tourne en effort HAUT sous 16 000 jetons de complétion. Une clé que le modèle ne déclare pas ne part pas.
 
     ⚠️ Un modèle que le catalogue ne connaît pas ne part PAS : sans famille, il
     atteindrait un worker quelconque qui tenterait de l'appeler chez un
@@ -140,8 +157,9 @@ def repli_api(model: Optional[str]) -> Optional[str]:
     façon de payer le même travail (OTO-130, repli plafond, 27/09/2026).
 
     Dérivé du même préfixe que la famille (`sub:sonnet` -> tier `sonnet` ->
-    `claude-sonnet-5`) — jamais une table à part qui divergerait du catalogue le
-    jour où un tier est ajouté d'un côté et pas de l'autre. `None` si `model`
+    `claude-sonnet-5-5`, le premier du tier dans l'ordre de `MODELES`) — jamais une
+    table à part qui divergerait du catalogue le jour où un tier est ajouté d'un côté
+    et pas de l'autre. `None` si `model`
     n'est pas un abonnement, ou si aucun modèle `anthropic` ne porte ce tier."""
     m = _PAR_ID.get(model or "")
     if not m or m.family not in FAMILLES_PERSONNELLES:

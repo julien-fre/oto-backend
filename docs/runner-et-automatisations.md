@@ -1064,8 +1064,7 @@ travail que ce que le modèle déclare :
 
 | Modèle | `effort` | `max_output_tokens` |
 |---|---|---|
-| `claude-sonnet-5`, `claude-opus-5` | — (celui du worker) | — (celui du worker) |
-| `claude-haiku-4-5` | `none` | — |
+| `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5` | — (celui du worker) | — (celui du worker) |
 | `mistral-large-2512` | — | 8 192 |
 | `mistral-medium-2604` | `high` | 16 000 |
 | `mistral-small-2603` | `high` | 16 000 |
@@ -1079,8 +1078,9 @@ tout le catalogue. Ces plafonds reprennent ceux que les workers servaient déjà
 remplacent la variable d'hôte `OTO_RUNNER_MAX_TOKENS_EFFORT`.
 
 ⚠️ **`none` ne raisonne pas, et chaque voie le dit à sa façon.** Côté Anthropic, il
-n'envoie aucun effort : Haiku 4.5 refuse `output_config.effort` (400), que le worker
-envoie sinon à chaque tour. Côté Mistral, il part tel quel (`reasoning_effort: "none"`),
+n'envoie aucun effort : Haiku 4.5 refusait `output_config.effort` (400), que le worker
+envoie sinon à chaque tour — aucun modèle Claude du catalogue ne le déclare depuis que
+Haiku 5.5, qui l'accepte, l'a remplacé (11/11/2026). Côté Mistral, il part tel quel (`reasoning_effort: "none"`),
 car c'est une valeur de l'API : `mistral-medium-2604` n'accepte que `high` et `none`
 (400 sur `medium`, mesuré le 14/09/2026), et l'omettre laisserait le défaut du
 fournisseur.
@@ -1088,6 +1088,30 @@ fournisseur.
 ⚠️ **Un `continue` relit l'effort et le plafond du `start`**, jamais le catalogue
 courant (`db.modele_du_run`). Les deux voyagent ensemble : relire l'effort sans le
 plafond faisait lever toute reprise d'un run qui raisonne (relevé en revue).
+
+### La génération Claude 5.5 REMPLACE la 5 (11/11/2026)
+
+Le catalogue ne sert plus que `claude-sonnet-5-5`, `claude-opus-5-5` et
+`claude-haiku-5-5` côté `anthropic` ; `claude-sonnet-5`, `claude-opus-5` et
+`claude-haiku-4-5` en sont sortis (`runner_models.REMPLACES` nomme le remplaçant de
+chacun). Sonnet 5.5 est le premier : c'est le défaut proposé quand la famille est servie
+et payable, et `repli_api` envoie `sub:sonnet|opus|haiku` au modèle 5.5 du même tier.
+
+- **Les agents posés sont réécrits** par la révision `20261111_1400_modeles_claude_55` :
+  `runner_triggers.model` et `forfait_prete_model` dans la même écriture (un prêt n'est
+  vivant que si les deux sont égaux), puis `runner_fleets.model`.
+  Sans elle, un id retiré ferait refuser la livraison (`motif_sans_famille`) et l'agent
+  cesserait de tourner.
+- ⚠️ **`runner_jobs` n'est PAS réécrit.** Un travail enfilé porte sa charge et se route
+  par `model_family` (inchangée) ; Anthropic sert toujours les ids d'avant. Un `continue`
+  reprend le modèle du départ de son run, jamais le catalogue courant (ci-dessus) :
+  réécrire l'historique ferait poursuivre un fil sur un autre modèle.
+- ⚠️ **Un id retiré reste une fonction de barème connue** (`credits_tours.fonctions_connues`
+  lit `REMPLACES`) : ses tours en vol se règlent sous leurs lignes, et une entrée
+  d'`OTO_CREDITS_MODE_FUNCTIONS` qui le nomme ne fait pas tomber le démarrage.
+- ⚠️ **Les lignes de barème des trois modèles 5.5 se posent AVANT la mise en prod**
+  (`docs/credits-au-moment-de-l-appel.md`) : sans elles, un tour sur clé refacturée est
+  `credits_unpriced` — refusé en `enforce`, servi sans réservation en `report`.
 
 ⚠️ **Le backend se déploie avant le runner.** Un worker d'avant ce lot ignore
 `max_output_tokens` et applique sa variable d'hôte ; un worker d'après lève sur un
@@ -2455,7 +2479,7 @@ ces identifiants. D'où trois conséquences lisibles dans le code :
 - seul un **worker de plateforme** reçoit ce sandbox, et seul lui peut faire arrêter
   un travail faute de connexion — la file est ouverte aux membres, pas ce pouvoir.
 
-**Des ids PRÉFIXÉS.** La famille se DÉDUIT du modèle : `claude-sonnet-5` reste la voie
+**Des ids PRÉFIXÉS.** La famille se DÉDUIT du modèle : `claude-sonnet-5-5` est la voie
 « clé de l'org », `sub:sonnet` est la voie « abonnement ». Le worker retire le préfixe.
 
 **La couture du partage : `_abonnement.peut_agir_pour`.** Au niveau de la PERSONNE : le
@@ -2755,8 +2779,8 @@ modèle, au même palier, payé aux jetons sur la clé API de l'org. Le repli le
   l'avant, l'après, le mode et l'échéance qui l'a déclenché, visible partout où la charge
   l'est déjà. Déplacer une dépense sans le dire serait la faire découvrir au relevé.
 - **Le travail rerouté est un travail `anthropic` ORDINAIRE** : la charge du modèle
-  d'arrivée (`runner_models.charge` — `model`, `model_family`, et son `effort` :
-  `claude-haiku-4-5` répond 400 sans `effort=none`) est réécrite DANS l'écriture de la
+  d'arrivée (`runner_models.charge` — `model`, `model_family`, et son `effort`
+  s'il en déclare un) est réécrite DANS l'écriture de la
   prise, et la charge d'avant stampée (`charge_avant`), que le repli défait rend à
   l'octet. Sans ça, `noter_rapport` lèverait la pause
   d'un abonnement qui n'a pas tourné, et l'usage compterait zéro jeton pour une exécution

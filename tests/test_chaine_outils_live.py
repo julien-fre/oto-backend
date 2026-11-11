@@ -80,7 +80,7 @@ def _agent(org: int, outils: list) -> int:
     t = db.create_trigger(org, SUB, procedure=f"enfant-{uuid.uuid4().hex[:6]}",
                           cron="5 6 * * *", tz="UTC",
                           next_due=datetime.datetime.now(datetime.timezone.utc),
-                          tools=outils, model="claude-sonnet-5")
+                          tools=outils, model="claude-sonnet-5-5")
     return int(t["id"])
 
 
@@ -128,7 +128,7 @@ def test_une_personne_lance_l_agent_qu_elle_veut(org):
 def _campagne(org: int, outils: list) -> int:
     from oto_mcp import db
     f = db.create_fleet(org, SUB, label=f"c-{uuid.uuid4().hex[:6]}", procedure="p",
-                        tools=outils, model="claude-sonnet-5", provider="anthropic")
+                        tools=outils, model="claude-sonnet-5-5", provider="anthropic")
     return int(f["id"])
 
 

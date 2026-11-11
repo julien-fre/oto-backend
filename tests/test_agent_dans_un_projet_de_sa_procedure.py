@@ -42,7 +42,7 @@ def _ctx():
 
 def _appel(**kw):
     if kw.get("op") == "create":
-        kw.setdefault("model", "claude-sonnet-5")
+        kw.setdefault("model", "claude-sonnet-5-5")
     return asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(**kw)))
 
 
@@ -166,7 +166,7 @@ def test_un_second_agent_programme_est_accepte_dans_un_projet_comme_dans_l_autre
 def retouche(banc, monkeypatch):
     actuel = {"id": 3, "sub": "alexis", "kind": "schedule", "procedure": "autre",
               "project_id": 20, "cron": "5 6 * * *", "tz": "Europe/Paris", "enabled": True,
-              "model": "claude-sonnet-5"}
+              "model": "claude-sonnet-5-5"}
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: dict(actuel))
     monkeypatch.setattr(RT.db, "update_trigger",
                         lambda i, o, champs, **k: banc.update(ecrit=dict(champs))
@@ -236,7 +236,7 @@ def test_une_retouche_ordinaire_ne_lit_pas_les_projets(retouche, monkeypatch):
 def _declencheur(**kw):
     base = {"id": 5, "org_id": ORG, "cron": "5 6 * * *", "tz": "Europe/Paris",
             "procedure": "veille", "project_id": None, "tools": ["data_write"],
-            "input": None, "label": None, "max_steps": None, "model": "claude-sonnet-5"}
+            "input": None, "label": None, "max_steps": None, "model": "claude-sonnet-5-5"}
     base.update(kw)
     return base
 

@@ -365,7 +365,7 @@ def pose(monkeypatch):
     ligne = {"id": 5, "org_id": ORG, "sub": "alexis", "kind": "webhook",
              "procedure": "assistant", "tools": ["a"], "enabled": True,
              "payload_mode": "ignore", "payload_fields": None,
-             "model": "claude-sonnet-5", "hook_auth": "bearer",
+             "model": "claude-sonnet-5-5", "hook_auth": "bearer",
              "signing_secret_set": True, "hook_slug": None, "max_per_day": None}
     etat = {"ligne": ligne, "hash": "h0", "admin": True, "autre": None,
             "procedures_org": {"assistant"}}
@@ -457,7 +457,7 @@ def test_enfiler_porte_l_IDENTITE_et_les_OUTILS_du_run_Slack(monkeypatch):
     monkeypatch.setattr(runner_hook.procedure_retiree, "archivee", lambda *a: None)
     t = {"id": 5, "org_id": ORG, "sub": "owner", "procedure": "assistant",
          "tools": ["serper_search", "slack_post_message"], "input": "x", "enabled": True,
-         "model": "claude-sonnet-5", "hook_auth": "slack", "max_per_day": None}
+         "model": "claude-sonnet-5-5", "hook_auth": "slack", "max_per_day": None}
     runner_hook.enfiler(t, "Ev1", "slack", entree="the request", sub="ada-sub",
                         outils_en_plus=slack_events.OUTILS_DE_REPONSE)
     assert vu["sub"] == "ada-sub"

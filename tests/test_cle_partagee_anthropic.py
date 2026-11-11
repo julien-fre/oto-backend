@@ -199,12 +199,12 @@ def test_sous_le_plancher_le_travail_s_arrete_AVANT_l_estampille(remise, monkeyp
                         vu.update(demande=(sub, org, model))
                         or {"code": "insufficient_credits", "needed": 500, "available": 10})
     rendu = RJ._avec_cle(_travail(payload={"model_family": "anthropic",
-                                           "model": "claude-sonnet-5"}),
+                                           "model": "claude-sonnet-5-5"}),
                          "anthropic", "worker:banc", worker=True, metre=True)
     assert "model_key" not in rendu and "insufficient_credits" in rendu["delegation_refusee"]
     assert remise["estampilles"] == [] and "insufficient_credits" in remise["arret"]
     assert "rendu" not in remise
-    assert vu["demande"] == ("alexis", ORG, "claude-sonnet-5"), "le payeur, au modèle du travail"
+    assert vu["demande"] == ("alexis", ORG, "claude-sonnet-5-5"), "le payeur, au modèle du travail"
 
 
 def test_un_solde_ILLISIBLE_au_plancher_rend_le_travail_a_la_file(remise, monkeypatch):
@@ -317,13 +317,13 @@ def test_sans_grant_l_exigence_arrete_toujours(remise, monkeypatch):
 
 # ── 4. chaque appel au modèle, au budget d'unités ───────────────────────────
 
-_TOUR = {"model": "claude-sonnet-5", "usage_input": 100, "usage_output": 50,
+_TOUR = {"model": "claude-sonnet-5-5", "usage_input": 100, "usage_output": 50,
          "usage_cache_write": 0, "usage_cache_read": 1_000}
 _ESTAMPILLE = {"depot": "anthropic", "mode": "platform", "tentative": 2}
 
 
 def _prise(**kw):
-    return {"org_id": ORG, "sub": "alexis", "attempts": 2, "model": "claude-sonnet-5",
+    return {"org_id": ORG, "sub": "alexis", "attempts": 2, "model": "claude-sonnet-5-5",
             "cle_partagee": _ESTAMPILLE, **kw}
 
 
@@ -363,7 +363,7 @@ def _metrer(tour=0, **usage):
 def test_un_tour_se_reserve_a_son_max_tokens_avant_l_appel(budget):
     assert _reserver_tour(3, 8000) == {"ok": True, "held": True, "reserved": 3}
     assert budget["reserver"] == [
-        ("runner:9:2:3", "alexis", ORG, 8000, "claude-sonnet-5")], \
+        ("runner:9:2:3", "alexis", ORG, 8000, "claude-sonnet-5-5")], \
         "le travail, la tentative, le tour ; le demandeur et l'org du travail paient, " \
         "au prix du modèle que nomme le travail"
 
@@ -388,11 +388,11 @@ def test_un_tour_se_regle_a_ses_quatre_comptes_de_jetons(budget):
     assert out == {"ok": True, "metered": True, "amount": 7, "exceeded": True,
                    "duplicate": False}
     [(uid, sub, org, tokens, meta, model)] = budget["regler"]
-    assert (uid, sub, org, model) == ("runner:9:2:3", "alexis", ORG, "claude-sonnet-5")
+    assert (uid, sub, org, model) == ("runner:9:2:3", "alexis", ORG, "claude-sonnet-5-5")
     assert tokens == {"input_tokens": 100, "output_tokens": 50,
                       "cache_creation_input_tokens": 0, "cache_read_input_tokens": 1_000}
     assert meta == {"runner_job_id": 9, "attempt": 2, "turn": 3,
-                    "model": "claude-sonnet-5", "key_mode": "platform"}
+                    "model": "claude-sonnet-5-5", "key_mode": "platform"}
 
 
 @pytest.mark.parametrize("poste", ["usage_input", "usage_output"])
@@ -418,7 +418,7 @@ def test_le_prix_suit_le_modele_du_travail_pas_celui_que_le_worker_rapporte(budg
     modèle que nomme la charge du travail, lu par le cœur."""
     assert _metrer(model="claude-inconnu")["metered"] is True
     [(_, _, _, _, meta, model)] = budget["regler"]
-    assert (meta["model"], model) == ("claude-inconnu", "claude-sonnet-5")
+    assert (meta["model"], model) == ("claude-inconnu", "claude-sonnet-5-5")
 
 
 def test_un_cache_non_declare_se_lit_zero_et_le_dit(budget):
@@ -487,7 +487,7 @@ def test_en_report_aucun_tour_n_est_jamais_refuse(monkeypatch, cas):
     prise = _prise(model=None) if cas == "travail_sans_modele" else _prise()
     monkeypatch.setattr(RJ.db, "tentative_en_cours", lambda job_id, sub: prise)
     disponible = {"solde_nul": 0, "solde_negatif": -500}.get(cas, 10 ** 9)
-    modele = "claude-opus-5" if cas == "modele_sans_ligne" else "claude-sonnet-5"
+    modele = "claude-opus-5-5" if cas == "modele_sans_ligne" else "claude-sonnet-5-5"
     lignes = [] if cas == "hors_bareme" else [
         {"connector": "anthropic", "function": f"messages:{modele}", "unit": u,
          "budget": 1, "per_n": 1} for u in credits_tours.UNITES_DU_MODELE]
@@ -634,7 +634,7 @@ def bareme_par_modele(monkeypatch):
     doublé note ce qui s'écrit."""
     from oto_mcp.access import credits, credits_tours as tours
     from oto_mcp.db import credits as db_credits
-    prix = {"claude-sonnet-5": 2, "claude-opus-5": 5}
+    prix = {"claude-sonnet-5-5": 2, "claude-opus-5-5": 5}
     lignes = [{"connector": "anthropic", "function": f"messages:{m}", "unit": u,
                "budget": b, "per_n": 20} for m, b in prix.items()
               for u in tours.UNITES_DU_MODELE]
@@ -657,13 +657,13 @@ def bareme_par_modele(monkeypatch):
 
 def test_un_tour_se_reserve_au_prix_de_son_modele(bareme_par_modele):
     from oto_mcp.access import credits_tours as tours
-    assert tours.reserver_tour("runner:1:1:1", "s", ORG, 400, "claude-sonnet-5")["reserved"] == 40
-    assert tours.reserver_tour("copilot:th:000002", "s", ORG, 400, "claude-opus-5")["reserved"] == 100
+    assert tours.reserver_tour("runner:1:1:1", "s", ORG, 400, "claude-sonnet-5-5")["reserved"] == 40
+    assert tours.reserver_tour("copilot:th:000002", "s", ORG, 400, "claude-opus-5-5")["reserved"] == 100
     assert [r["function"] for r in bareme_par_modele["reserver"]] == [
-        "messages:claude-sonnet-5", "messages:claude-opus-5"]
+        "messages:claude-sonnet-5-5", "messages:claude-opus-5-5"]
 
 
-@pytest.mark.parametrize("model", ["claude-haiku-4-5", None])
+@pytest.mark.parametrize("model", ["claude-haiku-5-5", None])
 def test_un_modele_sans_ses_lignes_est_sans_bareme(bareme_par_modele, model):
     from oto_mcp.access import credits_tours as tours
     with pytest.raises(tours.TourRefuse) as e:
@@ -679,10 +679,10 @@ def test_le_reglement_suit_le_modele_de_la_reservation(monkeypatch, bareme_par_m
     from oto_mcp.db import credits as db_credits
     monkeypatch.setattr(db_credits, "reservation", lambda uid: {
         "state": db_credits.OUVERTE, "scale_version": 1, "reserved": 100,
-        "function": "messages:claude-opus-5"})
+        "function": "messages:claude-opus-5-5"})
     jetons = {"input_tokens": 20, "output_tokens": 400, "cache_creation_input_tokens": 0,
               "cache_read_input_tokens": 0}
-    r = tours.regler_tour("t2", "s", ORG, jetons, {}, "claude-sonnet-5")
+    r = tours.regler_tour("t2", "s", ORG, jetons, {}, "claude-sonnet-5-5")
     assert r == {"settled": True, "amount": 5 + 100, "exceeded": True}
 
 

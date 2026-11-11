@@ -66,7 +66,7 @@ def _pose(org, quand, label):
     from oto_mcp import db
     return db.create_trigger(org["id"], org["membre"], procedure="veille",
                              cron="0 18 * * *", tz="Europe/Paris",
-                             model="claude-sonnet-5", next_due=quand, tools=["data_write"], label=label)
+                             model="claude-sonnet-5-5", next_due=quand, tools=["data_write"], label=label)
 
 
 def test_une_echeance_a_MICROSECONDES_est_consommee(live, org):

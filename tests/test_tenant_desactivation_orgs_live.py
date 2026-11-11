@@ -126,7 +126,7 @@ def _anonyme(slug: str) -> tuple[int, str]:
 
 def _cron(db, org):
     t = db.create_trigger(org, "acme:carla", procedure=f"veille-{org}", tz="UTC",
-                          model="claude-sonnet-5", tools=["a"], cron="0 * * * *",
+                          model="claude-sonnet-5-5", tools=["a"], cron="0 * * * *",
                           next_due="2026-01-01T00:00:00+00:00")
     return t
 
@@ -176,7 +176,7 @@ def test_desactiver_ferme_les_orgs_du_tenant_a_tout_le_monde(base):
 
     # Le webhook entrant est refusé, nommément.
     hook = db.create_trigger(orgs["a1"], "acme:carla", procedure="hook", tz="UTC",
-                             model="claude-sonnet-5", tools=["a"], kind="webhook")
+                             model="claude-sonnet-5-5", tools=["a"], kind="webhook")
     secret, hache = runner_hook.nouveau_secret()
     db.poser_secret_de_hook(hook["id"], orgs["a1"], hache)
     with pytest.raises(runner_hook.HookRefus) as e:

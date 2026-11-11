@@ -44,7 +44,7 @@ def porte(monkeypatch):
     t = {"id": 5, "org_id": ORG, "sub": "alexis", "procedure": "veille",
          "tools": ["a"], "input": "go", "enabled": True, "kind": "webhook",
          "payload_mode": "ignore", "payload_fields": None, "max_per_hour": None,
-         "fraicheur_s": None, "model": "claude-sonnet-5", "project_id": None, "max_steps": None,
+         "fraicheur_s": None, "model": "claude-sonnet-5-5", "project_id": None, "max_steps": None,
          "label": None, "hook_auth": "bearer", "max_per_day": None, "hook_slug": None}
     vu["trigger"] = t
     monkeypatch.setattr(runner_hook.db, "trigger_par_secret", lambda i, h: dict(t))
@@ -153,7 +153,7 @@ def _ctx():
 
 def _appel(**kw):
     if kw.get("op") == "create":
-        kw.setdefault("model", "claude-sonnet-5")
+        kw.setdefault("model", "claude-sonnet-5-5")
     return asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(**kw)))
 
 
@@ -176,7 +176,7 @@ def base(monkeypatch):
     ligne = {"id": 5, "org_id": ORG, "sub": "alexis", "kind": "webhook",
              "procedure": "veille", "tools": ["a"], "enabled": True,
              "payload_mode": "ignore", "payload_fields": None,
-             "model": "claude-sonnet-5", "hook_auth": "bearer",
+             "model": "claude-sonnet-5-5", "hook_auth": "bearer",
              "max_per_day": None, "hook_slug": None}
     etat = {"ligne": ligne, "ecrit": []}
 

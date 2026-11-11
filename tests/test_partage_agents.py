@@ -34,7 +34,7 @@ def org(monkeypatch):
     agent = {"id": 7, "org_id": ORG, "sub": PROPRIETAIRE, "procedure": "veille",
              "tools": ["a"], "input": "fais la veille", "enabled": False,
              "kind": "schedule", "cron": "0 8 * * *", "tz": "Europe/Paris",
-             "model": "claude-sonnet-5"}
+             "model": "claude-sonnet-5-5"}
     partages: dict[tuple[str, str], str] = {
         ("user", EDITEUR): "editor", ("user", LECTEUR): "viewer"}
     etat = {"agent": agent, "partages": partages, "ecrit": None, "supprime": False}
@@ -185,7 +185,7 @@ def _creer(monkeypatch, **kw):
     monkeypatch.setattr(RT._cle_exigee, "exiger_a_la_pose", lambda *a, **k: None)
     monkeypatch.setattr(RT._abonnement, "exiger_a_la_pose", lambda *a, **k: None)
     return _appel(PROPRIETAIRE, op="create", procedure="veille", cron="0 8 * * *",
-                  tools=["a"], model="claude-sonnet-5", **kw)["trigger"]
+                  tools=["a"], model="claude-sonnet-5-5", **kw)["trigger"]
 
 
 def test_sans_reglage_un_agent_nait_prive(creation, monkeypatch):
@@ -220,12 +220,12 @@ def test_le_preset_shared_partage_et_prete_a_la_naissance(creation, monkeypatch)
     prets = []
     monkeypatch.setattr(RT.db, "poser_pret_du_forfait",
                         lambda i, o, sub, m: prets.append((sub, m)) or None)
-    monkeypatch.setattr(RT.runner_models, "MODELES_PERSONNELS", {"claude-sonnet-5"})
+    monkeypatch.setattr(RT.runner_models, "MODELES_PERSONNELS", {"claude-sonnet-5-5"})
     _creer(monkeypatch)
     assert creation["partages"] == {("org", str(ORG)): "editor"}
     assert creation["auteurs"] == {("org", str(ORG)): PROPRIETAIRE}, (
         "un geste du propriétaire, pas le partage marqué d'un réglage d'admin")
-    assert prets == [(PROPRIETAIRE, "claude-sonnet-5")]
+    assert prets == [(PROPRIETAIRE, "claude-sonnet-5-5")]
 
 
 def test_le_preset_ne_prete_rien_hors_abonnement(creation, monkeypatch):
@@ -385,7 +385,7 @@ def test_le_kind_runner_trigger_est_enregistre(org):
 
 def _travail():
     return {"id": 1, "payload": {"trigger_id": 7, "procedure": "veille",
-                                 "label": "la veille", "model": "claude-sonnet-5",
+                                 "label": "la veille", "model": "claude-sonnet-5-5",
                                  "input": "consigne", "tools": ["a"],
                                  "webhook_body": {"email": "x@y.test"}}}
 
@@ -394,7 +394,7 @@ def _travail():
 def test_la_file_ne_montre_pas_ce_qu_un_agent_execute_a_qui_ne_peut_le_modifier(org, sub):
     j, = A.masquer_charges(ResolvedCtx(sub=sub, org_id=ORG), [_travail()])
     assert j["payload"] == {"trigger_id": 7, "procedure": "veille",
-                            "label": "la veille", "model": "claude-sonnet-5",
+                            "label": "la veille", "model": "claude-sonnet-5-5",
                             "payload_redacted": True}
     assert j["id"] == 1, "la ligne reste : le compte de la file ne ment pas"
 
@@ -585,21 +585,21 @@ def test_l_editeur_nomme_change_de_modele_dans_le_forfait(forfait):
 
 
 def test_l_editeur_nomme_peut_sortir_l_agent_du_forfait(forfait):
-    _appel(EDITEUR, op="update", trigger_id=7, model="claude-sonnet-5")
-    assert forfait["ecrit"] == {"model": "claude-sonnet-5"}
+    _appel(EDITEUR, op="update", trigger_id=7, model="claude-sonnet-5-5")
+    assert forfait["ecrit"] == {"model": "claude-sonnet-5-5"}
 
 
 def test_sortir_du_forfait_d_autrui_sans_pret_dit_pourquoi(forfait):
     """Refusé par la garde d'écriture : le refus nomme le forfait, pas un agent
     inconnu (la clé d'org visée, elle, ne garde rien)."""
-    e = _refus(AUTRE, op="update", trigger_id=7, model="claude-sonnet-5")
+    e = _refus(AUTRE, op="update", trigger_id=7, model="claude-sonnet-5-5")
     assert (e.status, e.code) == (400, "subscription_personal_only")
     assert forfait["ecrit"] is None
 
 
 def test_POSER_l_agent_sur_le_forfait_reste_au_proprietaire(forfait):
     """Le prêt vaut pour l'agent qui tourne DÉJÀ sur le forfait."""
-    forfait["agent"]["model"] = "claude-sonnet-5"
+    forfait["agent"]["model"] = "claude-sonnet-5-5"
     e = _refus(EDITEUR, op="update", trigger_id=7, model="sub:sonnet")
     assert e.code == "subscription_personal_only"
     assert forfait["ecrit"] is None
@@ -702,7 +702,7 @@ def test_qui_ne_voit_pas_l_agent_ne_prete_pas_et_n_apprend_rien(forfait):
 
 
 def test_un_agent_hors_abonnement_n_a_rien_a_preter(forfait):
-    forfait["agent"]["model"] = "claude-sonnet-5"
+    forfait["agent"]["model"] = "claude-sonnet-5-5"
     assert _refus(PROPRIETAIRE, op="lend", trigger_id=7).code == "lend_not_on_subscription"
 
 

@@ -309,7 +309,7 @@ def test_un_travail_sans_agent_garde_la_regle_d_avant(monkeypatch):
 def _t(**kw):
     base = {"id": 4, "org_id": 2, "procedure": "trouver-acheteurs", "project_id": None,
             "tools": ["data_rows"], "input": None, "label": None, "max_steps": None,
-            "tz": "Europe/Paris", "model": "claude-sonnet-5"}
+            "tz": "Europe/Paris", "model": "claude-sonnet-5-5"}
     base.update(kw)
     return base
 

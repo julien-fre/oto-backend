@@ -186,7 +186,7 @@ def linear(monkeypatch):
     t = {"id": 5, "org_id": ORG, "sub": "alexis", "procedure": "usine-a-connecteurs",
          "tools": ["a"], "input": "traite le ticket", "enabled": True,
          "kind": "webhook", "payload_mode": "inline", "payload_fields": None,
-         "max_per_hour": None, "fraicheur_s": None, "model": "claude-sonnet-5",
+         "max_per_hour": None, "fraicheur_s": None, "model": "claude-sonnet-5-5",
          "project_id": None, "max_steps": None, "label": None,
          "hook_auth": runner_hook.LINEAR, "hook_slug": None,
          "hook_signing_secret_enc": runner_hook.chiffrer_secret_de_signature(5, SECRET)}
@@ -362,7 +362,7 @@ def test_la_ROUTE_rend_200_a_Linear_sur_les_octets_recus(linear):
 def pose(monkeypatch):
     ligne = {"id": 5, "org_id": ORG, "sub": "alexis", "kind": "webhook",
              "procedure": "veille", "tools": ["a"], "enabled": True,
-             "payload_mode": "ignore", "payload_fields": None, "model": "claude-sonnet-5",
+             "payload_mode": "ignore", "payload_fields": None, "model": "claude-sonnet-5-5",
              "hook_auth": "bearer", "signing_secret_set": False, "hook_sources": None}
     ecrit = []
     monkeypatch.setattr(RT.db, "get_trigger", lambda t, o: dict(ligne))

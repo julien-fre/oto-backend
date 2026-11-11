@@ -222,7 +222,7 @@ def _agent_pose(sub: str, monde, **kw):
     from oto_mcp.capabilities import runner_triggers as RT
     from oto_mcp.capabilities._types import ResolvedCtx
     if kw.get("op") == "create":
-        kw.setdefault("model", "claude-sonnet-5")
+        kw.setdefault("model", "claude-sonnet-5-5")
     return asyncio.run(RT._triggers(ResolvedCtx(sub=sub, org_id=monde["org"]),
                                     RT.TriggerInput(**kw)))
 

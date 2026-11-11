@@ -82,7 +82,7 @@ def test_sans_serveur_boote_aucune_cle_n_apparait_et_rien_ne_casse(monkeypatch):
     monkeypatch.setattr(RT.db, "create_trigger",
                         lambda org, sub, **kw: vu.update(kw, org=org) or {"id": 1, **kw})
     out = asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(
-        op="create", procedure="veille", cron="5 6 * * *", model="claude-sonnet-5",
+        op="create", procedure="veille", cron="5 6 * * *", model="claude-sonnet-5-5",
         tools=["linkedin_aiark_search", "lusha_search_and_enrich"])))
     assert "tool_warnings" not in out["trigger"] or out["trigger"]["tool_warnings"] is None
     assert out["trigger"]["id"] == 1
@@ -159,6 +159,6 @@ def test_un_outil_deduit_de_la_procedure_et_retire_depuis_leve_unknown_tool(
                         lambda org, sub, **kw: vu.update(kw, org=org) or {"id": 7, "org_id": org, **kw})
     out = asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(
         op="create", procedure="veille-retiree", cron="5 6 * * *",
-        model="claude-sonnet-5")))
+        model="claude-sonnet-5-5")))
     avertis = {a["tool"]: a["issue"] for a in out["trigger"]["tool_warnings"]}
     assert avertis == {"un_outil_retire_depuis": "unknown_tool"}

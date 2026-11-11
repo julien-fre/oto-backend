@@ -100,12 +100,12 @@ def test_un_modele_que_personne_ne_sert_est_refuse_sur_la_route(client, org):
 
 
 def test_un_modele_servi_se_pose_et_se_relit(client, org):
-    r = _poser(client, org, procedure="veille-c", model="claude-opus-5")
+    r = _poser(client, org, procedure="veille-c", model="claude-opus-5-5")
     assert r.status_code == 200, r.text
     tid = r.json()["trigger"]["id"]
-    assert r.json()["trigger"]["model"] == "claude-opus-5"
+    assert r.json()["trigger"]["model"] == "claude-opus-5-5"
     r = client.post(ROUTE, headers=_h(org["membre"]), json={"op": "get", "trigger_id": tid})
-    assert r.json()["trigger"]["model"] == "claude-opus-5"
+    assert r.json()["trigger"]["model"] == "claude-opus-5-5"
 
 
 def test_le_catalogue_marque_se_serialise_sur_list(client, org):
@@ -114,5 +114,5 @@ def test_le_catalogue_marque_se_serialise_sur_list(client, org):
     runner = r.json()["runner"]
     assert runner["families"] == ["anthropic"]
     servis = {m["id"]: m["served"] for m in runner["models"]}
-    assert servis["claude-sonnet-5"] is True
+    assert servis["claude-sonnet-5-5"] is True
     assert servis["mistral-large-2512"] is False

@@ -83,13 +83,16 @@ def fonction_du_modele(model: Optional[str]) -> Optional[str]:
 
 
 def fonctions_connues(connector: str) -> frozenset[str]:
-    """The functions of `connector` the scale can price: a model call of the catalogue
-    (`messages:<model>`, `fonction_du_modele`) for the model connector, a
-    function with a declared cost for any other. Empty: an unknown connector."""
+    """The functions of `connector` the scale can price: a model call of the catalogue,
+    or of a model retired from it (`messages:<model>`, `fonction_du_modele`) for the
+    model connector, a function with a declared cost for any other. Empty: an unknown connector."""
     if connector == MODELE_CONNECTOR:
         from .. import runner_models
-        return frozenset(fonction_du_modele(m.id) for m in runner_models.MODELES
-                         if m.family == MODELE_CONNECTOR)
+        # Models RETIRED from the catalogue count (`runner_models.REMPLACES`): their
+        # jobs in flight still settle, and a mode entry naming one must not fail startup.
+        return frozenset([*(fonction_du_modele(m.id) for m in runner_models.MODELES
+                            if m.family == MODELE_CONNECTOR),
+                          *(fonction_du_modele(m) for m in runner_models.REMPLACES)])
     from oto.connectors.declared import DECLARED
     return frozenset(f for f, d in DECLARED.get(connector, {}).items() if "cost" in d)
 

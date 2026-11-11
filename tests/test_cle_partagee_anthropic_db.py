@@ -13,7 +13,7 @@ import uuid
 import pytest
 
 PORTEUR, AUTRE = "worker:banc", "worker:autre"
-TOUR = {"model": "claude-sonnet-5", "usage_input": 100, "usage_output": 50,
+TOUR = {"model": "claude-sonnet-5-5", "usage_input": 100, "usage_output": 50,
         "usage_cache_write": 0, "usage_cache_read": 1000}
 # Une unité de budget par paquet : 100 jetons d'entrée, 10 de sortie, 100 d'écriture de
 # cache, 1 000 de lecture.
@@ -30,7 +30,7 @@ def travail(live, monkeypatch):
     from oto_mcp.db._conn import _connect
     monkeypatch.setenv("OTO_CREDITS_MODE", "enforce")
     db_credits.poser_bareme(1, [{"connector": "anthropic",
-                                 "function": "messages:claude-sonnet-5",
+                                 "function": "messages:claude-sonnet-5-5",
                                  "unit": u, "budget": b, "per_n": n} for u, b, n in LIGNES])
     credits.oublier()
     org = 42
@@ -42,7 +42,7 @@ def travail(live, monkeypatch):
             """INSERT INTO runner_jobs (org_id, kind, payload, status, claimed_by, attempts,
                                         sub, run_id)
                VALUES (%s, 'start',
-                       '{"model": "claude-sonnet-5", "model_family": "anthropic"}',
+                       '{"model": "claude-sonnet-5-5", "model_family": "anthropic"}',
                        'claimed', %s, 1,
                        'alexis', %s) RETURNING id""", (org, PORTEUR, run_id)).fetchone()["id"]
     db_credits.verser(f"org:{org}", 1000, "banc", f"banc-{jid}")
@@ -105,7 +105,7 @@ def test_chaque_tour_se_reserve_puis_se_regle_une_fois(travail):
                                     "cache_creation_input_tokens": 0,
                                     "cache_read_input_tokens": 1000}
     assert (r0["meta"]["key_mode"], r0["meta"]["model"], r0["meta"]["turn"]) == \
-        ("platform", "claude-sonnet-5", 0)
+        ("platform", "claude-sonnet-5-5", 0)
 
 
 def test_le_rapprochement_lit_les_jetons_regles_du_rang(travail):
@@ -124,7 +124,7 @@ def test_le_rapprochement_lit_les_jetons_regles_du_rang(travail):
     def _lu(rang):
         return db_credits.jetons_du_jour(
             "anthropic", "messages:", rang, datetime.now(timezone.utc).date(),
-            credits_tours.UNITES_DU_MODELE).get("messages:claude-sonnet-5", zero)
+            credits_tours.UNITES_DU_MODELE).get("messages:claude-sonnet-5-5", zero)
     avant = _lu("platform")
     db.estampiller_cle_partagee(jid, PORTEUR, "anthropic", "platform")
     _jobs("meter", jid, turn=0, result=TOUR)       # un tour jamais réservé se règle aussi
@@ -158,8 +158,8 @@ def test_le_tour_porte_le_modele_du_travail_et_un_modele_sans_ligne_est_refuse(t
         fonction = c.execute("SELECT function FROM credit_holds WHERE call_uid = %s",
                              (f"runner:{jid}:1:0",)).fetchone()["function"]
         c.execute("UPDATE runner_jobs SET payload = jsonb_set(payload, '{model}', "
-                  "'\"claude-opus-5\"') WHERE id = %s", (jid,))
-    assert fonction == "messages:claude-sonnet-5"
+                  "'\"claude-opus-5-5\"') WHERE id = %s", (jid,))
+    assert fonction == "messages:claude-sonnet-5-5"
     with pytest.raises(AuthzDenied) as e:
         _jobs("reserve", jid, turn=1, max_tokens=100)
     assert (e.value.status, e.value.code) == (422, "credits_unpriced")

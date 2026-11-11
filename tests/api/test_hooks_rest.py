@@ -90,7 +90,7 @@ def agent(org):
     """Un déclencheur webhook, posé EN BASE, avec son secret en clair."""
     from oto_mcp import db
     t = db.create_trigger(org["id"], org["membre"], procedure="veille",
-                          tz="UTC", model="claude-sonnet-5", tools=["oto_doc"], kind="webhook",
+                          tz="UTC", model="claude-sonnet-5-5", tools=["oto_doc"], kind="webhook",
                           input="fais la veille")
     secret, hache = runner_hook.nouveau_secret()
     db.poser_secret_de_hook(t["id"], org["id"], hache)
@@ -273,7 +273,7 @@ def test_au_dela_du_debit_la_livraison_est_RETARDEE_pas_refusee(client, org):
     pour que le deuxième appel franchisse le seuil."""
     from oto_mcp import db
     t = db.create_trigger(org["id"], org["membre"], procedure="veille-rafale",
-                          tz="UTC", model="claude-sonnet-5", tools=["oto_doc"], kind="webhook",
+                          tz="UTC", model="claude-sonnet-5-5", tools=["oto_doc"], kind="webhook",
                           input="x", max_per_hour=1, fraicheur_s=0)
     secret, hache = runner_hook.nouveau_secret()
     db.poser_secret_de_hook(t["id"], org["id"], hache)
@@ -293,7 +293,7 @@ def test_SANS_fraicheur_declaree_une_rafale_n_est_jamais_refusee(client, org):
     ne porte aucune péremption."""
     from oto_mcp import db
     t = db.create_trigger(org["id"], org["membre"], procedure="veille-defaut",
-                          tz="UTC", model="claude-sonnet-5", tools=["oto_doc"], kind="webhook",
+                          tz="UTC", model="claude-sonnet-5-5", tools=["oto_doc"], kind="webhook",
                           input="x", max_per_hour=1)
     secret, hache = runner_hook.nouveau_secret()
     db.poser_secret_de_hook(t["id"], org["id"], hache)
@@ -307,7 +307,7 @@ def test_SANS_fraicheur_declaree_une_rafale_n_est_jamais_refusee(client, org):
 def test_une_file_au_dela_de_sa_FRAICHEUR_rend_429(client, org):
     from oto_mcp import db
     t = db.create_trigger(org["id"], org["membre"], procedure="veille-perimee",
-                          tz="UTC", model="claude-sonnet-5", tools=["oto_doc"], kind="webhook",
+                          tz="UTC", model="claude-sonnet-5-5", tools=["oto_doc"], kind="webhook",
                           input="x", max_per_hour=1, fraicheur_s=1)
     secret, hache = runner_hook.nouveau_secret()
     db.poser_secret_de_hook(t["id"], org["id"], hache)
@@ -326,7 +326,7 @@ def test_une_file_au_dela_de_sa_FRAICHEUR_rend_429(client, org):
 def test_le_mode_FIELDS_de_bout_en_bout(client, org):
     from oto_mcp import db
     t = db.create_trigger(org["id"], org["membre"], procedure="veille-fields",
-                          tz="UTC", model="claude-sonnet-5", tools=["oto_doc"], kind="webhook",
+                          tz="UTC", model="claude-sonnet-5-5", tools=["oto_doc"], kind="webhook",
                           input="traite le lead", payload_mode="fields",
                           payload_fields={"lead_id": "$.data.id"})
     secret, hache = runner_hook.nouveau_secret()

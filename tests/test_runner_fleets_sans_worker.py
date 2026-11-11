@@ -50,7 +50,7 @@ def test_launch_est_refuse_quand_aucun_worker_nest_joignable(monkeypatch):
     from oto_mcp import roles
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
-    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5", 
+    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5-5", 
         "id": 1, "status": "draft", "procedure": "p", "input": "x"})
     _sans_worker(monkeypatch)
 
@@ -71,7 +71,7 @@ def test_le_refus_narme_rien(monkeypatch):
     from oto_mcp import roles
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
-    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5", 
+    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5-5", 
         "id": 1, "status": "draft", "procedure": "p", "input": "x"})
     _sans_worker(monkeypatch)
     appele = {}
@@ -86,7 +86,7 @@ def test_launch_passe_quand_un_worker_est_joignable(monkeypatch):
     from oto_mcp import roles
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
-    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5", 
+    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5-5", 
         "id": 1, "status": "draft", "procedure": "p", "input": "x"})
     monkeypatch.setattr(RF.db, "armer", lambda *a, **k: {
         "id": 1, "max_rows": None, "max_tokens_per_row": None})

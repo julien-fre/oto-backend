@@ -80,7 +80,7 @@ def base(monkeypatch):
     ligne = {"id": 5, "org_id": ORG, "sub": "owner-sub", "kind": "webhook",
              "procedure": "veille", "tools": ["a"], "enabled": True,
              "payload_mode": "inline", "payload_fields": None,
-             "model": "claude-sonnet-5", "hook_auth": "bearer",
+             "model": "claude-sonnet-5-5", "hook_auth": "bearer",
              "signing_secret_set": False, "hook_slug": "h_privee", "max_per_day": 20,
              "hook_sources": None}
     etat = {"ligne": ligne, "hash": "h0", "client": _Lemlist(), "supprime": False,

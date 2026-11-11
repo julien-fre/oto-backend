@@ -85,7 +85,7 @@ def agent(live):
     org_store.add_org_member(oid, membre, "org_admin")
     org_store.set_active_org(membre, oid)
     t = db.create_trigger(oid, membre, procedure="appel-vers-crm", tz="UTC",
-                          model="claude-sonnet-5", tools=["a"], kind="webhook", payload_mode="inline")
+                          model="claude-sonnet-5-5", tools=["a"], kind="webhook", payload_mode="inline")
     porteur, hache = runner_hook.nouveau_secret()
     db.poser_secret_de_hook(t["id"], oid, hache)
     return {"id": t["id"], "org": oid, "membre": membre, "porteur": porteur}
@@ -202,7 +202,7 @@ def test_8_un_webhook_CREE_par_la_route_nait_avec_une_adresse_privee(client, age
     h = {"Authorization": f"Bearer {agent['membre']}"}
     r = client.post("/api/me/runner/triggers", headers=h,
                     json={"op": "create", "kind": "webhook", "procedure": "neuf-prive",
-                          "tools": ["a"], "model": "claude-sonnet-5"})
+                          "tools": ["a"], "model": "claude-sonnet-5-5"})
     assert r.status_code == 200, r.text
     t, jeton = r.json()["trigger"], r.json()["hook_secret"]
     assert t["private_address"] is True

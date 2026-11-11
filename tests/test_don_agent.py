@@ -40,7 +40,7 @@ _SUPER_ADMIN_DEHORS = "exemple:super-admin"
 
 def _agent(**extra):
     return {"id": 1, "org_id": _ORG, "sub": _PROPRIETAIRE, "kind": "schedule",
-            "procedure": "daily-brain-ingestion", "model": "claude-sonnet-5",
+            "procedure": "daily-brain-ingestion", "model": "claude-sonnet-5-5",
             "enabled": True, **extra}
 
 

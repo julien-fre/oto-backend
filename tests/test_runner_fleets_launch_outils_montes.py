@@ -98,7 +98,7 @@ def _stub_admin_et_flotte(monkeypatch, tools, sub="pilote"):
     from oto_mcp import roles
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
-    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5", 
+    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5-5", 
         "id": 1, "status": "draft", "procedure": "p", "input": "x",
         "sub": sub, "tools": tools})
 

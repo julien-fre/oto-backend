@@ -33,7 +33,7 @@ _ANCIEN = "tulina:ancien"
 
 def _agent(**extra):
     return {"id": 1, "org_id": _ORG, "sub": _ANCIEN, "kind": "schedule",
-            "procedure": "daily-brain-ingestion", "model": "claude-sonnet-5",
+            "procedure": "daily-brain-ingestion", "model": "claude-sonnet-5-5",
             "enabled": True, **extra}
 
 

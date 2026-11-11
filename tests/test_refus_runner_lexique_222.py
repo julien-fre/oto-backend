@@ -72,7 +72,7 @@ def _flotte(**kw):
 
 def _declencheur(**kw):
     if kw.get("op") == "create":
-        kw.setdefault("model", "claude-sonnet-5")
+        kw.setdefault("model", "claude-sonnet-5-5")
     return lambda: asyncio.run(RT._triggers(_ctx(kw.pop("org_id", 2)),
                                             RT.TriggerInput(**kw)))
 
@@ -83,7 +83,7 @@ def _pour_lancer(monkeypatch, fleet):
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
     monkeypatch.setattr(RF._outils_manquants, "manquants", lambda *a, **k: [])
     monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k:
-                        fleet and {"model": "claude-sonnet-5", **fleet})
+                        fleet and {"model": "claude-sonnet-5-5", **fleet})
     monkeypatch.setattr(RF.db, "armer", lambda *a, **k: None)
 
 
@@ -152,7 +152,7 @@ def test_not_launchable(monkeypatch):
 
 def test_not_takeable(monkeypatch):
     monkeypatch.setattr(ORD.db, "prendre", lambda *a, **k: None)
-    monkeypatch.setattr(ORD.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5", "id": 1,
+    monkeypatch.setattr(ORD.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5-5", "id": 1,
                                                               "status": "draft"})
     msg = _refus(409, "not_takeable", _flotte(op="take", fleet_id=1, taken_by="o"))
     assert msg.startswith("cette automatisation est `draft`")

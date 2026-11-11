@@ -64,7 +64,7 @@ def _ctx(sub="alexis", org_id=2):
 
 def _appel(ctx, **kw):
     if kw.get("op") == "create":
-        kw.setdefault("model", "claude-sonnet-5")
+        kw.setdefault("model", "claude-sonnet-5-5")
     return asyncio.run(RT._triggers(ctx, RT.TriggerInput(**kw)))
 
 

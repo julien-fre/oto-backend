@@ -97,7 +97,7 @@ def test_lancer_ne_compte_rien_et_arme_avec_la_flotte_et_son_org_seules(monkeypa
     monkeypatch.setattr("oto_mcp.datastore.core.make_store", _jamais)
     monkeypatch.setattr(RF.db, "get_fleet", lambda fid, oid: {
         "id": fid, "status": "draft", "procedure": "p", "input": "x",
-        "model": "claude-sonnet-5",
+        "model": "claude-sonnet-5-5",
         "namespace": "prospects", "row_filter": {"statut": "a_traiter"}})
     recu = {}
 

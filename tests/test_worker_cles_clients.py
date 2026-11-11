@@ -57,7 +57,7 @@ def arret(monkeypatch):
 
 def _travail(**kw):
     return {"id": 9, "org_id": ORG, "sub": "alexis", "delegated_token": "otd_x",
-            "payload": {"model": "claude-sonnet-5", "model_family": "anthropic"}, **kw}
+            "payload": {"model": "claude-sonnet-5-5", "model_family": "anthropic"}, **kw}
 
 
 def _remise(depot="anthropic", *, org_key_only, worker=True):
@@ -168,7 +168,7 @@ def test_la_capacite_REMET_le_mode_a_la_remise_de_cle(monkeypatch):
     il doit sortir arrêté, pas remis sans clé."""
     arrete = {}
     job = {"id": 11, "org_id": ORG, "sub": "alexis",
-           "payload": {"model": "claude-sonnet-5", "model_family": "anthropic"}}
+           "payload": {"model": "claude-sonnet-5-5", "model_family": "anthropic"}}
     monkeypatch.setattr(RJ.db, "claim_next_job", lambda *a, **k: dict(job))
     monkeypatch.setattr(RJ, "_charge_servie", lambda j: j)
     monkeypatch.setattr(RJ, "_delegue", lambda j, bail, sub: {**j, "delegated_token": "otd_x"})

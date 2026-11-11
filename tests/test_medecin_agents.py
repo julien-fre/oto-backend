@@ -75,7 +75,7 @@ def test_une_famille_non_servie_se_lit_sur_le_texte_du_code(monkeypatch):
 
 
 def _panne(**kw):
-    p = {"org_id": 7, "trigger_id": 55, "model": "claude-sonnet-5", "job_id": 900,
+    p = {"org_id": 7, "trigger_id": 55, "model": "claude-sonnet-5-5", "job_id": 900,
          "kind": "start", "payload": {"trigger_id": 55, "_plateforme": {"x": 1}},
          "sub": "porteur", "dernier": _MAINTENANT - timedelta(minutes=20), "travaux": 1,
          "motif": "HTTP 529 overloaded_error"}

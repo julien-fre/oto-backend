@@ -73,7 +73,7 @@ def _runner(monkeypatch, familles=("anthropic",), armed=True):
 # ── 1. le catalogue ───────────────────────────────────────────────────────────
 
 def test_la_famille_se_deduit_du_modele_et_l_inconnu_n_en_a_pas():
-    assert runner_models.famille("claude-opus-5") == "anthropic"
+    assert runner_models.famille("claude-opus-5-5") == "anthropic"
     assert runner_models.famille("mistral-large-2512") == "mistral"
     assert runner_models.famille("gpt-9") is None
     assert runner_models.famille(None) is None
@@ -82,8 +82,8 @@ def test_la_famille_se_deduit_du_modele_et_l_inconnu_n_en_a_pas():
 def test_un_modele_inconnu_ne_part_PAS_avec_le_travail():
     """Sans famille, rien ne sait le router : l'envoyer le ferait appeler par un
     worker quelconque chez un fournisseur qui ne le sert peut-être pas."""
-    assert runner_models.charge("claude-opus-5") == {
-        "model": "claude-opus-5", "model_family": "anthropic"}
+    assert runner_models.charge("claude-opus-5-5") == {
+        "model": "claude-opus-5-5", "model_family": "anthropic"}
     assert runner_models.charge("un-modele-libre") == {}
     assert runner_models.charge(None) == {}
 
@@ -97,7 +97,7 @@ def test_effort_est_une_propriete_du_modele_pas_un_reglage_global():
         "max_output_tokens": 16000}
     assert "effort" not in runner_models.charge("mistral-large-2512"), (
         "Large ne porte aucun effort")
-    assert "effort" not in runner_models.charge("claude-sonnet-5")
+    assert "effort" not in runner_models.charge("claude-sonnet-5-5")
 
 
 def test_small_raisonne_en_effort_haut_sous_son_plafond():
@@ -110,10 +110,38 @@ def test_small_raisonne_en_effort_haut_sous_son_plafond():
     assert ids.index("mistral-large-2512") < ids.index("mistral-small-2603")
 
 
-def test_haiku_part_sans_effort():
-    """14/09/2026 : Haiku 4.5 refuse `output_config.effort` (400), que le worker Anthropic
-    envoie sinon à chaque tour. `none` lui dit de n'en envoyer aucun."""
-    assert runner_models.charge("claude-haiku-4-5")["effort"] == "none"
+def test_haiku_5_5_part_sans_effort_force():
+    """Haiku 4.5 refusait `output_config.effort` (400, 14/09/2026) et le catalogue le
+    déclarait `none`. Haiku 5.5 l'accepte (`low` à `max`) : rien n'est imposé, le worker
+    envoie le sien ou aucun."""
+    assert "effort" not in runner_models.charge("claude-haiku-5-5")
+
+
+def test_la_generation_5_5_REMPLACE_la_5():
+    """11/11/2026 : les ids d'avant sortent du catalogue — plus aucun agent ne s'y pose —
+    et chacun nomme un remplaçant qui, lui, y est, de la même famille."""
+    for ancien, neuf in runner_models.REMPLACES.items():
+        assert runner_models.famille(ancien) is None, ancien
+        assert runner_models.famille(neuf) == "anthropic", neuf
+    anthropic = [m.id for m in runner_models.MODELES if m.family == "anthropic"]
+    assert anthropic == ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"]
+
+
+@pytest.mark.parametrize("abonnement,api", [("sub:sonnet", "claude-sonnet-5-5"),
+                                            ("sub:opus", "claude-opus-5-5"),
+                                            ("sub:haiku", "claude-haiku-5-5")])
+def test_le_repli_d_un_abonnement_va_au_modele_5_5_de_son_tier(abonnement, api):
+    assert runner_models.repli_api(abonnement) == api
+
+
+def test_un_modele_retire_reste_une_fonction_connue_du_bareme():
+    """Ses travaux en vol se règlent encore, et une entrée de mode qui le nomme ne fait
+    pas tomber le démarrage (`credits_tours.verifier_les_noms`)."""
+    from oto_mcp.access import credits_tours as tours
+    connues = tours.fonctions_connues("anthropic")
+    for ancien in runner_models.REMPLACES:
+        assert f"messages:{ancien}" in connues
+    tours.verifier_les_noms({(None, "anthropic", "messages:claude-sonnet-5"): "enforce"})
 
 
 def test_un_modele_qui_raisonne_declare_son_plafond_de_completion():
@@ -129,20 +157,20 @@ def test_le_plafond_part_avec_le_travail_seulement_s_il_est_declare():
     """8 192 pour Large : le plafond que ses workers servaient déjà, désormais écrit
     au catalogue plutôt que dans l'environnement d'un hôte."""
     assert runner_models.charge("mistral-large-2512")["max_output_tokens"] == 8192
-    assert "max_output_tokens" not in runner_models.charge("claude-sonnet-5"), (
+    assert "max_output_tokens" not in runner_models.charge("claude-sonnet-5-5"), (
         "sans plafond déclaré, le worker garde le sien")
 
 
 @pytest.mark.parametrize("familles, attendu", [
     ((), None),
     (("mistral",), "mistral-large-2512"),
-    (("anthropic",), "claude-sonnet-5"),
-    (("anthropic", "mistral"), "claude-sonnet-5"),
+    (("anthropic",), "claude-sonnet-5-5"),
+    (("anthropic", "mistral"), "claude-sonnet-5-5"),
 ])
 def test_le_defaut_propose_est_le_premier_modele_SERVI_et_aucun_sans_famille(
         familles, attendu):
     """Le défaut se DÉRIVE de ce qui est servi. Une marque en dur proposait
-    `claude-sonnet-5` alors que les workers de production ne servent que `mistral` :
+    `claude-sonnet-5-5` alors que les workers de production ne servent que `mistral` :
     un agent qui la suivait se faisait refuser `model_not_served`."""
     modeles = runner_models.catalogue(familles)
     defauts = [m for m in modeles if m["default"]]
@@ -160,7 +188,7 @@ def test_le_catalogue_servi_marque_ce_qu_un_worker_vivant_sert():
                                "families": ["mistral"]})
     servis = {m["id"]: m["served"] for m in etat["models"]}
     assert servis["mistral-large-2512"] is True
-    assert servis["claude-sonnet-5"] is False
+    assert servis["claude-sonnet-5-5"] is False
 
 
 def test_un_etat_SANS_familles_se_sert_avec_une_liste_vide():
@@ -185,8 +213,8 @@ def pose(monkeypatch):
 def test_un_agent_pose_AVEC_un_modele_l_ecrit(monkeypatch, pose):
     _runner(monkeypatch, familles=("anthropic",))
     _declencher(op="create", procedure="veille", cron="5 6 * * *", tools=["a"],
-                model="claude-opus-5")
-    assert pose["model"] == "claude-opus-5"
+                model="claude-opus-5-5")
+    assert pose["model"] == "claude-opus-5-5"
 
 
 def test_un_agent_pose_SANS_modele_est_REFUSE(monkeypatch, pose):
@@ -200,7 +228,7 @@ def test_un_agent_pose_SANS_modele_est_REFUSE(monkeypatch, pose):
     with pytest.raises(AuthzDenied) as e:
         _declencher(op="create", procedure="veille", cron="5 6 * * *", tools=["a"])
     assert (e.value.status, e.value.code) == (400, "model_required")
-    assert "claude-sonnet-5" in e.value.message, "le refus nomme les modèles servis"
+    assert "claude-sonnet-5-5" in e.value.message, "le refus nomme les modèles servis"
     assert "model" not in pose, "un refus n'écrit rien"
 
 
@@ -210,7 +238,7 @@ def test_un_modele_hors_catalogue_est_refuse_et_nomme(monkeypatch, pose):
         _declencher(op="create", procedure="veille", cron="5 6 * * *", tools=["a"],
                     model="gpt-9")
     assert (e.value.status, e.value.code) == (400, "invalid_model")
-    assert "gpt-9" in e.value.message and "claude-sonnet-5" in e.value.message
+    assert "gpt-9" in e.value.message and "claude-sonnet-5-5" in e.value.message
     assert "model" not in pose, "un refus n'écrit rien"
 
 
@@ -244,7 +272,7 @@ def test_sans_runner_du_tout_le_refus_reste_no_runner_armed(monkeypatch, pose):
                                      "families": []})
     with pytest.raises(AuthzDenied) as e:
         _declencher(op="create", procedure="veille", cron="5 6 * * *", tools=["a"],
-                    model="claude-opus-5")
+                    model="claude-opus-5-5")
     assert e.value.code == "no_runner_armed"
 
 
@@ -292,8 +320,8 @@ def test_rallumer_un_agent_dont_le_modele_STOCKE_n_est_plus_servi_est_refuse(
 def test_rallumer_en_CHANGEANT_de_modele_juge_le_nouveau(monkeypatch, retouche):
     retouche["stocke"].update(enabled=False, model="mistral-large-2512")
     _runner(monkeypatch, familles=("anthropic",))
-    _declencher(op="update", trigger_id=3, enabled=True, model="claude-sonnet-5")
-    assert retouche["champs"]["model"] == "claude-sonnet-5"
+    _declencher(op="update", trigger_id=3, enabled=True, model="claude-sonnet-5-5")
+    assert retouche["champs"]["model"] == "claude-sonnet-5-5"
 
 
 def test_une_chaine_VIDE_ne_rend_plus_l_agent_au_modele_du_worker(monkeypatch, retouche):
@@ -314,14 +342,14 @@ def test_list_sert_le_catalogue_marque(monkeypatch):
     runner = _declencher(op="list")["runner"]
     assert runner["families"] == ["anthropic"]
     servis = {m["id"]: m["served"] for m in runner["models"]}
-    assert servis == {"claude-sonnet-5": True, "claude-opus-5": True,
-                      "claude-haiku-4-5": True, "mistral-large-2512": False,
+    assert servis == {"claude-sonnet-5-5": True, "claude-opus-5-5": True,
+                      "claude-haiku-5-5": True, "mistral-large-2512": False,
                       "mistral-medium-2604": False, "mistral-small-2603": False,
                       # L'abonnement personnel (OTO-130) est un dépôt comme un
                       # autre pour le catalogue : servi quand un worker de cette
                       # famille sonde la file, et jamais proposé par défaut ici.
                       "sub:sonnet": False, "sub:opus": False, "sub:haiku": False}
-    assert [m["id"] for m in runner["models"] if m["default"]] == ["claude-sonnet-5"]
+    assert [m["id"] for m in runner["models"] if m["default"]] == ["claude-sonnet-5-5"]
     # Servi par la seule famille des workers de production : le défaut la suit.
     _runner(monkeypatch, familles=("mistral",))
     runner = _declencher(op="list")["runner"]
@@ -355,8 +383,8 @@ def _tick_avec(monkeypatch, **declencheur):
 
 
 def test_le_tick_emporte_le_modele_ET_sa_famille(monkeypatch):
-    charge = _tick_avec(monkeypatch, model="claude-opus-5")
-    assert charge["model"] == "claude-opus-5"
+    charge = _tick_avec(monkeypatch, model="claude-opus-5-5")
+    assert charge["model"] == "claude-opus-5-5"
     assert charge["model_family"] == "anthropic", "sans famille, rien ne route"
 
 
@@ -400,10 +428,10 @@ def test_un_continue_GARDE_le_modele_de_son_run(monkeypatch, file):
     """Un fil ouvert sur une voie ne se poursuit pas sur une autre. Le modèle passé
     à l'appel est ignoré au profit de celui du run."""
     monkeypatch.setattr(RJ.db, "modele_du_run", lambda run_id, org_id: {
-        "model": "claude-opus-5", "model_family": "anthropic"})
+        "model": "claude-opus-5-5", "model_family": "anthropic"})
     _enfiler(kind="continue", run_id="run-X",
              payload={"model": "mistral-large-2512", "model_family": "mistral"})
-    assert file["payload"] == {"model": "claude-opus-5", "model_family": "anthropic"}
+    assert file["payload"] == {"model": "claude-opus-5-5", "model_family": "anthropic"}
 
 
 def test_un_continue_d_un_run_sans_modele_n_invente_rien(file):
@@ -415,7 +443,7 @@ def test_un_continue_d_un_run_sans_modele_n_invente_rien(file):
 def test_la_famille_ne_se_DECLARE_pas_elle_se_deduit(file):
     """Une famille posée par l'appelant enverrait un modèle Anthropic à un worker
     Mistral, qui le recevrait comme une commande valide."""
-    _enfiler(kind="start", payload={"procedure": "p", "model": "claude-sonnet-5",
+    _enfiler(kind="start", payload={"procedure": "p", "model": "claude-sonnet-5-5",
                                     "model_family": "mistral"})
     assert file["payload"]["model_family"] == "anthropic"
     _enfiler(kind="start", payload={"procedure": "p", "model_family": "mistral"})
@@ -459,7 +487,7 @@ def test_une_flotte_sans_modele_est_REFUSEE(flotte):
 
 @pytest.mark.parametrize("champs", [
     {"model": "un-modele-libre"},
-    {"model": "claude-sonnet-5", "provider": "openai"},
+    {"model": "claude-sonnet-5-5", "provider": "openai"},
     {"provider": "anthropic"},
 ])
 def test_une_flotte_refuse_un_contexte_qui_ne_route_pas(flotte, champs):

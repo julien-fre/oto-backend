@@ -97,7 +97,7 @@ def declencheur(live, org):
     return db.create_trigger(
         org["id"], org["membre"], procedure="veille", cron="0 18 * * *",
         tz="Europe/Paris",
-        model="claude-sonnet-5", next_due=datetime.datetime.now(datetime.timezone.utc),
+        model="claude-sonnet-5-5", next_due=datetime.datetime.now(datetime.timezone.utc),
         tools=["data_write"], label="veille du soir")
 
 
@@ -211,7 +211,7 @@ def test_supprimer_perime_avant_de_supprimer(client, org):
     t = db.create_trigger(
         org["id"], org["membre"], procedure="veille-jetable", cron="0 9 * * *",
         tz="Europe/Paris",
-        model="claude-sonnet-5", next_due=datetime.datetime.now(datetime.timezone.utc),
+        model="claude-sonnet-5-5", next_due=datetime.datetime.now(datetime.timezone.utc),
         tools=["data_write"], label="à supprimer")
     db.enqueue_job(org["id"], "start",
                    payload={"procedure": "veille-jetable", "trigger_id": t["id"]})

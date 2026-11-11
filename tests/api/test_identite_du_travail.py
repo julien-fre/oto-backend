@@ -134,7 +134,7 @@ def test_un_travail_de_declencheur_porte_le_sub_du_createur(client, org):
     t = db.create_trigger(
         org["id"], org["membre"], procedure="veille", cron="0 4 * * *",
         tz="Europe/Paris",
-        model="claude-sonnet-5", next_due=datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0),
+        model="claude-sonnet-5-5", next_due=datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0),
         tools=["data_write"], label="veille de nuit")
     runner_tick._tick()
 

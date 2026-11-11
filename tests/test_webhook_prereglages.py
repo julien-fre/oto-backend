@@ -49,7 +49,7 @@ def porte(monkeypatch):
     t = {"id": 5, "org_id": ORG, "sub": "alexis", "procedure": "lemlist-replies",
          "tools": ["a"], "input": "go", "enabled": True, "kind": "webhook",
          "payload_mode": "inline", "payload_fields": None, "max_per_hour": None,
-         "fraicheur_s": None, "model": "claude-sonnet-5", "project_id": None, "max_steps": None,
+         "fraicheur_s": None, "model": "claude-sonnet-5-5", "project_id": None, "max_steps": None,
          "label": None, "hook_auth": "body_secret", "max_per_day": None,
          "hook_slug": "h_privee"}
     vu["trigger"] = t
@@ -285,7 +285,7 @@ def base(monkeypatch):
     ligne = {"id": 5, "org_id": ORG, "sub": "alexis", "kind": "webhook",
              "procedure": "veille", "tools": ["a"], "enabled": True,
              "payload_mode": "ignore", "payload_fields": None,
-             "model": "claude-sonnet-5", "hook_auth": "bearer",
+             "model": "claude-sonnet-5-5", "hook_auth": "bearer",
              "signing_secret_set": False, "hook_slug": "h_privee", "max_per_day": 20}
     etat = {"ligne": ligne, "hash": "h0", "enc": "enc0"}
 

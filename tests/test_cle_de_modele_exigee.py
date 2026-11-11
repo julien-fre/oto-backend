@@ -222,7 +222,7 @@ def test_poser_un_agent_sans_la_cle_exigee_est_refuse_LISIBLEMENT(monkeypatch):
     with pytest.raises(AuthzDenied) as e:
         asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
                                              cron="5 6 * * *", tools=["a"],
-                                             model="claude-opus-5")))
+                                             model="claude-opus-5-5")))
     assert (e.value.status, e.value.code) == (400, "model_key_required")
     assert "anthropic" in e.value.message
 
@@ -234,7 +234,7 @@ def test_rallumer_sans_la_cle_exigee_est_refuse(monkeypatch):
                         lambda org: {"armed": True, "workers": 1, "last_seen": None,
                                      "families": ["anthropic"]})
     monkeypatch.setattr(RT.db, "get_trigger",
-                        lambda tid, org: {"id": tid, "model": "claude-opus-5"})
+                        lambda tid, org: {"id": tid, "model": "claude-opus-5-5"})
     monkeypatch.setattr(RT.db, "update_trigger",
                         lambda *a, **k: pytest.fail("un refus n'écrit rien"))
     with pytest.raises(AuthzDenied) as e:
@@ -248,7 +248,7 @@ def test_armer_un_passage_sans_la_cle_exigee_est_refuse(monkeypatch):
     monkeypatch.setattr(CE, "cle_deposee", lambda org, f: False)
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
-    monkeypatch.setattr(RF.db, "get_fleet", lambda fid, org: {"model": "claude-opus-5"})
+    monkeypatch.setattr(RF.db, "get_fleet", lambda fid, org: {"model": "claude-opus-5-5"})
     monkeypatch.setattr(RF.db, "armer", lambda *a, **k: pytest.fail("un refus n'arme rien"))
     with pytest.raises(AuthzDenied) as e:
         RF._fleets(_ctx(), RF.FleetInput(op="launch", fleet_id=1))
@@ -264,7 +264,7 @@ def test_creer_un_passage_ANTHROPIC_sans_sa_cle_est_refuse(monkeypatch):
                         lambda *a, **k: pytest.fail("un refus n'écrit rien"))
     with pytest.raises(AuthzDenied) as e:
         RF._fleets(_ctx(), RF.FleetInput(op="create", label="p", procedure="p",
-                                         tools=["a"], model="claude-opus-5"))
+                                         tools=["a"], model="claude-opus-5-5"))
     assert e.value.code == "model_key_required"
 
 
@@ -327,7 +327,7 @@ def test_eteint_poser_un_agent_sans_cle_passe(monkeypatch):
     monkeypatch.setattr(RT.db, "create_trigger", lambda *a, **k: {"id": 1})
     asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
                                          cron="5 6 * * *", tools=["a"],
-                                         model="claude-sonnet-5")))
+                                         model="claude-sonnet-5-5")))
 
 
 # ── la console admin refuse ce que la réservation lirait de travers ──────────
@@ -404,7 +404,7 @@ def test_org_routee_sans_sa_cle_le_declencheur_ne_se_pose_pas(monkeypatch, routa
     with pytest.raises(AuthzDenied) as e:
         asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
                                              cron="5 6 * * *", tools=["a"],
-                                             model="claude-opus-5")))
+                                             model="claude-opus-5-5")))
     assert e.value.code == "model_key_required"
 
 

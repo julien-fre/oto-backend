@@ -61,7 +61,7 @@ ORG = 8100
 def _webhook(db, procedure="veille", org=ORG, **kw):
     # Un agent sans modèle n'enfile plus rien (`refused_no_model`) : ces bancs parlent
     # du lissage et de la porte, leur agent déclare donc un modèle.
-    kw.setdefault("model", "claude-sonnet-5")
+    kw.setdefault("model", "claude-sonnet-5-5")
     t = db.create_trigger(org, "alexis", procedure=procedure, tz="UTC",
                           tools=["a"], kind="webhook", **kw)
     from oto_mcp import runner_hook
