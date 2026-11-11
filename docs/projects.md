@@ -476,6 +476,43 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > (`publication_field_on_update`, rien d'écrit) plutôt qu'ignorés : ils se redéclarent
 > par `publish_mcp`.
 
+## Profondeur de l'audit d'`op=get` — `audit="links"` (2026-11-11)
+
+**Le besoin.** L'écran qui ouvre un projet lit `op=get` à chaque ouverture et n'utilise de
+l'audit que les liens morts (il cache les procédures mortes de ses comptes). Il payait
+pourtant l'audit complet. Mesuré en local, sur un projet d'org de la forme de ~80 liens
+(48 procédures, 33 tableaux, 5 connecteurs) dans une org de 4 équipes : 71 requêtes par
+lecture, dont 53 pour `unresolvable_connectors` quand aucun connecteur ne résout au niveau
+de l'org — une lecture par équipe **et** par connecteur lié (un connecteur que l'org
+résout s'arrête avant ce parcours) ; les corps des 48 procédures relus pour n'en garder
+que slug et slots ; et le journal (`project_run_stats`) pour `inert_procedures`.
+
+**Ce qui change pour tous, sans rien changer à la réponse.** L'audit complet lit les
+équipes qui détiennent une clé EN LOT (`group_store.groups_holding`, deux requêtes par
+connecteur distinct quel que soit le nombre d'équipes), juge un connecteur lié sous
+plusieurs identités une seule fois, lit des procédures leur slug et leurs slots seulement
+(`org_store.get_instruction_slots_by_ids`), et réutilise la ligne du projet déjà lue. Mêmes
+quatre listes, mêmes valeurs (`tests/test_project_get_audit_depth.py`).
+
+**Le choix offert à un lecteur.** `audit="links"` (MCP et `POST /api/me/projects`, ou
+`GET /api/me/projects/{id}?audit=links`) rend `dead_links` seul — et tous, procédures
+comprises : une procédure est morte quand `list_project_links` ne lui a pas posé de
+`procedure_id`, ce que l'audit complet juge aussi, l'existence ayant été lue par la requête
+des titres. Aucune requête de plus que les liens. Les trois autres listes sont ABSENTES,
+pas vides — vides, elles se liraient « rien à signaler » —, et `checked: ["dead_links"]` le
+dit. Omis (ou `full`), l'audit complet, tel qu'il a toujours été servi : aucun appelant
+existant ne voit sa réponse changer. ⚠️ Un backend d'avant ce lot REFUSE le champ en
+REST (400 `unknown_fields`) : un écran ne l'envoie qu'une fois ce backend servi. Hors
+`op=get`, le champ est refusé (`unsupported_audit`).
+
+**Ce qui reste.** `project_run_stats` (l'inertie) lit le journal en semi-jointure
+`run_id IN (runs récents du projet)` ; sur un journal d'un million de lignes, le
+planificateur choisit de balayer TOUS les `run_start` de la plateforme (`idx_tool_call_log_tool`)
+puis de les hacher — mesuré en local : 250 à 600 ms juste après un chargement massif
+(cache froid), ~20 ms à chaud, pour 300 runs du projet. Un index partiel
+`tool_calls (run_id) WHERE tool = 'run_start'` ramène la même requête à ~1 ms ; le poser sur
+la table la plus écrite de la base est une migration, pas l'objet de ce lot.
+
 ## Rendre privé ce qu'un projet privé lie — `make_private=true` (2026-11-09)
 
 Le défaut constaté : un projet possédé par une personne, partagé à deux collègues, liait
