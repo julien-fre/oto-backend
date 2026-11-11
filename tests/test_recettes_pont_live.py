@@ -594,3 +594,26 @@ def test_via_d_une_recette_est_prouve_par_ses_propres_appels(tableaux):
             "ORDER BY 1", (ns,)).fetchall()
     assert [(c["champ"], c["outil"]) for c in cases] == [
         ("name", "acme_people"), ("slug", "acme_people")]
+
+
+def test_via_d_une_recette_sans_geste_en_cours_attribue_quand_meme(tableaux):
+    """Recette jouée hors requête (aucun geste) : `via` prouvé ouvre son geste, il ne
+    s'évapore pas en silence."""
+    from oto_mcp import geste
+    from oto_mcp.db._conn import _connect
+    from oto_mcp.recipes import pont
+    ns = _table()
+    assert geste.courant() is None
+
+    async def scenario():
+        appeler = pont.appeleur_de_recette(tableaux, SUB, datastore=ns, ecrire=True)
+        await appeler("acme_people", {"company": "Acme"})
+        return await appeler("data_write", {
+            "rows": [{"slug": "c", "name": "C"}], "key": "slug", "via": "acme_people"})
+
+    assert asyncio.run(scenario())["ok"]
+    with _connect() as conn:
+        outils = {r["outil"] for r in conn.execute(
+            "SELECT c.outil FROM datastore_cell_sources c JOIN user_datastores u "
+            "ON u.id = c.ns_id WHERE u.namespace = %s", (ns,)).fetchall()}
+    assert outils == {"acme_people"}

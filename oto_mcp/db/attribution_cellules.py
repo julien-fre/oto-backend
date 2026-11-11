@@ -28,8 +28,8 @@ d'`unwrap`, `paths._valeur_jsonb` — une écriture qui ne touche qu'une couche,
   est RETIRÉE : ce qui la tient n'est plus ce qui l'avait trouvée.
 Une ligne supprimée emporte ses cases ; un tableau supprimé aussi (clé étrangère).
 
-Il lit l'estampille (`oto.outil`, `oto.fournisseur`, `oto.source`) et l'interrupteur du
-journal (`oto.journal_revisions=off` : rien). Jamais bloquant : pas d'`EXCEPTION`
+Il lit l'estampille (`oto.outil`, `oto.fournisseur`, `oto.source`) ; il ne suit PAS
+l'interrupteur du journal (une réécriture faite journal coupé doit retirer l'attribution). Jamais bloquant : pas d'`EXCEPTION`
 avalée, mais rien qui puisse lever sur une donnée — un `data` qui n'est pas un objet
 n'écrit rien.
 
@@ -40,7 +40,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .journal_revisions import REGLAGE_PG
 from .paths import _valeur_jsonb
 
 TABLE = "datastore_cell_sources"
@@ -79,9 +78,9 @@ DECLARE
     changes text[];
     tenues text[];
 BEGIN
-    IF current_setting('{REGLAGE_PG}', true) = 'off' THEN
-        RETURN NULL;
-    END IF;
+    -- PAS d'interrupteur ici (`oto.journal_revisions=off` coupe le journal, pas
+    -- ceci) : une réécriture faite journal coupé doit RETIRER l'attribution qu'elle
+    -- remplace, sinon « Hunter » resterait sur une valeur écrite autrement.
     IF TG_OP = 'DELETE' THEN
         DELETE FROM {TABLE} WHERE ns_id = OLD.ns_id AND row_id = OLD.row_id;
         RETURN NULL;
@@ -151,6 +150,16 @@ def ddl_declencheur(nom: str, quand: str, condition: Optional[str]) -> str:
     when = f"WHEN ({condition}) " if condition else ""
     return (f"CREATE TRIGGER {nom} AFTER {quand} ON datastore_rows "
             f"FOR EACH ROW {when}EXECUTE FUNCTION {NOM_FONCTION}()")
+
+
+def ddl_declencheur_si_absent(nom: str, quand: str, condition: Optional[str]) -> str:
+    """Le `CREATE TRIGGER` sous garde de catalogue, en une instruction (migration) :
+    rien n'est envoyé quand il existe — ni `DROP` (verrou `ACCESS EXCLUSIVE`), ni
+    `CREATE`."""
+    ddl = ddl_declencheur(nom, quand, condition).replace("'", "''")
+    return (f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = "
+            f"'datastore_rows'::regclass AND tgname = '{nom}') THEN EXECUTE '{ddl}'; "
+            f"END IF; END $$")
 
 
 def poser_attribution(conn) -> list[str]:

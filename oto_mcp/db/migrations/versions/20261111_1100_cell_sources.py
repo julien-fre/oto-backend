@@ -35,8 +35,9 @@ def upgrade() -> None:
     op.execute(ac.DDL_TABLE)
     op.execute(ac.FONCTION)
     for nom, quand, condition in ac._DECLENCHEURS:
-        op.execute(f"DROP TRIGGER IF EXISTS {nom} ON datastore_rows")
-        op.execute(ac.ddl_declencheur(nom, quand, condition))
+        # Sous garde de catalogue, jamais `DROP … IF EXISTS` d'abord : un `DROP
+        # TRIGGER` prend `ACCESS EXCLUSIVE` (bloque aussi les lectures), même absent.
+        op.execute(ac.ddl_declencheur_si_absent(nom, quand, condition))
 
 
 def downgrade() -> None:

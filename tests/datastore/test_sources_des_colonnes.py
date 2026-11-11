@@ -337,3 +337,62 @@ def test_face_rest_forme_servie_et_hors_perimetre(rest):
     r = rest.get(f"/api/datastores/{autre}/column-sources",
                  headers={"Authorization": f"Bearer {SUB}"})
     assert r.status_code == 404, r.text
+
+
+# ── 6. Jev, l'interrupteur du journal, la migration ───────────────────────────
+
+def test_jev_attribue_ses_verdicts_par_le_vrai_chemin_d_ecriture(compte):
+    """Le chemin de `jev.qualifier` : `pr.ecrire_ligne` sur le fil appelant, sous le geste
+    que pose la tâche de fond (`portee(…, outil="jev_rows")`) ou l'appel MCP."""
+    from oto_mcp import db, geste
+    from oto_mcp.datastore import par_reference as pr
+    from oto_mcp.datastore.core import make_store
+    ns, ns_id = _table()
+    db.set_datastore_schema(ns_id, {"fields": [{"key": "nom", "type": "text"},
+                                                {"key": "email", "type": "text"},
+                                                {"key": "fit", "type": "text"}]})
+    db.datastore_insert_row(ns_id, "r1", {"nom": "Acme"})
+    store = make_store(SUB)
+    with geste.portee(geste.AGENT, SUB, outil="jev_rows"):
+        code = pr.ecrire_ligne(store, ns, "r1", {"fit": "yes"})
+    assert code is None
+    assert _cases(ns_id) == [("r1", "fit", "jev_rows", None)]
+
+
+def test_la_tache_de_fond_jev_ecrit_sous_jev_rows():
+    import inspect
+
+    from oto_mcp import jev_jobs_worker
+    assert 'outil="jev_rows"' in inspect.getsource(jev_jobs_worker._tranche)
+
+
+def test_journal_coupe_une_reecriture_retire_quand_meme_l_attribution(compte):
+    from oto_mcp import db
+    from oto_mcp.db._conn import _connect
+    _, ns_id = _table()
+    db.datastore_insert_row(ns_id, "r1", {"nom": "x"})
+    _waterfall(ns_id, "r1", "hunter_email_finder", {"email": "a@x.fr"})
+    with _connect() as conn:
+        with conn.transaction():
+            conn.execute("SET LOCAL oto.journal_revisions = 'off'")
+            conn.execute("UPDATE datastore_rows SET data = data || '{\"email\": \"b@x.fr\"}' "
+                         "WHERE ns_id = %s AND row_id = 'r1'", (ns_id,))
+    assert _cases(ns_id) == []
+
+
+def test_la_migration_pose_ses_declencheurs_sous_garde_sans_drop(compte):
+    from oto_mcp.db import attribution_cellules as ac
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        for nom, quand, condition in ac._DECLENCHEURS:
+            ddl = ac.ddl_declencheur_si_absent(nom, quand, condition)
+            assert "DROP" not in ddl
+            conn.execute(ddl)          # déjà posé : rien
+        n = conn.execute("SELECT count(*) AS n FROM pg_trigger WHERE tgrelid = "
+                         "'datastore_rows'::regclass AND tgname LIKE "
+                         "'datastore_rows_40_attribution_%%'").fetchone()["n"]
+    assert n == 3
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parents[2] / \
+        "oto_mcp/db/migrations/versions/20261111_1100_cell_sources.py"
+    assert "DROP TRIGGER" not in src.read_text().split("def downgrade")[0]

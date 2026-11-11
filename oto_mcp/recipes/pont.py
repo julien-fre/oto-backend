@@ -133,7 +133,12 @@ def appeleur_de_recette(fastmcp, sub: Optional[str], *, datastore: Any, ecrire: 
             if via is not None:
                 nom = str(via).strip()
                 if nom and nom in trouveurs:
-                    with geste.via(nom):
+                    # Le geste de l'appel qui a lancé la recette porte l'écriture ; sans
+                    # lui (recette lancée hors requête), on en ouvre un : sinon `via`
+                    # ne poserait rien, en silence.
+                    portee = (geste.via(nom) if geste.courant() is not None
+                              else geste.portee(geste.AGENT, sub, outil=nom))
+                    with portee:
                         out = await appeler("data_write", arguments)
                     return out
                 out = await appeler("data_write", arguments)
