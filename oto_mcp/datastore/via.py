@@ -5,9 +5,11 @@ sans plus, le journal des révisions nomme `data_write` — vrai, mais ce n'est 
 l'en-tête de la colonne veut dire (« trouvé par Apollo »). `via` le dit, et le journal
 l'écrit en `outil` sur chaque révision de l'appel (`geste.via`).
 
-**Prouvé, jamais déclaré.** `via` n'est accepté que si cet outil a RÉUSSI dans le run
-de l'appel (`tool_calls`, même `run_id`, `ok`) — `oto_call` déplié vers sa cible. Sans
-run, ou un outil que le run n'a pas appelé : refusé, en nommant pourquoi. Un nom qu'on
+**Prouvé, jamais déclaré — et jamais bloquant.** `via` n'est retenu que si cet outil
+a RÉUSSI dans le run de l'appel (`tool_calls`, même `run_id`, `ok`) — `oto_call` déplié
+vers sa cible. Sinon (pas de run, outil que le run n'a pas appelé, outil de la
+plateforme), l'écriture se fait QUAND MÊME, sans attribution, et la réponse le dit
+(`via_dropped`) : la donnée ne doit jamais payer pour son étiquette. Un nom qu'on
 pourrait poser librement finirait par dire n'importe quoi, et un en-tête qui ment est
 pire qu'un en-tête vide.
 
@@ -33,9 +35,10 @@ DESCRIPTION = (
     "the tool that FOUND what this call writes (`apollo_match_person`, "
     "`waterfall_email`, `serper_search`…), when you looked it up first and write it now. "
     "The row's journal records it, and the column header shows it (\"found by Apollo\"). "
-    "It must be a tool that SUCCEEDED in THIS run (`run_start`, then `_run_id=`) — "
-    "otherwise the write is refused. Never a platform tool (`data_*`, `oto_*`, `run_*`). "
-    "Omit it when you write what you established yourself.")
+    "It counts only for a tool that SUCCEEDED in THIS run (`run_start`, then `_run_id=`); "
+    "otherwise the write still happens, unattributed, and the reply says why "
+    "(`via_dropped`). Never a platform tool (`data_*`, `oto_*`, `run_*`). Omit it when "
+    "you write what you established yourself.")
 
 
 def _appele_dans_le_run(run_id: str, outil: str) -> bool:
@@ -57,34 +60,33 @@ def verifier(via: Optional[str]) -> Optional[str]:
         return None
     if _PLATEFORME.search(nom):
         raise ValueError(
-            f"`via={nom}`: a platform tool found nothing — name the tool that looked the "
-            f"value up (e.g. `apollo_match_person`), or omit `via`.")
+            f"`via={nom}` ignored: a platform tool found nothing — name the tool that "
+            f"looked the value up (e.g. `apollo_match_person`). Written, unattributed.")
     run_id = session_org.current_call_or_session_run()
     if not run_id:
         raise ValueError(
-            f"`via={nom}` needs a run: open one with `run_start`, pass `_run_id=` on the "
-            f"lookup AND on this write, or omit `via`.")
+            f"`via={nom}` ignored: it needs a run — `run_start`, then `_run_id=` on the "
+            f"lookup AND on this write. Written, unattributed.")
     if not _appele_dans_le_run(str(run_id), nom):
         raise ValueError(
-            f"`via={nom}`: no successful `{nom}` call in run {run_id}. Name the tool that "
-            f"returned this value in this run, or omit `via` — it is never guessed.")
+            f"`via={nom}` ignored: no successful `{nom}` call in run {run_id} — it is "
+            f"never guessed. Written, unattributed.")
     return nom[:128]
 
 
 def sous_via(fn):
-    """Décorateur d'un outil d'écriture qui porte `via` : vérifié avant l'écriture,
-    puis l'écriture entière sous `geste.via(nom)`."""
-    from mcp.types import ErrorData, INVALID_PARAMS
-    from ..mcp_errors import McpError
-
+    """Décorateur d'un outil d'écriture qui porte `via` : vérifié avant l'écriture ;
+    prouvé → l'écriture entière sous `geste.via(nom)` ; sinon l'écriture se fait sans
+    attribution et la réponse porte `via_dropped` (la raison)."""
     @functools.wraps(fn)
     def _enveloppe(*args, **kwargs):
         try:
             nom = verifier(kwargs.get("via"))
         except ValueError as e:
-            # Le même chemin que les autres refus d'écriture : INVALID_PARAMS, la phrase
-            # qui nomme le geste qui réussit.
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e))) from None
+            out = fn(*args, **kwargs)
+            if isinstance(out, dict):
+                out = {**out, "via_dropped": str(e)}
+            return out
         if nom is None:
             return fn(*args, **kwargs)
         with geste.via(nom):

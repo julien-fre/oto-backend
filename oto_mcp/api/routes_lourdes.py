@@ -168,9 +168,10 @@ ROUTES_LOURDES: tuple[RouteLourde, ...] = (
     RouteLourde(
         "GET", "/api/datastores/{datastore}/column-sources", par_minute=60,
         concurrence=3,
-        pourquoi=("Provenance des colonnes d'un tableau : un agrégat sur le journal des "
-                  "révisions (au plus 50 000 révisions, sous statement_timeout), gardé "
-                  "120 s par tableau. Le cockpit le lit à l'ouverture d'un tableau.")),
+        pourquoi=("Provenance des colonnes d'un tableau : un agrégat sur les cases "
+                  "attribuées et un compte des cases tenues (sous statement_timeout), "
+                  "gardé 120 s par tableau. Le cockpit le lit à l'ouverture d'un "
+                  "tableau.")),
     RouteLourde(
         "GET", "/api/admin/monitoring/summary", par_minute=30, concurrence=2,
         pourquoi=("Résumé d'appels de la supervision plateforme : sans périmètre, il "

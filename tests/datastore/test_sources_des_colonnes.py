@@ -178,20 +178,27 @@ async def test_via_prouve_dans_le_run_nomme_l_outil(mcp):
 
 
 @pytest.mark.asyncio
-async def test_via_refuse_sans_preuve(mcp):
+async def test_via_non_prouve_ecrit_quand_meme_sans_attribution(mcp):
+    """Jamais bloquant : la donnée ne paie pas pour son étiquette."""
+    import json
+
+    from fastmcp import Client
     ns, ns_id = _table()
     run = _run()
     _appel_journalise(run, "apollo_match_person", ok=False)
-    msg = await _ecrire(mcp, {"datastore": ns, "row": {"email": "a@x.fr"},
-                              "via": "apollo_match_person", "_run_id": run}, refus=True)
-    assert "no successful `apollo_match_person` call" in msg
-    msg = await _ecrire(mcp, {"datastore": ns, "row": {"email": "a@x.fr"},
-                              "via": "apollo_match_person"}, refus=True)
-    assert "needs a run" in msg
-    msg = await _ecrire(mcp, {"datastore": ns, "row": {"email": "a@x.fr"},
-                              "via": "data_rows", "_run_id": run}, refus=True)
-    assert "platform tool" in msg
-    assert _revisions(ns_id) == [], "un `via` refusé n'écrit rien"
+    cas = [({"via": "apollo_match_person", "_run_id": run}, "no successful"),
+           ({"via": "apollo_match_person"}, "needs a run"),
+           ({"via": "data_rows", "_run_id": run}, "platform tool")]
+    async with Client(mcp) as c:
+        for i, (extra, attendu) in enumerate(cas):
+            r = await c.call_tool("data_write", {"datastore": ns,
+                                                 "row": {"email": f"{i}@x.fr"}, **extra})
+            corps = r.structured_content or json.loads(r.content[0].text)
+            assert attendu in corps["via_dropped"], corps
+    revs = _revisions(ns_id)
+    assert len(revs) == 3, "les trois écritures ont eu lieu"
+    assert {r["outil"] for r in revs} == {"data_write"}, "aucune n'est attribuée"
+    assert _cases(ns_id) == []
 
 
 def test_via_est_decrit_dans_la_description_servie():
@@ -203,47 +210,93 @@ def test_via_est_decrit_dans_la_description_servie():
     assert "@ds_via.sous_via" in src and "via: <<via>>" in src
 
 
-# ── 4. l'agrégat par colonne ───────────────────────────────────────────────────
+# ── 4. la table des cases attribuées, et l'agrégat ────────────────────────────
 
-def test_l_agregat_compte_la_valeur_actuelle_de_chaque_cellule_tenue(compte):
+def _cases(ns_id: int) -> list[tuple]:
+    return [(r["row_id"], r["champ"], r["outil"], r["fournisseur"]) for r in _sql(
+        "SELECT row_id, champ, outil, fournisseur FROM datastore_cell_sources "
+        "WHERE ns_id = %s ORDER BY row_id, champ", ns_id)]
+
+
+def _waterfall(ns_id, rid, fournisseur, patch):
+    from oto_mcp import geste
+    with geste.portee(geste.AGENT, SUB, outil="waterfall_email_act"):
+        with geste.par_fournisseur(fournisseur):
+            _maj(ns_id, rid, patch)
+
+
+def test_une_case_trouvee_est_attribuee_et_la_suite_la_deplace_ou_la_retire(compte):
     from oto_mcp import db, geste
-    from oto_mcp.db import historique
     _, ns_id = _table()
     with geste.portee(geste.CONSOLE, SUB):
         for rid in ("r1", "r2", "r3", "r4"):
             db.datastore_insert_row(ns_id, rid, {"nom": rid})
-    with geste.portee(geste.AGENT, SUB, outil="waterfall_email_act"):
-        for rid, f in (("r1", "hunter"), ("r2", "hunter"), ("r3", "fullenrich"),
-                       ("r4", "hunter")):
-            with geste.par_fournisseur(f):
-                _maj(ns_id, rid, {"email": f"{rid}@x.fr"})
-    # r2 : l'email RÉÉCRIT à la main → c'est la main qui le tient désormais.
+    assert _cases(ns_id) == [], "écrit à la main : rien d'attribué"
+    for rid, f in (("r1", "hunter_email_finder"), ("r2", "hunter_email_finder"),
+                   ("r3", "fullenrich_enrich_linkedin"), ("r4", "hunter_email_finder")):
+        _waterfall(ns_id, rid, f, {"email": f"{rid}@x.fr"})
+    # Un COMMENTAIRE seul ne change pas la valeur : l'attribution reste.
+    with geste.portee(geste.CONSOLE, SUB):
+        _maj(ns_id, "r1", {"email": {"valeur": "r1@x.fr", "comment": "vérifié"}})
+    # La valeur réécrite à la main : ce n'est plus Hunter qui la tient.
     with geste.portee(geste.CONSOLE, SUB):
         _maj(ns_id, "r2", {"email": "fixe@x.fr"})
-    # r4 : la ligne supprimée ne compte plus.
+    # Un agent qui écrit sans nommer l'outil : retirée aussi.
+    with geste.portee(geste.AGENT, SUB, outil="data_write"):
+        _maj(ns_id, "r3", {"email": "autre@x.fr"})
+    # Ligne supprimée : ses cases partent avec elle.
     db.datastore_delete_row(ns_id, "r4")
+    assert _cases(ns_id) == [("r1", "email", "waterfall_email_act", "hunter_email_finder")]
+
+
+def test_effacer_la_valeur_retire_l_attribution(compte):
+    _, ns_id = _table()
+    from oto_mcp import db
+    db.datastore_insert_row(ns_id, "r1", {"nom": "x"})
+    _waterfall(ns_id, "r1", "hunter_email_finder", {"email": "a@x.fr"})
+    _maj(ns_id, "r1", {"email": None})
+    assert _cases(ns_id) == []
+
+
+def test_l_attribution_survit_a_la_purge_du_journal(compte):
+    """Le défaut que la table corrige : la purge garde l'import, pas l'enrichissement."""
+    from oto_mcp import db, geste
+    from oto_mcp.db import historique
+    _, ns_id = _table()
+    with geste.portee(geste.IMPORT, SUB):
+        db.datastore_insert_row(ns_id, "r1", {"nom": "x", "email": "vieux@x.fr"})
+    _waterfall(ns_id, "r1", "hunter_email_finder", {"email": "neuf@x.fr"})
+    _sql("DELETE FROM datastore_row_revisions WHERE ns_id = %s AND source <> 'import'",
+         ns_id)
     out = historique.sources_des_colonnes(ns_id)
-    assert out["complet"] is True
-    assert out["colonnes"]["email"] == [
-        {"source": "agent", "outil": "waterfall_email_act", "fournisseur": "fullenrich",
-         "cellules": 1},
-        {"source": "agent", "outil": "waterfall_email_act", "fournisseur": "hunter",
-         "cellules": 1},
-        {"source": "console", "outil": None, "fournisseur": None, "cellules": 1},
-    ]
-    assert out["colonnes"]["nom"] == [
-        {"source": "console", "outil": None, "fournisseur": None, "cellules": 3}]
+    assert out["colonnes"]["email"] == [{"source": "agent", "outil": "waterfall_email_act",
+                                         "fournisseur": "hunter_email_finder",
+                                         "cellules": 1}]
 
 
-def test_l_agregat_dit_quand_la_fenetre_ne_couvre_pas_tout(compte):
+def test_l_agregat_rend_les_parts_et_les_cases_tenues(compte):
     from oto_mcp import db
     from oto_mcp.db import historique
     _, ns_id = _table()
-    for i in range(3):
+    for i in range(4):
         db.datastore_insert_row(ns_id, f"r{i}", {"nom": str(i)})
-    out = historique.sources_des_colonnes(ns_id, limite=2)
-    assert (out["complet"], out["revisions_lues"]) == (False, 2)
-    assert out["colonnes"]["nom"][0]["cellules"] == 2
+    _waterfall(ns_id, "r0", "hunter_email_finder", {"email": "a@x.fr"})
+    _waterfall(ns_id, "r1", "hunter_email_finder", {"email": "b@x.fr"})
+    _waterfall(ns_id, "r2", "fullenrich_enrich_linkedin", {"email": "c@x.fr"})
+    _maj(ns_id, "r3", {"email": "d@x.fr"})
+    out = historique.sources_des_colonnes(ns_id)
+    assert [(g["fournisseur"], g["cellules"]) for g in out["colonnes"]["email"]] == [
+        ("hunter_email_finder", 2), ("fullenrich_enrich_linkedin", 1)]
+    assert "nom" not in out["colonnes"]
+    assert out["tenues"] == {"email": 4}
+
+
+def test_un_tableau_sans_attribution_ne_lit_pas_ses_lignes(compte, monkeypatch):
+    from oto_mcp import db
+    from oto_mcp.db import historique
+    _, ns_id = _table()
+    db.datastore_insert_row(ns_id, "r1", {"nom": "x"})
+    assert historique.sources_des_colonnes(ns_id) == {"colonnes": {}, "tenues": None}
 
 
 # ── 5. la face REST ────────────────────────────────────────────────────────────
@@ -279,8 +332,7 @@ def test_face_rest_forme_servie_et_hors_perimetre(rest):
     corps = r.json()
     assert corps["columns"] == {"nom": [
         {"source": "agent", "tool": "jev_rows", "provider": None, "cells": 1}]}
-    assert corps["complete"] is True and corps["revisions_read"] == 1
-    assert corps["since"] and corps["retention_days"] >= 1
+    assert corps["held"] == {"nom": 1} and corps["since"]
     _, autre = _table(AUTRE)
     r = rest.get(f"/api/datastores/{autre}/column-sources",
                  headers={"Authorization": f"Bearer {SUB}"})

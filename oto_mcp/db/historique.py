@@ -46,7 +46,8 @@ COUVERTURE = (
     f"`avant`) depuis que le journal les enregistre : une ligne absente sans révision "
     f"de suppression a pu être supprimée quand même, avant.")
 
-_COLONNES = "id, rev, at, acteur, run_id, source, geste_id, suppression"
+_COLONNES = ("id, rev, at, acteur, run_id, source, geste_id, suppression, "
+             "outil, fournisseur")
 
 
 def revisions_de_ligne(ns_id: int, row_id: str, *, champ: Optional[str] = None,
@@ -118,57 +119,43 @@ def revisions_du_geste(geste_id: str, depuis_id: int, *, limit: int = 1001) -> l
 
 # ── QUI A TROUVÉ chaque colonne — l'en-tête d'une colonne (« Jev, Hunter 62 % ») ──
 #
-# Pour chaque cellule TENUE aujourd'hui (la ligne existe, la valeur n'est pas `null`),
-# la révision la plus récente qui l'a écrite, et ce qu'elle porte : la face (`source`),
-# l'outil (`outil`) et le fournisseur (`fournisseur`). Compté par colonne. Rien n'est
-# deviné : une révision sans outil reste sans outil (console, API, écrite avant
-# l'estampille de l'outil), et le client l'affiche comme telle.
-#
-# ⚠️ BORNÉ aux `SOURCES_MAX_REVISIONS` révisions les plus récentes du tableau (une cellule
-# écrite avant n'est pas comptée, et `complet` le dit), et par la rétention du journal
-# (90 jours, `journal_revisions.retention_jours`) : ce qui est plus vieux n'y est plus.
-# Lecture d'agrégat sous `statement_timeout` (`lecture_d_agregat`).
-SOURCES_MAX_REVISIONS = 50_000
+# Deux lectures, chacune proportionnelle à la TAILLE du tableau, jamais à son histoire :
+# - les cases ATTRIBUÉES (`datastore_cell_sources`, par sa clé primaire) groupées par
+#   outil / fournisseur / face — `db/attribution_cellules.py` dit ce qui y entre ;
+# - les cases TENUES par colonne (ligne vivante, valeur ni absente ni `null`, le jumeau
+#   SQL d'`unwrap`), pour les parts. Bornée : si elle dépasse, elle est omise
+#   (`tenues: None`) — les parts se lisent alors entre cases attribuées seulement.
 
 
-def sources_des_colonnes(ns_id: int, *, limite: int = SOURCES_MAX_REVISIONS) -> dict:
-    """`{"colonnes": {champ: [{source, outil, fournisseur, cellules}]}, "revisions_lues",
-    "complet"}` — les groupes d'une colonne du plus fourni au moins fourni."""
-    from .lecture_bornee import lecture_d_agregat
+def sources_des_colonnes(ns_id: int) -> dict:
+    """`{"colonnes": {champ: [{source, outil, fournisseur, cellules}]},
+    "tenues": {champ: n} | None}` — les groupes d'une colonne du plus fourni au moins."""
+    from .attribution_cellules import TABLE as CASES
+    from .lecture_bornee import LectureTropLongue, lecture_d_agregat
+    from .paths import _valeur_jsonb
     with lecture_d_agregat("sources des colonnes") as conn:
-        lues = conn.execute(
-            f"SELECT count(*) AS n FROM (SELECT 1 FROM {TABLE} WHERE ns_id = %s "
-            f"AND NOT suppression LIMIT %s) t", (int(ns_id), int(limite) + 1)
-        ).fetchone()["n"]
         lignes = conn.execute(
-            f"""
-            WITH recentes AS (
-                SELECT id, row_id, diff, source, outil, fournisseur
-                  FROM {TABLE}
-                 WHERE ns_id = %(ns)s AND NOT suppression
-                 ORDER BY id DESC
-                 LIMIT %(lim)s
-            ), cellules AS (
-                SELECT DISTINCT ON (r.row_id, c.k)
-                       r.row_id, c.k AS champ,
-                       (c.v ? 'apres' AND jsonb_typeof(c.v -> 'apres') <> 'null') AS tenue,
-                       r.source, r.outil, r.fournisseur
-                  FROM recentes r, jsonb_each(r.diff) AS c(k, v)
-                 ORDER BY r.row_id, c.k, r.id DESC
-            )
-            SELECT champ, source, outil, fournisseur, count(*) AS cellules
-              FROM cellules c
-             WHERE tenue AND EXISTS (SELECT 1 FROM datastore_rows d
-                                      WHERE d.ns_id = %(ns)s AND d.row_id = c.row_id)
-             GROUP BY 1, 2, 3, 4
-            """, {"ns": int(ns_id), "lim": int(limite)}).fetchall()
+            f"SELECT champ, source, outil, fournisseur, count(*) AS cellules "
+            f"FROM {CASES} WHERE ns_id = %s GROUP BY 1, 2, 3, 4",
+            (int(ns_id),)).fetchall()
     colonnes: dict[str, list[dict]] = {}
     for r in lignes:
         colonnes.setdefault(r["champ"], []).append({
             "source": r["source"], "outil": r["outil"],
             "fournisseur": r["fournisseur"], "cellules": int(r["cellules"])})
     for groupes in colonnes.values():
-        groupes.sort(key=lambda g: (-g["cellules"], g["outil"] is None,
-                                    g["outil"] or "", g["fournisseur"] or ""))
-    return {"colonnes": colonnes, "revisions_lues": min(int(lues), int(limite)),
-            "complet": int(lues) <= int(limite)}
+        groupes.sort(key=lambda g: (-g["cellules"], g["outil"] or "", g["fournisseur"] or ""))
+    tenues: Optional[dict] = None
+    if colonnes:
+        v = _valeur_jsonb("e.v")
+        try:
+            with lecture_d_agregat("cases tenues par colonne") as conn:
+                tenues = {r["champ"]: int(r["n"]) for r in conn.execute(
+                    f"SELECT e.k AS champ, count(*) AS n "
+                    f"FROM datastore_rows r, jsonb_each(r.data) AS e(k, v) "
+                    f"WHERE r.ns_id = %s AND jsonb_typeof(r.data) = 'object' "
+                    f"AND e.k = ANY(%s) AND {v} IS NOT NULL AND {v} <> 'null'::jsonb "
+                    f"GROUP BY 1", (int(ns_id), list(colonnes))).fetchall()}
+        except LectureTropLongue:
+            tenues = None
+    return {"colonnes": colonnes, "tenues": tenues}

@@ -1,11 +1,10 @@
 """`me.datastore.column_sources` — GET …/column-sources : QUI a trouvé chaque colonne.
 
 L'en-tête d'une colonne dit d'où viennent ses valeurs : « Jev », « Hunter 62 %,
-FullEnrich 30 % », « à la main ». Lu dans le journal des révisions de ligne, qui
-estampille chaque écriture de sa face (`source`), de l'outil qui l'a faite (`outil`) et
-du fournisseur derrière la valeur (`fournisseur`, `geste.par_fournisseur`) — jamais
-déclaré à côté, donc jamais périmé, et jamais deviné (`db/historique.
-sources_des_colonnes`).
+FullEnrich 30 % », « à la main ». Lu dans `datastore_cell_sources`, qu'un
+déclencheur entretient à chaque écriture d'après l'estampille (outil, fournisseur,
+face) — jamais déclaré à côté, donc jamais périmé, et jamais deviné
+(`db/attribution_cellules.py`, `db/historique.sources_des_colonnes`).
 
 REST seule : c'est une lecture d'écran ; l'agent a `data_row_history`.
 
@@ -13,8 +12,8 @@ Autz : `SUB_ONLY` au seuil, le vrai gate est la LECTURE du tableau, résolue par
 store (org active + propriété) — un tableau hors périmètre est un 404, comme partout
 dans le datastore.
 
-⚠️ Une lecture d'agrégat sur le journal (bornée : `statement_timeout`, au plus
-`SOURCES_MAX_REVISIONS` révisions, route lourde). Gardée `_TTL_S` secondes par tableau
+⚠️ Deux lectures d'agrégat bornées (`statement_timeout`, route lourde), chacune
+proportionnelle à la taille du tableau. Gardée `_TTL_S` secondes par tableau
 dans ce processus : l'en-tête est relu à chaque ouverture du tableau, la provenance d'une
 colonne ne change pas d'une seconde à l'autre.
 """
@@ -29,7 +28,6 @@ from pydantic import BaseModel, Field
 from ...datastore.core import DatastoreNotFound, make_store
 from ...datastore.identite import Adresse
 from ...db import historique
-from ...db.journal_revisions import retention_jours
 from .._authz import SUB_ONLY
 from .._lecture_bornee import bornee
 from .._types import AuthzDenied, Capability, RestBinding, ResolvedCtx
@@ -48,30 +46,32 @@ class ColumnSourcesInput(EntreeDatastore):
 
 class SourceGroup(BaseModel):
     source: Optional[str] = Field(default=None, description=(
-        "La face qui a écrit : `agent`, `console` (à la main), `api`, `import`, "
-        "`upload`, `system` ; `null` = écrit hors du serveur ou avant l'estampille."))
+        "La face de l'écriture qui a posé la valeur : `agent`, `api`, `system`…"))
     tool: Optional[str] = Field(default=None, description=(
-        "L'outil qui a écrit la valeur (`jev_rows`, `waterfall_email_act`, l'outil "
-        "qu'un `data_write(via=…)` a prouvé). `data_write` seul = un agent a écrit, "
-        "sans dire où il l'a trouvé. `null` = pas connu."))
+        "L'outil qui a trouvé la valeur (`jev_rows`, `waterfall_email_act`, l'outil "
+        "qu'un `data_write(via=…)` a prouvé)."))
     provider: Optional[str] = Field(default=None, description=(
-        "Le fournisseur derrière la valeur (`hunter`, `fullenrich`…), posé par une "
-        "cascade ; `null` ailleurs."))
+        "L'outil de l'étape d'une cascade qui a trouvé la valeur "
+        "(`hunter_email_finder`) ; `null` hors cascade."))
     cells: int
 
 
 class ColumnSources(BaseModel):
     columns: dict[str, list[SourceGroup]] = Field(description=(
-        "Par colonne, les cellules TENUES aujourd'hui groupées par ce qui a écrit leur "
-        "valeur actuelle, du plus fourni au moins fourni. Une colonne absente n'a "
-        "aucune valeur écrite dans la fenêtre lue."))
-    revisions_read: int
-    complete: bool = Field(description=(
-        "`false` = le tableau a plus de révisions que la fenêtre lue : les cellules "
-        "écrites avant ne sont pas comptées."))
-    retention_days: int
-    since: str = Field(description="La mise en service du journal (" +
-                       historique.MISE_EN_SERVICE + ") : rien avant n'est connu.")
+        "Par colonne, les cases dont la valeur ACTUELLE a été trouvée par un outil, "
+        "groupées par outil / fournisseur. Une case écrite à la main, importée, par un "
+        "agent qui n'a pas nommé l'outil, ou avant la mise en service, n'y est pas."))
+    held: Optional[dict[str, int]] = Field(default=None, description=(
+        "Par colonne listée dans `columns`, le nombre de cases qui tiennent une valeur "
+        "— le dénominateur des parts. `null` quand la lecture a dépassé sa borne : les "
+        "parts se lisent alors entre cases attribuées seulement."))
+    since: str = Field(description=(
+        "La mise en service de l'attribution : une case écrite avant n'est pas "
+        "attribuée."))
+
+
+#: Le jour où l'attribution a été posée (la révision `20261111_1100_cell_sources`).
+MISE_EN_SERVICE = "2026-11-11"
 
 
 def _lire(ns_id: int) -> dict:
@@ -87,10 +87,8 @@ def _lire(ns_id: int) -> dict:
                      "provider": g["fournisseur"], "cells": g["cellules"]}
                     for g in groupes]
             for champ, groupes in brut["colonnes"].items()},
-        "revisions_read": brut["revisions_lues"],
-        "complete": brut["complet"],
-        "retention_days": retention_jours(),
-        "since": historique.MISE_EN_SERVICE,
+        "held": brut["tenues"],
+        "since": MISE_EN_SERVICE,
     }
     with _verrou:
         if len(_cache) >= _MAX_ENTREES:
