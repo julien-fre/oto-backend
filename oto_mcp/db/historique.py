@@ -114,3 +114,61 @@ def revisions_du_geste(geste_id: str, depuis_id: int, *, limit: int = 1001) -> l
             f"SELECT id, ns_id, row_id, rev, diff, suppression FROM {TABLE} "
             f"WHERE id > %s AND geste_id = %s ORDER BY id LIMIT %s",
             (int(depuis_id), str(geste_id), int(limit))).fetchall()]
+
+
+# ── QUI A TROUVÉ chaque colonne — l'en-tête d'une colonne (« Jev, Hunter 62 % ») ──
+#
+# Pour chaque cellule TENUE aujourd'hui (la ligne existe, la valeur n'est pas `null`),
+# la révision la plus récente qui l'a écrite, et ce qu'elle porte : la face (`source`),
+# l'outil (`outil`) et le fournisseur (`fournisseur`). Compté par colonne. Rien n'est
+# deviné : une révision sans outil reste sans outil (console, API, écrite avant
+# l'estampille de l'outil), et le client l'affiche comme telle.
+#
+# ⚠️ BORNÉ aux `SOURCES_MAX_REVISIONS` révisions les plus récentes du tableau (une cellule
+# écrite avant n'est pas comptée, et `complet` le dit), et par la rétention du journal
+# (90 jours, `journal_revisions.retention_jours`) : ce qui est plus vieux n'y est plus.
+# Lecture d'agrégat sous `statement_timeout` (`lecture_d_agregat`).
+SOURCES_MAX_REVISIONS = 50_000
+
+
+def sources_des_colonnes(ns_id: int, *, limite: int = SOURCES_MAX_REVISIONS) -> dict:
+    """`{"colonnes": {champ: [{source, outil, fournisseur, cellules}]}, "revisions_lues",
+    "complet"}` — les groupes d'une colonne du plus fourni au moins fourni."""
+    from .lecture_bornee import lecture_d_agregat
+    with lecture_d_agregat("sources des colonnes") as conn:
+        lues = conn.execute(
+            f"SELECT count(*) AS n FROM (SELECT 1 FROM {TABLE} WHERE ns_id = %s "
+            f"AND NOT suppression LIMIT %s) t", (int(ns_id), int(limite) + 1)
+        ).fetchone()["n"]
+        lignes = conn.execute(
+            f"""
+            WITH recentes AS (
+                SELECT id, row_id, diff, source, outil, fournisseur
+                  FROM {TABLE}
+                 WHERE ns_id = %(ns)s AND NOT suppression
+                 ORDER BY id DESC
+                 LIMIT %(lim)s
+            ), cellules AS (
+                SELECT DISTINCT ON (r.row_id, c.k)
+                       r.row_id, c.k AS champ,
+                       (c.v ? 'apres' AND jsonb_typeof(c.v -> 'apres') <> 'null') AS tenue,
+                       r.source, r.outil, r.fournisseur
+                  FROM recentes r, jsonb_each(r.diff) AS c(k, v)
+                 ORDER BY r.row_id, c.k, r.id DESC
+            )
+            SELECT champ, source, outil, fournisseur, count(*) AS cellules
+              FROM cellules c
+             WHERE tenue AND EXISTS (SELECT 1 FROM datastore_rows d
+                                      WHERE d.ns_id = %(ns)s AND d.row_id = c.row_id)
+             GROUP BY 1, 2, 3, 4
+            """, {"ns": int(ns_id), "lim": int(limite)}).fetchall()
+    colonnes: dict[str, list[dict]] = {}
+    for r in lignes:
+        colonnes.setdefault(r["champ"], []).append({
+            "source": r["source"], "outil": r["outil"],
+            "fournisseur": r["fournisseur"], "cellules": int(r["cellules"])})
+    for groupes in colonnes.values():
+        groupes.sort(key=lambda g: (-g["cellules"], g["outil"] is None,
+                                    g["outil"] or "", g["fournisseur"] or ""))
+    return {"colonnes": colonnes, "revisions_lues": min(int(lues), int(limite)),
+            "complet": int(lues) <= int(limite)}
