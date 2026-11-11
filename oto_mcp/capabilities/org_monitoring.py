@@ -1015,6 +1015,12 @@ class OrgTokenRow(BaseModel):
     # Travaux de la case dont l'entrée ou la sortie n'est pas déclarée : leurs jetons
     # connus sont dans les sommes, mais le total est un minorant.
     unmeasured: int
+    # Le temps que les travaux de la case ont tourné, en secondes : de l'ouverture
+    # du run d'un `start` à sa conclusion, 3 h au plus par travail. Un `continue`
+    # (il reprend un run ancien) n'est pas chronométré : il compte dans `untimed`,
+    # et `seconds` est alors un minorant.
+    seconds: int = 0
+    untimed: int = 0
 
 
 class OrgTokens(BaseModel):
@@ -1033,7 +1039,8 @@ def _tokens(ctx: ResolvedCtx, inp: OrgTokensInput) -> dict:
         {"day": r["jour"], "trigger_id": r["trigger_id"], "paid_by": r["paye_par"],
          "model": r["modele"], "jobs": r["travaux"], "input": r["entree"],
          "output": r["sortie"], "cache_read": r["lecture_cache"],
-         "cache_write": r["ecriture_cache"], "unmeasured": r["non_mesures"]}
+         "cache_write": r["ecriture_cache"], "unmeasured": r["non_mesures"],
+         "seconds": r["secondes"], "untimed": r["non_chronometres"]}
         for r in rows]}
 
 

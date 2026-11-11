@@ -2301,10 +2301,22 @@ def jetons_des_travaux(org_id: int, jours: int) -> list[dict]:
 
     Les travaux en cours sont exclus : sans `finished_at`, ils n'ont pas de jour.
 
+    `secondes` : le temps que les travaux ont tourné (voir `duree` ci-dessous) ;
+    `non_chronometres` : ceux dont le temps n'est pas connu — la somme est un minorant.
+
     Lecture d'agrégat BORNÉE (`lecture_d_agregat`) : au-delà de sa durée maximale, elle
     lève `LectureTropLongue`, que la face rend en `503 aggregate_timeout`. Servie par
     `idx_runner_jobs_conclus` (`INDEX_CONCLUS`), dont elle porte le prédicat."""
     nombre = "jsonb_typeof(result->'{}') = 'number'"
+
+    # Le temps d'un travail : de l'ouverture de SON run à sa conclusion. Seul un
+    # `start` ouvre son run en commençant ; un `continue` reprend un run ancien, dont
+    # le début daterait le travail de la veille — il n'est pas chronométré (NULL,
+    # compté dans `non_chronometres`), plutôt que gonfler la journée. Borné à 3 h :
+    # un horodatage aberrant ne fait pas à lui seul la courbe.
+    duree = ("CASE WHEN rj.kind = 'start' AND r.started_at IS NOT NULL "
+             "AND r.started_at <= rj.finished_at "
+             "THEN LEAST(EXTRACT(EPOCH FROM rj.finished_at - r.started_at), 10800) END")
 
     def somme(poste: str) -> str:
         return (f"COALESCE(SUM(CASE WHEN {nombre.format(poste)} "
@@ -2313,7 +2325,7 @@ def jetons_des_travaux(org_id: int, jours: int) -> list[dict]:
     with lecture_d_agregat("jetons des travaux") as conn:
         rows = conn.execute(
             f"""
-            SELECT (finished_at AT TIME ZONE 'UTC')::date AS jour,
+            SELECT (rj.finished_at AT TIME ZONE 'UTC')::date AS jour,
                    CASE WHEN payload->>'trigger_id' ~ '^[0-9]+$'
                         THEN payload->>'trigger_id' END AS trigger_id,
                    result->>'paye_par' AS paye_par,
@@ -2325,10 +2337,13 @@ def jetons_des_travaux(org_id: int, jours: int) -> list[dict]:
                    {somme('usage_cache_write')} AS ecriture_cache,
                    COUNT(*) FILTER (WHERE NOT (COALESCE({nombre.format('usage_input')}, FALSE)
                                           AND COALESCE({nombre.format('usage_output')}, FALSE)))::int
-                       AS non_mesures
-              FROM runner_jobs
-             WHERE org_id = %s AND finished_at IS NOT NULL
-               AND finished_at >= NOW() - make_interval(days => %s)
+                       AS non_mesures,
+                   COALESCE(SUM({duree}), 0)::bigint AS secondes,
+                   COUNT(*) FILTER (WHERE {duree} IS NULL)::int AS non_chronometres
+              FROM runner_jobs rj
+              LEFT JOIN runs r ON r.run_id = rj.run_id
+             WHERE rj.org_id = %s AND rj.finished_at IS NOT NULL
+               AND rj.finished_at >= NOW() - make_interval(days => %s)
              GROUP BY 1, 2, 3, 4
              ORDER BY 1, 2, 3, 4
             """,
