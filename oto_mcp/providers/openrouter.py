@@ -26,7 +26,7 @@ CONNECTOR = _c(
     cardinality="mono",
     # ONE secret, as `mistral`: the screens deposit a single-field key as `api_key`.
     secret_kind="api_key", label="OpenRouter",
-    help="OpenRouter key for the open models (DeepSeek, GLM, MiniMax) — used by the "
+    help="OpenRouter key for the open models (DeepSeek, MiniMax) — used by the "
          "organization's scheduled agents, never by a tool. Without one, a platform key "
          "granted to the organization is used and billed.",
     href="https://openrouter.ai/settings/keys",

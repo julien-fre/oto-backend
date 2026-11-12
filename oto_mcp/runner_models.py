@@ -86,9 +86,9 @@ MODELES: tuple[Modele, ...] = (
     Modele("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "openrouter",
            effort="medium", max_output_tokens=16000,
            providers=("streamlake/fp8", "baidu/fp8", "gmicloud/fp8")),
-    Modele("z-ai/glm-5.3", "GLM-5.3", "openrouter",
-           effort="medium", max_output_tokens=16000,
-           providers=("novita/fp8", "siliconflow/fp8", "gmicloud/fp8")),
+    # GLM-5.3 (z-ai/glm-5.3) RETIRÉ le 12/11/2026 : sur un run long (60 tours), il conclut
+    # par du texte après une écriture au lieu d'enchaîner (20 tours sur 60), ce qui
+    # termine le travail dans la boucle. À ne remettre qu'après un run long qui enchaîne.
     Modele("minimax/minimax-m3", "MiniMax M3", "openrouter",
            effort="medium", max_output_tokens=16000,
            providers=("parasail/fp8", "streamlake/fp8", "gmicloud/fp8")),

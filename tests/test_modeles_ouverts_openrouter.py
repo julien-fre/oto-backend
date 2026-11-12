@@ -35,7 +35,7 @@ def _propre(monkeypatch):
 
 def test_les_modeles_ouverts_sont_de_la_famille_openrouter_et_apres_les_autres():
     ouverts = [m for m in runner_models.MODELES if m.family == "openrouter"]
-    assert [m.id for m in ouverts] == [FLASH, "deepseek/deepseek-v4-pro", "z-ai/glm-5.3",
+    assert [m.id for m in ouverts] == [FLASH, "deepseek/deepseek-v4-pro",
                                        "minimax/minimax-m3"]
     ids = [m.id for m in runner_models.MODELES]
     assert ids.index(FLASH) > ids.index("mistral-small-2603")

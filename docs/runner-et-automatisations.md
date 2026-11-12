@@ -1097,7 +1097,7 @@ travail avec effort produit par un backend d'avant.
 ### Les modèles ouverts via OpenRouter : une famille, des hôtes épinglés (12/11/2026)
 
 La famille `openrouter` (`runner_models`) sert des modèles ouverts — DeepSeek V4.1 Flash,
-DeepSeek V4 Pro, GLM-5.3, MiniMax M3 — par OpenRouter, en Chat Completions : un worker
+DeepSeek V4 Pro, MiniMax M3 — par OpenRouter, en Chat Completions : un worker
 oto-runner `OTO_RUNNER_PROVIDER=openai` sur `OTO_RUNNER_OPENAI_BASE=https://openrouter.ai/api/v1`,
 dont l'hôte NOMME le dépôt `openrouter`. Le dépôt est un porteur de clé
 (`providers/openrouter.py`, `kind="credential"`) : la clé de l'org (`byo_org`), ou la clé

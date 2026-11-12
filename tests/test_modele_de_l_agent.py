@@ -319,7 +319,7 @@ def test_list_sert_le_catalogue_marque(monkeypatch):
                       "mistral-medium-2604": False, "mistral-small-2603": False,
                       # Les modèles ouverts d'OpenRouter : aucun worker ne les sert ici.
                       "deepseek/deepseek-v4.1-flash-1017": False,
-                      "deepseek/deepseek-v4-pro": False, "z-ai/glm-5.3": False,
+                      "deepseek/deepseek-v4-pro": False,
                       "minimax/minimax-m3": False,
                       # L'abonnement personnel (OTO-130) est un dépôt comme un
                       # autre pour le catalogue : servi quand un worker de cette
